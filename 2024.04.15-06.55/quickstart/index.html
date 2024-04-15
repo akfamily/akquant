@@ -1,0 +1,1038 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../installation/">
+      
+      
+        <link rel="next" href="../data-source/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.5.3, mkdocs-material-9.5.17">
+    
+    
+      
+        <title>快速入门 - 利用 PyBroker 进行量化投资</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.bcfcd587.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce((e,_)=>(e<<5)-e+_.charCodeAt(0),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#_1" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href=".." title="利用 PyBroker 进行量化投资" class="md-header__button md-logo" aria-label="利用 PyBroker 进行量化投资" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54Z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            利用 PyBroker 进行量化投资
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              快速入门
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12c0-2.42-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var media,input,key,value,palette=__md_get("__palette");if(palette&&palette.color){"(prefers-color-scheme)"===palette.color.media&&(media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']"),palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent"));for([key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12Z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41Z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.5.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="利用 PyBroker 进行量化投资" class="md-nav__button md-logo" aria-label="利用 PyBroker 进行量化投资" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54Z"/></svg>
+
+    </a>
+    利用 PyBroker 进行量化投资
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.5.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    PyBroker 介绍
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    PyBroker 安装
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    快速入门
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    快速入门
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      导入相关的模块和类
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      配置策略
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      定义规则
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      运行策略
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看结果
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="查看结果">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看绩效
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看订单
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看持仓
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看投资组合
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看交易
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      策略代码
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data-source/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    从数据源开始
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../article/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    文章分享
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fin-data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    财经数据源
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quant-resource/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    量化投资资源
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    贡献文档
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      导入相关的模块和类
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      配置策略
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      定义规则
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      运行策略
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看结果
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="查看结果">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看绩效
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看订单
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看持仓
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看投资组合
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      查看交易
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      策略代码
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="_1">快速开始</h1>
+<p>在此处通过一个简单的例子来介绍如何使用 <code>pybroker</code> 来开发策略。</p>
+<h2 id="_2">导入相关的模块和类</h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span> <span class="nn">pybroker</span> <span class="k">as</span> <span class="nn">pb</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span> <span class="nn">pybroker</span> <span class="kn">import</span> <span class="n">Strategy</span><span class="p">,</span> <span class="n">StrategyConfig</span><span class="p">,</span> <span class="n">ExecContext</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">from</span> <span class="nn">pybroker.ext.data</span> <span class="kn">import</span> <span class="n">AKShare</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">pb</span><span class="o">.</span><span class="n">__version__</span><span class="p">)</span>
+</span></code></pre></div>
+<ol>
+<li>将 <code>pybroker</code> 模块导入为 <code>pb</code>，这是一个约定俗成的做法，方便后续使用。</li>
+<li>从 <code>pybroker</code> 中导入 <code>Strategy</code> 和 <code>StrategyConfig</code> 类，以及 <code>AKShare</code> 数据源。</li>
+<li><code>Strategy</code> 类是 pybroker 中的策略基类，所有的策略都需要继承该类。</li>
+<li><code>StrategyConfig</code> 类是 pybroker 中的策略配置基类，所有的策略配置都需要继承该类。</li>
+<li><code>AKShare</code> 类是 pybroker 中的数据源类，用于获取数据。</li>
+<li><code>pb.__version__</code> 属性用于获取 pybroker 的版本。</li>
+</ol>
+<h2 id="_3">配置策略</h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">config</span> <span class="o">=</span> <span class="n">StrategyConfig</span><span class="p">(</span><span class="n">initial_cash</span><span class="o">=</span><span class="mi">500_000</span><span class="p">)</span>
+</span></code></pre></div>
+<ol>
+<li>创建一个策略配置对象，该对象用于配置策略的一些参数。</li>
+<li><code>initial_cash</code> 参数用于配置策略的初始资金，默认为 10 万。</li>
+</ol>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">strategy</span> <span class="o">=</span> <span class="n">Strategy</span><span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">data_source</span><span class="o">=</span><span class="n">AKShare</span><span class="p">(),</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">start_date</span><span class="o">=</span><span class="s1">&#39;20220101&#39;</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">end_date</span><span class="o">=</span><span class="s1">&#39;20230916&#39;</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">config</span><span class="o">=</span><span class="n">config</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<ol>
+<li>创建一个策略对象，该对象用于运行策略。</li>
+<li><code>AKShare()</code> 参数用于配置策略的数据源，该数据源为 akshare。</li>
+<li><code>20220101</code> 参数用于配置策略的开始日期。</li>
+<li><code>20230916</code> 参数用于配置策略的结束日期。</li>
+<li><code>config</code> 参数用于配置策略的配置对象。</li>
+<li><code>strategy</code> 对象用于运行策略。</li>
+<li><code>strategy</code> 对象的 <code>config</code> 属性用于获取策略的配置对象。</li>
+</ol>
+<h2 id="_4">定义规则</h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">def</span> <span class="nf">buy_low</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecContext</span><span class="p">):</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="c1"># 如果当前已经持有仓位，则不再买入。</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">long_pos</span><span class="p">():</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        <span class="k">return</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="c1"># 如果当前的收盘价小于前一天的最低价，则下单买入。</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">bars</span> <span class="o">&gt;=</span> <span class="mi">2</span> <span class="ow">and</span> <span class="n">ctx</span><span class="o">.</span><span class="n">close</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">ctx</span><span class="o">.</span><span class="n">low</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">]:</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>        <span class="c1"># 计算买入的股票数量，该数量为当前资金的 25%。</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>        <span class="n">ctx</span><span class="o">.</span><span class="n">buy_shares</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">calc_target_shares</span><span class="p">(</span><span class="mf">0.25</span><span class="p">)</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>        <span class="c1"># 设置买入的限价，该限价为当前收盘价减去 0.01。</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>        <span class="n">ctx</span><span class="o">.</span><span class="n">buy_limit_price</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">close</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mf">0.01</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>        <span class="c1"># 设置持有仓位的时间，该时间为 3 个交易日。</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>        <span class="n">ctx</span><span class="o">.</span><span class="n">hold_bars</span> <span class="o">=</span> <span class="mi">3</span>
+</span></code></pre></div>
+<ol>
+<li>定义一个名为 <code>buy_low</code> 的函数，该函数用于判断是否需要买入。</li>
+<li><code>ctx</code> 参数是一个上下文对象，该对象包含了策略运行时的一些数据。</li>
+<li><code>ctx.long_pos()</code> 方法用于判断是否已经持有仓位。</li>
+<li><code>ctx.bars</code> 属性用于获取当前的交易日。</li>
+</ol>
+<h2 id="_5">运行策略</h2>
+<p>可以通过调用 <code>strategy.backtest()</code> 方法来进行策略回测：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">strategy</span><span class="o">.</span><span class="n">add_execution</span><span class="p">(</span><span class="n">fn</span><span class="o">=</span><span class="n">buy_low</span><span class="p">,</span> <span class="n">symbols</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;000001&#39;</span><span class="p">,</span> <span class="s1">&#39;600000&#39;</span><span class="p">])</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">result</span> <span class="o">=</span> <span class="n">strategy</span><span class="o">.</span><span class="n">backtest</span><span class="p">()</span>
+</span></code></pre></div>
+<h2 id="_6">查看结果</h2>
+<h3 id="_7">查看绩效</h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">metrics_df</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="language-shell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="w">                      </span>name<span class="w">         </span>value
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="m">0</span><span class="w">              </span>trade_count<span class="w">  </span><span class="m">6</span>.000000e+01
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="m">1</span><span class="w">     </span>initial_market_value<span class="w">  </span><span class="m">5</span>.000000e+05
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="m">2</span><span class="w">         </span>end_market_value<span class="w">  </span><span class="m">4</span>.807408e+05
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="m">3</span><span class="w">                </span>total_pnl<span class="w"> </span>-1.925923e+04
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="m">4</span><span class="w">           </span>unrealized_pnl<span class="w">  </span><span class="m">1</span>.818989e-11
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="m">5</span><span class="w">         </span>total_return_pct<span class="w"> </span>-3.851846e+00
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="m">6</span><span class="w">             </span>total_profit<span class="w">  </span><span class="m">4</span>.150577e+04
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="m">7</span><span class="w">               </span>total_loss<span class="w"> </span>-6.076500e+04
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="m">8</span><span class="w">               </span>total_fees<span class="w">  </span><span class="m">0</span>.000000e+00
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="m">9</span><span class="w">             </span>max_drawdown<span class="w"> </span>-3.168807e+04
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="m">10</span><span class="w">        </span>max_drawdown_pct<span class="w"> </span>-6.280127e+00
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="m">11</span><span class="w">                </span>win_rate<span class="w">  </span><span class="m">4</span>.745763e+01
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="m">12</span><span class="w">               </span>loss_rate<span class="w">  </span><span class="m">5</span>.254237e+01
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="m">13</span><span class="w">          </span>winning_trades<span class="w">  </span><span class="m">2</span>.800000e+01
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="m">14</span><span class="w">           </span>losing_trades<span class="w">  </span><span class="m">3</span>.100000e+01
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="m">15</span><span class="w">                 </span>avg_pnl<span class="w"> </span>-3.209872e+02
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="m">16</span><span class="w">          </span>avg_return_pct<span class="w"> </span>-2.623333e-01
+</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a><span class="m">17</span><span class="w">          </span>avg_trade_bars<span class="w">  </span><span class="m">3</span>.000000e+00
+</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a><span class="m">18</span><span class="w">              </span>avg_profit<span class="w">  </span><span class="m">1</span>.482349e+03
+</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a><span class="m">19</span><span class="w">          </span>avg_profit_pct<span class="w">  </span><span class="m">1</span>.242857e+00
+</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a><span class="m">20</span><span class="w">  </span>avg_winning_trade_bars<span class="w">  </span><span class="m">3</span>.000000e+00
+</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a><span class="m">21</span><span class="w">                </span>avg_loss<span class="w"> </span>-1.960161e+03
+</span><span id="__span-6-24"><a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a><span class="m">22</span><span class="w">            </span>avg_loss_pct<span class="w"> </span>-1.630323e+00
+</span><span id="__span-6-25"><a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a><span class="m">23</span><span class="w">   </span>avg_losing_trade_bars<span class="w">  </span><span class="m">3</span>.000000e+00
+</span><span id="__span-6-26"><a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a><span class="m">24</span><span class="w">             </span>largest_win<span class="w">  </span><span class="m">4</span>.888940e+03
+</span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a><span class="m">25</span><span class="w">         </span>largest_win_pct<span class="w">  </span><span class="m">4</span>.060000e+00
+</span><span id="__span-6-28"><a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a><span class="m">26</span><span class="w">        </span>largest_win_bars<span class="w">  </span><span class="m">3</span>.000000e+00
+</span><span id="__span-6-29"><a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a><span class="m">27</span><span class="w">            </span>largest_loss<span class="w"> </span>-7.065140e+03
+</span><span id="__span-6-30"><a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a><span class="m">28</span><span class="w">        </span>largest_loss_pct<span class="w"> </span>-5.780000e+00
+</span><span id="__span-6-31"><a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a><span class="m">29</span><span class="w">       </span>largest_loss_bars<span class="w">  </span><span class="m">3</span>.000000e+00
+</span><span id="__span-6-32"><a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a><span class="m">30</span><span class="w">                </span>max_wins<span class="w">  </span><span class="m">3</span>.000000e+00
+</span><span id="__span-6-33"><a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a><span class="m">31</span><span class="w">              </span>max_losses<span class="w">  </span><span class="m">5</span>.000000e+00
+</span><span id="__span-6-34"><a id="__codelineno-6-34" name="__codelineno-6-34" href="#__codelineno-6-34"></a><span class="m">32</span><span class="w">                  </span>sharpe<span class="w"> </span>-4.184734e-02
+</span><span id="__span-6-35"><a id="__codelineno-6-35" name="__codelineno-6-35" href="#__codelineno-6-35"></a><span class="m">33</span><span class="w">                 </span>sortino<span class="w"> </span>-4.060695e-02
+</span><span id="__span-6-36"><a id="__codelineno-6-36" name="__codelineno-6-36" href="#__codelineno-6-36"></a><span class="m">34</span><span class="w">           </span>profit_factor<span class="w">  </span><span class="m">8</span>.291367e-01
+</span><span id="__span-6-37"><a id="__codelineno-6-37" name="__codelineno-6-37" href="#__codelineno-6-37"></a><span class="m">35</span><span class="w">             </span>ulcer_index<span class="w">  </span><span class="m">6</span>.942926e-01
+</span><span id="__span-6-38"><a id="__codelineno-6-38" name="__codelineno-6-38" href="#__codelineno-6-38"></a><span class="m">36</span><span class="w">                     </span>upi<span class="w"> </span>-1.328477e-02
+</span><span id="__span-6-39"><a id="__codelineno-6-39" name="__codelineno-6-39" href="#__codelineno-6-39"></a><span class="m">37</span><span class="w">               </span>equity_r2<span class="w">  </span><span class="m">6</span>.199979e-01
+</span><span id="__span-6-40"><a id="__codelineno-6-40" name="__codelineno-6-40" href="#__codelineno-6-40"></a><span class="m">38</span><span class="w">               </span>std_error<span class="w">  </span><span class="m">6</span>.892189e+03
+</span></code></pre></div>
+<h3 id="_8">查看订单</h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">orders</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="language-shell highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="w">     </span><span class="nb">type</span><span class="w">  </span>symbol<span class="w">       </span>date<span class="w">  </span>shares<span class="w">  </span>limit_price<span class="w">  </span>fill_price<span class="w">  </span>fees
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>id
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="m">1</span><span class="w">     </span>buy<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-01-17<span class="w">      </span><span class="m">44</span><span class="w">      </span><span class="m">2822</span>.91<span class="w">     </span><span class="m">2818</span>.04<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="m">2</span><span class="w">    </span>sell<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-01-20<span class="w">      </span><span class="m">44</span><span class="w">          </span>NaN<span class="w">     </span><span class="m">2922</span>.06<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="m">3</span><span class="w">     </span>buy<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-01-25<span class="w">      </span><span class="m">42</span><span class="w">      </span><span class="m">2964</span>.31<span class="w">     </span><span class="m">2922</span>.88<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="m">4</span><span class="w">     </span>buy<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-01-25<span class="w">    </span><span class="m">1497</span><span class="w">        </span><span class="m">84</span>.20<span class="w">       </span><span class="m">83</span>.74<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="m">5</span><span class="w">    </span>sell<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-01-28<span class="w">      </span><span class="m">42</span><span class="w">          </span>NaN<span class="w">     </span><span class="m">2791</span>.23<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>..<span class="w">    </span>...<span class="w">     </span>...<span class="w">        </span>...<span class="w">     </span>...<span class="w">          </span>...<span class="w">         </span>...<span class="w">   </span>...
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="m">116</span><span class="w">  </span>sell<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-08-29<span class="w">      </span><span class="m">57</span><span class="w">          </span>NaN<span class="w">     </span><span class="m">2090</span>.42<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="m">117</span><span class="w">   </span>buy<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-08-30<span class="w">      </span><span class="m">57</span><span class="w">      </span><span class="m">2090</span>.40<span class="w">     </span><span class="m">2072</span>.54<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="m">118</span><span class="w">   </span>buy<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-08-30<span class="w">    </span><span class="m">1525</span><span class="w">        </span><span class="m">78</span>.33<span class="w">       </span><span class="m">78</span>.24<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="m">119</span><span class="w">  </span>sell<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-09-04<span class="w">      </span><span class="m">57</span><span class="w">          </span>NaN<span class="w">     </span><span class="m">2114</span>.79<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="m">120</span><span class="w">  </span>sell<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-09-04<span class="w">    </span><span class="m">1525</span><span class="w">          </span>NaN<span class="w">       </span><span class="m">78</span>.44<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="o">[</span><span class="m">120</span><span class="w"> </span>rows<span class="w"> </span>x<span class="w"> </span><span class="m">7</span><span class="w"> </span>columns<span class="o">]</span>
+</span></code></pre></div>
+<h3 id="_9">查看持仓</h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">positions</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="language-shell highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="w">                   </span>long_shares<span class="w">  </span>short_shares<span class="w">  </span>...<span class="w">  </span>margin<span class="w">  </span>unrealized_pnl
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>symbol<span class="w"> </span>date<span class="w">                                   </span>...
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-01-17<span class="w">           </span><span class="m">44</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span>-572.00
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">       </span><span class="m">2022</span>-01-18<span class="w">           </span><span class="m">44</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span><span class="m">1573</span>.44
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">       </span><span class="m">2022</span>-01-19<span class="w">           </span><span class="m">44</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span><span class="m">1430</span>.44
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-01-25<span class="w">         </span><span class="m">1497</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span>-583.83
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-01-25<span class="w">           </span><span class="m">42</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span>-648.48
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">                        </span>...<span class="w">           </span>...<span class="w">  </span>...<span class="w">     </span>...<span class="w">             </span>...
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">       </span><span class="m">2023</span>-08-30<span class="w">           </span><span class="m">57</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span>-648.66
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-08-31<span class="w">         </span><span class="m">1525</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span>-762.50
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-08-31<span class="w">           </span><span class="m">57</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span>-648.66
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-09-01<span class="w">         </span><span class="m">1525</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span>-457.50
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-09-01<span class="w">           </span><span class="m">57</span><span class="w">             </span><span class="m">0</span><span class="w">  </span>...<span class="w">     </span><span class="m">0</span>.0<span class="w">         </span><span class="m">1111</span>.50
+</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="o">[</span><span class="m">180</span><span class="w"> </span>rows<span class="w"> </span>x<span class="w"> </span><span class="m">7</span><span class="w"> </span>columns<span class="o">]</span>
+</span></code></pre></div>
+<h3 id="_10">查看投资组合</h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">portfolio</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="language-shell highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="w">                 </span>cash<span class="w">     </span>equity<span class="w">  </span>margin<span class="w">  </span>...<span class="w">       </span>pnl<span class="w">  </span>unrealized_pnl<span class="w">  </span>fees
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>date<span class="w">                                      </span>...
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="m">2022</span>-01-04<span class="w">  </span><span class="m">500000</span>.00<span class="w">  </span><span class="m">500000</span>.00<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w">      </span><span class="m">0</span>.00<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="m">2022</span>-01-05<span class="w">  </span><span class="m">500000</span>.00<span class="w">  </span><span class="m">500000</span>.00<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w">      </span><span class="m">0</span>.00<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="m">2022</span>-01-06<span class="w">  </span><span class="m">500000</span>.00<span class="w">  </span><span class="m">500000</span>.00<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w">      </span><span class="m">0</span>.00<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="m">2022</span>-01-07<span class="w">  </span><span class="m">500000</span>.00<span class="w">  </span><span class="m">500000</span>.00<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w">      </span><span class="m">0</span>.00<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="m">2022</span>-01-10<span class="w">  </span><span class="m">500000</span>.00<span class="w">  </span><span class="m">500000</span>.00<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w">      </span><span class="m">0</span>.00<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">               </span>...<span class="w">        </span>...<span class="w">     </span>...<span class="w">  </span>...<span class="w">       </span>...<span class="w">             </span>...<span class="w">   </span>...
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="m">2023</span>-09-11<span class="w">  </span><span class="m">480740</span>.77<span class="w">  </span><span class="m">480740</span>.77<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w"> </span>-19259.23<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="m">2023</span>-09-12<span class="w">  </span><span class="m">480740</span>.77<span class="w">  </span><span class="m">480740</span>.77<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w"> </span>-19259.23<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="m">2023</span>-09-13<span class="w">  </span><span class="m">480740</span>.77<span class="w">  </span><span class="m">480740</span>.77<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w"> </span>-19259.23<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="m">2023</span>-09-14<span class="w">  </span><span class="m">480740</span>.77<span class="w">  </span><span class="m">480740</span>.77<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w"> </span>-19259.23<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="m">2023</span>-09-15<span class="w">  </span><span class="m">480740</span>.77<span class="w">  </span><span class="m">480740</span>.77<span class="w">     </span><span class="m">0</span>.0<span class="w">  </span>...<span class="w"> </span>-19259.23<span class="w">             </span><span class="m">0</span>.0<span class="w">   </span><span class="m">0</span>.0
+</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="o">[</span><span class="m">415</span><span class="w"> </span>rows<span class="w"> </span>x<span class="w"> </span><span class="m">7</span><span class="w"> </span>columns<span class="o">]</span>
+</span></code></pre></div>
+<h3 id="_11">查看交易</h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trades</span><span class="p">)</span>
+</span></code></pre></div>
+<div class="language-shell highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="w">    </span><span class="nb">type</span><span class="w">  </span>symbol<span class="w"> </span>entry_date<span class="w">  </span>exit_date<span class="w">  </span>...<span class="w">   </span>agg_pnl<span class="w">  </span>bars<span class="w">  </span>pnl_per_bar<span class="w">  </span>stop
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>id<span class="w">                                      </span>...
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="m">1</span><span class="w">   </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-01-17<span class="w"> </span><span class="m">2022</span>-01-20<span class="w">  </span>...<span class="w">   </span><span class="m">4576</span>.88<span class="w">     </span><span class="m">3</span><span class="w">      </span><span class="m">1525</span>.63<span class="w">   </span>bar
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="m">2</span><span class="w">   </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-01-25<span class="w"> </span><span class="m">2022</span>-01-28<span class="w">  </span>...<span class="w">   </span>-952.42<span class="w">     </span><span class="m">3</span><span class="w">     </span>-1843.10<span class="w">   </span>bar
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="m">3</span><span class="w">   </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-01-25<span class="w"> </span><span class="m">2022</span>-01-28<span class="w">  </span>...<span class="w">  </span>-2524.27<span class="w">     </span><span class="m">3</span><span class="w">      </span>-523.95<span class="w">   </span>bar
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="m">4</span><span class="w">   </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-02-15<span class="w"> </span><span class="m">2022</span>-02-18<span class="w">  </span>...<span class="w">  </span>-1441.10<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">361</span>.06<span class="w">   </span>bar
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="m">5</span><span class="w">   </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-02-15<span class="w"> </span><span class="m">2022</span>-02-18<span class="w">  </span>...<span class="w">  </span>-1188.31<span class="w">     </span><span class="m">3</span><span class="w">        </span><span class="m">84</span>.26<span class="w">   </span>bar
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="m">6</span><span class="w">   </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-02-23<span class="w"> </span><span class="m">2022</span>-02-28<span class="w">  </span>...<span class="w">  </span>-4084.39<span class="w">     </span><span class="m">3</span><span class="w">      </span>-965.36<span class="w">   </span>bar
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="m">7</span><span class="w">   </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-03-07<span class="w"> </span><span class="m">2022</span>-03-10<span class="w">  </span>...<span class="w">  </span>-7784.63<span class="w">     </span><span class="m">3</span><span class="w">     </span>-1233.41<span class="w">   </span>bar
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="m">8</span><span class="w">   </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-03-07<span class="w"> </span><span class="m">2022</span>-03-10<span class="w">  </span>...<span class="w"> </span>-11308.67<span class="w">     </span><span class="m">3</span><span class="w">     </span>-1174.68<span class="w">   </span>bar
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="m">9</span><span class="w">   </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-04-12<span class="w"> </span><span class="m">2022</span>-04-15<span class="w">  </span>...<span class="w">  </span>-9666.50<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">547</span>.39<span class="w">   </span>bar
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="m">10</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-04-22<span class="w"> </span><span class="m">2022</span>-04-27<span class="w">  </span>...<span class="w"> </span>-11531.88<span class="w">     </span><span class="m">3</span><span class="w">      </span>-621.79<span class="w">   </span>bar
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="m">11</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-04-26<span class="w"> </span><span class="m">2022</span>-04-29<span class="w">  </span>...<span class="w">  </span>-6642.94<span class="w">     </span><span class="m">3</span><span class="w">      </span><span class="m">1629</span>.65<span class="w">   </span>bar
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="m">12</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-05-05<span class="w"> </span><span class="m">2022</span>-05-10<span class="w">  </span>...<span class="w"> </span>-13708.08<span class="w">     </span><span class="m">3</span><span class="w">     </span>-2355.05<span class="w">   </span>bar
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="m">13</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-05-09<span class="w"> </span><span class="m">2022</span>-05-12<span class="w">  </span>...<span class="w"> </span>-13302.74<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">135</span>.11<span class="w">   </span>bar
+</span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="m">14</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-05-25<span class="w"> </span><span class="m">2022</span>-05-30<span class="w">  </span>...<span class="w"> </span>-15136.34<span class="w">     </span><span class="m">3</span><span class="w">      </span>-611.20<span class="w">   </span>bar
+</span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="m">15</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-06-06<span class="w"> </span><span class="m">2022</span>-06-09<span class="w">  </span>...<span class="w"> </span>-12149.79<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">995</span>.52<span class="w">   </span>bar
+</span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="m">16</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-07-04<span class="w"> </span><span class="m">2022</span>-07-07<span class="w">  </span>...<span class="w"> </span>-12961.75<span class="w">     </span><span class="m">3</span><span class="w">      </span>-270.65<span class="w">   </span>bar
+</span><span id="__span-14-19"><a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a><span class="m">17</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-07-07<span class="w"> </span><span class="m">2022</span>-07-12<span class="w">  </span>...<span class="w"> </span>-12649.75<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">104</span>.00<span class="w">   </span>bar
+</span><span id="__span-14-20"><a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a><span class="m">18</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-07-14<span class="w"> </span><span class="m">2022</span>-07-19<span class="w">  </span>...<span class="w"> </span>-13804.68<span class="w">     </span><span class="m">3</span><span class="w">      </span>-384.98<span class="w">   </span>bar
+</span><span id="__span-14-21"><a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a><span class="m">19</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-07-14<span class="w"> </span><span class="m">2022</span>-07-19<span class="w">  </span>...<span class="w"> </span>-13897.56<span class="w">     </span><span class="m">3</span><span class="w">       </span>-30.96<span class="w">   </span>bar
+</span><span id="__span-14-22"><a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a><span class="m">20</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-07-22<span class="w"> </span><span class="m">2022</span>-07-27<span class="w">  </span>...<span class="w"> </span>-13638.92<span class="w">     </span><span class="m">3</span><span class="w">        </span><span class="m">86</span>.21<span class="w">   </span>bar
+</span><span id="__span-14-23"><a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a><span class="m">21</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-08-01<span class="w"> </span><span class="m">2022</span>-08-04<span class="w">  </span>...<span class="w"> </span>-17386.55<span class="w">     </span><span class="m">3</span><span class="w">     </span>-1249.21<span class="w">   </span>bar
+</span><span id="__span-14-24"><a id="__codelineno-14-24" name="__codelineno-14-24" href="#__codelineno-14-24"></a><span class="m">22</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-08-01<span class="w"> </span><span class="m">2022</span>-08-04<span class="w">  </span>...<span class="w"> </span>-19096.76<span class="w">     </span><span class="m">3</span><span class="w">      </span>-570.07<span class="w">   </span>bar
+</span><span id="__span-14-25"><a id="__codelineno-14-25" name="__codelineno-14-25" href="#__codelineno-14-25"></a><span class="m">23</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-08-30<span class="w"> </span><span class="m">2022</span>-09-02<span class="w">  </span>...<span class="w"> </span>-17780.24<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">438</span>.84<span class="w">   </span>bar
+</span><span id="__span-14-26"><a id="__codelineno-14-26" name="__codelineno-14-26" href="#__codelineno-14-26"></a><span class="m">24</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-09-05<span class="w"> </span><span class="m">2022</span>-09-08<span class="w">  </span>...<span class="w"> </span>-18770.81<span class="w">     </span><span class="m">3</span><span class="w">      </span>-330.19<span class="w">   </span>bar
+</span><span id="__span-14-27"><a id="__codelineno-14-27" name="__codelineno-14-27" href="#__codelineno-14-27"></a><span class="m">25</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-09-27<span class="w"> </span><span class="m">2022</span>-09-30<span class="w">  </span>...<span class="w"> </span>-19576.01<span class="w">     </span><span class="m">3</span><span class="w">      </span>-268.40<span class="w">   </span>bar
+</span><span id="__span-14-28"><a id="__codelineno-14-28" name="__codelineno-14-28" href="#__codelineno-14-28"></a><span class="m">26</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-09-27<span class="w"> </span><span class="m">2022</span>-09-30<span class="w">  </span>...<span class="w"> </span>-19844.44<span class="w">     </span><span class="m">3</span><span class="w">       </span>-89.48<span class="w">   </span>bar
+</span><span id="__span-14-29"><a id="__codelineno-14-29" name="__codelineno-14-29" href="#__codelineno-14-29"></a><span class="m">27</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-10-20<span class="w"> </span><span class="m">2022</span>-10-25<span class="w">  </span>...<span class="w"> </span>-24840.56<span class="w">     </span><span class="m">3</span><span class="w">     </span>-1665.37<span class="w">   </span>bar
+</span><span id="__span-14-30"><a id="__codelineno-14-30" name="__codelineno-14-30" href="#__codelineno-14-30"></a><span class="m">28</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-10-24<span class="w"> </span><span class="m">2022</span>-10-27<span class="w">  </span>...<span class="w"> </span>-25142.66<span class="w">     </span><span class="m">3</span><span class="w">      </span>-100.70<span class="w">   </span>bar
+</span><span id="__span-14-31"><a id="__codelineno-14-31" name="__codelineno-14-31" href="#__codelineno-14-31"></a><span class="m">29</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-10-31<span class="w"> </span><span class="m">2022</span>-11-03<span class="w">  </span>...<span class="w"> </span>-23732.16<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">470</span>.17<span class="w">   </span>bar
+</span><span id="__span-14-32"><a id="__codelineno-14-32" name="__codelineno-14-32" href="#__codelineno-14-32"></a><span class="m">30</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-10-31<span class="w"> </span><span class="m">2022</span>-11-03<span class="w">  </span>...<span class="w"> </span>-23891.56<span class="w">     </span><span class="m">3</span><span class="w">       </span>-53.13<span class="w">   </span>bar
+</span><span id="__span-14-33"><a id="__codelineno-14-33" name="__codelineno-14-33" href="#__codelineno-14-33"></a><span class="m">31</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2022</span>-11-17<span class="w"> </span><span class="m">2022</span>-11-22<span class="w">  </span>...<span class="w"> </span>-24114.86<span class="w">     </span><span class="m">3</span><span class="w">       </span>-74.43<span class="w">   </span>bar
+</span><span id="__span-14-34"><a id="__codelineno-14-34" name="__codelineno-14-34" href="#__codelineno-14-34"></a><span class="m">32</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-11-18<span class="w"> </span><span class="m">2022</span>-11-23<span class="w">  </span>...<span class="w"> </span>-23060.95<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">351</span>.30<span class="w">   </span>bar
+</span><span id="__span-14-35"><a id="__codelineno-14-35" name="__codelineno-14-35" href="#__codelineno-14-35"></a><span class="m">33</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2022</span>-12-26<span class="w"> </span><span class="m">2022</span>-12-29<span class="w">  </span>...<span class="w"> </span>-22132.15<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">309</span>.60<span class="w">   </span>bar
+</span><span id="__span-14-36"><a id="__codelineno-14-36" name="__codelineno-14-36" href="#__codelineno-14-36"></a><span class="m">34</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-02-02<span class="w"> </span><span class="m">2023</span>-02-07<span class="w">  </span>...<span class="w"> </span>-24748.17<span class="w">     </span><span class="m">3</span><span class="w">      </span>-872.01<span class="w">   </span>bar
+</span><span id="__span-14-37"><a id="__codelineno-14-37" name="__codelineno-14-37" href="#__codelineno-14-37"></a><span class="m">35</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-02-02<span class="w"> </span><span class="m">2023</span>-02-07<span class="w">  </span>...<span class="w"> </span>-25848.33<span class="w">     </span><span class="m">3</span><span class="w">      </span>-366.72<span class="w">   </span>bar
+</span><span id="__span-14-38"><a id="__codelineno-14-38" name="__codelineno-14-38" href="#__codelineno-14-38"></a><span class="m">36</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-02-17<span class="w"> </span><span class="m">2023</span>-02-22<span class="w">  </span>...<span class="w"> </span>-22225.27<span class="w">     </span><span class="m">3</span><span class="w">      </span><span class="m">1207</span>.69<span class="w">   </span>bar
+</span><span id="__span-14-39"><a id="__codelineno-14-39" name="__codelineno-14-39" href="#__codelineno-14-39"></a><span class="m">37</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-02-24<span class="w"> </span><span class="m">2023</span>-03-01<span class="w">  </span>...<span class="w"> </span>-22225.27<span class="w">     </span><span class="m">3</span><span class="w">         </span><span class="m">0</span>.00<span class="w">   </span>bar
+</span><span id="__span-14-40"><a id="__codelineno-14-40" name="__codelineno-14-40" href="#__codelineno-14-40"></a><span class="m">38</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-02-27<span class="w"> </span><span class="m">2023</span>-03-02<span class="w">  </span>...<span class="w"> </span>-18559.03<span class="w">     </span><span class="m">3</span><span class="w">      </span><span class="m">1222</span>.08<span class="w">   </span>bar
+</span><span id="__span-14-41"><a id="__codelineno-14-41" name="__codelineno-14-41" href="#__codelineno-14-41"></a><span class="m">39</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-03-08<span class="w"> </span><span class="m">2023</span>-03-13<span class="w">  </span>...<span class="w"> </span>-21546.07<span class="w">     </span><span class="m">3</span><span class="w">      </span>-995.68<span class="w">   </span>bar
+</span><span id="__span-14-42"><a id="__codelineno-14-42" name="__codelineno-14-42" href="#__codelineno-14-42"></a><span class="m">40</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-03-13<span class="w"> </span><span class="m">2023</span>-03-16<span class="w">  </span>...<span class="w"> </span>-21031.93<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">171</span>.38<span class="w">   </span>bar
+</span><span id="__span-14-43"><a id="__codelineno-14-43" name="__codelineno-14-43" href="#__codelineno-14-43"></a><span class="m">41</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-03-20<span class="w"> </span><span class="m">2023</span>-03-23<span class="w">  </span>...<span class="w"> </span>-20482.29<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">183</span>.21<span class="w">   </span>bar
+</span><span id="__span-14-44"><a id="__codelineno-14-44" name="__codelineno-14-44" href="#__codelineno-14-44"></a><span class="m">42</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-04-12<span class="w"> </span><span class="m">2023</span>-04-17<span class="w">  </span>...<span class="w"> </span>-18328.90<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">717</span>.80<span class="w">   </span>bar
+</span><span id="__span-14-45"><a id="__codelineno-14-45" name="__codelineno-14-45" href="#__codelineno-14-45"></a><span class="m">43</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-04-20<span class="w"> </span><span class="m">2023</span>-04-25<span class="w">  </span>...<span class="w"> </span>-22681.82<span class="w">     </span><span class="m">3</span><span class="w">     </span>-1450.97<span class="w">   </span>bar
+</span><span id="__span-14-46"><a id="__codelineno-14-46" name="__codelineno-14-46" href="#__codelineno-14-46"></a><span class="m">44</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-05-15<span class="w"> </span><span class="m">2023</span>-05-18<span class="w">  </span>...<span class="w"> </span>-21994.58<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">229</span>.08<span class="w">   </span>bar
+</span><span id="__span-14-47"><a id="__codelineno-14-47" name="__codelineno-14-47" href="#__codelineno-14-47"></a><span class="m">45</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-05-24<span class="w"> </span><span class="m">2023</span>-05-29<span class="w">  </span>...<span class="w"> </span>-22608.56<span class="w">     </span><span class="m">3</span><span class="w">      </span>-204.66<span class="w">   </span>bar
+</span><span id="__span-14-48"><a id="__codelineno-14-48" name="__codelineno-14-48" href="#__codelineno-14-48"></a><span class="m">46</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-05-24<span class="w"> </span><span class="m">2023</span>-05-29<span class="w">  </span>...<span class="w"> </span>-22411.35<span class="w">     </span><span class="m">3</span><span class="w">        </span><span class="m">65</span>.74<span class="w">   </span>bar
+</span><span id="__span-14-49"><a id="__codelineno-14-49" name="__codelineno-14-49" href="#__codelineno-14-49"></a><span class="m">47</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-05-31<span class="w"> </span><span class="m">2023</span>-06-05<span class="w">  </span>...<span class="w"> </span>-20623.85<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">595</span>.83<span class="w">   </span>bar
+</span><span id="__span-14-50"><a id="__codelineno-14-50" name="__codelineno-14-50" href="#__codelineno-14-50"></a><span class="m">48</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-06-13<span class="w"> </span><span class="m">2023</span>-06-16<span class="w">  </span>...<span class="w"> </span>-19349.29<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">424</span>.85<span class="w">   </span>bar
+</span><span id="__span-14-51"><a id="__codelineno-14-51" name="__codelineno-14-51" href="#__codelineno-14-51"></a><span class="m">49</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-06-20<span class="w"> </span><span class="m">2023</span>-06-27<span class="w">  </span>...<span class="w"> </span>-20805.29<span class="w">     </span><span class="m">3</span><span class="w">      </span>-485.33<span class="w">   </span>bar
+</span><span id="__span-14-52"><a id="__codelineno-14-52" name="__codelineno-14-52" href="#__codelineno-14-52"></a><span class="m">50</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-06-20<span class="w"> </span><span class="m">2023</span>-06-27<span class="w">  </span>...<span class="w"> </span>-22283.69<span class="w">     </span><span class="m">3</span><span class="w">      </span>-492.80<span class="w">   </span>bar
+</span><span id="__span-14-53"><a id="__codelineno-14-53" name="__codelineno-14-53" href="#__codelineno-14-53"></a><span class="m">51</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-07-07<span class="w"> </span><span class="m">2023</span>-07-12<span class="w">  </span>...<span class="w"> </span>-21681.77<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">200</span>.64<span class="w">   </span>bar
+</span><span id="__span-14-54"><a id="__codelineno-14-54" name="__codelineno-14-54" href="#__codelineno-14-54"></a><span class="m">52</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-07-18<span class="w"> </span><span class="m">2023</span>-07-21<span class="w">  </span>...<span class="w"> </span>-21079.85<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">200</span>.64<span class="w">   </span>bar
+</span><span id="__span-14-55"><a id="__codelineno-14-55" name="__codelineno-14-55" href="#__codelineno-14-55"></a><span class="m">53</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-08-02<span class="w"> </span><span class="m">2023</span>-08-07<span class="w">  </span>...<span class="w"> </span>-20218.60<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">287</span>.08<span class="w">   </span>bar
+</span><span id="__span-14-56"><a id="__codelineno-14-56" name="__codelineno-14-56" href="#__codelineno-14-56"></a><span class="m">54</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-08-08<span class="w"> </span><span class="m">2023</span>-08-11<span class="w">  </span>...<span class="w"> </span>-20433.78<span class="w">     </span><span class="m">3</span><span class="w">       </span>-71.73<span class="w">   </span>bar
+</span><span id="__span-14-57"><a id="__codelineno-14-57" name="__codelineno-14-57" href="#__codelineno-14-57"></a><span class="m">55</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-08-08<span class="w"> </span><span class="m">2023</span>-08-11<span class="w">  </span>...<span class="w"> </span>-21923.53<span class="w">     </span><span class="m">3</span><span class="w">      </span>-496.58<span class="w">   </span>bar
+</span><span id="__span-14-58"><a id="__codelineno-14-58" name="__codelineno-14-58" href="#__codelineno-14-58"></a><span class="m">56</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-08-14<span class="w"> </span><span class="m">2023</span>-08-17<span class="w">  </span>...<span class="w"> </span>-22844.77<span class="w">     </span><span class="m">3</span><span class="w">      </span>-307.08<span class="w">   </span>bar
+</span><span id="__span-14-59"><a id="__codelineno-14-59" name="__codelineno-14-59" href="#__codelineno-14-59"></a><span class="m">57</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-08-14<span class="w"> </span><span class="m">2023</span>-08-17<span class="w">  </span>...<span class="w"> </span>-23130.72<span class="w">     </span><span class="m">3</span><span class="w">       </span>-95.32<span class="w">   </span>bar
+</span><span id="__span-14-60"><a id="__codelineno-14-60" name="__codelineno-14-60" href="#__codelineno-14-60"></a><span class="m">58</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-08-24<span class="w"> </span><span class="m">2023</span>-08-29<span class="w">  </span>...<span class="w"> </span>-21972.48<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">386</span>.08<span class="w">   </span>bar
+</span><span id="__span-14-61"><a id="__codelineno-14-61" name="__codelineno-14-61" href="#__codelineno-14-61"></a><span class="m">59</span><span class="w">  </span>long<span class="w">  </span><span class="m">000001</span><span class="w"> </span><span class="m">2023</span>-08-30<span class="w"> </span><span class="m">2023</span>-09-04<span class="w">  </span>...<span class="w"> </span>-19564.23<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">802</span>.75<span class="w">   </span>bar
+</span><span id="__span-14-62"><a id="__codelineno-14-62" name="__codelineno-14-62" href="#__codelineno-14-62"></a><span class="m">60</span><span class="w">  </span>long<span class="w">  </span><span class="m">600000</span><span class="w"> </span><span class="m">2023</span>-08-30<span class="w"> </span><span class="m">2023</span>-09-04<span class="w">  </span>...<span class="w"> </span>-19259.23<span class="w">     </span><span class="m">3</span><span class="w">       </span><span class="m">101</span>.67<span class="w">   </span>bar
+</span><span id="__span-14-63"><a id="__codelineno-14-63" name="__codelineno-14-63" href="#__codelineno-14-63"></a><span class="o">[</span><span class="m">60</span><span class="w"> </span>rows<span class="w"> </span>x<span class="w"> </span><span class="m">13</span><span class="w"> </span>columns<span class="o">]</span>
+</span></code></pre></div>
+<h2 id="_12">策略代码</h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># 导入相关模块和类</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="kn">import</span> <span class="nn">pybroker</span> <span class="k">as</span> <span class="nn">pb</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="kn">from</span> <span class="nn">pybroker</span> <span class="kn">import</span> <span class="n">Strategy</span><span class="p">,</span> <span class="n">StrategyConfig</span><span class="p">,</span> <span class="n">ExecContext</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="kn">from</span> <span class="nn">pybroker.ext.data</span> <span class="kn">import</span> <span class="n">AKShare</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="c1"># 查看当前版本</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">pb</span><span class="o">.</span><span class="n">__version__</span><span class="p">)</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="c1"># 策略配置</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="n">config</span> <span class="o">=</span> <span class="n">StrategyConfig</span><span class="p">(</span><span class="n">initial_cash</span><span class="o">=</span><span class="mi">500_000</span><span class="p">)</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="n">strategy</span> <span class="o">=</span> <span class="n">Strategy</span><span class="p">(</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>    <span class="n">data_source</span><span class="o">=</span><span class="n">AKShare</span><span class="p">(),</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>    <span class="n">start_date</span><span class="o">=</span><span class="s1">&#39;20220101&#39;</span><span class="p">,</span>
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>    <span class="n">end_date</span><span class="o">=</span><span class="s1">&#39;20230916&#39;</span><span class="p">,</span>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>    <span class="n">config</span><span class="o">=</span><span class="n">config</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a><span class="p">)</span>
+</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>
+</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="c1"># 定义规则</span>
+</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="k">def</span> <span class="nf">buy_low</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExecContext</span><span class="p">):</span>
+</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>    <span class="c1"># 如果当前已经持有仓位，则不再买入。</span>
+</span><span id="__span-15-21"><a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a>    <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">long_pos</span><span class="p">():</span>
+</span><span id="__span-15-22"><a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a>        <span class="k">return</span>
+</span><span id="__span-15-23"><a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a>    <span class="c1"># 如果当前的收盘价小于前一天的最低价，则下单买入。</span>
+</span><span id="__span-15-24"><a id="__codelineno-15-24" name="__codelineno-15-24" href="#__codelineno-15-24"></a>    <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">bars</span> <span class="o">&gt;=</span> <span class="mi">2</span> <span class="ow">and</span> <span class="n">ctx</span><span class="o">.</span><span class="n">close</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">ctx</span><span class="o">.</span><span class="n">low</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">]:</span>
+</span><span id="__span-15-25"><a id="__codelineno-15-25" name="__codelineno-15-25" href="#__codelineno-15-25"></a>        <span class="c1"># 计算买入的股票数量，该数量为当前资金的 25%。</span>
+</span><span id="__span-15-26"><a id="__codelineno-15-26" name="__codelineno-15-26" href="#__codelineno-15-26"></a>        <span class="n">ctx</span><span class="o">.</span><span class="n">buy_shares</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">calc_target_shares</span><span class="p">(</span><span class="mf">0.25</span><span class="p">)</span>
+</span><span id="__span-15-27"><a id="__codelineno-15-27" name="__codelineno-15-27" href="#__codelineno-15-27"></a>        <span class="c1"># 设置买入的限价，该限价为当前收盘价减去 0.01。</span>
+</span><span id="__span-15-28"><a id="__codelineno-15-28" name="__codelineno-15-28" href="#__codelineno-15-28"></a>        <span class="n">ctx</span><span class="o">.</span><span class="n">buy_limit_price</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">close</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mf">0.01</span>
+</span><span id="__span-15-29"><a id="__codelineno-15-29" name="__codelineno-15-29" href="#__codelineno-15-29"></a>        <span class="c1"># 设置持有仓位的时间，该时间为 3 个交易日。</span>
+</span><span id="__span-15-30"><a id="__codelineno-15-30" name="__codelineno-15-30" href="#__codelineno-15-30"></a>        <span class="n">ctx</span><span class="o">.</span><span class="n">hold_bars</span> <span class="o">=</span> <span class="mi">3</span>
+</span><span id="__span-15-31"><a id="__codelineno-15-31" name="__codelineno-15-31" href="#__codelineno-15-31"></a>
+</span><span id="__span-15-32"><a id="__codelineno-15-32" name="__codelineno-15-32" href="#__codelineno-15-32"></a><span class="c1"># 执行回测</span>
+</span><span id="__span-15-33"><a id="__codelineno-15-33" name="__codelineno-15-33" href="#__codelineno-15-33"></a><span class="n">strategy</span><span class="o">.</span><span class="n">add_execution</span><span class="p">(</span><span class="n">fn</span><span class="o">=</span><span class="n">buy_low</span><span class="p">,</span> <span class="n">symbols</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;000001&#39;</span><span class="p">,</span> <span class="s1">&#39;600000&#39;</span><span class="p">])</span>
+</span><span id="__span-15-34"><a id="__codelineno-15-34" name="__codelineno-15-34" href="#__codelineno-15-34"></a><span class="n">result</span> <span class="o">=</span> <span class="n">strategy</span><span class="o">.</span><span class="n">backtest</span><span class="p">()</span>
+</span><span id="__span-15-35"><a id="__codelineno-15-35" name="__codelineno-15-35" href="#__codelineno-15-35"></a>
+</span><span id="__span-15-36"><a id="__codelineno-15-36" name="__codelineno-15-36" href="#__codelineno-15-36"></a><span class="c1"># 查看结果</span>
+</span><span id="__span-15-37"><a id="__codelineno-15-37" name="__codelineno-15-37" href="#__codelineno-15-37"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">metrics_df</span><span class="p">)</span>  <span class="c1"># 查看绩效</span>
+</span><span id="__span-15-38"><a id="__codelineno-15-38" name="__codelineno-15-38" href="#__codelineno-15-38"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">orders</span><span class="p">)</span>  <span class="c1"># 查看订单</span>
+</span><span id="__span-15-39"><a id="__codelineno-15-39" name="__codelineno-15-39" href="#__codelineno-15-39"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">positions</span><span class="p">)</span>  <span class="c1"># 查看持仓</span>
+</span><span id="__span-15-40"><a id="__codelineno-15-40" name="__codelineno-15-40" href="#__codelineno-15-40"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">portfolio</span><span class="p">)</span>  <span class="c1"># 查看投资组合</span>
+</span><span id="__span-15-41"><a id="__codelineno-15-41" name="__codelineno-15-41" href="#__codelineno-15-41"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trades</span><span class="p">)</span>  <span class="c1"># 查看交易</span>
+</span></code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "..", "features": ["content.code.copy", "content.code.select", "content.code.annotate"], "search": "../assets/javascripts/workers/search.b8dbb3d2.min.js", "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.1e8ae164.min.js"></script>
+      
+        <script src="../javascripts/mathjax.js"></script>
+      
+        <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
