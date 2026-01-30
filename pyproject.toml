@@ -29,6 +29,12 @@ full = [
 ]
 data = ["akshare>=1.0.0"]
 plot = ["matplotlib>=3.0.0"]
+dev = [
+    "ruff>=0.1.0",
+    "pre-commit>=3.0.0",
+    "mypy>=1.0.0",
+    "pytest>=7.0.0",
+]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
