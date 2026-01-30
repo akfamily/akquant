@@ -1,0 +1,54 @@
+site_name: akquant
+site_description: 高性能 Rust/Python 量化投研框架
+site_author: akquant contributors
+repo_url: https://github.com/yourusername/akquant
+repo_name: akquant
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - 首页: index.md
+  - 安装指南: installation.md
+  - 快速开始: quickstart.md
+  - 策略指南: strategy_guide.md
+  - 架构设计: architecture.md
+  - API 参考: api.md
+  - 示例: examples.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+plugins:
+  - search

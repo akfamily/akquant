@@ -1,0 +1,54 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "akquant"
+version = "0.1.3"
+description = "High-performance quantitative trading framework based on Rust and Python"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "Akquant Developers"}]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pandas>=3.0.0",
+    "numpy>=2.4.1",
+]
+
+[project.optional-dependencies]
+full = [
+    "akshare>=1.0.0",
+    "matplotlib>=3.0.0",
+]
+data = ["akshare>=1.0.0"]
+plot = ["matplotlib>=3.0.0"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "akquant.akquant"
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "D"]
+ignore = ["D100", "D104"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
