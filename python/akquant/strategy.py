@@ -37,11 +37,8 @@ class Strategy:
         instance._indicators = []
         instance._subscriptions = []
 
-        # 历史数据存储
+        # 历史数据配置
         instance._history_depth = 0
-        instance._bars_history = defaultdict(
-            lambda: deque(maxlen=max(1, instance._history_depth))
-        )
         return instance
 
     def __init__(self) -> None:
@@ -55,14 +52,6 @@ class Strategy:
         :param depth: 保留的 Bar 数量 (0 表示不保留)
         """
         self._history_depth = depth
-        if depth > 0:
-            # 如果已有数据，需要调整 maxlen (通过重新创建 deque)
-            # 注意: 这会清空现有历史，通常只在初始化时调用
-            self._bars_history: defaultdict[str, deque[Bar]] = defaultdict(
-                lambda: deque(maxlen=depth)
-            )
-        else:
-            self._bars_history.clear()
 
     def get_history(
         self, count: int, symbol: Optional[str] = None, field: str = "close"
@@ -80,21 +69,23 @@ class Strategy:
                 "History tracking is not enabled. Call set_history_depth() first."
             )
 
-        symbol = self._resolve_symbol(symbol)
-        history = self._bars_history[symbol]
+        if self.ctx is None:
+            raise RuntimeError("Context not ready")
 
-        if len(history) < count:
-            # 数据不足时返回 NaN 填充的数组
+        symbol = self._resolve_symbol(symbol)
+
+        # Call Rust implementation
+        arr = self.ctx.history(symbol, field.lower(), count)
+
+        if arr is None:
             return cast(np.ndarray, np.full(count, np.nan))
 
-        # 获取最近的 count 个 Bar
-        # Optimization: Avoid copying the entire deque to a list
-        hist_len = len(history)
-        start_idx = hist_len - count
-        bars = [history[i] for i in range(start_idx, hist_len)]
+        if len(arr) < count:
+            # Pad with NaN at the beginning
+            padding = np.full(count - len(arr), np.nan)
+            return cast(np.ndarray, np.concatenate((padding, arr)))
 
-        # 提取字段
-        return cast(np.ndarray, np.array([getattr(b, field) for b in bars]))
+        return cast(np.ndarray, arr)
 
     def set_sizer(self, sizer: Sizer) -> None:
         """设置仓位管理器."""
@@ -141,10 +132,6 @@ class Strategy:
         """引擎调用的 Bar 回调 (Internal)."""
         self.ctx = ctx
         self.current_bar = bar
-
-        # 自动维护历史数据
-        if self._history_depth > 0:
-            self._bars_history[bar.symbol].append(bar)
 
         self.on_bar(bar)
 
@@ -560,10 +547,6 @@ class VectorizedStrategy(Strategy):
 
         self.ctx = ctx
         self.current_bar = bar
-
-        # Skip history maintenance if depth is 0 (default for VectorizedStrategy)
-        if self._history_depth > 0:
-            self._bars_history[bar.symbol].append(bar)
 
         # 2. Call User Strategy
         self.on_bar(bar)

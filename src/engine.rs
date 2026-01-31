@@ -5,12 +5,14 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
+use std::sync::{Arc, RwLock};
 
 use crate::analysis::{BacktestResult, TradeTracker};
 use crate::clock::Clock;
 use crate::context::StrategyContext;
 use crate::data::{DataFeed, Event};
 use crate::execution::ExchangeSimulator;
+use crate::history::HistoryBuffer;
 use crate::market::{
     ChinaMarket, ChinaMarketConfig, MarketModel, MarketType, SessionRange, SimpleMarket,
 };
@@ -54,6 +56,7 @@ pub struct Engine {
     pub risk_manager: RiskManager,
     timezone_offset: i32,
     trade_tracker: TradeTracker,
+    history_buffer: Arc<RwLock<HistoryBuffer>>,
 }
 
 #[gen_stub_pymethods]
@@ -90,7 +93,15 @@ impl Engine {
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8
             trade_tracker: TradeTracker::new(),
+            history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(0))),
         }
+    }
+
+    /// 设置历史数据长度
+    ///
+    /// :param depth: 历史数据长度
+    fn set_history_depth(&mut self, depth: usize) {
+        self.history_buffer.write().unwrap().set_capacity(depth);
     }
 
     /// 设置时区偏移 (秒)
@@ -298,6 +309,15 @@ impl Engine {
     /// :return: 回测结果摘要
     /// :rtype: str
     fn run(&mut self, strategy: &Bound<'_, PyAny>, show_progress: bool) -> PyResult<String> {
+        // Configure history buffer if strategy has _history_depth set
+        if let Ok(depth_attr) = strategy.getattr("_history_depth") {
+            if let Ok(depth) = depth_attr.extract::<usize>() {
+                if depth > 0 {
+                    self.set_history_depth(depth);
+                }
+            }
+        }
+
         let mut pending_orders: Vec<Order> = Vec::new();
         let mut count = 0;
         let mut last_timestamp = 0;
@@ -389,6 +409,12 @@ impl Engine {
             } else {
                 // Process Data Event
                 let event = self.feed.events.pop_front().unwrap();
+
+                // Update History Buffer
+                if let Event::Bar(ref b) = event {
+                    self.history_buffer.write().unwrap().update(b);
+                }
+
                 count += 1;
                 if let Some(pb) = &pb {
                     pb.inc(1);
@@ -575,6 +601,7 @@ impl Engine {
             self.clock.session,
             active_orders,
             self.trade_tracker.closed_trades.clone(),
+            Some(self.history_buffer.clone()),
         )
     }
 }

@@ -7,6 +7,7 @@ mod context;
 mod data;
 mod engine;
 mod execution;
+mod history;
 mod indicators;
 mod market;
 mod model;
