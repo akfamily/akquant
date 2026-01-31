@@ -1,10 +1,14 @@
 from collections import defaultdict, deque
-from typing import Any, Dict, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 import numpy as np
+import pandas as pd
 
 from .akquant import Bar, OrderStatus, StrategyContext, Tick, TimeInForce
 from .sizer import FixedSize, Sizer
+
+if TYPE_CHECKING:
+    from .indicator import Indicator
 
 
 class Strategy:
@@ -20,6 +24,7 @@ class Strategy:
     current_tick: Optional[Tick]
     _history_depth: int
     _bars_history: "defaultdict[str, deque[Bar]]"
+    _indicators: List["Indicator"]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -28,6 +33,7 @@ class Strategy:
         instance.sizer = FixedSize(100)
         instance.current_bar = None
         instance.current_tick = None
+        instance._indicators = []
 
         # 历史数据存储
         instance._history_depth = 0
@@ -91,6 +97,26 @@ class Strategy:
     def set_sizer(self, sizer: Sizer) -> None:
         """设置仓位管理器."""
         self.sizer = sizer
+
+    def register_indicator(self, name: str, indicator: "Indicator") -> None:
+        """
+        Register an indicator.
+
+        This allows accessing the indicator via self.name and ensures it is
+        calculated before the backtest starts.
+        """
+        self._indicators.append(indicator)
+        setattr(self, name, indicator)
+
+    def _prepare_indicators(self, data: Dict[str, pd.DataFrame]) -> None:
+        """Pre-calculate indicators."""
+        if not self._indicators:
+            return
+
+        for ind in self._indicators:
+            for sym, df in data.items():
+                # Calculate and cache inside indicator
+                ind(df, sym)
 
     def _on_bar_event(self, bar: Bar, ctx: StrategyContext) -> None:
         """引擎调用的 Bar 回调 (Internal)."""

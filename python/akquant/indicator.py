@@ -41,6 +41,22 @@ class Indicator:
         self._data[symbol] = result
         return result
 
+    def get_value(self, symbol: str, timestamp: Any) -> float:
+        """
+        Get indicator value at specific timestamp (or latest before it).
+
+        Uses asof lookup which is efficient for sorted time series.
+        """
+        if symbol not in self._data:
+            return float("nan")
+
+        series = self._data[symbol]
+        # Assuming series index is datetime
+        try:
+            return float(series.asof(timestamp))
+        except Exception:
+            return float("nan")
+
 
 class IndicatorSet:
     """Collection of indicators for easy management."""

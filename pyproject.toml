@@ -20,6 +20,7 @@ requires-python = ">=3.9"
 dependencies = [
     "pandas>=3.0.0",
     "numpy>=2.4.1",
+    "pyarrow>=14.0.0",
 ]
 
 [project.optional-dependencies]

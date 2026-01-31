@@ -389,6 +389,20 @@ def run_backtest(
     if history_depth > 0:
         strategy_instance.set_history_depth(history_depth)
 
+    # 7.5 Prepare Indicators (Vectorized Pre-calculation)
+    if hasattr(strategy_instance, "_prepare_indicators"):
+        data_map = {}
+        if isinstance(data, pd.DataFrame):
+            # Use symbols[0] as inferred above
+            sym = symbols[0] if symbols else "BENCHMARK"
+            data_map[sym] = prepare_dataframe(data)
+        elif isinstance(data, dict):
+            for sym, df in data.items():
+                data_map[sym] = prepare_dataframe(df)
+
+        if data_map:
+            strategy_instance._prepare_indicators(data_map)
+
     engine.run(strategy_instance, show_progress)
 
     return BacktestResult(engine.get_results(), timezone=timezone)
