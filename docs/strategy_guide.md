@@ -10,7 +10,8 @@
 *   **Strategy**: 策略逻辑的载体，负责接收市场事件并生成交易指令。
 *   **Context (`ctx`)**: 策略上下文，提供账户信息（资金、持仓）、订单管理以及历史数据访问能力。
 *   **生命周期**:
-    *   `initialize`: 策略初始化时调用 (设置参数、订阅数据等)。
+    *   `__init__`: Python 对象初始化，适合定义参数和注册指标。
+    *   `on_start`: 策略启动时调用，**必须**在此处使用 `self.subscribe()` 订阅数据。
     *   `on_bar`: 每一根 K 线闭合时触发 (核心交易逻辑)。
     *   `on_tick`: 每一个 Tick 到达时触发 (高频/盘口策略)。
     *   `on_timer`: 定时器触发时调用 (需手动注册)。
@@ -32,34 +33,36 @@
 
 ```python
 from akquant import Strategy, Bar
-import numpy as np
+from akquant.indicator import SMA
 
 class MyStrategy(Strategy):
     def __init__(self, ma_window=20):
         super().__init__()
-        self.ma_window = ma_window
+        # 定义指标，系统会自动维护其计算
+        self.sma = SMA(ma_window)
+
+    def on_start(self):
+        # 显式订阅数据
+        self.subscribe("600000")
 
     def on_bar(self, bar: Bar):
-        # 1. 获取历史数据 (自动维护)
-        # 注意：需要在 run_backtest 中设置 history_depth
-        prices = self.get_history(count=self.ma_window)
+        # 1. 获取指标值
+        ma_value = self.sma.value
 
-        # 检查数据是否充足
-        if np.isnan(prices).any():
+        # 检查指标是否就绪
+        if ma_value is None:
             return
 
-        # 2. 计算指标
-        ma = prices.mean()
-
-        # 3. 交易逻辑
-        if bar.close > ma:
+        # 2. 交易逻辑
+        if bar.close > ma_value:
             self.buy(symbol=bar.symbol, quantity=100)
-        elif bar.close < ma:
+        elif bar.close < ma_value:
             self.sell(symbol=bar.symbol, quantity=100)
 ```
 
 ### 3.2 关键方法
 
+*   **`on_start(self)`**: 策略启动入口，用于订阅数据 (`self.subscribe`) 和注册定时器。
 *   **`on_bar(self, bar: Bar)`**: 核心回调，每个 Bar 到达时触发。
 *   **`self.buy(symbol, quantity, price=None)`**: 发送买入指令。不指定价格则为市价单。
 *   **`self.sell(symbol, quantity, price=None)`**: 发送卖出指令。

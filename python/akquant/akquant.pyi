@@ -157,6 +157,7 @@ class Engine:
     """
 
     portfolio: Portfolio
+    risk_manager: RiskManager
     orders: list[Order]
     trades: list[Trade]
     def __new__(

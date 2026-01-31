@@ -17,17 +17,20 @@
     *   **MarketModel**: 可插拔的市场模型，内置 A 股 T+1 和期货 T+0 规则。
 *   **事件系统**:
     *   **Timer**: 支持 `schedule(timestamp, payload)` 注册定时事件，触发 `on_timer` 回调，实现复杂的盘中定时逻辑。
+*   **风控系统 (New)**:
+    *   **独立拦截层**: 内置 `RiskManager`，在 Rust 引擎层直接拦截违规订单（如超过最大持仓、限制名单等），保障交易安全。
+    *   **灵活配置**: 通过 `RiskConfig` 可配置最大单笔金额、最大持仓比例、黑名单等。
 *   **数据生态**:
+    *   **Parquet Data Catalog (New)**: 采用 Apache Parquet 格式存储数据，相比 Pickle 读写速度更快，压缩率更高，便于跨语言使用。
     *   **AKShare 集成**: 内置 `DataLoader`，无缝支持 [AKShare](https://github.com/akfamily/akshare) 数据加载。
-    *   **智能缓存**: 支持数据本地缓存 (Pickle)，避免重复下载，加速策略迭代。
-    *   **自动降级**: 如果默认缓存目录 (`~/.akquant`) 不可写，自动降级到当前目录 (`.akquant_cache`)。
+    *   **显式订阅**: 策略通过 `subscribe` 方法明确声明所需数据，引擎自动按需加载。
 *   **多资产支持**:
     *   **股票 (Stock)**: 默认支持 T+1，买入 100 股一手限制，印花税/过户费。
     *   **基金 (Fund)**: 支持基金特有费率配置。
     *   **期货 (Futures)**: 支持 T+0，保证金交易，合约乘数。
     *   **期权 (Option)**: 支持 Call/Put，行权价，按张收费模式。
 *   **灵活配置**:
-    *   **StrategyConfig**: 全局策略配置 (类似 PyBroker)，支持资金管理、费率模式等设置。
+    *   **Typed Config (New)**: 引入 `BacktestConfig`, `StrategyConfig`, `RiskConfig` 类型化配置对象，替代散乱的 `**kwargs`，提供更好的 IDE 提示和参数校验。
     *   **ExecutionMode**: 支持 `CurrentClose` (信号当根K线收盘成交) 和 `NextOpen` (次日开盘成交) 模式。
 *   **丰富的分析工具**:
     *   **PerformanceMetrics**:
@@ -75,9 +78,14 @@ maturin develop
 import akquant
 from akquant.backtest import run_backtest
 from akquant import Strategy
+from akquant.config import BacktestConfig
 
 # 1. 定义策略
 class MyStrategy(Strategy):
+    def on_start(self):
+        # 显式订阅数据
+        self.subscribe("600000")
+
     def on_bar(self, bar):
         # 简单的双均线逻辑 (示例)
         # 实际回测推荐使用 IndicatorSet 进行向量化计算
@@ -86,18 +94,22 @@ class MyStrategy(Strategy):
         elif bar.close > self.ctx.position.avg_price * 1.1:
             self.sell(symbol=bar.symbol, quantity=100)
 
-# 2. 运行回测
-# 自动加载数据、设置资金、费率等
-result = run_backtest(
-    strategy=MyStrategy,  # 传递类或实例
-    symbol="600000",      # 浦发银行
+# 2. 配置回测
+config = BacktestConfig(
     start_date="20230101",
     end_date="20241231",
-    cash=500_000.0,       # 初始资金
-    commission=0.0003     # 万三佣金
+    cash=500_000.0,
+    commission=0.0003
 )
 
-# 3. 查看结果
+# 3. 运行回测
+# 自动加载数据、设置资金、费率等
+result = run_backtest(
+    strategy=MyStrategy,  # 传递类
+    config=config         # 传递配置对象
+)
+
+# 4. 查看结果
 print(f"Total Return: {result.metrics.total_return_pct:.2f}%")
 print(f"Sharpe Ratio: {result.metrics.sharpe_ratio:.2f}")
 print(f"Max Drawdown: {result.metrics.max_drawdown_pct:.2f}%")

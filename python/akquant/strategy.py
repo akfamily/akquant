@@ -25,6 +25,7 @@ class Strategy:
     _history_depth: int
     _bars_history: "defaultdict[str, deque[Bar]]"
     _indicators: List["Indicator"]
+    _subscriptions: List[str]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -34,6 +35,7 @@ class Strategy:
         instance.current_bar = None
         instance.current_tick = None
         instance._indicators = []
+        instance._subscriptions = []
 
         # 历史数据存储
         instance._history_depth = 0
@@ -107,6 +109,23 @@ class Strategy:
         """
         self._indicators.append(indicator)
         setattr(self, name, indicator)
+
+    def subscribe(self, instrument_id: str) -> None:
+        """
+        Subscribe to market data for an instrument.
+
+        :param instrument_id: The instrument identifier (e.g., '600000').
+        """
+        if instrument_id not in self._subscriptions:
+            self._subscriptions.append(instrument_id)
+
+    def on_start(self) -> None:
+        """
+        Start the strategy.
+
+        Use this to subscribe to data or initialize resources.
+        """
+        pass
 
     def _prepare_indicators(self, data: Dict[str, pd.DataFrame]) -> None:
         """Pre-calculate indicators."""

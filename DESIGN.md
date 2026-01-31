@@ -35,6 +35,9 @@ akquant/
 │   └── akquant/            # Python 包源码 (用户接口)
 │       ├── __init__.py     # 导出公共 API
 │       ├── strategy.py     # Strategy 基类：封装上下文，提供 buy/sell 接口
+│       ├── config.py       # 配置定义：BacktestConfig, StrategyConfig, RiskConfig
+│       ├── risk.py         # 风控配置适配层
+│       ├── data.py         # 数据加载与目录服务 (DataCatalog)
 │       ├── sizer.py        # Sizer 基类：提供多种仓位管理实现
 │       ├── analyzer.py     # TradeAnalyzer：交易记录分析工具
 │       └── akquant.pyi     # 类型提示文件 (IDE 补全支持)
@@ -83,7 +86,19 @@ akquant/
     *   **T+1 (股票)**: 买入当日增加总持仓 (`positions`)，但不增加可用持仓 (`available_positions`)。次日结算后解锁。
     *   **T+0 (期货)**: 买入立即增加可用持仓，允许当日平仓。
 
-### 2.4 账户层 (`src/portfolio.rs`)
+### 2.4 风控层 (`src/risk.rs` & `python/akquant/risk.py`) (New)
+
+风控模块 (`RiskManager`) 是独立于执行层的拦截器，确保每一笔订单都符合预设的安全规则。
+
+*   **拦截机制**: 在订单生成后、进入撮合队列前 (`Engine` 循环中)，调用 `RiskManager::check(order, portfolio)`。
+*   **检查规则**:
+    *   **限制名单 (Restricted List)**: 禁止交易特定标的。
+    *   **最大单笔数量 (Max Order Size)**: 防止胖手指错误。
+    *   **最大单笔金额 (Max Order Value)**: 控制单笔风险敞口。
+    *   **最大持仓比例 (Max Position Size)**: 防止单标的仓位过重。
+*   **Python 配置**: 用户在 Python 端通过 `RiskConfig` 配置参数，回测启动时自动注入到 Rust 引擎。
+
+### 2.5 账户层 (`src/portfolio.rs`)
 
 `Portfolio` 结构体维护账户状态：
 
@@ -113,11 +128,15 @@ akquant/
 
 这种设计确保了指标计算的准确性，并方便用户进行跨框架对比。
 
-### 2.7 Python 抽象层 (`python/akquant/`)
+### 2.8 Python 抽象层 (`python/akquant/`)
 
 *   **`Strategy` (`strategy.py`)**:
+    *   **生命周期**:
+        *   `on_start()`: 策略启动时调用，用于注册定时器或**显式订阅数据** (`self.subscribe("600000")`)。
+        *   `on_bar(bar)`: 每个 Bar 到达时调用。
+        *   `on_stop()`: 策略结束时调用。
     *   **Context 代理**: 自动注入 `self.context`，提供 `self.buy`, `self.sell`, `self.position` 等便捷属性。
-    *   **Sizer 集成**: 在 `buy/sell` 时自动调用配置的 `Sizer` 计算下单数量。
+    *   **Indicator 自动管理**: 在 `__init__` 中定义的指标 (如 `self.sma = SMA(10)`) 会被自动注册，并在 `on_bar` 之前自动计算最新值。
 *   **`Sizer` (`sizer.py`)**:
     *   `FixedSize`: 每次交易固定股数。
     *   `PercentSizer`: 按当前资金百分比开仓 (默认 95% 防止资金不足)。
@@ -156,16 +175,19 @@ akquant/
 1.  **Signal**: 策略调用 `self.buy(symbol='000001', price=10.0)`。
 2.  **Creation**: `Strategy` 调用 `Sizer` 计算数量，构建 `Order` 对象 (Status: `New`)。
 3.  **Submission**: 订单被推送到 `Engine` 的 `pending_orders` 队列。
-4.  **Matching (Rust)**:
+4.  **Risk Check (Rust)**:
+    *   `Engine` 调用 `RiskManager.check(order)`。
+    *   如果违反风控规则（如超限额、黑名单），订单状态变为 `Rejected`，并记录错误日志，**终止后续流程**。
+5.  **Matching (Rust)**:
     *   `ExchangeSimulator` 遍历 `pending_orders`。
     *   检查价格条件 (Limit/Stop) 和时间条件 (Open/Close)。
     *   若满足，生成 `Trade` 对象，修改 Order Status 为 `Filled`。
-5.  **Settlement (Rust)**:
+6.  **Settlement (Rust)**:
     *   `Trade` 触发 `Portfolio` 更新：
         *   `Cash` 减少 (含佣金)。
         *   `Positions` (总持仓) 增加。
         *   `MarketModel` 决定是否增加 `Available Positions` (T+0 vs T+1)。
-6.  **Reporting**: 订单移入 `Engine.orders` 历史列表，成交记录移入 `Engine.trades`。
+7.  **Reporting**: 订单移入 `Engine.orders` 历史列表，成交记录移入 `Engine.trades`。
 
 ## 4. 扩展开发指南
 

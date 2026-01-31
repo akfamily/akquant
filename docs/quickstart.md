@@ -67,15 +67,20 @@ print("Trades:", result.trades_df)
 
 ## 2. 进阶示例 (AKShare 真实数据)
 
-这个示例展示了如何结合 `DataLoader` 和便捷函数 `run_backtest` 快速运行基于 AKShare 数据的回测。
+这个示例展示了如何结合 `DataLoader` 和便捷函数 `run_backtest` 快速运行基于 AKShare 数据的回测。我们推荐使用 `BacktestConfig` 来管理配置，并在策略中显式订阅数据。
 
 ```python
 import akquant
 from akquant.backtest import run_backtest
-from akquant import Strategy, DataLoader
+from akquant import Strategy
+from akquant.config import BacktestConfig
 
 # 1. 定义策略
 class SmaStrategy(Strategy):
+    def on_start(self):
+        # 显式订阅数据
+        self.subscribe("600000")
+
     def on_bar(self, bar):
         # 简单策略：价格高于均价时买入，否则卖出
         # 注意：实际中建议使用 IndicatorSet 进行向量化计算
@@ -84,26 +89,22 @@ class SmaStrategy(Strategy):
         elif bar.close > self.ctx.position.avg_price * 1.1:
             self.sell(symbol=bar.symbol, quantity=100)
 
-# 2. 获取数据
-loader = DataLoader()
-df = loader.load_akshare(
-    symbol="600000",       # 浦发银行
+# 2. 配置回测
+config = BacktestConfig(
     start_date="20230101",
     end_date="20230630",
-    adjust="qfq"
+    cash=500_000.0,
+    commission=0.0003
 )
 
 # 3. 运行回测
 # run_backtest 会自动处理：
+# - 数据加载 (根据策略订阅)
 # - 合约信息注册 (默认 A股 T+1)
 # - 资金与费率配置
 result = run_backtest(
-    data=df,               # 传入 DataFrame
     strategy=SmaStrategy,
-    symbol="600000",
-    cash=500_000.0,        # 初始资金
-    commission=0.0003,     # 万三佣金
-    stamp_tax=0.0005       # 印花税 (A股默认千一，可覆盖)
+    config=config
 )
 
 # 4. 查看结果

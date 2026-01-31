@@ -23,7 +23,10 @@ from .akquant import (
 from .akquant import (
     BacktestResult as RustBacktestResult,
 )
+from .config import BacktestConfig
+from .data import ParquetDataCatalog
 from .log import get_logger, register_logger
+from .risk import apply_risk_config
 from .strategy import Strategy
 from .utils import df_to_arrays, prepare_dataframe
 
@@ -188,8 +191,8 @@ class FunctionalStrategy(Strategy):
 
 
 def run_backtest(
-    data: Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]],
-    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]],
+    data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]] = None,
+    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
     symbol: Union[str, List[str]] = "BENCHMARK",
     cash: float = 1_000_000.0,
     commission: float = 0.0003,
@@ -203,12 +206,14 @@ def run_backtest(
     history_depth: int = 0,
     lot_size: Union[int, Dict[str, int], None] = None,
     show_progress: bool = True,
+    config: Optional[BacktestConfig] = None,
     **kwargs: Any,
 ) -> BacktestResult:
     """
     简化版回测入口函数.
 
-    :param data: 回测数据，可以是 Pandas DataFrame 或 Bar 列表
+    :param data: 回测数据，可以是 Pandas DataFrame 或 Bar 列表.
+                 可选(如果配置了config或策略订阅).
     :param strategy: 策略类、策略实例或 on_bar 回调函数
     :param symbol: 标的代码
     :param cash: 初始资金
@@ -224,59 +229,161 @@ def run_backtest(
     :param lot_size: 最小交易单位。如果是 int，则应用于所有标的；
                      如果是 Dict[str, int]，则按代码匹配；如果不传(None)，默认为 1。
     :param show_progress: 是否显示进度条 (默认 True)
+    :param config: BacktestConfig 配置对象 (可选)
     :return: 回测结果 Result 对象
     """
     # 1. 确保日志已初始化
-    # 如果用户没有配置过日志，这里会提供一个默认配置
     logger = get_logger()
     if not logger.handlers:
         register_logger(console=True, level="INFO")
         logger = get_logger()
 
-    # 2. 准备数据
+    # 1.5 处理 Config 覆盖
+    if config:
+        if config.start_date:
+            kwargs["start_date"] = config.start_date
+        if config.end_date:
+            kwargs["end_date"] = config.end_date
+        if config.timezone:
+            timezone = config.timezone
+        if config.show_progress is not None:
+            show_progress = config.show_progress
+        if config.history_depth is not None:
+            history_depth = config.history_depth
+
+        if config.strategy_config:
+            cash = config.strategy_config.initial_cash
+            # Fee handling could be more complex, simplifying here
+            commission = config.strategy_config.fee_amount or commission
+
+            # Risk Config injection handled later
+
+    # 2. 实例化策略 (提前实例化以获取订阅信息)
+    strategy_instance = None
+
+    if isinstance(strategy, type) and issubclass(strategy, Strategy):
+        try:
+            strategy_instance = strategy(**kwargs)
+        except TypeError:
+            strategy_instance = strategy()
+    elif isinstance(strategy, Strategy):
+        strategy_instance = strategy
+    elif callable(strategy):
+        strategy_instance = FunctionalStrategy(
+            initialize, cast(Callable[[Any, Bar], None], strategy), context
+        )
+    elif strategy is None:
+        raise ValueError("Strategy must be provided.")
+    else:
+        raise ValueError("Invalid strategy type")
+
+    # 注入 context
+    if context and hasattr(strategy_instance, "_context"):
+        pass
+    elif context and strategy_instance:
+        for k, v in context.items():
+            setattr(strategy_instance, k, v)
+
+    # 注入 Config 中的 Risk Config
+    if config and config.strategy_config and config.strategy_config.risk:
+        # 如果策略支持 set_risk_config (假设我们添加它，或者直接注入属性)
+        if hasattr(strategy_instance, "risk_config"):
+            strategy_instance.risk_config = config.strategy_config.risk  # type: ignore
+
+    # 调用 on_start 获取订阅
+    if hasattr(strategy_instance, "on_start"):
+        strategy_instance.on_start()
+
+    # 3. 准备数据源和 Symbol
     feed = DataFeed()
     symbols = []
+    data_map_for_indicators = {}
 
-    # Normalize symbol to list
+    # Normalize symbol arg to list
     if isinstance(symbol, str):
         symbols = [symbol]
     elif isinstance(symbol, list):
         symbols = symbol
     else:
-        # If symbol not provided, try to infer from Dict keys or use default
         symbols = ["BENCHMARK"]
 
-    if isinstance(data, pd.DataFrame):
-        # Single DataFrame -> Single Symbol (use first symbol)
-        target_symbol = symbols[0] if symbols else "BENCHMARK"
-        df = prepare_dataframe(data)
-        # Fast Path: Avoid creating Bar objects in Python
-        arrays = df_to_arrays(df, symbol=target_symbol)
-        feed.add_arrays(*arrays)  # type: ignore
-        feed.sort()
+    # Merge with Config instruments
+    if config and config.instruments:
+        for s in config.instruments:
+            if s not in symbols:
+                symbols.append(s)
 
-        if target_symbol not in symbols:
-            symbols = [target_symbol]
+    # Merge with Strategy subscriptions
+    if hasattr(strategy_instance, "_subscriptions"):
+        for s in strategy_instance._subscriptions:
+            if s not in symbols:
+                symbols.append(s)
 
-    elif isinstance(data, dict):
-        # Dict[str, DataFrame] -> Multi Symbol
-        symbols = list(data.keys())
-        for sym, df in data.items():
-            df_prep = prepare_dataframe(df)
-            # Fast Path
-            arrays = df_to_arrays(df_prep, symbol=sym)
+    # Determine Data Loading Strategy
+    if data is not None:
+        # Use provided data
+        if isinstance(data, pd.DataFrame):
+            target_symbol = symbols[0] if symbols else "BENCHMARK"
+            df = prepare_dataframe(data)
+            data_map_for_indicators[target_symbol] = df
+            arrays = df_to_arrays(df, symbol=target_symbol)
             feed.add_arrays(*arrays)  # type: ignore
-        feed.sort()
-
-    elif isinstance(data, list):
-        # List[Bar]
-        if data:
-            data.sort(key=lambda b: b.timestamp)
-            feed.add_bars(data)
+            feed.sort()
+            if target_symbol not in symbols:
+                symbols = [target_symbol]
+        elif isinstance(data, dict):
+            for sym, df in data.items():
+                df_prep = prepare_dataframe(df)
+                data_map_for_indicators[sym] = df_prep
+                arrays = df_to_arrays(df_prep, symbol=sym)
+                feed.add_arrays(*arrays)  # type: ignore
+                if sym not in symbols:
+                    symbols.append(sym)
+            feed.sort()
+        elif isinstance(data, list):
+            if data:
+                data.sort(key=lambda b: b.timestamp)
+                feed.add_bars(data)
     else:
-        raise ValueError("data must be a DataFrame, Dict[str, DataFrame], or List[Bar]")
+        # Load from Catalog / Akshare
+        if not symbols:
+            logger.warning("No symbols specified and no data provided.")
 
-    # 3. 设置引擎
+        catalog = ParquetDataCatalog()
+        start_date = kwargs.get("start_date")
+        end_date = kwargs.get("end_date")
+
+        loaded_count = 0
+        for sym in symbols:
+            # Try Catalog
+            df = catalog.read(sym, start_date=start_date, end_date=end_date)
+            if df.empty:
+                # Try Akshare
+                logger.info(f"Loading {sym} from Akshare...")
+                try:
+                    from .utils import fetch_akshare_daily
+
+                    df = fetch_akshare_daily(
+                        sym, start_date=start_date, end_date=end_date
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to load {sym}: {e}")
+                    continue
+
+            if not df.empty:
+                df = prepare_dataframe(df)
+                data_map_for_indicators[sym] = df
+                arrays = df_to_arrays(df, symbol=sym)
+                feed.add_arrays(*arrays)  # type: ignore
+                loaded_count += 1
+
+        if loaded_count > 0:
+            feed.sort()
+        else:
+            if symbols:
+                logger.warning("Failed to load data for all requested symbols.")
+
+    # 4. 设置引擎
     engine = Engine()
     engine.set_timezone_name(timezone)
     engine.set_cash(cash)
@@ -312,7 +419,11 @@ def run_backtest(
     if "option_commission" in kwargs:
         engine.set_option_fee_rules(kwargs["option_commission"])
 
-    # 4. 添加标的
+    # Apply Risk Config
+    if config and config.strategy_config:
+        apply_risk_config(engine, config.strategy_config.risk)
+
+    # 5. 添加标的
     multiplier = kwargs.get("multiplier", 1.0)
     margin_ratio = kwargs.get("margin_ratio", 1.0)
     tick_size = kwargs.get("tick_size", 0.01)
@@ -322,7 +433,6 @@ def run_backtest(
     option_type = kwargs.get("option_type", None)
     strike_price = kwargs.get("strike_price", None)
     expiry_date = kwargs.get("expiry_date", None)
-    # lot_size is handled separately via argument
 
     for sym in symbols:
         # Determine lot_size for this symbol
@@ -345,63 +455,19 @@ def run_backtest(
         )
         engine.add_instrument(instr)
 
-    # 5. 添加数据
+    # 6. 添加数据
     engine.add_data(feed)
-
-    # ... (Rest is same)
-
-    # 6. 准备策略实例
-    strategy_instance = None
-
-    if isinstance(strategy, type) and issubclass(strategy, Strategy):
-        # 如果是策略类，实例化它
-        # 尝试传递 kwargs 给构造函数，如果失败则无参数构造
-        try:
-            strategy_instance = strategy(**kwargs)
-        except TypeError:
-            strategy_instance = strategy()
-    elif isinstance(strategy, Strategy):
-        # 如果已经是实例
-        strategy_instance = strategy
-    elif callable(strategy):
-        # 如果是函数，假设是 on_bar 回调 (Zipline 风格)
-        # 需要配合 initialize 使用
-        strategy_instance = FunctionalStrategy(
-            initialize, cast(Callable[[Any, Bar], None], strategy), context
-        )
-    else:
-        raise ValueError("Invalid strategy type")
 
     # 7. 运行回测
     logger.info("Running backtest via run_backtest()...")
-
-    # 注入 context 到策略实例
-    if context and hasattr(strategy_instance, "_context"):
-        # 如果是 FunctionalStrategy
-        # 已经在 __init__ 中注入了
-        pass
-    elif context and strategy_instance:
-        # 如果是普通 Strategy，尝试注入属性
-        for k, v in context.items():
-            setattr(strategy_instance, k, v)
 
     # 设置自动历史数据维护
     if history_depth > 0:
         strategy_instance.set_history_depth(history_depth)
 
     # 7.5 Prepare Indicators (Vectorized Pre-calculation)
-    if hasattr(strategy_instance, "_prepare_indicators"):
-        data_map = {}
-        if isinstance(data, pd.DataFrame):
-            # Use symbols[0] as inferred above
-            sym = symbols[0] if symbols else "BENCHMARK"
-            data_map[sym] = prepare_dataframe(data)
-        elif isinstance(data, dict):
-            for sym, df in data.items():
-                data_map[sym] = prepare_dataframe(df)
-
-        if data_map:
-            strategy_instance._prepare_indicators(data_map)
+    if hasattr(strategy_instance, "_prepare_indicators") and data_map_for_indicators:
+        strategy_instance._prepare_indicators(data_map_for_indicators)
 
     engine.run(strategy_instance, show_progress)
 

@@ -1,5 +1,16 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
+
+
+@dataclass
+class RiskConfig:
+    """Configuration for Risk Management."""
+
+    active: bool = True
+    max_order_size: Optional[float] = None
+    max_order_value: Optional[float] = None
+    max_position_size: Optional[float] = None
+    restricted_list: Optional[List[str]] = None
 
 
 @dataclass
@@ -31,6 +42,23 @@ class StrategyConfig:
 
     # Other
     exit_on_last_bar: bool = True
+
+    # Risk Config
+    risk: Optional[RiskConfig] = None
+
+
+@dataclass
+class BacktestConfig:
+    """Configuration specifically for running backtests."""
+
+    strategy_config: StrategyConfig
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    instruments: Optional[List[str]] = None
+    benchmark: Optional[str] = None
+    timezone: str = "Asia/Shanghai"
+    show_progress: bool = True
+    history_depth: int = 0
 
 
 # Global instance

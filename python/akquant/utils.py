@@ -2,7 +2,50 @@ from typing import Dict, List, Optional, Tuple, cast
 
 import pandas as pd
 
+try:
+    import akshare as ak  # type: ignore
+except ImportError:
+    ak = None
+
 from .akquant import Bar, from_arrays
+
+
+def fetch_akshare_daily(
+    symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None
+) -> pd.DataFrame:
+    """
+    Fetch daily stock data from Akshare.
+
+    :param symbol: Stock symbol (e.g., "000001").
+    :param start_date: Start date "YYYYMMDD".
+    :param end_date: End date "YYYYMMDD".
+    :return: DataFrame with columns matching load_akshare_bar requirements.
+    """
+    if ak is None:
+        raise ImportError("akshare is required to fetch data.")
+
+    if not start_date:
+        start_date = "20000101"
+    if not end_date:
+        end_date = "20991231"
+
+    try:
+        # stock_zh_a_hist is the standard interface for A-share history
+        df = ak.stock_zh_a_hist(
+            symbol=symbol,
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust="qfq",
+        )
+        # Ensure we have "股票代码" column if not present (sometimes it is)
+        if "股票代码" not in df.columns:
+            df["股票代码"] = symbol
+
+        return cast(pd.DataFrame, df)
+    except Exception as e:
+        print(f"Error fetching data for {symbol}: {e}")
+        return pd.DataFrame()
 
 
 def load_akshare_bar(df: pd.DataFrame, symbol: Optional[str] = None) -> List[Bar]:
