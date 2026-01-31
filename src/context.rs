@@ -1,13 +1,15 @@
 use crate::model::market_data::extract_decimal;
 use crate::model::{Order, OrderSide, OrderType, TimeInForce, Timer, TradingSession};
 use crate::analysis::ClosedTrade;
+use crate::history::HistoryBuffer;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use uuid::Uuid;
+use numpy::PyArray1;
 
 #[gen_stub_pyclass]
 #[pyclass]
@@ -33,6 +35,8 @@ pub struct StrategyContext {
     pub session: TradingSession,
     // Do NOT expose closed_trades as a direct getter to avoid expensive cloning on every access
     pub closed_trades: Arc<Vec<ClosedTrade>>,
+    // History Buffer (Shared with Engine)
+    pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
 }
 
 impl StrategyContext {
@@ -43,6 +47,7 @@ impl StrategyContext {
         session: TradingSession,
         active_orders: Vec<Order>,
         closed_trades: Arc<Vec<ClosedTrade>>,
+        history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
     ) -> Self {
         StrategyContext {
             orders: Vec::new(),
@@ -54,6 +59,7 @@ impl StrategyContext {
             available_positions,
             session,
             closed_trades,
+            history_buffer,
         }
     }
 }
@@ -89,7 +95,46 @@ impl StrategyContext {
             available_positions: avail_dec,
             session: session.unwrap_or(TradingSession::Closed),
             closed_trades: Arc::new(closed_trades.unwrap_or_default()),
+            history_buffer: None,
         })
+    }
+
+    /// 获取历史数据
+    ///
+    /// :param symbol: 标的代码
+    /// :param field: 字段名 (open, high, low, close, volume)
+    /// :param count: 获取的数据长度
+    /// :return: numpy array or None
+    fn history<'py>(
+        &self,
+        py: Python<'py>,
+        symbol: String,
+        field: String,
+        count: usize,
+    ) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
+        if let Some(ref buffer_lock) = self.history_buffer {
+            let buffer = buffer_lock.read().unwrap();
+            if let Some(history) = buffer.get_history(&symbol) {
+                let len = history.timestamps.len();
+                if len == 0 {
+                    return Ok(None);
+                }
+
+                let start = if len > count { len - count } else { 0 };
+                let data_slice = match field.as_str() {
+                    "open" => &history.opens[start..],
+                    "high" => &history.highs[start..],
+                    "low" => &history.lows[start..],
+                    "close" => &history.closes[start..],
+                    "volume" => &history.volumes[start..],
+                    _ => return Err(pyo3::exceptions::PyValueError::new_err("Invalid field")),
+                };
+
+                let py_array = PyArray1::from_slice(py, data_slice);
+                return Ok(Some(py_array));
+            }
+        }
+        Ok(None)
     }
 
     #[getter]

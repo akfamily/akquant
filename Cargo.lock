@@ -35,6 +35,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "indicatif",
+ "numpy",
  "polars",
  "pyo3",
  "pyo3-stub-gen",

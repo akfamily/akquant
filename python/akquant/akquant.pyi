@@ -2,6 +2,7 @@
 # ruff: noqa: E501, F401
 
 import typing
+import numpy as np
 
 import akquant
 
@@ -472,6 +473,9 @@ class StrategyContext:
         :param order_id: 订单 ID
         """
         ...
+    def history(
+        self, symbol: str, field: str, count: int
+    ) -> typing.Optional[np.ndarray]: ...
 
 class Tick:
     r"""
