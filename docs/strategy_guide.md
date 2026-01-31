@@ -68,7 +68,7 @@ class MyStrategy(Strategy):
 *   **`self.sell(symbol, quantity, price=None)`**: 发送卖出指令。
 *   **`self.get_position(symbol)`**: 获取指定标的的当前持仓数量。
 *   **`self.get_open_orders(symbol)`**: 获取指定标的的未成交订单列表。
-*   **`self.get_history(count, symbol=None, field="close")`**: 获取历史数据序列。
+*   **`self.get_history(count, symbol=None, field="close")`**: 获取历史数据序列。底层通过 Zero-Copy View 直接访问 Rust 内存，性能极高。
 
 ## 4. 编写函数风格策略 (Functional)
 
@@ -159,8 +159,9 @@ def on_bar(ctx, bar):
 
 这种模式下，在 `on_bar` 中实时获取历史序列计算指标。
 
+*   **性能优化**: Akquant 0.1.3+ 采用 Zero-Copy 内存映射 (Numpy View) 技术，从 Rust 端直接暴露历史数据给 Python。这意味着 `get_history` 操作几乎没有内存拷贝开销，相比传统的 Python 列表切片方式有显著性能提升。
 *   **优点**: 代码简单，逻辑与实盘完全一致，无未来函数风险。
-*   **缺点**: 速度较慢 (受限于 Python 循环和切片开销)。
+*   **缺点**: 相比向量化预计算仍有一定 Python 调用开销。
 *   **实现步骤**:
     1.  在 `run_backtest` 中设置 `history_depth` (如 20)。
     2.  在 `on_bar` 中使用 `ctx.get_history(count=20)` 获取 Numpy 数组。
@@ -267,6 +268,87 @@ class OptionStrategy(Strategy):
 # run_backtest(..., asset_type=AssetType.Option, option_type=OptionType.Call, ...)
 ```
 
-## 11. 常见问题 (FAQ)
+## 11. 高级特性 (Advanced Features)
+
+### 11.1 流式数据加载 (Streaming Data)
+
+对于 TB 级别的超大历史数据文件（如高频 Tick 数据或全市场多年的分钟线），一次性加载到内存会导致 OOM (Out of Memory)。Akquant 提供了 `DataFeed.from_csv` 方法支持流式读取。
+
+```python
+from akquant import DataFeed, Engine
+
+# 创建流式数据源 (只占用极少内存)
+feed = DataFeed.from_csv("large_data.csv", symbol="SH600000")
+
+# 创建引擎
+engine = Engine()
+engine.add_data(feed)
+
+# 运行回测 (数据将在回测过程中逐行读取)
+engine.run(strategy)
+```
+
+### 11.2 实时交易 (Live Trading)
+
+Akquant 0.1.3+ 支持实时模式，可以接收来自外部接口（如 CTP, TWS, IB Gateway）的数据推送，并驱动策略运行。
+
+**关键点:**
+
+1.  使用 `DataFeed.create_live()` 创建实时数据源。
+2.  引擎会自动进入 **Live Loop** 模式：
+    *   如果没有数据到达，引擎会挂起 (Wait) 而不是空转，节省 CPU。
+    *   引擎会严格根据系统时钟 (Wall Clock) 触发定时器 (Timer)。
+3.  `DataFeed` 的 `add_bar` / `add_tick` 方法在 Live 模式下是**线程安全**的，可以在回调线程中直接调用。
+
+**示例: 接入模拟 CTP 数据推送**
+
+```python
+import akquant
+from akquant import DataFeed, Bar, Decimal
+import threading
+import time
+
+# 1. 创建实时数据源
+live_feed = DataFeed.create_live()
+
+# 2. 初始化引擎和策略
+engine = akquant.Engine()
+engine.add_data(live_feed)
+strategy = MyLiveStrategy()
+
+# 3. 模拟 CTP 接收线程
+def ctp_receiver(feed):
+    while True:
+        # 模拟从 CTP 接收数据 (阻塞调用)
+        # raw_data = ctp_api.recv()
+        time.sleep(1) # 模拟每秒一个 Tick
+
+        # 转换为 Akquant Bar
+        bar = Bar(
+            timestamp=time.time_ns(), # 使用当前纳秒时间戳
+            symbol="rb2310",
+            open=Decimal(3600),
+            high=Decimal(3605),
+            low=Decimal(3595),
+            close=Decimal(3602),
+            volume=Decimal(10),
+            # ...
+        )
+
+        # 推送数据 (线程安全)
+        feed.add_bar(bar)
+        print(f"Pushed bar: {bar.timestamp}")
+
+# 启动接收线程
+t = threading.Thread(target=ctp_receiver, args=(live_feed,))
+t.daemon = True
+t.start()
+
+# 4. 运行引擎 (阻塞主线程)
+# 引擎将持续运行，处理推送过来的数据
+engine.run(strategy)
+```
+
+## 12. 常见问题 (FAQ)
 
 *(待补充)*

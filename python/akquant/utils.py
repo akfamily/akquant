@@ -224,7 +224,9 @@ def df_to_arrays(
 
     # 2. Extract numeric columns
     def get_col(name: str) -> List[float]:
-        return df[resolved[name]].fillna(0.0).astype(float).values.tolist()
+        return cast(
+            List[float], df[resolved[name]].fillna(0.0).astype(float).values.tolist()
+        )
 
     opens = get_col("open")
     highs = get_col("high")

@@ -385,7 +385,12 @@ def run_backtest(
 
     # 4. 设置引擎
     engine = Engine()
-    engine.set_timezone_name(timezone)
+    # engine.set_timezone_name(timezone)
+    offset_delta = pd.Timestamp.now(tz=timezone).utcoffset()
+    if offset_delta is None:
+        raise ValueError(f"Invalid timezone: {timezone}")
+    offset = int(offset_delta.total_seconds())
+    engine.set_timezone(offset)
     engine.set_cash(cash)
 
     # ... (ExecutionMode logic)

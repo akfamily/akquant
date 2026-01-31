@@ -1,4 +1,6 @@
+import hashlib
 import time
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -9,6 +11,7 @@ def get_benchmark_data(
     symbol: str = "BENCHMARK",
     freq: str = "min",
     start_date: str = "2020-01-01",
+    seed: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Generate dummy market data using Geometric Brownian Motion.
@@ -25,7 +28,12 @@ def get_benchmark_data(
     # Random walk (Geometric Brownian Motion to ensure positive prices)
     # Use symbol hash to ensure different data for different symbols,
     # but consistent data for the same symbol.
-    seed_val = abs(hash(symbol)) % (2**32)
+    if seed is not None:
+        seed_val = seed
+    else:
+        # Use stable hash (md5) instead of python's hash() which is randomized
+        seed_val = int(hashlib.md5(symbol.encode("utf-8")).hexdigest(), 16) % (2**32)
+
     np.random.seed(seed_val)
     returns = np.random.normal(0, 0.001, n)
     price = 100 * np.exp(np.cumsum(returns))

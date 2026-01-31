@@ -10,6 +10,7 @@
 
 *   **极致性能**: 核心回测引擎采用 Rust 编写，通过 PyO3 提供 Python 接口。
     *   **基准测试**: 在 200k K线数据的 SMA 策略回测中，akquant 耗时仅 **1.31s** (吞吐量 ~152k bars/sec)，相比 Backtrader (26.55s) 和 PyBroker (23.61s) 快约 **20倍**。
+    *   **Zero-Copy Access (New)**: 历史数据 (`ctx.history`) 通过 PyO3 Buffer Protocol / Numpy View 直接映射 Rust 内存，实现零拷贝访问，大幅提升 Python 端指标计算性能。
 *   **模块化架构**:
     *   **Engine**: 事件驱动的核心撮合引擎，采用二进制堆 (BinaryHeap) 管理事件队列。
     *   **Clock**: 参考 NautilusTrader 设计的交易时钟，精确管理交易时段 (TradingSession) 和时间流逝。
@@ -18,6 +19,7 @@
 *   **事件系统**:
     *   **Timer**: 支持 `schedule(timestamp, payload)` 注册定时事件，触发 `on_timer` 回调，实现复杂的盘中定时逻辑。
 *   **数据生态**:
+    *   **Streaming CSV (New)**: 支持流式加载超大 CSV 文件 (`DataFeed.from_csv`)，极大降低内存占用。
     *   **AKShare 集成**: 内置 `DataLoader`，无缝支持 [AKShare](https://github.com/akfamily/akshare) 数据加载。
     *   **智能缓存**: 支持数据本地缓存 (Pickle)，避免重复下载，加速策略迭代。
 *   **灵活配置**:

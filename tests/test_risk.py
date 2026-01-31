@@ -4,7 +4,6 @@ import uuid
 from akquant import (
     Order,
     OrderSide,
-    OrderStatus,
     OrderType,
     Portfolio,
     RiskManager,
@@ -25,9 +24,6 @@ def create_dummy_order(
         price=price,
         time_in_force=TimeInForce.Day,
         trigger_price=None,
-        status=OrderStatus.New,
-        filled_quantity=0.0,
-        average_filled_price=None,
     )
 
 

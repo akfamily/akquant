@@ -97,14 +97,27 @@
 
 ### `akquant.DataFeed`
 
-数据容器，用于存储和管理 K 线 (Bar) 和 Tick 数据。
+数据容器，用于存储和管理 K 线 (Bar) 和 Tick 数据。支持内存模式、流式文件模式和实时推送模式。
 
-**方法:**
+**静态方法:**
 
-*   `__init__()`: 创建一个空的数据源。
-*   `add_bar(bar: Bar)`: 添加一条 K 线数据。
-*   `add_tick(tick: Tick)`: 添加一条 Tick 数据。
-*   `get_bars() -> List[Bar]`: 获取所有 K 线数据。
+*   `new() -> DataFeed`: 创建一个空的内存数据源。
+*   `from_csv(path: str, symbol: str) -> DataFeed`: 创建一个流式 CSV 数据源。
+    *   **特点**: 逐行读取，内存占用极低，适合 TB 级历史数据回测。
+    *   **path**: CSV 文件路径。
+    *   **symbol**: 关联的合约代码。
+*   `create_live() -> DataFeed`: 创建一个实时数据源 (Channel Mode)。
+    *   **特点**: 线程安全，支持从其他线程通过 `add_bar`/`add_tick` 推送数据。
+    *   **适用**: 接入 CTP、TWS 等实时交易接口。
+
+**实例方法:**
+
+*   `add_bar(bar: Bar)`: 添加单根 K 线。
+    *   在 **Live Mode** 下，此方法是线程安全的，可用于从回调线程推送数据。
+*   `add_bars(bars: List[Bar])`: 批量添加 K 线。
+*   `add_tick(tick: Tick)`: 添加 Tick 数据。
+    *   在 **Live Mode** 下，此方法是线程安全的。
+
 
 ### `akquant.StrategyContext`
 
@@ -123,6 +136,7 @@
 *   `buy(...)`: 发送买单 (底层接口)。
 *   `sell(...)`: 发送卖单 (底层接口)。
 *   `get_position(symbol: str) -> float`: 获取指定标的的持仓数量。
+*   `history(symbol: str, field: str, count: int) -> Optional[np.ndarray]`: (底层 API) 获取历史数据 Zero-Copy View。推荐使用 `Strategy.get_history`。
 *   `schedule(timestamp: int, payload: str)`: 注册定时事件，将在指定时间戳触发 `on_timer(payload)` 回调。
 *   `cancel_order(order_id: str)`: 取消指定订单。
 

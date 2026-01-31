@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 import numpy as np
 import pandas as pd
 
-from .akquant import Bar, OrderStatus, StrategyContext, Tick, TimeInForce
+from .akquant import Bar, ExecutionMode, OrderStatus, StrategyContext, Tick, TimeInForce
 from .sizer import FixedSize, Sizer
 
 if TYPE_CHECKING:
@@ -19,6 +19,7 @@ class Strategy:
     """
 
     ctx: Optional[StrategyContext]
+    execution_mode: Optional[ExecutionMode]
     sizer: Sizer
     current_bar: Optional[Bar]
     current_tick: Optional[Tick]
@@ -31,6 +32,7 @@ class Strategy:
         """Create a new Strategy instance."""
         instance = super().__new__(cls)
         instance.ctx = None
+        instance.execution_mode = None
         instance.sizer = FixedSize(100)
         instance.current_bar = None
         instance.current_tick = None
@@ -575,4 +577,4 @@ class VectorizedStrategy(Strategy):
             return float(self.precalc[sym][indicator_name][idx])
         except (KeyError, IndexError):
             # 越界或键不存在
-            return np.nan
+            return float(np.nan)

@@ -6,6 +6,7 @@ use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use crate::analysis::{BacktestResult, TradeTracker};
 use crate::clock::Clock;
@@ -294,10 +295,8 @@ impl Engine {
     /// 批量添加 K 线数据
     ///
     /// :param bars: K 线列表
-    fn add_bars(&mut self, bars: Vec<Bar>) {
-        for bar in bars {
-            self.feed.add_bar(bar);
-        }
+    fn add_bars(&mut self, bars: Vec<Bar>) -> PyResult<()> {
+        self.feed.add_bars(bars)
     }
 
     /// 运行回测
@@ -324,7 +323,7 @@ impl Engine {
         let mut bar_index = 0;
 
         // Progress Bar Initialization
-        let total_events = self.feed.events.len();
+        let total_events = self.feed.len_hint().unwrap_or(0);
         let pb = if show_progress {
             let pb = ProgressBar::new(total_events as u64);
             pb.set_style(
@@ -343,11 +342,7 @@ impl Engine {
         // Record initial equity (before processing any events)
         // This ensures equity_curve starts with initial capital, preventing return calculation errors
         // for intraday backtests or when the first period has no return.
-        if let Some(event) = self.feed.events.front() {
-            let timestamp = match event {
-                Event::Bar(b) => b.timestamp,
-                Event::Tick(t) => t.timestamp,
-            };
+        if let Some(timestamp) = self.feed.peek_timestamp() {
             // At start, equity should equal cash (assuming no positions set)
             // If positions are set, calculate_equity will handle it (assuming prices are available or 0)
             let equity = self
@@ -357,21 +352,56 @@ impl Engine {
         }
 
         // Process all events (Data + Timers) in order
+        let is_live = self.feed.is_live();
+
         loop {
             // Check if we have data or timers
-            let next_event_time = self.feed.events.front().map(|e| match e {
-                Event::Bar(b) => b.timestamp,
-                Event::Tick(t) => t.timestamp,
-            });
+            let mut next_event_time = self.feed.peek_timestamp();
             let next_timer_time = self.timers.peek().map(|t| t.timestamp);
 
-            if next_event_time.is_none() && next_timer_time.is_none() {
-                break; // No more events
+            if !is_live && next_event_time.is_none() && next_timer_time.is_none() {
+                break; // No more events (Backtest End)
             }
 
-            // Determine what to process
+            // Live Mode: Block and wait for data if buffer is empty
+            if is_live && next_event_time.is_none() {
+                let timeout = if let Some(timer_ts) = next_timer_time {
+                    let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                    if timer_ts > now {
+                        let diff_ms = (timer_ts - now) / 1_000_000;
+                        if diff_ms > 0 {
+                            Duration::from_millis(std::cmp::min(diff_ms as u64, 1000))
+                        } else {
+                            Duration::ZERO
+                        }
+                    } else {
+                        Duration::ZERO
+                    }
+                } else {
+                    Duration::from_secs(1)
+                };
+
+                if timeout > Duration::ZERO {
+                    if let Some(ts) = self.feed.wait_peek(timeout) {
+                        next_event_time = Some(ts);
+                    }
+                }
+            }
+
+            // If live and still no event, check if timer is ready
+            if is_live && next_event_time.is_none() {
+                if let Some(timer_ts) = next_timer_time {
+                    let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                    if timer_ts > now {
+                        continue; // Timer not ready yet, wait more
+                    }
+                } else {
+                    continue; // No data, no timer, wait more
+                }
+            }
+
             let process_timer = match (next_event_time, next_timer_time) {
-                (Some(et), Some(tt)) => tt <= et, // Timer first if time is earlier or equal (priority to timer)
+                (Some(et), Some(tt)) => tt <= et,
                 (Some(_), None) => false,
                 (None, Some(_)) => true,
                 (None, None) => break,
@@ -408,7 +438,7 @@ impl Engine {
                 }
             } else {
                 // Process Data Event
-                let event = self.feed.events.pop_front().unwrap();
+                let event = self.feed.next().unwrap();
 
                 // Update History Buffer
                 if let Event::Bar(ref b) = event {
