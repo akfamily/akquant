@@ -348,6 +348,7 @@ live_feed = DataFeed.create_live()
 
 # 2. 初始化引擎和策略
 engine = akquant.Engine()
+engine.use_realtime_execution() # 切换到实盘执行模式 (重要!)
 engine.add_data(live_feed)
 strategy = MyLiveStrategy()
 

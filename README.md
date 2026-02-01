@@ -42,6 +42,10 @@
 *   **高级订单 (New)**:
     *   **Stop Orders**: Rust 引擎原生支持止损单触发，提供 StopMarket 和 StopLimit。
     *   **Target Position**: 内置 `order_target_value` 等辅助函数，自动计算调仓数量。
+*   **架构抽象 (New)**:
+    *   **ExecutionClient**: 抽象执行层，支持 `SimulatedExecutionClient` (内存撮合) 和 `RealtimeExecutionClient` (实盘对接)。
+    *   **DataClient**: 抽象数据层，支持 `SimulatedDataClient` (内存/回放) 和 `RealtimeDataClient` (实时流)。
+    *   **无缝切换**: 策略代码无需修改，仅需通过 `engine.use_realtime_execution()` 和 `DataFeed.create_live()` 即可切换至实盘模式。
 *   **灵活配置**:
     *   **Typed Config (New)**: 引入 `BacktestConfig`, `StrategyConfig`, `RiskConfig` 类型化配置对象，替代散乱的 `**kwargs`，提供更好的 IDE 提示和参数校验。
     *   **ExecutionMode**: 支持 `CurrentClose` (信号当根K线收盘成交) 和 `NextOpen` (次日开盘成交) 模式。

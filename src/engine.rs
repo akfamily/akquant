@@ -12,7 +12,9 @@ use crate::analysis::{BacktestResult, TradeTracker};
 use crate::clock::Clock;
 use crate::context::StrategyContext;
 use crate::data::{DataFeed, Event};
-use crate::execution::ExchangeSimulator;
+use crate::execution::{
+    ExecutionClient, RealtimeExecutionClient, SimulatedExecutionClient,
+};
 use crate::history::HistoryBuffer;
 use crate::market::{
     ChinaMarket, ChinaMarketConfig, MarketModel, MarketType, SessionRange, SimpleMarket,
@@ -46,7 +48,7 @@ pub struct Engine {
     market_config: ChinaMarketConfig,
     active_market_type: MarketType,
     market_model: Box<dyn MarketModel>,
-    execution_model: ExchangeSimulator,
+    execution_model: Box<dyn ExecutionClient>,
     daily_equity: Vec<(i64, Decimal)>,
     daily_positions: Vec<(i64, HashMap<String, Decimal>)>,
     execution_mode: ExecutionMode,
@@ -84,7 +86,7 @@ impl Engine {
             market_config: market_config.clone(),
             active_market_type: MarketType::China,
             market_model: Box::new(ChinaMarket::from_config(market_config)),
-            execution_model: ExchangeSimulator::new(),
+            execution_model: Box::new(SimulatedExecutionClient::new()),
             daily_equity: Vec::new(),
             daily_positions: Vec::new(),
             execution_mode: ExecutionMode::NextOpen,
@@ -110,6 +112,21 @@ impl Engine {
     /// :param offset: 偏移秒数 (例如 UTC+8 为 28800)
     fn set_timezone(&mut self, offset: i32) {
         self.timezone_offset = offset;
+    }
+
+    /// 启用模拟执行 (回测模式)
+    ///
+    /// 默认模式。在内存中撮合订单。
+    fn use_simulated_execution(&mut self) {
+        self.execution_model = Box::new(SimulatedExecutionClient::new());
+    }
+
+    /// 启用实盘执行 (CTP/Broker 模式)
+    ///
+    /// 模拟对接 CTP 或其他 Broker API。
+    /// 在此模式下，订单会被标记为 Submitted 并等待回调 (目前仅模拟发送)。
+    fn use_realtime_execution(&mut self) {
+        self.execution_model = Box::new(RealtimeExecutionClient::new());
     }
 
     /// 设置撮合模式

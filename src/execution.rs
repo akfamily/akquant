@@ -57,32 +57,57 @@ impl SlippageModel for PercentSlippage {
     }
 }
 
-/// 模拟交易所执行器
-/// 负责处理订单撮合逻辑
-pub struct ExchangeSimulator {
+/// 交易执行接口 (Execution Client Trait)
+pub trait ExecutionClient: Send + Sync {
+    /// 处理市场事件并更新订单状态/生成成交
+    fn process_event(
+        &mut self,
+        event: &Event,
+        orders: &mut [Order],
+        instruments: &std::collections::HashMap<String, crate::model::Instrument>,
+        match_at_open: bool,
+        bar_index: usize,
+        session: TradingSession,
+    ) -> Vec<Trade>;
+
+    /// 设置滑点模型 (仅回测有效)
+    fn set_slippage_model(&mut self, _model: Box<dyn SlippageModel>) {}
+
+    /// 设置成交量限制 (仅回测有效)
+    fn set_volume_limit(&mut self, _limit: f64) {}
+
+    /// 是否为实盘模式
+    fn is_live(&self) -> bool {
+        false
+    }
+}
+
+/// 模拟交易所执行器 (Simulated Execution Client)
+/// 负责在内存中撮合订单 (回测模式)
+pub struct SimulatedExecutionClient {
     slippage_model: Box<dyn SlippageModel>,
     volume_limit_pct: Decimal, // 成交量限制比例 (0.0 = 不限制)
 }
 
-impl ExchangeSimulator {
+impl SimulatedExecutionClient {
     pub fn new() -> Self {
-        ExchangeSimulator {
+        SimulatedExecutionClient {
             slippage_model: Box::new(ZeroSlippage),
             volume_limit_pct: Decimal::ZERO,
         }
     }
+}
 
-    pub fn set_slippage_model(&mut self, model: Box<dyn SlippageModel>) {
+impl ExecutionClient for SimulatedExecutionClient {
+    fn set_slippage_model(&mut self, model: Box<dyn SlippageModel>) {
         self.slippage_model = model;
     }
 
-    pub fn set_volume_limit(&mut self, limit: f64) {
+    fn set_volume_limit(&mut self, limit: f64) {
         self.volume_limit_pct = Decimal::from_f64(limit).unwrap_or(Decimal::ZERO);
     }
 
-    /// 处理事件并撮合订单
-    /// 返回生成的成交记录
-    pub fn process_event(
+    fn process_event(
         &mut self,
         event: &Event,
         orders: &mut [Order],
@@ -101,10 +126,6 @@ impl ExchangeSimulator {
         {
             return trades;
         }
-
-        // 筛选出未完成的订单
-        // 这里需要注意：我们不能在遍历时修改 orders，所以需要两步走或者使用索引
-        // 为了简单，我们收集需要更新的索引
 
         // 实际撮合逻辑：遍历所有挂单，看当前 Event 是否满足成交条件
         for order in orders.iter_mut() {
@@ -339,6 +360,49 @@ impl ExchangeSimulator {
     }
 }
 
+/// 实盘执行器 (Realtime Execution Client)
+/// 对接外部交易接口 (如 CTP/Broker API)
+pub struct RealtimeExecutionClient;
+
+impl RealtimeExecutionClient {
+    pub fn new() -> Self {
+        RealtimeExecutionClient
+    }
+}
+
+impl ExecutionClient for RealtimeExecutionClient {
+    fn is_live(&self) -> bool {
+        true
+    }
+
+    fn process_event(
+        &mut self,
+        _event: &Event,
+        orders: &mut [Order],
+        _instruments: &std::collections::HashMap<String, crate::model::Instrument>,
+        _match_at_open: bool,
+        _bar_index: usize,
+        _session: TradingSession,
+    ) -> Vec<Trade> {
+        // 在实盘模式下，process_event 主要用于：
+        // 1. 发送新订单到柜台
+        // 2. 检查订单更新 (或者通过回调/Polling 方式)
+        // 这里仅做简单模拟
+
+        for order in orders.iter_mut() {
+            if order.status == OrderStatus::New {
+                println!("[Realtime] Sending Order to Broker: {} {:?} {}", order.symbol, order.side, order.quantity);
+                // 模拟发送成功
+                order.status = OrderStatus::Submitted;
+            }
+        }
+
+        // 实盘成交通常异步返回，不直接在此处生成 Trade
+        // 如果需要模拟，可以随机成交
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_execution_market_order() {
-        let mut sim = ExchangeSimulator::new();
+        let mut sim = SimulatedExecutionClient::new();
         let instruments = create_test_instruments();
         let order = create_test_order("AAPL", OrderSide::Buy, OrderType::Market, Decimal::from(100), None);
         let mut orders = vec![order.clone()];
@@ -425,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_execution_limit_buy() {
-        let mut sim = ExchangeSimulator::new();
+        let mut sim = SimulatedExecutionClient::new();
         let instruments = create_test_instruments();
         // Limit Buy @ 98. Low is 95. Should fill.
         let order = create_test_order("AAPL", OrderSide::Buy, OrderType::Limit, Decimal::from(100), Some(Decimal::from(98)));
@@ -444,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_execution_limit_buy_no_fill() {
-        let mut sim = ExchangeSimulator::new();
+        let mut sim = SimulatedExecutionClient::new();
         let instruments = create_test_instruments();
         // Limit Buy @ 90. Low is 95. Should NOT fill.
         let order = create_test_order("AAPL", OrderSide::Buy, OrderType::Limit, Decimal::from(100), Some(Decimal::from(90)));
@@ -461,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_execution_limit_sell() {
-        let mut sim = ExchangeSimulator::new();
+        let mut sim = SimulatedExecutionClient::new();
         let instruments = create_test_instruments();
         // Limit Sell @ 103. High is 105. Should fill.
         let order = create_test_order("AAPL", OrderSide::Sell, OrderType::Limit, Decimal::from(100), Some(Decimal::from(103)));
@@ -480,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_lot_size_check() {
-        let mut sim = ExchangeSimulator::new();
+        let mut sim = SimulatedExecutionClient::new();
         let instruments = create_test_instruments();
 
         // Odd lot buy (50 shares), should be rejected (lot size 100)

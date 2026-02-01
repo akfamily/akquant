@@ -26,8 +26,8 @@ fn normalize_timestamp(ts: i64) -> i64 {
     }
 }
 
-/// Data Provider Trait for streaming or in-memory data
-pub trait DataProvider: Send {
+/// Data Client Trait for streaming or in-memory data
+pub trait DataClient: Send {
     fn peek_timestamp(&mut self) -> Option<i64>;
     fn next(&mut self) -> Option<Event>;
     fn add(&mut self, event: Event) -> PyResult<()>;
@@ -45,12 +45,12 @@ pub trait DataProvider: Send {
     }
 }
 
-/// In-Memory Data Provider (Backward Compatible)
-pub struct InMemoryProvider {
+/// Simulated Data Client (In-Memory)
+pub struct SimulatedDataClient {
     pub events: VecDeque<Event>,
 }
 
-impl InMemoryProvider {
+impl SimulatedDataClient {
     pub fn new() -> Self {
         Self {
             events: VecDeque::new(),
@@ -58,7 +58,7 @@ impl InMemoryProvider {
     }
 }
 
-impl DataProvider for InMemoryProvider {
+impl DataClient for SimulatedDataClient {
     fn peek_timestamp(&mut self) -> Option<i64> {
         self.events.front().map(|e| match e {
             Event::Bar(b) => b.timestamp,
@@ -87,14 +87,14 @@ impl DataProvider for InMemoryProvider {
     }
 }
 
-/// CSV Data Provider (Streaming)
-pub struct CsvProvider {
+/// CSV Data Client (Streaming)
+pub struct CsvDataClient {
     reader: csv::Reader<File>,
     current: Option<Event>,
     symbol: String,
 }
 
-impl CsvProvider {
+impl CsvDataClient {
     pub fn new(path: &str, symbol: &str) -> PyResult<Self> {
         let file = File::open(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let reader = csv::ReaderBuilder::new()
@@ -147,7 +147,7 @@ impl CsvProvider {
     }
 }
 
-impl DataProvider for CsvProvider {
+impl DataClient for CsvDataClient {
     fn peek_timestamp(&mut self) -> Option<i64> {
         if self.current.is_none() {
             self.current = self.read_next();
@@ -179,15 +179,15 @@ impl DataProvider for CsvProvider {
     }
 }
 
-/// Channel Data Provider (Live Streaming)
+/// Realtime Data Client (Channel)
 /// 适用于 CTP 等实时数据推送场景
-pub struct ChannelProvider {
+pub struct RealtimeDataClient {
     rx: mpsc::Receiver<Event>,
     sender: mpsc::Sender<Event>, // Keep sender to clone for external use
     current: Option<Event>,
 }
 
-impl ChannelProvider {
+impl RealtimeDataClient {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
@@ -202,7 +202,7 @@ impl ChannelProvider {
     }
 }
 
-impl DataProvider for ChannelProvider {
+impl DataClient for RealtimeDataClient {
     fn peek_timestamp(&mut self) -> Option<i64> {
         // Try to read from channel non-blocking
         if self.current.is_none() {
@@ -349,7 +349,7 @@ pub enum Event {
 #[pyclass]
 #[derive(Clone)]
 pub struct DataFeed {
-    pub provider: Arc<Mutex<Box<dyn DataProvider>>>,
+    pub provider: Arc<Mutex<Box<dyn DataClient>>>,
     pub live_sender: Option<Arc<Mutex<mpsc::Sender<Event>>>>,
 }
 
@@ -358,14 +358,14 @@ impl DataFeed {
     #[new]
     pub fn new() -> Self {
         DataFeed {
-            provider: Arc::new(Mutex::new(Box::new(InMemoryProvider::new()))),
+            provider: Arc::new(Mutex::new(Box::new(SimulatedDataClient::new()))),
             live_sender: None,
         }
     }
 
     #[staticmethod]
     pub fn from_csv(path: &str, symbol: &str) -> PyResult<Self> {
-        let provider = CsvProvider::new(path, symbol)?;
+        let provider = CsvDataClient::new(path, symbol)?;
         Ok(DataFeed {
             provider: Arc::new(Mutex::new(Box::new(provider))),
             live_sender: None,
@@ -376,7 +376,7 @@ impl DataFeed {
     /// 适用于 CTP 等实时接口推送数据
     #[staticmethod]
     pub fn create_live() -> Self {
-        let provider = ChannelProvider::new();
+        let provider = RealtimeDataClient::new();
         let sender = provider.get_sender();
         DataFeed {
             provider: Arc::new(Mutex::new(Box::new(provider))),

@@ -19,6 +19,8 @@
 *   `add_bars(bars: List[Bar])`: 批量加载 K 线数据 (推荐使用)。
 *   `add_instrument(instrument: Instrument)`: 添加合约信息。
 *   `run(strategy: object, show_progress: bool = True) -> str`: 运行回测。
+*   `use_simulated_execution()`: 启用模拟执行 (默认回测模式)，在内存中撮合订单。
+*   `use_realtime_execution()`: 启用实盘执行 (Live模式)，模拟对接 CTP/Broker，订单状态标记为 Submitted。
 *   `set_execution_mode(mode: ExecutionMode)`: 设置执行模式 (`CurrentClose` 或 `NextOpen`)。
 *   `set_timezone(offset_secs: int)`: 设置时区偏移秒数 (例如 28800 为 UTC+8)。
 *   `use_simple_market(commission_rate: float)`: 启用简单市场模式 (7x24小时, T+0, 无税, 简单佣金)。
@@ -252,6 +254,21 @@ Tick 数据结构。
 *   `history(...)`: 获取历史数据
 *   `get_position(symbol)`: 获取持仓
 
+
+### `akquant.DataFeed`
+
+数据容器，负责加载和管理市场数据。
+
+**静态方法:**
+
+*   `from_csv(file_path: str, symbol: str, ...) -> DataFeed`: 从 CSV 文件创建流式数据源。
+*   `create_live() -> DataFeed`: 创建实时数据源，支持通过 `add_bar` / `add_tick` 实时推送数据。
+*   `new(data: List[Bar]) -> DataFeed`: 从内存 Bar 列表创建数据源。
+
+**方法:**
+
+*   `add_bar(bar: Bar)`: 添加一根 K 线 (Live 模式下线程安全)。
+*   `add_tick(tick: Tick)`: 添加一个 Tick (Live 模式下线程安全)。
 
 ## 工具函数
 
