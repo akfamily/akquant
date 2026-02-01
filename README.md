@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="AKQuant" width="400">
+</p>
+
 # AKQuant
 
 **AKQuant** 是一个基于 **Rust** 和 **Python** 构建的高性能量化投研框架。它旨在结合 Rust 的极致性能和 Python 的易用性，为量化交易者提供强大的回测和研究工具。
