@@ -6,7 +6,11 @@
 
 ### `akquant.Engine`
 
-回测引擎的主入口。负责管理数据、资金、持仓，并驱动策略运行。市场规则与交易时段可由用户配置。
+回测引擎的主入口。负责管理数据、资金、持仓，并驱动策略运行。
+
+**属性:**
+
+*   `risk_manager` (`RiskManager`): 访问引擎内部的风控管理器。
 
 **方法:**
 
@@ -14,131 +18,23 @@
 *   `add_data(feed: DataFeed)`: 加载数据源。
 *   `add_bars(bars: List[Bar])`: 批量加载 K 线数据 (推荐使用)。
 *   `add_instrument(instrument: Instrument)`: 添加合约信息。
-    *   `instrument.symbol`: 合约代码
-    *   `instrument.asset_type`: 资产类型 (Stock, Fund, Futures, Option)
-    *   `instrument.multiplier`: 合约乘数
-    *   `instrument.margin_ratio`: 保证金比率
-    *   `instrument.lot_size`: 最小交易单位 (股票默认为 100)
-    *   `instrument.option_type`: 期权类型 (Call, Put, 可选)
-    *   `instrument.strike_price`: 行权价 (可选)
-    *   `instrument.expiry_date`: 到期日 (可选)
-*   `run(strategy: object) -> BacktestResult`: 运行 K 线回测。`strategy` 对象必须实现 `on_bar(bar, ctx)` 方法。
+*   `run(strategy: object, show_progress: bool = True) -> str`: 运行回测。
 *   `set_execution_mode(mode: ExecutionMode)`: 设置执行模式 (`CurrentClose` 或 `NextOpen`)。
 *   `set_timezone(offset_secs: int)`: 设置时区偏移秒数 (例如 28800 为 UTC+8)。
-*   `set_timezone_name(tz_name: str)`: 设置时区名称 (如 "Asia/Shanghai")，用于日志和时间处理（Python 封装层方法）。
 *   `use_simple_market(commission_rate: float)`: 启用简单市场模式 (7x24小时, T+0, 无税, 简单佣金)。
 *   `use_china_market()`: 启用中国市场模式 (支持 T+1/T+0, 印花税, 过户费, 交易时段等)。
 *   `use_china_futures_market()`: 启用中国期货市场默认配置 (T+0, 需手动设置交易时段)。
 *   `set_t_plus_one(enabled: bool)`: 设置股票 T+1/T+0 规则 (仅针对 ChinaMarket)。
 *   `set_force_session_continuous(enabled: bool)`: 强制使用连续交易时段。
 *   `set_stock_fee_rules(commission_rate: float, stamp_tax: float, transfer_fee: float, min_commission: float)`: 设置股票费率参数。
-*   `set_fund_fee_rules(commission_rate: float, transfer_fee: float, min_commission: float)`: 设置基金费率参数。
 *   `set_future_fee_rules(commission_rate: float)`: 设置期货费率参数。
+*   `set_fund_fee_rules(commission_rate: float, transfer_fee: float, min_commission: float)`: 设置基金费率参数。
 *   `set_option_fee_rules(commission_per_contract: float)`: 设置期权费率参数 (按张收费)。
-*   `set_slippage(type: str, value: float)`: 设置滑点模型。
-    *   `type`: "fixed" (固定金额) 或 "percent" (百分比)。
-    *   `value`: 滑点数值 (例如 0.01 表示 1分钱 或 1%)。
-*   `set_volume_limit(limit: float)`: 设置成交量限制比例 (0.0 - 1.0)，限制单笔撮合数量不超过当根 K 线成交量的指定比例。
-*   `set_market_sessions(sessions: List[Tuple[str, str, TradingSession]])`: 设置交易时段列表，时间格式为 `HH:MM` 或 `HH:MM:SS`。
+*   `set_slippage(type: str, value: float)`: 设置滑点模型 (`fixed` 或 `percent`)。
+*   `set_volume_limit(limit: float)`: 设置成交量限制比例 (0.0 - 1.0)。
+*   `set_market_sessions(sessions: List[Tuple[str, str, TradingSession]])`: 设置交易时段列表。
 *   `get_results() -> BacktestResult`: 获取回测结果。
-
-### `akquant.BacktestResult`
-
-回测结果对象，包含绩效指标、交易记录和权益曲线。
-
-**属性:**
-
-*   `metrics` (`PerformanceMetrics`): 包含核心绩效指标的对象。
-    *   `total_return_pct`: 总收益率 (%)
-    *   `annualized_return`: 年化收益率 (小数)
-    *   `max_drawdown_pct`: 最大回撤 (%)
-    *   `sharpe_ratio`: 夏普比率
-    *   `sortino_ratio`: 索提诺比率
-    *   `win_rate`: 胜率 (小数)
-*   `metrics_df` (`pd.DataFrame`): 包含上述指标的 DataFrame (单行)。
-*   `trades_df` (`pd.DataFrame`): 包含所有已平仓交易的详细记录 (Entry/Exit Time/Price, PnL, Commission 等)。
-*   `daily_positions_df` (`pd.DataFrame`): 每日持仓快照 DataFrame。
-*   `equity_curve` (`List[Tuple[int, float]]`): 权益曲线数据列表 `[(timestamp, equity), ...]`。
-*   `trades` (`List[ClosedTrade]`): 原始交易记录对象列表。
-
-### `akquant.DataLoader`
-
-数据加载与缓存工具类。
-
-**方法:**
-
-*   `__init__(cache_dir: Optional[str] = None)`: 初始化数据加载器，指定缓存目录。
-*   `load_akshare(symbol: str, start_date: str, end_date: str, adjust: str = "qfq", period: str = "daily") -> pd.DataFrame`: 加载 AKShare A 股历史数据并自动缓存。
-
-### `akquant.config.StrategyConfig`
-
-全局策略配置对象 (`akquant.config.strategy_config`)。
-
-**属性:**
-
-*   `initial_cash` (float): 初始资金。
-*   `fee_mode` (str): 费率模式 ('per_order', 'per_share', 'percent')。
-*   `fee_amount` (float): 费率数值。
-*   `execution_mode` (ExecutionMode): 执行模式。
-*   `max_order_size` (float): 最大订单比例 (0.0 - 1.0)。
-*   `max_order_value` (float): 最大订单金额。
-*   `max_position_size` (float): 最大持仓比例。
-*   `bootstrap_samples` (int): Bootstrap 抽样次数 (默认 1000)。
-*   `exit_on_last_bar` (bool): 是否在回测结束时强制平仓 (默认 True)。
-
-### `akquant.indicator.IndicatorSet`
-
-指标集合，用于向量化预计算。
-
-**方法:**
-
-*   `add(name: str, func: Callable, *args, **kwargs)`: 添加指标计算函数。
-*   `calculate_all(df: pd.DataFrame, symbol: str) -> Dict[str, pd.Series]`: 编译并计算所有指标，返回字典。
-
-### `akquant.DataFeed`
-
-数据容器，用于存储和管理 K 线 (Bar) 和 Tick 数据。支持内存模式、流式文件模式和实时推送模式。
-
-**静态方法:**
-
-*   `new() -> DataFeed`: 创建一个空的内存数据源。
-*   `from_csv(path: str, symbol: str) -> DataFeed`: 创建一个流式 CSV 数据源。
-    *   **特点**: 逐行读取，内存占用极低，适合 TB 级历史数据回测。
-    *   **path**: CSV 文件路径。
-    *   **symbol**: 关联的合约代码。
-*   `create_live() -> DataFeed`: 创建一个实时数据源 (Channel Mode)。
-    *   **特点**: 线程安全，支持从其他线程通过 `add_bar`/`add_tick` 推送数据。
-    *   **适用**: 接入 CTP、TWS 等实时交易接口。
-
-**实例方法:**
-
-*   `add_bar(bar: Bar)`: 添加单根 K 线。
-    *   在 **Live Mode** 下，此方法是线程安全的，可用于从回调线程推送数据。
-*   `add_bars(bars: List[Bar])`: 批量添加 K 线。
-*   `add_tick(tick: Tick)`: 添加 Tick 数据。
-    *   在 **Live Mode** 下，此方法是线程安全的。
-
-
-### `akquant.StrategyContext`
-
-策略上下文对象，在 `on_bar` 回调中传递给策略，用于查询状态和执行交易。
-
-**属性:**
-
-*   `cash`: 当前可用资金 (float, 只读)。
-*   `orders`: 当前挂单列表 (List[Order], 只读)。
-*   `positions`: 当前持仓字典 `{symbol: quantity}` (Dict[str, float], 只读)。
-*   `available_positions`: 当前可用持仓字典 (Dict[str, float], 只读)。
-*   `session`: 当前交易时段 (`TradingSession`, 只读)。
-
-**方法:**
-
-*   `buy(...)`: 发送买单 (底层接口)。
-*   `sell(...)`: 发送卖单 (底层接口)。
-*   `get_position(symbol: str) -> float`: 获取指定标的的持仓数量。
-*   `history(symbol: str, field: str, count: int) -> Optional[np.ndarray]`: (底层 API) 获取历史数据 Zero-Copy View。推荐使用 `Strategy.get_history`。
-*   `schedule(timestamp: int, payload: str)`: 注册定时事件，将在指定时间戳触发 `on_timer(payload)` 回调。
-*   `cancel_order(order_id: str)`: 取消指定订单。
+*   `set_history_depth(depth: int)`: 设置引擎层面的历史数据缓存深度（通常由策略自动设置）。
 
 ### `akquant.Strategy`
 
@@ -146,101 +42,218 @@ Python 策略基类 (`akquant.strategy.Strategy`)。
 
 **回调方法 (需重写):**
 
-*   `on_bar(bar)`: K 线数据到达时触发。
-*   `on_tick(tick)`: Tick 数据到达时触发。
-*   `on_timer(payload)`: 定时器触发时调用。
+*   `on_bar(bar: Bar)`: K 线数据到达时触发。
+*   `on_tick(tick: Tick)`: Tick 数据到达时触发。
+*   `on_timer(payload: str)`: 定时器触发时调用。
+*   `on_start()`: 策略启动时调用，可用于订阅行情或注册指标。
+
+**交易方法:**
+
+*   `buy(symbol, quantity, price, time_in_force, trigger_price)`: 发送买单。
+*   `sell(symbol, quantity, price, time_in_force, trigger_price)`: 发送卖单。
+*   `short(symbol, quantity, price, time_in_force, trigger_price)`: 卖出开空 (Short Sell)。
+*   `cover(symbol, quantity, price, time_in_force, trigger_price)`: 买入平空 (Buy to Cover)。
+*   `stop_buy(symbol, trigger_price, quantity, price, time_in_force)`: 发送止损买入单。
+*   `stop_sell(symbol, trigger_price, quantity, price, time_in_force)`: 发送止损卖出单。
+*   `buy_all(symbol)`: 全仓买入。
+*   `close_position(symbol)`: 平仓当前标的。
+*   `cancel_order(order_or_id)`: 取消指定订单。
+*   `cancel_all_orders(symbol)`: 取消所有订单。
+
+**数据与状态方法:**
+
+*   `get_position(symbol) -> float`: 获取指定标的持仓数量。
+*   `get_cash() -> float`: 获取当前可用资金。
+*   `get_open_orders(symbol) -> List[Order]`: 获取未完成订单。
+*   `get_history(count, symbol, field="close") -> np.ndarray`: 获取历史数据。
+*   `set_history_depth(depth: int)`: 设置历史数据回溯长度 (0 表示禁用)。
+*   `set_sizer(sizer: Sizer)`: 设置仓位管理器。
+*   `register_indicator(name, indicator)`: 注册指标，可通过 `self.name` 访问。
+*   `subscribe(instrument_id: str)`: 订阅合约行情。
+*   `schedule(timestamp: int, payload: str)`: 注册定时事件。
+
+### `akquant.VectorizedStrategy`
+
+向量化策略基类 (`akquant.strategy.VectorizedStrategy`)，继承自 `Strategy`。
+用于支持基于预计算指标的高速回测模式。
 
 **方法:**
 
-*   `buy(symbol=None, quantity=None, price=None, time_in_force=None, trigger_price=None)`: 发送买单。
-*   `sell(symbol=None, quantity=None, price=None, time_in_force=None, trigger_price=None)`: 发送卖单。
-*   `buy_all(symbol=None)`: 全仓买入。
-*   `close_position(symbol=None)`: 平仓当前标的。
-*   `cancel_order(order_or_id)`: 取消订单。
-*   `cancel_all_orders(symbol=None)`: 取消所有订单。
-*   `get_open_orders(symbol=None) -> List[Order]`: 获取未完成订单。
-*   `schedule(timestamp, payload)`: 注册定时事件。
-*   `set_history_depth(depth: int)`: 设置自动维护的历史数据长度 (0 表示禁用)。
-*   `get_history(count, symbol=None, field="close") -> np.ndarray`: 获取最近 `count` 个 Bar 的历史数据。
-*   `set_sizer(sizer: Sizer)`: 设置仓位管理器。
+*   `__init__(precalculated_data: Dict[str, Dict[str, np.ndarray]])`: 初始化策略。
+*   `get_value(indicator_name: str, symbol: str) -> float`: 获取当前 Bar 对应的预计算指标值 (O(1) 访问)。
 
-### `akquant.run_backtest`
+### `akquant.RiskManager` & `akquant.RiskConfig`
 
-简化版回测入口函数，支持类和函数式策略。
+风控管理模块。
 
-**参数:**
+**`RiskConfig` 属性:**
 
-*   `data`: 回测数据 (DataFrame, Dict[str, DataFrame] 或 List[Bar])。
-*   `strategy`: 策略类、实例或回调函数。
-*   `symbol`: 标的代码 (str 或 List[str])。
-*   `cash`: 初始资金。
-*   `commission`, `stamp_tax`, `transfer_fee`, `min_commission`: 费率参数。
-*   `execution_mode`: 执行模式 ("next_open" 或 ExecutionMode)。
-*   `timezone`: 时区名称 (默认 "Asia/Shanghai")。
-*   `history_depth`: 自动维护历史数据的长度 (默认为 0)。
-*   `lot_size`: 最小交易单位 (int 或 Dict[str, int])。
-*   `initialize`, `context`: 函数式策略专用参数。
+*   `max_order_size` (float): 单笔最大下单数量。
+*   `max_order_value` (float): 单笔最大下单金额。
+*   `max_position_size` (float): 最大持仓数量 (绝对值)。
+*   `restricted_list` (List[str]): 限制交易标的列表。
+*   `active` (bool): 是否启用风控。
 
-**返回:**
+**`RiskManager` 方法:**
 
-*   `BacktestResult`: 回测结果对象 (Python 包装器)。
+*   `check(order: Order, portfolio: Portfolio) -> Optional[str]`: 检查订单是否合规，不合规返回错误信息。
 
-## 数据结构
+**辅助函数:**
+
+*   `akquant.risk.apply_risk_config(engine: Engine, config: RiskConfig)`: 将 Python 侧的风控配置应用到 Rust 引擎。
+
+## 数据结构与枚举
+
+### 枚举类型
+
+*   `AssetType`: `Stock`, `Future`, `Option`, `Fund`, `Crypto`, `Forex`, `Index`, `Bond`
+*   `ExecutionMode`: `CurrentClose`, `NextOpen`
+*   `OrderSide`: `Buy`, `Sell`
+*   `OrderType`: `Market`, `Limit`, `Stop`, `StopLimit`
+*   `OrderStatus`: `New`, `Submitted`, `PartiallyFilled`, `Filled`, `Canceled`, `Rejected`, `Expired`
+*   `TimeInForce`: `GTC`, `Day`, `IOC`, `FOK`, `GTD`
+*   `TradingSession`: `PreMarket`, `Regular`, `PostMarket`
+*   `OptionType`: `Call`, `Put`
+
+### `akquant.Instrument`
+
+交易标的定义。
+
+**属性:**
+
+*   `symbol` (str): 代码
+*   `asset_type` (AssetType): 资产类型
+*   `multiplier` (float): 合约乘数
+*   `margin_ratio` (float): 保证金比率
+*   `tick_size` (float): 最小变动价位
+*   `option_type` (OptionType, optional): 期权类型
+*   `strike_price` (float, optional): 行权价
+*   `expiry_date` (int, optional): 到期日
+*   `lot_size` (float, optional): 最小交易单位
 
 ### `akquant.Bar`
 
-代表一根 K 线数据。
+K 线数据结构。
+
+**属性:** `timestamp` (int), `symbol` (str), `open` (float), `high` (float), `low` (float), `close` (float), `volume` (float), `extra` (Dict[str, float])
+
+### `akquant.Tick`
+
+Tick 数据结构。
+
+**属性:** `timestamp` (int), `symbol` (str), `price` (float), `volume` (float)
+
+### `akquant.Order`
+
+订单对象。
 
 **属性:**
 
-*   `timestamp` (int): Unix 时间戳（纳秒）。
-*   `open` (float): 开盘价。
-*   `high` (float): 最高价。
-*   `low` (float): 最低价。
-*   `close` (float): 收盘价。
-*   `volume` (float): 成交量。
-*   `symbol` (str): 标的代码。
+*   `id` (str): 订单ID
+*   `symbol` (str): 标的代码
+*   `side` (OrderSide): 交易方向
+*   `order_type` (OrderType): 订单类型
+*   `quantity` (float): 数量
+*   `price` (float, optional): 价格
+*   `time_in_force` (TimeInForce): 有效期
+*   `trigger_price` (float, optional): 触发价
+*   `status` (OrderStatus): 状态
+*   `filled_quantity` (float): 已成交数量
+*   `average_filled_price` (float): 成交均价
+
+### `akquant.Trade`
+
+成交记录。
+
+**属性:** `id`, `order_id`, `symbol`, `side`, `quantity`, `price`, `commission`, `timestamp`, `bar_index`
+
+### `akquant.ClosedTrade`
+
+平仓交易记录 (Entry + Exit)。
+
+**属性:**
+
+*   `symbol`, `entry_time`, `exit_time`
+*   `entry_price`, `exit_price`
+*   `quantity`, `direction` (str)
+*   `pnl`, `net_pnl`, `return_pct`
+*   `commission`
+*   `duration_bars`
 
 ### `akquant.BacktestResult`
 
-回测运行的最终结果对象 (Python 包装类)。
+回测结果对象。
 
-**属性 (DataFrame):**
+**属性:**
 
-*   `metrics_df` (pd.DataFrame): 包含详细的绩效指标。
-*   `trades_df` (pd.DataFrame): 包含所有平仓交易记录。
-*   `daily_positions_df` (pd.DataFrame): 每日持仓快照。
-
-**属性 (原始数据):**
-
-*   `metrics` (PerformanceMetrics): 详细的绩效指标对象。
-*   `trade_metrics` (TradePnL): 详细的交易盈亏统计对象。
-*   `trades` (List[ClosedTrade]): 交易列表。
-*   `equity_curve` (List[Tuple[int, float]]): 权益曲线。
+*   `metrics` (`PerformanceMetrics`): 核心绩效指标。
+*   `trade_metrics` (`TradePnL`): 交易统计指标。
+*   `trades` (`List[ClosedTrade]`): 所有平仓交易记录列表。
+*   `equity_curve` (`List[Tuple[int, float]]`): 权益曲线数据。
+*   `daily_positions` (`List[Tuple[int, Dict[str, float]]]`): 每日持仓快照。
 
 ### `akquant.PerformanceMetrics`
 
-包含详细的策略绩效评估指标。
+核心绩效指标。
 
 **属性:**
 
-*   `total_return` (float): 总收益率。
-*   `annualized_return` (float): 年化收益率。
-*   `max_drawdown` (float): 最大回撤金额。
-*   `sharpe_ratio` (float): 夏普比率。
-*   `sortino_ratio` (float): 索提诺比率。
-*   `ulcer_index` (float): 溃疡指数。
-*   `equity_r2` (float): 权益曲线回归 R²。
-*   `win_rate` (float): 胜率。
+*   `akquant.SMA(period)`: 简单移动平均线计算器 (流式更新)。
+    *   `update(value) -> Optional[float]`: 更新数据并获取当前均值。
+
+*   `total_return` (float): 总收益
+*   `total_return_pct` (float): 总收益率
+*   `annualized_return` (float): 年化收益率
+*   `max_drawdown` (float): 最大回撤金额
+*   `max_drawdown_pct` (float): 最大回撤比例
+*   `sharpe_ratio` (float): 夏普比率
+*   `sortino_ratio` (float): 索提诺比率
+*   `volatility` (float): 波动率
+*   `win_rate` (float): 胜率 (基于天数或周期，非交易笔数)
+*   `initial_market_value` (float): 初始市值
+*   `end_market_value` (float): 结束市值
 
 ### `akquant.TradePnL`
 
-基于 FIFO (先进先出) 规则计算的交易盈亏统计。
+交易盈亏统计 (FIFO)。
 
 **属性:**
 
-*   `win_rate` (float): 胜率 (0.0 - 1.0)。
-*   `profit_factor` (float): 盈亏比。
-*   `max_wins` (int): 最大连续盈利次数。
-*   `max_losses` (int): 最大连续亏损次数。
-*   `unrealized_pnl` (float): 未实现盈亏。
+*   `net_pnl` (float): 净盈亏
+*   `total_commission` (float): 总手续费
+*   `total_closed_trades` (int): 总平仓交易数
+*   `won_count` (int): 盈利交易数
+*   `lost_count` (int): 亏损交易数
+*   `win_rate` (float): 胜率 (盈利次数 / 总次数)
+*   `profit_factor` (float): 盈亏比 (总盈利 / 总亏损绝对值)
+*   `avg_profit` (float): 平均盈利
+*   `avg_loss` (float): 平均亏损
+*   `largest_win` (float): 最大单笔盈利
+*   `largest_loss` (float): 最大单笔亏损
+*   `unrealized_pnl` (float): 未实现盈亏
+
+### `akquant.StrategyContext`
+
+策略上下文，提供给策略逻辑使用的状态和操作接口。
+
+**属性:**
+
+*   `cash` (float): 当前现金
+*   `positions` (Dict[str, float]): 当前持仓
+*   `active_orders` (List[Order]): 活动订单
+*   `session` (TradingSession): 当前交易时段
+
+**方法:**
+
+*   `buy(...)`, `sell(...)`: 交易指令
+*   `cancel_order(order_id)`: 取消订单
+*   `history(...)`: 获取历史数据
+*   `get_position(symbol)`: 获取持仓
+
+
+## 工具函数
+
+*   `akquant.from_arrays(timestamps, opens, highs, lows, closes, volumes, symbol=None, ...)`: 从 Numpy 数组高效批量创建 `Bar` 列表。
+*   `akquant.run_backtest(data, strategy, ...)`: 简化版回测入口函数。
+*   `akquant.DataLoader`: 数据加载工具，支持 AKShare 数据自动缓存。
+*   `akquant.DataFeed`: 数据容器，支持 CSV 流式读取和实时模式。
