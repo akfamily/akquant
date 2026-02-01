@@ -1,6 +1,6 @@
-# akquant
+# AKQuant
 
-**akquant** 是一个基于 **Rust** 和 **Python** 构建的高性能量化投研框架。它旨在结合 Rust 的极致性能和 Python 的易用性，为量化交易者提供强大的回测和研究工具。
+**AKQuant** 是一个基于 **Rust** 和 **Python** 构建的高性能量化投研框架。它旨在结合 Rust 的极致性能和 Python 的易用性，为量化交易者提供强大的回测和研究工具。
 
 最新版本参考了 [NautilusTrader](https://github.com/nautechsystems/nautilus_trader) 和 [PyBroker](https://github.com/edtechre/pybroker) 的架构理念，引入了模块化设计、独立的投资组合管理、高级订单类型支持以及便捷的数据加载与缓存机制。
 
@@ -9,7 +9,7 @@
 ## 核心特性
 
 *   **极致性能**: 核心回测引擎采用 Rust 编写，通过 PyO3 提供 Python 接口。
-    *   **基准测试**: 在 200k K线数据的 SMA 策略回测中，akquant 耗时仅 **1.31s** (吞吐量 ~152k bars/sec)，相比 Backtrader (26.55s) 和 PyBroker (23.61s) 快约 **20倍**。
+    *   **基准测试**: 在 200k K线数据的 SMA 策略回测中，AKQuant 耗时仅 **1.31s** (吞吐量 ~152k bars/sec)，相比 Backtrader (26.55s) 和 PyBroker (23.61s) 快约 **20倍**。
     *   **Zero-Copy Access (New)**: 历史数据 (`ctx.history`) 通过 PyO3 Buffer Protocol / Numpy View 直接映射 Rust 内存，实现零拷贝访问，大幅提升 Python 端指标计算性能。
 *   **模块化架构**:
     *   **Engine**: 事件驱动的核心撮合引擎，采用二进制堆 (BinaryHeap) 管理事件队列。
@@ -35,11 +35,11 @@
     *   **滑点模型 (Slippage)**: 支持 Fixed (固定金额) 和 Percent (百分比) 滑点模型，模拟真实交易成本。
     *   **成交量限制 (Volume Limit)**: 支持按 K 线成交量比例限制单笔撮合数量，并实现分批成交 (Partial Fill)。
 
-## 为什么选择 akquant?
+## 为什么选择 AKQuant?
 
 传统的 Python 回测框架（如 backtrader）在处理大规模数据或复杂逻辑时往往面临性能瓶颈。纯 C++/Rust 框架虽然性能优越，但开发和调试门槛较高。
 
-**akquant** 试图在两者之间找到平衡点：
+**AKQuant** 试图在两者之间找到平衡点：
 
 1.  **性能**: Rust 核心保证了回测速度，特别适合大规模参数优化。
 2.  **易用**: 策略编写完全使用 Python，提供类似 PyBroker 的简洁 API。
@@ -65,7 +65,7 @@ maturin develop
 
 ### 1. 使用 helper 快速回测 (推荐)
 
-`akquant` 提供了一个类似 Zipline 的便捷入口 `run_backtest`，可以快速运行策略。
+`AKQuant` 提供了一个类似 Zipline 的便捷入口 `run_backtest`，可以快速运行策略。
 
 ```python
 import akquant

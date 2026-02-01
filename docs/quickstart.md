@@ -1,6 +1,6 @@
 # 快速开始
 
-本指南将带您快速上手 `akquant`，从简单的手动数据回测到使用 AKShare 真实数据回测。
+本指南将带您快速上手 `AKQuant`，从简单的手动数据回测到使用 AKShare 真实数据回测。
 
 ## 1. 基础示例 (手动数据)
 
@@ -168,7 +168,7 @@ inst = Instrument("600519", AssetType.Stock, 1.0, 0.01)
 engine.add_instrument(inst)
 
 # 5. 加载数据到引擎
-# akquant 提供了便捷工具将 akshare 的 DataFrame 转换为 Bar 列表
+# AKQuant 提供了便捷工具将 akshare 的 DataFrame 转换为 Bar 列表
 bars = load_akshare_bar(df, symbol="600519")
 feed = DataFeed()
 # 批量添加 Bar (比循环添加更快)
@@ -192,7 +192,7 @@ print("-" * 30)
 
 ## 4. 多品种回测 (期货/期权)
 
-`akquant` 支持股票、基金、期货、期权等多种资产类型的回测，并内置了相应的交易规则（如股票买入 100 股限制、期权按张收费等）。
+`AKQuant` 支持股票、基金、期货、期权等多种资产类型的回测，并内置了相应的交易规则（如股票买入 100 股限制、期权按张收费等）。
 
 ### 期货回测示例
 
@@ -267,7 +267,7 @@ run_backtest(
 
 ## 6. 结果分析
 
-`akquant` 提供了方便的 DataFrame 接口用于分析回测结果：
+`AKQuant` 提供了方便的 DataFrame 接口用于分析回测结果：
 
 | 属性 | 描述 |
 | :--- | :--- |

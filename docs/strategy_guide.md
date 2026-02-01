@@ -1,6 +1,6 @@
 # 策略编写指南
 
-本文档旨在帮助策略开发者快速掌握 Akquant 的策略编写方法。Akquant 提供了两种风格的策略开发接口：**类风格 (Class-based)** 和 **函数风格 (Functional)**。
+本文档旨在帮助策略开发者快速掌握 AKQuant 的策略编写方法。AKQuant 提供了两种风格的策略开发接口：**类风格 (Class-based)** 和 **函数风格 (Functional)**。
 
 ## 1. 核心概念
 
@@ -27,7 +27,7 @@
 
 ## 3. 编写类风格策略 (Class-based)
 
-这是 Akquant 推荐的策略编写方式，结构清晰，易于扩展。
+这是 AKQuant 推荐的策略编写方式，结构清晰，易于扩展。
 
 ### 3.1 示例代码
 
@@ -121,7 +121,7 @@ run_backtest(
 
 ## 5. 指标计算模式
 
-Akquant 支持两种指标计算模式，开发者应根据性能需求选择。
+AKQuant 支持两种指标计算模式，开发者应根据性能需求选择。
 
 ### 5.1 向量化预计算 (推荐) - `IndicatorSet`
 
@@ -176,7 +176,7 @@ def on_bar(self, bar):
 
 这种模式下，在 `on_bar` 中实时获取历史序列计算指标。
 
-*   **性能优化**: Akquant 0.1.3+ 采用 Zero-Copy 内存映射 (Numpy View) 技术，从 Rust 端直接暴露历史数据给 Python。这意味着 `get_history` 操作几乎没有内存拷贝开销，相比传统的 Python 列表切片方式有显著性能提升。
+*   **性能优化**: AKQuant 0.1.3+ 采用 Zero-Copy 内存映射 (Numpy View) 技术，从 Rust 端直接暴露历史数据给 Python。这意味着 `get_history` 操作几乎没有内存拷贝开销，相比传统的 Python 列表切片方式有显著性能提升。
 *   **优点**: 代码简单，逻辑与实盘完全一致，无未来函数风险。
 *   **缺点**: 相比向量化预计算仍有一定 Python 调用开销。
 *   **实现步骤**:
@@ -204,7 +204,7 @@ def on_bar(self, bar):
 
 ### 6.2 交易规则
 
-Akquant 引擎内置了中国市场的交易规则支持：
+AKQuant 引擎内置了中国市场的交易规则支持：
 
 *   **T+1 / T+0**: 引擎根据 `Instrument` 类型自动处理。
     *   **股票 (Stock) / 基金 (Fund)**: 默认 T+1 (今日买入明日可卖)。
@@ -226,7 +226,7 @@ Akquant 引擎内置了中国市场的交易规则支持：
 
 ## 7. 全局配置 (`StrategyConfig`)
 
-`akquant` 提供了一个全局配置对象 `strategy_config` (类似 PyBroker)，用于控制回测行为。虽然 `run_backtest` 封装了大部分常用配置，但在高级场景下可以直接修改它。
+`AKQuant` 提供了一个全局配置对象 `strategy_config` (类似 PyBroker)，用于控制回测行为。虽然 `run_backtest` 封装了大部分常用配置，但在高级场景下可以直接修改它。
 
 ```python
 from akquant.config import strategy_config
@@ -248,7 +248,7 @@ strategy_config.max_order_size = 0.5  # 每次最多买入总资金的 50%
 
 ## 9. 结果可视化
 
-Akquant 提供了内置的绘图工具，方便分析策略表现。
+AKQuant 提供了内置的绘图工具，方便分析策略表现。
 
 ```python
 from akquant.backtest import plot_result
@@ -291,7 +291,7 @@ class OptionStrategy(Strategy):
 
 ### 11.1 流式数据加载 (Streaming Data)
 
-对于 TB 级别的超大历史数据文件（如高频 Tick 数据或全市场多年的分钟线），一次性加载到内存会导致 OOM (Out of Memory)。Akquant 提供了 `DataFeed.from_csv` 方法支持流式读取。
+对于 TB 级别的超大历史数据文件（如高频 Tick 数据或全市场多年的分钟线），一次性加载到内存会导致 OOM (Out of Memory)。AKQuant 提供了 `DataFeed.from_csv` 方法支持流式读取。
 
 ```python
 from akquant import DataFeed, Engine
@@ -309,7 +309,7 @@ engine.run(strategy)
 
 ### 11.2 实时交易 (Live Trading)
 
-Akquant 0.1.3+ 支持实时模式，可以接收来自外部接口（如 CTP, TWS, IB Gateway）的数据推送，并驱动策略运行。
+AKQuant 0.1.3+ 支持实时模式，可以接收来自外部接口（如 CTP, TWS, IB Gateway）的数据推送，并驱动策略运行。
 
 **关键点:**
 
@@ -342,7 +342,7 @@ def ctp_receiver(feed):
         # raw_data = ctp_api.recv()
         time.sleep(1) # 模拟每秒一个 Tick
 
-        # 转换为 Akquant Bar
+        # 转换为 AKQuant Bar
         bar = Bar(
             timestamp=time.time_ns(), # 使用当前纳秒时间戳
             symbol="rb2310",

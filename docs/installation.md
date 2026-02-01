@@ -2,7 +2,7 @@
 
 ## 前置要求
 
-在安装 `akquant` 之前，请确保您的系统满足以下要求：
+在安装 `AKQuant` 之前，请确保您的系统满足以下要求：
 
 *   **Python**: 版本 3.9 - 3.13。
 *   **Rust**: 如果需要从源码编译，请安装最新稳定版 Rust。[安装 Rust](https://www.rust-lang.org/tools/install)
@@ -12,7 +12,7 @@
 
 ### 1. 从 PyPI 安装 (推荐)
 
-目前 `akquant` 尚未正式发布到 PyPI。发布后，您将可以通过以下命令安装：
+目前 `AKQuant` 尚未正式发布到 PyPI。发布后，您将可以通过以下命令安装：
 
 ```bash
 pip install akquant
@@ -61,7 +61,7 @@ maturin develop --release
 
 ```python
 import akquant
-print(akquant.__doc__)
+print(akquant.__version__)
 ```
 
 如果没有报错，说明安装成功。
