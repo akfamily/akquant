@@ -103,7 +103,8 @@ fn default_sessions() -> Vec<SessionRange> {
     let t_11_30 = NaiveTime::from_hms_opt(11, 30, 0).unwrap();
     let t_13_00 = NaiveTime::from_hms_opt(13, 0, 0).unwrap();
     let t_14_57 = NaiveTime::from_hms_opt(14, 57, 0).unwrap();
-    let t_15_00 = NaiveTime::from_hms_opt(15, 0, 0).unwrap();
+    // 延长闭市时间到 15:00:01 以包含 15:00:00 的数据点
+    let t_15_00 = NaiveTime::from_hms_opt(15, 0, 1).unwrap();
     vec![
         SessionRange {
             start: t_9_15,

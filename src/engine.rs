@@ -18,7 +18,7 @@ use crate::market::{
     ChinaMarket, ChinaMarketConfig, MarketModel, MarketType, SessionRange, SimpleMarket,
 };
 use crate::model::{
-    AssetType, Bar, ExecutionMode, Instrument, Order, OrderStatus, TimeInForce, Timer, Trade,
+    Bar, ExecutionMode, Instrument, Order, OrderStatus, TimeInForce, Timer, Trade,
     TradingSession,
 };
 use crate::portfolio::Portfolio;
@@ -526,7 +526,7 @@ impl Engine {
                         }
 
                         for mut order in new_orders {
-                            if let Some(err) = self.risk_manager.check(&order, &self.portfolio, &self.instruments, &pending_orders) {
+                            if let Some(err) = self.risk_manager.check_internal(&order, &self.portfolio, &self.instruments, &pending_orders) {
                                 println!("{}", err);
                                 order.status = OrderStatus::Rejected;
                                 self.orders.push(order);
@@ -551,7 +551,7 @@ impl Engine {
                         }
 
                         for mut order in new_orders {
-                            if let Some(err) = self.risk_manager.check(&order, &self.portfolio, &self.instruments, &pending_orders) {
+                            if let Some(err) = self.risk_manager.check_internal(&order, &self.portfolio, &self.instruments, &pending_orders) {
                                 println!("{}", err);
                                 order.status = OrderStatus::Rejected;
                                 self.orders.push(order);

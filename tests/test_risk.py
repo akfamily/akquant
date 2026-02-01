@@ -36,7 +36,7 @@ def test_risk_restricted_list() -> None:
     portfolio = Portfolio(100000.0)
     order = create_dummy_order("BANNED", 100.0)
 
-    error = risk.check(order, portfolio)
+    error = risk.check(order, portfolio, {}, [])
     assert error is not None
     assert "restricted" in error
 
@@ -50,7 +50,7 @@ def test_risk_max_order_size() -> None:
     portfolio = Portfolio(100000.0)
     order = create_dummy_order("AAPL", 2000.0)
 
-    error = risk.check(order, portfolio)
+    error = risk.check(order, portfolio, {}, [])
     assert error is not None
     assert "quantity" in error
 
@@ -64,7 +64,7 @@ def test_risk_max_order_value() -> None:
     portfolio = Portfolio(100000.0)
     order = create_dummy_order("AAPL", 100.0, 600.0)  # Value = 60000
 
-    error = risk.check(order, portfolio)
+    error = risk.check(order, portfolio, {}, [])
     assert error is not None
     assert "value" in error
 
@@ -80,6 +80,6 @@ def test_risk_max_position_size() -> None:
 
     order = create_dummy_order("AAPL", 200.0)  # Resulting pos = 600
 
-    error = risk.check(order, portfolio)
+    error = risk.check(order, portfolio, {}, [])
     assert error is not None
     assert "position" in error

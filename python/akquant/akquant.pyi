@@ -6,25 +6,19 @@ import typing
 import numpy
 import numpy.typing
 
-import akquant
-
 class AssetType:
     Stock: "AssetType"
-    Future: "AssetType"
-    Option: "AssetType"
     Fund: "AssetType"
-    Crypto: "AssetType"
-    Forex: "AssetType"
-    Index: "AssetType"
-    Bond: "AssetType"
-
-class ExecutionMode:
-    CurrentClose: "ExecutionMode"
-    NextOpen: "ExecutionMode"
+    Futures: "AssetType"
+    Option: "AssetType"
 
 class OptionType:
     Call: "OptionType"
     Put: "OptionType"
+
+class OrderType:
+    Market: "OrderType"
+    Limit: "OrderType"
 
 class OrderSide:
     Buy: "OrderSide"
@@ -33,32 +27,31 @@ class OrderSide:
 class OrderStatus:
     New: "OrderStatus"
     Submitted: "OrderStatus"
-    PartiallyFilled: "OrderStatus"
     Filled: "OrderStatus"
-    Canceled: "OrderStatus"
+    Cancelled: "OrderStatus"
     Rejected: "OrderStatus"
     Expired: "OrderStatus"
 
-class OrderType:
-    Market: "OrderType"
-    Limit: "OrderType"
-    Stop: "OrderType"
-    StopLimit: "OrderType"
-
 class TimeInForce:
     GTC: "TimeInForce"
-    Day: "TimeInForce"
     IOC: "TimeInForce"
     FOK: "TimeInForce"
-    GTD: "TimeInForce"
+    Day: "TimeInForce"
+
+class ExecutionMode:
+    CurrentClose: "ExecutionMode"
+    NextOpen: "ExecutionMode"
 
 class TradingSession:
-    PreMarket: "TradingSession"
-    Regular: "TradingSession"
-    PostMarket: "TradingSession"
+    PreOpen: "TradingSession"
+    Continuous: "TradingSession"
+    CallAuction: "TradingSession"
+    Break: "TradingSession"
+    Closed: "TradingSession"
+    PostClose: "TradingSession"
 
 class BacktestResult:
-    r"""回测结果."""
+    """回测结果."""
 
     equity_curve: list[tuple[int, float]]
     metrics: PerformanceMetrics
@@ -67,7 +60,7 @@ class BacktestResult:
     daily_positions: list[tuple[int, dict[str, float]]]
 
 class Bar:
-    r"""
+    """
     K线数据结构.
 
     :ivar timestamp: Unix 时间戳 (纳秒)
@@ -96,7 +89,7 @@ class Bar:
         close: float,
         volume: float,
         symbol: str,
-        extra: typing.Optional[dict[str, float]] = None,
+        extra: typing.Optional[dict[str, float]] = ...,
     ) -> "Bar": ...
     def set_open(self, value: float) -> None: ...
     def set_high(self, value: float) -> None: ...
@@ -106,7 +99,7 @@ class Bar:
     def __repr__(self) -> str: ...
 
 class ClosedTrade:
-    r"""平仓交易记录."""
+    """平仓交易记录."""
 
     symbol: str
     entry_time: int
@@ -123,11 +116,29 @@ class ClosedTrade:
 
 class DataFeed:
     def __new__(cls) -> "DataFeed": ...
+    @staticmethod
+    def from_csv(path: str, symbol: str) -> "DataFeed": ...
+    @staticmethod
+    def create_live() -> "DataFeed": ...
+    def add_bar(self, bar: Bar) -> None: ...
     def add_bars(self, bars: typing.Sequence[Bar]) -> None: ...
+    def add_arrays(
+        self,
+        timestamps: typing.Sequence[int],
+        opens: typing.Sequence[float],
+        highs: typing.Sequence[float],
+        lows: typing.Sequence[float],
+        closes: typing.Sequence[float],
+        volumes: typing.Sequence[float],
+        symbol: typing.Optional[str] = None,
+        symbols: typing.Optional[typing.Sequence[str]] = None,
+        extra: typing.Optional[typing.Mapping[str, typing.Sequence[float]]] = None,
+    ) -> None: ...
     def sort(self) -> None: ...
+    def add_tick(self, tick: Tick) -> None: ...
 
 class Engine:
-    r"""
+    """
     主回测引擎.
 
     :ivar feed: 数据源
@@ -141,13 +152,62 @@ class Engine:
     trades: list[Trade]
     risk_manager: RiskManager
     def __new__(cls) -> "Engine": ...
-    def set_history_depth(self, depth: int) -> None: ...
-    def set_timezone(self, offset: int) -> None: ...
-    def set_execution_mode(self, mode: ExecutionMode) -> None: ...
-    def use_simple_market(self, commission_rate: float) -> None: ...
-    def use_china_market(self) -> None: ...
-    def use_china_futures_market(self) -> None: ...
-    def set_t_plus_one(self, enabled: bool) -> None: ...
+    def set_history_depth(self, depth: int) -> None:
+        """
+        设置历史数据长度.
+
+        :param depth: 历史数据长度
+        """
+        ...
+
+    def set_timezone(self, offset: int) -> None:
+        """
+        设置时区偏移 (秒).
+
+        :param offset: 偏移秒数 (例如 UTC+8 为 28800)
+        """
+        ...
+
+    def set_execution_mode(self, mode: ExecutionMode) -> None:
+        """
+        设置撮合模式.
+
+        :param mode: 撮合模式 (ExecutionMode.CurrentClose 或 ExecutionMode.NextOpen)
+        :type mode: ExecutionMode
+        """
+        ...
+
+    def use_simple_market(self, commission_rate: float) -> None:
+        """
+        启用 SimpleMarket (7x24小时, T+0, 无税, 简单佣金).
+
+        :param commission_rate: 佣金率
+        """
+        ...
+
+    def use_china_market(self) -> None:
+        """启用 ChinaMarket (支持 T+1/T+0, 印花税, 过户费, 交易时段等)."""
+        ...
+
+    def use_china_futures_market(self) -> None:
+        """
+        启用中国期货市场默认配置.
+
+        - 切换到 ChinaMarket
+        - 设置 T+0
+        - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
+        """
+        ...
+
+    def set_t_plus_one(self, enabled: bool) -> None:
+        """
+        启用/禁用 T+1 交易规则 (仅针对 ChinaMarket).
+
+        :param enabled: 是否启用 T+1
+        :type enabled: bool
+        """
+        ...
+
     def set_force_session_continuous(self, enabled: bool) -> None: ...
     def set_stock_fee_rules(
         self,
@@ -161,23 +221,88 @@ class Engine:
         self, commission_rate: float, transfer_fee: float, min_commission: float
     ) -> None: ...
     def set_option_fee_rules(self, commission_per_contract: float) -> None: ...
-    def set_slippage(self, type_: str, value: float) -> None: ...
-    def set_volume_limit(self, limit: float) -> None: ...
+    def set_slippage(self, type_: str, value: float) -> None:
+        """
+        设置滑点模型.
+
+        :param type: 滑点类型 ("fixed" 或 "percent")
+        :param value: 滑点值 (固定金额 或 百分比如 0.001)
+        """
+        ...
+
+    def set_volume_limit(self, limit: float) -> None:
+        """
+        设置成交量限制.
+
+        :param limit: 限制比例 (0.0-1.0), 0.0 为不限制
+        """
+        ...
+
     def set_market_sessions(
         self, sessions: typing.Sequence[tuple[str, str, TradingSession]]
     ) -> None: ...
-    def add_instrument(self, instrument: Instrument) -> None: ...
-    def set_cash(self, cash: float) -> None: ...
-    def add_data(self, feed: DataFeed) -> None: ...
-    def add_bars(self, bars: typing.Sequence[Bar]) -> None: ...
-    def run(self, strategy: typing.Any, show_progress: bool) -> str: ...
-    def get_results(self) -> BacktestResult: ...
+    def add_instrument(self, instrument: Instrument) -> None:
+        """
+        添加交易标的.
+
+        :param instrument: 交易标的对象
+        :type instrument: Instrument
+        """
+        ...
+
+    def set_cash(self, cash: float) -> None:
+        """
+        设置初始资金.
+
+        :param cash: 初始资金数额
+        :type cash: float
+        """
+        ...
+
+    def add_data(self, feed: DataFeed) -> None:
+        """
+        添加数据源.
+
+        :param feed: 数据源对象
+        :type feed: DataFeed
+        """
+        ...
+
+    def add_bars(self, bars: typing.Sequence[Bar]) -> None:
+        """
+        批量添加 K 线数据.
+
+        :param bars: K 线列表
+        """
+        ...
+
+    def run(self, strategy: typing.Any, show_progress: bool) -> str:
+        """
+        运行回测.
+
+        :param strategy: 策略对象
+        :param show_progress: 是否显示进度条
+        :type strategy: object
+        :type show_progress: bool
+        :return: 回测结果摘要
+        :rtype: str
+        """
+        ...
+
+    def get_results(self) -> BacktestResult:
+        """
+        获取回测结果.
+
+        :return: BacktestResult
+        """
+        ...
+
     def create_context(
         self, active_orders: typing.Sequence[Order]
     ) -> StrategyContext: ...
 
 class Instrument:
-    r"""
+    """
     交易标的.
 
     :ivar symbol: 代码
@@ -206,7 +331,7 @@ class Instrument:
     ) -> "Instrument": ...
 
 class Order:
-    r"""
+    """
     订单.
 
     :ivar id: 订单ID
@@ -240,14 +365,14 @@ class Order:
         side: OrderSide,
         order_type: OrderType,
         quantity: float,
-        price: typing.Optional[float] = None,
-        time_in_force: TimeInForce = ...,
-        trigger_price: typing.Optional[float] = None,
+        price: typing.Optional[float] = ...,
+        time_in_force: typing.Optional[TimeInForce] = ...,
+        trigger_price: typing.Optional[float] = ...,
     ) -> "Order": ...
     def __repr__(self) -> str: ...
 
 class PerformanceMetrics:
-    r"""绩效指标."""
+    """绩效指标."""
 
     total_return: float
     annualized_return: float
@@ -266,7 +391,7 @@ class PerformanceMetrics:
     total_return_pct: float
 
 class Portfolio:
-    r"""
+    """
     投资组合管理.
 
     :ivar cash: 当前现金余额
@@ -282,7 +407,7 @@ class Portfolio:
     def get_available_position(self, symbol: str) -> float: ...
 
 class RiskConfig:
-    r"""
+    """
     风控配置.
 
     :ivar max_order_size: 单笔最大下单数量
@@ -292,22 +417,37 @@ class RiskConfig:
     :ivar active: 是否启用风控
     """
 
-    max_order_size: float
-    max_order_value: float
-    max_position_size: float
+    max_order_size: typing.Optional[float]
+    max_order_value: typing.Optional[float]
+    max_position_size: typing.Optional[float]
     restricted_list: list[str]
     active: bool
 
 class RiskManager:
-    r"""
+    """
     风控管理器.
 
     :ivar config: 风控配置
     """
 
     config: RiskConfig
-    def __new__(cls) -> "RiskManager": ...
-    def check(self, order: Order, portfolio: Portfolio) -> typing.Optional[str]: ...
+    def check(
+        self,
+        order: Order,
+        portfolio: Portfolio,
+        instruments: dict[str, Instrument],
+        active_orders: list[Order],
+    ) -> typing.Optional[str]:
+        """
+        检查订单是否符合风控规则.
+
+        :param order: 待检查订单
+        :param portfolio: 当前投资组合
+        :param instruments: 交易标的信息
+        :param active_orders: 当前活动订单
+        :return: 如果检查通过返回 None，否则返回错误信息
+        """
+        ...
 
 class SMA:
     value: typing.Optional[float]
@@ -316,7 +456,7 @@ class SMA:
     def update(self, value: float) -> typing.Optional[float]: ...
 
 class StrategyContext:
-    r"""
+    """
     策略上下文.
 
     :ivar orders: 订单列表 (内部使用)
@@ -346,30 +486,55 @@ class StrategyContext:
     ) -> "StrategyContext": ...
     def history(
         self, symbol: str, field: str, count: int
-    ) -> typing.Optional[numpy.typing.NDArray[numpy.float64]]: ...
-    def schedule(self, timestamp: int, payload: str) -> None: ...
-    def cancel_order(self, order_id: str) -> None: ...
+    ) -> typing.Optional[numpy.typing.NDArray[numpy.float64]]:
+        """
+        获取历史数据.
+
+        :param symbol: 标的代码
+        :param field: 字段名 (open, high, low, close, volume)
+        :param count: 获取的数据长度
+        :return: numpy array or None
+        """
+        ...
+
+    def schedule(self, timestamp: int, payload: str) -> None:
+        """
+        注册定时器.
+
+        :param timestamp: 触发时间戳 (纳秒)
+        :param payload: 携带的数据 (如回调函数名)
+        """
+        ...
+
+    def cancel_order(self, order_id: str) -> None:
+        """
+        取消订单.
+
+        :param order_id: 订单 ID
+        """
+        ...
+
     def buy(
         self,
         symbol: str,
         quantity: float,
-        price: typing.Optional[float] = None,
-        time_in_force: typing.Optional[TimeInForce] = None,
-        trigger_price: typing.Optional[float] = None,
+        price: typing.Optional[float] = ...,
+        time_in_force: typing.Optional[TimeInForce] = ...,
+        trigger_price: typing.Optional[float] = ...,
     ) -> None: ...
     def sell(
         self,
         symbol: str,
         quantity: float,
-        price: typing.Optional[float] = None,
-        time_in_force: typing.Optional[TimeInForce] = None,
-        trigger_price: typing.Optional[float] = None,
+        price: typing.Optional[float] = ...,
+        time_in_force: typing.Optional[TimeInForce] = ...,
+        trigger_price: typing.Optional[float] = ...,
     ) -> None: ...
     def get_position(self, symbol: str) -> float: ...
     def get_available_position(self, symbol: str) -> float: ...
 
 class Tick:
-    r"""
+    """
     Tick 数据结构.
 
     :ivar timestamp: Unix 时间戳 (纳秒)
@@ -390,7 +555,7 @@ class Tick:
     def __repr__(self) -> str: ...
 
 class Trade:
-    r"""
+    """
     成交记录.
 
     :ivar id: 成交ID
@@ -427,7 +592,7 @@ class Trade:
     def __repr__(self) -> str: ...
 
 class TradePnL:
-    r"""交易盈亏统计 (FIFO)."""
+    """交易盈亏统计 (FIFO)."""
 
     gross_pnl: float
     net_pnl: float
@@ -468,9 +633,9 @@ def from_arrays(
     lows: typing.Sequence[float],
     closes: typing.Sequence[float],
     volumes: typing.Sequence[float],
-    symbol: typing.Optional[str] = None,
-    symbols: typing.Optional[typing.Sequence[str]] = None,
+    symbol: typing.Optional[str],
+    symbols: typing.Optional[typing.Sequence[str]],
     extra: typing.Optional[typing.Mapping[str, typing.Sequence[float]]] = None,
 ) -> list[Bar]:
-    r"""从数组批量创建 Bar 列表 (Python 优化用)."""
+    """从数组批量创建 Bar 列表 (Python 优化用)."""
     ...

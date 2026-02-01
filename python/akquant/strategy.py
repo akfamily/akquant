@@ -44,8 +44,8 @@ class Strategy:
         return instance
 
     def __init__(self) -> None:
-        """Initialize the strategy."""
-        pass
+        """初始化."""
+        self._ctx = None
 
     def set_history_depth(self, depth: int) -> None:
         """
@@ -113,11 +113,7 @@ class Strategy:
             self._subscriptions.append(instrument_id)
 
     def on_start(self) -> None:
-        """
-        Start the strategy.
-
-        Use this to subscribe to data or initialize resources.
-        """
+        """策略启动时调用."""
         pass
 
     def _prepare_indicators(self, data: Dict[str, pd.DataFrame]) -> None:

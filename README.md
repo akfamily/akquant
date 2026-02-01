@@ -20,10 +20,13 @@
     *   **Clock**: 参考 NautilusTrader 设计的交易时钟，精确管理交易时段 (TradingSession) 和时间流逝。
     *   **Portfolio**: 独立的投资组合管理，支持实时权益计算。
     *   **MarketModel**: 可插拔的市场模型，内置 A 股 T+1 和期货 T+0 规则。
+        *   **T+1 严格风控**: 针对股票/基金，严格执行 T+1 可用持仓检查，防止当日买入当日卖出（除非配置为 T+0 市场）。
+        *   **可用持仓管理**: 自动维护 `available_positions`，并扣除未成交的卖单冻结数量，防止超卖。
 *   **事件系统**:
     *   **Timer**: 支持 `schedule(timestamp, payload)` 注册定时事件，触发 `on_timer` 回调，实现复杂的盘中定时逻辑。
 *   **风控系统 (New)**:
-    *   **独立拦截层**: 内置 `RiskManager`，在 Rust 引擎层直接拦截违规订单（如超过最大持仓、限制名单等），保障交易安全。
+    *   **独立拦截层**: 内置 `RiskManager`，在 Rust 引擎层直接拦截违规订单。
+    *   **可用持仓检查**: 下单前实时检查可用持仓（Available - Pending Sell），防止超卖违规。
     *   **灵活配置**: 通过 `RiskConfig` 可配置最大单笔金额、最大持仓比例、黑名单等。
 *   **数据生态**:
     *   **Streaming CSV (New)**: 支持流式加载超大 CSV 文件 (`DataFeed.from_csv`)，极大降低内存占用。

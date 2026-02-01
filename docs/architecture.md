@@ -10,6 +10,7 @@
     *   **数据引擎**: 使用 `polars` (Arrow 格式) 管理 OHLCV 数据，尽可能实现零拷贝内存映射。
     *   **回测引擎**: 事件驱动的执行引擎。
     *   **订单撮合**: 模拟限价单/市价单、滑点和手续费。
+    *   **风控模块**: 内置 `RiskManager`，支持预交易风控（T+1 可用持仓、资金限制等）。
     *   **指标计算**: 快速计算夏普比率、最大回撤等指标。
 2.  **接口层 (PyO3)**:
     *   将 Rust 结构体 (`Engine`, `DataFeed`, `StrategyContext`) 暴露为 Python 类。
@@ -31,9 +32,10 @@ akquant/
 │   ├── engine.rs       # 回测核心引擎
 │   ├── clock.rs        # 交易时钟 (NautilusTrader 风格)
 │   ├── execution.rs    # 交易所模拟与订单撮合
-│   ├── market.rs       # 市场规则 (费率、T+1/T+0)
-│   ├── portfolio.rs    # 资金与持仓管理
-│   └── context.rs      # 策略交互上下文
+    ├── market.rs       # 市场规则 (费率、T+1/T+0)
+    ├── portfolio.rs    # 资金与持仓管理
+    ├── risk.rs         # 风控管理 (RiskManager)
+    └── context.rs      # 策略交互上下文
 ├── python/             # Python 源代码
 │   └── akquant/
 │       ├── __init__.py
