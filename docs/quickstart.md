@@ -61,8 +61,8 @@ result = engine.run(MyStrategy())
 # 6. 查看结果
 print(f"Total Return: {result.metrics.total_return_pct:.2f}%")
 
-# 获取 DataFrame 格式结果
-print("Trades:", result.trades_df)
+# 获取 DataFrame 格式结果 (如果有)
+# print("Trades:", result.trades)
 ```
 
 ## 2. 进阶示例 (AKShare 真实数据)
@@ -82,11 +82,15 @@ class SmaStrategy(Strategy):
         self.subscribe("600000")
 
     def on_bar(self, bar):
-        # 简单策略：价格高于均价时买入，否则卖出
+        # 简单策略
+        # 获取当前持仓
+        pos = self.get_position(bar.symbol)
+
+        # 假设我们有一个简单的均线策略 (此处简化为与前一日收盘价比较)
         # 注意：实际中建议使用 IndicatorSet 进行向量化计算
-        if self.ctx.position.size == 0:
+        if pos == 0:
             self.buy(symbol=bar.symbol, quantity=100)
-        elif bar.close > self.ctx.position.avg_price * 1.1:
+        elif bar.close > bar.open * 1.05: # 涨幅超过 5% 止盈
             self.sell(symbol=bar.symbol, quantity=100)
 
 # 2. 配置回测
@@ -244,9 +248,12 @@ def initialize(ctx):
     ctx.stop_loss = 0.05
 
 def on_bar(ctx, bar):
-    if ctx.position.size == 0:
+    # 获取持仓
+    pos = ctx.get_position(bar.symbol)
+
+    if pos == 0:
         ctx.buy(symbol=bar.symbol, quantity=100)
-    elif bar.close < ctx.position.avg_price * (1 - ctx.stop_loss):
+    elif bar.close < bar.open * (1 - ctx.stop_loss):
         ctx.sell(symbol=bar.symbol, quantity=100)
 
 run_backtest(

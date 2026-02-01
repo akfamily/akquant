@@ -33,30 +33,36 @@
 
 ```python
 from akquant import Strategy, Bar
-from akquant.indicator import SMA
+import numpy as np
 
 class MyStrategy(Strategy):
     def __init__(self, ma_window=20):
         super().__init__()
-        # 定义指标，系统会自动维护其计算
-        self.sma = SMA(ma_window)
+        self.ma_window = ma_window
 
     def on_start(self):
         # 显式订阅数据
         self.subscribe("600000")
 
     def on_bar(self, bar: Bar):
-        # 1. 获取指标值
-        ma_value = self.sma.value
+        # 1. 获取历史数据 (Online 模式)
+        # 获取最近 N 个收盘价
+        history = self.get_history(count=self.ma_window, symbol=bar.symbol, field="close")
 
-        # 检查指标是否就绪
-        if ma_value is None:
+        # 检查数据是否足够
+        if len(history) < self.ma_window:
             return
 
+        # 计算均线
+        ma_value = np.mean(history)
+
         # 2. 交易逻辑
-        if bar.close > ma_value:
+        # 获取当前持仓
+        pos = self.get_position(bar.symbol)
+
+        if bar.close > ma_value and pos == 0:
             self.buy(symbol=bar.symbol, quantity=100)
-        elif bar.close < ma_value:
+        elif bar.close < ma_value and pos > 0:
             self.sell(symbol=bar.symbol, quantity=100)
 ```
 
@@ -88,15 +94,18 @@ def on_bar(ctx, bar):
     # ctx 即为策略上下文，同时代理了 Strategy 方法
     prices = ctx.get_history(count=ctx.ma_window)
 
-    if np.isnan(prices).any():
+    if len(prices) < ctx.ma_window:
         return
 
     ma = prices.mean()
 
+    # 获取持仓
+    pos = ctx.get_position(bar.symbol)
+
     # 交易逻辑
-    if bar.close > ma:
+    if bar.close > ma and pos == 0:
         ctx.buy(symbol=bar.symbol, quantity=100)
-    elif bar.close < ma:
+    elif bar.close < ma and pos > 0:
         ctx.sell(symbol=bar.symbol, quantity=100)
 
 # 运行回测
@@ -137,20 +146,28 @@ indicators.add("rsi_14", calculate_rsi, timeperiod=14)
 # 支持 lambda
 indicators.add("ma_20", lambda df: df['close'].rolling(20).mean())
 
-# 3. 在 run_backtest 中传入
+# 3. 在策略中注册
+class MyVectorizedStrategy(Strategy):
+    def __init__(self):
+        super().__init__()
+        # 注册指标
+        # 这里的 Indicator 包装了计算逻辑
+        self.register_indicator("rsi_14", Indicator("rsi_14", calculate_rsi, timeperiod=14))
+
+        # 支持 lambda
+        self.register_indicator("ma_20", Indicator("ma_20", lambda df: df['close'].rolling(20).mean()))
+
+# 4. 运行回测
 run_backtest(
     # ... 其他参数
-    indicators=indicators
+    strategy=MyVectorizedStrategy
 )
 
-# 4. 在策略中使用 (自动注入到 self.indicators 或 ctx.indicators)
-def on_bar(ctx, bar):
-    # 通过 bar.timestamp 自动查找当天的指标值
-    rsi = ctx.indicators["rsi_14"]
-    ma = ctx.indicators["ma_20"]
-
-    if rsi < 30 and bar.close > ma:
-        ctx.buy(symbol=bar.symbol, quantity=100)
+# 5. 在策略中使用
+def on_bar(self, bar):
+    # 可以通过 self.indicators 获取 (需自定义逻辑) 或直接使用预计算值的缓存
+    # 目前建议在 __init__ 中保存引用，或者通过 self.get_indicator(name) (若支持)
+    pass
 ```
 
 ### 5.2 在线计算 (Online)
@@ -255,13 +272,15 @@ from akquant import Strategy, OptionType
 class OptionStrategy(Strategy):
     def on_bar(self, bar):
         # 假设这是一个看涨期权 (Call)
+        pos = self.get_position(bar.symbol)
+
         # 如果标的价格上涨，买入期权
-        if bar.close > 3.0 and self.ctx.position.size == 0:
+        if bar.close > 3.0 and pos == 0:
             # 买入 10 张期权 (假设 multiplier=10000, 相当于 10万股标的)
             self.buy(symbol=bar.symbol, quantity=10)
 
         # 止盈
-        elif bar.close > 3.5 and self.ctx.position.size > 0:
+        elif bar.close > 3.5 and pos > 0:
             self.sell(symbol=bar.symbol, quantity=10)
 
 # 运行回测时指定期权参数
