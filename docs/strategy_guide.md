@@ -228,6 +228,9 @@ AKQuant 引擎内置了中国市场的交易规则支持：
 
 AKQuant 提供了便捷的 helper 函数，允许策略直接设定目标持仓市值或百分比，引擎会自动计算并发送买卖指令。
 
+*   **`order_target(target, symbol)`**: 将持仓调整到指定数量.
+    *   `target`: 目标持仓数量 (例如 100, -100).
+    *   示例: `self.order_target(1000, "AAPL")` (调整 AAPL 持仓至 1000 股).
 *   **`order_target_value(target_value, symbol)`**: 将持仓调整到指定市值。
     *   `target_value`: 目标持仓金额 (正数)。
     *   示例: `self.order_target_value(50000, "AAPL")` (调整 AAPL 持仓至 5万元)。

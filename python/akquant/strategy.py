@@ -346,6 +346,34 @@ class Strategy:
 
         return total_value
 
+    def order_target(
+        self,
+        target: float,
+        symbol: Optional[str] = None,
+        price: Optional[float] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        调整仓位到目标数量.
+
+        :param target: 目标持仓数量 (例如 100, -100)
+        :param symbol: 标的代码
+        :param price: 限价 (可选)
+        :param kwargs: 其他下单参数
+        """
+        symbol = self._resolve_symbol(symbol)
+
+        current_qty = 0.0
+        if self.ctx:
+            current_qty = float(self.ctx.get_position(symbol))
+
+        delta_qty = target - current_qty
+
+        if delta_qty > 0:
+            self.buy(symbol, delta_qty, price, **kwargs)
+        elif delta_qty < 0:
+            self.sell(symbol, abs(delta_qty), price, **kwargs)
+
     def order_target_value(
         self,
         target_value: float,
