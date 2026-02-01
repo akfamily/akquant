@@ -526,7 +526,7 @@ impl Engine {
                         }
 
                         for mut order in new_orders {
-                            if let Some(err) = self.risk_manager.check(&order, &self.portfolio) {
+                            if let Some(err) = self.risk_manager.check(&order, &self.portfolio, &self.instruments, &pending_orders) {
                                 println!("{}", err);
                                 order.status = OrderStatus::Rejected;
                                 self.orders.push(order);
@@ -551,7 +551,7 @@ impl Engine {
                         }
 
                         for mut order in new_orders {
-                            if let Some(err) = self.risk_manager.check(&order, &self.portfolio) {
+                            if let Some(err) = self.risk_manager.check(&order, &self.portfolio, &self.instruments, &pending_orders) {
                                 println!("{}", err);
                                 order.status = OrderStatus::Rejected;
                                 self.orders.push(order);
@@ -691,10 +691,8 @@ impl Engine {
                 }
             }
 
-            // Update Available Positions immediately for T+0 (Futures)
-            if let Some(instr) = self.instruments.get(&trade.symbol)
-                && instr.asset_type == AssetType::Futures
-            {
+            // Update Available Positions
+            if let Some(instr) = self.instruments.get(&trade.symbol) {
                 self.market_model.update_available_position(
                     &mut self.portfolio.available_positions,
                     instr,

@@ -1,10 +1,11 @@
 use crate::model::market_data::extract_decimal;
-use crate::model::{Order, OrderSide};
+use crate::model::{Instrument, Order, OrderSide};
 use crate::portfolio::Portfolio;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
+use std::collections::HashMap;
 
 #[gen_stub_pyclass]
 #[pyclass]
@@ -107,8 +108,16 @@ impl RiskManager {
     ///
     /// :param order: 待检查订单
     /// :param portfolio: 当前投资组合
+    /// :param instruments: 交易标的信息
+    /// :param active_orders: 当前活动订单
     /// :return: 如果检查通过返回 None，否则返回错误信息
-    pub fn check(&self, order: &Order, portfolio: &Portfolio) -> Option<String> {
+    pub fn check(
+        &self,
+        order: &Order,
+        portfolio: &Portfolio,
+        instruments: &HashMap<String, Instrument>,
+        active_orders: &[Order],
+    ) -> Option<String> {
         if !self.config.active {
             return None;
         }
@@ -157,6 +166,35 @@ impl RiskManager {
                     "Risk: Resulting position {} exceeds limit {}",
                     new_pos, max_pos
                 ));
+            }
+        }
+
+        // 5. Check Available Position (For Stocks/Funds - Long Only)
+        if let Some(instr) = instruments.get(&order.symbol) {
+            match instr.asset_type {
+                crate::model::AssetType::Stock | crate::model::AssetType::Fund => {
+                    if order.side == OrderSide::Sell {
+                        let available = portfolio
+                            .available_positions
+                            .get(&order.symbol)
+                            .cloned()
+                            .unwrap_or(Decimal::ZERO);
+
+                        let pending_sell: Decimal = active_orders
+                            .iter()
+                            .filter(|o| o.symbol == order.symbol && o.side == OrderSide::Sell)
+                            .map(|o| o.quantity - o.filled_quantity)
+                            .sum();
+
+                        if available - pending_sell < order.quantity {
+                            return Some(format!(
+                                "Risk: Insufficient available position for {}. Available: {}, Pending Sell: {}, Required: {}",
+                                order.symbol, available, pending_sell, order.quantity
+                            ));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
