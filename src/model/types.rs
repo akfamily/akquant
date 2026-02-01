@@ -73,6 +73,8 @@ pub enum OptionType {
 pub enum OrderType {
     Market,
     Limit,
+    StopMarket,
+    StopLimit,
 }
 
 #[pyclass(eq, eq_int)]

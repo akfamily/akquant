@@ -39,6 +39,9 @@
     *   **基金 (Fund)**: 支持基金特有费率配置。
     *   **期货 (Futures)**: 支持 T+0，保证金交易，合约乘数。
     *   **期权 (Option)**: 支持 Call/Put，行权价，按张收费模式。
+*   **高级订单 (New)**:
+    *   **Stop Orders**: Rust 引擎原生支持止损单触发，提供 StopMarket 和 StopLimit。
+    *   **Target Position**: 内置 `order_target_value` 等辅助函数，自动计算调仓数量。
 *   **灵活配置**:
     *   **Typed Config (New)**: 引入 `BacktestConfig`, `StrategyConfig`, `RiskConfig` 类型化配置对象，替代散乱的 `**kwargs`，提供更好的 IDE 提示和参数校验。
     *   **ExecutionMode**: 支持 `CurrentClose` (信号当根K线收盘成交) 和 `NextOpen` (次日开盘成交) 模式。

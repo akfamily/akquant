@@ -4,7 +4,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 import numpy as np
 import pandas as pd
 
-from .akquant import Bar, ExecutionMode, OrderStatus, StrategyContext, Tick, TimeInForce
+from .akquant import (
+    Bar,
+    ExecutionMode,
+    OrderStatus,
+    StrategyContext,
+    Tick,
+    TimeInForce,
+)
 from .sizer import FixedSize, Sizer
 
 if TYPE_CHECKING:
@@ -27,6 +34,7 @@ class Strategy:
     _bars_history: "defaultdict[str, deque[Bar]]"
     _indicators: List["Indicator"]
     _subscriptions: List[str]
+    _last_prices: Dict[str, float]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -38,6 +46,7 @@ class Strategy:
         instance.current_tick = None
         instance._indicators = []
         instance._subscriptions = []
+        instance._last_prices = {}
 
         # 历史数据配置
         instance._history_depth = 0
@@ -130,6 +139,7 @@ class Strategy:
         """引擎调用的 Bar 回调 (Internal)."""
         self.ctx = ctx
         self.current_bar = bar
+        self._last_prices[bar.symbol] = bar.close
 
         self.on_bar(bar)
 
@@ -137,6 +147,7 @@ class Strategy:
         """引擎调用的 Tick 回调 (Internal)."""
         self.ctx = ctx
         self.current_tick = tick
+        self._last_prices[tick.symbol] = tick.price
         self.on_tick(tick)
 
     def _on_timer_event(self, payload: str, ctx: StrategyContext) -> None:
@@ -201,6 +212,206 @@ class Strategy:
             return [o for o in orders if o.symbol == symbol]
         return orders
 
+    def buy(
+        self,
+        symbol: Optional[str] = None,
+        quantity: Optional[float] = None,
+        price: Optional[float] = None,
+        time_in_force: Optional[TimeInForce] = None,
+        trigger_price: Optional[float] = None,
+    ) -> None:
+        """
+        买入下单.
+
+        Args:
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
+            quantity: 数量 (如果不填, 使用 Sizer 计算)
+            price: 限价 (None 为市价)
+            time_in_force: 订单有效期
+            trigger_price: 触发价 (止损/止盈)
+        """
+        if self.ctx is None:
+            raise RuntimeError("Context not ready")
+
+        # 1. Determine Symbol
+        symbol = self._resolve_symbol(symbol)
+
+        # 2. Determine Reference Price for Sizing
+        ref_price = price
+        if ref_price is None:
+            ref_price = self._last_prices.get(symbol, 0.0)
+
+        # 3. Determine Quantity via Sizer
+        if quantity is None:
+            quantity = self.sizer.get_size(ref_price, self.ctx.cash, self.ctx, symbol)
+
+        # 4. Execute Buy
+        if quantity > 0:
+            self.ctx.buy(symbol, quantity, price, time_in_force, trigger_price)
+
+    def sell(
+        self,
+        symbol: Optional[str] = None,
+        quantity: Optional[float] = None,
+        price: Optional[float] = None,
+        time_in_force: Optional[TimeInForce] = None,
+        trigger_price: Optional[float] = None,
+    ) -> None:
+        """
+        卖出下单.
+
+        Args:
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
+            quantity: 数量 (如果不填, 默认卖出当前标的所有持仓)
+            price: 限价 (None 为市价)
+            time_in_force: 订单有效期
+            trigger_price: 触发价 (止损/止盈)
+        """
+        if self.ctx is None:
+            raise RuntimeError("Context not ready")
+
+        # 1. Determine Symbol
+        symbol = self._resolve_symbol(symbol)
+
+        # 2. Determine Quantity (Default to Close Position if None)
+        if quantity is None:
+            # Default to closing the entire position for this symbol
+            pos = self.ctx.get_position(symbol)
+            if pos > 0:
+                quantity = pos
+            else:
+                # If no position, maybe use Sizer?
+                # For now, if no position and no quantity, we can't sell.
+                return
+
+        # 3. Execute Sell
+        if quantity > 0:
+            self.ctx.sell(symbol, quantity, price, time_in_force, trigger_price)
+
+    def stop_buy(
+        self,
+        symbol: Optional[str] = None,
+        trigger_price: float = 0.0,
+        quantity: Optional[float] = None,
+        price: Optional[float] = None,
+        time_in_force: Optional[TimeInForce] = None,
+    ) -> None:
+        """
+        发送止损买入单 (Stop Buy Order).
+
+        当市价上涨突破 trigger_price 时触发买入.
+        - 如果 price 为 None, 触发后转为市价单 (Stop Market).
+        - 如果 price 不为 None, 触发后转为限价单 (Stop Limit).
+        """
+        self.buy(symbol, quantity, price, time_in_force, trigger_price=trigger_price)
+
+    def stop_sell(
+        self,
+        symbol: Optional[str] = None,
+        trigger_price: float = 0.0,
+        quantity: Optional[float] = None,
+        price: Optional[float] = None,
+        time_in_force: Optional[TimeInForce] = None,
+    ) -> None:
+        """
+        发送止损卖出单 (Stop Sell Order).
+
+        当市价下跌跌破 trigger_price 时触发卖出.
+        - 如果 price 为 None, 触发后转为市价单 (Stop Market).
+        - 如果 price 不为 None, 触发后转为限价单 (Stop Limit).
+        """
+        self.sell(symbol, quantity, price, time_in_force, trigger_price=trigger_price)
+
+    def get_portfolio_value(self) -> float:
+        """计算当前投资组合总价值 (现金 + 持仓市值)."""
+        if self.ctx is None:
+            return 0.0
+
+        total_value = float(self.ctx.cash)
+
+        for symbol, qty in self.ctx.positions.items():
+            if qty == 0:
+                continue
+
+            # 使用最新价格计算市值
+            price = self._last_prices.get(symbol, 0.0)
+            # 如果没有最新价格，尝试使用当前 bar/tick
+            if price == 0.0:
+                if self.current_bar and self.current_bar.symbol == symbol:
+                    price = self.current_bar.close
+                elif self.current_tick and self.current_tick.symbol == symbol:
+                    price = self.current_tick.price
+
+            total_value += float(qty) * price
+
+        return total_value
+
+    def order_target_value(
+        self,
+        target_value: float,
+        symbol: Optional[str] = None,
+        price: Optional[float] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        调整仓位到目标价值.
+
+        :param target_value: 目标持仓市值
+        :param symbol: 标的代码
+        :param price: 限价 (可选)
+        :param kwargs: 其他下单参数
+        """
+        symbol = self._resolve_symbol(symbol)
+
+        # 获取当前价格
+        current_price = self._last_prices.get(symbol, 0.0)
+        if current_price == 0.0:
+            if self.current_bar and self.current_bar.symbol == symbol:
+                current_price = self.current_bar.close
+            elif self.current_tick and self.current_tick.symbol == symbol:
+                current_price = self.current_tick.price
+            else:
+                # 无法获取价格，无法计算数量
+                print(
+                    f"Warning: Cannot determine price for {symbol}, "
+                    "skipping order_target_value"
+                )
+                return
+
+        # 获取当前持仓
+        current_qty = 0.0
+        if self.ctx:
+            current_qty = float(self.ctx.get_position(symbol))
+
+        # 计算目标数量
+        target_qty = target_value / current_price
+        delta_qty = target_qty - current_qty
+
+        # 下单
+        if delta_qty > 0:
+            self.buy(symbol, delta_qty, price, **kwargs)
+        elif delta_qty < 0:
+            self.sell(symbol, abs(delta_qty), price, **kwargs)
+
+    def order_target_percent(
+        self,
+        target_percent: float,
+        symbol: Optional[str] = None,
+        price: Optional[float] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        调整仓位到目标百分比.
+
+        :param target_percent: 目标持仓比例 (0.5 = 50%)
+        :param symbol: 标的代码
+        :param price: 限价 (可选)
+        :param kwargs: 其他下单参数
+        """
+        portfolio_value = self.get_portfolio_value()
+        target_value = portfolio_value * target_percent
+        self.order_target_value(target_value, symbol, price, **kwargs)
+
     def cancel_order(self, order_or_id: Any) -> None:
         """
         取消订单.
@@ -222,7 +433,7 @@ class Strategy:
         取消所有未完成订单.
 
         Args:
-            symbol: 标的代码 (如果为 None，取消所有标的订单)
+            symbol: 标的代码 (如果为 None, 取消所有标的订单)
         """
         for order in self.get_open_orders(symbol):
             self.cancel_order(order)
@@ -234,7 +445,7 @@ class Strategy:
         使用当前所有可用资金买入.
 
         Args:
-            symbol: 标的代码 (如果不填，默认使用当前 Bar/Tick 的 symbol)
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
         """
         if self.ctx is None:
             raise RuntimeError("Context not ready")
@@ -269,7 +480,7 @@ class Strategy:
         卖出/买入以抵消当前持仓.
 
         Args:
-            symbol: 标的代码 (如果不填，默认使用当前 Bar/Tick 的 symbol)
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
         """
         symbol = self._resolve_symbol(symbol)
         position = self.get_position(symbol)
@@ -278,93 +489,6 @@ class Strategy:
             self.sell(symbol=symbol, quantity=position)
         elif position < 0:
             self.buy(symbol=symbol, quantity=abs(position))
-
-    def buy(
-        self,
-        symbol: Optional[str] = None,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-        trigger_price: Optional[float] = None,
-    ) -> None:
-        """
-        买入下单.
-
-        Args:
-            symbol: 标的代码 (如果不填，默认使用当前 Bar/Tick 的 symbol)
-            quantity: 数量 (如果不填，使用 Sizer 计算)
-            price: 限价 (None 为市价)
-            time_in_force: 订单有效期
-            trigger_price: 触发价 (止损/止盈)
-        """
-        if self.ctx is None:
-            raise RuntimeError("Context not ready")
-
-        # 1. Determine Symbol
-        symbol = self._resolve_symbol(symbol)
-
-        # 2. Determine Reference Price for Sizing
-        ref_price = price
-        if ref_price is None:
-            if self.current_bar:
-                ref_price = self.current_bar.close
-            elif self.current_tick:
-                ref_price = self.current_tick.price
-            else:
-                ref_price = 0.0
-
-        # 3. Determine Quantity via Sizer
-        if quantity is None:
-            quantity = self.sizer.get_size(ref_price, self.ctx.cash, self.ctx, symbol)
-
-        # 4. Execute Buy
-        if quantity > 0:
-            self.ctx.buy(symbol, quantity, price, time_in_force, trigger_price)
-
-    def sell(
-        self,
-        symbol: Optional[str] = None,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-        trigger_price: Optional[float] = None,
-    ) -> None:
-        """
-        卖出下单.
-
-        Args:
-            symbol: 标的代码 (如果不填，默认使用当前 Bar/Tick 的 symbol)
-            quantity: 数量 (如果不填，默认卖出当前标的所有持仓)
-            price: 限价 (None 为市价)
-            time_in_force: 订单有效期
-            trigger_price: 触发价 (止损/止盈)
-        """
-        if self.ctx is None:
-            raise RuntimeError("Context not ready")
-
-        # 1. Determine Symbol
-        if symbol is None:
-            if self.current_bar:
-                symbol = self.current_bar.symbol
-            elif self.current_tick:
-                symbol = self.current_tick.symbol
-            else:
-                raise ValueError("Symbol must be provided")
-
-        # 2. Determine Quantity (Default to Close Position if None)
-        if quantity is None:
-            # Default to closing the entire position for this symbol
-            pos = self.ctx.get_position(symbol)
-            if pos > 0:
-                quantity = pos
-            else:
-                # If no position, maybe use Sizer?
-                # For now, if no position and no quantity, we can't sell.
-                return
-
-        # 3. Execute Sell
-        if quantity > 0:
-            self.ctx.sell(symbol, quantity, price, time_in_force, trigger_price)
 
     def short(
         self,
@@ -378,8 +502,8 @@ class Strategy:
         卖出开空 (Short Sell).
 
         Args:
-            symbol: 标的代码 (如果不填，默认使用当前 Bar/Tick 的 symbol)
-            quantity: 数量 (如果不填，使用 Sizer 计算)
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
+            quantity: 数量 (如果不填, 使用 Sizer 计算)
             price: 限价 (None 为市价)
             time_in_force: 订单有效期
             trigger_price: 触发价 (止损/止盈)
@@ -420,8 +544,8 @@ class Strategy:
         买入平空 (Buy to Cover).
 
         Args:
-            symbol: 标的代码 (如果不填，默认使用当前 Bar/Tick 的 symbol)
-            quantity: 数量 (如果不填，默认平掉当前标的所有空头持仓)
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
+            quantity: 数量 (如果不填, 默认平掉当前标的所有空头持仓)
             price: 限价 (None 为市价)
             time_in_force: 订单有效期
             trigger_price: 触发价 (止损/止盈)
@@ -444,40 +568,6 @@ class Strategy:
         # 3. Execute Buy (Cover)
         if quantity > 0:
             self.ctx.buy(symbol, quantity, price, time_in_force, trigger_price)
-
-    def stop_buy(
-        self,
-        symbol: Optional[str] = None,
-        trigger_price: float = 0.0,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-    ) -> None:
-        """
-        发送止损买入单 (Stop Buy Order).
-
-        当市价上涨突破 trigger_price 时触发买入。
-        - 如果 price 为 None，触发后转为市价单 (Stop Market)。
-        - 如果 price 不为 None，触发后转为限价单 (Stop Limit)。
-        """
-        self.buy(symbol, quantity, price, time_in_force, trigger_price=trigger_price)
-
-    def stop_sell(
-        self,
-        symbol: Optional[str] = None,
-        trigger_price: float = 0.0,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-    ) -> None:
-        """
-        发送止损卖出单 (Stop Sell Order).
-
-        当市价下跌跌破 trigger_price 时触发卖出。
-        - 如果 price 为 None，触发后转为市价单 (Stop Market)。
-        - 如果 price 不为 None，触发后转为限价单 (Stop Limit)。
-        """
-        self.sell(symbol, quantity, price, time_in_force, trigger_price=trigger_price)
 
     def schedule(self, timestamp: int, payload: str) -> None:
         """
@@ -516,9 +606,9 @@ class VectorizedStrategy(Strategy):
     """
     向量化策略基类 (Vectorized Strategy Base Class).
 
-    支持预计算指标的高速回测模式。
-    用户应在回测前使用 Pandas/Numpy 计算好所有指标，
-    然后通过本类提供的高速游标访问机制在 on_bar 中读取。
+    支持预计算指标的高速回测模式.
+    用户应在回测前使用 Pandas/Numpy 计算好所有指标,
+    然后通过本类提供的高速游标访问机制在 on_bar 中读取.
     """
 
     def __init__(self, precalculated_data: Dict[str, Dict[str, np.ndarray]]) -> None:
@@ -552,25 +642,21 @@ class VectorizedStrategy(Strategy):
         # 3. Increment Cursor
         self.cursors[bar.symbol] += 1
 
-    def get_value(self, indicator_name: str, symbol: Optional[str] = None) -> float:
+    def get_value(self, name: str, symbol: Optional[str] = None) -> float:
         """
-        获取当前 Bar 对应的预计算指标值 (O(1) Access).
+        获取当前 Bar 对应的预计算指标值.
 
-        :param indicator_name: 指标名称 (key in precalculated_data)
-        :param symbol: 标的代码 (默认当前 Bar symbol)
-        :return: 指标值 (float) 或 NaN
+        Args:
+            name: 指标名称
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar 的 symbol)
+
+        Returns:
+            指标值 (float). 如果不存在或越界，返回 nan.
         """
-        if symbol is None:
-            if self.current_bar is None:
-                return np.nan
-            sym = self.current_bar.symbol
-        else:
-            sym = symbol
-
-        idx = self.cursors[sym]
+        symbol = self._resolve_symbol(symbol)
+        idx = self.cursors[symbol]
 
         try:
-            return float(self.precalc[sym][indicator_name][idx])
+            return float(self.precalc[symbol][name][idx])
         except (KeyError, IndexError):
-            # 越界或键不存在
-            return float(np.nan)
+            return float("nan")

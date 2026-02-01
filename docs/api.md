@@ -55,6 +55,8 @@ Python 策略基类 (`akquant.strategy.Strategy`)。
 *   `cover(symbol, quantity, price, time_in_force, trigger_price)`: 买入平空 (Buy to Cover)。
 *   `stop_buy(symbol, trigger_price, quantity, price, time_in_force)`: 发送止损买入单。
 *   `stop_sell(symbol, trigger_price, quantity, price, time_in_force)`: 发送止损卖出单。
+*   `order_target_value(target_value, symbol, price, **kwargs)`: 调整仓位到目标市值。
+*   `order_target_percent(target_percent, symbol, price, **kwargs)`: 调整仓位到目标账户占比。
 *   `buy_all(symbol)`: 全仓买入。
 *   `close_position(symbol)`: 平仓当前标的。
 *   `cancel_order(order_or_id)`: 取消指定订单。

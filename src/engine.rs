@@ -600,6 +600,9 @@ impl Engine {
             self.daily_equity.push((last_timestamp, equity));
         }
 
+        // Add remaining pending orders to self.orders for analysis
+        self.orders.extend(pending_orders);
+
         if let Some(pb) = pb {
             pb.finish_with_message("Backtest completed");
         }

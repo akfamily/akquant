@@ -107,10 +107,10 @@ impl ExchangeSimulator {
         // 为了简单，我们收集需要更新的索引
 
         // 实际撮合逻辑：遍历所有挂单，看当前 Event 是否满足成交条件
-        for order in orders
-            .iter_mut()
-            .filter(|o| o.status == OrderStatus::New || o.status == OrderStatus::Submitted)
-        {
+        for order in orders.iter_mut() {
+            if order.status != OrderStatus::New && order.status != OrderStatus::Submitted {
+                continue;
+            }
             // 0. 检查最小交易单位 (Lot Size)
             // 仅针对买入订单，且必须存在标的定义
             if order.side == OrderSide::Buy {
@@ -139,24 +139,30 @@ impl ExchangeSimulator {
                         if !triggered {
                             continue; // 未触发，跳过
                         }
-                        // 触发后，trigger_price 视为已满足，继续执行撮合（如果是市价单则直接成交，限价单则看价格）
-                        // 实际系统中，触发后通常变更为市价单或限价单提交到订单簿
-                        // 这里简化处理：只要触发了，就尝试撮合
+
+                        // 触发后，清除 trigger_price，并根据类型转换为市价或限价单
+                        order.trigger_price = None;
+                        match order.order_type {
+                            OrderType::StopMarket => order.order_type = OrderType::Market,
+                            OrderType::StopLimit => order.order_type = OrderType::Limit,
+                            _ => {} // Should not happen for Limit/Market unless they have trigger_price (Conditional)
+                        }
                     }
 
                     // 2. 撮合逻辑
                     let mut execute_price: Option<Decimal> = None;
 
                     match order.order_type {
-                        OrderType::Market => {
-                            // 市价单
+                        OrderType::Market | OrderType::StopMarket => {
+                            // 市价单 / 触发后的止损市价单
                             if match_at_open {
                                 execute_price = Some(bar.open);
                             } else {
                                 execute_price = Some(bar.close);
                             }
                         }
-                        OrderType::Limit => {
+                        OrderType::Limit | OrderType::StopLimit => {
+                            // 限价单 / 触发后的止损限价单
                             if let Some(limit_price) = order.price {
                                 match order.side {
                                     OrderSide::Buy => {
@@ -245,14 +251,22 @@ impl ExchangeSimulator {
                         if !triggered {
                             continue;
                         }
+
+                        // 触发后，清除 trigger_price
+                        order.trigger_price = None;
+                        match order.order_type {
+                            OrderType::StopMarket => order.order_type = OrderType::Market,
+                            OrderType::StopLimit => order.order_type = OrderType::Limit,
+                            _ => {}
+                        }
                     }
 
                     let mut execute_price: Option<Decimal> = None;
                     match order.order_type {
-                        OrderType::Market => {
+                        OrderType::Market | OrderType::StopMarket => {
                             execute_price = Some(tick.price);
                         }
-                        OrderType::Limit => {
+                        OrderType::Limit | OrderType::StopLimit => {
                             if let Some(limit_price) = order.price {
                                 match order.side {
                                     OrderSide::Buy => {

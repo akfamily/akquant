@@ -217,10 +217,11 @@ impl StrategyContext {
             id,
             symbol,
             side: OrderSide::Buy,
-            order_type: if price.is_some() {
-                OrderType::Limit
-            } else {
-                OrderType::Market
+            order_type: match (price.is_some(), trigger_price.is_some()) {
+                (true, true) => OrderType::StopLimit,
+                (false, true) => OrderType::StopMarket,
+                (true, false) => OrderType::Limit,
+                (false, false) => OrderType::Market,
             },
             quantity: qty_decimal,
             price: price_decimal,
@@ -260,10 +261,11 @@ impl StrategyContext {
             id,
             symbol,
             side: OrderSide::Sell,
-            order_type: if price.is_some() {
-                OrderType::Limit
-            } else {
-                OrderType::Market
+            order_type: match (price.is_some(), trigger_price.is_some()) {
+                (true, true) => OrderType::StopLimit,
+                (false, true) => OrderType::StopMarket,
+                (true, false) => OrderType::Limit,
+                (false, false) => OrderType::Market,
             },
             quantity: qty_decimal,
             price: price_decimal,

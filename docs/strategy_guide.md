@@ -224,6 +224,22 @@ AKQuant 引擎内置了中国市场的交易规则支持：
     *   **基金**: 支持独立的佣金费率。
     *   **期权**: 支持按张收费模式。
 
+### 6.3 目标仓位管理
+
+AKQuant 提供了便捷的 helper 函数，允许策略直接设定目标持仓市值或百分比，引擎会自动计算并发送买卖指令。
+
+*   **`order_target_value(target_value, symbol)`**: 将持仓调整到指定市值。
+    *   `target_value`: 目标持仓金额 (正数)。
+    *   示例: `self.order_target_value(50000, "AAPL")` (调整 AAPL 持仓至 5万元)。
+*   **`order_target_percent(target_percent, symbol)`**: 将持仓调整到指定账户总资产比例。
+    *   `target_percent`: 目标比例 (0.0 - 1.0)。
+    *   示例: `self.order_target_percent(0.5, "AAPL")` (调整 AAPL 持仓至总资产的 50%)。
+
+**注意**:
+*   计算基于当前 Bar/Tick 的价格。
+*   自动处理买入和卖出方向。
+*   会自动向下取整以符合最小交易单位 (Lot Size)。
+
 ## 7. 全局配置 (`StrategyConfig`)
 
 `AKQuant` 提供了一个全局配置对象 `strategy_config` (类似 PyBroker)，用于控制回测行为。虽然 `run_backtest` 封装了大部分常用配置，但在高级场景下可以直接修改它。
