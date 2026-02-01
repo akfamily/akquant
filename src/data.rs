@@ -1,4 +1,5 @@
 use crate::model::{Bar, Tick};
+use crate::event::Event;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
@@ -63,6 +64,8 @@ impl DataClient for SimulatedDataClient {
         self.events.front().map(|e| match e {
             Event::Bar(b) => b.timestamp,
             Event::Tick(t) => t.timestamp,
+            Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
+            _ => 0, // Fallback for events without timestamp
         })
     }
 
@@ -79,6 +82,8 @@ impl DataClient for SimulatedDataClient {
         self.events.make_contiguous().sort_by_key(|e| match e {
             Event::Bar(b) => b.timestamp,
             Event::Tick(t) => t.timestamp,
+            Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
+            _ => 0,
         });
     }
 
@@ -156,6 +161,8 @@ impl DataClient for CsvDataClient {
         self.current.as_ref().map(|e| match e {
             Event::Bar(b) => b.timestamp,
             Event::Tick(t) => t.timestamp,
+            Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
+            _ => 0,
         })
     }
 
@@ -215,6 +222,8 @@ impl DataClient for RealtimeDataClient {
         self.current.as_ref().map(|e| match e {
             Event::Bar(b) => b.timestamp,
             Event::Tick(t) => t.timestamp,
+            Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
+            _ => 0,
         })
     }
 
@@ -338,12 +347,6 @@ pub fn from_arrays(
     Ok(bars)
 }
 
-/// 事件类型枚举
-#[derive(Debug, Clone)]
-pub enum Event {
-    Bar(Bar),
-    Tick(Tick),
-}
 
 #[gen_stub_pyclass]
 #[pyclass]

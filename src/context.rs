@@ -1,5 +1,6 @@
 use crate::model::market_data::extract_decimal;
 use crate::model::{Order, OrderSide, OrderType, TimeInForce, Timer, TradingSession};
+use crate::event::Event;
 use crate::analysis::ClosedTrade;
 use crate::history::HistoryBuffer;
 use pyo3::prelude::*;
@@ -7,7 +8,7 @@ use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, mpsc::Sender};
 use uuid::Uuid;
 use numpy::PyArray1;
 
@@ -37,6 +38,8 @@ pub struct StrategyContext {
     pub closed_trades: Arc<Vec<ClosedTrade>>,
     // History Buffer (Shared with Engine)
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
+    // Event Channel (Optional, for async order submission)
+    pub event_tx: Option<Sender<Event>>,
 }
 
 impl StrategyContext {
@@ -48,6 +51,7 @@ impl StrategyContext {
         active_orders: Vec<Order>,
         closed_trades: Arc<Vec<ClosedTrade>>,
         history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
+        event_tx: Option<Sender<Event>>,
     ) -> Self {
         StrategyContext {
             orders: Vec::new(),
@@ -60,6 +64,7 @@ impl StrategyContext {
             session,
             closed_trades,
             history_buffer,
+            event_tx,
         }
     }
 }
@@ -96,6 +101,7 @@ impl StrategyContext {
             session: session.unwrap_or(TradingSession::Closed),
             closed_trades: Arc::new(closed_trades.unwrap_or_default()),
             history_buffer: None,
+            event_tx: None,
         })
     }
 
@@ -231,7 +237,11 @@ impl StrategyContext {
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
         };
-        self.orders.push(order);
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(Event::OrderRequest(order));
+        } else {
+            self.orders.push(order);
+        }
         Ok(())
     }
 
@@ -275,7 +285,11 @@ impl StrategyContext {
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
         };
-        self.orders.push(order);
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(Event::OrderRequest(order));
+        } else {
+            self.orders.push(order);
+        }
         Ok(())
     }
 

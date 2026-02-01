@@ -18,11 +18,14 @@
 *   `add_data(feed: DataFeed)`: 加载数据源。
 *   `add_bars(bars: List[Bar])`: 批量加载 K 线数据 (推荐使用)。
 *   `add_instrument(instrument: Instrument)`: 添加合约信息。
-*   `run(strategy: object, show_progress: bool = True) -> str`: 运行回测。
+**执行模式方法:**
+
 *   `use_simulated_execution()`: 启用模拟执行 (默认回测模式)，在内存中撮合订单。
-*   `use_realtime_execution()`: 启用实盘执行 (Live模式)，模拟对接 CTP/Broker，订单状态标记为 Submitted。
-*   `set_execution_mode(mode: ExecutionMode)`: 设置执行模式 (`CurrentClose` 或 `NextOpen`)。
-*   `set_timezone(offset_secs: int)`: 设置时区偏移秒数 (例如 28800 为 UTC+8)。
+*   `use_realtime_execution()`: 启用实盘执行 (Live模式)，订单通过事件总线异步发送，状态标记为 Submitted。
+*   `set_execution_mode(mode: ExecutionMode)`: 设置撮合时机 (`CurrentClose` 或 `NextOpen`)。
+
+**市场与风控方法:**
+
 *   `use_simple_market(commission_rate: float)`: 启用简单市场模式 (7x24小时, T+0, 无税, 简单佣金)。
 *   `use_china_market()`: 启用中国市场模式 (支持 T+1/T+0, 印花税, 过户费, 交易时段等)。
 *   `use_china_futures_market()`: 启用中国期货市场默认配置 (T+0, 需手动设置交易时段)。

@@ -5,13 +5,14 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock, mpsc::{self, Sender, Receiver}};
 use std::time::Duration;
 
 use crate::analysis::{BacktestResult, TradeTracker};
 use crate::clock::Clock;
 use crate::context::StrategyContext;
-use crate::data::{DataFeed, Event};
+use crate::data::DataFeed;
+use crate::event::Event;
 use crate::execution::{
     ExecutionClient, RealtimeExecutionClient, SimulatedExecutionClient,
 };
@@ -60,6 +61,9 @@ pub struct Engine {
     timezone_offset: i32,
     trade_tracker: TradeTracker,
     history_buffer: Arc<RwLock<HistoryBuffer>>,
+    // Event Bus
+    event_tx: Sender<Event>,
+    event_rx: Option<Mutex<Receiver<Event>>>,
 }
 
 #[gen_stub_pymethods]
@@ -70,6 +74,7 @@ impl Engine {
     /// :return: Engine 实例
     #[new]
     fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
         let market_config = ChinaMarketConfig::default();
         Engine {
             feed: DataFeed::new(),
@@ -97,6 +102,8 @@ impl Engine {
             timezone_offset: 28800, // Default UTC+8
             trade_tracker: TradeTracker::new(),
             history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(0))),
+            event_tx: tx,
+            event_rx: Some(Mutex::new(rx)),
         }
     }
 
@@ -356,23 +363,81 @@ impl Engine {
             None
         };
 
-        // Record initial equity (before processing any events)
-        // This ensures equity_curve starts with initial capital, preventing return calculation errors
-        // for intraday backtests or when the first period has no return.
+        // Record initial equity
         if let Some(timestamp) = self.feed.peek_timestamp() {
-            // At start, equity should equal cash (assuming no positions set)
-            // If positions are set, calculate_equity will handle it (assuming prices are available or 0)
             let equity = self
                 .portfolio
                 .calculate_equity(&self.last_prices, &self.instruments);
             self.daily_equity.push((timestamp, equity));
         }
 
-        // Process all events (Data + Timers) in order
         let is_live = self.feed.is_live();
 
         loop {
-            // Check if we have data or timers
+            // -----------------------------------------------------------
+            // 0. Process Channel Events (High Priority)
+            // -----------------------------------------------------------
+            // We drain the channel to ensure all async events (e.g. from Realtime Broker or Risk) are processed
+            // before moving to the next time step.
+            let mut trades_to_process = Vec::new();
+            if let Some(rx_mutex) = &self.event_rx {
+                if let Ok(rx) = rx_mutex.lock() {
+                    while let Ok(event) = rx.try_recv() {
+                        match event {
+                            Event::OrderRequest(mut order) => {
+                                // 1. Risk Check
+                                if let Some(_err) = self.risk_manager.check_internal(&order, &self.portfolio, &self.instruments, &pending_orders) {
+                                    // Reject
+                                    // println!("Risk Reject: {}", err);
+                                    order.status = OrderStatus::Rejected;
+                                    // Directly process rejection report
+                                    let report = Event::ExecutionReport(order, None);
+                                    let _ = self.event_tx.send(report);
+                                } else {
+                                    // Validate -> Send to Execution
+                                    let _ = self.event_tx.send(Event::OrderValidated(order));
+                                }
+                            },
+                            Event::OrderValidated(order) => {
+                                // 2. Send to Execution Client
+                                self.execution_model.on_order(order.clone());
+                                // Add to local pending (Strategy View)
+                                pending_orders.push(order);
+                            },
+                            Event::ExecutionReport(order, trade) => {
+                                // 3. Update Order State
+                                if let Some(existing) = pending_orders.iter_mut().find(|o| o.id == order.id) {
+                                    existing.status = order.status;
+                                    existing.filled_quantity = order.filled_quantity;
+                                    existing.average_filled_price = order.average_filled_price;
+                                } else {
+                                    // Might be a new order from a source we didn't track yet?
+                                    // Or we missed the Validated event?
+                                    // In strict flow, we should have seen Validated.
+                                    // But if Rejected immediately, we might not have it in pending_orders yet?
+                                    // If Rejected was sent via ExecutionReport, we should add it to pending so we can move it to history.
+                                    if order.status == OrderStatus::Rejected {
+                                         pending_orders.push(order.clone());
+                                    }
+                                }
+
+                                // 4. Process Trade (if any)
+                                if let Some(t) = trade {
+                                    trades_to_process.push(t);
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            if !trades_to_process.is_empty() {
+                self.process_trades(trades_to_process);
+            }
+
+            // -----------------------------------------------------------
+            // 1. Time & Data Management
+            // -----------------------------------------------------------
             let mut next_event_time = self.feed.peek_timestamp();
             let next_timer_time = self.timers.peek().map(|t| t.timestamp);
 
@@ -380,7 +445,7 @@ impl Engine {
                 break; // No more events (Backtest End)
             }
 
-            // Live Mode: Block and wait for data if buffer is empty
+            // Live Mode Wait
             if is_live && next_event_time.is_none() {
                 let timeout = if let Some(timer_ts) = next_timer_time {
                     let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
@@ -405,15 +470,15 @@ impl Engine {
                 }
             }
 
-            // If live and still no event, check if timer is ready
+            // Check timers again after wait
             if is_live && next_event_time.is_none() {
-                if let Some(timer_ts) = next_timer_time {
+                 if let Some(timer_ts) = next_timer_time {
                     let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
                     if timer_ts > now {
-                        continue; // Timer not ready yet, wait more
+                        continue;
                     }
                 } else {
-                    continue; // No data, no timer, wait more
+                    continue;
                 }
             }
 
@@ -424,40 +489,40 @@ impl Engine {
                 (None, None) => break,
             };
 
+            // -----------------------------------------------------------
+            // 2. Process Timer or Data Event
+            // -----------------------------------------------------------
             if process_timer {
-                // Process Timer
+                // --- TIMER EVENT ---
                 if let Some(timer) = self.timers.pop() {
-                    // Update Clock
-                    let local_dt =
-                        Self::local_datetime_from_ns(timer.timestamp, self.timezone_offset);
+                    let local_dt = Self::local_datetime_from_ns(timer.timestamp, self.timezone_offset);
                     let session = self.market_model.get_session_status(local_dt.time());
                     self.clock.update(timer.timestamp, session);
                     if self.force_session_continuous {
                         self.clock.session = TradingSession::Continuous;
                     }
 
-                    // Call Strategy on_timer
-                    let (new_orders, canceled_ids) =
+                    // Strategy on_timer
+                    let (new_orders, new_timers, canceled_ids) =
                         self.call_strategy_timer(strategy, &timer.payload, &pending_orders)?;
 
-                    // Process cancellations
+                    // Handle Strategy Output
                     for order_id in canceled_ids {
-                        if let Some(order) = pending_orders.iter_mut().find(|o| o.id == order_id) {
-                            order.status = OrderStatus::Cancelled;
-                        }
+                        self.execution_model.on_cancel(&order_id);
                     }
-
-                    pending_orders.extend(new_orders);
-
-                    // Note: Timers do not advance bar_index or trigger day close directly in this simplified model,
-                    // unless we add logic for that. For now, they are just callbacks.
-                    // Also, we don't extract new orders from timers yet, but we could.
+                    for order in new_orders {
+                        // Push to Channel for processing
+                        let _ = self.event_tx.send(Event::OrderRequest(order));
+                    }
+                    for t in new_timers {
+                        self.timers.push(t);
+                    }
                 }
             } else {
-                // Process Data Event
+                // --- MARKET DATA EVENT ---
                 let event = self.feed.next().unwrap();
 
-                // Update History Buffer
+                // Update History
                 if let Event::Bar(ref b) = event {
                     self.history_buffer.write().unwrap().update(b);
                 }
@@ -467,50 +532,56 @@ impl Engine {
                     pb.inc(1);
                 }
 
-                // 1. Process Date Change (Day Close)
+                // Update Clock & Day Close
                 let timestamp = match &event {
                     Event::Bar(b) => b.timestamp,
                     Event::Tick(t) => t.timestamp,
+                    _ => 0,
                 };
 
                 if last_timestamp != 0 && timestamp > last_timestamp {
                     bar_index += 1;
                 }
 
-                // Update Clock
                 let local_dt = Self::local_datetime_from_ns(timestamp, self.timezone_offset);
                 let session = self.market_model.get_session_status(local_dt.time());
                 self.clock.update(timestamp, session);
-                if self.force_session_continuous {
+                 if self.force_session_continuous {
                     self.clock.session = TradingSession::Continuous;
                 }
 
                 let local_date = local_dt.date_naive();
                 if self.current_date != Some(local_date) {
-                    // New day: Settlement logic
+                    // Day Close Logic
                     if self.current_date.is_some() {
-                        // Record equity for the previous day
-                        let equity = self
-                            .portfolio
-                            .calculate_equity(&self.last_prices, &self.instruments);
+                        // Equity Snapshot
+                        let equity = self.portfolio.calculate_equity(&self.last_prices, &self.instruments);
                         self.daily_equity.push((last_timestamp, equity));
                         self.daily_positions.push((last_timestamp, self.portfolio.positions.clone()));
 
-                        // Update T+1 availability
+                        // T+1
                         self.market_model.on_day_close(
                             &self.portfolio.positions,
                             &mut self.portfolio.available_positions,
                             &self.instruments,
                         );
 
-                        // Expire Day orders
-                        // Note: We need to filter pending_orders in place.
-                        let (expired, kept): (Vec<Order>, Vec<Order>) = pending_orders
+                        // Expire Day Orders
+                        // We need to tell ExecutionClient to cancel them?
+                        // Or ExecutionClient handles expiry?
+                        // Simplified: Engine handles expiry for now by marking them.
+                        // Ideally ExecutionClient checks time.
+                        // Let's manually expire in pending_orders and send Cancel to ExecutionClient?
+                        // No, just update status and let ExecutionClient sync via logic or on_cancel.
+                        // For Simulated, we can just leave it.
+                        // But let's stick to legacy behavior:
+                         let (expired, kept): (Vec<Order>, Vec<Order>) = pending_orders
                             .into_iter()
                             .partition(|o| o.time_in_force == TimeInForce::Day);
 
                         for mut o in expired {
                             o.status = OrderStatus::Expired;
+                            // self.execution_model.on_cancel(&o.id); // Or on_expire?
                             self.orders.push(o);
                         }
                         pending_orders = kept;
@@ -521,79 +592,122 @@ impl Engine {
                 match self.execution_mode {
                     ExecutionMode::NextOpen => {
                         // Phase 1: Execution (Match pending orders at Open)
-                        let new_trades = self.execution_model.process_event(
+                        // Pass event to ExecutionClient
+                        let reports = self.execution_model.on_event(
                             &event,
-                            &mut pending_orders[..],
                             &self.instruments,
                             true,
                             bar_index,
                             self.clock.session,
                         );
-                        self.process_trades(new_trades);
 
-                        // Phase 2: Strategy (Generate new orders)
+                        // Process Reports
+                        for report in reports {
+                             let _ = self.event_tx.send(report);
+                        }
+                        // We need to pump the channel immediately to update pending_orders BEFORE strategy sees them?
+                        // Or let the loop handle it next iteration?
+                        // Strategy usually expects "filled" status if it happened at Open?
+                        // "NextOpen" means orders submitted yesterday are filled at Open.
+                        // So we should process reports NOW.
+                        // But reports are in Channel.
+                        // Let's manually process them or loop channel again?
+                        // Simpler: Just recursively call channel drain? Or copy-paste channel logic?
+                        // Or: send reports to channel, and let the NEXT loop iteration process them.
+                        // BUT call_strategy is below. If we don't process, Strategy sees old state.
+                        // So we should drain channel again here.
+
+                        // Drain Channel (Mini-Loop)
+                        let mut trades_to_process = Vec::new();
+                        if let Some(rx_mutex) = &self.event_rx {
+                            if let Ok(rx) = rx_mutex.lock() {
+                                while let Ok(ev) = rx.try_recv() {
+                                    match ev {
+                                        Event::ExecutionReport(o, t) => {
+                                            if let Some(existing) = pending_orders.iter_mut().find(|ex| ex.id == o.id) {
+                                                existing.status = o.status;
+                                                existing.filled_quantity = o.filled_quantity;
+                                                existing.average_filled_price = o.average_filled_price;
+                                            }
+                                            if let Some(tr) = t { trades_to_process.push(tr); }
+                                        },
+                                        _ => {} // Ignore others for now (or queue them)
+                                    }
+                                }
+                            }
+                        }
+                        if !trades_to_process.is_empty() {
+                            self.process_trades(trades_to_process);
+                        }
+
+                        // Phase 2: Strategy
                         let (new_orders, new_timers, canceled_ids) =
                             self.call_strategy(strategy, &event, &pending_orders)?;
 
-                        // Process cancellations
-                        for order_id in canceled_ids {
-                            if let Some(order) = pending_orders.iter_mut().find(|o| o.id == order_id) {
-                                order.status = OrderStatus::Cancelled;
-                            }
-                        }
-
-                        for mut order in new_orders {
-                            if let Some(err) = self.risk_manager.check_internal(&order, &self.portfolio, &self.instruments, &pending_orders) {
-                                println!("{}", err);
-                                order.status = OrderStatus::Rejected;
-                                self.orders.push(order);
-                            } else {
-                                pending_orders.push(order);
-                            }
-                        }
-                        for t in new_timers {
-                            self.timers.push(t);
-                        }
+                        for id in canceled_ids { self.execution_model.on_cancel(&id); }
+                        for order in new_orders { let _ = self.event_tx.send(Event::OrderRequest(order)); }
+                        for t in new_timers { self.timers.push(t); }
                     }
                     ExecutionMode::CurrentClose => {
-                        // Phase 1: Strategy (Generate new orders)
+                        // Phase 1: Strategy
                         let (new_orders, new_timers, canceled_ids) =
                             self.call_strategy(strategy, &event, &pending_orders)?;
 
-                        // Process cancellations
-                        for order_id in canceled_ids {
-                            if let Some(order) = pending_orders.iter_mut().find(|o| o.id == order_id) {
-                                order.status = OrderStatus::Cancelled;
-                            }
-                        }
+                        for id in canceled_ids { self.execution_model.on_cancel(&id); }
+                        for order in new_orders { let _ = self.event_tx.send(Event::OrderRequest(order)); }
+                        for t in new_timers { self.timers.push(t); }
 
-                        for mut order in new_orders {
-                            if let Some(err) = self.risk_manager.check_internal(&order, &self.portfolio, &self.instruments, &pending_orders) {
-                                println!("{}", err);
-                                order.status = OrderStatus::Rejected;
-                                self.orders.push(order);
-                            } else {
-                                pending_orders.push(order);
+                        // Drain channel to process OrderRequests -> OrderValidated -> ExecutionClient
+                        // This allows orders generated at "Close" to be matched immediately at "Close" (if supported)
+                        let mut trades_to_process = Vec::new();
+                        if let Some(rx_mutex) = &self.event_rx {
+                            if let Ok(rx) = rx_mutex.lock() {
+                                while let Ok(ev) = rx.try_recv() {
+                                    match ev {
+                                        Event::OrderRequest(mut o) => {
+                                            if let Some(_err) = self.risk_manager.check_internal(&o, &self.portfolio, &self.instruments, &pending_orders) {
+                                                o.status = OrderStatus::Rejected;
+                                                let _ = self.event_tx.send(Event::ExecutionReport(o, None));
+                                            } else {
+                                                let _ = self.event_tx.send(Event::OrderValidated(o));
+                                            }
+                                        },
+                                        Event::OrderValidated(o) => {
+                                            self.execution_model.on_order(o.clone());
+                                            pending_orders.push(o);
+                                        },
+                                        Event::ExecutionReport(o, t) => {
+                                            if let Some(ex) = pending_orders.iter_mut().find(|x| x.id == o.id) {
+                                                ex.status = o.status;
+                                                ex.filled_quantity = o.filled_quantity;
+                                                ex.average_filled_price = o.average_filled_price;
+                                            } else if o.status == OrderStatus::Rejected {
+                                                pending_orders.push(o);
+                                            }
+                                            if let Some(tr) = t { trades_to_process.push(tr); }
+                                        },
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
-                        for t in new_timers {
-                            self.timers.push(t);
+                        if !trades_to_process.is_empty() {
+                            self.process_trades(trades_to_process);
                         }
 
                         // Phase 2: Execution (Match new orders at Close)
-                        let new_trades = self.execution_model.process_event(
+                        let reports = self.execution_model.on_event(
                             &event,
-                            &mut pending_orders[..],
                             &self.instruments,
                             false,
                             bar_index,
                             self.clock.session,
                         );
-                        self.process_trades(new_trades);
+                        for report in reports { let _ = self.event_tx.send(report); }
                     }
                 }
 
-                // Clean up filled/cancelled orders from pending list
+                // Cleanup finished orders
                 let (finished, active): (Vec<Order>, Vec<Order>) =
                     pending_orders.into_iter().partition(|o| {
                         o.status == OrderStatus::Filled
@@ -609,15 +723,13 @@ impl Engine {
             }
         }
 
-        // Record final equity
+        // Final Equity
         if count > 0 {
             let equity = self
                 .portfolio
                 .calculate_equity(&self.last_prices, &self.instruments);
             self.daily_equity.push((last_timestamp, equity));
         }
-
-        // Add remaining pending orders to self.orders for analysis
         self.orders.extend(pending_orders);
 
         if let Some(pb) = pb {
@@ -652,6 +764,7 @@ impl Engine {
             active_orders,
             self.trade_tracker.closed_trades.clone(),
             Some(self.history_buffer.clone()),
+            Some(self.event_tx.clone()),
         )
     }
 }
@@ -778,6 +891,9 @@ impl Engine {
                 });
                 Ok((new_orders, new_timers, canceled_ids))
             }
+            Event::OrderRequest(_) | Event::OrderValidated(_) | Event::ExecutionReport(_, _) => {
+                Ok((Vec::new(), Vec::new(), Vec::new()))
+            }
         }
     }
 
@@ -786,7 +902,7 @@ impl Engine {
         strategy: &Bound<'_, PyAny>,
         payload: &str,
         active_orders: &[Order],
-    ) -> PyResult<(Vec<Order>, Vec<String>)> {
+    ) -> PyResult<(Vec<Order>, Vec<Timer>, Vec<String>)> {
         let ctx = self.create_context(active_orders.to_vec());
         let py_ctx = Python::attach(|py| {
             let py_ctx = Py::new(py, ctx).unwrap();
@@ -805,13 +921,7 @@ impl Engine {
             new_timers.extend(ctx_ref.timers.clone());
             canceled_ids.extend(ctx_ref.canceled_order_ids.clone());
         });
-
-        // Add extracted items to Engine
-        for t in new_timers {
-            self.timers.push(t);
-        }
-
-        Ok((new_orders, canceled_ids))
+        Ok((new_orders, new_timers, canceled_ids))
     }
 }
 

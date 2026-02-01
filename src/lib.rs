@@ -6,6 +6,7 @@ mod clock;
 mod context;
 mod data;
 mod engine;
+mod event;
 mod execution;
 mod history;
 mod indicators;

@@ -1,4 +1,4 @@
-use crate::data::Event;
+use crate::event::Event;
 use crate::model::{Order, OrderSide, OrderStatus, OrderType, TimeInForce, Trade, TradingSession};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
@@ -59,16 +59,21 @@ impl SlippageModel for PercentSlippage {
 
 /// 交易执行接口 (Execution Client Trait)
 pub trait ExecutionClient: Send + Sync {
-    /// 处理市场事件并更新订单状态/生成成交
-    fn process_event(
+    /// 接收新订单
+    fn on_order(&mut self, order: Order);
+
+    /// 取消订单请求
+    fn on_cancel(&mut self, order_id: &str);
+
+    /// 处理市场事件并返回执行报告
+    fn on_event(
         &mut self,
         event: &Event,
-        orders: &mut [Order],
         instruments: &std::collections::HashMap<String, crate::model::Instrument>,
         match_at_open: bool,
         bar_index: usize,
         session: TradingSession,
-    ) -> Vec<Trade>;
+    ) -> Vec<Event>;
 
     /// 设置滑点模型 (仅回测有效)
     fn set_slippage_model(&mut self, _model: Box<dyn SlippageModel>) {}
@@ -87,6 +92,7 @@ pub trait ExecutionClient: Send + Sync {
 pub struct SimulatedExecutionClient {
     slippage_model: Box<dyn SlippageModel>,
     volume_limit_pct: Decimal, // 成交量限制比例 (0.0 = 不限制)
+    pending_orders: Vec<Order>,
 }
 
 impl SimulatedExecutionClient {
@@ -94,6 +100,7 @@ impl SimulatedExecutionClient {
         SimulatedExecutionClient {
             slippage_model: Box::new(ZeroSlippage),
             volume_limit_pct: Decimal::ZERO,
+            pending_orders: Vec::new(),
         }
     }
 }
@@ -107,16 +114,38 @@ impl ExecutionClient for SimulatedExecutionClient {
         self.volume_limit_pct = Decimal::from_f64(limit).unwrap_or(Decimal::ZERO);
     }
 
-    fn process_event(
+    fn on_order(&mut self, order: Order) {
+        // 模拟交易所接收订单
+        let mut order = order;
+        if order.status == OrderStatus::New {
+            order.status = OrderStatus::Submitted;
+        }
+        self.pending_orders.push(order);
+    }
+
+    fn on_cancel(&mut self, order_id: &str) {
+        if let Some(order) = self.pending_orders.iter_mut().find(|o| o.id == order_id) {
+            if order.status == OrderStatus::Submitted || order.status == OrderStatus::New {
+                order.status = OrderStatus::Cancelled;
+                // Note: In a real system, we would generate an ExecutionReport for cancellation here.
+                // But on_event loop will pick it up or we should return events from on_cancel too?
+                // For simplicity, we just mark it. The loop will clean it up or we handle it in on_event.
+                // Better: Keep it as Cancelled, on_event will generate report and remove it?
+                // Or just mark it and let the engine see the state?
+                // Let's assume on_event handles reporting.
+            }
+        }
+    }
+
+    fn on_event(
         &mut self,
         event: &Event,
-        orders: &mut [Order],
         instruments: &std::collections::HashMap<String, crate::model::Instrument>,
         match_at_open: bool,
         bar_index: usize,
         session: TradingSession,
-    ) -> Vec<Trade> {
-        let mut trades = Vec::new();
+    ) -> Vec<Event> {
+        let mut reports = Vec::new();
 
         // Skip matching during non-trading sessions
         if session == TradingSession::Break
@@ -124,11 +153,17 @@ impl ExecutionClient for SimulatedExecutionClient {
             || session == TradingSession::PreOpen
             || session == TradingSession::PostClose
         {
-            return trades;
+            return reports;
         }
 
         // 实际撮合逻辑：遍历所有挂单，看当前 Event 是否满足成交条件
-        for order in orders.iter_mut() {
+        for order in self.pending_orders.iter_mut() {
+            // Check for cancellation first
+            if order.status == OrderStatus::Cancelled {
+                reports.push(Event::ExecutionReport(order.clone(), None));
+                continue;
+            }
+
             if order.status != OrderStatus::New && order.status != OrderStatus::Submitted {
                 continue;
             }
@@ -138,7 +173,7 @@ impl ExecutionClient for SimulatedExecutionClient {
                 if let Some(instrument) = instruments.get(&order.symbol) {
                     if order.quantity % instrument.lot_size != Decimal::ZERO {
                         order.status = OrderStatus::Rejected;
-                        // 可以添加日志说明拒绝原因
+                        reports.push(Event::ExecutionReport(order.clone(), None));
                         continue;
                     }
                 }
@@ -249,13 +284,14 @@ impl ExecutionClient for SimulatedExecutionClient {
                                 timestamp: bar.timestamp,
                                 bar_index,
                             };
-                            trades.push(trade);
+                            reports.push(Event::ExecutionReport(order.clone(), Some(trade)));
                         }
                     } else if order.time_in_force == TimeInForce::IOC
                         || order.time_in_force == TimeInForce::FOK
                     {
                         // IOC/FOK 未能立即成交则取消
                         order.status = OrderStatus::Cancelled;
+                        reports.push(Event::ExecutionReport(order.clone(), None));
                     }
                 }
                 Event::Tick(tick) => {
@@ -345,18 +381,28 @@ impl ExecutionClient for SimulatedExecutionClient {
                                 timestamp: tick.timestamp,
                                 bar_index,
                             };
-                            trades.push(trade);
+                            reports.push(Event::ExecutionReport(order.clone(), Some(trade)));
                         }
                     } else if order.time_in_force == TimeInForce::IOC
                         || order.time_in_force == TimeInForce::FOK
                     {
                         order.status = OrderStatus::Cancelled;
+                        reports.push(Event::ExecutionReport(order.clone(), None));
                     }
                 }
+                _ => {}
             }
         }
 
-        trades
+        // Cleanup filled/cancelled/rejected orders from pending list
+        self.pending_orders.retain(|o| {
+            o.status != OrderStatus::Filled
+                && o.status != OrderStatus::Cancelled
+                && o.status != OrderStatus::Rejected
+                && o.status != OrderStatus::Expired
+        });
+
+        reports
     }
 }
 
@@ -375,30 +421,24 @@ impl ExecutionClient for RealtimeExecutionClient {
         true
     }
 
-    fn process_event(
+    fn on_order(&mut self, order: Order) {
+        println!("[Realtime] Sending Order to Broker: {} {:?} {}", order.symbol, order.side, order.quantity);
+        // In real impl, send to broker API
+    }
+
+    fn on_cancel(&mut self, order_id: &str) {
+        println!("[Realtime] Cancelling Order: {}", order_id);
+    }
+
+    fn on_event(
         &mut self,
         _event: &Event,
-        orders: &mut [Order],
         _instruments: &std::collections::HashMap<String, crate::model::Instrument>,
         _match_at_open: bool,
         _bar_index: usize,
         _session: TradingSession,
-    ) -> Vec<Trade> {
-        // 在实盘模式下，process_event 主要用于：
-        // 1. 发送新订单到柜台
-        // 2. 检查订单更新 (或者通过回调/Polling 方式)
-        // 这里仅做简单模拟
-
-        for order in orders.iter_mut() {
-            if order.status == OrderStatus::New {
-                println!("[Realtime] Sending Order to Broker: {} {:?} {}", order.symbol, order.side, order.quantity);
-                // 模拟发送成功
-                order.status = OrderStatus::Submitted;
-            }
-        }
-
-        // 实盘成交通常异步返回，不直接在此处生成 Trade
-        // 如果需要模拟，可以随机成交
+    ) -> Vec<Event> {
+        // In realtime, this might check for async callbacks or do nothing if callbacks push to channel directly
         Vec::new()
     }
 }
