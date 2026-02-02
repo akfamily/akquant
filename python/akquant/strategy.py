@@ -1,5 +1,5 @@
 from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -12,7 +12,9 @@ from .akquant import (
     Tick,
     TimeInForce,
 )
+from .ml.model import QuantModel
 from .sizer import FixedSize, Sizer
+from .utils import parse_duration_to_bars
 
 if TYPE_CHECKING:
     from .indicator import Indicator
@@ -35,6 +37,10 @@ class Strategy:
     _indicators: List["Indicator"]
     _subscriptions: List[str]
     _last_prices: Dict[str, float]
+    _rolling_train_window: int
+    _rolling_step: int
+    _bar_count: int
+    _model_configured: bool
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -50,11 +56,19 @@ class Strategy:
 
         # 历史数据配置
         instance._history_depth = 0
+
+        # 滚动训练配置
+        instance._rolling_train_window = 0
+        instance._rolling_step = 0
+        instance._bar_count = 0
+        instance._model_configured = False
+
         return instance
 
     def __init__(self) -> None:
         """初始化."""
         self._ctx = None
+        self.model: Optional[QuantModel] = None
 
     def set_history_depth(self, depth: int) -> None:
         """
@@ -63,6 +77,19 @@ class Strategy:
         :param depth: 保留的 Bar 数量 (0 表示不保留)
         """
         self._history_depth = depth
+
+    def set_rolling_window(self, train_window: int, step: int) -> None:
+        """
+        设置滚动训练窗口参数.
+
+        :param train_window: 训练数据长度 (Bars)
+        :param step: 滚动步长 (每隔多少个 Bar 触发一次训练)
+        """
+        self._rolling_train_window = train_window
+        self._rolling_step = step
+        # 自动调整 history_depth 以满足训练窗口需求
+        if self._history_depth < train_window:
+            self._history_depth = train_window
 
     def get_history(
         self, count: int, symbol: Optional[str] = None, field: str = "close"
@@ -97,6 +124,98 @@ class Strategy:
             return cast(np.ndarray, np.concatenate((padding, arr)))
 
         return cast(np.ndarray, arr)
+
+    def get_history_df(self, count: int, symbol: Optional[str] = None) -> pd.DataFrame:
+        """
+        获取历史数据 DataFrame (Open, High, Low, Close, Volume).
+
+        :param count: 数据长度
+        :param symbol: 标的代码
+        :return: pd.DataFrame
+        """
+        symbol = self._resolve_symbol(symbol)
+
+        data = {
+            "open": self.get_history(count, symbol, "open"),
+            "high": self.get_history(count, symbol, "high"),
+            "low": self.get_history(count, symbol, "low"),
+            "close": self.get_history(count, symbol, "close"),
+            "volume": self.get_history(count, symbol, "volume"),
+        }
+        return pd.DataFrame(data)
+
+    def get_rolling_data(
+        self, length: Optional[int] = None, symbol: Optional[str] = None
+    ) -> tuple[pd.DataFrame, Optional[pd.Series]]:
+        """
+        获取滚动训练数据.
+
+        :param length: 数据长度 (默认使用 set_rolling_window 设置的 train_window)
+        :param symbol: 标的代码
+        :return: (X, y) 默认为 (DataFrame, None)
+        """
+        if length is None:
+            length = self._rolling_train_window
+
+        if length <= 0:
+            raise ValueError("Invalid rolling window length")
+
+        df = self.get_history_df(length, symbol)
+
+        # 默认返回 raw DataFrame 作为 X，y 为 None
+        # 用户可以在策略中重写此方法或自行处理数据
+        return df, None
+
+    def on_train_signal(self, context: Any) -> None:
+        """
+        滚动训练信号回调.
+
+        默认实现：如果配置了 self.model，则自动执行数据准备和训练.
+
+        :param context: 策略上下文 (通常是 self)
+        """
+        if self.model:
+            try:
+                X_df, _ = self.get_rolling_data()
+                X, y = self.prepare_features(X_df)
+                self.model.fit(X, y)
+            except NotImplementedError:
+                # User didn't implement prepare_features, assuming manual handling
+                pass
+            except Exception as e:
+                print(f"Auto-training failed at bar {self._bar_count}: {e}")
+
+    def prepare_features(self, df: pd.DataFrame) -> Tuple[Any, Any]:
+        """
+        Prepare features and labels for ML model.
+
+        Must be implemented by user if using auto-training.
+
+        :param df: Raw dataframe from get_rolling_data
+        :return: (X, y)
+        """
+        raise NotImplementedError(
+            "You must implement prepare_features(self, df) for auto-training"
+        )
+
+    def _auto_configure_model(self) -> None:
+        """Apply model validation configuration if present."""
+        if self._model_configured:
+            return
+
+        if self.model and self.model.validation_config:
+            cfg = self.model.validation_config
+
+            try:
+                train_window = parse_duration_to_bars(cfg.train_window, cfg.frequency)
+                step = parse_duration_to_bars(cfg.rolling_step, cfg.frequency)
+
+                # Update settings
+                self.set_rolling_window(train_window, step)
+            except Exception as e:
+                print(f"Failed to configure model validation: {e}")
+
+        self._model_configured = True
 
     def set_sizer(self, sizer: Sizer) -> None:
         """设置仓位管理器."""
@@ -138,8 +257,20 @@ class Strategy:
     def _on_bar_event(self, bar: Bar, ctx: StrategyContext) -> None:
         """引擎调用的 Bar 回调 (Internal)."""
         self.ctx = ctx
+
+        # Lazy configuration
+        if not self._model_configured:
+            self._auto_configure_model()
+
         self.current_bar = bar
         self._last_prices[bar.symbol] = bar.close
+
+        # 检查滚动训练信号
+        if self._rolling_step > 0:
+            self._bar_count += 1
+            if self._bar_count % self._rolling_step == 0:
+                # 触发训练信号，传入 self 作为 context
+                self.on_train_signal(self)
 
         self.on_bar(bar)
 

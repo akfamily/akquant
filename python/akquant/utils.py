@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Optional, Tuple, Union, cast
 
 import pandas as pd
 
@@ -114,6 +114,60 @@ def load_akshare_bar(df: pd.DataFrame, symbol: Optional[str] = None) -> List[Bar
     return from_arrays(
         timestamps, opens, highs, lows, closes, volumes, symbol_val, symbols_list
     )
+
+
+def parse_duration_to_bars(duration: Union[str, int], frequency: str = "1d") -> int:
+    """
+    Parse duration string to number of bars.
+
+    Assumes A-share trading hours for intraday frequencies.
+
+    :param duration: Duration string (e.g. "1y", "3m", "20d") or integer bars.
+    :param frequency: Data frequency ("1d", "1h", "1m"). Default "1d".
+    :return: Estimated number of bars.
+    """
+    if isinstance(duration, int):
+        return duration
+
+    import re
+
+    match = re.match(r"(\d+)([ymwd])", duration.lower())
+    if not match:
+        # Try to parse as int string
+        try:
+            return int(duration)
+        except ValueError:
+            raise ValueError(f"Invalid duration format: {duration}")
+
+    value = int(match.group(1))
+    unit = match.group(2)
+
+    # Estimated bars per day (A-share)
+    if frequency == "1d":
+        bars_per_day = 1
+    elif frequency == "1h":
+        bars_per_day = 4
+    elif frequency == "30m":
+        bars_per_day = 8
+    elif frequency == "15m":
+        bars_per_day = 16
+    elif frequency == "5m":
+        bars_per_day = 48
+    elif frequency == "1m":
+        bars_per_day = 240
+    else:
+        bars_per_day = 1
+
+    if unit == "y":
+        return int(value * 252 * bars_per_day)
+    elif unit == "m":
+        return int(value * 21 * bars_per_day)
+    elif unit == "w":
+        return int(value * 5 * bars_per_day)
+    elif unit == "d":
+        return int(value * bars_per_day)
+
+    return value
 
 
 def df_to_arrays(

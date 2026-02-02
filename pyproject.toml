@@ -30,6 +30,10 @@ full = [
 ]
 data = ["akshare>=1.0.0"]
 plot = ["matplotlib>=3.0.0"]
+ml = [
+    "scikit-learn>=1.0.0",
+    "torch>=2.0.0",
+]
 dev = [
     "ruff>=0.1.0",
     "pre-commit>=3.0.0",

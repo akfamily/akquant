@@ -279,24 +279,45 @@ result = run_backtest(...)
 plot_result(result)
 ```
 
-## 10. 多品种策略示例
 
-对于涉及多种资产类型的策略，您可以在 `run_backtest` 中指定 `asset_type`，或手动添加不同类型的 `Instrument`。
+## 11. 机器学习策略 (Machine Learning)
 
-### 10.1 期权策略示例 (Class-based)
+AKQuant 引入了全新的 ML 框架，支持 **Walk-forward Validation (滚动训练)** 和 **Adapter Pattern (适配器模式)**，使得构建 AI 驱动的策略变得前所未有的简单。
+
+与传统逻辑不同，ML 策略的核心是将“预测”与“决策”分离：
+
+1.  **Model**: 输出 Signal (概率/数值)。
+2.  **Strategy**: 根据 Signal 执行 Action (买/卖)。
 
 ```python
-from akquant import Strategy, OptionType
+class MyMLStrategy(Strategy):
+    def __init__(self):
+        super().__init__()
+        # 1. 初始化模型
+        self.model = SklearnAdapter(LogisticRegression())
 
-class OptionStrategy(Strategy):
+        # 2. 自动配置 Walk-forward 验证
+        # 框架自动处理：数据切分 -> 特征提取 -> 模型重训 -> 参数冻结
+        self.model.set_validation(
+            method='walk_forward',
+            train_window='1y',
+            rolling_step='3m'
+        )
+
+    def prepare_features(self, df):
+        # ... 特征工程逻辑 ...
+        return X, y
+
     def on_bar(self, bar):
-        # 假设这是一个看涨期权 (Call)
-        pos = self.get_position(bar.symbol)
+        # 3. 实时预测
+        signal = self.model.predict(current_features)
 
-        # 如果标的价格上涨，买入期权
-        if bar.close > 3.0 and pos == 0:
-            # 买入 10 张期权 (假设 multiplier=10000, 相当于 10万股标的)
-            self.buy(symbol=bar.symbol, quantity=10)
+        # 4. 决策逻辑
+        if signal > 0.6:
+            self.buy(bar.symbol, 100)
+```
+
+详细教程请参阅 **[机器学习指南 (ML Guide)](ml_guide.md)**。
 
         # 止盈
         elif bar.close > 3.5 and pos > 0:

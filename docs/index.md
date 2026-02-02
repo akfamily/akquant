@@ -28,6 +28,10 @@
     *   **Streaming CSV (New)**: 支持流式加载超大 CSV 文件 (`DataFeed.from_csv`)，极大降低内存占用。
     *   **AKShare 集成**: 内置 `DataLoader`，无缝支持 [AKShare](https://github.com/akfamily/akshare) 数据加载。
     *   **智能缓存**: 支持数据本地缓存 (Pickle)，避免重复下载，加速策略迭代。
+*   **机器学习 (New)**:
+    *   **ML Framework**: 内置高性能机器学习训练框架，支持 Walk-forward Validation (滚动训练)。
+    *   **Adapter Pattern**: 统一 Scikit-learn 和 PyTorch 接口，解耦模型与策略逻辑。
+    *   **📖 [机器学习指南](ml_guide.md)**: 详细了解如何构建 AI 驱动的策略。
 *   **灵活配置**:
     *   **StrategyConfig**: 全局策略配置 (类似 PyBroker)，支持资金管理、费率模式等设置。
     *   **ExecutionMode**: 支持 `CurrentClose` (信号当根K线收盘成交) 和 `NextOpen` (次日开盘成交) 模式。
