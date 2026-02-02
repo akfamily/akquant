@@ -1,4 +1,3 @@
-use pyo3::prelude::*;
 use crate::model::{Bar, Tick, Order, Trade};
 
 #[derive(Debug, Clone)]

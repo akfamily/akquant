@@ -280,7 +280,7 @@ plot_result(result)
 ```
 
 
-## 11. 机器学习策略 (Machine Learning)
+## 10. 机器学习策略 (Machine Learning)
 
 AKQuant 引入了全新的 ML 框架，支持 **Walk-forward Validation (滚动训练)** 和 **Adapter Pattern (适配器模式)**，使得构建 AI 驱动的策略变得前所未有的简单。
 
@@ -318,13 +318,6 @@ class MyMLStrategy(Strategy):
 ```
 
 详细教程请参阅 **[机器学习指南 (ML Guide)](ml_guide.md)**。
-
-        # 止盈
-        elif bar.close > 3.5 and pos > 0:
-            self.sell(symbol=bar.symbol, quantity=10)
-
-# 运行回测时指定期权参数
-# run_backtest(..., asset_type=AssetType.Option, option_type=OptionType.Call, ...)
 ```
 
 ## 11. 高级特性 (Advanced Features)

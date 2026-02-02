@@ -130,13 +130,13 @@ class SklearnAdapter(QuantModel):
 
     def save(self, path: str) -> None:
         """Save the sklearn model using joblib."""
-        import joblib
+        import joblib  # type: ignore
 
         joblib.dump(self.model, path)
 
     def load(self, path: str) -> None:
         """Load the sklearn model using joblib."""
-        import joblib
+        import joblib  # type: ignore
 
         self.model = joblib.load(path)
 

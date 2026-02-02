@@ -80,9 +80,10 @@ class MyMLStrategy(Strategy):
         future_ret = df['close'].pct_change().shift(-1)
         y = (future_ret > 0).astype(int)
 
-        # 注意: 框架会自动处理数据对齐，你只需要返回完整的 X 和 y
-        # 训练时框架会自动切片并去掉最后一行无效数据
-        return X, y
+        # 注意: 框架只负责按时间窗口切割原始数据 df，不负责特征和标签的对齐
+        # 由于 shift(-1) 会导致最后一行 y 为 NaN，必须手动去除
+        # 否则 sklearn/pytorch 训练会报错
+        return X.iloc[:-1], y.iloc[:-1]
 
     def on_bar(self, bar):
         # 3. 实时预测与交易

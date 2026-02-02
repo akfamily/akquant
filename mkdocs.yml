@@ -34,6 +34,7 @@ nav:
   - 安装指南: installation.md
   - 快速开始: quickstart.md
   - 策略指南: strategy_guide.md
+  - 机器学习指南: ml_guide.md
   - 架构设计: architecture.md
   - API 参考: api.md
   - 示例: examples.md

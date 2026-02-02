@@ -6,7 +6,7 @@ from akquant.akquant import Bar
 from akquant.backtest import run_backtest
 from akquant.ml import SklearnAdapter
 from akquant.strategy import Strategy
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression  # type: ignore
 
 
 class WalkForwardStrategy(Strategy):

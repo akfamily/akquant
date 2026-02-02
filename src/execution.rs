@@ -82,6 +82,7 @@ pub trait ExecutionClient: Send + Sync {
     fn set_volume_limit(&mut self, _limit: f64) {}
 
     /// 是否为实盘模式
+    #[allow(dead_code)]
     fn is_live(&self) -> bool {
         false
     }

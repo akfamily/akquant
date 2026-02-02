@@ -28,6 +28,10 @@
     *   **独立拦截层**: 内置 `RiskManager`，在 Rust 引擎层直接拦截违规订单。
     *   **可用持仓检查**: 下单前实时检查可用持仓（Available - Pending Sell），防止超卖违规。
     *   **灵活配置**: 通过 `RiskConfig` 可配置最大单笔金额、最大持仓比例、黑名单等。
+*   **机器学习 (New)**:
+    *   **Walk-forward Validation**: 内置滚动训练框架，彻底杜绝未来函数。
+    *   **统一适配器**: 提供 `SklearnAdapter` 和 `PyTorchAdapter`，统一 Scikit-learn 和 PyTorch 接口。
+    *   **信号解耦**: 提倡 Signal (预测) 与 Action (执行) 分离的设计模式。
 *   **数据生态**:
     *   **Streaming CSV (New)**: 支持流式加载超大 CSV 文件 (`DataFeed.from_csv`)，极大降低内存占用。
     *   **Live Trading (New)**: 支持通过 `DataFeed.create_live()` 创建实时数据源，支持 CTP/Gateway 实时数据推送。

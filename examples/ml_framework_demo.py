@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from akquant.ml import PyTorchAdapter, SklearnAdapter
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression  # type: ignore
 
 
 def verify_sklearn_adapter() -> None:
