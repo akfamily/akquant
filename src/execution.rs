@@ -507,22 +507,44 @@ mod tests {
         let mut sim = SimulatedExecutionClient::new();
         let instruments = create_test_instruments();
         let order = create_test_order("AAPL", OrderSide::Buy, OrderType::Market, Decimal::from(100), None);
-        let mut orders = vec![order.clone()];
+        // Setup sim
+        sim.on_order(order);
 
         let bar = create_test_bar("AAPL", Decimal::from(100), Decimal::from(105), Decimal::from(95), Decimal::from(102));
         let event = Event::Bar(bar);
 
         // Match at Open
-        let trades = sim.process_event(&event, &mut orders, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+
+        let trades: Vec<Trade> = events.iter().filter_map(|e| {
+            if let Event::ExecutionReport(_, Some(trade)) = e {
+                Some(trade.clone())
+            } else {
+                None
+            }
+        }).collect();
 
         assert_eq!(trades.len(), 1);
         assert_eq!(trades[0].price, Decimal::from(100)); // Open price
-        assert_eq!(orders[0].status, OrderStatus::Filled);
+
+        // Check order status from the last report
+        let last_order = events.iter().filter_map(|e| {
+            if let Event::ExecutionReport(o, _) = e { Some(o) } else { None }
+        }).last().unwrap();
+        assert_eq!(last_order.status, OrderStatus::Filled);
 
         // Reset and Match at Close
         let order2 = create_test_order("AAPL", OrderSide::Buy, OrderType::Market, Decimal::from(100), None);
-        let mut orders2 = vec![order2.clone()];
-        let trades2 = sim.process_event(&event, &mut orders2, &instruments, false, 0, TradingSession::Continuous);
+        sim.on_order(order2);
+
+        let events2 = sim.on_event(&event, &instruments, false, 0, TradingSession::Continuous);
+        let trades2: Vec<Trade> = events2.iter().filter_map(|e| {
+            if let Event::ExecutionReport(_, Some(trade)) = e {
+                Some(trade.clone())
+            } else {
+                None
+            }
+        }).collect();
 
         assert_eq!(trades2.len(), 1);
         assert_eq!(trades2[0].price, Decimal::from(102)); // Close price
@@ -534,12 +556,19 @@ mod tests {
         let instruments = create_test_instruments();
         // Limit Buy @ 98. Low is 95. Should fill.
         let order = create_test_order("AAPL", OrderSide::Buy, OrderType::Limit, Decimal::from(100), Some(Decimal::from(98)));
-        let mut orders = vec![order];
+        sim.on_order(order);
 
         let bar = create_test_bar("AAPL", Decimal::from(100), Decimal::from(105), Decimal::from(95), Decimal::from(102));
         let event = Event::Bar(bar);
 
-        let trades = sim.process_event(&event, &mut orders, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let trades: Vec<Trade> = events.iter().filter_map(|e| {
+            if let Event::ExecutionReport(_, Some(trade)) = e {
+                Some(trade.clone())
+            } else {
+                None
+            }
+        }).collect();
 
         assert_eq!(trades.len(), 1);
         // Fill logic in code: min(limit, open) if Low <= limit.
@@ -553,15 +582,22 @@ mod tests {
         let instruments = create_test_instruments();
         // Limit Buy @ 90. Low is 95. Should NOT fill.
         let order = create_test_order("AAPL", OrderSide::Buy, OrderType::Limit, Decimal::from(100), Some(Decimal::from(90)));
-        let mut orders = vec![order];
+        sim.on_order(order);
 
         let bar = create_test_bar("AAPL", Decimal::from(100), Decimal::from(105), Decimal::from(95), Decimal::from(102));
         let event = Event::Bar(bar);
 
-        let trades = sim.process_event(&event, &mut orders, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let trades: Vec<Trade> = events.iter().filter_map(|e| {
+            if let Event::ExecutionReport(_, Some(trade)) = e {
+                Some(trade.clone())
+            } else {
+                None
+            }
+        }).collect();
 
         assert_eq!(trades.len(), 0);
-        assert_eq!(orders[0].status, OrderStatus::New);
+        assert_eq!(events.len(), 0);
     }
 
     #[test]
@@ -570,12 +606,19 @@ mod tests {
         let instruments = create_test_instruments();
         // Limit Sell @ 103. High is 105. Should fill.
         let order = create_test_order("AAPL", OrderSide::Sell, OrderType::Limit, Decimal::from(100), Some(Decimal::from(103)));
-        let mut orders = vec![order];
+        sim.on_order(order);
 
         let bar = create_test_bar("AAPL", Decimal::from(100), Decimal::from(105), Decimal::from(95), Decimal::from(102));
         let event = Event::Bar(bar);
 
-        let trades = sim.process_event(&event, &mut orders, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let trades: Vec<Trade> = events.iter().filter_map(|e| {
+            if let Event::ExecutionReport(_, Some(trade)) = e {
+                Some(trade.clone())
+            } else {
+                None
+            }
+        }).collect();
 
         assert_eq!(trades.len(), 1);
         // Fill logic: max(limit, open) if High >= limit.
@@ -590,22 +633,35 @@ mod tests {
 
         // Odd lot buy (50 shares), should be rejected (lot size 100)
         let order = create_test_order("AAPL", OrderSide::Buy, OrderType::Market, Decimal::from(50), None);
-        let mut orders = vec![order];
+        sim.on_order(order);
 
         let bar = create_test_bar("AAPL", Decimal::from(100), Decimal::from(105), Decimal::from(95), Decimal::from(102));
         let event = Event::Bar(bar);
 
-        let trades = sim.process_event(&event, &mut orders, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
 
-        assert_eq!(trades.len(), 0);
-        assert_eq!(orders[0].status, OrderStatus::Rejected);
+        let last_order = events.iter().filter_map(|e| {
+            if let Event::ExecutionReport(o, _) = e { Some(o) } else { None }
+        }).last().unwrap();
+        assert_eq!(last_order.status, OrderStatus::Rejected);
 
         // Valid lot buy (200 shares), should be accepted
         let order2 = create_test_order("AAPL", OrderSide::Buy, OrderType::Market, Decimal::from(200), None);
-        let mut orders2 = vec![order2];
-        let trades2 = sim.process_event(&event, &mut orders2, &instruments, true, 0, TradingSession::Continuous);
+        sim.on_order(order2);
+
+        let events2 = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let trades2: Vec<Trade> = events2.iter().filter_map(|e| {
+            if let Event::ExecutionReport(_, Some(trade)) = e {
+                Some(trade.clone())
+            } else {
+                None
+            }
+        }).collect();
 
         assert_eq!(trades2.len(), 1);
-        assert_eq!(orders2[0].status, OrderStatus::Filled);
+        let last_order2 = events2.iter().filter_map(|e| {
+            if let Event::ExecutionReport(o, _) = e { Some(o) } else { None }
+        }).last().unwrap();
+        assert_eq!(last_order2.status, OrderStatus::Filled);
     }
 }
