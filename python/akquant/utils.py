@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional, Tuple, Union, cast
 
+import numpy as np
 import pandas as pd
 
 from .akquant import Bar, from_arrays
@@ -89,15 +90,15 @@ def load_bar_from_df(
     if dt_series.dt.tz is None:
         dt_series = dt_series.dt.tz_localize("Asia/Shanghai")
     dt_series = dt_series.dt.tz_convert("UTC")
-    timestamps = dt_series.astype("int64").tolist()
+    timestamps = dt_series.astype("int64").values
 
     # 2. Extract numeric columns
     # Use astype(float) to ensure correct type, fillna(0.0) for safety
-    opens = df[field_to_col["open"]].fillna(0.0).astype(float).tolist()
-    highs = df[field_to_col["high"]].fillna(0.0).astype(float).tolist()
-    lows = df[field_to_col["low"]].fillna(0.0).astype(float).tolist()
-    closes = df[field_to_col["close"]].fillna(0.0).astype(float).tolist()
-    volumes = df[field_to_col["volume"]].fillna(0.0).astype(float).tolist()
+    opens = df[field_to_col["open"]].fillna(0.0).astype(float).values
+    highs = df[field_to_col["high"]].fillna(0.0).astype(float).values
+    lows = df[field_to_col["low"]].fillna(0.0).astype(float).values
+    closes = df[field_to_col["close"]].fillna(0.0).astype(float).values
+    volumes = df[field_to_col["volume"]].fillna(0.0).astype(float).values
 
     # 3. Handle Symbol
     symbols_list: Optional[List[str]] = None
@@ -174,15 +175,15 @@ def parse_duration_to_bars(duration: Union[str, int], frequency: str = "1d") -> 
 def df_to_arrays(
     df: pd.DataFrame, symbol: Optional[str] = None
 ) -> Tuple[
-    List[int],
-    List[float],
-    List[float],
-    List[float],
-    List[float],
-    List[float],
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
     Optional[str],
     Optional[List[str]],
-    Optional[Dict[str, List[float]]],
+    Optional[Dict[str, np.ndarray]],
 ]:
     r"""
     将 DataFrame 转换为用于 DataFeed.add_arrays 的数组元组.
@@ -192,7 +193,17 @@ def df_to_arrays(
     :return: (timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra)
     """
     if df.empty:
-        return ([], [], [], [], [], [], symbol, None, None)
+        return (
+            np.array([], dtype=np.int64),
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+            symbol,
+            None,
+            None,
+        )
 
     # Column Mapping Strategy
     # Priority:
@@ -276,13 +287,11 @@ def df_to_arrays(
         dt_series_s = dt_series_s.dt.tz_localize("Asia/Shanghai")
     dt_series_s = dt_series_s.dt.tz_convert("UTC")
 
-    timestamps = dt_series_s.astype("int64").values.tolist()
+    timestamps = cast(np.ndarray, dt_series_s.astype("int64").values)
 
     # 2. Extract numeric columns
-    def get_col(name: str) -> List[float]:
-        return cast(
-            List[float], df[resolved[name]].fillna(0.0).astype(float).values.tolist()
-        )
+    def get_col(name: str) -> np.ndarray:
+        return cast(np.ndarray, df[resolved[name]].fillna(0.0).astype(float).values)
 
     opens = get_col("open")
     highs = get_col("high")
@@ -315,7 +324,9 @@ def df_to_arrays(
             # We use fillna(0.0) for safety, similar to other fields
             # Check if column is numeric
             if pd.api.types.is_numeric_dtype(df[col]):
-                extra[str(col)] = df[col].fillna(0.0).astype(float).values.tolist()
+                extra[str(col)] = cast(
+                    np.ndarray, df[col].fillna(0.0).astype(float).values
+                )
         except Exception:
             # Skip non-numeric extra columns
             pass
