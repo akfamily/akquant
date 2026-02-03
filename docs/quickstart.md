@@ -1,6 +1,6 @@
 # 快速开始
 
-本指南将带您快速上手 `AKQuant`，从简单的手动数据回测到使用 AKShare 真实数据回测。
+本指南将带您快速上手 `AKQuant`，从简单的手动数据回测到使用 Pandas DataFrame 数据回测。
 
 ## 1. 基础示例 (手动数据)
 
@@ -65,17 +65,31 @@ print(f"Total Return: {result.metrics.total_return_pct:.2f}%")
 # print("Trades:", result.trades)
 ```
 
-## 2. 进阶示例 (AKShare 真实数据)
+## 2. 进阶示例 (Pandas DataFrame 数据)
 
-这个示例展示了如何结合 `DataLoader` 和便捷函数 `run_backtest` 快速运行基于 AKShare 数据的回测。我们推荐使用 `BacktestConfig` 来管理配置，并在策略中显式订阅数据。
+这个示例展示了如何结合 `DataLoader` 和便捷函数 `run_backtest` 快速运行基于 Pandas DataFrame 数据的回测。
 
 ```python
+import pandas as pd
 import akquant
 from akquant.backtest import run_backtest
 from akquant import Strategy
 from akquant.config import BacktestConfig
 
-# 1. 定义策略
+# 1. 准备数据
+dates = pd.date_range(start="2023-01-01", end="2023-06-30")
+data = {
+    "date": dates,
+    "open": [10.0 + i * 0.1 for i in range(len(dates))],
+    "high": [10.5 + i * 0.1 for i in range(len(dates))],
+    "low": [9.5 + i * 0.1 for i in range(len(dates))],
+    "close": [10.2 + i * 0.1 for i in range(len(dates))],
+    "volume": [1000.0 for _ in range(len(dates))],
+    "symbol": ["600000"] * len(dates)
+}
+df = pd.DataFrame(data)
+
+# 2. 定义策略
 class SmaStrategy(Strategy):
     def on_start(self):
         # 显式订阅数据
@@ -86,65 +100,55 @@ class SmaStrategy(Strategy):
         # 获取当前持仓
         pos = self.get_position(bar.symbol)
 
-        # 假设我们有一个简单的均线策略 (此处简化为与前一日收盘价比较)
-        # 注意：实际中建议使用 IndicatorSet 进行向量化计算
         if pos == 0:
             self.buy(symbol=bar.symbol, quantity=100)
         elif bar.close > bar.open * 1.05: # 涨幅超过 5% 止盈
             self.sell(symbol=bar.symbol, quantity=100)
 
-# 2. 配置回测
+# 3. 配置回测
 config = BacktestConfig(
     start_date="20230101",
     end_date="20230630",
     cash=500_000.0,
-    commission=0.0003
+    commission=0.0003,
 )
 
-# 3. 运行回测
-# run_backtest 会自动处理：
-# - 数据加载 (根据策略订阅)
-# - 合约信息注册 (默认 A股 T+1)
-# - 资金与费率配置
+# 4. 运行回测
+# 直接传入 DataFrame 字典，key 为 symbol
 result = run_backtest(
-    strategy=SmaStrategy,
-    config=config
+    strategy_cls=SmaStrategy,
+    config=config,
+    data={"600000": df}
 )
 
-# 4. 查看结果
-print(f"Total Return: {result.metrics.total_return_pct:.2f}%")
-print(f"Sharpe Ratio: {result.metrics.sharpe_ratio:.2f}")
-print(f"Max Drawdown: {result.metrics.max_drawdown_pct:.2f}%")
-
-# 5. 可视化与分析
-# 绘制权益曲线
-import akquant
-akquant.plot_result(result, show=True)
-
-# 导出交易记录
-result.trades_df.to_csv("trades.csv")
+# 5. 查看结果
+print("Annualized Return:", result.metrics.annualized_return)
+result.plot()
 ```
 
-## 3. 自定义数据源 (手动集成 AkShare)
+## 3. 自定义数据源 (手动加载)
 
-如果您希望手动控制数据下载过程，或者使用 `run_backtest` 以外的数据源，可以使用以下方式手动加载数据。这里以显式调用 `akshare` 接口为例。
+如果您希望手动控制数据下载过程，或者使用 `run_backtest` 以外的数据源，可以使用以下方式手动加载数据。
 
 ```python
-import akshare as ak
+import pandas as pd
 import akquant
 from akquant import Engine, Strategy, DataFeed, Instrument, AssetType
-from akquant.utils import load_akshare_bar
+from akquant.utils import load_bar_from_df
 
-# 1. 获取数据 (使用 akshare)
-print("正在下载数据...")
-# 获取贵州茅台 (600519) 的历史数据
-df = ak.stock_zh_a_hist(
-    symbol="600519",
-    period="daily",
-    start_date="20230101",
-    end_date="20231231",
-    adjust="qfq"
-)
+# 1. 加载数据
+# 假设我们有一个 DataFrame (例如从 CSV 读取)
+# df = pd.read_csv("data.csv")
+# 这里我们构造一个简单的示例数据
+dates = pd.date_range("20230101", "20231231")
+df = pd.DataFrame({
+    "date": dates,
+    "open": 100.0,
+    "high": 105.0,
+    "low": 95.0,
+    "close": 101.0,
+    "volume": 10000
+})
 
 # 2. 定义策略
 class MyStrategy(Strategy):
@@ -168,8 +172,11 @@ inst = Instrument("600519", AssetType.Stock, 1.0, 0.01)
 engine.add_instrument(inst)
 
 # 5. 加载数据到引擎
-# AKQuant 提供了便捷工具将 akshare 的 DataFrame 转换为 Bar 列表
-bars = load_akshare_bar(df, symbol="600519")
+# 使用 load_bar_from_df 转换 DataFrame
+# 可选: 指定列映射 (如果 CSV 列名不同)
+# column_map = {"Date": "timestamp", "Close": "close", ...}
+bars = load_bar_from_df(df, symbol="600519")
+
 feed = DataFeed()
 # 批量添加 Bar (比循环添加更快)
 feed.add_bars(bars)

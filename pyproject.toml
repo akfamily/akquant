@@ -25,10 +25,8 @@ dependencies = [
 
 [project.optional-dependencies]
 full = [
-    "akshare>=1.0.0",
     "matplotlib>=3.0.0",
 ]
-data = ["akshare>=1.0.0"]
 plot = ["matplotlib>=3.0.0"]
 ml = [
     "scikit-learn>=1.0.0",
@@ -65,5 +63,5 @@ disallow_untyped_defs = true
 check_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["torch.*", "sklearn.*", "matplotlib.*", "akshare.*"]
+module = ["torch.*", "sklearn.*", "matplotlib.*"]
 ignore_missing_imports = true

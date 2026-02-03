@@ -9,12 +9,12 @@ from .indicator import Indicator, IndicatorSet
 from .log import get_logger, register_logger
 from .sizer import AllInSizer, FixedSize, PercentSizer, Sizer
 from .strategy import Strategy
-from .utils import load_akshare_bar, prepare_dataframe
+from .utils import load_bar_from_df, prepare_dataframe
 
 __doc__ = _akquant.__doc__
 if hasattr(_akquant, "__all__"):  # noqa: F405
     __all__ = _akquant.__all__ + [  # noqa: F405
-        "load_akshare_bar",
+        "load_bar_from_df",
         "prepare_dataframe",
         "Sizer",
         "FixedSize",
@@ -33,7 +33,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
     ]
 else:
     __all__ = [
-        "load_akshare_bar",
+        "load_bar_from_df",
         "prepare_dataframe",
         "Sizer",
         "FixedSize",

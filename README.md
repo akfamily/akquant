@@ -36,7 +36,7 @@
     *   **Streaming CSV (New)**: 支持流式加载超大 CSV 文件 (`DataFeed.from_csv`)，极大降低内存占用。
     *   **Live Trading (New)**: 支持通过 `DataFeed.create_live()` 创建实时数据源，支持 CTP/Gateway 实时数据推送。
     *   **Parquet Data Catalog (New)**: 采用 Apache Parquet 格式存储数据，相比 Pickle 读写速度更快，压缩率更高，便于跨语言使用。
-    *   **AKShare 集成**: 内置 `DataLoader`，无缝支持 [AKShare](https://github.com/akfamily/akshare) 数据加载。
+    *   **Pandas 集成**: 支持直接加载 Pandas DataFrame 数据，兼容各类数据源。
     *   **显式订阅**: 策略通过 `subscribe` 方法明确声明所需数据，引擎自动按需加载。
 *   **多资产支持**:
     *   **股票 (Stock)**: 默认支持 T+1，买入 100 股一手限制，印花税/过户费。

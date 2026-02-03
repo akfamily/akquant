@@ -358,17 +358,8 @@ def run_backtest(
             # Try Catalog
             df = catalog.read(sym, start_date=start_date, end_date=end_date)
             if df.empty:
-                # Try Akshare
-                logger.info(f"Loading {sym} from Akshare...")
-                try:
-                    from .utils import fetch_akshare_daily
-
-                    df = fetch_akshare_daily(
-                        sym, start_date=start_date, end_date=end_date
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to load {sym}: {e}")
-                    continue
+                logger.warning(f"Data not found in catalog for {sym}")
+                continue
 
             if not df.empty:
                 df = prepare_dataframe(df)

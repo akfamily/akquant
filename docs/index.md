@@ -26,7 +26,7 @@
     *   **灵活配置**: 通过 `RiskConfig` 可配置最大单笔金额、最大持仓比例、黑名单等。
 *   **数据生态**:
     *   **Streaming CSV (New)**: 支持流式加载超大 CSV 文件 (`DataFeed.from_csv`)，极大降低内存占用。
-    *   **AKShare 集成**: 内置 `DataLoader`，无缝支持 [AKShare](https://github.com/akfamily/akshare) 数据加载。
+    *   **Pandas 集成**: 支持直接加载 Pandas DataFrame 数据，兼容各类数据源。
     *   **智能缓存**: 支持数据本地缓存 (Pickle)，避免重复下载，加速策略迭代。
 *   **机器学习 (New)**:
     *   **ML Framework**: 内置高性能机器学习训练框架，支持 Walk-forward Validation (滚动训练)。

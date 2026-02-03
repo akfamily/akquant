@@ -2,86 +2,87 @@ from typing import Dict, List, Optional, Tuple, Union, cast
 
 import pandas as pd
 
-try:
-    import akshare as ak  # type: ignore
-except ImportError:
-    ak = None
-
 from .akquant import Bar, from_arrays
 
 
-def fetch_akshare_daily(
-    symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None
-) -> pd.DataFrame:
-    """
-    Fetch daily stock data from Akshare.
-
-    :param symbol: Stock symbol (e.g., "000001").
-    :param start_date: Start date "YYYYMMDD".
-    :param end_date: End date "YYYYMMDD".
-    :return: DataFrame with columns matching load_akshare_bar requirements.
-    """
-    if ak is None:
-        raise ImportError("akshare is required to fetch data.")
-
-    if not start_date:
-        start_date = "20000101"
-    if not end_date:
-        end_date = "20991231"
-
-    try:
-        # stock_zh_a_hist is the standard interface for A-share history
-        df = ak.stock_zh_a_hist(
-            symbol=symbol,
-            period="daily",
-            start_date=start_date,
-            end_date=end_date,
-            adjust="qfq",
-        )
-        # Ensure we have "股票代码" column if not present (sometimes it is)
-        if "股票代码" not in df.columns:
-            df["股票代码"] = symbol
-
-        return cast(pd.DataFrame, df)
-    except Exception as e:
-        print(f"Error fetching data for {symbol}: {e}")
-        return pd.DataFrame()
-
-
-def load_akshare_bar(df: pd.DataFrame, symbol: Optional[str] = None) -> List[Bar]:
+def load_bar_from_df(
+    df: pd.DataFrame,
+    symbol: Optional[str] = None,
+    column_map: Optional[Dict[str, str]] = None,
+) -> List[Bar]:
     r"""
-    将 AKShare 返回的 DataFrame 转换为 akquant.Bar 列表.
+    Convert DataFrame to list of akquant.Bar.
 
-    :param df: AKShare 历史行情数据
+    :param df: Historical market data
     :type df: pandas.DataFrame
-    :param symbol: 标的代码；未提供时尝试使用 DataFrame 的“股票代码”列
+    :param symbol: Symbol code; if not provided, try to use "symbol" column
     :type symbol: str, optional
-    :return: 转换后的 Bar 对象列表
+    :param column_map: Mapping from DataFrame columns to standard fields.
+                       Defaults: date->timestamp, open->open, etc.
+    :type column_map: Dict[str, str], optional
+    :return: List of Bar objects
     :rtype: List[Bar]
     """
     if df.empty:
         return []
 
-    # Check for required columns
+    # Default mapping
     required_map = {
-        "日期": "timestamp",
-        "开盘": "open",
-        "最高": "high",
-        "最低": "low",
-        "收盘": "close",
-        "成交量": "volume",
+        "date": "timestamp",
+        "open": "open",
+        "high": "high",
+        "low": "low",
+        "close": "close",
+        "volume": "volume",
     }
 
-    # Validate columns
-    missing = [col for col in required_map.keys() if col not in df.columns]
-    if missing:
-        raise ValueError(f"DataFrame 缺少必要列: {missing}")
+    if column_map:
+        required_map.update(column_map)
+
+    # Reverse map to find dataframe columns
+    # We need to find which df column corresponds to 'timestamp', 'open', etc.
+    # required_map is DF_COL -> STANDARD_FIELD
+    # So we want to check if keys of required_map exist in df.columns
+
+    # Actually, let's flip logic slightly to be more robust.
+    # Users pass { "my_date": "date", "my_open": "open" } ?
+    # Or { "date": "my_date", "open": "my_open" } ?
+    # The previous implementation had: required_map = {"日期": "timestamp", ...}
+    # implying Key is DF Column, Value is Internal Field.
+
+    # Let's keep that convention.
+
+    # Check for required internal fields
+    internal_fields = ["timestamp", "open", "high", "low", "close", "volume"]
+
+    # Find which DF column maps to which internal field
+    field_to_col = {}
+    for col, field in required_map.items():
+        if field in internal_fields:
+            field_to_col[field] = col
+
+    # Check if all internal fields have a corresponding column in DF
+    missing_fields = []
+    for field in internal_fields:
+        if field not in field_to_col:
+            # try finding exact match in df
+            if field in df.columns:
+                field_to_col[field] = field
+            else:
+                missing_fields.append(field)
+        else:
+            if field_to_col[field] not in df.columns:
+                missing_fields.append(f"{field} (mapped to {field_to_col[field]})")
+
+    if missing_fields:
+        raise ValueError(f"DataFrame missing columns for fields: {missing_fields}")
 
     # Vectorized Preprocessing
 
     # 1. Handle Timestamp
+    col_date = field_to_col["timestamp"]
     # Convert to datetime with error coercion (invalid dates becomes NaT)
-    dt_series = pd.to_datetime(df["日期"], errors="coerce")
+    dt_series = pd.to_datetime(df[col_date], errors="coerce")
     # Fill NaT with 0 (Epoch 0) or handle appropriately
     dt_series = dt_series.fillna(pd.Timestamp(0))
     # type: ignore
@@ -92,11 +93,11 @@ def load_akshare_bar(df: pd.DataFrame, symbol: Optional[str] = None) -> List[Bar
 
     # 2. Extract numeric columns
     # Use astype(float) to ensure correct type, fillna(0.0) for safety
-    opens = df["开盘"].fillna(0.0).astype(float).tolist()
-    highs = df["最高"].fillna(0.0).astype(float).tolist()
-    lows = df["最低"].fillna(0.0).astype(float).tolist()
-    closes = df["收盘"].fillna(0.0).astype(float).tolist()
-    volumes = df["成交量"].fillna(0.0).astype(float).tolist()
+    opens = df[field_to_col["open"]].fillna(0.0).astype(float).tolist()
+    highs = df[field_to_col["high"]].fillna(0.0).astype(float).tolist()
+    lows = df[field_to_col["low"]].fillna(0.0).astype(float).tolist()
+    closes = df[field_to_col["close"]].fillna(0.0).astype(float).tolist()
+    volumes = df[field_to_col["volume"]].fillna(0.0).astype(float).tolist()
 
     # 3. Handle Symbol
     symbols_list: Optional[List[str]] = None
