@@ -58,8 +58,12 @@ ignore = ["D100", "D104"]
 convention = "pep257"
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["torch.*", "sklearn.*", "matplotlib.*", "akshare.*"]
+ignore_missing_imports = true

@@ -28,3 +28,4 @@ csv = "1.3"
 [features]
 default = ["extension-module"]
 extension-module = ["pyo3/extension-module"]
+test-utils = ["pyo3/auto-initialize"]

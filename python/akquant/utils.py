@@ -112,7 +112,7 @@ def load_akshare_bar(df: pd.DataFrame, symbol: Optional[str] = None) -> List[Bar
 
     # Call Rust extension
     return from_arrays(
-        timestamps, opens, highs, lows, closes, volumes, symbol_val, symbols_list
+        timestamps, opens, highs, lows, closes, volumes, symbol_val, symbols_list, None
     )
 
 
@@ -251,6 +251,7 @@ def df_to_arrays(
             raise ValueError(msg)
 
     # 1. Handle Timestamp
+    dt_series: Union[pd.Series, pd.Index]
     if resolved.get("timestamp") == "__index__":
         dt_series = df.index
     else:

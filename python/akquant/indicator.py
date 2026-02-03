@@ -53,7 +53,7 @@ class Indicator:
         series = self._data[symbol]
         # Assuming series index is datetime
         try:
-            return float(series.asof(timestamp))
+            return float(series.asof(timestamp))  # type: ignore[arg-type]
         except Exception:
             return float("nan")
 

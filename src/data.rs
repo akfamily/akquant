@@ -1,3 +1,4 @@
+use numpy::PyReadonlyArray1;
 use crate::model::{Bar, Tick};
 use crate::event::Event;
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -264,21 +265,36 @@ impl DataClient for RealtimeDataClient {
     }
 }
 
-/// 从数组批量创建 Bar 列表 (Python 优化用)
+/// 从数组批量创建 Bar 列表 (Python 优化用 - Zero Copy)
 #[gen_stub_pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 pub fn from_arrays(
-    timestamps: Vec<i64>,
-    opens: Vec<f64>,
-    highs: Vec<f64>,
-    lows: Vec<f64>,
-    closes: Vec<f64>,
-    volumes: Vec<f64>,
+    timestamps: &Bound<'_, PyAny>,
+    opens: &Bound<'_, PyAny>,
+    highs: &Bound<'_, PyAny>,
+    lows: &Bound<'_, PyAny>,
+    closes: &Bound<'_, PyAny>,
+    volumes: &Bound<'_, PyAny>,
     symbol: Option<String>,
     symbols: Option<Vec<String>>,
-    extra: Option<HashMap<String, Vec<f64>>>,
+    extra: Option<HashMap<String, Py<PyAny>>>,
+    py: Python<'_>,
 ) -> PyResult<Vec<Bar>> {
+    let timestamps: PyReadonlyArray1<i64> = timestamps.extract()?;
+    let opens: PyReadonlyArray1<f64> = opens.extract()?;
+    let highs: PyReadonlyArray1<f64> = highs.extract()?;
+    let lows: PyReadonlyArray1<f64> = lows.extract()?;
+    let closes: PyReadonlyArray1<f64> = closes.extract()?;
+    let volumes: PyReadonlyArray1<f64> = volumes.extract()?;
+
+    let timestamps = timestamps.as_array();
+    let opens = opens.as_array();
+    let highs = highs.as_array();
+    let lows = lows.as_array();
+    let closes = closes.as_array();
+    let volumes = volumes.as_array();
+
     let len = timestamps.len();
     if opens.len() != len
         || highs.len() != len
@@ -300,15 +316,33 @@ pub fn from_arrays(
     }
 
     // Check extra arrays length
+    // Need to collect extra arrays into a more usable format for iteration
+    let mut extra_arrays = HashMap::new();
+    // Use a temporary vec to hold the readonly arrays to keep them alive
+    let mut extra_guards = Vec::new();
+
     if let Some(ref extra_data) = extra {
         for (key, val) in extra_data {
-            if val.len() != len {
+            let arr: PyReadonlyArray1<f64> = val.extract(py)?;
+            let array_view = arr.as_array();
+            if array_view.len() != len {
                  return Err(PyValueError::new_err(format!(
                     "Extra array '{}' must have the same length as other arrays",
                     key
                 )));
             }
+            // We need to extend the lifetime or copy the data if we want to store views
+            // But since we process in loop below, we can't easily store views in HashMap referring to local vars in loop
+            // unless we structure this differently.
+            // For simplicity and safety with PyO3 lifetimes, let's just push to a list and index
+            // OR simpler: collect all guards first.
+            extra_guards.push((key.clone(), arr));
         }
+    }
+
+    // Re-build map of views
+    for (k, guard) in &extra_guards {
+        extra_arrays.insert(k.clone(), guard.as_array());
     }
 
     let mut bars = Vec::with_capacity(len);
@@ -326,10 +360,8 @@ pub fn from_arrays(
         let normalized_ts = normalize_timestamp(ts);
 
         let mut bar_extra = HashMap::new();
-        if let Some(ref extra_data) = extra {
-            for (k, v) in extra_data {
-                bar_extra.insert(k.clone(), v[i]);
-            }
+        for (k, arr) in &extra_arrays {
+            bar_extra.insert(k.clone(), arr[i]);
         }
 
         bars.push(Bar {
@@ -415,27 +447,27 @@ impl DataFeed {
         }
     }
 
-    /// 从数组批量添加 Bar 数据 (高性能优化)
+    /// 从数组批量添加 Bar 数据 (高性能优化 - Zero Copy)
     #[allow(clippy::too_many_arguments)]
     pub fn add_arrays(
         &mut self,
-        timestamps: Vec<i64>,
-        opens: Vec<f64>,
-        highs: Vec<f64>,
-        lows: Vec<f64>,
-        closes: Vec<f64>,
-        volumes: Vec<f64>,
+        timestamps: &Bound<'_, PyAny>,
+        opens: &Bound<'_, PyAny>,
+        highs: &Bound<'_, PyAny>,
+        lows: &Bound<'_, PyAny>,
+        closes: &Bound<'_, PyAny>,
+        volumes: &Bound<'_, PyAny>,
         symbol: Option<String>,
         symbols: Option<Vec<String>>,
-        extra: Option<HashMap<String, Vec<f64>>>,
+        extra: Option<HashMap<String, Py<PyAny>>>,
+        py: Python<'_>,
     ) -> PyResult<()> {
-        let bars = from_arrays(timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra)?;
+        let bars = from_arrays(timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra, py)?;
         self.add_bars(bars)
     }
 
-    /// 对事件队列按时间戳进行排序
-    /// 在多标的批量加载后必须调用，以确保回测时序正确
-    pub fn sort(&mut self) {
+    /// 对数据源进行排序 (按时间戳)
+    pub fn sort(&self) {
         let mut provider = self.provider.lock().unwrap();
         provider.sort();
     }
@@ -483,25 +515,42 @@ impl DataFeed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use numpy::PyArray1;
+    use pyo3::Python;
 
     #[test]
     fn test_from_arrays_valid() {
-        let ts = vec![1625097600]; // 2021-07-01 00:00:00 UTC
-        let opens = vec![100.0];
-        let highs = vec![105.0];
-        let lows = vec![95.0];
-        let closes = vec![102.0];
-        let volumes = vec![1000.0];
-        let symbol = Some("AAPL".to_string());
+        // Python::initialize(); // Auto-initialized usually
+        Python::attach(|py| {
+            let ts = PyArray1::from_vec(py, vec![1625097600i64]);
+            let opens = PyArray1::from_vec(py, vec![100.0]);
+            let highs = PyArray1::from_vec(py, vec![105.0]);
+            let lows = PyArray1::from_vec(py, vec![95.0]);
+            let closes = PyArray1::from_vec(py, vec![102.0]);
+            let volumes = PyArray1::from_vec(py, vec![1000.0]);
 
-        let result = from_arrays(ts, opens, highs, lows, closes, volumes, symbol, None, None);
-        assert!(result.is_ok());
+            let symbol = Some("AAPL".to_string());
 
-        let bars = result.unwrap();
-        assert_eq!(bars.len(), 1);
-        assert_eq!(bars[0].symbol, "AAPL");
-        assert_eq!(bars[0].open, Decimal::from(100));
-        assert_eq!(bars[0].timestamp, 1625097600000000000); // Normalized to nanoseconds
+            let result = from_arrays(
+                ts.as_any(),
+                opens.as_any(),
+                highs.as_any(),
+                lows.as_any(),
+                closes.as_any(),
+                volumes.as_any(),
+                symbol,
+                None,
+                None,
+                py
+            );
+            assert!(result.is_ok());
+
+            let bars = result.unwrap();
+            assert_eq!(bars.len(), 1);
+            assert_eq!(bars[0].symbol, "AAPL");
+            assert_eq!(bars[0].open, Decimal::from(100));
+            assert_eq!(bars[0].timestamp, 1625097600000000000); // Normalized to nanoseconds
+        });
     }
 
     #[test]
