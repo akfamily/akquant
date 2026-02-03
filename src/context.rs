@@ -14,7 +14,7 @@ use numpy::PyArray1;
 
 #[gen_stub_pyclass]
 #[pyclass]
-/// 策略上下文
+/// 策略上下文.
 ///
 /// :ivar orders: 订单列表 (内部使用)
 /// :ivar cash: 当前现金
@@ -105,7 +105,7 @@ impl StrategyContext {
         })
     }
 
-    /// 获取历史数据
+    /// 获取历史数据.
     ///
     /// :param symbol: 标的代码
     /// :param field: 字段名 (open, high, low, close, volume)
@@ -174,7 +174,7 @@ impl StrategyContext {
             .collect()
     }
 
-    /// 注册定时器
+    /// 注册定时器.
     ///
     /// :param timestamp: 触发时间戳 (纳秒)
     /// :param payload: 携带的数据 (如回调函数名)
@@ -190,7 +190,7 @@ impl StrategyContext {
         });
     }
 
-    /// 取消订单
+    /// 取消订单.
     ///
     /// :param order_id: 订单 ID
     fn cancel_order(&mut self, order_id: String) {

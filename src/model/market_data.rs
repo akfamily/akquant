@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// K线数据结构
+/// K线数据结构.
 ///
 /// :ivar timestamp: Unix 时间戳 (纳秒)
 /// :ivar open: 开盘价
@@ -36,7 +36,7 @@ pub struct Bar {
 #[gen_stub_pymethods]
 #[pymethods]
 impl Bar {
-    /// 创建 Bar 对象
+    /// 创建 Bar 对象.
     ///
     /// :param timestamp: Unix 时间戳 (纳秒)
     /// :param open: 开盘价
@@ -143,7 +143,7 @@ impl Bar {
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Tick 数据结构
+/// Tick 数据结构.
 ///
 /// :ivar timestamp: Unix 时间戳 (纳秒)
 /// :ivar price: 最新价
@@ -161,7 +161,7 @@ pub struct Tick {
 #[gen_stub_pymethods]
 #[pymethods]
 impl Tick {
-    /// 创建 Tick 对象
+    /// 创建 Tick 对象.
     ///
     /// :param timestamp: Unix 时间戳 (纳秒, int) 或 日期字符串 (str, "YYYY-MM-DD" / "YYYY-MM-DD HH:MM:SS")
     /// :param price: 最新价

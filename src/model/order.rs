@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// 订单
+/// 订单.
 ///
 /// :ivar id: 订单ID
 /// :ivar symbol: 标的代码
@@ -45,7 +45,7 @@ pub struct Order {
 #[gen_stub_pymethods]
 #[pymethods]
 impl Order {
-    /// 创建订单
+    /// 创建订单.
     ///
     /// :param id: 订单ID
     /// :param symbol: 标的代码
@@ -133,7 +133,7 @@ impl Order {
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// 成交记录
+/// 成交记录.
 ///
 /// :ivar id: 成交ID
 /// :ivar order_id: 订单ID

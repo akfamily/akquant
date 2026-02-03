@@ -9,7 +9,7 @@ use std::collections::HashMap;
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone)]
-/// 投资组合管理
+/// 投资组合管理.
 ///
 /// :ivar cash: 当前现金余额
 /// :ivar positions: 当前持仓 (symbol -> quantity)
@@ -22,7 +22,7 @@ pub struct Portfolio {
 
 #[pymethods]
 impl Portfolio {
-    /// 创建投资组合
+    /// 创建投资组合.
     ///
     /// :param cash: 初始资金
     #[new]
@@ -63,7 +63,7 @@ impl Portfolio {
         )
     }
 
-    /// 获取持仓数量
+    /// 获取持仓数量.
     pub fn get_position(&self, symbol: &str) -> f64 {
         self.positions
             .get(symbol)
@@ -72,7 +72,7 @@ impl Portfolio {
             .unwrap_or_default()
     }
 
-    /// 获取可用持仓数量
+    /// 获取可用持仓数量.
     pub fn get_available_position(&self, symbol: &str) -> f64 {
         self.available_positions
             .get(symbol)

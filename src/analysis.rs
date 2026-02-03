@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// 平仓交易记录
+/// 平仓交易记录.
 pub struct ClosedTrade {
     #[pyo3(get)]
     pub symbol: String,
@@ -40,7 +40,7 @@ pub struct ClosedTrade {
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// 绩效指标
+/// 绩效指标.
 pub struct PerformanceMetrics {
     #[pyo3(get)]
     pub total_return: f64,
@@ -77,7 +77,7 @@ pub struct PerformanceMetrics {
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// 交易盈亏统计 (FIFO)
+/// 交易盈亏统计 (FIFO).
 pub struct TradePnL {
     #[pyo3(get)]
     pub gross_pnl: f64,
@@ -148,7 +148,7 @@ pub struct TradePnL {
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// 回测结果
+/// 回测结果.
 pub struct BacktestResult {
     #[pyo3(get)]
     pub equity_curve: Vec<(i64, f64)>,

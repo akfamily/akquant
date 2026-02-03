@@ -6,75 +6,69 @@ import typing
 import numpy
 import numpy.typing
 
+# Enums
 class AssetType:
-    r"""资产类型."""
-
-    Stock: typing.ClassVar["AssetType"]
-    Fund: typing.ClassVar["AssetType"]
-    Futures: typing.ClassVar["AssetType"]
-    Option: typing.ClassVar["AssetType"]
+    Stock: "AssetType"
+    Fund: "AssetType"
+    Futures: "AssetType"
+    Option: "AssetType"
 
 class OptionType:
-    r"""期权类型."""
-
-    Call: typing.ClassVar["OptionType"]
-    Put: typing.ClassVar["OptionType"]
+    Call: "OptionType"
+    Put: "OptionType"
 
 class OrderType:
-    r"""订单类型."""
-
-    Market: typing.ClassVar["OrderType"]
-    Limit: typing.ClassVar["OrderType"]
-    StopMarket: typing.ClassVar["OrderType"]
-    StopLimit: typing.ClassVar["OrderType"]
+    Market: "OrderType"
+    Limit: "OrderType"
+    StopMarket: "OrderType"
+    StopLimit: "OrderType"
 
 class OrderSide:
-    r"""交易方向."""
-
-    Buy: typing.ClassVar["OrderSide"]
-    Sell: typing.ClassVar["OrderSide"]
+    Buy: "OrderSide"
+    Sell: "OrderSide"
 
 class OrderStatus:
-    r"""订单状态."""
-
-    New: typing.ClassVar["OrderStatus"]
-    Submitted: typing.ClassVar["OrderStatus"]
-    Filled: typing.ClassVar["OrderStatus"]
-    Cancelled: typing.ClassVar["OrderStatus"]
-    Rejected: typing.ClassVar["OrderStatus"]
-    Expired: typing.ClassVar["OrderStatus"]
+    New: "OrderStatus"
+    Submitted: "OrderStatus"
+    Filled: "OrderStatus"
+    Cancelled: "OrderStatus"
+    Rejected: "OrderStatus"
+    Expired: "OrderStatus"
 
 class TimeInForce:
-    r"""订单有效期."""
-
-    GTC: typing.ClassVar["TimeInForce"]
-    IOC: typing.ClassVar["TimeInForce"]
-    FOK: typing.ClassVar["TimeInForce"]
-    Day: typing.ClassVar["TimeInForce"]
+    GTC: "TimeInForce"
+    IOC: "TimeInForce"
+    FOK: "TimeInForce"
+    Day: "TimeInForce"
 
 class ExecutionMode:
-    r"""撮合执行模式."""
-
-    CurrentClose: typing.ClassVar["ExecutionMode"]
-    NextOpen: typing.ClassVar["ExecutionMode"]
+    CurrentClose: "ExecutionMode"
+    NextOpen: "ExecutionMode"
 
 class TradingSession:
-    r"""交易时段状态."""
+    PreOpen: "TradingSession"
+    Continuous: "TradingSession"
+    CallAuction: "TradingSession"
+    Break: "TradingSession"
+    Closed: "TradingSession"
+    PostClose: "TradingSession"
 
-    PreOpen: typing.ClassVar["TradingSession"]
-    Continuous: typing.ClassVar["TradingSession"]
-    CallAuction: typing.ClassVar["TradingSession"]
-    Break: typing.ClassVar["TradingSession"]
-    Closed: typing.ClassVar["TradingSession"]
-    PostClose: typing.ClassVar["TradingSession"]
+class ATR:
+    r"""Average True Range."""
+
+    value: typing.Optional[float]
+    def __new__(cls, period: int) -> "ATR": ...
+    def update(
+        self, high: float, low: float, close: float
+    ) -> typing.Optional[float]: ...
 
 class BacktestResult:
     r"""回测结果."""
 
     equity_curve: list[tuple[int, float]]
-    metrics: PerformanceMetrics
-    trade_metrics: TradePnL
-    trades: list[ClosedTrade]
+    metrics: "PerformanceMetrics"
+    trade_metrics: "TradePnL"
+    trades: list["ClosedTrade"]
     daily_positions: list[tuple[int, dict[str, float]]]
 
 class Bar:
@@ -116,6 +110,15 @@ class Bar:
     def set_volume(self, value: typing.Any) -> None: ...
     def __repr__(self) -> str: ...
 
+class BollingerBands:
+    r"""Bollinger Bands."""
+
+    value: typing.Optional[tuple[float, float, float]]
+    def __new__(cls, period: int, multiplier: float) -> "BollingerBands": ...
+    def update(self, value: float) -> typing.Optional[tuple[float, float, float]]:
+        r"""Return (upper, middle, lower)."""
+        ...
+
 class ClosedTrade:
     r"""平仓交易记录."""
 
@@ -133,27 +136,17 @@ class ClosedTrade:
     duration_bars: int
 
 class DataFeed:
-    def __new__(cls) -> "DataFeed": ...
-    @staticmethod
-    def from_csv(path: str, symbol: str) -> "DataFeed": ...
-    @staticmethod
-    def create_live() -> "DataFeed": ...
-    def add_bar(self, bar: Bar) -> None: ...
-    def add_bars(self, bars: typing.Sequence[Bar]) -> None: ...
-    def add_arrays(
-        self,
-        timestamps: typing.Any,
-        opens: typing.Any,
-        highs: typing.Any,
-        lows: typing.Any,
-        closes: typing.Any,
-        volumes: typing.Any,
-        symbol: typing.Optional[str] = None,
-        symbols: typing.Optional[typing.Sequence[str]] = None,
-        extra: typing.Optional[typing.Mapping[str, typing.Any]] = None,
-    ) -> None: ...
     def sort(self) -> None: ...
-    def add_tick(self, tick: Tick) -> None: ...
+    def add_bars(self, bars: typing.Sequence[Bar]) -> None: ...
+
+class EMA:
+    r"""Exponential Moving Average."""
+
+    value: typing.Optional[float]
+    is_ready: bool
+    period: int
+    def __new__(cls, period: int) -> "EMA": ...
+    def update(self, value: float) -> typing.Optional[float]: ...
 
 class Engine:
     r"""
@@ -165,10 +158,10 @@ class Engine:
     :ivar trades: 成交列表
     """
 
-    portfolio: Portfolio
-    orders: list[Order]
-    trades: list[Trade]
-    risk_manager: RiskManager
+    portfolio: "Portfolio"
+    orders: list["Order"]
+    trades: list["Trade"]
+    risk_manager: "RiskManager"
     def __new__(
         cls,
     ) -> "Engine": ...
@@ -205,7 +198,7 @@ class Engine:
         """
         ...
 
-    def set_execution_mode(self, mode: ExecutionMode) -> None:
+    def set_execution_mode(self, mode: "ExecutionMode") -> None:
         r"""
         设置撮合模式.
 
@@ -232,7 +225,7 @@ class Engine:
 
         - 切换到 ChinaMarket
         - 设置 T+0
-        - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种).
+        - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
         """
         ...
 
@@ -276,9 +269,9 @@ class Engine:
         ...
 
     def set_market_sessions(
-        self, sessions: typing.Sequence[tuple[str, str, TradingSession]]
+        self, sessions: typing.Sequence[tuple[str, str, "TradingSession"]]
     ) -> None: ...
-    def add_instrument(self, instrument: Instrument) -> None:
+    def add_instrument(self, instrument: "Instrument") -> None:
         r"""
         添加交易标的.
 
@@ -326,7 +319,7 @@ class Engine:
         """
         ...
 
-    def get_results(self) -> BacktestResult:
+    def get_results(self) -> "BacktestResult":
         r"""
         获取回测结果.
 
@@ -335,8 +328,8 @@ class Engine:
         ...
 
     def create_context(
-        self, active_orders: typing.Sequence[Order]
-    ) -> StrategyContext: ...
+        self, active_orders: typing.Sequence["Order"]
+    ) -> "StrategyContext": ...
 
 class Instrument:
     r"""
@@ -350,22 +343,33 @@ class Instrument:
     """
 
     symbol: str
-    asset_type: AssetType
+    asset_type: "AssetType"
     multiplier: float
     margin_ratio: float
     tick_size: float
     def __new__(
         cls,
         symbol: str,
-        asset_type: AssetType,
+        asset_type: "AssetType",
         multiplier: typing.Any,
         margin_ratio: typing.Any,
         tick_size: typing.Any,
-        option_type: typing.Optional[OptionType],
+        option_type: typing.Optional["OptionType"],
         strike_price: typing.Optional[typing.Any],
         expiry_date: typing.Optional[int],
         lot_size: typing.Optional[typing.Any],
     ) -> "Instrument": ...
+
+class MACD:
+    r"""Moving Average Convergence Divergence."""
+
+    value: typing.Optional[tuple[float, float, float]]
+    def __new__(
+        cls, fast_period: int, slow_period: int, signal_period: int
+    ) -> "MACD": ...
+    def update(self, value: float) -> typing.Optional[tuple[float, float, float]]:
+        r"""Return (macd_line, signal_line, histogram)."""
+        ...
 
 class Order:
     r"""
@@ -386,10 +390,10 @@ class Order:
 
     id: str
     symbol: str
-    side: OrderSide
-    order_type: OrderType
-    time_in_force: TimeInForce
-    status: OrderStatus
+    side: "OrderSide"
+    order_type: "OrderType"
+    time_in_force: "TimeInForce"
+    status: "OrderStatus"
     quantity: float
     price: typing.Optional[float]
     trigger_price: typing.Optional[float]
@@ -399,11 +403,11 @@ class Order:
         cls,
         id: str,
         symbol: str,
-        side: OrderSide,
-        order_type: OrderType,
+        side: "OrderSide",
+        order_type: "OrderType",
         quantity: float,
         price: typing.Optional[float] = ...,
-        time_in_force: TimeInForce = ...,
+        time_in_force: "TimeInForce" = ...,
         trigger_price: typing.Optional[float] = ...,
     ) -> "Order": ...
     def __repr__(self) -> str: ...
@@ -442,6 +446,14 @@ class Portfolio:
     def __new__(cls, cash: typing.Any) -> "Portfolio": ...
     def get_position(self, symbol: str) -> float: ...
     def get_available_position(self, symbol: str) -> float: ...
+    def __repr__(self) -> str: ...
+
+class RSI:
+    r"""Relative Strength Index."""
+
+    value: typing.Optional[float]
+    def __new__(cls, period: int) -> "RSI": ...
+    def update(self, value: float) -> typing.Optional[float]: ...
 
 class RiskConfig:
     r"""
@@ -459,6 +471,7 @@ class RiskConfig:
     max_position_size: typing.Optional[float]
     restricted_list: list[str]
     active: bool
+    def __new__(cls) -> "RiskConfig": ...
 
 class RiskManager:
     r"""
@@ -470,13 +483,15 @@ class RiskManager:
     config: RiskConfig
     def check(
         self,
-        order: Order,
-        portfolio: Portfolio,
-        instruments: typing.Mapping[str, Instrument],
-        active_orders: typing.Sequence[Order],
+        order: "Order",
+        portfolio: "Portfolio",
+        instruments: dict[str, "Instrument"],
+        active_orders: list["Order"],
     ) -> typing.Optional[str]: ...
 
 class SMA:
+    r"""Simple Moving Average."""
+
     value: typing.Optional[float]
     is_ready: bool
     def __new__(cls, period: int) -> "SMA": ...
@@ -496,7 +511,7 @@ class StrategyContext:
     orders: list[Order]
     canceled_order_ids: list[str]
     active_orders: list[Order]
-    session: TradingSession
+    session: "TradingSession"
     last_closed_trade: typing.Optional[ClosedTrade]
     closed_trades: list[ClosedTrade]
     cash: float
@@ -507,7 +522,7 @@ class StrategyContext:
         cash: typing.Any,
         positions: typing.Mapping[str, float],
         available_positions: typing.Mapping[str, float],
-        session: typing.Optional[TradingSession],
+        session: typing.Optional["TradingSession"],
         active_orders: typing.Optional[typing.Sequence[Order]],
         closed_trades: typing.Optional[typing.Sequence[ClosedTrade]],
     ) -> "StrategyContext": ...
@@ -546,7 +561,7 @@ class StrategyContext:
         symbol: str,
         quantity: float,
         price: typing.Optional[float] = ...,
-        time_in_force: typing.Optional[TimeInForce] = ...,
+        time_in_force: typing.Optional["TimeInForce"] = ...,
         trigger_price: typing.Optional[float] = ...,
     ) -> None: ...
     def sell(
@@ -554,7 +569,7 @@ class StrategyContext:
         symbol: str,
         quantity: float,
         price: typing.Optional[float] = ...,
-        time_in_force: typing.Optional[TimeInForce] = ...,
+        time_in_force: typing.Optional["TimeInForce"] = ...,
         trigger_price: typing.Optional[float] = ...,
     ) -> None: ...
     def get_position(self, symbol: str) -> float: ...
@@ -598,7 +613,7 @@ class Trade:
     id: str
     order_id: str
     symbol: str
-    side: OrderSide
+    side: "OrderSide"
     timestamp: int
     bar_index: int
     quantity: float
@@ -609,7 +624,7 @@ class Trade:
         id: str,
         order_id: str,
         symbol: str,
-        side: OrderSide,
+        side: "OrderSide",
         quantity: typing.Any,
         price: typing.Any,
         commission: typing.Any,
@@ -660,9 +675,9 @@ def from_arrays(
     lows: typing.Any,
     closes: typing.Any,
     volumes: typing.Any,
-    symbol: typing.Optional[str] = None,
-    symbols: typing.Optional[typing.Sequence[str]] = None,
-    extra: typing.Optional[typing.Mapping[str, typing.Any]] = None,
+    symbol: typing.Optional[str],
+    symbols: typing.Optional[typing.Sequence[str]],
+    extra: typing.Optional[typing.Mapping[str, typing.Any]],
 ) -> list[Bar]:
     r"""从数组批量创建 Bar 列表 (Python 优化用 - Zero Copy)."""
     ...

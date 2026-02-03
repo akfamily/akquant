@@ -27,7 +27,7 @@ use crate::model::{
 use crate::portfolio::Portfolio;
 use crate::risk::RiskManager;
 
-/// 主回测引擎
+/// 主回测引擎.
 ///
 /// :ivar feed: 数据源
 /// :ivar portfolio: 投资组合
@@ -69,7 +69,7 @@ pub struct Engine {
 #[gen_stub_pymethods]
 #[pymethods]
 impl Engine {
-    /// 初始化回测引擎
+    /// 初始化回测引擎.
     ///
     /// :return: Engine 实例
     #[new]

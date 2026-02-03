@@ -10,7 +10,7 @@ use std::collections::HashMap;
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Default)]
-/// 风控配置
+/// 风控配置.
 ///
 /// :ivar max_order_size: 单笔最大下单数量
 /// :ivar max_order_value: 单笔最大下单金额
@@ -87,7 +87,7 @@ impl RiskConfig {
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone)]
-/// 风控管理器
+/// 风控管理器.
 ///
 /// :ivar config: 风控配置
 pub struct RiskManager {

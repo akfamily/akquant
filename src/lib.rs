@@ -19,7 +19,7 @@ use analysis::{BacktestResult, ClosedTrade, PerformanceMetrics, TradePnL};
 use context::StrategyContext;
 use data::{DataFeed, from_arrays};
 use engine::Engine;
-use indicators::SMA;
+use indicators::{ATR, BollingerBands, EMA, MACD, RSI, SMA};
 use model::{
     AssetType, Bar, ExecutionMode, Instrument, Order, OrderSide, OrderStatus, OrderType, Tick,
     TimeInForce, Trade, TradingSession,
@@ -54,6 +54,11 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RiskManager>()?;
     m.add_class::<RiskConfig>()?;
     m.add_class::<SMA>()?;
+    m.add_class::<EMA>()?;
+    m.add_class::<MACD>()?;
+    m.add_class::<RSI>()?;
+    m.add_class::<BollingerBands>()?;
+    m.add_class::<ATR>()?;
     Ok(())
 }
 
