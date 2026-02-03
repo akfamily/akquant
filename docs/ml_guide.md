@@ -44,7 +44,6 @@ import pandas as pd
 
 class MyMLStrategy(Strategy):
     def __init__(self):
-        super().__init__()
 
         # 1. 初始化模型
         # 这里可以使用任何 sklearn 兼容的模型，如 RandomForest, XGBoost

@@ -23,11 +23,11 @@ class MyStrategy(Strategy):
         # 简单的价格突破逻辑
         if bar.close > 100.0 and position == 0:
             print(f"[{datetime.fromtimestamp(bar.timestamp / 1e9)}] 价格 {bar.close} > 100, 买入")
-            self.buy(quantity=100.0) # 使用默认 symbol
+            self.buy(symbol=bar.symbol, quantity=100.0) # 使用默认 symbol
 
         elif bar.close <= 100.0 and position > 0:
             print(f"[{datetime.fromtimestamp(bar.timestamp / 1e9)}] 价格 {bar.close} <= 100, 卖出")
-            self.sell(quantity=float(position))
+            self.sell(symbol=bar.symbol, quantity=float(position))
 
 # 2. 准备环境
 engine = Engine()
@@ -39,7 +39,8 @@ engine.set_timezone(28800)
 feed = DataFeed()
 
 # 3. 添加合约 (股票)
-engine.add_instrument(Instrument("AAPL", AssetType.Stock, 1.0, 0.01))
+# Instrument 参数: symbol, asset_type, multiplier, margin_ratio, tick_size, option_type, strike_price, expiry_date, lot_size
+engine.add_instrument(Instrument("AAPL", AssetType.Stock, 1.0, 0.01, 0.01, None, None, None, None))
 
 # 4. 添加数据
 feed.add_bar(Bar(
@@ -56,9 +57,11 @@ engine.add_data(feed)
 
 # 5. 运行回测
 print("开始回测...")
-result = engine.run(MyStrategy())
+summary = engine.run(MyStrategy(), show_progress=True)
+print(summary)
 
 # 6. 查看结果
+result = engine.get_results()
 print(f"Total Return: {result.metrics.total_return_pct:.2f}%")
 
 # 获取 DataFrame 格式结果 (如果有)

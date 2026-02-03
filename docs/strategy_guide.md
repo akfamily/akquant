@@ -37,7 +37,7 @@ import numpy as np
 
 class MyStrategy(Strategy):
     def __init__(self, ma_window=20):
-        super().__init__()
+        # 注意: Strategy 类使用了 __new__ 进行初始化，子类不再需要调用 super().__init__()
         self.ma_window = ma_window
 
     def on_start(self):
@@ -149,7 +149,6 @@ indicators.add("ma_20", lambda df: df['close'].rolling(20).mean())
 # 3. 在策略中注册
 class MyVectorizedStrategy(Strategy):
     def __init__(self):
-        super().__init__()
         # 注册指标
         # 这里的 Indicator 包装了计算逻辑
         self.register_indicator("rsi_14", Indicator("rsi_14", calculate_rsi, timeperiod=14))
@@ -292,7 +291,6 @@ AKQuant 引入了全新的 ML 框架，支持 **Walk-forward Validation (滚动�
 ```python
 class MyMLStrategy(Strategy):
     def __init__(self):
-        super().__init__()
         # 1. 初始化模型
         self.model = SklearnAdapter(LogisticRegression())
 
@@ -337,7 +335,7 @@ engine = Engine()
 engine.add_data(feed)
 
 # 运行回测 (数据将在回测过程中逐行读取)
-engine.run(strategy)
+engine.run(strategy, show_progress=True)
 ```
 
 ### 11.2 实时交易 (Live Trading)
@@ -399,7 +397,7 @@ t.start()
 
 # 4. 运行引擎 (阻塞主线程)
 # 引擎将持续运行，处理推送过来的数据
-engine.run(strategy)
+engine.run(strategy, show_progress=True)
 ```
 
 ## 12. 常见问题 (FAQ)

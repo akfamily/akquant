@@ -38,12 +38,17 @@
 *   `set_slippage(type: str, value: float)`: 设置滑点模型 (`fixed` 或 `percent`)。
 *   `set_volume_limit(limit: float)`: 设置成交量限制比例 (0.0 - 1.0)。
 *   `set_market_sessions(sessions: List[Tuple[str, str, TradingSession]])`: 设置交易时段列表。
-*   `get_results() -> BacktestResult`: 获取回测结果。
+*   `run(strategy: Strategy, show_progress: bool) -> str`: 运行回测，返回简要结果字符串。
+    *   `strategy`: 策略实例
+    *   `show_progress`: 是否显示进度条 (必须指定)
+*   `get_results() -> BacktestResult`: 获取详细的回测结果对象。
 *   `set_history_depth(depth: int)`: 设置引擎层面的历史数据缓存深度（通常由策略自动设置）。
 
 ### `akquant.Strategy`
 
 Python 策略基类 (`akquant.strategy.Strategy`)。
+
+**注意**: `Strategy` 类使用了 `__new__` 进行初始化，因此子类在 `__init__` 中**不需要**调用 `super().__init__()`。
 
 **回调方法 (需重写):**
 
@@ -125,6 +130,11 @@ Python 策略基类 (`akquant.strategy.Strategy`)。
 ### `akquant.Instrument`
 
 交易标的定义。
+
+**构造函数:**
+`Instrument(symbol, asset_type, multiplier, margin_ratio, tick_size, option_type, strike_price, expiry_date, lot_size)`
+
+*   注意: 所有参数均为位置参数且必填。可选参数如果不需要请传 `None`。
 
 **属性:**
 
