@@ -53,7 +53,21 @@ class Indicator:
         series = self._data[symbol]
         # Assuming series index is datetime
         try:
-            return float(series.asof(timestamp))  # type: ignore[arg-type]
+            # Handle integer timestamp (nanoseconds)
+            ts = timestamp
+            if isinstance(timestamp, (int, float)):
+                ts = pd.Timestamp(timestamp, unit="ns", tz="UTC")
+
+            # Handle Timezone Mismatch
+            if isinstance(series.index, pd.DatetimeIndex):
+                if series.index.tz is None and getattr(ts, "tzinfo", None) is not None:
+                    ts = ts.tz_localize(None)
+                elif (
+                    series.index.tz is not None and getattr(ts, "tzinfo", None) is None
+                ):
+                    ts = ts.tz_localize("UTC").tz_convert(series.index.tz)
+
+            return float(series.asof(ts))  # type: ignore[arg-type]
         except Exception:
             return float("nan")
 
