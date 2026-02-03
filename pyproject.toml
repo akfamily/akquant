@@ -4,11 +4,11 @@ build-backend = "maturin"
 
 [project]
 name = "akquant"
-version = "0.1.4"
+version = "0.1.5"
 description = "High-performance quantitative trading framework based on Rust and Python"
 readme = "README.md"
 license = {file = "LICENSE"}
-authors = [{name = "Akquant Developers"}]
+authors = [{name = "AKQuant Developers"}]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
