@@ -1,8 +1,9 @@
 site_name: akquant
 site_description: 高性能 Rust/Python 量化投研框架
 site_author: akquant contributors
-repo_url: https://github.com/yourusername/akquant
-repo_name: akquant
+site_url: https://albertandking.github.io/akquant/
+repo_url: https://github.com/albertandking/akquant
+repo_name: albertandking/akquant
 edit_uri: edit/main/docs/
 
 theme:
