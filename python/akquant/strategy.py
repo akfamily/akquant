@@ -12,12 +12,12 @@ from .akquant import (
     Tick,
     TimeInForce,
 )
-from .ml.model import QuantModel
 from .sizer import FixedSize, Sizer
 from .utils import parse_duration_to_bars
 
 if TYPE_CHECKING:
     from .indicator import Indicator
+    from .ml.model import QuantModel
 
 
 class Strategy:
@@ -41,6 +41,7 @@ class Strategy:
     _rolling_step: int
     _bar_count: int
     _model_configured: bool
+    model: Optional["QuantModel"]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -63,12 +64,14 @@ class Strategy:
         instance._bar_count = 0
         instance._model_configured = False
 
+        # 初始化通常在 __init__ 中的属性，允许子类省略 super().__init__()
+        instance.model = None
+
         return instance
 
     def __init__(self) -> None:
         """初始化."""
-        self._ctx = None
-        self.model: Optional[QuantModel] = None
+        pass
 
     def set_history_depth(self, depth: int) -> None:
         """
