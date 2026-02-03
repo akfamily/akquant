@@ -497,51 +497,39 @@ async def fetch_all(urls: list[str]) -> dict[str, str]:
     return dict(zip(urls, results))
 ```
 
-## Package Organization
+## Project Organization (Hybrid Rust/Python)
 
-### Standard Project Layout
+### Hybrid Layout Structure
 
 ```
-myproject/
-├── src/
-│   └── mypackage/
+akquant/
+├── python/              # Python package source
+│   └── akquant/
 │       ├── __init__.py
-│       ├── main.py
-│       ├── api/
-│       │   ├── __init__.py
-│       │   └── routes.py
-│       ├── models/
-│       │   ├── __init__.py
-│       │   └── user.py
-│       └── utils/
-│           ├── __init__.py
-│           └── helpers.py
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py
-│   ├── test_api.py
-│   └── test_models.py
-├── pyproject.toml
-├── README.md
-└── .gitignore
+│       ├── strategy.py  # Pure Python logic
+│       └── akquant.pyi  # Stubs for Rust extensions
+├── src/                 # Rust source code (PyO3 bindings)
+│   ├── lib.rs
+│   └── engine.rs
+├── tests/               # Python tests
+├── Cargo.toml           # Rust build configuration
+├── pyproject.toml       # Python build & tool configuration
+└── build.rs             # Rust build script
 ```
 
 ### Import Conventions
 
 ```python
-# Good: Import order - stdlib, third-party, local
-import os
-import sys
-from pathlib import Path
+# Good: Handle TYPE_CHECKING to avoid circular imports
+from typing import TYPE_CHECKING, Optional
 
-import requests
-from fastapi import FastAPI
+if TYPE_CHECKING:
+    from .indicator import Indicator
+    from .strategy import Strategy
 
-from mypackage.models import User
-from mypackage.utils import format_name
-
-# Good: Use isort for automatic import sorting
-# pip install isort
+# Good: Explicit imports from local modules
+from .akquant import Bar, OrderStatus
+from .utils import parse_duration
 ```
 
 ### __init__.py for Package Exports
@@ -614,71 +602,82 @@ for item in items:
 result = buffer.getvalue()
 ```
 
+## AKQuant Specific Patterns
+
+### Strategy Initialization (`__new__` vs `__init__`)
+
+In AKQuant, base classes often use `__new__` to handle initialization logic that must run before user-defined `__init__`. This avoids forcing users to call `super().__init__()`.
+
+```python
+class Strategy:
+    def __new__(cls, *args, **kwargs):
+        instance = super().__new__(cls)
+        # Framework initialization
+        instance.ctx = None
+        instance._indicators = []
+        return instance
+
+    def __init__(self):
+        # User initialization (no super().__init__ needed)
+        pass
+```
+
+### Rust Extension Type Hinting (.pyi)
+
+For classes implemented in Rust (via PyO3), provide explicit type stubs in `.pyi` files.
+
+```python
+# akquant.pyi
+class Bar:
+    """K-line data structure implemented in Rust."""
+    timestamp: int
+    open: float
+    close: float
+
+    def __new__(cls, timestamp: int, open: float, ...) -> "Bar": ...
+```
+
 ## Python Tooling Integration
 
-### Essential Commands
+### Essential Commands (Ruff & Mypy)
+
+AKQuant uses `ruff` for both linting and formatting, and `mypy` for strict type checking.
 
 ```bash
-# Code formatting
-black .
-isort .
+# Formatting & Linting
+ruff format .
+ruff check . --fix
 
-# Linting
-ruff check .
-pylint mypackage/
-
-# Type checking
+# Type checking (Strict)
 mypy .
 
-# Testing
-pytest --cov=mypackage --cov-report=html
-
-# Security scanning
-bandit -r .
-
-# Dependency management
-pip-audit
-safety check
+# Build & Install (Hybrid)
+maturin develop
 ```
 
 ### pyproject.toml Configuration
 
 ```toml
 [project]
-name = "mypackage"
-version = "1.0.0"
-requires-python = ">=3.9"
+name = "akquant"
+requires-python = ">=3.10"
 dependencies = [
-    "requests>=2.31.0",
-    "pydantic>=2.0.0",
+    "pandas>=2.0.0",
+    "numpy>=1.20.0",
 ]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-    "mypy>=1.5.0",
-]
-
-[tool.black]
-line-length = 88
-target-version = ['py39']
 
 [tool.ruff]
 line-length = 88
-select = ["E", "F", "I", "N", "W"]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "D"]  # Pyflakes, pycodestyle, isort, pydocstyle
+ignore = ["D100", "D104"]      # Ignore missing docstring in public module/package
 
 [tool.mypy]
-python_version = "3.9"
-warn_return_any = true
-warn_unused_configs = true
+python_version = "3.10"
 disallow_untyped_defs = true
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "--cov=mypackage --cov-report=term-missing"
+check_untyped_defs = true
 ```
 
 ## Quick Reference: Python Idioms
