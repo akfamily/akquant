@@ -58,7 +58,7 @@
 ## 前置要求
 
 - **Rust**: [安装 Rust](https://www.rust-lang.org/tools/install)
-- **Python**: 3.9+
+- **Python**: 3.10+
 - **Maturin**: `pip install maturin`
 
 ## 安装说明
