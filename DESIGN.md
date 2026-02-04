@@ -18,6 +18,7 @@
 akquant/
 ├── Cargo.toml              # Rust 项目依赖与配置
 ├── pyproject.toml          # Python 项目构建配置 (Maturin)
+├── Makefile                # 项目管理命令
 ├── src/                    # Rust 核心源码 (底层实现)
 │   ├── lib.rs              # PyO3 模块入口，注册 Python 模块
 │   ├── engine.rs           # 回测引擎：驱动时间轴与事件循环
@@ -32,28 +33,37 @@ akquant/
 │   ├── history.rs          # 历史数据：高效的环形缓冲区管理
 │   ├── indicators.rs       # 技术指标：Rust 原生指标实现 (如 SMA)
 │   └── model/              # 数据模型：定义基础数据结构
+│       ├── mod.rs          # 模型模块定义
 │       ├── order.rs        # 订单 (Order) 与成交 (Trade)
 │       ├── instrument.rs   # 标的物信息 (Instrument)
+│       ├── market_data.rs  # 市场数据 (Bar, Tick)
 │       ├── timer.rs        # 定时器事件
 │       └── types.rs        # 基础枚举 (Side, Type, ExecutionMode)
 ├── python/
 │   └── akquant/            # Python 包源码 (用户接口)
 │       ├── __init__.py     # 导出公共 API
 │       ├── strategy.py     # Strategy 基类：封装上下文，提供 ML 训练与交易接口
+│       ├── backtest.py     # BacktestResult 分析与 DataFrame 转换
 │       ├── config.py       # 配置定义：BacktestConfig, StrategyConfig, RiskConfig
 │       ├── risk.py         # 风控配置适配层
 │       ├── data.py         # 数据加载与目录服务 (DataCatalog)
 │       ├── sizer.py        # Sizer 基类：提供多种仓位管理实现
-│       ├── analyzer.py     # TradeAnalyzer：交易记录分析工具
 │       ├── indicator.py    # Python 指标接口
+│       ├── optimize.py     # 参数优化工具
+│       ├── plot.py         # 绘图工具
 │       ├── log.py          # 日志模块
+│       ├── utils.py        # 工具函数
 │       ├── ml/             # 机器学习框架 (New)
 │       │   ├── __init__.py
 │       │   └── model.py    # QuantModel, SklearnAdapter, ValidationConfig
 │       └── akquant.pyi     # 类型提示文件 (IDE 补全支持)
+├── tests/                  # 测试用例
 └── examples/               # 示例代码
-    ├── ml_framework_demo.py      # ML 框架基础示例
-    └── ml_walk_forward_demo.py   # 滚动训练示例
+    ├── benchmark_akquant_multi.py  # 多线程 Benchmark
+    ├── ml_framework_demo.py        # ML 框架基础示例
+    ├── ml_walk_forward_demo.py     # 滚动训练示例
+    ├── optimization_demo.py        # 参数优化示例
+    └── plot_demo.py                # 绘图示例
 ```
 
 ## 2. 核心组件架构详解
@@ -124,8 +134,10 @@ akquant/
         *   `set_rolling_window(train, step)`: 配置滚动训练参数。
         *   `on_train_signal(context)`: 周期性触发模型训练。
         *   `prepare_features(df)`: 特征工程接口。
+*   **`BacktestResult` (`backtest.py`)**:
+    *   封装 Rust 返回的 `BacktestResult`。
+    *   提供 `metrics_df`, `daily_positions_df` 等便捷属性。
 *   **`Sizer` (`sizer.py`)**: 仓位管理基类。
-*   **`TradeAnalyzer` (`analyzer.py`)**: 交易记录分析。
 
 ### 2.9 机器学习框架 (`python/akquant/ml/`)
 
