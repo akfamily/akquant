@@ -1,4 +1,4 @@
-site_name: akquant
+site_name: AKQuant
 site_description: 高性能 Rust/Python 量化投研框架
 site_author: akquant contributors
 site_url: https://albertandking.github.io/akquant/
@@ -37,11 +37,13 @@ nav:
   - 策略指南: strategy_guide.md
   - 机器学习指南: ml_guide.md
   - 架构设计: architecture.md
+  - 设计与开发指南: design.md
   - API 参考: api.md
   - 示例: examples.md
 
 markdown_extensions:
   - admonition
+  - attr_list
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite

@@ -16,7 +16,7 @@
     *   `on_tick`: 每一个 Tick 到达时触发 (高频/盘口策略)。
     *   `on_timer`: 定时器触发时调用 (需手动注册)。
 
-## 2. 策略风格选择
+## 2. 策略风格选择 {: #style-selection }
 
 AKQuant 提供了两种风格的策略开发接口：
 
@@ -27,7 +27,7 @@ AKQuant 提供了两种风格的策略开发接口：
 | **代码结构** | 面向对象，逻辑封装性好 | 脚本化，简单直观 |
 | **API 调用** | `self.buy()`, `self.ctx` | `ctx.buy()`, `ctx` 作为参数传递 |
 
-## 3. 编写类风格策略 (Class-based)
+## 3. 编写类风格策略 (Class-based) {: #class-based }
 
 这是 AKQuant 推荐的策略编写方式，结构清晰，易于扩展。
 
@@ -134,7 +134,7 @@ engine.risk_manager.config = risk_config # 应用配置
 
 如果订单违反风控规则，`self.buy()` 等函数会返回 `None` 或生成的订单状态直接为 `Rejected`，并会在日志中记录原因。
 
-## 6. 使用高性能指标 (Built-in Indicators)
+## 6. 使用高性能指标 (Built-in Indicators) {: #indicatorset }
 
 AKQuant 在 Rust 层内置了常用的技术指标，通过增量计算 (Incremental Calculation) 避免了重复的全量计算，性能极高。
 
@@ -218,7 +218,7 @@ class IntradayStrategy(Strategy):
         # 其他交易逻辑...
 ```
 
-### 7.3 多品种轮动
+### 7.3 多品种轮动 {: #multi-asset }
 
 ```python
 class RotationStrategy(Strategy):

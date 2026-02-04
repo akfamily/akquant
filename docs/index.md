@@ -4,7 +4,7 @@
 
 最新版本参考了 [NautilusTrader](https://github.com/nautechsystems/nautilus_trader) 和 [PyBroker](https://github.com/edtechre/pybroker) 的架构理念，引入了模块化设计、独立的投资组合管理、高级订单类型支持以及便捷的数据加载与缓存机制。
 
-📖 **[设计与开发指南 (DESIGN.md)](../DESIGN.md)**: 如果你想深入了解内部架构、学习如何设计此类系统或进行二次开发，请阅读此文档。
+📖 **[设计与开发指南 (DESIGN.md)](design.md)**: 如果你想深入了解内部架构、学习如何设计此类系统或进行二次开发，请阅读此文档。
 
 ## 核心特性
 

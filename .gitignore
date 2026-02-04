@@ -1,4 +1,5 @@
 target/
+site/
 __pycache__/
 *.so
 *.dylib
