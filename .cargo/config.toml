@@ -1,0 +1,4 @@
+[env]
+# 请将下面的路径替换为你实际的 Python 解释器路径
+# 注意：Windows 路径中的反斜杠需要使用双反斜杠 \\ 或直接使用正斜杠 /
+PYO3_PYTHON = "C:\\Users\\albert\\miniconda3\\envs\\akquant\\python.exe"
