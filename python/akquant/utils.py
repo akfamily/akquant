@@ -274,7 +274,15 @@ def df_to_arrays(
 
     # Ensure nanosecond resolution
     if hasattr(dt_series, "astype"):
-        dt_series = dt_series.astype("datetime64[ns]")
+        # Check if tz-aware to avoid TypeError
+        is_aware = False
+        if isinstance(dt_series, pd.DatetimeIndex):
+            is_aware = dt_series.tz is not None
+        elif hasattr(dt_series, "dt"):
+            is_aware = dt_series.dt.tz is not None
+
+        if not is_aware:
+            dt_series = dt_series.astype("datetime64[ns]")
 
     dt_series = dt_series.fillna(pd.Timestamp(0))
 
@@ -373,11 +381,10 @@ def prepare_dataframe(
         # 2. Convert to datetime
         dt = pd.to_datetime(df[date_col], errors="coerce")
 
-        # Ensure ns
-        dt = dt.astype("datetime64[ns]")
-
         # 3. Handle Timezone
         if dt.dt.tz is None:
+            # Ensure ns for naive before localizing
+            dt = dt.astype("datetime64[ns]")
             dt = dt.dt.tz_localize(tz)
 
         # 4. Convert to UTC
@@ -390,11 +397,10 @@ def prepare_dataframe(
         # Handle DatetimeIndex
         dt_idx = df.index
 
-        # Ensure ns
-        dt_idx = dt_idx.astype("datetime64[ns]")  # type: ignore
-
         if dt_idx.tz is None:
+            dt_idx = cast(pd.DatetimeIndex, dt_idx.astype("datetime64[ns]"))
             dt_idx = dt_idx.tz_localize(tz)
+
         dt_idx = dt_idx.tz_convert("UTC")
         df.index = dt_idx
         df["timestamp"] = dt_idx.astype("int64")
