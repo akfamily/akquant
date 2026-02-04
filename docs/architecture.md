@@ -38,14 +38,23 @@ akquant/
 │   ├── event.rs        # 事件定义与总线消息
 │   ├── clock.rs        # 交易时钟 (NautilusTrader 风格)
 │   ├── execution.rs    # 交易所模拟与订单撮合
-    ├── market.rs       # 市场规则 (费率、T+1/T+0)
-    ├── portfolio.rs    # 资金与持仓管理
-    ├── risk.rs         # 风控管理 (RiskManager)
-    └── context.rs      # 策略交互上下文
+│   ├── market.rs       # 市场规则 (费率、T+1/T+0)
+│   ├── portfolio.rs    # 资金与持仓管理
+│   ├── risk.rs         # 风控管理 (RiskManager)
+│   ├── context.rs      # 策略交互上下文
+│   ├── history.rs      # 历史数据管理 (Zero-Copy View)
+│   ├── analysis.rs     # 绩效指标计算
+│   └── indicators.rs   # 高性能指标实现
 ├── python/             # Python 源代码
 │   └── akquant/
+│       ├── ml/         # 机器学习适配器
 │       ├── __init__.py
-│       └── akquant.pyi    # 类型提示文件
+│       ├── akquant.pyi # 类型提示文件
+│       ├── backtest.py # 回测入口
+│       ├── strategy.py # 策略基类
+│       ├── indicator.py# 指标包装
+│       ├── optimize.py # 参数优化
+│       └── ...         # 其他辅助模块
 └── examples/           # 使用示例
 ```
 

@@ -94,6 +94,24 @@ Python 策略基类 (`akquant.strategy.Strategy`)。
 *   `__init__(precalculated_data: Dict[str, Dict[str, np.ndarray]])`: 初始化策略。
 *   `get_value(indicator_name: str, symbol: str) -> float`: 获取当前 Bar 对应的预计算指标值 (O(1) 访问)。
 
+### `akquant.ml` (Machine Learning)
+
+`akquant.ml` 模块提供了与主流机器学习框架集成的适配器。
+
+**类:**
+
+*   `QuantModel`: 所有 ML 模型的基类。
+*   `SklearnAdapter(model)`: 适配 Scikit-learn 风格的模型 (如 RandomForest, XGBoost, LightGBM)。
+*   `PyTorchAdapter(network, criterion, optimizer_cls, ...)`: 适配 PyTorch 神经网络模型。
+
+**方法 (QuantModel):**
+
+*   `set_validation(method='walk_forward', train_window, rolling_step, frequency)`: 配置滚动验证参数。
+*   `fit(X, y)`: 训练模型。
+*   `predict(X)`: 预测结果。
+*   `save(path)`: 保存模型。
+*   `load(path)`: 加载模型。
+
 ### `akquant.RiskManager` & `akquant.RiskConfig`
 
 风控管理模块。

@@ -37,7 +37,7 @@
     *   **ExecutionMode**: 支持 `CurrentClose` (信号当根K线收盘成交) 和 `NextOpen` (次日开盘成交) 模式。
 *   **丰富的分析工具**:
     *   **PerformanceMetrics**:
-        *   **收益**: Total Return, Annualized Return, Alpha.
+        *   **收益**: Total Return, Annualized Return, Alpha, Win Rate.
         *   **风险**: Max Drawdown, Sharpe Ratio, Sortino Ratio, Ulcer Index, UPI (Ulcer Performance Index).
         *   **拟合**: Equity R² (线性回归拟合度).
     *   **TradeAnalyzer**: 包含胜率、盈亏比、最大连续盈亏等详细交易统计，支持未结盈亏 (Unrealized PnL) 计算。

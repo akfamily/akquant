@@ -4,7 +4,7 @@
 
 在安装 `AKQuant` 之前，请确保您的系统满足以下要求：
 
-*   **Python**: 版本 3.9 - 3.13。
+*   **Python**: 版本 >= 3.10。
 *   **Rust**: 如果需要从源码编译，请安装最新稳定版 Rust。[安装 Rust](https://www.rust-lang.org/tools/install)
 *   **操作系统**: 支持 macOS, Linux, Windows。
 

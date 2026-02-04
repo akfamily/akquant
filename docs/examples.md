@@ -8,7 +8,7 @@
 ## 2. 进阶示例 (Advanced Examples)
 
 *   **Zipline 风格策略**: 展示了如何使用函数式 API (`initialize`, `on_bar`) 编写策略，适合从 Zipline 迁移的用户。
-    *   参考代码: `examples/zipline_style_backtest.py` (如果存在) 或参考 [策略指南](strategy_guide.md#4-编写函数风格策略-functional)。
+    *   参考 [策略指南](strategy_guide.md#4-编写函数风格策略-functional)。
 
 *   **多品种回测 (Multi-Asset)**:
     *   **期货策略**: 展示期货回测配置（保证金、乘数）。参考 [快速开始](quickstart.md#4-多品种回测-期货期权)。
