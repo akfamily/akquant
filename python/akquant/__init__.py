@@ -2,12 +2,13 @@ import typing
 
 from . import akquant as _akquant
 from .akquant import *  # noqa: F403
-from .backtest import BacktestResult, plot_result, run_backtest  # type: ignore
-from .config import strategy_config
+from .backtest import BacktestResult, run_backtest  # type: ignore
+from .config import BacktestConfig, StrategyConfig, strategy_config
 from .data import DataLoader
 from .indicator import Indicator, IndicatorSet
 from .log import get_logger, register_logger
 from .optimize import OptimizationResult, run_optimization
+from .plot import plot_result
 from .sizer import AllInSizer, FixedSize, PercentSizer, Sizer
 from .strategy import Strategy
 from .utils import load_bar_from_df, prepare_dataframe
@@ -33,6 +34,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "BacktestResult",
         "run_optimization",
         "OptimizationResult",
+        "BacktestConfig",
+        "StrategyConfig",
     ]
 else:
     __all__ = [
@@ -54,6 +57,8 @@ else:
         "BacktestResult",
         "run_optimization",
         "OptimizationResult",
+        "BacktestConfig",
+        "StrategyConfig",
     ]
 
 

@@ -159,6 +159,31 @@ class BacktestResult:
             set(dir(self._raw) + list(self.__dict__.keys()) + ["daily_positions_df"])
         )
 
+    def plot(
+        self,
+        symbol: Optional[str] = None,
+        show: bool = True,
+        title: str = "Backtest Result",
+    ) -> Any:
+        """
+        Plot the backtest results using Plotly.
+
+        :param symbol: The symbol to highlight positions for.
+        :param show: Whether to display the plot immediately.
+        :param title: Title of the plot.
+        :return: Plotly Figure object.
+        """
+        try:
+            from .plot import plot_result
+        except ImportError:
+            print(
+                "Plotly is not installed. Please install it using `pip install plotly` "
+                "or `pip install akquant[plot]`."
+            )
+            return None
+
+        return plot_result(self, symbol=symbol, show=show, title=title)
+
 
 class FunctionalStrategy(Strategy):
     """内部策略包装器，用于支持函数式 API (Zipline 风格)."""
@@ -374,7 +399,20 @@ def run_backtest(
             if symbols:
                 logger.warning("Failed to load data for all requested symbols.")
 
-    # 4. 设置引擎
+    # 3.5 Pre-calculate indicators
+    # Inject data into indicators so they can be accessed in on_bar via get_value()
+    if hasattr(strategy_instance, "_indicators") and data_map_for_indicators:
+        for symbol_key, df_val in data_map_for_indicators.items():
+            for ind in strategy_instance._indicators:
+                try:
+                    ind(df_val, symbol_key)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to calculate indicator {ind.name} "
+                        f"for {symbol_key}: {e}"
+                    )
+
+    # 4. 配置引擎
     engine = Engine()
     # engine.set_timezone_name(timezone)
     offset_delta = pd.Timestamp.now(tz=timezone).utcoffset()

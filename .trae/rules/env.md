@@ -6,3 +6,4 @@
 6. 文档或者注释中出现 akquant，则用 AKQuant 替换。
 7. 本项目主要参考：https://github.com/nautechsystems/nautilus_trader 量化框架
 8. 本项目用 PyO3 绑定 Rust 代码，实现高性能的回测引擎。绑定的 API 参考：https://github.com/nautechsystems/nautilus_trader，请使用最新的 API 版本
+9. AKQuant 时区处理：默认 "Asia/Shanghai"，非 A 股回测需显式设置 timezone，数据必须显式 tz_localize。

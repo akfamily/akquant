@@ -272,6 +272,10 @@ def df_to_arrays(
     if not isinstance(dt_series, pd.DatetimeIndex):
         dt_series = pd.to_datetime(dt_series)
 
+    # Ensure nanosecond resolution
+    if hasattr(dt_series, "astype"):
+        dt_series = dt_series.astype("datetime64[ns]")
+
     dt_series = dt_series.fillna(pd.Timestamp(0))
 
     # Handle timezone (support both Series and DatetimeIndex)
@@ -369,6 +373,9 @@ def prepare_dataframe(
         # 2. Convert to datetime
         dt = pd.to_datetime(df[date_col], errors="coerce")
 
+        # Ensure ns
+        dt = dt.astype("datetime64[ns]")
+
         # 3. Handle Timezone
         if dt.dt.tz is None:
             dt = dt.dt.tz_localize(tz)
@@ -382,6 +389,10 @@ def prepare_dataframe(
     elif isinstance(df.index, pd.DatetimeIndex):
         # Handle DatetimeIndex
         dt_idx = df.index
+
+        # Ensure ns
+        dt_idx = dt_idx.astype("datetime64[ns]")  # type: ignore
+
         if dt_idx.tz is None:
             dt_idx = dt_idx.tz_localize(tz)
         dt_idx = dt_idx.tz_convert("UTC")
