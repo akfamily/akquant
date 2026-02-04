@@ -104,7 +104,7 @@ impl RiskManager {
         }
     }
 
-    /// 检查订单是否符合风控规则
+    /// 检查订单是否符合风控规则.
     ///
     /// :param order: 待检查订单
     /// :param portfolio: 当前投资组合
