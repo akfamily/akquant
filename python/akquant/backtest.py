@@ -150,8 +150,10 @@ class BacktestResult:
         return getattr(self._raw, name)
 
     def __repr__(self) -> str:
-        """Return the string representation of the raw result."""
-        return repr(self._raw)
+        """Return the string representation of the result (Vertical Metrics)."""
+        metrics = self.metrics_df.T
+        metrics.columns = ["Value"]
+        return f"BacktestResult:\n{metrics.to_string()}"
 
     def __dir__(self) -> List[str]:
         """Return the list of attributes including raw result attributes."""

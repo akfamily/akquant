@@ -100,9 +100,10 @@ class MyStrategy(Strategy):
     def on_bar(self, bar):
         # 简单的策略逻辑 (示例)
         # 实际回测推荐使用 IndicatorSet 进行向量化计算
-        if self.ctx.position.size == 0:
+        position = self.ctx.get_position(bar.symbol)
+        if position == 0:
             self.buy(symbol=bar.symbol, quantity=100)
-        elif bar.close > self.ctx.position.avg_price * 1.1:
+        elif position > 0:
             self.sell(symbol=bar.symbol, quantity=100)
 
 # 3. 运行回测
@@ -121,8 +122,8 @@ print(f"Sharpe Ratio: {result.metrics.sharpe_ratio:.2f}")
 print(f"Max Drawdown: {result.metrics.max_drawdown_pct:.2f}%")
 
 # 5. 获取详细数据 (DataFrame)
-# 绩效指标表
-print(result.metrics_df)
+# 绩效指标表 (使用 .T 转置为竖排显示，方便阅读)
+print(result.metrics_df.T)
 # 交易记录表
 print(result.trades_df)
 # 每日持仓表
@@ -140,9 +141,10 @@ def initialize(ctx):
     ctx.stop_loss_pct = 0.05
 
 def on_bar(ctx, bar):
-    if ctx.position.size == 0:
+    position = ctx.get_position(bar.symbol)
+    if position == 0:
         ctx.buy(symbol=bar.symbol, quantity=100)
-    elif bar.close < ctx.position.avg_price * (1 - ctx.stop_loss_pct):
+    elif position > 0:
         ctx.sell(symbol=bar.symbol, quantity=100)
 
 run_backtest(
@@ -151,6 +153,50 @@ run_backtest(
     data=df, # 使用上文生成的数据
     symbol="600000"
 )
+```
+
+### 3. 使用自定义因子数据 (Custom Factors)
+
+AKQuant 支持在 `DataFrame` 中传入任意数量的自定义数值字段（如因子、信号等），并在 `on_bar` 中通过 `bar.extra` 字典访问。
+
+```python
+import pandas as pd
+import numpy as np
+from akquant import Strategy, run_backtest
+
+# 1. 准备数据
+def generate_data():
+    dates = pd.date_range(start="2023-01-01", end="2023-12-31")
+    n = len(dates)
+    price = 100 * np.cumprod(1 + np.random.normal(0.0005, 0.02, n))
+    return pd.DataFrame({
+        "date": dates,
+        "open": price, "high": price * 1.01, "low": price * 0.99, "close": price,
+        "volume": 10000,
+        "symbol": "600000"
+    })
+
+df = generate_data()
+
+# 2. 增加自定义因子 (必须是数值类型)
+df["momentum"] = df["close"] / df["open"]       # 因子 1
+df["volatility"] = df["high"] - df["low"]       # 因子 2
+df["sentiment_score"] = np.random.rand(len(df)) # 因子 3
+
+# 3. 在策略中同时访问这些字段
+class MyStrategy(Strategy):
+    def on_bar(self, bar):
+        # 通过键名访问 (返回 float 类型)
+        mom = bar.extra.get("momentum", 0.0)
+        vol = bar.extra.get("volatility", 0.0)
+        score = bar.extra.get("sentiment_score", 0.0)
+
+        # 综合判断
+        if mom > 1.02 and score > 0.8:
+            self.buy(bar.symbol, 100)
+
+# 4. 运行回测
+run_backtest(strategy=MyStrategy, data=df, symbol="600000")
 ```
 
 更多示例请参考 `examples/` 目录。
