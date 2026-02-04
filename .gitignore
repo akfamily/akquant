@@ -7,3 +7,6 @@ __pycache__/
 .venv
 venv/
 .DS_Store
+
+# Local cargo config
+.cargo/config.toml
