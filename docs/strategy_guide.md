@@ -1,6 +1,6 @@
 # 策略编写指南
 
-本文档旨在帮助策略开发者快速掌握 AKQuant 的策略编写方法。AKQuant 提供了两种风格的策略开发接口：**类风格 (Class-based)** 和 **函数风格 (Functional)**。
+本文档旨在帮助策略开发者快速掌握 AKQuant 的策略编写方法。
 
 ## 1. 核心概念
 
@@ -10,13 +10,15 @@
 *   **Strategy**: 策略逻辑的载体，负责接收市场事件并生成交易指令。
 *   **Context (`ctx`)**: 策略上下文，提供账户信息（资金、持仓）、订单管理以及历史数据访问能力。
 *   **生命周期**:
-    *   `__init__`: Python 对象初始化，适合定义参数和注册指标。
-    *   `on_start`: 策略启动时调用，**必须**在此处使用 `self.subscribe()` 订阅数据。
+    *   `__init__`: Python 对象初始化，适合定义参数。
+    *   `on_start`: 策略启动时调用，**必须**在此处使用 `self.subscribe()` 订阅数据，也可在此注册指标。
     *   `on_bar`: 每一根 K 线闭合时触发 (核心交易逻辑)。
     *   `on_tick`: 每一个 Tick 到达时触发 (高频/盘口策略)。
     *   `on_timer`: 定时器触发时调用 (需手动注册)。
 
 ## 2. 策略风格选择
+
+AKQuant 提供了两种风格的策略开发接口：
 
 | 特性 | 类风格 (推荐) | 函数风格 |
 | :--- | :--- | :--- |
@@ -28,8 +30,6 @@
 ## 3. 编写类风格策略 (Class-based)
 
 这是 AKQuant 推荐的策略编写方式，结构清晰，易于扩展。
-
-### 3.1 示例代码
 
 ```python
 from akquant import Strategy, Bar
@@ -66,340 +66,175 @@ class MyStrategy(Strategy):
             self.sell(symbol=bar.symbol, quantity=100)
 ```
 
-### 3.2 关键方法
+## 4. 订单与交易详解 (Orders & Execution)
 
-*   **`on_start(self)`**: 策略启动入口，用于订阅数据 (`self.subscribe`) 和注册定时器。
-*   **`on_bar(self, bar: Bar)`**: 核心回调，每个 Bar 到达时触发。
-*   **`self.buy(symbol, quantity, price=None)`**: 发送买入指令。不指定价格则为市价单。
-*   **`self.sell(symbol, quantity, price=None)`**: 发送卖出指令。
-*   **`self.get_position(symbol)`**: 获取指定标的的当前持仓数量。
-*   **`self.get_open_orders(symbol)`**: 获取指定标的的未成交订单列表。
-*   **`self.get_history(count, symbol=None, field="close")`**: 获取历史数据序列。底层通过 Zero-Copy View 直接访问 Rust 内存，性能极高。
+### 4.1 订单生命周期
 
-## 4. 编写函数风格策略 (Functional)
+在 AKQuant 中，订单状态流转如下：
 
-这种风格与 Zipline 非常相似，适合习惯函数式编程的用户。
+1.  **New**: 订单对象被创建。
+2.  **Submitted**: 订单已发送给交易所/仿真撮合引擎。
+3.  **Accepted**: (实盘模式) 交易所确认接收订单。
+4.  **Filled**: 订单全部成交。
+    *   **PartiallyFilled**: 部分成交 (目前状态码统一为 Filled，需通过 `filled_quantity` 判断)。
+5.  **Cancelled**: 订单已取消。
+6.  **Rejected**: 订单被风控或交易所拒绝 (如资金不足、超出涨跌停)。
 
-### 4.1 示例代码
+### 4.2 常用交易指令
+
+*   **市价单 (Market Order)**:
+    ```python
+    self.buy(symbol="AAPL", quantity=100) # 市价买入
+    self.sell(symbol="AAPL", quantity=100) # 市价卖出
+    ```
+*   **限价单 (Limit Order)**:
+    指定价格成交，只有当市场价格达到或优于指定价格时才成交。
+    ```python
+    self.buy(symbol="AAPL", quantity=100, price=150.0) # 限价 150 买入
+    ```
+*   **止损单 (Stop Order)**:
+    当市价触及触发价 (`trigger_price`) 时，转化为市价单。
+    ```python
+    # 当价格跌破 140 时，市价卖出止损
+    self.stop_sell(symbol="AAPL", quantity=100, trigger_price=140.0)
+    ```
+*   **目标仓位 (Target Orders)**:
+    自动计算买卖数量，将仓位调整到目标值。
+    ```python
+    # 调整仓位到总资产的 50%
+    self.order_target_percent(target_percent=0.5, symbol="AAPL", price=None)
+
+    # 调整持仓到 1000 股 (如果是 0 则买入 1000，如果是 2000 则卖出 1000)
+    self.order_target_value(target_value=1000 * price, symbol="AAPL") # 注意这里 API 暂未直接支持 target_share，可用 value 模拟
+    ```
+
+### 4.3 撮合模式
+
+通过 `engine.set_execution_mode(mode)` 设置：
+
+*   **CurrentClose (默认)**: 信号在当前 Bar 收盘时立即撮合。适合日线级别回测或无法获取次日开盘价的场景。
+*   **NextOpen**: 信号在下一个 Bar 的开盘时撮合。这是更严谨的回测方式，避免了“未来函数”风险。
+
+## 5. 风险控制 (Risk Management)
+
+AKQuant 内置了 Rust 层面的风控管理器，可以在回测中模拟交易所或券商的风控规则。
 
 ```python
-from akquant import run_backtest
-import numpy as np
+from akquant import RiskConfig
 
-def initialize(ctx):
-    # 初始化策略参数
-    ctx.ma_window = 20
+# 在 Engine 初始化后设置
+risk_config = RiskConfig()
+risk_config.active = True
+risk_config.max_order_value = 1_000_000.0  # 单笔最大 100万
+risk_config.max_position_size = 5000       # 单标的最大持仓 5000 股
+risk_config.restricted_list = ["ST股票"]    # 黑名单 (Symbol)
 
-def on_bar(ctx, bar):
-    # ctx 即为策略上下文，同时代理了 Strategy 方法
-    prices = ctx.get_history(count=ctx.ma_window)
-
-    if len(prices) < ctx.ma_window:
-        return
-
-    ma = prices.mean()
-
-    # 获取持仓
-    pos = ctx.get_position(bar.symbol)
-
-    # 交易逻辑
-    if bar.close > ma and pos == 0:
-        ctx.buy(symbol=bar.symbol, quantity=100)
-    elif bar.close < ma and pos > 0:
-        ctx.sell(symbol=bar.symbol, quantity=100)
-
-# 运行回测
-run_backtest(
-    data=df,
-    strategy=on_bar,
-    initialize=initialize,
-    history_depth=20,  # 关键：启用历史数据维护
-    symbol="600000",
-    cash=100000
-)
+engine.risk_manager.config = risk_config # 应用配置
 ```
 
-## 5. 指标计算模式
+如果订单违反风控规则，`self.buy()` 等函数会返回 `None` 或生成的订单状态直接为 `Rejected`，并会在日志中记录原因。
 
-AKQuant 支持两种指标计算模式，开发者应根据性能需求选择。
+## 6. 使用高性能指标 (Built-in Indicators)
 
-### 5.1 向量化预计算 (推荐) - `IndicatorSet`
+AKQuant 在 Rust 层内置了常用的技术指标，通过增量计算 (Incremental Calculation) 避免了重复的全量计算，性能极高。
 
-**这是最高效的方式，类似 PyBroker 的设计。**
+支持的指标: `SMA`, `EMA`, `MACD`, `RSI`, `BollingerBands`, `ATR`.
 
-通过 `IndicatorSet`，你可以利用 Pandas/Numpy/Talib 在回测开始前一次性计算好所有指标，然后在策略中以极低的开销访问。
-
-*   **优点**: 极快 (比在线计算快 10-50 倍)，代码整洁。
-*   **使用方法**:
+### 6.1 注册与使用
 
 ```python
-from akquant.indicator import IndicatorSet
-import talib
+from akquant import Strategy
+from akquant.indicators import SMA, RSI
 
-# 1. 定义计算函数 (接收 DataFrame, 返回 Series)
-def calculate_rsi(df, timeperiod=14):
-    return talib.RSI(df['close'].values, timeperiod=timeperiod)
+class IndicatorStrategy(Strategy):
+    def on_start(self):
+        self.subscribe("AAPL")
 
-# 2. 创建 IndicatorSet
-indicators = IndicatorSet()
-indicators.add("rsi_14", calculate_rsi, timeperiod=14)
-# 支持 lambda
-indicators.add("ma_20", lambda df: df['close'].rolling(20).mean())
+        # 注册指标: 自动处理数据更新
+        # 参数: period=20
+        self.register_indicator("sma20", SMA(20))
 
-# 3. 在策略中注册
-class MyVectorizedStrategy(Strategy):
-    def __init__(self):
-        # 注册指标
-        # 这里的 Indicator 包装了计算逻辑
-        self.register_indicator("rsi_14", Indicator("rsi_14", calculate_rsi, timeperiod=14))
-
-        # 支持 lambda
-        self.register_indicator("ma_20", Indicator("ma_20", lambda df: df['close'].rolling(20).mean()))
-
-# 4. 运行回测
-run_backtest(
-    # ... 其他参数
-    strategy=MyVectorizedStrategy
-)
-
-# 5. 在策略中使用
-def on_bar(self, bar):
-    # 可以通过 self.indicators 获取 (需自定义逻辑) 或直接使用预计算值的缓存
-    # 目前建议在 __init__ 中保存引用，或者通过 self.get_indicator(name) (若支持)
-    pass
-```
-
-### 5.2 在线计算 (Online)
-
-**推荐用于实盘、复杂逻辑验证或无法预计算的场景。**
-
-这种模式下，在 `on_bar` 中实时获取历史序列计算指标。
-
-*   **性能优化**: AKQuant 0.1.3+ 采用 Zero-Copy 内存映射 (Numpy View) 技术，从 Rust 端直接暴露历史数据给 Python。这意味着 `get_history` 操作几乎没有内存拷贝开销，相比传统的 Python 列表切片方式有显著性能提升。
-*   **优点**: 代码简单，逻辑与实盘完全一致，无未来函数风险。
-*   **缺点**: 相比向量化预计算仍有一定 Python 调用开销。
-*   **实现步骤**:
-    1.  在 `run_backtest` 中设置 `history_depth` (如 20)。
-    2.  在 `on_bar` 中使用 `ctx.get_history(count=20)` 获取 Numpy 数组。
-    3.  调用 `talib` 或 `numpy` 函数计算。
-
-*(参考 `examples/zipline_style_backtest.py`)*
-
-## 6. 订单与交易
-
-### 6.1 订单类型
-
-*   **市价单 (Market Order)**: `buy(symbol, quantity)` (不指定价格)。
-    *   **ExecutionMode.CurrentClose**: 以当根 Bar 收盘价成交 (Cheat-on-Close)。
-    *   **ExecutionMode.NextOpen**: 以次日 Open 价成交 (更真实)。
-*   **限价单 (Limit Order)**: `buy(symbol, quantity, price=10.5)`。
-    *   **买入**: 当 Low <= Limit Price 时成交，成交价为 min(Open, Limit)。
-    *   **卖出**: 当 High >= Limit Price 时成交，成交价为 max(Open, Limit)。
-*   **止损单 (Stop Order)**: `stop_buy(symbol, trigger_price=10.5)` / `stop_sell(...)`。
-    *   **止损买入**: 当市价(High) >= 触发价(trigger_price) 时触发。
-    *   **止损卖出**: 当市价(Low) <= 触发价(trigger_price) 时触发。
-    *   **Stop Market**: 若不指定 `price`，触发后提交市价单。
-    *   **Stop Limit**: 若指定 `price`，触发后提交限价单。
-
-### 6.2 交易规则
-
-AKQuant 引擎内置了中国市场的交易规则支持：
-
-*   **T+1 / T+0**: 引擎根据 `Instrument` 类型自动处理。
-    *   **股票 (Stock) / 基金 (Fund)**: 默认 T+1 (今日买入明日可卖)。
-    *   **期货 (Futures) / 期权 (Option)**: 默认 T+0 (当日买入当日可卖)。
-*   **最小交易单位 (Lot Size)**:
-    *   **股票**: 买入必须是 100 股的整数倍 (一手)，卖出无限制 (支持零股)。
-    *   **其他**: 默认为 1。
-    *   **配置方式**: 可以在 `run_backtest` 中通过 `lot_size` 参数修改。
-        ```python
-        # 全局修改为 200
-        run_backtest(..., lot_size=200)
-
-        # 针对特定标的修改
-        run_backtest(..., lot_size={"000001": 100, "HK0700": 200})
-        ```
-*   **费率 (Fee)**: 支持分别配置佣金 (Commission)、印花税 (Stamp Tax)、过户费 (Transfer Fee) 和最低佣金。
-    *   **基金**: 支持独立的佣金费率。
-    *   **期权**: 支持按张收费模式。
-
-### 6.3 目标仓位管理
-
-AKQuant 提供了便捷的 helper 函数，允许策略直接设定目标持仓市值或百分比，引擎会自动计算并发送买卖指令。
-
-*   **`order_target(target, symbol)`**: 将持仓调整到指定数量.
-    *   `target`: 目标持仓数量 (例如 100, -100).
-    *   示例: `self.order_target(1000, "AAPL")` (调整 AAPL 持仓至 1000 股).
-*   **`order_target_value(target_value, symbol)`**: 将持仓调整到指定市值。
-    *   `target_value`: 目标持仓金额 (正数)。
-    *   示例: `self.order_target_value(50000, "AAPL")` (调整 AAPL 持仓至 5万元)。
-*   **`order_target_percent(target_percent, symbol)`**: 将持仓调整到指定账户总资产比例。
-    *   `target_percent`: 目标比例 (0.0 - 1.0)。
-    *   示例: `self.order_target_percent(0.5, "AAPL")` (调整 AAPL 持仓至总资产的 50%)。
-
-**注意**:
-*   计算基于当前 Bar/Tick 的价格。
-*   自动处理买入和卖出方向。
-*   会自动向下取整以符合最小交易单位 (Lot Size)。
-
-## 7. 全局配置 (`StrategyConfig`)
-
-`AKQuant` 提供了一个全局配置对象 `strategy_config` (类似 PyBroker)，用于控制回测行为。虽然 `run_backtest` 封装了大部分常用配置，但在高级场景下可以直接修改它。
-
-```python
-from akquant.config import strategy_config
-from akquant import ExecutionMode
-
-# 设置执行模式 (默认 CurrentClose)
-strategy_config.execution_mode = ExecutionMode.NextOpen
-
-# 设置最大订单比例 (默认 1.0)
-strategy_config.max_order_size = 0.5  # 每次最多买入总资金的 50%
-```
-
-## 8. 进阶技巧
-
-*   **自定义参数**: 在 `__init__` 或 `initialize` 中定义成员变量。
-*   **定时任务**: 使用 `self.schedule(timestamp, payload)` 注册盘中定时事件，适合做收盘前平仓等逻辑。
-*   **多标的**: `on_bar` 会按时间顺序依次推送不同标的的 Bar，使用 `bar.symbol` 区分处理。
-    *   在 `run_backtest` 中，可以传入 `data={"AAPL": df1, "GOOG": df2}` 字典来支持多标的回测。
-
-## 9. 结果可视化
-
-AKQuant 提供了内置的绘图工具，方便分析策略表现。
-
-```python
-from akquant.backtest import plot_result
-
-# 运行回测
-result = run_backtest(...)
-
-# 绘制权益曲线和回撤
-plot_result(result)
-```
-
-
-## 10. 机器学习策略 (Machine Learning)
-
-AKQuant 引入了全新的 ML 框架，支持 **Walk-forward Validation (滚动训练)** 和 **Adapter Pattern (适配器模式)**，使得构建 AI 驱动的策略变得前所未有的简单。
-
-与传统逻辑不同，ML 策略的核心是将“预测”与“决策”分离：
-
-1.  **Model**: 输出 Signal (概率/数值)。
-2.  **Strategy**: 根据 Signal 执行 Action (买/卖)。
-
-```python
-class MyMLStrategy(Strategy):
-    def __init__(self):
-        # 1. 初始化模型
-        self.model = SklearnAdapter(LogisticRegression())
-
-        # 2. 自动配置 Walk-forward 验证
-        # 框架自动处理：数据切分 -> 特征提取 -> 模型重训 -> 参数冻结
-        self.model.set_validation(
-            method='walk_forward',
-            train_window='1y',
-            rolling_step='3m'
-        )
-
-    def prepare_features(self, df):
-        # ... 特征工程逻辑 ...
-        return X, y
+        # 注册 RSI
+        self.register_indicator("rsi14", RSI(14))
 
     def on_bar(self, bar):
-        # 3. 实时预测
-        signal = self.model.predict(current_features)
+        # 直接访问指标值
+        # 注意: 如果指标尚未准备好 (数据不足)，value 可能为 None
+        sma_val = self.sma20.value
+        rsi_val = self.rsi14.value
 
-        # 4. 决策逻辑
-        if signal > 0.6:
+        if sma_val is None or rsi_val is None:
+            return
+
+        if bar.close > sma_val and rsi_val < 30:
             self.buy(bar.symbol, 100)
 ```
 
-详细教程请参阅 **[机器学习指南 (ML Guide)](ml_guide.md)**。
-```
+## 7. 常用策略模式 (Cookbook)
 
-## 11. 高级特性 (Advanced Features)
-
-### 11.1 流式数据加载 (Streaming Data)
-
-对于 TB 级别的超大历史数据文件（如高频 Tick 数据或全市场多年的分钟线），一次性加载到内存会导致 OOM (Out of Memory)。AKQuant 提供了 `DataFeed.from_csv` 方法支持流式读取。
+### 7.1 移动止损 (Trailing Stop)
 
 ```python
-from akquant import DataFeed, Engine
+class TrailingStopStrategy(Strategy):
+    def __init__(self):
+        self.highest_price = 0.0
+        self.trailing_percent = 0.05 # 5% 回撤止损
 
-# 创建流式数据源 (只占用极少内存)
-feed = DataFeed.from_csv("large_data.csv", symbol="SH600000")
+    def on_bar(self, bar):
+        pos = self.get_position(bar.symbol)
 
-# 创建引擎
-engine = Engine()
-engine.add_data(feed)
+        if pos > 0:
+            # 更新最高价
+            self.highest_price = max(self.highest_price, bar.high)
 
-# 运行回测 (数据将在回测过程中逐行读取)
-engine.run(strategy, show_progress=True)
+            # 检查回撤
+            drawdown = (self.highest_price - bar.close) / self.highest_price
+            if drawdown > self.trailing_percent:
+                print(f"触发移动止损: 最高 {self.highest_price}, 当前 {bar.close}")
+                self.close_position(bar.symbol)
+                self.highest_price = 0.0 # 重置
+        else:
+            # 开仓逻辑 (示例)
+            if bar.close > 100:
+                self.buy(bar.symbol, 100)
+                self.highest_price = bar.close # 初始化最高价
 ```
 
-### 11.2 实时交易 (Live Trading)
-
-AKQuant 0.1.3+ 支持实时模式，可以接收来自外部接口（如 CTP, TWS, IB Gateway）的数据推送，并驱动策略运行。
-
-**关键点:**
-
-1.  使用 `DataFeed.create_live()` 创建实时数据源。
-2.  引擎会自动进入 **Live Loop** 模式：
-    *   如果没有数据到达，引擎会挂起 (Wait) 而不是空转，节省 CPU。
-    *   引擎会严格根据系统时钟 (Wall Clock) 触发定时器 (Timer)。
-3.  `DataFeed` 的 `add_bar` / `add_tick` 方法在 Live 模式下是**线程安全**的，可以在回调线程中直接调用。
-
-**示例: 接入模拟 CTP 数据推送**
+### 7.2 定时平仓 (Intraday Exit)
 
 ```python
-import akquant
-from akquant import DataFeed, Bar, Decimal
-import threading
-import time
+class IntradayStrategy(Strategy):
+    def on_bar(self, bar):
+        # 假设 bar.timestamp 是纳秒时间戳
+        # 转换为 datetime (需要 import datetime)
+        dt = datetime.fromtimestamp(bar.timestamp / 1e9)
 
-# 1. 创建实时数据源
-live_feed = DataFeed.create_live()
+        # 每天 14:55 强制平仓
+        if dt.hour == 14 and dt.minute >= 55:
+            if self.get_position(bar.symbol) != 0:
+                self.close_position(bar.symbol)
+            return
 
-# 2. 初始化引擎和策略
-engine = akquant.Engine()
-engine.use_realtime_execution() # 切换到实盘执行模式 (重要!)
-engine.add_data(live_feed)
-strategy = MyLiveStrategy()
-
-# 3. 模拟 CTP 接收线程
-def ctp_receiver(feed):
-    while True:
-        # 模拟从 CTP 接收数据 (阻塞调用)
-        # raw_data = ctp_api.recv()
-        time.sleep(1) # 模拟每秒一个 Tick
-
-        # 转换为 AKQuant Bar
-        bar = Bar(
-            timestamp=time.time_ns(), # 使用当前纳秒时间戳
-            symbol="rb2310",
-            open=Decimal(3600),
-            high=Decimal(3605),
-            low=Decimal(3595),
-            close=Decimal(3602),
-            volume=Decimal(10),
-            # ...
-        )
-
-        # 推送数据 (线程安全)
-        feed.add_bar(bar)
-        print(f"Pushed bar: {bar.timestamp}")
-
-# 启动接收线程
-t = threading.Thread(target=ctp_receiver, args=(live_feed,))
-t.daemon = True
-t.start()
-
-# 4. 运行引擎 (阻塞主线程)
-# 引擎将持续运行，处理推送过来的数据
-engine.run(strategy, show_progress=True)
+        # 其他交易逻辑...
 ```
 
-## 12. 常见问题 (FAQ)
+### 7.3 多品种轮动
 
-*(待补充)*
+```python
+class RotationStrategy(Strategy):
+    def on_bar(self, bar):
+        # 注意: on_bar 是针对每个 symbol 触发的
+        # 如果需要全市场横截面比较，建议在 on_timer 或 收集完所有 bar 后处理
+        # 这里展示简单的独立处理
+        pass
+
+    def on_timer(self, payload):
+        # 假设注册了一个每日定时器
+        # 获取所有订阅标的的当前价格
+        scores = {}
+        for symbol in self.ctx.portfolio.positions.keys(): # 仅示例，实际应遍历关注列表
+             hist = self.get_history(20, symbol)
+             scores[symbol] = hist[-1] / hist[0] # 20日动量
+
+        # 排序并调仓...
+```
