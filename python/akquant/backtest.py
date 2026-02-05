@@ -363,7 +363,14 @@ def run_backtest(
             if target_symbol not in symbols:
                 symbols = [target_symbol]
         elif isinstance(data, dict):
+            # If explicit symbols are provided (i.e., not just the default "BENCHMARK"),
+            # we filter the data dictionary to only include requested symbols.
+            filter_symbols = "BENCHMARK" not in symbols
+
             for sym, df in data.items():
+                if filter_symbols and sym not in symbols:
+                    continue
+
                 df_prep = prepare_dataframe(df)
                 data_map_for_indicators[sym] = df_prep
                 arrays = df_to_arrays(df_prep, symbol=sym)
