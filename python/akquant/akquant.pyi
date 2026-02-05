@@ -514,6 +514,7 @@ class StrategyContext:
     session: "TradingSession"
     last_closed_trade: typing.Optional[ClosedTrade]
     closed_trades: list[ClosedTrade]
+    recent_trades: list[Trade]
     cash: float
     positions: dict[str, float]
     available_positions: dict[str, float]
@@ -525,6 +526,7 @@ class StrategyContext:
         session: typing.Optional["TradingSession"],
         active_orders: typing.Optional[typing.Sequence[Order]],
         closed_trades: typing.Optional[typing.Sequence[ClosedTrade]],
+        recent_trades: typing.Optional[typing.Sequence[Trade]],
     ) -> "StrategyContext": ...
     def history(
         self, symbol: str, field: str, count: int

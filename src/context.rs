@@ -1,5 +1,5 @@
 use crate::model::market_data::extract_decimal;
-use crate::model::{Order, OrderSide, OrderType, TimeInForce, Timer, TradingSession};
+use crate::model::{Order, OrderSide, OrderType, TimeInForce, Timer, TradingSession, Trade};
 use crate::event::Event;
 use crate::analysis::ClosedTrade;
 use crate::history::HistoryBuffer;
@@ -36,6 +36,9 @@ pub struct StrategyContext {
     pub session: TradingSession,
     // Do NOT expose closed_trades as a direct getter to avoid expensive cloning on every access
     pub closed_trades: Arc<Vec<ClosedTrade>>,
+    // Recent trades generated in the last step
+    #[pyo3(get)]
+    pub recent_trades: Vec<Trade>,
     // History Buffer (Shared with Engine)
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
     // Event Channel (Optional, for async order submission)
@@ -50,6 +53,7 @@ impl StrategyContext {
         session: TradingSession,
         active_orders: Vec<Order>,
         closed_trades: Arc<Vec<ClosedTrade>>,
+        recent_trades: Vec<Trade>,
         history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
         event_tx: Option<Sender<Event>>,
     ) -> Self {
@@ -63,6 +67,7 @@ impl StrategyContext {
             available_positions,
             session,
             closed_trades,
+            recent_trades,
             history_buffer,
             event_tx,
         }
@@ -80,6 +85,7 @@ impl StrategyContext {
         session: Option<TradingSession>,
         active_orders: Option<Vec<Order>>,
         closed_trades: Option<Vec<ClosedTrade>>,
+        recent_trades: Option<Vec<Trade>>,
     ) -> PyResult<Self> {
         let pos_dec: HashMap<String, Decimal> = positions
             .into_iter()
@@ -98,8 +104,9 @@ impl StrategyContext {
             cash: extract_decimal(cash)?,
             positions: pos_dec,
             available_positions: avail_dec,
-            session: session.unwrap_or(TradingSession::Closed),
+            session: session.unwrap_or(TradingSession::Continuous),
             closed_trades: Arc::new(closed_trades.unwrap_or_default()),
+            recent_trades: recent_trades.unwrap_or_default(),
             history_buffer: None,
             event_tx: None,
         })

@@ -74,6 +74,7 @@ class Strategy:
     _bar_count: int
     _model_configured: bool
     model: Optional["QuantModel"]
+    _known_orders: Dict[str, Any]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -86,6 +87,7 @@ class Strategy:
         instance._indicators = []
         instance._subscriptions = []
         instance._last_prices = {}
+        instance._known_orders = {}
 
         # 历史数据配置
         instance._history_depth = 0
@@ -103,6 +105,22 @@ class Strategy:
 
     def __init__(self) -> None:
         """初始化."""
+        pass
+
+    def on_start(self) -> None:
+        """
+        策略启动时调用.
+
+        在此处订阅数据 (self.subscribe) 或注册指标.
+        """
+        pass
+
+    def on_stop(self) -> None:
+        """
+        策略停止时调用.
+
+        在此处进行资源清理或结果统计.
+        """
         pass
 
     def set_history_depth(self, depth: int) -> None:
@@ -275,10 +293,6 @@ class Strategy:
         if instrument_id not in self._subscriptions:
             self._subscriptions.append(instrument_id)
 
-    def on_start(self) -> None:
-        """策略启动时调用."""
-        pass
-
     def _prepare_indicators(self, data: Dict[str, pd.DataFrame]) -> None:
         """Pre-calculate indicators."""
         if not self._indicators:
@@ -289,9 +303,97 @@ class Strategy:
                 # Calculate and cache inside indicator
                 ind(df, sym)
 
+    def on_order(self, order: Any) -> None:
+        """
+        订单状态更新回调.
+
+        Args:
+            order: 订单对象
+        """
+        pass
+
+    def on_trade(self, trade: Any) -> None:
+        """
+        成交回调.
+
+        Args:
+            trade: 成交对象
+        """
+        pass
+
+    def _check_order_events(self) -> None:
+        """检查订单和成交事件并触发回调."""
+        if self.ctx is None:
+            return
+
+        # 1. Process New Trades (from Rust Engine)
+        if hasattr(self.ctx, "recent_trades"):
+            for trade in self.ctx.recent_trades:
+                self.on_trade(trade)
+
+                # Update known order status if we have it
+                if trade.order_id in self._known_orders:
+                    pass
+
+        # 2. Process Canceled Orders (from Rust Engine)
+        if hasattr(self.ctx, "canceled_order_ids"):
+            for oid in self.ctx.canceled_order_ids:
+                if oid in self._known_orders:
+                    order = self._known_orders[oid]
+                    try:
+                        order.status = OrderStatus.Cancelled
+                    except Exception:
+                        pass
+
+                    self.on_order(order)
+                    del self._known_orders[oid]
+
+        # 3. Process Active Orders (New & Status Changes)
+        current_active_ids = set()
+        if hasattr(self.ctx, "active_orders"):
+            for order in self.ctx.active_orders:
+                current_active_ids.add(order.id)
+                oid = order.id
+
+                # New Order or Status Change
+                if oid not in self._known_orders:
+                    self._known_orders[oid] = order
+                    self.on_order(order)
+                else:
+                    known = self._known_orders[oid]
+                    status_changed = known.status != order.status
+                    qty_changed = known.filled_quantity != order.filled_quantity
+                    if status_changed or qty_changed:
+                        self._known_orders[oid] = order
+                        self.on_order(order)
+
+        # 4. Cleanup Disappeared Orders (Filled?)
+        recent_trade_order_ids = set()
+        if hasattr(self.ctx, "recent_trades"):
+            for t in self.ctx.recent_trades:
+                recent_trade_order_ids.add(t.order_id)
+
+        for oid in list(self._known_orders.keys()):
+            if oid not in current_active_ids:
+                # It disappeared. Was it canceled? (Handled in step 2)
+                # Is it Filled?
+                if oid in recent_trade_order_ids:
+                    order = self._known_orders[oid]
+                    try:
+                        order.status = OrderStatus.Filled
+                    except Exception:
+                        pass
+                    self.on_order(order)
+                    del self._known_orders[oid]
+                else:
+                    # Disappeared but not canceled and no trade?
+                    del self._known_orders[oid]
+
     def _on_bar_event(self, bar: Bar, ctx: StrategyContext) -> None:
         """引擎调用的 Bar 回调 (Internal)."""
         self.ctx = ctx
+
+        self._check_order_events()
 
         # Lazy configuration
         if not self._model_configured:

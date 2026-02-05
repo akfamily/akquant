@@ -43,6 +43,8 @@ pub struct Engine {
     orders: Vec<Order>,
     #[pyo3(get)]
     trades: Vec<Trade>,
+    // Trades generated in the current step (for strategy notification)
+    current_step_trades: Vec<Trade>,
     last_prices: HashMap<String, Decimal>,
     instruments: HashMap<String, Instrument>,
     current_date: Option<NaiveDate>,
@@ -85,6 +87,7 @@ impl Engine {
             },
             orders: Vec::new(),
             trades: Vec::new(),
+            current_step_trades: Vec::new(),
             last_prices: HashMap::new(),
             instruments: HashMap::new(),
             current_date: None,
@@ -754,7 +757,7 @@ impl Engine {
         BacktestResult::calculate(self.daily_equity.clone(), self.daily_positions.clone(), trade_pnl, closed_trades)
     }
 
-    fn create_context(&self, active_orders: Vec<Order>) -> StrategyContext {
+    fn create_context(&self, active_orders: Vec<Order>, step_trades: Vec<Trade>) -> StrategyContext {
         // Create a temporary context for the strategy to use
         StrategyContext::new(
             self.portfolio.cash,
@@ -763,6 +766,7 @@ impl Engine {
             self.clock.session,
             active_orders,
             self.trade_tracker.closed_trades.clone(),
+            step_trades,
             Some(self.history_buffer.clone()),
             Some(self.event_tx.clone()),
         )
@@ -798,6 +802,9 @@ impl Engine {
     }
 
     fn process_trades(&mut self, trades: Vec<Trade>) {
+        // Add to current step trades for strategy notification
+        self.current_step_trades.extend(trades.iter().cloned());
+
         for mut trade in trades {
             // Calculate Commission
             if let Some(instr) = self.instruments.get(&trade.symbol) {
@@ -849,7 +856,8 @@ impl Engine {
         match event {
             Event::Bar(b) => {
                 self.last_prices.insert(b.symbol.clone(), b.close);
-                let ctx = self.create_context(active_orders.to_vec());
+                let step_trades = std::mem::take(&mut self.current_step_trades);
+                let ctx = self.create_context(active_orders.to_vec(), step_trades);
                 let py_ctx = Python::attach(|py| {
                     let py_ctx = Py::new(py, ctx).unwrap();
                     let args = (b.clone(), py_ctx.clone_ref(py));
@@ -871,7 +879,8 @@ impl Engine {
             }
             Event::Tick(t) => {
                 self.last_prices.insert(t.symbol.clone(), t.price);
-                let ctx = self.create_context(active_orders.to_vec());
+                let step_trades = std::mem::take(&mut self.current_step_trades);
+                let ctx = self.create_context(active_orders.to_vec(), step_trades);
                 let py_ctx = Python::attach(|py| {
                     let py_ctx = Py::new(py, ctx).unwrap();
                     let args = (t.clone(), py_ctx.clone_ref(py));
@@ -903,7 +912,8 @@ impl Engine {
         payload: &str,
         active_orders: &[Order],
     ) -> PyResult<(Vec<Order>, Vec<Timer>, Vec<String>)> {
-        let ctx = self.create_context(active_orders.to_vec());
+        let step_trades = std::mem::take(&mut self.current_step_trades);
+        let ctx = self.create_context(active_orders.to_vec(), step_trades);
         let py_ctx = Python::attach(|py| {
             let py_ctx = Py::new(py, ctx).unwrap();
             // Call _on_timer_event in Python

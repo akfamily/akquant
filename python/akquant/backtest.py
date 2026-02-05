@@ -599,7 +599,17 @@ def run_backtest(
     if hasattr(strategy_instance, "_prepare_indicators") and data_map_for_indicators:
         strategy_instance._prepare_indicators(data_map_for_indicators)
 
-    engine.run(strategy_instance, show_progress)
+    try:
+        engine.run(strategy_instance, show_progress)
+    except Exception as e:
+        logger.error(f"Backtest failed: {e}")
+        raise e
+    finally:
+        if hasattr(strategy_instance, "on_stop"):
+            try:
+                strategy_instance.on_stop()
+            except Exception as e:
+                logger.error(f"Error in on_stop: {e}")
 
     return BacktestResult(engine.get_results(), timezone=timezone)
 

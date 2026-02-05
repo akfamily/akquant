@@ -14,7 +14,11 @@
     *   `on_start`: 策略启动时调用，**必须**在此处使用 `self.subscribe()` 订阅数据，也可在此注册指标。
     *   `on_bar`: 每一根 K 线闭合时触发 (核心交易逻辑)。
     *   `on_tick`: 每一个 Tick 到达时触发 (高频/盘口策略)。
+    *   `on_order`: 订单状态变化时触发 (如提交、成交、取消)。
+    *   `on_trade`: 收到成交回报时触发。
     *   `on_timer`: 定时器触发时调用 (需手动注册)。
+    *   `on_stop`: 策略停止时调用，适合进行资源清理或结果统计 (参考 Backtrader `stop` / Nautilus `on_stop`)。
+    *   `on_train_signal`: 滚动训练触发信号 (仅在 ML 模式下触发)。
 
 ## 2. 策略风格选择 {: #style-selection }
 
@@ -114,6 +118,33 @@ class MyStrategy(Strategy):
 
 *   **CurrentClose (默认)**: 信号在当前 Bar 收盘时立即撮合。适合日线级别回测或无法获取次日开盘价的场景。
 *   **NextOpen**: 信号在下一个 Bar 的开盘时撮合。这是更严谨的回测方式，避免了“未来函数”风险。
+
+### 4.4 事件回调 (Event Callbacks) {: #callbacks }
+
+AKQuant 提供了类似 Backtrader 的回调机制，用于追踪订单状态和成交记录。
+
+#### 4.4.1 订单状态回调 (`on_order`)
+
+当订单状态发生变化（如从 `New` 变为 `Submitted`，或变为 `Filled`）时触发。
+
+```python
+from akquant import OrderStatus
+
+def on_order(self, order):
+    if order.status == OrderStatus.Filled:
+        print(f"订单成交: {order.symbol} 方向: {order.side} 数量: {order.filled_quantity}")
+    elif order.status == OrderStatus.Cancelled:
+        print(f"订单已取消: {order.id}")
+```
+
+#### 4.4.2 成交回报回调 (`on_trade`)
+
+当发生真实成交时触发。与 `on_order` 不同，`on_trade` 包含具体的成交价格、数量和手续费信息。
+
+```python
+def on_trade(self, trade):
+    print(f"成交回报: {trade.symbol} 价格: {trade.price} 数量: {trade.quantity} 手续费: {trade.commission}")
+```
 
 ## 5. 风险控制 (Risk Management)
 
