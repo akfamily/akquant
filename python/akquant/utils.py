@@ -392,7 +392,7 @@ def prepare_dataframe(
 
         # 5. Assign back
         df[date_col] = dt
-        df["timestamp"] = dt.astype("int64")
+        df["timestamp"] = dt
     elif isinstance(df.index, pd.DatetimeIndex):
         # Handle DatetimeIndex
         dt_idx = df.index
@@ -403,7 +403,7 @@ def prepare_dataframe(
 
         dt_idx = dt_idx.tz_convert("UTC")
         df.index = dt_idx
-        df["timestamp"] = dt_idx.astype("int64")
+        df["timestamp"] = dt_idx
     else:
         # Warn or ignore? For now silent, user might be processing non-time data?
         pass
