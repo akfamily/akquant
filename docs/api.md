@@ -2,7 +2,46 @@
 
 本 API 文档涵盖了 AKQuant 的核心类和方法。
 
-## 1. 核心引擎 (Core)
+## 1. 高级入口 (High-Level API)
+
+### `akquant.run_backtest`
+
+最常用的回测入口函数，封装了引擎的初始化和配置过程。
+
+```python
+def run_backtest(
+    data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]] = None,
+    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
+    symbol: Union[str, List[str]] = "BENCHMARK",
+    cash: float = 1_000_000.0,
+    commission: float = 0.0003,
+    instruments_config: Optional[Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]] = None,
+    # ... 其他参数
+) -> BacktestResult
+```
+
+**关键参数:**
+
+*   `data`: 回测数据。支持单个 DataFrame，或 `{symbol: DataFrame}` 字典。
+*   `instruments_config`: **(新增)** 标的配置。用于设置期货/期权等非股票资产的参数（如乘数、保证金）。
+    *   接收 `List[InstrumentConfig]` 或 `{symbol: InstrumentConfig}`。
+
+### `akquant.InstrumentConfig`
+
+用于配置单个标的属性的数据类。
+
+```python
+@dataclass
+class InstrumentConfig:
+    symbol: str
+    asset_type: str = "STOCK"  # "STOCK", "FUTURES", "FUND", "OPTION"
+    multiplier: float = 1.0    # 合约乘数
+    margin_ratio: float = 1.0  # 保证金率 (0.1 表示 10% 保证金)
+    tick_size: float = 0.01    # 最小变动价位
+    lot_size: int = 1          # 最小交易单位
+```
+
+## 2. 核心引擎 (Core)
 
 ### `akquant.Engine`
 

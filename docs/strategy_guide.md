@@ -238,3 +238,43 @@ class RotationStrategy(Strategy):
 
         # 排序并调仓...
 ```
+
+## 8. 多资产混合回测配置 (Mixed Asset Configuration)
+
+AKQuant 支持在同一个策略中混合交易股票、期货、期权等多种资产。不同资产通常具有不同的属性（如合约乘数、保证金率、最小变动价位）。
+
+使用 `InstrumentConfig` 可以方便地为每个标的配置这些属性。
+
+### 8.1 配置步骤
+
+1.  **准备数据**: 为每个标的准备数据 (DataFrame 或 CSV)。
+2.  **创建配置**: 使用 `InstrumentConfig` 定义非股票资产的参数。
+3.  **运行回测**: 将配置传递给 `run_backtest` 的 `instruments_config` 参数。
+
+### 8.2 配置示例
+
+假设我们要回测一个包含 "股票 A" 和 "股指期货 IF" 的投资组合：
+
+```python
+from akquant import InstrumentConfig, run_backtest
+
+# 1. 定义期货配置
+future_config = InstrumentConfig(
+    symbol="IF2301",          # 标的代码
+    asset_type="FUTURES",     # 资产类型: STOCK, FUTURES, OPTION
+    multiplier=300.0,         # 合约乘数 (1点 300元)
+    margin_ratio=0.1,         # 保证金率 (10%)
+    tick_size=0.2             # 最小变动价位
+)
+
+# 2. 运行回测
+# 注意: 未配置的标的 (如 STOCK_A) 将使用默认参数 (股票, 乘数1, 保证金100%)
+run_backtest(
+    data=data_dict,
+    strategy=MyStrategy,
+    instruments_config=[future_config], # 传入配置列表
+    # ...
+)
+```
+
+详细代码请参考 [混合资产回测示例](examples.md#mixed-asset)。

@@ -9,7 +9,7 @@ except metadata.PackageNotFoundError:
 from . import akquant as _akquant
 from .akquant import *  # noqa: F403
 from .backtest import BacktestResult, run_backtest  # type: ignore
-from .config import BacktestConfig, StrategyConfig, strategy_config
+from .config import BacktestConfig, InstrumentConfig, StrategyConfig, strategy_config
 from .data import DataLoader
 from .indicator import Indicator, IndicatorSet
 from .log import get_logger, register_logger
@@ -42,6 +42,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "OptimizationResult",
         "BacktestConfig",
         "StrategyConfig",
+        "InstrumentConfig",
     ]
 else:
     __all__ = [
@@ -65,6 +66,7 @@ else:
         "OptimizationResult",
         "BacktestConfig",
         "StrategyConfig",
+        "InstrumentConfig",
     ]
 
 

@@ -23,7 +23,7 @@ from .akquant import (
 from .akquant import (
     BacktestResult as RustBacktestResult,
 )
-from .config import BacktestConfig
+from .config import BacktestConfig, InstrumentConfig
 from .data import ParquetDataCatalog
 from .log import get_logger, register_logger
 from .risk import apply_risk_config
@@ -234,6 +234,9 @@ def run_backtest(
     lot_size: Union[int, Dict[str, int], None] = None,
     show_progress: bool = True,
     config: Optional[BacktestConfig] = None,
+    instruments_config: Optional[
+        Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]
+    ] = None,
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -257,6 +260,7 @@ def run_backtest(
                      如果是 Dict[str, int]，则按代码匹配；如果不传(None)，默认为 1。
     :param show_progress: 是否显示进度条 (默认 True)
     :param config: BacktestConfig 配置对象 (可选)
+    :param instruments_config: 标的配置列表或字典 (可选)
     :return: 回测结果 Result 对象
     """
     # 1. 确保日志已初始化
@@ -460,15 +464,80 @@ def run_backtest(
         apply_risk_config(engine, config.strategy_config.risk)
 
     # 5. 添加标的
-    multiplier = kwargs.get("multiplier", 1.0)
-    margin_ratio = kwargs.get("margin_ratio", 1.0)
-    tick_size = kwargs.get("tick_size", 0.01)
-    asset_type = kwargs.get("asset_type", AssetType.Stock)
+    # 解析 Instrument Config
+    inst_conf_map = {}
+
+    # From arguments
+    if instruments_config:
+        if isinstance(instruments_config, list):
+            for c in instruments_config:
+                inst_conf_map[c.symbol] = c
+        elif isinstance(instruments_config, dict):
+            inst_conf_map.update(instruments_config)
+
+    # From BacktestConfig
+    if config and config.instruments_config:
+        if isinstance(config.instruments_config, list):
+            for c in config.instruments_config:
+                if c.symbol not in inst_conf_map:
+                    inst_conf_map[c.symbol] = c
+        elif isinstance(config.instruments_config, dict):
+            for k, v in config.instruments_config.items():
+                if k not in inst_conf_map:
+                    inst_conf_map[k] = v
+
+    # Default values from kwargs
+    default_multiplier = kwargs.get("multiplier", 1.0)
+    default_margin_ratio = kwargs.get("margin_ratio", 1.0)
+    default_tick_size = kwargs.get("tick_size", 0.01)
+    default_asset_type = kwargs.get("asset_type", AssetType.Stock)
 
     # Option specific fields
-    option_type = kwargs.get("option_type", None)
-    strike_price = kwargs.get("strike_price", None)
-    expiry_date = kwargs.get("expiry_date", None)
+    default_option_type = kwargs.get("option_type", None)
+    default_strike_price = kwargs.get("strike_price", None)
+    default_expiry_date = kwargs.get("expiry_date", None)
+
+    def _parse_asset_type(val: Union[str, AssetType]) -> AssetType:
+        if isinstance(val, AssetType):
+            return val
+        if isinstance(val, str):
+            v_lower = val.lower()
+            if "stock" in v_lower:
+                return AssetType.Stock
+            if "future" in v_lower:
+                return AssetType.Futures
+            if "fund" in v_lower:
+                return AssetType.Fund
+            if "option" in v_lower:
+                return AssetType.Option
+        return AssetType.Stock
+
+    def _parse_option_type(val: Any) -> Any:
+        # OptionType might not be available in current binary
+        try:
+            from .akquant import OptionType  # type: ignore
+
+            if isinstance(val, str):
+                if val.lower() == "call":
+                    return OptionType.Call
+                if val.lower() == "put":
+                    return OptionType.Put
+        except ImportError:
+            pass
+        return val
+
+    def _parse_expiry(val: Any) -> Optional[int]:
+        if val is None:
+            return None
+        if isinstance(val, (int, float)):
+            return int(val)
+        if isinstance(val, str):
+            try:
+                # Convert string date to nanosecond timestamp
+                return int(pd.Timestamp(val).value)
+            except Exception:
+                pass
+        return None
 
     for sym in symbols:
         # Determine lot_size for this symbol
@@ -478,16 +547,41 @@ def run_backtest(
         elif isinstance(lot_size, dict):
             current_lot_size = lot_size.get(sym)
 
+        # Check specific config
+        i_conf = inst_conf_map.get(sym)
+
+        if i_conf:
+            p_asset_type = _parse_asset_type(i_conf.asset_type)
+            p_multiplier = i_conf.multiplier
+            p_margin = i_conf.margin_ratio
+            p_tick = i_conf.tick_size
+            # If config has lot_size, use it, otherwise use global setting
+            p_lot = i_conf.lot_size if i_conf.lot_size != 1 else (current_lot_size or 1)
+
+            p_opt_type = _parse_option_type(i_conf.option_type)
+            p_strike = i_conf.strike_price
+            p_expiry = _parse_expiry(i_conf.expiry_date)
+        else:
+            p_asset_type = default_asset_type
+            p_multiplier = default_multiplier
+            p_margin = default_margin_ratio
+            p_tick = default_tick_size
+            p_lot = current_lot_size or 1
+
+            p_opt_type = default_option_type
+            p_strike = default_strike_price
+            p_expiry = _parse_expiry(default_expiry_date)
+
         instr = Instrument(
             sym,
-            asset_type,
-            multiplier,
-            margin_ratio,
-            tick_size,
-            option_type,
-            strike_price,
-            expiry_date,
-            current_lot_size,
+            p_asset_type,
+            p_multiplier,
+            p_margin,
+            p_tick,
+            p_opt_type,
+            p_strike,
+            p_expiry,
+            p_lot,
         )
         engine.add_instrument(instr)
 

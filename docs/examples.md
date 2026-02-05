@@ -145,6 +145,63 @@ class BollingerStrategy(aq.Strategy):
             self.sell(bar.symbol, 100)
 ```
 
+### 3.4 混合资产回测 (Mixed Asset Backtest) {: #mixed-asset }
+
+展示如何在同一个策略中混合交易股票和期货，并使用 `InstrumentConfig` 配置期货参数。
+
+```python
+import akquant as aq
+from akquant import InstrumentConfig
+import pandas as pd
+import numpy as np
+
+# 1. 准备数据 (模拟数据)
+def create_dummy_data(symbol, start_date, n_bars, price=100.0):
+    dates = pd.date_range(start_date, periods=n_bars, freq="B")
+    np.random.seed(42)
+    changes = np.random.randn(n_bars)
+    prices = price + np.cumsum(changes)
+
+    df = pd.DataFrame({
+        "open": prices, "high": prices + 1, "low": prices - 1, "close": prices,
+        "volume": 1000, "symbol": symbol
+    }, index=dates)
+    return df
+
+class TestStrategy(aq.Strategy):
+    def __init__(self):
+        self.count = 0
+
+    def on_bar(self, bar: aq.Bar):
+        # 简单逻辑: 前两根 Bar 买入
+        if self.count < 2:
+            print(f"[{bar.timestamp}] Buying {bar.symbol}")
+            self.buy(bar.symbol, 1)
+        self.count += 1
+
+# 2. 生成数据
+df_stock = create_dummy_data("STOCK_A", "2023-01-01", 100, 100.0)
+df_future = create_dummy_data("FUTURE_B", "2023-01-01", 100, 3500.0)
+data = {"STOCK_A": df_stock, "FUTURE_B": df_future}
+
+# 3. 配置期货参数
+future_config = InstrumentConfig(
+    symbol="FUTURE_B",
+    asset_type="FUTURES",
+    multiplier=300.0,
+    margin_ratio=0.1,
+    tick_size=0.2
+)
+
+# 4. 运行回测
+result = aq.run_backtest(
+    data=data,
+    strategy=TestStrategy,
+    instruments_config=[future_config], # 传入配置
+    cash=1_000_000.0
+)
+```
+
 ## 4. 更多资源
 
 *   查看 `examples/` 目录下的源代码获取更多实用示例。
