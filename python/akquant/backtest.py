@@ -105,8 +105,8 @@ class BacktestResult:
             "total_return_pct": metrics.total_return_pct,
         }
 
-        # Return as a DataFrame with one row
-        return pd.DataFrame([data], index=["Backtest"])
+        # Return as a DataFrame with one row (Transposed by default)
+        return pd.DataFrame([data], index=["Backtest"]).T
 
     @cached_property
     def trades_df(self) -> pd.DataFrame:
@@ -151,7 +151,7 @@ class BacktestResult:
 
     def __repr__(self) -> str:
         """Return the string representation of the result (Vertical Metrics)."""
-        metrics = self.metrics_df.T
+        metrics = self.metrics_df
         metrics.columns = ["Value"]
         return f"BacktestResult:\n{metrics.to_string()}"
 
