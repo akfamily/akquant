@@ -412,6 +412,9 @@ def run_backtest(
             if symbols:
                 logger.warning("Failed to load data for all requested symbols.")
 
+    # Inject timezone to strategy
+    strategy_instance.timezone = timezone
+
     # 3.5 Pre-calculate indicators
     # Inject data into indicators so they can be accessed in on_bar via get_value()
     if hasattr(strategy_instance, "_indicators") and data_map_for_indicators:

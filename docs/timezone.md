@@ -86,7 +86,29 @@ results = run_backtest(
 
 在策略的 `on_bar` 回调中，`bar.timestamp` 是一个整数（int64），表示 **UTC 纳秒时间戳**。如果你需要在日志中打印当前时间，或者根据时间做逻辑判断（如：只在下午交易），需要将其转换为本地时间。
 
-### 转换示例
+### 方式 2：使用 Strategy 辅助方法（推荐）
+
+AKQuant 在 `Strategy` 基类中提供了便捷的辅助方法，自动使用回测配置的时区进行转换。
+
+```python
+class MyStrategy(Strategy):
+    def on_bar(self, bar: Bar):
+        # 1. 获取本地时间对象 (pd.Timestamp)
+        ts = self.to_local_time(bar.timestamp)
+
+        # 2. 直接获取格式化字符串 (默认 "%Y-%m-%d %H:%M:%S")
+        ts_str = self.format_time(bar.timestamp)
+        self.log(f"Current time: {ts_str}")
+
+        # 3. 获取当前策略时间 (now)
+        # 自动根据当前处理的 bar/tick 返回本地时间
+        if self.now:
+             print(f"Now: {self.now}")
+```
+
+### 方式 3：手动转换（底层原理）
+
+如果你需要更底层的控制，可以手动进行转换：
 
 ```python
 import pandas as pd
@@ -101,20 +123,13 @@ class MyStrategy(Strategy):
         # 2. 转换为北京时间
         ts_bj = ts_utc.tz_convert("Asia/Shanghai")
 
-        # 3. 格式化输出
-        time_str = ts_bj.strftime("%Y-%m-%d %H:%M:%S")
-        self.log(f"Current time (Beijing): {time_str}")
-
-        # 4. 基于时间的逻辑判断
-        # 例如：只在 14:50 之后平仓
-        if ts_bj.hour == 14 and ts_bj.minute >= 50:
-            pass
+        # ...
 ```
 
 ## 5. 常见问题 (FAQ)
 
 **Q: 为什么我在日志里看到的时间是 01:31 而不是 09:31？**
-A: 这是因为直接打印 `bar.timestamp` 转换出来的默认可能是 UTC 时间（北京时间 09:31 对应 UTC 01:31）。请按照上述“策略中的时间处理”一节，显式调用 `.tz_convert("Asia/Shanghai")`。
+A: 这是因为直接打印 `bar.timestamp` 转换出来的默认可能是 UTC 时间（北京时间 09:31 对应 UTC 01:31）。推荐使用 `self.format_time(bar.timestamp)` 或 `self.to_local_time(bar.timestamp)` 来获取配置时区后的时间。
 
 **Q: `AttributeError: 'float' object has no attribute 'quantity'` 是什么？**
 A: 这通常是在访问持仓时发生的错误。`self.ctx.get_position(symbol)` 返回的是持仓数量（float），而不是一个对象。请直接使用返回值作为数量。

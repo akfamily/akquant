@@ -147,10 +147,11 @@ class MultiFreqStrategy(aq.Strategy):
 
         Distinguish behavior based on bar.symbol.
         """
-        # Convert UTC nanoseconds to Beijing Time
-        ts_utc = pd.to_datetime(bar.timestamp, unit="ns", utc=True)
-        ts_bj = ts_utc.tz_convert("Asia/Shanghai")
-        ts_str = ts_bj.strftime("%Y-%m-%d %H:%M")
+        # Convert UTC nanoseconds to configured timezone (default Asia/Shanghai)
+        ts_bj = self.to_local_time(bar.timestamp)
+
+        # Use helper for formatted string (Default: %Y-%m-%d %H:%M:%S)
+        ts_str = self.format_time(bar.timestamp)
 
         if bar.symbol == "000001.SZ_1D":
             print(f"\n{'=' * 60}")

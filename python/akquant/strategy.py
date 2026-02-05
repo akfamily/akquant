@@ -75,6 +75,7 @@ class Strategy:
     _model_configured: bool
     model: Optional["QuantModel"]
     _known_orders: Dict[str, Any]
+    timezone: str = "Asia/Shanghai"
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -88,6 +89,7 @@ class Strategy:
         instance._subscriptions = []
         instance._last_prices = {}
         instance._known_orders = {}
+        instance.timezone = "Asia/Shanghai"
 
         # 历史数据配置
         instance._history_depth = 0
@@ -122,6 +124,43 @@ class Strategy:
         在此处进行资源清理或结果统计.
         """
         pass
+
+    def to_local_time(self, timestamp: int) -> pd.Timestamp:
+        """
+        将 UTC 纳秒时间戳转换为本地时间 (Timestamp).
+
+        :param timestamp: UTC 纳秒时间戳 (int64)
+        :return: 本地时间 (pd.Timestamp)
+        """
+        ts_utc = pd.to_datetime(timestamp, unit="ns", utc=True)
+        return ts_utc.tz_convert(self.timezone)
+
+    def format_time(self, timestamp: int, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+        """
+        将 UTC 纳秒时间戳格式化为本地时间字符串.
+
+        :param timestamp: UTC 纳秒时间戳 (int64)
+        :param fmt: 时间格式字符串
+        :return: 格式化后的时间字符串
+        """
+        return self.to_local_time(timestamp).strftime(fmt)
+
+    @property
+    def now(self) -> Optional[pd.Timestamp]:
+        """
+        获取当前回测时间的本地时间表示.
+
+        如果当前没有 Bar 或 Tick，则返回 None.
+        """
+        ts = None
+        if self.current_bar:
+            ts = self.current_bar.timestamp
+        elif self.current_tick:
+            ts = self.current_tick.timestamp
+
+        if ts is not None:
+            return self.to_local_time(ts)
+        return None
 
     def set_history_depth(self, depth: int) -> None:
         """
