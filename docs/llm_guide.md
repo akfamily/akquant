@@ -2,7 +2,7 @@
 
 本文档旨在帮助用户构建高效的 Prompt，以便利用 ChatGPT、Claude 或其他大模型（LLM）自动生成 AKQuant 策略代码。
 
-## 1. 核心 Prompt 模板
+## 1. 核心 Prompt 模板 (基础策略)
 
 你可以将以下内容直接复制给大模型，作为"System Prompt"或对话的开头，让模型快速理解 AKQuant 的编程规范。
 
@@ -88,7 +88,91 @@ class MovingAverageStrategy(Strategy):
 ```
 ```
 
-## 2. 常见场景 Prompt 示例
+## 2. 核心 Prompt 模板 (机器学习策略)
+
+如果用户需要生成机器学习策略，请使用此模板。
+
+```markdown
+### AKQuant ML Strategy Rules
+
+1.  **Framework**: Use `akquant.ml` which provides `QuantModel`, `SklearnAdapter`, and `PyTorchAdapter`.
+2.  **Workflow**:
+    *   Initialize model in `__init__` (e.g., `self.model = SklearnAdapter(...)`).
+    *   Configure validation via `self.model.set_validation(method='walk_forward', ...)` to enable auto-retraining.
+    *   Implement `prepare_features(self, df)` to generate X, y for **training**.
+    *   In `on_bar`, perform **inference** using manual feature extraction (or carefully reused logic) and `self.model.predict(X)`.
+3.  **Data Handling**:
+    *   **Training**: The framework calls `prepare_features` automatically during rolling windows. `df` contains historical bars. You must return `(X, y)` where `y` is aligned with `X`. Typically, `y` is shifted (future return), so you must drop the last row of `X` and `y` to remove NaNs.
+    *   **Inference**: In `on_bar`, you need features for the *current* moment to predict the *next* step. You cannot use `prepare_features` directly if it drops the last row. You should manually construct `X_curr` from `self.get_history_df`.
+
+### Example ML Strategy (Reference)
+
+```python
+from akquant import Strategy, Bar
+from akquant.ml import SklearnAdapter
+from sklearn.linear_model import LogisticRegression
+import pandas as pd
+import numpy as np
+
+class MLStrategy(Strategy):
+    def __init__(self):
+        # 1. Initialize Adapter
+        self.model = SklearnAdapter(LogisticRegression())
+
+        # 2. Configure Walk-Forward (Auto-Training)
+        self.model.set_validation(
+            method='walk_forward',
+            train_window=200, # Train on last 200 bars
+            rolling_step=50,  # Retrain every 50 bars
+            frequency='1d'
+        )
+        # Ensure history depth covers training window
+        self.set_history_depth(250)
+
+    def prepare_features(self, df: pd.DataFrame):
+        """Called by framework for TRAINING data preparation"""
+        X = pd.DataFrame()
+        X['ret1'] = df['close'].pct_change()
+        X['ret2'] = df['close'].pct_change(2)
+        X = X.fillna(0)
+
+        # Label: Next period return > 0
+        future_ret = df['close'].pct_change().shift(-1)
+        y = (future_ret > 0).astype(int)
+
+        # Align X and y (Drop last row where y is NaN)
+        return X.iloc[:-1], y.iloc[:-1]
+
+    def on_bar(self, bar: Bar):
+        # Wait for initial training
+        if self._bar_count < 200:
+            return
+
+        # 3. Inference (Real-time)
+        # Get recent history to construct current features
+        hist_df = self.get_history_df(5)
+
+        # Manual Feature Extraction (Must match prepare_features logic)
+        curr_ret1 = (bar.close - hist_df['close'].iloc[-2]) / hist_df['close'].iloc[-2]
+        curr_ret2 = (bar.close - hist_df['close'].iloc[-3]) / hist_df['close'].iloc[-3]
+
+        X_curr = pd.DataFrame([[curr_ret1, curr_ret2]], columns=['ret1', 'ret2'])
+        X_curr = X_curr.fillna(0)
+
+        try:
+            # Predict
+            pred = self.model.predict(X_curr)[0] # SklearnAdapter returns proba for class 1 or label
+
+            if pred > 0.55:
+                self.buy(bar.symbol, 100)
+            elif pred < 0.45:
+                self.sell(bar.symbol, 100)
+        except:
+            pass # Model might not be ready
+```
+```
+
+## 3. 常见场景 Prompt 示例
 
 ### 场景 A：编写一个双均线策略
 
@@ -138,10 +222,11 @@ print(result)
 result.plot() # 可视化
 ```
 
-## 3. 注意事项 (给 LLM 的“负面约束”)
+## 4. 注意事项 (给 LLM 的“负面约束”)
 
 在使用大模型时，可能会出现以下幻觉（Hallucinations），可以在 Prompt 中显式禁止：
 
 1.  **关于 `super().__init__()`**: AKQuant 的 `Strategy` 使用了 `__new__` 钩子处理初始化。虽然调用 `super().__init__` 是安全的（空操作），但在本框架中并非必须。
 2.  **禁止使用 `context.portfolio` 这种过时的写法**: 虽然内部支持，但推荐使用 `self.get_position()` 等顶层 API。
 3.  **注意 `get_history` 的返回值**: 它返回的是 `numpy.ndarray`，不是 `pandas.Series`（除非使用 `get_history_df`）。直接对 `ndarray` 做运算性能更高。
+4.  **ML 策略中的特征一致性**: 训练时 `prepare_features` 通常会 `shift(-1)` 导致最后一行无效被丢弃；但在 `on_bar` 预测时，我们需要用当前最新的行情计算特征。直接复用 `prepare_features` 可能会导致预测时取不到最新的特征（因为它以为那是“最后一行”而丢弃了），或者需要特殊的参数控制。建议在 `on_bar` 中显式计算当前特征。
