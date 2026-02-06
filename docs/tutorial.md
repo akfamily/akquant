@@ -151,8 +151,11 @@ if __name__ == "__main__":
 
 ## 4. 常见问题 (FAQ)
 
-**Q: 为什么我的 `get_history` 返回是空的？**
-A: 很可能是忘记在 `on_start` 中调用 `self.set_history_depth()` 了。系统默认只保留当前这根 K 线。
+**Q: 为什么程序报错 `RuntimeError: History tracking is not enabled`？**
+A: 这是因为你调用了 `get_history` 但忘记在 `on_start` 中调用 `self.set_history_depth()` 了。系统默认为了性能不开启历史缓存，必须显式开启。
+
+**Q: 为什么 `get_history` 返回了很多 `NaN`？**
+A: 这通常发生在回测刚开始阶段。比如你设置了 depth=30，但在第 5 天就调用了 `get_history(30)`。此时数据不足，系统会自动在前面填充 `NaN` 以保证返回数组长度一致。建议在 `on_bar` 开头判断 `if len(closes) < N: return`。
 
 **Q: 回测结果里的 `sharpe_ratio` 是什么？**
 A: 夏普比率，衡量策略性价比的指标。大于 1 通常被认为是还可以的策略，大于 2 是非常优秀的策略。
