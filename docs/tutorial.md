@@ -53,10 +53,19 @@ class DualMAStrategy(Strategy):
     继承 akquant.Strategy 类，这是所有策略的基类。
     """
 
+    # 新增 (推荐): 声明式设置历史数据预热期
+    # 这样框架会自动为你处理 set_history_depth，无需在 on_start 中手动调用
+    # 优先级: 动态属性 (self.warmup_period) > 类属性 (warmup_period) > AST 自动推断
+    warmup_period = 40 # 30日均线 + 10 安全余量
+
     def __init__(self, fast_window=10, slow_window=30):
         # 定义策略参数：快线周期和慢线周期
         self.fast_window = fast_window
         self.slow_window = slow_window
+
+        # 进阶技巧：动态设置预热期
+        # 如果均线周期是动态传入的，建议在这里根据参数覆盖 warmup_period
+        self.warmup_period = slow_window + 10
 
     def on_start(self):
         """
@@ -66,11 +75,11 @@ class DualMAStrategy(Strategy):
         print("策略启动...")
         self.subscribe("AAPL")
 
-        # 关键：设置历史数据缓存长度
-        # 1. 性能优化：AKQuant 默认不缓存历史数据，需显式开启
-        # 2. 安全冗余：计算 30日均线理论上只需 30 个数据，但 +10 是为了留出安全余量 (Buffer)，
-        #    防止边界计算时数组越界，或用于某些指标的预热。
-        self.set_history_depth(self.slow_window + 10)
+        # 方式 1 (推荐)：使用 warmup_period (支持 类属性 / 实例属性 / AST自动推断)
+        # 方式 2 (旧版)：手动调用 self.set_history_depth(self.slow_window + 10)
+
+        # 由于我们已经配置了 warmup_period，这里无需做任何操作
+        # 框架会自动取 max(warmup_period, ast_inferred_value, run_backtest_history_depth)
 
     def on_bar(self, bar):
         """
@@ -135,10 +144,12 @@ if __name__ == "__main__":
 每一个 AKQuant 策略都是一个 Python 类，继承自 `Strategy`。你需要关注三个主要方法：
 
 *   **`__init__`**: 设置策略的参数（如均线周期）。
-*   **`on_start`**: 初始化工作。**最重要的是调用 `self.set_history_depth(N)`**。
-    *   **性能考量**：AKQuant 为了极致性能，默认设计是"不缓存历史数据"的（只处理当前 bar）。
-    *   **数据预热**：如果你需要"回头看"（如计算过去 30 天均线），必须显式告诉系统保留多少历史数据。
-    *   **安全冗余**：建议设置的值比实际计算周期稍大（例如 +10），以防止数组越界并满足某些指标的预热需求。
+*   **`on_start`**: 初始化工作。
+    *   **数据预热 (新版推荐)**：设置 `warmup_period`。
+        *   **静态设置**: 类属性 `warmup_period = 40`。
+        *   **动态设置**: 在 `__init__` 中 `self.warmup_period = slow_window + 10`。
+        *   **自动推断**: 如果代码中有 `SMA(30)`，框架也会尝试自动推断 (AST)。
+    *   **数据预热 (旧版兼容)**：调用 `self.set_history_depth(40)`。如果不设置，`get_history` 会报错。
 *   **`on_bar`**: 这是一个死循环，系统会按时间顺序把每一根 K 线传给你。你在这里做决策：买还是卖？
 
 ### 3.2 获取数据

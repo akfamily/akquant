@@ -29,6 +29,7 @@ from .log import get_logger, register_logger
 from .risk import apply_risk_config
 from .strategy import Strategy
 from .utils import df_to_arrays, prepare_dataframe
+from .utils.inspector import infer_warmup_period
 
 
 class BacktestResult:
@@ -289,13 +290,34 @@ def run_backtest(
 
             # Risk Config injection handled later
 
+    # Handle strategy_params explicitly
+    if "strategy_params" in kwargs:
+        s_params = kwargs.pop("strategy_params")
+        if isinstance(s_params, dict):
+            kwargs.update(s_params)
+
     # 2. 实例化策略 (提前实例化以获取订阅信息)
     strategy_instance = None
 
     if isinstance(strategy, type) and issubclass(strategy, Strategy):
         try:
             strategy_instance = strategy(**kwargs)
-        except TypeError:
+        except TypeError as e:
+            # Try fallback only if explicit kwargs failed, but log warning
+            # However, if kwargs contained extra unused params, this failure is
+            # expected for strict init.
+            # But we should try to match params if possible, or just let it fail
+            # if user provided params that don't match?
+            # The original behavior was silent fallback. We should preserve it
+            # but try to be smarter?
+            # Or at least warn if strategy_params were provided but ignored.
+
+            # For now, keep the fallback but maybe inspect if it was due to
+            # strategy_params
+            logger.warning(
+                f"Failed to instantiate strategy with provided parameters: {e}. "
+                "Falling back to default constructor (no arguments)."
+            )
             strategy_instance = strategy()
     elif isinstance(strategy, Strategy):
         strategy_instance = strategy
@@ -613,8 +635,23 @@ def run_backtest(
     logger.info("Running backtest via run_backtest()...")
 
     # 设置自动历史数据维护
-    if history_depth > 0:
-        strategy_instance.set_history_depth(history_depth)
+    # Logic: effective_depth = max(strategy.warmup_period, inferred_warmup,
+    #                              run_backtest(history_depth))
+    strategy_warmup = getattr(strategy_instance, "warmup_period", 0)
+
+    # Auto-infer from AST
+    inferred_warmup = 0
+    try:
+        inferred_warmup = infer_warmup_period(type(strategy_instance))
+        if inferred_warmup > 0:
+            logger.info(f"Auto-inferred warmup period: {inferred_warmup}")
+    except Exception as e:
+        logger.debug(f"Failed to infer warmup period: {e}")
+
+    effective_depth = max(strategy_warmup, inferred_warmup, history_depth)
+
+    if effective_depth > 0:
+        strategy_instance.set_history_depth(effective_depth)
 
     # 7.5 Prepare Indicators (Vectorized Pre-calculation)
     if hasattr(strategy_instance, "_prepare_indicators") and data_map_for_indicators:

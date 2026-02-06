@@ -14,13 +14,17 @@ Your task is to write trading strategies or backtest scripts based on user requi
 
 1.  **Strategy Structure**:
     *   Inherit from `akquant.Strategy`.
-    *   **Do NOT** call `super().__init__()` in your `__init__` method.
+    *   **Note**: Calling `super().__init__()` is **optional** (Strategy uses `__new__` for initialization), but harmless if called.
     *   Define parameters in `__init__`.
     *   **Subscribe (Optional but Recommended)**: Call `self.subscribe(symbol)` in `on_start` to explicitly declare interest. If omitted in backtest, it will be inferred from data.
     *   Implement trading logic in `on_bar(self, bar: Bar)`.
 
 2.  **Data Access**:
-    *   **Setup**: Call `self.set_history_depth(N)` in `on_start` to enable history tracking.
+    *   **Setup (Recommended)**:
+        *   **Static**: `warmup_period = N` (Class Attribute).
+        *   **Dynamic**: `self.warmup_period = N` in `__init__` (Instance Attribute).
+        *   **Auto**: The framework will try to infer N via AST if you use standard indicators (e.g. `SMA(30)`).
+    *   **Setup (Legacy)**: Call `self.set_history_depth(N)` in `on_start`.
     *   Current bar: `bar.close`, `bar.open`, `bar.high`, `bar.low`, `bar.volume`, `bar.timestamp_str` (Formatted time string).
     *   History: `self.get_history(count=N, symbol=bar.symbol, field="close")` returns a numpy array.
     *   **Check Data Sufficiency**: Always check `if len(history) < N: return` before calculating indicators.
@@ -47,14 +51,22 @@ from akquant import Strategy, Bar
 import numpy as np
 
 class MovingAverageStrategy(Strategy):
+    # Declarative Warmup (Static Default)
+    warmup_period = 30
+
     def __init__(self, fast_window=10, slow_window=20):
-        # NO super().__init__() call
+        # super().__init__() is optional here
         self.fast_window = fast_window
         self.slow_window = slow_window
 
+        # Dynamic Warmup (Overrides Class Attribute)
+        # Useful when windows are parameters
+        self.warmup_period = slow_window + 10
+
     def on_start(self):
         # self.subscribe("600000") # Optional in backtest if data provided
-        self.set_history_depth(self.slow_window + 10) # Set history buffer size
+        # self.set_history_depth(self.slow_window + 10) # No longer needed if warmup_period is set
+        pass
 
     def on_bar(self, bar: Bar):
         # 1. Get History
@@ -130,6 +142,6 @@ result.plot() # 可视化
 
 在使用大模型时，可能会出现以下幻觉（Hallucinations），可以在 Prompt 中显式禁止：
 
-1.  **禁止调用 `super().__init__()`**: AKQuant 的 `Strategy` 使用了 `__new__` 钩子处理初始化，子类调用 `super().__init__` 虽不报错但多余。
+1.  **关于 `super().__init__()`**: AKQuant 的 `Strategy` 使用了 `__new__` 钩子处理初始化。虽然调用 `super().__init__` 是安全的（空操作），但在本框架中并非必须。
 2.  **禁止使用 `context.portfolio` 这种过时的写法**: 虽然内部支持，但推荐使用 `self.get_position()` 等顶层 API。
 3.  **注意 `get_history` 的返回值**: 它返回的是 `numpy.ndarray`，不是 `pandas.Series`（除非使用 `get_history_df`）。直接对 `ndarray` 做运算性能更高。

@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Tuple, Union, cast
 import numpy as np
 import pandas as pd
 
-from .akquant import Bar, from_arrays
+from ..akquant import Bar, from_arrays
 
 
 def load_bar_from_df(

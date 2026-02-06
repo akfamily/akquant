@@ -39,11 +39,20 @@ def generate_mock_data() -> pd.DataFrame:
 class DualMAStrategy(Strategy):
     """继承 akquant.Strategy 类，这是所有策略的基类."""
 
+    # 新增：声明式设置历史数据预热期 (AKQuant 自动感知机制)
+    # 框架会自动识别此属性，或通过 AST 静态分析推断指标周期。
+    # 由于本策略使用了动态参数 (slow_window)，建议显式定义以确保安全。
+    warmup_period = 40  # 30 (slow_window) + 10 (buffer)
+
     def __init__(self, fast_window: int = 10, slow_window: int = 30) -> None:
         """Initialize the strategy."""
         # 定义策略参数：快线周期和慢线周期
         self.fast_window = fast_window
         self.slow_window = slow_window
+
+        # 动态更新 warmup_period (覆盖类属性)
+        # 这样即使外部修改了 slow_window 参数，历史数据也能自动适配
+        self.warmup_period = slow_window + 10
 
     def on_start(self) -> None:
         """
@@ -54,9 +63,7 @@ class DualMAStrategy(Strategy):
         print("策略启动...")
         self.subscribe("AAPL")
 
-        # 关键：设置历史数据缓存长度
-        # 我们需要计算 30日均线，所以至少需要缓存 30+10 天的数据
-        self.set_history_depth(self.slow_window + 10)
+        # 历史数据长度已通过 warmup_period 自动设置，无需手动调用 set_history_depth
 
     def on_bar(self, bar: Bar) -> None:
         """
@@ -111,7 +118,7 @@ if __name__ == "__main__":
     result = run_backtest(
         data=df,
         strategy=DualMAStrategy,  # 传入我们的策略类
-        strategy_params={"fast_window": 10, "slow_window": 30},  # 调整参数
+        strategy_params={"fast_window": 10, "slow_window": 40},  # 调整参数
         cash=100_000.0,  # 初始资金 10万
         commission=0.0003,  # 佣金万分之三
     )

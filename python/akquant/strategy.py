@@ -76,6 +76,7 @@ class Strategy:
     model: Optional["QuantModel"]
     _known_orders: Dict[str, Any]
     timezone: str = "Asia/Shanghai"
+    warmup_period: int = 0
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -93,6 +94,7 @@ class Strategy:
 
         # 历史数据配置
         instance._history_depth = 0
+        instance.warmup_period = getattr(instance, "warmup_period", 0)
 
         # 滚动训练配置
         instance._rolling_train_window = 0
