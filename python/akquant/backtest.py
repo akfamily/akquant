@@ -232,6 +232,7 @@ def run_backtest(
     initialize: Optional[Callable[[Any], None]] = None,
     context: Optional[Dict[str, Any]] = None,
     history_depth: int = 0,
+    warmup_period: int = 0,
     lot_size: Union[int, Dict[str, int], None] = None,
     show_progress: bool = True,
     config: Optional[BacktestConfig] = None,
@@ -257,6 +258,7 @@ def run_backtest(
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
     :param context: 初始上下文数据 (仅当 strategy 为函数时使用)
     :param history_depth: 自动维护历史数据的长度 (0 表示禁用)
+    :param warmup_period: 策略预热期 (等同于 history_depth，取最大值)
     :param lot_size: 最小交易单位。如果是 int，则应用于所有标的；
                      如果是 Dict[str, int]，则按代码匹配；如果不传(None)，默认为 1。
     :param show_progress: 是否显示进度条 (默认 True)
@@ -648,7 +650,9 @@ def run_backtest(
     except Exception as e:
         logger.debug(f"Failed to infer warmup period: {e}")
 
-    effective_depth = max(strategy_warmup, inferred_warmup, history_depth)
+    effective_depth = max(
+        strategy_warmup, inferred_warmup, history_depth, warmup_period
+    )
 
     if effective_depth > 0:
         strategy_instance.set_history_depth(effective_depth)
