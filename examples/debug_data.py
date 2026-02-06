@@ -10,7 +10,7 @@ from akquant import Bar, Strategy, run_backtest
 # 这里为了演示方便，我们生成一些模拟数据
 def generate_mock_data() -> pd.DataFrame:
     """Generate mock data for testing."""
-    dates = pd.date_range(start="2023-01-01", end="2023-12-31")
+    dates = pd.date_range(start="2003-01-01", end="2023-12-31")
     n = len(dates)
 
     # 生成一条随机走势
@@ -107,23 +107,61 @@ class DualMAStrategy(Strategy):
 
 
 # --------------------------
-# 第三步：运行回测
+# 第三步：运行参数优化与回测
 # --------------------------
 if __name__ == "__main__":
     # 1. 获取数据
     df = generate_mock_data()
 
-    # 2. 运行回测
-    print("开始回测...")
-    result = run_backtest(
+    # 2. 定义参数网格
+    # 我们希望找到最优的 (fast_window, slow_window) 组合
+    param_grid = {
+        "fast_window": list(range(5, 300, 5)),  # [5, 10, 15, 20, 25]
+        "slow_window": list(range(20, 600, 10)),  # [20, 30, 40, 50]
+    }
+
+    # 3. 运行优化
+    print("开始运行参数优化 (Grid Search)...")
+    from akquant import run_optimization
+
+    # run_optimization 会自动进行多进程并行计算
+    results_df = run_optimization(
+        strategy=DualMAStrategy,
+        param_grid=param_grid,
         data=df,
-        strategy=DualMAStrategy,  # 传入我们的策略类
-        strategy_params={"fast_window": 10, "slow_window": 40},  # 调整参数
-        cash=100_000.0,  # 初始资金 10万
-        commission=0.0003,  # 佣金万分之三
+        cash=100_000.0,
+        commission=0.0003,
+        sort_by="total_return",  # 按总回报排序
+        ascending=False,  # 降序 (最大的排前面)
     )
 
-    # 3. 打印结果
+    # 4. 显示优化结果
+    if not isinstance(results_df, pd.DataFrame):
+        raise TypeError("Optimization results must be a DataFrame")
+
+    print("\n" + "=" * 50)
+    print("Top 5 最优参数组合:")
+    # 显示参数和核心指标
+    cols = ["fast_window", "slow_window", "total_return", "sharpe_ratio", "_duration"]
+    print(results_df.head(5)[cols])
+    print("=" * 50)
+
+    # 5. 使用最优参数运行最终回测
+    best_row = results_df.iloc[0]
+    best_params = {
+        "fast_window": int(best_row["fast_window"]),
+        "slow_window": int(best_row["slow_window"]),
+    }
+    print(f"\n使用最优参数运行回测: {best_params}")
+
+    result = run_backtest(
+        data=df,
+        strategy=DualMAStrategy,
+        strategy_params=best_params,
+        cash=100_000.0,
+        commission=0.0003,
+    )
+
     print("\n" + "=" * 30)
-    print(result)  # 打印详细的绩效报表
+    print(result)
     print("=" * 30)

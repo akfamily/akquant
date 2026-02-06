@@ -163,7 +163,7 @@ if __name__ == "__main__":
 ## 4. 常见问题 (FAQ)
 
 **Q: 为什么程序报错 `RuntimeError: History tracking is not enabled`？**
-A: 这是因为你调用了 `get_history` 但忘记在 `on_start` 中调用 `self.set_history_depth()` 了。系统默认为了性能不开启历史缓存，必须显式开启。
+A: 这是因为你调用了 `get_history` 但未设置历史数据长度。请确保在策略类中设置了 `warmup_period` 属性（推荐），或者在 `on_start` 中调用 `self.set_history_depth()`。系统默认为了性能不开启历史缓存，必须显式开启。
 
 **Q: 为什么 `get_history` 返回了很多 `NaN`？**
 A: 这通常发生在回测刚开始阶段。比如你设置了 depth=30，但在第 5 天就调用了 `get_history(30)`。此时数据不足，系统会自动在前面填充 `NaN` 以保证返回数组长度一致。建议在 `on_bar` 开头判断 `if len(closes) < N: return`。
@@ -173,3 +173,33 @@ A: 夏普比率，衡量策略性价比的指标。大于 1 通常被认为是�
 
 **Q: 如何换成我自己的数据？**
 A: 只要将 `data=df` 替换为你自己的 DataFrame 即可。确保你的 DataFrame 包含 `date`, `open`, `high`, `low`, `close`, `volume`, `symbol` 这几列。
+
+## 5. 进阶：参数优化
+
+在实际开发中，我们往往需要寻找策略的最优参数（例如：均线周期到底选 10/30 好，还是 5/20 好？）。AKQuant 提供了内置的网格搜索工具。
+
+```python
+from akquant import run_optimization
+
+# 定义参数网格
+param_grid = {
+    "fast_window": range(5, 30, 5),   # [5, 10, 15, 20, 25]
+    "slow_window": range(20, 60, 10), # [20, 30, 40, 50]
+}
+
+# 运行优化
+results_df = run_optimization(
+    strategy=DualMAStrategy,
+    param_grid=param_grid,
+    data=df,
+    cash=100_000.0,
+    commission=0.0003,
+    sort_by="total_return", # 按收益率排序
+    ascending=False
+)
+
+# 打印前 5 名
+print(results_df.head(5))
+```
+
+`run_optimization` 会自动利用多核 CPU 并行加速回测，并返回一个包含所有参数组合及对应绩效指标的 DataFrame。

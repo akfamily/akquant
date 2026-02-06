@@ -67,8 +67,12 @@ def _run_single_backtest(args: Dict[str, Any]) -> OptimizationResult:
     try:
         result = run_backtest(strategy=strategy_cls, **kwargs)
         metrics_df = result.metrics_df
-        # 提取第一行作为字典
-        metrics = cast(Dict[str, Any], metrics_df.iloc[0].to_dict())
+        # metrics_df is transposed (Index=Metric Names, Columns=['Backtest'])
+        if "Backtest" in metrics_df.columns:
+            metrics = cast(Dict[str, Any], metrics_df["Backtest"].to_dict())
+        else:
+            # Fallback if structure changes
+            metrics = cast(Dict[str, Any], metrics_df.iloc[:, 0].to_dict())
     except Exception as e:
         metrics = {"error": str(e)}
         # Set default bad metrics
