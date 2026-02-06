@@ -35,6 +35,7 @@ nav:
   - 安装指南: installation.md
   - 快速开始: quickstart.md
   - 策略指南: strategy_guide.md
+  - LLM 辅助编程指南: llm_guide.md
   - 机器学习指南: ml_guide.md
   - 架构设计: architecture.md
   - 设计与开发指南: design.md

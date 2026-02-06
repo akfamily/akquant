@@ -354,6 +354,17 @@ def run_backtest(
     if data is not None:
         # Use provided data
         if isinstance(data, pd.DataFrame):
+            # Try to infer symbol from DataFrame if not explicitly provided or default
+            if (not symbols or symbols == ["BENCHMARK"]) and "symbol" in data.columns:
+                unique_symbols = data["symbol"].unique()
+                if len(unique_symbols) == 1:
+                    inferred = unique_symbols[0]
+                    if symbols == ["BENCHMARK"]:
+                        symbols = [inferred]
+                    else:
+                        if inferred not in symbols:
+                            symbols.append(inferred)
+
             target_symbol = symbols[0] if symbols else "BENCHMARK"
             df = prepare_dataframe(data)
             data_map_for_indicators[target_symbol] = df
