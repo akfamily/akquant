@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc, FixedOffset};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
@@ -132,6 +132,22 @@ impl Bar {
         Ok(())
     }
 
+    /// 获取格式化的时间字符串 (Asia/Shanghai).
+    /// 格式: YYYY-MM-DD HH:MM:SS
+    #[getter]
+    pub fn timestamp_str(&self) -> String {
+        let secs = self.timestamp.div_euclid(1_000_000_000);
+        let nanos = self.timestamp.rem_euclid(1_000_000_000) as u32;
+
+        if let Some(dt) = Utc.timestamp_opt(secs, nanos).single() {
+            // Default to Asia/Shanghai (UTC+8)
+            let tz = FixedOffset::east_opt(8 * 3600).unwrap();
+            dt.with_timezone(&tz).format("%Y-%m-%d %H:%M:%S").to_string()
+        } else {
+            self.timestamp.to_string()
+        }
+    }
+
     pub fn __repr__(&self) -> String {
         format!(
             "Bar(symbol={}, time={}, close={})",
@@ -206,6 +222,22 @@ impl Tick {
     fn set_volume(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         self.volume = extract_decimal(value)?;
         Ok(())
+    }
+
+    /// 获取格式化的时间字符串 (Asia/Shanghai).
+    /// 格式: YYYY-MM-DD HH:MM:SS
+    #[getter]
+    pub fn timestamp_str(&self) -> String {
+        let secs = self.timestamp.div_euclid(1_000_000_000);
+        let nanos = self.timestamp.rem_euclid(1_000_000_000) as u32;
+
+        if let Some(dt) = Utc.timestamp_opt(secs, nanos).single() {
+            // Default to Asia/Shanghai (UTC+8)
+            let tz = FixedOffset::east_opt(8 * 3600).unwrap();
+            dt.with_timezone(&tz).format("%Y-%m-%d %H:%M:%S").to_string()
+        } else {
+            self.timestamp.to_string()
+        }
     }
 
     pub fn __repr__(&self) -> String {

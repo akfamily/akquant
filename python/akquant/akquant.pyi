@@ -92,6 +92,7 @@ class Bar:
     low: float
     close: float
     volume: float
+    timestamp_str: str
     def __new__(
         cls,
         timestamp: int,
@@ -591,6 +592,7 @@ class Tick:
     symbol: str
     price: float
     volume: float
+    timestamp_str: str
     def __new__(
         cls, timestamp: typing.Any, price: typing.Any, volume: typing.Any, symbol: str
     ) -> "Tick": ...

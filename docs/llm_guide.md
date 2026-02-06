@@ -21,7 +21,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
 
 2.  **Data Access**:
     *   **Setup**: Call `self.set_history_depth(N)` in `on_start` to enable history tracking.
-    *   Current bar: `bar.close`, `bar.open`, `bar.high`, `bar.low`, `bar.volume`.
+    *   Current bar: `bar.close`, `bar.open`, `bar.high`, `bar.low`, `bar.volume`, `bar.timestamp_str` (Formatted time string).
     *   History: `self.get_history(count=N, symbol=bar.symbol, field="close")` returns a numpy array.
     *   **Check Data Sufficiency**: Always check `if len(history) < N: return` before calculating indicators.
 

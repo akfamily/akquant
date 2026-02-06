@@ -34,6 +34,8 @@ nav:
   - 首页: index.md
   - 安装指南: installation.md
   - 快速开始: quickstart.md
+  - 教程:
+      - 编写你的第一个策略: tutorial.md
   - 策略指南: strategy_guide.md
   - LLM 辅助编程指南: llm_guide.md
   - 机器学习指南: ml_guide.md
