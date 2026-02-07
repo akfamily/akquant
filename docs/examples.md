@@ -188,21 +188,76 @@ data = {"STOCK_A": df_stock, "FUTURE_B": df_future}
 future_config = InstrumentConfig(
     symbol="FUTURE_B",
     asset_type="FUTURES",
-    multiplier=300.0,
-    margin_ratio=0.1,
-    tick_size=0.2
+    multiplier=300, # 股指期货乘数
+    margin_ratio=0.1 # 10% 保证金
 )
 
-# 4. 运行回测
-result = aq.run_backtest(
+# 4. 运行
+run_backtest(
     data=data,
     strategy=TestStrategy,
-    instruments_config=[future_config], # 传入配置
-    cash=1_000_000.0
+    instruments_config=[future_config]
 )
 ```
 
-## 4. 更多资源
+## 4. 复杂订单与风控 (Complex Orders) {: #complex-orders }
 
-*   查看 `examples/` 目录下的源代码获取更多实用示例。
-*   阅读 [API 文档](api.md) 了解详细接口定义。
+虽然 AKQuant 的核心撮合引擎尚未原生内置 OCO (One-Cancels-Other) 或 Bracket Order 订单类型，但你可以通过策略层的回调函数 (`on_trade`, `on_order`) 轻松实现这些高级逻辑。
+
+### 4.1 OCO 与 Bracket Order
+
+Bracket Order 通常包含三个部分：
+1.  **Entry Order**: 进场单（如突破买入）。
+2.  **Stop Loss**: 止损单（保护性卖出）。
+3.  **Take Profit**: 止盈单（获利卖出）。
+
+其中 Stop Loss 和 Take Profit 构成一组 **OCO** 订单：即如果其中一个成交，另一个应立即自动取消。
+
+👉 **[查看完整代码示例](file:///c:/Users/albert/Documents/trae_projects/akquant/examples/complex_orders.py)**
+
+**核心逻辑实现：**
+
+```python
+def on_trade(self, trade):
+    # 1. 进场单成交 -> 立即挂止损和止盈
+    if trade.order_id == self.entry_order_id:
+        # 下达止损单 (Stop Market)
+        self.stop_loss_id = self.sell(
+            trade.symbol, trade.quantity,
+            trigger_price=trade.price * 0.98, # 止损价
+            price=None # None 表示触发后市价卖出
+        )
+
+        # 下达止盈单 (Limit Sell)
+        self.take_profit_id = self.sell(
+            trade.symbol, trade.quantity,
+            price=trade.price * 1.05 # 止盈价
+        )
+
+    # 2. 止损成交 -> 取消止盈
+    elif trade.order_id == self.stop_loss_id:
+        self.cancel_order(self.take_profit_id)
+
+    # 3. 止盈成交 -> 取消止损
+    elif trade.order_id == self.take_profit_id:
+        self.cancel_order(self.stop_loss_id)
+```
+
+!!! tip "参数优化"
+    该策略的 `stop_loss_pct` 和 `take_profit_pct` 参数可以通过 `akquant.run_optimization` 进行网格搜索优化。
+
+    ```python
+    from akquant import run_optimization
+    from examples.complex_orders import BracketStrategy
+
+    param_grid = {
+        "stop_loss_pct": [0.01, 0.02, 0.03],
+        "take_profit_pct": [0.03, 0.05, 0.08]
+    }
+
+    results = run_optimization(BracketStrategy, param_grid, data=df)
+    ```
+
+完整代码请参考 [examples/complex_orders.py](file:///examples/complex_orders.py)。
+
+> **注意**: `buy` / `sell` / `stop_buy` / `stop_sell` 方法都会返回唯一的 `order_id` (str)，你可以利用这个 ID 在 `on_trade` 和 `on_order` 回调中精确追踪每个订单的状态。

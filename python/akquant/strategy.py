@@ -557,7 +557,7 @@ class Strategy:
         price: Optional[float] = None,
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
-    ) -> None:
+    ) -> str:
         """
         买入下单.
 
@@ -567,6 +567,9 @@ class Strategy:
             price: 限价 (None 为市价)
             time_in_force: 订单有效期
             trigger_price: 触发价 (止损/止盈)
+
+        Returns:
+            str: 订单 ID
         """
         if self.ctx is None:
             raise RuntimeError("Context not ready")
@@ -585,7 +588,8 @@ class Strategy:
 
         # 4. Execute Buy
         if quantity > 0:
-            self.ctx.buy(symbol, quantity, price, time_in_force, trigger_price)
+            return self.ctx.buy(symbol, quantity, price, time_in_force, trigger_price)
+        return ""
 
     def sell(
         self,
@@ -594,7 +598,7 @@ class Strategy:
         price: Optional[float] = None,
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
-    ) -> None:
+    ) -> str:
         """
         卖出下单.
 
@@ -604,6 +608,9 @@ class Strategy:
             price: 限价 (None 为市价)
             time_in_force: 订单有效期
             trigger_price: 触发价 (止损/止盈)
+
+        Returns:
+            str: 订单 ID
         """
         if self.ctx is None:
             raise RuntimeError("Context not ready")
@@ -620,11 +627,12 @@ class Strategy:
             else:
                 # If no position, maybe use Sizer?
                 # For now, if no position and no quantity, we can't sell.
-                return
+                return ""
 
         # 3. Execute Sell
         if quantity > 0:
-            self.ctx.sell(symbol, quantity, price, time_in_force, trigger_price)
+            return self.ctx.sell(symbol, quantity, price, time_in_force, trigger_price)
+        return ""
 
     def stop_buy(
         self,

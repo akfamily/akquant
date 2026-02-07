@@ -212,7 +212,7 @@ impl StrategyContext {
         price: Option<&Bound<'_, PyAny>>,
         time_in_force: Option<TimeInForce>,
         trigger_price: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<()> {
+    ) -> PyResult<String> {
         let qty_decimal = extract_decimal(quantity)?;
         let price_decimal = if let Some(p) = price {
             Some(extract_decimal(p)?)
@@ -227,7 +227,7 @@ impl StrategyContext {
 
         let id = Uuid::new_v4().to_string();
         let order = Order {
-            id,
+            id: id.clone(),
             symbol,
             side: OrderSide::Buy,
             order_type: match (price.is_some(), trigger_price.is_some()) {
@@ -249,7 +249,7 @@ impl StrategyContext {
         } else {
             self.orders.push(order);
         }
-        Ok(())
+        Ok(id)
     }
 
     #[pyo3(signature = (symbol, quantity, price=None, time_in_force=None, trigger_price=None))]
@@ -260,7 +260,7 @@ impl StrategyContext {
         price: Option<&Bound<'_, PyAny>>,
         time_in_force: Option<TimeInForce>,
         trigger_price: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<()> {
+    ) -> PyResult<String> {
         let qty_decimal = extract_decimal(quantity)?;
         let price_decimal = if let Some(p) = price {
             Some(extract_decimal(p)?)
@@ -275,7 +275,7 @@ impl StrategyContext {
 
         let id = Uuid::new_v4().to_string();
         let order = Order {
-            id,
+            id: id.clone(),
             symbol,
             side: OrderSide::Sell,
             order_type: match (price.is_some(), trigger_price.is_some()) {
@@ -297,7 +297,7 @@ impl StrategyContext {
         } else {
             self.orders.push(order);
         }
-        Ok(())
+        Ok(id)
     }
 
     fn get_position(&self, symbol: String) -> f64 {

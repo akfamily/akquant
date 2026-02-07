@@ -37,6 +37,7 @@ nav:
   - 教程:
       - 编写你的第一个策略: tutorial.md
   - 策略指南: strategy_guide.md
+  - 时区处理指南: timezone.md
   - LLM 辅助编程指南: llm_guide.md
   - 机器学习指南: ml_guide.md
   - 架构设计: architecture.md
