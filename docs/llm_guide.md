@@ -231,3 +231,52 @@ result.plot() # 可视化
 2.  **禁止使用 `context.portfolio` 这种过时的写法**: 虽然内部支持，但推荐使用 `self.get_position()` 等顶层 API。
 3.  **注意 `get_history` 的返回值**: 它返回的是 `numpy.ndarray`，不是 `pandas.Series`（除非使用 `get_history_df`）。直接对 `ndarray` 做运算性能更高。
 4.  **ML 策略中的特征一致性**: 训练时 `prepare_features` 通常会 `shift(-1)` 导致最后一行无效被丢弃；但在 `on_bar` 预测时，我们需要用当前最新的行情计算特征。直接复用 `prepare_features` 可能会导致预测时取不到最新的特征（因为它以为那是“最后一行”而丢弃了），或者需要特殊的参数控制。建议在 `on_bar` 中显式计算当前特征。
+
+## 5. 实时数据处理 (Realtime / CTP)
+
+AKQuant 提供了 `LiveRunner` 类来简化实盘/仿真交易的启动流程。
+
+**Prompt 示例**:
+> 我需要编写一个 CTP 实盘策略启动脚本，使用 1 分钟 K 线聚合，并在运行 1 小时后自动停止。
+
+**模型应生成的代码片段**:
+
+```python
+from akquant.live import LiveRunner
+from akquant import AssetType, Instrument
+
+# 1. 定义合约
+instruments = [
+    Instrument(symbol="rb2505", asset_type=AssetType.Futures, multiplier=10.0, margin_ratio=0.1, tick_size=1.0)
+]
+
+# 2. 创建运行器
+runner = LiveRunner(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    md_front="tcp://182.254.243.31:40011",
+    use_aggregator=True  # 关键参数
+)
+
+# 3. 运行 (支持 duration 自动停止)
+# show_progress=False 在实盘中推荐，避免进度条干扰日志
+runner.run(cash=500_000, show_progress=False, duration="1h")
+```
+
+### 模式选择 (`use_aggregator`)
+
+*   **`use_aggregator=True` (默认)**:
+    *   启用内置的 Rust 高性能聚合器 (`BarAggregator`)。
+    *   策略的 `on_bar` 每 1 分钟触发一次（标准 OHLCV）。
+    *   适用于趋势跟踪、技术指标策略。
+*   **`use_aggregator=False`**:
+    *   **Tick-as-Bar 模式**。网关收到每个 Tick 都会直接封装成 Bar 推送。
+    *   策略的 `on_bar` 频率极高（同 Tick 频率）。
+    *   适用于高频策略、做市策略或测试数据连接。
+
+### 关键区别说明
+
+*   **Gateway 层 (`on_tick`)**: 负责接收外部接口（如 CTP, Binance）的原始 Tick 数据。
+*   **Strategy 层 (`on_bar`)**: 策略逻辑的核心入口。
+    *   **无论数据源是聚合后的分钟线，还是 Tick 快照，策略始终通过 `on_bar` 接收数据。**
+    *   AKQuant 引擎标准化了数据流，策略不需要感知上游是 Tick 还是 Bar，只需要处理 `Bar` 对象。

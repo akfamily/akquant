@@ -87,6 +87,19 @@ engine = akquant.Engine()
 *   `add_bars(bars: List[Bar])`: 添加数据。
 *   `sort()`: 按时间戳排序数据。
 
+### `akquant.BarAggregator`
+
+实时 Tick 聚合器，用于将 Tick 流转换为 Bar 数据并自动注入 DataFeed。
+
+```python
+aggregator = akquant.BarAggregator(feed: DataFeed, interval_min: int = 1)
+```
+
+**方法:**
+
+*   `on_tick(symbol: str, price: float, volume: float, timestamp_ns: int)`: 处理新的 Tick 数据。
+    *   `volume`: 这里的 volume 应该是累计成交量 (TotalVolume)，聚合器会自动计算增量。
+
 ## 2. 策略开发 (Strategy)
 
 ### `akquant.Strategy`

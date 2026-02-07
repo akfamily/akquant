@@ -77,6 +77,7 @@ class Strategy:
     _known_orders: Dict[str, Any]
     timezone: str = "Asia/Shanghai"
     warmup_period: int = 0
+    _last_event_type: str = ""  # "bar" or "tick"
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -90,7 +91,8 @@ class Strategy:
         instance._subscriptions = []
         instance._last_prices = {}
         instance._known_orders = {}
-        instance.timezone = "Asia/Shanghai"
+        instance.timezone = getattr(instance, "timezone", "Asia/Shanghai")
+        instance._last_event_type = ""
 
         # 历史数据配置
         instance._history_depth = 0
@@ -430,9 +432,15 @@ class Strategy:
                     # Disappeared but not canceled and no trade?
                     del self._known_orders[oid]
 
+        # 5. Process Trades
+        if hasattr(self.ctx, "recent_trades"):
+            for t in self.ctx.recent_trades:
+                self.on_trade(t)
+
     def _on_bar_event(self, bar: Bar, ctx: StrategyContext) -> None:
         """引擎调用的 Bar 回调 (Internal)."""
         self.ctx = ctx
+        self._last_event_type = "bar"
 
         self._check_order_events()
 
@@ -455,6 +463,7 @@ class Strategy:
     def _on_tick_event(self, tick: Tick, ctx: StrategyContext) -> None:
         """引擎调用的 Tick 回调 (Internal)."""
         self.ctx = ctx
+        self._last_event_type = "tick"
         self.current_tick = tick
         self._last_prices[tick.symbol] = tick.price
         self.on_tick(tick)
@@ -499,14 +508,19 @@ class Strategy:
         """
         策略逻辑入口 (Timer 事件).
 
-        Args:
-            payload: 定时器携带的数据
+        用户应重写此方法.
         """
         pass
 
     def _resolve_symbol(self, symbol: Optional[str] = None) -> str:
         if symbol is None:
-            if self.current_bar:
+            # Prioritize based on the last event type
+            if self._last_event_type == "tick" and self.current_tick:
+                symbol = self.current_tick.symbol
+            elif self._last_event_type == "bar" and self.current_bar:
+                symbol = self.current_bar.symbol
+            # Fallbacks
+            elif self.current_bar:
                 symbol = self.current_bar.symbol
             elif self.current_tick:
                 symbol = self.current_tick.symbol

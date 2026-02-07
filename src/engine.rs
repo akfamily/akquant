@@ -344,6 +344,20 @@ impl Engine {
             }
         }
 
+        // Trigger Strategy on_start
+        if let Err(e) = strategy.call_method0("on_start") {
+             // It's okay if it fails or doesn't exist (though base class has it),
+             // but strictly we might want to log it.
+             // However, for now, we just propagate error if it's a real error,
+             // or ignore if it's just missing method (which shouldn't happen with base class).
+             // Given PyO3, call_method0 returns Result.
+             // If we want to be safe:
+             // println!("Warning: Failed to call on_start: {}", e);
+             // But let's just propagate (?) or ignore.
+             // Best to just call it and propagate error, as it SHOULD exist.
+             return Err(e);
+        }
+
         let mut pending_orders: Vec<Order> = Vec::new();
         let mut count = 0;
         let mut last_timestamp = 0;
@@ -756,7 +770,23 @@ impl Engine {
             .trade_tracker
             .calculate_pnl(Some(self.last_prices.clone()));
         let closed_trades = self.trade_tracker.closed_trades.to_vec();
-        BacktestResult::calculate(self.daily_equity.clone(), self.daily_positions.clone(), trade_pnl, closed_trades)
+
+        // Clone daily records and append current state (Mark-to-Market)
+        // This ensures that we have the latest equity point even if the run loop was interrupted
+        // or hasn't reached the next day close.
+        let mut daily_equity = self.daily_equity.clone();
+        let mut daily_positions = self.daily_positions.clone();
+
+        if let Some(now_ns) = self.clock.timestamp() {
+             let equity = self.portfolio.calculate_equity(&self.last_prices, &self.instruments);
+             // Avoid duplicate if timestamp matches last one exactly (unlikely but safe)
+             if daily_equity.last().map(|(t, _)| *t != now_ns).unwrap_or(true) {
+                 daily_equity.push((now_ns, equity));
+                 daily_positions.push((now_ns, self.portfolio.positions.clone()));
+             }
+        }
+
+        BacktestResult::calculate(daily_equity, daily_positions, trade_pnl, closed_trades)
     }
 
     fn create_context(&self, active_orders: Vec<Order>, step_trades: Vec<Trade>) -> StrategyContext {

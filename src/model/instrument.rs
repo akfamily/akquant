@@ -43,20 +43,39 @@ impl Instrument {
     /// :param option_type: 期权类型 (可选)
     /// :param strike_price: 行权价 (可选)
     /// :param expiry_date: 到期日 (可选)
-    /// :param lot_size: 最小交易单位 (可选, 股票默认为100)
+    /// :param lot_size: 最小交易单位 (可选, 默认为1)
     #[new]
     #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (symbol, asset_type, multiplier=None, margin_ratio=None, tick_size=None, option_type=None, strike_price=None, expiry_date=None, lot_size=None))]
     pub fn new(
         symbol: String,
         asset_type: AssetType,
-        multiplier: &Bound<'_, PyAny>,
-        margin_ratio: &Bound<'_, PyAny>,
-        tick_size: &Bound<'_, PyAny>,
+        multiplier: Option<&Bound<'_, PyAny>>,
+        margin_ratio: Option<&Bound<'_, PyAny>>,
+        tick_size: Option<&Bound<'_, PyAny>>,
         option_type: Option<OptionType>,
         strike_price: Option<&Bound<'_, PyAny>>,
         expiry_date: Option<u32>,
         lot_size: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        let mult = if let Some(m) = multiplier {
+            extract_decimal(m)?
+        } else {
+            Decimal::from(1)
+        };
+
+        let margin = if let Some(m) = margin_ratio {
+            extract_decimal(m)?
+        } else {
+            Decimal::from(1) // Default 100% margin (no leverage)
+        };
+
+        let tick = if let Some(t) = tick_size {
+            extract_decimal(t)?
+        } else {
+            Decimal::new(1, 2) // Default 0.01
+        };
+
         let strike = if let Some(s) = strike_price {
             Some(extract_decimal(s)?)
         } else {
@@ -72,9 +91,9 @@ impl Instrument {
         Ok(Instrument {
             symbol,
             asset_type,
-            multiplier: extract_decimal(multiplier)?,
-            margin_ratio: extract_decimal(margin_ratio)?,
-            tick_size: extract_decimal(tick_size)?,
+            multiplier: mult,
+            margin_ratio: margin,
+            tick_size: tick,
             option_type,
             strike_price: strike,
             expiry_date,

@@ -17,7 +17,7 @@ mod risk;
 
 use analysis::{BacktestResult, ClosedTrade, PerformanceMetrics, TradePnL};
 use context::StrategyContext;
-use data::{DataFeed, from_arrays};
+use data::{DataFeed, BarAggregator, from_arrays};
 use engine::Engine;
 use indicators::{ATR, BollingerBands, EMA, MACD, RSI, SMA};
 use model::{
@@ -34,6 +34,7 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(from_arrays, m)?)?;
     m.add_class::<Tick>()?;
     m.add_class::<DataFeed>()?;
+    m.add_class::<BarAggregator>()?;
     m.add_class::<Engine>()?;
     m.add_class::<StrategyContext>()?;
     m.add_class::<Order>()?;

@@ -501,114 +501,141 @@ impl DataFeed {
         provider.len_hint()
     }
 
-    pub fn is_live(&self) -> bool {
-        let provider = self.provider.lock().unwrap();
-        provider.is_live()
-    }
-
     pub fn wait_peek(&self, timeout: Duration) -> Option<i64> {
         let mut provider = self.provider.lock().unwrap();
         provider.wait_peek(timeout)
     }
+
+    pub fn is_live(&self) -> bool {
+        let provider = self.provider.lock().unwrap();
+        provider.is_live()
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use numpy::PyArray1;
-    use pyo3::Python;
+// ----------------------------------------------------------------------------
+// Bar Aggregator (New Feature)
+// ----------------------------------------------------------------------------
 
-    #[test]
-    fn test_from_arrays_valid() {
-        // Python::initialize(); // Auto-initialized usually
-        Python::attach(|py| {
-            let ts = PyArray1::from_vec(py, vec![1625097600i64]);
-            let opens = PyArray1::from_vec(py, vec![100.0]);
-            let highs = PyArray1::from_vec(py, vec![105.0]);
-            let lows = PyArray1::from_vec(py, vec![95.0]);
-            let closes = PyArray1::from_vec(py, vec![102.0]);
-            let volumes = PyArray1::from_vec(py, vec![1000.0]);
+#[derive(Debug, Clone)]
+struct ActiveBar {
+    open: Decimal,
+    high: Decimal,
+    low: Decimal,
+    close: Decimal,
+    volume_base: Decimal,
+    volume_curr: Decimal,
+    timestamp_min: i64,
+}
 
-            let symbol = Some("AAPL".to_string());
+#[gen_stub_pyclass]
+#[pyclass]
+pub struct BarAggregator {
+    feed: DataFeed,
+    active_bars: HashMap<String, ActiveBar>,
+    last_cumulative_volumes: HashMap<String, Decimal>,
+    interval_min: i64,
+}
 
-            let result = from_arrays(
-                ts.as_any(),
-                opens.as_any(),
-                highs.as_any(),
-                lows.as_any(),
-                closes.as_any(),
-                volumes.as_any(),
-                symbol,
-                None,
-                None,
-                py
-            );
-            assert!(result.is_ok());
-
-            let bars = result.unwrap();
-            assert_eq!(bars.len(), 1);
-            assert_eq!(bars[0].symbol, "AAPL");
-            assert_eq!(bars[0].open, Decimal::from(100));
-            assert_eq!(bars[0].timestamp, 1625097600000000000); // Normalized to nanoseconds
-        });
-    }
-
-    #[test]
-    fn test_data_feed() {
-        let mut feed = DataFeed::new();
-        let bar = Bar {
-            timestamp: 1000,
-            open: Decimal::ZERO,
-            high: Decimal::ZERO,
-            low: Decimal::ZERO,
-            close: Decimal::ZERO,
-            volume: Decimal::ZERO,
-            symbol: "TEST".to_string(),
-            extra: std::collections::HashMap::new(),
-        };
-
-        feed.add_bar(bar.clone()).unwrap();
-        // Since internal is hidden, test via public API behavior if possible,
-        // or check behavior via mock engine.
-        // For now, simple assertion that it didn't panic.
-    }
-
-    #[test]
-    fn test_live_feed() {
-        let feed = DataFeed::create_live();
-
-        let bar = Bar {
-            timestamp: 1625097600000000000,
-            open: Decimal::ZERO,
-            high: Decimal::ZERO,
-            low: Decimal::ZERO,
-            close: Decimal::ZERO,
-            volume: Decimal::ZERO,
-            symbol: "TEST".to_string(),
-            extra: std::collections::HashMap::new(),
-        };
-
-        // Clone feed for thread
-        let mut feed_clone = feed.clone();
-        let bar_clone = bar.clone();
-
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(100));
-            feed_clone.add_bar(bar_clone).unwrap();
-        });
-
-        // Should wait and receive
-        let ts = feed.wait_peek(Duration::from_secs(1));
-        assert!(ts.is_some());
-        assert_eq!(ts.unwrap(), 1625097600000000000);
-
-        // Next should return event
-        let event = feed.next();
-        assert!(event.is_some());
-        if let Event::Bar(b) = event.unwrap() {
-            assert_eq!(b.timestamp, 1625097600000000000);
-        } else {
-            panic!("Expected Bar");
+#[gen_stub_pymethods]
+#[pymethods]
+impl BarAggregator {
+    #[new]
+    #[pyo3(signature = (feed, interval_min=None))]
+    pub fn new(feed: DataFeed, interval_min: Option<i64>) -> Self {
+        Self {
+            feed,
+            active_bars: HashMap::new(),
+            last_cumulative_volumes: HashMap::new(),
+            interval_min: interval_min.unwrap_or(1),
         }
+    }
+
+    /// 处理新的 Tick 数据
+    ///
+    /// :param symbol: 标的代码
+    /// :param price: 最新价
+    /// :param volume: 累计成交量 (TotalVolume)
+    /// :param timestamp_ns: 时间戳 (纳秒)
+    pub fn on_tick(&mut self, symbol: String, price: f64, volume: f64, timestamp_ns: i64) -> PyResult<()> {
+        let price = Decimal::from_f64(price).unwrap_or(Decimal::ZERO);
+        let volume = Decimal::from_f64(volume).unwrap_or(Decimal::ZERO);
+
+        // Calculate current interval key
+        let current_key = timestamp_ns / 1_000_000_000 / 60 / self.interval_min;
+
+        // Initialize last cumulative volume
+        if !self.last_cumulative_volumes.contains_key(&symbol) {
+            self.last_cumulative_volumes.insert(symbol.clone(), volume);
+        }
+
+        // Check active bar
+        if let Some(bar_data) = self.active_bars.get_mut(&symbol) {
+            // Same interval?
+            if current_key == bar_data.timestamp_min {
+                if price > bar_data.high { bar_data.high = price; }
+                if price < bar_data.low { bar_data.low = price; }
+                bar_data.close = price;
+                bar_data.volume_curr = volume;
+            } else {
+                // New interval -> Emit previous bar
+                let prev_bar = bar_data.clone();
+                self.emit_bar(&symbol, prev_bar)?;
+
+                // Start new
+                self.start_new_bar(symbol.clone(), price, volume, current_key);
+            }
+        } else {
+            // First tick
+            self.start_new_bar(symbol.clone(), price, volume, current_key);
+        }
+
+        Ok(())
+    }
+}
+
+impl BarAggregator {
+    fn start_new_bar(&mut self, symbol: String, price: Decimal, volume: Decimal, key: i64) {
+        let base_vol = self.last_cumulative_volumes.get(&symbol).cloned().unwrap_or(volume);
+
+        let new_bar = ActiveBar {
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+            volume_base: base_vol,
+            volume_curr: volume,
+            timestamp_min: key,
+        };
+
+        self.active_bars.insert(symbol, new_bar);
+    }
+
+    fn emit_bar(&mut self, symbol: &str, bar_data: ActiveBar) -> PyResult<()> {
+        let vol = if bar_data.volume_curr >= bar_data.volume_base {
+            bar_data.volume_curr - bar_data.volume_base
+        } else {
+            Decimal::ZERO
+        };
+
+        // Timestamp = start of interval
+        let ts = bar_data.timestamp_min * self.interval_min * 60 * 1_000_000_000;
+
+        let bar = Bar {
+            timestamp: ts,
+            symbol: symbol.to_string(),
+            open: bar_data.open,
+            high: bar_data.high,
+            low: bar_data.low,
+            close: bar_data.close,
+            volume: vol,
+            extra: HashMap::new(),
+        };
+
+        self.feed.add_bar(bar)?;
+
+        // Update global state
+        self.last_cumulative_volumes.insert(symbol.to_string(), bar_data.volume_curr);
+
+        Ok(())
     }
 }

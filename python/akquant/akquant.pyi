@@ -111,6 +111,29 @@ class Bar:
     def set_volume(self, value: typing.Any) -> None: ...
     def __repr__(self) -> str: ...
 
+class BarAggregator:
+    r"""
+    K线聚合器.
+
+    用于将实时 Tick 数据聚合成 Bar 数据。
+    """
+
+    def __new__(
+        cls, feed: "DataFeed", interval_min: typing.Optional[int] = ...
+    ) -> "BarAggregator": ...
+    def on_tick(
+        self, symbol: str, price: float, volume: float, timestamp_ns: int
+    ) -> None:
+        r"""
+        处理新的 Tick 数据.
+
+        :param symbol: 标的代码
+        :param price: 最新价
+        :param volume: 累计成交量
+        :param timestamp_ns: 时间戳 (纳秒)
+        """
+        ...
+
 class BollingerBands:
     r"""Bollinger Bands."""
 
