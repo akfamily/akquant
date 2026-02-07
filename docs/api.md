@@ -16,6 +16,7 @@ def run_backtest(
     cash: float = 1_000_000.0,
     commission: float = 0.0003,
     instruments_config: Optional[Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]] = None,
+    warmup_period: int = 0,
     # ... 其他参数
 ) -> BacktestResult
 ```
@@ -23,6 +24,7 @@ def run_backtest(
 **关键参数:**
 
 *   `data`: 回测数据。支持单个 DataFrame，或 `{symbol: DataFrame}` 字典。
+*   `warmup_period`: **(新增)** 策略预热期。指定需要预加载的历史数据长度（Bar 数量），用于计算指标。
 *   `instruments_config`: **(新增)** 标的配置。用于设置期货/期权等非股票资产的参数（如乘数、保证金）。
     *   接收 `List[InstrumentConfig]` 或 `{symbol: InstrumentConfig}`。
 

@@ -41,7 +41,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
 
 5.  **Backtest Execution**:
     *   Use `akquant.run_backtest` with direct arguments for simplicity.
-    *   Example: `run_backtest(data=df, strategy=MyStrat, cash=100_000.0)`.
+    *   Example: `run_backtest(data=df, strategy=MyStrat, cash=100_000.0, warmup_period=50)`.
     *   Timezone: Default is "Asia/Shanghai".
 
 ### Example Strategy (Reference)
@@ -66,6 +66,7 @@ class MovingAverageStrategy(Strategy):
     def on_start(self):
         # self.subscribe("600000") # Optional in backtest if data provided
         # self.set_history_depth(self.slow_window + 10) # No longer needed if warmup_period is set
+        # Alternatively, you can pass `warmup_period` to `run_backtest` function.
         pass
 
     def on_bar(self, bar: Bar):
