@@ -59,8 +59,8 @@ engine = akquant.Engine()
 *   `use_simulated_execution()`: (默认) 启用内存撮合模拟执行。
 *   `use_realtime_execution()`: 启用实盘/仿真执行 (订单发送至外部 Broker)。
 *   `set_execution_mode(mode: ExecutionMode)`: 设置撮合模式。
-    *   `ExecutionMode.CurrentClose`: 当前 Bar 收盘价撮合 (默认)。
-    *   `ExecutionMode.NextOpen`: 下一 Bar 开盘价撮合。
+    *   `ExecutionMode.NextOpen`: 下一 Bar 开盘价撮合 (默认)。
+    *   `ExecutionMode.CurrentClose`: 当前 Bar 收盘价撮合。
 *   `set_history_depth(depth: int)`: 设置引擎层面的历史数据缓存长度。
 
 **市场与费率配置:**
@@ -211,3 +211,18 @@ Instrument(
 *   `ATR(period)`
 
 所有指标均有 `value` 属性获取当前值，且在注册到 Strategy 后会自动更新。
+
+## 7. 机器学习 (Machine Learning)
+
+AKQuant 提供了专门的机器学习支持模块 `akquant.ml`。详细使用说明请参考 [机器学习指南](ml_guide.md)。
+
+### 核心类
+
+*   `akquant.ml.QuantModel`: 所有 ML 模型的统一接口。
+*   `akquant.ml.SklearnAdapter`: 用于适配 Scikit-learn 风格的模型 (如 XGBoost, LightGBM)。
+*   `akquant.ml.PyTorchAdapter`: 用于适配 PyTorch 深度学习模型。
+
+主要方法:
+
+*   `set_validation(method='walk_forward', ...)`: 配置滚动验证/训练参数。
+*   `predict(X)`: 执行预测。

@@ -124,10 +124,10 @@ class MyStrategy(Strategy):
 
 ### 4.3 撮合模式
 
-通过 `engine.set_execution_mode(mode)` 设置：
+通过 `engine.set_execution_mode(mode)` 设置（或在 `run_backtest` 中传入 `execution_mode` 参数）：
 
-*   **CurrentClose (默认)**: 信号在当前 Bar 收盘时立即撮合。适合日线级别回测或无法获取次日开盘价的场景。
-*   **NextOpen**: 信号在下一个 Bar 的开盘时撮合。这是更严谨的回测方式，避免了“未来函数”风险。
+*   **NextOpen (默认)**: 信号在下一个 Bar 的开盘时撮合。这是更严谨的回测方式，符合实盘逻辑（今收盘后挂单，明开盘撮合）。
+*   **CurrentClose**: 信号在当前 Bar 收盘时立即撮合。适合利用收盘价进行结算的特殊策略，或者无法获取次日数据的场景。
 
 ### 4.4 事件回调 (Event Callbacks) {: #callbacks }
 

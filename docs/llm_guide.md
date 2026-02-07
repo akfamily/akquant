@@ -39,10 +39,11 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   Prefer using `akquant.indicators` (e.g., `SMA`, `RSI`) registered in `on_start`.
     *   Example: `self.register_indicator("sma", SMA(20))` -> access via `self.sma.value`.
 
-5.  **Backtest Execution**:
-    *   Use `akquant.run_backtest` with direct arguments for simplicity.
-    *   Example: `run_backtest(data=df, strategy=MyStrat, cash=100_000.0, warmup_period=50)`.
-    *   Timezone: Default is "Asia/Shanghai".
+5.42→5.  **Backtest Execution**:
+43→    *   Use `akquant.run_backtest` with direct arguments for simplicity.
+44→    *   Example: `run_backtest(data=df, strategy=MyStrat, cash=100_000.0, warmup_period=50)`.
+45→    *   **Execution Mode**: Default is `ExecutionMode.NextOpen` (trade on next bar open). Set `execution_mode=ExecutionMode.CurrentClose` to trade on current bar close.
+46→    *   Timezone: Default is "Asia/Shanghai".
 
 ### Example Strategy (Reference)
 
