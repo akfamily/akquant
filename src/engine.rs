@@ -334,7 +334,7 @@ impl Engine {
     /// :type show_progress: bool
     /// :return: 回测结果摘要
     /// :rtype: str
-    fn run(&mut self, strategy: &Bound<'_, PyAny>, show_progress: bool) -> PyResult<String> {
+    fn run(&mut self, py: Python<'_>, strategy: &Bound<'_, PyAny>, show_progress: bool) -> PyResult<String> {
         // Configure history buffer if strategy has _history_depth set
         if let Ok(depth_attr) = strategy.getattr("_history_depth") {
             if let Ok(depth) = depth_attr.extract::<usize>() {
@@ -467,7 +467,9 @@ impl Engine {
                 };
 
                 if timeout > Duration::ZERO {
-                    if let Some(ts) = self.feed.wait_peek(timeout) {
+                    let feed = self.feed.clone();
+                    #[allow(deprecated)]
+                    if let Some(ts) = py.allow_threads(move || feed.wait_peek(timeout)) {
                         next_event_time = Some(ts);
                     }
                 }
