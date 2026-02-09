@@ -6,27 +6,27 @@
     </linearGradient>
   </defs>
 
-  <!-- Graphic: Candlesticks with a rising trend line -->
-  <g transform="translate(20, 20)">
-    <!-- Candlestick 1 (Red/Down) -->
-    <line x1="10" y1="20" x2="10" y2="60" stroke="#E74C3C" stroke-width="2"/>
-    <rect x="5" y="30" width="10" height="20" fill="#E74C3C"/>
+  <!-- Graphic: Quant Signal Bars (Ascending Data Spectrum) -->
+  <!-- Represents: Data Analysis -> Model Building -> Alpha Generation -->
+  <g transform="translate(30, 25)">
+    <!-- Bar 1: Low (Foundation/Data - Rust Color) -->
+    <rect x="0" y="40" width="15" height="30" rx="4" fill="#CE412B" />
 
-    <!-- Candlestick 2 (Green/Up) -->
-    <line x1="30" y1="10" x2="30" y2="50" stroke="#2ECC71" stroke-width="2"/>
-    <rect x="25" y="20" width="10" height="20" fill="#2ECC71"/>
+    <!-- Bar 2: Mid (Processing/Strategy - Blend) -->
+    <rect x="25" y="20" width="15" height="50" rx="4" fill="#BE5C60" />
 
-    <!-- Candlestick 3 (Green/Up) -->
-    <line x1="50" y1="0" x2="50" y2="40" stroke="#2ECC71" stroke-width="2"/>
-    <rect x="45" y="5" width="10" height="25" fill="#2ECC71"/>
+    <!-- Bar 3: High (Alpha/Profit - Python Color) -->
+    <rect x="50" y="0" width="15" height="70" rx="4" fill="#3776AB" />
 
-    <!-- Trend Line (Lightning Bolt style to imply speed) -->
-    <polyline points="0,50 20,40 40,15 60,5" fill="none" stroke="#F1C40F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Abstract Data Dots (floating above, implying quantitative precision) -->
+    <circle cx="7" cy="30" r="2" fill="#FFFFFF" fill-opacity="0.5"/>
+    <circle cx="32" cy="10" r="2" fill="#FFFFFF" fill-opacity="0.5"/>
+    <circle cx="57" cy="-10" r="2" fill="#3776AB" />
   </g>
 
   <!-- Text -->
-  <text x="80" y="70" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="60" font-weight="bold" fill="url(#textGradient)">AKQuant</text>
+  <text x="110" y="75" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="60" font-weight="bold" fill="url(#textGradient)">AKQuant</text>
 
   <!-- Subtitle -->
-  <text x="85" y="95" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#666">High-Performance Quant Framework</text>
+  <text x="115" y="100" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#666">High-Performance Quant Framework</text>
 </svg>
