@@ -393,6 +393,57 @@ impl BacktestResult {
     }
 }
 
+#[pymethods]
+impl BacktestResult {
+    /// Get trades as a dictionary of columns for fast DataFrame creation.
+    pub fn get_trades_dict(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let n = self.trades.len();
+        let mut symbols = Vec::with_capacity(n);
+        let mut entry_times = Vec::with_capacity(n);
+        let mut exit_times = Vec::with_capacity(n);
+        let mut entry_prices = Vec::with_capacity(n);
+        let mut exit_prices = Vec::with_capacity(n);
+        let mut quantities = Vec::with_capacity(n);
+        let mut directions = Vec::with_capacity(n);
+        let mut pnls = Vec::with_capacity(n);
+        let mut net_pnls = Vec::with_capacity(n);
+        let mut return_pcts = Vec::with_capacity(n);
+        let mut commissions = Vec::with_capacity(n);
+        let mut duration_bars = Vec::with_capacity(n);
+
+        for t in &self.trades {
+            symbols.push(t.symbol.clone());
+            entry_times.push(t.entry_time);
+            exit_times.push(t.exit_time);
+            entry_prices.push(t.entry_price);
+            exit_prices.push(t.exit_price);
+            quantities.push(t.quantity);
+            directions.push(t.direction.clone());
+            pnls.push(t.pnl);
+            net_pnls.push(t.net_pnl);
+            return_pcts.push(t.return_pct);
+            commissions.push(t.commission);
+            duration_bars.push(t.duration_bars);
+        }
+
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item("symbol", symbols)?;
+        dict.set_item("entry_time", entry_times)?;
+        dict.set_item("exit_time", exit_times)?;
+        dict.set_item("entry_price", entry_prices)?;
+        dict.set_item("exit_price", exit_prices)?;
+        dict.set_item("quantity", quantities)?;
+        dict.set_item("direction", directions)?;
+        dict.set_item("pnl", pnls)?;
+        dict.set_item("net_pnl", net_pnls)?;
+        dict.set_item("return_pct", return_pcts)?;
+        dict.set_item("commission", commissions)?;
+        dict.set_item("duration_bars", duration_bars)?;
+
+        Ok(dict.into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,6 +7,7 @@ import pandas as pd
 from .akquant import (
     Bar,
     ExecutionMode,
+    Order,
     OrderStatus,
     StrategyContext,
     Tick,
@@ -74,7 +75,7 @@ class Strategy:
     _bar_count: int
     _model_configured: bool
     model: Optional["QuantModel"]
-    _known_orders: Dict[str, Any]
+    _known_orders: Dict[str, Order]
     timezone: str = "Asia/Shanghai"
     warmup_period: int = 0
     _last_event_type: str = ""  # "bar" or "tick"

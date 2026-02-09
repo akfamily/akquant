@@ -297,7 +297,6 @@ if __name__ == "__main__":
     aq.plot_result(
         result,
         show=False,
-        # filename is not supported, use title or update plot_result
-        title="benchmark_multi_result.png",
-        # benchmark=combined_bench, # benchmark is not supported yet
+        title="Multi Symbol Backtest Result",
+        filename="benchmark_multi_result.html",
     )

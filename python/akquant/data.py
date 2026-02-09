@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -81,14 +81,27 @@ class ParquetDataCatalog:
         if not file_path.exists():
             return pd.DataFrame()
 
-        # Read with projection (columns)
-        df = pd.read_parquet(file_path, columns=columns)
-
-        # Filter by date
+        # Read with projection (columns) and push-down filters
+        filters = []
         if start_date:
-            df = df[df.index >= pd.to_datetime(start_date)]
+            filters.append(("index", ">=", pd.to_datetime(start_date)))
         if end_date:
-            df = df[df.index <= pd.to_datetime(end_date)]
+            filters.append(("index", "<=", pd.to_datetime(end_date)))
+
+        # If filters is empty, pass None to read_parquet
+        kwargs: Dict[str, Any] = {"columns": columns}
+        if filters:
+            kwargs["filters"] = filters
+
+        try:
+            df = pd.read_parquet(file_path, **kwargs)
+        except Exception:
+            # Fallback for engines that don't support filters or if index name mismatch
+            df = pd.read_parquet(file_path, columns=columns)
+            if start_date:
+                df = df[df.index >= pd.to_datetime(start_date)]
+            if end_date:
+                df = df[df.index <= pd.to_datetime(end_date)]
 
         return df
 

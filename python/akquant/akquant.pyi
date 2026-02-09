@@ -70,6 +70,7 @@ class BacktestResult:
     trade_metrics: "TradePnL"
     trades: list["ClosedTrade"]
     daily_positions: list[tuple[int, dict[str, float]]]
+    def get_trades_dict(self) -> dict[str, list[typing.Any]]: ...
 
 class Bar:
     r"""

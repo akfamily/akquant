@@ -85,25 +85,14 @@ class BacktestResult:
         """Get performance metrics as a Pandas DataFrame."""
         metrics = self._raw.metrics
 
-        # Manually construct dictionary from known fields since PyO3 objects
-        # might not expose __dict__ directly in a clean way or might have extra fields.
-        # We use the fields defined in PerformanceMetrics (see akquant.pyi)
+        # Dynamic extraction of fields from the Rust PerformanceMetrics object
+        # This avoids hardcoding field names and automatically supports new metrics
         data = {
-            "total_return": metrics.total_return,
-            "annualized_return": metrics.annualized_return,
-            "max_drawdown": metrics.max_drawdown,
-            "max_drawdown_pct": metrics.max_drawdown_pct,
-            "sharpe_ratio": metrics.sharpe_ratio,
-            "sortino_ratio": metrics.sortino_ratio,
-            "volatility": metrics.volatility,
-            "ulcer_index": metrics.ulcer_index,
-            "upi": metrics.upi,
-            "equity_r2": metrics.equity_r2,
-            "std_error": metrics.std_error,
-            "win_rate": metrics.win_rate,
-            "initial_market_value": metrics.initial_market_value,
-            "end_market_value": metrics.end_market_value,
-            "total_return_pct": metrics.total_return_pct,
+            name: getattr(metrics, name)
+            for name in dir(metrics)
+            if not name.startswith("__")
+            and not callable(getattr(metrics, name))
+            and isinstance(getattr(metrics, name), (int, float, str, bool))
         }
 
         # Return as a DataFrame with one row (Transposed by default)
@@ -115,26 +104,31 @@ class BacktestResult:
         if not self._raw.trades:
             return pd.DataFrame()
 
-        data = []
-        for t in self._raw.trades:
-            data.append(
-                {
-                    "symbol": t.symbol,
-                    "entry_time": t.entry_time,
-                    "exit_time": t.exit_time,
-                    "entry_price": t.entry_price,
-                    "exit_price": t.exit_price,
-                    "quantity": t.quantity,
-                    "direction": t.direction,
-                    "pnl": t.pnl,
-                    "net_pnl": t.net_pnl,
-                    "return_pct": t.return_pct,
-                    "commission": t.commission,
-                    "duration_bars": t.duration_bars,
-                }
-            )
-
-        df = pd.DataFrame(data)
+        # Try to use the optimized get_trades_dict method (from Rust)
+        # Fallback to loop if not available (old binary)
+        if hasattr(self._raw, "get_trades_dict"):
+            data_dict = self._raw.get_trades_dict()
+            df = pd.DataFrame(data_dict)
+        else:
+            data_list = []
+            for t in self._raw.trades:
+                data_list.append(
+                    {
+                        "symbol": t.symbol,
+                        "entry_time": t.entry_time,
+                        "exit_time": t.exit_time,
+                        "entry_price": t.entry_price,
+                        "exit_price": t.exit_price,
+                        "quantity": t.quantity,
+                        "direction": t.direction,
+                        "pnl": t.pnl,
+                        "net_pnl": t.net_pnl,
+                        "return_pct": t.return_pct,
+                        "commission": t.commission,
+                        "duration_bars": t.duration_bars,
+                    }
+                )
+            df = pd.DataFrame(data_list)
 
         # Convert timestamps
         df["entry_time"] = pd.to_datetime(

@@ -23,6 +23,7 @@ def plot_result(
     symbol: Optional[str] = None,
     show: bool = True,
     title: str = "Backtest Result",
+    filename: Optional[str] = None,
 ) -> Optional["go.Figure"]:
     """
     Plot backtest result using Plotly.
@@ -32,6 +33,10 @@ def plot_result(
         symbol: The symbol to plot. If None, uses the first symbol found.
         show: Whether to show the plot immediately.
         title: Chart title.
+        filename: File path to save the plot. If ends with .html,
+                 saves as interactive HTML.
+                 If ends with .png/.jpg/.jpeg/.webp/.svg/.pdf,
+                 saves as static image (requires kaleido).
 
     Returns:
         go.Figure: The plotly figure object.
@@ -163,8 +168,7 @@ def plot_result(
                     y=positions_df[symbol],
                     mode="lines",
                     name=f"Position ({symbol})",
-                    line=dict(color="green", width=1),
-                    step="hv",  # Step chart for positions
+                    line=dict(color="green", width=1, shape="hv"),
                 ),
                 row=3,
                 col=1,
@@ -180,8 +184,7 @@ def plot_result(
                     y=positions_df[col],
                     mode="lines",
                     name=f"Position ({col})",
-                    line=dict(color="green", width=1),
-                    step="hv",
+                    line=dict(color="green", width=1, shape="hv"),
                 ),
                 row=3,
                 col=1,
@@ -204,6 +207,24 @@ def plot_result(
     fig.update_yaxes(title_text="Equity", row=1, col=1)
     fig.update_yaxes(title_text="Drawdown", tickformat=".1%", row=2, col=1)
     fig.update_yaxes(title_text="Position", row=3, col=1)
+
+    if filename:
+        try:
+            if filename.endswith(".html"):
+                fig.write_html(filename)
+                print(f"Plot saved to {filename}")
+            else:
+                # Try saving as static image
+                fig.write_image(filename)
+                print(f"Plot saved to {filename}")
+        except ImportError:
+            print(
+                "Error saving static image. Please install kaleido: "
+                "`pip install -U kaleido`. "
+                "Or use .html extension for interactive plot."
+            )
+        except Exception as e:
+            print(f"Error saving plot to {filename}: {e}")
 
     if show:
         fig.show()
