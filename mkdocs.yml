@@ -1,5 +1,5 @@
 site_name: AKQuant
-site_description: 高性能 Rust/Python 量化投研框架
+site_description: High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架
 site_author: akquant contributors
 site_url: https://albertandking.github.io/akquant/
 repo_url: https://github.com/albertandking/akquant
@@ -8,7 +8,6 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
-  language: zh
   features:
     - navigation.tabs
     - navigation.sections
@@ -30,20 +29,61 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
 
+plugins:
+  - search
+  - i18n:
+      docs_structure: folder
+      languages:
+        - locale: zh
+          name: 中文
+          default: true
+          build: true
+          nav_translations:
+            Home: 首页
+            Installation: 安装指南
+            Quick Start: 快速开始
+            Tutorials: 教程
+            First Strategy: 编写你的第一个策略
+            Strategy Guide: 策略指南
+            Timezone Guide: 时区处理指南
+            LLM Guide: LLM 辅助编程指南
+            ML Guide: 机器学习指南
+            Architecture: 架构设计
+            Design Guide: 设计与开发指南
+            API Reference: API 参考
+            Examples: 示例
+        - locale: en
+          name: English
+          build: true
+          nav_translations:
+            Home: Home
+            Installation: Installation
+            Quick Start: Quick Start
+            Tutorials: Tutorials
+            First Strategy: First Strategy
+            Strategy Guide: Strategy Guide
+            Timezone Guide: Timezone Guide
+            LLM Guide: LLM Guide
+            ML Guide: ML Guide
+            Architecture: Architecture
+            Design Guide: Design Guide
+            API Reference: API Reference
+            Examples: Examples
+
 nav:
-  - 首页: index.md
-  - 安装指南: installation.md
-  - 快速开始: quickstart.md
-  - 教程:
-      - 编写你的第一个策略: tutorial.md
-  - 策略指南: strategy_guide.md
-  - 时区处理指南: timezone.md
-  - LLM 辅助编程指南: llm_guide.md
-  - 机器学习指南: ml_guide.md
-  - 架构设计: architecture.md
-  - 设计与开发指南: design.md
-  - API 参考: api.md
-  - 示例: examples.md
+  - Home: index.md
+  - Installation: installation.md
+  - Quick Start: quickstart.md
+  - Tutorials:
+      - First Strategy: tutorial.md
+  - Strategy Guide: strategy_guide.md
+  - Timezone Guide: timezone.md
+  - LLM Guide: llm_guide.md
+  - ML Guide: ml_guide.md
+  - Architecture: architecture.md
+  - Design Guide: design.md
+  - API Reference: api.md
+  - Examples: examples.md
 
 markdown_extensions:
   - admonition
@@ -58,5 +98,11 @@ markdown_extensions:
   - toc:
       permalink: true
 
-plugins:
-  - search
+extra:
+  alternate:
+    - name: 中文
+      link: /akquant/
+      lang: zh
+    - name: English
+      link: /akquant/en/
+      lang: en
