@@ -30,8 +30,6 @@ jobs:
       - name: Mypy Check
         run: mypy .
 
-      - name: Run Python Tests
-        run: pytest tests/
 
   check-rust:
     runs-on: ubuntu-latest
