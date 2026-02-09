@@ -20,6 +20,7 @@ class ValidationConfig:
     )
     rolling_step: Union[str, int] = "3m"
     frequency: str = "1d"
+    verbose: bool = False
 
 
 class QuantModel(ABC):
@@ -41,6 +42,7 @@ class QuantModel(ABC):
         test_window: Union[str, int] = "3m",
         rolling_step: Union[str, int] = "3m",
         frequency: str = "1d",
+        verbose: bool = False,
     ) -> None:
         """
         Configure validation method (e.g., Walk-forward).
@@ -51,6 +53,7 @@ class QuantModel(ABC):
         :param rolling_step: How often to retrain (e.g., '3m') or bar count.
         :param frequency: Data frequency ('1d', '1h', '1m') used for parsing time
             strings.
+        :param verbose: Whether to print training logs (default False).
         """
         self.validation_config = ValidationConfig(
             method=method,
@@ -58,6 +61,7 @@ class QuantModel(ABC):
             test_window=test_window,
             rolling_step=rolling_step,
             frequency=frequency,
+            verbose=verbose,
         )
 
     @abstractmethod

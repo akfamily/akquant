@@ -274,6 +274,18 @@ class Strategy:
         if self.model:
             try:
                 X_df, _ = self.get_rolling_data()
+
+                if (
+                    self.model.validation_config
+                    and self.model.validation_config.verbose
+                ):
+                    ts_str = ""
+                    if self.current_bar:
+                        ts_str = self.format_time(self.current_bar.timestamp)
+                    print(
+                        f"[{ts_str}] Auto-training triggered | Train Size: {len(X_df)}"
+                    )
+
                 X, y = self.prepare_features(X_df, mode="training")
                 self.model.fit(X, y)
             except NotImplementedError:

@@ -126,7 +126,8 @@ class MLStrategy(Strategy):
             method='walk_forward',
             train_window=200, # Train on last 200 bars
             rolling_step=50,  # Retrain every 50 bars
-            frequency='1d'
+            frequency='1d',
+            verbose=True      # Print training logs
         )
         # Ensure history depth covers training window
         self.set_history_depth(250)

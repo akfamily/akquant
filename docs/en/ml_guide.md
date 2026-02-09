@@ -55,7 +55,8 @@ class MyMLStrategy(Strategy):
             method='walk_forward',
             train_window='1y',   # Use past 1 year of data for training each time
             rolling_step='3m',   # Retrain every 3 months
-            frequency='1d'       # Data frequency (used for parsing time strings)
+            frequency='1d',      # Data frequency (used for parsing time strings)
+            verbose=True         # Print training logs
         )
 
         # Ensure historical data length is sufficient
@@ -143,7 +144,8 @@ def set_validation(
     train_window: str | int = '1y',
     test_window: str | int = '3m',
     rolling_step: str | int = '3m',
-    frequency: str = '1d'
+    frequency: str = '1d',
+    verbose: bool = False
 )
 ```
 
@@ -151,6 +153,7 @@ def set_validation(
 *   `train_window`: Training window length. Supports `'1y'` (1 year), `'6m'` (6 months), `'50d'` (50 days) or integer (number of Bars).
 *   `rolling_step`: Rolling step size, i.e., how often to retrain the model.
 *   `frequency`: Data frequency, used to correctly convert time strings to Bar counts (e.g., under '1d', 1y=252 bars).
+*   `verbose`: Whether to print training logs, default is `False`.
 
 ### `strategy.prepare_features`
 

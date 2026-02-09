@@ -83,7 +83,8 @@ class WalkForwardStrategy(Strategy):
             method='walk_forward',
             train_window=50,   # 使用过去 50 个 bar 训练
             rolling_step=10,   # 每 10 个 bar 重训一次
-            frequency='1m'     # 数据频率
+            frequency='1m',    # 数据频率
+            verbose=True       # 打印训练日志
         )
 
         # 确保历史数据长度足够 (训练窗口 + 特征计算所需窗口)
@@ -280,7 +281,8 @@ def set_validation(
     train_window: str | int = '1y',
     test_window: str | int = '3m',
     rolling_step: str | int = '3m',
-    frequency: str = '1d'
+    frequency: str = '1d',
+    verbose: bool = False
 )
 ```
 
@@ -288,6 +290,7 @@ def set_validation(
 *   `train_window`: 训练窗口长度。支持 `'1y'` (1年), `'6m'` (6个月), `'50d'` (50天) 或整数 (Bar数量)。
 *   `rolling_step`: 滚动步长，即每隔多久重训一次模型。
 *   `frequency`: 数据的频率，用于将时间字符串正确转换为 Bar 数量 (例如 '1d' 下 1y=252 bars)。
+*   `verbose`: 是否打印训练日志，默认为 `False`。
 
 ### `strategy.prepare_features`
 
