@@ -274,7 +274,7 @@ class Strategy:
         if self.model:
             try:
                 X_df, _ = self.get_rolling_data()
-                X, y = self.prepare_features(X_df)
+                X, y = self.prepare_features(X_df, mode="training")
                 self.model.fit(X, y)
             except NotImplementedError:
                 # User didn't implement prepare_features, assuming manual handling
@@ -282,17 +282,22 @@ class Strategy:
             except Exception as e:
                 print(f"Auto-training failed at bar {self._bar_count}: {e}")
 
-    def prepare_features(self, df: pd.DataFrame) -> Tuple[Any, Any]:
+    def prepare_features(
+        self, df: pd.DataFrame, mode: str = "training"
+    ) -> Tuple[Any, Any]:
         """
         Prepare features and labels for ML model.
 
         Must be implemented by user if using auto-training.
 
         :param df: Raw dataframe from get_rolling_data
+        :param mode: "training" or "inference".
+                     If "training", return (X, y).
+                     If "inference", return (X_last_row, None) or just X.
         :return: (X, y)
         """
         raise NotImplementedError(
-            "You must implement prepare_features(self, df) for auto-training"
+            "You must implement prepare_features(self, df, mode) for auto-training"
         )
 
     def _auto_configure_model(self) -> None:

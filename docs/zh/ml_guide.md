@@ -28,145 +28,213 @@ AKQuant 内置了一个高性能的机器学习训练框架，专为量化交易
 2.  **Window 2**: 用 2020 Q2 - 2021 Q1 数据训练，预测 2021 Q2。
 3.  ... 像滚轮一样不断向前推进。
 
+### 4. 防止未来函数 (Look-ahead Bias)
+
+在量化 ML 中，最危险的错误是使用未来数据。AKQuant 建议遵循以下原则：
+
+*   **特征 (X)**: 只能使用当前时刻 $t$ 及之前的数据。
+*   **标签 (y)**: 描述 $t+1$ 时刻的状态（如未来的涨跌），但在 $t$ 时刻训练时，我们实际上是拿 $t$ 时刻的 $X$ 去拟合 $t+1$ 时刻的 $y$。
+*   **代码实现**: 构造 $y$ 时通常需要 `shift(-1)`，这会导致最后一行数据没有标签（因为没有未来），必须在训练前剔除。
+
+### 5. 防止数据泄露：使用 Pipeline
+
+特征预处理（如标准化、归一化）也可能引入 Look-ahead Bias。例如，如果在全量数据上使用 `StandardScaler`，那么训练集就隐含了未来测试集的均值和方差信息。
+
+**解决方案**：将预处理步骤封装在 `sklearn.pipeline.Pipeline` 中。
+
+*   **封装**: Pipeline 将 Scaler 和 Model 视为一个整体。
+*   **隔离**: 在 Walk-forward 训练时，Pipeline 只会在当前的训练窗口数据上调用 `fit`（计算均值/方差），然后应用到验证集上。
+*   **一致性**: 在推理阶段，Pipeline 会自动应用训练好的统计量，无需用户手动维护。
+
 ---
 
-## 快速开始
+## 完整可运行示例
 
-### 1. 定义策略
-
-你需要继承 `Strategy` 并实现 `prepare_features` 方法。
+以下代码展示了如何结合 **Pipeline** 和 **Walk-forward Validation** 构建一个稳健的策略。
 
 ```python
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from akquant.strategy import Strategy
 from akquant.ml import SklearnAdapter
-from sklearn.linear_model import LogisticRegression
-import pandas as pd
+from akquant.backtest import run_backtest
 
-class MyMLStrategy(Strategy):
+class WalkForwardStrategy(Strategy):
+    """
+    演示策略：使用逻辑回归预测涨跌 (集成 Pipeline 预处理)
+    """
+
     def __init__(self):
+        # 1. 初始化模型 (使用 Pipeline 封装预处理和模型)
+        # StandardScaler: 确保使用训练集统计量进行标准化，防止数据泄露
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('model', LogisticRegression())
+        ])
 
-        # 1. 初始化模型
-        # 这里可以使用任何 sklearn 兼容的模型，如 RandomForest, XGBoost
-        self.model = SklearnAdapter(LogisticRegression())
+        self.model = SklearnAdapter(pipeline)
 
         # 2. 配置 Walk-forward Validation
-        # 框架会自动接管数据的切割、模型的重训和参数冻结
+        # 框架会自动接管数据的切割、模型的重训
         self.model.set_validation(
             method='walk_forward',
-            train_window='1y',   # 每次使用过去 1 年的数据训练
-            rolling_step='3m',   # 每 3 个月滚动重训一次
-            frequency='1d'       # 数据频率 (用于解析时间字符串)
+            train_window=50,   # 使用过去 50 个 bar 训练
+            rolling_step=10,   # 每 10 个 bar 重训一次
+            frequency='1m'     # 数据频率
         )
 
-        # 确保历史数据长度足够
-        self.set_history_depth(300)
+        # 确保历史数据长度足够 (训练窗口 + 特征计算所需窗口)
+        self.set_history_depth(60)
 
-    def prepare_features(self, df: pd.DataFrame):
+    def prepare_features(self, df: pd.DataFrame, mode: str = "training"):
         """
         [必须实现] 特征工程逻辑
-
-        :param df: 原始 OHLCV 数据 (DataFrame)
-        :return: (X, y) 元组
+        该函数会被用于训练阶段（生成 X, y）和预测阶段（生成 X）
         """
-        # 简单示例: 使用收益率作为特征
         X = pd.DataFrame()
+        # 特征 1: 1周期收益率
         X['ret1'] = df['close'].pct_change()
+        # 特征 2: 2周期收益率
         X['ret2'] = df['close'].pct_change(2)
         X = X.fillna(0)
 
-        # 构造标签 y (预测下一期的涨跌)
+        if mode == 'inference':
+            # 推理模式：只返回最后一行特征，不需要 y
+            return X.iloc[-1:]
+
+        # 训练模式：构造标签 y (预测下一期的涨跌)
         # shift(-1) 把未来的收益挪到当前行作为 label
         future_ret = df['close'].pct_change().shift(-1)
         y = (future_ret > 0).astype(int)
 
-        # 注意: 框架只负责按时间窗口切割原始数据 df，不负责特征和标签的对齐
-        # 由于 shift(-1) 会导致最后一行 y 为 NaN，必须手动去除
-        # 否则 sklearn/pytorch 训练会报错
+        # 注意：训练时框架会自动处理最后一行 NaN 的问题
+        # 但为了严谨，我们返回对齐的 X 和 y
+        # 在预测阶段，y 中的最后一行是 NaN (因为不知道未来)，这是正常的
         return X.iloc[:-1], y.iloc[:-1]
 
     def on_bar(self, bar):
         # 3. 实时预测与交易
-        # 检查模型是否已就绪 (前 1 年的数据用于冷启动训练)
-        if self._bar_count < 250:
+
+        # 简单判断模型是否已完成首次训练
+        if self._bar_count < 50:
             return
 
         # 获取最近的数据进行特征提取
-        hist_df = self.get_history_df(5)
+        # 注意：需要足够的历史长度来计算特征 (例如 pct_change(2) 需要至少3根bar)
+        hist_df = self.get_history_df(10)
 
-        # 这里为了演示，手动构造当期特征 (与 prepare_features 逻辑一致)
-        curr_ret1 = (bar.close - hist_df['close'].iloc[-2]) / hist_df['close'].iloc[-2]
-        curr_ret2 = (bar.close - hist_df['close'].iloc[-3]) / hist_df['close'].iloc[-3]
-
-        X_curr = pd.DataFrame([[curr_ret1, curr_ret2]], columns=['ret1', 'ret2'])
-        X_curr = X_curr.fillna(0)
+        # 复用特征计算逻辑！
+        # 直接调用 prepare_features 获取当前特征
+        X_curr = self.prepare_features(hist_df, mode='inference')
 
         try:
             # 获取预测信号 (概率)
-            # 对于二分类，返回的是 Class 1 (涨) 的概率
+            # SklearnAdapter 对于二分类返回 Class 1 的概率
             signal = self.model.predict(X_curr)[0]
 
+            # 打印信号方便观察
+            # print(f"Time: {bar.timestamp}, Signal: {signal:.4f}")
+
             # 结合风控规则下单
-            if signal > 0.6:
+            if signal > 0.55:
                 self.buy(bar.symbol, 100)
-            elif signal < 0.4:
+            elif signal < 0.45:
                 self.sell(bar.symbol, 100)
 
         except Exception:
-            # 模型可能尚未完成首次训练
+            # 模型可能尚未初始化或训练失败
             pass
+
+if __name__ == "__main__":
+    # 1. 生成合成数据
+    print("生成测试数据...")
+    dates = pd.date_range(start="2023-01-01", periods=500, freq="1min")
+    # 随机漫步价格
+    price = 100 + np.cumsum(np.random.randn(500))
+    df = pd.DataFrame({
+        "timestamp": dates,
+        "open": price,
+        "high": price + 1,
+        "low": price - 1,
+        "close": price,
+        "volume": 1000,
+        "symbol": "TEST"
+    })
+
+    # 2. 运行回测
+    print("开始运行机器学习回测...")
+    result = run_backtest(
+        data=df,
+        strategy=WalkForwardStrategy,
+        symbol="TEST",
+        lot_size=1,
+        execution_mode="current_close", # 在当根 bar 结束时撮合
+        history_depth=60
+    )
+    print("回测结束。")
+
+    # 3. 打印结果
+    print(result)
 ```
 
-### 2. 运行回测
+### 运行结果示例
+
+上述代码运行后，你将看到类似如下的输出：
+
+```text
+生成测试数据...
+开始运行机器学习回测...
+2026-02-09 15:58:29 | INFO | Running backtest via run_backtest()...
+[########################################] 500/500 (0s)
+回测结束。
+BacktestResult:
+                             Value
+annualized_return     2.424312e+05
+end_market_value      1.011841e+06
+equity_r2             1.000000e+00
+initial_market_value  1.000000e+06
+max_drawdown          0.000000e+00
+max_drawdown_pct      0.000000e+00
+sharpe_ratio          0.000000e+00
+sortino_ratio         0.000000e+00
+std_error             0.000000e+00
+total_return          1.184056e-02
+total_return_pct      1.184056e+00
+ulcer_index           0.000000e+00
+upi                   0.000000e+00
+volatility            0.000000e+00
+win_rate              9.101124e-01
+```
+
+## 进阶指南
+
+### 1. 特征工程建议
+
+优秀的特征是 ML 成功的关键。除了简单的收益率，你可以考虑：
+
+*   **技术指标**: RSI, MACD, Bollinger Bands (推荐使用 `talib` 或 `pandas_ta`)。
+*   **波动率特征**: 历史波动率, ATR。
+*   **市场微观结构**: 买卖压力, 量价关系。
+*   **时间特征**: 小时, 星期几 (注意这是类别特征，可能需要 One-hot 编码)。
+
+### 2. 模型持久化 (Save/Load)
+
+训练好的模型可以保存下来，用于实盘或后续分析。
 
 ```python
-from akquant.backtest import run_backtest
+# 保存
+strategy.model.save("my_model.pkl")
 
-run_backtest(
-    strategy=MyMLStrategy,
-    symbol="600000",
-    start_date="20200101",
-    end_date="20231231",
-    cash=100000.0
-)
+# 加载 (在 __init__ 中)
+self.model.load("my_model.pkl")
 ```
 
-## API 参考
+### 3. 深度学习支持 (PyTorch)
 
-### `model.set_validation`
-
-配置模型的验证和训练方式。
-
-```python
-def set_validation(
-    self,
-    method: str = 'walk_forward',
-    train_window: str | int = '1y',
-    test_window: str | int = '3m',
-    rolling_step: str | int = '3m',
-    frequency: str = '1d'
-)
-```
-
-*   `method`: 目前仅支持 `'walk_forward'`。
-*   `train_window`: 训练窗口长度。支持 `'1y'` (1年), `'6m'` (6个月), `'50d'` (50天) 或整数 (Bar数量)。
-*   `rolling_step`: 滚动步长，即每隔多久重训一次模型。
-*   `frequency`: 数据的频率，用于将时间字符串正确转换为 Bar 数量 (例如 '1d' 下 1y=252 bars)。
-
-### `strategy.prepare_features`
-
-用户必须实现的回调函数，用于特征工程。
-
-```python
-def prepare_features(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]
-```
-
-*   **输入**: `df` 是框架根据 `train_window` 自动获取的历史数据。
-*   **输出**: `X` (特征矩阵) 和 `y` (标签向量)。
-*   **注意**: 这是一个纯函数，不应依赖外部状态。它会被用于训练和（可选的）预测阶段。
-
-## 深度学习支持 (PyTorch)
-
-使用 `PyTorchAdapter` 可以轻松集成深度学习模型：
+使用 `PyTorchAdapter` 可以轻松集成深度学习模型。你需要定义一个标准的 `nn.Module`。
 
 ```python
 from akquant.ml import PyTorchAdapter
@@ -198,3 +266,41 @@ self.model = PyTorchAdapter(
     device='cuda'  # 支持 GPU 加速
 )
 ```
+
+## API 参考
+
+### `model.set_validation`
+
+配置模型的验证和训练方式。
+
+```python
+def set_validation(
+    self,
+    method: str = 'walk_forward',
+    train_window: str | int = '1y',
+    test_window: str | int = '3m',
+    rolling_step: str | int = '3m',
+    frequency: str = '1d'
+)
+```
+
+*   `method`: 目前仅支持 `'walk_forward'`。
+*   `train_window`: 训练窗口长度。支持 `'1y'` (1年), `'6m'` (6个月), `'50d'` (50天) 或整数 (Bar数量)。
+*   `rolling_step`: 滚动步长，即每隔多久重训一次模型。
+*   `frequency`: 数据的频率，用于将时间字符串正确转换为 Bar 数量 (例如 '1d' 下 1y=252 bars)。
+
+### `strategy.prepare_features`
+
+用户必须实现的回调函数，用于特征工程。
+
+```python
+def prepare_features(self, df: pd.DataFrame, mode: str = "training") -> Tuple[Any, Any]
+```
+
+*   **输入**:
+    *   `df`: 历史数据 DataFrame。
+    *   `mode`: `"training"` (训练模式) 或 `"inference"` (推理模式)。
+*   **输出**:
+    *   `mode="training"`: 返回 `(X, y)`。
+    *   `mode="inference"`: 返回 `X` (通常是最后一行)。
+*   **注意**: 这是一个纯函数，不应依赖外部状态。
