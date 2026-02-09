@@ -1,55 +1,111 @@
-# Contributing to AKQuant
+# 贡献指南 (Contributing Guide)
 
-First off, thanks for taking the time to contribute! ❤️
+感谢你对 AKQuant 的关注！我们需要你的帮助来让这个项目变得更好。无论你是修复 Bug、改进文档，还是增加新功能，我们都非常欢迎！
 
-All types of contributions are welcome:
-- 🐛 Bug reports
-- 💡 Feature requests
-- 📖 Documentation improvements
-- 🔧 Code contributions
+为了方便“萌新”上手，我们准备了这份详细的 GitHub 合作开发指南。
 
-## Development Setup
+## 🚀 开发流程 (Workflow)
 
-1. **Prerequisites**:
-   - Rust (latest stable)
-   - Python 3.10+
-   - `maturin`
+我们采用 **Git Flow** 的简化模式进行开发。
 
-2. **Clone and Install**:
-   ```bash
-   git clone https://github.com/your-username/akquant.git
-   cd akquant
-   # Install dev dependencies
-   pip install -e ".[dev,ml,plot]"
-   # Build Rust extension in development mode
-   maturin develop
-   ```
+- **`main` 分支**: 稳定分支，对应 PyPI 发布的版本。
+- **`dev` 分支**: 开发分支，所有的日常开发和 PR 都应合并到此分支。
 
-3. **Running Tests**:
-   ```bash
-   pytest tests/
-   ```
+### 1. Fork & Clone (复刻与克隆)
 
-4. **Code Quality**:
-   We use `ruff` for linting and `mypy` for type checking.
-   ```bash
-   ruff check .
-   mypy .
-   ```
+1.  **Fork 项目**: 点击 GitHub 页面右上角的 `Fork` 按钮，将 `akquant` 仓库复刻到你自己的账号下。
+2.  **Clone 到本地**:
+    ```bash
+    # 将 <your-username> 替换为你的 GitHub 用户名
+    git clone https://github.com/<your-username>/akquant.git
+    cd akquant
+    ```
+3.  **设置上游仓库 (Upstream)**:
+    为了保持你的代码与官方仓库同步，需要添加上游仓库地址：
+    ```bash
+    git remote add upstream https://github.com/albertandking/akquant.git
+    ```
 
-## Pull Request Process
+### 2. 环境搭建 (Setup)
 
-1. Fork the repository.
-2. Create a new branch for your changes.
-3. Make sure your changes follow the [PEP 8](https://www.python.org/dev/peps/pep-0008/) style guide and have proper type hints.
-4. Add tests for new features or bug fixes.
-5. Ensure all tests pass.
-6. Submit a Pull Request with a clear description of the changes.
+本项目混合了 Rust 和 Python，请按以下步骤配置环境：
 
-## Documentation
+1.  **安装 Rust**: [官网下载](https://www.rust-lang.org/tools/install)
+2.  **创建 Python 虚拟环境 (推荐 Conda)**:
+    ```bash
+    conda create -n akquant python=3.10
+    conda activate akquant
+    ```
+3.  **安装依赖与编译**:
+    ```bash
+    # 安装开发依赖
+    pip install -e ".[dev,ml,plot]"
 
-If you modify the source code, please update the corresponding documentation in the `docs/` folder.
+    # 编译 Rust 扩展 (开发模式)
+    maturin develop
+    ```
 
-## License
+### 3. 开始开发 (Coding)
 
-By contributing, you agree that your contributions will be licensed under its MIT License.
+1.  **同步最新代码**:
+    每次开发前，先确保你的本地 `dev` 分支是最新的：
+    ```bash
+    git checkout dev
+    git pull upstream dev
+    ```
+
+2.  **创建功能分支**:
+    **不要**直接在 `dev` 或 `main` 上修改。请为每个任务创建一个新分支：
+    ```bash
+    git checkout -b feature/my-new-feature
+    # 或者修复 bug
+    git checkout -b fix/bug-fix-name
+    ```
+
+3.  **编写代码**:
+    *   遵循 PEP 8 编码规范。
+    *   确保添加了类型注解 (Type Hints)。
+    *   如果是 Python 代码，请运行检查：
+        ```bash
+        ruff check .
+        mypy .
+        ```
+
+### 4. 提交与推送 (Commit & Push)
+
+1.  **提交代码**:
+    ```bash
+    git add .
+    git commit -m "feat: 添加了xxx功能"
+    ```
+    *(推荐使用 [Conventional Commits](https://www.conventionalcommits.org/) 格式)*
+
+2.  **推送到你的 Fork 仓库**:
+    ```bash
+    git push origin feature/my-new-feature
+    ```
+
+### 5. 提交 Pull Request (PR)
+
+1.  回到 GitHub 你的仓库页面。
+2.  你会看到 "Compare & pull request" 的提示，点击它。
+3.  **重要**: 将 `base repository` 的分支选择为 **`dev`** (而不是 `main`)。
+4.  填写 PR 描述，说明你做了什么修改。
+5.  点击 "Create pull request"。
+
+---
+
+## ✅ 提交前的检查清单
+
+在提交 PR 之前，请检查：
+
+- [ ] 代码可以通过 `maturin develop` 编译成功。
+- [ ] 运行了 `ruff check .` 和 `mypy .` 没有报错。
+- [ ] 如果是新功能，是否添加了简单的测试或示例？
+- [ ] 文档是否已更新？
+
+## ❓ 遇到问题？
+
+如果你在配置环境或提交代码时遇到困难，欢迎在 [Issues](https://github.com/albertandking/akquant/issues) 中提问，我们会尽快回复！
+
+再次感谢你的贡献！🎉
