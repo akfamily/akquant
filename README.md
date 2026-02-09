@@ -77,21 +77,21 @@ print(result.metrics_df)
 ```text
 === Backtest Result ===
                             Backtest
+total_return_pct           -0.056694
 annualized_return          -0.000575
-end_market_value       999433.064610
-equity_r2                   0.981178
-initial_market_value  1000000.000000
-max_drawdown                0.000567
-max_drawdown_pct            0.056694
 sharpe_ratio               -6.331191
 sortino_ratio              -6.845218
-std_error                  22.986004
-total_return               -0.000567
-total_return_pct           -0.056694
-ulcer_index                 0.000306
-upi                        -1.878765
+max_drawdown_pct            0.056694
 volatility                  0.000091
 win_rate                    0.339286
+end_market_value       999433.064610
+initial_market_value  1000000.000000
+total_return               -0.000567
+max_drawdown                0.000567
+ulcer_index                 0.000306
+upi                        -1.878765
+equity_r2                   0.981178
+std_error                  22.986004
 ```
 
 ## 文档索引
