@@ -282,6 +282,7 @@ def set_validation(
     test_window: str | int = '3m',
     rolling_step: str | int = '3m',
     frequency: str = '1d',
+    incremental: bool = False,
     verbose: bool = False
 )
 ```
@@ -290,6 +291,7 @@ def set_validation(
 *   `train_window`: 训练窗口长度。支持 `'1y'` (1年), `'6m'` (6个月), `'50d'` (50天) 或整数 (Bar数量)。
 *   `rolling_step`: 滚动步长，即每隔多久重训一次模型。
 *   `frequency`: 数据的频率，用于将时间字符串正确转换为 Bar 数量 (例如 '1d' 下 1y=252 bars)。
+*   `incremental`: 是否使用增量学习（在上次训练的基础上继续训练）还是从头重训。默认为 `False`。
 *   `verbose`: 是否打印训练日志，默认为 `False`。
 
 ### `strategy.prepare_features`

@@ -1,3 +1,4 @@
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal, Optional, Union
@@ -20,6 +21,7 @@ class ValidationConfig:
     )
     rolling_step: Union[str, int] = "3m"
     frequency: str = "1d"
+    incremental: bool = False
     verbose: bool = False
 
 
@@ -42,6 +44,7 @@ class QuantModel(ABC):
         test_window: Union[str, int] = "3m",
         rolling_step: Union[str, int] = "3m",
         frequency: str = "1d",
+        incremental: bool = False,
         verbose: bool = False,
     ) -> None:
         """
@@ -53,6 +56,8 @@ class QuantModel(ABC):
         :param rolling_step: How often to retrain (e.g., '3m') or bar count.
         :param frequency: Data frequency ('1d', '1h', '1m') used for parsing time
             strings.
+        :param incremental: Whether to use incremental learning (continue from last
+            training) or retrain from scratch. Default False.
         :param verbose: Whether to print training logs (default False).
         """
         self.validation_config = ValidationConfig(
@@ -61,6 +66,7 @@ class QuantModel(ABC):
             test_window=test_window,
             rolling_step=rolling_step,
             frequency=frequency,
+            incremental=incremental,
             verbose=verbose,
         )
 
@@ -117,6 +123,21 @@ class SklearnAdapter(QuantModel):
         """Train the sklearn model."""
         if self.validation_config and self.validation_config.verbose:
             print(f"Training Sklearn Model: {type(self.model).__name__}")
+
+        if self.validation_config and self.validation_config.incremental:
+            if hasattr(self.model, "partial_fit"):
+                # Note: partial_fit might require 'classes' for the first call
+                # This is a basic support.
+                try:
+                    self.model.partial_fit(X, y)
+                    return
+                except Exception as e:
+                    print(f"partial_fit failed: {e}. Falling back to fit.")
+            else:
+                print(
+                    f"Warning: {type(self.model).__name__} does not support "
+                    "incremental learning (partial_fit). Retraining from scratch."
+                )
 
         # Convert DataFrame to numpy if necessary, or let sklearn handle it
         self.model.fit(X, y)
@@ -179,14 +200,30 @@ class PyTorchAdapter(QuantModel):
         self.device = torch.device(device)
         self.network = network.to(self.device)
         self.criterion = criterion
+        self.optimizer_cls = optimizer_cls
+        self.lr = lr
         self.optimizer = optimizer_cls(self.network.parameters(), lr=lr)
         self.epochs = epochs
         self.batch_size = batch_size
+
+        # Save initial state for non-incremental training
+        self.initial_state = copy.deepcopy(self.network.state_dict())
 
     def fit(self, X: DataType, y: DataType) -> None:
         """Train the PyTorch model."""
         import torch
         from torch.utils.data import DataLoader, TensorDataset
+
+        # Check for incremental training
+        incremental = False
+        if self.validation_config:
+            incremental = self.validation_config.incremental
+
+        if not incremental:
+            # Reset network weights
+            self.network.load_state_dict(self.initial_state)
+            # Reset optimizer
+            self.optimizer = self.optimizer_cls(self.network.parameters(), lr=self.lr)
 
         # 1. Data conversion: Numpy/Pandas -> Tensor
         X_array = X.values if isinstance(X, pd.DataFrame) else X

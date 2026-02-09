@@ -145,6 +145,7 @@ def set_validation(
     test_window: str | int = '3m',
     rolling_step: str | int = '3m',
     frequency: str = '1d',
+    incremental: bool = False,
     verbose: bool = False
 )
 ```
@@ -153,6 +154,7 @@ def set_validation(
 *   `train_window`: Training window length. Supports `'1y'` (1 year), `'6m'` (6 months), `'50d'` (50 days) or integer (number of Bars).
 *   `rolling_step`: Rolling step size, i.e., how often to retrain the model.
 *   `frequency`: Data frequency, used to correctly convert time strings to Bar counts (e.g., under '1d', 1y=252 bars).
+*   `incremental`: Whether to use incremental learning (continue from last training) or retrain from scratch. Default is `False`.
 *   `verbose`: Whether to print training logs, default is `False`.
 
 ### `strategy.prepare_features`
@@ -160,12 +162,16 @@ def set_validation(
 Callback function that must be implemented by the user for feature engineering.
 
 ```python
-def prepare_features(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]
+def prepare_features(self, df: pd.DataFrame, mode: str = "training") -> Tuple[Any, Any]
 ```
 
-*   **Input**: `df` is the historical data automatically retrieved by the framework based on `train_window`.
-*   **Output**: `X` (Feature Matrix) and `y` (Label Vector).
-*   **Note**: This is a pure function and should not rely on external state. It will be used in both training and (optional) prediction stages.
+*   **Input**:
+    *   `df`: Raw dataframe from `get_rolling_data`.
+    *   `mode`: `"training"` or `"inference"`.
+*   **Output**:
+    *   If `mode="training"`, return `(X, y)`.
+    *   If `mode="inference"`, return `X` (usually the last row) or `(X, None)`.
+*   **Note**: This is a pure function and should not rely on external state. It will be used in both training and prediction stages.
 
 ## Deep Learning Support (PyTorch)
 

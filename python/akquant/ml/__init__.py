@@ -1,3 +1,3 @@
-from .model import PyTorchAdapter, QuantModel, SklearnAdapter
+from .model import PyTorchAdapter, QuantModel, SklearnAdapter, ValidationConfig
 
-__all__ = ["QuantModel", "SklearnAdapter", "PyTorchAdapter"]
+__all__ = ["QuantModel", "SklearnAdapter", "PyTorchAdapter", "ValidationConfig"]
