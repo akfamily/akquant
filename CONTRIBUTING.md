@@ -23,7 +23,7 @@
 3.  **设置上游仓库 (Upstream)**:
     为了保持你的代码与官方仓库同步，需要添加上游仓库地址：
     ```bash
-    git remote add upstream https://github.com/albertandking/akquant.git
+    git remote add upstream https://github.com/akfamily/akquant.git
     ```
 
 ### 2. 环境搭建 (Setup)
@@ -106,6 +106,6 @@
 
 ## ❓ 遇到问题？
 
-如果你在配置环境或提交代码时遇到困难，欢迎在 [Issues](https://github.com/albertandking/akquant/issues) 中提问，我们会尽快回复！
+如果你在配置环境或提交代码时遇到困难，欢迎在 [Issues](https://github.com/akfamily/akquant/issues) 中提问，我们会尽快回复！
 
 再次感谢你的贡献！🎉

@@ -2,8 +2,8 @@ site_name: AKQuant
 site_description: High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架
 site_author: akquant contributors
 site_url: https://akquant.akfamily.xyz/
-repo_url: https://github.com/albertandking/akquant
-repo_name: albertandking/akquant
+repo_url: https://github.com/akfamily/akquant
+repo_name: akfamily/akquant
 edit_uri: edit/main/docs/
 
 theme:

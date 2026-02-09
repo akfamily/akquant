@@ -213,8 +213,6 @@ Bracket Order 通常包含三个部分：
 
 其中 Stop Loss 和 Take Profit 构成一组 **OCO** 订单：即如果其中一个成交，另一个应立即自动取消。
 
-👉 **[查看完整代码示例](file:///c:/Users/albert/Documents/trae_projects/akquant/examples/complex_orders.py)**
-
 **核心逻辑实现：**
 
 ```python
