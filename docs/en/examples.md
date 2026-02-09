@@ -213,8 +213,6 @@ A Bracket Order typically consists of three parts:
 
 The Stop Loss and Take Profit form an **OCO** group: if one executes, the other should be automatically cancelled immediately.
 
-👉 **[View Full Code Example](file:///c:/Users/albert/Documents/trae_projects/akquant/examples/complex_orders.py)**
-
 **Core Logic Implementation:**
 
 ```python
