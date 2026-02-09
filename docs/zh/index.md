@@ -77,21 +77,9 @@ AKQuant 旨在解决传统 Python 回测框架（如 Backtrader）性能不足�
 *   **双风格 API**: 同时支持 **类 (Class-based)** 和 **函数式 (Zipline-style)** 两种策略编写风格，满足不同用户习惯。
 *   **严格类型检查**: 核心逻辑经过 Rust 编译器严格检查，Python 端通过 `mypy` 类型检查，最大限度减少运行时错误。
 
-## 前置要求
+## 安装
 
-- **Rust**: [安装 Rust](https://www.rust-lang.org/tools/install)
-- **Python**: 3.10+
-- **Maturin**: `pip install maturin`
-
-## 安装说明
-
-### 开发模式（推荐）
-
-如果你正在开发该项目并希望更改即时生效：
-
-```bash
-maturin develop
-```
+详细安装步骤请参考 **[安装指南](installation.md)**。
 
 ## 快速开始
 

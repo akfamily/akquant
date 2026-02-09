@@ -12,7 +12,7 @@ Before installing `AKQuant`, please ensure your system meets the following requi
 
 ### 1. Install from PyPI (Recommended)
 
-Currently, `AKQuant` is not yet officially published to PyPI. Once published, you can install it via:
+`AKQuant` is now available on PyPI. You can install the pre-compiled wheel (no Rust required) via:
 
 ```bash
 pip install akquant

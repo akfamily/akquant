@@ -77,21 +77,9 @@ AKQuant aims to solve the performance bottlenecks of traditional Python backtest
 *   **Dual-Style API**: Supports both **Class-based** and **Functional (Zipline-style)** strategy writing styles to suit different user habits.
 *   **Strict Type Checking**: Core logic is strictly checked by the Rust compiler, and Python code is checked via `mypy`, minimizing runtime errors.
 
-## Prerequisites
-
-- **Rust**: [Install Rust](https://www.rust-lang.org/tools/install)
-- **Python**: 3.10+
-- **Maturin**: `pip install maturin`
-
 ## Installation
 
-### Development Mode (Recommended)
-
-If you are developing this project and want changes to take effect immediately:
-
-```bash
-maturin develop
-```
+For detailed installation steps, please refer to the **[Installation Guide](installation.md)**.
 
 ## Quick Start
 

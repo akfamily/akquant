@@ -127,6 +127,7 @@ class MLStrategy(Strategy):
             train_window=200, # Train on last 200 bars
             rolling_step=50,  # Retrain every 50 bars
             frequency='1d',
+            incremental=False, # Set True to use partial_fit (faster)
             verbose=True      # Print training logs
         )
         # Ensure history depth covers training window

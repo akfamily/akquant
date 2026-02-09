@@ -12,7 +12,7 @@
 
 ### 1. 从 PyPI 安装 (推荐)
 
-目前 `AKQuant` 尚未正式发布到 PyPI。发布后，您将可以通过以下命令安装：
+`AKQuant` 已发布到 PyPI，您可以直接通过 `pip` 安装预编译的 Wheel 包（无需 Rust 环境）：
 
 ```bash
 pip install akquant
