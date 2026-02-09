@@ -47,13 +47,35 @@ The latest version is inspired by [NautilusTrader](https://github.com/nautechsys
 
 ## Why Choose AKQuant?
 
-Traditional Python backtesting frameworks (like backtrader) often face performance bottlenecks when processing large-scale data or complex logic. Pure C++/Rust frameworks offer superior performance but have higher development and debugging barriers.
+AKQuant aims to solve the performance bottlenecks of traditional Python backtesting frameworks (like Backtrader) and the high development barriers of pure C++/Rust frameworks. We have achieved breakthroughs in five core dimensions through our hybrid architecture:
 
-**AKQuant** seeks a balance:
+### 1. Extreme Performance: Rust Core + Python Ecosystem
+*   **Hybrid Architecture**: The core computation layer (matching, capital, risk control) is written in **Rust** and exposed to Python via PyO3.
+*   **Zero-Copy Access**: Leveraging Rust's `arrow` and `numpy` view technologies, Python access to historical data (OHLCV, indicators) achieves **zero-copy**, avoiding massive memory copying overhead.
+*   **Benchmark**: In a 200k bar SMA strategy test, it took only **1.31s** (~152k bars/sec), **20x faster** than Backtrader.
+*   **Incremental Calculation**: Internal indicator calculations use incremental update algorithms instead of full recalculation, suitable for ultra-long history backtesting.
 
-1.  **Performance**: Rust core ensures backtesting speed, especially for large-scale parameter optimization.
-2.  **Ease of Use**: Strategies are written entirely in Python with a concise API similar to PyBroker.
-3.  **Professional**: Strictly adheres to Chinese market trading rules (T+1, stamp duty, minimum commission, etc.).
+### 2. Machine Learning First
+*   **Built-in Training Framework**: Unlike traditional frameworks that only support simple technical indicators, AKQuant features a built-in full ML Pipeline.
+*   **Walk-forward Validation**: Natively supports rolling window training (Walk-forward) to effectively prevent look-ahead bias and overfitting.
+*   **Adapter Pattern**: Provides unified adapters (`QuantModel`) for Scikit-learn and PyTorch, allowing AI model integration into strategies with just a few lines of code.
+*   **Feature Engineering**: `DataFeed` supports dynamic feature calculation, facilitating integration with Talib or Pandas for feature preprocessing.
+
+### 3. Precise and Flexible Event-Driven Engine
+*   **Precise Simulation**: Based on **NautilusTrader** design principles, featuring a precise time flow model and order lifecycle management.
+*   **Complex Order Support**: Supports Market, Limit, Stop, TakeProfit, and other order types.
+*   **Multi-Asset Mixing**: Supports mixed backtesting of stocks, futures, ETFs, etc., with independent fee, slippage, and trading session configurations for each asset.
+*   **Intraday Scheduled Tasks**: Supports `schedule` to register intraday timed events (e.g., close positions daily at 14:50), offering more flexibility than simple `on_bar`.
+
+### 4. Production-Grade Risk Control and Live Trading
+*   **Built-in Risk Manager**: The engine layer includes a `RiskManager` supporting hard limits on capital, position ratios, blocklists, etc., to prevent runaway strategies.
+*   **Seamless Live Trading Switch**: Strategy code is decoupled from live trading interfaces. Theoretically, switching to live trading only requires replacing `Broker` and `DataFeed` adapters (live interface under development).
+*   **Data Aggregator**: `DataFeed` supports multi-source aggregation, handling data alignment issues for different frequencies.
+
+### 5. Ultimate Developer Experience
+*   **LLM Friendly**: Clear code structure, detailed documentation, and optimized Type Hints facilitate strategy writing with Copilot or GPT.
+*   **Dual-Style API**: Supports both **Class-based** and **Functional (Zipline-style)** strategy writing styles to suit different user habits.
+*   **Strict Type Checking**: Core logic is strictly checked by the Rust compiler, and Python code is checked via `mypy`, minimizing runtime errors.
 
 ## Prerequisites
 
