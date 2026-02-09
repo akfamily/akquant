@@ -13,6 +13,7 @@ venv/
 # IDEs
 .idea/
 .vscode/
+.trae/
 *.swp
 
 # Python distribution
