@@ -111,7 +111,7 @@ class ParquetDataCatalog:
 
 
 class DataLoader:
-    """Data Loader with caching capabilities, inspired by PyBroker."""
+    """Data Loader with caching capabilities."""
 
     def __init__(self, cache_dir: Optional[str] = None):
         """

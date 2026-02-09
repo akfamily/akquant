@@ -12,7 +12,7 @@
     *   **Data Engine**: Uses `polars` (Arrow format) to manage OHLCV data, aiming for zero-copy memory mapping.
     *   **Backtest Engine**: Event-driven execution engine.
     *   **Event Bus**:
-        *   Inspired by the message bus concept in NautilusTrader, implemented based on Rust Channel (`mpsc`).
+        *   Inspired by mature event-driven message bus concepts, implemented based on Rust Channel (`mpsc`).
         *   Decouples strategy, risk control, execution, and data components.
         *   Supports asynchronous flow of events like `OrderRequest` (request), `OrderValidated` (risk passed), `ExecutionReport` (execution report).
         *   Handles control events with high priority, supporting future expansion to multi-strategy parallelism or asynchronous risk checks.
@@ -39,7 +39,7 @@ akquant/
 │   ├── data.rs         # Data source (DataFeed)
 │   ├── engine.rs       # Core backtest engine
 │   ├── event.rs        # Event definitions and bus messages
-│   ├── clock.rs        # Trading clock (NautilusTrader style)
+│   ├── clock.rs        # Trading clock
 │   ├── execution.rs    # Exchange simulation and order matching
 │   ├── market.rs       # Market rules (Fees, T+1/T+0)
 │   ├── portfolio.rs    # Fund and position management

@@ -10,7 +10,7 @@ This document details the internal design principles, core component architectur
 
 1.  **Core Calculation Sinking (Rust Core)**: All computationally intensive tasks (event loop, order matching, risk checks, data management, performance calculation, historical data maintenance) are implemented in the Rust layer to ensure high performance and memory safety.
 2.  **Strategy Logic Floating (Python API)**: User interaction layers such as strategy writing, parameter configuration, data analysis, and machine learning model definition remain in Python, leveraging its dynamic features and rich ecosystem (Pandas, Scikit-learn, PyTorch, etc.).
-3.  **Modularity & Decoupling**: Drawing from mature frameworks like `NautilusTrader`, modules such as data, execution, strategy, risk control, and machine learning are strictly separated and interact through clear interfaces (Traits).
+3.  **Modularity & Decoupling**: Drawing from mature quantitative framework designs, modules such as data, execution, strategy, risk control, and machine learning are strictly separated and interact through clear interfaces (Traits).
 
 ### 1.2 Project Directory Structure
 

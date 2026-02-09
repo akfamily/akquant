@@ -2,18 +2,18 @@
 
 **AKQuant** 是一个基于 **Rust** 和 **Python** 构建的高性能量化投研框架。它旨在结合 Rust 的极致性能和 Python 的易用性，为量化交易者提供强大的回测和研究工具。
 
-最新版本参考了 [NautilusTrader](https://github.com/nautechsystems/nautilus_trader) 和 [PyBroker](https://github.com/edtechre/pybroker) 的架构理念，引入了模块化设计、独立的投资组合管理、高级订单类型支持以及便捷的数据加载与缓存机制。
+最新版本引入了模块化设计、独立的投资组合管理、高级订单类型支持以及便捷的数据加载与缓存机制。
 
 📖 **[设计与开发指南 (DESIGN.md)](design.md)**: 如果你想深入了解内部架构、学习如何设计此类系统或进行二次开发，请阅读此文档。
 
 ## 核心特性
 
 *   **极致性能**: 核心回测引擎采用 Rust 编写，通过 PyO3 提供 Python 接口。
-    *   **基准测试**: 在 200k K线数据的 SMA 策略回测中，AKQuant 耗时仅 **1.31s** (吞吐量 ~152k bars/sec)，相比 Backtrader (26.55s) 和 PyBroker (23.61s) 快约 **20倍**。
+    *   **基准测试**: 在 200k K线数据的 SMA 策略回测中，AKQuant 耗时仅 **1.31s** (吞吐量 ~152k bars/sec)，相比 Backtrader (26.55s) 快约 **20倍**。
     *   **Zero-Copy Access (New)**: 历史数据 (`ctx.history`) 通过 PyO3 Buffer Protocol / Numpy View 直接映射 Rust 内存，实现零拷贝访问，大幅提升 Python 端指标计算性能。
 *   **模块化架构**:
     *   **Engine**: 事件驱动的核心撮合引擎，采用二进制堆 (BinaryHeap) 管理事件队列。
-    *   **Clock**: 参考 NautilusTrader 设计的交易时钟，精确管理交易时段 (TradingSession) 和时间流逝。
+    *   **Clock**: 精确管理交易时段 (TradingSession) 和时间流逝。
     *   **Portfolio**: 独立的投资组合管理，支持实时权益计算。
     *   **MarketModel**: 可插拔的市场模型，内置 A 股 T+1 和期货 T+0 规则。
         *   **T+1 严格风控**: 针对股票/基金，严格执行 T+1 可用持仓检查，防止当日买入当日卖出（除非配置为 T+0 市场）。
@@ -33,7 +33,7 @@
     *   **Adapter Pattern**: 统一 Scikit-learn 和 PyTorch 接口，解耦模型与策略逻辑。
     *   **📖 [机器学习指南](ml_guide.md)**: 详细了解如何构建 AI 驱动的策略。
 *   **灵活配置**:
-    *   **StrategyConfig**: 全局策略配置 (类似 PyBroker)，支持资金管理、费率模式等设置。
+    *   **StrategyConfig**: 全局策略配置，支持资金管理、费率模式等设置。
     *   **ExecutionMode**: 支持 `CurrentClose` (信号当根K线收盘成交) 和 `NextOpen` (次日开盘成交) 模式。
 *   **丰富的分析工具**:
     *   **PerformanceMetrics**:
@@ -62,7 +62,7 @@ AKQuant 旨在解决传统 Python 回测框架（如 Backtrader）性能不足�
 *   **特征工程**: `DataFeed` 支持动态特征计算，方便接入 Talib 或 Pandas 进行特征预处理。
 
 ### 3. 精确且灵活的事件驱动引擎
-*   **精确仿真**: 基于 **NautilusTrader** 的设计理念，拥有精确的时间流逝模型和订单生命周期管理。
+*   **精确仿真**: 拥有精确的时间流逝模型和订单生命周期管理。
 *   **复杂订单支持**: 支持市价单 (Market)、限价单 (Limit)、止损单 (Stop)、止盈单 (TakeProfit) 等多种订单类型。
 *   **多资产混合**: 支持股票、期货、ETF 等多资产混合回测，每个资产可独立配置费率、滑点和交易时段。
 *   **盘中定时任务**: 支持 `schedule` 注册盘中定时事件（如：每天 14:50 平仓），比单纯的 `on_bar` 更加灵活。

@@ -4,11 +4,7 @@ import pandas as pd
 
 
 class Indicator:
-    """
-    Helper class for defining and calculating indicators.
-
-    Inspired by PyBroker's indicator system.
-    """
+    """Wrapper for technical indicators."""
 
     def __init__(self, name: str, fn: Callable, **kwargs: Any) -> None:
         """Initialize the Indicator."""
@@ -24,7 +20,7 @@ class Indicator:
 
         # Assume fn takes a series/df and returns a series
         # If kwargs contains column names, extract them
-        # This is a simplified version of PyBroker's powerful DSL
+        # This is a simplified version of powerful DSL
         try:
             result = self.fn(df, **self.kwargs)
         except Exception:

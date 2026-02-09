@@ -2,18 +2,18 @@
 
 **AKQuant** is a high-performance quantitative research framework built on **Rust** and **Python**. It combines the extreme performance of Rust with the ease of use of Python, providing powerful backtesting and research tools for quantitative traders.
 
-The latest version is inspired by [NautilusTrader](https://github.com/nautechsystems/nautilus_trader) and [PyBroker](https://github.com/edtechre/pybroker), featuring a modular design, independent portfolio management, advanced order type support, and convenient data loading and caching mechanisms.
+The latest version features a modular design, independent portfolio management, advanced order type support, and convenient data loading and caching mechanisms.
 
 📖 **[Design and Development Guide (DESIGN.md)](design.md)**: If you want to understand the internal architecture, learn how to design such systems, or contribute to development, please read this document.
 
 ## Core Features
 
 *   **Extreme Performance**: The core backtesting engine is written in Rust and exposed to Python via PyO3.
-    *   **Benchmark**: In an SMA strategy backtest with 200k bars, AKQuant took only **1.31s** (~152k bars/sec), about **20x faster** than Backtrader (26.55s) and PyBroker (23.61s).
+    *   **Benchmark**: In an SMA strategy backtest with 200k bars, AKQuant took only **1.31s** (~152k bars/sec), about **20x faster** than Backtrader (26.55s).
     *   **Zero-Copy Access (New)**: Historical data (`ctx.history`) maps directly to Rust memory via PyO3 Buffer Protocol / Numpy View, enabling zero-copy access and significantly boosting indicator calculation performance in Python.
 *   **Modular Architecture**:
     *   **Engine**: Event-driven core matching engine using BinaryHeap for event queue management.
-    *   **Clock**: Trading clock inspired by NautilusTrader, precisely managing TradingSessions and time flow.
+    *   **Clock**: Trading clock precisely managing TradingSessions and time flow.
     *   **Portfolio**: Independent portfolio management supporting real-time equity calculation.
     *   **MarketModel**: Pluggable market models with built-in A-share T+1 and Futures T+0 rules.
         *   **T+1 Strict Risk Control**: For stocks/funds, strictly enforces T+1 available position checks to prevent day trading (unless configured as T+0 market).
@@ -33,7 +33,7 @@ The latest version is inspired by [NautilusTrader](https://github.com/nautechsys
     *   **Adapter Pattern**: Unifies Scikit-learn and PyTorch interfaces.
     *   **📖 [Machine Learning Guide](ml_guide.md)**: Learn how to build AI-driven strategies.
 *   **Flexible Configuration**:
-    *   **StrategyConfig**: Global strategy configuration (similar to PyBroker).
+    *   **StrategyConfig**: Global strategy configuration.
     *   **ExecutionMode**: Supports `CurrentClose` and `NextOpen` modes.
 *   **Rich Analysis Tools**:
     *   **PerformanceMetrics**:
@@ -62,7 +62,7 @@ AKQuant aims to solve the performance bottlenecks of traditional Python backtest
 *   **Feature Engineering**: `DataFeed` supports dynamic feature calculation, facilitating integration with Talib or Pandas for feature preprocessing.
 
 ### 3. Precise and Flexible Event-Driven Engine
-*   **Precise Simulation**: Based on **NautilusTrader** design principles, featuring a precise time flow model and order lifecycle management.
+*   **Precise Simulation**: Featuring a precise time flow model and order lifecycle management.
 *   **Complex Order Support**: Supports Market, Limit, Stop, TakeProfit, and other order types.
 *   **Multi-Asset Mixing**: Supports mixed backtesting of stocks, futures, ETFs, etc., with independent fee, slippage, and trading session configurations for each asset.
 *   **Intraday Scheduled Tasks**: Supports `schedule` to register intraday timed events (e.g., close positions daily at 14:50), offering more flexibility than simple `on_bar`.

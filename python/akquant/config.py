@@ -35,11 +35,7 @@ class RiskConfig:
 
 @dataclass
 class StrategyConfig:
-    """
-    Global configuration for strategies and backtesting.
-
-    Inspired by PyBroker's configuration system.
-    """
+    """Configuration for strategy execution."""
 
     # Capital Management
     initial_cash: float = 100000.0

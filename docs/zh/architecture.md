@@ -10,7 +10,7 @@
     *   **数据引擎**: 使用 `polars` (Arrow 格式) 管理 OHLCV 数据，尽可能实现零拷贝内存映射。
     *   **回测引擎**: 事件驱动的执行引擎。
     *   **事件总线 (Event Bus)**:
-        *   参考 NautilusTrader 的消息总线概念，基于 Rust Channel (`mpsc`) 实现。
+        *   参考成熟的事件驱动消息总线概念，基于 Rust Channel (`mpsc`) 实现。
         *   解耦了策略、风控、执行和数据组件。
         *   支持 `OrderRequest` (请求), `OrderValidated` (风控通过), `ExecutionReport` (执行报告) 等事件的异步流转。
         *   高优先级处理控制事件，支持未来扩展为多策略并行或异步风控检查。
@@ -36,7 +36,7 @@ akquant/
 │   ├── data.rs         # 数据源 (DataFeed)
 │   ├── engine.rs       # 回测核心引擎
 │   ├── event.rs        # 事件定义与总线消息
-│   ├── clock.rs        # 交易时钟 (NautilusTrader 风格)
+│   ├── clock.rs        # 交易时钟
 │   ├── execution.rs    # 交易所模拟与订单撮合
 │   ├── market.rs       # 市场规则 (费率、T+1/T+0)
 │   ├── portfolio.rs    # 资金与持仓管理

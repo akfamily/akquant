@@ -3,7 +3,7 @@ use chrono::{DateTime, TimeZone, Utc};
 
 /// 交易时钟
 /// 负责维护当前时间、交易时段状态
-/// 参考 NautilusTrader 的设计，将时间管理从引擎中分离
+/// 将时间管理从引擎中分离
 #[allow(dead_code)]
 pub struct Clock {
     /// 当前时间 (UTC)

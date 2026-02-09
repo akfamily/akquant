@@ -57,7 +57,7 @@ class Strategy:
     """
     策略基类 (Base Strategy Class).
 
-    采用类似 NautilusTrader 的事件驱动设计
+    采用事件驱动设计
     """
 
     ctx: Optional[StrategyContext]
@@ -504,7 +504,7 @@ class Strategy:
         """
         获取当前处理标的的持仓对象.
 
-        支持类似 PyBroker/Backtrader 的语法:
+        支持常见的策略编写语法:
         if self.position.size == 0:
             ...
         """
