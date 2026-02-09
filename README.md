@@ -35,27 +35,63 @@ pip install akquant
 以下是一个简单的策略示例：
 
 ```python
-from akquant import Strategy, run_backtest
-from akquant.config import BacktestConfig
+import akshare as ak
+import akquant as aq
+from akquant import Strategy
+
+# 1. 准备数据
+# 使用 akshare 获取 A 股历史数据 (需安装: pip install akshare)
+df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20230101", end_date="20231231")
 
 class MyStrategy(Strategy):
-    def on_start(self):
-        self.subscribe("600000")
-
     def on_bar(self, bar):
-        # 简单的双均线逻辑示例
-        if self.ctx.position.size == 0:
-            self.buy(symbol=bar.symbol, quantity=100)
-        elif bar.close > self.ctx.position.avg_price * 1.1:
-            self.sell(symbol=bar.symbol, quantity=100)
+        # 简单策略示例:
+        # 当收盘价 > 开盘价 (阳线) -> 买入
+        # 当收盘价 < 开盘价 (阴线) -> 卖出
+
+        # 获取当前持仓
+        current_pos = self.get_position(bar.symbol)
+
+        if current_pos == 0 and bar.close > bar.open:
+            self.buy(bar.symbol, 100)
+            print(f"[{bar.timestamp_str}] Buy 100 at {bar.close:.2f}")
+
+        elif current_pos > 0 and bar.close < bar.open:
+            self.close_position(bar.symbol)
+            print(f"[{bar.timestamp_str}] Sell 100 at {bar.close:.2f}")
 
 # 运行回测
-run_backtest(
+result = aq.run_backtest(
+    data=df,
     strategy=MyStrategy,
-    symbol="600000",
-    start_date="20230101",
-    end_date="20231231"
+    symbol="sh600000"
 )
+
+# 打印回测结果
+print("\n=== Backtest Result ===")
+print(result.metrics_df)
+```
+
+**运行结果示例:**
+
+```text
+=== Backtest Result ===
+                            Backtest
+annualized_return          -0.000575
+end_market_value       999433.064610
+equity_r2                   0.981178
+initial_market_value  1000000.000000
+max_drawdown                0.000567
+max_drawdown_pct            0.056694
+sharpe_ratio               -6.331191
+sortino_ratio              -6.845218
+std_error                  22.986004
+total_return               -0.000567
+total_return_pct           -0.056694
+ulcer_index                 0.000306
+upi                        -1.878765
+volatility                  0.000091
+win_rate                    0.339286
 ```
 
 ## 文档索引

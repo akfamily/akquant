@@ -95,8 +95,37 @@ class BacktestResult:
             and isinstance(getattr(metrics, name), (int, float, str, bool))
         }
 
-        # Return as a DataFrame with one row (Transposed by default)
-        return pd.DataFrame([data], index=["Backtest"]).T
+        # Defined preferred order for display
+        preferred_order = [
+            "total_return_pct",
+            "annualized_return",
+            "sharpe_ratio",
+            "sortino_ratio",
+            "max_drawdown_pct",
+            "volatility",
+            "win_rate",
+            "end_market_value",
+            "initial_market_value",
+            "total_return",
+            "max_drawdown",
+            "ulcer_index",
+            "upi",
+            "equity_r2",
+            "std_error",
+        ]
+
+        df = pd.DataFrame([data], index=["Backtest"])
+
+        # Sort columns: preferred ones first in order, then others alphabetically
+        cols = list(df.columns)
+        sorted_cols = sorted(
+            cols,
+            key=lambda x: preferred_order.index(x)
+            if x in preferred_order
+            else 999 + (0 if x < "a" else 1),
+        )
+
+        return df[sorted_cols].T
 
     @cached_property
     def trades_df(self) -> pd.DataFrame:
