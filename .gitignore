@@ -10,5 +10,19 @@ __pycache__/
 venv/
 .DS_Store
 
+# IDEs
+.idea/
+.vscode/
+*.swp
+
+# Python distribution
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+*.err
+
 # Local cargo config
 .cargo/config.toml
