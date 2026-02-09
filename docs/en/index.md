@@ -132,8 +132,8 @@ print(f"Sharpe Ratio: {result.metrics.sharpe_ratio:.2f}")
 print(f"Max Drawdown: {result.metrics.max_drawdown_pct:.2f}%")
 
 # 5. Get Detailed Data (DataFrame)
-# Performance metrics table (transposed for readability)
-print(result.metrics_df.T)
+# Performance metrics table
+print(result.metrics_df)
 # Trade record table
 print(result.trades_df)
 # Daily position table
