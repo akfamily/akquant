@@ -2,6 +2,18 @@
   <img src="assets/logo.svg" alt="AKQuant" width="400">
 </p>
 
+<p align="center">
+    <a href="https://pypi.org/project/akquant/">
+        <img src="https://img.shields.io/pypi/v/akquant?style=flat-square&color=007ec6" alt="PyPI Version">
+    </a>
+    <a href="https://pypi.org/project/akquant/">
+        <img src="https://img.shields.io/pypi/pyversions/akquant?style=flat-square" alt="Python Versions">
+    </a>
+    <a href="LICENSE">
+        <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
+    </a>
+</p>
+
 # AKQuant
 
 **AKQuant** 是一个基于 **Rust** 和 **Python** 构建的高性能量化投研框架。它旨在结合 Rust 的极致性能和 Python 的易用性，为量化交易者提供强大的回测和研究工具。
@@ -93,21 +105,25 @@
 *   **双风格 API**：同时支持 **类风格 (Class-based)**（适合复杂逻辑、状态管理）和 **函数风格**（适合快速原型），满足不同层次开发者的需求。
 *   **严格的类型检查**：代码库全面支持 Type Hints，通过 `mypy` 和 `ruff` 保证代码质量，减少运行时错误。
 
-## 前置要求
-
-- **Rust**: [安装 Rust](https://www.rust-lang.org/tools/install)
-- **Python**: 3.10+
-- **Maturin**: `pip install maturin`
-
 ## 安装说明
 
-### 开发模式（推荐）
+**AKQuant** 已发布至 PyPI，支持 Windows, macOS 和 Linux。由于核心引擎预编译为 Wheel 包，**无需安装 Rust 环境**即可直接使用。
 
-如果你正在开发该项目并希望更改即时生效：
+### 1. 快速安装 (推荐)
 
 ```bash
-maturin develop
+pip install akquant
 ```
+
+### 2. 验证安装
+
+```bash
+python -c "import akquant; print(f'AKQuant v{akquant.__version__} installed successfully!')"
+```
+
+### 3. 本地开发 (贡献者)
+
+如果你希望参与开发或修改源码，请参考 [贡献指南 (CONTRIBUTING.md)](CONTRIBUTING.md) 进行环境搭建（需要 Rust 工具链）。
 
 ## 快速开始
 
