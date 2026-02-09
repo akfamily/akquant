@@ -132,8 +132,8 @@ print(f"Sharpe Ratio: {result.metrics.sharpe_ratio:.2f}")
 print(f"Max Drawdown: {result.metrics.max_drawdown_pct:.2f}%")
 
 # 5. 获取详细数据 (DataFrame)
-# 绩效指标表 (使用 .T 转置为竖排显示，方便阅读)
-print(result.metrics_df.T)
+# 绩效指标表
+print(result.metrics_df)
 # 交易记录表
 print(result.trades_df)
 # 每日持仓表
