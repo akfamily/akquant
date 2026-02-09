@@ -224,5 +224,5 @@ AKQuant 提供了专门的机器学习支持模块 `akquant.ml`。详细使用�
 
 主要方法:
 
-*   `set_validation(method='walk_forward', ...)`: 配置滚动验证/训练参数。
+*   `set_validation(method='walk_forward', verbose=False, ...)`: 配置滚动验证/训练参数。
 *   `predict(X)`: 执行预测。

@@ -115,6 +115,9 @@ class SklearnAdapter(QuantModel):
 
     def fit(self, X: DataType, y: DataType) -> None:
         """Train the sklearn model."""
+        if self.validation_config and self.validation_config.verbose:
+            print(f"Training Sklearn Model: {type(self.model).__name__}")
+
         # Convert DataFrame to numpy if necessary, or let sklearn handle it
         self.model.fit(X, y)
 
@@ -200,21 +203,44 @@ class PyTorchAdapter(QuantModel):
 
         # 3. Standard training loop
         self.network.train()
+
+        verbose = False
+        if self.validation_config and self.validation_config.verbose:
+            verbose = True
+
         for epoch in range(self.epochs):
+            total_loss = 0.0
+            num_batches = 0
             for batch_X, batch_y in loader:
                 self.optimizer.zero_grad()
                 outputs = self.network(batch_X)
 
                 # Note: Adjust loss calculation dimensions based on task
                 # (regression/classification)
-                # Squeeze outputs to match batch_y shape if necessary
-                loss = self.criterion(outputs.squeeze(), batch_y)
+                # Squeeze last dim if it's 1 (e.g. (N, 1) -> (N)) to match batch_y
+                if outputs.dim() > 1 and outputs.shape[-1] == 1:
+                    outputs = outputs.squeeze(-1)
 
+                loss = self.criterion(outputs, batch_y)
                 loss.backward()
                 self.optimizer.step()
+                total_loss += loss.item()
+                num_batches += 1
+
+            if verbose:
+                avg_loss = total_loss / num_batches if num_batches > 0 else 0
+                print(f"Epoch [{epoch + 1}/{self.epochs}], Loss: {avg_loss:.4f}")
 
     def predict(self, X: DataType) -> np.ndarray:
-        """Predict using the PyTorch model."""
+        """
+        Predict using the PyTorch model.
+
+        Note:
+            This returns the raw output from the network (logits or probabilities
+            depending on the network's last layer). User should handle any necessary
+            activations (e.g. sigmoid, softmax) in the network definition or
+            post-processing.
+        """
         import torch
 
         self.network.eval()

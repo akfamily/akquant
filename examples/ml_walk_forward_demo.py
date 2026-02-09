@@ -30,6 +30,7 @@ class WalkForwardStrategy(Strategy):
             train_window=50,  # Use last 50 bars for training
             rolling_step=10,  # Retrain every 10 bars
             frequency="1m",
+            verbose=True,  # Print training logs
         )
 
         # Ensure we have enough history for features + training
@@ -37,7 +38,9 @@ class WalkForwardStrategy(Strategy):
 
         print("WalkForwardStrategy initialized")
 
-    def prepare_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+    def prepare_features(
+        self, df: pd.DataFrame, mode: str = "training"
+    ) -> tuple[pd.DataFrame, pd.Series]:
         """
         Feature Engineering (Shared by Training and Prediction).
 

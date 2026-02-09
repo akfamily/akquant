@@ -224,5 +224,5 @@ AKQuant provides a dedicated machine learning support module `akquant.ml`. For d
 
 Key Methods:
 
-*   `set_validation(method='walk_forward', ...)`: Configure rolling validation/training parameters.
+*   `set_validation(method='walk_forward', verbose=False, ...)`: Configure rolling validation/training parameters.
 *   `predict(X)`: Execute prediction.
