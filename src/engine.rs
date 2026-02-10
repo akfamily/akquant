@@ -366,15 +366,26 @@ impl Engine {
         // Progress Bar Initialization
         let total_events = self.feed.len_hint().unwrap_or(0);
         let pb = if show_progress {
-            let pb = ProgressBar::new(total_events as u64);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
-                    )
-                    .unwrap()
-                    .progress_chars("#>-"),
-            );
+            let pb = if total_events > 0 {
+                let pb = ProgressBar::new(total_events as u64);
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template(
+                            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                        )
+                        .unwrap()
+                        .progress_chars("#>-"),
+                );
+                pb
+            } else {
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} [{elapsed_precise}] {pos} events processed")
+                        .unwrap(),
+                );
+                pb
+            };
             Some(pb)
         } else {
             None

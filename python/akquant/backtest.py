@@ -1,3 +1,5 @@
+import os
+import sys
 from functools import cached_property
 from typing import (
     Any,
@@ -294,6 +296,16 @@ def run_backtest(
     if not logger.handlers:
         register_logger(console=True, level="INFO")
         logger = get_logger()
+
+    # 1.2 检查 PyCharm 环境下的进度条可见性
+    if show_progress and "PYCHARM_HOSTED" in os.environ:
+        # PyCharm Console 或 Run 窗口未开启模拟终端时，isatty 通常为 False
+        if not sys.stderr.isatty():
+            logger.warning(
+                "Progress bar might be invisible in PyCharm. "
+                "Solution: Enable 'Emulate terminal in output console' "
+                "in Run Configuration."
+            )
 
     # 1.5 处理 Config 覆盖
     if config:
