@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "akquant"
-version = "0.1.15"
+version = "0.1.16"
 description = "High-performance quantitative trading framework based on Rust and Python"
 readme = "README.md"
 license = {text = "MIT License"}
@@ -35,15 +35,22 @@ Repository = "https://github.com/akfamily/akquant"
 Documentation = "https://akquant.akfamily.xyz"
 
 [project.optional-dependencies]
-full = [
-    "matplotlib>=3.0.0",
-    "plotly>=5.0.0",
-]
 plot = [
     "matplotlib>=3.0.0",
     "plotly>=5.0.0",
 ]
 ml = [
+    "scikit-learn>=1.0.0",
+    "torch>=2.0.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocs-static-i18n>=1.2.0",
+]
+full = [
+    "matplotlib>=3.0.0",
+    "plotly>=5.0.0",
     "scikit-learn>=1.0.0",
     "torch>=2.0.0",
 ]
@@ -54,6 +61,7 @@ dev = [
     "pytest>=7.0.0",
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.5.0",
+    "mkdocs-static-i18n>=1.2.0",
 ]
 
 [tool.maturin]
