@@ -53,6 +53,7 @@ pub struct Engine {
     market_model: Box<dyn MarketModel>,
     execution_model: Box<dyn ExecutionClient>,
     daily_equity: Vec<(i64, Decimal)>,
+    equity_curve: Vec<(i64, Decimal)>,
     daily_positions: Vec<(i64, HashMap<String, Decimal>)>,
     execution_mode: ExecutionMode,
     clock: Clock,
@@ -96,6 +97,7 @@ impl Engine {
             market_model: Box::new(ChinaMarket::from_config(market_config)),
             execution_model: Box::new(SimulatedExecutionClient::new()),
             daily_equity: Vec::new(),
+            equity_curve: Vec::new(),
             daily_positions: Vec::new(),
             execution_mode: ExecutionMode::NextOpen,
             clock: Clock::new(),
@@ -570,6 +572,12 @@ impl Engine {
                 };
 
                 if last_timestamp != 0 && timestamp > last_timestamp {
+                    // Record High-Res Equity Curve (at the end of the previous timestamp step)
+                    let equity = self
+                        .portfolio
+                        .calculate_equity(&self.last_prices, &self.instruments);
+                    self.equity_curve.push((last_timestamp, equity));
+
                     bar_index += 1;
                 }
 
@@ -759,6 +767,7 @@ impl Engine {
                 .portfolio
                 .calculate_equity(&self.last_prices, &self.instruments);
             self.daily_equity.push((last_timestamp, equity));
+            self.equity_curve.push((last_timestamp, equity));
         }
         self.orders.extend(pending_orders);
 
@@ -782,22 +791,29 @@ impl Engine {
             .calculate_pnl(Some(self.last_prices.clone()));
         let closed_trades = self.trade_tracker.closed_trades.to_vec();
 
-        // Clone daily records and append current state (Mark-to-Market)
+        // Clone equity curve and append current state (Mark-to-Market)
         // This ensures that we have the latest equity point even if the run loop was interrupted
-        // or hasn't reached the next day close.
-        let mut daily_equity = self.daily_equity.clone();
+        let mut equity_curve = self.equity_curve.clone();
         let mut daily_positions = self.daily_positions.clone();
 
         if let Some(now_ns) = self.clock.timestamp() {
-             let equity = self.portfolio.calculate_equity(&self.last_prices, &self.instruments);
-             // Avoid duplicate if timestamp matches last one exactly (unlikely but safe)
-             if daily_equity.last().map(|(t, _)| *t != now_ns).unwrap_or(true) {
-                 daily_equity.push((now_ns, equity));
-                 daily_positions.push((now_ns, self.portfolio.positions.clone()));
-             }
+            let equity = self
+                .portfolio
+                .calculate_equity(&self.last_prices, &self.instruments);
+            // Avoid duplicate if timestamp matches last one exactly (unlikely but safe)
+            if equity_curve.last().map(|(t, _)| *t != now_ns).unwrap_or(true) {
+                equity_curve.push((now_ns, equity));
+            }
+            if daily_positions
+                .last()
+                .map(|(t, _)| *t != now_ns)
+                .unwrap_or(true)
+            {
+                daily_positions.push((now_ns, self.portfolio.positions.clone()));
+            }
         }
 
-        BacktestResult::calculate(daily_equity, daily_positions, trade_pnl, closed_trades)
+        BacktestResult::calculate(equity_curve, daily_positions, trade_pnl, closed_trades)
     }
 
     fn create_context(&self, active_orders: Vec<Order>, step_trades: Vec<Trade>) -> StrategyContext {
