@@ -7,8 +7,8 @@ name = "akquant"
 version = "0.1.15"
 description = "High-performance quantitative trading framework based on Rust and Python"
 readme = "README.md"
-license = {file = "LICENSE"}
-authors = [{name = "AKQuant Developers"}]
+license = {text = "MIT License"}
+authors = [{name = "AKQuant Developers", email = "albertandking@gmail.com"}]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -28,6 +28,11 @@ dependencies = [
     "tqdm>=4.0.0",
     "plotly>=5.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/akfamily/akquant"
+Repository = "https://github.com/akfamily/akquant"
+Documentation = "https://akquant.akfamily.xyz"
 
 [project.optional-dependencies]
 full = [
@@ -58,7 +63,7 @@ module-name = "akquant.akquant"
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "D"]
