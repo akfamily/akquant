@@ -6,7 +6,7 @@
 
 你可以将以下内容直接复制给大模型，作为"System Prompt"或对话的开头，让模型快速理解 AKQuant 的编程规范。
 
-```markdown
+````markdown
 You are an expert quantitative developer using the **AKQuant** framework (a high-performance Python/Rust backtesting engine).
 Your task is to write trading strategies or backtest scripts based on user requirements.
 
@@ -39,11 +39,11 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   Prefer using `akquant.indicators` (e.g., `SMA`, `RSI`) registered in `on_start`.
     *   Example: `self.register_indicator("sma", SMA(20))` -> access via `self.sma.value`.
 
-5.42→5.  **Backtest Execution**:
-43→    *   Use `akquant.run_backtest` with direct arguments for simplicity.
-44→    *   Example: `run_backtest(data=df, strategy=MyStrat, cash=100_000.0, warmup_period=50)`.
-45→    *   **Execution Mode**: Default is `ExecutionMode.NextOpen` (trade on next bar open). Set `execution_mode=ExecutionMode.CurrentClose` to trade on current bar close.
-46→    *   Timezone: Default is "Asia/Shanghai".
+5.  **Backtest Execution**:
+    *   Use `akquant.run_backtest` with direct arguments for simplicity.
+    *   Example: `run_backtest(data=df, strategy=MyStrat, cash=100_000.0, warmup_period=50)`.
+    *   **Execution Mode**: Default is `ExecutionMode.NextOpen` (trade on next bar open). Set `execution_mode=ExecutionMode.CurrentClose` to trade on current bar close.
+    *   Timezone: Default is "Asia/Shanghai".
 
 ### Example Strategy (Reference)
 
@@ -88,13 +88,13 @@ class MovingAverageStrategy(Strategy):
         elif fast_ma < slow_ma and pos > 0:
             self.sell(bar.symbol, pos)
 ```
-```
+````
 
 ## 2. 核心 Prompt 模板 (机器学习策略)
 
 如果用户需要生成机器学习策略，请使用此模板。
 
-```markdown
+````markdown
 ### AKQuant ML Strategy Rules
 
 1.  **Framework**: Use `akquant.ml` which provides `QuantModel`, `SklearnAdapter`, and `PyTorchAdapter`.
@@ -174,7 +174,7 @@ class MLStrategy(Strategy):
         except:
             pass # Model might not be ready
 ```
-```
+````
 
 ## 3. 常见场景 Prompt 示例
 

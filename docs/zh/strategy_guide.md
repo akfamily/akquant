@@ -20,17 +20,18 @@
 ## 2. 策略生命周期
 
 一个策略从开始到结束，会经历以下几个阶段：
-    *   `__init__`: Python 对象初始化，适合定义参数。
-    *   `on_start`: 策略启动时调用，**必须**在此处使用 `self.subscribe()` 订阅数据，也可在此注册指标。
-    *   `on_bar`: 每一根 K 线闭合时触发 (核心交易逻辑)。
-    *   `on_tick`: 每一个 Tick 到达时触发 (高频/盘口策略)。
-    *   `on_order`: 订单状态变化时触发 (如提交、成交、取消)。
-    *   `on_trade`: 收到成交回报时触发。
-    *   `on_timer`: 定时器触发时调用 (需手动注册)。
-    *   `on_stop`: 策略停止时调用，适合进行资源清理或结果统计 (参考 Backtrader `stop` / Nautilus `on_stop`)。
-    *   `on_train_signal`: 滚动训练触发信号 (仅在 ML 模式下触发)。
 
-## 2. 策略风格选择 {: #style-selection }
+* `__init__`: Python 对象初始化，适合定义参数。
+* `on_start`: 策略启动时调用，**必须**在此处使用 `self.subscribe()` 订阅数据，也可在此注册指标。
+* `on_bar`: 每一根 K 线闭合时触发 (核心交易逻辑)。
+* `on_tick`: 每一个 Tick 到达时触发 (高频/盘口策略)。
+* `on_order`: 订单状态变化时触发 (如提交、成交、取消)。
+* `on_trade`: 收到成交回报时触发。
+* `on_timer`: 定时器触发时调用 (需手动注册)。
+* `on_stop`: 策略停止时调用，适合进行资源清理或结果统计 (参考 Backtrader `stop` / Nautilus `on_stop`)。
+* `on_train_signal`: 滚动训练触发信号 (仅在 ML 模式下触发)。
+
+## 3. 策略风格选择 {: #style-selection }
 
 AKQuant 提供了两种风格的策略开发接口：
 
@@ -41,7 +42,7 @@ AKQuant 提供了两种风格的策略开发接口：
 | **代码结构** | 面向对象，逻辑封装性好 | 脚本化，简单直观 |
 | **API 调用** | `self.buy()`, `self.ctx` | `ctx.buy()`, `ctx` 作为参数传递 |
 
-## 3. 编写类风格策略 (Class-based) {: #class-based }
+## 4. 编写类风格策略 (Class-based) {: #class-based }
 
 这是 AKQuant 推荐的策略编写方式，结构清晰，易于扩展。
 
@@ -80,9 +81,9 @@ class MyStrategy(Strategy):
             self.sell(symbol=bar.symbol, quantity=100)
 ```
 
-## 4. 订单与交易详解 (Orders & Execution)
+## 5. 订单与交易详解 (Orders & Execution)
 
-### 4.1 订单生命周期
+### 5.1 订单生命周期
 
 在 AKQuant 中，订单状态流转如下：
 
@@ -94,7 +95,7 @@ class MyStrategy(Strategy):
 5.  **Cancelled**: 订单已取消。
 6.  **Rejected**: 订单被风控或交易所拒绝 (如资金不足、超出涨跌停)。
 
-### 4.2 常用交易指令
+### 5.2 常用交易指令
 
 *   **市价单 (Market Order)**:
     ```python
@@ -122,18 +123,18 @@ class MyStrategy(Strategy):
     self.order_target_value(target_value=1000 * price, symbol="AAPL") # 注意这里 API 暂未直接支持 target_share，可用 value 模拟
     ```
 
-### 4.3 撮合模式
+### 5.3 撮合模式
 
 通过 `engine.set_execution_mode(mode)` 设置（或在 `run_backtest` 中传入 `execution_mode` 参数）：
 
 *   **NextOpen (默认)**: 信号在下一个 Bar 的开盘时撮合。这是更严谨的回测方式，符合实盘逻辑（今收盘后挂单，明开盘撮合）。
 *   **CurrentClose**: 信号在当前 Bar 收盘时立即撮合。适合利用收盘价进行结算的特殊策略，或者无法获取次日数据的场景。
 
-### 4.4 事件回调 (Event Callbacks) {: #callbacks }
+### 5.4 事件回调 (Event Callbacks) {: #callbacks }
 
 AKQuant 提供了类似 Backtrader 的回调机制，用于追踪订单状态和成交记录。
 
-#### 4.4.1 订单状态回调 (`on_order`)
+#### 5.4.1 订单状态回调 (`on_order`)
 
 当订单状态发生变化（如从 `New` 变为 `Submitted`，或变为 `Filled`）时触发。
 
@@ -147,7 +148,7 @@ def on_order(self, order):
         print(f"订单已取消: {order.id}")
 ```
 
-#### 4.4.2 成交回报回调 (`on_trade`)
+#### 5.4.2 成交回报回调 (`on_trade`)
 
 当发生真实成交时触发。与 `on_order` 不同，`on_trade` 包含具体的成交价格、数量和手续费信息。
 
@@ -156,7 +157,7 @@ def on_trade(self, trade):
     print(f"成交回报: {trade.symbol} 价格: {trade.price} 数量: {trade.quantity} 手续费: {trade.commission}")
 ```
 
-## 5. 风险控制 (Risk Management)
+## 6. 风险控制 (Risk Management)
 
 AKQuant 内置了 Rust 层面的风控管理器，可以在回测中模拟交易所或券商的风控规则。
 
@@ -175,13 +176,13 @@ engine.risk_manager.config = risk_config # 应用配置
 
 如果订单违反风控规则，`self.buy()` 等函数会返回 `None` 或生成的订单状态直接为 `Rejected`，并会在日志中记录原因。
 
-## 6. 使用高性能指标 (Built-in Indicators) {: #indicatorset }
+## 7. 使用高性能指标 (Built-in Indicators) {: #indicatorset }
 
 AKQuant 在 Rust 层内置了常用的技术指标，通过增量计算 (Incremental Calculation) 避免了重复的全量计算，性能极高。
 
 支持的指标: `SMA`, `EMA`, `MACD`, `RSI`, `BollingerBands`, `ATR`.
 
-### 6.1 注册与使用
+### 7.1 注册与使用
 
 ```python
 from akquant import Strategy
@@ -211,9 +212,9 @@ class IndicatorStrategy(Strategy):
             self.buy(bar.symbol, 100)
 ```
 
-## 7. 常用策略模式 (Cookbook)
+## 8. 常用策略模式 (Cookbook)
 
-### 7.1 移动止损 (Trailing Stop)
+### 8.1 移动止损 (Trailing Stop)
 
 ```python
 class TrailingStopStrategy(Strategy):
@@ -241,7 +242,7 @@ class TrailingStopStrategy(Strategy):
                 self.highest_price = bar.close # 初始化最高价
 ```
 
-### 7.2 定时平仓 (Intraday Exit)
+### 8.2 定时平仓 (Intraday Exit)
 
 ```python
 class IntradayStrategy(Strategy):
@@ -259,7 +260,7 @@ class IntradayStrategy(Strategy):
         # 其他交易逻辑...
 ```
 
-### 7.3 多品种轮动 {: #multi-asset }
+### 8.3 多品种轮动 {: #multi-asset }
 
 ```python
 class RotationStrategy(Strategy):
@@ -280,19 +281,19 @@ class RotationStrategy(Strategy):
         # 排序并调仓...
 ```
 
-## 8. 多资产混合回测配置 (Mixed Asset Configuration)
+## 9. 多资产混合回测配置 (Mixed Asset Configuration)
 
 AKQuant 支持在同一个策略中混合交易股票、期货、期权等多种资产。不同资产通常具有不同的属性（如合约乘数、保证金率、最小变动价位）。
 
 使用 `InstrumentConfig` 可以方便地为每个标的配置这些属性。
 
-### 8.1 配置步骤
+### 9.1 配置步骤
 
 1.  **准备数据**: 为每个标的准备数据 (DataFrame 或 CSV)。
 2.  **创建配置**: 使用 `InstrumentConfig` 定义非股票资产的参数。
 3.  **运行回测**: 将配置传递给 `run_backtest` 的 `instruments_config` 参数。
 
-### 8.2 配置示例
+### 9.2 配置示例
 
 假设我们要回测一个包含 "股票 A" 和 "股指期货 IF" 的投资组合：
 
