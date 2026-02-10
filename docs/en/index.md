@@ -1,4 +1,8 @@
-# AKQuant
+<p align="center">
+  <img src="../assets/akquant-logo.svg" alt="AKQuant Logo" width="800" />
+</p>
+
+---
 
 **AKQuant** is a high-performance quantitative research framework built on **Rust** and **Python**. It combines the extreme performance of Rust with the ease of use of Python, providing powerful backtesting and research tools for quantitative traders.
 
