@@ -52,7 +52,13 @@ if __name__ == "__main__":
     print(df)
 
     # Check if we have expected fields
-    expected_fields = ["total_return", "sharpe_ratio", "max_drawdown"]
+    expected_fields = [
+        "total_return",
+        "sharpe_ratio",
+        "max_drawdown",
+        "ulcer_index",
+        "upi",
+    ]
     missing = [f for f in expected_fields if f not in df.index]
 
     if missing:
