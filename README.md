@@ -12,13 +12,20 @@
     <a href="LICENSE">
         <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
     </a>
+    <a href="https://github.com/akfamily/akshare">
+        <img src="https://img.shields.io/badge/Data%20Science-AKShare-green?style=flat-square" alt="AKShare">
+    </a>
 </p>
 
 # AKQuant
 
-**AKQuant** 是一个基于 **Rust** 和 **Python** 构建的高性能量化投研框架。它结合了 Rust 的极致性能和 Python 的易用性，为量化交易者提供强大的回测、风控及机器学习支持。
+**AKQuant** 是一款专为量化投研设计的**下一代高性能混合框架**。核心引擎采用 **Rust** 编写以确保极致的执行效率，同时提供优雅的 **Python** 接口以维持灵活的策略开发体验。
 
-相比传统框架（如 Backtrader），AKQuant 拥有 **20倍+** 的回测性能提升，并原生支持 **Walk-forward Validation**（滚动训练）和 **Zero-Copy** 数据访问。
+🚀 **核心亮点：**
+
+*   **极致性能**：得益于 Rust 的零开销抽象与 **Zero-Copy** 数据架构，回测速度较传统纯 Python 框架（如 Backtrader）提升 **X倍+**。
+*   **原生 ML 支持**：内置 **Walk-forward Validation**（滚动训练）框架，无缝集成 PyTorch/Scikit-learn，让 AI 策略开发从实验到回测一气呵成。
+*   **专业级风控**：内置完善的订单流管理与即时风控模块，支持多资产组合回测。
 
 👉 **[阅读完整文档](docs/zh/index.md)** | **[English Documentation](docs/en/index.md)**
 

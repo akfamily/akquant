@@ -19,8 +19,8 @@
     <rect x="50" y="0" width="15" height="70" rx="4" fill="#3776AB" />
 
     <!-- Abstract Data Dots (floating above, implying quantitative precision) -->
-    <circle cx="7" cy="30" r="2" fill="#FFFFFF" fill-opacity="0.5"/>
-    <circle cx="32" cy="10" r="2" fill="#FFFFFF" fill-opacity="0.5"/>
+    <circle cx="7" cy="30" r="2" fill="#CE412B" />
+    <circle cx="32" cy="10" r="2" fill="#BE5C60" />
     <circle cx="57" cy="-10" r="2" fill="#3776AB" />
   </g>
 
