@@ -7,6 +7,7 @@ We will cover the entire process from data preparation and strategy writing to b
 ## 1. Strategy Logic
 
 The logic of the Dual Moving Average strategy is very intuitive:
+
 *   **Golden Cross**: When the short-term moving average (e.g., 10-day MA) crosses above the long-term moving average (e.g., 30-day MA), the trend is considered upward, so **Buy**.
 *   **Death Cross**: When the short-term moving average crosses below the long-term moving average, the trend is considered downward, so **Sell**.
 

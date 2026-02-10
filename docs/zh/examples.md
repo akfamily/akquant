@@ -207,6 +207,7 @@ run_backtest(
 ### 4.1 OCO 与 Bracket Order
 
 Bracket Order 通常包含三个部分：
+
 1.  **Entry Order**: 进场单（如突破买入）。
 2.  **Stop Loss**: 止损单（保护性卖出）。
 3.  **Take Profit**: 止盈单（获利卖出）。

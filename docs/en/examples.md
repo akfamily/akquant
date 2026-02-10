@@ -207,6 +207,7 @@ Although AKQuant's core matching engine does not natively support OCO (One-Cance
 ### 4.1 OCO and Bracket Order
 
 A Bracket Order typically consists of three parts:
+
 1.  **Entry Order**: Initial order (e.g., Breakout Buy).
 2.  **Stop Loss**: Protective sell order.
 3.  **Take Profit**: Profit-taking sell order.

@@ -56,6 +56,7 @@ Too simple? Want to learn how to write real quantitative strategies (like Dual M
 👉 **Please read [Tutorial: Writing Your First Strategy](tutorial.md)**
 
 This tutorial will cover:
+
 *   How to get historical data (`get_history`)
 *   How to calculate technical indicators (MA, RSI)
 *   How to implement stop-loss and take-profit

@@ -6,7 +6,7 @@ This document aims to help users build efficient Prompts to automatically genera
 
 You can copy the following content directly to the large model as a "System Prompt" or the beginning of a conversation, allowing the model to quickly understand AKQuant's coding standards.
 
-```markdown
+````markdown
 You are an expert quantitative developer using the **AKQuant** framework (a high-performance Python/Rust backtesting engine).
 Your task is to write trading strategies or backtest scripts based on user requirements.
 
@@ -88,13 +88,13 @@ class MovingAverageStrategy(Strategy):
         elif fast_ma < slow_ma and pos > 0:
             self.sell(bar.symbol, pos)
 ```
-```
+````
 
 ## 2. Core Prompt Templates (ML Strategy)
 
 If the user needs to generate a machine learning strategy, please use this template.
 
-```markdown
+````markdown
 ### AKQuant ML Strategy Rules
 
 1.  **Framework**: Use `akquant.ml` which provides `QuantModel`, `SklearnAdapter`, and `PyTorchAdapter`.
@@ -174,7 +174,7 @@ class MLStrategy(Strategy):
         except:
             pass # Model might not be ready
 ```
-```
+````
 
 ## 3. Common Scenario Prompt Examples
 
