@@ -546,6 +546,33 @@ class Strategy:
                 raise ValueError("Symbol must be provided")
         return symbol
 
+    def get_position(self, symbol: Optional[str] = None) -> float:
+        """
+        获取指定标的的持仓数量.
+
+        Args:
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
+
+        Returns:
+            float: 持仓数量 (正数为多头, 负数为空头)
+        """
+        if self.ctx is None:
+            raise RuntimeError("Context not ready")
+
+        symbol = self._resolve_symbol(symbol)
+        return self.ctx.get_position(symbol)
+
+    def get_positions(self) -> Dict[str, float]:
+        """
+        获取所有持仓信息.
+
+        Returns:
+            Dict[str, float]: 持仓字典 {symbol: quantity}
+        """
+        if self.ctx is None:
+            raise RuntimeError("Context not ready")
+        return self.ctx.positions
+
     def get_open_orders(self, symbol: Optional[str] = None) -> list[Any]:
         """
         获取当前未完成的订单.
@@ -972,20 +999,6 @@ class Strategy:
         if self.ctx is None:
             raise RuntimeError("Context not ready")
         self.ctx.schedule(timestamp, payload)
-
-    def get_position(self, symbol: Optional[str] = None) -> float:
-        """获取当前持仓数量."""
-        if self.ctx is None:
-            return 0.0
-
-        if symbol is None:
-            if self.current_bar:
-                symbol = self.current_bar.symbol
-            elif self.current_tick:
-                symbol = self.current_tick.symbol
-            else:
-                return 0.0
-        return self.ctx.get_position(symbol)
 
     def get_cash(self) -> float:
         """获取现金."""

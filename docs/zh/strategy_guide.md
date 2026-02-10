@@ -274,7 +274,9 @@ class RotationStrategy(Strategy):
         # 假设注册了一个每日定时器
         # 获取所有订阅标的的当前价格
         scores = {}
-        for symbol in self.ctx.portfolio.positions.keys(): # 仅示例，实际应遍历关注列表
+        # 仅示例，实际应遍历关注列表
+        # 注意: self.ctx.positions 仅包含当前持仓，可能需要遍历所有订阅的代码
+        for symbol in self.ctx.positions.keys():
              hist = self.get_history(20, symbol)
              scores[symbol] = hist[-1] / hist[0] # 20日动量
 

@@ -114,7 +114,7 @@ class MyStrategy(Strategy):
     def on_bar(self, bar):
         # Simple strategy logic (example)
         # For real backtests, using IndicatorSet for vectorized calculation is recommended
-        position = self.ctx.get_position(bar.symbol)
+        position = self.get_position(bar.symbol)
         if position == 0:
             self.buy(symbol=bar.symbol, quantity=100)
         elif position > 0:
