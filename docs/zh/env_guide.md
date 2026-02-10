@@ -72,14 +72,14 @@ pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 打开终端（Windows 用户打开 CMD 或 Anaconda Prompt），输入：
 
 ```bash
-# 创建一个名为 akquant 的环境，指定 Python 版本为 3.10
-conda create -n akquant python=3.10 -y
+# 创建一个名为 quant_dev 的环境，指定 Python 版本为 3.10，AKQuant 支持 Python 3.10及以上版本
+conda create -n quant_dev python=3.10 -y
 
 # 激活环境
-conda activate akquant
+conda activate quant_dev
 ```
 
-激活成功后，你的命令行前缀会变成 `(akquant)`，说明你已经进入了沙盒。
+激活成功后，你的命令行前缀会变成 `(quant_dev)`，说明你已经进入了沙盒。
 
 ---
 
