@@ -274,7 +274,9 @@ class RotationStrategy(Strategy):
         # Assume a daily timer is registered
         # Get current prices of all subscribed symbols
         scores = {}
-        for symbol in self.ctx.portfolio.positions.keys(): # Example only, actually should iterate over watchlist
+        # Actually should iterate over watchlist or subscribed symbols
+        # Note: self.ctx.positions contains current positions, but we might want to check all watched symbols
+        for symbol in self.ctx.positions.keys():
              hist = self.get_history(20, symbol)
              scores[symbol] = hist[-1] / hist[0] # 20-day momentum
 
