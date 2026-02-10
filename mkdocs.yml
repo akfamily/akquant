@@ -55,6 +55,9 @@ plugins:
             User Guide: 用户指南
             Advanced: 进阶文档
             Installation: 安装指南
+            Environment Setup: 环境搭建
+            Quant Guide: 量化新手指南
+            Python Guide: Python 金融入门
             Quick Start: 快速开始
             Tutorials: 教程
             Strategy Guide: 策略指南
@@ -74,6 +77,9 @@ plugins:
             User Guide: User Guide
             Advanced: Advanced
             Installation: Installation
+            Environment Setup: Environment Setup
+            Quant Guide: Quant Guide
+            Python Guide: Python for Finance
             Quick Start: Quick Start
             Tutorials: Tutorials
             Strategy Guide: Strategy Guide
@@ -89,6 +95,9 @@ nav:
   - Home: index.md
   - Getting Started:
       - Installation: installation.md
+      - Environment Setup: env_guide.md
+      - Quant Guide: quant_guide.md
+      - Python Guide: py_guide.md
       - Quick Start: quickstart.md
       - Tutorials: tutorial.md
       - Examples: examples.md

@@ -19,44 +19,64 @@
 
 ## 3. Common Strategies
 
-Here are some common quantitative strategy implementations that you can use directly in your projects.
+Here are some common quantitative strategy implementations that you can use directly in your projects. We provide detailed logic explanations for each strategy to help you understand the core concepts.
 
 ### 3.1 Dual Moving Average Strategy
 
-Classic trend following strategy using the crossover of long and short period moving averages to generate buy/sell signals. This example uses high-performance incremental indicators `aq.SMA` implemented in Rust.
+**Core Concept**:
+The Dual Moving Average strategy uses two moving averages (SMA) with different periods to determine market trends.
+*   **Short-term SMA** (e.g., 5 days): Sensitive, closely follows price fluctuations.
+*   **Long-term SMA** (e.g., 20 days): Lagging, represents the long-term trend.
+
+**Trading Signals**:
+*   **Golden Cross**: When the short-term SMA **crosses above** the long-term SMA, it indicates a strengthening short-term trend, which is a **Buy** signal.
+*   **Death Cross**: When the short-term SMA **crosses below** the long-term SMA, it indicates a weakening short-term trend, which is a **Sell** signal.
+
+This example uses high-performance incremental indicators `aq.SMA` implemented in Rust.
 
 ```python
 import akquant as aq
 
 class DualSMAStrategy(aq.Strategy):
     def __init__(self, short_window=5, long_window=20):
+        # Initialize two indicators: Short SMA and Long SMA
         # Use Rust implemented high-performance incremental SMA indicators
         self.sma_short = aq.SMA(short_window)
         self.sma_long = aq.SMA(long_window)
 
     def on_bar(self, bar: aq.Bar):
-        # Update indicators
+        # 1. Update indicator status
+        # The update method accepts the current closing price and returns the latest MA value
         short_val = self.sma_short.update(bar.close)
         long_val = self.sma_long.update(bar.close)
 
-        # Return if indicators are not ready
+        # 2. Skip if indicator data is insufficient (e.g., cannot calculate 20-day MA at the start)
         if short_val is None or long_val is None:
             return
 
+        # Get current position quantity
         position = self.get_position(bar.symbol)
 
-        # Golden Cross (Short MA crosses above Long MA) -> Buy
+        # 3. Generate Trading Signals
+
+        # Golden Cross (Short MA crosses above Long MA) -> And no position -> Buy
         if short_val > long_val and position == 0:
             self.buy(bar.symbol, 100)
 
-        # Death Cross (Short MA crosses below Long MA) -> Sell to Close
+        # Death Cross (Short MA crosses below Long MA) -> And holding position -> Sell to Close
         elif short_val < long_val and position > 0:
             self.sell(bar.symbol, 100)
 ```
 
 ### 3.2 RSI Mean Reversion Strategy
 
-Uses Relative Strength Index (RSI) to determine overbought and oversold conditions. This example demonstrates how to use `get_history_df` combined with pandas to calculate complex indicators.
+**Core Concept**:
+RSI (Relative Strength Index) is a momentum indicator ranging from 0 to 100, measuring the magnitude of recent price changes.
+*   **Mean Reversion**: This strategy assumes that prices will not rise or fall indefinitely and will eventually revert to a normal level after excessive deviation.
+*   **Oversold**: RSI below a threshold (e.g., 30) implies the recent drop is excessive, suggesting a potential rebound -> **Buy**.
+*   **Overbought**: RSI above a threshold (e.g., 70) implies the recent rise is excessive, suggesting a potential pullback -> **Sell**.
+
+This example demonstrates how to use `get_history_df` to retrieve historical data and combine it with `pandas` to calculate complex indicators.
 
 ```python
 import akquant as aq
@@ -68,47 +88,59 @@ class RSIStrategy(aq.Strategy):
         self.period = period
         self.buy_threshold = buy_threshold
         self.sell_threshold = sell_threshold
-        # Set sufficient history depth to calculate RSI (period + warmup data)
+        # IMPORTANT: Set historical data lookback depth
+        # Since calculating RSI requires past N days of data, sufficient history window must be reserved
         self.set_history_depth(period + 20)
 
     def calculate_rsi(self, prices: pd.Series) -> pd.Series:
         """Calculate RSI using pandas."""
         delta = prices.diff()
-        # Simple RSI algorithm
+        # Simple RSI algorithm implementation
         gain = (delta.where(delta > 0, 0)).rolling(window=self.period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=self.period).mean()
         rs = gain / loss
         return 100 - (100 / (1 + rs))
 
     def on_bar(self, bar: aq.Bar):
-        # Get historical closing price DataFrame
+        # 1. Get historical closing price DataFrame
+        # get_history_df returns data for the past N bars
         history = self.get_history_df(self.period + 20, bar.symbol)
 
         # Return if data is insufficient
         if len(history) < self.period + 1:
             return
 
-        # Calculate RSI
+        # 2. Calculate RSI
         rsi_series = self.calculate_rsi(history['close'])
-        current_rsi = rsi_series.iloc[-1]
+        current_rsi = rsi_series.iloc[-1] # Get the latest RSI value
 
         if np.isnan(current_rsi):
             return
 
         position = self.get_position(bar.symbol)
 
-        # RSI < 30 (Oversold) -> Buy
+        # 3. Trading Logic
+
+        # RSI < 30 (Oversold) -> Expect Rebound -> Buy
         if current_rsi < self.buy_threshold and position == 0:
             self.buy(bar.symbol, 100)
 
-        # RSI > 70 (Overbought) -> Sell
+        # RSI > 70 (Overbought) -> Expect Drop -> Sell
         elif current_rsi > self.sell_threshold and position > 0:
             self.sell(bar.symbol, 100)
 ```
 
 ### 3.3 Bollinger Bands Strategy
 
-Uses Bollinger Bands upper and lower rails as trading signals. This example demonstrates how to calculate statistical indicators via pandas.
+**Core Concept**:
+Bollinger Bands consist of three lines:
+*   **Middle Band**: N-day Moving Average.
+*   **Upper Band**: Middle Band + K * Standard Deviation.
+*   **Lower Band**: Middle Band - K * Standard Deviation.
+
+According to statistical principles, prices have a high probability (e.g., 95%) of falling between the upper and lower bands.
+*   When price **breaks below the lower band**, it is often seen as an irrational **oversold** state, and price may revert to the middle band -> **Buy**.
+*   When price **breaks above the upper band**, it is often seen as an irrational **overbought** state, and price may pullback -> **Sell**.
 
 ```python
 import akquant as aq
@@ -118,28 +150,31 @@ class BollingerStrategy(aq.Strategy):
     def __init__(self, window=20, num_std=2):
         self.window = window
         self.num_std = num_std
-        # Set history depth
+        # Set history depth to ensure enough data for mean and std calculation
         self.set_history_depth(window + 5)
 
     def on_bar(self, bar: aq.Bar):
-        # Get historical data
+        # 1. Get historical data
         history = self.get_history_df(self.window, bar.symbol)
         if len(history) < self.window:
             return
 
-        # Calculate Bollinger Bands
+        # 2. Calculate Bollinger Bands
         close_prices = history['close']
-        ma = close_prices.mean()
-        std = close_prices.std()
-        upper_band = ma + self.num_std * std
-        lower_band = ma - self.num_std * std
+        ma = close_prices.mean()          # Middle Band (Mean)
+        std = close_prices.std()          # Standard Deviation
+        upper_band = ma + self.num_std * std # Upper Band
+        lower_band = ma - self.num_std * std # Lower Band
 
         position = self.get_position(bar.symbol)
         current_price = bar.close
 
+        # 3. Trading Logic
+
         # Price breaks below lower band -> Oversold reversal signal -> Buy
         if current_price < lower_band and position == 0:
             self.buy(bar.symbol, 100)
+
         # Price breaks above upper band -> Overbought reversal signal -> Sell
         elif current_price > upper_band and position > 0:
             self.sell(bar.symbol, 100)
@@ -147,7 +182,12 @@ class BollingerStrategy(aq.Strategy):
 
 ### 3.4 Mixed Asset Backtest {: #mixed-asset }
 
-Demonstrates how to trade stocks and futures in the same strategy, using `InstrumentConfig` to configure futures parameters.
+**Core Concept**:
+In real trading, strategies may involve multiple assets like stocks, futures, and options simultaneously. Different assets have different trading attributes:
+*   **Stocks**: Usually 1 lot = 100 shares, fully paid trading.
+*   **Futures**: Have **Contract Multiplier** (e.g., 1 point = $300) and **Margin Ratio** (e.g., buy contract with 10% funds).
+
+This example demonstrates how to use `InstrumentConfig` to configure special attributes for futures and mix trade stocks and futures in the same strategy.
 
 ```python
 import akquant as aq
@@ -173,7 +213,7 @@ class TestStrategy(aq.Strategy):
         self.count = 0
 
     def on_bar(self, bar: aq.Bar):
-        # Simple logic: Buy on first two bars
+        # Simple logic: Buy stock and future respectively on first two bars
         if self.count < 2:
             print(f"[{bar.timestamp}] Buying {bar.symbol}")
             self.buy(bar.symbol, 1)
@@ -185,6 +225,7 @@ df_future = create_dummy_data("FUTURE_B", "2023-01-01", 100, 3500.0)
 data = {"STOCK_A": df_stock, "FUTURE_B": df_future}
 
 # 3. Configure futures parameters
+# Tell backtest engine: FUTURE_B is a future, multiplier 300, margin 10%
 future_config = InstrumentConfig(
     symbol="FUTURE_B",
     asset_type="FUTURES",
@@ -202,42 +243,48 @@ run_backtest(
 
 ## 4. Complex Orders & Risk Control {: #complex-orders }
 
-Although AKQuant's core matching engine does not natively support OCO (One-Cancels-Other) or Bracket Order types yet, you can easily implement these advanced logic via strategy callback functions (`on_trade`, `on_order`).
+**Core Concept**:
+Advanced trading often requires precise order management.
+*   **Bracket Order**: A combination of "Entry + Stop Loss + Take Profit". When you open a position (Entry), you immediately set a "Stop Loss" and "Take Profit" order for this position, bracketing the price like a pair of brackets.
+*   **OCO (One-Cancels-Other)**: Refers to the relationship between the "Stop Loss" and "Take Profit" orders. If price rises and triggers Take Profit, the Stop Loss order should be automatically cancelled (since the position is closed, no need to stop loss anymore), and vice versa.
 
-### 4.1 OCO and Bracket Order
+Although AKQuant's core matching engine does not natively support OCO order types yet, you can easily implement these advanced logic via strategy callback functions (`on_trade`, `on_order`).
 
-A Bracket Order typically consists of three parts:
+### 4.1 OCO and Bracket Order Implementation
 
-1.  **Entry Order**: Initial order (e.g., Breakout Buy).
-2.  **Stop Loss**: Protective sell order.
-3.  **Take Profit**: Profit-taking sell order.
-
-The Stop Loss and Take Profit form an **OCO** group: if one executes, the other should be automatically cancelled immediately.
-
-**Core Logic Implementation:**
+**Logic Flow**:
+1.  **Entry**: Strategy sends an open position signal.
+2.  **Trade Callback (`on_trade`)**: Once entry order is filled, immediately send two closing orders:
+    *   **Stop Loss**: Sell if price drops to X (protect principal).
+    *   **Take Profit**: Sell if price rises to Y (lock in profit).
+3.  **Subsequent Trades**:
+    *   If Stop Loss filled -> Immediately cancel Take Profit.
+    *   If Take Profit filled -> Immediately cancel Stop Loss.
 
 ```python
 def on_trade(self, trade):
     # 1. Entry order filled -> Immediately place SL and TP
     if trade.order_id == self.entry_order_id:
-        # Place Stop Loss (Stop Market)
+        # Place Stop Loss (Stop Market: Sell at market price after trigger)
         self.stop_loss_id = self.sell(
             trade.symbol, trade.quantity,
-            trigger_price=trade.price * 0.98, # Stop Price
+            trigger_price=trade.price * 0.98, # Stop Price (Cost - 2%)
             price=None # None means Market Sell after trigger
         )
 
-        # Place Take Profit (Limit Sell)
+        # Place Take Profit (Limit Sell: Sell at specified price)
         self.take_profit_id = self.sell(
             trade.symbol, trade.quantity,
-            price=trade.price * 1.05 # Take Profit Price
+            price=trade.price * 1.05 # Take Profit Price (Cost + 5%)
         )
 
     # 2. Stop Loss filled -> Cancel Take Profit
+    # We have exited with stop loss, cancel the previous take profit order
     elif trade.order_id == self.stop_loss_id:
         self.cancel_order(self.take_profit_id)
 
     # 3. Take Profit filled -> Cancel Stop Loss
+    # We have exited with profit, cancel the previous stop loss order
     elif trade.order_id == self.take_profit_id:
         self.cancel_order(self.stop_loss_id)
 ```
