@@ -51,62 +51,65 @@ plugins:
           build: true
           nav_translations:
             Home: 首页
-            Getting Started: 入门指南
-            User Guide: 用户指南
-            Advanced: 进阶文档
+            Getting Started: 快速入门
             Installation: 安装指南
             Environment Setup: 环境搭建
-            Quant Guide: 量化新手指南
-            Python Guide: Python 金融入门
             Quick Start: 快速开始
-            Tutorials: 教程
-            Strategy Guide: 策略指南
-            Timezone Guide: 时区处理指南
-            LLM Guide: LLM 辅助编程指南
+            Tutorials: 基础教程
+            Python Guide: Python 金融入门
+            Quant Guide: 量化新手指南
+            Strategy Tutorial: 手把手策略教程
+            User Guide: 用户手册
+            Strategy Manual: 策略开发手册
+            Timezone Handling: 时区处理指南
+            Examples: 实战案例
+            Advanced: 进阶功能
             ML Guide: 机器学习指南
-            Architecture: 架构设计
-            Design Guide: 设计与开发指南
-            API Reference: API 参考
-            Examples: 示例
+            LLM Guide: LLM 辅助编程
+            Architecture: 架构原理
+            Design Guide: 设计规范
+            API Reference: API 文档
         - locale: en
           name: English
           build: true
           nav_translations:
             Home: Home
             Getting Started: Getting Started
-            User Guide: User Guide
-            Advanced: Advanced
             Installation: Installation
             Environment Setup: Environment Setup
-            Quant Guide: Quant Guide
-            Python Guide: Python for Finance
             Quick Start: Quick Start
             Tutorials: Tutorials
-            Strategy Guide: Strategy Guide
-            Timezone Guide: Timezone Guide
-            LLM Guide: LLM Guide
+            Python Guide: Python for Finance
+            Quant Guide: Quant Guide
+            Strategy Tutorial: Strategy Tutorial
+            User Guide: User Guide
+            Strategy Manual: Strategy Manual
+            Timezone Handling: Timezone Handling
+            Examples: Examples
+            Advanced: Advanced
             ML Guide: ML Guide
+            LLM Guide: LLM Guide
             Architecture: Architecture
             Design Guide: Design Guide
             API Reference: API Reference
-            Examples: Examples
 
 nav:
   - Home: index.md
   - Getting Started:
       - Installation: installation.md
       - Environment Setup: env_guide.md
-      - Quant Guide: quant_guide.md
-      - Python Guide: py_guide.md
       - Quick Start: quickstart.md
-      - Tutorials: tutorial.md
-      - Examples: examples.md
+  - Tutorials:
+      - Python Guide: py_guide.md
+      - Quant Guide: quant_guide.md
+      - Strategy Tutorial: tutorial.md
   - User Guide:
-      - Strategy Guide: strategy_guide.md
-      - Timezone Guide: timezone.md
-      - LLM Guide: llm_guide.md
-      - ML Guide: ml_guide.md
+      - Strategy Manual: strategy_guide.md
+      - Timezone Handling: timezone.md
+      - Examples: examples.md
   - Advanced:
+      - ML Guide: ml_guide.md
+      - LLM Guide: llm_guide.md
       - Architecture: architecture.md
       - Design Guide: design.md
   - API Reference: api.md
