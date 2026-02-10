@@ -149,7 +149,7 @@ print(result.daily_positions_df)
 如果你习惯 Zipline 或 Backtrader 的函数式写法，也可以直接使用：
 
 ```python
-from akquant.backtest import run_backtest
+from akquant import run_backtest
 
 def initialize(ctx):
     ctx.stop_loss_pct = 0.05

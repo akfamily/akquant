@@ -8,8 +8,8 @@ edit_uri: ""
 
 theme:
   name: material
-  logo: assets/logo.svg
-  favicon: assets/logo.svg
+  logo: assets/akquant-icon.svg
+  favicon: assets/akquant-icon.svg
   features:
     - navigation.tabs
     - navigation.sections
