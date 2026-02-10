@@ -194,7 +194,7 @@ Instrument(
 
 回测结果容器。
 
-*   `metrics_df`: 包含各项绩效指标的 DataFrame (Total Return, Sharpe, Max Drawdown 等)。
+*   `metrics_df`: 包含各项绩效指标的 DataFrame (Total Return, Sharpe, Max Drawdown, Ulcer Index, UPI 等)。
 *   `daily_positions_df`: 每日持仓 DataFrame。
 *   `trades`: 交易记录列表 (`ClosedTrade` 对象)。
 *   `equity_curve`: 权益曲线数据。

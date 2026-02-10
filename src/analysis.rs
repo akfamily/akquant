@@ -538,6 +538,80 @@ mod tests {
         assert_eq!(pnl.total_closed_trades, 0);
         assert_eq!(pnl.unrealized_pnl, 500.0); // (15-10)*100
     }
+
+    #[test]
+    fn test_max_drawdown_logic() {
+        let empty_pnl = TradeTracker::new().calculate_pnl(None);
+
+        // Case 1: Standard Drawdown
+        // 100 -> 120 -> 90 -> 110
+        let equity_curve = vec![
+            (1, Decimal::from(100)),
+            (2, Decimal::from(120)), // Peak
+            (3, Decimal::from(90)),  // Drawdown: (120-90)/120 = 0.25
+            (4, Decimal::from(110)),
+        ];
+
+        let result = BacktestResult::calculate(equity_curve, vec![], empty_pnl.clone(), vec![]);
+        assert_eq!(result.metrics.max_drawdown, 0.25);
+
+        // Case 2: No Drawdown (Monotonic Increase)
+        // 100 -> 110 -> 120
+        let equity_curve_2 = vec![
+            (1, Decimal::from(100)),
+            (2, Decimal::from(110)),
+            (3, Decimal::from(120)),
+        ];
+        let result_2 = BacktestResult::calculate(equity_curve_2, vec![], empty_pnl.clone(), vec![]);
+        assert_eq!(result_2.metrics.max_drawdown, 0.0);
+
+        // Case 3: Immediate Drawdown
+        // 100 -> 80 -> 90
+        let equity_curve_3 = vec![
+            (1, Decimal::from(100)), // Peak
+            (2, Decimal::from(80)),  // Drawdown: (100-80)/100 = 0.2
+            (3, Decimal::from(90)),
+        ];
+        let result_3 = BacktestResult::calculate(equity_curve_3, vec![], empty_pnl.clone(), vec![]);
+        assert_eq!(result_3.metrics.max_drawdown, 0.2);
+
+        // Case 4: Multiple Peaks
+        // 100 -> 90 (0.1) -> 100 -> 110 -> 55 (0.5) -> 110
+        let equity_curve_4 = vec![
+            (1, Decimal::from(100)),
+            (2, Decimal::from(90)),  // DD 0.1
+            (3, Decimal::from(100)),
+            (4, Decimal::from(110)), // New Peak
+            (5, Decimal::from(55)),  // DD (110-55)/110 = 0.5
+            (6, Decimal::from(110)),
+        ];
+        let result_4 = BacktestResult::calculate(equity_curve_4, vec![], empty_pnl.clone(), vec![]);
+        assert_eq!(result_4.metrics.max_drawdown, 0.5);
+    }
+
+    #[test]
+    fn test_ulcer_index_logic() {
+        let empty_pnl = TradeTracker::new().calculate_pnl(None);
+
+        // Equity Curve: [100, 100, 90, 90, 100]
+        // DDs: [0, 0, 0.1, 0.1, 0]
+        // Squares: [0, 0, 0.01, 0.01, 0]
+        // Sum = 0.02
+        // Mean = 0.02 / 5 = 0.004
+        // UI = sqrt(0.004) = 0.0632455532
+
+        let equity_curve = vec![
+            (1, Decimal::from(100)),
+            (2, Decimal::from(100)),
+            (3, Decimal::from(90)),
+            (4, Decimal::from(90)),
+            (5, Decimal::from(100)),
+        ];
+
+        let result = BacktestResult::calculate(equity_curve, vec![], empty_pnl.clone(), vec![]);
+        let expected_ui = 0.004f64.sqrt();
+        assert!((result.metrics.ulcer_index - expected_ui).abs() < 1e-9);
+    }
 }
 
 #[derive(Debug, Clone)]
