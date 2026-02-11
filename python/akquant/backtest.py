@@ -17,10 +17,13 @@ import pandas as pd
 from .akquant import (
     AssetType,
     Bar,
+    ClosedTrade,
     DataFeed,
     Engine,
     ExecutionMode,
     Instrument,
+    Order,
+    PerformanceMetrics,
 )
 from .akquant import (
     BacktestResult as RustBacktestResult,
@@ -51,6 +54,38 @@ class BacktestResult:
         """
         self._raw = raw_result
         self._timezone = timezone
+
+    @property
+    def trades(self) -> List[ClosedTrade]:
+        """
+        Get closed trades as a list of raw objects (Raw Access).
+
+        These are the raw Rust objects, useful for iteration and accessing complex
+        fields. For statistical analysis, use `trades_df`.
+        """
+        return cast(List[ClosedTrade], self._raw.trades)
+
+    @property
+    def orders(self) -> List[Order]:
+        """
+        Get orders as a list of raw objects (Raw Access).
+
+        These are the raw Rust objects, useful for iteration and debugging.
+        For statistical analysis, use `orders_df`.
+        """
+        if hasattr(self._raw, "orders"):
+            return cast(List[Order], self._raw.orders)
+        return []
+
+    @property
+    def metrics(self) -> PerformanceMetrics:
+        """
+        Get performance metrics as a raw object (Raw Access).
+
+        This is the raw Rust object containing all metrics fields.
+        For a DataFrame view, use `metrics_df`.
+        """
+        return self._raw.metrics
 
     @property
     def positions(self) -> pd.DataFrame:
@@ -95,15 +130,15 @@ class BacktestResult:
         Get detailed positions history as a Pandas DataFrame (PyBroker style).
 
         Columns:
-            - long_shares
-            - short_shares
-            - close
-            - equity
-            - market_value
-            - margin
-            - unrealized_pnl
-            - symbol
-            - date
+            - date (datetime): Snapshot time.
+            - symbol (str): Trading symbol.
+            - long_shares (float): Long position quantity.
+            - short_shares (float): Short position quantity.
+            - close (float): Closing price.
+            - equity (float): Total account equity.
+            - market_value (float): Market value of positions.
+            - margin (float): Margin used.
+            - unrealized_pnl (float): Floating PnL.
         """
         # Try to use the Rust optimized getter if available
         if hasattr(self._raw, "get_positions_dict"):
@@ -170,7 +205,24 @@ class BacktestResult:
 
     @cached_property
     def orders_df(self) -> pd.DataFrame:
-        """Get orders history as a Pandas DataFrame."""
+        """
+        Get orders history as a Pandas DataFrame.
+
+        Columns:
+            - id (str): Order ID.
+            - symbol (str): Trading symbol.
+            - side (str): 'buy' or 'sell'.
+            - order_type (str): 'market', 'limit', 'stop'.
+            - quantity (float): Order quantity.
+            - filled_quantity (float): Executed quantity.
+            - limit_price (float): Price for limit orders.
+            - stop_price (float): Trigger price for stop orders.
+            - avg_price (float): Average execution price.
+            - commission (float): Commission paid.
+            - status (str): 'filled', 'cancelled', 'rejected', etc.
+            - time_in_force (str): 'gtc', 'day', 'ioc', etc.
+            - created_at (datetime): Creation time.
+        """
         if not hasattr(self._raw, "orders_df"):
             return pd.DataFrame()
 
@@ -199,7 +251,24 @@ class BacktestResult:
 
     @cached_property
     def trades_df(self) -> pd.DataFrame:
-        """Get closed trades as a Pandas DataFrame."""
+        """
+        Get closed trades as a Pandas DataFrame.
+
+        Columns:
+            - symbol (str): Trading symbol.
+            - entry_time (datetime): Time of entry.
+            - exit_time (datetime): Time of exit.
+            - entry_price (float): Average entry price.
+            - exit_price (float): Average exit price.
+            - quantity (float): Traded quantity.
+            - side (str): 'long' or 'short'.
+            - pnl (float): Gross PnL.
+            - net_pnl (float): Net PnL (after commission).
+            - return_pct (float): Trade return (decimal).
+            - commission (float): Commission paid.
+            - duration_bars (int): Number of bars held.
+            - duration (timedelta): Duration of trade.
+        """
         if not self._raw.trades:
             return pd.DataFrame()
 

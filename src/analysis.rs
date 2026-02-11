@@ -39,6 +39,14 @@ pub struct ClosedTrade {
     pub duration: i64, // Duration in nanoseconds
 }
 
+#[gen_stub_pymethods]
+#[pymethods]
+impl ClosedTrade {
+    pub fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +94,59 @@ pub struct PerformanceMetrics {
     pub duration: i64,
     #[pyo3(get)]
     pub total_bars: usize,
+
+    // New risk metrics
+    #[pyo3(get)]
+    pub exposure_time_pct: f64,
+    #[pyo3(get)]
+    pub var_95: f64,
+    #[pyo3(get)]
+    pub var_99: f64,
+    #[pyo3(get)]
+    pub cvar_95: f64,
+    #[pyo3(get)]
+    pub cvar_99: f64,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PerformanceMetrics {
+    pub fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    pub fn __getitem__(&self, py: Python, key: &str) -> PyResult<Py<PyAny>> {
+        let v = match key {
+            "total_return" => self.total_return.into_pyobject(py).unwrap().into_any().unbind(),
+            "annualized_return" => self.annualized_return.into_pyobject(py).unwrap().into_any().unbind(),
+            "max_drawdown" => self.max_drawdown.into_pyobject(py).unwrap().into_any().unbind(),
+            "max_drawdown_value" => self.max_drawdown_value.into_pyobject(py).unwrap().into_any().unbind(),
+            "max_drawdown_pct" => self.max_drawdown_pct.into_pyobject(py).unwrap().into_any().unbind(),
+            "sharpe_ratio" => self.sharpe_ratio.into_pyobject(py).unwrap().into_any().unbind(),
+            "sortino_ratio" => self.sortino_ratio.into_pyobject(py).unwrap().into_any().unbind(),
+            "calmar_ratio" => self.calmar_ratio.into_pyobject(py).unwrap().into_any().unbind(),
+            "volatility" => self.volatility.into_pyobject(py).unwrap().into_any().unbind(),
+            "ulcer_index" => self.ulcer_index.into_pyobject(py).unwrap().into_any().unbind(),
+            "upi" => self.upi.into_pyobject(py).unwrap().into_any().unbind(),
+            "equity_r2" => self.equity_r2.into_pyobject(py).unwrap().into_any().unbind(),
+            "std_error" => self.std_error.into_pyobject(py).unwrap().into_any().unbind(),
+            "win_rate" => self.win_rate.into_pyobject(py).unwrap().into_any().unbind(),
+            "initial_market_value" => self.initial_market_value.into_pyobject(py).unwrap().into_any().unbind(),
+            "end_market_value" => self.end_market_value.into_pyobject(py).unwrap().into_any().unbind(),
+            "total_return_pct" => self.total_return_pct.into_pyobject(py).unwrap().into_any().unbind(),
+            "start_time" => self.start_time.into_pyobject(py).unwrap().into_any().unbind(),
+            "end_time" => self.end_time.into_pyobject(py).unwrap().into_any().unbind(),
+            "duration" => self.duration.into_pyobject(py).unwrap().into_any().unbind(),
+            "total_bars" => self.total_bars.into_pyobject(py).unwrap().into_any().unbind(),
+            "exposure_time_pct" => self.exposure_time_pct.into_pyobject(py).unwrap().into_any().unbind(),
+            "var_95" => self.var_95.into_pyobject(py).unwrap().into_any().unbind(),
+            "var_99" => self.var_99.into_pyobject(py).unwrap().into_any().unbind(),
+            "cvar_95" => self.cvar_95.into_pyobject(py).unwrap().into_any().unbind(),
+            "cvar_99" => self.cvar_99.into_pyobject(py).unwrap().into_any().unbind(),
+            _ => return Err(pyo3::exceptions::PyKeyError::new_err(format!("Key '{}' not found", key))),
+        };
+        Ok(v)
+    }
 }
 
 #[gen_stub_pyclass]
@@ -157,6 +218,18 @@ pub struct TradePnL {
     pub total_profit: f64, // Same as won_pnl
     #[pyo3(get)]
     pub total_loss: f64, // Same as lost_pnl
+    #[pyo3(get)]
+    pub sqn: f64,
+    #[pyo3(get)]
+    pub kelly_criterion: f64,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl TradePnL {
+    pub fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
 }
 
 #[gen_stub_pyclass]
@@ -182,6 +255,14 @@ pub struct PositionSnapshot {
     pub margin: f64,
     #[pyo3(get)]
     pub unrealized_pnl: f64,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PositionSnapshot {
+    pub fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
 }
 
 #[gen_stub_pyclass]
@@ -247,6 +328,11 @@ impl BacktestResult {
                     end_time: 0,
                     duration: 0,
                     total_bars: 0,
+                    exposure_time_pct: 0.0,
+                    var_95: 0.0,
+                    var_99: 0.0,
+                    cvar_95: 0.0,
+                    cvar_99: 0.0,
                 },
                 trade_metrics: trade_pnl,
                 trades,
@@ -426,6 +512,36 @@ impl BacktestResult {
 
         let total_bars = equity_curve.len();
 
+        // 10. Exposure Time %
+        let exposure_count = snapshots.iter().filter(|(_, positions)| {
+             positions.iter().any(|p| p.quantity != 0.0)
+        }).count();
+        let exposure_time_pct = if !snapshots.is_empty() {
+             (exposure_count as f64 / snapshots.len() as f64) * 100.0
+        } else {
+             0.0
+        };
+
+        // 11. VaR and CVaR
+        let mut sorted_returns = returns.clone();
+        sorted_returns.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let calculate_risk_metrics = |alpha: f64, sorted_rets: &Vec<f64>| -> (f64, f64) {
+             if sorted_rets.is_empty() {
+                 return (0.0, 0.0);
+             }
+             let idx = ((sorted_rets.len() as f64) * alpha).floor() as usize;
+             let idx = idx.min(sorted_rets.len() - 1);
+             let var = sorted_rets[idx];
+
+             let cvar_sum: f64 = sorted_rets[0..=idx].iter().sum();
+             let cvar = cvar_sum / (idx + 1) as f64;
+             (var, cvar)
+        };
+
+        let (var_95, cvar_95) = calculate_risk_metrics(0.05, &sorted_returns);
+        let (var_99, cvar_99) = calculate_risk_metrics(0.01, &sorted_returns);
+
         BacktestResult {
             equity_curve,
             metrics: PerformanceMetrics {
@@ -450,6 +566,11 @@ impl BacktestResult {
                 end_time: end_ts,
                 duration: (end_ts - start_ts),
                 total_bars,
+                exposure_time_pct,
+                var_95,
+                var_99,
+                cvar_95,
+                cvar_99,
             },
             trade_metrics: trade_pnl,
             trades,
@@ -607,6 +728,13 @@ impl BacktestResult {
             "equity_r2",
             "std_error",
             "calmar_ratio",
+            "exposure_time_pct",
+            "var_95",
+            "var_99",
+            "cvar_95",
+            "cvar_99",
+            "sqn",
+            "kelly_criterion",
         ];
 
         let mut values = Vec::<Py<PyAny>>::new();
@@ -682,6 +810,13 @@ impl BacktestResult {
         push_f64(metrics.equity_r2);
         push_f64(metrics.std_error);
         push_f64(metrics.calmar_ratio);
+        push_f64(metrics.exposure_time_pct);
+        push_f64(metrics.var_95);
+        push_f64(metrics.var_99);
+        push_f64(metrics.cvar_95);
+        push_f64(metrics.cvar_99);
+        push_f64(t_metrics.sqn);
+        push_f64(t_metrics.kelly_criterion);
 
         // Try to import pandas
         match py.import("pandas") {
@@ -1466,6 +1601,38 @@ impl TradeTracker {
             0.0
         };
 
+        // SQN
+        let sqn = if total_closed_trades > 0 {
+            let avg_pnl_val = to_f64(sum_pnl) / total_closed_trades as f64;
+            let variance = self.closed_trades_stats.iter()
+                .map(|(pnl, _, _, _)| {
+                    let diff = to_f64(*pnl) - avg_pnl_val;
+                    diff * diff
+                })
+                .sum::<f64>() / total_closed_trades as f64;
+            let std_dev = variance.sqrt();
+            if std_dev != 0.0 {
+                (avg_pnl_val / std_dev) * (total_closed_trades as f64).sqrt()
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        // Kelly Criterion
+        let kelly_criterion = if win_rate > 0.0 && avg_loss.abs() > 0.0 {
+            let w = win_rate / 100.0;
+            let r = avg_profit / avg_loss.abs();
+            if r > 0.0 {
+                 w - (1.0 - w) / r
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
         TradePnL {
             gross_pnl: to_f64(self.total_pnl),
             net_pnl: to_f64(self.total_pnl - self.total_commission),
@@ -1498,6 +1665,8 @@ impl TradeTracker {
             profit_factor,
             total_profit: to_f64(self.won_pnl),
             total_loss: to_f64(self.lost_pnl),
+            sqn,
+            kelly_criterion,
         }
     }
 }
