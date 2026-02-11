@@ -8,8 +8,6 @@
 
 The latest version features a modular design, independent portfolio management, advanced order type support, and convenient data loading and caching mechanisms.
 
-📖 **[Design and Development Guide (DESIGN.md)](design.md)**: If you want to understand the internal architecture, learn how to design such systems, or contribute to development, please read this document.
-
 ## Core Features
 
 *   **Extreme Performance**: The core backtesting engine is written in Rust and exposed to Python via PyO3.
