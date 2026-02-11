@@ -28,6 +28,7 @@
 
 *   **极致性能**：得益于 Rust 的零开销抽象与 **Zero-Copy** 数据架构，回测速度较传统纯 Python 框架（如 Backtrader）提升 **X倍+**。
 *   **原生 ML 支持**：内置 **Walk-forward Validation**（滚动训练）框架，无缝集成 PyTorch/Scikit-learn，让 AI 策略开发从实验到回测一气呵成。
+*   **参数优化**：内置多进程网格搜索（Grid Search）框架，支持策略参数的高效并行优化。
 *   **专业级风控**：内置完善的订单流管理与即时风控模块，支持多资产组合回测。
 
 👉 **[阅读完整文档](docs/zh/index.md)** | **[English Documentation](docs/en/index.md)**
