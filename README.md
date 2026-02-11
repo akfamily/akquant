@@ -52,7 +52,7 @@ from akquant import Strategy
 
 # 1. 准备数据
 # 使用 akshare 获取 A 股历史数据 (需安装: pip install akshare)
-df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20230101", end_date="20231231")
+df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20250212", end_date="20260212")
 
 
 class MyStrategy(Strategy):
@@ -65,16 +65,17 @@ class MyStrategy(Strategy):
         current_pos = self.get_position(bar.symbol)
 
         if current_pos == 0 and bar.close > bar.open:
-            self.buy(bar.symbol, 100)
+            self.buy(symbol=bar.symbol, quantity=100)
             print(f"[{bar.timestamp_str}] Buy 100 at {bar.close:.2f}")
 
         elif current_pos > 0 and bar.close < bar.open:
-            self.close_position(bar.symbol)
+            self.close_position(symbol=bar.symbol)
             print(f"[{bar.timestamp_str}] Sell 100 at {bar.close:.2f}")
 
 
 # 运行回测
 result = aq.run_backtest(
+    cash=100000.0,
     data=df,
     strategy=MyStrategy,
     symbol="sh600000"
@@ -82,69 +83,69 @@ result = aq.run_backtest(
 
 # 打印回测结果
 print("\n=== Backtest Result ===")
-print(result.metrics_df)
-
+print(result)
 ```
 
 **运行结果示例:**
 
 ```text
 === Backtest Result ===
-                                            value
+BacktestResult:
+                                            Value
 name
-start_time              2023-01-03 00:00:00+08:00
-end_time                2023-12-29 00:00:00+08:00
-duration                        360 days, 0:00:00
-total_bars                                    242
-trade_count                                  56.0
-initial_market_value                    1000000.0
-end_market_value                     999433.06461
-total_pnl                                    17.0
-unrealized_pnl                                2.0
-total_return_pct                        -0.056694
-annualized_return                       -0.000575
-volatility                               0.000091
-total_profit                                175.0
-total_loss                                 -158.0
-total_commission                        585.93539
-max_drawdown                            566.93539
-max_drawdown_pct                         0.056694
-win_rate                                33.928571
-loss_rate                               66.071429
-winning_trades                               19.0
-losing_trades                                37.0
-avg_pnl                                  0.303571
-avg_return_pct                           0.042808
-avg_trade_bars                           1.946429
-avg_profit                               9.210526
-avg_profit_pct                           1.269445
-avg_winning_trade_bars                   2.789474
-avg_loss                                 -4.27027
-avg_loss_pct                            -0.587086
-avg_losing_trade_bars                    1.513514
-largest_win                                  45.0
-largest_win_pct                          6.016043
-largest_win_bars                              4.0
-largest_loss                                -33.0
-largest_loss_pct                        -4.441454
+start_time              2025-02-12 00:00:00+08:00
+end_time                2026-02-11 00:00:00+08:00
+duration                        364 days, 0:00:00
+total_bars                                    248
+trade_count                                  62.0
+initial_market_value                     100000.0
+end_market_value                      99145.34904
+total_pnl                                  -196.0
+unrealized_pnl                                0.0
+total_return_pct                        -0.854651
+annualized_return                        -0.00857
+volatility                               0.002504
+total_profit                                548.0
+total_loss                                 -744.0
+total_commission                        658.65096
+max_drawdown                            854.65096
+max_drawdown_pct                         0.854651
+win_rate                                22.580645
+loss_rate                               77.419355
+winning_trades                               14.0
+losing_trades                                48.0
+avg_pnl                                  -3.16129
+avg_return_pct                          -0.199577
+avg_trade_bars                           1.967742
+avg_profit                              39.142857
+avg_profit_pct                           3.371156
+avg_winning_trade_bars                        4.5
+avg_loss                                    -15.5
+avg_loss_pct                            -1.241041
+avg_losing_trade_bars                    1.229167
+largest_win                                 120.0
+largest_win_pct                         10.178117
+largest_win_bars                              7.0
+largest_loss                                -70.0
+largest_loss_pct                        -5.380477
 largest_loss_bars                             1.0
-max_wins                                      3.0
-max_losses                                    7.0
-sharpe_ratio                            -6.320253
-sortino_ratio                           -6.831061
-profit_factor                            1.107595
-ulcer_index                              0.000307
-upi                                     -1.874895
-equity_r2                                0.981117
-std_error                               22.958262
-calmar_ratio                            -1.013885
-exposure_time_pct                       45.867769
-var_95                                  -0.000009
-var_99                                  -0.000019
-cvar_95                                 -0.000015
-cvar_99                                 -0.000025
-sqn                                       0.20869
-kelly_criterion                          0.032959
+max_wins                                      2.0
+max_losses                                    9.0
+sharpe_ratio                            -3.421951
+sortino_ratio                           -4.061416
+profit_factor                            0.736559
+ulcer_index                              0.004391
+upi                                     -1.951616
+equity_r2                                   0.926
+std_error                               70.598038
+calmar_ratio                            -1.002735
+exposure_time_pct                       49.193548
+var_95                                  -0.000281
+var_99                                  -0.000624
+cvar_95                                 -0.000441
+cvar_99                                 -0.000709
+sqn                                     -0.743693
+kelly_criterion                         -0.080763
 ```
 
 ## 文档索引
