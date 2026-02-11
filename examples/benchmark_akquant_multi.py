@@ -234,10 +234,10 @@ if __name__ == "__main__":
             "%Y-%m-%d %H:%M"
         )
         exit_dt = pd.to_datetime(trade.exit_time, unit="ns").strftime("%Y-%m-%d %H:%M")
-        direction = (
-            str(trade.direction).split(".")[-1]
-            if "." in str(trade.direction)
-            else str(trade.direction)
+        side = (
+            str(trade.side).split(".")[-1]
+            if "." in str(trade.side)
+            else str(trade.side)
         )
 
         # Use new fields from updated Rust struct
@@ -247,7 +247,7 @@ if __name__ == "__main__":
         net_pnl = trade.net_pnl
 
         print(
-            f"{trade.symbol:<10} {direction:<5} {entry_dt:<18} {exit_dt:<18} "
+            f"{trade.symbol:<10} {side:<5} {entry_dt:<18} {exit_dt:<18} "
             f"{int(trade.quantity):<6} {trade.entry_price:<10.2f} "
             f"{trade.exit_price:<10.2f} {gross_pnl:<10.2f} "
             f"{trade.commission:<8.2f} {net_pnl:<10.2f}"

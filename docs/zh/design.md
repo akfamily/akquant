@@ -136,7 +136,7 @@ akquant/
         *   `prepare_features(df)`: 特征工程接口。
 *   **`BacktestResult` (`backtest.py`)**:
     *   封装 Rust 返回的 `BacktestResult`。
-    *   提供 `metrics_df`, `daily_positions_df` 等便捷属性。
+    *   提供 `metrics_df`, `positions` 等便捷属性。
 *   **`Sizer` (`sizer.py`)**: 仓位管理基类。
 
 ### 2.9 机器学习框架 (`python/akquant/ml/`)

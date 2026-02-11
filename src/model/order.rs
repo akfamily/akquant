@@ -40,6 +40,9 @@ pub struct Order {
     pub status: OrderStatus,
     pub filled_quantity: Decimal,
     pub average_filled_price: Option<Decimal>,
+    #[pyo3(get)]
+    pub created_at: i64,
+    pub commission: Decimal,
 }
 
 #[gen_stub_pymethods]
@@ -55,8 +58,9 @@ impl Order {
     /// :param price: 价格
     /// :param time_in_force: 订单有效期 (可选，默认 Day)
     /// :param trigger_price: 触发价格 (可选)
+    /// :param created_at: 创建时间戳 (可选，默认 0)
     #[new]
-    #[pyo3(signature = (id, symbol, side, order_type, quantity, price=None, time_in_force=None, trigger_price=None))]
+    #[pyo3(signature = (id, symbol, side, order_type, quantity, price=None, time_in_force=None, trigger_price=None, created_at=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
@@ -67,6 +71,7 @@ impl Order {
         price: Option<&Bound<'_, PyAny>>,
         time_in_force: Option<TimeInForce>,
         trigger_price: Option<&Bound<'_, PyAny>>,
+        created_at: Option<i64>,
     ) -> PyResult<Self> {
         Ok(Order {
             id,
@@ -86,7 +91,14 @@ impl Order {
             status: OrderStatus::New,
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
+            created_at: created_at.unwrap_or(0),
+            commission: Decimal::ZERO,
         })
+    }
+
+    #[getter]
+    fn get_commission(&self) -> f64 {
+        self.commission.to_f64().unwrap_or_default()
     }
 
     #[getter]

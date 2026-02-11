@@ -68,9 +68,21 @@ class BacktestResult:
     equity_curve: list[tuple[int, float]]
     metrics: "PerformanceMetrics"
     trade_metrics: "TradePnL"
+    metrics_df: typing.Any
+    orders_df: typing.Any
     trades: list["ClosedTrade"]
-    daily_positions: list[tuple[int, dict[str, float]]]
+    snapshots: list[tuple[int, list["PositionSnapshot"]]]
     def get_trades_dict(self) -> dict[str, list[typing.Any]]: ...
+    def get_positions_dict(self) -> dict[str, list[typing.Any]]: ...
+
+class PositionSnapshot:
+    r"""每日持仓快照."""
+
+    symbol: str
+    quantity: float
+    cost_basis: float
+    market_value: float
+    unrealized_pnl: float
 
 class Bar:
     r"""
@@ -153,12 +165,13 @@ class ClosedTrade:
     entry_price: float
     exit_price: float
     quantity: float
-    direction: str
+    side: str
     pnl: float
     net_pnl: float
     return_pct: float
     commission: float
     duration_bars: int
+    duration: int
 
 class DataFeed:
     def sort(self) -> None: ...
@@ -455,6 +468,10 @@ class PerformanceMetrics:
     initial_market_value: float
     end_market_value: float
     total_return_pct: float
+    start_time: int
+    end_time: int
+    duration: int
+    total_bars: int
 
 class Portfolio:
     r"""

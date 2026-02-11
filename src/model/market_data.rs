@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc, FixedOffset};
+use chrono::{FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[gen_stub_pyclass]
 #[pyclass]
@@ -142,7 +142,9 @@ impl Bar {
         if let Some(dt) = Utc.timestamp_opt(secs, nanos).single() {
             // Default to Asia/Shanghai (UTC+8)
             let tz = FixedOffset::east_opt(8 * 3600).unwrap();
-            dt.with_timezone(&tz).format("%Y-%m-%d %H:%M:%S").to_string()
+            dt.with_timezone(&tz)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
         } else {
             self.timestamp.to_string()
         }
@@ -234,7 +236,9 @@ impl Tick {
         if let Some(dt) = Utc.timestamp_opt(secs, nanos).single() {
             // Default to Asia/Shanghai (UTC+8)
             let tz = FixedOffset::east_opt(8 * 3600).unwrap();
-            dt.with_timezone(&tz).format("%Y-%m-%d %H:%M:%S").to_string()
+            dt.with_timezone(&tz)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
         } else {
             self.timestamp.to_string()
         }

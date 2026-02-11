@@ -200,8 +200,10 @@ impl RSI {
                     }
                 } else {
                     // Wilder's Smoothing
-                    self.avg_gain = (self.avg_gain * (self.period as f64 - 1.0) + gain) / self.period as f64;
-                    self.avg_loss = (self.avg_loss * (self.period as f64 - 1.0) + loss) / self.period as f64;
+                    self.avg_gain =
+                        (self.avg_gain * (self.period as f64 - 1.0) + gain) / self.period as f64;
+                    self.avg_loss =
+                        (self.avg_loss * (self.period as f64 - 1.0) + loss) / self.period as f64;
                 }
             }
             None => {}
@@ -352,7 +354,8 @@ impl ATR {
         }
 
         // Wilder's Smoothing
-        self.smoothed_tr = (self.smoothed_tr * (self.period as f64 - 1.0) + tr) / self.period as f64;
+        self.smoothed_tr =
+            (self.smoothed_tr * (self.period as f64 - 1.0) + tr) / self.period as f64;
         Some(self.smoothed_tr)
     }
 

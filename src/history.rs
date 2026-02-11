@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use rust_decimal::prelude::ToPrimitive;
 use crate::model::Bar;
+use rust_decimal::prelude::ToPrimitive;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct SymbolHistory {
@@ -77,7 +77,9 @@ impl HistoryBuffer {
             return;
         }
 
-        let history = self.data.entry(bar.symbol.clone())
+        let history = self
+            .data
+            .entry(bar.symbol.clone())
             .or_insert_with(|| SymbolHistory::new(self.default_capacity));
 
         history.push(bar);

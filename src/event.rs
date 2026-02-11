@@ -1,4 +1,4 @@
-use crate::model::{Bar, Tick, Order, Trade};
+use crate::model::{Bar, Order, Tick, Trade};
 
 #[derive(Debug, Clone)]
 pub enum Event {

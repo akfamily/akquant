@@ -234,6 +234,8 @@ mod tests {
             status: crate::model::OrderStatus::New,
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
+            created_at: 0,
+            commission: Decimal::ZERO,
         }
     }
 
@@ -329,30 +331,36 @@ mod tests {
 
     #[test]
     fn test_risk_available_position() {
-        use crate::model::{Instrument, AssetType};
+        use crate::model::{AssetType, Instrument};
 
         let risk = RiskManager::new();
         // Config doesn't need specific setting, check is always active for Stock/Fund
 
         let mut portfolio = create_dummy_portfolio();
         // Available: 100
-        portfolio.available_positions.insert("AAPL".to_string(), Decimal::from(100));
+        portfolio
+            .available_positions
+            .insert("AAPL".to_string(), Decimal::from(100));
 
         let mut instruments = HashMap::new();
-        instruments.insert("AAPL".to_string(), Instrument {
-            symbol: "AAPL".to_string(),
-            asset_type: AssetType::Stock,
-            multiplier: Decimal::ONE,
-            tick_size: Decimal::from_str("0.01").unwrap(),
-            lot_size: Decimal::from(100),
-            margin_ratio: Decimal::ONE,
-            option_type: None,
-            strike_price: None,
-            expiry_date: None,
-        });
+        instruments.insert(
+            "AAPL".to_string(),
+            Instrument {
+                symbol: "AAPL".to_string(),
+                asset_type: AssetType::Stock,
+                multiplier: Decimal::ONE,
+                tick_size: Decimal::from_str("0.01").unwrap(),
+                lot_size: Decimal::from(100),
+                margin_ratio: Decimal::ONE,
+                option_type: None,
+                strike_price: None,
+                expiry_date: None,
+            },
+        );
 
         // Sell 101 -> Fail
-        let mut order_fail = create_dummy_order("AAPL", Decimal::from(101), Some(Decimal::from(10)));
+        let mut order_fail =
+            create_dummy_order("AAPL", Decimal::from(101), Some(Decimal::from(10)));
         order_fail.side = OrderSide::Sell;
 
         let active_orders = Vec::new();
@@ -371,18 +379,22 @@ mod tests {
         let mut order_ok2 = create_dummy_order("AAPL", Decimal::from(50), Some(Decimal::from(10)));
         order_ok2.side = OrderSide::Sell;
 
-        let mut pending_order = create_dummy_order("AAPL", Decimal::from(50), Some(Decimal::from(10)));
+        let mut pending_order =
+            create_dummy_order("AAPL", Decimal::from(50), Some(Decimal::from(10)));
         pending_order.side = OrderSide::Sell;
         let active_orders_2 = vec![pending_order];
 
-        let result_ok2 = risk.check_internal(&order_ok2, &portfolio, &instruments, &active_orders_2);
+        let result_ok2 =
+            risk.check_internal(&order_ok2, &portfolio, &instruments, &active_orders_2);
         assert!(result_ok2.is_none());
 
         // Sell 51 with Pending Sell 50 -> Fail (Total 101)
-        let mut order_fail2 = create_dummy_order("AAPL", Decimal::from(51), Some(Decimal::from(10)));
+        let mut order_fail2 =
+            create_dummy_order("AAPL", Decimal::from(51), Some(Decimal::from(10)));
         order_fail2.side = OrderSide::Sell;
 
-        let result_fail2 = risk.check_internal(&order_fail2, &portfolio, &instruments, &active_orders_2);
+        let result_fail2 =
+            risk.check_internal(&order_fail2, &portfolio, &instruments, &active_orders_2);
         assert!(result_fail2.is_some());
     }
 }

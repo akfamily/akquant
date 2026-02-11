@@ -53,21 +53,28 @@ class BacktestResult:
         self._timezone = timezone
 
     @property
-    def daily_positions_df(self) -> pd.DataFrame:
+    def positions(self) -> pd.DataFrame:
         """
-        Get daily positions as a Pandas DataFrame.
+        Get positions history as a Pandas DataFrame.
 
         Index: Datetime (Timezone-aware)
         Columns: Symbols
         Values: Quantity.
         """
-        if not self._raw.daily_positions:
+        if not self._raw.snapshots:
             return pd.DataFrame()
 
-        # Unzip the list of tuples [(ts, {sym: qty}), ...]
-        timestamps, positions = zip(*self._raw.daily_positions)
+        # Extract data from snapshots
+        data = []
+        timestamps = []
 
-        df = pd.DataFrame(list(positions), index=timestamps)
+        for ts, snapshots in self._raw.snapshots:
+            timestamps.append(ts)
+            # Create a dict for this timestamp: {symbol: quantity}
+            row = {s.symbol: s.quantity for s in snapshots}
+            data.append(row)
+
+        df = pd.DataFrame(data, index=timestamps)
 
         # Convert nanosecond timestamp to datetime with timezone
         df.index = pd.to_datetime(df.index, unit="ns", utc=True).tz_convert(
@@ -77,57 +84,118 @@ class BacktestResult:
         # Sort index just in case
         df = df.sort_index()
 
-        # Fill missing values with 0 (assuming 0 position if not present in map)
+        # Fill missing values with 0.0
         df = df.fillna(0.0)
 
         return df
 
     @property
+    def positions_df(self) -> pd.DataFrame:
+        """
+        Get detailed positions history as a Pandas DataFrame (PyBroker style).
+
+        Columns:
+            - long_shares
+            - short_shares
+            - close
+            - equity
+            - market_value
+            - margin
+            - unrealized_pnl
+            - symbol
+            - date
+        """
+        # Try to use the Rust optimized getter if available
+        if hasattr(self._raw, "get_positions_dict"):
+            data = self._raw.get_positions_dict()
+            if not data or not data["symbol"]:
+                return pd.DataFrame()
+
+            df = pd.DataFrame(data)
+
+            # Convert date to datetime
+            df["date"] = pd.to_datetime(df["date"], unit="ns", utc=True).dt.tz_convert(
+                self._timezone
+            )
+
+            # Reorder columns
+            cols = [
+                "long_shares",
+                "short_shares",
+                "close",
+                "equity",
+                "market_value",
+                "margin",
+                "unrealized_pnl",
+                "symbol",
+                "date",
+            ]
+            # Ensure all columns exist
+            # (in case of empty or mismatch, though Rust guarantees keys)
+            existing_cols = [c for c in cols if c in df.columns]
+            df = df[existing_cols]
+
+            # Sort
+            df = df.sort_values(by=["symbol", "date"])
+
+            return df
+
+        return pd.DataFrame()
+
+    @property
     def metrics_df(self) -> pd.DataFrame:
-        """Get performance metrics as a Pandas DataFrame."""
-        metrics = self._raw.metrics
+        """
+        Get performance metrics as a Pandas DataFrame.
 
-        # Dynamic extraction of fields from the Rust PerformanceMetrics object
-        # This avoids hardcoding field names and automatically supports new metrics
-        data = {
-            name: getattr(metrics, name)
-            for name in dir(metrics)
-            if not name.startswith("__")
-            and not callable(getattr(metrics, name))
-            and isinstance(getattr(metrics, name), (int, float, str, bool))
-        }
+        Returns a DataFrame indexed by metric name with a single 'value' column,
+        matching PyBroker's format.
+        """
+        df = cast(pd.DataFrame, self._raw.metrics_df)
 
-        # Defined preferred order for display
-        preferred_order = [
-            "total_return_pct",
-            "annualized_return",
-            "sharpe_ratio",
-            "sortino_ratio",
-            "max_drawdown_pct",
-            "volatility",
-            "win_rate",
-            "end_market_value",
-            "initial_market_value",
-            "total_return",
-            "max_drawdown",
-            "ulcer_index",
-            "upi",
-            "equity_r2",
-            "std_error",
-        ]
+        # Convert time fields to the configured timezone
+        time_fields = ["start_time", "end_time"]
+        for field in time_fields:
+            if field in df.index:
+                val = df.at[field, "value"]
+                if val is not None:
+                    try:
+                        # Convert to pandas Timestamp for easy tz handling
+                        ts = pd.Timestamp(cast(Any, val))
+                        if ts.tz is not None:
+                            df.at[field, "value"] = ts.tz_convert(self._timezone)
+                    except Exception:
+                        pass
 
-        df = pd.DataFrame([data], index=["Backtest"])
+        return df
 
-        # Sort columns: preferred ones first in order, then others alphabetically
-        cols = list(df.columns)
-        sorted_cols = sorted(
-            cols,
-            key=lambda x: preferred_order.index(x)
-            if x in preferred_order
-            else 999 + (0 if x < "a" else 1),
-        )
+    @cached_property
+    def orders_df(self) -> pd.DataFrame:
+        """Get orders history as a Pandas DataFrame."""
+        if not hasattr(self._raw, "orders_df"):
+            return pd.DataFrame()
 
-        return df[sorted_cols].T
+        df = cast(pd.DataFrame, self._raw.orders_df.copy())
+
+        if df.empty:
+            return df
+
+        if "created_at" in df.columns:
+            # Rust returns int64 timestamp (ns since epoch)
+            if pd.api.types.is_numeric_dtype(df["created_at"]):
+                df["created_at"] = pd.to_datetime(
+                    df["created_at"], unit="ns", utc=True
+                ).dt.tz_convert(self._timezone)
+            elif hasattr(df["created_at"], "dt"):
+                if df["created_at"].dt.tz is None:
+                    df["created_at"] = (
+                        df["created_at"]
+                        .dt.tz_localize("UTC")
+                        .dt.tz_convert(self._timezone)
+                    )
+                else:
+                    df["created_at"] = df["created_at"].dt.tz_convert(self._timezone)
+
+        return df
 
     @cached_property
     def trades_df(self) -> pd.DataFrame:
@@ -151,12 +219,13 @@ class BacktestResult:
                         "entry_price": t.entry_price,
                         "exit_price": t.exit_price,
                         "quantity": t.quantity,
-                        "direction": t.direction,
+                        "side": t.side,
                         "pnl": t.pnl,
                         "net_pnl": t.net_pnl,
                         "return_pct": t.return_pct,
                         "commission": t.commission,
                         "duration_bars": t.duration_bars,
+                        "duration": t.duration,
                     }
                 )
             df = pd.DataFrame(data_list)
@@ -168,6 +237,10 @@ class BacktestResult:
         df["exit_time"] = pd.to_datetime(
             df["exit_time"], unit="ns", utc=True
         ).dt.tz_convert(self._timezone)
+
+        # Convert duration to Timedelta
+        if "duration" in df.columns:
+            df["duration"] = pd.to_timedelta(df["duration"], unit="ns")
 
         return df
 
@@ -183,9 +256,7 @@ class BacktestResult:
 
     def __dir__(self) -> List[str]:
         """Return the list of attributes including raw result attributes."""
-        return list(
-            set(dir(self._raw) + list(self.__dict__.keys()) + ["daily_positions_df"])
-        )
+        return list(set(dir(self._raw) + list(self.__dict__.keys()) + ["positions"]))
 
     def plot(
         self,

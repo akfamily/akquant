@@ -1,8 +1,9 @@
-use crate::model::market_data::extract_decimal;
-use crate::model::{Order, OrderSide, OrderType, TimeInForce, Timer, TradingSession, Trade};
-use crate::event::Event;
 use crate::analysis::ClosedTrade;
+use crate::event::Event;
 use crate::history::HistoryBuffer;
+use crate::model::market_data::extract_decimal;
+use crate::model::{Order, OrderSide, OrderType, TimeInForce, Timer, Trade, TradingSession};
+use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
@@ -10,7 +11,6 @@ use rust_decimal::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, mpsc::Sender};
 use uuid::Uuid;
-use numpy::PyArray1;
 
 #[gen_stub_pyclass]
 #[pyclass]
@@ -34,6 +34,8 @@ pub struct StrategyContext {
     pub available_positions: HashMap<String, Decimal>,
     #[pyo3(get)]
     pub session: TradingSession,
+    #[pyo3(get)]
+    pub current_time: i64,
     // Do NOT expose closed_trades as a direct getter to avoid expensive cloning on every access
     pub closed_trades: Arc<Vec<ClosedTrade>>,
     // Recent trades generated in the last step
@@ -51,6 +53,7 @@ impl StrategyContext {
         positions: HashMap<String, Decimal>,
         available_positions: HashMap<String, Decimal>,
         session: TradingSession,
+        current_time: i64,
         active_orders: Vec<Order>,
         closed_trades: Arc<Vec<ClosedTrade>>,
         recent_trades: Vec<Trade>,
@@ -66,6 +69,7 @@ impl StrategyContext {
             positions,
             available_positions,
             session,
+            current_time,
             closed_trades,
             recent_trades,
             history_buffer,
@@ -83,6 +87,7 @@ impl StrategyContext {
         positions: HashMap<String, f64>,
         available_positions: HashMap<String, f64>,
         session: Option<TradingSession>,
+        current_time: Option<i64>,
         active_orders: Option<Vec<Order>>,
         closed_trades: Option<Vec<ClosedTrade>>,
         recent_trades: Option<Vec<Trade>>,
@@ -105,6 +110,7 @@ impl StrategyContext {
             positions: pos_dec,
             available_positions: avail_dec,
             session: session.unwrap_or(TradingSession::Continuous),
+            current_time: current_time.unwrap_or(0),
             closed_trades: Arc::new(closed_trades.unwrap_or_default()),
             recent_trades: recent_trades.unwrap_or_default(),
             history_buffer: None,
@@ -243,6 +249,8 @@ impl StrategyContext {
             status: crate::model::OrderStatus::New,
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
+            created_at: self.current_time,
+            commission: Decimal::ZERO,
         };
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(Event::OrderRequest(order));
@@ -291,6 +299,8 @@ impl StrategyContext {
             status: crate::model::OrderStatus::New,
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
+            created_at: self.current_time,
+            commission: Decimal::ZERO,
         };
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(Event::OrderRequest(order));
