@@ -67,6 +67,7 @@ plugins:
             Architecture: 架构原理
             Design Guide: 设计规范
             API Reference: API 文档
+            Backtest Result: 回测结果
         - locale: en
           name: English
           build: true
@@ -90,6 +91,7 @@ plugins:
             Architecture: Architecture
             Design Guide: Design Guide
             API Reference: API Reference
+            Backtest Result: Backtest Result
 
 nav:
   - Home: index.md
