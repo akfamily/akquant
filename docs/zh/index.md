@@ -141,7 +141,7 @@ print(result.metrics_df)
 # 交易记录表
 print(result.trades_df)
 # 每日持仓表
-print(result.daily_positions_df)
+print(result.positions_df)
 ```
 
 ### 2. 函数式 API (Zipline 风格)

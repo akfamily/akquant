@@ -17,7 +17,7 @@ mod risk;
 
 use analysis::{BacktestResult, ClosedTrade, PerformanceMetrics, TradePnL};
 use context::StrategyContext;
-use data::{DataFeed, BarAggregator, from_arrays};
+use data::{BarAggregator, DataFeed, from_arrays};
 use engine::Engine;
 use indicators::{ATR, BollingerBands, EMA, MACD, RSI, SMA};
 use model::{

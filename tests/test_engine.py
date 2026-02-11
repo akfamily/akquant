@@ -136,7 +136,6 @@ def test_backtest_regression_baseline() -> None:
     day3 = bars[2].timestamp
     expected_equity = [
         (day1, 100000.0),
-        (day1, 100000.0),
         (day2, 100020.0),
         (day3, 100010.0),
     ]
@@ -153,10 +152,10 @@ def test_backtest_regression_baseline() -> None:
     assert trade.entry_price == pytest.approx(10.0, rel=1e-9)
     assert trade.exit_price == pytest.approx(11.0, rel=1e-9)
     assert trade.quantity == pytest.approx(10.0, rel=1e-9)
-    assert trade.direction == "Long"
+    assert trade.side == "Long"
     assert trade.pnl == pytest.approx(10.0, rel=1e-9)
     assert trade.net_pnl == pytest.approx(10.0, rel=1e-9)
-    assert trade.return_pct == pytest.approx(0.1, rel=1e-9)
+    assert trade.return_pct == pytest.approx(10.0, rel=1e-9)
     assert trade.commission == pytest.approx(0.0, rel=1e-9)
     assert trade.duration_bars == 2
 

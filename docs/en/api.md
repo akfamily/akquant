@@ -195,7 +195,7 @@ Risk configuration.
 Backtest result container.
 
 *   `metrics_df`: DataFrame containing performance metrics (Total Return, Sharpe, Max Drawdown, Ulcer Index, UPI, etc.).
-*   `daily_positions_df`: Daily position DataFrame.
+*   `positions_df`: Daily position DataFrame.
 *   `trades`: List of trade records (`ClosedTrade` objects).
 *   `equity_curve`: Equity curve data.
 

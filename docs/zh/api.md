@@ -192,12 +192,20 @@ Instrument(
 
 ### `akquant.BacktestResult`
 
-回测结果容器。
+回测运行后返回的结果对象，包含账户权益曲线、交易记录和详细的绩效指标。
 
-*   `metrics_df`: 包含各项绩效指标的 DataFrame (Total Return, Sharpe, Max Drawdown, Ulcer Index, UPI 等)。
-*   `daily_positions_df`: 每日持仓 DataFrame。
-*   `trades`: 交易记录列表 (`ClosedTrade` 对象)。
-*   `equity_curve`: 权益曲线数据。
+**主要属性:**
+
+*   `metrics_df`: (pd.DataFrame) 包含所有绩效指标的表格，以指标名称为索引。
+*   `trades_df`: (pd.DataFrame) 包含所有平仓交易记录的表格。
+*   `positions_df`: (pd.DataFrame) 包含每日持仓快照的表格。
+*   `positions`: (pd.DataFrame) 每日持仓快照 (原 `daily_positions_df`，已重命名)。
+*   `equity_curve`: (List[Tuple[int, float]]) 权益曲线原始数据。
+
+**绩效指标详解 (Performance Metrics):**
+
+详细的绩效指标说明、单位及计算公式，请参考 **[绩效指标详解](metrics.md)**。
+
 
 ## 6. 内置指标 (Indicators)
 

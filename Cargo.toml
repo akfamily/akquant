@@ -13,7 +13,7 @@ name = "akquant"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.27.2", features = ["abi3-py310"] }
+pyo3 = { version = "0.27.2", features = ["abi3-py310", "chrono"] }
 numpy = "0.27"
 pyo3-stub-gen = "0.6.0"
 serde = { version = "1.0", features = ["derive"] }

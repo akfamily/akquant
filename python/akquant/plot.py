@@ -70,7 +70,7 @@ def plot_result(
 
     # Determine Symbol
     trades_df = result.trades_df
-    positions_df = result.daily_positions_df
+    positions_df = result.positions_df
 
     if symbol is None:
         if not trades_df.empty:

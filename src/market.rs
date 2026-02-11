@@ -402,7 +402,12 @@ mod tests {
         let instr = create_stock_instrument("AAPL");
 
         // Buy 100 @ 100. Value = 10000. Comm = 10.
-        let comm = market.calculate_commission(&instr, OrderSide::Buy, Decimal::from(100), Decimal::from(100));
+        let comm = market.calculate_commission(
+            &instr,
+            OrderSide::Buy,
+            Decimal::from(100),
+            Decimal::from(100),
+        );
         assert_eq!(comm, Decimal::from(10));
     }
 
@@ -416,7 +421,12 @@ mod tests {
         // Brokerage = 1000 * 0.0003 = 0.3 < 5 -> 5.
         // Transfer = 1000 * 0.00001 = 0.01.
         // Total = 5.01.
-        let comm_buy = market.calculate_commission(&instr, OrderSide::Buy, Decimal::from(10), Decimal::from(100));
+        let comm_buy = market.calculate_commission(
+            &instr,
+            OrderSide::Buy,
+            Decimal::from(10),
+            Decimal::from(100),
+        );
         assert_eq!(comm_buy, Decimal::from_str("5.01").unwrap());
 
         // Case 2: Sell (Add Stamp Tax)
@@ -425,7 +435,12 @@ mod tests {
         // Stamp Tax = 1000 * 0.0005 = 0.5.
         // Transfer = 0.01.
         // Total = 5.51.
-        let comm_sell = market.calculate_commission(&instr, OrderSide::Sell, Decimal::from(10), Decimal::from(100));
+        let comm_sell = market.calculate_commission(
+            &instr,
+            OrderSide::Sell,
+            Decimal::from(10),
+            Decimal::from(100),
+        );
         assert_eq!(comm_sell, Decimal::from_str("5.51").unwrap());
     }
 
@@ -436,8 +451,15 @@ mod tests {
         let mut available = HashMap::new();
 
         // Buy 100. T+1 means available shouldn't increase immediately.
-        market.update_available_position(&mut available, &instr, Decimal::from(100), OrderSide::Buy);
-        assert!(available.get("600000").is_none() || *available.get("600000").unwrap() == Decimal::ZERO);
+        market.update_available_position(
+            &mut available,
+            &instr,
+            Decimal::from(100),
+            OrderSide::Buy,
+        );
+        assert!(
+            available.get("600000").is_none() || *available.get("600000").unwrap() == Decimal::ZERO
+        );
 
         // Day Close. Positions (Inventory) has 100. Available should update.
         let mut positions = HashMap::new();
@@ -466,12 +488,24 @@ mod tests {
         let market = ChinaMarket::new();
 
         // 9:15 -> CallAuction
-        assert_eq!(market.get_session_status(NaiveTime::from_hms_opt(9, 15, 0).unwrap()), TradingSession::CallAuction);
+        assert_eq!(
+            market.get_session_status(NaiveTime::from_hms_opt(9, 15, 0).unwrap()),
+            TradingSession::CallAuction
+        );
         // 9:30 -> Continuous
-        assert_eq!(market.get_session_status(NaiveTime::from_hms_opt(9, 30, 0).unwrap()), TradingSession::Continuous);
+        assert_eq!(
+            market.get_session_status(NaiveTime::from_hms_opt(9, 30, 0).unwrap()),
+            TradingSession::Continuous
+        );
         // 12:00 -> Break
-        assert_eq!(market.get_session_status(NaiveTime::from_hms_opt(12, 0, 0).unwrap()), TradingSession::Break);
+        assert_eq!(
+            market.get_session_status(NaiveTime::from_hms_opt(12, 0, 0).unwrap()),
+            TradingSession::Break
+        );
         // 18:00 -> Closed
-        assert_eq!(market.get_session_status(NaiveTime::from_hms_opt(18, 0, 0).unwrap()), TradingSession::Closed);
+        assert_eq!(
+            market.get_session_status(NaiveTime::from_hms_opt(18, 0, 0).unwrap()),
+            TradingSession::Closed
+        );
     }
 }

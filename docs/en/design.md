@@ -136,7 +136,7 @@ Follows standard PnL calculation: `Gross PnL`, `Net PnL`, `Commission`.
         *   `prepare_features(df)`: Feature engineering interface.
 *   **`BacktestResult` (`backtest.py`)**:
     *   Encapsulates `BacktestResult` returned by Rust.
-    *   Provides convenient properties like `metrics_df`, `daily_positions_df`.
+    *   Provides convenient properties like `metrics_df`, `positions`.
 *   **`Sizer` (`sizer.py`)**: Position sizing base class.
 
 ### 2.9 Machine Learning Framework (`python/akquant/ml/`)

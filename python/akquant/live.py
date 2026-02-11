@@ -182,13 +182,13 @@ class LiveRunner:
             print("=" * 50)
 
             # Print Current Positions if available
-            if results.daily_positions:
-                last_pos = results.daily_positions[-1][1]
+            if results.snapshots:
+                last_snapshots = results.snapshots[-1][1]
                 print("\nCurrent Positions:")
                 has_pos = False
-                for sym, qty in last_pos.items():
-                    if abs(qty) > 0:
-                        print(f"  {sym}: {qty}")
+                for s in last_snapshots:
+                    if abs(s.quantity) > 0:
+                        print(f"  {s.symbol}: {s.quantity}")
                         has_pos = True
                 if not has_pos:
                     print("  (None)")

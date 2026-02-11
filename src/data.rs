@@ -1,13 +1,13 @@
-use numpy::PyReadonlyArray1;
-use crate::model::{Bar, Tick};
 use crate::event::Event;
+use crate::model::{Bar, Tick};
+use numpy::PyReadonlyArray1;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 #[inline]
@@ -133,20 +133,20 @@ impl CsvDataClient {
 
         let mut record = csv::StringRecord::new();
         if self.reader.read_record(&mut record).ok()? {
-             // Deserialize
-             let row: CsvRow = record.deserialize(self.reader.headers().ok()).ok()?;
+            // Deserialize
+            let row: CsvRow = record.deserialize(self.reader.headers().ok()).ok()?;
 
-             let bar = Bar {
-                 timestamp: normalize_timestamp(row.timestamp),
-                 open: Decimal::from_f64(row.open).unwrap_or(Decimal::ZERO),
-                 high: Decimal::from_f64(row.high).unwrap_or(Decimal::ZERO),
-                 low: Decimal::from_f64(row.low).unwrap_or(Decimal::ZERO),
-                 close: Decimal::from_f64(row.close).unwrap_or(Decimal::ZERO),
-                 volume: Decimal::from_f64(row.volume).unwrap_or(Decimal::ZERO),
-                 symbol: self.symbol.clone(),
-                 extra: HashMap::new(),
-             };
-             Some(Event::Bar(bar))
+            let bar = Bar {
+                timestamp: normalize_timestamp(row.timestamp),
+                open: Decimal::from_f64(row.open).unwrap_or(Decimal::ZERO),
+                high: Decimal::from_f64(row.high).unwrap_or(Decimal::ZERO),
+                low: Decimal::from_f64(row.low).unwrap_or(Decimal::ZERO),
+                close: Decimal::from_f64(row.close).unwrap_or(Decimal::ZERO),
+                volume: Decimal::from_f64(row.volume).unwrap_or(Decimal::ZERO),
+                symbol: self.symbol.clone(),
+                extra: HashMap::new(),
+            };
+            Some(Event::Bar(bar))
         } else {
             None
         }
@@ -175,7 +175,9 @@ impl DataClient for CsvDataClient {
     }
 
     fn add(&mut self, _event: Event) -> PyResult<()> {
-        Err(PyTypeError::new_err("Cannot add data to a streaming CSV provider"))
+        Err(PyTypeError::new_err(
+            "Cannot add data to a streaming CSV provider",
+        ))
     }
 
     fn sort(&mut self) {
@@ -214,10 +216,10 @@ impl DataClient for RealtimeDataClient {
     fn peek_timestamp(&mut self) -> Option<i64> {
         // Try to read from channel non-blocking
         if self.current.is_none() {
-             match self.rx.try_recv() {
-                 Ok(event) => self.current = Some(event),
-                 Err(_) => return None, // Empty or Disconnected
-             }
+            match self.rx.try_recv() {
+                Ok(event) => self.current = Some(event),
+                Err(_) => return None, // Empty or Disconnected
+            }
         }
 
         self.current.as_ref().map(|e| match e {
@@ -236,7 +238,9 @@ impl DataClient for RealtimeDataClient {
     }
 
     fn add(&mut self, event: Event) -> PyResult<()> {
-        self.sender.send(event).map_err(|e| PyValueError::new_err(e.to_string()))
+        self.sender
+            .send(event)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     fn sort(&mut self) {
@@ -326,7 +330,7 @@ pub fn from_arrays(
             let arr: PyReadonlyArray1<f64> = val.extract(py)?;
             let array_view = arr.as_array();
             if array_view.len() != len {
-                 return Err(PyValueError::new_err(format!(
+                return Err(PyValueError::new_err(format!(
                     "Extra array '{}' must have the same length as other arrays",
                     key
                 )));
@@ -379,7 +383,6 @@ pub fn from_arrays(
     Ok(bars)
 }
 
-
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Clone)]
@@ -423,7 +426,9 @@ impl DataFeed {
     pub fn add_bar(&mut self, bar: Bar) -> PyResult<()> {
         if let Some(sender_lock) = &self.live_sender {
             let sender = sender_lock.lock().unwrap();
-            sender.send(Event::Bar(bar)).map_err(|e| PyValueError::new_err(e.to_string()))
+            sender
+                .send(Event::Bar(bar))
+                .map_err(|e| PyValueError::new_err(e.to_string()))
         } else {
             let mut provider = self.provider.lock().unwrap();
             provider.add(Event::Bar(bar))
@@ -435,7 +440,9 @@ impl DataFeed {
         if let Some(sender_lock) = &self.live_sender {
             let sender = sender_lock.lock().unwrap();
             for bar in bars {
-                sender.send(Event::Bar(bar)).map_err(|e| PyValueError::new_err(e.to_string()))?;
+                sender
+                    .send(Event::Bar(bar))
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
             }
             Ok(())
         } else {
@@ -462,7 +469,9 @@ impl DataFeed {
         extra: Option<HashMap<String, Py<PyAny>>>,
         py: Python<'_>,
     ) -> PyResult<()> {
-        let bars = from_arrays(timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra, py)?;
+        let bars = from_arrays(
+            timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra, py,
+        )?;
         self.add_bars(bars)
     }
 
@@ -476,7 +485,9 @@ impl DataFeed {
     pub fn add_tick(&mut self, tick: Tick) -> PyResult<()> {
         if let Some(sender_lock) = &self.live_sender {
             let sender = sender_lock.lock().unwrap();
-            sender.send(Event::Tick(tick)).map_err(|e| PyValueError::new_err(e.to_string()))
+            sender
+                .send(Event::Tick(tick))
+                .map_err(|e| PyValueError::new_err(e.to_string()))
         } else {
             let mut provider = self.provider.lock().unwrap();
             provider.add(Event::Tick(tick))
@@ -556,7 +567,13 @@ impl BarAggregator {
     /// :param price: 最新价
     /// :param volume: 累计成交量 (TotalVolume)
     /// :param timestamp_ns: 时间戳 (纳秒)
-    pub fn on_tick(&mut self, symbol: String, price: f64, volume: f64, timestamp_ns: i64) -> PyResult<()> {
+    pub fn on_tick(
+        &mut self,
+        symbol: String,
+        price: f64,
+        volume: f64,
+        timestamp_ns: i64,
+    ) -> PyResult<()> {
         let price = Decimal::from_f64(price).unwrap_or(Decimal::ZERO);
         let volume = Decimal::from_f64(volume).unwrap_or(Decimal::ZERO);
 
@@ -572,8 +589,12 @@ impl BarAggregator {
         if let Some(bar_data) = self.active_bars.get_mut(&symbol) {
             // Same interval?
             if current_key == bar_data.timestamp_min {
-                if price > bar_data.high { bar_data.high = price; }
-                if price < bar_data.low { bar_data.low = price; }
+                if price > bar_data.high {
+                    bar_data.high = price;
+                }
+                if price < bar_data.low {
+                    bar_data.low = price;
+                }
                 bar_data.close = price;
                 bar_data.volume_curr = volume;
             } else {
@@ -595,7 +616,11 @@ impl BarAggregator {
 
 impl BarAggregator {
     fn start_new_bar(&mut self, symbol: String, price: Decimal, volume: Decimal, key: i64) {
-        let base_vol = self.last_cumulative_volumes.get(&symbol).cloned().unwrap_or(volume);
+        let base_vol = self
+            .last_cumulative_volumes
+            .get(&symbol)
+            .cloned()
+            .unwrap_or(volume);
 
         let new_bar = ActiveBar {
             open: price,
@@ -634,7 +659,8 @@ impl BarAggregator {
         self.feed.add_bar(bar)?;
 
         // Update global state
-        self.last_cumulative_volumes.insert(symbol.to_string(), bar_data.volume_curr);
+        self.last_cumulative_volumes
+            .insert(symbol.to_string(), bar_data.volume_curr);
 
         Ok(())
     }

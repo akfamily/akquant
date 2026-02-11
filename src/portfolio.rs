@@ -234,9 +234,9 @@ mod tests {
         let instr = Instrument {
             symbol: "FUT".to_string(),
             asset_type: AssetType::Futures,
-            multiplier: Decimal::from(10), // Multiplier 10
+            multiplier: Decimal::from(10),    // Multiplier 10
             margin_ratio: Decimal::new(1, 1), // 0.1
-            tick_size: Decimal::new(2, 1), // 0.2
+            tick_size: Decimal::new(2, 1),    // 0.2
             option_type: None,
             strike_price: None,
             expiry_date: None,

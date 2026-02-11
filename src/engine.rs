@@ -5,24 +5,24 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
-use std::sync::{Arc, Mutex, RwLock, mpsc::{self, Sender, Receiver}};
+use std::sync::{
+    Arc, Mutex, RwLock,
+    mpsc::{self, Receiver, Sender},
+};
 use std::time::Duration;
 
-use crate::analysis::{BacktestResult, TradeTracker};
+use crate::analysis::{BacktestResult, PositionSnapshot, TradeTracker};
 use crate::clock::Clock;
 use crate::context::StrategyContext;
 use crate::data::DataFeed;
 use crate::event::Event;
-use crate::execution::{
-    ExecutionClient, RealtimeExecutionClient, SimulatedExecutionClient,
-};
+use crate::execution::{ExecutionClient, RealtimeExecutionClient, SimulatedExecutionClient};
 use crate::history::HistoryBuffer;
 use crate::market::{
     ChinaMarket, ChinaMarketConfig, MarketModel, MarketType, SessionRange, SimpleMarket,
 };
 use crate::model::{
-    Bar, ExecutionMode, Instrument, Order, OrderStatus, TimeInForce, Timer, Trade,
-    TradingSession,
+    Bar, ExecutionMode, Instrument, Order, OrderStatus, TimeInForce, Timer, Trade, TradingSession,
 };
 use crate::portfolio::Portfolio;
 use crate::risk::RiskManager;
@@ -52,9 +52,8 @@ pub struct Engine {
     active_market_type: MarketType,
     market_model: Box<dyn MarketModel>,
     execution_model: Box<dyn ExecutionClient>,
-    daily_equity: Vec<(i64, Decimal)>,
     equity_curve: Vec<(i64, Decimal)>,
-    daily_positions: Vec<(i64, HashMap<String, Decimal>)>,
+    pub snapshots: Vec<(i64, Vec<PositionSnapshot>)>,
     execution_mode: ExecutionMode,
     clock: Clock,
     timers: BinaryHeap<Timer>, // Min-Heap via Timer's Ord implementation
@@ -67,6 +66,7 @@ pub struct Engine {
     // Event Bus
     event_tx: Sender<Event>,
     event_rx: Option<Mutex<Receiver<Event>>>,
+    initial_capital: Decimal,
 }
 
 #[gen_stub_pymethods]
@@ -96,9 +96,8 @@ impl Engine {
             active_market_type: MarketType::China,
             market_model: Box::new(ChinaMarket::from_config(market_config)),
             execution_model: Box::new(SimulatedExecutionClient::new()),
-            daily_equity: Vec::new(),
             equity_curve: Vec::new(),
-            daily_positions: Vec::new(),
+            snapshots: Vec::new(),
             execution_mode: ExecutionMode::NextOpen,
             clock: Clock::new(),
             timers: BinaryHeap::new(),
@@ -109,6 +108,7 @@ impl Engine {
             history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(0))),
             event_tx: tx,
             event_rx: Some(Mutex::new(rx)),
+            initial_capital: Decimal::from(100_000),
         }
     }
 
@@ -215,12 +215,7 @@ impl Engine {
         }
     }
 
-    fn set_fund_fee_rules(
-        &mut self,
-        commission_rate: f64,
-        transfer_fee: f64,
-        min_commission: f64,
-    ) {
+    fn set_fund_fee_rules(&mut self, commission_rate: f64, transfer_fee: f64, min_commission: f64) {
         self.market_config.fund_commission_rate =
             Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
         self.market_config.fund_transfer_fee =
@@ -310,7 +305,9 @@ impl Engine {
     /// :param cash: 初始资金数额
     /// :type cash: float
     fn set_cash(&mut self, cash: f64) {
-        self.portfolio.cash = Decimal::from_f64(cash).unwrap_or(Decimal::ZERO);
+        let val = Decimal::from_f64(cash).unwrap_or(Decimal::ZERO);
+        self.portfolio.cash = val;
+        self.initial_capital = val;
     }
 
     /// 添加数据源
@@ -336,7 +333,12 @@ impl Engine {
     /// :type show_progress: bool
     /// :return: 回测结果摘要
     /// :rtype: str
-    fn run(&mut self, py: Python<'_>, strategy: &Bound<'_, PyAny>, show_progress: bool) -> PyResult<String> {
+    fn run(
+        &mut self,
+        py: Python<'_>,
+        strategy: &Bound<'_, PyAny>,
+        show_progress: bool,
+    ) -> PyResult<String> {
         // Configure history buffer if strategy has _history_depth set
         if let Ok(depth_attr) = strategy.getattr("_history_depth") {
             if let Ok(depth) = depth_attr.extract::<usize>() {
@@ -348,16 +350,16 @@ impl Engine {
 
         // Trigger Strategy on_start
         if let Err(e) = strategy.call_method0("on_start") {
-             // It's okay if it fails or doesn't exist (though base class has it),
-             // but strictly we might want to log it.
-             // However, for now, we just propagate error if it's a real error,
-             // or ignore if it's just missing method (which shouldn't happen with base class).
-             // Given PyO3, call_method0 returns Result.
-             // If we want to be safe:
-             // println!("Warning: Failed to call on_start: {}", e);
-             // But let's just propagate (?) or ignore.
-             // Best to just call it and propagate error, as it SHOULD exist.
-             return Err(e);
+            // It's okay if it fails or doesn't exist (though base class has it),
+            // but strictly we might want to log it.
+            // However, for now, we just propagate error if it's a real error,
+            // or ignore if it's just missing method (which shouldn't happen with base class).
+            // Given PyO3, call_method0 returns Result.
+            // If we want to be safe:
+            // println!("Warning: Failed to call on_start: {}", e);
+            // But let's just propagate (?) or ignore.
+            // Best to just call it and propagate error, as it SHOULD exist.
+            return Err(e);
         }
 
         let mut pending_orders: Vec<Order> = Vec::new();
@@ -394,11 +396,10 @@ impl Engine {
         };
 
         // Record initial equity
-        if let Some(timestamp) = self.feed.peek_timestamp() {
-            let equity = self
+        if let Some(_) = self.feed.peek_timestamp() {
+            let _equity = self
                 .portfolio
                 .calculate_equity(&self.last_prices, &self.instruments);
-            self.daily_equity.push((timestamp, equity));
         }
 
         let is_live = self.feed.is_live();
@@ -416,7 +417,12 @@ impl Engine {
                         match event {
                             Event::OrderRequest(mut order) => {
                                 // 1. Risk Check
-                                if let Some(_err) = self.risk_manager.check_internal(&order, &self.portfolio, &self.instruments, &pending_orders) {
+                                if let Some(_err) = self.risk_manager.check_internal(
+                                    &order,
+                                    &self.portfolio,
+                                    &self.instruments,
+                                    &pending_orders,
+                                ) {
                                     // Reject
                                     // println!("Risk Reject: {}", err);
                                     order.status = OrderStatus::Rejected;
@@ -427,16 +433,18 @@ impl Engine {
                                     // Validate -> Send to Execution
                                     let _ = self.event_tx.send(Event::OrderValidated(order));
                                 }
-                            },
+                            }
                             Event::OrderValidated(order) => {
                                 // 2. Send to Execution Client
                                 self.execution_model.on_order(order.clone());
                                 // Add to local pending (Strategy View)
                                 pending_orders.push(order);
-                            },
+                            }
                             Event::ExecutionReport(order, trade) => {
                                 // 3. Update Order State
-                                if let Some(existing) = pending_orders.iter_mut().find(|o| o.id == order.id) {
+                                if let Some(existing) =
+                                    pending_orders.iter_mut().find(|o| o.id == order.id)
+                                {
                                     existing.status = order.status;
                                     existing.filled_quantity = order.filled_quantity;
                                     existing.average_filled_price = order.average_filled_price;
@@ -447,7 +455,7 @@ impl Engine {
                                     // But if Rejected immediately, we might not have it in pending_orders yet?
                                     // If Rejected was sent via ExecutionReport, we should add it to pending so we can move it to history.
                                     if order.status == OrderStatus::Rejected {
-                                         pending_orders.push(order.clone());
+                                        pending_orders.push(order.clone());
                                     }
                                 }
 
@@ -455,14 +463,14 @@ impl Engine {
                                 if let Some(t) = trade {
                                     trades_to_process.push(t);
                                 }
-                            },
+                            }
                             _ => {}
                         }
                     }
                 }
             }
             if !trades_to_process.is_empty() {
-                self.process_trades(trades_to_process);
+                self.process_trades(trades_to_process, &mut pending_orders);
             }
 
             // -----------------------------------------------------------
@@ -504,7 +512,7 @@ impl Engine {
 
             // Check timers again after wait
             if is_live && next_event_time.is_none() {
-                 if let Some(timer_ts) = next_timer_time {
+                if let Some(timer_ts) = next_timer_time {
                     let now = Utc::now().timestamp_nanos_opt().unwrap_or(0);
                     if timer_ts > now {
                         continue;
@@ -527,7 +535,8 @@ impl Engine {
             if process_timer {
                 // --- TIMER EVENT ---
                 if let Some(timer) = self.timers.pop() {
-                    let local_dt = Self::local_datetime_from_ns(timer.timestamp, self.timezone_offset);
+                    let local_dt =
+                        Self::local_datetime_from_ns(timer.timestamp, self.timezone_offset);
                     let session = self.market_model.get_session_status(local_dt.time());
                     self.clock.update(timer.timestamp, session);
                     if self.force_session_continuous {
@@ -584,7 +593,7 @@ impl Engine {
                 let local_dt = Self::local_datetime_from_ns(timestamp, self.timezone_offset);
                 let session = self.market_model.get_session_status(local_dt.time());
                 self.clock.update(timestamp, session);
-                 if self.force_session_continuous {
+                if self.force_session_continuous {
                     self.clock.session = TradingSession::Continuous;
                 }
 
@@ -593,9 +602,11 @@ impl Engine {
                     // Day Close Logic
                     if self.current_date.is_some() {
                         // Equity Snapshot
-                        let equity = self.portfolio.calculate_equity(&self.last_prices, &self.instruments);
-                        self.daily_equity.push((last_timestamp, equity));
-                        self.daily_positions.push((last_timestamp, self.portfolio.positions.clone()));
+                        // let equity = self.portfolio.calculate_equity(&self.last_prices, &self.instruments);
+
+                        // Position Snapshots
+                        let snapshots = self.create_position_snapshots(last_timestamp);
+                        self.snapshots.push((last_timestamp, snapshots));
 
                         // T+1
                         self.market_model.on_day_close(
@@ -613,7 +624,7 @@ impl Engine {
                         // No, just update status and let ExecutionClient sync via logic or on_cancel.
                         // For Simulated, we can just leave it.
                         // But let's stick to legacy behavior:
-                         let (expired, kept): (Vec<Order>, Vec<Order>) = pending_orders
+                        let (expired, kept): (Vec<Order>, Vec<Order>) = pending_orders
                             .into_iter()
                             .partition(|o| o.time_in_force == TimeInForce::Day);
 
@@ -641,7 +652,7 @@ impl Engine {
 
                         // Process Reports
                         for report in reports {
-                             let _ = self.event_tx.send(report);
+                            let _ = self.event_tx.send(report);
                         }
                         // We need to pump the channel immediately to update pending_orders BEFORE strategy sees them?
                         // Or let the loop handle it next iteration?
@@ -662,38 +673,55 @@ impl Engine {
                                 while let Ok(ev) = rx.try_recv() {
                                     match ev {
                                         Event::ExecutionReport(o, t) => {
-                                            if let Some(existing) = pending_orders.iter_mut().find(|ex| ex.id == o.id) {
+                                            if let Some(existing) =
+                                                pending_orders.iter_mut().find(|ex| ex.id == o.id)
+                                            {
                                                 existing.status = o.status;
                                                 existing.filled_quantity = o.filled_quantity;
-                                                existing.average_filled_price = o.average_filled_price;
+                                                existing.average_filled_price =
+                                                    o.average_filled_price;
                                             }
-                                            if let Some(tr) = t { trades_to_process.push(tr); }
-                                        },
+                                            if let Some(tr) = t {
+                                                trades_to_process.push(tr);
+                                            }
+                                        }
                                         _ => {} // Ignore others for now (or queue them)
                                     }
                                 }
                             }
                         }
                         if !trades_to_process.is_empty() {
-                            self.process_trades(trades_to_process);
+                            self.process_trades(trades_to_process, &mut pending_orders);
                         }
 
                         // Phase 2: Strategy
                         let (new_orders, new_timers, canceled_ids) =
                             self.call_strategy(strategy, &event, &pending_orders)?;
 
-                        for id in canceled_ids { self.execution_model.on_cancel(&id); }
-                        for order in new_orders { let _ = self.event_tx.send(Event::OrderRequest(order)); }
-                        for t in new_timers { self.timers.push(t); }
+                        for id in canceled_ids {
+                            self.execution_model.on_cancel(&id);
+                        }
+                        for order in new_orders {
+                            let _ = self.event_tx.send(Event::OrderRequest(order));
+                        }
+                        for t in new_timers {
+                            self.timers.push(t);
+                        }
                     }
                     ExecutionMode::CurrentClose => {
                         // Phase 1: Strategy
                         let (new_orders, new_timers, canceled_ids) =
                             self.call_strategy(strategy, &event, &pending_orders)?;
 
-                        for id in canceled_ids { self.execution_model.on_cancel(&id); }
-                        for order in new_orders { let _ = self.event_tx.send(Event::OrderRequest(order)); }
-                        for t in new_timers { self.timers.push(t); }
+                        for id in canceled_ids {
+                            self.execution_model.on_cancel(&id);
+                        }
+                        for order in new_orders {
+                            let _ = self.event_tx.send(Event::OrderRequest(order));
+                        }
+                        for t in new_timers {
+                            self.timers.push(t);
+                        }
 
                         // Drain channel to process OrderRequests -> OrderValidated -> ExecutionClient
                         // This allows orders generated at "Close" to be matched immediately at "Close" (if supported)
@@ -703,34 +731,46 @@ impl Engine {
                                 while let Ok(ev) = rx.try_recv() {
                                     match ev {
                                         Event::OrderRequest(mut o) => {
-                                            if let Some(_err) = self.risk_manager.check_internal(&o, &self.portfolio, &self.instruments, &pending_orders) {
+                                            if let Some(_err) = self.risk_manager.check_internal(
+                                                &o,
+                                                &self.portfolio,
+                                                &self.instruments,
+                                                &pending_orders,
+                                            ) {
                                                 o.status = OrderStatus::Rejected;
-                                                let _ = self.event_tx.send(Event::ExecutionReport(o, None));
+                                                let _ = self
+                                                    .event_tx
+                                                    .send(Event::ExecutionReport(o, None));
                                             } else {
-                                                let _ = self.event_tx.send(Event::OrderValidated(o));
+                                                let _ =
+                                                    self.event_tx.send(Event::OrderValidated(o));
                                             }
-                                        },
+                                        }
                                         Event::OrderValidated(o) => {
                                             self.execution_model.on_order(o.clone());
                                             pending_orders.push(o);
-                                        },
+                                        }
                                         Event::ExecutionReport(o, t) => {
-                                            if let Some(ex) = pending_orders.iter_mut().find(|x| x.id == o.id) {
+                                            if let Some(ex) =
+                                                pending_orders.iter_mut().find(|x| x.id == o.id)
+                                            {
                                                 ex.status = o.status;
                                                 ex.filled_quantity = o.filled_quantity;
                                                 ex.average_filled_price = o.average_filled_price;
                                             } else if o.status == OrderStatus::Rejected {
                                                 pending_orders.push(o);
                                             }
-                                            if let Some(tr) = t { trades_to_process.push(tr); }
-                                        },
+                                            if let Some(tr) = t {
+                                                trades_to_process.push(tr);
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
                             }
                         }
                         if !trades_to_process.is_empty() {
-                            self.process_trades(trades_to_process);
+                            self.process_trades(trades_to_process, &mut pending_orders);
                         }
 
                         // Phase 2: Execution (Match new orders at Close)
@@ -741,7 +781,9 @@ impl Engine {
                             bar_index,
                             self.clock.session,
                         );
-                        for report in reports { let _ = self.event_tx.send(report); }
+                        for report in reports {
+                            let _ = self.event_tx.send(report);
+                        }
                     }
                 }
 
@@ -766,7 +808,7 @@ impl Engine {
             let equity = self
                 .portfolio
                 .calculate_equity(&self.last_prices, &self.instruments);
-            self.daily_equity.push((last_timestamp, equity));
+
             self.equity_curve.push((last_timestamp, equity));
         }
         self.orders.extend(pending_orders);
@@ -794,35 +836,50 @@ impl Engine {
         // Clone equity curve and append current state (Mark-to-Market)
         // This ensures that we have the latest equity point even if the run loop was interrupted
         let mut equity_curve = self.equity_curve.clone();
-        let mut daily_positions = self.daily_positions.clone();
+
+        let mut snapshots = self.snapshots.clone();
 
         if let Some(now_ns) = self.clock.timestamp() {
             let equity = self
                 .portfolio
                 .calculate_equity(&self.last_prices, &self.instruments);
             // Avoid duplicate if timestamp matches last one exactly (unlikely but safe)
-            if equity_curve.last().map(|(t, _)| *t != now_ns).unwrap_or(true) {
-                equity_curve.push((now_ns, equity));
-            }
-            if daily_positions
+            if equity_curve
                 .last()
                 .map(|(t, _)| *t != now_ns)
                 .unwrap_or(true)
             {
-                daily_positions.push((now_ns, self.portfolio.positions.clone()));
+                equity_curve.push((now_ns, equity));
+            }
+            if snapshots.last().map(|(t, _)| *t != now_ns).unwrap_or(true) {
+                let snap = self.create_position_snapshots(now_ns);
+                snapshots.push((now_ns, snap));
             }
         }
 
-        BacktestResult::calculate(equity_curve, daily_positions, trade_pnl, closed_trades)
+        BacktestResult::calculate(
+            equity_curve,
+            snapshots,
+            trade_pnl,
+            closed_trades,
+            self.initial_capital,
+            self.orders.clone(),
+            self.trades.clone(),
+        )
     }
 
-    fn create_context(&self, active_orders: Vec<Order>, step_trades: Vec<Trade>) -> StrategyContext {
+    fn create_context(
+        &self,
+        active_orders: Vec<Order>,
+        step_trades: Vec<Trade>,
+    ) -> StrategyContext {
         // Create a temporary context for the strategy to use
         StrategyContext::new(
             self.portfolio.cash,
             self.portfolio.positions.clone(),
             self.portfolio.available_positions.clone(),
             self.clock.session,
+            self.clock.timestamp().unwrap_or(0),
             active_orders,
             self.trade_tracker.closed_trades.clone(),
             step_trades,
@@ -847,6 +904,68 @@ impl Engine {
         Self::datetime_from_ns(timestamp + offset_ns)
     }
 
+    fn create_position_snapshots(&self, _timestamp: i64) -> Vec<PositionSnapshot> {
+        let mut snapshots = Vec::new();
+        for (symbol, &qty) in &self.portfolio.positions {
+            if qty == Decimal::ZERO {
+                continue;
+            }
+
+            let price = self
+                .last_prices
+                .get(symbol)
+                .cloned()
+                .unwrap_or(Decimal::ZERO);
+            let instr = self.instruments.get(symbol);
+            let multiplier = instr.map(|i| i.multiplier).unwrap_or(Decimal::ONE);
+            let margin_ratio = instr.map(|i| i.margin_ratio).unwrap_or(Decimal::ZERO);
+
+            // Convert to f64 for snapshot
+            let qty_f64 = qty.to_f64().unwrap_or(0.0);
+            let price_f64 = price.to_f64().unwrap_or(0.0);
+            // let multiplier_f64 = multiplier.to_f64().unwrap_or(1.0);
+
+            let market_value = qty.abs() * price * multiplier;
+            let market_value_f64 = market_value.to_f64().unwrap_or(0.0);
+
+            let (long_shares, short_shares) = if qty > Decimal::ZERO {
+                (qty_f64, 0.0)
+            } else {
+                (0.0, qty.abs().to_f64().unwrap_or(0.0))
+            };
+
+            // Equity & Margin logic
+            // Long: Equity = MarketValue, Margin = MarketValue * ratio
+            // Short: Equity = 0 (conservative), Margin = MarketValue * ratio
+            let equity_f64 = if qty > Decimal::ZERO {
+                market_value_f64
+            } else {
+                0.0
+            };
+
+            let margin_dec = market_value * margin_ratio;
+            let margin_f64 = margin_dec.to_f64().unwrap_or(0.0);
+
+            let unrealized_pnl = self
+                .trade_tracker
+                .get_unrealized_pnl(symbol, price, multiplier);
+            let unrealized_pnl_f64 = unrealized_pnl.to_f64().unwrap_or(0.0);
+
+            snapshots.push(PositionSnapshot {
+                symbol: symbol.clone(),
+                quantity: qty_f64,
+                long_shares,
+                short_shares,
+                close: price_f64,
+                equity: equity_f64,
+                market_value: market_value_f64,
+                margin: margin_f64,
+                unrealized_pnl: unrealized_pnl_f64,
+            });
+        }
+        snapshots
+    }
+
     fn parse_time_string(value: &str) -> PyResult<NaiveTime> {
         if let Ok(t) = NaiveTime::parse_from_str(value, "%H:%M:%S") {
             return Ok(t);
@@ -860,7 +979,7 @@ impl Engine {
         )))
     }
 
-    fn process_trades(&mut self, trades: Vec<Trade>) {
+    fn process_trades(&mut self, trades: Vec<Trade>, pending_orders: &mut Vec<Order>) {
         // Add to current step trades for strategy notification
         self.current_step_trades.extend(trades.iter().cloned());
 
@@ -898,6 +1017,11 @@ impl Engine {
                     trade.quantity,
                     trade.side,
                 );
+            }
+
+            // Update Order Commission
+            if let Some(order) = pending_orders.iter_mut().find(|o| o.id == trade.order_id) {
+                order.commission += trade.commission;
             }
 
             self.trade_tracker.process_trade(&trade);

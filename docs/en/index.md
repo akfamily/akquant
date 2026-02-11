@@ -141,7 +141,7 @@ print(result.metrics_df)
 # Trade record table
 print(result.trades_df)
 # Daily position table
-print(result.daily_positions_df)
+print(result.positions_df)
 ```
 
 ### 2. Functional API (Zipline Style)

@@ -91,4 +91,4 @@ if __name__ == "__main__":
     print(f"Total Return: {result.metrics.total_return_pct:.2f}%")
 
     print("\nDaily Positions Head:")
-    print(result.daily_positions_df.head())
+    print(result.positions_df.head())
