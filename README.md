@@ -157,6 +157,21 @@ kelly_criterion                         -0.080763
 *   📚 **[API 参考](docs/zh/api.md)**: 详细的类与函数文档。
 *   💻 **[贡献指南](CONTRIBUTING.md)**: 如何参与项目开发。
 
+## Citation
+
+Please use this bibtex if you want to cite this repository in your publications:
+
+```bibtex
+@misc{akquant,
+    author = {Albert King},
+    title = {AKQuant},
+    year = {2026},
+    publisher = {GitHub},
+    journal = {GitHub repository},
+    howpublished = {\url{https://github.com/akfamily/akquant}},
+}
+```
+
 ## License
 
 MIT License
