@@ -111,6 +111,7 @@ nav:
       - Architecture: architecture.md
       - Design Guide: design.md
   - API Reference: api.md
+  - Backtest Result: backtest_result.md
 
 markdown_extensions:
   - admonition

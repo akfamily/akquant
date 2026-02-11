@@ -230,6 +230,10 @@ After running a backtest, AKQuant outputs several metrics. Here is what they mea
 | **Max Drawdown** | The largest peak-to-trough decline. **A key risk metric**. E.g., -20% means you could lose 20% in the worst-case scenario. |
 | **Sharpe Ratio** | Measures risk-adjusted return. How much excess return you get per unit of risk. >1 is good, >2 is excellent. |
 | **Win Rate** | Percentage of profitable trades. High win rate doesn't guarantee high profit (you could make small profits but huge losses). |
+| **SQN** | System Quality Number. Measures the stability of the trading system. Higher is better. |
+| **Kelly Criterion** | Optimal position size based on win rate and profit/loss ratio. |
+| **Exposure Time %** | Percentage of time the strategy holds a position. Useful for assessing capital efficiency and risk exposure. |
+| **VaR / CVaR** | Value at Risk and Conditional VaR. Measures extreme downside risk. |
 
 ---
 
