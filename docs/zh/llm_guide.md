@@ -226,6 +226,46 @@ print(result)
 result.plot() # 可视化
 ```
 
+### 场景 C：参数优化
+
+**用户提问**:
+> 请帮我对 `MyStrategy` 的 `fast_window` (5-20, 步长5) 和 `slow_window` (20-60, 步长10) 参数进行网格搜索优化，并按夏普比率排序。
+
+**模型生成的预期代码**:
+
+```python
+from akquant.optimize import run_optimization
+import pandas as pd
+import numpy as np
+
+# 1. 定义参数网格
+# 每个参数对应一个列表
+param_grid = {
+    "fast_window": range(5, 25, 5),   # [5, 10, 15, 20]
+    "slow_window": range(20, 70, 10)  # [20, 30, 40, 50, 60]
+}
+
+# 2. 运行优化
+# 支持多进程并行 (max_workers)
+results_df = run_optimization(
+    strategy=MyStrategy,
+    param_grid=param_grid,
+    data=df,              # 所有回测共享的数据
+    cash=100_000.0,       # 回测配置
+    max_workers=4,        # 并行进程数
+    sort_by="sharpe_ratio",
+    ascending=False
+)
+
+# 3. 查看最佳结果
+print("Top 5 Parameter Combinations:")
+print(results_df.head())
+
+# 获取最佳参数
+best_params = results_df.iloc[0]["params"]
+print(f"最佳参数: {best_params}")
+```
+
 ## 4. 注意事项 (给 LLM 的“负面约束”)
 
 在使用大模型时，可能会出现以下幻觉（Hallucinations），可以在 Prompt 中显式禁止：
