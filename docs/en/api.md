@@ -194,10 +194,13 @@ Risk configuration.
 
 Backtest result container.
 
-*   `metrics_df`: DataFrame containing performance metrics (Total Return, Sharpe, Max Drawdown, Ulcer Index, UPI, **SQN**, **Kelly**, **VaR/CVaR**, etc.).
-*   `positions_df`: Daily position DataFrame.
-*   `trades`: List of trade records (`ClosedTrade` objects).
-*   `equity_curve`: Equity curve data.
+*   `metrics_df`: (pd.DataFrame) DataFrame containing performance metrics (Total Return, Sharpe, Max Drawdown, Ulcer Index, UPI, **SQN**, **Kelly**, **VaR/CVaR**, etc.).
+*   `trades_df`: (pd.DataFrame) DataFrame containing all closed trades.
+*   `orders_df`: (pd.DataFrame) DataFrame containing all order records.
+*   `positions_df`: (pd.DataFrame) DataFrame containing daily position details, including quantity, market value, unrealized PnL, **average entry price (entry_price)**, etc.
+*   `equity_curve`: (pd.Series) Equity curve, indexed by time, values are total account equity.
+*   `cash_curve`: (pd.Series) Cash curve, indexed by time, values are available cash.
+*   `trades`: (List[ClosedTrade]) Raw list of closed trade objects.
 
 ## 6. Built-in Indicators
 

@@ -79,6 +79,15 @@ This document details the performance metrics in AKQuant backtest results (`metr
 *   **SQN**: System Quality Number. Measures system stability.
 *   **Kelly Criterion**: Optimal position size based on win rate and payoff ratio.
 
+## Equity & Cash Curves
+
+The `result` object provides equity and cash curves over time, useful for plotting and analysis.
+
+| Property | Description | Type | Explanation |
+| :--- | :--- | :--- | :--- |
+| `equity_curve` | Equity Curve | `pandas.Series` | Index is `Datetime`, values are Total Equity. Shows the trend of net asset value. |
+| `cash_curve` | Cash Curve | `pandas.Series` | Index is `Datetime`, values are Available Cash. Shows the trend of liquid capital, useful for money management analysis. |
+
 ## Trades
 
 `result.trades_df` contains details of every closed trade.
@@ -124,6 +133,11 @@ This document details the performance metrics in AKQuant backtest results (`metr
 | `status` | Status | String | `filled`, `cancelled`, `rejected`, etc. |
 | `time_in_force` | TIF | String | `gtc`, `day`, `ioc`, etc. |
 | `created_at` | Created At | Datetime | Creation time. |
+| `updated_at` | Updated At | Datetime | Last update time. |
+| `duration` | Duration | Timedelta | `updated_at - created_at`. |
+| `filled_value` | Filled Value | Float | `filled_quantity * avg_price`. |
+| `tag` | Tag | String | User defined tag. |
+| `reject_reason` | Reject Reason | String | Reason for rejection (if any). |
 
 ## Positions
 
@@ -140,3 +154,4 @@ This document details the performance metrics in AKQuant backtest results (`metr
 | `market_value` | Market Value | Float | Market value of positions. |
 | `margin` | Margin | Float | Margin used. |
 | `unrealized_pnl` | Unrealized PnL | Float | Floating PnL. |
+| `entry_price` | Entry Price | Float | Average entry price. |

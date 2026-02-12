@@ -8,7 +8,7 @@
 | :--- | :--- | :--- | :--- |
 | `start_time` | 回测开始时间 | Datetime | 对应回测数据的第一个 Bar 的时间。 |
 | `end_time` | 回测结束时间 | Datetime | 对应回测数据的最后一个 Bar 的时间。 |
-| `duration` | 回测总时长 | Timedelta | `end_time - start_time`。 |
+| `duration` | 回测总时长 | Timedelta | `end_time - start_time`。注意：在 Python 中返回 `datetime.timedelta` 对象。 |
 | `total_bars` | 总 Bar 数量 | Int | 回测经历的 K 线总数。 |
 | `trade_count` | 交易笔数 | Int | 完成平仓的交易总数 (Round-trip)。 |
 | `initial_market_value` | 初始市值 | Float | 初始资金 (通常为 Cash)。 |
@@ -80,6 +80,15 @@
 *   **系统质量指数 (SQN)**: 衡量交易系统的稳定性。SQN 越高，越容易通过加大仓位来获利。一般认为 >2.0 为合格，>3.0 为优秀，>7.0 为圣杯。
 *   **凯利公式 (Kelly Criterion)**: 基于胜率和盈亏比计算的理论最佳仓位比例。注意凯利公式通常过于激进，实盘中常使用 "半凯利" (Half-Kelly) 甚至更低比例。
 
+## 权益与现金曲线 (Curves)
+
+`result` 对象提供了权益和现金随时间变化的曲线数据，方便进行绘图和分析。
+
+| 属性名称 (Property) | 含义 (Description) | 类型 (Type) | 说明 |
+| :--- | :--- | :--- | :--- |
+| `equity_curve` | 权益曲线 | `pandas.Series` | 索引为时间 (`Datetime`)，值为账户总权益 (`Equity`)。反映账户资产净值的变化趋势。 |
+| `cash_curve` | 现金曲线 | `pandas.Series` | 索引为时间 (`Datetime`)，值为账户可用现金 (`Cash`)。反映账户流动资金的变化情况，有助于资金管理分析。 |
+
 ## 交易明细 (Trades)
 
 `result.trades_df` 包含了每笔平仓交易的详细信息。
@@ -98,7 +107,7 @@
 | `return_pct` | 收益率 | Float | 交易收益率 (小数)。 |
 | `commission` | 手续费 | Float | 交易产生的佣金。 |
 | `duration_bars` | 持仓 K 线数 | Int | 持仓期间经历的 Bar 数量。 |
-| `duration` | 持仓时长 | Timedelta | `exit_time - entry_time`。 |
+| `duration` | 持仓时长 | Timedelta | `exit_time - entry_time`。注意：在 Python 中返回 `datetime.timedelta` 对象。 |
 | `mae` | 最大不利偏移 | **% (百分比)** | 持仓期间最大亏损幅度 (相对于开仓价)。 |
 | `mfe` | 最大有利偏移 | **% (百分比)** | 持仓期间最大盈利幅度 (相对于开仓价)。 |
 | `entry_tag` | 开仓标签 | String | 开仓订单的标签。 |
@@ -125,6 +134,11 @@
 | `status` | 订单状态 | String | `filled`, `cancelled`, `rejected` 等。 |
 | `time_in_force` | 有效期 | String | `gtc`, `day`, `ioc` 等。 |
 | `created_at` | 创建时间 | Datetime | 订单创建时间。 |
+| `updated_at` | 更新时间 | Datetime | 订单最后更新时间。 |
+| `duration` | 存续时长 | Timedelta | `updated_at - created_at`。 |
+| `filled_value` | 成交金额 | Float | `filled_quantity * avg_price`。 |
+| `tag` | 订单标签 | String | 用户自定义标签。 |
+| `reject_reason` | 拒绝原因 | String | 订单被拒绝的原因 (若有)。 |
 
 ## 持仓记录 (Positions)
 
@@ -141,3 +155,4 @@
 | `market_value` | 持仓市值 | Float | 当前持仓的市场价值。 |
 | `margin` | 占用保证金 | Float | 当前持仓占用的保证金。 |
 | `unrealized_pnl` | 未实现盈亏 | Float | 持仓浮动盈亏。 |
+| `entry_price` | 持仓均价 | Float | 当前持仓的平均成本价格。 |

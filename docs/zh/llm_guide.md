@@ -197,140 +197,17 @@ class MLStrategy(Strategy):
 **推荐补充信息**:
 > (将上面的 Core Prompt 粘贴在最前面，或者作为系统提示词)
 
-### 场景 B：编写回测运行脚本
+## 4. 注意事项与常见问题 (Troubleshooting)
 
-**用户提问**:
-> 我已经有了 `MyStrategy` 类，请帮我写一个运行回测的脚本，数据使用 pandas DataFrame，时间范围是 2023 年全年。
+### 4.1 时间范围限制 (Time Range Limitations)
+*   **Pandas 限制**: 由于底层依赖 Pandas 的 `datetime64[ns]` 类型，回测的**起始时间不能早于 1678 年 9 月**。
+*   **错误现象**: 如果设置更早的时间（如 1200 年），会报 `pandas.errors.OutOfBoundsDatetime` 错误。
+*   **Rust 引擎**: 虽然 Rust 引擎底层已支持超长周期（使用 u64 纳秒存储），但受限于 Python 接口，建议将回测时间控制在 1678 年 - 2262 年之间。
 
-**模型生成的预期代码**:
+### 4.2 绩效指标中的时长 (Duration)
+*   `BacktestResult.metrics.duration` 和 `ClosedTrade.duration` 现在返回 Python 的 `datetime.timedelta` 对象。
+*   这解决了超长回测周期（超过 292 年）导致的时间计算溢出问题。
 
-```python
-import pandas as pd
-from akquant import run_backtest, BacktestConfig
-
-# 1. 准备数据 (Mock Data for example)
-# AKQuant requires columns: timestamp, open, high, low, close, volume, symbol
-dates = pd.date_range("2023-01-01", "2023-12-31", freq="D")
-df = pd.DataFrame({
-    "timestamp": dates,
-    "open": 100.0,
-    "high": 105.0,
-    "low": 95.0,
-    "close": 102.0,
-    "volume": 10000.0,
-    "symbol": "AAPL"
-})
-
-# 2. 配置与运行回测 (Simpler Approach)
-# 直接通过 arguments 传递参数，无需构建复杂的 Config 对象
-result = run_backtest(
-    data=df,               # 支持 DataFrame, Dict[str, DataFrame] 或 CSV 路径
-    strategy=MyStrategy,   # 策略类
-    strategy_params={"fast_window": 5, "slow_window": 20}, # 策略参数
-    cash=100_000.0,        # 初始资金
-    commission=0.0003,     # 佣金率
-    show_progress=True     # 显示进度条
-)
-
-# 3. 查看结果
-print(result)
-result.plot() # 可视化
-```
-
-### 场景 C：参数优化
-
-**用户提问**:
-> 请帮我对 `MyStrategy` 的 `fast_window` (5-20, 步长5) 和 `slow_window` (20-60, 步长10) 参数进行网格搜索优化，并按夏普比率排序。
-
-**模型生成的预期代码**:
-
-```python
-from akquant.optimize import run_optimization
-import pandas as pd
-import numpy as np
-
-# 1. 定义参数网格
-# 每个参数对应一个列表
-param_grid = {
-    "fast_window": range(5, 25, 5),   # [5, 10, 15, 20]
-    "slow_window": range(20, 70, 10)  # [20, 30, 40, 50, 60]
-}
-
-# 2. 运行优化
-# 支持多进程并行 (max_workers)
-results_df = run_optimization(
-    strategy=MyStrategy,
-    param_grid=param_grid,
-    data=df,              # 所有回测共享的数据
-    cash=100_000.0,       # 回测配置
-    max_workers=4,        # 并行进程数
-    sort_by="sharpe_ratio",
-    ascending=False
-)
-
-# 3. 查看最佳结果
-print("Top 5 Parameter Combinations:")
-print(results_df.head())
-
-# 获取最佳参数
-best_params = results_df.iloc[0]["params"]
-print(f"最佳参数: {best_params}")
-```
-
-## 4. 注意事项 (给 LLM 的“负面约束”)
-
-在使用大模型时，可能会出现以下幻觉（Hallucinations），可以在 Prompt 中显式禁止：
-
-1.  **关于 `super().__init__()`**: AKQuant 的 `Strategy` 使用了 `__new__` 钩子处理初始化。虽然调用 `super().__init__` 是安全的（空操作），但在本框架中并非必须。
-2.  **禁止使用 `context.portfolio` 这种过时的写法**: 虽然内部支持，但推荐使用 `self.get_position()` 等顶层 API。
-3.  **注意 `get_history` 的返回值**: 它返回的是 `numpy.ndarray`，不是 `pandas.Series`（除非使用 `get_history_df`）。直接对 `ndarray` 做运算性能更高。
-4.  **ML 策略中的特征一致性**: 训练时 `prepare_features` 通常会 `shift(-1)` 导致最后一行无效被丢弃；但在 `on_bar` 预测时，我们需要用当前最新的行情计算特征。直接复用 `prepare_features` 可能会导致预测时取不到最新的特征（因为它以为那是“最后一行”而丢弃了），或者需要特殊的参数控制。建议在 `on_bar` 中显式计算当前特征。
-
-## 5. 实时数据处理 (Realtime / CTP)
-
-AKQuant 提供了 `LiveRunner` 类来简化实盘/仿真交易的启动流程。
-
-**Prompt 示例**:
-> 我需要编写一个 CTP 实盘策略启动脚本，使用 1 分钟 K 线聚合，并在运行 1 小时后自动停止。
-
-**模型应生成的代码片段**:
-
-```python
-from akquant.live import LiveRunner
-from akquant import AssetType, Instrument
-
-# 1. 定义合约
-instruments = [
-    Instrument(symbol="rb2505", asset_type=AssetType.Futures, multiplier=10.0, margin_ratio=0.1, tick_size=1.0)
-]
-
-# 2. 创建运行器
-runner = LiveRunner(
-    strategy_cls=MyStrategy,
-    instruments=instruments,
-    md_front="tcp://182.254.243.31:40011",
-    use_aggregator=True  # 关键参数
-)
-
-# 3. 运行 (支持 duration 自动停止)
-# show_progress=False 在实盘中推荐，避免进度条干扰日志
-runner.run(cash=500_000, show_progress=False, duration="1h")
-```
-
-### 模式选择 (`use_aggregator`)
-
-*   **`use_aggregator=True` (默认)**:
-    *   启用内置的 Rust 高性能聚合器 (`BarAggregator`)。
-    *   策略的 `on_bar` 每 1 分钟触发一次（标准 OHLCV）。
-    *   适用于趋势跟踪、技术指标策略。
-*   **`use_aggregator=False`**:
-    *   **Tick-as-Bar 模式**。网关收到每个 Tick 都会直接封装成 Bar 推送。
-    *   策略的 `on_bar` 频率极高（同 Tick 频率）。
-    *   适用于高频策略、做市策略或测试数据连接。
-
-### 关键区别说明
-
-*   **Gateway 层 (`on_tick`)**: 负责接收外部接口（如 CTP, Binance）的原始 Tick 数据。
-*   **Strategy 层 (`on_bar`)**: 策略逻辑的核心入口。
-    *   **无论数据源是聚合后的分钟线，还是 Tick 快照，策略始终通过 `on_bar` 接收数据。**
-    *   AKQuant 引擎标准化了数据流，策略不需要感知上游是 Tick 还是 Bar，只需要处理 `Bar` 对象。
+### 4.3 时区处理 (Timezone Handling)
+*   `prepare_dataframe` 默认使用 `ambiguous='NaT'` 和 `nonexistent='shift_forward'` 处理时区转换。
+*   这意味着在夏令时切换或无效时间点，系统会自动修正或标记为 NaT，防止程序崩溃。
