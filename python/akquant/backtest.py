@@ -56,6 +56,42 @@ class BacktestResult:
         self._timezone = timezone
 
     @property
+    def equity_curve(self) -> pd.Series:
+        """
+        Get the equity curve as a Pandas Series.
+
+        Index: Datetime (Timezone-aware)
+        Values: Total equity
+        """
+        if not self._raw.equity_curve:
+            return pd.Series(dtype=float)
+
+        df = pd.DataFrame(self._raw.equity_curve, columns=["timestamp", "equity"])
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], unit="ns", utc=True
+        ).dt.tz_convert(self._timezone)
+        df.set_index("timestamp", inplace=True)
+        return df["equity"]
+
+    @property
+    def cash_curve(self) -> pd.Series:
+        """
+        Get the cash curve as a Pandas Series.
+
+        Index: Datetime (Timezone-aware)
+        Values: Available cash
+        """
+        if not hasattr(self._raw, "cash_curve") or not self._raw.cash_curve:
+            return pd.Series(dtype=float)
+
+        df = pd.DataFrame(self._raw.cash_curve, columns=["timestamp", "cash"])
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], unit="ns", utc=True
+        ).dt.tz_convert(self._timezone)
+        df.set_index("timestamp", inplace=True)
+        return df["cash"]
+
+    @property
     def trades(self) -> List[ClosedTrade]:
         """
         Get closed trades as a list of raw objects (Raw Access).
@@ -139,6 +175,7 @@ class BacktestResult:
             - market_value (float): Market value of positions.
             - margin (float): Margin used.
             - unrealized_pnl (float): Floating PnL.
+            - entry_price (float): Average entry price.
         """
         # Try to use the Rust optimized getter if available
         if hasattr(self._raw, "get_positions_dict"):
@@ -162,6 +199,7 @@ class BacktestResult:
                 "market_value",
                 "margin",
                 "unrealized_pnl",
+                "entry_price",
                 "symbol",
                 "date",
             ]

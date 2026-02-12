@@ -53,6 +53,7 @@ pub struct Engine {
     market_model: Box<dyn MarketModel>,
     execution_model: Box<dyn ExecutionClient>,
     equity_curve: Vec<(i64, Decimal)>,
+    cash_curve: Vec<(i64, Decimal)>,
     pub snapshots: Vec<(i64, Vec<PositionSnapshot>)>,
     execution_mode: ExecutionMode,
     clock: Clock,
@@ -107,6 +108,7 @@ impl Engine {
             market_model: Box::new(ChinaMarket::from_config(market_config)),
             execution_model: Box::new(SimulatedExecutionClient::new()),
             equity_curve: Vec::new(),
+            cash_curve: Vec::new(),
             snapshots: Vec::new(),
             execution_mode: ExecutionMode::NextOpen,
             clock: Clock::new(),
@@ -643,6 +645,7 @@ impl Engine {
                         .portfolio
                         .calculate_equity(&self.last_prices, &self.instruments);
                     self.equity_curve.push((last_timestamp, equity));
+                    self.cash_curve.push((last_timestamp, self.portfolio.cash));
 
                     bar_index += 1;
                 }
@@ -963,6 +966,7 @@ impl Engine {
         // Clone equity curve and append current state (Mark-to-Market)
         // This ensures that we have the latest equity point even if the run loop was interrupted
         let mut equity_curve = self.equity_curve.clone();
+        let mut cash_curve = self.cash_curve.clone();
 
         let mut snapshots = self.snapshots.clone();
 
@@ -978,6 +982,9 @@ impl Engine {
             {
                 equity_curve.push((now_ns, equity));
             }
+            if cash_curve.last().map(|(t, _)| *t != now_ns).unwrap_or(true) {
+                cash_curve.push((now_ns, self.portfolio.cash));
+            }
             if snapshots.last().map(|(t, _)| *t != now_ns).unwrap_or(true) {
                 let snap = self.create_position_snapshots(now_ns);
                 snapshots.push((now_ns, snap));
@@ -986,6 +993,7 @@ impl Engine {
 
         BacktestResult::calculate(
             equity_curve,
+            cash_curve,
             snapshots,
             trade_pnl,
             closed_trades,
@@ -1079,9 +1087,13 @@ impl Engine {
                 .get_unrealized_pnl(symbol, price, multiplier);
             let unrealized_pnl_f64 = unrealized_pnl.to_f64().unwrap_or(0.0);
 
+            let entry_price = self.trade_tracker.get_average_price(symbol);
+            let entry_price_f64 = entry_price.to_f64().unwrap_or(0.0);
+
             snapshots.push(PositionSnapshot {
                 symbol: symbol.clone(),
                 quantity: qty_f64,
+                entry_price: entry_price_f64,
                 long_shares,
                 short_shares,
                 close: price_f64,

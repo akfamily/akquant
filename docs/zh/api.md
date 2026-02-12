@@ -198,9 +198,10 @@ Instrument(
 
 *   `metrics_df`: (pd.DataFrame) 包含所有绩效指标的表格，以指标名称为索引。
 *   `trades_df`: (pd.DataFrame) 包含所有平仓交易记录的表格。
-*   `positions_df`: (pd.DataFrame) 包含每日持仓快照的表格。
-*   `positions`: (pd.DataFrame) 每日持仓快照 (原 `daily_positions_df`，已重命名)。
-*   `equity_curve`: (List[Tuple[int, float]]) 权益曲线原始数据。
+*   `orders_df`: (pd.DataFrame) 包含所有委托记录的表格。
+*   `positions_df`: (pd.DataFrame) 包含每日持仓详情，包括持仓数量、市值、浮动盈亏、**持仓均价 (entry_price)** 等。
+*   `equity_curve`: (pd.Series) 权益曲线，索引为时间，值为账户总权益。
+*   `cash_curve`: (pd.Series) 现金曲线，索引为时间，值为账户可用现金。
 
 **绩效指标详解 (Performance Metrics):**
 

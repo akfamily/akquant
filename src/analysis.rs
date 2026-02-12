@@ -255,6 +255,8 @@ pub struct PositionSnapshot {
     #[pyo3(get)]
     pub quantity: f64,
     #[pyo3(get)]
+    pub entry_price: f64,
+    #[pyo3(get)]
     pub long_shares: f64,
     #[pyo3(get)]
     pub short_shares: f64,
@@ -286,6 +288,8 @@ pub struct BacktestResult {
     #[pyo3(get)]
     pub equity_curve: Vec<(i64, f64)>,
     #[pyo3(get)]
+    pub cash_curve: Vec<(i64, f64)>,
+    #[pyo3(get)]
     pub metrics: PerformanceMetrics,
     #[pyo3(get)]
     pub trade_metrics: TradePnL,
@@ -303,6 +307,7 @@ pub struct BacktestResult {
 impl BacktestResult {
     pub fn calculate(
         equity_curve_decimal: Vec<(i64, Decimal)>,
+        cash_curve_decimal: Vec<(i64, Decimal)>,
         snapshots: Vec<(i64, Vec<PositionSnapshot>)>,
         trade_pnl: TradePnL,
         trades: Vec<ClosedTrade>,
@@ -315,10 +320,15 @@ impl BacktestResult {
             .iter()
             .map(|(t, d)| (*t, d.to_f64().unwrap_or_default()))
             .collect();
+        let cash_curve: Vec<(i64, f64)> = cash_curve_decimal
+            .iter()
+            .map(|(t, d)| (*t, d.to_f64().unwrap_or_default()))
+            .collect();
 
         if equity_curve_decimal.is_empty() {
             return BacktestResult {
                 equity_curve,
+                cash_curve,
                 metrics: PerformanceMetrics {
                     total_return: 0.0,
                     annualized_return: 0.0,
@@ -559,6 +569,7 @@ impl BacktestResult {
 
         BacktestResult {
             equity_curve,
+            cash_curve,
             metrics: PerformanceMetrics {
                 total_return: total_return_f64,
                 annualized_return,
@@ -678,6 +689,7 @@ impl BacktestResult {
         let mut market_values = Vec::new();
         let mut margins = Vec::new();
         let mut unrealized_pnls = Vec::new();
+        let mut entry_prices = Vec::new();
 
         for (ts, snapshots) in &self.snapshots {
             for s in snapshots {
@@ -690,6 +702,7 @@ impl BacktestResult {
                 market_values.push(s.market_value);
                 margins.push(s.margin);
                 unrealized_pnls.push(s.unrealized_pnl);
+                entry_prices.push(s.entry_price);
             }
         }
 
@@ -703,6 +716,7 @@ impl BacktestResult {
         dict.set_item("market_value", market_values)?;
         dict.set_item("margin", margins)?;
         dict.set_item("unrealized_pnl", unrealized_pnls)?;
+        dict.set_item("entry_price", entry_prices)?;
 
         Ok(dict.into())
     }
@@ -1130,6 +1144,7 @@ mod tests {
         let result = BacktestResult::calculate(
             equity_curve,
             vec![],
+            vec![],
             empty_pnl.clone(),
             vec![],
             Decimal::from(100),
@@ -1148,6 +1163,7 @@ mod tests {
         let result_2 = BacktestResult::calculate(
             equity_curve_2,
             vec![],
+            vec![],
             empty_pnl.clone(),
             vec![],
             Decimal::from(100),
@@ -1165,6 +1181,7 @@ mod tests {
         ];
         let result_3 = BacktestResult::calculate(
             equity_curve_3,
+            vec![],
             vec![],
             empty_pnl.clone(),
             vec![],
@@ -1186,6 +1203,7 @@ mod tests {
         ];
         let result_4 = BacktestResult::calculate(
             equity_curve_4,
+            vec![],
             vec![],
             empty_pnl.clone(),
             vec![],
@@ -1217,6 +1235,7 @@ mod tests {
 
         let result = BacktestResult::calculate(
             equity_curve,
+            vec![],
             vec![],
             empty_pnl.clone(),
             vec![],
@@ -1713,6 +1732,33 @@ impl TradeTracker {
                         .push_back((remaining_qty, price, remaining_comm, bar_idx, timestamp, tag, portfolio_value));
                 }
             }
+        }
+    }
+
+    pub fn get_average_price(&self, symbol: &str) -> Decimal {
+        let calc_avg = |inventory: &VecDeque<(Decimal, Decimal, Decimal, usize, i64, String, Decimal)>| {
+            if inventory.is_empty() {
+                return Decimal::ZERO;
+            }
+            let mut total_val = Decimal::ZERO;
+            let mut total_qty = Decimal::ZERO;
+            for (qty, price, _, _, _, _, _) in inventory {
+                total_val += *qty * *price;
+                total_qty += *qty;
+            }
+            if total_qty.is_zero() {
+                Decimal::ZERO
+            } else {
+                total_val / total_qty
+            }
+        };
+
+        if let Some(inventory) = self.long_inventory.get(symbol) {
+            calc_avg(inventory)
+        } else if let Some(inventory) = self.short_inventory.get(symbol) {
+            calc_avg(inventory)
+        } else {
+            Decimal::ZERO
         }
     }
 
