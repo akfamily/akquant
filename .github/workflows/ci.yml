@@ -18,6 +18,7 @@ env:
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '16' }}
 
 jobs:
+  # Release jobs - Run on Tags AND Push/PR (accelerated via Env vars)
   linux:
     runs-on: ubuntu-latest
     strategy:
@@ -28,10 +29,19 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # 缓存 cargo registry 到宿主机，后面挂载进 Docker 容器
+      - name: Cache cargo registry
+        uses: actions/cache@v5
         with:
-          key: linux-${{ matrix.target }}
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-registry-linux-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-registry-linux-${{ matrix.target }}-
+      - name: Prepare cargo dirs
+        run: mkdir -p ~/.cargo/registry ~/.cargo/git
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -39,6 +49,8 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: 'true'
           manylinux: auto
+          # 将宿主机的 cargo registry 挂载进容器
+          docker-options: -v /home/runner/.cargo/registry:/root/.cargo/registry -v /home/runner/.cargo/git:/root/.cargo/git
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -100,6 +112,7 @@ jobs:
 
   sdist:
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v6
       - name: Build sdist
