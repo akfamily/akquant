@@ -28,6 +28,11 @@ impl SymbolHistory {
 
     pub fn push(&mut self, bar: &Bar) {
         if self.capacity == 0 {
+            // If capacity is 0, we can still store unbounded history?
+            // Or should we interpret 0 as "unlimited" or "none"?
+            // Usually 0 means None.
+            // But if we want MAE/MFE, we need history.
+            // Let's assume 0 means disabled.
             return;
         }
 

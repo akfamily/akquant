@@ -79,6 +79,8 @@ class Strategy:
     timezone: str = "Asia/Shanghai"
     warmup_period: int = 0
     _last_event_type: str = ""  # "bar" or "tick"
+    _hold_bars: "defaultdict[str, int]"
+    _last_position_signs: "defaultdict[str, float]"
 
     # Fee rates
     commission_rate: float
@@ -99,6 +101,8 @@ class Strategy:
         instance._subscriptions = []
         instance._last_prices = {}
         instance._known_orders = {}
+        instance._hold_bars = defaultdict(int)
+        instance._last_position_signs = defaultdict(float)
         instance.timezone = getattr(instance, "timezone", "Asia/Shanghai")
         instance._last_event_type = ""
 
@@ -478,6 +482,26 @@ class Strategy:
 
         self._check_order_events()
 
+        # Update hold bars count
+        symbol = bar.symbol
+        current_pos = ctx.get_position(symbol)
+
+        if current_pos == 0:
+            self._hold_bars[symbol] = 0
+            self._last_position_signs[symbol] = 0.0
+        else:
+            current_sign = np.sign(current_pos)
+            prev_sign = self._last_position_signs[symbol]
+
+            if current_sign != prev_sign:
+                # Opened or Flipped position
+                self._hold_bars[symbol] = 1
+            else:
+                # Holding
+                self._hold_bars[symbol] += 1
+
+            self._last_position_signs[symbol] = current_sign
+
         # Lazy configuration
         if not self._model_configured:
             self._auto_configure_model()
@@ -577,6 +601,22 @@ class Strategy:
 
         symbol = self._resolve_symbol(symbol)
         return self.ctx.get_position(symbol)
+
+    def hold_bar(self, symbol: Optional[str] = None) -> int:
+        """
+        获取当前持仓持有的 Bar 数量.
+
+        Args:
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
+
+        Returns:
+            int: 持有的 Bar 数量. 如果未持仓，返回 0.
+        """
+        if self.ctx is None:
+            return 0
+
+        symbol = self._resolve_symbol(symbol)
+        return self._hold_bars[symbol]
 
     def get_positions(self) -> Dict[str, float]:
         """
