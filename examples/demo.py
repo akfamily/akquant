@@ -30,21 +30,10 @@ class MyStrategy(Strategy):
 
 
 # 运行回测
-result = aq.run_backtest(data=df, strategy=MyStrategy, symbol="sh600000")
+result = aq.run_backtest(data=df, strategy=MyStrategy, symbol="sh600000", cash=100)
 
 
 pd.set_option("display.max_columns", None)  # 显示所有行
 # 打印回测结果
 print("\n=== Backtest Result ===")
-print(result.positions)
-print(result.positions_df)
-result
-# 绩效指标 (DataFrame)
-result.metrics_df
-# 交易明细 (DataFrame) - 包含 symbol, entry_time, pnl, return_pct 等
-result.trades_df
-# 订单记录 (DataFrame) - 包含 order_id, status, filled_quantity, avg_price 等
-result.orders_df
-# 持仓记录 (DataFrame) - 包含 date, symbol, long_shares, equity, market_value 等
-result.positions_df
-result.positions
+print(result)

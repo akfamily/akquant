@@ -417,14 +417,15 @@ impl Engine {
                         match event {
                             Event::OrderRequest(mut order) => {
                                 // 1. Risk Check
-                                if let Some(_err) = self.risk_manager.check_internal(
+                                if let Some(err) = self.risk_manager.check_internal(
                                     &order,
                                     &self.portfolio,
                                     &self.instruments,
                                     &pending_orders,
+                                    &self.last_prices,
                                 ) {
                                     // Reject
-                                    // println!("Risk Reject: {}", err);
+                                    println!("Risk Reject: {}", err);
                                     order.status = OrderStatus::Rejected;
                                     // Directly process rejection report
                                     let report = Event::ExecutionReport(order, None);
@@ -731,12 +732,14 @@ impl Engine {
                                 while let Ok(ev) = rx.try_recv() {
                                     match ev {
                                         Event::OrderRequest(mut o) => {
-                                            if let Some(_err) = self.risk_manager.check_internal(
+                                            if let Some(err) = self.risk_manager.check_internal(
                                                 &o,
                                                 &self.portfolio,
                                                 &self.instruments,
                                                 &pending_orders,
+                                                &self.last_prices,
                                             ) {
+                                                println!("Risk Reject: {}", err);
                                                 o.status = OrderStatus::Rejected;
                                                 let _ = self
                                                     .event_tx

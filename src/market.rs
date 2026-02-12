@@ -353,6 +353,10 @@ impl MarketModel for ChinaMarket {
             let is_t_plus_one_asset = if let Some(instr) = instruments.get(symbol) {
                 matches!(instr.asset_type, AssetType::Stock | AssetType::Fund)
             } else {
+                // Warn if instrument metadata is missing for a position we hold
+                if !quantity.is_zero() {
+                    println!("Warning: Missing instrument metadata for symbol {}. T+1 settlement skipped.", symbol);
+                }
                 false
             };
 
