@@ -98,6 +98,12 @@ This document details the performance metrics in AKQuant backtest results (`metr
 | `commission` | Commission | Float | Commission paid. |
 | `duration_bars` | Duration (Bars) | Int | Number of bars held. |
 | `duration` | Duration | Timedelta | `exit_time - entry_time`. |
+| `mae` | MAE | **%** | Maximum Adverse Excursion (max loss during trade). |
+| `mfe` | MFE | **%** | Maximum Favorable Excursion (max profit during trade). |
+| `entry_tag` | Entry Tag | String | Tag of the entry order. |
+| `exit_tag` | Exit Tag | String | Tag of the exit order. |
+| `entry_portfolio_value` | Entry Portfolio Value | Float | Total account equity at entry. |
+| `max_drawdown_pct` | Max Drawdown % | **%** | Max drawdown percentage during the trade. |
 
 ## Orders
 

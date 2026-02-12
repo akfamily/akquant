@@ -361,7 +361,9 @@ pub fn from_arrays(
         };
 
         let ts = timestamps[i];
-        let normalized_ts = normalize_timestamp(ts);
+        // Timestamps from Python/Pandas are already in nanoseconds (int64)
+        // No normalization needed (and normalization can be buggy for dates near 1970)
+        let normalized_ts = ts;
 
         let mut bar_extra = HashMap::new();
         for (k, arr) in &extra_arrays {

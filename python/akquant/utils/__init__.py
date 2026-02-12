@@ -385,7 +385,7 @@ def prepare_dataframe(
         if dt.dt.tz is None:
             # Ensure ns for naive before localizing
             dt = dt.astype("datetime64[ns]")
-            dt = dt.dt.tz_localize(tz)
+            dt = dt.dt.tz_localize(tz, ambiguous="NaT", nonexistent="shift_forward")
 
         # 4. Convert to UTC
         dt = dt.dt.tz_convert("UTC")
@@ -399,7 +399,9 @@ def prepare_dataframe(
 
         if dt_idx.tz is None:
             dt_idx = cast(pd.DatetimeIndex, dt_idx.astype("datetime64[ns]"))
-            dt_idx = dt_idx.tz_localize(tz)
+            dt_idx = dt_idx.tz_localize(
+                tz, ambiguous="NaT", nonexistent="shift_forward"
+            )
 
         dt_idx = dt_idx.tz_convert("UTC")
         df.index = dt_idx

@@ -115,7 +115,7 @@ impl Engine {
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8
             trade_tracker: TradeTracker::new(),
-            history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(0))),
+            history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(10000))), // Default large capacity for MAE/MFE
             event_tx: tx,
             event_rx: Some(Mutex::new(rx)),
             initial_capital: Decimal::from(100_000),
@@ -1237,11 +1237,23 @@ impl Engine {
             }
 
             // Update Order Commission
+            let mut order_tag = None;
             if let Some(order) = pending_orders.iter_mut().find(|o| o.id == trade.order_id) {
                 order.commission += trade.commission;
+                order_tag = Some(order.tag.clone());
             }
 
-            self.trade_tracker.process_trade(&trade);
+            if order_tag.is_none() {
+                order_tag = self.orders.iter().find(|o| o.id == trade.order_id).map(|o| o.tag.clone());
+            }
+
+            let equity = self.portfolio.calculate_equity(&self.last_prices, &self.instruments);
+
+            {
+                let history_buffer = self.history_buffer.read().unwrap();
+                let history = history_buffer.get_history(&trade.symbol);
+                self.trade_tracker.process_trade(&trade, order_tag.as_deref(), history, equity);
+            }
             self.trades.push(trade);
         }
     }

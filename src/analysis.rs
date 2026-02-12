@@ -1,4 +1,5 @@
 use crate::model::{Order, OrderSide, Trade};
+use crate::history::SymbolHistory;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
@@ -36,7 +37,19 @@ pub struct ClosedTrade {
     #[pyo3(get)]
     pub duration_bars: usize,
     #[pyo3(get)]
-    pub duration: i64, // Duration in nanoseconds
+    pub duration: u64, // Duration in nanoseconds
+    #[pyo3(get)]
+    pub mae: f64, // Maximum Adverse Excursion
+    #[pyo3(get)]
+    pub mfe: f64, // Maximum Favorable Excursion
+    #[pyo3(get)]
+    pub entry_tag: String, // Entry order tag
+    #[pyo3(get)]
+    pub exit_tag: String, // Exit order tag
+    #[pyo3(get)]
+    pub entry_portfolio_value: f64, // Portfolio value at entry
+    #[pyo3(get)]
+    pub max_drawdown_pct: f64, // Max drawdown percentage during trade
 }
 
 #[gen_stub_pymethods]
@@ -91,7 +104,7 @@ pub struct PerformanceMetrics {
     #[pyo3(get)]
     pub end_time: i64,
     #[pyo3(get)]
-    pub duration: i64,
+    pub duration: u64,
     #[pyo3(get)]
     pub total_bars: usize,
 
@@ -402,7 +415,9 @@ impl BacktestResult {
         // 4. Annualized Return & Volatility
         let start_ts = equity_curve.first().unwrap().0;
         let end_ts = equity_curve.last().unwrap().0;
-        let duration_seconds = (end_ts - start_ts) as f64 / 1_000_000_000.0;
+        // Use i128 to prevent overflow when calculating duration for very long backtests (e.g. > 292 years)
+        let duration_ns = (end_ts as i128) - (start_ts as i128);
+        let duration_seconds = duration_ns as f64 / 1_000_000_000.0;
         let years = duration_seconds / (365.0 * 24.0 * 3600.0);
 
         let total_return_f64 = total_return_dec.to_f64().unwrap_or_default();
@@ -564,7 +579,7 @@ impl BacktestResult {
                 total_return_pct: total_return_f64 * 100.0,
                 start_time: start_ts,
                 end_time: end_ts,
-                duration: (end_ts - start_ts),
+                duration: (end_ts as i128 - start_ts as i128) as u64,
                 total_bars,
                 exposure_time_pct,
                 var_95,
@@ -599,6 +614,12 @@ impl BacktestResult {
         let mut commissions = Vec::with_capacity(n);
         let mut duration_bars = Vec::with_capacity(n);
         let mut durations = Vec::with_capacity(n);
+        let mut maes = Vec::with_capacity(n);
+        let mut mfes = Vec::with_capacity(n);
+        let mut entry_tags = Vec::with_capacity(n);
+        let mut exit_tags = Vec::with_capacity(n);
+        let mut entry_portfolio_values = Vec::with_capacity(n);
+        let mut max_drawdown_pcts = Vec::with_capacity(n);
 
         for t in &self.trades {
             symbols.push(t.symbol.clone());
@@ -614,6 +635,12 @@ impl BacktestResult {
             commissions.push(t.commission);
             duration_bars.push(t.duration_bars);
             durations.push(t.duration);
+            maes.push(t.mae);
+            mfes.push(t.mfe);
+            entry_tags.push(t.entry_tag.clone());
+            exit_tags.push(t.exit_tag.clone());
+            entry_portfolio_values.push(t.entry_portfolio_value);
+            max_drawdown_pcts.push(t.max_drawdown_pct);
         }
 
         let dict = pyo3::types::PyDict::new(py);
@@ -630,6 +657,12 @@ impl BacktestResult {
         dict.set_item("commission", commissions)?;
         dict.set_item("duration_bars", duration_bars)?;
         dict.set_item("duration", durations)?;
+        dict.set_item("mae", maes)?;
+        dict.set_item("mfe", mfes)?;
+        dict.set_item("entry_tag", entry_tags)?;
+        dict.set_item("exit_tag", exit_tags)?;
+        dict.set_item("entry_portfolio_value", entry_portfolio_values)?;
+        dict.set_item("max_drawdown_pct", max_drawdown_pcts)?;
 
         Ok(dict.into())
     }
@@ -753,9 +786,17 @@ impl BacktestResult {
         }
 
         // Push duration as timedelta
-        let duration = chrono::Duration::nanoseconds(metrics.duration);
-        if let Ok(obj) = duration.into_pyobject(py) {
-            values.push(obj.into_any().unbind());
+        let nanos = metrics.duration;
+        let days = (nanos / 86_400_000_000_000) as i32;
+        let rem_ns = nanos % 86_400_000_000_000;
+        let seconds = (rem_ns / 1_000_000_000) as i32;
+        let rem_ns = rem_ns % 1_000_000_000;
+        let microseconds = (rem_ns / 1_000) as i32;
+
+        if let Ok(delta) = pyo3::types::PyDelta::new(py, days, seconds, microseconds, true) {
+            values.push(delta.into_any().unbind());
+        } else {
+            values.push(py.None());
         }
 
         // Push total_bars
@@ -960,7 +1001,7 @@ mod tests {
     ) -> (TradePnL, Vec<ClosedTrade>) {
         let mut tracker = TradeTracker::new();
         for trade in trades {
-            tracker.process_trade(&trade);
+            tracker.process_trade(&trade, None, None, Decimal::ZERO);
         }
         (
             tracker.calculate_pnl(current_prices),
@@ -1190,8 +1231,9 @@ mod tests {
 
 #[derive(Debug, Clone)]
 pub struct TradeTracker {
-    pub long_inventory: HashMap<String, VecDeque<(Decimal, Decimal, Decimal, usize, i64)>>,
-    pub short_inventory: HashMap<String, VecDeque<(Decimal, Decimal, Decimal, usize, i64)>>,
+    // (qty, price, commission, bar_idx, timestamp, tag, entry_portfolio_value)
+    pub long_inventory: HashMap<String, VecDeque<(Decimal, Decimal, Decimal, usize, i64, String, Decimal)>>,
+    pub short_inventory: HashMap<String, VecDeque<(Decimal, Decimal, Decimal, usize, i64, String, Decimal)>>,
     pub closed_trades: Arc<Vec<ClosedTrade>>,
     pub closed_trades_stats: Vec<(Decimal, Decimal, Decimal, bool)>, // (pnl, return_pct, bars, is_win)
 
@@ -1238,14 +1280,14 @@ impl TradeTracker {
 
         // Long positions: (Price - Entry) * Qty * Multiplier
         if let Some(queue) = self.long_inventory.get(symbol) {
-            for (qty, price, _, _, _) in queue {
+            for (qty, price, _, _, _, _, _) in queue {
                 pnl += (current_price - price) * qty * multiplier;
             }
         }
 
         // Short positions: (Entry - Price) * Qty * Multiplier
         if let Some(queue) = self.short_inventory.get(symbol) {
-            for (qty, price, _, _, _) in queue {
+            for (qty, price, _, _, _, _, _) in queue {
                 pnl += (price - current_price) * qty * multiplier;
             }
         }
@@ -1253,7 +1295,13 @@ impl TradeTracker {
         pnl
     }
 
-    pub fn process_trade(&mut self, trade: &Trade) {
+    pub fn process_trade(
+        &mut self,
+        trade: &Trade,
+        order_tag: Option<&str>,
+        history: Option<&SymbolHistory>,
+        portfolio_value: Decimal,
+    ) {
         let symbol = trade.symbol.clone();
         let side = trade.side;
         let qty = trade.quantity;
@@ -1261,6 +1309,7 @@ impl TradeTracker {
         let comm = trade.commission;
         let bar_idx = trade.bar_index;
         let timestamp = trade.timestamp;
+        let tag = order_tag.unwrap_or("").to_string();
 
         self.total_commission += comm;
 
@@ -1271,7 +1320,7 @@ impl TradeTracker {
                 // Try to cover shorts
                 if let Some(inventory) = self.short_inventory.get_mut(&symbol) {
                     while remaining_qty > Decimal::ZERO && !inventory.is_empty() {
-                        let (match_qty, match_price, match_comm, match_bar_idx, match_timestamp) =
+                        let (match_qty, match_price, match_comm, match_bar_idx, match_timestamp, match_tag, match_portfolio_value) =
                             inventory.front_mut().unwrap();
                         let covered_qty = remaining_qty.min(*match_qty);
 
@@ -1308,6 +1357,99 @@ impl TradeTracker {
 
                         let to_f64 = |d: Decimal| d.to_f64().unwrap_or_default();
 
+                        // Calculate MAE/MFE and Max Drawdown
+                        let mut mae = 0.0;
+                        let mut mfe = 0.0;
+                        let mut max_dd_pct = 0.0;
+
+                        if let Some(hist) = history {
+                            // Short trade:
+                            // MAE (Adverse) = Max High during trade
+                            // MFE (Favorable) = Min Low during trade
+                            let start_ts = *match_timestamp;
+                            let end_ts = timestamp;
+
+                            // Find indices
+                            let start_idx = match hist.timestamps.binary_search(&start_ts) {
+                                Ok(i) => i,
+                                Err(i) => i,
+                            };
+                            let end_idx = match hist.timestamps.binary_search(&end_ts) {
+                                Ok(i) => i,
+                                Err(i) => i, // Include up to end_ts
+                            };
+
+                            // Iterate
+                            let entry_px_f64 = to_f64(*match_price);
+                            let mut max_high = entry_px_f64;
+                            let mut min_low = entry_px_f64;
+
+                            let mut valley_low = entry_px_f64; // For Short Drawdown: lowest price seen so far (max profit)
+                            let mut current_max_dd = 0.0;
+
+                            let search_start = start_idx;
+                            let search_end = end_idx + 1; // inclusive of end_idx
+
+                            if search_start < hist.timestamps.len() {
+                                let limit = search_end.min(hist.timestamps.len());
+                                for i in search_start..limit {
+                                    let h = hist.highs[i];
+                                    let l = hist.lows[i];
+
+                                    if h > max_high { max_high = h; }
+                                    if l < min_low { min_low = l; }
+
+                                    // Short Drawdown Logic:
+                                    // Drawdown is from the lowest price seen so far (valley).
+                                    // If price rises from valley, that's drawdown.
+                                    if l < valley_low {
+                                        valley_low = l;
+                                    }
+                                    // Calculate drawdown at this bar's high (worst case in this bar)
+                                    // DD = (High - Valley) / Valley
+                                    if valley_low > 0.0 {
+                                        let dd = (h - valley_low) / valley_low;
+                                        if dd > current_max_dd {
+                                            current_max_dd = dd;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // If no bars in between (same bar entry/exit), assume entry/exit prices are bounds
+                            if max_high == -f64::INFINITY {
+                                let p = to_f64(price);
+                                max_high = entry_px_f64.max(p);
+                                min_low = entry_px_f64.min(p);
+
+                                // Check DD with exit price
+                                if p < valley_low { valley_low = p; }
+                                if valley_low > 0.0 {
+                                    let dd = (p - valley_low) / valley_low;
+                                    if dd > current_max_dd { current_max_dd = dd; }
+                                }
+                            } else {
+                                // Also consider exit price
+                                let p = to_f64(price);
+                                max_high = max_high.max(p);
+                                min_low = min_low.min(p);
+
+                                if p < valley_low { valley_low = p; }
+                                if valley_low > 0.0 {
+                                    let dd = (p - valley_low) / valley_low;
+                                    if dd > current_max_dd { current_max_dd = dd; }
+                                }
+                            }
+
+                            // Short:
+                            // MAE: (Entry - MaxHigh) / Entry. (e.g. 100 - 110 / 100 = -10%)
+                            mae = (entry_px_f64 - max_high) / entry_px_f64 * 100.0;
+                            // MFE: (Entry - MinLow) / Entry. (e.g. 100 - 90 / 100 = +10%)
+                            mfe = (entry_px_f64 - min_low) / entry_px_f64 * 100.0;
+
+                            max_dd_pct = current_max_dd * 100.0;
+                        }
+
                         Arc::make_mut(&mut self.closed_trades).push(ClosedTrade {
                             symbol: symbol.clone(),
                             entry_time: *match_timestamp,
@@ -1321,7 +1463,13 @@ impl TradeTracker {
                             return_pct: to_f64(ret_pct) * 100.0,
                             commission: to_f64(total_trade_comm),
                             duration_bars: bars.to_usize().unwrap_or(0),
-                            duration: timestamp - *match_timestamp,
+                            duration: ((timestamp as i128) - (*match_timestamp as i128)) as u64,
+                            mae,
+                            mfe,
+                            entry_tag: match_tag.clone(),
+                            exit_tag: tag.clone(),
+                            entry_portfolio_value: to_f64(*match_portfolio_value),
+                            max_drawdown_pct: max_dd_pct,
                         });
 
                         if pnl > Decimal::ZERO {
@@ -1367,14 +1515,14 @@ impl TradeTracker {
                     self.long_inventory
                         .entry(symbol.clone())
                         .or_default()
-                        .push_back((remaining_qty, price, remaining_comm, bar_idx, timestamp));
+                        .push_back((remaining_qty, price, remaining_comm, bar_idx, timestamp, tag, portfolio_value));
                 }
             }
             OrderSide::Sell => {
                 // Try to close longs
                 if let Some(inventory) = self.long_inventory.get_mut(&symbol) {
                     while remaining_qty > Decimal::ZERO && !inventory.is_empty() {
-                        let (match_qty, match_price, match_comm, match_bar_idx, match_timestamp) =
+                        let (match_qty, match_price, match_comm, match_bar_idx, match_timestamp, match_tag, match_portfolio_value) =
                             inventory.front_mut().unwrap();
                         let covered_qty = remaining_qty.min(*match_qty);
 
@@ -1409,6 +1557,96 @@ impl TradeTracker {
 
                         let to_f64 = |d: Decimal| d.to_f64().unwrap_or_default();
 
+                        // Calculate MAE/MFE
+                        let mut mae = 0.0;
+                        let mut mfe = 0.0;
+                        let mut max_dd_pct = 0.0;
+
+                        if let Some(hist) = history {
+                            // Long trade:
+                            // MAE (Adverse) = Min Low during trade
+                            // MFE (Favorable) = Max High during trade
+                            let start_ts = *match_timestamp;
+                            let end_ts = timestamp;
+
+                            let start_idx = match hist.timestamps.binary_search(&start_ts) {
+                                Ok(i) => i,
+                                Err(i) => i,
+                            };
+                            let end_idx = match hist.timestamps.binary_search(&end_ts) {
+                                Ok(i) => i,
+                                Err(i) => i,
+                            };
+
+                            let entry_px_f64 = to_f64(*match_price);
+                            let mut max_high = entry_px_f64;
+                            let mut min_low = entry_px_f64;
+
+                            let mut peak_high = entry_px_f64; // For Long Drawdown: highest price seen so far (max profit)
+                            let mut current_max_dd = 0.0;
+
+                            let search_start = start_idx;
+                            let search_end = end_idx + 1;
+
+                            if search_start < hist.timestamps.len() {
+                                let limit = search_end.min(hist.timestamps.len());
+                                for i in search_start..limit {
+                                    let h = hist.highs[i];
+                                    let l = hist.lows[i];
+
+                                    if h > max_high { max_high = h; }
+                                    if l < min_low { min_low = l; }
+
+                                    // Long Drawdown Logic:
+                                    // Drawdown is from the highest price seen so far (peak).
+                                    // If price falls from peak, that's drawdown.
+                                    if h > peak_high {
+                                        peak_high = h;
+                                    }
+                                    // Calculate drawdown at this bar's low (worst case in this bar)
+                                    // DD = (Peak - Low) / Peak
+                                    if peak_high > 0.0 {
+                                        let dd = (peak_high - l) / peak_high;
+                                        if dd > current_max_dd {
+                                            current_max_dd = dd;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if max_high == -f64::INFINITY {
+                                let p = to_f64(price);
+                                max_high = entry_px_f64.max(p);
+                                min_low = entry_px_f64.min(p);
+
+                                // Check DD with exit price
+                                if p > peak_high { peak_high = p; }
+                                if peak_high > 0.0 {
+                                    let dd = (peak_high - p) / peak_high;
+                                    if dd > current_max_dd { current_max_dd = dd; }
+                                }
+                            } else {
+                                let p = to_f64(price);
+                                max_high = max_high.max(p);
+                                min_low = min_low.min(p);
+
+                                // Check DD with exit price
+                                if p > peak_high { peak_high = p; }
+                                if peak_high > 0.0 {
+                                    let dd = (peak_high - p) / peak_high;
+                                    if dd > current_max_dd { current_max_dd = dd; }
+                                }
+                            }
+
+                            // Long:
+                            // MAE: (MinLow - Entry) / Entry. (e.g. 90 - 100 / 100 = -10%)
+                            mae = (min_low - entry_px_f64) / entry_px_f64 * 100.0;
+                            // MFE: (MaxHigh - Entry) / Entry. (e.g. 110 - 100 / 100 = +10%)
+                            mfe = (max_high - entry_px_f64) / entry_px_f64 * 100.0;
+
+                            max_dd_pct = current_max_dd * 100.0;
+                        }
+
                         Arc::make_mut(&mut self.closed_trades).push(ClosedTrade {
                             symbol: symbol.clone(),
                             entry_time: *match_timestamp,
@@ -1422,7 +1660,13 @@ impl TradeTracker {
                             return_pct: to_f64(ret_pct) * 100.0,
                             commission: to_f64(total_trade_comm),
                             duration_bars: bars.to_usize().unwrap_or(0),
-                            duration: timestamp - *match_timestamp,
+                            duration: ((timestamp as i128) - (*match_timestamp as i128)) as u64,
+                            mae,
+                            mfe,
+                            entry_tag: match_tag.clone(),
+                            exit_tag: tag.clone(),
+                            entry_portfolio_value: to_f64(*match_portfolio_value),
+                            max_drawdown_pct: max_dd_pct,
                         });
 
                         if pnl > Decimal::ZERO {
@@ -1466,7 +1710,7 @@ impl TradeTracker {
                     self.short_inventory
                         .entry(symbol.clone())
                         .or_default()
-                        .push_back((remaining_qty, price, remaining_comm, bar_idx, timestamp));
+                        .push_back((remaining_qty, price, remaining_comm, bar_idx, timestamp, tag, portfolio_value));
                 }
             }
         }
@@ -1478,14 +1722,14 @@ impl TradeTracker {
         if let Some(prices) = current_prices {
             for (symbol, inventory) in &self.long_inventory {
                 if let Some(price) = prices.get(symbol) {
-                    for (qty, entry_price, _, _, _) in inventory {
+                    for (qty, entry_price, _, _, _, _, _) in inventory {
                         unrealized_pnl += (*price - *entry_price) * *qty;
                     }
                 }
             }
             for (symbol, inventory) in &self.short_inventory {
                 if let Some(price) = prices.get(symbol) {
-                    for (qty, entry_price, _, _, _) in inventory {
+                    for (qty, entry_price, _, _, _, _, _) in inventory {
                         unrealized_pnl += (*entry_price - *price) * *qty;
                     }
                 }

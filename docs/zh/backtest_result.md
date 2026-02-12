@@ -99,6 +99,12 @@
 | `commission` | 手续费 | Float | 交易产生的佣金。 |
 | `duration_bars` | 持仓 K 线数 | Int | 持仓期间经历的 Bar 数量。 |
 | `duration` | 持仓时长 | Timedelta | `exit_time - entry_time`。 |
+| `mae` | 最大不利偏移 | **% (百分比)** | 持仓期间最大亏损幅度 (相对于开仓价)。 |
+| `mfe` | 最大有利偏移 | **% (百分比)** | 持仓期间最大盈利幅度 (相对于开仓价)。 |
+| `entry_tag` | 开仓标签 | String | 开仓订单的标签。 |
+| `exit_tag` | 平仓标签 | String | 平仓订单的标签。 |
+| `entry_portfolio_value` | 开仓总资产 | Float | 开仓时刻的账户总权益 (Equity)。用于计算仓位占比。 |
+| `max_drawdown_pct` | 单笔最大回撤 | **% (百分比)** | 持仓期间从最高点回落的最大幅度。 |
 
 ## 订单记录 (Orders)
 

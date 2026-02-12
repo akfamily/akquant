@@ -217,6 +217,12 @@ class ClosedTrade:
     commission: float
     duration_bars: int
     duration: int
+    mae: float
+    mfe: float
+    entry_tag: str
+    exit_tag: str
+    entry_portfolio_value: float
+    max_drawdown_pct: float
 
 class EMA:
     r"""Exponential Moving Average."""

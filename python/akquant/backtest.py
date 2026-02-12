@@ -298,6 +298,12 @@ class BacktestResult:
             - commission (float): Commission paid.
             - duration_bars (int): Number of bars held.
             - duration (timedelta): Duration of trade.
+            - mae (float): Maximum Adverse Excursion (%).
+            - mfe (float): Maximum Favorable Excursion (%).
+            - entry_tag (str): Tag of the entry order.
+            - exit_tag (str): Tag of the exit order.
+            - entry_portfolio_value (float): Portfolio value at entry.
+            - max_drawdown_pct (float): Max drawdown % during trade.
         """
         if not self._raw.trades:
             return pd.DataFrame()
@@ -325,6 +331,14 @@ class BacktestResult:
                         "commission": t.commission,
                         "duration_bars": t.duration_bars,
                         "duration": t.duration,
+                        "mae": t.mae,
+                        "mfe": t.mfe,
+                        "entry_tag": t.entry_tag,
+                        "exit_tag": t.exit_tag,
+                        "entry_portfolio_value": getattr(
+                            t, "entry_portfolio_value", 0.0
+                        ),
+                        "max_drawdown_pct": getattr(t, "max_drawdown_pct", 0.0),
                     }
                 )
             df = pd.DataFrame(data_list)
