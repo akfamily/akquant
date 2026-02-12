@@ -80,6 +80,13 @@ class Strategy:
     warmup_period: int = 0
     _last_event_type: str = ""  # "bar" or "tick"
 
+    # Fee rates
+    commission_rate: float
+    min_commission: float
+    stamp_tax_rate: float
+    transfer_fee_rate: float
+    lot_size: Any  # Can be int or Dict[str, int]
+
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
         instance = super().__new__(cls)
@@ -107,6 +114,15 @@ class Strategy:
 
         # 初始化通常在 __init__ 中的属性，允许子类省略 super().__init__()
         instance.model = None
+
+        # 默认费率配置
+        instance.commission_rate = 0.0
+        instance.min_commission = 0.0
+        instance.stamp_tax_rate = 0.0
+        instance.transfer_fee_rate = 0.0
+        # lot_size 可以是 int (全局统一) 或 Dict[str, int] (按标的设置)
+        # 默认 1，这是最通用的设置（适用于美股、加密货币等）。A股回测请务必设置为 100。
+        instance.lot_size = 1
 
         return instance
 
@@ -138,7 +154,7 @@ class Strategy:
         :return: 本地时间 (pd.Timestamp)
         """
         ts_utc = pd.to_datetime(timestamp, unit="ns", utc=True)
-        return ts_utc.tz_convert(self.timezone)
+        return cast(pd.Timestamp, ts_utc.tz_convert(self.timezone))
 
     def format_time(self, timestamp: int, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
         """
@@ -602,6 +618,7 @@ class Strategy:
         price: Optional[float] = None,
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
+        tag: Optional[str] = None,
     ) -> str:
         """
         买入下单.
@@ -612,6 +629,7 @@ class Strategy:
             price: 限价 (None 为市价)
             time_in_force: 订单有效期
             trigger_price: 触发价 (止损/止盈)
+            tag: 订单标签
 
         Returns:
             str: 订单 ID
@@ -633,7 +651,9 @@ class Strategy:
 
         # 4. Execute Buy
         if quantity > 0:
-            return self.ctx.buy(symbol, quantity, price, time_in_force, trigger_price)
+            return self.ctx.buy(
+                symbol, quantity, price, time_in_force, trigger_price, tag
+            )
         return ""
 
     def sell(
@@ -643,6 +663,7 @@ class Strategy:
         price: Optional[float] = None,
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
+        tag: Optional[str] = None,
     ) -> str:
         """
         卖出下单.
@@ -653,6 +674,7 @@ class Strategy:
             price: 限价 (None 为市价)
             time_in_force: 订单有效期
             trigger_price: 触发价 (止损/止盈)
+            tag: 订单标签
 
         Returns:
             str: 订单 ID
@@ -676,7 +698,9 @@ class Strategy:
 
         # 3. Execute Sell
         if quantity > 0:
-            return self.ctx.sell(symbol, quantity, price, time_in_force, trigger_price)
+            return self.ctx.sell(
+                symbol, quantity, price, time_in_force, trigger_price, tag
+            )
         return ""
 
     def stop_buy(
@@ -765,6 +789,62 @@ class Strategy:
         elif delta_qty < 0:
             self.sell(symbol, abs(delta_qty), price, **kwargs)
 
+    def _calculate_max_buy_qty(self, symbol: str, price: float, cash: float) -> float:
+        """
+        计算考虑费率后的最大可买数量.
+
+        :param symbol: 标的代码
+        :param price: 交易价格
+        :param cash: 可用资金
+        :return: 最大可买数量
+        """
+        if price <= 0 or cash <= 0:
+            return 0.0
+
+        # 1. 预估模式 (假设费用超过最低佣金)
+        # 综合买入费率 = 佣金率 + 过户费率 (印花税仅卖出收，不影响买入)
+        total_rate = self.commission_rate + self.transfer_fee_rate
+
+        # Get safety margin from config
+        safety_margin = 0.0001
+        if self.ctx and hasattr(self.ctx, "risk_config"):
+            safety_margin = self.ctx.risk_config.safety_margin
+
+        # 预留缓冲，防止浮点数精度误差
+        safe_cash = cash * (1.0 - safety_margin)
+
+        # 初始预估数量
+        est_qty = safe_cash / (price * (1 + total_rate))
+
+        # 2. 检查最低佣金
+        est_commission = est_qty * price * self.commission_rate
+
+        if est_commission < self.min_commission:
+            # 触发最低佣金，费用变为固定值
+            # Cash >= Qty * Price * (1 + TransferRate) + MinCommission
+            # Qty <= (Cash - MinCommission) / (Price * (1 + TransferRate))
+            remaining_cash = safe_cash - self.min_commission
+            if remaining_cash <= 0:
+                return 0.0
+
+            est_qty = remaining_cash / (price * (1 + self.transfer_fee_rate))
+
+        # 3. 整手调整 (向下取整到 lot_size 倍数)
+        # 获取当前标的的 lot_size
+        current_lot_size = 1
+        if isinstance(self.lot_size, int):
+            current_lot_size = self.lot_size
+        elif isinstance(self.lot_size, dict):
+            # Ensure we get an int, defaulting to 1 if something goes wrong
+            # or returns None
+            val = self.lot_size.get(symbol, self.lot_size.get("DEFAULT", 1))
+            current_lot_size = int(val) if val is not None else 1
+
+        if current_lot_size > 0:
+            est_qty = (est_qty // current_lot_size) * current_lot_size
+
+        return est_qty
+
     def order_target_value(
         self,
         target_value: float,
@@ -775,15 +855,22 @@ class Strategy:
         """
         调整仓位到目标价值.
 
-        :param target_value: 目标持仓市值
+        :param target_value: 目标持仓价值
         :param symbol: 标的代码
         :param price: 限价 (可选)
         :param kwargs: 其他下单参数
         """
         symbol = self._resolve_symbol(symbol)
 
-        # 获取当前价格
-        current_price = self._last_prices.get(symbol, 0.0)
+        # 1. Cancel existing open orders for this symbol
+        # This prevents "stacking" orders and ensures we target the net exposure
+        self.cancel_all_orders(symbol)
+
+        # 2. Get Price
+        if price is not None:
+            current_price = price
+        else:
+            current_price = self._last_prices.get(symbol, 0.0)
         if current_price == 0.0:
             if self.current_bar and self.current_bar.symbol == symbol:
                 current_price = self.current_bar.close
@@ -805,6 +892,14 @@ class Strategy:
         # 计算目标数量
         target_qty = target_value / current_price
         delta_qty = target_qty - current_qty
+
+        # 自动调整买入数量，防止资金不足
+        if delta_qty > 0 and self.ctx:
+            max_buy_qty = self._calculate_max_buy_qty(
+                symbol, current_price, float(self.ctx.cash)
+            )
+            if delta_qty > max_buy_qty:
+                delta_qty = max_buy_qty
 
         # 下单
         if delta_qty > 0:
@@ -851,11 +946,13 @@ class Strategy:
         """
         取消所有未完成订单.
 
-        Args:
-            symbol: 标的代码 (如果为 None, 取消所有标的订单)
+        :param symbol: 指定标的代码 (如果为 None, 取消所有标的订单)
         """
-        for order in self.get_open_orders(symbol):
-            self.cancel_order(order)
+        try:
+            for order in self.get_open_orders(symbol):
+                self.cancel_order(order)
+        except Exception as e:
+            print(f"Error calling cancel_all_orders: {e}")
 
     def buy_all(self, symbol: Optional[str] = None) -> None:
         """

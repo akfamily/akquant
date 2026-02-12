@@ -122,7 +122,7 @@ class BacktestResult:
         # Fill missing values with 0.0
         df = df.fillna(0.0)
 
-        return df
+        return cast(pd.DataFrame, df)
 
     @property
     def positions_df(self) -> pd.DataFrame:
@@ -173,7 +173,7 @@ class BacktestResult:
             # Sort
             df = df.sort_values(by=["symbol", "date"])
 
-            return df
+            return cast(pd.DataFrame, df)
 
         return pd.DataFrame()
 
@@ -246,6 +246,36 @@ class BacktestResult:
                     )
                 else:
                     df["created_at"] = df["created_at"].dt.tz_convert(self._timezone)
+
+        if "updated_at" in df.columns:
+            # Rust returns int64 timestamp (ns since epoch)
+            if pd.api.types.is_numeric_dtype(df["updated_at"]):
+                df["updated_at"] = pd.to_datetime(
+                    df["updated_at"], unit="ns", utc=True
+                ).dt.tz_convert(self._timezone)
+            elif hasattr(df["updated_at"], "dt"):
+                if df["updated_at"].dt.tz is None:
+                    df["updated_at"] = (
+                        df["updated_at"]
+                        .dt.tz_localize("UTC")
+                        .dt.tz_convert(self._timezone)
+                    )
+                else:
+                    df["updated_at"] = df["updated_at"].dt.tz_convert(self._timezone)
+
+        # Calculate derivative columns
+        if "filled_quantity" in df.columns and "avg_price" in df.columns:
+            # Calculate filled value (成交金额)
+            df["filled_value"] = df["filled_quantity"] * df["avg_price"].fillna(0.0)
+
+        if "created_at" in df.columns and "updated_at" in df.columns:
+            # Calculate duration (存续时长)
+            df["duration"] = df["updated_at"] - df["created_at"]
+
+        # Sort by creation time for better readability
+        if "created_at" in df.columns:
+            df.sort_values(by="created_at", inplace=True)
+            df.reset_index(drop=True, inplace=True)
 
         return df
 
@@ -387,19 +417,19 @@ def run_backtest(
     data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]] = None,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
     symbol: Union[str, List[str]] = "BENCHMARK",
-    cash: float = 1_000_000.0,
-    commission: float = 0.0003,
-    stamp_tax: float = 0.0005,
-    transfer_fee: float = 0.00001,
-    min_commission: float = 5.0,
+    initial_cash: Optional[float] = None,
+    commission_rate: Optional[float] = None,
+    stamp_tax_rate: float = 0.0,
+    transfer_fee_rate: float = 0.0,
+    min_commission: float = 0.0,
     execution_mode: Union[ExecutionMode, str] = ExecutionMode.NextOpen,
-    timezone: str = "Asia/Shanghai",
+    timezone: Optional[str] = None,
     initialize: Optional[Callable[[Any], None]] = None,
     context: Optional[Dict[str, Any]] = None,
-    history_depth: int = 0,
+    history_depth: Optional[int] = None,
     warmup_period: int = 0,
     lot_size: Union[int, Dict[str, int], None] = None,
-    show_progress: bool = True,
+    show_progress: Optional[bool] = None,
     config: Optional[BacktestConfig] = None,
     instruments_config: Optional[
         Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]
@@ -413,13 +443,13 @@ def run_backtest(
                  可选(如果配置了config或策略订阅).
     :param strategy: 策略类、策略实例或 on_bar 回调函数
     :param symbol: 标的代码
-    :param cash: 初始资金
-    :param commission: 佣金率
-    :param stamp_tax: 印花税率 (仅卖出)
-    :param transfer_fee: 过户费率
-    :param min_commission: 最低佣金
+    :param initial_cash: 初始资金 (默认 1,000,000.0)
+    :param commission_rate: 佣金率 (默认 0.0)
+    :param stamp_tax_rate: 印花税率 (仅卖出, 默认 0.0)
+    :param transfer_fee_rate: 过户费率 (默认 0.0)
+    :param min_commission: 最低佣金 (默认 0.0)
     :param execution_mode: 执行模式 (ExecutionMode.NextOpen 或 "next_open")
-    :param timezone: 时区名称
+    :param timezone: 时区名称 (默认 "Asia/Shanghai")
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
     :param context: 初始上下文数据 (仅当 strategy 为函数时使用)
     :param history_depth: 自动维护历史数据的长度 (0 表示禁用)
@@ -431,6 +461,51 @@ def run_backtest(
     :param instruments_config: 标的配置列表或字典 (可选)
     :return: 回测结果 Result 对象
     """
+    # 0. 设置默认值 (如果未传入且未在 Config 中设置)
+    # 优先级: 参数 > Config > 默认值
+
+    # Defaults
+    DEFAULT_INITIAL_CASH = 1_000_000.0
+    DEFAULT_COMMISSION_RATE = 0.0
+    DEFAULT_TIMEZONE = "Asia/Shanghai"
+    DEFAULT_SHOW_PROGRESS = True
+    DEFAULT_HISTORY_DEPTH = 0
+
+    # Resolve Initial Cash
+    if initial_cash is None:
+        if config and config.strategy_config:
+            initial_cash = config.strategy_config.initial_cash
+        else:
+            initial_cash = DEFAULT_INITIAL_CASH
+
+    # Resolve Commission Rate
+    if commission_rate is None:
+        if config and config.strategy_config:
+            commission_rate = config.strategy_config.fee_amount
+        else:
+            commission_rate = DEFAULT_COMMISSION_RATE
+
+    # Resolve Timezone
+    if timezone is None:
+        if config and config.timezone:
+            timezone = config.timezone
+        else:
+            timezone = DEFAULT_TIMEZONE
+
+    # Resolve Show Progress
+    if show_progress is None:
+        if config and config.show_progress is not None:
+            show_progress = config.show_progress
+        else:
+            show_progress = DEFAULT_SHOW_PROGRESS
+
+    # Resolve History Depth
+    if history_depth is None:
+        if config and config.history_depth is not None:
+            history_depth = config.history_depth
+        else:
+            history_depth = DEFAULT_HISTORY_DEPTH
+
     # 1. 确保日志已初始化
     logger = get_logger()
     if not logger.handlers:
@@ -447,25 +522,17 @@ def run_backtest(
                 "in Run Configuration."
             )
 
-    # 1.5 处理 Config 覆盖
+    # 1.5 处理 Config 覆盖 (剩余部分)
     if config:
         if config.start_date:
             kwargs["start_date"] = config.start_date
         if config.end_date:
             kwargs["end_date"] = config.end_date
-        if config.timezone:
-            timezone = config.timezone
-        if config.show_progress is not None:
-            show_progress = config.show_progress
-        if config.history_depth is not None:
-            history_depth = config.history_depth
 
-        if config.strategy_config:
-            cash = config.strategy_config.initial_cash
-            # Fee handling could be more complex, simplifying here
-            commission = config.strategy_config.fee_amount or commission
+        # 注意: initial_cash, commission_rate, timezone, show_progress, history_depth
+        # 已经在上方通过优先级逻辑处理过了，这里不需要再覆盖
 
-            # Risk Config injection handled later
+        # Risk Config injection handled later
 
     # Handle strategy_params explicitly
     if "strategy_params" in kwargs:
@@ -519,6 +586,25 @@ def run_backtest(
         # 如果策略支持 set_risk_config (假设我们添加它，或者直接注入属性)
         if hasattr(strategy_instance, "risk_config"):
             strategy_instance.risk_config = config.strategy_config.risk  # type: ignore
+
+    # 注入费率配置到 Strategy 实例
+    if hasattr(strategy_instance, "commission_rate"):
+        strategy_instance.commission_rate = commission_rate
+    if hasattr(strategy_instance, "min_commission"):
+        strategy_instance.min_commission = min_commission
+    if hasattr(strategy_instance, "stamp_tax_rate"):
+        strategy_instance.stamp_tax_rate = stamp_tax_rate
+    if hasattr(strategy_instance, "transfer_fee_rate"):
+        strategy_instance.transfer_fee_rate = transfer_fee_rate
+
+    # 注入 lot_size
+    # lot_size 参数可能是 int 或 dict。
+    # 如果是 dict，则 Strategy._calculate_max_buy_qty 会自动处理
+    if lot_size is not None and hasattr(strategy_instance, "lot_size"):
+        strategy_instance.lot_size = lot_size
+    elif lot_size is None and hasattr(strategy_instance, "lot_size"):
+        # 默认值已经在 Strategy.__new__ 中设置为 1
+        pass
 
     # 调用 on_start 获取订阅
     if hasattr(strategy_instance, "on_start"):
@@ -646,7 +732,9 @@ def run_backtest(
         raise ValueError(f"Invalid timezone: {timezone}")
     offset = int(offset_delta.total_seconds())
     engine.set_timezone(offset)
-    engine.set_cash(cash)
+    engine.set_cash(initial_cash)
+    if history_depth > 0:
+        engine.set_history_depth(history_depth)
 
     # ... (ExecutionMode logic)
     if isinstance(execution_mode, str):
@@ -666,7 +754,9 @@ def run_backtest(
 
     engine.set_t_plus_one(False)  # 默认 T+0，可配置
     engine.set_force_session_continuous(True)
-    engine.set_stock_fee_rules(commission, stamp_tax, transfer_fee, min_commission)
+    engine.set_stock_fee_rules(
+        commission_rate, stamp_tax_rate, transfer_fee_rate, min_commission
+    )
 
     # Configure other asset fees if provided
     if "fund_commission" in kwargs:

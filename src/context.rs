@@ -3,6 +3,7 @@ use crate::event::Event;
 use crate::history::HistoryBuffer;
 use crate::model::market_data::extract_decimal;
 use crate::model::{Order, OrderSide, OrderType, TimeInForce, Timer, Trade, TradingSession};
+use crate::risk::RiskConfig;
 use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
@@ -45,6 +46,8 @@ pub struct StrategyContext {
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
     // Event Channel (Optional, for async order submission)
     pub event_tx: Option<Sender<Event>>,
+    #[pyo3(get)]
+    pub risk_config: RiskConfig,
 }
 
 impl StrategyContext {
@@ -59,6 +62,7 @@ impl StrategyContext {
         recent_trades: Vec<Trade>,
         history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
         event_tx: Option<Sender<Event>>,
+        risk_config: RiskConfig,
     ) -> Self {
         StrategyContext {
             orders: Vec::new(),
@@ -74,6 +78,7 @@ impl StrategyContext {
             recent_trades,
             history_buffer,
             event_tx,
+            risk_config,
         }
     }
 }
@@ -91,6 +96,7 @@ impl StrategyContext {
         active_orders: Option<Vec<Order>>,
         closed_trades: Option<Vec<ClosedTrade>>,
         recent_trades: Option<Vec<Trade>>,
+        risk_config: Option<RiskConfig>,
     ) -> PyResult<Self> {
         let pos_dec: HashMap<String, Decimal> = positions
             .into_iter()
@@ -115,6 +121,7 @@ impl StrategyContext {
             recent_trades: recent_trades.unwrap_or_default(),
             history_buffer: None,
             event_tx: None,
+            risk_config: risk_config.unwrap_or_else(RiskConfig::new),
         })
     }
 
@@ -210,7 +217,7 @@ impl StrategyContext {
         self.canceled_order_ids.push(order_id);
     }
 
-    #[pyo3(signature = (symbol, quantity, price=None, time_in_force=None, trigger_price=None))]
+    #[pyo3(signature = (symbol, quantity, price=None, time_in_force=None, trigger_price=None, tag=None))]
     fn buy(
         &mut self,
         symbol: String,
@@ -218,6 +225,7 @@ impl StrategyContext {
         price: Option<&Bound<'_, PyAny>>,
         time_in_force: Option<TimeInForce>,
         trigger_price: Option<&Bound<'_, PyAny>>,
+        tag: Option<String>,
     ) -> PyResult<String> {
         let qty_decimal = extract_decimal(quantity)?;
         let price_decimal = if let Some(p) = price {
@@ -250,7 +258,10 @@ impl StrategyContext {
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
             created_at: self.current_time,
+            updated_at: self.current_time,
             commission: Decimal::ZERO,
+            tag: tag.unwrap_or_default(),
+            reject_reason: String::new(),
         };
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(Event::OrderRequest(order));
@@ -260,7 +271,7 @@ impl StrategyContext {
         Ok(id)
     }
 
-    #[pyo3(signature = (symbol, quantity, price=None, time_in_force=None, trigger_price=None))]
+    #[pyo3(signature = (symbol, quantity, price=None, time_in_force=None, trigger_price=None, tag=None))]
     fn sell(
         &mut self,
         symbol: String,
@@ -268,6 +279,7 @@ impl StrategyContext {
         price: Option<&Bound<'_, PyAny>>,
         time_in_force: Option<TimeInForce>,
         trigger_price: Option<&Bound<'_, PyAny>>,
+        tag: Option<String>,
     ) -> PyResult<String> {
         let qty_decimal = extract_decimal(quantity)?;
         let price_decimal = if let Some(p) = price {
@@ -300,7 +312,10 @@ impl StrategyContext {
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
             created_at: self.current_time,
+            updated_at: self.current_time,
             commission: Decimal::ZERO,
+            tag: tag.unwrap_or_default(),
+            reject_reason: String::new(),
         };
         if let Some(tx) = &self.event_tx {
             let _ = tx.send(Event::OrderRequest(order));

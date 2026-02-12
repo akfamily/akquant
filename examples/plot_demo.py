@@ -8,6 +8,8 @@ Demonstrates a complete workflow:
 4. Visualizing results with a professional-grade interactive dashboard using Plotly.
 """
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go  # type: ignore
@@ -67,7 +69,7 @@ class TrendMomentumStrategy(Strategy):
         gain = (delta.where(delta > 0, 0)).rolling(window=self.rsi_period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=self.rsi_period).mean()
         rs = gain / loss
-        return 100 - (100 / (1 + rs))
+        return cast(pd.Series, 100 - (100 / (1 + rs)))
 
     def on_bar(self, bar: Bar) -> None:
         """Handle new bar event."""

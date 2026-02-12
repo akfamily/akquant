@@ -11,9 +11,9 @@ class TestStrategy(Strategy):
         # Day 2: Close=93 -> Buy Limit 100
         # ...
         if bar.close < 100:
-            self.buy(bar.symbol, 100, price=100.0)
+            self.buy(bar.symbol, 100, price=100.0, tag="entry_signal")
         elif bar.close > 110:
-            self.sell(bar.symbol, 100)
+            self.sell(bar.symbol, 100, tag="exit_signal")
 
 
 def test_orders_df() -> None:
@@ -34,7 +34,13 @@ def test_orders_df() -> None:
 
     print("Running backtest...")
     result = run_backtest(
-        data=data, strategy=TestStrategy, symbol="TEST", show_progress=False
+        data=data,
+        strategy=TestStrategy,
+        symbol="TEST",
+        show_progress=False,
+        commission_rate=0.0002,
+        min_commission=5.0,
+        transfer_fee_rate=0.00001,
     )
 
     print("\nOrders DataFrame:")
@@ -55,6 +61,11 @@ def test_orders_df() -> None:
         "stop_price",
         "filled_quantity",
         "time_in_force",
+        "updated_at",
+        "tag",
+        "reject_reason",
+        "filled_value",
+        "duration",
     ]
     missing = [c for c in expected if c not in result.orders_df.columns]
     assert not missing, f"Missing columns: {missing}"
@@ -72,6 +83,20 @@ def test_orders_df() -> None:
     assert first_order["commission"] > 0, "Fees should be greater than 0"
     assert first_order["order_type"] == "limit"
     assert first_order["filled_quantity"] == 100.0
+    assert first_order["tag"] == "entry_signal"
+    assert first_order["updated_at"] >= first_order["created_at"]
+
+    # Check new derivative fields
+    assert "filled_value" in result.orders_df.columns
+    assert "duration" in result.orders_df.columns
+    assert (
+        first_order["filled_value"]
+        == first_order["filled_quantity"] * first_order["avg_price"]
+    )
+    assert (
+        first_order["duration"] == first_order["updated_at"] - first_order["created_at"]
+    )
+    assert isinstance(first_order["duration"], pd.Timedelta)
 
     # Verify fees logic roughly (commission + transfer fee)
     # Buy at 93.0. Value 9300. Commission 5 (min). Transfer 0.093. Total 5.093.

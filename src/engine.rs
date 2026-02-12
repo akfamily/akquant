@@ -25,7 +25,7 @@ use crate::model::{
     Bar, ExecutionMode, Instrument, Order, OrderStatus, TimeInForce, Timer, Trade, TradingSession,
 };
 use crate::portfolio::Portfolio;
-use crate::risk::RiskManager;
+use crate::risk::{RiskConfig, RiskManager};
 
 /// 主回测引擎.
 ///
@@ -72,6 +72,16 @@ pub struct Engine {
 #[gen_stub_pymethods]
 #[pymethods]
 impl Engine {
+    /// 设置风控配置
+    ///
+    /// 由于 PyO3 对嵌套结构体的属性访问可能返回副本，
+    /// 提供此方法以显式更新风控配置。
+    ///
+    /// :param config: 新的风控配置
+    fn set_risk_config(&mut self, config: RiskConfig) {
+        self.risk_manager.config = config;
+    }
+
     /// 初始化回测引擎.
     ///
     /// :return: Engine 实例
@@ -424,12 +434,55 @@ impl Engine {
                                     &pending_orders,
                                     &self.last_prices,
                                 ) {
-                                    // Reject
-                                    println!("Risk Reject: {}", err);
-                                    order.status = OrderStatus::Rejected;
-                                    // Directly process rejection report
-                                    let report = Event::ExecutionReport(order, None);
-                                    let _ = self.event_tx.send(report);
+                                    let mut handled = false;
+                                    // Check for insufficient cash to attempt auto-reduction
+                                    if err.contains("Insufficient cash") && order.side == crate::model::OrderSide::Buy {
+                                        if let Some(instr) = self.instruments.get(&order.symbol) {
+                                            // Get price (Limit or Last)
+                                            let price = if let Some(p) = order.price {
+                                                p
+                                            } else {
+                                                *self.last_prices.get(&order.symbol).unwrap_or(&Decimal::ZERO)
+                                            };
+
+                                            if price > Decimal::ZERO {
+                                                let multiplier = instr.multiplier;
+                                                let cost_per_unit = price * multiplier * instr.margin_ratio;
+                                                if cost_per_unit > Decimal::ZERO {
+                                                    let max_qty_raw = self.portfolio.cash / cost_per_unit;
+                                                    // Buffer for commission (e.g. 1%)
+                                                    let max_qty_raw = max_qty_raw * Decimal::from_f64(0.9999).unwrap();
+
+                                                    let lot_size = instr.lot_size;
+                                                    let mut new_qty = max_qty_raw.floor();
+                                                    if lot_size > Decimal::ZERO {
+                                                        new_qty = new_qty - (new_qty % lot_size);
+                                                    }
+
+                                                    if new_qty > Decimal::ZERO && new_qty < order.quantity {
+                                                        // println!("Insufficient cash. Auto-reducing quantity from {} to {}", order.quantity, new_qty);
+                                                        order.quantity = new_qty;
+                                                        handled = true;
+                                                        // Send as Validated (assuming it passes now)
+                                                        let _ = self.event_tx.send(Event::OrderValidated(order.clone()));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if !handled {
+                                        // Reject
+                                        // println!("Risk Reject: {}", err);
+                                        order.status = OrderStatus::Rejected;
+                                        order.reject_reason = err;
+                                        if let Some(ts) = self.clock.timestamp() {
+                                            order.updated_at = ts;
+                                        }
+                                        // Directly process rejection report
+                                        let report = Event::ExecutionReport(order, None);
+                                        let _ = self.event_tx.send(report);
+                                    }
                                 } else {
                                     // Validate -> Send to Execution
                                     let _ = self.event_tx.send(Event::OrderValidated(order));
@@ -443,12 +496,15 @@ impl Engine {
                             }
                             Event::ExecutionReport(order, trade) => {
                                 // 3. Update Order State
+                                // println!("DEBUG: Received ExecutionReport: OrderID={} Status={:?} Trade={:?}", order.id, order.status, trade.is_some());
                                 if let Some(existing) =
                                     pending_orders.iter_mut().find(|o| o.id == order.id)
                                 {
                                     existing.status = order.status;
                                     existing.filled_quantity = order.filled_quantity;
                                     existing.average_filled_price = order.average_filled_price;
+                                    existing.updated_at = order.updated_at;
+                                    existing.reject_reason = order.reject_reason.clone();
                                 } else {
                                     // Might be a new order from a source we didn't track yet?
                                     // Or we missed the Validated event?
@@ -640,13 +696,13 @@ impl Engine {
                 }
 
                 match self.execution_mode {
-                    ExecutionMode::NextOpen => {
-                        // Phase 1: Execution (Match pending orders at Open)
+                    ExecutionMode::NextOpen | ExecutionMode::NextAverage | ExecutionMode::NextHighLowMid => {
+                        // Phase 1: Execution (Match pending orders at Open or Average)
                         // Pass event to ExecutionClient
                         let reports = self.execution_model.on_event(
                             &event,
                             &self.instruments,
-                            true,
+                            self.execution_mode,
                             bar_index,
                             self.clock.session,
                         );
@@ -655,17 +711,6 @@ impl Engine {
                         for report in reports {
                             let _ = self.event_tx.send(report);
                         }
-                        // We need to pump the channel immediately to update pending_orders BEFORE strategy sees them?
-                        // Or let the loop handle it next iteration?
-                        // Strategy usually expects "filled" status if it happened at Open?
-                        // "NextOpen" means orders submitted yesterday are filled at Open.
-                        // So we should process reports NOW.
-                        // But reports are in Channel.
-                        // Let's manually process them or loop channel again?
-                        // Simpler: Just recursively call channel drain? Or copy-paste channel logic?
-                        // Or: send reports to channel, and let the NEXT loop iteration process them.
-                        // BUT call_strategy is below. If we don't process, Strategy sees old state.
-                        // So we should drain channel again here.
 
                         // Drain Channel (Mini-Loop)
                         let mut trades_to_process = Vec::new();
@@ -686,7 +731,7 @@ impl Engine {
                                                 trades_to_process.push(tr);
                                             }
                                         }
-                                        _ => {} // Ignore others for now (or queue them)
+                                        _ => {}
                                     }
                                 }
                             }
@@ -701,12 +746,81 @@ impl Engine {
 
                         for id in canceled_ids {
                             self.execution_model.on_cancel(&id);
+                            // Also update local pending_orders to reflect cancellation immediately
+                            // This ensures RiskManager sees the freed cash for subsequent orders in this step
+                            if let Some(o) = pending_orders.iter_mut().find(|o| o.id == id) {
+                                o.status = OrderStatus::Cancelled;
+                            }
                         }
                         for order in new_orders {
                             let _ = self.event_tx.send(Event::OrderRequest(order));
                         }
                         for t in new_timers {
                             self.timers.push(t);
+                        }
+
+                        // Phase 3: Process New Order Requests (but do not execute yet)
+                        // This moves orders from Channel -> pending_orders -> ExecutionClient
+                        let mut trades_to_process = Vec::new();
+                        if let Some(rx_mutex) = &self.event_rx {
+                            if let Ok(rx) = rx_mutex.lock() {
+                                while let Ok(ev) = rx.try_recv() {
+                                    match ev {
+                                        Event::OrderRequest(mut o) => {
+                                            if let Some(err) = self.risk_manager.check_internal(
+                                                &o,
+                                                &self.portfolio,
+                                                &self.instruments,
+                                                &pending_orders,
+                                                &self.last_prices,
+                                            ) {
+                                                // println!("Risk Reject: {}", err);
+                                                o.status = OrderStatus::Rejected;
+                                                o.reject_reason = err;
+                                                if let Some(ts) = self.clock.timestamp() {
+                                                    o.updated_at = ts;
+                                                }
+                                                // We don't send ExecutionReport for rejection here in Next* mode?
+                                                // Actually we should, to keep consistency.
+                                                // But mostly we just add to pending_orders as Rejected?
+                                                pending_orders.push(o);
+                                            } else {
+                                                // Order Validated, set created_at here if 0 (strategy didn't set it correctly or wants engine time)
+                                                if o.created_at == 0 {
+                                                    if let Some(ts) = self.clock.timestamp() {
+                                                        o.created_at = ts;
+                                                    }
+                                                }
+                                                let _ =
+                                                    self.event_tx.send(Event::OrderValidated(o));
+                                            }
+                                        }
+                                        Event::OrderValidated(o) => {
+                                            self.execution_model.on_order(o.clone());
+                                            pending_orders.push(o);
+                                        }
+                                        Event::ExecutionReport(o, t) => {
+                                            // Should not happen here usually, but just in case
+                                            if let Some(ex) =
+                                                pending_orders.iter_mut().find(|x| x.id == o.id)
+                                            {
+                                                ex.status = o.status;
+                                                ex.filled_quantity = o.filled_quantity;
+                                                ex.average_filled_price = o.average_filled_price;
+                                                ex.updated_at = o.updated_at;
+                                                ex.reject_reason = o.reject_reason.clone();
+                                            }
+                                            if let Some(tr) = t {
+                                                trades_to_process.push(tr);
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        if !trades_to_process.is_empty() {
+                            self.process_trades(trades_to_process, &mut pending_orders);
                         }
                     }
                     ExecutionMode::CurrentClose => {
@@ -741,10 +855,20 @@ impl Engine {
                                             ) {
                                                 println!("Risk Reject: {}", err);
                                                 o.status = OrderStatus::Rejected;
+                                                o.reject_reason = err;
+                                                if let Some(ts) = self.clock.timestamp() {
+                                                    o.updated_at = ts;
+                                                }
                                                 let _ = self
                                                     .event_tx
                                                     .send(Event::ExecutionReport(o, None));
                                             } else {
+                                                // Order Validated, set created_at here if 0
+                                                if o.created_at == 0 {
+                                                    if let Some(ts) = self.clock.timestamp() {
+                                                        o.created_at = ts;
+                                                    }
+                                                }
                                                 let _ =
                                                     self.event_tx.send(Event::OrderValidated(o));
                                             }
@@ -780,7 +904,7 @@ impl Engine {
                         let reports = self.execution_model.on_event(
                             &event,
                             &self.instruments,
-                            false,
+                            self.execution_mode,
                             bar_index,
                             self.clock.session,
                         );
@@ -888,6 +1012,7 @@ impl Engine {
             step_trades,
             Some(self.history_buffer.clone()),
             Some(self.event_tx.clone()),
+            self.risk_manager.config.clone(),
         )
     }
 }
@@ -982,12 +1107,101 @@ impl Engine {
         )))
     }
 
-    fn process_trades(&mut self, trades: Vec<Trade>, pending_orders: &mut Vec<Order>) {
+    fn process_trades(&mut self, mut trades: Vec<Trade>, pending_orders: &mut Vec<Order>) {
+        // 1. Adjust trades for insufficient cash (Dynamic Position Sizing)
+        for trade in trades.iter_mut() {
+            if trade.side == crate::model::OrderSide::Buy {
+                // Calculate estimated commission for the full trade first
+                let instr_opt = self.instruments.get(&trade.symbol);
+                let mut commission = Decimal::ZERO;
+                if let Some(instr) = instr_opt {
+                    commission = self.market_model.calculate_commission(
+                        instr,
+                        trade.side,
+                        trade.price,
+                        trade.quantity,
+                    );
+                }
+
+                let multiplier = instr_opt.map(|i| i.multiplier).unwrap_or(Decimal::ONE);
+                let cost = trade.price * trade.quantity * multiplier;
+                let total_required = cost + commission;
+
+                if total_required > self.portfolio.cash {
+                    // Insufficient cash, reduce quantity
+                    let mut ratio = if total_required > Decimal::ZERO {
+                        self.portfolio.cash / total_required
+                    } else {
+                        Decimal::ZERO
+                    };
+
+                    if ratio < Decimal::ZERO {
+                        ratio = Decimal::ZERO;
+                    }
+
+                    // Apply ratio and round down to lot size
+                    // Use configurable safety factor to avoid rounding issues causing rejection
+                    let safety_margin = self.risk_manager.config.safety_margin;
+                    let safety_factor = Decimal::from_f64(1.0 - safety_margin).unwrap_or(Decimal::from_f64(0.9999).unwrap());
+                    ratio = ratio * safety_factor;
+
+                    let lot_size = instr_opt.map(|i| i.lot_size).unwrap_or(Decimal::ONE);
+                    let mut new_qty = (trade.quantity * ratio).floor();
+                    new_qty = new_qty - (new_qty % lot_size);
+
+                    // Recalculate to ensure it fits (handling min commission etc)
+                    if let Some(instr) = instr_opt {
+                        let new_comm = self.market_model.calculate_commission(
+                            instr,
+                            trade.side,
+                            trade.price,
+                            new_qty,
+                        );
+                        let new_cost = trade.price * new_qty * multiplier;
+                        if new_cost + new_comm > self.portfolio.cash {
+                            // Still too high, reduce by one lot
+                            if new_qty >= lot_size {
+                                new_qty -= lot_size;
+                            } else {
+                                new_qty = Decimal::ZERO;
+                            }
+                        }
+                    }
+
+                    // Update trade quantity (we will update commission in the next loop)
+                    // We store the diff to update order later?
+                    // No, we just update trade here.
+                    // But we need to know we changed it.
+                    // Actually, the next loop handles commission calc again.
+                    // But we need to handle Order update logic carefully.
+                    // Let's store the original quantity in the trade? No field.
+                    // We can check if trade.quantity changed in the second loop?
+                    // No, let's just do it here.
+
+                    if new_qty < trade.quantity {
+                         let diff = trade.quantity - new_qty;
+                         // Update Order filled quantity NOW to keep consistency
+                         if let Some(order) = pending_orders.iter_mut().find(|o| o.id == trade.order_id) {
+                             order.filled_quantity -= diff;
+                             if order.filled_quantity < order.quantity {
+                                 order.status = OrderStatus::Submitted;
+                             }
+                         }
+                         trade.quantity = new_qty;
+                    }
+                }
+            }
+        }
+
         // Add to current step trades for strategy notification
         self.current_step_trades.extend(trades.iter().cloned());
 
         for mut trade in trades {
-            // Calculate Commission
+            if trade.quantity <= Decimal::ZERO {
+                continue;
+            }
+
+            // Calculate Commission (Final)
             if let Some(instr) = self.instruments.get(&trade.symbol) {
                 trade.commission = self.market_model.calculate_commission(
                     instr,
@@ -1001,12 +1215,12 @@ impl Engine {
             self.portfolio.adjust_cash(-trade.commission); // Deduct commission
             match trade.side {
                 crate::model::OrderSide::Buy => {
-                    self.portfolio.adjust_cash(-trade.price * trade.quantity);
+                    self.portfolio.adjust_cash(-trade.price * trade.quantity * self.instruments.get(&trade.symbol).map(|i| i.multiplier).unwrap_or(Decimal::ONE));
                     self.portfolio
                         .adjust_position(&trade.symbol, trade.quantity);
                 }
                 crate::model::OrderSide::Sell => {
-                    self.portfolio.adjust_cash(trade.price * trade.quantity);
+                    self.portfolio.adjust_cash(trade.price * trade.quantity * self.instruments.get(&trade.symbol).map(|i| i.multiplier).unwrap_or(Decimal::ONE));
                     self.portfolio
                         .adjust_position(&trade.symbol, -trade.quantity);
                 }
