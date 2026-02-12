@@ -25,6 +25,8 @@ pub struct RiskConfig {
     pub restricted_list: Vec<String>,
     #[pyo3(get, set)]
     pub active: bool,
+    #[pyo3(get, set)]
+    pub check_cash: bool,
 }
 
 #[pymethods]
@@ -37,6 +39,7 @@ impl RiskConfig {
             max_position_size: None,
             restricted_list: Vec::new(),
             active: true,
+            check_cash: true,
         }
     }
 
@@ -110,6 +113,7 @@ impl RiskManager {
     /// :param portfolio: 当前投资组合
     /// :param instruments: 交易标的信息
     /// :param active_orders: 当前活动订单
+    /// :param current_prices: 当前最新价格 (可选)
     /// :return: 如果检查通过返回 None，否则返回错误信息
     pub fn check(
         &self,
@@ -117,8 +121,16 @@ impl RiskManager {
         portfolio: &Portfolio,
         instruments: HashMap<String, Instrument>,
         active_orders: Vec<Order>,
+        current_prices: Option<HashMap<String, f64>>,
     ) -> Option<String> {
-        self.check_internal(order, portfolio, &instruments, &active_orders)
+        let prices_dec: HashMap<String, Decimal> = if let Some(cp) = current_prices {
+            cp.into_iter()
+                .map(|(k, v)| (k, Decimal::from_f64(v).unwrap_or(Decimal::ZERO)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        self.check_internal(order, portfolio, &instruments, &active_orders, &prices_dec)
     }
 }
 
@@ -130,6 +142,7 @@ impl RiskManager {
         portfolio: &Portfolio,
         instruments: &HashMap<String, Instrument>,
         active_orders: &[Order],
+        current_prices: &HashMap<String, Decimal>,
     ) -> Option<String> {
         if !self.config.active {
             return None;
@@ -151,19 +164,69 @@ impl RiskManager {
         }
 
         // 3. Check Max Order Value
-        if let Some(max_value) = self.config.max_order_value
-            && let Some(price) = order.price
-        {
-            let value = price * order.quantity;
-            if value > max_value {
-                return Some(format!(
-                    "Risk: Order value {} exceeds limit {}",
-                    value, max_value
-                ));
+        if let Some(max_value) = self.config.max_order_value {
+            let price = if let Some(p) = order.price {
+                Some(p)
+            } else {
+                current_prices.get(&order.symbol).cloned()
+            };
+
+            if let Some(p) = price {
+                let value = p * order.quantity;
+                if value > max_value {
+                    return Some(format!(
+                        "Risk: Order value {} exceeds limit {}",
+                        value, max_value
+                    ));
+                }
             }
         }
 
-        // 4. Check Max Position Size
+        // 4. Check Cash Sufficiency (New)
+        if self.config.check_cash && order.side == OrderSide::Buy {
+            let mut required_cash = Decimal::ZERO;
+            let mut price_found = false;
+
+            // Determine price for current order
+            if let Some(p) = order.price {
+                required_cash = p * order.quantity;
+                price_found = true;
+            } else if let Some(p) = current_prices.get(&order.symbol) {
+                required_cash = *p * order.quantity;
+                price_found = true;
+            }
+
+            if price_found {
+                // Calculate frozen cash from active BUY orders
+                let mut frozen_cash = Decimal::ZERO;
+                for active_order in active_orders {
+                    if active_order.side == OrderSide::Buy
+                        && (active_order.status == crate::model::OrderStatus::New || active_order.status == crate::model::OrderStatus::Submitted)
+                    {
+                        let remaining_qty = active_order.quantity - active_order.filled_quantity;
+                        if remaining_qty > Decimal::ZERO {
+                            if let Some(p) = active_order.price {
+                                frozen_cash += p * remaining_qty;
+                            } else if let Some(p) = current_prices.get(&active_order.symbol) {
+                                frozen_cash += *p * remaining_qty;
+                            }
+                            // If price unknown for active order, we can't estimate frozen cash accurately.
+                            // Maybe assume 0 or last known? Let's stick to known prices.
+                        }
+                    }
+                }
+
+                let total_required = required_cash + frozen_cash;
+                if total_required > portfolio.cash {
+                    return Some(format!(
+                        "Risk: Insufficient cash. Required: {} (Order: {} + Frozen: {}), Available: {}",
+                        total_required, required_cash, frozen_cash, portfolio.cash
+                    ));
+                }
+            }
+        }
+
+        // 5. Check Max Position Size
         if let Some(max_pos) = self.config.max_position_size {
             let current_pos = portfolio
                 .positions
@@ -209,6 +272,9 @@ impl RiskManager {
                 }
                 _ => {}
             }
+        } else if order.side == OrderSide::Sell {
+            // Warn if selling without instrument metadata (can't check T+1/Short logic)
+             println!("Warning: Risk check skipping T+1/Short validation for {} due to missing instrument metadata.", order.symbol);
         }
 
         None
@@ -256,13 +322,14 @@ mod tests {
         let portfolio = create_dummy_portfolio();
         let instruments = HashMap::new();
         let active_orders = Vec::new();
+        let current_prices = HashMap::new();
 
-        let result = risk.check_internal(&order, &portfolio, &instruments, &active_orders);
+        let result = risk.check_internal(&order, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result.is_some());
         assert!(result.unwrap().contains("restricted"));
 
         let order_ok = create_dummy_order("GOOD", Decimal::from(100), Some(Decimal::from(10)));
-        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders);
+        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result_ok.is_none());
     }
 
@@ -275,13 +342,14 @@ mod tests {
         let portfolio = create_dummy_portfolio();
         let instruments = HashMap::new();
         let active_orders = Vec::new();
+        let current_prices = HashMap::new();
 
-        let result = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders);
+        let result = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result.is_some());
         assert!(result.unwrap().contains("quantity"));
 
         let order_ok = create_dummy_order("AAPL", Decimal::from(100), Some(Decimal::from(10)));
-        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders);
+        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result_ok.is_none());
     }
 
@@ -295,14 +363,15 @@ mod tests {
         let portfolio = create_dummy_portfolio();
         let instruments = HashMap::new();
         let active_orders = Vec::new();
+        let current_prices = HashMap::new();
 
-        let result = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders);
+        let result = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result.is_some());
         assert!(result.unwrap().contains("value"));
 
         // 100 * 10 = 1000 <= 1000
         let order_ok = create_dummy_order("AAPL", Decimal::from(100), Some(Decimal::from(10)));
-        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders);
+        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result_ok.is_none());
     }
 
@@ -318,14 +387,15 @@ mod tests {
         let order_fail = create_dummy_order("AAPL", Decimal::from(101), Some(Decimal::from(10)));
         let instruments = HashMap::new();
         let active_orders = Vec::new();
+        let current_prices = HashMap::new();
 
-        let result = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders);
+        let result = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result.is_some());
         assert!(result.unwrap().contains("position"));
 
         // 400 + 100 = 500 <= 500
         let order_ok = create_dummy_order("AAPL", Decimal::from(100), Some(Decimal::from(10)));
-        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders);
+        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result_ok.is_none());
     }
 
@@ -364,15 +434,16 @@ mod tests {
         order_fail.side = OrderSide::Sell;
 
         let active_orders = Vec::new();
+        let current_prices = HashMap::new();
 
-        let result = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders);
+        let result = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result.is_some());
         assert!(result.unwrap().contains("Insufficient available"));
 
         // Sell 100 -> OK
         let mut order_ok = create_dummy_order("AAPL", Decimal::from(100), Some(Decimal::from(10)));
         order_ok.side = OrderSide::Sell;
-        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders);
+        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result_ok.is_none());
 
         // Sell 50 with Pending Sell 50 -> OK (Total 100)
@@ -385,7 +456,7 @@ mod tests {
         let active_orders_2 = vec![pending_order];
 
         let result_ok2 =
-            risk.check_internal(&order_ok2, &portfolio, &instruments, &active_orders_2);
+            risk.check_internal(&order_ok2, &portfolio, &instruments, &active_orders_2, &current_prices);
         assert!(result_ok2.is_none());
 
         // Sell 51 with Pending Sell 50 -> Fail (Total 101)
@@ -394,7 +465,47 @@ mod tests {
         order_fail2.side = OrderSide::Sell;
 
         let result_fail2 =
-            risk.check_internal(&order_fail2, &portfolio, &instruments, &active_orders_2);
+            risk.check_internal(&order_fail2, &portfolio, &instruments, &active_orders_2, &current_prices);
+        assert!(result_fail2.is_some());
+    }
+
+    #[test]
+    fn test_risk_cash_sufficiency() {
+        let risk = RiskManager::new();
+        // Default check_cash is true
+
+        let mut portfolio = create_dummy_portfolio();
+        portfolio.cash = Decimal::from(1000); // 1000 Cash
+
+        let instruments = HashMap::new();
+        let active_orders = Vec::new();
+        let current_prices = HashMap::new();
+
+        // 1. Buy 100 @ 10 = 1000 (OK)
+        let order_ok = create_dummy_order("AAPL", Decimal::from(100), Some(Decimal::from(10)));
+        let result_ok = risk.check_internal(&order_ok, &portfolio, &instruments, &active_orders, &current_prices);
+        assert!(result_ok.is_none());
+
+        // 2. Buy 101 @ 10 = 1010 (Fail)
+        let order_fail = create_dummy_order("AAPL", Decimal::from(101), Some(Decimal::from(10)));
+        let result_fail = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders, &current_prices);
+        assert!(result_fail.is_some());
+        assert!(result_fail.unwrap().contains("Insufficient cash"));
+
+        // 3. Buy with pending orders
+        // Pending: Buy 50 @ 10 = 500
+        let mut pending = create_dummy_order("AAPL", Decimal::from(50), Some(Decimal::from(10)));
+        pending.side = OrderSide::Buy;
+        let active_orders_2 = vec![pending];
+
+        // Try Buy 50 @ 10 = 500. Total 1000. Available 1000. OK.
+        let order_ok2 = create_dummy_order("AAPL", Decimal::from(50), Some(Decimal::from(10)));
+        let result_ok2 = risk.check_internal(&order_ok2, &portfolio, &instruments, &active_orders_2, &current_prices);
+        assert!(result_ok2.is_none());
+
+        // Try Buy 51 @ 10 = 510. Total 1010. Available 1000. Fail.
+        let order_fail2 = create_dummy_order("AAPL", Decimal::from(51), Some(Decimal::from(10)));
+        let result_fail2 = risk.check_internal(&order_fail2, &portfolio, &instruments, &active_orders_2, &current_prices);
         assert!(result_fail2.is_some());
     }
 }
