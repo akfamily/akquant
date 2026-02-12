@@ -34,7 +34,17 @@ def apply_risk_config(engine: "Engine", config: Optional[PyRiskConfig]) -> None:
     if config.restricted_list is not None:
         rust_config.restricted_list = config.restricted_list
 
-    rust_config.active = config.active
+    if config.active is not None:
+        rust_config.active = config.active
 
-    # Re-assign to ensure it updates (in case it was a copy)
-    engine.risk_manager.config = rust_config
+    if config.safety_margin is not None:
+        rust_config.safety_margin = config.safety_margin
+
+    # Use the dedicated setter method to ensure the update propagates to the Engine
+    # Direct attribute assignment (engine.risk_manager.config = ...) might only
+    # update a copy
+    if hasattr(engine, "set_risk_config"):
+        engine.set_risk_config(rust_config)
+    else:
+        # Fallback for older versions or if method is missing
+        engine.risk_manager.config = rust_config

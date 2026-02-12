@@ -27,6 +27,7 @@ class RiskConfig:
     """Configuration for Risk Management."""
 
     active: bool = True
+    safety_margin: float = 0.0001
     max_order_size: Optional[float] = None
     max_order_value: Optional[float] = None
     max_position_size: Optional[float] = None

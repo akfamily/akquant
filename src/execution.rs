@@ -70,7 +70,7 @@ pub trait ExecutionClient: Send + Sync {
         &mut self,
         event: &Event,
         instruments: &std::collections::HashMap<String, crate::model::Instrument>,
-        match_at_open: bool,
+        execution_mode: crate::model::ExecutionMode,
         bar_index: usize,
         session: TradingSession,
     ) -> Vec<Event>;
@@ -142,7 +142,7 @@ impl ExecutionClient for SimulatedExecutionClient {
         &mut self,
         event: &Event,
         instruments: &std::collections::HashMap<String, crate::model::Instrument>,
-        match_at_open: bool,
+        execution_mode: crate::model::ExecutionMode,
         bar_index: usize,
         session: TradingSession,
     ) -> Vec<Event> {
@@ -174,6 +174,15 @@ impl ExecutionClient for SimulatedExecutionClient {
                 if let Some(instrument) = instruments.get(&order.symbol) {
                     if order.quantity % instrument.lot_size != Decimal::ZERO {
                         order.status = OrderStatus::Rejected;
+                        order.reject_reason = format!(
+                            "Quantity {} is not a multiple of lot size {}",
+                            order.quantity, instrument.lot_size
+                        );
+                        match event {
+                            Event::Bar(b) => order.updated_at = b.timestamp,
+                            Event::Tick(t) => order.updated_at = t.timestamp,
+                            _ => {}
+                        }
                         reports.push(Event::ExecutionReport(order.clone(), None));
                         continue;
                     }
@@ -212,31 +221,65 @@ impl ExecutionClient for SimulatedExecutionClient {
                     match order.order_type {
                         OrderType::Market | OrderType::StopMarket => {
                             // 市价单 / 触发后的止损市价单
-                            if match_at_open {
-                                execute_price = Some(bar.open);
-                            } else {
-                                execute_price = Some(bar.close);
-                            }
+                            execute_price = match execution_mode {
+                                crate::model::ExecutionMode::NextOpen => Some(bar.open),
+                                crate::model::ExecutionMode::CurrentClose => Some(bar.close),
+                                crate::model::ExecutionMode::NextAverage => Some(
+                                    (bar.open + bar.high + bar.low + bar.close) / Decimal::from(4),
+                                ),
+                                crate::model::ExecutionMode::NextHighLowMid => {
+                                    Some((bar.high + bar.low) / Decimal::from(2))
+                                }
+                            };
                         }
                         OrderType::Limit | OrderType::StopLimit => {
                             // 限价单 / 触发后的止损限价单
                             if let Some(limit_price) = order.price {
+                                let avg_price =
+                                    (bar.open + bar.high + bar.low + bar.close) / Decimal::from(4);
+                                let mid_price = (bar.high + bar.low) / Decimal::from(2);
                                 match order.side {
                                     OrderSide::Buy => {
                                         // 买单：最低价 <= 限价
                                         if bar.low <= limit_price {
-                                            execute_price = Some(limit_price.min(bar.open)); // 简化撮合价
-                                            if execute_price.unwrap() > limit_price {
-                                                execute_price = Some(limit_price); // 修正，买入不能高于限价
+                                            match execution_mode {
+                                                crate::model::ExecutionMode::NextAverage => {
+                                                    // 在均价模式下，如果能成交，尝试以均价成交，但不能超过限价
+                                                    execute_price = Some(limit_price.min(avg_price));
+                                                }
+                                                crate::model::ExecutionMode::NextHighLowMid => {
+                                                    // 在中间价模式下，如果能成交，尝试以中间价成交，但不能超过限价
+                                                    execute_price = Some(limit_price.min(mid_price));
+                                                }
+                                                _ => {
+                                                    // 默认逻辑 (gap handling)
+                                                    execute_price = Some(limit_price.min(bar.open));
+                                                    if execute_price.unwrap() > limit_price {
+                                                        execute_price = Some(limit_price);
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                     OrderSide::Sell => {
                                         // 卖单：最高价 >= 限价
                                         if bar.high >= limit_price {
-                                            execute_price = Some(limit_price.max(bar.open)); // 简化撮合价
-                                            if execute_price.unwrap() < limit_price {
-                                                execute_price = Some(limit_price); // 修正，卖出不能低于限价
+                                            match execution_mode {
+                                                crate::model::ExecutionMode::NextAverage => {
+                                                    // 在均价模式下，如果能成交，尝试以均价成交，但不能低于限价
+                                                    execute_price = Some(limit_price.max(avg_price));
+                                                }
+                                                crate::model::ExecutionMode::NextHighLowMid => {
+                                                    // 在中间价模式下，如果能成交，尝试以中间价成交，但不能低于限价
+                                                    execute_price = Some(limit_price.max(mid_price));
+                                                }
+                                                _ => {
+                                                    // 默认逻辑 (gap handling)
+                                                    execute_price = Some(limit_price.max(bar.open));
+                                                    if execute_price.unwrap() < limit_price {
+                                                        execute_price = Some(limit_price);
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -262,6 +305,7 @@ impl ExecutionClient for SimulatedExecutionClient {
 
                         if trade_qty > Decimal::ZERO {
                             order.status = OrderStatus::Filled;
+                            order.updated_at = bar.timestamp;
                             // Check if partial fill
                             if trade_qty < order.quantity - order.filled_quantity {
                                 order.status = OrderStatus::Submitted; // Remain submitted/partially filled
@@ -295,7 +339,13 @@ impl ExecutionClient for SimulatedExecutionClient {
                     {
                         // IOC/FOK 未能立即成交则取消
                         order.status = OrderStatus::Cancelled;
+                        order.updated_at = bar.timestamp;
                         reports.push(Event::ExecutionReport(order.clone(), None));
+                    } else if order.time_in_force == TimeInForce::Day && session == TradingSession::Closed {
+                         // Day order expired
+                         order.status = OrderStatus::Cancelled;
+                         order.updated_at = bar.timestamp;
+                         reports.push(Event::ExecutionReport(order.clone(), None));
                     }
                 }
                 Event::Tick(tick) => {
@@ -362,6 +412,7 @@ impl ExecutionClient for SimulatedExecutionClient {
 
                         if trade_qty > Decimal::ZERO {
                             order.status = OrderStatus::Filled;
+                            order.updated_at = tick.timestamp;
                             order.filled_quantity += trade_qty;
 
                             // Check partial fill
@@ -394,6 +445,7 @@ impl ExecutionClient for SimulatedExecutionClient {
                         || order.time_in_force == TimeInForce::FOK
                     {
                         order.status = OrderStatus::Cancelled;
+                        order.updated_at = tick.timestamp;
                         reports.push(Event::ExecutionReport(order.clone(), None));
                     }
                 }
@@ -444,11 +496,11 @@ impl ExecutionClient for RealtimeExecutionClient {
         &mut self,
         _event: &Event,
         _instruments: &std::collections::HashMap<String, crate::model::Instrument>,
-        _match_at_open: bool,
+        _execution_mode: crate::model::ExecutionMode,
         _bar_index: usize,
         _session: TradingSession,
     ) -> Vec<Event> {
-        // In realtime, this might check for async callbacks or do nothing if callbacks push to channel directly
+        // In realtime, this might check for interaction with broker
         Vec::new()
     }
 }
@@ -456,7 +508,7 @@ impl ExecutionClient for RealtimeExecutionClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AssetType, Bar, Instrument, TimeInForce};
+    use crate::model::{AssetType, Bar, Instrument, TimeInForce, ExecutionMode};
     use std::collections::HashMap;
 
     fn create_test_instruments() -> HashMap<String, Instrument> {
@@ -496,7 +548,10 @@ mod tests {
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
             created_at: 0,
+            updated_at: 0,
             commission: Decimal::ZERO,
+            tag: String::new(),
+            reject_reason: String::new(),
         }
     }
 
@@ -543,7 +598,7 @@ mod tests {
         let event = Event::Bar(bar);
 
         // Match at Open
-        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, ExecutionMode::NextOpen, 0, TradingSession::Continuous);
 
         let trades: Vec<Trade> = events
             .iter()
@@ -583,7 +638,7 @@ mod tests {
         );
         sim.on_order(order2);
 
-        let events2 = sim.on_event(&event, &instruments, false, 0, TradingSession::Continuous);
+        let events2 = sim.on_event(&event, &instruments, ExecutionMode::CurrentClose, 0, TradingSession::Continuous);
         let trades2: Vec<Trade> = events2
             .iter()
             .filter_map(|e| {
@@ -622,7 +677,7 @@ mod tests {
         );
         let event = Event::Bar(bar);
 
-        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, ExecutionMode::NextOpen, 0, TradingSession::Continuous);
         let trades: Vec<Trade> = events
             .iter()
             .filter_map(|e| {
@@ -663,7 +718,7 @@ mod tests {
         );
         let event = Event::Bar(bar);
 
-        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, ExecutionMode::NextOpen, 0, TradingSession::Continuous);
         let trades: Vec<Trade> = events
             .iter()
             .filter_map(|e| {
@@ -702,7 +757,7 @@ mod tests {
         );
         let event = Event::Bar(bar);
 
-        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, ExecutionMode::NextOpen, 0, TradingSession::Continuous);
         let trades: Vec<Trade> = events
             .iter()
             .filter_map(|e| {
@@ -744,7 +799,7 @@ mod tests {
         );
         let event = Event::Bar(bar);
 
-        let events = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let events = sim.on_event(&event, &instruments, ExecutionMode::NextOpen, 0, TradingSession::Continuous);
 
         let last_order = events
             .iter()
@@ -769,7 +824,7 @@ mod tests {
         );
         sim.on_order(order2);
 
-        let events2 = sim.on_event(&event, &instruments, true, 0, TradingSession::Continuous);
+        let events2 = sim.on_event(&event, &instruments, ExecutionMode::NextOpen, 0, TradingSession::Continuous);
         let trades2: Vec<Trade> = events2
             .iter()
             .filter_map(|e| {

@@ -115,4 +115,15 @@ impl Instrument {
     fn get_tick_size(&self) -> f64 {
         self.tick_size.to_f64().unwrap_or_default()
     }
+
+    #[getter]
+    fn get_lot_size(&self) -> f64 {
+        self.lot_size.to_f64().unwrap_or_default()
+    }
+
+    #[setter]
+    fn set_lot_size(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.lot_size = extract_decimal(value)?;
+        Ok(())
+    }
 }

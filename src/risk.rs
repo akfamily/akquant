@@ -27,6 +27,8 @@ pub struct RiskConfig {
     pub active: bool,
     #[pyo3(get, set)]
     pub check_cash: bool,
+    #[pyo3(get, set)]
+    pub safety_margin: f64,
 }
 
 #[pymethods]
@@ -40,6 +42,7 @@ impl RiskConfig {
             restricted_list: Vec::new(),
             active: true,
             check_cash: true,
+            safety_margin: 0.0001,
         }
     }
 
@@ -286,10 +289,11 @@ mod tests {
     use super::*;
     use crate::model::OrderType;
     use std::collections::HashMap;
+    use uuid::Uuid;
 
     fn create_dummy_order(symbol: &str, quantity: Decimal, price: Option<Decimal>) -> Order {
         Order {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: Uuid::new_v4().to_string(),
             symbol: symbol.to_string(),
             side: OrderSide::Buy,
             order_type: OrderType::Limit,
@@ -301,7 +305,10 @@ mod tests {
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
             created_at: 0,
+            updated_at: 0,
             commission: Decimal::ZERO,
+            tag: String::new(),
+            reject_reason: String::new(),
         }
     }
 

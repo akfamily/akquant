@@ -848,6 +848,7 @@ impl BacktestResult {
         let mut order_types = Vec::with_capacity(n); // market/limit/stop
         let mut symbols = Vec::with_capacity(n);
         let mut dates = Vec::with_capacity(n);
+        let mut updated_dates = Vec::with_capacity(n);
         let mut quantities = Vec::with_capacity(n);
         let mut filled_quantities = Vec::with_capacity(n);
         let mut limit_prices = Vec::with_capacity(n);
@@ -856,6 +857,8 @@ impl BacktestResult {
         let mut commissions = Vec::with_capacity(n);
         let mut status = Vec::with_capacity(n);
         let mut time_in_force = Vec::with_capacity(n);
+        let mut tags = Vec::with_capacity(n);
+        let mut reject_reasons = Vec::with_capacity(n);
 
         for o in &self.orders {
             ids.push(o.id.clone());
@@ -863,6 +866,7 @@ impl BacktestResult {
             order_types.push(format!("{:?}", o.order_type).to_lowercase());
             symbols.push(o.symbol.clone());
             dates.push(o.created_at); // i64 timestamp (ns)
+            updated_dates.push(o.updated_at);
             quantities.push(o.quantity.to_f64().unwrap_or(0.0));
             filled_quantities.push(o.filled_quantity.to_f64().unwrap_or(0.0));
             limit_prices.push(
@@ -883,6 +887,8 @@ impl BacktestResult {
             commissions.push(o.commission.to_f64().unwrap_or(0.0));
             status.push(format!("{:?}", o.status).to_lowercase());
             time_in_force.push(format!("{:?}", o.time_in_force).to_lowercase());
+            tags.push(o.tag.clone());
+            reject_reasons.push(o.reject_reason.clone());
         }
 
         let dict = pyo3::types::PyDict::new(py);
@@ -899,6 +905,9 @@ impl BacktestResult {
         dict.set_item("status", status)?;
         dict.set_item("time_in_force", time_in_force)?;
         dict.set_item("created_at", dates)?; // Renamed date -> created_at for consistency
+        dict.set_item("updated_at", updated_dates)?;
+        dict.set_item("tag", tags)?;
+        dict.set_item("reject_reason", reject_reasons)?;
 
         Ok(dict.into())
     }

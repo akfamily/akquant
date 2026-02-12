@@ -44,6 +44,49 @@ class TimeInForce:
 class ExecutionMode:
     CurrentClose: "ExecutionMode"
     NextOpen: "ExecutionMode"
+    NextAverage: "ExecutionMode"
+    NextHighLowMid: "ExecutionMode"
+
+class Instrument:
+    r"""
+    交易标的.
+
+    :ivar symbol: 代码
+    :ivar asset_type: 资产类型
+    :ivar multiplier: 合约乘数
+    :ivar margin_ratio: 保证金比率
+    :ivar tick_size: 最小变动价位
+    """
+
+    symbol: str
+    asset_type: "AssetType"
+    multiplier: typing.Any
+    margin_ratio: typing.Any
+    tick_size: typing.Any
+    option_type: typing.Optional["OptionType"]
+    strike_price: typing.Optional[typing.Any]
+    expiry_date: typing.Optional[int]
+    lot_size: typing.Any
+    def __new__(
+        cls,
+        symbol: str,
+        asset_type: "AssetType",
+        multiplier: typing.Optional[typing.Any] = ...,
+        margin_ratio: typing.Optional[typing.Any] = ...,
+        tick_size: typing.Optional[typing.Any] = ...,
+        option_type: typing.Optional["OptionType"] = ...,
+        strike_price: typing.Optional[typing.Any] = ...,
+        expiry_date: typing.Optional[int] = ...,
+        lot_size: typing.Optional[typing.Any] = ...,
+    ) -> "Instrument": ...
+
+class DataFeed:
+    r"""数据源."""
+
+    def __new__(cls) -> "DataFeed": ...
+    def add_bar(self, bar: "Bar") -> None: ...
+    def add_bars(self, bars: list["Bar"]) -> None: ...
+    def sort(self) -> None: ...
 
 class TradingSession:
     PreOpen: "TradingSession"
@@ -74,6 +117,8 @@ class BacktestResult:
     snapshots: list[tuple[int, list["PositionSnapshot"]]]
     def get_trades_dict(self) -> dict[str, list[typing.Any]]: ...
     def get_positions_dict(self) -> dict[str, list[typing.Any]]: ...
+    @property
+    def executions(self) -> list["Trade"]: ...
 
 class PositionSnapshot:
     r"""每日持仓快照."""
@@ -172,10 +217,6 @@ class ClosedTrade:
     commission: float
     duration_bars: int
     duration: int
-
-class DataFeed:
-    def sort(self) -> None: ...
-    def add_bars(self, bars: typing.Sequence[Bar]) -> None: ...
 
 class EMA:
     r"""Exponential Moving Average."""
@@ -369,35 +410,6 @@ class Engine:
         self, active_orders: typing.Sequence["Order"]
     ) -> "StrategyContext": ...
 
-class Instrument:
-    r"""
-    交易标的.
-
-    :ivar symbol: 代码
-    :ivar asset_type: 资产类型
-    :ivar multiplier: 合约乘数
-    :ivar margin_ratio: 保证金比率
-    :ivar tick_size: 最小变动价位
-    """
-
-    symbol: str
-    asset_type: "AssetType"
-    multiplier: float
-    margin_ratio: float
-    tick_size: float
-    def __new__(
-        cls,
-        symbol: str,
-        asset_type: "AssetType",
-        multiplier: typing.Any,
-        margin_ratio: typing.Any,
-        tick_size: typing.Any,
-        option_type: typing.Optional["OptionType"],
-        strike_price: typing.Optional[typing.Any],
-        expiry_date: typing.Optional[int],
-        lot_size: typing.Optional[typing.Any],
-    ) -> "Instrument": ...
-
 class MACD:
     r"""Moving Average Convergence Divergence."""
 
@@ -424,6 +436,10 @@ class Order:
     :ivar status: 订单状态
     :ivar filled_quantity: 已成交数量
     :ivar average_filled_price: 成交均价
+    :ivar created_at: 创建时间戳
+    :ivar updated_at: 更新时间戳
+    :ivar tag: 订单标签
+    :ivar reject_reason: 拒绝原因
     """
 
     id: str
@@ -437,6 +453,10 @@ class Order:
     trigger_price: typing.Optional[float]
     filled_quantity: float
     average_filled_price: typing.Optional[float]
+    created_at: int
+    updated_at: int
+    tag: str
+    reject_reason: str
     def __new__(
         cls,
         id: str,
@@ -447,6 +467,8 @@ class Order:
         price: typing.Optional[float] = ...,
         time_in_force: "TimeInForce" = ...,
         trigger_price: typing.Optional[float] = ...,
+        created_at: typing.Optional[int] = ...,
+        tag: typing.Optional[str] = ...,
     ) -> "Order": ...
     def __repr__(self) -> str: ...
 
@@ -513,6 +535,7 @@ class RiskConfig:
     max_position_size: typing.Optional[float]
     restricted_list: list[str]
     active: bool
+    safety_margin: float
     def __new__(cls) -> "RiskConfig": ...
 
 class RiskManager:
@@ -560,6 +583,7 @@ class StrategyContext:
     cash: float
     positions: dict[str, float]
     available_positions: dict[str, float]
+    risk_config: RiskConfig
     def __new__(
         cls,
         cash: typing.Any,
@@ -569,6 +593,7 @@ class StrategyContext:
         active_orders: typing.Optional[typing.Sequence[Order]],
         closed_trades: typing.Optional[typing.Sequence[ClosedTrade]],
         recent_trades: typing.Optional[typing.Sequence[Trade]],
+        risk_config: typing.Optional[RiskConfig],
     ) -> "StrategyContext": ...
     def history(
         self, symbol: str, field: str, count: int
@@ -607,6 +632,7 @@ class StrategyContext:
         price: typing.Optional[float] = ...,
         time_in_force: typing.Optional["TimeInForce"] = ...,
         trigger_price: typing.Optional[float] = ...,
+        tag: typing.Optional[str] = ...,
     ) -> str: ...
     def sell(
         self,
@@ -615,6 +641,7 @@ class StrategyContext:
         price: typing.Optional[float] = ...,
         time_in_force: typing.Optional["TimeInForce"] = ...,
         trigger_price: typing.Optional[float] = ...,
+        tag: typing.Optional[str] = ...,
     ) -> str: ...
     def get_position(self, symbol: str) -> float: ...
     def get_available_position(self, symbol: str) -> float: ...

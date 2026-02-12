@@ -42,7 +42,13 @@ pub struct Order {
     pub average_filled_price: Option<Decimal>,
     #[pyo3(get)]
     pub created_at: i64,
+    #[pyo3(get)]
+    pub updated_at: i64,
     pub commission: Decimal,
+    #[pyo3(get, set)]
+    pub tag: String,
+    #[pyo3(get)]
+    pub reject_reason: String,
 }
 
 #[gen_stub_pymethods]
@@ -59,8 +65,9 @@ impl Order {
     /// :param time_in_force: 订单有效期 (可选，默认 Day)
     /// :param trigger_price: 触发价格 (可选)
     /// :param created_at: 创建时间戳 (可选，默认 0)
+    /// :param tag: 订单标签 (可选，默认 "")
     #[new]
-    #[pyo3(signature = (id, symbol, side, order_type, quantity, price=None, time_in_force=None, trigger_price=None, created_at=None))]
+    #[pyo3(signature = (id, symbol, side, order_type, quantity, price=None, time_in_force=None, trigger_price=None, created_at=None, tag=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
@@ -72,7 +79,9 @@ impl Order {
         time_in_force: Option<TimeInForce>,
         trigger_price: Option<&Bound<'_, PyAny>>,
         created_at: Option<i64>,
+        tag: Option<String>,
     ) -> PyResult<Self> {
+        let created_at_ts = created_at.unwrap_or(0);
         Ok(Order {
             id,
             symbol,
@@ -91,8 +100,11 @@ impl Order {
             status: OrderStatus::New,
             filled_quantity: Decimal::ZERO,
             average_filled_price: None,
-            created_at: created_at.unwrap_or(0),
+            created_at: created_at_ts,
+            updated_at: created_at_ts,
             commission: Decimal::ZERO,
+            tag: tag.unwrap_or_default(),
+            reject_reason: String::new(),
         })
     }
 
@@ -129,7 +141,7 @@ impl Order {
 
     pub fn __repr__(&self) -> String {
         format!(
-            "Order(id={}, symbol={}, side={:?}, type={:?}, qty={}, price={:?}, tif={:?}, status={:?})",
+            "Order(id={}, symbol={}, side={:?}, type={:?}, qty={}, price={:?}, tif={:?}, status={:?}, tag={}, reject_reason={})",
             self.id,
             self.symbol,
             self.side,
@@ -137,7 +149,9 @@ impl Order {
             self.quantity,
             self.price,
             self.time_in_force,
-            self.status
+            self.status,
+            self.tag,
+            self.reject_reason
         )
     }
 }

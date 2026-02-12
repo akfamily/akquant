@@ -30,8 +30,8 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   **Check Data Sufficiency**: Always check `if len(history) < N: return` before calculating indicators.
 
 3.  **Trading API**:
-    *   Buy: `self.buy(symbol, quantity, price=None)`. `price=None` means Market Order.
-    *   Sell: `self.sell(symbol, quantity, price=None)`.
+    *   Buy: `self.buy(symbol, quantity, price=None, tag=None)`. `price=None` means Market Order.
+    *   Sell: `self.sell(symbol, quantity, price=None, tag=None)`.
     *   Position: `self.get_position(symbol)` returns float (0 if no position).
     *   Target: `self.order_target_percent(target, symbol)` or `self.order_target_value(target, symbol)`.
 
@@ -42,8 +42,19 @@ Your task is to write trading strategies or backtest scripts based on user requi
 5.  **Backtest Execution**:
     *   Use `akquant.run_backtest` with direct arguments for simplicity.
     *   Example: `run_backtest(data=df, strategy=MyStrat, cash=100_000.0, warmup_period=50)`.
-    *   **Execution Mode**: Default is `ExecutionMode.NextOpen` (trade on next bar open). Set `execution_mode=ExecutionMode.CurrentClose` to trade on current bar close.
+    *   **Execution Mode**: Default is `ExecutionMode.NextOpen` (trade on next bar open). Options: `ExecutionMode.CurrentClose` (trade on current bar close), `ExecutionMode.NextAverage` (trade on next bar average price (OHLC/4)).
     *   Timezone: Default is "Asia/Shanghai".
+
+6.  **Configuration**:
+    *   **Risk Config**: Use `RiskConfig` to set parameters like `safety_margin` (default 0.0001).
+    *   Example:
+        ```python
+        from akquant.config import RiskConfig, StrategyConfig, BacktestConfig
+        risk_config = RiskConfig(safety_margin=0.001)
+        strategy_config = StrategyConfig(risk=risk_config)
+        backtest_config = BacktestConfig(strategy_config=strategy_config)
+        run_backtest(..., config=backtest_config)
+        ```
 
 ### Example Strategy (Reference)
 
