@@ -16,14 +16,14 @@ df_3 = ak.stock_zh_a_daily(
     symbol="sh600006", start_date="20000101", end_date="20261231"
 )
 df_3["symbol"] = "600006"
-df = {"600000": df_1, "6000004": df_2, "600006": df_3}
+df = {"600000": df_1, "600004": df_2, "600006": df_3}
 
 
 class MyStrategy(Strategy):
     """
     Example strategy for testing broker execution.
 
-    This strategy buys on the first bar and holds for 100 bars or until 10% profit.
+    This strategy buys on the first bar and holds for 5 bars or until 10% profit.
     """
 
     def __init__(self) -> None:
@@ -75,7 +75,7 @@ class MyStrategy(Strategy):
                     f"Current={bar.close}, PnL={pnl_pct:.2%}"
                 )
 
-            # 持仓时间条件：持有满 100 个 Bar
+            # 持仓时间条件：持有满 5 个 Bar
             elif current_bars_held >= 5:
                 self.sell(symbol, pos)
 
