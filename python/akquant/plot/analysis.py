@@ -130,7 +130,7 @@ def plot_pnl_vs_duration(
             text=symbols,
             hovertemplate=(
                 f"<b>%{{text}}</b><br>持仓: %{{x:.1f}} {unit_label}<br>"
-                "盈亏: %{{y:.2f}}<extra></extra>"
+                "盈亏: %{y:.2f}<extra></extra>"
             ),
         )
     )
