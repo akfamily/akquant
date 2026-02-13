@@ -988,6 +988,7 @@ def run_backtest(
                     for col in ["date", "timestamp", "datetime", "Date", "Timestamp"]:
                         if col in df.columns:
                             df = df.set_index(col)
+                            df.index = pd.to_datetime(df.index)
                             found_date = True
                             break
 
