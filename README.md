@@ -179,7 +179,7 @@ Please use this bibtex if you want to cite this repository in your publications:
 
 ```bibtex
 @misc{akquant,
-    author = {Albert King and Zhangyao Jie},
+    author = {Albert King and Yaojie Zhang},
     title = {AKQuant},
     year = {2026},
     publisher = {GitHub},
