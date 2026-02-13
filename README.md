@@ -145,6 +145,25 @@ sqn                                     -0.743693
 kelly_criterion                         -0.080763
 ```
 
+## 可视化 (Visualization)
+
+AKQuant 内置了基于 **Plotly** 的强大可视化模块，仅需一行代码即可生成包含权益曲线、回撤分析、月度热力图等详细指标的交互式 HTML 报告。
+
+```python
+# 生成交互式 HTML 报告，自动在浏览器中打开
+result.report(title="我的策略报告", show=True)
+
+# 或者单独绘制仪表盘
+import akquant.plot as aqp
+aqp.plot_dashboard(result)
+```
+
+<p align="center">
+  <img src="assets/dashboard_preview.png" alt="Strategy Dashboard" width="800">
+  <br>
+  👉 <a href="https://akquant.akfamily.xyz/report_demo/">点击查看交互式报表示例 (Interactive Demo)</a>
+</p>
+
 ## 文档索引
 
 *   📖 **[核心特性与架构](docs/zh/index.md#核心特性)**: 了解 AKQuant 的设计理念与性能优势。

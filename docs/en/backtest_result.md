@@ -1,6 +1,53 @@
 # Backtest Results & Metrics
 
-This document details the performance metrics in AKQuant backtest results (`metrics_df`), including their meanings, units, and calculation methods.
+This document details the performance metrics in AKQuant backtest results (`metrics_df`), including their meanings, units, and calculation methods. It also covers the visualization capabilities for analyzing these results.
+
+## Visualization (Plotting)
+
+AKQuant provides a comprehensive visualization module to analyze backtest results. You can generate professional-grade interactive HTML reports or individual plots directly from the `BacktestResult` object.
+
+### Quick Start
+
+The easiest way to visualize your backtest results is using the `report()` method:
+
+```python
+# Generate a full HTML report
+result.report(
+    title="My Strategy Report",
+    filename="report.html",
+    show=True  # Set to True to open in browser automatically (default is False)
+)
+```
+
+This generates a consolidated dashboard including:
+- **Equity Curve**: Interactive chart of account equity over time.
+- **Drawdown**: Historical drawdown analysis.
+- **Monthly Heatmap**: Monthly return performance grid.
+- **Key Metrics**: A summary of important performance statistics.
+
+### Intraday Support (New)
+
+The plotting module automatically detects and adapts to intraday (minute-level) backtests:
+- **Smart Downsampling**: For large datasets (>10k points), it switches to WebGL rendering (`Scattergl`) for high performance.
+- **Adaptive X-Axis**: Automatically formats time labels (e.g., `%Y-%m-%d %H:%M`) and prevents label overlap.
+- **Adaptive Duration Units**: Trade duration analysis automatically switches units (Days, Hours, or Minutes) based on the strategy's average holding period.
+
+### Advanced Plotting
+
+You can also access individual plotting functions for more granular control:
+
+```python
+import akquant.plot as aqp
+
+# 1. Plot Dashboard (Equity, Drawdown, Heatmap)
+aqp.plot_dashboard(result)
+
+# 2. Analyze Trade Distribution (PnL vs Duration)
+aqp.plot_trades_distribution(result.trades_df)
+
+# 3. Analyze PnL vs Duration
+aqp.plot_pnl_vs_duration(result.trades_df)
+```
 
 ## Metrics Overview
 

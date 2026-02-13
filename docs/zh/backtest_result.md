@@ -156,3 +156,62 @@
 | `margin` | 占用保证金 | Float | 当前持仓占用的保证金。 |
 | `unrealized_pnl` | 未实现盈亏 | Float | 持仓浮动盈亏。 |
 | `entry_price` | 持仓均价 | Float | 当前持仓的平均成本价格。 |
+
+## 可视化 (Visualization)
+
+AKQuant 提供了强大的可视化工具，帮助用户直观地分析策略表现。
+
+### 快速开始 (Quick Start)
+
+最简单的方法是直接调用 `BacktestResult` 对象的 `report` 方法，它会生成一个包含所有关键图表的交互式 HTML 报告。
+
+```python
+# 生成完整的 HTML 报告
+result.report(
+    title="我的策略报告",
+    filename="report.html",
+    show=True  # 设为 True 以自动在浏览器中打开 (默认为 False)
+)
+```
+
+或者使用 `plot` 方法快速预览特定图表：
+
+```python
+# 绘制权益曲线
+result.plot(kind="equity")
+
+# 绘制月度热力图
+result.plot(kind="heatmap")
+```
+
+### 进阶绘图 (Advanced Plotting)
+
+对于更细粒度的控制，可以直接使用 `akquant.plot` 模块。
+
+```python
+import akquant.plot as aqp
+
+# 1. 绘制仪表盘 (权益, 回撤, 热力图)
+aqp.plot_dashboard(result)
+
+# 2. 分析交易分布 (盈亏 vs 持仓时间)
+aqp.plot_trades_distribution(result.trades_df)
+
+# 3. 绘制滚动指标 (夏普比率, 波动率)
+aqp.plot_rolling_metrics(result)
+
+# 4. 绘制年度回报
+aqp.plot_yearly_returns(result)
+
+# 5. 绘制每日回报分布
+aqp.plot_daily_returns_distribution(result)
+```
+
+### 日内回测支持 (Intraday Support)
+
+AKQuant 的绘图引擎会自动检测日内数据（如分钟级数据）并进行优化：
+
+*   **自适应 X 轴**: 自动调整时间刻度格式，避免标签重叠。
+*   **WebGL 加速**: 对于超过 10,000 个数据点的图表，自动切换到 WebGL 渲染以保证流畅度。
+*   **智能布局**: 动态调整子图间距，防止高频数据的标签遮挡。
+*   **自适应单位**: 交易分布图会自动根据平均持仓时间切换单位（天/小时/分钟）。

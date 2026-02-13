@@ -205,7 +205,7 @@ Instrument(
 
 **绩效指标详解 (Performance Metrics):**
 
-详细的绩效指标说明、单位及计算公式，请参考 **[绩效指标详解](metrics.md)**。
+详细的绩效指标说明、单位及计算公式，请参考 **[绩效指标详解](backtest_result.md)**。
 
 
 ## 6. 内置指标 (Indicators)
