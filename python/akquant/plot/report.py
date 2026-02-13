@@ -1,5 +1,6 @@
 """Consolidated report generation module."""
 
+import base64
 import datetime
 from typing import TYPE_CHECKING
 
@@ -16,12 +17,67 @@ from .utils import check_plotly
 if TYPE_CHECKING:
     from ..backtest import BacktestResult
 
+# Embedded SVG Icon
+AKQUANT_ICON_SVG = """<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(17, 25)">
+    <rect x="0" y="40" width="15" height="30" rx="4" fill="#CE412B" />
+    <rect x="25" y="20" width="15" height="50" rx="4" fill="#BE5C60" />
+    <rect x="50" y="0" width="15" height="70" rx="4" fill="#3776AB" />
+    <circle cx="7" cy="30" r="2" fill="#CE412B" />
+    <circle cx="32" cy="10" r="2" fill="#BE5C60" />
+    <circle cx="57" cy="-10" r="2" fill="#3776AB" />
+  </g>
+</svg>"""
+
+# Embedded SVG Logo
+AKQUANT_LOGO_SVG = """<svg width="400" height="120" viewBox="0 0 400 120" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#CE412B;stop-opacity:1" />
+      <!-- Rust Orange -->
+      <stop offset="100%" style="stop-color:#3776AB;stop-opacity:1" />
+      <!-- Python Blue -->
+    </linearGradient>
+  </defs>
+
+  <!-- Graphic: Quant Signal Bars (Ascending Data Spectrum) -->
+  <g transform="translate(30, 25)">
+    <!-- Bar 1: Low (Foundation/Data - Rust Color) -->
+    <rect x="0" y="40" width="15" height="30" rx="4" fill="#CE412B" />
+
+    <!-- Bar 2: Mid (Processing/Strategy - Blend) -->
+    <rect x="25" y="20" width="15" height="50" rx="4" fill="#BE5C60" />
+
+    <!-- Bar 3: High (Alpha/Profit - Python Color) -->
+    <rect x="50" y="0" width="15" height="70" rx="4" fill="#3776AB" />
+
+    <!-- Abstract Data Dots -->
+    <circle cx="7" cy="30" r="2" fill="#CE412B" />
+    <circle cx="32" cy="10" r="2" fill="#BE5C60" />
+    <circle cx="57" cy="-10" r="2" fill="#3776AB" />
+  </g>
+
+  <!-- Text -->
+  <text x="110" y="75"
+        font-family="'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="60"
+        font-weight="bold"
+        fill="url(#textGradient)">AKQuant</text>
+
+  <!-- Subtitle -->
+  <text x="115" y="100"
+        font-family="'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="14"
+        fill="#666">High-Performance Quant Framework</text>
+</svg>"""
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
     <title>{title}</title>
+    <link rel="icon" href="{favicon_uri}">
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
     <style>
         :root {{
@@ -61,6 +117,15 @@ HTML_TEMPLATE = """
             margin-bottom: 40px;
             border-bottom: 1px solid var(--border-color);
             padding-bottom: 20px;
+        }}
+
+        .header-logo {{
+            margin-bottom: 10px;
+        }}
+
+        .header-logo svg {{
+            height: 80px;
+            width: auto;
         }}
 
         header h1 {{
@@ -203,6 +268,7 @@ HTML_TEMPLATE = """
 <body>
     <div class="container">
         <header>
+            <div class="header-logo">{icon_svg}</div>
             <h1>{title}</h1>
             <p>生成时间: {date}</p>
         </header>
@@ -326,6 +392,10 @@ def plot_report(
     """
     if not check_plotly():
         return
+
+    # Prepare Icon
+    icon_b64 = base64.b64encode(AKQUANT_ICON_SVG.encode("utf-8")).decode("utf-8")
+    favicon_uri = f"data:image/svg+xml;base64,{icon_b64}"
 
     # 1. Prepare Summary Data
     equity_curve = result.equity_curve
@@ -516,6 +586,8 @@ def plot_report(
     # 4. Assemble HTML
     html_content = HTML_TEMPLATE.format(
         title=title,
+        favicon_uri=favicon_uri,
+        icon_svg=AKQUANT_LOGO_SVG,
         date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         start_date=start_date,
         end_date=end_date,
