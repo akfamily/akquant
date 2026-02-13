@@ -61,6 +61,7 @@ plugins:
             Strategy Manual: 策略开发手册
             Timezone Handling: 时区处理指南
             Examples: 实战案例
+            Report Demo: 报告演示
             Advanced: 进阶功能
             ML Guide: 机器学习指南
             LLM Guide: LLM 辅助编程
@@ -85,6 +86,7 @@ plugins:
             Strategy Manual: Strategy Manual
             Timezone Handling: Timezone Handling
             Examples: Examples
+            Report Demo: Report Demo
             Advanced: Advanced
             ML Guide: ML Guide
             LLM Guide: LLM Guide
@@ -107,6 +109,7 @@ nav:
       - Strategy Manual: strategy_guide.md
       - Timezone Handling: timezone.md
       - Examples: examples.md
+      - Report Demo: report_demo.md
   - Advanced:
       - ML Guide: ml_guide.md
       - LLM Guide: llm_guide.md

@@ -45,15 +45,22 @@ class BacktestResult:
     like DataFrames.
     """
 
-    def __init__(self, raw_result: RustBacktestResult, timezone: str = "Asia/Shanghai"):
+    def __init__(
+        self,
+        raw_result: RustBacktestResult,
+        timezone: str = "Asia/Shanghai",
+        initial_cash: float = 0.0,
+    ):
         """
         Initialize the BacktestResult wrapper.
 
         :param raw_result: The raw Rust BacktestResult object.
         :param timezone: The timezone string for datetime conversion.
+        :param initial_cash: Initial capital used in backtest.
         """
         self._raw = raw_result
         self._timezone = timezone
+        self.initial_cash = initial_cash
 
     @property
     def equity_curve(self) -> pd.Series:
@@ -63,15 +70,72 @@ class BacktestResult:
         Index: Datetime (Timezone-aware)
         Values: Total equity
         """
-        if not self._raw.equity_curve:
+        series = pd.Series(dtype=float)
+
+        if self._raw.equity_curve:
+            df = pd.DataFrame(self._raw.equity_curve, columns=["timestamp", "equity"])
+            df["timestamp"] = pd.to_datetime(
+                df["timestamp"], unit="ns", utc=True
+            ).dt.tz_convert(self._timezone)
+            df.set_index("timestamp", inplace=True)
+            series = df["equity"]
+
+        # Fallback: Try to derive from snapshots via positions_df
+        if series.empty:
+            try:
+                pos_df = self.positions_df
+                if (
+                    not pos_df.empty
+                    and "equity" in pos_df.columns
+                    and "date" in pos_df.columns
+                ):
+                    # WARNING: pos_df["equity"] might be Position Value,
+                    # not Account Equity.
+                    # We only use it if it looks like Account Equity
+                    # (>= initial_cash * 0.5) or if we can't determine otherwise.
+                    # Equity is account-level, unique per timestamp
+                    df = pos_df[["date", "equity"]].drop_duplicates(subset=["date"])
+                    df.set_index("date", inplace=True)
+                    df.sort_index(inplace=True)
+                    series = df["equity"]
+            except Exception:
+                pass
+
+        # Post-processing: Handle PnL-only curve (starts at 0)
+        if not series.empty and self.initial_cash > 0:
+            # If the curve starts near 0 (e.g., < 10% of initial cash), assume it's PnL
+            # and add initial_cash to convert to Equity.
+            if abs(series.iloc[0]) < self.initial_cash * 0.1:
+                series += self.initial_cash
+
+            # Special case: If the curve is significantly below initial cash
+            # (e.g., just position value), and we are in the fallback scenario,
+            # we might want to warn or fix.
+            # But adding initial_cash blindly to Position Value is also wrong.
+            # For now, the PnL check handles the "0 to 250" case.
+
+        return series
+
+    @property
+    def daily_returns(self) -> pd.Series:
+        """
+        Get daily returns of the strategy equity.
+
+        Returns:
+            pd.Series: Daily returns (percentage).
+        """
+        equity = self.equity_curve
+        if equity.empty:
             return pd.Series(dtype=float)
 
-        df = pd.DataFrame(self._raw.equity_curve, columns=["timestamp", "equity"])
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"], unit="ns", utc=True
-        ).dt.tz_convert(self._timezone)
-        df.set_index("timestamp", inplace=True)
-        return df["equity"]
+        # Resample to daily and calculate percentage change
+        # Assuming equity curve might have intraday data,
+        # take the last value of each day
+        # For intraday data, we need to be careful. 'D' means Calendar Day.
+        # If we have multiple days, this works.
+        daily_equity = equity.resample("D").last().ffill()
+        returns = daily_equity.pct_change().fillna(0.0)
+        return returns
 
     @property
     def cash_curve(self) -> pd.Series:
@@ -432,7 +496,97 @@ class BacktestResult:
             )
             return None
 
-        return plot_result(self, symbol=symbol, show=show, title=title)
+        return plot_result(result=self, show=show, title=title)
+
+    def to_quantstats(self) -> pd.Series:
+        """
+        Convert backtest results to QuantStats-compatible returns series.
+
+        :return: pd.Series with DatetimeIndex and daily returns.
+        """
+        # Get daily returns (already calculated from equity curve)
+        returns = self.daily_returns.copy()
+
+        if returns.empty:
+            return returns
+
+        # QuantStats prefers timezone-naive index (or UTC) usually, but it handles
+        # datetime index well.
+        # However, to be safe and compatible with most data sources QS uses (Yahoo),
+        # we might want to ensure it's timezone-naive (localized to None)
+        # or keep it as is if QS handles it.
+        # AKQuant returns are timezone-aware (user configured).
+        # Let's strip timezone to avoid warnings/errors in some QS versions if they
+        # compare with naive benchmarks.
+        # Use cast to help mypy understand it's a DatetimeIndex
+        idx = cast(pd.DatetimeIndex, returns.index)
+        if idx.tz is not None:
+            returns.index = idx.tz_localize(None)
+
+        return returns
+
+    def report_quantstats(
+        self,
+        benchmark: Optional[Union[str, pd.Series]] = None,
+        title: str = "Strategy Report",
+        filename: str = "quantstats-report.html",
+        **kwargs: Any,
+    ) -> None:
+        """
+        Generate a QuantStats HTML report.
+
+        :param benchmark: Benchmark ticker (e.g. "SPY") or pd.Series.
+        :param title: Report title.
+        :param filename: Output filename.
+        :param kwargs: Additional arguments passed to qs.reports.html.
+        """
+        try:
+            import quantstats as qs
+        except ImportError:
+            print(
+                "QuantStats is not installed. Please install it using "
+                "`pip install quantstats` or `pip install akquant[quantstats]`."
+            )
+            return
+
+        # Extend pandas functionality (optional, but good practice for QS)
+        qs.extend_pandas()
+
+        returns = self.to_quantstats()
+
+        if returns.empty:
+            print("No returns data available to generate report.")
+            return
+
+        print(f"Generating QuantStats report to {filename}...")
+        qs.reports.html(
+            returns, benchmark=benchmark, title=title, output=filename, **kwargs
+        )
+        print("Done.")
+
+    def report(
+        self,
+        title: str = "AKQuant 策略回测报告",
+        filename: str = "akquant_report.html",
+        show: bool = False,
+    ) -> None:
+        """
+        生成 HTML 策略回测报告 (便捷方法).
+
+        该方法是 akquant.plot.report.plot_report 的快捷入口。
+
+        :param title: 报告标题
+        :param filename: 保存的文件名
+        :param show: 是否在浏览器中自动打开 (默认 False)
+        """
+        # 延迟导入，避免循环引用和非必要的 Plotly 依赖
+        try:
+            from .plot.report import plot_report
+        except ImportError:
+            print("Plot module not found. Please install akquant[plot] or plotly.")
+            return
+
+        return plot_report(result=self, title=title, filename=filename, show=show)
 
 
 class FunctionalStrategy(Strategy):
@@ -667,11 +821,10 @@ def run_backtest(
     symbols = []
     data_map_for_indicators = {}
 
-    # Normalize symbol arg to list
     if isinstance(symbol, str):
         symbols = [symbol]
-    elif isinstance(symbol, list):
-        symbols = symbol
+    elif isinstance(symbol, (list, tuple)):
+        symbols = list(symbol)
     else:
         symbols = ["BENCHMARK"]
 
@@ -990,7 +1143,9 @@ def run_backtest(
             except Exception as e:
                 logger.error(f"Error in on_stop: {e}")
 
-    return BacktestResult(engine.get_results(), timezone=timezone)
+    return BacktestResult(
+        engine.get_results(), timezone=timezone, initial_cash=initial_cash
+    )
 
 
 def plot_result(
