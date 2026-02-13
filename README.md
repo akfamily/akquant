@@ -73,9 +73,9 @@ class MyStrategy(Strategy):
 
 # 运行回测
 result = aq.run_backtest(
-    cash=100000.0,
     data=df,
     strategy=MyStrategy,
+    initial_cash=100000.0,
     symbol="sh600000"
 )
 
@@ -87,27 +87,26 @@ print(result)
 **运行结果示例:**
 
 ```text
-=== Backtest Result ===
 BacktestResult:
                                             Value
 name
 start_time              2025-02-12 00:00:00+08:00
-end_time                2026-02-11 00:00:00+08:00
-duration                        364 days, 0:00:00
-total_bars                                    248
+end_time                2026-02-12 00:00:00+08:00
+duration                        365 days, 0:00:00
+total_bars                                    249
 trade_count                                  62.0
 initial_market_value                     100000.0
-end_market_value                      99145.34904
+end_market_value                          99804.0
 total_pnl                                  -196.0
 unrealized_pnl                                0.0
-total_return_pct                        -0.854651
-annualized_return                        -0.00857
-volatility                               0.002504
+total_return_pct                           -0.196
+annualized_return                        -0.00196
+volatility                               0.002402
 total_profit                                548.0
 total_loss                                 -744.0
-total_commission                        658.65096
-max_drawdown                            854.65096
-max_drawdown_pct                         0.854651
+total_commission                              0.0
+max_drawdown                                345.0
+max_drawdown_pct                         0.344487
 win_rate                                22.580645
 loss_rate                               77.419355
 winning_trades                               14.0
@@ -129,19 +128,19 @@ largest_loss_pct                        -5.380477
 largest_loss_bars                             1.0
 max_wins                                      2.0
 max_losses                                    9.0
-sharpe_ratio                            -3.421951
-sortino_ratio                           -4.061416
+sharpe_ratio                            -0.816142
+sortino_ratio                           -1.066016
 profit_factor                            0.736559
-ulcer_index                              0.004391
-upi                                     -1.951616
-equity_r2                                   0.926
-std_error                               70.598038
-calmar_ratio                            -1.002735
-exposure_time_pct                       49.193548
-var_95                                  -0.000281
-var_99                                  -0.000624
-cvar_95                                 -0.000441
-cvar_99                                 -0.000709
+ulcer_index                              0.001761
+upi                                     -1.113153
+equity_r2                                0.399577
+std_error                                68.64863
+calmar_ratio                            -0.568962
+exposure_time_pct                       48.995984
+var_95                                   -0.00023
+var_99                                   -0.00062
+cvar_95                                 -0.000405
+cvar_99                                  -0.00069
 sqn                                     -0.743693
 kelly_criterion                         -0.080763
 ```
@@ -161,7 +160,7 @@ Please use this bibtex if you want to cite this repository in your publications:
 
 ```bibtex
 @misc{akquant,
-    author = {Albert King},
+    author = {Albert King and Zhangyao Jie},
     title = {AKQuant},
     year = {2026},
     publisher = {GitHub},
