@@ -49,11 +49,21 @@ if __name__ == "__main__":
     # Configuration
     SYMBOL = "sh600000"
     START_DATE = "20120101"
-    END_DATE = "20231231"
+    END_DATE = "20261231"
     INITIAL_CASH = 100_000.0
 
     df = ak.stock_zh_a_daily(symbol=SYMBOL, start_date=START_DATE, end_date=END_DATE)
     df["symbol"] = SYMBOL
+
+    # from akquant.config import BacktestConfig, StrategyConfig, RiskConfig
+    # # 配置风险参数：safety_margin
+    # risk_config = RiskConfig(safety_margin=0.0001)
+    # strategy_config = StrategyConfig(risk=risk_config)
+    # backtest_config = BacktestConfig(
+    #     strategy_config=strategy_config,
+    #     # start_time="20200131",
+    #     # end_time="20260210"
+    # )
 
     # 2. Run Backtest
     print("\nRunning Backtest...")
@@ -63,6 +73,9 @@ if __name__ == "__main__":
         symbol=SYMBOL,
         initial_cash=INITIAL_CASH,
         show_progress=True,
+        # config=backtest_config,
+        start_time="20160101",
+        end_time="20201231",
     )
 
     # 3. Print Metrics

@@ -1,3 +1,4 @@
+import datetime as dt_module
 import os
 import sys
 from functools import cached_property
@@ -23,7 +24,6 @@ from .akquant import (
     ExecutionMode,
     Instrument,
     Order,
-    PerformanceMetrics,
 )
 from .akquant import (
     BacktestResult as RustBacktestResult,
@@ -178,14 +178,27 @@ class BacktestResult:
         return []
 
     @property
-    def metrics(self) -> PerformanceMetrics:
-        """
-        Get performance metrics as a raw object (Raw Access).
+    def metrics(self) -> Any:
+        """Get metrics with timezone-aware datetime conversion."""
+        metrics = self._raw.metrics
 
-        This is the raw Rust object containing all metrics fields.
-        For a DataFrame view, use `metrics_df`.
-        """
-        return self._raw.metrics
+        class MetricsWrapper:
+            def __init__(self, raw_metrics: Any, timezone: str) -> None:
+                self._raw = raw_metrics
+                self._timezone = timezone
+
+            def __getattr__(self, name: str) -> Any:
+                val = getattr(self._raw, name)
+                if name in ["start_time", "end_time"]:
+                    # Convert ns timestamp to datetime
+                    if isinstance(val, int):
+                        dt = pd.to_datetime(val, unit="ns", utc=True).tz_convert(
+                            self._timezone
+                        )
+                        return dt
+                return val
+
+        return MetricsWrapper(metrics, self._timezone)
 
     @property
     def positions(self) -> pd.DataFrame:
@@ -636,6 +649,8 @@ def run_backtest(
     warmup_period: int = 0,
     lot_size: Union[int, Dict[str, int], None] = None,
     show_progress: Optional[bool] = None,
+    start_time: Optional[Union[str, Any]] = None,
+    end_time: Optional[Union[str, Any]] = None,
     config: Optional[BacktestConfig] = None,
     instruments_config: Optional[
         Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]
@@ -663,9 +678,30 @@ def run_backtest(
     :param lot_size: 最小交易单位。如果是 int，则应用于所有标的；
                      如果是 Dict[str, int]，则按代码匹配；如果不传(None)，默认为 1。
     :param show_progress: 是否显示进度条 (默认 True)
+    :param start_time: 回测开始时间 (e.g., "2020-01-01 09:30"). 优先级高于
+                       config.start_time.
+    :param end_time: 回测结束时间 (e.g., "2020-12-31 15:00"). 优先级高于
+                     config.end_time.
     :param config: BacktestConfig 配置对象 (可选)
     :param instruments_config: 标的配置列表或字典 (可选)
     :return: 回测结果 Result 对象
+
+    配置优先级说明 (Parameter Priority):
+    ----------------------------------
+    本函数参数采用以下优先级顺序解析（由高到低）：
+
+    1. **Explicit Arguments (显式参数)**:
+       直接传递给 `run_backtest` 的参数优先级最高。
+       例如: `run_backtest(..., start_time="2022-01-01")` 会覆盖 Config 中的设置。
+
+    2. **Configuration Objects (配置对象)**:
+       如果显式参数为 `None`，则尝试从 `config` (`BacktestConfig`) 及其子配置
+       (`StrategyConfig`) 中读取。
+       例如: `config.start_time` 或 `config.strategy_config.initial_cash`。
+
+    3. **Default Values (默认值)**:
+       如果上述两者都未提供，则使用系统默认值。
+       例如: `initial_cash` 默认为 1,000,000。
     """
     # 0. 设置默认值 (如果未传入且未在 Config 中设置)
     # 优先级: 参数 > Config > 默认值
@@ -687,9 +723,18 @@ def run_backtest(
     # Resolve Commission Rate
     if commission_rate is None:
         if config and config.strategy_config:
-            commission_rate = config.strategy_config.fee_amount
+            commission_rate = config.strategy_config.commission_rate
         else:
             commission_rate = DEFAULT_COMMISSION_RATE
+
+    # Resolve Other Fees (if not passed as args, check config)
+    if config and config.strategy_config:
+        if stamp_tax_rate == 0.0:
+            stamp_tax_rate = config.strategy_config.stamp_tax_rate
+        if transfer_fee_rate == 0.0:
+            transfer_fee_rate = config.strategy_config.transfer_fee_rate
+        if min_commission == 0.0:
+            min_commission = config.strategy_config.min_commission
 
     # Resolve Timezone
     if timezone is None:
@@ -729,11 +774,23 @@ def run_backtest(
             )
 
     # 1.5 处理 Config 覆盖 (剩余部分)
-    if config:
-        if config.start_date:
-            kwargs["start_date"] = config.start_date
-        if config.end_date:
-            kwargs["end_date"] = config.end_date
+    # Resolve effective start/end time for filtering
+    # Priority: explicit argument > config
+
+    if start_time is None:
+        if config and config.start_time:
+            start_time = config.start_time
+
+    if end_time is None:
+        if config and config.end_time:
+            end_time = config.end_time
+
+    # Update kwargs if needed by strategy (optional, can be removed if strategies
+    # don't need it)
+    if start_time:
+        kwargs["start_time"] = start_time
+    if end_time:
+        kwargs["end_time"] = end_time
 
         # 注意: initial_cash, commission_rate, timezone, show_progress, history_depth
         # 已经在上方通过优先级逻辑处理过了，这里不需要再覆盖
@@ -844,6 +901,58 @@ def run_backtest(
     if data is not None:
         # Use provided data
         if isinstance(data, pd.DataFrame):
+            # Ensure index is datetime
+            if not isinstance(data.index, pd.DatetimeIndex):
+                # Try to find a date column if index is not date
+                # Common candidates: "date", "timestamp", "datetime"
+                found_date = False
+                for col in ["date", "timestamp", "datetime", "Date", "Timestamp"]:
+                    if col in data.columns:
+                        data = data.set_index(col)
+                        found_date = True
+                        break
+
+                if not found_date:
+                    # try convert index
+                    try:
+                        data.index = pd.to_datetime(data.index)
+                    except Exception:
+                        pass
+
+            # Ensure index is pd.Timestamp compatible
+            # (convert datetime.date to Timestamp)
+            # This is handled by pd.to_datetime but let's be safe for object index
+            if data.index.dtype == "object":
+                try:
+                    data.index = pd.to_datetime(data.index)
+                except Exception:
+                    pass
+
+            # Filter by date if provided
+            if start_time:
+                # Handle potential mismatch between Timestamp and datetime.date
+                ts_start = pd.Timestamp(start_time)
+                # If index is date objects, compare with date()
+                if (
+                    len(data) > 0
+                    and isinstance(data.index[0], (dt_module.date))
+                    and not isinstance(data.index[0], dt_module.datetime)
+                ):
+                    data = data[data.index >= ts_start.date()]
+                else:
+                    data = data[data.index >= ts_start]
+
+            if end_time:
+                ts_end = pd.Timestamp(end_time)
+                if (
+                    len(data) > 0
+                    and isinstance(data.index[0], (dt_module.date))
+                    and not isinstance(data.index[0], dt_module.datetime)
+                ):
+                    data = data[data.index <= ts_end.date()]
+                else:
+                    data = data[data.index <= ts_end]
+
             # Try to infer symbol from DataFrame if not explicitly provided or default
             if (not symbols or symbols == ["BENCHMARK"]) and "symbol" in data.columns:
                 unique_symbols = data["symbol"].unique()
@@ -872,6 +981,28 @@ def run_backtest(
                 if filter_symbols and sym not in symbols:
                     continue
 
+                # Ensure index is datetime
+                if not isinstance(df.index, pd.DatetimeIndex):
+                    # Try to find a date column if index is not date
+                    found_date = False
+                    for col in ["date", "timestamp", "datetime", "Date", "Timestamp"]:
+                        if col in df.columns:
+                            df = df.set_index(col)
+                            found_date = True
+                            break
+
+                    if not found_date:
+                        try:
+                            df.index = pd.to_datetime(df.index)
+                        except Exception:
+                            pass
+
+                # Filter by date
+                if start_time:
+                    df = df[df.index >= pd.Timestamp(start_time)]
+                if end_time:
+                    df = df[df.index <= pd.Timestamp(end_time)]
+
                 df_prep = prepare_dataframe(df)
                 data_map_for_indicators[sym] = df_prep
                 arrays = df_to_arrays(df_prep, symbol=sym)
@@ -881,6 +1012,15 @@ def run_backtest(
             feed.sort()
         elif isinstance(data, list):
             if data:
+                # Filter by date
+                if start_time:
+                    # Explicitly convert to int to satisfy mypy
+                    ts_start: int = int(pd.Timestamp(start_time).value)  # type: ignore
+                    data = [b for b in data if b.timestamp >= ts_start]  # type: ignore
+                if end_time:
+                    ts_end: int = int(pd.Timestamp(end_time).value)  # type: ignore
+                    data = [b for b in data if b.timestamp <= ts_end]  # type: ignore
+
                 data.sort(key=lambda b: b.timestamp)
                 feed.add_bars(data)
     else:
@@ -889,13 +1029,12 @@ def run_backtest(
             logger.warning("No symbols specified and no data provided.")
 
         catalog = ParquetDataCatalog()
-        start_date = kwargs.get("start_date")
-        end_date = kwargs.get("end_date")
+        # start_time / end_time already resolved above
 
         loaded_count = 0
         for sym in symbols:
             # Try Catalog
-            df = catalog.read(sym, start_date=start_date, end_date=end_date)
+            df = catalog.read(sym, start_time=start_time, end_time=end_time)
             if df.empty:
                 logger.warning(f"Data not found in catalog for {sym}")
                 continue
@@ -1163,8 +1302,6 @@ def plot_result(
     :param benchmark: 基准收益率序列 (可选, Series with DatetimeIndex)
     """
     try:
-        from datetime import datetime
-
         import matplotlib.dates as mdates
         import matplotlib.pyplot as plt
         from matplotlib.gridspec import GridSpec
@@ -1190,9 +1327,9 @@ def plot_result(
     if first_ts > 1e11:
         scale = 1e-9
 
-    from datetime import timezone
-
     # Use UTC to avoid local timezone issues and align with benchmark data
+    from datetime import datetime, timezone
+
     times = [
         datetime.fromtimestamp(t * scale, tz=timezone.utc).replace(tzinfo=None)
         for t, _ in equity_curve

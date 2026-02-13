@@ -43,7 +43,7 @@ for i, symbol in enumerate(SYMBOLS):
     # 生成数据 (使用 'B' 代表工作日频率，从 1990 年开始)
     # 固定种子以确保结果可复现
     df = get_benchmark_data(
-        DATA_SIZE, symbol, freq="B", start_date="1990-01-01", seed=42 + i
+        DATA_SIZE, symbol, freq="B", start_time="1990-01-01", seed=42 + i
     )
 
     # 重命名列

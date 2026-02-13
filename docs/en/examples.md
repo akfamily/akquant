@@ -196,8 +196,8 @@ import pandas as pd
 import numpy as np
 
 # 1. Prepare data (Mock data)
-def create_dummy_data(symbol, start_date, n_bars, price=100.0):
-    dates = pd.date_range(start_date, periods=n_bars, freq="B")
+def create_dummy_data(symbol, start_time, n_bars, price=100.0):
+    dates = pd.date_range(start_time, periods=n_bars, freq="B")
     np.random.seed(42)
     changes = np.random.randn(n_bars)
     prices = price + np.cumsum(changes)
