@@ -10,7 +10,7 @@ def get_benchmark_data(
     n: int = 200_000,
     symbol: str = "BENCHMARK",
     freq: str = "min",
-    start_date: str = "2020-01-01",
+    start_time: str = "2020-01-01",
     seed: Optional[int] = None,
 ) -> pd.DataFrame:
     """
@@ -21,7 +21,7 @@ def get_benchmark_data(
     print(f"Generating {n} rows of dummy data...")
     t0 = time.time()
 
-    dates = pd.date_range(start=start_date, periods=n, freq=freq, tz="UTC")
+    dates = pd.date_range(start=start_time, periods=n, freq=freq, tz="UTC")
     # Add 15 hours to simulate market close time (15:00:00 UTC)
     dates = dates + pd.Timedelta(hours=15)
 

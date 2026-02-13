@@ -42,8 +42,10 @@ class StrategyConfig:
     initial_cash: float = 100000.0
 
     # Fees & Commission
-    fee_mode: str = "per_order"  # 'per_order', 'per_share', 'percent'
-    fee_amount: float = 0.0  # Fixed amount or percentage
+    commission_rate: float = 0.0  # Commission rate (e.g. 0.0003 for 0.03%)
+    stamp_tax_rate: float = 0.0  # Stamp tax rate (e.g. 0.001, sell only)
+    transfer_fee_rate: float = 0.0  # Transfer fee rate
+    min_commission: float = 0.0  # Minimum commission per order (e.g. 5.0)
 
     # Execution
     enable_fractional_shares: bool = False
@@ -69,8 +71,8 @@ class BacktestConfig:
     """Configuration specifically for running backtests."""
 
     strategy_config: StrategyConfig
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
     instruments: Optional[List[str]] = None
     instruments_config: Optional[
         Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]

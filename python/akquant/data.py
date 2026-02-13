@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 
@@ -62,16 +62,16 @@ class ParquetDataCatalog:
     def read(
         self,
         symbol: str,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_time: Optional[Union[str, pd.Timestamp]] = None,
+        end_time: Optional[Union[str, pd.Timestamp]] = None,
         columns: Optional[List[str]] = None,
     ) -> pd.DataFrame:
         """
         Read DataFrame from Parquet catalog.
 
         :param symbol: Instrument symbol.
-        :param start_date: Filter start date (YYYYMMDD or YYYY-MM-DD).
-        :param end_date: Filter end date.
+        :param start_time: Filter start date/time.
+        :param end_time: Filter end date/time.
         :param columns: Specific columns to read.
         :return: DataFrame.
         """
@@ -83,10 +83,10 @@ class ParquetDataCatalog:
 
         # Read with projection (columns) and push-down filters
         filters = []
-        if start_date:
-            filters.append(("index", ">=", pd.to_datetime(start_date)))
-        if end_date:
-            filters.append(("index", "<=", pd.to_datetime(end_date)))
+        if start_time:
+            filters.append(("index", ">=", pd.to_datetime(start_time)))
+        if end_time:
+            filters.append(("index", "<=", pd.to_datetime(end_time)))
 
         # If filters is empty, pass None to read_parquet
         kwargs: Dict[str, Any] = {"columns": columns}
@@ -98,10 +98,10 @@ class ParquetDataCatalog:
         except Exception:
             # Fallback for engines that don't support filters or if index name mismatch
             df = pd.read_parquet(file_path, columns=columns)
-            if start_date:
-                df = df[df.index >= pd.to_datetime(start_date)]
-            if end_date:
-                df = df[df.index <= pd.to_datetime(end_date)]
+            if start_time:
+                df = df[df.index >= pd.to_datetime(start_time)]
+            if end_time:
+                df = df[df.index <= pd.to_datetime(end_time)]
 
         return df
 
