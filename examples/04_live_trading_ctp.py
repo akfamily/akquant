@@ -137,11 +137,12 @@ def main() -> None:
 
     # Create and Run LiveRunner
     # use_aggregator=False means we process every Tick as a Bar (High Frequency)
+    # Set use_aggregator=True to enable 1-minute bar aggregation (default)
     runner = LiveRunner(
         strategy_cls=DemoLiveStrategy,
         instruments=instruments,
         md_front=MD_FRONT,
-        use_aggregator=False,
+        use_aggregator=False,  # Set to True for 1-minute bars
     )
 
     # Run the strategy

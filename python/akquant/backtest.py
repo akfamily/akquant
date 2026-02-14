@@ -643,6 +643,7 @@ def run_backtest(
     min_commission: float = 0.0,
     execution_mode: Union[ExecutionMode, str] = ExecutionMode.NextOpen,
     timezone: Optional[str] = None,
+    t_plus_one: bool = False,
     initialize: Optional[Callable[[Any], None]] = None,
     context: Optional[Dict[str, Any]] = None,
     history_depth: Optional[int] = None,
@@ -671,6 +672,7 @@ def run_backtest(
     :param min_commission: 最低佣金 (默认 0.0)
     :param execution_mode: 执行模式 (ExecutionMode.NextOpen 或 "next_open")
     :param timezone: 时区名称 (默认 "Asia/Shanghai")
+    :param t_plus_one: 是否启用 T+1 交易规则 (默认 False)
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
     :param context: 初始上下文数据 (仅当 strategy 为函数时使用)
     :param history_depth: 自动维护历史数据的长度 (0 表示禁用)
@@ -870,7 +872,10 @@ def run_backtest(
         pass
 
     # 调用 on_start 获取订阅
-    if hasattr(strategy_instance, "on_start"):
+    # 注意：现在调用 _on_start_internal 来触发自动发现
+    if hasattr(strategy_instance, "_on_start_internal"):
+        strategy_instance._on_start_internal()
+    elif hasattr(strategy_instance, "on_start"):
         strategy_instance.on_start()
 
     # 3. 准备数据源和 Symbol
@@ -1056,6 +1061,17 @@ def run_backtest(
     # Inject timezone to strategy
     strategy_instance.timezone = timezone
 
+    # Inject trading days to strategy (for add_daily_timer)
+    if hasattr(strategy_instance, "_trading_days") and data_map_for_indicators:
+        all_dates: set[pd.Timestamp] = set()
+        for df in data_map_for_indicators.values():
+            if not df.empty and isinstance(df.index, pd.DatetimeIndex):
+                dates = df.index.normalize().unique()
+                all_dates.update(dates)
+
+        if all_dates:
+            strategy_instance._trading_days = sorted(list(all_dates))
+
     # 3.5 Pre-calculate indicators
     # Inject data into indicators so they can be accessed in on_bar via get_value()
     if hasattr(strategy_instance, "_indicators") and data_map_for_indicators:
@@ -1097,7 +1113,33 @@ def run_backtest(
     else:
         engine.set_execution_mode(execution_mode)
 
-    engine.set_t_plus_one(False)  # 默认 T+0，可配置
+    # 4.1 市场规则配置
+    # 如果启用了 T+1，必须使用 ChinaMarket
+    if t_plus_one:
+        engine.use_china_market()
+        engine.set_t_plus_one(True)
+    else:
+        # 即使是 T+0，如果配置了印花税等费率，建议使用 ChinaMarket 或 SimpleMarket
+        # 这里为了保持一致性，默认 SimpleMarket (T+0, 无税)，除非用户显式设置了费率
+        # 如果设置了费率，set_stock_fee_rules 会生效，但 SimpleMarket 不支持印花税
+        # 所以如果印花税 > 0，应该自动切换到 ChinaMarket?
+        # 目前 Engine 的 use_simple_market 只接受 commission_rate
+        # 为了支持印花税，我们统一使用 ChinaMarket 但关闭 T+1?
+        # 现有的逻辑是：engine 默认初始化时是 SimpleMarket
+        # 下面调用 set_t_plus_one(False) 实际上只对 ChinaMarket 有效
+
+        # 简单起见，如果 t_plus_one=False (默认)，我们保持原有逻辑
+        # 但为了支持印花税，最好总是使用 ChinaMarket 并根据 t_plus_one 开关
+        # 不过为了兼容性，我们只在 t_plus_one=True 时强制 ChinaMarket
+        # 或者如果用户传入了 stamp_tax_rate > 0
+        if stamp_tax_rate > 0 or transfer_fee_rate > 0:
+            engine.use_china_market()
+            engine.set_t_plus_one(False)
+        else:
+            # 使用 SimpleMarket (更轻量)
+            # 但 set_stock_fee_rules 可能在 SimpleMarket 下部分参数无效
+            engine.use_simple_market(commission_rate)
+
     engine.set_force_session_continuous(True)
     engine.set_stock_fee_rules(
         commission_rate, stamp_tax_rate, transfer_fee_rate, min_commission

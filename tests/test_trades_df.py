@@ -2,7 +2,7 @@ import pandas as pd
 from akquant import Bar, Strategy, run_backtest
 
 
-class TestStrategy(Strategy):
+class TradesTestStrategy(Strategy):
     """Strategy for testing trades dataframe."""
 
     def on_bar(self, bar: Bar) -> None:
@@ -38,7 +38,7 @@ def test_trades_df() -> None:
 
     print("Running backtest...")
     result = run_backtest(
-        data=data, strategy=TestStrategy, symbol="TEST", show_progress=False
+        data=data, strategy=TradesTestStrategy, symbol="TEST", show_progress=False
     )
 
     print("\nTrades DataFrame:")
