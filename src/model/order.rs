@@ -109,31 +109,43 @@ impl Order {
     }
 
     #[getter]
+    /// 获取手续费.
+    /// :return: 手续费
     fn get_commission(&self) -> f64 {
         self.commission.to_f64().unwrap_or_default()
     }
 
     #[getter]
+    /// 获取订单数量.
+    /// :return: 订单数量
     fn get_quantity(&self) -> f64 {
         self.quantity.to_f64().unwrap_or_default()
     }
 
     #[getter]
+    /// 获取订单价格.
+    /// :return: 订单价格 (如果为市价单则返回 None)
     fn get_price(&self) -> Option<f64> {
         self.price.map(|d| d.to_f64().unwrap_or_default())
     }
 
     #[getter]
+    /// 获取触发价格.
+    /// :return: 触发价格 (如果未设置则返回 None)
     fn get_trigger_price(&self) -> Option<f64> {
         self.trigger_price.map(|d| d.to_f64().unwrap_or_default())
     }
 
     #[getter]
+    /// 获取已成交数量.
+    /// :return: 已成交数量
     fn get_filled_quantity(&self) -> f64 {
         self.filled_quantity.to_f64().unwrap_or_default()
     }
 
     #[getter]
+    /// 获取成交均价.
+    /// :return: 成交均价 (如果未成交则返回 None)
     fn get_average_filled_price(&self) -> Option<f64> {
         self.average_filled_price
             .map(|d| d.to_f64().unwrap_or_default())
@@ -190,6 +202,17 @@ pub struct Trade {
 #[gen_stub_pymethods]
 #[pymethods]
 impl Trade {
+    /// 创建成交记录.
+    ///
+    /// :param id: 成交ID
+    /// :param order_id: 订单ID
+    /// :param symbol: 标的代码
+    /// :param side: 交易方向
+    /// :param quantity: 成交数量
+    /// :param price: 成交价格
+    /// :param commission: 手续费
+    /// :param timestamp: Unix 时间戳 (纳秒)
+    /// :param bar_index: K线索引
     #[new]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -217,16 +240,22 @@ impl Trade {
     }
 
     #[getter]
+    /// 获取成交数量.
+    /// :return: 成交数量
     fn get_quantity(&self) -> f64 {
         self.quantity.to_f64().unwrap_or_default()
     }
 
     #[getter]
+    /// 获取成交价格.
+    /// :return: 成交价格
     fn get_price(&self) -> f64 {
         self.price.to_f64().unwrap_or_default()
     }
 
     #[getter]
+    /// 获取手续费.
+    /// :return: 手续费
     fn get_commission(&self) -> f64 {
         self.commission.to_f64().unwrap_or_default()
     }

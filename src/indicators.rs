@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
 
-/// Simple Moving Average.
+/// 简单移动平均线 (SMA).
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -15,6 +15,9 @@ pub struct SMA {
 #[gen_stub_pymethods]
 #[pymethods]
 impl SMA {
+    /// 创建 SMA 指标.
+    ///
+    /// :param period: 周期
     #[new]
     pub fn new(period: usize) -> Self {
         SMA {
@@ -24,6 +27,10 @@ impl SMA {
         }
     }
 
+    /// 更新指标值.
+    ///
+    /// :param value: 新数据点
+    /// :return: 当前 SMA 值 (如果数据不足则返回 None)
     pub fn update(&mut self, value: f64) -> Option<f64> {
         self.buffer.push_back(value);
         self.sum += value;
@@ -41,6 +48,9 @@ impl SMA {
         }
     }
 
+    /// 获取当前指标值.
+    ///
+    /// :return: 当前 SMA 值
     #[getter]
     pub fn value(&self) -> Option<f64> {
         if self.buffer.len() == self.period {
@@ -50,13 +60,16 @@ impl SMA {
         }
     }
 
+    /// 检查指标是否就绪.
+    ///
+    /// :return: 是否已收集足够数据
     #[getter]
     pub fn is_ready(&self) -> bool {
         self.buffer.len() == self.period
     }
 }
 
-/// Exponential Moving Average.
+/// 指数移动平均线 (EMA).
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -69,6 +82,9 @@ pub struct EMA {
 #[gen_stub_pymethods]
 #[pymethods]
 impl EMA {
+    /// 创建 EMA 指标.
+    ///
+    /// :param period: 周期
     #[new]
     pub fn new(period: usize) -> Self {
         EMA {
@@ -78,6 +94,10 @@ impl EMA {
         }
     }
 
+    /// 更新指标值.
+    ///
+    /// :param value: 新数据点
+    /// :return: 当前 EMA 值
     pub fn update(&mut self, value: f64) -> Option<f64> {
         match self.current_value {
             Some(prev) => {
@@ -107,7 +127,7 @@ impl EMA {
     }
 }
 
-/// Moving Average Convergence Divergence.
+/// 平滑异同移动平均线 (MACD).
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -120,6 +140,11 @@ pub struct MACD {
 #[gen_stub_pymethods]
 #[pymethods]
 impl MACD {
+    /// 创建 MACD 指标.
+    ///
+    /// :param fast_period: 快线周期 (通常 12)
+    /// :param slow_period: 慢线周期 (通常 26)
+    /// :param signal_period: 信号线周期 (通常 9)
     #[new]
     pub fn new(fast_period: usize, slow_period: usize, signal_period: usize) -> Self {
         MACD {
@@ -129,7 +154,10 @@ impl MACD {
         }
     }
 
-    /// Returns (macd_line, signal_line, histogram).
+    /// 更新指标值.
+    ///
+    /// :param value: 新数据点
+    /// :return: (DIF, DEA, MACD柱)
     pub fn update(&mut self, value: f64) -> Option<(f64, f64, f64)> {
         let fast = self.fast_ema.update(value)?;
         let slow = self.slow_ema.update(value)?;
@@ -141,6 +169,9 @@ impl MACD {
         Some((macd_line, signal_line, histogram))
     }
 
+    /// 获取当前指标值.
+    ///
+    /// :return: (DIF, DEA, MACD柱)
     #[getter]
     pub fn value(&self) -> Option<(f64, f64, f64)> {
         let fast = self.fast_ema.value()?;
@@ -152,7 +183,7 @@ impl MACD {
     }
 }
 
-/// Relative Strength Index.
+/// 相对强弱指数 (RSI).
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -168,6 +199,9 @@ pub struct RSI {
 #[gen_stub_pymethods]
 #[pymethods]
 impl RSI {
+    /// 创建 RSI 指标.
+    ///
+    /// :param period: 周期 (通常 14)
     #[new]
     pub fn new(period: usize) -> Self {
         RSI {
@@ -180,6 +214,10 @@ impl RSI {
         }
     }
 
+    /// 更新指标值.
+    ///
+    /// :param value: 新数据点 (通常是收盘价)
+    /// :return: 当前 RSI 值
     pub fn update(&mut self, value: f64) -> Option<f64> {
         match self.prev_price {
             Some(prev) => {
@@ -232,7 +270,7 @@ impl RSI {
     }
 }
 
-/// Bollinger Bands.
+/// 布林带 (Bollinger Bands).
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -247,6 +285,10 @@ pub struct BollingerBands {
 #[gen_stub_pymethods]
 #[pymethods]
 impl BollingerBands {
+    /// 创建布林带指标.
+    ///
+    /// :param period: 周期 (通常 20)
+    /// :param multiplier: 标准差倍数 (通常 2.0)
     #[new]
     pub fn new(period: usize, multiplier: f64) -> Self {
         BollingerBands {
@@ -258,7 +300,10 @@ impl BollingerBands {
         }
     }
 
-    /// Returns (upper, middle, lower).
+    /// 更新指标值.
+    ///
+    /// :param value: 新数据点
+    /// :return: (上轨, 中轨, 下轨)
     pub fn update(&mut self, value: f64) -> Option<(f64, f64, f64)> {
         self.buffer.push_back(value);
         self.sum += value;
@@ -287,6 +332,9 @@ impl BollingerBands {
         }
     }
 
+    /// 获取当前指标值.
+    ///
+    /// :return: (上轨, 中轨, 下轨)
     #[getter]
     pub fn value(&self) -> Option<(f64, f64, f64)> {
         if self.buffer.len() == self.period {
@@ -304,7 +352,7 @@ impl BollingerBands {
     }
 }
 
-/// Average True Range.
+/// 平均真实波幅 (ATR).
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -318,6 +366,9 @@ pub struct ATR {
 #[gen_stub_pymethods]
 #[pymethods]
 impl ATR {
+    /// 创建 ATR 指标.
+    ///
+    /// :param period: 周期 (通常 14)
     #[new]
     pub fn new(period: usize) -> Self {
         ATR {
@@ -328,6 +379,12 @@ impl ATR {
         }
     }
 
+    /// 更新指标值.
+    ///
+    /// :param high: 最高价
+    /// :param low: 最低价
+    /// :param close: 收盘价
+    /// :return: 当前 ATR 值
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
         let tr = match self.prev_close {
             Some(pc) => {

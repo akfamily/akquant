@@ -102,26 +102,36 @@ impl Instrument {
     }
 
     #[getter]
+    /// 获取合约乘数.
+    /// :return: 合约乘数
     fn get_multiplier(&self) -> f64 {
         self.multiplier.to_f64().unwrap_or_default()
     }
 
     #[getter]
+    /// 获取保证金比率.
+    /// :return: 保证金比率
     fn get_margin_ratio(&self) -> f64 {
         self.margin_ratio.to_f64().unwrap_or_default()
     }
 
     #[getter]
+    /// 获取最小变动价位.
+    /// :return: 最小变动价位
     fn get_tick_size(&self) -> f64 {
         self.tick_size.to_f64().unwrap_or_default()
     }
 
     #[getter]
+    /// 获取最小交易单位.
+    /// :return: 最小交易单位
     fn get_lot_size(&self) -> f64 {
         self.lot_size.to_f64().unwrap_or_default()
     }
 
     #[setter]
+    /// 设置最小交易单位.
+    /// :param value: 最小交易单位
     fn set_lot_size(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         self.lot_size = extract_decimal(value)?;
         Ok(())

@@ -68,9 +68,9 @@ class TPlusOneStrategy(Strategy):
             f"{order.filled_quantity}@{order.average_filled_price}"
         )
 
-    def on_trade(self, trade: akquant.ClosedTrade) -> None:
+    def on_trade(self, trade: akquant.Trade) -> None:
         """Handle trade update."""
-        print(f"Trade: {trade.side} {trade.quantity}@{trade.exit_price}")
+        print(f"Trade: {trade.side} {trade.quantity}@{trade.price}")
 
 
 def test_t_plus_one_mechanics() -> None:

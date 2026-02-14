@@ -1,27 +1,27 @@
 use crate::model::Bar;
 use rust_decimal::prelude::ToPrimitive;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone)]
 pub struct SymbolHistory {
-    pub timestamps: Vec<i64>,
-    pub opens: Vec<f64>,
-    pub highs: Vec<f64>,
-    pub lows: Vec<f64>,
-    pub closes: Vec<f64>,
-    pub volumes: Vec<f64>,
+    pub timestamps: VecDeque<i64>,
+    pub opens: VecDeque<f64>,
+    pub highs: VecDeque<f64>,
+    pub lows: VecDeque<f64>,
+    pub closes: VecDeque<f64>,
+    pub volumes: VecDeque<f64>,
     pub capacity: usize,
 }
 
 impl SymbolHistory {
     pub fn new(capacity: usize) -> Self {
         SymbolHistory {
-            timestamps: Vec::with_capacity(capacity),
-            opens: Vec::with_capacity(capacity),
-            highs: Vec::with_capacity(capacity),
-            lows: Vec::with_capacity(capacity),
-            closes: Vec::with_capacity(capacity),
-            volumes: Vec::with_capacity(capacity),
+            timestamps: VecDeque::with_capacity(capacity),
+            opens: VecDeque::with_capacity(capacity),
+            highs: VecDeque::with_capacity(capacity),
+            lows: VecDeque::with_capacity(capacity),
+            closes: VecDeque::with_capacity(capacity),
+            volumes: VecDeque::with_capacity(capacity),
             capacity,
         }
     }
@@ -37,23 +37,21 @@ impl SymbolHistory {
         }
 
         if self.timestamps.len() >= self.capacity {
-            // Simple O(N) removal.
-            // Ideally we would use a RingBuffer, but Vec is easier for numpy integration (contiguous memory).
-            // For typical history depths (e.g. < 5000), this is very fast.
-            self.timestamps.remove(0);
-            self.opens.remove(0);
-            self.highs.remove(0);
-            self.lows.remove(0);
-            self.closes.remove(0);
-            self.volumes.remove(0);
+            // O(1) removal from front
+            self.timestamps.pop_front();
+            self.opens.pop_front();
+            self.highs.pop_front();
+            self.lows.pop_front();
+            self.closes.pop_front();
+            self.volumes.pop_front();
         }
 
-        self.timestamps.push(bar.timestamp);
-        self.opens.push(bar.open.to_f64().unwrap_or(0.0));
-        self.highs.push(bar.high.to_f64().unwrap_or(0.0));
-        self.lows.push(bar.low.to_f64().unwrap_or(0.0));
-        self.closes.push(bar.close.to_f64().unwrap_or(0.0));
-        self.volumes.push(bar.volume.to_f64().unwrap_or(0.0));
+        self.timestamps.push_back(bar.timestamp);
+        self.opens.push_back(bar.open.to_f64().unwrap_or(0.0));
+        self.highs.push_back(bar.high.to_f64().unwrap_or(0.0));
+        self.lows.push_back(bar.low.to_f64().unwrap_or(0.0));
+        self.closes.push_back(bar.close.to_f64().unwrap_or(0.0));
+        self.volumes.push_back(bar.volume.to_f64().unwrap_or(0.0));
     }
 }
 

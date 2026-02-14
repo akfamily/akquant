@@ -35,11 +35,15 @@ impl Portfolio {
     }
 
     #[getter]
+    /// 获取当前现金余额.
+    /// :return: 现金余额
     fn get_cash(&self) -> f64 {
         self.cash.to_f64().unwrap_or_default()
     }
 
     #[getter]
+    /// 获取当前持仓字典.
+    /// :return: 持仓字典 {symbol: quantity}
     fn get_positions(&self) -> HashMap<String, f64> {
         self.positions
             .iter()
@@ -48,6 +52,8 @@ impl Portfolio {
     }
 
     #[getter]
+    /// 获取可用持仓字典.
+    /// :return: 可用持仓字典 {symbol: quantity}
     fn get_available_positions(&self) -> HashMap<String, f64> {
         self.available_positions
             .iter()
@@ -64,6 +70,9 @@ impl Portfolio {
     }
 
     /// 获取持仓数量.
+    ///
+    /// :param symbol: 标的代码
+    /// :return: 持仓数量
     pub fn get_position(&self, symbol: &str) -> f64 {
         self.positions
             .get(symbol)
@@ -73,6 +82,9 @@ impl Portfolio {
     }
 
     /// 获取可用持仓数量.
+    ///
+    /// :param symbol: 标的代码
+    /// :return: 可用持仓数量
     pub fn get_available_position(&self, symbol: &str) -> f64 {
         self.available_positions
             .get(symbol)

@@ -1,7 +1,8 @@
+use crate::error::AkQuantError;
 use crate::event::Event;
 use crate::model::{Bar, Tick};
 use numpy::PyReadonlyArray1;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
@@ -32,7 +33,7 @@ fn normalize_timestamp(ts: i64) -> i64 {
 pub trait DataClient: Send {
     fn peek_timestamp(&mut self) -> Option<i64>;
     fn next(&mut self) -> Option<Event>;
-    fn add(&mut self, event: Event) -> PyResult<()>;
+    fn add(&mut self, event: Event) -> Result<(), AkQuantError>;
     fn sort(&mut self);
     fn len_hint(&self) -> Option<usize>;
 
@@ -74,7 +75,7 @@ impl DataClient for SimulatedDataClient {
         self.events.pop_front()
     }
 
-    fn add(&mut self, event: Event) -> PyResult<()> {
+    fn add(&mut self, event: Event) -> Result<(), AkQuantError> {
         self.events.push_back(event);
         Ok(())
     }
@@ -174,9 +175,9 @@ impl DataClient for CsvDataClient {
         self.current.take()
     }
 
-    fn add(&mut self, _event: Event) -> PyResult<()> {
-        Err(PyTypeError::new_err(
-            "Cannot add data to a streaming CSV provider",
+    fn add(&mut self, _event: Event) -> Result<(), AkQuantError> {
+        Err(AkQuantError::DataError(
+            "Cannot add data to a streaming CSV provider".to_string(),
         ))
     }
 
@@ -237,10 +238,10 @@ impl DataClient for RealtimeDataClient {
         self.rx.try_recv().ok()
     }
 
-    fn add(&mut self, event: Event) -> PyResult<()> {
+    fn add(&mut self, event: Event) -> Result<(), AkQuantError> {
         self.sender
             .send(event)
-            .map_err(|e| PyValueError::new_err(e.to_string()))
+            .map_err(|e| AkQuantError::DataError(e.to_string()))
     }
 
     fn sort(&mut self) {
@@ -269,7 +270,17 @@ impl DataClient for RealtimeDataClient {
     }
 }
 
-/// 从数组批量创建 Bar 列表 (Python 优化用 - Zero Copy)
+/// 从数组批量创建 Bar 列表 (Python 优化用 - Zero Copy).
+///
+/// :param timestamps: 时间戳数组
+/// :param opens: 开盘价数组
+/// :param highs: 最高价数组
+/// :param lows: 最低价数组
+/// :param closes: 收盘价数组
+/// :param volumes: 成交量数组
+/// :param symbol: 标的代码 (可选)
+/// :param symbols: 标的代码数组 (可选)
+/// :param extra: 额外数据 (可选)
 #[gen_stub_pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
@@ -385,6 +396,10 @@ pub fn from_arrays(
     Ok(bars)
 }
 
+/// 数据源管理器.
+///
+/// 负责管理历史数据和实时数据流。
+/// 支持 CSV 文件读取、数组批量加载和实时数据推送。
 #[gen_stub_pyclass]
 #[pyclass]
 #[derive(Clone)]
@@ -395,6 +410,7 @@ pub struct DataFeed {
 
 #[pymethods]
 impl DataFeed {
+    /// 创建空的数据源.
     #[new]
     pub fn new() -> Self {
         DataFeed {
@@ -403,6 +419,11 @@ impl DataFeed {
         }
     }
 
+    /// 从 CSV 文件创建数据源.
+    ///
+    /// :param path: CSV 文件路径
+    /// :param symbol: 标的代码
+    /// :return: DataFeed 实例
     #[staticmethod]
     pub fn from_csv(path: &str, symbol: &str) -> PyResult<Self> {
         let provider = CsvDataClient::new(path, symbol)?;
@@ -412,8 +433,11 @@ impl DataFeed {
         })
     }
 
-    /// 创建实时数据源 (Channel 模式)
-    /// 适用于 CTP 等实时接口推送数据
+    /// 创建实时数据源 (Channel 模式).
+    ///
+    /// 适用于 CTP 等实时接口推送数据。
+    ///
+    /// :return: DataFeed 实例
     #[staticmethod]
     pub fn create_live() -> Self {
         let provider = RealtimeDataClient::new();
@@ -424,7 +448,9 @@ impl DataFeed {
         }
     }
 
-    /// 添加 Bar 数据
+    /// 添加 Bar 数据.
+    ///
+    /// :param bar: K 线数据
     pub fn add_bar(&mut self, bar: Bar) -> PyResult<()> {
         if let Some(sender_lock) = &self.live_sender {
             let sender = sender_lock.lock().unwrap();
@@ -433,11 +459,14 @@ impl DataFeed {
                 .map_err(|e| PyValueError::new_err(e.to_string()))
         } else {
             let mut provider = self.provider.lock().unwrap();
-            provider.add(Event::Bar(bar))
+            provider.add(Event::Bar(bar))?;
+            Ok(())
         }
     }
 
-    /// 批量添加 Bar 数据 (优化)
+    /// 批量添加 Bar 数据.
+    ///
+    /// :param bars: K 线数据列表
     pub fn add_bars(&mut self, bars: Vec<Bar>) -> PyResult<()> {
         if let Some(sender_lock) = &self.live_sender {
             let sender = sender_lock.lock().unwrap();
@@ -456,7 +485,17 @@ impl DataFeed {
         }
     }
 
-    /// 从数组批量添加 Bar 数据 (高性能优化 - Zero Copy)
+    /// 从数组批量添加 Bar 数据 (高性能优化 - Zero Copy).
+    ///
+    /// :param timestamps: 时间戳数组 (int64, 纳秒)
+    /// :param opens: 开盘价数组 (float64)
+    /// :param highs: 最高价数组 (float64)
+    /// :param lows: 最低价数组 (float64)
+    /// :param closes: 收盘价数组 (float64)
+    /// :param volumes: 成交量数组 (float64)
+    /// :param symbol: 标的代码 (可选，单一标的)
+    /// :param symbols: 标的代码数组 (可选，多标的，长度需与数据一致)
+    /// :param extra: 额外数据字典 {name: array} (可选)
     #[allow(clippy::too_many_arguments)]
     pub fn add_arrays(
         &mut self,
@@ -477,13 +516,15 @@ impl DataFeed {
         self.add_bars(bars)
     }
 
-    /// 对数据源进行排序 (按时间戳)
+    /// 对数据源进行排序 (按时间戳).
     pub fn sort(&self) {
         let mut provider = self.provider.lock().unwrap();
         provider.sort();
     }
 
-    /// 添加 Tick 数据
+    /// 添加 Tick 数据.
+    ///
+    /// :param tick: Tick 数据
     pub fn add_tick(&mut self, tick: Tick) -> PyResult<()> {
         if let Some(sender_lock) = &self.live_sender {
             let sender = sender_lock.lock().unwrap();
@@ -492,7 +533,8 @@ impl DataFeed {
                 .map_err(|e| PyValueError::new_err(e.to_string()))
         } else {
             let mut provider = self.provider.lock().unwrap();
-            provider.add(Event::Tick(tick))
+            provider.add(Event::Tick(tick))?;
+            Ok(())
         }
     }
 }
@@ -542,6 +584,9 @@ struct ActiveBar {
 
 #[gen_stub_pyclass]
 #[pyclass]
+/// K 线合成器.
+///
+/// 用于将 Tick 数据合成为 K 线 (Bar) 数据。
 pub struct BarAggregator {
     feed: DataFeed,
     active_bars: HashMap<String, ActiveBar>,
@@ -552,6 +597,10 @@ pub struct BarAggregator {
 #[gen_stub_pymethods]
 #[pymethods]
 impl BarAggregator {
+    /// 创建 K 线合成器.
+    ///
+    /// :param feed: 数据源 (合成的 Bar 将添加到此数据源)
+    /// :param interval_min: K 线周期 (分钟, 默认 1 分钟)
     #[new]
     #[pyo3(signature = (feed, interval_min=None))]
     pub fn new(feed: DataFeed, interval_min: Option<i64>) -> Self {

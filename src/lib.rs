@@ -6,12 +6,15 @@ mod clock;
 mod context;
 mod data;
 mod engine;
+mod error;
 mod event;
+mod event_manager;
 mod execution;
 mod history;
 mod indicators;
 mod market;
 mod model;
+mod order_manager;
 mod portfolio;
 mod risk;
 
