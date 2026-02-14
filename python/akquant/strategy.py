@@ -904,9 +904,14 @@ class Strategy:
         if self.ctx:
             self.ctx.cancel_order(order_id)
 
-    def cancel_all_orders(self) -> None:
-        """取消当前所有未完成的订单."""
-        for order in self.get_open_orders():
+    def cancel_all_orders(self, symbol: Optional[str] = None) -> None:
+        """
+        取消当前所有未完成的订单.
+
+        Args:
+            symbol: 标的代码 (如果不填, 取消所有标的订单)
+        """
+        for order in self.get_open_orders(symbol=symbol):
             self.cancel_order(order.id)
 
     def buy(
@@ -1171,7 +1176,7 @@ class Strategy:
 
         # 1. Cancel existing open orders for this symbol
         # This prevents "stacking" orders and ensures we target the net exposure
-        self.cancel_all_orders()
+        self.cancel_all_orders(symbol=symbol)
 
         # 2. Get Price
         if price is not None:
@@ -1199,6 +1204,20 @@ class Strategy:
         # 计算目标数量
         target_qty = target_value / current_price
         delta_qty = target_qty - current_qty
+
+        # 3. 整手调整 (向下取整到 lot_size 倍数)
+        current_lot_size = 1
+        if isinstance(self.lot_size, int):
+            current_lot_size = self.lot_size
+        elif isinstance(self.lot_size, dict):
+            val = self.lot_size.get(symbol, self.lot_size.get("DEFAULT", 1))
+            current_lot_size = int(val) if val is not None else 1
+
+        if current_lot_size > 0:
+            if delta_qty > 0:
+                delta_qty = (delta_qty // current_lot_size) * current_lot_size
+            elif delta_qty < 0:
+                delta_qty = -((abs(delta_qty) // current_lot_size) * current_lot_size)
 
         # 自动调整买入数量，防止资金不足
         if delta_qty > 0 and self.ctx:

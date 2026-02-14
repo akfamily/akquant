@@ -480,7 +480,7 @@ impl ExecutionClient for RealtimeExecutionClient {
         true
     }
 
-    fn on_order(&mut self, order: Order) {
+    fn on_order(&mut self, _order: Order) {
         // println!(
         //     "[Realtime] Sending Order to Broker: {} {:?} {}",
         //     order.symbol, order.side, order.quantity
@@ -488,7 +488,7 @@ impl ExecutionClient for RealtimeExecutionClient {
         // In real impl, send to broker API
     }
 
-    fn on_cancel(&mut self, order_id: &str) {
+    fn on_cancel(&mut self, _order_id: &str) {
         // println!("[Realtime] Cancelling Order: {}", order_id);
     }
 
