@@ -222,14 +222,14 @@ impl Engine {
                 self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
             },
             MarketType::Simple => {
-                    let config = crate::market::SimpleMarketConfig {
-                        commission_rate: Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO),
-                        stamp_tax: Decimal::from_f64(stamp_tax).unwrap_or(Decimal::ZERO),
-                        transfer_fee: Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO),
-                        min_commission: Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO),
-                    };
-                    self.market_model = Box::new(SimpleMarket::from_config(config));
-                }
+                let config = crate::market::SimpleMarketConfig {
+                    commission_rate: Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO),
+                    stamp_tax: Decimal::from_f64(stamp_tax).unwrap_or(Decimal::ZERO),
+                    transfer_fee: Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO),
+                    min_commission: Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO),
+                };
+                self.market_model = Box::new(SimpleMarket::from_config(config));
+            }
         }
     }
 
