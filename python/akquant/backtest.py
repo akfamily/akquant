@@ -1121,7 +1121,7 @@ def run_backtest(
         engine.set_t_plus_one(True)
     else:
         # T+0 模式
-        # 使用 SimpleMarket (已支持印花税、过户费、最低佣金等完整费率规则)
+        # 使用SimpleMarket（支持佣金率和印花税）
         engine.use_simple_market(commission_rate)
 
     engine.set_force_session_continuous(True)
