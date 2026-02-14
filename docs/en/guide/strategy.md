@@ -79,6 +79,7 @@ def on_bar(self, bar):
 In addition to the low-level `schedule` method, AKQuant provides more convenient ways to register timers:
 
 *   **`add_daily_timer(time_str, payload)`**: Triggers daily at a specified time.
+    *   **Live Mode Supported**: Pre-generates triggers in Backtest mode; Automatically schedules the next trigger daily in Live mode.
 *   **`schedule(trigger_time, payload)`**: Triggers once at a specified datetime.
 
 ```python

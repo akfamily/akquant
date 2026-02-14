@@ -285,9 +285,29 @@ class Strategy:
         :param time_str: 时间字符串 (例如 "14:55:00")
         :param payload: 回调标识
         """
+        # Wrap payload to include time_str for recurrence handling
+        # Format: __daily__|{time_str}|{payload}
+        wrapped_payload = f"__daily__|{time_str}|{payload}"
+
         if not self._trading_days:
-            # If no trading days info (e.g. not running in backtest), warn or ignore
-            print("Warning: No trading days available for add_daily_timer")
+            # Live Mode: Schedule the next occurrence immediately
+            try:
+                t = pd.to_datetime(time_str).time()
+            except Exception:
+                print(f"Error parsing time: {time_str}")
+                return
+
+            # Get current time in strategy timezone
+            now = pd.Timestamp.now(tz=self.timezone)
+
+            # Combine today's date with target time
+            target = pd.Timestamp.combine(now.date(), t).tz_localize(self.timezone)
+
+            # If target time has passed today, schedule for tomorrow
+            if target <= now:
+                target += pd.Timedelta(days=1)
+
+            self.schedule(target, wrapped_payload)
             return
 
         # Parse time part
@@ -311,7 +331,7 @@ class Strategy:
             dt_obj = naive_dt.tz_localize(self.timezone)
 
             # Pass int timestamp directly to avoid re-parsing logic in schedule
-            self.schedule(dt_obj, payload)
+            self.schedule(dt_obj, wrapped_payload)
 
     def to_local_time(self, timestamp: int) -> pd.Timestamp:
         """
@@ -694,6 +714,37 @@ class Strategy:
     def _on_timer_event(self, payload: str, ctx: StrategyContext) -> None:
         """引擎调用的 Timer 回调 (Internal)."""
         self.ctx = ctx
+
+        # Handle wrapped daily timer payload
+        if payload.startswith("__daily__|"):
+            try:
+                # Split: prefix, time_str, user_payload
+                parts = payload.split("|", 2)
+                if len(parts) == 3:
+                    _, time_str, user_payload = parts
+
+                    # 1. Trigger user callback
+                    self.on_timer(user_payload)
+
+                    # 2. Reschedule if Live Mode
+                    if not self._trading_days:
+                        t = pd.to_datetime(time_str).time()
+                        now = pd.Timestamp.now(tz=self.timezone)
+                        target = pd.Timestamp.combine(now.date(), t).tz_localize(
+                            self.timezone
+                        )
+
+                        # Ensure target is in future
+                        if target <= now:
+                            target += pd.Timedelta(days=1)
+
+                        self.schedule(target, payload)  # Use original wrapped payload
+                    return
+            except Exception as e:
+                print(f"Error processing daily timer: {e}")
+                # Fallback to calling on_timer with raw payload if parsing fails
+                pass
+
         self.on_timer(payload)
 
     def on_bar(self, bar: Bar) -> None:

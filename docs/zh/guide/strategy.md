@@ -78,6 +78,7 @@ def on_bar(self, bar):
 除了底层的 `schedule` 方法，AKQuant 提供了更便捷的定时任务注册方式：
 
 *   **`add_daily_timer(time_str, payload)`**: 每天在指定时间触发。
+    *   **支持实盘**: 在回测模式下预生成所有触发时间；在实盘模式下，每日自动调度下一次触发。
 *   **`schedule(trigger_time, payload)`**: 在指定时间点（一次性）触发。
 
 ```python

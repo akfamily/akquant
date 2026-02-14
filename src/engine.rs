@@ -166,7 +166,9 @@ impl Engine {
     /// :param commission_rate: 佣金率
     fn use_simple_market(&mut self, commission_rate: f64) {
         self.active_market_type = MarketType::Simple;
-        self.market_model = Box::new(SimpleMarket::new(commission_rate));
+        let mut config = crate::market::SimpleMarketConfig::default();
+        config.commission_rate = Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
+        self.market_model = Box::new(SimpleMarket::from_config(config));
     }
 
     /// 启用 ChinaMarket (支持 T+1/T+0, 印花税, 过户费, 交易时段等)
@@ -214,8 +216,20 @@ impl Engine {
             Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO);
         self.market_config.stock_min_commission =
             Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO);
-        if self.active_market_type == MarketType::China {
-            self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
+
+        match self.active_market_type {
+            MarketType::China => {
+                self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
+            },
+            MarketType::Simple => {
+                    let config = crate::market::SimpleMarketConfig {
+                        commission_rate: Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO),
+                        stamp_tax: Decimal::from_f64(stamp_tax).unwrap_or(Decimal::ZERO),
+                        transfer_fee: Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO),
+                        min_commission: Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO),
+                    };
+                    self.market_model = Box::new(SimpleMarket::from_config(config));
+                }
         }
     }
 
