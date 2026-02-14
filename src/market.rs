@@ -405,7 +405,7 @@ impl MarketModel for ChinaMarket {
             } else {
                 // Warn if instrument metadata is missing for a position we hold
                 if !quantity.is_zero() {
-                    println!("Warning: Missing instrument metadata for symbol {}. T+1 settlement skipped.", symbol);
+                    // println!("Warning: Missing instrument metadata for symbol {}. T+1 settlement skipped.", symbol);
                 }
                 false
             };
@@ -433,6 +433,8 @@ mod tests {
             strike_price: None,
             expiry_date: None,
             lot_size: Decimal::from(100),
+            underlying_symbol: None,
+            settlement_type: None,
         }
     }
 
@@ -447,6 +449,8 @@ mod tests {
             strike_price: None,
             expiry_date: None,
             lot_size: Decimal::from(1),
+            underlying_symbol: None,
+            settlement_type: None,
         }
     }
 

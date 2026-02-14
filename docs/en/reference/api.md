@@ -16,6 +16,7 @@ def run_backtest(
     cash: float = 1_000_000.0,
     commission: float = 0.0003,
     instruments_config: Optional[Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]] = None,
+    instruments: Optional[List[Instrument]] = None,
     warmup_period: int = 0,
     # ... other parameters
 ) -> BacktestResult
@@ -27,6 +28,7 @@ def run_backtest(
 *   `warmup_period`: **(New)** Strategy warmup period. Specifies the length of historical data (number of Bars) to preload for indicator calculation.
 *   `instruments_config`: **(New)** Instrument configuration. Used to set parameters for non-stock assets like futures/options (e.g., multiplier, margin ratio).
     *   Accepts `List[InstrumentConfig]` or `{symbol: InstrumentConfig}`.
+*   `instruments`: **(New)** Explicit list of `Instrument` objects. Use this for advanced configuration (e.g., Options with specific strike/expiry/settlement) where `InstrumentConfig` is insufficient.
 
 ### `akquant.InstrumentConfig`
 
@@ -41,6 +43,10 @@ class InstrumentConfig:
     margin_ratio: float = 1.0  # Margin ratio (0.1 means 10% margin)
     tick_size: float = 0.01    # Minimum price variation
     lot_size: int = 1          # Minimum trading unit
+    # Option specific
+    option_type: Optional[str] = None  # "CALL" or "PUT"
+    strike_price: Optional[float] = None
+    expiry_date: Optional[str] = None  # YYYY-MM-DD
 ```
 
 ## 2. Core Engine
@@ -167,7 +173,13 @@ Instrument(
     asset_type=AssetType.Stock,
     multiplier=1.0,
     margin_ratio=1.0,
-    tick_size=0.01
+    tick_size=0.01,
+    # Option specific
+    option_type=None,        # OptionType.Call / OptionType.Put
+    strike_price=None,       # float
+    expiry_date=None,        # int (ns timestamp)
+    underlying_symbol=None,  # str
+    settlement_type=None     # SettlementType.Physical / SettlementType.Cash
 )
 ```
 

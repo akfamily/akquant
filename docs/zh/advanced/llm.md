@@ -48,6 +48,8 @@ Your task is to write trading strategies or backtest scripts based on user requi
 6.  **Configuration**:
     *   **Risk Config**: Use `RiskConfig` to set parameters like `safety_margin` (default 0.0001).
     *   **Market Config**: `SimpleMarket` (T+0, 7x24) now supports full fee rules (stamp tax, transfer fee). `ChinaMarket` enforces T+1 and trading sessions.
+    *   **Margin Trading**: `SimpleMarket` supports **Margin Trading** (e.g. Futures) by default. The system uses an **Equity-based Margin Check** (Free Margin = Equity - Used Margin). You can trade as long as `Free Margin > 0`, even if Cash is negative.
+    *   **Option Trading**: Supported via `AssetType.Option`. Use `Instrument` or `InstrumentConfig` to specify `option_type` ('CALL'/'PUT'), `strike_price`, and `expiry_date`.
     *   Example:
         ```python
         from akquant.config import RiskConfig, StrategyConfig, BacktestConfig
@@ -214,5 +216,10 @@ class MLStrategy(Strategy):
 *   这解决了超长回测周期（超过 292 年）导致的时间计算溢出问题。
 
 ### 4.3 时区处理 (Timezone Handling)
-*   `prepare_dataframe` 默认使用 `ambiguous='NaT'` 和 `nonexistent='shift_forward'` 处理时区转换。
-*   这意味着在夏令时切换或无效时间点，系统会自动修正或标记为 NaT，防止程序崩溃。
+217→*   `prepare_dataframe` 默认使用 `ambiguous='NaT'` 和 `nonexistent='shift_forward'` 处理时区转换。
+218→*   这意味着在夏令时切换或无效时间点，系统会自动修正或标记为 NaT，防止程序崩溃。
+219→
+220→### 4.4 杠杆与保证金指标 (Leverage & Margin Metrics)
+221→*   `BacktestResult.metrics_df` 现在包含两个关键的风险指标，用于监控期货或杠杆交易：
+222→    *   **max_leverage**: 最大杠杆率 ($\text{Gross Market Value} / \text{Equity}$)。
+223→    *   **min_margin_level**: 最低保证金水平 ($\text{Equity} / \text{Used Margin}$)。如果此值接近 1.0，表示有爆仓风险。

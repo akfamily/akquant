@@ -17,6 +17,7 @@ def run_backtest(
     commission: float = 0.0003,
     t_plus_one: bool = False,
     instruments_config: Optional[Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]] = None,
+    instruments: Optional[List[Instrument]] = None,
     warmup_period: int = 0,
     # ... 其他参数
 ) -> BacktestResult
@@ -29,6 +30,7 @@ def run_backtest(
 *   `warmup_period`: **(新增)** 策略预热期。指定需要预加载的历史数据长度（Bar 数量），用于计算指标。
 *   `instruments_config`: **(新增)** 标的配置。用于设置期货/期权等非股票资产的参数（如乘数、保证金）。
     *   接收 `List[InstrumentConfig]` 或 `{symbol: InstrumentConfig}`。
+*   `instruments`: **(新增)** 显式 `Instrument` 对象列表。用于 `InstrumentConfig` 无法满足的高级配置场景（如需指定期权行权价/到期日/结算方式）。
 
 ### `akquant.InstrumentConfig`
 
@@ -43,6 +45,10 @@ class InstrumentConfig:
     margin_ratio: float = 1.0  # 保证金率 (0.1 表示 10% 保证金)
     tick_size: float = 0.01    # 最小变动价位
     lot_size: int = 1          # 最小交易单位
+    # 期权相关
+    option_type: Optional[str] = None  # "CALL" 或 "PUT"
+    strike_price: Optional[float] = None
+    expiry_date: Optional[str] = None  # YYYY-MM-DD
 ```
 
 ## 2. 核心引擎 (Core)
@@ -169,7 +175,13 @@ Instrument(
     asset_type=AssetType.Stock,
     multiplier=1.0,
     margin_ratio=1.0,
-    tick_size=0.01
+    tick_size=0.01,
+    # 期权相关
+    option_type=None,        # OptionType.Call / OptionType.Put
+    strike_price=None,       # float
+    expiry_date=None,        # int (ns timestamp)
+    underlying_symbol=None,  # str
+    settlement_type=None     # SettlementType.Physical / SettlementType.Cash
 )
 ```
 

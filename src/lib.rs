@@ -24,8 +24,8 @@ use data::{BarAggregator, DataFeed, from_arrays};
 use engine::Engine;
 use indicators::{ATR, BollingerBands, EMA, MACD, RSI, SMA};
 use model::{
-    AssetType, Bar, ExecutionMode, Instrument, Order, OrderSide, OrderStatus, OrderType, Tick,
-    TimeInForce, Trade, TradingSession,
+    AssetType, Bar, ExecutionMode, Instrument, OptionType, Order, OrderSide, OrderStatus, OrderType,
+    SettlementType, Tick, TimeInForce, Trade, TradingSession,
 };
 use portfolio::Portfolio;
 use risk::{RiskConfig, RiskManager};
@@ -47,6 +47,8 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<OrderStatus>()?;
     m.add_class::<TimeInForce>()?;
     m.add_class::<AssetType>()?;
+    m.add_class::<OptionType>()?;
+    m.add_class::<SettlementType>()?;
     m.add_class::<Instrument>()?;
     m.add_class::<ExecutionMode>()?;
     m.add_class::<TradingSession>()?;

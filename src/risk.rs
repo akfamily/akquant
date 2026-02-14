@@ -205,45 +205,64 @@ impl RiskManager {
             }
         }
 
-        // 4. Check Cash Sufficiency (New)
+        // 4. Check Cash/Margin Sufficiency (Updated)
         if self.config.check_cash && order.side == OrderSide::Buy {
-            let mut required_cash = Decimal::ZERO;
+            let mut required_margin = Decimal::ZERO;
             let mut price_found = false;
+
+            // Get instrument info for multiplier and margin_ratio
+            let default_multiplier = Decimal::ONE;
+            let default_margin_ratio = Decimal::ONE;
+            let (multiplier, margin_ratio) = if let Some(instr) = instruments.get(&order.symbol) {
+                (instr.multiplier, instr.margin_ratio)
+            } else {
+                (default_multiplier, default_margin_ratio)
+            };
 
             // Determine price for current order
             if let Some(p) = order.price {
-                required_cash = p * order.quantity;
+                required_margin = p * order.quantity * multiplier * margin_ratio;
                 price_found = true;
             } else if let Some(p) = current_prices.get(&order.symbol) {
-                required_cash = *p * order.quantity;
+                required_margin = *p * order.quantity * multiplier * margin_ratio;
                 price_found = true;
             }
 
             if price_found {
-                // Check Active Buy Orders for committed cash
-                let mut committed_cash = Decimal::ZERO;
+                // Check Active Buy Orders for committed margin
+                let mut committed_margin = Decimal::ZERO;
                 for o in active_orders {
                     if o.side == OrderSide::Buy && o.status == crate::model::OrderStatus::New {
+                        let (o_mult, o_margin_ratio) = if let Some(instr) = instruments.get(&o.symbol) {
+                            (instr.multiplier, instr.margin_ratio)
+                        } else {
+                            (Decimal::ONE, Decimal::ONE)
+                        };
+
                         if let Some(p) = o.price {
-                             committed_cash += p * o.quantity;
+                             committed_margin += p * o.quantity * o_mult * o_margin_ratio;
                         } else if let Some(p) = current_prices.get(&o.symbol) {
-                             committed_cash += *p * o.quantity;
+                             committed_margin += *p * o.quantity * o_mult * o_margin_ratio;
                         }
                     }
                 }
+
+                // Calculate Free Margin
+                let free_margin = portfolio.calculate_free_margin(current_prices, instruments);
 
                 // Apply Safety Margin (default 0.0001 or user config)
                 let safety_margin = self.config.safety_margin;
                 // Safety factor = 1.0 - margin (e.g., 0.9999)
                 let safety_factor = Decimal::from_f64(1.0 - safety_margin).unwrap_or(Decimal::from_f64(0.9999).unwrap());
 
-                // Available Cash = (Total Cash - Committed) * Safety Factor
-                let available_cash = (portfolio.cash - committed_cash) * safety_factor;
+                // Available Margin = (Free Margin - Committed Margin) * Safety Factor
+                // Note: Free Margin already accounts for Used Margin of existing positions
+                let available_margin = (free_margin - committed_margin) * safety_factor;
 
-                if required_cash > available_cash {
+                if required_margin > available_margin {
                      return Err(AkQuantError::OrderError(format!(
-                        "Risk: Insufficient cash. Required: {}, Available: {} (Safety Margin: {})",
-                        required_cash, available_cash, safety_margin
+                        "Risk: Insufficient margin. Required: {}, Available: {} (Free: {}, Committed: {}, Safety: {})",
+                        required_margin, available_margin, free_margin, committed_margin, safety_margin
                     )));
                 }
             }
@@ -297,7 +316,7 @@ impl RiskManager {
             }
         } else if order.side == OrderSide::Sell {
             // Warn if selling without instrument metadata (can't check T+1/Short logic)
-             println!("Warning: Risk check skipping T+1/Short validation for {} due to missing instrument metadata.", order.symbol);
+             // println!("Warning: Risk check skipping T+1/Short validation for {} due to missing instrument metadata.", order.symbol);
         }
 
         Ok(())
@@ -452,6 +471,8 @@ mod tests {
                 option_type: None,
                 strike_price: None,
                 expiry_date: None,
+                underlying_symbol: None,
+                settlement_type: None,
             },
         );
 
@@ -517,7 +538,7 @@ mod tests {
         let order_fail = create_dummy_order("AAPL", Decimal::from(101), Some(Decimal::from(10)));
         let result_fail = risk.check_internal(&order_fail, &portfolio, &instruments, &active_orders, &current_prices);
         assert!(result_fail.is_err());
-        assert!(result_fail.unwrap_err().to_string().contains("Insufficient cash"));
+        assert!(result_fail.unwrap_err().to_string().contains("Insufficient margin"));
 
         // 3. Buy with pending orders
         // Pending: Buy 50 @ 10 = 500

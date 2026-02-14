@@ -481,15 +481,15 @@ impl ExecutionClient for RealtimeExecutionClient {
     }
 
     fn on_order(&mut self, order: Order) {
-        println!(
-            "[Realtime] Sending Order to Broker: {} {:?} {}",
-            order.symbol, order.side, order.quantity
-        );
+        // println!(
+        //     "[Realtime] Sending Order to Broker: {} {:?} {}",
+        //     order.symbol, order.side, order.quantity
+        // );
         // In real impl, send to broker API
     }
 
     fn on_cancel(&mut self, order_id: &str) {
-        println!("[Realtime] Cancelling Order: {}", order_id);
+        // println!("[Realtime] Cancelling Order: {}", order_id);
     }
 
     fn on_event(
@@ -523,6 +523,8 @@ mod tests {
             strike_price: None,
             expiry_date: None,
             lot_size: Decimal::from(100),
+            underlying_symbol: None,
+            settlement_type: None,
         };
         map.insert("AAPL".to_string(), aapl);
         map

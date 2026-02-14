@@ -48,6 +48,8 @@ Your task is to write trading strategies or backtest scripts based on user requi
 6.  **Configuration**:
     *   **Risk Config**: Use `RiskConfig` to set parameters like `safety_margin` (default 0.0001).
     *   **Market Config**: `SimpleMarket` (T+0, 7x24) now supports full fee rules (stamp tax, transfer fee). `ChinaMarket` enforces T+1 and trading sessions.
+    *   **Margin Trading**: `SimpleMarket` supports **Margin Trading** (e.g. Futures) by default. The system uses an **Equity-based Margin Check** (Free Margin = Equity - Used Margin). You can trade as long as `Free Margin > 0`, even if Cash is negative.
+    *   **Option Trading**: Supported via `AssetType.Option`. Use `Instrument` or `InstrumentConfig` to specify `option_type` ('CALL'/'PUT'), `strike_price`, and `expiry_date`.
     *   Example:
         ```python
         from akquant.config import RiskConfig, StrategyConfig, BacktestConfig
@@ -290,6 +292,15 @@ When using large models, the following hallucinations may occur, which can be ex
 2.  **Prohibit `context.portfolio` legacy usage**: Although internally supported, it is recommended to use top-level APIs like `self.get_position()`.
 3.  **Note `get_history` return value**: It returns `numpy.ndarray`, not `pandas.Series` (unless `get_history_df` is used). Performing operations directly on `ndarray` offers higher performance.
 4.  **Feature Consistency in ML Strategies**: During training, `prepare_features` usually `shift(-1)` causing the last row to be invalid and dropped; however, during `on_bar` prediction, we need to calculate features using the current latest market data. Reusing `prepare_features` directly may lead to prediction failure (as it thinks that is the "last row" and drops it), or requires special parameter control. It is recommended to explicitly calculate current features in `on_bar`.
+
+### 4.3 Timezone Handling (Timezone Handling)
+*   `prepare_dataframe` default uses `ambiguous='NaT'` and `nonexistent='shift_forward'` to handle timezone conversion.
+*   This means that at daylight saving time switching or invalid time points, the system will automatically correct or mark as NaT to prevent program crash.
+
+### 4.4 Leverage & Margin Metrics
+*   `BacktestResult.metrics_df` now includes two key risk metrics for monitoring futures or leveraged trading:
+    *   **max_leverage**: Maximum Leverage ($\text{Gross Market Value} / \text{Equity}$).
+    *   **min_margin_level**: Minimum Margin Level ($\text{Equity} / \text{Used Margin}$). If this value approaches 1.0, it indicates a risk of liquidation.
 
 ## 5. Realtime Data Processing (Realtime / CTP)
 

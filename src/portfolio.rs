@@ -127,6 +127,77 @@ impl Portfolio {
         }
         equity
     }
+
+    /// Calculate total used margin based on current positions
+    pub fn calculate_used_margin(
+        &self,
+        prices: &HashMap<String, Decimal>,
+        instruments: &HashMap<String, Instrument>,
+    ) -> Decimal {
+        use crate::model::types::AssetType;
+
+        let mut used_margin = Decimal::ZERO;
+        for (symbol, quantity) in &self.positions {
+            if !quantity.is_zero() {
+                if let Some(price) = prices.get(symbol) {
+                    if let Some(instr) = instruments.get(symbol) {
+                        match instr.asset_type {
+                            AssetType::Option => {
+                                // Option Margin Logic
+                                if *quantity > Decimal::ZERO {
+                                    // Long Option: No maintenance margin (premium paid upfront)
+                                    // But check if we want to model it? Standard is 0.
+                                } else {
+                                    // Short Option: Complex margin
+                                    // Simplified Model: (OptionPrice + UnderlyingPrice * MarginRatio) * Multiplier * Abs(Qty)
+                                    // If underlying price not available, fallback to OptionPrice * (1 + MarginRatio)
+                                    let abs_qty = quantity.abs();
+                                    let underlying_price = if let Some(us) = &instr.underlying_symbol
+                                    {
+                                        prices.get(us).cloned().unwrap_or(Decimal::ZERO)
+                                    } else {
+                                        Decimal::ZERO
+                                    };
+
+                                    let margin_per_unit = if underlying_price > Decimal::ZERO {
+                                        price + (underlying_price * instr.margin_ratio)
+                                    } else {
+                                        // Fallback: assume margin ratio applies to option value itself (e.g. 100% + extra)
+                                        price * (Decimal::ONE + instr.margin_ratio)
+                                    };
+
+                                    used_margin += margin_per_unit * instr.multiplier * abs_qty;
+                                }
+                            }
+                            _ => {
+                                // Standard (Stock/Futures)
+                                // Margin = Price * Quantity * Multiplier * MarginRatio
+                                // Use abs() because margin is always positive regardless of position side
+                                let position_value = (quantity * price * instr.multiplier).abs();
+                                used_margin += position_value * instr.margin_ratio;
+                            }
+                        }
+                    } else {
+                        // If no instrument info, assume 100% margin (Spot like)
+                        let position_value = (quantity * price).abs();
+                        used_margin += position_value;
+                    }
+                }
+            }
+        }
+        used_margin
+    }
+
+    /// Calculate free margin (Equity - Used Margin)
+    pub fn calculate_free_margin(
+        &self,
+        prices: &HashMap<String, Decimal>,
+        instruments: &HashMap<String, Instrument>,
+    ) -> Decimal {
+        let equity = self.calculate_equity(prices, instruments);
+        let used_margin = self.calculate_used_margin(prices, instruments);
+        equity - used_margin
+    }
 }
 
 #[cfg(test)]
@@ -217,6 +288,8 @@ mod tests {
             strike_price: None,
             expiry_date: None,
             lot_size: Decimal::from(100),
+            underlying_symbol: None,
+            settlement_type: None,
         };
         instruments.insert("AAPL".to_string(), instr);
 
@@ -253,6 +326,8 @@ mod tests {
             strike_price: None,
             expiry_date: None,
             lot_size: Decimal::from(1),
+            underlying_symbol: None,
+            settlement_type: None,
         };
         instruments.insert("FUT".to_string(), instr);
 

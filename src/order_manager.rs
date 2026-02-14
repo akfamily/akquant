@@ -93,7 +93,7 @@ impl OrderManager {
         history_buffer: &Arc<RwLock<HistoryBuffer>>,
         last_prices: &HashMap<String, Decimal>,
     ) {
-        // 1. Adjust trades for insufficient cash (Dynamic Position Sizing)
+                // 1. Adjust trades for insufficient margin (Dynamic Position Sizing)
         for trade in trades.iter_mut() {
             if trade.side == crate::model::OrderSide::Buy {
                 // Calculate estimated commission for the full trade first
@@ -109,20 +109,33 @@ impl OrderManager {
                 }
 
                 let multiplier = instr_opt.map(|i| i.multiplier).unwrap_or(Decimal::ONE);
-                let cost = trade.price * trade.quantity * multiplier;
-                let total_required = cost + commission;
+                let margin_ratio = instr_opt.map(|i| i.margin_ratio).unwrap_or(Decimal::ONE);
 
-                if total_required > portfolio.cash {
-                    // Insufficient cash, reduce quantity
-                    let mut ratio = if total_required > Decimal::ZERO {
-                        portfolio.cash / total_required
+                // Margin Required = Price * Qty * Multiplier * MarginRatio
+                let margin_required = trade.price * trade.quantity * multiplier * margin_ratio;
+
+                // Calculate Free Margin (Equity - Used Margin)
+                let free_margin = portfolio.calculate_free_margin(last_prices, instruments);
+
+                // We need: Free Margin >= Margin Required + Commission
+                let total_required = margin_required + commission;
+
+                if total_required > free_margin {
+                    // Insufficient margin, reduce quantity
+                    // Approx: NewQty = FreeMargin / (Price * Multiplier * MarginRatio)
+
+                    let unit_margin = trade.price * multiplier * margin_ratio;
+
+                    let mut ratio = if unit_margin > Decimal::ZERO {
+                        // Use a safer calculation to avoid division by zero or negative
+                        if free_margin <= Decimal::ZERO {
+                             Decimal::ZERO
+                        } else {
+                             free_margin / unit_margin
+                        }
                     } else {
                         Decimal::ZERO
                     };
-
-                    if ratio < Decimal::ZERO {
-                        ratio = Decimal::ZERO;
-                    }
 
                     // Apply ratio and round down to lot size
                     // Use configurable safety factor to avoid rounding issues causing rejection
@@ -145,8 +158,10 @@ impl OrderManager {
                             trade.price,
                             new_qty,
                         );
-                        let new_cost = trade.price * new_qty * multiplier;
-                        if new_cost + new_comm > portfolio.cash {
+                        let new_margin = trade.price * new_qty * multiplier * margin_ratio;
+
+                        // Check against free margin again
+                        if new_margin + new_comm > free_margin {
                             // Still too high, reduce by one lot
                             if new_qty >= lot_size {
                                 new_qty -= lot_size;

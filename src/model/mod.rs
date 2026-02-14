@@ -9,5 +9,6 @@ pub use market_data::*;
 pub use order::*;
 pub use timer::*;
 pub use types::{
-    AssetType, ExecutionMode, OrderSide, OrderStatus, OrderType, TimeInForce, TradingSession,
+    AssetType, ExecutionMode, OptionType, OrderSide, OrderStatus, OrderType, SettlementType,
+    TimeInForce, TradingSession,
 };
