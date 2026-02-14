@@ -1119,26 +1119,9 @@ def run_backtest(
         engine.use_china_market()
         engine.set_t_plus_one(True)
     else:
-        # 即使是 T+0，如果配置了印花税等费率，建议使用 ChinaMarket 或 SimpleMarket
-        # 这里为了保持一致性，默认 SimpleMarket (T+0, 无税)，除非用户显式设置了费率
-        # 如果设置了费率，set_stock_fee_rules 会生效，但 SimpleMarket 不支持印花税
-        # 所以如果印花税 > 0，应该自动切换到 ChinaMarket?
-        # 目前 Engine 的 use_simple_market 只接受 commission_rate
-        # 为了支持印花税，我们统一使用 ChinaMarket 但关闭 T+1?
-        # 现有的逻辑是：engine 默认初始化时是 SimpleMarket
-        # 下面调用 set_t_plus_one(False) 实际上只对 ChinaMarket 有效
-
-        # 简单起见，如果 t_plus_one=False (默认)，我们保持原有逻辑
-        # 但为了支持印花税，最好总是使用 ChinaMarket 并根据 t_plus_one 开关
-        # 不过为了兼容性，我们只在 t_plus_one=True 时强制 ChinaMarket
-        # 或者如果用户传入了 stamp_tax_rate > 0
-        if stamp_tax_rate > 0 or transfer_fee_rate > 0:
-            engine.use_china_market()
-            engine.set_t_plus_one(False)
-        else:
-            # 使用 SimpleMarket (更轻量)
-            # 但 set_stock_fee_rules 可能在 SimpleMarket 下部分参数无效
-            engine.use_simple_market(commission_rate)
+        # T+0 模式
+        # 使用 SimpleMarket (已支持印花税等费率)
+        engine.use_simple_market(commission_rate)
 
     engine.set_force_session_continuous(True)
     engine.set_stock_fee_rules(

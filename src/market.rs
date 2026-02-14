@@ -10,17 +10,35 @@ pub enum MarketType {
     Simple,
 }
 
+/// 简单市场配置
+#[derive(Clone, Debug)]
+pub struct SimpleMarketConfig {
+    pub commission_rate: Decimal,
+    pub stamp_tax: Decimal,
+    pub transfer_fee: Decimal,
+    pub min_commission: Decimal,
+}
+
+impl Default for SimpleMarketConfig {
+    fn default() -> Self {
+        Self {
+            commission_rate: Decimal::from_str("0.0003").unwrap(),
+            stamp_tax: Decimal::ZERO,
+            transfer_fee: Decimal::ZERO,
+            min_commission: Decimal::ZERO,
+        }
+    }
+}
+
 /// 简单市场模型 (如加密货币/外汇)
 /// 24/7 交易, T+0, 简单佣金结构
 pub struct SimpleMarket {
-    pub commission_rate: Decimal,
+    pub config: SimpleMarketConfig,
 }
 
 impl SimpleMarket {
-    pub fn new(commission_rate: f64) -> Self {
-        Self {
-            commission_rate: Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO),
-        }
+    pub fn from_config(config: SimpleMarketConfig) -> Self {
+        Self { config }
     }
 }
 
@@ -32,11 +50,26 @@ impl MarketModel for SimpleMarket {
     fn calculate_commission(
         &self,
         instrument: &Instrument,
-        _side: OrderSide,
+        side: OrderSide,
         price: Decimal,
         quantity: Decimal,
     ) -> Decimal {
-        price * quantity * instrument.multiplier * self.commission_rate
+        let turnover = price * quantity * instrument.multiplier;
+
+        let mut commission = turnover * self.config.commission_rate;
+        if commission < self.config.min_commission {
+            commission = self.config.min_commission;
+        }
+
+        let tax = if side == OrderSide::Sell {
+            turnover * self.config.stamp_tax
+        } else {
+            Decimal::ZERO
+        };
+
+        let transfer = turnover * self.config.transfer_fee;
+
+        commission + tax + transfer
     }
 
     fn update_available_position(
@@ -402,7 +435,9 @@ mod tests {
 
     #[test]
     fn test_simple_market_commission() {
-        let market = SimpleMarket::new(0.001); // 0.1%
+        let mut config = SimpleMarketConfig::default();
+        config.commission_rate = Decimal::from_str("0.001").unwrap();
+        let market = SimpleMarket::from_config(config); // 0.1%
         let instr = create_stock_instrument("AAPL");
 
         // Buy 100 @ 100. Value = 10000. Comm = 10.

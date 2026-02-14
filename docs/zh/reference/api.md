@@ -67,11 +67,12 @@ engine = akquant.Engine()
 
 **市场与费率配置:**
 
-*   `use_simple_market(commission_rate: float)`: 启用简单市场 (T+0, 7x24, 无税)。
+*   `use_simple_market(commission_rate: float)`: 启用简单市场 (T+0, 7x24)。
+    *   **更新**: 现已支持印花税、过户费和最低佣金配置 (通过 `set_stock_fee_rules`)。
 *   `use_china_market()`: 启用中国市场 (T+1/T+0, 交易时段, 税费)。
 *   `use_china_futures_market()`: 启用中国期货市场 (T+0, 需手动配置时段)。
 *   `set_t_plus_one(enabled: bool)`: 开启/关闭 T+1 规则 (仅限 ChinaMarket)。
-*   `set_stock_fee_rules(commission_rate, stamp_tax, transfer_fee, min_commission)`: 设置股票费率。
+*   `set_stock_fee_rules(commission_rate, stamp_tax, transfer_fee, min_commission)`: 设置股票费率 (适用于 SimpleMarket 和 ChinaMarket)。
 *   `set_slippage(type: str, value: float)`: 设置滑点。`type` 可为 `"fixed"` (固定金额) 或 `"percent"` (百分比)。
 
 **运行方法:**

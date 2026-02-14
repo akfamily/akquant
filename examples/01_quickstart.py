@@ -31,7 +31,7 @@ class MyStrategy(Strategy):
 
 # 运行回测
 result = aq.run_backtest(
-    data=df, strategy=MyStrategy, symbol="sh600000", initial_cash=100
+    data=df, strategy=MyStrategy, symbol="sh600000", initial_cash=100000
 )
 
 

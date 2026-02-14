@@ -65,11 +65,12 @@ engine = akquant.Engine()
 
 **Market & Fee Configuration:**
 
-*   `use_simple_market(commission_rate: float)`: Enable simple market (T+0, 7x24, no tax).
+*   `use_simple_market(commission_rate: float)`: Enable simple market (T+0, 7x24).
+    *   **Update**: Now supports stamp tax, transfer fee, and min commission configuration (via `set_stock_fee_rules`).
 *   `use_china_market()`: Enable China market (T+1/T+0, trading sessions, taxes).
 *   `use_china_futures_market()`: Enable China futures market (T+0, manual session config required).
 *   `set_t_plus_one(enabled: bool)`: Enable/Disable T+1 rule (ChinaMarket only).
-*   `set_stock_fee_rules(commission_rate, stamp_tax, transfer_fee, min_commission)`: Set stock fee rules.
+*   `set_stock_fee_rules(commission_rate, stamp_tax, transfer_fee, min_commission)`: Set stock fee rules (Applicable to both SimpleMarket and ChinaMarket).
 *   `set_slippage(type: str, value: float)`: Set slippage. `type` can be `"fixed"` (fixed amount) or `"percent"` (percentage).
 
 **Runtime Methods:**

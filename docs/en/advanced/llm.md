@@ -47,6 +47,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
 
 6.  **Configuration**:
     *   **Risk Config**: Use `RiskConfig` to set parameters like `safety_margin` (default 0.0001).
+    *   **Market Config**: `SimpleMarket` (T+0, 7x24) now supports full fee rules (stamp tax, transfer fee). `ChinaMarket` enforces T+1 and trading sessions.
     *   Example:
         ```python
         from akquant.config import RiskConfig, StrategyConfig, BacktestConfig
@@ -55,6 +56,10 @@ Your task is to write trading strategies or backtest scripts based on user requi
         backtest_config = BacktestConfig(strategy_config=strategy_config)
         run_backtest(..., config=backtest_config)
         ```
+
+7.  **Timers**:
+    *   Use `self.add_daily_timer("HH:MM:SS", "payload")` for recurring daily tasks. It works in both Backtest and Live modes.
+    *   Implement logic in `on_timer(self, payload)`.
 
 ### Example Strategy (Reference)
 
