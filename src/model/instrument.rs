@@ -1,5 +1,5 @@
 use super::market_data::extract_decimal;
-use super::types::{AssetType, OptionType};
+use super::types::{AssetType, OptionType, SettlementType};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
@@ -28,6 +28,8 @@ pub struct Instrument {
     pub strike_price: Option<Decimal>,
     pub expiry_date: Option<u32>,
     pub lot_size: Decimal,
+    pub underlying_symbol: Option<String>,
+    pub settlement_type: Option<SettlementType>,
 }
 
 #[gen_stub_pymethods]
@@ -44,9 +46,11 @@ impl Instrument {
     /// :param strike_price: 行权价 (可选)
     /// :param expiry_date: 到期日 (可选)
     /// :param lot_size: 最小交易单位 (可选, 默认为1)
+    /// :param underlying_symbol: 标的代码 (可选)
+    /// :param settlement_type: 结算方式 (可选)
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (symbol, asset_type, multiplier=None, margin_ratio=None, tick_size=None, option_type=None, strike_price=None, expiry_date=None, lot_size=None))]
+    #[pyo3(signature = (symbol, asset_type, multiplier=None, margin_ratio=None, tick_size=None, option_type=None, strike_price=None, expiry_date=None, lot_size=None, underlying_symbol=None, settlement_type=None))]
     pub fn new(
         symbol: String,
         asset_type: AssetType,
@@ -57,6 +61,8 @@ impl Instrument {
         strike_price: Option<&Bound<'_, PyAny>>,
         expiry_date: Option<u32>,
         lot_size: Option<&Bound<'_, PyAny>>,
+        underlying_symbol: Option<String>,
+        settlement_type: Option<SettlementType>,
     ) -> PyResult<Self> {
         let mult = if let Some(m) = multiplier {
             extract_decimal(m)?
@@ -98,6 +104,8 @@ impl Instrument {
             strike_price: strike,
             expiry_date,
             lot_size: lot,
+            underlying_symbol,
+            settlement_type,
         })
     }
 

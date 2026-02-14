@@ -110,7 +110,7 @@ if __name__ == "__main__":
                 f"\nBest Parameters: fast={best_params['fast_period']}, "
                 f"slow={best_params['slow_period']}"
             )
-            print(f"Best Return: {best_params['total_return']:.2f}")
+            print(f"Best Return: {best_params['total_return_pct']:.2f}")
     elif results:
         # handle list of OptimizationResult
         best_result = results[0]
@@ -118,4 +118,4 @@ if __name__ == "__main__":
             f"\nBest Parameters: fast={best_result.params['fast_period']}, "
             f"slow={best_result.params['slow_period']}"
         )
-        print(f"Best Return: {best_result.metrics.get('total_return', 0.0):.2f}")
+        print(f"Best Return: {best_result.metrics.get('total_return_pct', 0.0):.2f}")

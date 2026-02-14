@@ -316,6 +316,67 @@ class BacktestResult:
                     except Exception:
                         pass
 
+        # Calculate additional margin/leverage metrics using snapshots
+        try:
+            pos_df = self.positions_df
+            if (
+                not pos_df.empty
+                and "margin" in pos_df.columns
+                and "equity" in pos_df.columns
+            ):
+                # Group by date to get account-level snapshot
+                # Sum margin (used margin) and market_value
+                # Equity should be the same for all symbols on the same date
+                # (it's account level)
+                # But to be safe, take the first one or mean (should be identical)
+                daily_agg = pos_df.groupby("date").agg(
+                    {
+                        "margin": "sum",
+                        "market_value": lambda x: x.abs().sum(),  # type: ignore # Gross
+                        "equity": "first",
+                    }
+                )
+
+                # Calculate Max Leverage
+                # Leverage = Gross Market Value / Equity
+                daily_agg["leverage"] = daily_agg["market_value"] / daily_agg["equity"]
+                max_leverage = daily_agg["leverage"].max()
+
+                # Calculate Min Margin Level (Safety)
+                # Margin Level = Equity / Used Margin
+                # Avoid division by zero
+                daily_agg["margin_level"] = daily_agg.apply(
+                    lambda row: row["equity"] / row["margin"]
+                    if row["margin"] > 0
+                    else float("inf"),
+                    axis=1,
+                )
+                # Filter out inf (no margin used)
+                valid_levels = daily_agg[daily_agg["margin_level"] != float("inf")][
+                    "margin_level"
+                ]
+                min_margin_level = (
+                    valid_levels.min() if not valid_levels.empty else float("inf")
+                )
+
+                # Append to metrics DataFrame
+                new_rows = pd.DataFrame(
+                    [
+                        {"value": max_leverage},
+                        {
+                            "value": min_margin_level
+                            if min_margin_level != float("inf")
+                            else 0.0
+                        },
+                    ],
+                    index=["max_leverage", "min_margin_level"],
+                )
+
+                df = pd.concat([df, new_rows])
+        except Exception:
+            # Fallback or ignore if calculation fails
+            pass
+
         return df
 
     @cached_property
@@ -1149,6 +1210,16 @@ def run_backtest(
     # 解析 Instrument Config
     inst_conf_map = {}
 
+    # Handle explicit Instrument objects passed via kwargs
+    prebuilt_instruments = {}
+    if "instruments" in kwargs:
+        obs = kwargs["instruments"]
+        if isinstance(obs, list):
+            for o in obs:
+                prebuilt_instruments[o.symbol] = o
+        elif isinstance(obs, dict):
+            prebuilt_instruments.update(obs)
+
     # From arguments
     if instruments_config:
         if isinstance(instruments_config, list):
@@ -1222,6 +1293,11 @@ def run_backtest(
         return None
 
     for sym in symbols:
+        # Priority: Pre-built Instrument > Config > Default
+        if sym in prebuilt_instruments:
+            engine.add_instrument(prebuilt_instruments[sym])
+            continue
+
         # Determine lot_size for this symbol
         current_lot_size = None
         if isinstance(lot_size, int):

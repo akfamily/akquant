@@ -13,6 +13,10 @@ class AssetType:
     Futures: "AssetType"
     Option: "AssetType"
 
+class SettlementType:
+    Physical: "SettlementType"
+    Cash: "SettlementType"
+
 class OptionType:
     Call: "OptionType"
     Put: "OptionType"
@@ -67,6 +71,8 @@ class Instrument:
     strike_price: typing.Optional[typing.Any]
     expiry_date: typing.Optional[int]
     lot_size: typing.Any
+    underlying_symbol: typing.Optional[str]
+    settlement_type: typing.Optional["SettlementType"]
     def __new__(
         cls,
         symbol: str,
@@ -78,6 +84,8 @@ class Instrument:
         strike_price: typing.Optional[typing.Any] = ...,
         expiry_date: typing.Optional[int] = ...,
         lot_size: typing.Optional[typing.Any] = ...,
+        underlying_symbol: typing.Optional[str] = ...,
+        settlement_type: typing.Optional["SettlementType"] = ...,
     ) -> "Instrument": ...
 
 class DataFeed:

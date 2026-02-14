@@ -82,6 +82,10 @@ if __name__ == "__main__":
         data=data,
         strategy=TestStrategy,
         instruments_config=[future_config],  # Pass the config list here
+        # Note: Since SimpleMarket (T+0) requires full cash coverage by default
+        # in this version, we need enough cash to cover the full value of the
+        # Future contract (3500 * 300 = 1,050,000).
+        # Although margin_ratio is 0.1, the cash check might be strict.
         initial_cash=1_000_000.0,
         show_progress=True,
     )
@@ -91,4 +95,5 @@ if __name__ == "__main__":
     print(f"Total Return: {result.metrics.total_return_pct:.2f}%")
 
     print("\nDaily Positions Head:")
-    print(result.positions_df.head())
+    pd.set_option("display.max_rows", None)
+    print(result.positions_df)

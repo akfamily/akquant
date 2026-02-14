@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
 use indicatif::{ProgressBar, ProgressStyle};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -203,6 +203,86 @@ impl Engine {
         self.force_session_continuous = enabled;
     }
 
+    /// 处理期权到期交割/行权
+    fn process_option_expiry(&mut self, date: NaiveDate) {
+        use crate::model::types::{AssetType, OptionType};
+
+        // Identify expired options
+        let mut expired_positions = Vec::new();
+
+        for (symbol, qty) in &self.portfolio.positions {
+            if *qty == Decimal::ZERO {
+                continue;
+            }
+
+            if let Some(instr) = self.instruments.get(symbol) {
+                if instr.asset_type == AssetType::Option {
+                    if let Some(expiry_date_int) = instr.expiry_date {
+                        // expiry_date is u32 YYYYMMDD
+                        // Convert NaiveDate to YYYYMMDD u32
+                        let current_date_int = (date.year() as u32) * 10000
+                            + (date.month() as u32) * 100
+                            + (date.day() as u32);
+
+                        if current_date_int >= expiry_date_int {
+                            expired_positions.push(symbol.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Process expiration
+        for symbol in expired_positions {
+            let qty = self.portfolio.positions.get(&symbol).cloned().unwrap();
+            let instr = self.instruments.get(&symbol).unwrap().clone();
+
+            // Default to Cash Settlement for now if not specified
+            // Logic: Payoff = Max(0, S - K) for Call, Max(0, K - S) for Put
+            let strike = instr.strike_price.unwrap_or(Decimal::ZERO);
+            let underlying_price = if let Some(us) = &instr.underlying_symbol {
+                self.last_prices.get(us).cloned().unwrap_or(Decimal::ZERO)
+            } else {
+                Decimal::ZERO
+            };
+
+            let mut payoff_per_unit = Decimal::ZERO;
+            if underlying_price > Decimal::ZERO {
+                match instr.option_type {
+                    Some(OptionType::Call) => {
+                        if underlying_price > strike {
+                            payoff_per_unit = underlying_price - strike;
+                        }
+                    }
+                    Some(OptionType::Put) => {
+                        if strike > underlying_price {
+                            payoff_per_unit = strike - underlying_price;
+                        }
+                    }
+                    None => {}
+                }
+            }
+
+            // Total PnL impact
+            // Long (Qty > 0): Receives Payoff * Multiplier * Qty
+            // Short (Qty < 0): Pays Payoff * Multiplier * Abs(Qty) -> Same formula works: Qty * Payoff * Multiplier
+            let cash_flow = qty * payoff_per_unit * instr.multiplier;
+
+            // Apply Cash Flow
+            if !cash_flow.is_zero() {
+                self.portfolio.adjust_cash(cash_flow);
+            }
+
+            // Close Position
+            self.portfolio.positions.remove(&symbol);
+            self.portfolio.available_positions.remove(&symbol);
+
+            // Record Trade (Optional: Record an "Expiry" trade for tracking?)
+            // For now, we just adjust cash and remove position.
+            // Ideally we should create a Trade record with type "Exercise" or "Expire".
+        }
+    }
+
     /// 设置股票费率规则
     ///
     /// :param commission_rate: 佣金率 (如 0.0003)
@@ -317,10 +397,12 @@ impl Engine {
     ///
     /// 示例::
     ///
-    ///     engine.set_market_sessions([
-    ///         ("09:30:00", "11:30:00", TradingSession.Normal),
-    ///         ("13:00:00", "15:00:00", TradingSession.Normal)
-    ///     ])
+    /// ```python
+    /// engine.set_market_sessions([
+    ///     ("09:30:00", "11:30:00", TradingSession.Normal),
+    ///     ("13:00:00", "15:00:00", TradingSession.Normal)
+    /// ])
+    /// ```
     fn set_market_sessions(
         &mut self,
         sessions: Vec<(String, String, TradingSession)>,
@@ -692,6 +774,9 @@ impl Engine {
                             &self.instruments,
                         );
 
+                        // Process Option Expiry
+                        self.process_option_expiry(local_date);
+
                         // Expire Day Orders
                         // Simplified: Engine handles expiry for now by marking them.
                         // Ideally ExecutionClient checks time.
@@ -1024,6 +1109,11 @@ impl Engine {
     }
 
     fn create_position_snapshots(&self, _timestamp: i64) -> Vec<PositionSnapshot> {
+        let account_equity = self
+            .portfolio
+            .calculate_equity(&self.last_prices, &self.instruments);
+        let account_equity_f64 = account_equity.to_f64().unwrap_or(0.0);
+
         let mut snapshots = Vec::new();
         for (symbol, &qty) in &self.portfolio.positions {
             if qty == Decimal::ZERO {
@@ -1053,15 +1143,6 @@ impl Engine {
                 (0.0, qty.abs().to_f64().unwrap_or(0.0))
             };
 
-            // Equity & Margin logic
-            // Long: Equity = MarketValue, Margin = MarketValue * ratio
-            // Short: Equity = 0 (conservative), Margin = MarketValue * ratio
-            let equity_f64 = if qty > Decimal::ZERO {
-                market_value_f64
-            } else {
-                0.0
-            };
-
             let margin_dec = market_value * margin_ratio;
             let margin_f64 = margin_dec.to_f64().unwrap_or(0.0);
 
@@ -1081,7 +1162,7 @@ impl Engine {
                 long_shares,
                 short_shares,
                 close: price_f64,
-                equity: equity_f64,
+                equity: account_equity_f64,
                 market_value: market_value_f64,
                 margin: margin_f64,
                 unrealized_pnl: unrealized_pnl_f64,
@@ -1224,6 +1305,8 @@ mod tests {
             strike_price: None,
             expiry_date: None,
             lot_size: Decimal::from(100),
+            underlying_symbol: None,
+            settlement_type: None,
         };
         engine.add_instrument(instr);
         assert!(engine.instruments.contains_key("AAPL"));
