@@ -1,0 +1,1635 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/reference/api/">
+      
+      
+        <link rel="prev" href="../../advanced/timezone/">
+      
+      
+        <link rel="next" href="../../meta/architecture/">
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/reference/api/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+    
+    
+      
+        <title>API 参考 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API 参考
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/reference/api/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/strategy/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/strategy/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-high-level-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 高级入口 (High-Level API)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. 高级入口 (High-Level API)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantrun_backtest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.run_backtest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantinstrumentconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.InstrumentConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 核心引擎 (Core)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. 核心引擎 (Core)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantengine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Engine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantdatafeed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.DataFeed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantbaraggregator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.BarAggregator
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 策略开发 (Strategy)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. 策略开发 (Strategy)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantstrategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantbar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Bar
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-trading-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 交易对象 (Trading Objects)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. 交易对象 (Trading Objects)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantorder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantinstrument" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Instrument
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-portfolio-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. 投资组合与风控 (Portfolio &amp; Risk)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. 投资组合与风控 (Portfolio &amp; Risk)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantportfolio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Portfolio
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantriskconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.RiskConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 结果分析 (Analysis)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. 结果分析 (Analysis)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantbacktestresult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.BacktestResult
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-indicators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. 内置指标 (Indicators)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-machine-learning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 机器学习 (Machine Learning)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. 机器学习 (Machine Learning)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心类
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-high-level-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 高级入口 (High-Level API)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. 高级入口 (High-Level API)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantrun_backtest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.run_backtest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantinstrumentconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.InstrumentConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 核心引擎 (Core)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. 核心引擎 (Core)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantengine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Engine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantdatafeed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.DataFeed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantbaraggregator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.BarAggregator
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 策略开发 (Strategy)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. 策略开发 (Strategy)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantstrategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Strategy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantbar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Bar
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-trading-objects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 交易对象 (Trading Objects)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. 交易对象 (Trading Objects)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantorder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantinstrument" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Instrument
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-portfolio-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. 投资组合与风控 (Portfolio &amp; Risk)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. 投资组合与风控 (Portfolio &amp; Risk)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantportfolio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.Portfolio
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#akquantriskconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.RiskConfig
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 结果分析 (Analysis)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. 结果分析 (Analysis)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#akquantbacktestresult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        akquant.BacktestResult
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-indicators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. 内置指标 (Indicators)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-machine-learning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 机器学习 (Machine Learning)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. 机器学习 (Machine Learning)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        核心类
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="api">API 参考<a class="headerlink" href="#api" title="Permanent link">&para;</a></h1>
+<p>本 API 文档涵盖了 AKQuant 的核心类和方法。</p>
+<h2 id="1-high-level-api">1. 高级入口 (High-Level API)<a class="headerlink" href="#1-high-level-api" title="Permanent link">&para;</a></h2>
+<h3 id="akquantrun_backtest"><code>akquant.run_backtest</code><a class="headerlink" href="#akquantrun_backtest" title="Permanent link">&para;</a></h3>
+<p>最常用的回测入口函数，封装了引擎的初始化和配置过程。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">run_backtest</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">data</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">Bar</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">strategy</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">Type</span><span class="p">[</span><span class="n">Strategy</span><span class="p">],</span> <span class="n">Strategy</span><span class="p">,</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Bar</span><span class="p">],</span> <span class="kc">None</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">symbol</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="s2">&quot;BENCHMARK&quot;</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">cash</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1_000_000.0</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">commission</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0003</span><span class="p">,</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">t_plus_one</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">instruments_config</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">InstrumentConfig</span><span class="p">],</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">InstrumentConfig</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">instruments</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="n">Instrument</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">warmup_period</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="c1"># ... 其他参数</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BacktestResult</span>
+</span></code></pre></div>
+<p><strong>关键参数:</strong></p>
+<ul>
+<li><code>data</code>: 回测数据。支持单个 DataFrame，或 <code>{symbol: DataFrame}</code> 字典。</li>
+<li><code>t_plus_one</code>: <strong>(新增)</strong> 是否启用 T+1 交易规则 (默认 False)。如果启用，将强制使用中国市场模型。</li>
+<li><code>warmup_period</code>: <strong>(新增)</strong> 策略预热期。指定需要预加载的历史数据长度（Bar 数量），用于计算指标。</li>
+<li><code>instruments_config</code>: <strong>(新增)</strong> 标的配置。用于设置期货/期权等非股票资产的参数（如乘数、保证金）。<ul>
+<li>接收 <code>List[InstrumentConfig]</code> 或 <code>{symbol: InstrumentConfig}</code>。</li>
+</ul>
+</li>
+<li><code>instruments</code>: <strong>(新增)</strong> 显式 <code>Instrument</code> 对象列表。用于 <code>InstrumentConfig</code> 无法满足的高级配置场景（如需指定期权行权价/到期日/结算方式）。</li>
+</ul>
+<h3 id="akquantinstrumentconfig"><code>akquant.InstrumentConfig</code><a class="headerlink" href="#akquantinstrumentconfig" title="Permanent link">&para;</a></h3>
+<p>用于配置单个标的属性的数据类。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nd">@dataclass</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">InstrumentConfig</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">symbol</span><span class="p">:</span> <span class="nb">str</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">asset_type</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;STOCK&quot;</span>  <span class="c1"># &quot;STOCK&quot;, &quot;FUTURES&quot;, &quot;FUND&quot;, &quot;OPTION&quot;</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">multiplier</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>    <span class="c1"># 合约乘数</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">margin_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>  <span class="c1"># 保证金率 (0.1 表示 10% 保证金)</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">tick_size</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.01</span>    <span class="c1"># 最小变动价位</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">lot_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>          <span class="c1"># 最小交易单位</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="c1"># 期权相关</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">option_type</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># &quot;CALL&quot; 或 &quot;PUT&quot;</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">strike_price</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">expiry_date</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># YYYY-MM-DD</span>
+</span></code></pre></div>
+<h2 id="2-core">2. 核心引擎 (Core)<a class="headerlink" href="#2-core" title="Permanent link">&para;</a></h2>
+<h3 id="akquantengine"><code>akquant.Engine</code><a class="headerlink" href="#akquantengine" title="Permanent link">&para;</a></h3>
+<p>回测引擎的主入口。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">akquant</span><span class="o">.</span><span class="n">Engine</span><span class="p">()</span>
+</span></code></pre></div>
+<p><strong>配置方法:</strong></p>
+<ul>
+<li><code>set_timezone(offset: int)</code>: 设置时区偏移 (秒)。例如 UTC+8 为 28800。</li>
+<li><code>use_simulated_execution()</code>: (默认) 启用内存撮合模拟执行。</li>
+<li><code>use_realtime_execution()</code>: 启用实盘/仿真执行 (订单发送至外部 Broker)。</li>
+<li><code>set_execution_mode(mode: ExecutionMode)</code>: 设置撮合模式。<ul>
+<li><code>ExecutionMode.NextOpen</code>: 下一 Bar 开盘价撮合 (默认)。</li>
+<li><code>ExecutionMode.CurrentClose</code>: 当前 Bar 收盘价撮合。</li>
+</ul>
+</li>
+<li><code>set_history_depth(depth: int)</code>: 设置引擎层面的历史数据缓存长度。</li>
+</ul>
+<p><strong>市场与费率配置:</strong></p>
+<ul>
+<li><code>use_simple_market(commission_rate: float)</code>: 启用简单市场 (T+0, 7x24)。<ul>
+<li><strong>更新</strong>: 现已支持印花税、过户费和最低佣金配置 (通过 <code>set_stock_fee_rules</code>)。</li>
+</ul>
+</li>
+<li><code>use_china_market()</code>: 启用中国市场 (T+1/T+0, 交易时段, 税费)。</li>
+<li><code>use_china_futures_market()</code>: 启用中国期货市场 (T+0, 需手动配置时段)。</li>
+<li><code>set_t_plus_one(enabled: bool)</code>: 开启/关闭 T+1 规则 (仅限 ChinaMarket)。</li>
+<li><code>set_stock_fee_rules(commission_rate, stamp_tax, transfer_fee, min_commission)</code>: 设置股票费率 (适用于 SimpleMarket 和 ChinaMarket)。</li>
+<li><code>set_slippage(type: str, value: float)</code>: 设置滑点。<code>type</code> 可为 <code>"fixed"</code> (固定金额) 或 <code>"percent"</code> (百分比)。</li>
+</ul>
+<p><strong>运行方法:</strong></p>
+<ul>
+<li><code>add_instrument(instrument: Instrument)</code>: 添加合约定义。</li>
+<li><code>add_data(feed: DataFeed)</code>: 添加数据源。</li>
+<li><code>add_bars(bars: List[Bar])</code>: 批量添加 Bar 数据。</li>
+<li><code>run(strategy: Strategy, show_progress: bool) -&gt; str</code>: 运行回测。</li>
+<li><code>get_results() -&gt; BacktestResult</code>: 获取详细回测结果。</li>
+</ul>
+<h3 id="akquantdatafeed"><code>akquant.DataFeed</code><a class="headerlink" href="#akquantdatafeed" title="Permanent link">&para;</a></h3>
+<p>数据容器。</p>
+<ul>
+<li><code>add_bars(bars: List[Bar])</code>: 添加数据。</li>
+<li><code>sort()</code>: 按时间戳排序数据。</li>
+</ul>
+<h3 id="akquantbaraggregator"><code>akquant.BarAggregator</code><a class="headerlink" href="#akquantbaraggregator" title="Permanent link">&para;</a></h3>
+<p>实时 Tick 聚合器，用于将 Tick 流转换为 Bar 数据并自动注入 DataFeed。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">aggregator</span> <span class="o">=</span> <span class="n">akquant</span><span class="o">.</span><span class="n">BarAggregator</span><span class="p">(</span><span class="n">feed</span><span class="p">:</span> <span class="n">DataFeed</span><span class="p">,</span> <span class="n">interval_min</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">)</span>
+</span></code></pre></div>
+<p><strong>方法:</strong></p>
+<ul>
+<li><code>on_tick(symbol: str, price: float, volume: float, timestamp_ns: int)</code>: 处理新的 Tick 数据。<ul>
+<li><code>volume</code>: 这里的 volume 应该是累计成交量 (TotalVolume)，聚合器会自动计算增量。</li>
+</ul>
+</li>
+</ul>
+<h2 id="2-strategy">2. 策略开发 (Strategy)<a class="headerlink" href="#2-strategy" title="Permanent link">&para;</a></h2>
+<h3 id="akquantstrategy"><code>akquant.Strategy</code><a class="headerlink" href="#akquantstrategy" title="Permanent link">&para;</a></h3>
+<p>策略基类。用户应继承此类并重写回调方法。</p>
+<p><strong>回调方法:</strong></p>
+<ul>
+<li><code>on_start()</code>: 策略启动时触发。用于订阅 (<code>subscribe</code>) 和注册指标。</li>
+<li><code>on_bar(bar: Bar)</code>: K 线闭合时触发。</li>
+<li><code>on_tick(tick: Tick)</code>: Tick 到达时触发。</li>
+<li><code>on_timer(payload: str)</code>: 定时器触发。</li>
+</ul>
+<p><strong>交易方法:</strong></p>
+<ul>
+<li><code>buy(symbol, quantity, price=None, ...)</code>: 买入。不指定 <code>price</code> 则为市价单。</li>
+<li><code>sell(symbol, quantity, price=None, ...)</code>: 卖出。</li>
+<li><code>short(symbol, quantity, price=None, ...)</code>: 卖空。</li>
+<li><code>cover(symbol, quantity, price=None, ...)</code>: 平空。</li>
+<li><code>stop_buy(symbol, trigger_price, quantity, ...)</code>: 止损买入。</li>
+<li><code>stop_sell(symbol, trigger_price, quantity, ...)</code>: 止损卖出。</li>
+<li><code>order_target_value(target_value, symbol, price=None)</code>: 调整至目标持仓市值。</li>
+<li><code>order_target_percent(target_percent, symbol, price=None)</code>: 调整至目标账户占比。</li>
+<li><code>close_position(symbol)</code>: 平仓指定标的。</li>
+<li><code>cancel_all_orders(symbol)</code>: 取消指定标的的所有挂单。</li>
+</ul>
+<p><strong>数据访问:</strong></p>
+<ul>
+<li><code>get_history(count, symbol, field="close") -&gt; np.ndarray</code>: 获取历史数据数组 (Zero-Copy)。</li>
+<li><code>get_position(symbol) -&gt; float</code>: 获取当前持仓量。</li>
+<li><code>get_cash() -&gt; float</code>: 获取当前可用资金。</li>
+<li><code>subscribe(instrument_id: str)</code>: 订阅行情。</li>
+</ul>
+<h3 id="akquantbar"><code>akquant.Bar</code><a class="headerlink" href="#akquantbar" title="Permanent link">&para;</a></h3>
+<p>K 线数据对象。</p>
+<ul>
+<li><code>timestamp</code>: Unix 时间戳 (纳秒)。</li>
+<li><code>open</code>, <code>high</code>, <code>low</code>, <code>close</code>, <code>volume</code>: OHLCV 数据。</li>
+<li><code>symbol</code>: 标的代码。</li>
+</ul>
+<h2 id="3-trading-objects">3. 交易对象 (Trading Objects)<a class="headerlink" href="#3-trading-objects" title="Permanent link">&para;</a></h2>
+<h3 id="akquantorder"><code>akquant.Order</code><a class="headerlink" href="#akquantorder" title="Permanent link">&para;</a></h3>
+<p>订单对象。</p>
+<ul>
+<li><code>id</code>: 订单 ID。</li>
+<li><code>symbol</code>: 标的代码。</li>
+<li><code>side</code>: <code>OrderSide.Buy</code> 或 <code>OrderSide.Sell</code>。</li>
+<li><code>order_type</code>: <code>OrderType.Market</code>, <code>OrderType.Limit</code>, <code>OrderType.StopMarket</code> 等。</li>
+<li><code>status</code>: <code>OrderStatus.New</code>, <code>Submitted</code>, <code>Filled</code>, <code>Cancelled</code>, <code>Rejected</code> 等。</li>
+<li><code>quantity</code>: 委托数量。</li>
+<li><code>filled_quantity</code>: 已成交数量。</li>
+<li><code>average_filled_price</code>: 成交均价。</li>
+</ul>
+<h3 id="akquantinstrument"><code>akquant.Instrument</code><a class="headerlink" href="#akquantinstrument" title="Permanent link">&para;</a></h3>
+<p>合约定义。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">Instrument</span><span class="p">(</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">symbol</span><span class="o">=</span><span class="s2">&quot;AAPL&quot;</span><span class="p">,</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">asset_type</span><span class="o">=</span><span class="n">AssetType</span><span class="o">.</span><span class="n">Stock</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">multiplier</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">margin_ratio</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">tick_size</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="c1"># 期权相关</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">option_type</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>        <span class="c1"># OptionType.Call / OptionType.Put</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">strike_price</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>       <span class="c1"># float</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">expiry_date</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>        <span class="c1"># int (ns timestamp)</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">underlying_symbol</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>  <span class="c1"># str</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="n">settlement_type</span><span class="o">=</span><span class="kc">None</span>     <span class="c1"># SettlementType.Physical / SettlementType.Cash</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="4-portfolio-risk">4. 投资组合与风控 (Portfolio &amp; Risk)<a class="headerlink" href="#4-portfolio-risk" title="Permanent link">&para;</a></h2>
+<h3 id="akquantportfolio"><code>akquant.Portfolio</code><a class="headerlink" href="#akquantportfolio" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>cash</code>: 当前现金。</li>
+<li><code>positions</code>: 持仓字典 <code>{symbol: quantity}</code>。</li>
+<li><code>available_positions</code>: 可用持仓 (考虑 T+1 和冻结)。</li>
+</ul>
+<h3 id="akquantriskconfig"><code>akquant.RiskConfig</code><a class="headerlink" href="#akquantriskconfig" title="Permanent link">&para;</a></h3>
+<p>风控配置。</p>
+<ul>
+<li><code>active</code>: 是否启用。</li>
+<li><code>max_order_size</code>: 单笔最大数量。</li>
+<li><code>max_order_value</code>: 单笔最大金额。</li>
+<li><code>max_position_size</code>: 最大持仓数量。</li>
+<li><code>restricted_list</code>: 限制交易名单 (List[str])。</li>
+</ul>
+<h2 id="5-analysis">5. 结果分析 (Analysis)<a class="headerlink" href="#5-analysis" title="Permanent link">&para;</a></h2>
+<h3 id="akquantbacktestresult"><code>akquant.BacktestResult</code><a class="headerlink" href="#akquantbacktestresult" title="Permanent link">&para;</a></h3>
+<p>回测运行后返回的结果对象，包含账户权益曲线、交易记录和详细的绩效指标。</p>
+<p><strong>主要属性:</strong></p>
+<ul>
+<li><code>metrics_df</code>: (pd.DataFrame) 包含所有绩效指标的表格，以指标名称为索引。</li>
+<li><code>trades_df</code>: (pd.DataFrame) 包含所有平仓交易记录的表格。</li>
+<li><code>orders_df</code>: (pd.DataFrame) 包含所有委托记录的表格。</li>
+<li><code>positions_df</code>: (pd.DataFrame) 包含每日持仓详情，包括持仓数量、市值、浮动盈亏、<strong>持仓均价 (entry_price)</strong> 等。</li>
+<li><code>equity_curve</code>: (pd.Series) 权益曲线，索引为时间，值为账户总权益。</li>
+<li><code>cash_curve</code>: (pd.Series) 现金曲线，索引为时间，值为账户可用现金。</li>
+</ul>
+<p><strong>绩效指标详解 (Performance Metrics):</strong></p>
+<p>详细的绩效指标说明、单位及计算公式，请参考 <strong><a href="backtest_result.md">绩效指标详解</a></strong>。</p>
+<h2 id="6-indicators">6. 内置指标 (Indicators)<a class="headerlink" href="#6-indicators" title="Permanent link">&para;</a></h2>
+<p>位于 <code>akquant.indicators</code> 模块。</p>
+<ul>
+<li><code>SMA(period)</code></li>
+<li><code>EMA(period)</code></li>
+<li><code>MACD(fast, slow, signal)</code></li>
+<li><code>RSI(period)</code></li>
+<li><code>BollingerBands(period, multiplier)</code></li>
+<li><code>ATR(period)</code></li>
+</ul>
+<p>所有指标均有 <code>value</code> 属性获取当前值，且在注册到 Strategy 后会自动更新。</p>
+<h2 id="7-machine-learning">7. 机器学习 (Machine Learning)<a class="headerlink" href="#7-machine-learning" title="Permanent link">&para;</a></h2>
+<p>AKQuant 提供了专门的机器学习支持模块 <code>akquant.ml</code>。详细使用说明请参考 <a href="ml_guide.md">机器学习指南</a>。</p>
+<h3 id="_1">核心类<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>akquant.ml.QuantModel</code>: 所有 ML 模型的统一接口。</li>
+<li><code>akquant.ml.SklearnAdapter</code>: 用于适配 Scikit-learn 风格的模型 (如 XGBoost, LightGBM)。</li>
+<li><code>akquant.ml.PyTorchAdapter</code>: 用于适配 PyTorch 深度学习模型。</li>
+</ul>
+<p>主要方法:</p>
+<ul>
+<li><code>set_validation(method='walk_forward', verbose=False, ...)</code>: 配置滚动验证/训练参数。</li>
+<li><code>predict(X)</code>: 执行预测。</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,2122 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/en/guide/analysis/">
+      
+      
+        <link rel="prev" href="../visualization/">
+      
+      
+        <link rel="next" href="../examples/">
+      
+      
+        
+          <link rel="alternate" href="../../../guide/analysis/" hreflang="zh">
+        
+          <link rel="alternate" href="./" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+    
+    
+      
+        <title>Result Analysis - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#backtest-results-metrics" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../" title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Result Analysis
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="../../../guide/analysis/" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../strategy/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  Advanced Topics
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  Architecture & Internals
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../" title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Manual
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quant_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quant Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Result Analysis
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Result Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#visualization-plotting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visualization (Plotting)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Visualization (Plotting)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#intraday-support-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Intraday Support (New)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#advanced-plotting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Advanced Plotting
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metrics-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metrics Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-metrics-explained" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Metrics Explained
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Key Metrics Explained">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#risk-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risk-reward-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk-Reward Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#equity-cash-curves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Equity &amp; Cash Curves
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trades" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trades
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Orders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#positions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Topics
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture & Internals
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#visualization-plotting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visualization (Plotting)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Visualization (Plotting)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#intraday-support-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Intraday Support (New)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#advanced-plotting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Advanced Plotting
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metrics-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metrics Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-metrics-explained" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Metrics Explained
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Key Metrics Explained">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#risk-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risk-reward-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risk-Reward Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#equity-cash-curves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Equity &amp; Cash Curves
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trades" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trades
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Orders
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#positions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../../" class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../strategy/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    User Guide
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="backtest-results-metrics">Backtest Results &amp; Metrics<a class="headerlink" href="#backtest-results-metrics" title="Permanent link">&para;</a></h1>
+<p>This document details the performance metrics in AKQuant backtest results (<code>metrics_df</code>), including their meanings, units, and calculation methods. It also covers the visualization capabilities for analyzing these results.</p>
+<h2 id="visualization-plotting">Visualization (Plotting)<a class="headerlink" href="#visualization-plotting" title="Permanent link">&para;</a></h2>
+<p>AKQuant provides a comprehensive visualization module to analyze backtest results. You can generate professional-grade interactive HTML reports or individual plots directly from the <code>BacktestResult</code> object.</p>
+<h3 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h3>
+<p>The easiest way to visualize your backtest results is using the <code>report()</code> method:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Generate a full HTML report</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">result</span><span class="o">.</span><span class="n">report</span><span class="p">(</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">title</span><span class="o">=</span><span class="s2">&quot;My Strategy Report&quot;</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">filename</span><span class="o">=</span><span class="s2">&quot;report.html&quot;</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">show</span><span class="o">=</span><span class="kc">True</span>  <span class="c1"># Set to True to open in browser automatically (default is False)</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>This generates a consolidated dashboard including:
+- <strong>Equity Curve</strong>: Interactive chart of account equity over time.
+- <strong>Drawdown</strong>: Historical drawdown analysis.
+- <strong>Monthly Heatmap</strong>: Monthly return performance grid.
+- <strong>Key Metrics</strong>: A summary of important performance statistics.</p>
+<h3 id="intraday-support-new">Intraday Support (New)<a class="headerlink" href="#intraday-support-new" title="Permanent link">&para;</a></h3>
+<p>The plotting module automatically detects and adapts to intraday (minute-level) backtests:
+- <strong>Smart Downsampling</strong>: For large datasets (&gt;10k points), it switches to WebGL rendering (<code>Scattergl</code>) for high performance.
+- <strong>Adaptive X-Axis</strong>: Automatically formats time labels (e.g., <code>%Y-%m-%d %H:%M</code>) and prevents label overlap.
+- <strong>Adaptive Duration Units</strong>: Trade duration analysis automatically switches units (Days, Hours, or Minutes) based on the strategy's average holding period.</p>
+<h3 id="advanced-plotting">Advanced Plotting<a class="headerlink" href="#advanced-plotting" title="Permanent link">&para;</a></h3>
+<p>You can also access individual plotting functions for more granular control:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant.plot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aqp</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c1"># 1. Plot Dashboard (Equity, Drawdown, Heatmap)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">aqp</span><span class="o">.</span><span class="n">plot_dashboard</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1"># 2. Analyze Trade Distribution (PnL vs Duration)</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">aqp</span><span class="o">.</span><span class="n">plot_trades_distribution</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trades_df</span><span class="p">)</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="c1"># 3. Analyze PnL vs Duration</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">aqp</span><span class="o">.</span><span class="n">plot_pnl_vs_duration</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">trades_df</span><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="metrics-overview">Metrics Overview<a class="headerlink" href="#metrics-overview" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Name</th>
+<th style="text-align: left;">Description</th>
+<th style="text-align: left;">Unit/Type</th>
+<th style="text-align: left;">Calculation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>start_time</code></td>
+<td style="text-align: left;">Backtest Start Time</td>
+<td style="text-align: left;">Datetime</td>
+<td style="text-align: left;">Time of the first bar.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>end_time</code></td>
+<td style="text-align: left;">Backtest End Time</td>
+<td style="text-align: left;">Datetime</td>
+<td style="text-align: left;">Time of the last bar.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>duration</code></td>
+<td style="text-align: left;">Backtest Duration</td>
+<td style="text-align: left;">Timedelta</td>
+<td style="text-align: left;"><code>end_time - start_time</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>total_bars</code></td>
+<td style="text-align: left;">Total Bars</td>
+<td style="text-align: left;">Int</td>
+<td style="text-align: left;">Total number of bars in backtest.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>trade_count</code></td>
+<td style="text-align: left;">Trade Count</td>
+<td style="text-align: left;">Int</td>
+<td style="text-align: left;">Total number of closed trades (Round-trip).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>initial_market_value</code></td>
+<td style="text-align: left;">Initial Market Value</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Initial capital (usually Cash).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>end_market_value</code></td>
+<td style="text-align: left;">End Market Value</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Total asset value at the end (Cash + Position Value).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>total_pnl</code></td>
+<td style="text-align: left;">Total PnL</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;"><code>end_market_value - initial_market_value</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>unrealized_pnl</code></td>
+<td style="text-align: left;">Unrealized PnL</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Floating PnL of open positions at the end.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>total_return_pct</code></td>
+<td style="text-align: left;">Total Return</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;"><code>(End MV - Initial MV) / Initial MV * 100</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>annualized_return</code></td>
+<td style="text-align: left;">Annualized Return</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;"><code>(1 + Total Return)^(1/Years) - 1</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>volatility</code></td>
+<td style="text-align: left;">Annualized Volatility</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;">Return Std Dev * sqrt(252).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>total_profit</code></td>
+<td style="text-align: left;">Total Profit</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Sum of profits from winning trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>total_loss</code></td>
+<td style="text-align: left;">Total Loss</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Sum of losses from losing trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>total_commission</code></td>
+<td style="text-align: left;">Total Commission</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Total commission paid.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>max_drawdown</code></td>
+<td style="text-align: left;">Max Drawdown</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;">Max drawdown magnitude (e.g., 0.1 for 10%).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>max_drawdown_value</code></td>
+<td style="text-align: left;">Max Drawdown Value</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Absolute value of max drawdown.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>max_drawdown_pct</code></td>
+<td style="text-align: left;">Max Drawdown %</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;"><code>max_drawdown * 100</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>win_rate</code></td>
+<td style="text-align: left;">Win Rate</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;"><code>Winning Trades / Total Trades * 100</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>loss_rate</code></td>
+<td style="text-align: left;">Loss Rate</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;"><code>Losing Trades / Total Trades * 100</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>winning_trades</code></td>
+<td style="text-align: left;">Winning Trades</td>
+<td style="text-align: left;">Int</td>
+<td style="text-align: left;">Count of trades with PnL &gt; 0.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>losing_trades</code></td>
+<td style="text-align: left;">Losing Trades</td>
+<td style="text-align: left;">Int</td>
+<td style="text-align: left;">Count of trades with PnL &lt; 0.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_pnl</code></td>
+<td style="text-align: left;">Avg PnL</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average net PnL per trade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_return_pct</code></td>
+<td style="text-align: left;">Avg Return %</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;">Average return percentage per trade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_trade_bars</code></td>
+<td style="text-align: left;">Avg Trade Bars</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average bars held per trade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_profit</code></td>
+<td style="text-align: left;">Avg Profit</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average profit of winning trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_profit_pct</code></td>
+<td style="text-align: left;">Avg Profit %</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;">Average return of winning trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_winning_trade_bars</code></td>
+<td style="text-align: left;">Avg Win Trade Bars</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average bars held for winning trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_loss</code></td>
+<td style="text-align: left;">Avg Loss</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average loss of losing trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_loss_pct</code></td>
+<td style="text-align: left;">Avg Loss %</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;">Average return of losing trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_losing_trade_bars</code></td>
+<td style="text-align: left;">Avg Loss Trade Bars</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average bars held for losing trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>largest_win</code></td>
+<td style="text-align: left;">Largest Win</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Max profit in a single trade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>largest_win_pct</code></td>
+<td style="text-align: left;">Largest Win %</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;">Max return in a single trade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>largest_win_bars</code></td>
+<td style="text-align: left;">Largest Win Bars</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Duration (bars) of the largest win trade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>largest_loss</code></td>
+<td style="text-align: left;">Largest Loss</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Max loss in a single trade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>largest_loss_pct</code></td>
+<td style="text-align: left;">Largest Loss %</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;">Max loss rate in a single trade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>largest_loss_bars</code></td>
+<td style="text-align: left;">Largest Loss Bars</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Duration (bars) of the largest loss trade.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>max_wins</code></td>
+<td style="text-align: left;">Max Consecutive Wins</td>
+<td style="text-align: left;">Int</td>
+<td style="text-align: left;">Max number of consecutive winning trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>max_losses</code></td>
+<td style="text-align: left;">Max Consecutive Losses</td>
+<td style="text-align: left;">Int</td>
+<td style="text-align: left;">Max number of consecutive losing trades.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>sharpe_ratio</code></td>
+<td style="text-align: left;">Sharpe Ratio</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;"><code>(Ann. Return - Risk Free) / Ann. Volatility</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>sortino_ratio</code></td>
+<td style="text-align: left;">Sortino Ratio</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;"><code>(Ann. Return - Risk Free) / Downside Volatility</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>profit_factor</code></td>
+<td style="text-align: left;">Profit Factor</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;"><code>Total Profit / abs(Total Loss)</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ulcer_index</code></td>
+<td style="text-align: left;">Ulcer Index</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;">Measure of drawdown depth and duration.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>upi</code></td>
+<td style="text-align: left;">Ulcer Performance Index</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;"><code>(Ann. Return - Risk Free) / Ulcer Index</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>equity_r2</code></td>
+<td style="text-align: left;">Equity R²</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;">Linear regression fit of equity curve (0-1).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>std_error</code></td>
+<td style="text-align: left;">Standard Error</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Standard error of equity curve regression.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>calmar_ratio</code></td>
+<td style="text-align: left;">Calmar Ratio</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;"><code>Annualized Return / Max Drawdown</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>exposure_time_pct</code></td>
+<td style="text-align: left;">Exposure Time %</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;">Percentage of time with open positions.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>var_95</code></td>
+<td style="text-align: left;">VaR 95%</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;">Value at Risk at 95% confidence (daily).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>var_99</code></td>
+<td style="text-align: left;">VaR 99%</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;">Value at Risk at 99% confidence (daily).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cvar_95</code></td>
+<td style="text-align: left;">CVaR 95%</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;">Conditional VaR at 95% (Expected Shortfall).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cvar_99</code></td>
+<td style="text-align: left;">CVaR 99%</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;">Conditional VaR at 99% (Expected Shortfall).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>sqn</code></td>
+<td style="text-align: left;">SQN</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">System Quality Number.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>kelly_criterion</code></td>
+<td style="text-align: left;">Kelly Criterion</td>
+<td style="text-align: left;">Ratio</td>
+<td style="text-align: left;"><code>Win Rate - (Loss Rate / Profit Factor)</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="key-metrics-explained">Key Metrics Explained<a class="headerlink" href="#key-metrics-explained" title="Permanent link">&para;</a></h2>
+<h3 id="risk-metrics">Risk Metrics<a class="headerlink" href="#risk-metrics" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Max Drawdown</strong>: Measures the worst-case scenario. E.g., 30% means buying at the peak results in a 30% loss at the trough.</li>
+<li><strong>Volatility</strong>: Measures uncertainty of returns. Higher volatility means larger price swings.</li>
+<li><strong>VaR &amp; CVaR</strong>:<ul>
+<li><strong>VaR (Value at Risk)</strong>: Max expected loss over a day at a given confidence level (e.g., 95%).</li>
+<li><strong>CVaR (Conditional VaR)</strong>: Average loss exceeding VaR (Expected Shortfall).</li>
+</ul>
+</li>
+</ul>
+<h3 id="risk-reward-metrics">Risk-Reward Metrics<a class="headerlink" href="#risk-reward-metrics" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Sharpe Ratio</strong>: Excess return per unit of total risk. &gt;1 is good, &gt;2 is excellent.</li>
+<li><strong>Sortino Ratio</strong>: Similar to Sharpe but considers only downside volatility.</li>
+<li><strong>Calmar Ratio</strong>: Annualized Return / Max Drawdown.</li>
+<li><strong>SQN</strong>: System Quality Number. Measures system stability.</li>
+<li><strong>Kelly Criterion</strong>: Optimal position size based on win rate and payoff ratio.</li>
+</ul>
+<h2 id="equity-cash-curves">Equity &amp; Cash Curves<a class="headerlink" href="#equity-cash-curves" title="Permanent link">&para;</a></h2>
+<p>The <code>result</code> object provides equity and cash curves over time, useful for plotting and analysis.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Property</th>
+<th style="text-align: left;">Description</th>
+<th style="text-align: left;">Type</th>
+<th style="text-align: left;">Explanation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>equity_curve</code></td>
+<td style="text-align: left;">Equity Curve</td>
+<td style="text-align: left;"><code>pandas.Series</code></td>
+<td style="text-align: left;">Index is <code>Datetime</code>, values are Total Equity. Shows the trend of net asset value.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cash_curve</code></td>
+<td style="text-align: left;">Cash Curve</td>
+<td style="text-align: left;"><code>pandas.Series</code></td>
+<td style="text-align: left;">Index is <code>Datetime</code>, values are Available Cash. Shows the trend of liquid capital, useful for money management analysis.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="trades">Trades<a class="headerlink" href="#trades" title="Permanent link">&para;</a></h2>
+<p><code>result.trades_df</code> contains details of every closed trade.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Name</th>
+<th style="text-align: left;">Description</th>
+<th style="text-align: left;">Unit/Type</th>
+<th style="text-align: left;">Calculation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>symbol</code></td>
+<td style="text-align: left;">Symbol</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;">Trading symbol.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>entry_time</code></td>
+<td style="text-align: left;">Entry Time</td>
+<td style="text-align: left;">Datetime</td>
+<td style="text-align: left;">Time of entry.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>exit_time</code></td>
+<td style="text-align: left;">Exit Time</td>
+<td style="text-align: left;">Datetime</td>
+<td style="text-align: left;">Time of exit.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>entry_price</code></td>
+<td style="text-align: left;">Entry Price</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average entry price.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>exit_price</code></td>
+<td style="text-align: left;">Exit Price</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average exit price.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>quantity</code></td>
+<td style="text-align: left;">Quantity</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Traded quantity.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>side</code></td>
+<td style="text-align: left;">Side</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;"><code>long</code> or <code>short</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>pnl</code></td>
+<td style="text-align: left;">Gross PnL</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">PnL before commission.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>net_pnl</code></td>
+<td style="text-align: left;">Net PnL</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;"><code>pnl - commission</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>return_pct</code></td>
+<td style="text-align: left;">Return</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Trade return (decimal).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>commission</code></td>
+<td style="text-align: left;">Commission</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Commission paid.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>duration_bars</code></td>
+<td style="text-align: left;">Duration (Bars)</td>
+<td style="text-align: left;">Int</td>
+<td style="text-align: left;">Number of bars held.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>duration</code></td>
+<td style="text-align: left;">Duration</td>
+<td style="text-align: left;">Timedelta</td>
+<td style="text-align: left;"><code>exit_time - entry_time</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>mae</code></td>
+<td style="text-align: left;">MAE</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;">Maximum Adverse Excursion (max loss during trade).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>mfe</code></td>
+<td style="text-align: left;">MFE</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;">Maximum Favorable Excursion (max profit during trade).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>entry_tag</code></td>
+<td style="text-align: left;">Entry Tag</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;">Tag of the entry order.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>exit_tag</code></td>
+<td style="text-align: left;">Exit Tag</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;">Tag of the exit order.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>entry_portfolio_value</code></td>
+<td style="text-align: left;">Entry Portfolio Value</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Total account equity at entry.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>max_drawdown_pct</code></td>
+<td style="text-align: left;">Max Drawdown %</td>
+<td style="text-align: left;"><strong>%</strong></td>
+<td style="text-align: left;">Max drawdown percentage during the trade.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="orders">Orders<a class="headerlink" href="#orders" title="Permanent link">&para;</a></h2>
+<p><code>result.orders_df</code> contains all order history.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Name</th>
+<th style="text-align: left;">Description</th>
+<th style="text-align: left;">Unit/Type</th>
+<th style="text-align: left;">Calculation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>id</code></td>
+<td style="text-align: left;">Order ID</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;">Unique identifier.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>symbol</code></td>
+<td style="text-align: left;">Symbol</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;">Trading symbol.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>side</code></td>
+<td style="text-align: left;">Side</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;"><code>buy</code> or <code>sell</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>order_type</code></td>
+<td style="text-align: left;">Type</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;"><code>market</code>, <code>limit</code>, <code>stop</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>quantity</code></td>
+<td style="text-align: left;">Quantity</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Order quantity.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>filled_quantity</code></td>
+<td style="text-align: left;">Filled Qty</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Executed quantity.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>limit_price</code></td>
+<td style="text-align: left;">Limit Price</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Price for limit orders.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>stop_price</code></td>
+<td style="text-align: left;">Stop Price</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Trigger price for stop orders.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>avg_price</code></td>
+<td style="text-align: left;">Avg Price</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average execution price.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>commission</code></td>
+<td style="text-align: left;">Commission</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Commission paid.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>status</code></td>
+<td style="text-align: left;">Status</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;"><code>filled</code>, <code>cancelled</code>, <code>rejected</code>, etc.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>time_in_force</code></td>
+<td style="text-align: left;">TIF</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;"><code>gtc</code>, <code>day</code>, <code>ioc</code>, etc.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>created_at</code></td>
+<td style="text-align: left;">Created At</td>
+<td style="text-align: left;">Datetime</td>
+<td style="text-align: left;">Creation time.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>updated_at</code></td>
+<td style="text-align: left;">Updated At</td>
+<td style="text-align: left;">Datetime</td>
+<td style="text-align: left;">Last update time.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>duration</code></td>
+<td style="text-align: left;">Duration</td>
+<td style="text-align: left;">Timedelta</td>
+<td style="text-align: left;"><code>updated_at - created_at</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>filled_value</code></td>
+<td style="text-align: left;">Filled Value</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;"><code>filled_quantity * avg_price</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>tag</code></td>
+<td style="text-align: left;">Tag</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;">User defined tag.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>reject_reason</code></td>
+<td style="text-align: left;">Reject Reason</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;">Reason for rejection (if any).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="positions">Positions<a class="headerlink" href="#positions" title="Permanent link">&para;</a></h2>
+<p><code>result.positions_df</code> contains daily (or per-bar) position snapshots.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Name</th>
+<th style="text-align: left;">Description</th>
+<th style="text-align: left;">Unit/Type</th>
+<th style="text-align: left;">Calculation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>date</code></td>
+<td style="text-align: left;">Date</td>
+<td style="text-align: left;">Datetime</td>
+<td style="text-align: left;">Snapshot time.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>symbol</code></td>
+<td style="text-align: left;">Symbol</td>
+<td style="text-align: left;">String</td>
+<td style="text-align: left;">Trading symbol.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>long_shares</code></td>
+<td style="text-align: left;">Long Shares</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Long position quantity.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>short_shares</code></td>
+<td style="text-align: left;">Short Shares</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Short position quantity.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">Close Price</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Closing price.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>equity</code></td>
+<td style="text-align: left;">Equity</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Total account equity.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>market_value</code></td>
+<td style="text-align: left;">Market Value</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Market value of positions.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>margin</code></td>
+<td style="text-align: left;">Margin</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Margin used.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>unrealized_pnl</code></td>
+<td style="text-align: left;">Unrealized PnL</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Floating PnL.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>entry_price</code></td>
+<td style="text-align: left;">Entry Price</td>
+<td style="text-align: left;">Float</td>
+<td style="text-align: left;">Average entry price.</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../../javascripts/mathjax.js"></script>
+      
+        <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
