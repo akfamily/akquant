@@ -7,41 +7,50 @@ import pandas as pd
 class StopOrderStrategy(akquant.Strategy):
     """Test strategy for verifying stop orders and target position."""
 
-    def on_start(self) -> None:
-        """Initialize strategy state on start."""
-        self.stop_order_placed = False
-        self.target_order_placed = False
-        print("Strategy started")
-
     def __init__(self) -> None:
         """Initialize the strategy."""
         super().__init__()
         self.stop_order_placed = False
         self.target_order_placed = False
+        self.stop_order_filled = False
+        self.final_position = 0
+
+    def on_start(self) -> None:
+        """Initialize strategy state on start."""
+        print("Strategy started")
 
     def on_bar(self, bar: akquant.Bar) -> None:
         """Handle bar data events."""
         dt = datetime.fromtimestamp(bar.timestamp / 1e9)
-        print(f"On Bar: {dt}, Close: {bar.close}, High: {bar.high}")
+        # print(f"On Bar: {dt}, Close: {bar.close}, High: {bar.high}")
 
         # Test 1: Stop Market Order
         # Place a Stop Buy order at 110 when price is around 100
         if not self.stop_order_placed:
-            print("Placing Stop Market Buy at 110")
+            # print("Placing Stop Market Buy at 110")
             self.buy(bar.symbol, 100, price=None, trigger_price=110.0)
             self.stop_order_placed = True
             return
 
+        # Check if filled
+        pos = self.get_position(bar.symbol)
+        if pos > 0 and not self.stop_order_filled:
+            self.stop_order_filled = True
+            # print("Stop Order Filled")
+
         # Test 2: Target Position
         # On the last day, try to adjust position to target value
+        # Day 3 is the last day in our data (index 3, but logic says day==3)
         if dt.day == 3:  # Simple check for 3rd data point
-            print("Adjusting target value to 50000")
+            # print("Adjusting target value to 50000")
             # Current price is 120, holding 100 shares (from stop order) = 12000 value
             # Target 50000 -> Need to buy ~38000 / 120 worth
             self.order_target_value(50000, bar.symbol)
 
+        self.final_position = int(pos)
 
-def verify_stop_and_target() -> None:
+
+def test_stop_orders_and_target() -> None:
     """Run the verification backtest."""
     # 1. Create Data
     dates = [
@@ -52,8 +61,7 @@ def verify_stop_and_target() -> None:
     ]
 
     # Day 1: High 105 (Stop 110 not triggered)
-    # Day 2: High 115 (Stop 110 triggered, should fill at Open or Close depending
-    # on logic, let's say Close 112)
+    # Day 2: High 115 (Stop 110 triggered)
     # Day 3: Price 120. Test Target Position.
     data = pd.DataFrame(
         {
@@ -72,6 +80,7 @@ def verify_stop_and_target() -> None:
     engine.use_simple_market(
         0.0001
     )  # Use SimpleMarket to allow 24/7 trading (avoids session checks)
+
     engine.set_cash(100000.0)
 
     # Convert DataFrame to Bars
@@ -95,8 +104,27 @@ def verify_stop_and_target() -> None:
     strategy = StopOrderStrategy()
 
     # 3. Run
-    print("Running Backtest...")
+    # print("Running Backtest...")
     engine.run(strategy, show_progress=False)
+
+    # 4. Assertions
+    # Verify stop order triggered
+    assert strategy.stop_order_placed, "Stop order should have been placed"
+    assert strategy.stop_order_filled, "Stop order should have been filled"
+
+    # Verify target position logic
+    # On day 3 (price 120), target value 50000.
+    # 50000 / 120 = 416.66 shares. Rounding depends on lot size (default 1?)
+    # If lot size is 1, expected shares is approx 416 or 417.
+    # Let's check range.
+    final_pos = int(strategy.final_position)
+    # final_value = final_pos * 128.0  # Day 4 close is 128
+
+    # Check if we are close to target value (in shares term)
+    # The strategy logic ran on Day 3 close (120). Target 50000.
+    # Expected shares = 50000 / 120 = 416.
+    # Allow some margin for error/fees
+    assert 410 <= final_pos <= 420, f"Final position {final_pos} should be close to 416"
 
     # 4. Analyze Results
     trades = engine.trades
@@ -141,4 +169,4 @@ def verify_stop_and_target() -> None:
 
 
 if __name__ == "__main__":
-    verify_stop_and_target()
+    test_stop_orders_and_target()

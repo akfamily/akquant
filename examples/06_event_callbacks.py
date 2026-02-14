@@ -132,8 +132,8 @@ def main() -> None:
         strategy=EventCallbacksStrategy,
         data=df,
         symbol="MOCK_STOCK",
-        cash=100_000,
-        commission=0.0003,  # 万三佣金
+        initial_cash=100_000,
+        commission_rate=0.0003,  # 万三佣金
     )
 
     print("\n=== 回测结束 ===")

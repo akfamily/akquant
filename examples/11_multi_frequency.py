@@ -270,7 +270,7 @@ if __name__ == "__main__":
         data=data,
         strategy=MultiFreqStrategy,
         instruments_config=[stock_1m_config],
-        cash=100_000.0,
+        initial_cash=100_000.0,
         show_progress=True,
     )
 

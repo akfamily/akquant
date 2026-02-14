@@ -137,7 +137,7 @@ class MultiSymbolStrategy(aq.Strategy):
             if position > 0:
                 # 死叉且持有多单 -> 平仓
                 self.close_position(symbol)
-                self.cancel_all_orders(symbol)
+                self.cancel_all_orders()
                 action = "SELL_CLOSE"
 
         # 如果有动作，打印当时的指标状态
@@ -172,8 +172,8 @@ if __name__ == "__main__":
     result = aq.run_backtest(
         data=data_dict,
         strategy=strategy,
-        cash=1_000_000.0,
-        commission=0.0003,
+        initial_cash=1_000_000.0,
+        commission_rate=0.0003,
         execution_mode="next_open",
         lot_size=100,
         show_progress=True,

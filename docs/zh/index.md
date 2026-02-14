@@ -51,7 +51,7 @@ class MyStrategy(Strategy):
     def on_bar(self, bar):
         # 简单的策略逻辑 (示例)
         # 实际回测推荐使用 IndicatorSet 进行向量化计算
-        position = self.ctx.get_position(bar.symbol)
+        position = self.get_position(bar.symbol)
         if position == 0:
             self.buy(symbol=bar.symbol, quantity=100)
         elif position > 0:
@@ -63,8 +63,8 @@ result = run_backtest(
     strategy=MyStrategy,  # 传递类或实例
     data=df,              # 显式传入数据
     symbol="600000",      # 浦发银行
-    cash=500_000.0,       # 初始资金
-    commission=0.0003     # 万三佣金
+    initial_cash=500_000.0,       # 初始资金
+    commission_rate=0.0003     # 万三佣金
 )
 
 # 4. 查看结果

@@ -46,7 +46,7 @@ print("开始回测...")
 result = run_backtest(
     data=df,  # 输入数据
     strategy=MyStrategy,  # 输入策略
-    cash=100000.0,  # 初始资金
+    initial_cash=100000.0,  # 初始资金
     symbol="sh600000"  # 交易的股票代码
 )
 

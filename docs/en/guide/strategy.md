@@ -28,10 +28,73 @@ A strategy goes through the following stages from start to finish:
 *   `on_order`: Triggered when order status changes (e.g., Submitted, Filled, Cancelled).
 *   `on_trade`: Triggered when a trade execution report is received.
 *   `on_timer`: Called when a timer triggers (needs manual registration).
+    > Recommended: Use `self.add_daily_timer("14:55:00", "payload")`.
 *   `on_stop`: Called when the strategy stops, suitable for resource cleanup or result statistics (refer to Backtrader `stop` / Nautilus `on_stop`).
 *   `on_train_signal`: Triggered for rolling training signals (only in ML mode).
 
-## 2. Choosing a Strategy Style {: #style-selection }
+## 3. Utilities
+
+AKQuant provides a set of utilities to simplify strategy development.
+
+### 3.1 Logging
+
+Use `self.log()` to output logs with the current **backtest timestamp**, which is useful for debugging.
+
+```python
+def on_bar(self, bar):
+    # Automatically adds timestamp, e.g., [2023-01-01 09:30:00] Signal: Buy
+    self.log("Signal: Buy")
+
+    # Support logging level
+    import logging
+    self.log("Insufficient funds", level=logging.WARNING)
+```
+
+### 3.2 Data Access (Syntactic Sugar)
+
+The `Strategy` class provides properties for quick access to current Bar/Tick data:
+
+| Property | Description | Original Code |
+| :--- | :--- | :--- |
+| `self.symbol` | Current symbol | `bar.symbol` / `tick.symbol` |
+| `self.close` | Current price | `bar.close` / `tick.price` |
+| `self.open` | Current open price | `bar.open` (0 in Tick mode) |
+| `self.high` | Current high price | `bar.high` (0 in Tick mode) |
+| `self.low` | Current low price | `bar.low` (0 in Tick mode) |
+| `self.volume` | Current volume | `bar.volume` / `tick.volume` |
+
+**Example**:
+```python
+def on_bar(self, bar):
+    # Old way
+    if bar.close > bar.open: ...
+
+    # New way (Cleaner)
+    if self.close > self.open:
+        self.buy(self.symbol, 100)
+```
+
+### 3.3 Timer
+
+In addition to the low-level `schedule` method, AKQuant provides more convenient ways to register timers:
+
+*   **`add_daily_timer(time_str, payload)`**: Triggers daily at a specified time.
+*   **`schedule(trigger_time, payload)`**: Triggers once at a specified datetime.
+
+```python
+def on_start(self):
+    # Daily check at 14:55:00
+    self.add_daily_timer("14:55:00", "daily_check")
+
+    # Specific event
+    self.schedule("2023-01-01 09:30:00", "special_event")
+
+def on_timer(self, payload):
+    if payload == "daily_check":
+        self.log("Running daily check...")
+```
+
+## 4. Choosing a Strategy Style {: #style-selection }
 
 AKQuant provides two styles of strategy development interfaces:
 
@@ -42,7 +105,7 @@ AKQuant provides two styles of strategy development interfaces:
 | **Structure** | Object-oriented, good logic encapsulation | Script-like, simple and intuitive |
 | **API Call** | `self.buy()`, `self.ctx` | `ctx.buy()`, pass `ctx` as parameter |
 
-## 3. Writing Class-based Strategies {: #class-based }
+## 4. Writing Class-based Strategies {: #class-based }
 
 This is the recommended way to write strategies in AKQuant, offering a clear structure and easy extensibility.
 
@@ -81,7 +144,7 @@ class MyStrategy(Strategy):
             self.sell(symbol=bar.symbol, quantity=100)
 ```
 
-## 4. Orders & Execution
+## 5. Orders & Execution
 
 ### 4.1 Order Lifecycle
 
@@ -95,7 +158,7 @@ In AKQuant, order status transitions are as follows:
 5.  **Cancelled**: Order has been cancelled.
 6.  **Rejected**: Order rejected by risk control or exchange (e.g., insufficient funds, exceeding price limits).
 
-### 4.2 Common Trading Commands
+### 5.2 Common Trading Commands
 
 *   **Market Order**:
     ```python
@@ -122,19 +185,24 @@ In AKQuant, order status transitions are as follows:
     # Adjust holding to 1000 shares (Buy 1000 if 0, Sell 1000 if 2000)
     self.order_target_value(target_value=1000 * price, symbol="AAPL") # Note: API does not support target_share directly yet, simulate with value
     ```
+*   **Cancel Order**:
+    ```python
+    self.cancel_order(order_id) # Cancel specific order
+    self.cancel_all_orders()    # Cancel all open orders
+    ```
 
-### 4.3 Execution Modes
+### 5.3 Execution Modes
 
 Set via `engine.set_execution_mode(mode)` (or pass `execution_mode` parameter in `run_backtest`):
 
 *   **NextOpen (Default)**: Signals are matched at the Open of the *next* Bar. This is a more rigorous backtesting method, aligning with live trading logic (place order after today's close, match at tomorrow's open).
 *   **CurrentClose**: Signals are matched immediately at the Close of the *current* Bar. Suitable for special strategies using closing prices for settlement, or scenarios where next-day data is unavailable.
 
-### 4.4 Event Callbacks {: #callbacks }
+### 5.4 Event Callbacks {: #callbacks }
 
 AKQuant provides a callback mechanism similar to Backtrader for tracking order status and trade records.
 
-#### 4.4.1 Order Status Callback (`on_order`)
+#### 5.4.1 Order Status Callback (`on_order`)
 
 Triggered when order status changes (e.g., from `New` to `Submitted`, or to `Filled`).
 
@@ -148,7 +216,7 @@ def on_order(self, order):
         print(f"Order Cancelled: {order.id}")
 ```
 
-#### 4.4.2 Trade Execution Callback (`on_trade`)
+#### 5.4.2 Trade Execution Callback (`on_trade`)
 
 Triggered when a real trade occurs. Unlike `on_order`, `on_trade` contains specific execution price, quantity, and commission information.
 
@@ -157,7 +225,16 @@ def on_trade(self, trade):
     print(f"Trade Execution: {trade.symbol} Price: {trade.price} Qty: {trade.quantity} Comm: {trade.commission}")
 ```
 
-## 5. Risk Management
+### 5.5 Account & Position Query
+
+In addition to `get_position`, you can query more account information:
+
+*   **`self.equity`**: Current account equity (Cash + Market Value of Positions).
+*   **`self.get_trades()`**: Get all historical closed trades.
+*   **`self.get_open_orders()`**: Get current open orders.
+*   **`self.get_available_position(symbol)`**: Get available position (considering T+1 rule).
+
+## 6. Risk Management
 
 AKQuant has a built-in Rust-level risk manager that can simulate exchange or broker risk control rules during backtesting.
 
@@ -182,34 +259,34 @@ AKQuant includes commonly used technical indicators built into the Rust layer. T
 
 Supported Indicators: `SMA`, `EMA`, `MACD`, `RSI`, `BollingerBands`, `ATR`.
 
-### 6.1 Registration and Usage
+### 7.1 Registration and Usage
+
+AKQuant supports **Auto-Discovery**. You can simply assign indicators to `self` in `__init__`, and they will be registered automatically.
 
 ```python
 from akquant import Strategy
 from akquant.indicators import SMA, RSI
 
 class IndicatorStrategy(Strategy):
+    def __init__(self):
+        # Method 1: Auto-Discovery (Recommended)
+        # Assign to self.xxx, automatically registered and calculated
+        self.sma20 = SMA(20)
+        self.rsi14 = RSI(14)
+
     def on_start(self):
         self.subscribe("AAPL")
 
-        # Register indicator: Automatically handles data updates
-        # Parameter: period=20
-        self.register_indicator("sma20", SMA(20))
+        # Method 2: Manual Registration
+        # self.register_indicator("sma20", SMA(20))
 
-        # Register RSI
-        self.register_indicator("rsi14", RSI(14))
-
-    def on_bar(self, bar):
-        # Access indicator values directly
-        # Note: If indicator is not ready (insufficient data), value might be None
-        sma_val = self.sma20.value
-        rsi_val = self.rsi14.value
-
-        if sma_val is None or rsi_val is None:
-            return
-
-        if bar.close > sma_val and rsi_val < 30:
+    def on_bar(self, bar: Bar):
+        # Access value via property
+        if bar.close > self.sma20.value:
             self.buy(bar.symbol, 100)
+
+        # Or get historical value
+        # val = self.sma20.get_value(bar.symbol, bar.timestamp)
 ```
 
 ## 7. Strategy Cookbook

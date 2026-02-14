@@ -1,5 +1,7 @@
+import datetime as dt
+import logging
 from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -13,6 +15,7 @@ from .akquant import (
     Tick,
     TimeInForce,
 )
+from .log import get_logger
 from .sizer import FixedSize, Sizer
 from .utils import parse_duration_to_bars
 
@@ -82,6 +85,8 @@ class Strategy:
     _hold_bars: "defaultdict[str, int]"
     _last_position_signs: "defaultdict[str, float]"
 
+    _trading_days: List[pd.Timestamp]
+
     # Fee rates
     commission_rate: float
     min_commission: float
@@ -105,6 +110,7 @@ class Strategy:
         instance._last_position_signs = defaultdict(float)
         instance.timezone = getattr(instance, "timezone", "Asia/Shanghai")
         instance._last_event_type = ""
+        instance._trading_days = []
 
         # 历史数据配置
         instance._history_depth = 0
@@ -142,6 +148,23 @@ class Strategy:
         """
         pass
 
+    def _on_start_internal(self) -> None:
+        """内部启动回调，用于自动发现指标等."""
+        self._discover_indicators()
+        self.on_start()
+
+    def _discover_indicators(self) -> None:
+        """自动发现并注册 self 属性中的指标."""
+        from .indicator import Indicator
+
+        # Scan instance attributes
+        for name, value in self.__dict__.items():
+            if isinstance(value, Indicator):
+                # Avoid duplicate registration
+                if value not in self._indicators:
+                    self.register_indicator(name, value)
+                    # print(f"Auto-registered indicator: {name}")
+
     def on_stop(self) -> None:
         """
         策略停止时调用.
@@ -149,6 +172,146 @@ class Strategy:
         在此处进行资源清理或结果统计.
         """
         pass
+
+    def log(self, msg: str, level: int = logging.INFO) -> None:
+        """
+        输出日志 (自动添加当前回测时间).
+
+        :param msg: 日志内容
+        :param level: 日志等级 (logging.INFO, logging.WARNING, etc.)
+        """
+        timestamp_str = ""
+        # Try to get current time
+        ts = self.now
+        if ts:
+            timestamp_str = ts.strftime("%Y-%m-%d %H:%M:%S")
+
+        if timestamp_str:
+            final_msg = f"[{timestamp_str}] {msg}"
+        else:
+            final_msg = msg
+
+        get_logger().log(level, final_msg)
+
+    @property
+    def symbol(self) -> str:
+        """获取当前正在处理的标的代码 (Proxy to current_bar/tick)."""
+        return self._resolve_symbol(None)
+
+    @property
+    def close(self) -> float:
+        """获取当前最新价 (Close 或 LastPrice)."""
+        if self.current_bar:
+            return self.current_bar.close
+        elif self.current_tick:
+            return self.current_tick.price
+        return 0.0
+
+    @property
+    def open(self) -> float:
+        """获取当前开盘价 (仅 Bar 模式有效)."""
+        if self.current_bar:
+            return self.current_bar.open
+        return 0.0
+
+    @property
+    def high(self) -> float:
+        """获取当前最高价 (仅 Bar 模式有效)."""
+        if self.current_bar:
+            return self.current_bar.high
+        return 0.0
+
+    @property
+    def low(self) -> float:
+        """获取当前最低价 (仅 Bar 模式有效)."""
+        if self.current_bar:
+            return self.current_bar.low
+        return 0.0
+
+    @property
+    def volume(self) -> float:
+        """获取当前成交量."""
+        if self.current_bar:
+            return self.current_bar.volume
+        elif self.current_tick:
+            return self.current_tick.volume
+        return 0.0
+
+    def schedule(
+        self, trigger_time: Union[str, dt.datetime, pd.Timestamp], payload: str
+    ) -> None:
+        """
+        注册单次定时任务 (Simplified).
+
+        :param trigger_time: 触发时间 (支持 "2023-01-01 14:55:00", datetime, Timestamp)
+        :param payload: 回调标识
+        """
+        if self.ctx is None:
+            raise RuntimeError("Context not ready")
+
+        ts_ns = 0
+        if isinstance(trigger_time, str):
+            # Parse string
+            try:
+                dt_obj = pd.to_datetime(trigger_time)
+                if dt_obj.tz is None:
+                    dt_obj = dt_obj.tz_localize(self.timezone)
+                ts_ns = dt_obj.value
+            except Exception:
+                # If pandas parsing fails, maybe it's just a time string?
+                # But here we expect full datetime string for schedule()
+                pass
+        elif isinstance(trigger_time, (dt.datetime, pd.Timestamp)):
+            if trigger_time.tzinfo is None:
+                trigger_time = pd.Timestamp(trigger_time).tz_localize(self.timezone)
+            if hasattr(trigger_time, "value"):
+                ts_ns = trigger_time.value  # type: ignore
+            elif isinstance(trigger_time, dt.datetime):
+                # Standard datetime doesn't have .value (nanoseconds)
+                # convert to pd.Timestamp first
+                ts_ns = pd.Timestamp(trigger_time).value
+            else:
+                # Should not happen given isinstance check
+                ts_ns = 0
+
+        # Ensure we pass int (nanoseconds) to rust
+        if ts_ns > 0:
+            self.ctx.schedule(int(ts_ns), payload)
+
+    def add_daily_timer(self, time_str: str, payload: str) -> None:
+        """
+        注册每日定时任务 (Daily Timer).
+
+        :param time_str: 时间字符串 (例如 "14:55:00")
+        :param payload: 回调标识
+        """
+        if not self._trading_days:
+            # If no trading days info (e.g. not running in backtest), warn or ignore
+            print("Warning: No trading days available for add_daily_timer")
+            return
+
+        # Parse time part
+        try:
+            t = pd.to_datetime(time_str).time()
+        except Exception:
+            print(f"Error parsing time: {time_str}")
+            return
+
+        # Generate timestamps for each trading day
+        for day in self._trading_days:
+            # Combine date and time
+            # Note: day is already timezone aware (from backtest injection)
+            # We need to combine date and time, and ensure correct timezone
+
+            # If day is tz-aware, day.date() returns naive date
+            # We combine it with time t to get naive datetime
+            naive_dt = pd.Timestamp.combine(day.date(), t)
+
+            # Then localize
+            dt_obj = naive_dt.tz_localize(self.timezone)
+
+            # Pass int timestamp directly to avoid re-parsing logic in schedule
+            self.schedule(dt_obj, payload)
 
     def to_local_time(self, timestamp: int) -> pd.Timestamp:
         """
@@ -507,6 +670,7 @@ class Strategy:
             self._auto_configure_model()
 
         self.current_bar = bar
+        self.current_tick = None
         self._last_prices[bar.symbol] = bar.close
 
         # 检查滚动训练信号
@@ -523,6 +687,7 @@ class Strategy:
         self.ctx = ctx
         self._last_event_type = "tick"
         self.current_tick = tick
+        self.current_bar = None
         self._last_prices[tick.symbol] = tick.price
         self.on_tick(tick)
 
@@ -597,10 +762,24 @@ class Strategy:
             float: 持仓数量 (正数为多头, 负数为空头)
         """
         if self.ctx is None:
-            raise RuntimeError("Context not ready")
-
+            return 0.0
         symbol = self._resolve_symbol(symbol)
         return self.ctx.get_position(symbol)
+
+    def get_available_position(self, symbol: Optional[str] = None) -> float:
+        """
+        获取指定标的的可用持仓数量 (考虑 T+1 等限制).
+
+        Args:
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
+
+        Returns:
+            float: 可用持仓数量
+        """
+        if self.ctx is None:
+            return 0.0
+        symbol = self._resolve_symbol(symbol)
+        return self.ctx.get_available_position(symbol)
 
     def hold_bar(self, symbol: Optional[str] = None) -> int:
         """
@@ -650,6 +829,32 @@ class Strategy:
         if symbol:
             return [o for o in orders if o.symbol == symbol]
         return orders
+
+    def get_trades(self) -> list[Any]:
+        """
+        获取所有历史成交记录 (Closed Trades).
+
+        Returns:
+            List[ClosedTrade]: 已平仓交易列表
+        """
+        if self.ctx:
+            return self.ctx.closed_trades
+        return []
+
+    def cancel_order(self, order_id: str) -> None:
+        """
+        取消指定订单.
+
+        Args:
+            order_id: 订单 ID
+        """
+        if self.ctx:
+            self.ctx.cancel_order(order_id)
+
+    def cancel_all_orders(self) -> None:
+        """取消当前所有未完成的订单."""
+        for order in self.get_open_orders():
+            self.cancel_order(order.id)
 
     def buy(
         self,
@@ -801,6 +1006,15 @@ class Strategy:
 
         return total_value
 
+    @property
+    def equity(self) -> float:
+        """
+        获取当前账户总权益 (现金 + 持仓市值).
+
+        等同于 get_portfolio_value().
+        """
+        return self.get_portfolio_value()
+
     def order_target(
         self,
         target: float,
@@ -904,7 +1118,7 @@ class Strategy:
 
         # 1. Cancel existing open orders for this symbol
         # This prevents "stacking" orders and ensures we target the net exposure
-        self.cancel_all_orders(symbol)
+        self.cancel_all_orders()
 
         # 2. Get Price
         if price is not None:
@@ -965,34 +1179,6 @@ class Strategy:
         portfolio_value = self.get_portfolio_value()
         target_value = portfolio_value * target_percent
         self.order_target_value(target_value, symbol, price, **kwargs)
-
-    def cancel_order(self, order_or_id: Any) -> None:
-        """
-        取消订单.
-
-        Args:
-            order_or_id: 订单对象或订单 ID
-        """
-        if self.ctx is None:
-            raise RuntimeError("Context not ready")
-
-        order_id = order_or_id
-        if hasattr(order_or_id, "id"):
-            order_id = order_or_id.id
-
-        self.ctx.cancel_order(order_id)
-
-    def cancel_all_orders(self, symbol: Optional[str] = None) -> None:
-        """
-        取消所有未完成订单.
-
-        :param symbol: 指定标的代码 (如果为 None, 取消所有标的订单)
-        """
-        try:
-            for order in self.get_open_orders(symbol):
-                self.cancel_order(order)
-        except Exception as e:
-            print(f"Error calling cancel_all_orders: {e}")
 
     def buy_all(self, symbol: Optional[str] = None) -> None:
         """
@@ -1124,18 +1310,6 @@ class Strategy:
         # 3. Execute Buy (Cover)
         if quantity > 0:
             self.ctx.buy(symbol, quantity, price, time_in_force, trigger_price)
-
-    def schedule(self, timestamp: int, payload: str) -> None:
-        """
-        注册定时事件.
-
-        Args:
-            timestamp: 触发时间戳 (Unix 纳秒)
-            payload: 事件携带的数据
-        """
-        if self.ctx is None:
-            raise RuntimeError("Context not ready")
-        self.ctx.schedule(timestamp, payload)
 
     def get_cash(self) -> float:
         """获取现金."""

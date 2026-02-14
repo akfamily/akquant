@@ -30,7 +30,9 @@ class MyStrategy(Strategy):
 
 
 # 运行回测
-result = aq.run_backtest(data=df, strategy=MyStrategy, symbol="sh600000", cash=100)
+result = aq.run_backtest(
+    data=df, strategy=MyStrategy, symbol="sh600000", initial_cash=100
+)
 
 
 pd.set_option("display.max_columns", None)  # 显示所有行

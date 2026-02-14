@@ -82,7 +82,7 @@ if __name__ == "__main__":
         data=data,
         strategy=TestStrategy,
         instruments_config=[future_config],  # Pass the config list here
-        cash=1_000_000.0,
+        initial_cash=1_000_000.0,
         show_progress=True,
     )
 
