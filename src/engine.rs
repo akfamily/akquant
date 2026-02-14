@@ -5,25 +5,24 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
-use std::sync::{
-    Arc, Mutex, RwLock,
-    mpsc::{self, Receiver, Sender},
-};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use crate::analysis::{BacktestResult, PositionSnapshot, TradeTracker};
+use crate::analysis::{BacktestResult, PositionSnapshot};
 use crate::clock::Clock;
 use crate::context::StrategyContext;
 use crate::data::DataFeed;
 use crate::event::Event;
+use crate::event_manager::EventManager;
 use crate::execution::{ExecutionClient, RealtimeExecutionClient, SimulatedExecutionClient};
 use crate::history::HistoryBuffer;
 use crate::market::{
-    ChinaMarket, ChinaMarketConfig, MarketModel, MarketType, SessionRange, SimpleMarket,
+    ChinaMarketConfig, MarketConfig, MarketModel, SessionRange,
 };
 use crate::model::{
     Bar, ExecutionMode, Instrument, Order, OrderStatus, TimeInForce, Timer, Trade, TradingSession,
 };
+use crate::order_manager::OrderManager;
 use crate::portfolio::Portfolio;
 use crate::risk::{RiskConfig, RiskManager};
 
@@ -39,17 +38,10 @@ pub struct Engine {
     feed: DataFeed,
     #[pyo3(get)]
     portfolio: Portfolio,
-    #[pyo3(get)]
-    orders: Vec<Order>,
-    #[pyo3(get)]
-    trades: Vec<Trade>,
-    // Trades generated in the current step (for strategy notification)
-    current_step_trades: Vec<Trade>,
     last_prices: HashMap<String, Decimal>,
     instruments: HashMap<String, Instrument>,
     current_date: Option<NaiveDate>,
-    market_config: ChinaMarketConfig,
-    active_market_type: MarketType,
+    market_config: MarketConfig,
     market_model: Box<dyn MarketModel>,
     execution_model: Box<dyn ExecutionClient>,
     equity_curve: Vec<(i64, Decimal)>,
@@ -62,17 +54,28 @@ pub struct Engine {
     #[pyo3(get, set)]
     pub risk_manager: RiskManager,
     timezone_offset: i32,
-    trade_tracker: TradeTracker,
     history_buffer: Arc<RwLock<HistoryBuffer>>,
-    // Event Bus
-    event_tx: Sender<Event>,
-    event_rx: Option<Mutex<Receiver<Event>>>,
     initial_capital: Decimal,
+    // Components
+    order_manager: OrderManager,
+    event_manager: EventManager,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl Engine {
+    /// 获取订单列表
+    #[getter]
+    fn get_orders(&self) -> Vec<Order> {
+        self.order_manager.get_all_orders()
+    }
+
+    /// 获取成交列表
+    #[getter]
+    fn get_trades(&self) -> Vec<Trade> {
+        self.order_manager.trades.clone()
+    }
+
     /// 设置风控配置
     ///
     /// 由于 PyO3 对嵌套结构体的属性访问可能返回副本，
@@ -88,8 +91,7 @@ impl Engine {
     /// :return: Engine 实例
     #[new]
     fn new() -> Self {
-        let (tx, rx) = mpsc::channel();
-        let market_config = ChinaMarketConfig::default();
+        let market_config = MarketConfig::default();
         Engine {
             feed: DataFeed::new(),
             portfolio: Portfolio {
@@ -97,15 +99,11 @@ impl Engine {
                 positions: HashMap::new(),
                 available_positions: HashMap::new(),
             },
-            orders: Vec::new(),
-            trades: Vec::new(),
-            current_step_trades: Vec::new(),
             last_prices: HashMap::new(),
             instruments: HashMap::new(),
             current_date: None,
             market_config: market_config.clone(),
-            active_market_type: MarketType::China,
-            market_model: Box::new(ChinaMarket::from_config(market_config)),
+            market_model: market_config.create_model(),
             execution_model: Box::new(SimulatedExecutionClient::new()),
             equity_curve: Vec::new(),
             cash_curve: Vec::new(),
@@ -116,11 +114,10 @@ impl Engine {
             force_session_continuous: false,
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8
-            trade_tracker: TradeTracker::new(),
             history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(10000))), // Default large capacity for MAE/MFE
-            event_tx: tx,
-            event_rx: Some(Mutex::new(rx)),
             initial_capital: Decimal::from(100_000),
+            order_manager: OrderManager::new(),
+            event_manager: EventManager::new(),
         }
     }
 
@@ -165,16 +162,16 @@ impl Engine {
     ///
     /// :param commission_rate: 佣金率
     fn use_simple_market(&mut self, commission_rate: f64) {
-        self.active_market_type = MarketType::Simple;
         let mut config = crate::market::SimpleMarketConfig::default();
         config.commission_rate = Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
-        self.market_model = Box::new(SimpleMarket::from_config(config));
+        self.market_config = MarketConfig::Simple(config);
+        self.market_model = self.market_config.create_model();
     }
 
     /// 启用 ChinaMarket (支持 T+1/T+0, 印花税, 过户费, 交易时段等)
     fn use_china_market(&mut self) {
-        self.active_market_type = MarketType::China;
-        self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
+        self.market_config = MarketConfig::China(ChinaMarketConfig::default());
+        self.market_model = self.market_config.create_model();
     }
 
     /// 启用中国期货市场默认配置
@@ -182,9 +179,10 @@ impl Engine {
     /// - 设置 T+0
     /// - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
     fn use_china_futures_market(&mut self) {
-        self.active_market_type = MarketType::China;
-        self.market_config.t_plus_one = false;
-        self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
+        let mut config = ChinaMarketConfig::default();
+        config.t_plus_one = false;
+        self.market_config = MarketConfig::China(config);
+        self.market_model = self.market_config.create_model();
     }
 
     /// 启用/禁用 T+1 交易规则 (仅针对 ChinaMarket)
@@ -192,16 +190,25 @@ impl Engine {
     /// :param enabled: 是否启用 T+1
     /// :type enabled: bool
     fn set_t_plus_one(&mut self, enabled: bool) {
-        self.market_config.t_plus_one = enabled;
-        if self.active_market_type == MarketType::China {
-            self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
+        if let MarketConfig::China(ref mut c) = self.market_config {
+            c.t_plus_one = enabled;
+            self.market_model = self.market_config.create_model();
         }
     }
 
+    /// 强制连续交易时段
+    ///
+    /// :param enabled: 是否强制连续交易 (忽略午休等)
     fn set_force_session_continuous(&mut self, enabled: bool) {
         self.force_session_continuous = enabled;
     }
 
+    /// 设置股票费率规则
+    ///
+    /// :param commission_rate: 佣金率 (如 0.0003)
+    /// :param stamp_tax: 印花税率 (如 0.001)
+    /// :param transfer_fee: 过户费率 (如 0.00002)
+    /// :param min_commission: 最低佣金 (如 5.0)
     fn set_stock_fee_rules(
         &mut self,
         commission_rate: f64,
@@ -209,55 +216,62 @@ impl Engine {
         transfer_fee: f64,
         min_commission: f64,
     ) {
-        self.market_config.stock_commission_rate =
-            Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
-        self.market_config.stock_stamp_tax = Decimal::from_f64(stamp_tax).unwrap_or(Decimal::ZERO);
-        self.market_config.stock_transfer_fee =
-            Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO);
-        self.market_config.stock_min_commission =
-            Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO);
-
-        match self.active_market_type {
-            MarketType::China => {
-                self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
-            },
-            MarketType::Simple => {
-                let config = crate::market::SimpleMarketConfig {
-                    commission_rate: Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO),
-                    stamp_tax: Decimal::from_f64(stamp_tax).unwrap_or(Decimal::ZERO),
-                    transfer_fee: Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO),
-                    min_commission: Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO),
-                };
-                self.market_model = Box::new(SimpleMarket::from_config(config));
+        match &mut self.market_config {
+            MarketConfig::China(c) => {
+                c.stock_commission_rate =
+                    Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
+                c.stock_stamp_tax = Decimal::from_f64(stamp_tax).unwrap_or(Decimal::ZERO);
+                c.stock_transfer_fee =
+                    Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO);
+                c.stock_min_commission =
+                    Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO);
+            }
+            MarketConfig::Simple(c) => {
+                c.commission_rate = Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
+                c.stamp_tax = Decimal::from_f64(stamp_tax).unwrap_or(Decimal::ZERO);
+                c.transfer_fee = Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO);
+                c.min_commission = Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO);
             }
         }
+        self.market_model = self.market_config.create_model();
     }
 
+    /// 设置期货费率规则
+    ///
+    /// :param commission_rate: 佣金率 (如 0.0001)
     fn set_future_fee_rules(&mut self, commission_rate: f64) {
-        self.market_config.future_commission_rate =
-            Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
-        if self.active_market_type == MarketType::China {
-            self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
+        if let MarketConfig::China(ref mut c) = self.market_config {
+            c.future_commission_rate =
+                Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
+            self.market_model = self.market_config.create_model();
         }
     }
 
+    /// 设置基金费率规则
+    ///
+    /// :param commission_rate: 佣金率
+    /// :param transfer_fee: 过户费率
+    /// :param min_commission: 最低佣金
     fn set_fund_fee_rules(&mut self, commission_rate: f64, transfer_fee: f64, min_commission: f64) {
-        self.market_config.fund_commission_rate =
-            Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
-        self.market_config.fund_transfer_fee =
-            Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO);
-        self.market_config.fund_min_commission =
-            Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO);
-        if self.active_market_type == MarketType::China {
-            self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
+        if let MarketConfig::China(ref mut c) = self.market_config {
+            c.fund_commission_rate =
+                Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
+            c.fund_transfer_fee =
+                Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO);
+            c.fund_min_commission =
+                Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO);
+            self.market_model = self.market_config.create_model();
         }
     }
 
+    /// 设置期权费率规则
+    ///
+    /// :param commission_per_contract: 每张合约佣金 (如 5.0)
     fn set_option_fee_rules(&mut self, commission_per_contract: f64) {
-        self.market_config.option_commission_per_contract =
-            Decimal::from_f64(commission_per_contract).unwrap_or(Decimal::ZERO);
-        if self.active_market_type == MarketType::China {
-            self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
+        if let MarketConfig::China(ref mut c) = self.market_config {
+            c.option_commission_per_contract =
+                Decimal::from_f64(commission_per_contract).unwrap_or(Decimal::ZERO);
+            self.market_model = self.market_config.create_model();
         }
     }
 
@@ -296,6 +310,17 @@ impl Engine {
         self.execution_model.set_volume_limit(limit);
     }
 
+    /// 设置市场交易时段
+    ///
+    /// :param sessions: 交易时段列表，每个元素为 (开始时间, 结束时间, 时段类型)
+    /// :type sessions: List[Tuple[str, str, TradingSession]]
+    ///
+    /// 示例::
+    ///
+    ///     engine.set_market_sessions([
+    ///         ("09:30:00", "11:30:00", TradingSession.Normal),
+    ///         ("13:00:00", "15:00:00", TradingSession.Normal)
+    ///     ])
     fn set_market_sessions(
         &mut self,
         sessions: Vec<(String, String, TradingSession)>,
@@ -310,9 +335,9 @@ impl Engine {
                 session,
             });
         }
-        self.market_config.sessions = ranges;
-        if self.active_market_type == MarketType::China {
-            self.market_model = Box::new(ChinaMarket::from_config(self.market_config.clone()));
+        if let MarketConfig::China(ref mut c) = self.market_config {
+            c.sessions = ranges;
+            self.market_model = self.market_config.create_model();
         }
         Ok(())
     }
@@ -376,19 +401,9 @@ impl Engine {
 
         // Trigger Strategy on_start
         if let Err(e) = strategy.call_method0("on_start") {
-            // It's okay if it fails or doesn't exist (though base class has it),
-            // but strictly we might want to log it.
-            // However, for now, we just propagate error if it's a real error,
-            // or ignore if it's just missing method (which shouldn't happen with base class).
-            // Given PyO3, call_method0 returns Result.
-            // If we want to be safe:
-            // println!("Warning: Failed to call on_start: {}", e);
-            // But let's just propagate (?) or ignore.
-            // Best to just call it and propagate error, as it SHOULD exist.
             return Err(e);
         }
 
-        let mut pending_orders: Vec<Order> = Vec::new();
         let mut count = 0;
         let mut last_timestamp = 0;
         let mut bar_index = 0;
@@ -434,116 +449,108 @@ impl Engine {
             // -----------------------------------------------------------
             // 0. Process Channel Events (High Priority)
             // -----------------------------------------------------------
-            // We drain the channel to ensure all async events (e.g. from Realtime Broker or Risk) are processed
-            // before moving to the next time step.
             let mut trades_to_process = Vec::new();
-            if let Some(rx_mutex) = &self.event_rx {
-                if let Ok(rx) = rx_mutex.lock() {
-                    while let Ok(event) = rx.try_recv() {
-                        match event {
-                            Event::OrderRequest(mut order) => {
-                                // 1. Risk Check
-                                if let Some(err) = self.risk_manager.check_internal(
-                                    &order,
-                                    &self.portfolio,
-                                    &self.instruments,
-                                    &pending_orders,
-                                    &self.last_prices,
-                                ) {
-                                    let mut handled = false;
-                                    // Check for insufficient cash to attempt auto-reduction
-                                    if err.contains("Insufficient cash") && order.side == crate::model::OrderSide::Buy {
-                                        if let Some(instr) = self.instruments.get(&order.symbol) {
-                                            // Get price (Limit or Last)
-                                            let price = if let Some(p) = order.price {
-                                                p
-                                            } else {
-                                                *self.last_prices.get(&order.symbol).unwrap_or(&Decimal::ZERO)
-                                            };
+            while let Some(event) = self.event_manager.try_recv() {
+                match event {
+                    Event::OrderRequest(mut order) => {
+                        // 1. Risk Check
+                        if let Err(err) = self.risk_manager.check_internal(
+                            &order,
+                            &self.portfolio,
+                            &self.instruments,
+                            &self.order_manager.active_orders,
+                            &self.last_prices,
+                        ) {
+                            let err_msg = err.to_string();
+                            let mut handled = false;
+                            // Check for insufficient cash to attempt auto-reduction
+                            if err_msg.contains("Insufficient cash")
+                                && order.side == crate::model::OrderSide::Buy
+                            {
+                                if let Some(instr) = self.instruments.get(&order.symbol) {
+                                    // Get price (Limit or Last)
+                                    let price = if let Some(p) = order.price {
+                                        p
+                                    } else {
+                                        *self
+                                            .last_prices
+                                            .get(&order.symbol)
+                                            .unwrap_or(&Decimal::ZERO)
+                                    };
 
-                                            if price > Decimal::ZERO {
-                                                let multiplier = instr.multiplier;
-                                                let cost_per_unit = price * multiplier * instr.margin_ratio;
-                                                if cost_per_unit > Decimal::ZERO {
-                                                    let max_qty_raw = self.portfolio.cash / cost_per_unit;
-                                                    // Buffer for commission (e.g. 1%)
-                                                    let max_qty_raw = max_qty_raw * Decimal::from_f64(0.9999).unwrap();
+                                    if price > Decimal::ZERO {
+                                        let multiplier = instr.multiplier;
+                                        let cost_per_unit = price * multiplier * instr.margin_ratio;
+                                        if cost_per_unit > Decimal::ZERO {
+                                            let max_qty_raw = self.portfolio.cash / cost_per_unit;
+                                            // Buffer for commission (e.g. 1%)
+                                            let max_qty_raw =
+                                                max_qty_raw * Decimal::from_f64(0.9999).unwrap();
 
-                                                    let lot_size = instr.lot_size;
-                                                    let mut new_qty = max_qty_raw.floor();
-                                                    if lot_size > Decimal::ZERO {
-                                                        new_qty = new_qty - (new_qty % lot_size);
-                                                    }
+                                            let lot_size = instr.lot_size;
+                                            let mut new_qty = max_qty_raw.floor();
+                                            if lot_size > Decimal::ZERO {
+                                                new_qty = new_qty - (new_qty % lot_size);
+                                            }
 
-                                                    if new_qty > Decimal::ZERO && new_qty < order.quantity {
-                                                        // println!("Insufficient cash. Auto-reducing quantity from {} to {}", order.quantity, new_qty);
-                                                        order.quantity = new_qty;
-                                                        handled = true;
-                                                        // Send as Validated (assuming it passes now)
-                                                        let _ = self.event_tx.send(Event::OrderValidated(order.clone()));
-                                                    }
-                                                }
+                                            if new_qty > Decimal::ZERO && new_qty < order.quantity {
+                                                order.quantity = new_qty;
+                                                handled = true;
+                                                // Send as Validated (assuming it passes now)
+                                                let _ = self
+                                                    .event_manager
+                                                    .send(Event::OrderValidated(order.clone()));
                                             }
                                         }
                                     }
+                                }
+                            }
 
-                                    if !handled {
-                                        // Reject
-                                        // println!("Risk Reject: {}", err);
-                                        order.status = OrderStatus::Rejected;
-                                        order.reject_reason = err;
-                                        if let Some(ts) = self.clock.timestamp() {
-                                            order.updated_at = ts;
-                                        }
-                                        // Directly process rejection report
-                                        let report = Event::ExecutionReport(order, None);
-                                        let _ = self.event_tx.send(report);
-                                    }
-                                } else {
-                                    // Validate -> Send to Execution
-                                    let _ = self.event_tx.send(Event::OrderValidated(order));
+                            if !handled {
+                                // Reject
+                                order.status = OrderStatus::Rejected;
+                                order.reject_reason = err_msg;
+                                if let Some(ts) = self.clock.timestamp() {
+                                    order.updated_at = ts;
                                 }
+                                // Directly process rejection report
+                                let report = Event::ExecutionReport(order, None);
+                                let _ = self.event_manager.send(report);
                             }
-                            Event::OrderValidated(order) => {
-                                // 2. Send to Execution Client
-                                self.execution_model.on_order(order.clone());
-                                // Add to local pending (Strategy View)
-                                pending_orders.push(order);
-                            }
-                            Event::ExecutionReport(order, trade) => {
-                                // 3. Update Order State
-                                // println!("DEBUG: Received ExecutionReport: OrderID={} Status={:?} Trade={:?}", order.id, order.status, trade.is_some());
-                                if let Some(existing) =
-                                    pending_orders.iter_mut().find(|o| o.id == order.id)
-                                {
-                                    existing.status = order.status;
-                                    existing.filled_quantity = order.filled_quantity;
-                                    existing.average_filled_price = order.average_filled_price;
-                                    existing.updated_at = order.updated_at;
-                                    existing.reject_reason = order.reject_reason.clone();
-                                } else {
-                                    // Might be a new order from a source we didn't track yet?
-                                    // Or we missed the Validated event?
-                                    // In strict flow, we should have seen Validated.
-                                    // But if Rejected immediately, we might not have it in pending_orders yet?
-                                    // If Rejected was sent via ExecutionReport, we should add it to pending so we can move it to history.
-                                    if order.status == OrderStatus::Rejected {
-                                        pending_orders.push(order.clone());
-                                    }
-                                }
-
-                                // 4. Process Trade (if any)
-                                if let Some(t) = trade {
-                                    trades_to_process.push(t);
-                                }
-                            }
-                            _ => {}
+                        } else {
+                            // Validate -> Send to Execution
+                            let _ = self.event_manager.send(Event::OrderValidated(order));
                         }
                     }
+                    Event::OrderValidated(order) => {
+                        // 2. Send to Execution Client
+                        self.execution_model.on_order(order.clone());
+                        // Add to local active (Strategy View)
+                        self.order_manager.add_active_order(order);
+                    }
+                    Event::ExecutionReport(order, trade) => {
+                        // 3. Update Order State
+                        self.order_manager.on_execution_report(order);
+
+                        // 4. Process Trade (if any)
+                        if let Some(t) = trade {
+                            trades_to_process.push(t);
+                        }
+                    }
+                    _ => {}
                 }
             }
+
             if !trades_to_process.is_empty() {
-                self.process_trades(trades_to_process, &mut pending_orders);
+                self.order_manager.process_trades(
+                    trades_to_process,
+                    &mut self.portfolio,
+                    &self.instruments,
+                    self.market_model.as_ref(),
+                    &self.risk_manager,
+                    &self.history_buffer,
+                    &self.last_prices,
+                );
             }
 
             // -----------------------------------------------------------
@@ -618,15 +625,14 @@ impl Engine {
 
                     // Strategy on_timer
                     let (new_orders, new_timers, canceled_ids) =
-                        self.call_strategy_timer(strategy, &timer.payload, &pending_orders)?;
+                        self.call_strategy_timer(strategy, &timer.payload)?;
 
                     // Handle Strategy Output
                     for order_id in canceled_ids {
                         self.execution_model.on_cancel(&order_id);
                     }
                     for order in new_orders {
-                        // Push to Channel for processing
-                        let _ = self.event_tx.send(Event::OrderRequest(order));
+                        let _ = self.event_manager.send(Event::OrderRequest(order));
                     }
                     for t in new_timers {
                         self.timers.push(t);
@@ -654,7 +660,7 @@ impl Engine {
                 };
 
                 if last_timestamp != 0 && timestamp > last_timestamp {
-                    // Record High-Res Equity Curve (at the end of the previous timestamp step)
+                    // Record High-Res Equity Curve
                     let equity = self
                         .portfolio
                         .calculate_equity(&self.last_prices, &self.instruments);
@@ -675,9 +681,6 @@ impl Engine {
                 if self.current_date != Some(local_date) {
                     // Day Close Logic
                     if self.current_date.is_some() {
-                        // Equity Snapshot
-                        // let equity = self.portfolio.calculate_equity(&self.last_prices, &self.instruments);
-
                         // Position Snapshots
                         let snapshots = self.create_position_snapshots(last_timestamp);
                         self.snapshots.push((last_timestamp, snapshots));
@@ -690,32 +693,28 @@ impl Engine {
                         );
 
                         // Expire Day Orders
-                        // We need to tell ExecutionClient to cancel them?
-                        // Or ExecutionClient handles expiry?
                         // Simplified: Engine handles expiry for now by marking them.
                         // Ideally ExecutionClient checks time.
-                        // Let's manually expire in pending_orders and send Cancel to ExecutionClient?
-                        // No, just update status and let ExecutionClient sync via logic or on_cancel.
-                        // For Simulated, we can just leave it.
-                        // But let's stick to legacy behavior:
-                        let (expired, kept): (Vec<Order>, Vec<Order>) = pending_orders
-                            .into_iter()
+                        let (expired, kept): (Vec<Order>, Vec<Order>) = self
+                            .order_manager
+                            .active_orders
+                            .drain(..)
                             .partition(|o| o.time_in_force == TimeInForce::Day);
 
                         for mut o in expired {
                             o.status = OrderStatus::Expired;
-                            // self.execution_model.on_cancel(&o.id); // Or on_expire?
-                            self.orders.push(o);
+                            self.order_manager.orders.push(o);
                         }
-                        pending_orders = kept;
+                        self.order_manager.active_orders = kept;
                     }
                     self.current_date = Some(local_date);
                 }
 
                 match self.execution_mode {
-                    ExecutionMode::NextOpen | ExecutionMode::NextAverage | ExecutionMode::NextHighLowMid => {
+                    ExecutionMode::NextOpen
+                    | ExecutionMode::NextAverage
+                    | ExecutionMode::NextHighLowMid => {
                         // Phase 1: Execution (Match pending orders at Open or Average)
-                        // Pass event to ExecutionClient
                         let reports = self.execution_model.on_event(
                             &event,
                             &self.instruments,
@@ -724,197 +723,173 @@ impl Engine {
                             self.clock.session,
                         );
 
-                        // Process Reports
                         for report in reports {
-                            let _ = self.event_tx.send(report);
+                            let _ = self.event_manager.send(report);
                         }
 
                         // Drain Channel (Mini-Loop)
                         let mut trades_to_process = Vec::new();
-                        if let Some(rx_mutex) = &self.event_rx {
-                            if let Ok(rx) = rx_mutex.lock() {
-                                while let Ok(ev) = rx.try_recv() {
-                                    match ev {
-                                        Event::ExecutionReport(o, t) => {
-                                            if let Some(existing) =
-                                                pending_orders.iter_mut().find(|ex| ex.id == o.id)
-                                            {
-                                                existing.status = o.status;
-                                                existing.filled_quantity = o.filled_quantity;
-                                                existing.average_filled_price =
-                                                    o.average_filled_price;
-                                            }
-                                            if let Some(tr) = t {
-                                                trades_to_process.push(tr);
-                                            }
-                                        }
-                                        _ => {}
+                        while let Some(ev) = self.event_manager.try_recv() {
+                            match ev {
+                                Event::ExecutionReport(o, t) => {
+                                    self.order_manager.on_execution_report(o);
+                                    if let Some(tr) = t {
+                                        trades_to_process.push(tr);
                                     }
                                 }
+                                _ => {}
                             }
                         }
                         if !trades_to_process.is_empty() {
-                            self.process_trades(trades_to_process, &mut pending_orders);
+                            self.order_manager.process_trades(
+                                trades_to_process,
+                                &mut self.portfolio,
+                                &self.instruments,
+                                self.market_model.as_ref(),
+                                &self.risk_manager,
+                                &self.history_buffer,
+                                &self.last_prices,
+                            );
                         }
 
                         // Phase 2: Strategy
                         let (new_orders, new_timers, canceled_ids) =
-                            self.call_strategy(strategy, &event, &pending_orders)?;
+                            self.call_strategy(strategy, &event)?;
 
                         for id in canceled_ids {
                             self.execution_model.on_cancel(&id);
-                            // Also update local pending_orders to reflect cancellation immediately
-                            // This ensures RiskManager sees the freed cash for subsequent orders in this step
-                            if let Some(o) = pending_orders.iter_mut().find(|o| o.id == id) {
+                            if let Some(o) =
+                                self.order_manager.active_orders.iter_mut().find(|o| o.id == id)
+                            {
                                 o.status = OrderStatus::Cancelled;
                             }
                         }
                         for order in new_orders {
-                            let _ = self.event_tx.send(Event::OrderRequest(order));
+                            let _ = self.event_manager.send(Event::OrderRequest(order));
                         }
                         for t in new_timers {
                             self.timers.push(t);
                         }
 
-                        // Phase 3: Process New Order Requests (but do not execute yet)
-                        // This moves orders from Channel -> pending_orders -> ExecutionClient
+                        // Phase 3: Process New Order Requests
                         let mut trades_to_process = Vec::new();
-                        if let Some(rx_mutex) = &self.event_rx {
-                            if let Ok(rx) = rx_mutex.lock() {
-                                while let Ok(ev) = rx.try_recv() {
-                                    match ev {
-                                        Event::OrderRequest(mut o) => {
-                                            if let Some(err) = self.risk_manager.check_internal(
-                                                &o,
-                                                &self.portfolio,
-                                                &self.instruments,
-                                                &pending_orders,
-                                                &self.last_prices,
-                                            ) {
-                                                // println!("Risk Reject: {}", err);
-                                                o.status = OrderStatus::Rejected;
-                                                o.reject_reason = err;
-                                                if let Some(ts) = self.clock.timestamp() {
-                                                    o.updated_at = ts;
-                                                }
-                                                // We don't send ExecutionReport for rejection here in Next* mode?
-                                                // Actually we should, to keep consistency.
-                                                // But mostly we just add to pending_orders as Rejected?
-                                                pending_orders.push(o);
-                                            } else {
-                                                // Order Validated, set created_at here if 0 (strategy didn't set it correctly or wants engine time)
-                                                if o.created_at == 0 {
-                                                    if let Some(ts) = self.clock.timestamp() {
-                                                        o.created_at = ts;
-                                                    }
-                                                }
-                                                let _ =
-                                                    self.event_tx.send(Event::OrderValidated(o));
+                        while let Some(ev) = self.event_manager.try_recv() {
+                            match ev {
+                                Event::OrderRequest(mut o) => {
+                                    if let Err(err) = self.risk_manager.check_internal(
+                                        &o,
+                                        &self.portfolio,
+                                        &self.instruments,
+                                        &self.order_manager.active_orders,
+                                        &self.last_prices,
+                                    ) {
+                                        o.status = OrderStatus::Rejected;
+                                        o.reject_reason = err.to_string();
+                                        if let Some(ts) = self.clock.timestamp() {
+                                            o.updated_at = ts;
+                                        }
+                                        self.order_manager.add_active_order(o);
+                                    } else {
+                                        if o.created_at == 0 {
+                                            if let Some(ts) = self.clock.timestamp() {
+                                                o.created_at = ts;
                                             }
                                         }
-                                        Event::OrderValidated(o) => {
-                                            self.execution_model.on_order(o.clone());
-                                            pending_orders.push(o);
-                                        }
-                                        Event::ExecutionReport(o, t) => {
-                                            // Should not happen here usually, but just in case
-                                            if let Some(ex) =
-                                                pending_orders.iter_mut().find(|x| x.id == o.id)
-                                            {
-                                                ex.status = o.status;
-                                                ex.filled_quantity = o.filled_quantity;
-                                                ex.average_filled_price = o.average_filled_price;
-                                                ex.updated_at = o.updated_at;
-                                                ex.reject_reason = o.reject_reason.clone();
-                                            }
-                                            if let Some(tr) = t {
-                                                trades_to_process.push(tr);
-                                            }
-                                        }
-                                        _ => {}
+                                        let _ = self.event_manager.send(Event::OrderValidated(o));
                                     }
                                 }
+                                Event::OrderValidated(o) => {
+                                    self.execution_model.on_order(o.clone());
+                                    self.order_manager.add_active_order(o);
+                                }
+                                Event::ExecutionReport(o, t) => {
+                                    self.order_manager.on_execution_report(o);
+                                    if let Some(tr) = t {
+                                        trades_to_process.push(tr);
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                         if !trades_to_process.is_empty() {
-                            self.process_trades(trades_to_process, &mut pending_orders);
+                            self.order_manager.process_trades(
+                                trades_to_process,
+                                &mut self.portfolio,
+                                &self.instruments,
+                                self.market_model.as_ref(),
+                                &self.risk_manager,
+                                &self.history_buffer,
+                                &self.last_prices,
+                            );
                         }
                     }
                     ExecutionMode::CurrentClose => {
                         // Phase 1: Strategy
                         let (new_orders, new_timers, canceled_ids) =
-                            self.call_strategy(strategy, &event, &pending_orders)?;
+                            self.call_strategy(strategy, &event)?;
 
                         for id in canceled_ids {
                             self.execution_model.on_cancel(&id);
                         }
                         for order in new_orders {
-                            let _ = self.event_tx.send(Event::OrderRequest(order));
+                            let _ = self.event_manager.send(Event::OrderRequest(order));
                         }
                         for t in new_timers {
                             self.timers.push(t);
                         }
 
-                        // Drain channel to process OrderRequests -> OrderValidated -> ExecutionClient
-                        // This allows orders generated at "Close" to be matched immediately at "Close" (if supported)
+                        // Drain channel
                         let mut trades_to_process = Vec::new();
-                        if let Some(rx_mutex) = &self.event_rx {
-                            if let Ok(rx) = rx_mutex.lock() {
-                                while let Ok(ev) = rx.try_recv() {
-                                    match ev {
-                                        Event::OrderRequest(mut o) => {
-                                            if let Some(err) = self.risk_manager.check_internal(
-                                                &o,
-                                                &self.portfolio,
-                                                &self.instruments,
-                                                &pending_orders,
-                                                &self.last_prices,
-                                            ) {
-                                                println!("Risk Reject: {}", err);
-                                                o.status = OrderStatus::Rejected;
-                                                o.reject_reason = err;
-                                                if let Some(ts) = self.clock.timestamp() {
-                                                    o.updated_at = ts;
-                                                }
-                                                let _ = self
-                                                    .event_tx
-                                                    .send(Event::ExecutionReport(o, None));
-                                            } else {
-                                                // Order Validated, set created_at here if 0
-                                                if o.created_at == 0 {
-                                                    if let Some(ts) = self.clock.timestamp() {
-                                                        o.created_at = ts;
-                                                    }
-                                                }
-                                                let _ =
-                                                    self.event_tx.send(Event::OrderValidated(o));
+                        while let Some(ev) = self.event_manager.try_recv() {
+                            match ev {
+                                Event::OrderRequest(mut o) => {
+                                    if let Err(err) = self.risk_manager.check_internal(
+                                        &o,
+                                        &self.portfolio,
+                                        &self.instruments,
+                                        &self.order_manager.active_orders,
+                                        &self.last_prices,
+                                    ) {
+                                        o.status = OrderStatus::Rejected;
+                                        o.reject_reason = err.to_string();
+                                        if let Some(ts) = self.clock.timestamp() {
+                                            o.updated_at = ts;
+                                        }
+                                        let _ = self
+                                            .event_manager
+                                            .send(Event::ExecutionReport(o, None));
+                                    } else {
+                                        if o.created_at == 0 {
+                                            if let Some(ts) = self.clock.timestamp() {
+                                                o.created_at = ts;
                                             }
                                         }
-                                        Event::OrderValidated(o) => {
-                                            self.execution_model.on_order(o.clone());
-                                            pending_orders.push(o);
-                                        }
-                                        Event::ExecutionReport(o, t) => {
-                                            if let Some(ex) =
-                                                pending_orders.iter_mut().find(|x| x.id == o.id)
-                                            {
-                                                ex.status = o.status;
-                                                ex.filled_quantity = o.filled_quantity;
-                                                ex.average_filled_price = o.average_filled_price;
-                                            } else if o.status == OrderStatus::Rejected {
-                                                pending_orders.push(o);
-                                            }
-                                            if let Some(tr) = t {
-                                                trades_to_process.push(tr);
-                                            }
-                                        }
-                                        _ => {}
+                                        let _ = self.event_manager.send(Event::OrderValidated(o));
                                     }
                                 }
+                                Event::OrderValidated(o) => {
+                                    self.execution_model.on_order(o.clone());
+                                    self.order_manager.add_active_order(o);
+                                }
+                                Event::ExecutionReport(o, t) => {
+                                    self.order_manager.on_execution_report(o);
+                                    if let Some(tr) = t {
+                                        trades_to_process.push(tr);
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                         if !trades_to_process.is_empty() {
-                            self.process_trades(trades_to_process, &mut pending_orders);
+                            self.order_manager.process_trades(
+                                trades_to_process,
+                                &mut self.portfolio,
+                                &self.instruments,
+                                self.market_model.as_ref(),
+                                &self.risk_manager,
+                                &self.history_buffer,
+                                &self.last_prices,
+                            );
                         }
 
                         // Phase 2: Execution (Match new orders at Close)
@@ -926,22 +901,13 @@ impl Engine {
                             self.clock.session,
                         );
                         for report in reports {
-                            let _ = self.event_tx.send(report);
+                            let _ = self.event_manager.send(report);
                         }
                     }
                 }
 
                 // Cleanup finished orders
-                let (finished, active): (Vec<Order>, Vec<Order>) =
-                    pending_orders.into_iter().partition(|o| {
-                        o.status == OrderStatus::Filled
-                            || o.status == OrderStatus::Cancelled
-                            || o.status == OrderStatus::Expired
-                            || o.status == OrderStatus::Rejected
-                    });
-
-                self.orders.extend(finished);
-                pending_orders = active;
+                self.order_manager.cleanup_finished_orders();
 
                 last_timestamp = timestamp;
             }
@@ -955,7 +921,9 @@ impl Engine {
 
             self.equity_curve.push((last_timestamp, equity));
         }
-        self.orders.extend(pending_orders);
+
+        // Final cleanup
+        self.order_manager.cleanup_finished_orders();
 
         if let Some(pb) = pb {
             pb.finish_with_message("Backtest completed");
@@ -964,7 +932,7 @@ impl Engine {
         Ok(format!(
             "Backtest finished. Processed {} events. Total Trades: {}",
             count,
-            self.trades.len()
+            self.order_manager.trades.len()
         ))
     }
 
@@ -973,9 +941,10 @@ impl Engine {
     /// :return: BacktestResult
     fn get_results(&self) -> BacktestResult {
         let trade_pnl = self
+            .order_manager
             .trade_tracker
             .calculate_pnl(Some(self.last_prices.clone()));
-        let closed_trades = self.trade_tracker.closed_trades.to_vec();
+        let closed_trades = self.order_manager.trade_tracker.closed_trades.to_vec();
 
         // Clone equity curve and append current state (Mark-to-Market)
         // This ensures that we have the latest equity point even if the run loop was interrupted
@@ -1012,8 +981,8 @@ impl Engine {
             trade_pnl,
             closed_trades,
             self.initial_capital,
-            self.orders.clone(),
-            self.trades.clone(),
+            self.order_manager.get_all_orders(),
+            self.order_manager.trades.clone(),
         )
     }
 
@@ -1030,10 +999,10 @@ impl Engine {
             self.clock.session,
             self.clock.timestamp().unwrap_or(0),
             active_orders,
-            self.trade_tracker.closed_trades.clone(),
+            self.order_manager.trade_tracker.closed_trades.clone(),
             step_trades,
             Some(self.history_buffer.clone()),
-            Some(self.event_tx.clone()),
+            Some(self.event_manager.sender()),
             self.risk_manager.config.clone(),
         )
     }
@@ -1097,11 +1066,12 @@ impl Engine {
             let margin_f64 = margin_dec.to_f64().unwrap_or(0.0);
 
             let unrealized_pnl = self
+                .order_manager
                 .trade_tracker
                 .get_unrealized_pnl(symbol, price, multiplier);
             let unrealized_pnl_f64 = unrealized_pnl.to_f64().unwrap_or(0.0);
 
-            let entry_price = self.trade_tracker.get_average_price(symbol);
+            let entry_price = self.order_manager.trade_tracker.get_average_price(symbol);
             let entry_price_f64 = entry_price.to_f64().unwrap_or(0.0);
 
             snapshots.push(PositionSnapshot {
@@ -1133,169 +1103,17 @@ impl Engine {
         )))
     }
 
-    fn process_trades(&mut self, mut trades: Vec<Trade>, pending_orders: &mut Vec<Order>) {
-        // 1. Adjust trades for insufficient cash (Dynamic Position Sizing)
-        for trade in trades.iter_mut() {
-            if trade.side == crate::model::OrderSide::Buy {
-                // Calculate estimated commission for the full trade first
-                let instr_opt = self.instruments.get(&trade.symbol);
-                let mut commission = Decimal::ZERO;
-                if let Some(instr) = instr_opt {
-                    commission = self.market_model.calculate_commission(
-                        instr,
-                        trade.side,
-                        trade.price,
-                        trade.quantity,
-                    );
-                }
-
-                let multiplier = instr_opt.map(|i| i.multiplier).unwrap_or(Decimal::ONE);
-                let cost = trade.price * trade.quantity * multiplier;
-                let total_required = cost + commission;
-
-                if total_required > self.portfolio.cash {
-                    // Insufficient cash, reduce quantity
-                    let mut ratio = if total_required > Decimal::ZERO {
-                        self.portfolio.cash / total_required
-                    } else {
-                        Decimal::ZERO
-                    };
-
-                    if ratio < Decimal::ZERO {
-                        ratio = Decimal::ZERO;
-                    }
-
-                    // Apply ratio and round down to lot size
-                    // Use configurable safety factor to avoid rounding issues causing rejection
-                    let safety_margin = self.risk_manager.config.safety_margin;
-                    let safety_factor = Decimal::from_f64(1.0 - safety_margin).unwrap_or(Decimal::from_f64(0.9999).unwrap());
-                    ratio = ratio * safety_factor;
-
-                    let lot_size = instr_opt.map(|i| i.lot_size).unwrap_or(Decimal::ONE);
-                    let mut new_qty = (trade.quantity * ratio).floor();
-                    new_qty = new_qty - (new_qty % lot_size);
-
-                    // Recalculate to ensure it fits (handling min commission etc)
-                    if let Some(instr) = instr_opt {
-                        let new_comm = self.market_model.calculate_commission(
-                            instr,
-                            trade.side,
-                            trade.price,
-                            new_qty,
-                        );
-                        let new_cost = trade.price * new_qty * multiplier;
-                        if new_cost + new_comm > self.portfolio.cash {
-                            // Still too high, reduce by one lot
-                            if new_qty >= lot_size {
-                                new_qty -= lot_size;
-                            } else {
-                                new_qty = Decimal::ZERO;
-                            }
-                        }
-                    }
-
-                    // Update trade quantity (we will update commission in the next loop)
-                    // We store the diff to update order later?
-                    // No, we just update trade here.
-                    // But we need to know we changed it.
-                    // Actually, the next loop handles commission calc again.
-                    // But we need to handle Order update logic carefully.
-                    // Let's store the original quantity in the trade? No field.
-                    // We can check if trade.quantity changed in the second loop?
-                    // No, let's just do it here.
-
-                    if new_qty < trade.quantity {
-                         let diff = trade.quantity - new_qty;
-                         // Update Order filled quantity NOW to keep consistency
-                         if let Some(order) = pending_orders.iter_mut().find(|o| o.id == trade.order_id) {
-                             order.filled_quantity -= diff;
-                             if order.filled_quantity < order.quantity {
-                                 order.status = OrderStatus::Submitted;
-                             }
-                         }
-                         trade.quantity = new_qty;
-                    }
-                }
-            }
-        }
-
-        // Add to current step trades for strategy notification
-        self.current_step_trades.extend(trades.iter().cloned());
-
-        for mut trade in trades {
-            if trade.quantity <= Decimal::ZERO {
-                continue;
-            }
-
-            // Calculate Commission (Final)
-            if let Some(instr) = self.instruments.get(&trade.symbol) {
-                trade.commission = self.market_model.calculate_commission(
-                    instr,
-                    trade.side,
-                    trade.price,
-                    trade.quantity,
-                );
-            }
-
-            // Update Portfolio
-            self.portfolio.adjust_cash(-trade.commission); // Deduct commission
-            match trade.side {
-                crate::model::OrderSide::Buy => {
-                    self.portfolio.adjust_cash(-trade.price * trade.quantity * self.instruments.get(&trade.symbol).map(|i| i.multiplier).unwrap_or(Decimal::ONE));
-                    self.portfolio
-                        .adjust_position(&trade.symbol, trade.quantity);
-                }
-                crate::model::OrderSide::Sell => {
-                    self.portfolio.adjust_cash(trade.price * trade.quantity * self.instruments.get(&trade.symbol).map(|i| i.multiplier).unwrap_or(Decimal::ONE));
-                    self.portfolio
-                        .adjust_position(&trade.symbol, -trade.quantity);
-                }
-            }
-
-            // Update Available Positions
-            if let Some(instr) = self.instruments.get(&trade.symbol) {
-                self.market_model.update_available_position(
-                    &mut self.portfolio.available_positions,
-                    instr,
-                    trade.quantity,
-                    trade.side,
-                );
-            }
-
-            // Update Order Commission
-            let mut order_tag = None;
-            if let Some(order) = pending_orders.iter_mut().find(|o| o.id == trade.order_id) {
-                order.commission += trade.commission;
-                order_tag = Some(order.tag.clone());
-            }
-
-            if order_tag.is_none() {
-                order_tag = self.orders.iter().find(|o| o.id == trade.order_id).map(|o| o.tag.clone());
-            }
-
-            let equity = self.portfolio.calculate_equity(&self.last_prices, &self.instruments);
-
-            {
-                let history_buffer = self.history_buffer.read().unwrap();
-                let history = history_buffer.get_history(&trade.symbol);
-                self.trade_tracker.process_trade(&trade, order_tag.as_deref(), history, equity);
-            }
-            self.trades.push(trade);
-        }
-    }
-
     fn call_strategy(
         &mut self,
         strategy: &Bound<'_, PyAny>,
         event: &Event,
-        active_orders: &[Order],
     ) -> PyResult<(Vec<Order>, Vec<Timer>, Vec<String>)> {
         // Update Last Price and Trigger Strategy
         match event {
             Event::Bar(b) => {
                 self.last_prices.insert(b.symbol.clone(), b.close);
-                let step_trades = std::mem::take(&mut self.current_step_trades);
-                let ctx = self.create_context(active_orders.to_vec(), step_trades);
+                let step_trades = std::mem::take(&mut self.order_manager.current_step_trades);
+                let ctx = self.create_context(self.order_manager.active_orders.clone(), step_trades);
                 let py_ctx = Python::attach(|py| {
                     let py_ctx = Py::new(py, ctx).unwrap();
                     let args = (b.clone(), py_ctx.clone_ref(py));
@@ -1317,8 +1135,8 @@ impl Engine {
             }
             Event::Tick(t) => {
                 self.last_prices.insert(t.symbol.clone(), t.price);
-                let step_trades = std::mem::take(&mut self.current_step_trades);
-                let ctx = self.create_context(active_orders.to_vec(), step_trades);
+                let step_trades = std::mem::take(&mut self.order_manager.current_step_trades);
+                let ctx = self.create_context(self.order_manager.active_orders.clone(), step_trades);
                 let py_ctx = Python::attach(|py| {
                     let py_ctx = Py::new(py, ctx).unwrap();
                     let args = (t.clone(), py_ctx.clone_ref(py));
@@ -1348,10 +1166,9 @@ impl Engine {
         &mut self,
         strategy: &Bound<'_, PyAny>,
         payload: &str,
-        active_orders: &[Order],
     ) -> PyResult<(Vec<Order>, Vec<Timer>, Vec<String>)> {
-        let step_trades = std::mem::take(&mut self.current_step_trades);
-        let ctx = self.create_context(active_orders.to_vec(), step_trades);
+        let step_trades = std::mem::take(&mut self.order_manager.current_step_trades);
+        let ctx = self.create_context(self.order_manager.active_orders.clone(), step_trades);
         let py_ctx = Python::attach(|py| {
             let py_ctx = Py::new(py, ctx).unwrap();
             // Call _on_timer_event in Python
@@ -1382,8 +1199,8 @@ mod tests {
     fn test_engine_new() {
         let engine = Engine::new();
         assert_eq!(engine.portfolio.cash, Decimal::from(100_000));
-        assert!(engine.orders.is_empty());
-        assert!(engine.trades.is_empty());
+        assert!(engine.order_manager.orders.is_empty());
+        assert!(engine.order_manager.trades.is_empty());
         assert_eq!(engine.execution_mode, ExecutionMode::NextOpen);
     }
 

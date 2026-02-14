@@ -104,8 +104,9 @@ def test_timer_registration() -> None:
             clean_call_args.append((int(ts.value), payload))
 
     assert (manual_ts, "manual_timer") in clean_call_args
-    assert (daily_ts_1, "daily_timer") in clean_call_args
-    assert (daily_ts_2, "daily_timer") in clean_call_args
+    # Updated to match new wrapped payload format: __daily__|14:55:00|daily_timer
+    assert (daily_ts_1, "__daily__|14:55:00|daily_timer") in clean_call_args
+    assert (daily_ts_2, "__daily__|14:55:00|daily_timer") in clean_call_args
 
 
 def test_indicator_autodiscovery() -> None:

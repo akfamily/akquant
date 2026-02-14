@@ -4,10 +4,27 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
 
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum MarketType {
-    China,
-    Simple,
+
+
+#[derive(Clone, Debug)]
+pub enum MarketConfig {
+    China(ChinaMarketConfig),
+    Simple(SimpleMarketConfig),
+}
+
+impl Default for MarketConfig {
+    fn default() -> Self {
+        MarketConfig::China(ChinaMarketConfig::default())
+    }
+}
+
+impl MarketConfig {
+    pub fn create_model(&self) -> Box<dyn MarketModel> {
+        match self {
+            MarketConfig::China(c) => Box::new(ChinaMarket::from_config(c.clone())),
+            MarketConfig::Simple(c) => Box::new(SimpleMarket::from_config(c.clone())),
+        }
+    }
 }
 
 /// 简单市场配置
@@ -107,14 +124,14 @@ impl MarketModel for SimpleMarket {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SessionRange {
     pub start: NaiveTime,
     pub end: NaiveTime,
     pub session: TradingSession,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ChinaMarketConfig {
     pub t_plus_one: bool,
     pub stock_commission_rate: Decimal,

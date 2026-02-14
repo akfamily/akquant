@@ -1,6 +1,6 @@
 import datetime as dt
 import logging
-from collections import defaultdict, deque
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
@@ -69,7 +69,9 @@ class Strategy:
     current_bar: Optional[Bar]
     current_tick: Optional[Tick]
     _history_depth: int
-    _bars_history: "defaultdict[str, deque[Bar]]"
+    # Rust maintains HistoryBuffer for indicator calculation.
+    # Python side accesses it via self.ctx.history() (efficient copy).
+    # No duplicate storage in Python.
     _indicators: List["Indicator"]
     _subscriptions: List[str]
     _last_prices: Dict[str, float]

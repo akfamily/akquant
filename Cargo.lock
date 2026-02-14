@@ -43,6 +43,7 @@ dependencies = [
  "rayon",
  "rust_decimal",
  "serde",
+ "thiserror",
  "uuid",
 ]
 

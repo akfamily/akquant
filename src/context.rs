@@ -86,6 +86,17 @@ impl StrategyContext {
 #[gen_stub_pymethods]
 #[pymethods]
 impl StrategyContext {
+    /// 从 Python 端创建 StrategyContext (通常由内部调用).
+    ///
+    /// :param cash: 初始资金
+    /// :param positions: 初始持仓 {symbol: quantity}
+    /// :param available_positions: 初始可用持仓 {symbol: quantity}
+    /// :param session: 当前交易时段
+    /// :param current_time: 当前时间戳 (纳秒)
+    /// :param active_orders: 当前活跃订单列表
+    /// :param closed_trades: 已平仓交易列表
+    /// :param recent_trades: 最近成交列表
+    /// :param risk_config: 风控配置
     #[new]
     pub fn py_new(
         cash: &Bound<'_, PyAny>,
@@ -147,16 +158,15 @@ impl StrategyContext {
                 }
 
                 let start = if len > count { len - count } else { 0 };
-                let data_slice = match field.as_str() {
-                    "open" => &history.opens[start..],
-                    "high" => &history.highs[start..],
-                    "low" => &history.lows[start..],
-                    "close" => &history.closes[start..],
-                    "volume" => &history.volumes[start..],
+                let py_array = match field.as_str() {
+                    "open" => PyArray1::from_iter(py, history.opens.iter().skip(start).cloned()),
+                    "high" => PyArray1::from_iter(py, history.highs.iter().skip(start).cloned()),
+                    "low" => PyArray1::from_iter(py, history.lows.iter().skip(start).cloned()),
+                    "close" => PyArray1::from_iter(py, history.closes.iter().skip(start).cloned()),
+                    "volume" => PyArray1::from_iter(py, history.volumes.iter().skip(start).cloned()),
                     _ => return Err(pyo3::exceptions::PyValueError::new_err("Invalid field")),
                 };
 
-                let py_array = PyArray1::from_slice(py, data_slice);
                 return Ok(Some(py_array));
             }
         }
@@ -217,6 +227,15 @@ impl StrategyContext {
         self.canceled_order_ids.push(order_id);
     }
 
+    /// 买入下单.
+    ///
+    /// :param symbol: 标的代码
+    /// :param quantity: 买入数量 (正数)
+    /// :param price: 限价 (可选, 默认为 Market 单)
+    /// :param time_in_force: 订单有效期 (可选, 默认 GTC)
+    /// :param trigger_price: 触发价格 (可选, 用于止损/止盈单)
+    /// :param tag: 订单标签 (可选)
+    /// :return: 订单 ID
     #[pyo3(signature = (symbol, quantity, price=None, time_in_force=None, trigger_price=None, tag=None))]
     fn buy(
         &mut self,
@@ -271,6 +290,15 @@ impl StrategyContext {
         Ok(id)
     }
 
+    /// 卖出下单.
+    ///
+    /// :param symbol: 标的代码
+    /// :param quantity: 卖出数量 (正数)
+    /// :param price: 限价 (可选, 默认为 Market 单)
+    /// :param time_in_force: 订单有效期 (可选, 默认 GTC)
+    /// :param trigger_price: 触发价格 (可选, 用于止损/止盈单)
+    /// :param tag: 订单标签 (可选)
+    /// :return: 订单 ID
     #[pyo3(signature = (symbol, quantity, price=None, time_in_force=None, trigger_price=None, tag=None))]
     fn sell(
         &mut self,
@@ -325,6 +353,10 @@ impl StrategyContext {
         Ok(id)
     }
 
+    /// 获取当前持仓数量.
+    ///
+    /// :param symbol: 标的代码
+    /// :return: 持仓数量 (Long为正, Short为负)
     fn get_position(&self, symbol: String) -> f64 {
         self.positions
             .get(&symbol)
@@ -333,6 +365,10 @@ impl StrategyContext {
             .unwrap_or_default()
     }
 
+    /// 获取当前可用持仓数量.
+    ///
+    /// :param symbol: 标的代码
+    /// :return: 可用持仓数量
     fn get_available_position(&self, symbol: String) -> f64 {
         self.available_positions
             .get(&symbol)
