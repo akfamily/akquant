@@ -1116,14 +1116,16 @@ def run_backtest(
     # 4.1 市场规则配置
     # 如果启用了 T+1，必须使用 ChinaMarket
     if t_plus_one:
+        # T+1 必须使用 ChinaMarket
         engine.use_china_market()
         engine.set_t_plus_one(True)
     else:
         # T+0 模式
-        # 使用 SimpleMarket (已支持印花税等费率)
+        # 使用 SimpleMarket (已支持印花税、过户费、最低佣金等完整费率规则)
         engine.use_simple_market(commission_rate)
 
     engine.set_force_session_continuous(True)
+    # 无论使用 SimpleMarket 还是 ChinaMarket，set_stock_fee_rules 都能正确配置费率
     engine.set_stock_fee_rules(
         commission_rate, stamp_tax_rate, transfer_fee_rate, min_commission
     )
