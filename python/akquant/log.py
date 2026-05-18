@@ -43,7 +43,7 @@ class Logger:
         self._logger.setLevel(level)
 
     def _sync_handlers(self) -> None:
-        """同步内部 handler 索引，移除已脱离 logger 的引用."""
+        """同步内部 handler 索引，移除已脱离 logger 的引用"""
         active_handlers = set(self._logger.handlers)
         stale_keys = [
             key
@@ -53,31 +53,51 @@ class Logger:
         for key in stale_keys:
             del self._handlers[key]
 
-    def enable_console(self, format_str: str = DEFAULT_FORMAT) -> None:
+    def _sync_logger_level(self) -> None:
+        """Set logger level to the minimum of all handler levels with explicit settings."""
+        explicit_levels = [
+            h.level for h in self._logger.handlers if h.level != logging.NOTSET
+        ]
+        if explicit_levels:
+            self._logger.setLevel(min(explicit_levels))
+
+    def enable_console(
+        self, format_str: str = DEFAULT_FORMAT, level: Optional[Union[str, int]] = None
+    ) -> None:
         r"""
-        启用控制台日志.
+        启用控制台日志
 
         :param format_str: 日志格式字符串
         :type format_str: str
+        :param level: 控制台独立的日志等级，为 None 时继承 logger 全局级别
+        :type level: str | int, optional
         """
         self._sync_handlers()
         if "console" in self._handlers:
+            if level is not None:
+                self._handlers["console"].setLevel(level)
             return
 
         handler = logging.StreamHandler(sys.stdout)
         handler.setFormatter(logging.Formatter(format_str, datefmt=DATE_FORMAT))
+        if level is not None:
+            handler.setLevel(level)
         self._logger.addHandler(handler)
         self._handlers["console"] = handler
 
     def disable_console(self) -> None:
-        r"""禁用控制台日志."""
+        r"""禁用控制台日志"""
         self._sync_handlers()
         if "console" in self._handlers:
             self._logger.removeHandler(self._handlers["console"])
             del self._handlers["console"]
 
     def enable_file(
-        self, filename: str, format_str: str = DEFAULT_FORMAT, mode: str = "a"
+        self,
+        filename: str,
+        format_str: str = DEFAULT_FORMAT,
+        mode: str = "a",
+        level: Optional[Union[str, int]] = None,
     ) -> None:
         r"""
         启用文件日志.
@@ -86,17 +106,22 @@ class Logger:
         :type filename: str
         :param format_str: 日志格式字符串
         :type format_str: str
-        :param mode: 文件打开模式 ('a' 追加 或 'w' 覆写)
+        :param mode: 文件打开模式 (''"'"'a''"'"' 追加 或 ''"'"'w''"'"' 覆盖)
         :type mode: str
+        :param level: 文件独立的日志等级，为 None 时继承 logger 全局级别
+        :type level: str | int, optional
         """
         self._sync_handlers()
-        # Remove existing file handler if path matches (simple check)
         key = f"file_{filename}"
         if key in self._handlers:
+            if level is not None:
+                self._handlers[key].setLevel(level)
             return
 
         handler = logging.FileHandler(filename, mode=mode, encoding="utf-8")
         handler.setFormatter(logging.Formatter(format_str, datefmt=DATE_FORMAT))
+        if level is not None:
+            handler.setLevel(level)
         self._logger.addHandler(handler)
         self._handlers[key] = handler
 
@@ -123,7 +148,11 @@ def set_log_level(level: Union[str, int]) -> None:
 
 
 def register_logger(
-    filename: Optional[str] = None, console: bool = True, level: str = "INFO"
+    filename: Optional[str] = None,
+    console: bool = True,
+    level: str = "INFO",
+    console_level: Optional[Union[str, int]] = None,
+    file_level: Optional[Union[str, int]] = None,
 ) -> None:
     r"""
     日志一体化配置.
@@ -134,16 +163,24 @@ def register_logger(
     :type console: bool
     :param level: 日志等级 ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
     :type level: str
+    :param console_level: 控制台独立日志等级，为 None 时使用 level
+    :type console_level: str | int, optional
+    :param file_level: 文件独立日志等级，为 None 时使用 level
+    :type file_level: str | int, optional
     """
     logger_manager = Logger._instance or Logger()
     Logger._instance = logger_manager
 
-    logger_manager.set_level(level.upper())
-
     if console:
-        logger_manager.enable_console()
+        logger_manager.enable_console(level=console_level)
     else:
         logger_manager.disable_console()
 
     if filename:
-        logger_manager.enable_file(filename)
+        logger_manager.enable_file(filename, level=file_level)
+
+    # Sync logger level to minimum of all explicitly-set handler levels.
+    # If no handler has an explicit level, use the global level parameter.
+    logger_manager._sync_logger_level()
+    if not any(h.level != logging.NOTSET for h in logger_manager._logger.handlers):
+        logger_manager.set_level(level.upper())
