@@ -212,6 +212,19 @@ def on_bar(self, bar):
     self.log("Insufficient funds", level=logging.WARNING)
 ```
 
+To configure separate log levels for console and file output, call `register_logger()` at startup:
+
+```python
+from akquant import register_logger
+
+# Console shows only WARNING+, file records DEBUG+ details
+register_logger(
+    filename="strategy.log",
+    console_level="WARNING",
+    file_level="DEBUG",
+)
+```
+
 ### 3.2 Data Access (Syntactic Sugar)
 
 The `Strategy` class provides properties for quick access to current Bar/Tick data:

@@ -348,6 +348,19 @@ def on_bar(self, bar):
     self.log("资金不足", level=logging.WARNING)
 ```
 
+如需分别配置控制台与文件的日志级别，可在启动时调用 `register_logger()`：
+
+```python
+from akquant import register_logger
+
+# 控制台仅显示 WARNING 及以上，文件记录 DEBUG 及以上的详细信号
+register_logger(
+    filename="strategy.log",
+    console_level="WARNING",
+    file_level="DEBUG",
+)
+```
+
 ### 3.2 便捷数据访问 (Data Access)
 
 为了减少代码冗余，`Strategy` 类提供了当前 Bar/Tick 数据的快捷访问属性：
