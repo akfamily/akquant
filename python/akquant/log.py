@@ -54,7 +54,7 @@ class Logger:
             del self._handlers[key]
 
     def _sync_logger_level(self) -> None:
-        """Set logger level to the minimum of all handler levels with explicit settings."""
+        """Set logger level to the minimum of all explicitly-set handler levels."""
         explicit_levels = [
             h.level for h in self._logger.handlers if h.level != logging.NOTSET
         ]
