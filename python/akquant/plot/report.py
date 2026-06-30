@@ -794,6 +794,12 @@ def _build_metrics_html(result: Any) -> str:
             "negative",
         ),
         (
+            "最大回撤金额 (Max DD Amount)",
+            _get_metric_value(result, metrics, "max_drawdown_value"),
+            _format_currency(_get_metric_value(result, metrics, "max_drawdown_value")),
+            "negative",
+        ),
+        (
             "波动率 (Volatility)",
             metrics.volatility,
             format_metric_value("volatility", metrics.volatility),
