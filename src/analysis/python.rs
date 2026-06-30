@@ -474,6 +474,7 @@ impl BacktestResult {
             "total_loss",
             "total_commission",
             "max_drawdown",
+            "max_drawdown_value",
             "max_drawdown_pct",
             "win_rate",
             "loss_rate",
@@ -562,6 +563,7 @@ impl BacktestResult {
         push_f64(t_metrics.total_profit);
         push_f64(t_metrics.total_loss);
         push_f64(t_metrics.total_commission);
+        push_f64(metrics.max_drawdown);
         push_f64(metrics.max_drawdown_value);
         push_f64(metrics.max_drawdown_pct);
         push_f64(t_metrics.win_rate);
