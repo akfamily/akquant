@@ -57,6 +57,10 @@ Under AKQuant's futures margin-account semantics, read `get_account()` and
   the way a spot buy does; cash mainly reflects fees and realized cash flows.
 - `equity`: account equity. `get_portfolio_value()` is aligned with this field.
 - `used_margin` / `margin`: margin currently in use.
+- `free_margin`: available margin (`equity - used_margin`), i.e. the amount
+  actually usable to open new positions. When an order is rejected for
+  insufficient margin, the `Available` value in the log refers to this field —
+  do not compare it against `cash`.
 - `notional_value`: current futures notional exposure.
 - `unrealized_pnl`: floating PnL marked with the latest price.
 - `market_value`: mainly a spot-style marked-value field and should not be read

@@ -224,6 +224,7 @@ rb_config = InstrumentConfig(
 - `cash`: 账户现金余额。开仓期货时不会像股票买入那样扣减全额名义本金，只会反映手续费、已实现盈亏等现金流。
 - `equity`: 账户权益，是期货保证金账户最重要的总资产口径；`get_portfolio_value()` 与它保持一致。
 - `used_margin` / `margin`: 当前已占用保证金。
+- `free_margin`: 可用保证金（`equity - used_margin`），即真正可用于新开仓的资金。下单因保证金不足被拒时，日志里的 `Available` 就是这个口径——不要拿 `cash` 去和它比较。
 - `notional_value`: 当前期货名义敞口，用于观察杠杆暴露。
 - `unrealized_pnl`: 按最新价格计算的浮动盈亏。
 - `market_value`: 主要用于现货/持仓市值语义；对期货保证金账户，不应把它理解为“名义本金”。
