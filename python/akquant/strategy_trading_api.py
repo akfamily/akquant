@@ -1,7 +1,7 @@
 import warnings
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 
-from .akquant import OrderSide, OrderStatus, OrderType, PositionEffect, TimeInForce
+from .akquant import OrderStatus, OrderType, PositionEffect, TimeInForce
 
 OrderFillPolicy = Dict[str, Any]
 OrderSlippage = Dict[str, Any]
@@ -1109,154 +1109,6 @@ def _supports_short_targets(
     return bool(getattr(risk_config, "enable_short_sell", False))
 
 
-def _stock_margin_ratio(strategy: Any, margin_ratio: float) -> float:
-    if not _is_margin_account(strategy):
-        return margin_ratio
-    if strategy.ctx is None:
-        return margin_ratio
-    risk_config = getattr(strategy.ctx, "risk_config", None)
-    ratio = float(getattr(risk_config, "initial_margin_ratio", margin_ratio))
-    if ratio <= 0.0:
-        return margin_ratio
-    return ratio
-
-
-def _option_margin_model_name(inst: Any) -> str:
-    value = getattr(inst, "option_margin_model", None)
-    if value is None:
-        return "RATIO"
-    return str(value).strip().upper()
-
-
-def _calc_single_leg_option_margin(
-    option_type: str,
-    option_price: float,
-    strike_price: float,
-    underlying_price: float,
-    exposure_ratio: float,
-    floor_ratio: float,
-) -> float:
-    option_price = abs(float(option_price))
-    strike_price = abs(float(strike_price))
-    underlying_price = abs(float(underlying_price))
-    if option_type == "CALL":
-        otm = max(strike_price - underlying_price, 0.0)
-        floor_base = underlying_price
-    else:
-        otm = max(underlying_price - strike_price, 0.0)
-        floor_base = strike_price
-    exposure_component = max(underlying_price * exposure_ratio - otm, 0.0)
-    floor_component = floor_base * floor_ratio
-    return option_price + max(exposure_component, floor_component)
-
-
-def _calc_position_margin(strategy: Any, symbol: str, quantity: float) -> float:
-    if quantity == 0.0:
-        return 0.0
-    try:
-        inst = strategy.get_instrument(symbol)
-    except Exception:
-        price = _resolve_mark_price(strategy, symbol)
-        return abs(float(quantity) * float(price))
-
-    qty = float(quantity)
-    price = _resolve_mark_price(strategy, symbol)
-    multiplier = float(inst.multiplier)
-    margin_ratio = float(inst.margin_ratio)
-    asset_type = str(inst.asset_type).upper()
-
-    if asset_type == "OPTION":
-        if qty > 0:
-            return 0.0
-        underlying_symbol = (
-            str(inst.underlying_symbol) if inst.underlying_symbol else ""
-        )
-        underlying_price = (
-            _resolve_mark_price(strategy, underlying_symbol)
-            if underlying_symbol
-            else 0.0
-        )
-        option_type = str(getattr(inst, "option_type", "CALL")).upper()
-        strike_price = float(getattr(inst, "strike_price", 0.0) or 0.0)
-        margin_model = _option_margin_model_name(inst)
-        if underlying_price <= 0.0 or margin_model == "RATIO":
-            if underlying_price > 0.0:
-                margin_per_unit = price + underlying_price * margin_ratio
-            else:
-                margin_per_unit = price * (1.0 + margin_ratio)
-        elif margin_model == "CHINA_SINGLE_LEG":
-            margin_per_unit = _calc_single_leg_option_margin(
-                option_type,
-                price,
-                strike_price,
-                underlying_price,
-                0.12,
-                0.07,
-            )
-        elif margin_model == "US_BROKER_SINGLE_LEG":
-            margin_per_unit = _calc_single_leg_option_margin(
-                option_type,
-                price,
-                strike_price,
-                underlying_price,
-                0.20,
-                0.10,
-            )
-        elif margin_model == "US_BROKER_SINGLE_LEG_VOL_ADJUSTED":
-            margin_per_unit = _calc_single_leg_option_margin(
-                option_type,
-                price,
-                strike_price,
-                underlying_price,
-                0.20,
-                0.10,
-            )
-            implied_volatility = float(getattr(inst, "implied_volatility", 0.0) or 0.0)
-            reference_volatility = float(
-                getattr(inst, "reference_volatility", 0.0) or 0.0
-            )
-            if reference_volatility > 0.0 and implied_volatility > 0.0:
-                margin_per_unit *= 1.0 + implied_volatility / reference_volatility
-        else:
-            raise ValueError(f"Unsupported option_margin_model: {margin_model}")
-        return max(margin_per_unit, 0.0) * multiplier * abs(qty)
-
-    if asset_type in {"STOCK", "FUND"}:
-        margin_ratio = _stock_margin_ratio(strategy, margin_ratio)
-    return abs(qty * price * multiplier) * margin_ratio
-
-
-def _calc_used_margin(strategy: Any) -> float:
-    if strategy.ctx is None:
-        return 0.0
-    total = 0.0
-    for sym, qty in strategy.ctx.positions.items():
-        total += _calc_position_margin(strategy, str(sym), float(qty))
-    return total
-
-
-def _calc_frozen_cash(strategy: Any) -> float:
-    if strategy.ctx is None:
-        return 0.0
-    frozen = 0.0
-    for order in get_open_orders(strategy):
-        qty = max(float(order.quantity) - float(order.filled_quantity), 0.0)
-        if qty <= 0.0:
-            continue
-        symbol = str(order.symbol)
-        current_pos = float(strategy.ctx.positions.get(symbol, 0.0))
-        if order.side == OrderSide.Buy:
-            next_pos = current_pos + qty
-        elif order.side == OrderSide.Sell:
-            next_pos = current_pos - qty
-        else:
-            continue
-        current_margin = _calc_position_margin(strategy, symbol, current_pos)
-        next_margin = _calc_position_margin(strategy, symbol, next_pos)
-        frozen += max(next_margin - current_margin, 0.0)
-    return frozen
-
-
 def get_account(strategy: Any) -> Dict[str, Any]:
     """获取账户资金详情快照."""
     if strategy.ctx is None:
@@ -1294,9 +1146,7 @@ def get_account(strategy: Any) -> Dict[str, Any]:
             else equity - cash
         )
         margin = (
-            float(ctx_used_margin)
-            if isinstance(ctx_used_margin, (int, float))
-            else float(_calc_used_margin(strategy))
+            float(ctx_used_margin) if isinstance(ctx_used_margin, (int, float)) else 0.0
         )
         maintenance_ratio = (
             float(ctx_maintenance_ratio)
@@ -1319,28 +1169,26 @@ def get_account(strategy: Any) -> Dict[str, Any]:
     else:
         equity = float(strategy.equity)
         market_value = float(equity - cash)
-        margin = float(_calc_used_margin(strategy))
+        margin = float(getattr(strategy.ctx, "account_used_margin", 0.0) or 0.0)
         maintenance_ratio = 0.0
     previous_details = (
         getattr(strategy, "_framework_previous_account_details", None)
         if use_previous_snapshot
         else None
     )
-    frozen_cash = (
-        float(previous_details.get("frozen_cash", 0.0))
-        if isinstance(previous_details, dict)
-        else float(_calc_frozen_cash(strategy))
-    )
-    borrowed_cash = float(max(-cash, 0.0))
+    # frozen_cash / short_market_value are authoritative Rust values on the
+    # StrategyContext. On the previous-snapshot path they are read from the
+    # framework cache (which was populated from those same Rust values one
+    # period earlier); the Python re-implementations were removed.
     if isinstance(previous_details, dict):
+        frozen_cash = float(previous_details.get("frozen_cash", 0.0))
         short_market_value = float(previous_details.get("short_market_value", 0.0))
     else:
-        short_market_value = 0.0
-        for sym, qty in strategy.ctx.positions.items():
-            qty_f = float(qty)
-            if qty_f >= 0.0:
-                continue
-            short_market_value += abs(qty_f) * _resolve_mark_price(strategy, str(sym))
+        frozen_cash = float(getattr(strategy.ctx, "account_frozen_cash", 0.0))
+        short_market_value = float(
+            getattr(strategy.ctx, "account_short_market_value", 0.0)
+        )
+    borrowed_cash = float(max(-cash, 0.0))
     if ctx_equity is None and not callable(get_metrics):
         denominator = market_value + short_market_value
         maintenance_ratio = float(equity / denominator) if denominator > 0.0 else 0.0

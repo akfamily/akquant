@@ -403,6 +403,15 @@ impl SimulatedExecutionClient {
                                     (next_used_margin - base_used_margin).max(Decimal::ZERO);
                                 let total_required = margin_required + commission;
 
+                                // Execution-time affordability intentionally does
+                                // NOT reuse risk::common::check_affordability: it
+                                // gates on `current_free_margin` derived from
+                                // calculate_account_metrics (equity incl. futures
+                                // unrealized PnL, futures-accurate) at the real
+                                // fill price with no safety haircut. The submission
+                                // gate uses portfolio free margin at the last/limit
+                                // price with a safety buffer — a deliberate
+                                // forecast-vs-actual split, not duplicated logic.
                                 if total_required > current_free_margin {
                                     if report_order.allow_quantity_auto_resize {
                                         let lot_size = instrument.lot_size();

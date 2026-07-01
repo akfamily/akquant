@@ -150,6 +150,58 @@ impl Engine {
         )
     }
 
+    /// Cash/margin reserved by open (non-terminal) orders: the incremental used
+    /// margin they would consume beyond the current portfolio. Reported as the
+    /// account's `frozen_cash`, computed in Rust so it cannot drift from the
+    /// engine's own margin accounting (the Python re-implementation was removed).
+    fn current_frozen_cash(&self, active_orders: &[Order]) -> Decimal {
+        let stock_ratio_override = if self.risk_manager.config.is_margin_account() {
+            Some(self.risk_manager.config.stock_initial_margin_ratio())
+        } else {
+            None
+        };
+        let base_used = self.state.portfolio.calculate_used_margin_with_stock_ratio(
+            &self.last_prices,
+            &self.instruments,
+            stock_ratio_override,
+        );
+
+        // Project every open order's position onto a clone and diff used margin.
+        let mut projected = self.state.portfolio.clone();
+        for order in active_orders {
+            if !matches!(
+                order.status,
+                crate::model::OrderStatus::New
+                    | crate::model::OrderStatus::Submitted
+                    | crate::model::OrderStatus::PartiallyFilled
+            ) {
+                continue;
+            }
+            let remaining = order.quantity - order.filled_quantity;
+            if remaining <= Decimal::ZERO {
+                continue;
+            }
+            let current_pos = projected
+                .positions
+                .get(&order.symbol)
+                .copied()
+                .unwrap_or(Decimal::ZERO);
+            let next_pos = crate::model::project_position_after(
+                order.side,
+                order.position_effect,
+                current_pos,
+                remaining,
+            );
+            projected.adjust_position(&order.symbol, next_pos - current_pos);
+        }
+        let projected_used = projected.calculate_used_margin_with_stock_ratio(
+            &self.last_prices,
+            &self.instruments,
+            stock_ratio_override,
+        );
+        (projected_used - base_used).max(Decimal::ZERO)
+    }
+
     fn build_position_entry_prices(&self) -> Arc<HashMap<String, Decimal>> {
         let mut entry_prices = HashMap::new();
         for (symbol, quantity) in self.state.portfolio.positions.iter() {
@@ -629,6 +681,10 @@ impl Engine {
         self.ensure_strategy_context_capacity();
         let account_metrics = self.current_account_metrics();
         let position_entry_prices = self.build_position_entry_prices();
+        let frozen_cash = self
+            .current_frozen_cash(&active_orders)
+            .to_f64()
+            .unwrap_or_default();
         if let Some(existing_ctx) = self
             .strategy_contexts
             .get(slot_index)
@@ -672,6 +728,11 @@ impl Engine {
                             .maintenance_ratio
                             .to_f64()
                             .unwrap_or_default(),
+                        account_short_market_value: account_metrics
+                            .short_market_value
+                            .to_f64()
+                            .unwrap_or_default(),
+                        account_frozen_cash: frozen_cash,
                         previous_account_equity: previous_account_metrics
                             .equity
                             .to_f64()
@@ -1028,6 +1089,10 @@ impl Engine {
     ) -> StrategyContext {
         let account_metrics = self.current_account_metrics();
         let position_entry_prices = self.build_position_entry_prices();
+        let frozen_cash = self
+            .current_frozen_cash(&active_orders)
+            .to_f64()
+            .unwrap_or_default();
         // Create a temporary context for the strategy to use
         StrategyContext::new(crate::context::ContextInit {
             cash: self.state.portfolio.cash,
@@ -1055,6 +1120,11 @@ impl Engine {
                 .maintenance_ratio
                 .to_f64()
                 .unwrap_or_default(),
+            account_short_market_value: account_metrics
+                .short_market_value
+                .to_f64()
+                .unwrap_or_default(),
+            account_frozen_cash: frozen_cash,
             previous_account_equity: previous_account_metrics.equity.to_f64().unwrap_or_default(),
             previous_account_market_value: previous_account_metrics
                 .market_value

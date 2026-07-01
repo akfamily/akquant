@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import akquant
-import akquant.strategy_trading_api as strategy_trading_api
 import numpy as np
 import pandas as pd
 import pytest
@@ -6585,41 +6584,6 @@ def test_strategy_get_instrument_config_snapshot() -> None:
     assert multi["implied_volatility"] == pytest.approx(0.3, rel=1e-12)
     assert multi["reference_volatility"] == pytest.approx(0.2, rel=1e-12)
     assert multi["multiplier"] == pytest.approx(10.0, rel=1e-12)
-
-
-def test_strategy_trading_api_calc_position_margin_matches_vol_adjusted_model() -> None:
-    """Python strategy helper should match vol-adjusted option margin formula."""
-
-    class DummyStrategy:
-        def __init__(self) -> None:
-            self.ctx = None
-            self.current_bar = None
-            self.current_tick = None
-            self._last_prices = {"OPT_P": 4.0, "UL": 95.0}
-            self._inst = akquant.InstrumentSnapshot(
-                symbol="OPT_P",
-                asset_type="OPTION",
-                multiplier=100.0,
-                margin_ratio=0.2,
-                tick_size=0.01,
-                lot_size=1.0,
-                option_margin_model="US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
-                option_type="PUT",
-                strike_price=100.0,
-                expiry_date=20260131,
-                underlying_symbol="UL",
-                implied_volatility=0.3,
-                reference_volatility=0.2,
-            )
-
-        def get_instrument(self, symbol: str) -> akquant.InstrumentSnapshot:
-            assert symbol == "OPT_P"
-            return self._inst
-
-    strategy = DummyStrategy()
-    margin = strategy_trading_api._calc_position_margin(strategy, "OPT_P", -1.0)
-
-    assert margin == pytest.approx(5750.0, rel=1e-12)
 
 
 def test_run_backtest_settlement_price_mode_requires_price() -> None:

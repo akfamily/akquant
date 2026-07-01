@@ -173,6 +173,9 @@ impl RiskRule for CashMarginRule {
             return Ok(());
         }
         if ctx.config.check_cash {
+            // Submission-time affordability: the fill price is not yet known, so
+            // approximate with the limit price, else the last price. If neither
+            // is available we cannot check and let the order through.
             let order_price = if let Some(p) = order.price {
                 p
             } else if let Some(p) = ctx.current_prices.get(&order.symbol) {
@@ -181,71 +184,31 @@ impl RiskRule for CashMarginRule {
                 return Ok(());
             };
 
-            let mut prices_for_order = ctx.current_prices.clone();
-            prices_for_order.insert(order.symbol.clone(), order_price);
+            let safety_margin =
+                Decimal::from_f64(ctx.config.safety_margin).unwrap_or(Decimal::ZERO);
+            let result = check_affordability(
+                order,
+                ctx.portfolio,
+                ctx.current_prices,
+                ctx.instruments,
+                ctx.config,
+                ctx.market_model,
+                ctx.active_orders,
+                order_price,
+                safety_margin,
+            )?;
 
-            let mut projected_portfolio = ctx.portfolio.clone();
-            for o in ctx.active_orders {
-                if o.status != crate::model::OrderStatus::New {
-                    continue;
-                }
-                let active_price = if let Some(p) = o.price {
-                    p
-                } else if let Some(p) = ctx.current_prices.get(&o.symbol) {
-                    *p
-                } else {
-                    continue;
-                };
-                if let Some(instr) = ctx.instruments.get(&o.symbol) {
-                    let cost = active_price * o.quantity * instr.multiplier();
-                    let current_pos = projected_portfolio
-                        .positions
-                        .get(&o.symbol)
-                        .copied()
-                        .unwrap_or(Decimal::ZERO);
-                    let next_pos =
-                        project_position_after(o.side, o.position_effect, current_pos, o.quantity);
-                    let delta = next_pos - current_pos;
-                    match o.side {
-                        OrderSide::Buy => {
-                            projected_portfolio.adjust_cash(-cost);
-                            projected_portfolio.adjust_position(&o.symbol, delta);
-                        }
-                        OrderSide::Sell => {
-                            projected_portfolio.adjust_cash(cost);
-                            projected_portfolio.adjust_position(&o.symbol, delta);
-                        }
-                    }
-                }
-            }
-
-            let required_margin =
-                calc_required_margin_delta(order, ctx, &prices_for_order, &projected_portfolio)?;
-
-            if required_margin.is_zero() {
+            // Nothing to fund (e.g. a reduce that consumes no margin and carries
+            // no commission): let it through as before.
+            if result.required.is_zero() {
                 return Ok(());
             }
 
-            let free_margin = projected_portfolio.calculate_free_margin_with_stock_ratio(
-                ctx.current_prices,
-                ctx.instruments,
-                if ctx.config.is_margin_account() {
-                    Some(ctx.config.stock_initial_margin_ratio())
-                } else {
-                    None
-                },
-            );
-            let safety_margin = ctx.config.safety_margin;
-            let safety_factor = Decimal::from_f64(1.0 - safety_margin)
-                .unwrap_or(Decimal::from_f64(0.9999).unwrap());
-            let available_margin = free_margin
-                .checked_mul(safety_factor)
-                .unwrap_or(Decimal::ZERO)
-                .max(Decimal::ZERO);
-
-            if required_margin > available_margin {
+            if !result.affordable {
+                let (required, available) = (result.required, result.available);
                 return Err(AkQuantError::OrderError(format!(
-                    "Risk: Insufficient margin. Required: {required_margin}, Available: {available_margin} (Free: {free_margin}, Safety: {safety_margin})",
+                    "Risk: Insufficient margin. Required: {required}, Available: {available} (Safety: {})",
+                    ctx.config.safety_margin
                 )));
             }
         }
@@ -314,45 +277,47 @@ fn stock_margin_delta(
 
 fn calc_required_margin_delta(
     order: &Order,
-    ctx: &RiskCheckContext,
+    instruments: &HashMap<String, crate::model::Instrument>,
+    config: &crate::risk::RiskConfig,
     prices: &HashMap<String, Decimal>,
     portfolio: &crate::portfolio::Portfolio,
 ) -> Result<Decimal, AkQuantError> {
-    if let Some(instr) = ctx.instruments.get(&order.symbol) {
-        if ctx.config.is_margin_account()
-            && (instr.asset_type == AssetType::Stock || instr.asset_type == AssetType::Fund)
-        {
-            let price = prices
-                .get(&order.symbol)
-                .copied()
-                .unwrap_or_else(|| order.price.unwrap_or(Decimal::ZERO));
-            if price <= Decimal::ZERO {
-                return Ok(Decimal::ZERO);
-            }
-            let current_pos = portfolio
-                .positions
-                .get(&order.symbol)
-                .copied()
-                .unwrap_or(Decimal::ZERO);
-            return stock_margin_delta(
-                order,
-                current_pos,
-                price,
-                instr.multiplier(),
-                ctx.config.stock_initial_margin_ratio(),
-            );
+    if let Some(instr) = instruments.get(&order.symbol)
+        && config.is_margin_account()
+        && (instr.asset_type == AssetType::Stock || instr.asset_type == AssetType::Fund)
+    {
+        let price = prices
+            .get(&order.symbol)
+            .copied()
+            .unwrap_or_else(|| order.price.unwrap_or(Decimal::ZERO));
+        if price <= Decimal::ZERO {
+            return Ok(Decimal::ZERO);
         }
+        let current_pos = portfolio
+            .positions
+            .get(&order.symbol)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        return stock_margin_delta(
+            order,
+            current_pos,
+            price,
+            instr.multiplier(),
+            config.stock_initial_margin_ratio(),
+        );
     }
+
+    let stock_ratio_override = if config.is_margin_account() {
+        Some(config.stock_initial_margin_ratio())
+    } else {
+        None
+    };
 
     let mut projected_portfolio = portfolio.clone();
     let base_used = projected_portfolio.calculate_used_margin_with_stock_ratio(
         prices,
-        ctx.instruments,
-        if ctx.config.is_margin_account() {
-            Some(ctx.config.stock_initial_margin_ratio())
-        } else {
-            None
-        },
+        instruments,
+        stock_ratio_override,
     );
     if base_used == Decimal::MAX {
         return Err(risk_overflow_error(&order.symbol, "base_used_margin"));
@@ -366,18 +331,171 @@ fn calc_required_margin_delta(
     }
     let next_used = projected_portfolio.calculate_used_margin_with_stock_ratio(
         prices,
-        ctx.instruments,
-        if ctx.config.is_margin_account() {
-            Some(ctx.config.stock_initial_margin_ratio())
-        } else {
-            None
-        },
+        instruments,
+        stock_ratio_override,
     );
     if next_used == Decimal::MAX {
         return Err(risk_overflow_error(&order.symbol, "next_used_margin"));
     }
     let delta = checked_sub_or_err(next_used, base_used, &order.symbol, "next_used - base_used")?;
     Ok(delta.max(Decimal::ZERO))
+}
+
+/// Outcome of a unified affordability check. Single source of truth for
+/// "can this order be funded" across submission-time risk gating and
+/// execution-time margin checks (issue #292).
+#[derive(Debug, Clone)]
+pub(crate) struct AffordabilityResult {
+    /// Margin delta this order consumes plus commission.
+    pub required: Decimal,
+    /// Free margin available after projecting pending orders, net of the
+    /// caller-supplied safety haircut.
+    pub available: Decimal,
+    /// Whether `required <= available`.
+    pub affordable: bool,
+    /// Largest lot-rounded quantity that would be affordable (for auto-resize
+    /// callers). Equals `order.quantity` when the order already fits.
+    pub max_affordable_qty: Decimal,
+}
+
+/// Project all pending `New` orders (other than a fill already reflected in the
+/// portfolio) into a cloned portfolio: buys spend cash and add position, sells
+/// release cash and reduce position. This is what lets a sell free up cash for a
+/// same-cycle buy instead of the buy being rejected against pre-sale cash.
+pub(crate) fn project_active_orders_into(
+    portfolio: &crate::portfolio::Portfolio,
+    active_orders: &[Order],
+    prices: &HashMap<String, Decimal>,
+    instruments: &HashMap<String, crate::model::Instrument>,
+) -> crate::portfolio::Portfolio {
+    let mut projected = portfolio.clone();
+    for o in active_orders {
+        if o.status != crate::model::OrderStatus::New {
+            continue;
+        }
+        let active_price = if let Some(p) = o.price {
+            p
+        } else if let Some(p) = prices.get(&o.symbol) {
+            *p
+        } else {
+            continue;
+        };
+        if let Some(instr) = instruments.get(&o.symbol) {
+            let cost = active_price * o.quantity * instr.multiplier();
+            let current_pos = projected
+                .positions
+                .get(&o.symbol)
+                .copied()
+                .unwrap_or(Decimal::ZERO);
+            let next_pos =
+                project_position_after(o.side, o.position_effect, current_pos, o.quantity);
+            let delta = next_pos - current_pos;
+            match o.side {
+                OrderSide::Buy => {
+                    projected.adjust_cash(-cost);
+                    projected.adjust_position(&o.symbol, delta);
+                }
+                OrderSide::Sell => {
+                    projected.adjust_cash(cost);
+                    projected.adjust_position(&o.symbol, delta);
+                }
+            }
+        }
+    }
+    projected
+}
+
+/// Unified affordability check. Every checkpoint (submission gate, submission
+/// auto-resize, execution gate, execution auto-resize) funnels through this so
+/// price source, pending-order projection, safety haircut, and commission are
+/// computed one way.
+///
+/// - `price`: the authoritative price for THIS order — submission passes the
+///   last/limit price (a necessary approximation), execution passes the real
+///   fill price.
+/// - `market_model`: used to compute the order's commission, which is folded
+///   into `required` (both submission and execution include it). Commission is
+///   computed after the checked margin delta so absurd inputs surface as a
+///   graceful margin-overflow error rather than a panic.
+/// - `safety_margin`: applied as `(1 - safety_margin)` to available margin —
+///   submission passes `config.safety_margin`, execution passes `0` (the fill
+///   price and commission are already real, so no buffer is warranted).
+/// - `active_orders`: pending `New` orders to project (pass `&[]` when the
+///   caller has already folded fills into `portfolio`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn check_affordability(
+    order: &Order,
+    portfolio: &crate::portfolio::Portfolio,
+    prices: &HashMap<String, Decimal>,
+    instruments: &HashMap<String, crate::model::Instrument>,
+    config: &crate::risk::RiskConfig,
+    market_model: &dyn crate::market::MarketModel,
+    active_orders: &[Order],
+    price: Decimal,
+    safety_margin: Decimal,
+) -> Result<AffordabilityResult, AkQuantError> {
+    let mut prices_for_order = prices.clone();
+    prices_for_order.insert(order.symbol.clone(), price);
+
+    let projected_portfolio =
+        project_active_orders_into(portfolio, active_orders, prices, instruments);
+
+    let margin_delta =
+        calc_required_margin_delta(order, instruments, config, &prices_for_order, &projected_portfolio)?;
+
+    // Commission after the checked margin delta so overflow surfaces via the
+    // margin path rather than panicking in the market model's raw arithmetic.
+    let commission = instruments
+        .get(&order.symbol)
+        .map(|instr| market_model.calculate_commission(instr, order.side, price, order.quantity))
+        .unwrap_or(Decimal::ZERO);
+    let required = (margin_delta + commission).max(Decimal::ZERO);
+
+    let stock_ratio_override = if config.is_margin_account() {
+        Some(config.stock_initial_margin_ratio())
+    } else {
+        None
+    };
+    let free_margin = projected_portfolio.calculate_free_margin_with_stock_ratio(
+        prices,
+        instruments,
+        stock_ratio_override,
+    );
+    let safety_factor = (Decimal::ONE - safety_margin).max(Decimal::ZERO);
+    let available = free_margin
+        .checked_mul(safety_factor)
+        .unwrap_or(Decimal::ZERO)
+        .max(Decimal::ZERO);
+
+    let affordable = required <= available;
+
+    // Linear estimate of the largest affordable quantity, lot-rounded. Used only
+    // by auto-resize callers; `required` scales ~linearly with quantity for the
+    // dominant cash/stock path, so this matches the prior resize seed.
+    let max_affordable_qty = if affordable {
+        order.quantity
+    } else if required > Decimal::ZERO && available > Decimal::ZERO && order.quantity > Decimal::ZERO
+    {
+        let raw = order.quantity * available / required;
+        let lot = instruments
+            .get(&order.symbol)
+            .map(|instr| instr.lot_size())
+            .unwrap_or(Decimal::ONE);
+        let mut qty = raw.floor();
+        if lot > Decimal::ZERO {
+            qty -= qty % lot;
+        }
+        qty.max(Decimal::ZERO)
+    } else {
+        Decimal::ZERO
+    };
+
+    Ok(AffordabilityResult {
+        required,
+        available,
+        affordable,
+        max_affordable_qty,
+    })
 }
 
 #[cfg(test)]
@@ -431,6 +549,13 @@ mod tests {
         order
     }
 
+    fn test_market_model() -> &'static dyn crate::market::MarketModel {
+        use crate::market::{SimpleMarket, SimpleMarketConfig};
+        Box::leak(Box::new(SimpleMarket::from_config(
+            SimpleMarketConfig::default(),
+        )))
+    }
+
     #[test]
     fn required_margin_delta_for_china_short_put_matches_margin_engine() {
         let option = create_china_short_put("OPT_P", "510050.SH");
@@ -456,6 +581,7 @@ mod tests {
             active_orders: &[],
             current_prices: &prices,
             trade_tracker: &tracker,
+            market_model: test_market_model(),
             current_time: 0,
             config: &config,
             timezone_name: None,
@@ -463,7 +589,9 @@ mod tests {
         };
         let order = create_order("OPT_P", OrderSide::Sell, dec!(1), dec!(4));
 
-        let required = calc_required_margin_delta(&order, &ctx, &prices, &portfolio).unwrap();
+        let required =
+            calc_required_margin_delta(&order, ctx.instruments, ctx.config, &prices, &portfolio)
+                .unwrap();
         let expected =
             MarginEngine::position_margin(dec!(-1), dec!(4), instrument_ref, &prices, None);
 
@@ -495,6 +623,7 @@ mod tests {
             active_orders: &[],
             current_prices: &prices,
             trade_tracker: &tracker,
+            market_model: test_market_model(),
             current_time: 0,
             config: &config,
             timezone_name: None,
@@ -516,5 +645,62 @@ mod tests {
                 .contains("Insufficient margin")
         );
         assert!(accepted_result.is_ok());
+    }
+
+    #[test]
+    fn pending_cross_symbol_sell_frees_cash_for_same_cycle_buy() {
+        // Issue #292: a buy must not be rejected against pre-sale cash when a
+        // same-cycle sell of another symbol will release funds. CashMarginRule
+        // projects the pending sell before gating the buy.
+        let mut instruments = HashMap::new();
+        instruments.insert("AAA".to_string(), create_stock_instrument("AAA"));
+        instruments.insert("BBB".to_string(), create_stock_instrument("BBB"));
+
+        let mut prices = HashMap::new();
+        prices.insert("AAA".to_string(), dec!(1));
+        prices.insert("BBB".to_string(), dec!(1));
+
+        // Almost fully invested in AAA, little free cash.
+        let mut positions = HashMap::new();
+        positions.insert("AAA".to_string(), dec!(980000));
+        let portfolio = Portfolio {
+            cash: dec!(20000),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let config = RiskConfig::new();
+        let tracker = crate::analysis::TradeTracker::new();
+        let instrument_ref = instruments.get("BBB").unwrap();
+
+        // A pending sell of the whole AAA position releases ~980k cash.
+        let pending_sell = create_order("AAA", OrderSide::Sell, dec!(980000), dec!(1));
+        let active_orders = vec![pending_sell];
+
+        let ctx = RiskCheckContext {
+            portfolio: &portfolio,
+            instrument: instrument_ref,
+            instruments: &instruments,
+            active_orders: &active_orders,
+            current_prices: &prices,
+            trade_tracker: &tracker,
+            market_model: test_market_model(),
+            current_time: 0,
+            config: &config,
+            timezone_name: None,
+            timezone_offset: 0,
+        };
+        let rule = CashMarginRule;
+
+        // Buying 900k of BBB costs ~900k — unaffordable against 20k cash, but
+        // affordable once the pending AAA sale is projected in.
+        let buy = create_order("BBB", OrderSide::Buy, dec!(900000), dec!(1));
+        assert!(rule.check(&buy, &ctx).is_ok());
+
+        // Without the pending sell, the same buy must be rejected.
+        let ctx_no_sell = RiskCheckContext {
+            active_orders: &[],
+            ..ctx
+        };
+        assert!(rule.check(&buy, &ctx_no_sell).is_err());
     }
 }
