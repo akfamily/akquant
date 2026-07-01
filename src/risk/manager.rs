@@ -210,47 +210,29 @@ impl RiskManager {
                 };
 
                 if price > Decimal::ZERO {
-                    let multiplier = instr.multiplier();
-                    let margin_ratio = if self.config.is_margin_account()
-                        && (instr.asset_type == AssetType::Stock
-                            || instr.asset_type == AssetType::Fund)
-                    {
-                        self.config.stock_initial_margin_ratio()
-                    } else {
-                        instr.margin_ratio()
-                    };
+                    // Resize through the unified affordability check so the max
+                    // quantity is derived from free margin (not raw cash) with the
+                    // same safety/commission convention as the gate that rejected.
+                    let _ = instr;
+                    let safety_margin =
+                        Decimal::from_f64(self.config.safety_margin).unwrap_or(Decimal::ZERO);
+                    let result = super::common::check_affordability(
+                        order,
+                        ctx.portfolio,
+                        ctx.last_prices,
+                        ctx.instruments,
+                        &self.config,
+                        ctx.market_model,
+                        ctx.active_orders,
+                        price,
+                        safety_margin,
+                    )?;
 
-                    // Cost per unit = Price * Multiplier * MarginRatio
-                    // For Stock, MarginRatio is usually 1.0 (or 100% cash)
-                    let cost_per_unit = price * multiplier * margin_ratio;
-
-                    if cost_per_unit > Decimal::ZERO {
-                        // Calculate max quantity based on available cash/margin
-                        // Note: Portfolio::cash is used here. Ideally should use Free Margin for futures.
-                        // But for simple "Insufficient cash" check, let's use cash.
-                        // If we want to support margin trading correctly here, we should check what check_internal failed on.
-
-                        // For now, let's use a simplified calculation similar to old OrderManager
-                        let max_qty_raw = ctx.portfolio.cash / cost_per_unit;
-
-                        // Buffer for commission (e.g. 1% buffer -> 0.9999 safety factor from config)
-                        let safety_margin = self.config.safety_margin;
-                        let safety_factor = Decimal::from_f64(1.0 - safety_margin)
-                            .unwrap_or(Decimal::from_f64(0.9999).unwrap());
-
-                        let max_qty_raw = max_qty_raw * safety_factor;
-
-                        let lot_size = instr.lot_size();
-                        let mut new_qty = max_qty_raw.floor();
-                        if lot_size > Decimal::ZERO {
-                            new_qty = new_qty - (new_qty % lot_size);
-                        }
-
-                        if new_qty > Decimal::ZERO && new_qty < order.quantity {
-                            order.quantity = new_qty;
-                            // Re-check with new quantity
-                            return self.check_internal(order, ctx);
-                        }
+                    let new_qty = result.max_affordable_qty;
+                    if new_qty > Decimal::ZERO && new_qty < order.quantity {
+                        order.quantity = new_qty;
+                        // Re-check with new quantity
+                        return self.check_internal(order, ctx);
                     }
                 }
             }
@@ -279,6 +261,7 @@ impl RiskManager {
             active_orders: ctx.active_orders,
             current_prices: ctx.last_prices,
             trade_tracker: ctx.trade_tracker,
+            market_model: ctx.market_model,
             current_time: ctx.current_time,
             config: &self.config,
             timezone_name: ctx.timezone_name,

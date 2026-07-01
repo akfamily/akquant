@@ -77,6 +77,13 @@ mod tests {
         order
     }
 
+    fn test_market_model() -> &'static dyn crate::market::MarketModel {
+        use crate::market::{SimpleMarket, SimpleMarketConfig};
+        Box::leak(Box::new(SimpleMarket::from_config(
+            SimpleMarketConfig::default(),
+        )))
+    }
+
     fn make_context<'a>(
         portfolio: &'a Portfolio,
         instrument: &'a Instrument,
@@ -93,6 +100,7 @@ mod tests {
             active_orders,
             current_prices,
             trade_tracker,
+            market_model: test_market_model(),
             current_time: 0,
             config,
             timezone_name: None,
