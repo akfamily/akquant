@@ -631,6 +631,11 @@ class BacktestConfig:
     **Environment:**
     :param benchmark: Benchmark symbol for performance comparison.
     :param timezone: Exchange timezone. Default "Asia/Shanghai".
+    :param days_per_year: Annualization factor for risk metrics (Sharpe/Sortino/
+                          volatility). Traditional markets use 252; crypto 24/7
+                          markets use 365. Default 252.0.
+    :param risk_free_rate: Annualized risk-free rate subtracted from annualized
+                           return in Sharpe/Sortino/UPI. Default 0.0.
     :param show_progress: Show progress bar. Default True.
     :param history_depth: Auto-load N bars of history before strategy starts.
 
@@ -654,6 +659,8 @@ class BacktestConfig:
 
     benchmark: Optional[str] = None
     timezone: str = "Asia/Shanghai"
+    days_per_year: float = 252.0
+    risk_free_rate: float = 0.0
     show_progress: bool = True
     history_depth: int = 0
 

@@ -63,6 +63,10 @@ pub struct Engine {
     pub risk_manager: RiskManager,
     pub(crate) timezone_offset: i32,
     pub(crate) timezone_name: Option<String>,
+    /// 年化天数因子。传统市场 252，数字货币 24/7 用 365。
+    pub(crate) days_per_year: f64,
+    /// 年化无风险利率，默认 0.0。
+    pub(crate) risk_free_rate: f64,
     pub(crate) history_buffer: Arc<RwLock<HistoryBuffer>>,
     pub(crate) initial_cash: Decimal,
     #[pyo3(get, set)]

@@ -229,6 +229,8 @@ fn test_max_drawdown_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        days_per_year: 252.0,
+        risk_free_rate: 0.0,
     });
     assert_eq!(result.metrics.max_drawdown, 0.25);
 
@@ -252,6 +254,8 @@ fn test_max_drawdown_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        days_per_year: 252.0,
+        risk_free_rate: 0.0,
     });
     assert_eq!(result_2.metrics.max_drawdown, 0.0);
 
@@ -275,6 +279,8 @@ fn test_max_drawdown_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        days_per_year: 252.0,
+        risk_free_rate: 0.0,
     });
     assert_eq!(result_3.metrics.max_drawdown, 0.2);
 
@@ -301,6 +307,8 @@ fn test_max_drawdown_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        days_per_year: 252.0,
+        risk_free_rate: 0.0,
     });
     assert_eq!(result_4.metrics.max_drawdown, 0.5);
 }
@@ -337,6 +345,8 @@ fn test_ulcer_index_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        days_per_year: 252.0,
+        risk_free_rate: 0.0,
     });
     let expected_ui = 0.004f64.sqrt();
     assert!((result.metrics.ulcer_index - expected_ui).abs() < 1e-9);
@@ -364,6 +374,8 @@ fn test_calmar_uses_raw_drawdown_ratio_not_pct() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        days_per_year: 252.0,
+        risk_free_rate: 0.0,
     });
 
     let expected_raw_calmar = result.metrics.annualized_return / result.metrics.max_drawdown;
@@ -409,6 +421,8 @@ fn test_daily_metrics_resample_by_local_timezone_day() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        days_per_year: 252.0,
+        risk_free_rate: 0.0,
     });
 
     let expected_returns = [0.21_f64, 0.10_f64];
@@ -421,4 +435,84 @@ fn test_daily_metrics_resample_by_local_timezone_day() {
     let expected_volatility = variance.sqrt() * (252.0f64).sqrt();
 
     assert!((result.metrics.volatility - expected_volatility).abs() < 1e-12);
+}
+
+/// 构造一段每日权益曲线（日收益 [0.21, 0.10]），用指定的 days_per_year / risk_free_rate 计算结果。
+fn build_sharpe_fixture(days_per_year: f64, risk_free_rate: f64) -> BacktestResult {
+    let empty_pnl = TradeTracker::new().calculate_pnl(None);
+    let day_ns = 86_400_000_000_000_i64;
+    let equity_curve = vec![
+        (0, Decimal::from(100)),
+        (day_ns, Decimal::from(121)),
+        (2 * day_ns, Decimal::from_str_exact("133.1").unwrap()),
+    ];
+
+    BacktestResult::calculate(crate::analysis::CalculatorInput {
+        equity_curve_decimal: equity_curve,
+        cash_curve_decimal: vec![],
+        margin_curve_decimal: vec![],
+        snapshots: vec![],
+        timezone_name: Some("UTC".to_string()),
+        timezone_offset: 0,
+        trade_pnl: empty_pnl,
+        trades: vec![],
+        initial_cash: Decimal::from(100),
+        orders: vec![],
+        executions: vec![],
+        liquidation_audits: vec![],
+        days_per_year,
+        risk_free_rate,
+    })
+}
+
+#[test]
+fn test_sharpe_uses_arithmetic_mean_not_cagr() {
+    let dpy = 252.0_f64;
+    let result = build_sharpe_fixture(dpy, 0.0);
+
+    // 期望：分子为日收益算术均值年化 (mean * dpy)，与分母 std * sqrt(dpy) 口径匹配。
+    let returns = [0.21_f64, 0.10_f64];
+    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+    let variance =
+        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
+    let std = variance.sqrt();
+    let expected_sharpe = (mean * dpy) / (std * dpy.sqrt());
+
+    assert!((result.metrics.sharpe_ratio - expected_sharpe).abs() < 1e-9);
+
+    // 反向断言：旧的 CAGR 口径 (annualized_return / volatility) 在这种短回测下会爆炸，
+    // 新口径必须显著不同于它，以防回归到 PR #305 修复前的行为。
+    let old_cagr_sharpe = result.metrics.annualized_return / result.metrics.volatility;
+    assert!((result.metrics.sharpe_ratio - old_cagr_sharpe).abs() > 1.0);
+}
+
+#[test]
+fn test_days_per_year_scales_annualization() {
+    let sharpe_252 = build_sharpe_fixture(252.0, 0.0).metrics.sharpe_ratio;
+    let sharpe_365 = build_sharpe_fixture(365.0, 0.0).metrics.sharpe_ratio;
+
+    // sharpe = mean * sqrt(dpy) / std，故比值应为 sqrt(365/252)。
+    let expected_ratio = (365.0_f64 / 252.0_f64).sqrt();
+    assert!((sharpe_365 / sharpe_252 - expected_ratio).abs() < 1e-9);
+}
+
+#[test]
+fn test_risk_free_rate_lowers_sharpe() {
+    let dpy = 252.0_f64;
+    let rf = 0.5_f64; // 年化无风险利率
+    let base = build_sharpe_fixture(dpy, 0.0);
+    let with_rf = build_sharpe_fixture(dpy, rf);
+
+    // rf=0 与默认行为一致，保证基线不动。
+    let returns = [0.21_f64, 0.10_f64];
+    let mean = returns.iter().sum::<f64>() / returns.len() as f64;
+    let variance =
+        returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
+    let annualized_vol = variance.sqrt() * dpy.sqrt();
+
+    // Sharpe 下降量应恰为 rf / annualized_volatility。
+    let expected_drop = rf / annualized_vol;
+    assert!(
+        (base.metrics.sharpe_ratio - with_rf.metrics.sharpe_ratio - expected_drop).abs() < 1e-9
+    );
 }

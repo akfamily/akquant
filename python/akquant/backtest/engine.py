@@ -3313,6 +3313,14 @@ def run_backtest(
             raise ValueError(f"Invalid timezone: {timezone}")
         offset = int(offset_delta.total_seconds())
         engine.set_timezone(offset)
+    if hasattr(engine, "set_days_per_year"):
+        cast(Any, engine).set_days_per_year(
+            getattr(config, "days_per_year", 252.0) if config else 252.0
+        )
+    if hasattr(engine, "set_risk_free_rate"):
+        cast(Any, engine).set_risk_free_rate(
+            getattr(config, "risk_free_rate", 0.0) if config else 0.0
+        )
     engine.set_cash(initial_cash)
     if hasattr(engine, "set_default_strategy_id"):
         cast(Any, engine).set_default_strategy_id(effective_strategy_id)
