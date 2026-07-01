@@ -761,6 +761,7 @@ If the strategy is running with futures margin semantics, these fields become es
 
 - `snap["equity"]`: current account equity.
 - `snap["used_margin"]` / `snap["margin"]`: current margin in use.
+- `snap["free_margin"]`: available margin (`equity - used_margin`), i.e. the amount usable to open new positions; the `Available` value in the rejection log refers to this field, so do not compare it against `cash`.
 - `snap["notional_value"]`: current futures notional exposure.
 - `snap["unrealized_pnl"]`: current floating PnL.
 

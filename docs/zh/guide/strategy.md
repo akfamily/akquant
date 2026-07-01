@@ -324,6 +324,7 @@ print(
 
 - `snap["equity"]`: 当前账户权益。
 - `snap["used_margin"]` / `snap["margin"]`: 当前已占用保证金。
+- `snap["free_margin"]`: 可用保证金（`equity - used_margin`），即可用于新开仓的资金；下单因保证金不足被拒时日志里的 `Available` 就是此值，不要用 `cash` 去比较。
 - `snap["notional_value"]`: 当前期货名义敞口。
 - `snap["unrealized_pnl"]`: 当前浮动盈亏。
 

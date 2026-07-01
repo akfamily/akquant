@@ -1351,6 +1351,11 @@ def get_account(strategy: Any) -> Dict[str, Any]:
     else:
         accrued_interest = float(getattr(strategy.ctx, "margin_accrued_interest", 0.0))
         daily_interest = float(getattr(strategy.ctx, "margin_daily_interest", 0.0))
+    # 可用保证金 = 总权益 - 已占用保证金.
+    # 与开仓资金校验(拒单信息中的 Available)口径一致.
+    # 期货保证金账户下, cash 仅为现金余额(开仓不扣保证金).
+    # 真正可用于新开仓的是 free_margin.
+    free_margin = equity - margin
     return {
         "cash": cash,
         "equity": equity,
@@ -1359,6 +1364,7 @@ def get_account(strategy: Any) -> Dict[str, Any]:
         "frozen_cash": frozen_cash,
         "margin": margin,
         "used_margin": margin,
+        "free_margin": free_margin,
         "unrealized_pnl": float(unrealized_pnl),
         "borrowed_cash": borrowed_cash,
         "short_market_value": float(short_market_value),

@@ -875,9 +875,10 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `ctx.get_position_entry_price(symbol) -> float`: Get the current average entry price for one symbol.
 *   `ctx.get_position_entry_prices() -> Dict[str, float]`: Get current average entry prices for all symbols.
 *   `get_cash() -> float`: Get current available cash.
-*   `get_account() -> Dict[str, float]`: Get an account snapshot. Common fields include `cash`, `equity`, `market_value`, `notional_value`, `frozen_cash`, `margin`, `used_margin`, `unrealized_pnl`, `borrowed_cash`, `short_market_value`, `maintenance_ratio`, `account_mode`, `accrued_interest`, and `daily_interest`.
+*   `get_account() -> Dict[str, float]`: Get an account snapshot. Common fields include `cash`, `equity`, `market_value`, `notional_value`, `frozen_cash`, `margin`, `used_margin`, `free_margin`, `unrealized_pnl`, `borrowed_cash`, `short_market_value`, `maintenance_ratio`, `account_mode`, `accrued_interest`, and `daily_interest`.
     *   In cash / spot-style accounts, `market_value` usually represents marked position value.
     *   In futures margin accounts, `equity` is account equity, `used_margin` is margin in use, `notional_value` is futures notional exposure, and `unrealized_pnl` is marked floating PnL. Futures trades do not deduct full notional from `cash` the way spot buys do, and notional exposure is not mirrored into `market_value` as if it were spot inventory.
+    *   `cash` is the cash balance; `free_margin` (= `equity - used_margin`) is the amount actually available to open new positions and matches the `Available` value shown in the rejection log when an order is rejected. In futures margin accounts, opening a position does not deduct margin from `cash`, so `cash` is usually larger than `free_margin`; in stock cash accounts the two are equal.
     *   Inside strategy callbacks, prefer `get_portfolio_value()` when you only need current total equity; it is aligned with `get_account()["equity"]`.
 *   `get_order(order_id) -> Order`: Get details of a specific order.
 *   `get_open_orders(symbol) -> List[Order]`: Get list of open orders.

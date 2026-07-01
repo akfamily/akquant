@@ -1717,11 +1717,15 @@ class Strategy:
 
         Returns:
             Dict: 包含以下字段:
-                - cash: 可用资金
-                - equity: 总权益 (现金 + 持仓市值)
+                - cash: 现金余额 (期货保证金账户下, 开仓不从此扣减保证金,
+                  故并非可用于新开仓的资金; 请改用 free_margin)
+                - equity: 总权益 (现金 + 持仓市值 + 浮动盈亏)
                 - market_value: 持仓总市值 (equity - cash)
                 - frozen_cash: 当前未完成订单预占资金
                 - margin: 当前仓位占用保证金
+                - used_margin: 同 margin
+                - free_margin: 可用保证金 (equity - margin), 即可用于新开仓的资金;
+                  与拒单信息中的 Available 口径一致
                 - borrowed_cash: 融资负债 (现金为负时)
                 - short_market_value: 空头市值
                 - maintenance_ratio: 维持担保比例
