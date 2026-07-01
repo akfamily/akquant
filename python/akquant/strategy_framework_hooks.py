@@ -177,20 +177,21 @@ def _should_reraise_on_error(strategy: Any) -> bool:
 
 
 def _snapshot_previous_account_details(strategy: Any) -> Optional[Dict[str, float]]:
-    """Capture previous-snapshot derived account fields for framework phases."""
+    """Capture previous-snapshot derived account fields for framework phases.
+
+    frozen_cash / short_market_value are read from the authoritative Rust
+    StrategyContext (the Python re-implementations were removed); this snapshot
+    carries the current-period values forward as the "previous" snapshot the
+    next framework phase reads.
+    """
     if strategy.ctx is None:
         return None
-    from .strategy_trading_api import _calc_frozen_cash, _resolve_mark_price
 
-    short_market_value = 0.0
-    for sym, qty in strategy.ctx.positions.items():
-        qty_f = float(qty)
-        if qty_f >= 0.0:
-            continue
-        short_market_value += abs(qty_f) * _resolve_mark_price(strategy, str(sym))
     return {
-        "frozen_cash": float(_calc_frozen_cash(strategy)),
-        "short_market_value": float(short_market_value),
+        "frozen_cash": float(getattr(strategy.ctx, "account_frozen_cash", 0.0)),
+        "short_market_value": float(
+            getattr(strategy.ctx, "account_short_market_value", 0.0)
+        ),
         "margin_accrued_interest": float(
             getattr(strategy.ctx, "margin_accrued_interest", 0.0)
         ),

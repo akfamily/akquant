@@ -61,6 +61,8 @@ pub struct ContextInit {
     pub account_used_margin: f64,
     pub account_unrealized_pnl: f64,
     pub account_maintenance_ratio: f64,
+    pub account_short_market_value: f64,
+    pub account_frozen_cash: f64,
     pub previous_account_equity: f64,
     pub previous_account_market_value: f64,
     pub previous_account_notional_value: f64,
@@ -90,6 +92,8 @@ pub struct ContextUpdate {
     pub account_used_margin: f64,
     pub account_unrealized_pnl: f64,
     pub account_maintenance_ratio: f64,
+    pub account_short_market_value: f64,
+    pub account_frozen_cash: f64,
     pub previous_account_equity: f64,
     pub previous_account_market_value: f64,
     pub previous_account_notional_value: f64,
@@ -322,6 +326,8 @@ impl StrategyContext {
         self.account_used_margin = update.account_used_margin;
         self.account_unrealized_pnl = update.account_unrealized_pnl;
         self.account_maintenance_ratio = update.account_maintenance_ratio;
+        self.account_short_market_value = update.account_short_market_value;
+        self.account_frozen_cash = update.account_frozen_cash;
         self.previous_account_equity = update.previous_account_equity;
         self.previous_account_market_value = update.previous_account_market_value;
         self.previous_account_notional_value = update.previous_account_notional_value;
@@ -415,6 +421,10 @@ pub struct StrategyContext {
     #[pyo3(get)]
     pub account_maintenance_ratio: f64,
     #[pyo3(get)]
+    pub account_short_market_value: f64,
+    #[pyo3(get)]
+    pub account_frozen_cash: f64,
+    #[pyo3(get)]
     pub previous_account_equity: f64,
     #[pyo3(get)]
     pub previous_account_market_value: f64,
@@ -464,6 +474,8 @@ impl StrategyContext {
             account_used_margin: init.account_used_margin,
             account_unrealized_pnl: init.account_unrealized_pnl,
             account_maintenance_ratio: init.account_maintenance_ratio,
+            account_short_market_value: init.account_short_market_value,
+            account_frozen_cash: init.account_frozen_cash,
             previous_account_equity: init.previous_account_equity,
             previous_account_market_value: init.previous_account_market_value,
             previous_account_notional_value: init.previous_account_notional_value,
@@ -567,6 +579,8 @@ impl StrategyContext {
             account_used_margin: account_used_margin.unwrap_or(0.0),
             account_unrealized_pnl: account_unrealized_pnl.unwrap_or(0.0),
             account_maintenance_ratio: account_maintenance_ratio.unwrap_or(0.0),
+            account_short_market_value: 0.0,
+            account_frozen_cash: 0.0,
             previous_account_equity: previous_account_equity.unwrap_or(0.0),
             previous_account_market_value: previous_account_market_value.unwrap_or(0.0),
             previous_account_notional_value: previous_account_notional_value.unwrap_or(0.0),
