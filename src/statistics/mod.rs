@@ -165,6 +165,8 @@ impl StatisticsManager {
         now_ns: Option<i64>,
         timezone_name: Option<String>,
         timezone_offset: i32,
+        days_per_year: f64,
+        risk_free_rate: f64,
     ) -> BacktestResult {
         // Calculate final PnL
         let trade_pnl = order_manager
@@ -217,6 +219,8 @@ impl StatisticsManager {
             orders: order_manager.get_all_orders(),
             executions: order_manager.trades.clone(),
             liquidation_audits: self.liquidation_audits.clone(),
+            days_per_year,
+            risk_free_rate,
         })
     }
 

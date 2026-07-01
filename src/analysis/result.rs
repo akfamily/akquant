@@ -22,6 +22,10 @@ pub struct CalculatorInput {
     pub orders: Vec<Order>,
     pub executions: Vec<Trade>,
     pub liquidation_audits: Vec<LiquidationAudit>,
+    /// 年化天数因子。A 股等传统市场用 252，数字货币 24/7 市场用 365。
+    pub days_per_year: f64,
+    /// 年化无风险利率，默认 0.0。直接从年化收益分子里扣除。
+    pub risk_free_rate: f64,
 }
 
 #[gen_stub_pyclass]
@@ -250,12 +254,18 @@ impl BacktestResult {
         };
 
         let std_dev = variance.sqrt();
-        let annualized_volatility = std_dev * (252.0f64).sqrt();
+        let dpy = input.days_per_year;
+        let annualized_volatility = std_dev * dpy.sqrt();
+
+        // 口径说明：Sharpe / Sortino 的分子使用「日收益算术均值 × days_per_year」做年化，
+        // 与 pyfolio/empyrical/quantstats 等行业实现一致；与分母 √days_per_year 的算术年化口径匹配。
+        // 注意：UPI 与 Calmar 刻意沿用 CAGR（annualized_return），不要改成算术均值。
+        let annualized_mean_return = mean_return * dpy;
+        let risk_free_rate = input.risk_free_rate; // 年化无风险利率，默认 0.0
 
         // 5. Sharpe Ratio
-        let risk_free_rate = 0.0; // Assume 0 for simplicity or pass config
         let sharpe_ratio = if annualized_volatility != 0.0 {
-            (annualized_return - risk_free_rate) / annualized_volatility
+            (annualized_mean_return - risk_free_rate) / annualized_volatility
         } else {
             0.0
         };
@@ -268,15 +278,15 @@ impl BacktestResult {
             0.0
         };
         let downside_std_dev = downside_variance.sqrt();
-        let annualized_downside_volatility = downside_std_dev * (252.0f64).sqrt();
+        let annualized_downside_volatility = downside_std_dev * dpy.sqrt();
 
         let sortino_ratio = if annualized_downside_volatility != 0.0 {
-            (annualized_return - risk_free_rate) / annualized_downside_volatility
+            (annualized_mean_return - risk_free_rate) / annualized_downside_volatility
         } else {
             0.0
         };
 
-        // 7. UPI
+        // 7. UPI (Ulcer Performance Index) —— 沿用 CAGR 口径（与 quantstats 一致）
         let upi = if ulcer_index != 0.0 {
             (annualized_return - risk_free_rate) / ulcer_index
         } else {

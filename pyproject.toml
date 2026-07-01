@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "akquant"
-version = "0.2.47"
+version = "0.2.48"
 description = "High-performance quantitative trading framework based on Rust and Python"
 readme = "README.md"
 license = {text = "MIT License"}

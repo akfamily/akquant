@@ -519,6 +519,8 @@ impl Engine {
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8
             timezone_name: Some("Asia/Shanghai".to_string()),
+            days_per_year: 252.0,
+            risk_free_rate: 0.0,
             history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(10000))), // Default large capacity for MAE/MFE
             initial_cash,
             active_start_time_ns: None,
@@ -740,6 +742,20 @@ impl Engine {
             .local_minus_utc();
         self.timezone_name = Some(tz_name.to_string());
         Ok(())
+    }
+
+    /// 设置年化天数因子.
+    ///
+    /// :param days: 年化使用的天数。A 股等传统市场用 252，数字货币 24/7 市场用 365。
+    pub fn set_days_per_year(&mut self, days: f64) {
+        self.days_per_year = days;
+    }
+
+    /// 设置年化无风险利率.
+    ///
+    /// :param rate: 年化无风险利率 (例如 0.02 表示 2%)。默认 0.0。
+    pub fn set_risk_free_rate(&mut self, rate: f64) {
+        self.risk_free_rate = rate;
     }
 
     /// 启用模拟执行 (回测模式)
@@ -1235,6 +1251,8 @@ impl Engine {
             self.terminal_result_timestamp(),
             self.timezone_name.clone(),
             self.timezone_offset,
+            self.days_per_year,
+            self.risk_free_rate,
         )
     }
 }
