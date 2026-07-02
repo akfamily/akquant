@@ -1877,6 +1877,81 @@ def test_backtest_regression_baseline() -> None:
     assert trade.duration_bars == 2
 
 
+def test_metrics_df_exposes_display_friendly_trade_counts() -> None:
+    """metrics_df should separate closed trades, executions, and open positions."""
+    symbol = "DISPLAY_COUNTS"
+    engine = akquant.Engine()
+    engine.use_simple_market(0.0)
+    engine.set_force_session_continuous(True)
+    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    engine.set_cash(100000.0)
+    engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
+    engine.set_t_plus_one(False)
+
+    instr = akquant.Instrument(
+        symbol=symbol,
+        asset_type=akquant.AssetType.Stock,
+        multiplier=1.0,
+        margin_ratio=1.0,
+        tick_size=0.01,
+        option_type=None,
+        strike_price=None,
+        expiry_date=None,
+        lot_size=1.0,
+    )
+    engine.add_instrument(instr)
+
+    bars = [
+        akquant.Bar(
+            _ns(datetime(2023, 2, 1, 15, 0, tzinfo=timezone.utc)),
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            1000.0,
+            symbol,
+        ),
+        akquant.Bar(
+            _ns(datetime(2023, 2, 2, 15, 0, tzinfo=timezone.utc)),
+            11.0,
+            11.0,
+            11.0,
+            11.0,
+            1000.0,
+            symbol,
+        ),
+        akquant.Bar(
+            _ns(datetime(2023, 2, 3, 15, 0, tzinfo=timezone.utc)),
+            12.0,
+            12.0,
+            12.0,
+            12.0,
+            1000.0,
+            symbol,
+        ),
+        akquant.Bar(
+            _ns(datetime(2023, 2, 4, 15, 0, tzinfo=timezone.utc)),
+            13.0,
+            13.0,
+            13.0,
+            13.0,
+            1000.0,
+            symbol,
+        ),
+    ]
+    engine.add_bars(bars)
+
+    engine.run(BuyBuySellBuyStrategy(), show_progress=False)
+    result = engine.get_results()
+    metrics_df = result.metrics_df
+
+    assert float(metrics_df.loc["closed_trade_count", "value"]) == pytest.approx(1.0)
+    assert float(metrics_df.loc["execution_count", "value"]) == pytest.approx(4.0)
+    assert float(metrics_df.loc["open_position_count", "value"]) == pytest.approx(1.0)
+    assert len(result.trades) == 1
+    assert len(result.executions) == 4
+
+
 def test_engine_set_fill_policy_roundtrip() -> None:
     """Engine fill policy API should expose three-axis tuple."""
     engine = akquant.Engine()

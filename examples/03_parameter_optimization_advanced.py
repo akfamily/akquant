@@ -110,7 +110,7 @@ def result_filter(metrics: Dict[str, Any]) -> bool:
     # 1. 交易次数至少 2 次 (放宽条件，模拟数据交易较少)
     # 2. 夏普比率 > -99 (更放宽条件)
     # 3. 总收益 > -99
-    return bool(metrics.get("trade_count", 0) >= 2)
+    return bool(metrics.get("closed_trade_count", 0) >= 2)
 
 
 if __name__ == "__main__":
@@ -150,6 +150,7 @@ if __name__ == "__main__":
         strategy=DualMovingAverageStrategy,
         param_grid=param_grid,
         data=df,
+        max_workers=1,
         initial_cash=100_000.0,
         sort_by=["sharpe_ratio", "total_return"],  # 多字段排序：先按夏普，再按总收益
         ascending=[False, False],  # 都是降序
@@ -175,19 +176,22 @@ if __name__ == "__main__":
     # train=100, test=50 -> need 150+
     # current len is 365
 
-    wfo_result = run_walk_forward(
-        strategy=DualMovingAverageStrategy,
-        param_grid=param_grid,
-        data=df,
-        train_period=100,
-        test_period=50,
-        metric=["sharpe_ratio", "total_return"],  # 多目标排序
-        ascending=[False, False],
-        initial_cash=100_000.0,
-        warmup_calc=warmup_calc,
-        constraint=param_constraint,
-        result_filter=result_filter,  # 同样可以使用结果过滤
-    )
+    try:
+        wfo_result = run_walk_forward(
+            strategy=DualMovingAverageStrategy,
+            param_grid=param_grid,
+            data=df,
+            train_period=100,
+            test_period=50,
+            metric=["sharpe_ratio", "total_return"],  # 多目标排序
+            ascending=[False, False],
+            initial_cash=100_000.0,
+            warmup_calc=warmup_calc,
+            constraint=param_constraint,
+            result_filter=result_filter,  # 同样可以使用结果过滤
+        )
 
-    print("\nWFO Result Head:")
-    print(wfo_result.head())
+        print("\nWFO Result Head:")
+        print(wfo_result.head())
+    except TypeError as exc:
+        print(f"\nWFO 示例跳过: {exc}")

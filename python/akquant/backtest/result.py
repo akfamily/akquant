@@ -379,7 +379,7 @@ class BacktestResult:
         Returns a DataFrame indexed by metric name with a single 'value' column,
         matching PyBroker's format.
         """
-        df = cast(pd.DataFrame, self._raw.metrics_df)
+        df: pd.DataFrame = cast(pd.DataFrame, self._raw.metrics_df).copy()
 
         # Convert time fields to the configured timezone
         time_fields = ["start_time", "end_time"]
@@ -394,6 +394,47 @@ class BacktestResult:
                             df.at[field, "value"] = ts.tz_convert(self._timezone)
                     except Exception:
                         pass
+
+        # Expose explicit user-facing trade state metrics.
+        try:
+            closed_trade_count = float(len(self.trades_df))
+            df.loc["closed_trade_count", "value"] = closed_trade_count
+        except Exception:
+            pass
+
+        try:
+            execution_count = float(len(self.executions_df))
+            df.loc["execution_count", "value"] = execution_count
+        except Exception:
+            pass
+
+        try:
+            open_position_count = 0.0
+            pos_df = self.positions_df
+            if not pos_df.empty and "date" in pos_df.columns:
+                latest_date = pos_df["date"].max()
+                latest_positions = pos_df[pos_df["date"] == latest_date].copy()
+                if "quantity" in latest_positions.columns:
+                    quantity = pd.to_numeric(
+                        latest_positions["quantity"], errors="coerce"
+                    ).fillna(0.0)
+                    open_position_count = float(quantity.ne(0.0).sum())
+                elif {
+                    "long_shares",
+                    "short_shares",
+                }.issubset(latest_positions.columns):
+                    long_shares = pd.to_numeric(
+                        latest_positions["long_shares"], errors="coerce"
+                    ).fillna(0.0)
+                    short_shares = pd.to_numeric(
+                        latest_positions["short_shares"], errors="coerce"
+                    ).fillna(0.0)
+                    open_position_count = float(
+                        (long_shares.ne(0.0) | short_shares.ne(0.0)).sum()
+                    )
+            df.loc["open_position_count", "value"] = open_position_count
+        except Exception:
+            pass
 
         # Calculate additional margin/leverage metrics using snapshots
         try:
@@ -440,25 +481,15 @@ class BacktestResult:
                     valid_levels.min() if not valid_levels.empty else float("inf")
                 )
 
-                # Append to metrics DataFrame
-                new_rows = pd.DataFrame(
-                    [
-                        {"value": max_leverage},
-                        {
-                            "value": min_margin_level
-                            if min_margin_level != float("inf")
-                            else 0.0
-                        },
-                    ],
-                    index=["max_leverage", "min_margin_level"],
+                df.loc["max_leverage", "value"] = max_leverage
+                df.loc["min_margin_level", "value"] = (
+                    min_margin_level if min_margin_level != float("inf") else 0.0
                 )
-
-                df = pd.concat([df, new_rows])
         except Exception:
             # Fallback or ignore if calculation fails
             pass
 
-        return df
+        return cast(pd.DataFrame, df)
 
     @cached_property
     def orders_df(self) -> pd.DataFrame:

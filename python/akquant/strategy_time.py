@@ -33,12 +33,14 @@ def to_local_time(strategy: Any, timestamp: int) -> pd.Timestamp:
 def format_time_iso_utc(timestamp: int) -> str:
     """将 UTC 纳秒时间戳格式化为 UTC ISO 8601 字符串."""
     ts_utc = cast(pd.Timestamp, pd.to_datetime(timestamp, unit="ns", utc=True))
-    return ts_utc.isoformat().replace("+00:00", "Z")
+    iso_utc = cast(str, ts_utc.isoformat())
+    return iso_utc.replace("+00:00", "Z")
 
 
 def format_time(strategy: Any, timestamp: int, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
     """将 UTC 纳秒时间戳格式化为本地时间字符串."""
-    return to_local_time(strategy, timestamp).strftime(fmt)
+    local_time = to_local_time(strategy, timestamp)
+    return cast(str, local_time.strftime(fmt))
 
 
 def now(strategy: Any) -> Optional[pd.Timestamp]:

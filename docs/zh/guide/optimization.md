@@ -121,7 +121,7 @@ def result_filter(metrics):
     # 2. 夏普比率 > 1.0
     # 3. 最大回撤 < 20%
     return (
-        metrics.get("trade_count", 0) >= 50 and
+        metrics.get("closed_trade_count", 0) >= 50 and
         metrics.get("sharpe_ratio", 0) > 1.0 and
         metrics.get("max_drawdown_pct", 1.0) < 0.2
     )

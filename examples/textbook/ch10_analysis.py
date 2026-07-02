@@ -104,11 +104,11 @@ def analyze_results(result: Any) -> None:
 
     trades_df = result.trades_df
     if not trades_df.empty:
-        total_trades = len(trades_df)
-        win_rate = len(trades_df[trades_df["pnl"] > 0]) / total_trades
+        closed_trade_count = get_metric("closed_trade_count", float(len(trades_df)))
+        win_rate = len(trades_df[trades_df["pnl"] > 0]) / len(trades_df)
         avg_pnl = trades_df["pnl"].mean()
 
-        print(f"总交易次数: {total_trades}")
+        print(f"已完成交易数: {closed_trade_count:.0f}")
         print(f"胜率      : {win_rate:.2%}")
         print(f"平均每笔盈亏: {avg_pnl:.2f}")
 
