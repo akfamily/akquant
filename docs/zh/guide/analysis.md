@@ -10,7 +10,9 @@
 | `end_time` | 回测结束时间 | Datetime | 对应回测数据的最后一个 Bar 的时间。 |
 | `duration` | 回测总时长 | Timedelta | `end_time - start_time`。注意：在 Python 中返回 `datetime.timedelta` 对象。 |
 | `total_bars` | 总 Bar 数量 | Int | 回测经历的 K 线总数。 |
-| `trade_count` | 交易笔数 | Int | 完成平仓的交易总数 (Round-trip)。 |
+| `closed_trade_count` | 已完成交易数 | Int | 完成平仓的交易总数 (Round-trip)。 |
+| `execution_count` | 成交笔数 | Int | 所有成交回报（fills）的总数。通常大于或等于已完成交易数。 |
+| `open_position_count` | 未平仓标的数 | Int | 回测结束时仍有持仓的标的数量。 |
 | `initial_market_value` | 初始市值 | Float | 初始资金 (通常为 Cash)。 |
 | `end_market_value` | 结束市值 | Float | 回测结束时的总资产 (Cash + 持仓市值)。 |
 | `total_pnl` | 总盈亏 | Float | `end_market_value - initial_market_value`。 |

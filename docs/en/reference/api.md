@@ -1095,7 +1095,7 @@ Backtest result object.
 
 **Properties:**
 
-*   `metrics_df`: Performance metrics DataFrame.
+*   `metrics_df`: Performance metrics DataFrame. Core trade-state fields include `closed_trade_count`, `execution_count`, and `open_position_count`.
 *   `trades_df`: Trade history DataFrame.
 *   `orders_df`: Order history DataFrame.
 *   `executions_df`: Execution fills DataFrame (prefers Rust IPC/dict fast export path).

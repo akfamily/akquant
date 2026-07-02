@@ -202,7 +202,9 @@ def test_build_metrics_html_contains_key_labels() -> None:
     assert "累计收益率 (Total Return)" in html
     assert "年化收益率 (CAGR)" in html
     assert "2.12%" in html
-    assert "交易次数 (Trades)" in html
+    assert "已完成交易数 (Closed Trades)" in html
+    assert "成交笔数 (Executions)" in html
+    assert "未平仓标的数 (Open Positions)" in html
 
 
 def test_format_metric_value_uses_metric_unit_mapping() -> None:

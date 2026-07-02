@@ -1166,7 +1166,7 @@ class RiskConfig:
 
 **属性:**
 
-*   `metrics_df`: 绩效指标表格 (Sharpe, Drawdown 等)。
+*   `metrics_df`: 绩效指标表格 (Sharpe, Drawdown 等)。其中交易相关主字段包括 `closed_trade_count`、`execution_count`、`open_position_count`。
 *   `trades_df`: 所有平仓交易记录表格。
 *   `orders_df`: 所有委托记录表格。
 *   `executions_df`: 所有成交流水表格（优先使用 Rust IPC/dict 快速导出）。

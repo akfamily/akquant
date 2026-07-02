@@ -111,7 +111,9 @@ aqp.plot_pnl_vs_duration(result.trades_df)
 | `end_time` | Backtest End Time | Datetime | Time of the last bar. |
 | `duration` | Backtest Duration | Timedelta | `end_time - start_time`. |
 | `total_bars` | Total Bars | Int | Total number of bars in backtest. |
-| `trade_count` | Trade Count | Int | Total number of closed trades (Round-trip). |
+| `closed_trade_count` | Closed Trade Count | Int | Total number of closed trades (round-trip). |
+| `execution_count` | Execution Count | Int | Total number of execution fills. Usually greater than or equal to closed trade count. |
+| `open_position_count` | Open Position Count | Int | Number of symbols still carrying open positions at the end of the backtest. |
 | `initial_market_value` | Initial Market Value | Float | Initial capital (usually Cash). |
 | `end_market_value` | End Market Value | Float | Total asset value at the end (Cash + Position Value). |
 | `total_pnl` | Total PnL | Float | `end_market_value - initial_market_value`. |

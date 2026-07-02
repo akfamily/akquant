@@ -108,7 +108,9 @@ start_time              2025-02-12 00:00:00+08:00
 end_time                2026-02-12 00:00:00+08:00
 duration                        365 days, 0:00:00
 total_bars                                    249
-trade_count                                  62.0
+closed_trade_count                                  62.0
+execution_count                                    124.0
+open_position_count                                  0.0
 initial_market_value                     100000.0
 end_market_value                          99804.0
 total_pnl                                  -196.0

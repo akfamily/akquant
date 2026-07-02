@@ -742,6 +742,19 @@ def _get_metric_value(
 def _build_metrics_html(result: Any) -> str:
     """Build key-metrics HTML cards."""
     metrics = result.metrics
+    closed_trade_count = _get_metric_value(
+        result,
+        metrics,
+        "closed_trade_count",
+        default=float(len(result.trades_df)),
+    )
+    execution_count = _get_metric_value(
+        result,
+        metrics,
+        "execution_count",
+        default=float(len(getattr(result, "executions_df", pd.DataFrame()))),
+    )
+    open_position_count = _get_metric_value(result, metrics, "open_position_count")
 
     def get_color_class(val: float) -> str:
         if val > 0:
@@ -826,7 +839,24 @@ def _build_metrics_html(result: Any) -> str:
             ),
             "",
         ),
-        ("交易次数 (Trades)", len(result.trades_df), f"{len(result.trades_df)}", ""),
+        (
+            "已完成交易数 (Closed Trades)",
+            closed_trade_count,
+            f"{closed_trade_count:.0f}",
+            "",
+        ),
+        (
+            "成交笔数 (Executions)",
+            execution_count,
+            f"{execution_count:.0f}",
+            "",
+        ),
+        (
+            "未平仓标的数 (Open Positions)",
+            open_position_count,
+            f"{open_position_count:.0f}",
+            "",
+        ),
     ]
 
     metrics_html = ""

@@ -462,7 +462,9 @@ impl BacktestResult {
             "end_time",
             "duration",
             "total_bars",
-            "trade_count",
+            "closed_trade_count",
+            "execution_count",
+            "open_position_count",
             "initial_market_value",
             "end_market_value",
             "total_pnl",
@@ -552,7 +554,17 @@ impl BacktestResult {
             values.push(obj.into_any().unbind());
         };
 
-        push_f64(t_metrics.total_closed_trades as f64);
+        let closed_trade_count = t_metrics.total_closed_trades as f64;
+        let execution_count = self.executions.len() as f64;
+        let open_position_count = self
+            .snapshots
+            .last()
+            .map(|(_, snapshots)| snapshots.len() as f64)
+            .unwrap_or(0.0);
+
+        push_f64(closed_trade_count);
+        push_f64(execution_count);
+        push_f64(open_position_count);
         push_f64(metrics.initial_market_value);
         push_f64(metrics.end_market_value);
         push_f64(t_metrics.gross_pnl);

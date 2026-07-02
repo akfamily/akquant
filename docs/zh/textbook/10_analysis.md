@@ -130,10 +130,11 @@ $$ f = \frac{p(b+1) - 1}{b} = p - \frac{q}{b} $$
 
 ```python
 metrics = result.metrics_df
+closed_trade_count = metrics.loc["closed_trade_count", "value"]
 sharpe = metrics.loc["sharpe_ratio", "value"]
 calmar = metrics.loc["calmar_ratio", "value"]
 ```
-注意：`akquant` 在计算年化指标时，默认假设一年 252 个交易日。
+这里的 `closed_trade_count` 表示已完成交易数；如果要看成交笔数或期末仍未平仓的标的数量，可以继续读取 `execution_count` 与 `open_position_count`。注意：`akquant` 在计算年化指标时，默认假设一年 252 个交易日。
 
 ### 10.5.2 `trades_df` 解析
 

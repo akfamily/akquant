@@ -259,7 +259,7 @@ class MLStrategy(Strategy):
     *   `param_grid`: Dict where keys are parameter names and values are lists of candidates.
     *   `sort_by`: Metric(s) to sort results. Can be a single string (e.g., `"sharpe_ratio"`) or a list (e.g., `["sharpe_ratio", "total_return"]`).
     *   `ascending`: Boolean or list of booleans matching `sort_by`. `False` means descending (higher is better).
-    *   `result_filter`: Callable `f(metrics: dict) -> bool`. Use this to filter out results with few trades or high drawdown (e.g., `metrics['trade_count'] < 50`).
+    *   `result_filter`: Callable `f(metrics: dict) -> bool`. Use this to filter out results with few trades or high drawdown (e.g., `metrics['closed_trade_count'] < 50`).
 
 3.  **Callbacks**:
     *   **Warmup**: `warmup_calc(params) -> int`. Dynamic warmup period based on parameters (e.g., `params['long_window'] + 1`).
@@ -281,7 +281,7 @@ param_grid = {
 def result_filter(metrics):
     # Ensure statistical significance and risk control
     return (
-        metrics.get("trade_count", 0) >= 30 and
+        metrics.get("closed_trade_count", 0) >= 30 and
         metrics.get("max_drawdown_pct", 1.0) < 0.25
     )
 

@@ -265,7 +265,9 @@ start_time              2023-01-01 00:00:00+08:00
 end_time                2023-01-01 08:19:00+08:00
 duration                          0 days, 8:19:00
 total_bars                                    500
-trade_count                                  12.0
+closed_trade_count                                  12.0
+execution_count                                     24.0
+open_position_count                                  0.0
 initial_market_value                     100000.0
 end_market_value                        100120.50
 total_pnl                                  120.50
