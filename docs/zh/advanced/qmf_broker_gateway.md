@@ -84,11 +84,22 @@ trader.place_order(
 
 - `entrust_oc`：`O`=开仓 / `C`=平仓 / `X`=行权（必填）；`covered_flag`：`1`=备兑 / `0`=非（默认 `0`）。
 - 期权路由到 `/api/v1/option/*`；`query_positions`/`sync_*` 合并证券与期权。
-- 期权资产（`/option/assets`）本阶段**不并入** `query_account`（`query_account` 返回证券资金）。
+- 启用期权后 `query_account` 合并证券与期权资产（`/option/assets`），详见下节。
 - 完整示例：`examples/41_qmf_option_live_demo.py`。
+
+## 只读查询（Phase 3a）
+
+- 启用期权后（`enable_options=True`）`query_account()` 返回**合并**账户
+  （证券资金 + 期权资产汇总为 `equity`/`cash`/`available_cash`）；未启用期权时仍只返回证券资金。
+- `trader.query_settlements(start_date, end_date, stock_type=None)` /
+  `trader.query_fund_flow(start_date=None, end_date=None)` 查询证券交割单 / 资金流水。
+- `trader.query_option_history_orders/trades/settlements(start_date, end_date)`
+  查询期权历史委托/成交/交割单，需先 `enable_options=True` 建立期权会话，
+  否则抛出 `RuntimeError`。
+- 以上方法均非 `TraderGateway` 协议方法，返回柜台**原始行** `list[dict]`（不做 Unified 建模）。
 
 ## 范围与后续
 
-组合策略（338013/14）、行权指派/交割管理、备兑划转、历史查询、可交易数量(338010)、
-期权资产并入统一账户、期权独立实时 WS 订阅、Market 委托属性、完整柜台状态集与密钥下发方案
-属于后续 / 待确认项。
+组合策略（338013/14）、行权指派/交割管理、备兑划转、可交易数量(338010)、
+组合/行权/交割相关历史查询、历史查询分页透传、期权独立实时 WS 订阅、Market 委托属性、
+完整柜台状态集与密钥下发方案属于后续 / 待确认项。

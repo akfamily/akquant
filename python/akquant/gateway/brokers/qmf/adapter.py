@@ -175,6 +175,49 @@ class QMFTraderGateway(TraderGatewayBase):
             )
         return positions
 
+    # --- 只读扩展查询（非协议；原始行透传）---
+    def query_settlements(
+        self, start_date: str, end_date: str, stock_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """证券交割单查询（原始行）."""
+        return self._client.query_settlements(start_date, end_date, stock_type)
+
+    def query_fund_flow(
+        self, start_date: str | None = None, end_date: str | None = None
+    ) -> list[dict[str, Any]]:
+        """证券资金流水查询（原始行）."""
+        return self._client.query_fund_flow(start_date, end_date)
+
+    def query_option_history_orders(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """期权历史委托查询（原始行）."""
+        return self._require_option_client().query_option_history_orders(
+            start_date, end_date
+        )
+
+    def query_option_history_trades(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """期权历史成交查询（原始行）."""
+        return self._require_option_client().query_option_history_trades(
+            start_date, end_date
+        )
+
+    def query_option_history_settlements(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """期权历史交割单查询（原始行）."""
+        return self._require_option_client().query_option_history_settlements(
+            start_date, end_date
+        )
+
+    def _require_option_client(self) -> QMFHttpClient:
+        """返回期权会话客户端；未启用期权时抛清晰错误."""
+        if self._option_client is None:
+            raise RuntimeError("期权历史查询需 enable_options 并配置期权会话")
+        return self._option_client
+
     # --- 断线补齐 ---
     def sync_open_orders(self) -> list[UnifiedOrderSnapshot]:
         """重新拉取当前委托（证券 + 期权），用于断线补齐."""
