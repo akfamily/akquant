@@ -320,13 +320,11 @@ class LiveRunner:
                     "trading_mode='broker_live' requires a trader gateway configuration"
                 )
             logger.info(
-                "Starting %s trader gateway",
+                "Connecting+starting %s trader gateway",
                 self.broker,
                 extra=self._runner_log_extra(phase="gateway"),
             )
-            self._start_gateway_thread(
-                bundle.trader_gateway.start, f"{self.broker}-trader"
-            )
+            self._connect_and_start_trader(bundle.trader_gateway)
 
         time.sleep(2.0)
 
@@ -687,6 +685,13 @@ class LiveRunner:
     def _start_gateway_thread(self, target: Any, name: str) -> None:
         thread = threading.Thread(target=target, name=name, daemon=True)
         thread.start()
+
+    def _connect_and_start_trader(self, trader_gateway: Any) -> None:
+        """Connect (login/session, fail-fast) synchronously, then start streaming."""
+        connect = getattr(trader_gateway, "connect", None)
+        if callable(connect):
+            connect()
+        self._start_gateway_thread(trader_gateway.start, f"{self.broker}-trader")
 
     def _runner_log_extra(self, *, phase: str) -> dict[str, Any]:
         strategy_id = (
