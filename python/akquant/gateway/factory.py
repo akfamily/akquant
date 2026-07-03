@@ -1,7 +1,7 @@
 from typing import Any, Sequence
 
 from ..akquant import DataFeed
-from .protocols import GatewayBundle, TraderGateway  # noqa: F401 (类型/兼容)
+from .protocols import GatewayBundle
 from .registry import create_registered_gateway_bundle, list_registered_brokers
 
 
