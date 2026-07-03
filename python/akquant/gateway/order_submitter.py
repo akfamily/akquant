@@ -226,6 +226,7 @@ class BrokerOrderSubmitter:
             )
         _ = tag  # 元数据，收下忽略
         _ = trail_reference_price  # 仅随 trail_offset 生效；下方已拦截追踪单
+        order_type = order_type or "Market"  # buy()/sell() 缺省传 None → 用签名默认
         if trigger_price is not None:
             raise RuntimeError("broker_live 暂不支持条件/止损触发单(trigger_price)")
         if trail_offset is not None or str(order_type).strip().lower() in {

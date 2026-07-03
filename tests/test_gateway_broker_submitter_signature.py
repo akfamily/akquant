@@ -113,3 +113,13 @@ def test_buy_convenience_path_no_typeerror() -> None:
     result = api.buy(strategy, symbol="600000.SH", quantity=100, price=10.5)
     assert result == "b1"
     assert len(captured) == 1
+
+
+def test_order_type_none_defaults_to_market() -> None:
+    """order_type=None (as buy()/sell() forward) becomes the documented default."""
+    captured: list = []
+    sub = _submitter(captured)
+    sub.submit_order(
+        symbol="600000.SH", side="Buy", quantity=100, price=10.5, order_type=None
+    )
+    assert captured[0].order_type == "Market"
