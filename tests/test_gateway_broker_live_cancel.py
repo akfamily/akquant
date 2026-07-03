@@ -45,3 +45,31 @@ def test_cancel_all_orders_cancels_open() -> None:
     install_broker_cancel(strategy, gw)
     strategy.cancel_all_orders()
     assert gw.cancelled == ["9000000001"]
+
+
+def test_cancel_all_orders_symbol_filter() -> None:
+    """cancel_all_orders(symbol=...) cancels only that symbol's broker ids."""
+
+    class _MultiGw(_Gw):
+        def sync_open_orders(self):
+            """Return two open orders on different symbols."""
+            return [
+                UnifiedOrderSnapshot(
+                    client_order_id="c1",
+                    broker_order_id="9000000001",
+                    symbol="600000.SH",
+                    status=UnifiedOrderStatus.SUBMITTED,
+                ),
+                UnifiedOrderSnapshot(
+                    client_order_id="c2",
+                    broker_order_id="9000000002",
+                    symbol="000001.SZ",
+                    status=UnifiedOrderStatus.SUBMITTED,
+                ),
+            ]
+
+    gw = _MultiGw()
+    strategy = _Strategy()
+    install_broker_cancel(strategy, gw)
+    strategy.cancel_all_orders(symbol="000001.SZ")
+    assert gw.cancelled == ["9000000002"]
