@@ -63,4 +63,9 @@ __all__ = [
     "unregister_broker",
     "get_broker_builder",
     "list_registered_brokers",
+    "register_builtin_brokers",
 ]
+
+from .brokers.builtins import register_builtin_brokers
+
+register_builtin_brokers()
