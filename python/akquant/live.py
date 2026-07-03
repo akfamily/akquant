@@ -713,10 +713,18 @@ class LiveRunner:
         """
 
         def _run() -> None:
-            connect = getattr(trader_gateway, "connect", None)
-            if callable(connect):
-                connect()
-            trader_gateway.start()
+            try:
+                connect = getattr(trader_gateway, "connect", None)
+                if callable(connect):
+                    connect()
+                trader_gateway.start()
+            except Exception:
+                # 登录/启动失败：记清晰日志（否则仅一条泛化的"未就绪"告警）；
+                # 就绪由 heartbeat 轮询裁定，broker_ready 保持 False。
+                logger.exception(
+                    "trader gateway connect/start failed",
+                    extra=self._runner_log_extra(phase="gateway"),
+                )
 
         self._start_gateway_thread(_run, f"{self.broker}-trader")
 

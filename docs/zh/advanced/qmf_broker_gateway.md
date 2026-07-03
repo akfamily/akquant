@@ -113,6 +113,9 @@ trader.place_order(
 - `paper`/其它非 `broker_live` 模式下 `broker_ready` 默认即为 `True`，不受该守卫影响。
 - 拒单与错误分别通过 `on_reject(ctx, order)` / `on_error(ctx, error)` 回调上报，
   不要依赖 `on_order` 里再判断状态字符串。
+- 就绪判定基于登录（`heartbeat`）。QMF 登录完成即可下单/查询（HTTP），但推送 WS 可能
+  略晚建立；就绪到 WS 建立之间的委托/成交回报由断线补齐（`sync_open_orders`/
+  `sync_today_trades` 的 HTTP 补齐）兜底，不会丢。
 
 完整示例：`examples/39_live_broker_submit_order_demo.py`。
 
