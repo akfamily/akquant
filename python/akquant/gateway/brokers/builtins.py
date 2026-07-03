@@ -116,8 +116,26 @@ def _build_qmf(
         asset_prop=kwargs.get("asset_prop", "0"),
         timeout=float(kwargs.get("timeout", 10.0)),
     )
+    enable_options = bool(kwargs.get("enable_options", False))
+    option_client = None
+    if enable_options:
+        option_config = QMFClientConfig(
+            base_url=kwargs["base_url"],
+            qmf_user_id=kwargs.get("option_qmf_user_id", kwargs["qmf_user_id"]),
+            account_content=kwargs.get(
+                "option_account_content", kwargs["account_content"]
+            ),
+            password=kwargs.get("option_password", kwargs["password"]),
+            input_content=kwargs["input_content"],
+            content_type=kwargs["content_type"],
+            password_key=kwargs["password_key"],
+            password_type=kwargs.get("password_type", "2"),
+            asset_prop="B",
+            timeout=float(kwargs.get("timeout", 10.0)),
+        )
+        option_client = QMFHttpClient(option_config)
     trader_gateway: TraderGateway | None = QMFTraderGateway(
-        client=QMFHttpClient(config), ws_url=ws_url
+        client=QMFHttpClient(config), ws_url=ws_url, option_client=option_client
     )
     return GatewayBundle(
         market_gateway=None,
