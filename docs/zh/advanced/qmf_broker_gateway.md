@@ -54,7 +54,41 @@ trader.disconnect()
   另见 [自定义 Broker 注册](custom_broker_registry.md) 与
   [Broker 能力矩阵](broker_capability_matrix.md)。
 
+## 期权（Phase 2）
+
+同一个 `broker="qmf"` 通过**双会话**支持期权：证券会话（`asset_prop="0"`）与期权会话
+（`asset_prop="B"`）。装配时传 `enable_options=True` 即额外登录期权会话并声明期权能力
+（`features` 含 `"options"`、`broker_extra_fields` 含 `entrust_oc`/`covered_flag`/`entrust_prop`）。
+证券路径不受影响（默认 `enable_options=False`）。
+
+期权下单用 `asset_type="option"`，期权专属语义经 `extra` 传入：
+
+```python
+bundle = create_gateway_bundle(
+    broker="qmf", feed=DataFeed(), symbols=["10003456.SH"],
+    base_url="http://127.0.0.1:18080", ws_url="ws://127.0.0.1:18080/api/v1/stream",
+    qmf_user_id="u", account_content="8888000001", password="明文交易密码",
+    input_content="1", content_type="1", password_key="<base64(32B)>",
+    enable_options=True,
+)
+trader = bundle.trader_gateway
+trader.connect()
+trader.place_order(
+    UnifiedOrderRequest(
+        client_order_id="opt-1", symbol="10003456.SH", side="Buy",
+        quantity=1, price=0.05, order_type="Limit", asset_type="option",
+        extra={"entrust_oc": "O", "covered_flag": "0", "entrust_prop": "F0"},
+    )
+)
+```
+
+- `entrust_oc`：`O`=开仓 / `C`=平仓 / `X`=行权（必填）；`covered_flag`：`1`=备兑 / `0`=非（默认 `0`）。
+- 期权路由到 `/api/v1/option/*`；`query_positions`/`sync_*` 合并证券与期权。
+- 期权资产（`/option/assets`）本阶段**不并入** `query_account`（`query_account` 返回证券资金）。
+- 完整示例：`examples/41_qmf_option_live_demo.py`。
+
 ## 范围与后续
 
-Phase 1 覆盖证券（股票）交易。期权（`/api/v1/option/*`、开平/备兑/行权、`asset_prop="B"`
-独立会话）、Market 委托属性、完整柜台状态集与密钥下发方案属于 Phase 2 / 待确认项。
+组合策略（338013/14）、行权指派/交割管理、备兑划转、历史查询、可交易数量(338010)、
+期权资产并入统一账户、期权独立实时 WS 订阅、Market 委托属性、完整柜台状态集与密钥下发方案
+属于后续 / 待确认项。
