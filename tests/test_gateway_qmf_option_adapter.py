@@ -180,3 +180,13 @@ def test_queries_merge_securities_and_options() -> None:
     assert syms == {"600000.SH", "10003456.SH"}
     ids = {s.broker_order_id for s in gw.sync_open_orders()}
     assert ids == {"100000001", "9000000001"}
+
+
+def test_cancel_after_recovery_routes_to_option_client() -> None:
+    """A recovered (not locally placed) option order still cancels via options."""
+    opt = _OptClient()
+    gw = QMFTraderGateway(client=_SecClient(), ws_url="ws://x", option_client=opt)
+    # Simulate fresh process: no place_order call, recover via sync_open_orders.
+    gw.sync_open_orders()
+    gw.cancel_order("9000000001")
+    assert ("opt", "9000000001") in opt.cancelled

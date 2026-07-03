@@ -114,18 +114,26 @@ class QMFTraderGateway(TraderGatewayBase):
             self._client.cancel_order(broker_order_id)
 
     # --- 查询（证券 + 可选期权合并）---
+    def _option_order_rows(self) -> list[dict[str, Any]]:
+        """拉取期权委托行，并登记其 entrust_no 以便（含断线补齐后）撤单判源."""
+        if self._option_client is None:
+            return []
+        rows = self._option_client.query_option_orders()
+        for row in rows:
+            entrust_no = str(row.get("entrust_no", ""))
+            if entrust_no:
+                self._option_broker_ids.add(entrust_no)
+        return rows
+
     def query_order(self, broker_order_id: str) -> UnifiedOrderSnapshot | None:
         """按 broker_order_id 查询单笔委托快照（先证券后期权）."""
         target = str(broker_order_id)
         for row in self._client.query_orders():
             if str(row.get("entrust_no", "")) == target:
                 return mapper.parse_order(row, self.client_order_id_for(target))
-        if self._option_client is not None:
-            for row in self._option_client.query_option_orders():
-                if str(row.get("entrust_no", "")) == target:
-                    return mapper.parse_option_order(
-                        row, self.client_order_id_for(target)
-                    )
+        for row in self._option_order_rows():
+            if str(row.get("entrust_no", "")) == target:
+                return mapper.parse_option_order(row, self.client_order_id_for(target))
         return None
 
     def query_trades(self, since: int | None = None) -> list[UnifiedTrade]:
@@ -171,13 +179,12 @@ class QMFTraderGateway(TraderGatewayBase):
             )
             for row in self._client.query_orders()
         ]
-        if self._option_client is not None:
-            snapshots.extend(
-                mapper.parse_option_order(
-                    row, self.client_order_id_for(str(row.get("entrust_no", "")))
-                )
-                for row in self._option_client.query_option_orders()
+        snapshots.extend(
+            mapper.parse_option_order(
+                row, self.client_order_id_for(str(row.get("entrust_no", "")))
             )
+            for row in self._option_order_rows()
+        )
         return snapshots
 
     def sync_today_trades(self) -> list[UnifiedTrade]:
