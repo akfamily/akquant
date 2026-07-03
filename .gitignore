@@ -33,3 +33,7 @@ build/
 /data_catalog/
 plans/
 CLAUDE.md
+
+# 外部前置机/回测服务子项目（vendored，独立仓库，不纳入本仓版本管理）
+/backtest_server3.0-develop/
+/py_jinrongjie_gateway_server-develop/
