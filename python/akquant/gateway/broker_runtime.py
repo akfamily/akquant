@@ -64,6 +64,7 @@ class BrokerRuntime:
         self._payload_field = payload_field
         self._get_execution_capabilities = get_execution_capabilities
         self._submitter: BrokerOrderSubmitter | None = None
+        self._broker_state_cache: Any = None
 
     @property
     def event_bridge(self) -> BrokerEventBridge:
@@ -97,6 +98,13 @@ class BrokerRuntime:
             get_execution_capabilities=self._get_execution_capabilities,
         )
         self._submitter.install()
+
+        from .broker_state_cache import BrokerStateCache
+        from .broker_strategy_api import install_broker_state_reads
+
+        self._broker_state_cache = BrokerStateCache(trader_gateway)
+        install_broker_state_reads(strategy, self._broker_state_cache)
+
         return self._submitter
 
     def queue_event(self, event_name: str, payload: Any) -> None:
