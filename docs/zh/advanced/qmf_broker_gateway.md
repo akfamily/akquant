@@ -119,6 +119,29 @@ trader.place_order(
 
 完整示例：`examples/39_live_broker_submit_order_demo.py`。
 
+## 实盘状态与撤单（③b/③c）
+
+`broker_live` 下，策略的**状态读**与**撤单**方法会被覆盖为直接读/写真实柜台
+（回测/`paper` 下不安装这些覆盖，仍走 Rust 引擎 `ctx`，零回归）。柜台是唯一真相。
+
+- **状态读走柜台**：`get_position(symbol=None)` / `get_available_position(symbol=None)` /
+  `get_account()` / `get_portfolio_value()` / `get_open_orders(symbol=None)` 转发
+  `trader_gateway.query_*`。`symbol` 省略时回退到当前 bar/tick 的标的（与回测一致）。
+  应答进一个短生命缓存；柜台推送 **成交/委托**（`on_trade`/`on_order`）到达时缓存**失效**，
+  下次读重新查——兼顾正确与调用量。柜台查询异常时记日志并返回上次缓存，不中断策略。
+- **`get_account()` 键对齐回测**：返回与回测 `get_account()` 同形状的 dict（`cash`/
+  `available_cash`/`equity`/`market_value`/…共 15 键）；柜台无法提供的键给 `0.0`/合理默认，
+  以避免按回测写法的策略在实盘 `KeyError`。
+- **撤单走柜台**：`cancel_order(order_id)` 直接调 `trader_gateway.cancel_order(order_id)`
+  （`broker_live` 下 `submit_order` 返回的即 broker_order_id，故策略持有的 `order_id`
+  本就是柜台单号）；`cancel_all_orders(symbol=None)` 遍历 `sync_open_orders()` 逐个撤，
+  可按 `symbol` 过滤。
+- **组合目标类下单暂不支持**：`buy_all` / `order_target` / `order_target_value` /
+  `order_target_percent` / `order_target_weights` 在 `broker_live` 下会抛清晰 `RuntimeError`
+  （它们直接按引擎 `ctx` 资金/持仓 sizing，与柜台不一致，易错单）。请改用
+  `submit_order` / `buy`，并按 `get_account()` / `get_position()` 手动 sizing。
+  （让这些方法真正按柜台状态 sizing 属后续。）
+
 ## 范围与后续
 
 组合策略（338013/14）、行权指派/交割管理、备兑划转、可交易数量(338010)、

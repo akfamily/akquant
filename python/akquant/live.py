@@ -347,7 +347,10 @@ class LiveRunner:
         self._configure_strategy_slots(
             strategy_instance, slot_strategy_instances, effective_strategy_id
         )
-        if bundle.trader_gateway is not None:
+        # Broker callbacks + submit/state/cancel overrides are broker_live-only.
+        # A non-broker_live run (e.g. paper) uses simulated execution, so must not
+        # route submit/reads/cancel to a real trader gateway even if one was built.
+        if self.trading_mode == "broker_live" and bundle.trader_gateway is not None:
             strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
             callback_target: Any = (
                 _StrategyCallbackFanout(strategy_targets)

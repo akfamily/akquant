@@ -3,6 +3,7 @@ from typing import Any, Callable
 from .broker_event_bridge import BrokerEventBridge
 from .broker_models import BrokerCapability
 from .broker_recovery import BrokerRecovery
+from .broker_strategy_api import wrap_state_invalidation
 from .order_submitter import BrokerOrderSubmitter
 
 
@@ -35,6 +36,10 @@ class BrokerRuntime:
         get_execution_capabilities: Callable[[], dict[str, Any]],
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
+        self._broker_state_caches: list[Any] = []
+        update_broker_state = wrap_state_invalidation(
+            update_broker_state, lambda: self._broker_state_caches
+        )
         self._event_bridge = BrokerEventBridge(
             event_lock=event_lock,
             event_store=event_store,
@@ -97,6 +102,20 @@ class BrokerRuntime:
             get_execution_capabilities=self._get_execution_capabilities,
         )
         self._submitter.install()
+
+        from .broker_state_cache import BrokerStateCache
+        from .broker_strategy_api import (
+            install_broker_cancel,
+            install_broker_state_reads,
+        )
+
+        # One cache per strategy target; a fill/order push must invalidate all of
+        # them (single-field storage would only invalidate the last slot's cache).
+        cache = BrokerStateCache(trader_gateway)
+        self._broker_state_caches.append(cache)
+        install_broker_state_reads(strategy, cache)
+        install_broker_cancel(strategy, trader_gateway)
+
         return self._submitter
 
     def queue_event(self, event_name: str, payload: Any) -> None:

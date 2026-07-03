@@ -679,6 +679,20 @@ def get_execution_capabilities(strategy: Any) -> Dict[str, Any]:
     }
 
 
+def _reject_target_orders_in_broker_live(strategy: Any) -> None:
+    """Raise clearly for buy_all/order_target* helpers when running broker_live.
+
+    These helpers size off the (simulated) backtest ctx, which is not the
+    broker's source of truth in broker_live — raise instead of silently
+    mis-sizing.
+    """
+    if get_execution_capabilities(strategy).get("broker_live"):
+        raise RuntimeError(
+            "组合目标类下单(buy_all/order_target*)在 broker_live 暂不支持;"
+            "请用 submit_order/buy 并按 get_account()/get_position() 手动 sizing"
+        )
+
+
 def _normalize_position_effect(
     position_effect: Union[PositionEffect, str, None], default: str = "auto"
 ) -> str:
@@ -1281,6 +1295,18 @@ def order_target(
     Returns:
         本次调仓产生的订单 ID; 若无需交易 (已在目标) 则返回 None.
     """
+    _reject_target_orders_in_broker_live(strategy)
+    return _order_target_core(strategy, symbol, target, price, **kwargs)
+
+
+def _order_target_core(
+    strategy: Any,
+    symbol: Optional[str] = None,
+    target: Optional[float] = None,
+    price: Optional[float] = None,
+    **kwargs: Any,
+) -> Optional[str]:
+    """order_target 的无守卫核心：供已自带能力校验的调仓入口内部复用."""
     if target is None:
         raise ValueError("order_target requires 'target' (目标持仓数量)")
     symbol = resolve_symbol(strategy, symbol)
@@ -1310,6 +1336,7 @@ def order_target_value(
     Returns:
         本次调仓产生的订单 ID; 若无需交易或无法定价则返回 None.
     """
+    _reject_target_orders_in_broker_live(strategy)
     if target_value is None:
         raise ValueError("order_target_value requires 'target_value' (目标持仓价值)")
     symbol = resolve_symbol(strategy, symbol)
@@ -1372,6 +1399,7 @@ def order_target_percent(
     Returns:
         本次调仓产生的订单 ID; 若无需交易则返回 None.
     """
+    _reject_target_orders_in_broker_live(strategy)
     if target_percent is None:
         raise ValueError(
             "order_target_percent requires 'target_percent' (目标持仓比例)"
@@ -1395,6 +1423,7 @@ def order_target_weights(
     Returns:
         本次调仓产生的所有订单 ID 列表 (无交易时为空列表).
     """
+    _reject_target_orders_in_broker_live(strategy)
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
 
@@ -1627,7 +1656,7 @@ def order_target_positions(
                 plan["reject_reason"] = missing_price_error
                 raise RuntimeError(missing_price_error)
         leg_price = price_map.get(symbol) if price_map else None
-        oid = order_target(strategy, symbol, target_qty, leg_price, **kwargs)
+        oid = _order_target_core(strategy, symbol, target_qty, leg_price, **kwargs)
         plan["submitted_legs"].append(
             {
                 "symbol": symbol,
@@ -1665,7 +1694,7 @@ def order_target_positions(
                 plan["reject_reason"] = missing_price_error
                 raise RuntimeError(missing_price_error)
         leg_price = price_map.get(symbol) if price_map else None
-        oid = order_target(strategy, symbol, target_qty, leg_price, **kwargs)
+        oid = _order_target_core(strategy, symbol, target_qty, leg_price, **kwargs)
         plan["submitted_legs"].append(
             {
                 "symbol": symbol,
@@ -1683,6 +1712,7 @@ def order_target_positions(
 
 def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
     """全仓买入 (Buy All)."""
+    _reject_target_orders_in_broker_live(strategy)
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
 
