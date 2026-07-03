@@ -757,6 +757,7 @@ def submit_order(
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
+    asset_type: str = "stock",
 ) -> str:
     """统一下单接口."""
     capabilities = get_execution_capabilities(strategy)
@@ -764,7 +765,13 @@ def submit_order(
         raise RuntimeError("client_order_id is not supported in current execution mode")
     if extra:
         raise RuntimeError(
-            "extra broker fields are not supported in current execution mode"
+            "extra broker fields require broker_live mode "
+            "(not available in simulated/backtest execution)"
+        )
+    if str(asset_type).strip().lower() != "stock":
+        raise RuntimeError(
+            "non-stock asset_type requires broker_live mode "
+            "(not available in simulated/backtest execution)"
         )
     order_type_key, order_type_enum = _parse_order_type(order_type)
     if time_in_force is not None and not isinstance(time_in_force, TimeInForce):
