@@ -2061,6 +2061,7 @@ class Strategy:
         commission: Optional[Dict[str, Any]] = None,
         position_effect: Optional[str] = None,
         reduce_only: bool = False,
+        asset_type: str = "stock",
     ) -> str:
         """
         统一下单接口.
@@ -2087,6 +2088,7 @@ class Strategy:
             commission=commission,
             position_effect=position_effect,
             reduce_only=reduce_only,
+            asset_type=asset_type,
         )
 
     def can_submit_client_order(self, client_order_id: str) -> bool:

@@ -45,3 +45,22 @@ def test_sim_rejects_non_stock_asset_type() -> None:
             order_type="Limit",
             asset_type="option",
         )
+
+
+def test_strategy_submit_order_forwards_asset_type(monkeypatch) -> None:
+    """Strategy.submit_order exposes and forwards asset_type to the impl."""
+    from akquant import strategy as strat_mod
+    from akquant.strategy import Strategy
+
+    captured: dict = {}
+
+    def _fake_impl(_self, **kwargs):
+        captured.update(kwargs)
+        return "order-id"
+
+    monkeypatch.setattr(strat_mod, "_submit_order_impl", _fake_impl)
+    result = Strategy.submit_order(
+        object(), symbol="10004321.SH", side="Buy", quantity=1, asset_type="option"
+    )
+    assert result == "order-id"
+    assert captured["asset_type"] == "option"

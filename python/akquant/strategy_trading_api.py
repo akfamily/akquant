@@ -2,6 +2,7 @@ import warnings
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 
 from .akquant import OrderStatus, OrderType, PositionEffect, TimeInForce
+from .gateway.broker_models import normalize_asset_type
 
 OrderFillPolicy = Dict[str, Any]
 OrderSlippage = Dict[str, Any]
@@ -768,7 +769,7 @@ def submit_order(
             "extra broker fields require broker_live mode "
             "(not available in simulated/backtest execution)"
         )
-    if str(asset_type).strip().lower() != "stock":
+    if normalize_asset_type(asset_type) != "stock":
         raise RuntimeError(
             "non-stock asset_type requires broker_live mode "
             "(not available in simulated/backtest execution)"
