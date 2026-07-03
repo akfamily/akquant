@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from .broker_state_cache import BrokerStateCache
 
@@ -97,3 +97,19 @@ def install_broker_cancel(strategy: Any, trader_gateway: Any) -> None:
 
     strategy.cancel_order = _cancel_order
     strategy.cancel_all_orders = _cancel_all_orders
+
+
+def wrap_state_invalidation(
+    update_broker_state: Callable[[str, Any], None],
+    get_cache: Callable[[], Any | None],
+) -> Callable[[str, Any], None]:
+    """Wrap the broker update callback so order/trade events invalidate the cache."""
+
+    def _wrapped(event_name: str, payload: Any) -> None:
+        update_broker_state(event_name, payload)
+        if event_name in ("order", "trade"):
+            cache = get_cache()
+            if cache is not None:
+                cache.invalidate()
+
+    return _wrapped

@@ -3,6 +3,7 @@ from typing import Any, Callable
 from .broker_event_bridge import BrokerEventBridge
 from .broker_models import BrokerCapability
 from .broker_recovery import BrokerRecovery
+from .broker_strategy_api import wrap_state_invalidation
 from .order_submitter import BrokerOrderSubmitter
 
 
@@ -35,6 +36,10 @@ class BrokerRuntime:
         get_execution_capabilities: Callable[[], dict[str, Any]],
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
+        self._broker_state_cache: Any = None
+        update_broker_state = wrap_state_invalidation(
+            update_broker_state, lambda: self._broker_state_cache
+        )
         self._event_bridge = BrokerEventBridge(
             event_lock=event_lock,
             event_store=event_store,
@@ -64,7 +69,6 @@ class BrokerRuntime:
         self._payload_field = payload_field
         self._get_execution_capabilities = get_execution_capabilities
         self._submitter: BrokerOrderSubmitter | None = None
-        self._broker_state_cache: Any = None
 
     @property
     def event_bridge(self) -> BrokerEventBridge:
