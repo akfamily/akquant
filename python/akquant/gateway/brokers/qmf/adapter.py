@@ -2,52 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from ...broker_models import (
     BrokerCapability,
     UnifiedAccount,
-    UnifiedExecutionReport,
     UnifiedOrderRequest,
     UnifiedOrderSnapshot,
     UnifiedPosition,
     UnifiedTrade,
 )
+from ...trader_base import TraderGatewayBase
 from . import mapper
 from .client import QMFHttpClient
 from .ws import QMFPushClient
-
-
-class QMFMarketGateway:
-    """空转行情网关：行情由 akquant 现有 feed 提供，本 broker 不接柜台行情."""
-
-    def connect(self) -> None:
-        """No-op: 无柜台行情连接."""
-        return None
-
-    def disconnect(self) -> None:
-        """No-op."""
-        return None
-
-    def subscribe(self, symbols: Sequence[str]) -> None:
-        """No-op：订阅由现有 feed 负责."""
-        _ = symbols
-
-    def unsubscribe(self, symbols: Sequence[str]) -> None:
-        """No-op."""
-        _ = symbols
-
-    def on_tick(self, callback: Callable[[dict[str, Any]], None]) -> None:
-        """No-op：无 tick 推送."""
-        _ = callback
-
-    def on_bar(self, callback: Callable[[dict[str, Any]], None]) -> None:
-        """No-op：无 bar 推送."""
-        _ = callback
-
-    def start(self) -> None:
-        """No-op."""
-        return None
 
 
 def default_capability() -> BrokerCapability:
@@ -60,7 +28,7 @@ def default_capability() -> BrokerCapability:
     )
 
 
-class QMFTraderGateway:
+class QMFTraderGateway(TraderGatewayBase):
     """通过 chibi_quant 前置机网关交易的 TraderGateway 实现."""
 
     def __init__(
@@ -70,14 +38,11 @@ class QMFTraderGateway:
         capability: BrokerCapability | None = None,
     ) -> None:
         """Bind the HTTP client, stream URL and capability matrix."""
+        super().__init__()
         self._client = client
         self._ws_url = ws_url
         self._capability = capability or default_capability()
         self._push: QMFPushClient | None = None
-        self._client_id_by_broker: dict[str, str] = {}
-        self._on_order: Callable[[UnifiedOrderSnapshot], None] | None = None
-        self._on_trade: Callable[[UnifiedTrade], None] | None = None
-        self._on_exec: Callable[[UnifiedExecutionReport], None] | None = None
 
     # --- 生命周期 ---
     def connect(self) -> None:
@@ -113,7 +78,7 @@ class QMFTraderGateway:
         data = self._client.place_order(mapper.build_order_payload(req))
         broker_order_id = str(data.get("entrust_no", ""))
         if broker_order_id:
-            self._client_id_by_broker[broker_order_id] = req.client_order_id
+            self.record_broker_order(broker_order_id, req.client_order_id)
         return broker_order_id
 
     def cancel_order(self, broker_order_id: str) -> None:
@@ -126,7 +91,7 @@ class QMFTraderGateway:
         for row in self._client.query_orders():
             if str(row.get("entrust_no", "")) == str(broker_order_id):
                 return mapper.parse_order(
-                    row, self._client_id_by_broker.get(str(broker_order_id), "")
+                    row, self.client_order_id_for(str(broker_order_id))
                 )
         return None
 
@@ -135,7 +100,7 @@ class QMFTraderGateway:
         _ = since
         return [
             mapper.parse_trade(
-                row, self._client_id_by_broker.get(str(row.get("entrust_no", "")), "")
+                row, self.client_order_id_for(str(row.get("entrust_no", "")))
             )
             for row in self._client.query_trades()
         ]
@@ -148,27 +113,12 @@ class QMFTraderGateway:
         """查询持仓列表."""
         return [mapper.parse_position(row) for row in self._client.query_positions()]
 
-    # --- 回调注册 ---
-    def on_order(self, callback: Callable[[UnifiedOrderSnapshot], None]) -> None:
-        """注册委托状态回调."""
-        self._on_order = callback
-
-    def on_trade(self, callback: Callable[[UnifiedTrade], None]) -> None:
-        """注册成交回调."""
-        self._on_trade = callback
-
-    def on_execution_report(
-        self, callback: Callable[[UnifiedExecutionReport], None]
-    ) -> None:
-        """注册执行回报回调."""
-        self._on_exec = callback
-
     # --- 断线补齐 ---
     def sync_open_orders(self) -> list[UnifiedOrderSnapshot]:
         """重新拉取当前委托，用于断线补齐."""
         return [
             mapper.parse_order(
-                row, self._client_id_by_broker.get(str(row.get("entrust_no", "")), "")
+                row, self.client_order_id_for(str(row.get("entrust_no", "")))
             )
             for row in self._client.query_orders()
         ]
@@ -180,22 +130,10 @@ class QMFTraderGateway:
     # --- 推送分发 ---
     def _dispatch_push(self, event: str, data: dict[str, Any]) -> None:
         broker_order_id = str(data.get("entrust_no", ""))
-        client_order_id = self._client_id_by_broker.get(broker_order_id, "")
-        if event == "trade_update" and self._on_trade is not None:
-            self._on_trade(mapper.parse_trade(data, client_order_id))
+        client_order_id = self.client_order_id_for(broker_order_id)
+        if event == "trade_update":
+            self._emit_trade(mapper.parse_trade(data, client_order_id))
         elif event == "order_update":
             snapshot = mapper.parse_order(data, client_order_id)
-            if self._on_order is not None:
-                self._on_order(snapshot)
-            if self._on_exec is not None:
-                self._on_exec(
-                    UnifiedExecutionReport(
-                        broker_order_id=snapshot.broker_order_id,
-                        client_order_id=snapshot.client_order_id,
-                        status=snapshot.status,
-                        symbol=snapshot.symbol,
-                        filled_quantity=snapshot.filled_quantity,
-                        avg_fill_price=snapshot.avg_fill_price,
-                        reject_reason=snapshot.reject_reason,
-                    )
-                )
+            self._emit_order(snapshot)
+            self._emit_exec_from_order(snapshot)
