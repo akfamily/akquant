@@ -100,10 +100,14 @@ class BrokerRuntime:
         self._submitter.install()
 
         from .broker_state_cache import BrokerStateCache
-        from .broker_strategy_api import install_broker_state_reads
+        from .broker_strategy_api import (
+            install_broker_cancel,
+            install_broker_state_reads,
+        )
 
         self._broker_state_cache = BrokerStateCache(trader_gateway)
         install_broker_state_reads(strategy, self._broker_state_cache)
+        install_broker_cancel(strategy, trader_gateway)
 
         return self._submitter
 

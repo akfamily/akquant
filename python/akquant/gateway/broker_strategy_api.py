@@ -75,3 +75,25 @@ def install_broker_state_reads(strategy: Any, cache: BrokerStateCache) -> None:
     strategy.get_account = _get_account
     strategy.get_portfolio_value = _get_portfolio_value
     strategy.get_open_orders = _get_open_orders
+
+
+def install_broker_cancel(strategy: Any, trader_gateway: Any) -> None:
+    """Override cancel_order/cancel_all_orders to route to the broker.
+
+    In broker_live, submit_order returns the broker_order_id, so the
+    strategy's order_id IS the broker_order_id — forward it directly.
+    """
+
+    def _cancel_order(order_id: str) -> None:
+        trader_gateway.cancel_order(str(order_id))
+
+    def _cancel_all_orders(symbol: str | None = None) -> None:
+        for order in trader_gateway.sync_open_orders():
+            bid = getattr(order, "broker_order_id", "")
+            if symbol is not None and getattr(order, "symbol", None) != symbol:
+                continue
+            if bid:
+                trader_gateway.cancel_order(str(bid))
+
+    strategy.cancel_order = _cancel_order
+    strategy.cancel_all_orders = _cancel_all_orders
