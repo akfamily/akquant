@@ -38,3 +38,41 @@ def test_broker_live_reads_route_to_gateway() -> None:
     assert strategy.get_portfolio_value() == 1500.0
     assert strategy.get_position("000001.SZ") == 0.0
     assert strategy.get_open_orders() == []
+
+
+def test_get_account_has_backtest_key_parity() -> None:
+    """broker_live get_account exposes all backtest keys (0-default) for parity."""
+    strategy = _Strategy()
+    install_broker_state_reads(strategy, BrokerStateCache(_Gw()))
+    acct = strategy.get_account()
+    for key in (
+        "cash",
+        "equity",
+        "market_value",
+        "notional_value",
+        "frozen_cash",
+        "margin",
+        "used_margin",
+        "free_margin",
+        "unrealized_pnl",
+        "borrowed_cash",
+        "short_market_value",
+        "maintenance_ratio",
+        "account_mode",
+        "accrued_interest",
+        "daily_interest",
+    ):
+        assert key in acct
+
+
+def test_get_position_defaults_to_current_bar_symbol() -> None:
+    """get_position() with no symbol resolves to the current bar (backtest parity)."""
+
+    class _Bar:
+        symbol = "600000.SH"
+
+    strategy = _Strategy()
+    strategy.current_bar = _Bar()
+    install_broker_state_reads(strategy, BrokerStateCache(_Gw()))
+    assert strategy.get_position() == 1000.0
+    assert strategy.get_available_position() == 800.0
