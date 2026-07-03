@@ -170,6 +170,75 @@ class QMFHttpClient:
             {"fund_account": self.fund_account, "money_type": money_type},
         )
 
+    def query_settlements(
+        self, start_date: str, end_date: str, stock_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询证券交割单（列表）."""
+        payload: dict[str, Any] = {
+            "fund_account": self.fund_account,
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+        if stock_type is not None:
+            payload["stock_type"] = stock_type
+        return list(self._post("/api/v1/account/settlements", payload))
+
+    def query_fund_flow(
+        self, start_date: str | None = None, end_date: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询证券资金流水（列表；日期可选）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        if start_date is not None:
+            payload["start_date"] = start_date
+        if end_date is not None:
+            payload["end_date"] = end_date
+        return list(self._post("/api/v1/account/fund-flow", payload))
+
+    def query_option_history_orders(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """查询期权历史委托（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/history-orders",
+                {
+                    "fund_account": self.fund_account,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            )
+        )
+
+    def query_option_history_trades(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """查询期权历史成交（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/history-trades",
+                {
+                    "fund_account": self.fund_account,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            )
+        )
+
+    def query_option_history_settlements(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """查询期权历史交割单（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/history-settlements",
+                {
+                    "fund_account": self.fund_account,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            )
+        )
+
     def close(self) -> None:
         """关闭底层连接."""
         self._http.close()
