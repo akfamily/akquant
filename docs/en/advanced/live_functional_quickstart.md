@@ -45,7 +45,7 @@ def initialize(ctx):
     ctx.sent = False
 
 def on_bar(ctx, bar):
-    if not ctx.sent and hasattr(ctx, "submit_order"):
+    if not ctx.sent and getattr(ctx, "broker_ready", False):
         ctx.submit_order(
             symbol=bar.symbol,
             side="Buy",
@@ -72,9 +72,11 @@ runner.run(duration="30s", show_progress=False)
 
 ## 4. Common troubleshooting
 
-- `submit_order not injected yet`
-  - Cause: trader gateway binding is not ready.
-  - Fix: guard with `hasattr(ctx, "submit_order")` before placing.
+- `submit_order` not ready yet
+  - Cause: the trader gateway has not finished connecting/logging in.
+  - Fix: guard with `if getattr(ctx, "broker_ready", False):` before placing
+    (readiness is decided by LiveRunner's heartbeat poll; submitting before
+    ready raises a clear error).
 - `duplicate active client_order_id`
   - Cause: reused active client id.
   - Fix: generate a fresh `client_order_id` for each new order.

@@ -23,7 +23,7 @@ def on_bar(ctx: Any, bar: Any) -> None:
     """Bar 到达后发送一次最小市价单."""
     if ctx.sent:
         return
-    if not hasattr(ctx, "submit_order"):
+    if not getattr(ctx, "broker_ready", False):
         return
     ctx.seq += 1
     client_order_id = f"audit-{ctx.seq}"
