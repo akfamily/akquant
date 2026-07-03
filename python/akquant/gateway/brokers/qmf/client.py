@@ -128,6 +128,48 @@ class QMFHttpClient:
             self._post("/api/v1/account/trades", {"fund_account": self.fund_account})
         )
 
+    def place_option_order(self, order_fields: dict[str, Any]) -> dict[str, Any]:
+        """期权下单（自动注入 fund_account），返回 data."""
+        payload = {"fund_account": self.fund_account, **order_fields}
+        return self._post("/api/v1/option/order", payload)
+
+    def cancel_option_order(
+        self, entrust_no: str, exchange_type: str | None = None
+    ) -> dict[str, Any]:
+        """期权撤单."""
+        payload: dict[str, Any] = {
+            "fund_account": self.fund_account,
+            "entrust_no": entrust_no,
+        }
+        if exchange_type is not None:
+            payload["exchange_type"] = exchange_type
+        return self._post("/api/v1/option/cancel", payload)
+
+    def query_option_orders(self) -> list[dict[str, Any]]:
+        """查询期权委托（列表）."""
+        return list(
+            self._post("/api/v1/option/orders", {"fund_account": self.fund_account})
+        )
+
+    def query_option_trades(self) -> list[dict[str, Any]]:
+        """查询期权成交（列表）."""
+        return list(
+            self._post("/api/v1/option/trades", {"fund_account": self.fund_account})
+        )
+
+    def query_option_positions(self) -> list[dict[str, Any]]:
+        """查询期权持仓（列表）."""
+        return list(
+            self._post("/api/v1/option/positions", {"fund_account": self.fund_account})
+        )
+
+    def query_option_assets(self, money_type: str = "0") -> dict[str, Any]:
+        """查询期权资产."""
+        return self._post(
+            "/api/v1/option/assets",
+            {"fund_account": self.fund_account, "money_type": money_type},
+        )
+
     def close(self) -> None:
         """关闭底层连接."""
         self._http.close()
