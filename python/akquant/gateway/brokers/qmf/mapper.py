@@ -157,3 +157,71 @@ def parse_trade(row: dict, client_order_id: str = "") -> UnifiedTrade:
         price=_to_float(row.get("business_price")),
         timestamp_ns=0,
     )
+
+
+def build_option_order_payload(req: UnifiedOrderRequest) -> dict[str, str]:
+    """UnifiedOrderRequest(asset_type='option') -> chibi_quant OptOrderRequest 字段."""
+    exchange_type, option_code = split_symbol(req.symbol)
+    entrust_bs = SIDE_TO_ENTRUST_BS.get(str(req.side).strip().lower())
+    if entrust_bs is None:
+        raise ValueError(f"不支持的 side: {req.side!r}")
+    extra = req.extra or {}
+    entrust_oc = extra.get("entrust_oc")
+    if not entrust_oc:
+        raise ValueError("期权委托必须在 extra 提供 entrust_oc (O/C/X)")
+    entrust_prop = extra.get("entrust_prop")
+    if not entrust_prop:
+        raise ValueError("期权委托必须在 extra 提供 entrust_prop")
+    if req.price is None:
+        raise ValueError("期权委托必须提供 price")
+    return {
+        "exchange_type": exchange_type,
+        "option_code": option_code,
+        "entrust_bs": entrust_bs,
+        "entrust_oc": str(entrust_oc),
+        "covered_flag": str(extra.get("covered_flag", "0")),
+        "entrust_prop": str(entrust_prop),
+        "opt_entrust_price": _format_number(req.price),
+        "entrust_amount": _format_number(req.quantity),
+    }
+
+
+def parse_option_order(row: dict, client_order_id: str = "") -> UnifiedOrderSnapshot:
+    """期权委托行 -> UnifiedOrderSnapshot."""
+    return UnifiedOrderSnapshot(
+        client_order_id=client_order_id,
+        broker_order_id=str(row.get("entrust_no", "")),
+        symbol=join_symbol(row.get("exchange_type", ""), row.get("option_code", "")),
+        status=map_order_status(
+            str(row.get("entrust_status", "")), str(row.get("error_no", "0"))
+        ),
+        filled_quantity=_to_float(row.get("business_amount")),
+        avg_fill_price=_to_float(row.get("opt_business_price")),
+        reject_reason=str(row.get("error_info", "")),
+    )
+
+
+def parse_option_trade(row: dict, client_order_id: str = "") -> UnifiedTrade:
+    """期权成交行 -> UnifiedTrade."""
+    return UnifiedTrade(
+        trade_id=str(row.get("serial_no", "")),
+        broker_order_id=str(row.get("entrust_no", "")),
+        client_order_id=client_order_id,
+        symbol=join_symbol(row.get("exchange_type", ""), row.get("option_code", "")),
+        side=_ENTRUST_BS_TO_SIDE.get(str(row.get("entrust_bs", "")).strip(), ""),
+        quantity=_to_float(row.get("business_amount")),
+        price=_to_float(row.get("opt_business_price")),
+        timestamp_ns=0,
+    )
+
+
+def parse_option_position(row: dict) -> UnifiedPosition:
+    """期权持仓行 -> UnifiedPosition."""
+    quantity = _to_float(row.get("current_amount"))
+    return UnifiedPosition(
+        symbol=join_symbol(row.get("exchange_type", ""), row.get("option_code", "")),
+        quantity=quantity,
+        available_quantity=_to_float(row.get("enable_amount")),
+        direction="long" if quantity >= 0 else "short",
+        avg_price=_to_float(row.get("opt_cost_price")),
+    )
