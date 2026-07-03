@@ -20,7 +20,7 @@ def test_trade_event_invalidates_cache_and_calls_original() -> None:
     calls = []
     cache = _Cache()
     wrapped = wrap_state_invalidation(
-        lambda name, payload: calls.append((name, payload)), lambda: cache
+        lambda name, payload: calls.append((name, payload)), lambda: [cache]
     )
 
     wrapped("trade", {"symbol": "600000.SH"})
@@ -32,7 +32,7 @@ def test_trade_event_invalidates_cache_and_calls_original() -> None:
 def test_order_event_invalidates_cache() -> None:
     """An 'order' event also invalidates the cache."""
     cache = _Cache()
-    wrapped = wrap_state_invalidation(lambda name, payload: None, lambda: cache)
+    wrapped = wrap_state_invalidation(lambda name, payload: None, lambda: [cache])
 
     wrapped("order", {})
 
@@ -42,15 +42,24 @@ def test_order_event_invalidates_cache() -> None:
 def test_bar_event_does_not_invalidate_cache() -> None:
     """Non order/trade events (e.g. 'bar') do not touch the cache."""
     cache = _Cache()
-    wrapped = wrap_state_invalidation(lambda name, payload: None, lambda: cache)
+    wrapped = wrap_state_invalidation(lambda name, payload: None, lambda: [cache])
 
     wrapped("bar", {})
 
     assert cache.invalidate_calls == 0
 
 
-def test_none_cache_does_not_crash_on_trade_event() -> None:
-    """Before install_submitter runs, get_cache() returns None — no crash."""
-    wrapped = wrap_state_invalidation(lambda name, payload: None, lambda: None)
+def test_all_caches_invalidated_on_trade_event() -> None:
+    """Multi-slot broker_live: every target's cache is invalidated, not just one."""
+    caches = [_Cache(), _Cache(), _Cache()]
+    wrapped = wrap_state_invalidation(lambda name, payload: None, lambda: caches)
 
-    wrapped("trade", {})  # should not raise
+    wrapped("trade", {})
+
+    assert [c.invalidate_calls for c in caches] == [1, 1, 1]
+
+
+def test_empty_or_none_caches_do_not_crash_on_trade_event() -> None:
+    """Before install_submitter runs, get_caches() is empty/None — no crash."""
+    wrap_state_invalidation(lambda name, payload: None, lambda: [])("trade", {})
+    wrap_state_invalidation(lambda name, payload: None, lambda: None)("trade", {})

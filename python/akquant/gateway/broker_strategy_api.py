@@ -101,15 +101,20 @@ def install_broker_cancel(strategy: Any, trader_gateway: Any) -> None:
 
 def wrap_state_invalidation(
     update_broker_state: Callable[[str, Any], None],
-    get_cache: Callable[[], Any | None],
+    get_caches: Callable[[], list[Any] | None],
 ) -> Callable[[str, Any], None]:
-    """Wrap the broker update callback so order/trade events invalidate the cache."""
+    """Wrap the broker update callback so order/trade events invalidate caches.
+
+    In multi-slot broker_live each strategy target owns its own cache; a fill/
+    order push must invalidate ALL of them, not just the last installed one.
+    Always calls the original callback first; `get_caches()` may be None/empty.
+    """
 
     def _wrapped(event_name: str, payload: Any) -> None:
         update_broker_state(event_name, payload)
         if event_name in ("order", "trade"):
-            cache = get_cache()
-            if cache is not None:
-                cache.invalidate()
+            for cache in get_caches() or ():
+                if cache is not None:
+                    cache.invalidate()
 
     return _wrapped

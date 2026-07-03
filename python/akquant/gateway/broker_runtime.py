@@ -36,9 +36,9 @@ class BrokerRuntime:
         get_execution_capabilities: Callable[[], dict[str, Any]],
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
-        self._broker_state_cache: Any = None
+        self._broker_state_caches: list[Any] = []
         update_broker_state = wrap_state_invalidation(
-            update_broker_state, lambda: self._broker_state_cache
+            update_broker_state, lambda: self._broker_state_caches
         )
         self._event_bridge = BrokerEventBridge(
             event_lock=event_lock,
@@ -109,8 +109,11 @@ class BrokerRuntime:
             install_broker_state_reads,
         )
 
-        self._broker_state_cache = BrokerStateCache(trader_gateway)
-        install_broker_state_reads(strategy, self._broker_state_cache)
+        # One cache per strategy target; a fill/order push must invalidate all of
+        # them (single-field storage would only invalidate the last slot's cache).
+        cache = BrokerStateCache(trader_gateway)
+        self._broker_state_caches.append(cache)
+        install_broker_state_reads(strategy, cache)
         install_broker_cancel(strategy, trader_gateway)
 
         return self._submitter
