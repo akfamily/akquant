@@ -98,7 +98,53 @@ def create_gateway_bundle(
             metadata={"broker": "ptrade"},
         )
 
-    builtins = ["ctp", "miniqmt", "ptrade"]
+    if broker_key == "qmf":
+        try:
+            from .brokers.qmf.adapter import QMFMarketGateway, QMFTraderGateway
+            from .brokers.qmf.client import QMFClientConfig, QMFHttpClient
+        except ImportError as exc:  # 缺可选依赖
+            raise ValueError(
+                "broker='qmf' 需要额外依赖，请安装: pip install 'akquant[qmf]'"
+            ) from exc
+
+        ws_url = kwargs.get("ws_url")
+        if not ws_url:
+            raise ValueError("ws_url is required when broker='qmf'")
+        required = (
+            "base_url",
+            "qmf_user_id",
+            "account_content",
+            "password",
+            "input_content",
+            "content_type",
+            "password_key",
+        )
+        missing = [k for k in required if not kwargs.get(k)]
+        if missing:
+            raise ValueError(f"broker='qmf' 缺少必填项: {', '.join(missing)}")
+        config = QMFClientConfig(
+            base_url=kwargs["base_url"],
+            qmf_user_id=kwargs["qmf_user_id"],
+            account_content=kwargs["account_content"],
+            password=kwargs["password"],
+            input_content=kwargs["input_content"],
+            content_type=kwargs["content_type"],
+            password_key=kwargs["password_key"],
+            password_type=kwargs.get("password_type", "2"),
+            asset_prop=kwargs.get("asset_prop", "0"),
+            timeout=float(kwargs.get("timeout", 10.0)),
+        )
+        qmf_trader_gateway: TraderGateway | None = QMFTraderGateway(
+            client=QMFHttpClient(config), ws_url=ws_url
+        )
+        return GatewayBundle(
+            market_gateway=QMFMarketGateway(),
+            trader_gateway=qmf_trader_gateway,
+            trader_capabilities=_resolve_trader_capabilities(qmf_trader_gateway),
+            metadata={"broker": "qmf"},
+        )
+
+    builtins = ["ctp", "miniqmt", "ptrade", "qmf"]
     registered = list_registered_brokers()
     all_brokers = builtins + [name for name in registered if name not in builtins]
     supported = ", ".join(all_brokers)
