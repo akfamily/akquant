@@ -25,10 +25,15 @@ class _FakeTrader:
         return self._hb
 
 
-def _runner() -> LiveRunner:
+def _runner(**over: Any) -> LiveRunner:
     """Construct a bare LiveRunner, mirroring test_live_runner_broker_bridge.py."""
     runner = LiveRunner.__new__(LiveRunner)
     runner.broker = "qmf"
+    runner.on_broker_connected = None
+    runner.broker_ready_timeout = 10.0
+    runner.broker_ready_required = False
+    for key, value in over.items():
+        setattr(runner, key, value)
     return runner
 
 
@@ -42,3 +47,30 @@ def test_connect_called_before_start() -> None:
         time.sleep(0.02)
     assert fake.calls[0] == "connect"
     assert "start" in fake.calls
+
+
+class _Target:
+    """Minimal strategy target holding broker_ready."""
+
+
+def test_broker_ready_set_and_callback_fired() -> None:
+    """Heartbeat True → targets.broker_ready=True and on_broker_connected fires."""
+    fired: list = []
+    runner = _runner(on_broker_connected=lambda ctx: fired.append(ctx.broker_ready))
+    target = _Target()
+    runner._await_broker_ready(_FakeTrader(hb=True), [target])
+    assert target.broker_ready is True
+    assert fired == [True]
+
+
+def test_broker_not_ready_on_heartbeat_timeout() -> None:
+    """Heartbeat always False → broker_ready False, callback not fired."""
+    fired: list = []
+    runner = _runner(
+        on_broker_connected=lambda ctx: fired.append(1),
+        broker_ready_timeout=0.3,
+    )
+    target = _Target()
+    runner._await_broker_ready(_FakeTrader(hb=False), [target])
+    assert target.broker_ready is False
+    assert fired == []

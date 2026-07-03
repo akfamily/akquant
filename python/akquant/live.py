@@ -121,6 +121,9 @@ class LiveRunner:
         on_trade: Optional[Callable[[Any, Any], None]] = None,
         on_reject: Optional[Callable[[Any, Any], None]] = None,
         on_session_start: Optional[Callable[[Any, Any, int], None]] = None,
+        on_broker_connected: Optional[Callable[[Any], None]] = None,
+        broker_ready_timeout: float = 10.0,
+        broker_ready_required: bool = False,
         on_session_end: Optional[Callable[[Any, Any, int], None]] = None,
         on_before_trading: Optional[Callable[[Any, Any, int], None]] = None,
         on_after_trading: Optional[Callable[[Any, Any, int], None]] = None,
@@ -168,6 +171,12 @@ class LiveRunner:
         :param on_trade: Optional function-style on_trade callback.
         :param on_reject: Optional function-style on_reject callback.
         :param on_session_start: Optional function-style on_session_start callback.
+        :param on_broker_connected: Optional callback fired once the broker
+            trader gateway reports readiness (heartbeat) after connect+start.
+        :param broker_ready_timeout: Max seconds to poll trader_gateway.heartbeat()
+            before giving up (default 10.0).
+        :param broker_ready_required: If True, raise when broker readiness is not
+            reached within broker_ready_timeout (default False, only warns).
         :param on_session_end: Optional function-style on_session_end callback.
         :param on_before_trading: Optional function-style on_before_trading callback.
         :param on_after_trading: Optional function-style on_after_trading callback.
@@ -216,6 +225,9 @@ class LiveRunner:
         self.on_trade = on_trade
         self.on_reject = on_reject
         self.on_session_start = on_session_start
+        self.on_broker_connected = on_broker_connected
+        self.broker_ready_timeout = broker_ready_timeout
+        self.broker_ready_required = broker_ready_required
         self.on_session_end = on_session_end
         self.on_before_trading = on_before_trading
         self.on_after_trading = on_after_trading
@@ -345,6 +357,7 @@ class LiveRunner:
             self._bind_broker_callbacks(bundle.trader_gateway, callback_target)
             for target in strategy_targets:
                 self._install_broker_order_submitter(bundle.trader_gateway, target)
+            self._await_broker_ready(bundle.trader_gateway, strategy_targets)
 
         # Apply duration limit if specified
         if duration:
@@ -445,6 +458,10 @@ class LiveRunner:
         setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
         for slot_id, slot_strategy in slot_strategy_instances.items():
             setattr(slot_strategy, "_owner_strategy_id", slot_id)
+
+        default_ready = getattr(self, "trading_mode", "paper") != "broker_live"
+        for target in [strategy_instance, *slot_strategy_instances.values()]:
+            setattr(target, "broker_ready", default_ready)
 
         strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
         if self.context:
@@ -786,6 +803,48 @@ class LiveRunner:
             trader_gateway,
             strategy,
         )
+
+    def _await_broker_ready(self, trader_gateway: Any, targets: list) -> None:
+        """Poll heartbeat() until ready/timeout; set broker_ready, fire callback."""
+        deadline = time.monotonic() + float(self.broker_ready_timeout)
+        ready = False
+        while time.monotonic() < deadline:
+            try:
+                if trader_gateway.heartbeat():
+                    ready = True
+                    break
+            except Exception:  # noqa: BLE001 heartbeat errors count as not-ready
+                pass
+            time.sleep(0.2)
+        for target in targets:
+            setattr(target, "broker_ready", ready)
+        if ready:
+            self._dispatch_broker_connected(targets)
+        else:
+            logger.warning(
+                "broker not ready within %ss",
+                self.broker_ready_timeout,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+            if self.broker_ready_required:
+                raise RuntimeError(
+                    f"broker not ready within {self.broker_ready_timeout}s"
+                )
+
+    def _dispatch_broker_connected(self, targets: list) -> None:
+        """Fire on_broker_connected: strategy method(s) plus function-style callback."""
+        for target in targets:
+            method = getattr(target, "on_broker_connected", None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:  # noqa: BLE001
+                    logger.exception("strategy on_broker_connected failed")
+            if self.on_broker_connected is not None:
+                try:
+                    self.on_broker_connected(target)
+                except Exception:  # noqa: BLE001
+                    logger.exception("on_broker_connected callback failed")
 
     def _resolve_live_order_legs(
         self,
