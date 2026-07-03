@@ -4,6 +4,8 @@ from ..log import build_log_extra, get_logger
 from .broker_models import (
     BrokerCapability,
     UnifiedOrderRequest,
+    normalize_asset_type,
+    validate_broker_extra,
     validate_execution_semantics,
 )
 
@@ -207,13 +209,14 @@ class BrokerOrderSubmitter:
         position_effect: str = "auto",
         reduce_only: bool = False,
         extra: dict[str, Any] | None = None,
+        asset_type: str = "stock",
     ) -> str:
         """Submit a live broker order using the unified strategy-facing signature."""
         _ = trigger_price
         _ = tag
-        if extra:
-            raise RuntimeError("extra broker fields are not supported")
         capability = self._resolve_trader_capabilities(self._trader_gateway)
+        validate_broker_extra(capability, extra)
+        normalized_asset_type = normalize_asset_type(asset_type)
         normalized_position_effect = validate_execution_semantics(
             capability,
             position_effect,
@@ -258,6 +261,8 @@ class BrokerOrderSubmitter:
                 time_in_force=time_in_force,
                 position_effect=leg_position_effect,
                 reduce_only=reduce_only,
+                asset_type=normalized_asset_type,
+                extra=dict(extra or {}),
             )
             broker_order_id = str(self._trader_gateway.place_order(request))
             broker_order_ids.append(broker_order_id)
