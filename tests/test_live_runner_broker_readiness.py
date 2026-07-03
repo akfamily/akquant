@@ -74,3 +74,31 @@ def test_broker_not_ready_on_heartbeat_timeout() -> None:
     runner._await_broker_ready(_FakeTrader(hb=False), [target])
     assert target.broker_ready is False
     assert fired == []
+
+
+def test_blocking_connect_does_not_block_main_thread() -> None:
+    """A blocking connect() (CTP-shaped) runs on the thread, not the caller."""
+    import threading
+
+    started = threading.Event()
+
+    class _BlockingTrader:
+        """Trader whose connect() blocks like CTP's Join()."""
+
+        def connect(self) -> None:
+            """Block until released (simulates CTP Join)."""
+            started.set()
+            time.sleep(5.0)
+
+        def start(self) -> None:
+            """Unreached while connect() blocks (CTP connect==start)."""
+
+        def heartbeat(self) -> bool:
+            """Report ready once connect() has begun."""
+            return started.is_set()
+
+    t0 = time.monotonic()
+    _runner()._connect_and_start_trader(cast(Any, _BlockingTrader()))
+    # Caller must return immediately, not wait on the blocking connect().
+    assert time.monotonic() - t0 < 1.0
+    assert started.wait(2.0)

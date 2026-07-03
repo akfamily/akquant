@@ -704,11 +704,21 @@ class LiveRunner:
         thread.start()
 
     def _connect_and_start_trader(self, trader_gateway: Any) -> None:
-        """Connect (login/session, fail-fast) synchronously, then start streaming."""
-        connect = getattr(trader_gateway, "connect", None)
-        if callable(connect):
-            connect()
-        self._start_gateway_thread(trader_gateway.start, f"{self.broker}-trader")
+        """Run connect() then start() on the gateway thread.
+
+        connect() may block (CTP's connect() == start() enters the event loop
+        via Join()), so it must NOT run on the main thread. Running both on the
+        daemon thread fixes the QMF login gap (connect()=login before start()=WS)
+        without blocking run(); readiness is confirmed by the heartbeat poll.
+        """
+
+        def _run() -> None:
+            connect = getattr(trader_gateway, "connect", None)
+            if callable(connect):
+                connect()
+            trader_gateway.start()
+
+        self._start_gateway_thread(_run, f"{self.broker}-trader")
 
     def _runner_log_extra(self, *, phase: str) -> dict[str, Any]:
         strategy_id = (
