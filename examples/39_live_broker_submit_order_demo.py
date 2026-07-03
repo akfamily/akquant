@@ -30,8 +30,8 @@ def on_bar(ctx: Any, bar: Any) -> None:
     print(f"[on_bar] symbol={bar.symbol} close={bar.close}")
     if ctx.sent:
         return
-    if not hasattr(ctx, "submit_order"):
-        print("[on_bar] submit_order 尚未注入，跳过")
+    if not getattr(ctx, "broker_ready", False):
+        print("[on_bar] broker 未就绪，跳过下单")
         return
     client_order_id = _next_client_order_id(ctx)
     broker_order_id = ctx.submit_order(
@@ -66,6 +66,15 @@ def on_trade(ctx: Any, trade: Any) -> None:
     )
 
 
+def on_reject(ctx: Any, order: Any) -> None:
+    """拒单回调."""
+    _ = ctx
+    print(
+        f"[on_reject] {getattr(order, 'symbol', '?')} "
+        f"reason={getattr(order, 'reject_reason', '')}"
+    )
+
+
 def main() -> None:
     """运行 broker_live 函数式下单示例."""
     instruments = [
@@ -87,6 +96,7 @@ def main() -> None:
         initialize=initialize,
         on_order=on_order,
         on_trade=on_trade,
+        on_reject=on_reject,
         instruments=instruments,
         broker="ctp",
         trading_mode="broker_live",

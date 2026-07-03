@@ -98,6 +98,24 @@ trader.place_order(
   否则抛出 `RuntimeError`。
 - 以上方法均非 `TraderGateway` 协议方法，返回柜台**原始行** `list[dict]`（不做 Unified 建模）。
 
+## 实盘就绪（broker_ready）
+
+`trading_mode="broker_live"` 下 `LiveRunner` 会先 `connect()`（登录）再 `start()`
+（起 WebSocket 推送），随后轮询 `trader_gateway.heartbeat()` 直至就绪或超时
+（`broker_ready_timeout`，默认 10s）；就绪状态写回策略上下文的 `broker_ready` 属性。
+
+- 策略应以 `if ctx.broker_ready:` 门首单，而不是 `hasattr(ctx, "submit_order")`——
+  `submit_order` 在 `broker_live` 模式下总会被注入，但 broker 未就绪前调用它会直接
+  抛出清晰的 `RuntimeError`（`broker 尚未就绪，请在 broker_ready=True
+  (on_broker_connected 之后)再下单`）。
+- 就绪达成时，`LiveRunner` 会对策略与各 slot 触发 `on_broker_connected(ctx)`
+  （策略方法与 `LiveRunner(on_broker_connected=...)` 函数式回调均支持）。
+- `paper`/其它非 `broker_live` 模式下 `broker_ready` 默认即为 `True`，不受该守卫影响。
+- 拒单与错误分别通过 `on_reject(ctx, order)` / `on_error(ctx, error)` 回调上报，
+  不要依赖 `on_order` 里再判断状态字符串。
+
+完整示例：`examples/39_live_broker_submit_order_demo.py`。
+
 ## 范围与后续
 
 组合策略（338013/14）、行权指派/交割管理、备兑划转、可交易数量(338010)、
