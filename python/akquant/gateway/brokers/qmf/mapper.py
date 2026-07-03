@@ -225,3 +225,15 @@ def parse_option_position(row: dict) -> UnifiedPosition:
         direction="long" if quantity >= 0 else "short",
         avg_price=_to_float(row.get("opt_cost_price")),
     )
+
+
+def merge_option_assets(account: UnifiedAccount, opt_assets: dict) -> UnifiedAccount:
+    """将期权资产累加到证券 UnifiedAccount（M1 汇总口径）."""
+    return UnifiedAccount(
+        account_id=account.account_id,
+        equity=account.equity + _to_float(opt_assets.get("total_asset")),
+        cash=account.cash + _to_float(opt_assets.get("current_balance")),
+        available_cash=account.available_cash
+        + _to_float(opt_assets.get("enable_balance")),
+        timestamp_ns=account.timestamp_ns,
+    )

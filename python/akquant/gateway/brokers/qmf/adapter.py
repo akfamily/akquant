@@ -155,8 +155,13 @@ class QMFTraderGateway(TraderGatewayBase):
         return trades
 
     def query_account(self) -> UnifiedAccount | None:
-        """查询资金账户（证券；期权资产本阶段不并入）."""
-        return mapper.parse_account(self._client.query_funds())
+        """查询资金账户（启用期权时合并证券 + 期权资产）."""
+        account = mapper.parse_account(self._client.query_funds())
+        if self._option_client is not None:
+            account = mapper.merge_option_assets(
+                account, self._option_client.query_option_assets()
+            )
+        return account
 
     def query_positions(self) -> list[UnifiedPosition]:
         """查询持仓列表（证券 + 期权）."""
