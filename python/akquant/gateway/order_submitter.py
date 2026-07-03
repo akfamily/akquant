@@ -180,6 +180,7 @@ class BrokerOrderSubmitter:
         self._notify_strategy_error = notify_strategy_error
         self._payload_field = payload_field
         self._get_execution_capabilities = get_execution_capabilities
+        self._warned_ignored_params: set[str] = set()
 
     def install(self) -> None:
         """Bind broker-live submit_order helpers onto the strategy object."""
@@ -210,6 +211,12 @@ class BrokerOrderSubmitter:
         reduce_only: bool = False,
         extra: dict[str, Any] | None = None,
         asset_type: str = "stock",
+        fill_policy: Any = None,
+        slippage: Any = None,
+        commission: Any = None,
+        trail_offset: float | None = None,
+        trail_reference_price: float | None = None,
+        broker_options: dict[str, Any] | None = None,
     ) -> str:
         """Submit a live broker order using the unified strategy-facing signature."""
         if not getattr(self._strategy, "broker_ready", True):
@@ -217,8 +224,28 @@ class BrokerOrderSubmitter:
                 "broker 尚未就绪，请在 broker_ready=True"
                 "(on_broker_connected 之后)再下单"
             )
-        _ = trigger_price
-        _ = tag
+        _ = tag  # 元数据，收下忽略
+        _ = trail_reference_price  # 仅随 trail_offset 生效；下方已拦截追踪单
+        if trigger_price is not None:
+            raise RuntimeError("broker_live 暂不支持条件/止损触发单(trigger_price)")
+        if trail_offset is not None or str(order_type).strip().lower() in {
+            "stoptrail",
+            "stoptraillimit",
+        }:
+            raise RuntimeError("broker_live 暂不支持追踪止损单(trail_offset/StopTrail)")
+        for _name, _val in (
+            ("fill_policy", fill_policy),
+            ("slippage", slippage),
+            ("commission", commission),
+            ("broker_options", broker_options),
+        ):
+            if _val is not None and _name not in self._warned_ignored_params:
+                self._warned_ignored_params.add(_name)
+                logger.warning(
+                    "broker_live 忽略回测模拟参数 %s",
+                    _name,
+                    extra=build_log_extra(phase="gateway"),
+                )
         capability = self._resolve_trader_capabilities(self._trader_gateway)
         validate_broker_extra(capability, extra)
         normalized_asset_type = normalize_asset_type(asset_type)
