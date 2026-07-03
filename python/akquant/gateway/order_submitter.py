@@ -212,6 +212,11 @@ class BrokerOrderSubmitter:
         asset_type: str = "stock",
     ) -> str:
         """Submit a live broker order using the unified strategy-facing signature."""
+        if not getattr(self._strategy, "broker_ready", True):
+            raise RuntimeError(
+                "broker 尚未就绪，请在 broker_ready=True"
+                "(on_broker_connected 之后)再下单"
+            )
         _ = trigger_price
         _ = tag
         capability = self._resolve_trader_capabilities(self._trader_gateway)
