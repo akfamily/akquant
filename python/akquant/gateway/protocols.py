@@ -95,7 +95,7 @@ class TraderGateway(Protocol):
 class GatewayBundle:
     """Gateway instances and optional metadata."""
 
-    market_gateway: MarketGateway
+    market_gateway: MarketGateway | None = None
     trader_gateway: TraderGateway | None = None
     trader_capabilities: BrokerCapability | None = None
     metadata: dict[str, Any] | None = None

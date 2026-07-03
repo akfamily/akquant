@@ -304,12 +304,15 @@ class LiveRunner:
         )
         self._broker_capabilities = bundle.trader_capabilities
 
-        logger.info(
-            "Starting %s market gateway",
-            self.broker,
-            extra=self._runner_log_extra(phase="gateway"),
-        )
-        self._start_gateway_thread(bundle.market_gateway.start, f"{self.broker}-market")
+        if bundle.market_gateway is not None:
+            logger.info(
+                "Starting %s market gateway",
+                self.broker,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+            self._start_gateway_thread(
+                bundle.market_gateway.start, f"{self.broker}-market"
+            )
 
         if self.trading_mode == "broker_live":
             if bundle.trader_gateway is None:
