@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from ...broker_models import (
+    UnifiedAccount,
     UnifiedErrorType,
     UnifiedOrderRequest,
+    UnifiedOrderSnapshot,
     UnifiedOrderStatus,
+    UnifiedPosition,
+    UnifiedTrade,
 )
 
 EXCHANGE_BY_SUFFIX = {"SH": "1", "SZ": "2"}
@@ -92,3 +96,64 @@ def classify_error(error_no: str, error_info: str) -> UnifiedErrorType:
     if any(k in text for k in _RETRYABLE_KEYWORDS):
         return UnifiedErrorType.RETRYABLE
     return UnifiedErrorType.NON_RETRYABLE
+
+
+_ENTRUST_BS_TO_SIDE = {"1": "Buy", "2": "Sell"}
+
+
+def _to_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_account(data: dict) -> UnifiedAccount:
+    """资金查询 data -> UnifiedAccount."""
+    return UnifiedAccount(
+        account_id=str(data.get("fund_account", "")),
+        equity=_to_float(data.get("asset_balance")),
+        cash=_to_float(data.get("current_balance")),
+        available_cash=_to_float(data.get("enable_balance")),
+    )
+
+
+def parse_position(row: dict) -> UnifiedPosition:
+    """持仓行 -> UnifiedPosition."""
+    quantity = _to_float(row.get("current_amount"))
+    return UnifiedPosition(
+        symbol=join_symbol(row.get("exchange_type", ""), row.get("stock_code", "")),
+        quantity=quantity,
+        available_quantity=_to_float(row.get("enable_amount")),
+        direction="long" if quantity >= 0 else "short",
+        avg_price=_to_float(row.get("cost_price")),
+    )
+
+
+def parse_order(row: dict, client_order_id: str = "") -> UnifiedOrderSnapshot:
+    """委托行 -> UnifiedOrderSnapshot."""
+    return UnifiedOrderSnapshot(
+        client_order_id=client_order_id,
+        broker_order_id=str(row.get("entrust_no", "")),
+        symbol=join_symbol(row.get("exchange_type", ""), row.get("stock_code", "")),
+        status=map_order_status(
+            str(row.get("entrust_status", "")), str(row.get("error_no", "0"))
+        ),
+        filled_quantity=_to_float(row.get("business_amount")),
+        avg_fill_price=_to_float(row.get("business_price")),
+        reject_reason=str(row.get("error_info", "")),
+    )
+
+
+def parse_trade(row: dict, client_order_id: str = "") -> UnifiedTrade:
+    """成交行 -> UnifiedTrade."""
+    return UnifiedTrade(
+        trade_id=str(row.get("serial_no", "")),
+        broker_order_id=str(row.get("entrust_no", "")),
+        client_order_id=client_order_id,
+        symbol=join_symbol(row.get("exchange_type", ""), row.get("stock_code", "")),
+        side=_ENTRUST_BS_TO_SIDE.get(str(row.get("entrust_bs", "")).strip(), ""),
+        quantity=_to_float(row.get("business_amount")),
+        price=_to_float(row.get("business_price")),
+        timestamp_ns=0,
+    )
