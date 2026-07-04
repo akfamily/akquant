@@ -4,15 +4,25 @@ import pytest
 from akquant import strategy_trading_api as api
 
 
+class _CapExecution:
+    """Execution stub whose capabilities() reports a fixed broker_live flag."""
+
+    def __init__(self, broker_live: bool) -> None:
+        """Bind the broker_live flag to report from capabilities()."""
+        self._broker_live = broker_live
+
+    def capabilities(self) -> dict:
+        """Report the fixed broker_live flag."""
+        return {"broker_live": self._broker_live}
+
+
 class _Strategy:
     """Strategy stub reporting broker_live capabilities."""
 
     def __init__(self, broker_live: bool = True) -> None:
         """Inject execution capabilities reporting the given broker_live flag."""
         self.ctx = object()
-        self.__dict__["get_execution_capabilities"] = lambda: {
-            "broker_live": broker_live
-        }
+        self.execution = _CapExecution(broker_live)
 
 
 def test_buy_all_rejected_in_broker_live() -> None:

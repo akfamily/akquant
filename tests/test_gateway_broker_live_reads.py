@@ -1,6 +1,6 @@
+from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_models import UnifiedAccount, UnifiedPosition
 from akquant.gateway.broker_state_cache import BrokerStateCache
-from akquant.gateway.broker_strategy_api import install_broker_state_reads
 
 
 class _Gw:
@@ -28,23 +28,23 @@ class _Strategy:
 
 
 def test_broker_live_reads_route_to_gateway() -> None:
-    """After install, get_position/get_account read the broker snapshot."""
+    """Through BrokerExecution, get_position/get_account read the broker snapshot."""
     strategy = _Strategy()
-    install_broker_state_reads(strategy, BrokerStateCache(_Gw()))
-    assert strategy.get_position("600000.SH") == 1000.0
-    assert strategy.get_available_position("600000.SH") == 800.0
-    assert strategy.get_account()["cash"] == 1000.0
-    assert strategy.get_account()["available_cash"] == 850.0
-    assert strategy.get_portfolio_value() == 1500.0
-    assert strategy.get_position("000001.SZ") == 0.0
-    assert strategy.get_open_orders() == []
+    ex = BrokerExecution(strategy, _Gw(), BrokerStateCache(_Gw()), None)
+    assert ex.get_position("600000.SH") == 1000.0
+    assert ex.get_available_position("600000.SH") == 800.0
+    assert ex.get_account()["cash"] == 1000.0
+    assert ex.get_account()["available_cash"] == 850.0
+    assert ex.get_portfolio_value() == 1500.0
+    assert ex.get_position("000001.SZ") == 0.0
+    assert ex.get_open_orders() == []
 
 
 def test_get_account_has_backtest_key_parity() -> None:
     """broker_live get_account exposes all backtest keys (0-default) for parity."""
     strategy = _Strategy()
-    install_broker_state_reads(strategy, BrokerStateCache(_Gw()))
-    acct = strategy.get_account()
+    ex = BrokerExecution(strategy, _Gw(), BrokerStateCache(_Gw()), None)
+    acct = ex.get_account()
     for key in (
         "cash",
         "equity",
@@ -73,6 +73,6 @@ def test_get_position_defaults_to_current_bar_symbol() -> None:
 
     strategy = _Strategy()
     strategy.current_bar = _Bar()
-    install_broker_state_reads(strategy, BrokerStateCache(_Gw()))
-    assert strategy.get_position() == 1000.0
-    assert strategy.get_available_position() == 800.0
+    ex = BrokerExecution(strategy, _Gw(), BrokerStateCache(_Gw()), None)
+    assert ex.get_position() == 1000.0
+    assert ex.get_available_position() == 800.0

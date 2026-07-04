@@ -1,4 +1,4 @@
-from typing import Any, Callable, cast
+from typing import Any, Callable
 
 import pytest
 from akquant.gateway.broker_models import BrokerCapability, UnifiedPosition
@@ -75,12 +75,11 @@ def test_submitter_contract_injects_strategy_api_and_maps_order_ids() -> None:
         def place_order(self, req: Any) -> str:
             return f"b-{req.client_order_id}"
 
-    submitter, strategy, client_to_broker, broker_to_owner = _build_submitter(
+    submitter, _strategy, client_to_broker, broker_to_owner = _build_submitter(
         _DummyTraderGateway()
     )
-    strategy_any = cast(Any, strategy)
 
-    broker_order_id = strategy_any.submit_order(
+    broker_order_id = submitter.submit_order(
         symbol="IF2406",
         side="Buy",
         quantity=1.0,
@@ -88,11 +87,10 @@ def test_submitter_contract_injects_strategy_api_and_maps_order_ids() -> None:
     )
 
     assert broker_order_id == "b-coid-1"
-    assert strategy_any.can_submit_client_order("free-coid") is True
-    assert strategy_any.get_execution_capabilities()["broker_live"] is True
+    assert submitter._can_submit_client_order("free-coid") is True
+    assert submitter._get_execution_capabilities()["broker_live"] is True
     assert client_to_broker == {"coid-1": "b-coid-1"}
     assert broker_to_owner == {"b-coid-1": "alpha"}
-    assert submitter.submit_order == strategy_any.submit_order
 
 
 def test_submitter_contract_rejects_duplicate_active_client_order_id() -> None:
@@ -104,16 +102,15 @@ def test_submitter_contract_rejects_duplicate_active_client_order_id() -> None:
                 f"place_order should not be called: {req.client_order_id}"
             )
 
-    _, strategy, _, _ = _build_submitter(
+    submitter, strategy, _, _ = _build_submitter(
         _DummyTraderGateway(),
         can_submit_client_order=lambda client_order_id: client_order_id != "coid-dup",
     )
-    strategy_any = cast(Any, strategy)
 
     with pytest.raises(
         RuntimeError, match="duplicate active client_order_id: coid-dup"
     ):
-        strategy_any.submit_order(
+        submitter.submit_order(
             symbol="IF2406",
             side="Buy",
             quantity=1.0,
@@ -151,10 +148,9 @@ def test_submitter_contract_splits_close_legs_when_position_details_available() 
             ]
 
     gateway = _DummyTraderGateway()
-    _, strategy, client_to_broker, _ = _build_submitter(gateway)
-    strategy_any = cast(Any, strategy)
+    submitter, _strategy, client_to_broker, _ = _build_submitter(gateway)
 
-    broker_order_id = strategy_any.submit_order(
+    broker_order_id = submitter.submit_order(
         symbol="au2606",
         side="Sell",
         quantity=4.0,

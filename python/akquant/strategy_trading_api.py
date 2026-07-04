@@ -622,12 +622,7 @@ def _submit_sell_side_orders(
 
 
 def get_execution_capabilities(strategy: Any) -> Dict[str, Any]:
-    """获取当前执行环境能力描述."""
-    injected_method = getattr(
-        getattr(strategy, "__dict__", {}), "get", lambda *_: None
-    )("get_execution_capabilities")
-    if callable(injected_method):
-        return cast(Dict[str, Any], injected_method())
+    """获取当前执行环境能力描述（经执行后端）."""
     execution = getattr(strategy, "execution", None)
     if execution is not None:
         return cast(Dict[str, Any], execution.capabilities())
