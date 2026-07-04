@@ -1,4 +1,5 @@
 import pytest
+from akquant.execution.sim import SimExecution
 from akquant.strategy_trading_api import submit_order
 
 
@@ -16,6 +17,7 @@ class _SimStrategy:
             "client_order_id": False,
             "broker_live": False,
         }
+        self.execution = SimExecution(self)
 
 
 def test_sim_rejects_extra_with_clear_message() -> None:

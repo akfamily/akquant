@@ -165,36 +165,13 @@ def _attach_broker_options(strategy: Any, order_id: str, order: Any) -> None:
 
 
 def cancel_order(strategy: Any, order_id: str) -> None:
-    """取消指定订单."""
-    if strategy.ctx:
-        pending_canceled_ids: Set[str] = getattr(
-            strategy, "_pending_canceled_order_ids", set()
-        )
-        if not isinstance(pending_canceled_ids, set):
-            pending_canceled_ids = set()
-            setattr(strategy, "_pending_canceled_order_ids", pending_canceled_ids)
-        pending_canceled_ids.add(order_id)
-        strategy.ctx.cancel_order(order_id)
-        for order in strategy.ctx.active_orders:
-            if getattr(order, "id", "") != order_id:
-                continue
-            if getattr(order, "status", None) not in (
-                OrderStatus.New,
-                OrderStatus.Submitted,
-                OrderStatus.PartiallyFilled,
-            ):
-                continue
-            try:
-                order.status = OrderStatus.Cancelled
-            except Exception:
-                pass
-            break
+    """取消指定订单（经执行后端）."""
+    strategy.execution.cancel_order(order_id)
 
 
 def cancel_all_orders(strategy: Any, symbol: Optional[str] = None) -> None:
-    """取消当前所有未完成的订单."""
-    for order in get_open_orders(strategy, symbol=symbol):
-        cancel_order(strategy, order.id)
+    """取消所有未完成订单（经执行后端）."""
+    strategy.execution.cancel_all_orders(symbol=symbol)
 
 
 def buy(
@@ -730,97 +707,9 @@ def _resolve_auto_position_effect_legs(
     return legs
 
 
-def submit_order(
-    strategy: Any,
-    symbol: Optional[str] = None,
-    side: str = "Buy",
-    quantity: Optional[float] = None,
-    price: Optional[float] = None,
-    time_in_force: Optional[TimeInForce | str] = None,
-    trigger_price: Optional[float] = None,
-    tag: Optional[str] = None,
-    client_order_id: Optional[str] = None,
-    order_type: Optional[str] = None,
-    extra: Optional[Dict[str, Any]] = None,
-    broker_options: Optional[Dict[str, Any]] = None,
-    trail_offset: Optional[float] = None,
-    trail_reference_price: Optional[float] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
-    commission: Optional[OrderCommission] = None,
-    position_effect: Union[PositionEffect, str, None] = None,
-    reduce_only: bool = False,
-    asset_type: str = "stock",
-) -> str:
-    """统一下单接口."""
-    capabilities = get_execution_capabilities(strategy)
-    if client_order_id and not bool(capabilities.get("client_order_id", False)):
-        raise RuntimeError("client_order_id is not supported in current execution mode")
-    if extra:
-        raise RuntimeError(
-            "extra broker fields require broker_live mode "
-            "(not available in simulated/backtest execution)"
-        )
-    if normalize_asset_type(asset_type) != "stock":
-        raise RuntimeError(
-            "non-stock asset_type requires broker_live mode "
-            "(not available in simulated/backtest execution)"
-        )
-    order_type_key, order_type_enum = _parse_order_type(order_type)
-    if time_in_force is not None and not isinstance(time_in_force, TimeInForce):
-        raise RuntimeError(
-            "time_in_force string is not supported in current execution mode"
-        )
-    if order_type_key in {"stoptrail", "stoptraillimit"}:
-        if trail_offset is None or trail_offset <= 0:
-            raise RuntimeError("trail_offset must be > 0 for trailing orders")
-    if order_type_key == "stoptraillimit" and price is None:
-        raise RuntimeError("price must be provided for StopTrailLimit order")
-    if order_type_key in {"stoptrail", "stoptraillimit"} and order_type_enum is None:
-        raise RuntimeError("trailing order requires runtime with StopTrail support")
-
-    side_text = side.strip().lower()
-    if side_text == "buy":
-        order_ids = _submit_buy_side_orders(
-            strategy=strategy,
-            symbol=symbol,
-            quantity=quantity,
-            price=price,
-            time_in_force=time_in_force,
-            trigger_price=trigger_price,
-            tag=tag,
-            order_type=order_type_enum,
-            trail_offset=trail_offset,
-            trail_reference_price=trail_reference_price,
-            fill_policy=fill_policy,
-            slippage=slippage,
-            commission=commission,
-            position_effect=_normalize_position_effect(position_effect, "auto"),
-            reduce_only=reduce_only,
-        )
-        _record_broker_options(strategy, order_ids, broker_options)
-        return _first_order_id(order_ids)
-    if side_text == "sell":
-        order_ids = _submit_sell_side_orders(
-            strategy=strategy,
-            symbol=symbol,
-            quantity=quantity,
-            price=price,
-            time_in_force=time_in_force,
-            trigger_price=trigger_price,
-            tag=tag,
-            order_type=order_type_enum,
-            trail_offset=trail_offset,
-            trail_reference_price=trail_reference_price,
-            fill_policy=fill_policy,
-            slippage=slippage,
-            commission=commission,
-            position_effect=_normalize_position_effect(position_effect, "auto"),
-            reduce_only=reduce_only,
-        )
-        _record_broker_options(strategy, order_ids, broker_options)
-        return _first_order_id(order_ids)
-    raise ValueError(f"Unsupported side: {side}")
+def submit_order(strategy: Any, **kwargs: Any) -> str:
+    """统一下单接口（经执行后端）."""
+    return cast(str, strategy.execution.submit_order(**kwargs))
 
 
 def _parse_order_type(order_type: Optional[str]) -> Tuple[Optional[str], Optional[Any]]:
