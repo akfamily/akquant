@@ -32,7 +32,7 @@ class SimExecution:
 
     def get_open_orders(self, symbol: str | None = None) -> list[Any]:
         """获取未完成订单列表."""
-        return api.get_open_orders(self._s, symbol=symbol)
+        return api._sim_get_open_orders(self._s, symbol=symbol)
 
     def get_order(self, order_id: str) -> Any | None:
         """按订单号获取订单."""
@@ -40,11 +40,11 @@ class SimExecution:
 
     def get_account(self) -> dict[str, Any]:
         """获取账户信息."""
-        return api.get_account(self._s)
+        return api._sim_get_account(self._s)
 
     def get_portfolio_value(self) -> float:
         """获取组合总市值."""
-        return api.get_portfolio_value(self._s)
+        return api._sim_get_portfolio_value(self._s)
 
     def get_cash(self) -> float:
         """获取现金."""

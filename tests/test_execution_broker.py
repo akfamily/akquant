@@ -56,3 +56,26 @@ def test_broker_execution_reads_and_writes() -> None:
     assert ex.submit_order(symbol="600000.SH", side="Buy", quantity=100) == "BID-1"
     ex.cancel_order("BID-1")
     assert gw.canceled == ["BID-1"]
+
+
+def test_broker_execution_submit_order_drops_none_time_in_force() -> None:
+    """time_in_force=None 不应覆盖 submitter 的 "GTC" 默认.
+
+    回归：Strategy.submit_order 默认转发 time_in_force=None；若原样透传给
+    submitter.submit_order(**kwargs)，会覆盖其签名默认值 "GTC"，破坏重构前
+    broker_live 未指定 TIF 时默认为 "GTC" 的行为。
+    """
+    gw = _Gw()
+    submitter = _Submitter()
+    ex = BrokerExecution(_S(), gw, BrokerStateCache(gw), submitter)
+    ex.submit_order(symbol="600000.SH", side="Buy", quantity=100, time_in_force=None)
+    assert "time_in_force" not in submitter.submitted
+
+
+def test_broker_execution_submit_order_forwards_explicit_time_in_force() -> None:
+    """显式指定的 time_in_force 应原样透传给 submitter（不被丢弃）."""
+    gw = _Gw()
+    submitter = _Submitter()
+    ex = BrokerExecution(_S(), gw, BrokerStateCache(gw), submitter)
+    ex.submit_order(symbol="600000.SH", side="Buy", quantity=100, time_in_force="IOC")
+    assert submitter.submitted["time_in_force"] == "IOC"

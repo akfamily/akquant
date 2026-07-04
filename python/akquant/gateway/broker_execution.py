@@ -69,7 +69,14 @@ class BrokerExecution:
         return float(getattr(self._cache.account(), "cash", 0.0) or 0.0)
 
     def submit_order(self, **kwargs: Any) -> str:
-        """提交订单，返回订单号."""
+        """提交订单，返回订单号.
+
+        time_in_force=None（Strategy.submit_order 的缺省值）会显式覆盖
+        submitter.submit_order 签名默认值 "GTC"；这里丢弃 None，
+        保留旧 broker_live 行为：未指定 TIF 时默认为 "GTC"。
+        """
+        if kwargs.get("time_in_force") is None:
+            kwargs.pop("time_in_force", None)
         return str(self._submitter.submit_order(**kwargs))
 
     def cancel_order(self, order_id: str) -> None:
