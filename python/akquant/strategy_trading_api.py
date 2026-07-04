@@ -26,34 +26,23 @@ def resolve_symbol(strategy: Any, symbol: Optional[str]) -> str:
 
 
 def get_position(strategy: Any, symbol: Optional[str] = None) -> float:
-    """获取指定标的的持仓数量."""
-    if strategy.ctx is None:
-        return 0.0
-    symbol = resolve_symbol(strategy, symbol)
-    return float(strategy.ctx.get_position(symbol))
+    """获取指定标的持仓（经执行后端）."""
+    return float(strategy.execution.get_position(symbol))
 
 
 def get_available_position(strategy: Any, symbol: Optional[str] = None) -> float:
-    """获取指定标的的可用持仓数量."""
-    if strategy.ctx is None:
-        return 0.0
-    symbol = resolve_symbol(strategy, symbol)
-    return float(strategy.ctx.get_available_position(symbol))
+    """获取可用持仓（经执行后端）."""
+    return float(strategy.execution.get_available_position(symbol))
 
 
 def hold_bar(strategy: Any, symbol: Optional[str] = None) -> int:
-    """获取当前持仓持有的 Bar 数量."""
-    if strategy.ctx is None:
-        return 0
-    symbol = resolve_symbol(strategy, symbol)
-    return int(strategy._hold_bars[symbol])
+    """获取持仓持有 Bar 数（经执行后端）."""
+    return int(strategy.execution.hold_bar(symbol))
 
 
 def get_positions(strategy: Any) -> Dict[str, float]:
-    """获取所有持仓信息."""
-    if strategy.ctx is None:
-        raise RuntimeError("Context not ready")
-    return cast(Dict[str, float], strategy.ctx.positions)
+    """获取所有持仓（经执行后端）."""
+    return cast(Dict[str, float], strategy.execution.get_positions())
 
 
 def get_last_target_positions_plan(strategy: Any) -> Dict[str, Any]:
@@ -1862,10 +1851,8 @@ def cover(
 
 
 def get_cash(strategy: Any) -> float:
-    """获取现金."""
-    if strategy.ctx is None:
-        return 0.0
-    return float(strategy.ctx.cash)
+    """获取现金（经执行后端）."""
+    return float(strategy.execution.get_cash())
 
 
 # --- SimExecution 后端原语（Task 1 引入；Task 3/4 让公共函数 delegate 到 execution）---
