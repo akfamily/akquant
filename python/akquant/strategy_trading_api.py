@@ -662,21 +662,10 @@ def get_execution_capabilities(strategy: Any) -> Dict[str, Any]:
     )("get_execution_capabilities")
     if callable(injected_method):
         return cast(Dict[str, Any], injected_method())
-    risk_config = getattr(getattr(strategy, "ctx", None), "risk_config", None)
-    account_mode = str(getattr(risk_config, "account_mode", "cash")).strip().lower()
-    supports_short_sell = bool(getattr(risk_config, "enable_short_sell", False))
-    return {
-        "broker_live": False,
-        "client_order_id": False,
-        "order_type": True,
-        "time_in_force_str": False,
-        "position_effect": True,
-        "reduce_only": True,
-        "position_details": False,
-        "account_mode": account_mode,
-        "supports_short_sell": supports_short_sell,
-        "broker_extra_fields": [],
-    }
+    execution = getattr(strategy, "execution", None)
+    if execution is not None:
+        return cast(Dict[str, Any], execution.capabilities())
+    return _sim_capabilities(strategy)
 
 
 def _reject_target_orders_in_broker_live(strategy: Any) -> None:
