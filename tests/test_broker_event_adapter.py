@@ -94,6 +94,32 @@ def test_trade_mapping() -> None:
     assert t.position_effect is PositionEffect.Auto
 
 
+def test_owner_strategy_id_backfill() -> None:
+    """owner_strategy_id 回填到 StrategyOrder/StrategyTrade,与回测 Order/Trade 对齐."""
+    o = map_order_snapshot(_snap(), owner_strategy_id="s1")
+    assert o.owner_strategy_id == "s1"
+    t = map_trade(
+        UnifiedTrade(
+            trade_id="T1",
+            broker_order_id="B1",
+            client_order_id="c1",
+            symbol="600000.SH",
+            side="Sell",
+            quantity=100.0,
+            price=10.5,
+            timestamp_ns=123,
+        ),
+        owner_strategy_id="s1",
+    )
+    assert t.owner_strategy_id == "s1"
+
+
+def test_owner_strategy_id_defaults_none() -> None:
+    """未传 owner_strategy_id 时默认为 None，不影响既有调用方."""
+    o = map_order_snapshot(_snap())
+    assert o.owner_strategy_id is None
+
+
 def test_accepts_dict_payload() -> None:
     """map_order_snapshot 接受 dict payload."""
     o = map_order_snapshot(

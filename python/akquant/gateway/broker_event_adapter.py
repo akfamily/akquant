@@ -43,6 +43,7 @@ class StrategyOrder:
     created_at: Optional[int] = None
     client_order_id: str = ""
     broker_order_id: str = ""
+    owner_strategy_id: Optional[str] = None
 
 
 @dataclass
@@ -60,6 +61,7 @@ class StrategyTrade:
     commission: float = 0.0
     client_order_id: str = ""
     broker_order_id: str = ""
+    owner_strategy_id: Optional[str] = None
 
 
 _STATUS_MAP = {
@@ -180,6 +182,7 @@ def map_order_snapshot(
         created_at=None,
         client_order_id=str(_get(snapshot, "client_order_id", "") or ""),
         broker_order_id=broker_order_id,
+        owner_strategy_id=owner_strategy_id,
     )
 
 
@@ -199,4 +202,5 @@ def map_trade(
         commission=0.0,
         client_order_id=str(_get(trade, "client_order_id", "") or ""),
         broker_order_id=str(_get(trade, "broker_order_id", "") or ""),
+        owner_strategy_id=owner_strategy_id,
     )
