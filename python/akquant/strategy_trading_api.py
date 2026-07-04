@@ -629,20 +629,6 @@ def get_execution_capabilities(strategy: Any) -> Dict[str, Any]:
     return _sim_capabilities(strategy)
 
 
-def _reject_target_orders_in_broker_live(strategy: Any) -> None:
-    """Raise clearly for buy_all/order_target* helpers when running broker_live.
-
-    These helpers size off the (simulated) backtest ctx, which is not the
-    broker's source of truth in broker_live — raise instead of silently
-    mis-sizing.
-    """
-    if get_execution_capabilities(strategy).get("broker_live"):
-        raise RuntimeError(
-            "组合目标类下单(buy_all/order_target*)在 broker_live 暂不支持;"
-            "请用 submit_order/buy 并按 get_account()/get_position() 手动 sizing"
-        )
-
-
 def _normalize_position_effect(
     position_effect: Union[PositionEffect, str, None], default: str = "auto"
 ) -> str:
@@ -1157,7 +1143,6 @@ def order_target(
     Returns:
         本次调仓产生的订单 ID; 若无需交易 (已在目标) 则返回 None.
     """
-    _reject_target_orders_in_broker_live(strategy)
     return _order_target_core(strategy, symbol, target, price, **kwargs)
 
 
@@ -1173,9 +1158,7 @@ def _order_target_core(
         raise ValueError("order_target requires 'target' (目标持仓数量)")
     symbol = resolve_symbol(strategy, symbol)
 
-    current_qty = 0.0
-    if strategy.ctx:
-        current_qty = float(strategy.ctx.get_position(symbol))
+    current_qty = float(strategy.execution.get_position(symbol))
 
     delta_qty = target - current_qty
 
@@ -1198,7 +1181,6 @@ def order_target_value(
     Returns:
         本次调仓产生的订单 ID; 若无需交易或无法定价则返回 None.
     """
-    _reject_target_orders_in_broker_live(strategy)
     if target_value is None:
         raise ValueError("order_target_value requires 'target_value' (目标持仓价值)")
     symbol = resolve_symbol(strategy, symbol)
@@ -1222,9 +1204,7 @@ def order_target_value(
             )
             return None
 
-    current_qty = 0.0
-    if strategy.ctx:
-        current_qty = float(strategy.ctx.get_position(symbol))
+    current_qty = float(strategy.execution.get_position(symbol))
 
     target_qty = target_value / current_price
     delta_qty = target_qty - current_qty
@@ -1261,12 +1241,11 @@ def order_target_percent(
     Returns:
         本次调仓产生的订单 ID; 若无需交易则返回 None.
     """
-    _reject_target_orders_in_broker_live(strategy)
     if target_percent is None:
         raise ValueError(
             "order_target_percent requires 'target_percent' (目标持仓比例)"
         )
-    portfolio_value = get_portfolio_value(strategy)
+    portfolio_value = strategy.execution.get_portfolio_value()
     target_value = portfolio_value * float(target_percent)
     return order_target_value(strategy, symbol, target_value, price, **kwargs)
 
@@ -1285,10 +1264,6 @@ def order_target_weights(
     Returns:
         本次调仓产生的所有订单 ID 列表 (无交易时为空列表).
     """
-    _reject_target_orders_in_broker_live(strategy)
-    if strategy.ctx is None:
-        raise RuntimeError("Context not ready")
-
     if rebalance_tolerance < 0:
         raise ValueError("rebalance_tolerance must be >= 0")
 
@@ -1309,20 +1284,20 @@ def order_target_weights(
         )
 
     if liquidate_unmentioned:
-        for symbol, qty in strategy.ctx.positions.items():
+        for symbol, qty in strategy.execution.get_positions().items():
             if float(qty) != 0.0 and symbol not in normalized_weights:
                 normalized_weights[symbol] = 0.0
 
     if not normalized_weights:
         return []
 
-    portfolio_value = get_portfolio_value(strategy)
+    portfolio_value = strategy.execution.get_portfolio_value()
     abs_tolerance_value = abs(float(portfolio_value)) * float(rebalance_tolerance)
     planned: List[Tuple[str, float, float]] = []
 
     for symbol, weight in normalized_weights.items():
         target_value = float(portfolio_value) * float(weight)
-        current_qty = float(strategy.ctx.get_position(symbol))
+        current_qty = float(strategy.execution.get_position(symbol))
 
         current_price = strategy._last_prices.get(symbol, 0.0)
         if current_price == 0.0:
@@ -1381,9 +1356,6 @@ def order_target_positions(
     Returns:
         本次调仓产生的所有订单 ID 列表 (无交易时为空列表).
     """
-    if strategy.ctx is None:
-        raise RuntimeError("Context not ready")
-
     if rebalance_tolerance < 0:
         raise ValueError("rebalance_tolerance must be >= 0")
     normalized_missing_price_mode = str(missing_price_mode).strip().lower()
@@ -1441,7 +1413,7 @@ def order_target_positions(
             )
 
     if liquidate_unmentioned:
-        for symbol, qty in strategy.ctx.positions.items():
+        for symbol, qty in strategy.execution.get_positions().items():
             if float(qty) != 0.0 and symbol not in normalized_targets:
                 normalized_targets[str(symbol)] = 0.0
 
@@ -1453,7 +1425,7 @@ def order_target_positions(
     increase_legs: List[Tuple[str, float, float]] = []
 
     for symbol, target_qty in normalized_targets.items():
-        current_qty = float(strategy.ctx.get_position(symbol))
+        current_qty = float(strategy.execution.get_position(symbol))
         delta_qty = float(target_qty) - current_qty
         if abs(delta_qty) <= float(rebalance_tolerance):
             continue
@@ -1472,7 +1444,7 @@ def order_target_positions(
             "symbol": symbol,
             "target_quantity": float(target_qty),
             "delta_quantity": float(target_qty)
-            - float(strategy.ctx.get_position(symbol)),
+            - float(strategy.execution.get_position(symbol)),
             "phase": "reduce",
         }
         for symbol, target_qty, _ in reduce_legs
@@ -1482,7 +1454,7 @@ def order_target_positions(
             "symbol": symbol,
             "target_quantity": float(target_qty),
             "delta_quantity": float(target_qty)
-            - float(strategy.ctx.get_position(symbol)),
+            - float(strategy.execution.get_position(symbol)),
             "phase": "increase",
         }
         for symbol, target_qty, _ in increase_legs
@@ -1574,10 +1546,6 @@ def order_target_positions(
 
 def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
     """全仓买入 (Buy All)."""
-    _reject_target_orders_in_broker_live(strategy)
-    if strategy.ctx is None:
-        raise RuntimeError("Context not ready")
-
     symbol = resolve_symbol(strategy, symbol)
 
     price = 0.0
@@ -1589,7 +1557,7 @@ def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
     if price <= 0:
         return
 
-    cash = strategy.ctx.cash
+    cash = strategy.execution.get_cash()
     quantity = int(cash / price)
 
     if quantity > 0:
@@ -1711,7 +1679,7 @@ def cover(
     symbol = resolve_symbol(strategy, symbol)
 
     if quantity is None:
-        pos = strategy.ctx.get_position(symbol)
+        pos = strategy.execution.get_position(symbol)
         if pos < 0:
             quantity = abs(pos)
         else:

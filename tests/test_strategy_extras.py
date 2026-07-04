@@ -5179,6 +5179,9 @@ def test_strategy_order_target_positions_can_bypass_strict_short_capability() ->
                 "supports_short_sell": False,
             }
 
+        def get_position(self, symbol: str | None = None) -> float:
+            return 0.0
+
     strategy.execution = _CapExecution()
 
     strategy.order_target_positions(
