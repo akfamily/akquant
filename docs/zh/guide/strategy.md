@@ -332,7 +332,7 @@ print(
 
 - 期货保证金账户开仓不会像股票现货买入那样扣减全额名义本金。
 - 因此，期货场景下应优先用 `equity` 观察账户净值变化，用 `used_margin` 观察保证金占用，用 `notional_value` 观察杠杆敞口。
-- 如果只需要一个”当前总权益”数值，优先使用 `equity`，其口径与 `get_account()[“equity”]` 对齐。
+- 如果只需要一个“当前总权益”数值，优先使用 `equity`，其口径与 `get_account()["equity"]` 对齐。
 
 ## 4. 常用工具 (Utilities)
 

@@ -903,7 +903,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
     *   期货保证金账户下，`equity` 表示账户权益，`used_margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。
     *   `cash` 是现金余额，`free_margin`（= `equity - used_margin`）才是可用于新开仓的资金，与下单被拒时日志里的 `Available` 口径一致。期货保证金账户下开仓不从 `cash` 扣减保证金，因此 `cash` 通常大于 `free_margin`；股票现金账户下二者相等。
-    *   在策略回调内，如果你只想读取”当前账户总权益”，优先使用 `equity`；其口径与 `get_account()[“equity”]` 对齐。
+    *   在策略回调内，如果你只想读取“当前账户总权益”，优先使用 `equity`；其口径与 `get_account()["equity"]` 对齐。
 *   `get_order(order_id) -> Order`: 获取指定订单详情。
 *   `get_open_orders(symbol) -> List[Order]`: 获取当前未完成订单列表。
 *   `get_trades() -> List[ClosedTrade]`: 获取所有已平仓交易记录。
