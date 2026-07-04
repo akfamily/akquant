@@ -780,10 +780,10 @@ AKQuant 当前的订单语义已经不再是单纯的 `side`，而是 `side + po
 
 AKQuant 提供了两组交易助手，减少策略中手写订单联动逻辑：
 
-*   `self.create_oco_order_group(first_order_id, second_order_id, group_id=None)`
+*   `self.place_oco(first_order_id, second_order_id, group_id=None)`
     *   把两个订单绑定为 OCO（One-Cancels-the-Other）。
     *   任一订单成交后，另一订单会自动撤销。
-*   `self.place_bracket_order(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...)`
+*   `self.place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...)`
     *   一次性提交 Bracket 结构。
     *   进场单成交后，自动挂出止损/止盈；当止损与止盈同时存在时自动绑定 OCO。
 
@@ -798,7 +798,7 @@ class BracketHelperStrategy(Strategy):
         if self.get_position(bar.symbol) > 0 or self.entry_order_id:
             return
 
-        self.entry_order_id = self.place_bracket_order(
+        self.entry_order_id = self.place_bracket(
             symbol=bar.symbol,
             quantity=100,
             stop_trigger_price=bar.close * 0.98,
@@ -1084,7 +1084,7 @@ def on_start(self):
         self.log("Resumed from snapshot. Indicators retained.")
 
     # 2. 注册指标 (必须执行)
-    self.register_indicator("sma", self.sma)
+    self.register_precomputed_indicator("sma", self.sma)
 
     # 3. 订阅行情 (必须执行)
     self.subscribe(self.symbol)

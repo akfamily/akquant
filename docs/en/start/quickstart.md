@@ -367,7 +367,7 @@ result = run_backtest(data=df, strategy=MetaQuickStrategy, config=config)
 
 ## Complex Orders in 30 Seconds
 
-If you need an entry + stop-loss + take-profit flow with automatic OCO linkage, use `place_bracket_order` directly:
+If you need an entry + stop-loss + take-profit flow with automatic OCO linkage, use `place_bracket` directly:
 
 ```python
 from akquant import OrderStatus, Strategy
@@ -379,7 +379,7 @@ class BracketQuickStrategy(Strategy):
     def on_bar(self, bar):
         if self.get_position(bar.symbol) > 0 or self.entry_order_id:
             return
-        self.entry_order_id = self.place_bracket_order(
+        self.entry_order_id = self.place_bracket(
             symbol=bar.symbol,
             quantity=100,
             stop_trigger_price=bar.close * 0.98,

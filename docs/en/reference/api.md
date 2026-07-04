@@ -861,8 +861,8 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `close_position(symbol)`: Close position for a specific instrument.
 *   `cancel_order(order_id: str)`: Cancel a specific order.
 *   `cancel_all_orders(symbol)`: Cancel all pending orders for a specific instrument. If `symbol` is omitted, cancels all orders.
-*   `create_oco_order_group(first_order_id, second_order_id, group_id=None) -> str`: Create an OCO order group. Once one order is filled, the peer order is canceled automatically.
-*   `place_bracket_order(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: Create a bracket order. The entry order is submitted first, then stop-loss/take-profit exits are submitted after entry fill; if both exits exist, they are linked as OCO automatically.
+*   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: Create an OCO order group. Once one order is filled, the peer order is canceled automatically.
+*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: Create a bracket order. The entry order is submitted first, then stop-loss/take-profit exits are submitted after entry fill; if both exits exist, they are linked as OCO automatically.
 
 **Data & Utilities:**
 

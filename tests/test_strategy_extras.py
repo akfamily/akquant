@@ -6144,7 +6144,7 @@ def test_oco_group_cancels_peer_on_trade() -> None:
             self.cancelled.append(order_id)
 
     strategy = _OcoSpyStrategy()
-    group_id = strategy.create_oco_order_group("order-a", "order-b")
+    group_id = strategy.place_oco("order-a", "order-b")
     strategy._process_order_groups(SimpleNamespace(order_id="order-a"))
 
     assert group_id == "oco-1"
@@ -6157,8 +6157,8 @@ def test_oco_group_rebind_detaches_old_group() -> None:
     """Rebinding an order into new OCO group should detach old mapping."""
     strategy = MyStrategy()
 
-    first_group = strategy.create_oco_order_group("order-a", "order-b")
-    second_group = strategy.create_oco_order_group("order-b", "order-c")
+    first_group = strategy.place_oco("order-a", "order-b")
+    second_group = strategy.place_oco("order-b", "order-c")
 
     assert first_group == "oco-1"
     assert second_group == "oco-2"
@@ -6182,7 +6182,7 @@ def test_oco_group_prefers_engine_registration_when_available() -> None:
     fake_engine = _FakeEngine()
     setattr(strategy, "_engine", fake_engine)
 
-    group_id = strategy.create_oco_order_group("order-a", "order-b")
+    group_id = strategy.place_oco("order-a", "order-b")
 
     assert group_id == "oco-1"
     assert strategy._use_engine_oco is True
@@ -6225,7 +6225,7 @@ def test_oco_group_falls_back_to_deferred_engine_queue_on_runtime_error() -> Non
     strategy = MyStrategy()
     setattr(strategy, "_engine", _FailingEngine())
 
-    group_id = strategy.create_oco_order_group("order-a", "order-b")
+    group_id = strategy.place_oco("order-a", "order-b")
 
     assert group_id == "oco-1"
     assert strategy._use_engine_oco is True
@@ -6305,7 +6305,7 @@ def test_bracket_prefers_engine_registration_when_available() -> None:
     fake_engine = _FakeEngine()
     setattr(strategy, "_engine", fake_engine)
 
-    entry_id = strategy.place_bracket_order(
+    entry_id = strategy.place_bracket(
         symbol="AAPL",
         quantity=2.0,
         entry_price=100.0,
@@ -6374,7 +6374,7 @@ def test_bracket_falls_back_to_deferred_engine_queue_on_runtime_error() -> None:
     strategy = _BracketEngineStrategy()
     setattr(strategy, "_engine", _FailingEngine())
 
-    entry_id = strategy.place_bracket_order(
+    entry_id = strategy.place_bracket(
         symbol="AAPL",
         quantity=2.0,
         entry_price=100.0,
@@ -6460,7 +6460,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             return order_id
 
     strategy = _BracketSpyStrategy()
-    entry_id = strategy.place_bracket_order(
+    entry_id = strategy.place_bracket(
         symbol="AAPL",
         quantity=2.0,
         entry_price=100.0,

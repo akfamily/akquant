@@ -40,7 +40,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
 
 4.  **Indicators**:
     *   Prefer using `akquant.indicators` (e.g., `SMA`, `RSI`).
-    *   Register in `__init__` or `on_start`: `self.sma = SMA(20); self.register_indicator("sma", self.sma)`.
+    *   Register in `__init__` or `on_start`: `self.sma = SMA(20); self.register_precomputed_indicator("sma", self.sma)`.
     *   Access value via `self.sma.value`.
 
 5.  **Backtest Execution**:

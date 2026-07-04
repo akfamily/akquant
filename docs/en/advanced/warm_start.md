@@ -94,7 +94,7 @@ def on_start(self):
     else:
         self.log("Resumed from snapshot. Indicators retained.")
 
-    self.register_indicator("sma", self.sma)
+    self.register_precomputed_indicator("sma", self.sma)
     self.subscribe(self.symbol)
 ```
 
@@ -122,7 +122,7 @@ class MyStrategy(Strategy):
     def on_start(self):
         if not self.is_restored:
             self.sma = SMA(10)
-        self.register_indicator("sma", self.sma)
+        self.register_precomputed_indicator("sma", self.sma)
 
 # ... run phase 1 ...
 save_snapshot(engine, strategy, "checkpoint.pkl")

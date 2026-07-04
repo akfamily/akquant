@@ -51,8 +51,8 @@ class MovingAverageStrategy(Strategy):
         else:
             print("[Strategy] Resumed from snapshot. Indicators restored.")
 
-        self.register_indicator("sma_fast", self.sma_fast)
-        self.register_indicator("sma_slow", self.sma_slow)
+        self.register_precomputed_indicator("sma_fast", self.sma_fast)
+        self.register_precomputed_indicator("sma_slow", self.sma_slow)
         print(f"[Strategy] Started. Fast={self.fast_window}, Slow={self.slow_window}")
 
     def on_resume(self) -> None:

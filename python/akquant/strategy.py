@@ -1145,15 +1145,6 @@ class Strategy:
         """设置仓位管理器."""
         self.sizer = sizer
 
-    def register_indicator(self, name: str, indicator: "Indicator") -> None:
-        """
-        Register an indicator.
-
-        This allows accessing the indicator via self.name and ensures it is
-        calculated before the backtest starts.
-        """
-        self.register_precomputed_indicator(name, indicator)
-
     def register_precomputed_indicator(self, name: str, indicator: "Indicator") -> None:
         """注册预计算指标."""
         if self.indicator_mode != "precompute":
@@ -1765,7 +1756,7 @@ class Strategy:
         """
         _cancel_all_orders_impl(self, symbol)
 
-    def create_oco_order_group(
+    def place_oco(
         self,
         first_order_id: str,
         second_order_id: str,
@@ -1808,7 +1799,7 @@ class Strategy:
         self._oco_order_to_group[second] = group_key
         return group_key
 
-    def place_bracket_order(
+    def place_bracket(
         self,
         symbol: str,
         quantity: float,
@@ -1928,7 +1919,7 @@ class Strategy:
             )
 
         if stop_order_id and take_order_id:
-            self.create_oco_order_group(stop_order_id, take_order_id)
+            self.place_oco(stop_order_id, take_order_id)
 
     def _process_oco_trade(self, trade: Any) -> None:
         if self._use_engine_oco:

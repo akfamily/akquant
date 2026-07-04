@@ -914,10 +914,10 @@ class IntradayStrategy(Strategy):
 
 AKQuant provides helper APIs for linked order management:
 
-*   `self.create_oco_order_group(first_order_id, second_order_id, group_id=None)`
+*   `self.place_oco(first_order_id, second_order_id, group_id=None)`
     *   Binds two orders as OCO (One-Cancels-the-Other).
     *   Once either order is filled, the peer order is canceled automatically.
-*   `self.place_bracket_order(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...)`
+*   `self.place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...)`
     *   Submits a bracket structure in one call.
     *   After entry fill, stop-loss and take-profit exits are submitted automatically; when both exits exist, they are linked as OCO.
 
@@ -932,7 +932,7 @@ class BracketHelperStrategy(Strategy):
         if self.get_position(bar.symbol) > 0 or self.entry_order_id:
             return
 
-        self.entry_order_id = self.place_bracket_order(
+        self.entry_order_id = self.place_bracket(
             symbol=bar.symbol,
             quantity=100,
             stop_trigger_price=bar.close * 0.98,

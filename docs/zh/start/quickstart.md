@@ -280,7 +280,7 @@ print(bar.timestamp_iso)
 
 ## 复杂订单 30 秒示例
 
-如果你需要“进场 + 止损 + 止盈 + 自动 OCO 联动”，可以直接使用 `place_bracket_order`：
+如果你需要“进场 + 止损 + 止盈 + 自动 OCO 联动”，可以直接使用 `place_bracket`：
 
 ```python
 from akquant import OrderStatus, Strategy
@@ -292,7 +292,7 @@ class BracketQuickStrategy(Strategy):
     def on_bar(self, bar):
         if self.get_position(bar.symbol) > 0 or self.entry_order_id:
             return
-        self.entry_order_id = self.place_bracket_order(
+        self.entry_order_id = self.place_bracket(
             symbol=bar.symbol,
             quantity=100,
             stop_trigger_price=bar.close * 0.98,
