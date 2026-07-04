@@ -119,10 +119,25 @@ trader.place_order(
 
 完整示例：`examples/39_live_broker_submit_order_demo.py`。
 
+## 执行接口 ExecutionBackend（回测/实盘同一套）
+
+策略的状态读（`get_position`/`get_account`/…）、下单（`submit_order`）、撤单
+（`cancel_order`/`cancel_all_orders`）与组合目标类下单（`buy_all`/`order_target*`）
+统一经 `strategy.execution` 这一个 `ExecutionBackend` 接口调用，不再对策略对象
+做 `setattr` 猴补：
+
+- 回测/`paper` 下 `strategy.execution` 是 `SimExecution`，转发 Rust 引擎 `ctx`，
+  零回归。
+- `broker_live` 下 `strategy.execution` 是 `BrokerExecution`，柜台为唯一真相。
+
+策略代码全程只认 `self.execution`（或经既有的 `get_position()`/`submit_order()`
+等便捷方法，二者最终都落到 `strategy.execution`），两种模式下写法一致，切换
+`trading_mode` 无需改策略。
+
 ## 实盘状态与撤单（③b/③c）
 
-`broker_live` 下，策略的**状态读**与**撤单**方法会被覆盖为直接读/写真实柜台
-（回测/`paper` 下不安装这些覆盖，仍走 Rust 引擎 `ctx`，零回归）。柜台是唯一真相。
+`broker_live` 下，策略的**状态读**与**撤单**方法经 `BrokerExecution` 直接读/写
+真实柜台（回测/`paper` 下走 `SimExecution`/Rust 引擎 `ctx`，零回归）。柜台是唯一真相。
 
 - **状态读走柜台**：`get_position(symbol=None)` / `get_available_position(symbol=None)` /
   `get_account()` / `get_portfolio_value()` / `get_open_orders(symbol=None)` 转发
@@ -136,11 +151,10 @@ trader.place_order(
   （`broker_live` 下 `submit_order` 返回的即 broker_order_id，故策略持有的 `order_id`
   本就是柜台单号）；`cancel_all_orders(symbol=None)` 遍历 `sync_open_orders()` 逐个撤，
   可按 `symbol` 过滤。
-- **组合目标类下单暂不支持**：`buy_all` / `order_target` / `order_target_value` /
-  `order_target_percent` / `order_target_weights` 在 `broker_live` 下会抛清晰 `RuntimeError`
-  （它们直接按引擎 `ctx` 资金/持仓 sizing，与柜台不一致，易错单）。请改用
-  `submit_order` / `buy`，并按 `get_account()` / `get_position()` 手动 sizing。
-  （让这些方法真正按柜台状态 sizing 属后续。）
+- **组合目标类下单已支持**：`buy_all` / `order_target` / `order_target_value` /
+  `order_target_percent` / `order_target_weights` 在 `broker_live` 下现按柜台真实
+  持仓/资金 sizing 下单——经统一执行接口 `ExecutionBackend`，与回测下走
+  `SimExecution` 是同一套调用方式，不再报错。
 
 ## 范围与后续
 

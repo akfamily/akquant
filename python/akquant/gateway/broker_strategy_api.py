@@ -1,10 +1,8 @@
-"""broker_live 下把策略读/撤单方法 setattr 覆盖到柜台版（独立可测）."""
+"""broker_live 下策略读/撤单相关的共享 helper（经 `BrokerExecution` 调用）."""
 
 from __future__ import annotations
 
 from typing import Any, Callable
-
-from .broker_state_cache import BrokerStateCache
 
 
 def _account_to_dict(acct: Any) -> dict[str, Any]:
@@ -47,56 +45,6 @@ def _resolve_symbol(strategy: Any, symbol: str | None) -> str:
     if tick is not None and getattr(tick, "symbol", None):
         return str(tick.symbol)
     raise ValueError("Symbol must be provided")
-
-
-def install_broker_state_reads(strategy: Any, cache: BrokerStateCache) -> None:
-    """Override the strategy's state-read methods to consult the broker cache."""
-
-    def _get_position(symbol: str | None = None) -> float:
-        return cache.positions().get(_resolve_symbol(strategy, symbol), 0.0)
-
-    def _get_available_position(symbol: str | None = None) -> float:
-        return cache.available_positions().get(_resolve_symbol(strategy, symbol), 0.0)
-
-    def _get_account() -> dict[str, Any]:
-        return _account_to_dict(cache.account())
-
-    def _get_portfolio_value() -> float:
-        return float(getattr(cache.account(), "equity", 0.0) or 0.0)
-
-    def _get_open_orders(symbol: str | None = None) -> list[Any]:
-        orders = cache.open_orders()
-        if symbol is not None:
-            return [o for o in orders if getattr(o, "symbol", None) == symbol]
-        return list(orders)
-
-    strategy.get_position = _get_position
-    strategy.get_available_position = _get_available_position
-    strategy.get_account = _get_account
-    strategy.get_portfolio_value = _get_portfolio_value
-    strategy.get_open_orders = _get_open_orders
-
-
-def install_broker_cancel(strategy: Any, trader_gateway: Any) -> None:
-    """Override cancel_order/cancel_all_orders to route to the broker.
-
-    In broker_live, submit_order returns the broker_order_id, so the
-    strategy's order_id IS the broker_order_id — forward it directly.
-    """
-
-    def _cancel_order(order_id: str) -> None:
-        trader_gateway.cancel_order(str(order_id))
-
-    def _cancel_all_orders(symbol: str | None = None) -> None:
-        for order in trader_gateway.sync_open_orders():
-            bid = getattr(order, "broker_order_id", "")
-            if symbol is not None and getattr(order, "symbol", None) != symbol:
-                continue
-            if bid:
-                trader_gateway.cancel_order(str(bid))
-
-    strategy.cancel_order = _cancel_order
-    strategy.cancel_all_orders = _cancel_all_orders
 
 
 def wrap_state_invalidation(
