@@ -1641,13 +1641,9 @@ class Strategy:
         """
         return _hold_bar_impl(self, symbol)
 
-    def get_positions(self) -> Dict[str, float]:
-        """
-        获取所有持仓信息.
-
-        Returns:
-            Dict[str, float]: 持仓字典 {symbol: quantity}
-        """
+    @property
+    def positions(self) -> Dict[str, float]:
+        """所有标的持仓 {symbol: qty}（等同旧 get_positions()）."""
         return _get_positions_impl(self)
 
     def _set_instrument_snapshots(

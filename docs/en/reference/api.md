@@ -870,7 +870,7 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `get_history_df(count, symbol) -> pd.DataFrame`: Get history data DataFrame (OHLCV).
 *   `get_position(symbol) -> float`: Get current position size. This still returns a numeric quantity, not an object.
 *   `get_available_position(symbol) -> float`: Get available position size.
-*   `get_positions() -> Dict[str, float]`: Get all positions by symbol.
+*   `positions -> Dict[str, float]`: Get all positions by symbol (read-only property).
 *   `self.position.entry_price -> float`: Get the current symbol's average entry price via the `Position` helper.
 *   `self.position.avg_price -> float`: Alias of `entry_price`.
 *   `ctx.get_position_entry_price(symbol) -> float`: Get the current average entry price for one symbol.

@@ -892,7 +892,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `get_history_df(count, symbol) -> pd.DataFrame`: 获取历史数据 DataFrame (OHLCV)。
 *   `get_position(symbol) -> float`: 获取当前持仓量。返回值仍为数量，不返回对象。
 *   `get_available_position(symbol) -> float`: 获取可用持仓量。
-*   `get_positions() -> Dict[str, float]`: 获取所有标的持仓。
+*   `positions -> Dict[str, float]`: 获取所有标的持仓（只读属性）。
 *   `self.position.entry_price -> float`: 通过 `Position` helper 获取当前标的持仓均价。
 *   `self.position.avg_price -> float`: `entry_price` 的别名。
 *   `ctx.get_position_entry_price(symbol) -> float`: 获取指定标的当前持仓均价。
