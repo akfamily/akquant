@@ -898,7 +898,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `ctx.get_position_entry_price(symbol) -> float`: 获取指定标的当前持仓均价。
 *   `ctx.get_position_entry_prices() -> Dict[str, float]`: 获取所有标的当前持仓均价。
 *   `hold_bar(symbol) -> int`: 获取当前持仓持有的 Bar 数量。
-*   `get_cash() -> float`: 获取当前可用资金。
+*   `cash -> float`: 获取当前可用资金（只读属性）。
 *   `get_account() -> Dict[str, float]`: 获取账户详情快照。常见字段包括 `cash`、`equity`、`market_value`、`notional_value`、`frozen_cash`、`margin`、`used_margin`、`free_margin`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
     *   期货保证金账户下，`equity` 表示账户权益，`used_margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。

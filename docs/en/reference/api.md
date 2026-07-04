@@ -875,7 +875,7 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `self.position.avg_price -> float`: Alias of `entry_price`.
 *   `ctx.get_position_entry_price(symbol) -> float`: Get the current average entry price for one symbol.
 *   `ctx.get_position_entry_prices() -> Dict[str, float]`: Get current average entry prices for all symbols.
-*   `get_cash() -> float`: Get current available cash.
+*   `cash -> float`: Get current available cash (read-only property).
 *   `get_account() -> Dict[str, float]`: Get an account snapshot. Common fields include `cash`, `equity`, `market_value`, `notional_value`, `frozen_cash`, `margin`, `used_margin`, `free_margin`, `unrealized_pnl`, `borrowed_cash`, `short_market_value`, `maintenance_ratio`, `account_mode`, `accrued_interest`, and `daily_interest`.
     *   In cash / spot-style accounts, `market_value` usually represents marked position value.
     *   In futures margin accounts, `equity` is account equity, `used_margin` is margin in use, `notional_value` is futures notional exposure, and `unrealized_pnl` is marked floating PnL. Futures trades do not deduct full notional from `cash` the way spot buys do, and notional exposure is not mirrored into `market_value` as if it were spot inventory.

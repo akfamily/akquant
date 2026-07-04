@@ -2174,6 +2174,11 @@ class Strategy:
         return _get_portfolio_value_impl(self)
 
     @property
+    def cash(self) -> float:
+        """当前可用现金（等同旧 get_cash()）."""
+        return _get_cash_impl(self)
+
+    @property
     def equity(self) -> float:
         """
         获取当前账户总权益 (现金 + 持仓市值).
@@ -2397,10 +2402,6 @@ class Strategy:
             commission,
             reduce_only,
         )
-
-    def get_cash(self) -> float:
-        """获取现金."""
-        return _get_cash_impl(self)
 
 
 class VectorizedStrategy(Strategy):
