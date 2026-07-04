@@ -167,8 +167,8 @@ min_margin_level                        68.587671
 
 AKQuant 提供了两组复杂订单助手，减少手写订单联动逻辑：
 
-*   `create_oco_order_group(first_order_id, second_order_id, group_id=None)`：将两个订单绑定为 OCO，任一成交后自动撤销另一单。
-*   `place_bracket_order(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...)`：一次性提交 Bracket 结构；进场成交后自动挂出止损/止盈，并在双退出单场景下自动绑定 OCO。
+*   `place_oco(first_order_id, second_order_id, group_id=None)`：将两个订单绑定为 OCO，任一成交后自动撤销另一单。
+*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...)`：一次性提交 Bracket 结构；进场成交后自动挂出止损/止盈，并在双退出单场景下自动绑定 OCO。
 
 ```python
 from akquant import OrderStatus, Strategy
@@ -181,7 +181,7 @@ class BracketHelperStrategy(Strategy):
         if self.get_position(bar.symbol) > 0 or self.entry_order_id:
             return
 
-        self.entry_order_id = self.place_bracket_order(
+        self.entry_order_id = self.place_bracket(
             symbol=bar.symbol,
             quantity=100,
             stop_trigger_price=bar.close * 0.98,
