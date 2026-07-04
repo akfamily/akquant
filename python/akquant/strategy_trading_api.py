@@ -1402,14 +1402,9 @@ def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
 
 
 def close_position(strategy: Any, symbol: Optional[str] = None) -> None:
-    """平仓 (Close Position)."""
+    """平掉当前持仓（delegate 到 order_target(symbol, 0)）."""
     symbol = resolve_symbol(strategy, symbol)
-    position = get_position(strategy, symbol)
-
-    if position > 0:
-        sell(strategy, symbol=symbol, quantity=position)
-    elif position < 0:
-        buy(strategy, symbol=symbol, quantity=abs(position))
+    order_target(strategy, symbol=symbol, target=0)
 
 
 def short(
