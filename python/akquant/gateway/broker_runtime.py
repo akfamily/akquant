@@ -34,6 +34,7 @@ class BrokerRuntime:
         bind_order_owner: Callable[[str, str, str], None],
         payload_field: Callable[[Any, str], Any],
         get_execution_capabilities: Callable[[], dict[str, Any]],
+        record_order_request: Callable[[str, Any], None],
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -68,6 +69,7 @@ class BrokerRuntime:
         self._notify_strategy_error = notify_strategy_error
         self._payload_field = payload_field
         self._get_execution_capabilities = get_execution_capabilities
+        self._record_order_request = record_order_request
         self._submitter: BrokerOrderSubmitter | None = None
 
     @property
@@ -100,6 +102,7 @@ class BrokerRuntime:
             notify_strategy_error=self._notify_strategy_error,
             payload_field=self._payload_field,
             get_execution_capabilities=self._get_execution_capabilities,
+            record_order_request=self._record_order_request,
         )
         self._submitter.install()
 

@@ -63,6 +63,7 @@ def _build_submitter(
             else getattr(payload, field, "")
         ),
         get_execution_capabilities=lambda: capability.as_execution_capabilities(),
+        record_order_request=lambda *_a: None,
     )
     submitter.install()
     return submitter, strategy, client_to_broker, broker_to_owner

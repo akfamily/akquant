@@ -753,6 +753,7 @@ class LiveRunner:
         self._broker_account_state: Any = None
         self._client_to_broker_order_ids: dict[str, str] = {}
         self._broker_to_client_order_ids: dict[str, str] = {}
+        self._order_requests: dict[str, Any] = {}
         self._client_to_strategy_ids: dict[str, str] = {}
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
@@ -796,6 +797,7 @@ class LiveRunner:
             bind_order_owner=self._bind_order_owner,
             payload_field=self._payload_field,
             get_execution_capabilities=self.get_execution_capabilities,
+            record_order_request=self._record_order_request,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -1113,13 +1115,24 @@ class LiveRunner:
         if client_order_id:
             self._client_to_broker_order_ids.pop(client_order_id, None)
             self._client_to_strategy_ids.pop(client_order_id, None)
+            self._order_requests.pop(str(client_order_id), None)
         if broker_order_id:
             self._broker_to_client_order_ids.pop(broker_order_id, None)
             self._broker_to_strategy_ids.pop(broker_order_id, None)
             self._closed_broker_order_ids.add(broker_order_id)
 
+    def _record_order_request(self, client_order_id: str, request: Any) -> None:
+        self._order_requests[str(client_order_id)] = request
+
+    def _lookup_order_request(self, payload: Any) -> Any:
+        cid = self._payload_field(payload, "client_order_id")
+        if not cid:
+            bid = self._payload_field(payload, "broker_order_id")
+            cid = self._broker_to_client_order_ids.get(str(bid)) if bid else None
+        return self._order_requests.get(str(cid)) if cid else None
+
     def _is_terminal_status(self, status: Any) -> bool:
-        status_text = str(status).strip().lower()
+        status_text = str(getattr(status, "value", status)).strip().lower()
         return status_text in {"filled", "cancelled", "canceled", "rejected"}
 
     def can_submit_client_order(self, client_order_id: str) -> bool:
