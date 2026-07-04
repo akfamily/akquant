@@ -832,19 +832,20 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `self.position`: Position object for current symbol, with `size` and `available` properties.
 *   `self.now`: Current backtest time (`pd.Timestamp`).
 *   `self.runtime_config`: Runtime behavior config object (`StrategyRuntimeConfig`).
-*   `self.enable_precise_day_boundary_hooks`: Enable boundary timer based precise day hooks (default `False`). This switch changes trigger precision only; it does not change the visibility window of `get_history()`, `get_account()`, or `get_portfolio_value()` inside `on_before_trading` / `on_daily_rebalance`.
+*   `self.enable_precise_day_boundary_hooks`: Enable boundary timer based precise day hooks (default `False`). This switch changes trigger precision only; it does not change the visibility window of `get_history()`, `get_account()`, or `equity` inside `on_before_trading` / `on_daily_rebalance`.
 *   `self.portfolio_update_eps`: Snapshot threshold; changes below it skip `on_portfolio_update` (default `0.0`).
 *   `self.error_mode`: Error handling mode, `"raise"` or `"continue"` (default `"raise"`).
 *   `self.re_raise_on_error`: Whether to re-raise user callback exception after `on_error` (default `True`).
 
 **Trading Methods:**
 
-*   `buy(symbol, quantity, price=None, ...)`: Buy. Market order if `price` is not specified.
-*   `sell(symbol, quantity, price=None, ...)`: Sell.
+*   `buy(symbol, quantity, price=None, trigger_price=None, ...)`: Buy (open long / close short).
+    *   Market order if `price` is not specified.
+    *   Limit order if `price` is specified.
+    *   Stop order (Stop Market) if `trigger_price` is specified.
+*   `sell(symbol, quantity, price=None, trigger_price=None, ...)`: Sell (close long / open short). Same parameters as above.
 *   `short(symbol, quantity, price=None, ...)`: Short sell.
 *   `cover(symbol, quantity, price=None, ...)`: Buy to cover.
-*   `stop_buy(symbol, trigger_price, quantity, ...)`: Stop buy (Stop Market). Triggers a market buy order when price breaks above `trigger_price`.
-*   `stop_sell(symbol, trigger_price, quantity, ...)`: Stop sell (Stop Market). Triggers a market sell order when price drops below `trigger_price`.
 *   `submit_order(..., order_type="StopTrail", trail_offset=..., trail_reference_price=None)`: Submit a trailing stop order. `trail_offset` must be greater than 0.
 *   `submit_order(..., order_type="StopTrailLimit", price=..., trail_offset=..., trail_reference_price=None)`: Submit a trailing stop-limit order. `price` and `trail_offset` are required.
 *   `submit_order(..., broker_options={...})`: Optional broker extension fields passthrough (backtest currently records them on `order.broker_options` for debugging/audit).
@@ -852,7 +853,7 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `place_trailing_stop_limit(symbol, quantity, price, trail_offset, side="Sell", trail_reference_price=None, ...) -> str`: Helper for trailing stop-limit orders, promoted to limit order when triggered.
 *   `order_target_value(target_value, symbol, price=None)`: Adjust position to target value.
 *   `order_target_percent(target_percent, symbol, price=None)`: Adjust position to target account percentage.
-*   `order_target_weights(target_weights, price_map=None, liquidate_unmentioned=False, allow_leverage=False, rebalance_tolerance=0.0, ...)`: Rebalance a multi-asset portfolio by target weights.
+*   `rebalance_weights(target_weights, price_map=None, liquidate_unmentioned=False, allow_leverage=False, rebalance_tolerance=0.0, ...)`: Rebalance a multi-asset portfolio by target weights.
     *   `target_weights` is `{symbol: weight}` and by default requires total weight `<= 1.0`.
     *   `liquidate_unmentioned=True` sets all existing non-mentioned positions to target `0`.
     *   Orders are submitted in sell-first then buy-second order to reduce cash-lock conflicts.
@@ -860,8 +861,8 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `close_position(symbol)`: Close position for a specific instrument.
 *   `cancel_order(order_id: str)`: Cancel a specific order.
 *   `cancel_all_orders(symbol)`: Cancel all pending orders for a specific instrument. If `symbol` is omitted, cancels all orders.
-*   `create_oco_order_group(first_order_id, second_order_id, group_id=None) -> str`: Create an OCO order group. Once one order is filled, the peer order is canceled automatically.
-*   `place_bracket_order(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: Create a bracket order. The entry order is submitted first, then stop-loss/take-profit exits are submitted after entry fill; if both exits exist, they are linked as OCO automatically.
+*   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: Create an OCO order group. Once one order is filled, the peer order is canceled automatically.
+*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: Create a bracket order. The entry order is submitted first, then stop-loss/take-profit exits are submitted after entry fill; if both exits exist, they are linked as OCO automatically.
 
 **Data & Utilities:**
 
@@ -869,17 +870,17 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `get_history_df(count, symbol) -> pd.DataFrame`: Get history data DataFrame (OHLCV).
 *   `get_position(symbol) -> float`: Get current position size. This still returns a numeric quantity, not an object.
 *   `get_available_position(symbol) -> float`: Get available position size.
-*   `get_positions() -> Dict[str, float]`: Get all positions by symbol.
+*   `positions -> Dict[str, float]`: Get all positions by symbol (read-only property).
 *   `self.position.entry_price -> float`: Get the current symbol's average entry price via the `Position` helper.
 *   `self.position.avg_price -> float`: Alias of `entry_price`.
 *   `ctx.get_position_entry_price(symbol) -> float`: Get the current average entry price for one symbol.
 *   `ctx.get_position_entry_prices() -> Dict[str, float]`: Get current average entry prices for all symbols.
-*   `get_cash() -> float`: Get current available cash.
+*   `cash -> float`: Get current available cash (read-only property).
 *   `get_account() -> Dict[str, float]`: Get an account snapshot. Common fields include `cash`, `equity`, `market_value`, `notional_value`, `frozen_cash`, `margin`, `used_margin`, `free_margin`, `unrealized_pnl`, `borrowed_cash`, `short_market_value`, `maintenance_ratio`, `account_mode`, `accrued_interest`, and `daily_interest`.
     *   In cash / spot-style accounts, `market_value` usually represents marked position value.
     *   In futures margin accounts, `equity` is account equity, `used_margin` is margin in use, `notional_value` is futures notional exposure, and `unrealized_pnl` is marked floating PnL. Futures trades do not deduct full notional from `cash` the way spot buys do, and notional exposure is not mirrored into `market_value` as if it were spot inventory.
     *   `cash` is the cash balance; `free_margin` (= `equity - used_margin`) is the amount actually available to open new positions and matches the `Available` value shown in the rejection log when an order is rejected. In futures margin accounts, opening a position does not deduct margin from `cash`, so `cash` is usually larger than `free_margin`; in stock cash accounts the two are equal.
-    *   Inside strategy callbacks, prefer `get_portfolio_value()` when you only need current total equity; it is aligned with `get_account()["equity"]`.
+    *   Inside strategy callbacks, prefer `equity` when you only need current total equity; it is aligned with `get_account()["equity"]`.
 *   `get_order(order_id) -> Order`: Get details of a specific order.
 *   `get_open_orders(symbol) -> List[Order]`: Get list of open orders.
 *   `subscribe(instrument_id: str)`: Subscribe to market data. Must be called explicitly for multi-asset backtesting or live trading to receive `on_tick`/`on_bar` callbacks.

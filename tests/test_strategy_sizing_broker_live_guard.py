@@ -1,9 +1,14 @@
-"""组合目标类下单(buy_all/order_target*) 在 broker_live 下按柜台持仓 sizing 并真下单.
+"""组合目标类下单(order_target*) 在 broker_live 下按柜台持仓 sizing 并真下单.
 
 历史上这些函数在 broker_live 下会抛 RuntimeError
 (见 _reject_target_orders_in_broker_live, Task 7 前); 现在它们的持仓/现金/组合价值
 读取全部改走 strategy.execution, 因此在 broker_live 下也能正确按柜台真实状态
 sizing 并下单, 不再需要守卫拒单。
+
+（Task v2-T3 硬删了「全仓买入」薄封装；其专属的 cash-based `int(cash/price)`
+sizing 用例不做等价迁移——迁移目标 order_target_percent(1.0) 按 portfolio_value
+定价的 sizing 已由本文件 test_order_target_percent_sizes_off_execution_in_broker_live
+覆盖。）
 """
 
 from akquant import strategy_trading_api as api
@@ -73,28 +78,6 @@ class _Strategy:
         return self.execution.submit_order(**kwargs)
 
 
-class _Bar:
-    """Minimal bar stub exposing symbol/close for price resolution."""
-
-    def __init__(self, symbol: str, close: float) -> None:
-        """Bind symbol and close price."""
-        self.symbol = symbol
-        self.close = close
-
-
-def test_buy_all_sizes_off_execution_in_broker_live() -> None:
-    """buy_all 在 broker_live 下按 execution 现金 sizing 并真下单."""
-    execution = _CapExecution(broker_live=True, cash=1000.0)
-    strategy = _Strategy(execution)
-    strategy.current_bar = _Bar("600000.SH", 10.0)
-
-    api.buy_all(strategy, symbol="600000.SH")
-
-    assert len(execution.orders) == 1
-    assert execution.orders[0]["side"].lower() == "buy"
-    assert execution.orders[0]["quantity"] == 100.0  # 1000 // 10
-
-
 def test_order_target_sizes_off_execution_in_broker_live() -> None:
     """order_target 在 broker_live 下按 execution 持仓算 delta 并真下单."""
     execution = _CapExecution(broker_live=True, position=300.0)
@@ -135,12 +118,12 @@ def test_order_target_percent_sizes_off_execution_in_broker_live() -> None:
     assert execution.orders[0]["quantity"] == 500.0  # 10000*0.5/10
 
 
-def test_order_target_weights_sizes_off_execution_in_broker_live() -> None:
-    """order_target_weights 在 broker_live 下按 execution 组合价值/持仓 sizing."""
+def test_rebalance_weights_sizes_off_execution_in_broker_live() -> None:
+    """rebalance_weights 在 broker_live 下按 execution 组合价值/持仓 sizing."""
     execution = _CapExecution(broker_live=True, portfolio_value=10000.0)
     strategy = _Strategy(execution)
 
-    api.order_target_weights(
+    api.rebalance_weights(
         strategy,
         target_weights={"600000.SH": 0.5},
         price_map={"600000.SH": 10.0},
@@ -149,22 +132,6 @@ def test_order_target_weights_sizes_off_execution_in_broker_live() -> None:
     assert len(execution.orders) == 1
     assert execution.orders[0]["side"].lower() == "buy"
     assert execution.orders[0]["quantity"] == 500.0  # 10000*0.5/10
-
-
-def test_buy_all_not_rejected_when_broker_live_false() -> None:
-    """buy_all 在回测(broker_live=False, ctx 已就绪)下正常运行：无法定价时静默不下单."""
-    execution = _CapExecution(broker_live=False, cash=1000.0)
-    strategy = _Strategy(execution)
-    # ctx 已就绪 (真实回测中 engine 在调用 buy_all 前已绑定 ctx)；
-    # 这里只关心"无法定价 -> 静默跳过"这一分支，不是 ctx 未就绪场景
-    # (那由 test_composed_ctx_not_ready.py 覆盖)。
-    strategy.ctx = object()
-    strategy.current_bar = None
-    strategy.current_tick = None
-
-    api.buy_all(strategy, symbol="600000.SH")
-
-    assert execution.orders == []
 
 
 def test_order_target_not_rejected_when_broker_live_absent() -> None:
@@ -179,6 +146,7 @@ def test_order_target_not_rejected_when_broker_live_absent() -> None:
             self.ctx = None
             self.execution = _PlainExecution()
             self.submit_order_calls: list = []
+            self.lot_size = 1
 
         def submit_order(self, **kwargs):
             self.submit_order_calls.append(kwargs)

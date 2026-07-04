@@ -87,9 +87,6 @@ from .strategy_trading_api import (
     buy as _buy_impl,
 )
 from .strategy_trading_api import (
-    buy_all as _buy_all_impl,
-)
-from .strategy_trading_api import (
     calculate_max_buy_qty as _calculate_max_buy_qty_impl,
 )
 from .strategy_trading_api import (
@@ -117,6 +114,9 @@ from .strategy_trading_api import (
     get_execution_capabilities as _get_execution_capabilities_impl,
 )
 from .strategy_trading_api import (
+    get_holding_bars as _get_holding_bars_impl,
+)
+from .strategy_trading_api import (
     get_last_target_positions_plan as _get_last_target_positions_plan_impl,
 )
 from .strategy_trading_api import (
@@ -135,22 +135,19 @@ from .strategy_trading_api import (
     get_positions as _get_positions_impl,
 )
 from .strategy_trading_api import (
-    hold_bar as _hold_bar_impl,
-)
-from .strategy_trading_api import (
     order_target as _order_target_impl,
 )
 from .strategy_trading_api import (
     order_target_percent as _order_target_percent_impl,
 )
 from .strategy_trading_api import (
-    order_target_positions as _order_target_positions_impl,
-)
-from .strategy_trading_api import (
     order_target_value as _order_target_value_impl,
 )
 from .strategy_trading_api import (
-    order_target_weights as _order_target_weights_impl,
+    rebalance_positions as _rebalance_positions_impl,
+)
+from .strategy_trading_api import (
+    rebalance_weights as _rebalance_weights_impl,
 )
 from .strategy_trading_api import (
     resolve_symbol as _resolve_symbol_impl,
@@ -160,12 +157,6 @@ from .strategy_trading_api import (
 )
 from .strategy_trading_api import (
     short as _short_impl,
-)
-from .strategy_trading_api import (
-    stop_buy as _stop_buy_impl,
-)
-from .strategy_trading_api import (
-    stop_sell as _stop_sell_impl,
 )
 from .strategy_trading_api import (
     submit_order as _submit_order_impl,
@@ -1017,7 +1008,7 @@ class Strategy:
         :param liquidate_unmentioned: 是否清仓未入选标的
         :param allow_leverage: 是否允许总权重超过 1.0
         :param rebalance_tolerance: 调仓容忍阈值（按组合市值比例）
-        :param kwargs: 透传到 order_target_weights 的下单参数
+        :param kwargs: 透传到 rebalance_weights 的下单参数
         :return: 入选标的列表（按分数从高到低）
         """
         if top_n <= 0:
@@ -1027,7 +1018,7 @@ class Strategy:
 
         if not scores:
             if liquidate_unmentioned:
-                self.order_target_weights(
+                self.rebalance_weights(
                     target_weights={},
                     liquidate_unmentioned=True,
                     allow_leverage=allow_leverage,
@@ -1054,7 +1045,7 @@ class Strategy:
 
         if not selected:
             if liquidate_unmentioned:
-                self.order_target_weights(
+                self.rebalance_weights(
                     target_weights={},
                     liquidate_unmentioned=True,
                     allow_leverage=allow_leverage,
@@ -1079,7 +1070,7 @@ class Strategy:
                 target_weights = {
                     symbol: clipped_scores[symbol] / score_sum for symbol in selected
                 }
-        self.order_target_weights(
+        self.rebalance_weights(
             target_weights=target_weights,
             liquidate_unmentioned=liquidate_unmentioned,
             allow_leverage=allow_leverage,
@@ -1153,15 +1144,6 @@ class Strategy:
     def set_sizer(self, sizer: Sizer) -> None:
         """设置仓位管理器."""
         self.sizer = sizer
-
-    def register_indicator(self, name: str, indicator: "Indicator") -> None:
-        """
-        Register an indicator.
-
-        This allows accessing the indicator via self.name and ensures it is
-        calculated before the backtest starts.
-        """
-        self.register_precomputed_indicator(name, indicator)
 
     def register_precomputed_indicator(self, name: str, indicator: "Indicator") -> None:
         """注册预计算指标."""
@@ -1638,7 +1620,7 @@ class Strategy:
         """
         return _get_available_position_impl(self, symbol)
 
-    def hold_bar(self, symbol: Optional[str] = None) -> int:
+    def get_holding_bars(self, symbol: Optional[str] = None) -> int:
         """
         获取当前持仓持有的 Bar 数量.
 
@@ -1648,15 +1630,11 @@ class Strategy:
         Returns:
             int: 持有的 Bar 数量. 如果未持仓，返回 0.
         """
-        return _hold_bar_impl(self, symbol)
+        return _get_holding_bars_impl(self, symbol)
 
-    def get_positions(self) -> Dict[str, float]:
-        """
-        获取所有持仓信息.
-
-        Returns:
-            Dict[str, float]: 持仓字典 {symbol: quantity}
-        """
+    @property
+    def positions(self) -> Dict[str, float]:
+        """所有标的持仓 {symbol: qty}（等同旧 get_positions()）."""
         return _get_positions_impl(self)
 
     def _set_instrument_snapshots(
@@ -1778,7 +1756,7 @@ class Strategy:
         """
         _cancel_all_orders_impl(self, symbol)
 
-    def create_oco_order_group(
+    def place_oco(
         self,
         first_order_id: str,
         second_order_id: str,
@@ -1821,7 +1799,7 @@ class Strategy:
         self._oco_order_to_group[second] = group_key
         return group_key
 
-    def place_bracket_order(
+    def place_bracket(
         self,
         symbol: str,
         quantity: float,
@@ -1941,7 +1919,7 @@ class Strategy:
             )
 
         if stop_order_id and take_order_id:
-            self.create_oco_order_group(stop_order_id, take_order_id)
+            self.place_oco(stop_order_id, take_order_id)
 
     def _process_oco_trade(self, trade: Any) -> None:
         if self._use_engine_oco:
@@ -2119,42 +2097,8 @@ class Strategy:
         return _get_execution_capabilities_impl(self)
 
     def get_last_target_positions_plan(self) -> Dict[str, Any]:
-        """获取最近一次 order_target_positions() 生成的调仓计划."""
+        """获取最近一次 rebalance_positions() 生成的调仓计划."""
         return _get_last_target_positions_plan_impl(self)
-
-    def stop_buy(
-        self,
-        symbol: Optional[str] = None,
-        trigger_price: float = 0.0,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-    ) -> None:
-        """
-        发送止损买入单 (Stop Buy Order).
-
-        当市价上涨突破 trigger_price 时触发买入.
-        - 如果 price 为 None, 触发后转为市价单 (Stop Market).
-        - 如果 price 不为 None, 触发后转为限价单 (Stop Limit).
-        """
-        _stop_buy_impl(self, symbol, trigger_price, quantity, price, time_in_force)
-
-    def stop_sell(
-        self,
-        symbol: Optional[str] = None,
-        trigger_price: float = 0.0,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-    ) -> None:
-        """
-        发送止损卖出单 (Stop Sell Order).
-
-        当市价下跌跌破 trigger_price 时触发卖出.
-        - 如果 price 为 None, 触发后转为市价单 (Stop Market).
-        - 如果 price 不为 None, 触发后转为限价单 (Stop Limit).
-        """
-        _stop_sell_impl(self, symbol, trigger_price, quantity, price, time_in_force)
 
     def place_trailing_stop(
         self,
@@ -2212,18 +2156,15 @@ class Strategy:
             trail_reference_price=trail_reference_price,
         )
 
-    def get_portfolio_value(self) -> float:
-        """计算当前投资组合总价值 (现金 + 持仓市值)."""
-        return _get_portfolio_value_impl(self)
+    @property
+    def cash(self) -> float:
+        """当前可用现金（等同旧 get_cash()）."""
+        return _get_cash_impl(self)
 
     @property
     def equity(self) -> float:
-        """
-        获取当前账户总权益 (现金 + 持仓市值).
-
-        等同于 get_portfolio_value().
-        """
-        return self.get_portfolio_value()
+        """当前账户总权益（现金 + 持仓市值，权威只读；等同旧 get_portfolio_value()）."""
+        return _get_portfolio_value_impl(self)
 
     def order_target(
         self,
@@ -2290,7 +2231,7 @@ class Strategy:
         """
         return _order_target_percent_impl(self, symbol, target_percent, price, **kwargs)
 
-    def order_target_weights(
+    def rebalance_weights(
         self,
         target_weights: Dict[str, float],
         price_map: Optional[Dict[str, float]] = None,
@@ -2310,7 +2251,7 @@ class Strategy:
         :param kwargs: 其他下单参数
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
-        return _order_target_weights_impl(
+        return _rebalance_weights_impl(
             self,
             target_weights,
             price_map,
@@ -2320,7 +2261,7 @@ class Strategy:
             **kwargs,
         )
 
-    def order_target_positions(
+    def rebalance_positions(
         self,
         target_positions: Dict[str, float],
         price_map: Optional[Dict[str, float]] = None,
@@ -2344,7 +2285,7 @@ class Strategy:
         :param kwargs: 其他下单参数
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
-        return _order_target_positions_impl(
+        return _rebalance_positions_impl(
             self,
             target_positions,
             price_map,
@@ -2355,17 +2296,6 @@ class Strategy:
             missing_price_mode,
             **kwargs,
         )
-
-    def buy_all(self, symbol: Optional[str] = None) -> None:
-        """
-        全仓买入 (Buy All).
-
-        使用当前所有可用资金买入.
-
-        Args:
-            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
-        """
-        _buy_all_impl(self, symbol)
 
     def close_position(self, symbol: Optional[str] = None) -> None:
         """
@@ -2451,10 +2381,6 @@ class Strategy:
             commission,
             reduce_only,
         )
-
-    def get_cash(self) -> float:
-        """获取现金."""
-        return _get_cash_impl(self)
 
 
 class VectorizedStrategy(Strategy):

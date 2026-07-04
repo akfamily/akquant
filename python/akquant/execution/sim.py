@@ -28,7 +28,7 @@ class SimExecution:
 
     def hold_bar(self, symbol: str | None = None) -> int:
         """获取当前持仓持有的 Bar 数量."""
-        return api._sim_hold_bar(self._s, symbol)
+        return api._sim_get_holding_bars(self._s, symbol)
 
     def get_open_orders(self, symbol: str | None = None) -> list[Any]:
         """获取未完成订单列表."""

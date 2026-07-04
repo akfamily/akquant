@@ -73,10 +73,10 @@
     - 适合作为生产环境中更稳定的统一调仓入口。
 
 ### 8. [08_target_positions_long_short.py](./08_target_positions_long_short.py) - 高级目标仓位与多空切换
-- **目标**: 演示 `order_target_positions()` 如何在一个调用里同时表达多头与空头目标。
+- **目标**: 演示 `rebalance_positions()` 如何在一个调用里同时表达多头与空头目标。
 - **策略**: 先建立多头，再在同周期内切换为 `AAA` 空头和 `BBB` 多头。
 - **核心点**:
-    - `order_target_positions()` 支持正负目标仓位。
+    - `rebalance_positions()` 支持正负目标仓位。
     - `allow_short=True` 与 `RiskConfig(account_mode="margin", enable_short_sell=True)` 的配合。
     - `get_last_target_positions_plan()` 用于解释最近一次调仓计划。
 

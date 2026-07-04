@@ -122,7 +122,7 @@ trader.place_order(
 ## 执行接口 ExecutionBackend（回测/实盘同一套）
 
 策略的状态读（`get_position`/`get_account`/…）、下单（`submit_order`）、撤单
-（`cancel_order`/`cancel_all_orders`）与组合目标类下单（`buy_all`/`order_target*`）
+（`cancel_order`/`cancel_all_orders`）与组合目标类下单（`order_target*`）
 统一经 `strategy.execution` 这一个 `ExecutionBackend` 接口调用，不再对策略对象
 做 `setattr` 猴补：
 
@@ -140,7 +140,7 @@ trader.place_order(
 真实柜台（回测/`paper` 下走 `SimExecution`/Rust 引擎 `ctx`，零回归）。柜台是唯一真相。
 
 - **状态读走柜台**：`get_position(symbol=None)` / `get_available_position(symbol=None)` /
-  `get_account()` / `get_portfolio_value()` / `get_open_orders(symbol=None)` 转发
+  `get_account()` / `equity` / `get_open_orders(symbol=None)` 转发
   `trader_gateway.query_*`。`symbol` 省略时回退到当前 bar/tick 的标的（与回测一致）。
   应答进一个短生命缓存；柜台推送 **成交/委托**（`on_trade`/`on_order`）到达时缓存**失效**，
   下次读重新查——兼顾正确与调用量。柜台查询异常时记日志并返回上次缓存，不中断策略。
@@ -151,8 +151,8 @@ trader.place_order(
   （`broker_live` 下 `submit_order` 返回的即 broker_order_id，故策略持有的 `order_id`
   本就是柜台单号）；`cancel_all_orders(symbol=None)` 遍历 `sync_open_orders()` 逐个撤，
   可按 `symbol` 过滤。
-- **组合目标类下单已支持**：`buy_all` / `order_target` / `order_target_value` /
-  `order_target_percent` / `order_target_weights` 在 `broker_live` 下现按柜台真实
+- **组合目标类下单已支持**：`order_target` / `order_target_value` /
+  `order_target_percent` / `rebalance_weights` 在 `broker_live` 下现按柜台真实
   持仓/资金 sizing 下单——经统一执行接口 `ExecutionBackend`，与回测下走
   `SimExecution` 是同一套调用方式，不再报错。
 

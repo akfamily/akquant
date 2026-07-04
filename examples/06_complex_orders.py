@@ -35,7 +35,7 @@ class BracketStrategy(Strategy):
             f"[{bar.timestamp_iso}] 提交 Bracket 进场: {bar.symbol} @ {bar.close:.2f}, "
             f"stop={stop_price:.2f}, take={take_profit_price:.2f}"
         )
-        self.entry_order_id = self.place_bracket_order(
+        self.entry_order_id = self.place_bracket(
             symbol=bar.symbol,
             quantity=100,
             entry_price=None,

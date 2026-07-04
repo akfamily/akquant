@@ -2065,7 +2065,7 @@ def test_run_backtest_engine_oco_avoids_same_batch_double_fill() -> None:
                 return
             first = self.buy(symbol=bar.symbol, quantity=1, price=bar.close)
             second = self.buy(symbol=bar.symbol, quantity=1, price=bar.close)
-            self.create_oco_order_group(first, second)
+            self.place_oco(first, second)
             self.submitted = True
 
     symbol = "OCO_SAME_BAR"
@@ -2118,7 +2118,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders() -> None:
             """Submit bracket on first bar only."""
             if self.submitted:
                 return
-            self.place_bracket_order(
+            self.place_bracket(
                 symbol=bar.symbol,
                 quantity=1.0,
                 entry_price=100.0,

@@ -35,7 +35,7 @@ def get_available_position(strategy: Any, symbol: Optional[str] = None) -> float
     return float(strategy.execution.get_available_position(symbol))
 
 
-def hold_bar(strategy: Any, symbol: Optional[str] = None) -> int:
+def get_holding_bars(strategy: Any, symbol: Optional[str] = None) -> int:
     """获取持仓持有 Bar 数（经执行后端）."""
     return int(strategy.execution.hold_bar(symbol))
 
@@ -46,7 +46,7 @@ def get_positions(strategy: Any) -> Dict[str, float]:
 
 
 def get_last_target_positions_plan(strategy: Any) -> Dict[str, Any]:
-    """获取最近一次 order_target_positions() 生成的调仓计划."""
+    """获取最近一次 rebalance_positions() 生成的调仓计划."""
     plan = getattr(strategy, "_last_target_positions_plan", None)
     if isinstance(plan, dict):
         return cast(Dict[str, Any], plan)
@@ -866,30 +866,6 @@ def _resolve_effective_order_commission(
     return dict(resolved)
 
 
-def stop_buy(
-    strategy: Any,
-    symbol: Optional[str] = None,
-    trigger_price: float = 0.0,
-    quantity: Optional[float] = None,
-    price: Optional[float] = None,
-    time_in_force: Optional[TimeInForce] = None,
-) -> None:
-    """发送止损买入单."""
-    buy(strategy, symbol, quantity, price, time_in_force, trigger_price=trigger_price)
-
-
-def stop_sell(
-    strategy: Any,
-    symbol: Optional[str] = None,
-    trigger_price: float = 0.0,
-    quantity: Optional[float] = None,
-    price: Optional[float] = None,
-    time_in_force: Optional[TimeInForce] = None,
-) -> None:
-    """发送止损卖出单."""
-    sell(strategy, symbol, quantity, price, time_in_force, trigger_price=trigger_price)
-
-
 def get_portfolio_value(strategy: Any) -> float:
     """计算当前投资组合总价值 (现金 + 持仓市值)（经执行后端）."""
     return float(strategy.execution.get_portfolio_value())
@@ -990,24 +966,37 @@ def order_target(
     Returns:
         本次调仓产生的订单 ID; 若无需交易 (已在目标) 则返回 None.
     """
-    return _order_target_core(strategy, symbol, target, price, **kwargs)
+    return _target_to_orders(strategy, symbol, target, price, **kwargs)
 
 
-def _order_target_core(
+def _target_to_orders(
     strategy: Any,
     symbol: Optional[str] = None,
-    target: Optional[float] = None,
+    target_qty: Optional[float] = None,
     price: Optional[float] = None,
+    round_to_lot: bool = True,
     **kwargs: Any,
 ) -> Optional[str]:
-    """order_target 的无守卫核心：供已自带能力校验的调仓入口内部复用."""
-    if target is None:
-        raise ValueError("order_target requires 'target' (目标持仓数量)")
+    """目标持仓 → 下单的共享核心：按 lot_size 取整 delta（可关闭），不撤单."""
+    if target_qty is None:
+        raise ValueError("target requires a target quantity (目标持仓数量)")
     symbol = resolve_symbol(strategy, symbol)
-
     current_qty = float(strategy.execution.get_position(symbol))
+    delta_qty = target_qty - current_qty
 
-    delta_qty = target - current_qty
+    if round_to_lot:
+        lot_size = getattr(strategy, "lot_size", 1)
+        current_lot_size = 1
+        if isinstance(lot_size, int):
+            current_lot_size = int(lot_size)
+        elif isinstance(lot_size, dict):
+            val = lot_size.get(symbol, lot_size.get("DEFAULT", 1))
+            current_lot_size = int(val) if val is not None else 1
+        if current_lot_size > 0:
+            if delta_qty > 0:
+                delta_qty = (delta_qty // current_lot_size) * current_lot_size
+            elif delta_qty < 0:
+                delta_qty = -((abs(delta_qty) // current_lot_size) * current_lot_size)
 
     if delta_qty > 0:
         return buy(strategy, symbol, delta_qty, price, **kwargs)
@@ -1032,8 +1021,6 @@ def order_target_value(
         raise ValueError("order_target_value requires 'target_value' (目标持仓价值)")
     symbol = resolve_symbol(strategy, symbol)
 
-    cancel_all_orders(strategy, symbol=symbol)
-
     if price is not None:
         current_price = price
     else:
@@ -1051,29 +1038,8 @@ def order_target_value(
             )
             return None
 
-    current_qty = float(strategy.execution.get_position(symbol))
-
     target_qty = target_value / current_price
-    delta_qty = target_qty - current_qty
-
-    current_lot_size = 1
-    if isinstance(strategy.lot_size, int):
-        current_lot_size = strategy.lot_size
-    elif isinstance(strategy.lot_size, dict):
-        val = strategy.lot_size.get(symbol, strategy.lot_size.get("DEFAULT", 1))
-        current_lot_size = int(val) if val is not None else 1
-
-    if current_lot_size > 0:
-        if delta_qty > 0:
-            delta_qty = (delta_qty // current_lot_size) * current_lot_size
-        elif delta_qty < 0:
-            delta_qty = -((abs(delta_qty) // current_lot_size) * current_lot_size)
-
-    if delta_qty > 0:
-        return buy(strategy, symbol, delta_qty, price, **kwargs)
-    elif delta_qty < 0:
-        return sell(strategy, symbol, abs(delta_qty), price, **kwargs)
-    return None
+    return _target_to_orders(strategy, symbol, target_qty, price, **kwargs)
 
 
 def order_target_percent(
@@ -1097,7 +1063,7 @@ def order_target_percent(
     return order_target_value(strategy, symbol, target_value, price, **kwargs)
 
 
-def order_target_weights(
+def rebalance_weights(
     strategy: Any,
     target_weights: Dict[str, float],
     price_map: Optional[Dict[str, float]] = None,
@@ -1188,7 +1154,7 @@ def order_target_weights(
     return order_ids
 
 
-def order_target_positions(
+def rebalance_positions(
     strategy: Any,
     target_positions: Dict[str, float],
     price_map: Optional[Dict[str, float]] = None,
@@ -1333,13 +1299,13 @@ def order_target_positions(
             if normalized_missing_price_mode == "fail":
                 missing_price_error = (
                     f"missing price_map entry for symbol '{symbol}' "
-                    "in order_target_positions"
+                    "in rebalance_positions"
                 )
                 plan["status"] = "rejected"
                 plan["reject_reason"] = missing_price_error
                 raise RuntimeError(missing_price_error)
         leg_price = price_map.get(symbol) if price_map else None
-        oid = _order_target_core(strategy, symbol, target_qty, leg_price, **kwargs)
+        oid = _target_to_orders(strategy, symbol, target_qty, leg_price, **kwargs)
         plan["submitted_legs"].append(
             {
                 "symbol": symbol,
@@ -1371,13 +1337,13 @@ def order_target_positions(
             if normalized_missing_price_mode == "fail":
                 missing_price_error = (
                     f"missing price_map entry for symbol '{symbol}' "
-                    "in order_target_positions"
+                    "in rebalance_positions"
                 )
                 plan["status"] = "rejected"
                 plan["reject_reason"] = missing_price_error
                 raise RuntimeError(missing_price_error)
         leg_price = price_map.get(symbol) if price_map else None
-        oid = _order_target_core(strategy, symbol, target_qty, leg_price, **kwargs)
+        oid = _target_to_orders(strategy, symbol, target_qty, leg_price, **kwargs)
         plan["submitted_legs"].append(
             {
                 "symbol": symbol,
@@ -1393,36 +1359,10 @@ def order_target_positions(
     return order_ids
 
 
-def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
-    """全仓买入 (Buy All)."""
-    _require_execution_ready(strategy)
-    symbol = resolve_symbol(strategy, symbol)
-
-    price = 0.0
-    if strategy.current_bar and strategy.current_bar.symbol == symbol:
-        price = strategy.current_bar.close
-    elif strategy.current_tick and strategy.current_tick.symbol == symbol:
-        price = strategy.current_tick.price
-
-    if price <= 0:
-        return
-
-    cash = strategy.execution.get_cash()
-    quantity = int(cash / price)
-
-    if quantity > 0:
-        buy(strategy, symbol=symbol, quantity=quantity)
-
-
 def close_position(strategy: Any, symbol: Optional[str] = None) -> None:
-    """平仓 (Close Position)."""
+    """平掉当前持仓（全平，含 A 股零股；不按手数取整）."""
     symbol = resolve_symbol(strategy, symbol)
-    position = get_position(strategy, symbol)
-
-    if position > 0:
-        sell(strategy, symbol=symbol, quantity=position)
-    elif position < 0:
-        buy(strategy, symbol=symbol, quantity=abs(position))
+    _target_to_orders(strategy, symbol=symbol, target_qty=0, round_to_lot=False)
 
 
 def short(
@@ -1576,7 +1516,7 @@ def _sim_get_positions(strategy: Any) -> Dict[str, float]:
     return cast(Dict[str, float], strategy.ctx.positions)
 
 
-def _sim_hold_bar(strategy: Any, symbol: Optional[str] = None) -> int:
+def _sim_get_holding_bars(strategy: Any, symbol: Optional[str] = None) -> int:
     if strategy.ctx is None:
         return 0
     return int(strategy._hold_bars[resolve_symbol(strategy, symbol)])

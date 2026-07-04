@@ -36,11 +36,11 @@ Your task is to write trading strategies or backtest scripts based on user requi
         *   `self.order_target_percent(target, symbol)`: Adjust position to target percentage.
         *   `self.order_target_value(target, symbol)`: Adjust position to target value.
     *   **Position**: `self.get_position(symbol)` returns current holding (float). `self.position.entry_price` or `self.ctx.get_position_entry_price(symbol)` returns runtime average entry price.
-    *   **Account**: `self.ctx.cash`, `self.get_portfolio_value()`, `self.get_account()`.
+    *   **Account**: `self.ctx.cash`, `self.equity`, `self.get_account()`.
 
 4.  **Indicators**:
     *   Prefer using `akquant.indicators` (e.g., `SMA`, `RSI`).
-    *   Register in `__init__` or `on_start`: `self.sma = SMA(20); self.register_indicator("sma", self.sma)`.
+    *   Register in `__init__` or `on_start`: `self.sma = SMA(20); self.register_precomputed_indicator("sma", self.sma)`.
     *   Access value via `self.sma.value`.
 
 5.  **Backtest Execution**:
