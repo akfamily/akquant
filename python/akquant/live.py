@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from .akquant import Bar, DataFeed, Engine, Instrument
+from .gateway.broker_event_adapter import map_order_snapshot, map_trade
 from .gateway.broker_runtime import BrokerRuntime
 from .gateway.factory import create_gateway_bundle
 from .gateway.models import BrokerCapability
@@ -798,6 +799,7 @@ class LiveRunner:
             payload_field=self._payload_field,
             get_execution_capabilities=self.get_execution_capabilities,
             record_order_request=self._record_order_request,
+            adapt_strategy_payload=self._adapt_strategy_payload,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -1130,6 +1132,21 @@ class LiveRunner:
             bid = self._payload_field(payload, "broker_order_id")
             cid = self._broker_to_client_order_ids.get(str(bid)) if bid else None
         return self._order_requests.get(str(cid)) if cid else None
+
+    def _adapt_strategy_payload(self, event_name: str, payload: Any) -> Any:
+        if event_name == "order":
+            return map_order_snapshot(
+                payload,
+                request=self._lookup_order_request(payload),
+                owner_strategy_id=self._resolve_owner_strategy_id(payload),
+            )
+        if event_name == "trade":
+            return map_trade(
+                payload,
+                request=self._lookup_order_request(payload),
+                owner_strategy_id=self._resolve_owner_strategy_id(payload),
+            )
+        return payload
 
     def _is_terminal_status(self, status: Any) -> bool:
         status_text = str(getattr(status, "value", status)).strip().lower()

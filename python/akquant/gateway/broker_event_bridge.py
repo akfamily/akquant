@@ -20,6 +20,7 @@ class BrokerEventBridge:
         resolve_owner_strategy_id: Callable[[Any], str],
         payload_to_dict: Callable[[Any], dict[str, Any]],
         safe_strategy_callback: Callable[[Any, str, Any], None],
+        adapt_strategy_payload: Callable[[str, Any], Any],
     ) -> None:
         """Bind the queue, state callbacks and observer fanout dependencies."""
         self._event_lock = event_lock
@@ -31,6 +32,7 @@ class BrokerEventBridge:
         self._resolve_owner_strategy_id = resolve_owner_strategy_id
         self._payload_to_dict = payload_to_dict
         self._safe_strategy_callback = safe_strategy_callback
+        self._adapt_strategy_payload = adapt_strategy_payload
 
     def queue_event(self, event_name: str, payload: Any) -> None:
         """Add a broker event to the dispatch queue with semantic deduplication."""
@@ -92,9 +94,13 @@ class BrokerEventBridge:
         payload: Any,
     ) -> None:
         if event_name == "order":
-            self._safe_strategy_callback(strategy, "on_order", payload)
+            self._safe_strategy_callback(
+                strategy, "on_order", self._adapt_strategy_payload(event_name, payload)
+            )
         elif event_name == "trade":
-            self._safe_strategy_callback(strategy, "on_trade", payload)
+            self._safe_strategy_callback(
+                strategy, "on_trade", self._adapt_strategy_payload(event_name, payload)
+            )
         elif event_name == "execution_report":
             self._safe_strategy_callback(strategy, "on_execution_report", payload)
         elif event_name == "account":

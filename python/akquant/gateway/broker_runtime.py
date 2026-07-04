@@ -35,6 +35,7 @@ class BrokerRuntime:
         payload_field: Callable[[Any, str], Any],
         get_execution_capabilities: Callable[[], dict[str, Any]],
         record_order_request: Callable[[str, Any], None],
+        adapt_strategy_payload: Callable[[str, Any], Any],
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -51,6 +52,7 @@ class BrokerRuntime:
             resolve_owner_strategy_id=resolve_owner_strategy_id,
             payload_to_dict=payload_to_dict,
             safe_strategy_callback=safe_strategy_callback,
+            adapt_strategy_payload=adapt_strategy_payload,
         )
         self._recovery = BrokerRecovery(
             get_trader_gateway=get_trader_gateway,
