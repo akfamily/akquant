@@ -114,6 +114,9 @@ from .strategy_trading_api import (
     get_execution_capabilities as _get_execution_capabilities_impl,
 )
 from .strategy_trading_api import (
+    get_holding_bars as _get_holding_bars_impl,
+)
+from .strategy_trading_api import (
     get_last_target_positions_plan as _get_last_target_positions_plan_impl,
 )
 from .strategy_trading_api import (
@@ -130,9 +133,6 @@ from .strategy_trading_api import (
 )
 from .strategy_trading_api import (
     get_positions as _get_positions_impl,
-)
-from .strategy_trading_api import (
-    hold_bar as _hold_bar_impl,
 )
 from .strategy_trading_api import (
     order_target as _order_target_impl,
@@ -1629,7 +1629,7 @@ class Strategy:
         """
         return _get_available_position_impl(self, symbol)
 
-    def hold_bar(self, symbol: Optional[str] = None) -> int:
+    def get_holding_bars(self, symbol: Optional[str] = None) -> int:
         """
         获取当前持仓持有的 Bar 数量.
 
@@ -1639,7 +1639,7 @@ class Strategy:
         Returns:
             int: 持有的 Bar 数量. 如果未持仓，返回 0.
         """
-        return _hold_bar_impl(self, symbol)
+        return _get_holding_bars_impl(self, symbol)
 
     @property
     def positions(self) -> Dict[str, float]:

@@ -35,7 +35,7 @@ def get_available_position(strategy: Any, symbol: Optional[str] = None) -> float
     return float(strategy.execution.get_available_position(symbol))
 
 
-def hold_bar(strategy: Any, symbol: Optional[str] = None) -> int:
+def get_holding_bars(strategy: Any, symbol: Optional[str] = None) -> int:
     """获取持仓持有 Bar 数（经执行后端）."""
     return int(strategy.execution.hold_bar(symbol))
 
@@ -1514,7 +1514,7 @@ def _sim_get_positions(strategy: Any) -> Dict[str, float]:
     return cast(Dict[str, float], strategy.ctx.positions)
 
 
-def _sim_hold_bar(strategy: Any, symbol: Optional[str] = None) -> int:
+def _sim_get_holding_bars(strategy: Any, symbol: Optional[str] = None) -> int:
     if strategy.ctx is None:
         return 0
     return int(strategy._hold_bars[resolve_symbol(strategy, symbol)])
