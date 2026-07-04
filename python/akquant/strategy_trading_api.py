@@ -1877,3 +1877,172 @@ def get_cash(strategy: Any) -> float:
     if strategy.ctx is None:
         return 0.0
     return float(strategy.ctx.cash)
+
+
+# --- SimExecution 后端原语（Task 1 引入；Task 3/4 让公共函数 delegate 到 execution）---
+def _sim_get_position(strategy: Any, symbol: Optional[str] = None) -> float:
+    if strategy.ctx is None:
+        return 0.0
+    return float(strategy.ctx.get_position(resolve_symbol(strategy, symbol)))
+
+
+def _sim_get_available_position(strategy: Any, symbol: Optional[str] = None) -> float:
+    if strategy.ctx is None:
+        return 0.0
+    return float(strategy.ctx.get_available_position(resolve_symbol(strategy, symbol)))
+
+
+def _sim_get_positions(strategy: Any) -> Dict[str, float]:
+    if strategy.ctx is None:
+        raise RuntimeError("Context not ready")
+    return cast(Dict[str, float], strategy.ctx.positions)
+
+
+def _sim_hold_bar(strategy: Any, symbol: Optional[str] = None) -> int:
+    if strategy.ctx is None:
+        return 0
+    return int(strategy._hold_bars[resolve_symbol(strategy, symbol)])
+
+
+def _sim_get_cash(strategy: Any) -> float:
+    if strategy.ctx is None:
+        return 0.0
+    return float(strategy.ctx.cash)
+
+
+def _sim_capabilities(strategy: Any) -> Dict[str, Any]:
+    risk_config = getattr(getattr(strategy, "ctx", None), "risk_config", None)
+    account_mode = str(getattr(risk_config, "account_mode", "cash")).strip().lower()
+    supports_short_sell = bool(getattr(risk_config, "enable_short_sell", False))
+    return {
+        "broker_live": False,
+        "client_order_id": False,
+        "order_type": True,
+        "time_in_force_str": False,
+        "position_effect": True,
+        "reduce_only": True,
+        "position_details": False,
+        "account_mode": account_mode,
+        "supports_short_sell": supports_short_sell,
+        "broker_extra_fields": [],
+    }
+
+
+def _sim_cancel_order(strategy: Any, order_id: str) -> None:
+    """取消指定订单（_sim_ 原语，复制自 cancel_order:178-202，逻辑一字不改）."""
+    if strategy.ctx:
+        pending_canceled_ids: Set[str] = getattr(
+            strategy, "_pending_canceled_order_ids", set()
+        )
+        if not isinstance(pending_canceled_ids, set):
+            pending_canceled_ids = set()
+            setattr(strategy, "_pending_canceled_order_ids", pending_canceled_ids)
+        pending_canceled_ids.add(order_id)
+        strategy.ctx.cancel_order(order_id)
+        for order in strategy.ctx.active_orders:
+            if getattr(order, "id", "") != order_id:
+                continue
+            if getattr(order, "status", None) not in (
+                OrderStatus.New,
+                OrderStatus.Submitted,
+                OrderStatus.PartiallyFilled,
+            ):
+                continue
+            try:
+                order.status = OrderStatus.Cancelled
+            except Exception:
+                pass
+            break
+
+
+def _sim_submit_order(
+    strategy: Any,
+    symbol: Optional[str] = None,
+    side: str = "Buy",
+    quantity: Optional[float] = None,
+    price: Optional[float] = None,
+    time_in_force: Optional[TimeInForce | str] = None,
+    trigger_price: Optional[float] = None,
+    tag: Optional[str] = None,
+    client_order_id: Optional[str] = None,
+    order_type: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+    broker_options: Optional[Dict[str, Any]] = None,
+    trail_offset: Optional[float] = None,
+    trail_reference_price: Optional[float] = None,
+    fill_policy: Optional[OrderFillPolicy] = None,
+    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    commission: Optional[OrderCommission] = None,
+    position_effect: Union[PositionEffect, str, None] = None,
+    reduce_only: bool = False,
+    asset_type: str = "stock",
+) -> str:
+    """统一下单接口（_sim_ 原语，复制自 submit_order:755-845，逻辑一字不改）."""
+    capabilities = get_execution_capabilities(strategy)
+    if client_order_id and not bool(capabilities.get("client_order_id", False)):
+        raise RuntimeError("client_order_id is not supported in current execution mode")
+    if extra:
+        raise RuntimeError(
+            "extra broker fields require broker_live mode "
+            "(not available in simulated/backtest execution)"
+        )
+    if normalize_asset_type(asset_type) != "stock":
+        raise RuntimeError(
+            "non-stock asset_type requires broker_live mode "
+            "(not available in simulated/backtest execution)"
+        )
+    order_type_key, order_type_enum = _parse_order_type(order_type)
+    if time_in_force is not None and not isinstance(time_in_force, TimeInForce):
+        raise RuntimeError(
+            "time_in_force string is not supported in current execution mode"
+        )
+    if order_type_key in {"stoptrail", "stoptraillimit"}:
+        if trail_offset is None or trail_offset <= 0:
+            raise RuntimeError("trail_offset must be > 0 for trailing orders")
+    if order_type_key == "stoptraillimit" and price is None:
+        raise RuntimeError("price must be provided for StopTrailLimit order")
+    if order_type_key in {"stoptrail", "stoptraillimit"} and order_type_enum is None:
+        raise RuntimeError("trailing order requires runtime with StopTrail support")
+
+    side_text = side.strip().lower()
+    if side_text == "buy":
+        order_ids = _submit_buy_side_orders(
+            strategy=strategy,
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            time_in_force=time_in_force,
+            trigger_price=trigger_price,
+            tag=tag,
+            order_type=order_type_enum,
+            trail_offset=trail_offset,
+            trail_reference_price=trail_reference_price,
+            fill_policy=fill_policy,
+            slippage=slippage,
+            commission=commission,
+            position_effect=_normalize_position_effect(position_effect, "auto"),
+            reduce_only=reduce_only,
+        )
+        _record_broker_options(strategy, order_ids, broker_options)
+        return _first_order_id(order_ids)
+    if side_text == "sell":
+        order_ids = _submit_sell_side_orders(
+            strategy=strategy,
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            time_in_force=time_in_force,
+            trigger_price=trigger_price,
+            tag=tag,
+            order_type=order_type_enum,
+            trail_offset=trail_offset,
+            trail_reference_price=trail_reference_price,
+            fill_policy=fill_policy,
+            slippage=slippage,
+            commission=commission,
+            position_effect=_normalize_position_effect(position_effect, "auto"),
+            reduce_only=reduce_only,
+        )
+        _record_broker_options(strategy, order_ids, broker_options)
+        return _first_order_id(order_ids)
+    raise ValueError(f"Unsupported side: {side}")
