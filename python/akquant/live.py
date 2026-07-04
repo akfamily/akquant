@@ -999,6 +999,8 @@ class LiveRunner:
         if event_name == "order":
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             client_order_id = str(self._payload_field(payload, "client_order_id"))
+            if not client_order_id and broker_order_id:
+                client_order_id = self._resolve_client_order_id(broker_order_id)
             self._sync_order_id_mapping(client_order_id, broker_order_id)
             if broker_order_id:
                 self._broker_order_states[broker_order_id] = payload

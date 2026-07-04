@@ -58,3 +58,30 @@ def test_terminal_status_clears_request() -> None:
     )
     r._update_broker_state("order", snap)  # 终态应清理映射与请求缓存
     assert r._lookup_order_request(snap) is None
+
+
+def test_terminal_order_with_only_broker_order_id_clears_request_cache() -> None:
+    """终态 order 推送只带 broker_order_id 时也要反查 client_order_id 并清理缓存.
+
+    也应通过 _broker_to_client_order_ids 反查真实 client_order_id 并清理
+    _order_requests,避免请求缓存泄漏。
+    """
+    r = _runner()
+    req = UnifiedOrderRequest(
+        client_order_id="c1", symbol="600000.SH", side="Buy", quantity=100.0
+    )
+    r._record_order_request("c1", req)
+    r._sync_order_id_mapping("c1", "B1")
+
+    terminal_snap = UnifiedOrderSnapshot(
+        client_order_id="",  # broker 只回传 broker_order_id
+        broker_order_id="B1",
+        symbol="600000.SH",
+        status=UnifiedOrderStatus.FILLED,
+        filled_quantity=100.0,
+        avg_fill_price=10.0,
+    )
+    r._update_broker_state("order", terminal_snap)
+
+    assert r._order_requests == {}
+    assert r._broker_to_client_order_ids.get("B1") is None
