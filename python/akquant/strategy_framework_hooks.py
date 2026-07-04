@@ -624,7 +624,7 @@ def dispatch_portfolio_update(strategy: Any) -> None:
     )
     strategy._framework_use_previous_account_snapshot = use_previous_snapshot
     try:
-        equity = float(strategy.get_portfolio_value())
+        equity = float(strategy.equity)
         market_value = float(equity - cash)
         account_snapshot = strategy.get_account()
     finally:

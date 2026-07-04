@@ -81,7 +81,7 @@ Notes:
 * `on_reject` is emitted once per order id when the order first becomes `Rejected`.
 * `on_pre_open` is emitted once per trading day before the first regular bar/tick callback of that day.
 * `on_before_trading` is emitted once per local trading date when the regular trading session starts; on the default backtest path this session is usually exposed as `Continuous`.
-* `on_before_trading` / `on_daily_rebalance` always use a "previous trading day / previous snapshot only" visibility model; inside these callbacks, `get_history()`, `get_account()`, and `get_portfolio_value()` must not expose the current day's new bar or the current day's updated account view.
+* `on_before_trading` / `on_daily_rebalance` always use a "previous trading day / previous snapshot only" visibility model; inside these callbacks, `get_history()`, `get_account()`, and `equity` must not expose the current day's new bar or the current day's updated account view.
 * `on_daily_rebalance_after_bar` runs after the framework has seen the first complete cross-symbol slice for the trading day; inside this callback, current-day history and the current account snapshot are visible.
 * `on_after_trading` is emitted once per local trading date when leaving the regular trading session, or on the next event if day rollover occurs first.
 * Inside `on_pre_open`, plain `buy/sell/order_target_*` calls automatically resolve to `price_basis=open, bar_offset=1, temporal=same_cycle` unless an explicit `fill_policy` is provided.
@@ -769,7 +769,7 @@ Notes:
 
 - Opening a futures position does not deduct full notional from cash the way a spot buy does.
 - For futures, use `equity` for net account value, `used_margin` for margin usage, and `notional_value` for leverage exposure.
-- If you only need one "current total equity" number, prefer `get_portfolio_value()`, which is aligned with `get_account()["equity"]`.
+- If you only need one "current total equity" number, prefer `equity`, which is aligned with `get_account()["equity"]`.
 
 ## 6. Using High-Performance Indicators {: #indicatorset }
 

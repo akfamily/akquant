@@ -85,7 +85,7 @@
 * `on_before_trading` 在本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。
 * `on_pre_open` 在每个交易日的首个常规行情事件前，由框架预注册 timer 先触发一次。
 * `on_daily_rebalance` 与 `on_before_trading` 同一阶段触发，每个交易日最多触发一次。
-* `on_before_trading` / `on_daily_rebalance` 始终按“前一交易日/前一时点信息可见”的语义工作；在这些回调里，`get_history()`、`get_account()`、`get_portfolio_value()` 不应看到当日新 bar 或当日更新后的账户视图。
+* `on_before_trading` / `on_daily_rebalance` 始终按“前一交易日/前一时点信息可见”的语义工作；在这些回调里，`get_history()`、`get_account()`、`equity` 不应看到当日新 bar 或当日更新后的账户视图。
 * `on_daily_rebalance_after_bar` 会在框架见到当日首个“跨标的完整切片”后触发；在该回调里，可以看到当日历史和当前账户快照。
 * `on_after_trading` 在离开常规交易会话时触发；若先跨日再收到事件，会在下一事件补发上一交易日的 `on_after_trading`。
 * `on_pre_open` 内若直接调用 `buy/sell/order_target_*` 且未显式传 `fill_policy`，框架会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。
@@ -332,7 +332,7 @@ print(
 
 - 期货保证金账户开仓不会像股票现货买入那样扣减全额名义本金。
 - 因此，期货场景下应优先用 `equity` 观察账户净值变化，用 `used_margin` 观察保证金占用，用 `notional_value` 观察杠杆敞口。
-- 如果只需要一个“当前总权益”数值，优先使用 `get_portfolio_value()`，其口径与 `get_account()["equity"]` 对齐。
+- 如果只需要一个”当前总权益”数值，优先使用 `equity`，其口径与 `get_account()[“equity”]` 对齐。
 
 ## 4. 常用工具 (Utilities)
 
@@ -903,7 +903,7 @@ def on_bar(self, bar: Bar):
 除了 `get_position`，你还可以查询更多账户信息：
 
 *   **`self.ctx.cash`**: 当前账户可用资金。
-*   **`self.get_portfolio_value()`**: 当前账户总权益。
+*   **`self.equity`**: 当前账户总权益。
 *   **`self.get_account()`**: 当前账户快照；在保证金账户中可进一步读取 `used_margin`、`notional_value`、`unrealized_pnl`、`maintenance_ratio` 等字段。
 *   **`self.get_trades()`**: 获取历史所有已平仓交易记录（Closed Trades）。
 *   **`self.get_open_orders()`**: 获取当前未成交订单。

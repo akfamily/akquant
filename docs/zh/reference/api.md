@@ -856,7 +856,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `self.position`: 当前标的持仓辅助对象 (`Position`)，包含 `size` 和 `available` 属性。
 *   `self.now`: 当前回测时间 (`pd.Timestamp`)。
 *   `self.runtime_config`: 运行时行为配置对象 (`StrategyRuntimeConfig`)。
-*   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` / `on_daily_rebalance` 中 `get_history()`、`get_account()`、`get_portfolio_value()` 等接口的可见数据窗口。
+*   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` / `on_daily_rebalance` 中 `get_history()`、`get_account()`、`equity` 等接口的可见数据窗口。
 *   `self.portfolio_update_eps`: 账户快照更新阈值，低于该变化量不触发 `on_portfolio_update`（默认 `0.0`）。
 *   `self.error_mode`: 错误处理模式，`"raise"` 或 `"continue"`（默认 `"raise"`）。
 *   `self.re_raise_on_error`: 用户回调异常后是否继续抛出（默认 `True`）。
@@ -903,7 +903,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
     *   期货保证金账户下，`equity` 表示账户权益，`used_margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。
     *   `cash` 是现金余额，`free_margin`（= `equity - used_margin`）才是可用于新开仓的资金，与下单被拒时日志里的 `Available` 口径一致。期货保证金账户下开仓不从 `cash` 扣减保证金，因此 `cash` 通常大于 `free_margin`；股票现金账户下二者相等。
-    *   在策略回调内，如果你只想读取“当前账户总权益”，优先使用 `get_portfolio_value()`；其口径与 `get_account()["equity"]` 对齐。
+    *   在策略回调内，如果你只想读取”当前账户总权益”，优先使用 `equity`；其口径与 `get_account()[“equity”]` 对齐。
 *   `get_order(order_id) -> Order`: 获取指定订单详情。
 *   `get_open_orders(symbol) -> List[Order]`: 获取当前未完成订单列表。
 *   `get_trades() -> List[ClosedTrade]`: 获取所有已平仓交易记录。

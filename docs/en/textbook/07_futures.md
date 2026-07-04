@@ -51,11 +51,11 @@ Low-level Engine API naming:
 ## Futures Margin Account Snapshot Semantics
 
 Under AKQuant's futures margin-account semantics, read `get_account()` and
-`get_portfolio_value()` like this:
+`equity` like this:
 
 - `cash`: cash balance. Opening a futures position does not deduct full notional
   the way a spot buy does; cash mainly reflects fees and realized cash flows.
-- `equity`: account equity. `get_portfolio_value()` is aligned with this field.
+- `equity`: account equity. This is the `equity` property.
 - `used_margin` / `margin`: margin currently in use.
 - `free_margin`: available margin (`equity - used_margin`), i.e. the amount
   actually usable to open new positions. When an order is rejected for

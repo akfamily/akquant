@@ -4483,12 +4483,12 @@ def test_day_boundary_hooks_use_previous_account_snapshot(
         def on_before_trading(self, trading_date: object, timestamp: int) -> None:
             account = self.get_account()
             self.before_equities.append(float(account["equity"]))
-            self.before_portfolio_values.append(float(self.get_portfolio_value()))
+            self.before_portfolio_values.append(float(self.equity))
 
         def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
             account = self.get_account()
             self.rebalance_equities.append(float(account["equity"]))
-            self.rebalance_portfolio_values.append(float(self.get_portfolio_value()))
+            self.rebalance_portfolio_values.append(float(self.equity))
 
         def on_bar(self, bar: Bar) -> None:
             if not self.has_bought:
@@ -4615,7 +4615,7 @@ def test_daily_rebalance_after_bar_uses_current_account_snapshot(
         ) -> None:
             account = self.get_account()
             self.after_bar_equities.append(float(account["equity"]))
-            self.after_bar_portfolio_values.append(float(self.get_portfolio_value()))
+            self.after_bar_portfolio_values.append(float(self.equity))
 
         def on_bar(self, bar: Bar) -> None:
             if not self.has_bought:

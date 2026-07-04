@@ -832,7 +832,7 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `self.position`: Position object for current symbol, with `size` and `available` properties.
 *   `self.now`: Current backtest time (`pd.Timestamp`).
 *   `self.runtime_config`: Runtime behavior config object (`StrategyRuntimeConfig`).
-*   `self.enable_precise_day_boundary_hooks`: Enable boundary timer based precise day hooks (default `False`). This switch changes trigger precision only; it does not change the visibility window of `get_history()`, `get_account()`, or `get_portfolio_value()` inside `on_before_trading` / `on_daily_rebalance`.
+*   `self.enable_precise_day_boundary_hooks`: Enable boundary timer based precise day hooks (default `False`). This switch changes trigger precision only; it does not change the visibility window of `get_history()`, `get_account()`, or `equity` inside `on_before_trading` / `on_daily_rebalance`.
 *   `self.portfolio_update_eps`: Snapshot threshold; changes below it skip `on_portfolio_update` (default `0.0`).
 *   `self.error_mode`: Error handling mode, `"raise"` or `"continue"` (default `"raise"`).
 *   `self.re_raise_on_error`: Whether to re-raise user callback exception after `on_error` (default `True`).
@@ -880,7 +880,7 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
     *   In cash / spot-style accounts, `market_value` usually represents marked position value.
     *   In futures margin accounts, `equity` is account equity, `used_margin` is margin in use, `notional_value` is futures notional exposure, and `unrealized_pnl` is marked floating PnL. Futures trades do not deduct full notional from `cash` the way spot buys do, and notional exposure is not mirrored into `market_value` as if it were spot inventory.
     *   `cash` is the cash balance; `free_margin` (= `equity - used_margin`) is the amount actually available to open new positions and matches the `Available` value shown in the rejection log when an order is rejected. In futures margin accounts, opening a position does not deduct margin from `cash`, so `cash` is usually larger than `free_margin`; in stock cash accounts the two are equal.
-    *   Inside strategy callbacks, prefer `get_portfolio_value()` when you only need current total equity; it is aligned with `get_account()["equity"]`.
+    *   Inside strategy callbacks, prefer `equity` when you only need current total equity; it is aligned with `get_account()["equity"]`.
 *   `get_order(order_id) -> Order`: Get details of a specific order.
 *   `get_open_orders(symbol) -> List[Order]`: Get list of open orders.
 *   `subscribe(instrument_id: str)`: Subscribe to market data. Must be called explicitly for multi-asset backtesting or live trading to receive `on_tick`/`on_bar` callbacks.

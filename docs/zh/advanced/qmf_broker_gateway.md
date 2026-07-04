@@ -140,7 +140,7 @@ trader.place_order(
 真实柜台（回测/`paper` 下走 `SimExecution`/Rust 引擎 `ctx`，零回归）。柜台是唯一真相。
 
 - **状态读走柜台**：`get_position(symbol=None)` / `get_available_position(symbol=None)` /
-  `get_account()` / `get_portfolio_value()` / `get_open_orders(symbol=None)` 转发
+  `get_account()` / `equity` / `get_open_orders(symbol=None)` 转发
   `trader_gateway.query_*`。`symbol` 省略时回退到当前 bar/tick 的标的（与回测一致）。
   应答进一个短生命缓存；柜台推送 **成交/委托**（`on_trade`/`on_order`）到达时缓存**失效**，
   下次读重新查——兼顾正确与调用量。柜台查询异常时记日志并返回上次缓存，不中断策略。

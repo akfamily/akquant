@@ -2169,10 +2169,6 @@ class Strategy:
             trail_reference_price=trail_reference_price,
         )
 
-    def get_portfolio_value(self) -> float:
-        """计算当前投资组合总价值 (现金 + 持仓市值)."""
-        return _get_portfolio_value_impl(self)
-
     @property
     def cash(self) -> float:
         """当前可用现金（等同旧 get_cash()）."""
@@ -2180,12 +2176,8 @@ class Strategy:
 
     @property
     def equity(self) -> float:
-        """
-        获取当前账户总权益 (现金 + 持仓市值).
-
-        等同于 get_portfolio_value().
-        """
-        return self.get_portfolio_value()
+        """当前账户总权益（现金 + 持仓市值，权威只读；等同旧 get_portfolio_value()）."""
+        return _get_portfolio_value_impl(self)
 
     def order_target(
         self,
