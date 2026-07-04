@@ -141,13 +141,13 @@ from .strategy_trading_api import (
     order_target_percent as _order_target_percent_impl,
 )
 from .strategy_trading_api import (
-    order_target_positions as _order_target_positions_impl,
-)
-from .strategy_trading_api import (
     order_target_value as _order_target_value_impl,
 )
 from .strategy_trading_api import (
-    order_target_weights as _order_target_weights_impl,
+    rebalance_positions as _rebalance_positions_impl,
+)
+from .strategy_trading_api import (
+    rebalance_weights as _rebalance_weights_impl,
 )
 from .strategy_trading_api import (
     resolve_symbol as _resolve_symbol_impl,
@@ -1008,7 +1008,7 @@ class Strategy:
         :param liquidate_unmentioned: 是否清仓未入选标的
         :param allow_leverage: 是否允许总权重超过 1.0
         :param rebalance_tolerance: 调仓容忍阈值（按组合市值比例）
-        :param kwargs: 透传到 order_target_weights 的下单参数
+        :param kwargs: 透传到 rebalance_weights 的下单参数
         :return: 入选标的列表（按分数从高到低）
         """
         if top_n <= 0:
@@ -1018,7 +1018,7 @@ class Strategy:
 
         if not scores:
             if liquidate_unmentioned:
-                self.order_target_weights(
+                self.rebalance_weights(
                     target_weights={},
                     liquidate_unmentioned=True,
                     allow_leverage=allow_leverage,
@@ -1045,7 +1045,7 @@ class Strategy:
 
         if not selected:
             if liquidate_unmentioned:
-                self.order_target_weights(
+                self.rebalance_weights(
                     target_weights={},
                     liquidate_unmentioned=True,
                     allow_leverage=allow_leverage,
@@ -1070,7 +1070,7 @@ class Strategy:
                 target_weights = {
                     symbol: clipped_scores[symbol] / score_sum for symbol in selected
                 }
-        self.order_target_weights(
+        self.rebalance_weights(
             target_weights=target_weights,
             liquidate_unmentioned=liquidate_unmentioned,
             allow_leverage=allow_leverage,
@@ -2106,7 +2106,7 @@ class Strategy:
         return _get_execution_capabilities_impl(self)
 
     def get_last_target_positions_plan(self) -> Dict[str, Any]:
-        """获取最近一次 order_target_positions() 生成的调仓计划."""
+        """获取最近一次 rebalance_positions() 生成的调仓计划."""
         return _get_last_target_positions_plan_impl(self)
 
     def place_trailing_stop(
@@ -2240,7 +2240,7 @@ class Strategy:
         """
         return _order_target_percent_impl(self, symbol, target_percent, price, **kwargs)
 
-    def order_target_weights(
+    def rebalance_weights(
         self,
         target_weights: Dict[str, float],
         price_map: Optional[Dict[str, float]] = None,
@@ -2260,7 +2260,7 @@ class Strategy:
         :param kwargs: 其他下单参数
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
-        return _order_target_weights_impl(
+        return _rebalance_weights_impl(
             self,
             target_weights,
             price_map,
@@ -2270,7 +2270,7 @@ class Strategy:
             **kwargs,
         )
 
-    def order_target_positions(
+    def rebalance_positions(
         self,
         target_positions: Dict[str, float],
         price_map: Optional[Dict[str, float]] = None,
@@ -2294,7 +2294,7 @@ class Strategy:
         :param kwargs: 其他下单参数
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
-        return _order_target_positions_impl(
+        return _rebalance_positions_impl(
             self,
             target_positions,
             price_map,

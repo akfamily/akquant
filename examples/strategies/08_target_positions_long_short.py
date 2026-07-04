@@ -3,11 +3,11 @@
 
 =====================================================
 
-本示例展示如何使用 `order_target_positions()` 统一表达多标的正负目标仓位，
+本示例展示如何使用 `rebalance_positions()` 统一表达多标的正负目标仓位，
 并通过 `get_last_target_positions_plan()` 查看最近一次调仓计划。
 
 教学目标 (Learning Objectives):
-1. 使用 `order_target_positions()` 同时表达多头与空头目标。
+1. 使用 `rebalance_positions()` 同时表达多头与空头目标。
 2. 观察 `reduce-first` 语义下的同周期调仓行为。
 3. 使用 `get_last_target_positions_plan()` 解释最近一次调仓决策。
 
@@ -60,12 +60,12 @@ class TargetPositionsDemoStrategy(Strategy):
         self.pending.pop(bar.timestamp, None)
 
         if self.step == 0:
-            self.order_target_positions(
+            self.rebalance_positions(
                 {"AAA": 100.0},
                 liquidate_unmentioned=True,
             )
         elif self.step == 1:
-            self.order_target_positions(
+            self.rebalance_positions(
                 {"AAA": -100.0, "BBB": 50.0},
                 liquidate_unmentioned=True,
                 allow_short=True,

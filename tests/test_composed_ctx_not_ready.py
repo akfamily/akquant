@@ -1,4 +1,4 @@
-"""组合类下单(order_target_weights/order_target_positions) 的 ctx 就绪校验.
+"""组合类下单(rebalance_weights/rebalance_positions) 的 ctx 就绪校验.
 
 Task 7 移除了这两个函数里 `if strategy.ctx is None: raise RuntimeError(...)` 的
 硬编码守卫, 使它们能在 broker_live 下工作 (broker_live 时 ctx 恒为 None, 但
@@ -89,13 +89,13 @@ class _Strategy:
 # ---------------------------------------------------------------------------
 
 
-def test_order_target_weights_raises_when_ctx_not_ready_and_not_broker_live() -> None:
-    """order_target_weights: ctx 未绑定且非 broker_live 时应 fail-fast."""
+def test_rebalance_weights_raises_when_ctx_not_ready_and_not_broker_live() -> None:
+    """rebalance_weights: ctx 未绑定且非 broker_live 时应 fail-fast."""
     execution = _CapExecution(broker_live=False, portfolio_value=10000.0)
     strategy = _Strategy(execution)
 
     with pytest.raises(RuntimeError, match="Context not ready"):
-        api.order_target_weights(
+        api.rebalance_weights(
             strategy,
             target_weights={"600000.SH": 0.5},
             price_map={"600000.SH": 10.0},
@@ -104,13 +104,13 @@ def test_order_target_weights_raises_when_ctx_not_ready_and_not_broker_live() ->
     assert execution.orders == []
 
 
-def test_order_target_positions_raises_when_ctx_not_ready_and_not_broker_live() -> None:
-    """order_target_positions: ctx 未绑定且非 broker_live 时应 fail-fast."""
+def test_rebalance_positions_raises_when_ctx_not_ready_and_not_broker_live() -> None:
+    """rebalance_positions: ctx 未绑定且非 broker_live 时应 fail-fast."""
     execution = _CapExecution(broker_live=False, position=0.0)
     strategy = _Strategy(execution)
 
     with pytest.raises(RuntimeError, match="Context not ready"):
-        api.order_target_positions(
+        api.rebalance_positions(
             strategy,
             target_positions={"600000.SH": 100.0},
         )
@@ -123,12 +123,12 @@ def test_order_target_positions_raises_when_ctx_not_ready_and_not_broker_live() 
 # ---------------------------------------------------------------------------
 
 
-def test_order_target_weights_still_works_when_ctx_none_and_broker_live() -> None:
-    """order_target_weights: ctx 为 None 但 broker_live 就绪时不应报错."""
+def test_rebalance_weights_still_works_when_ctx_none_and_broker_live() -> None:
+    """rebalance_weights: ctx 为 None 但 broker_live 就绪时不应报错."""
     execution = _CapExecution(broker_live=True, portfolio_value=10000.0)
     strategy = _Strategy(execution)
 
-    order_ids = api.order_target_weights(
+    order_ids = api.rebalance_weights(
         strategy,
         target_weights={"600000.SH": 0.5},
         price_map={"600000.SH": 10.0},
@@ -140,12 +140,12 @@ def test_order_target_weights_still_works_when_ctx_none_and_broker_live() -> Non
     assert execution.orders[0]["quantity"] == 500.0  # 10000*0.5/10
 
 
-def test_order_target_positions_still_works_when_ctx_none_and_broker_live() -> None:
-    """order_target_positions: ctx 为 None 但 broker_live 就绪时不应报错."""
+def test_rebalance_positions_still_works_when_ctx_none_and_broker_live() -> None:
+    """rebalance_positions: ctx 为 None 但 broker_live 就绪时不应报错."""
     execution = _CapExecution(broker_live=True, position=0.0)
     strategy = _Strategy(execution)
 
-    order_ids = api.order_target_positions(
+    order_ids = api.rebalance_positions(
         strategy,
         target_positions={"600000.SH": 100.0},
     )

@@ -853,7 +853,7 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `place_trailing_stop_limit(symbol, quantity, price, trail_offset, side="Sell", trail_reference_price=None, ...) -> str`: Helper for trailing stop-limit orders, promoted to limit order when triggered.
 *   `order_target_value(target_value, symbol, price=None)`: Adjust position to target value.
 *   `order_target_percent(target_percent, symbol, price=None)`: Adjust position to target account percentage.
-*   `order_target_weights(target_weights, price_map=None, liquidate_unmentioned=False, allow_leverage=False, rebalance_tolerance=0.0, ...)`: Rebalance a multi-asset portfolio by target weights.
+*   `rebalance_weights(target_weights, price_map=None, liquidate_unmentioned=False, allow_leverage=False, rebalance_tolerance=0.0, ...)`: Rebalance a multi-asset portfolio by target weights.
     *   `target_weights` is `{symbol: weight}` and by default requires total weight `<= 1.0`.
     *   `liquidate_unmentioned=True` sets all existing non-mentioned positions to target `0`.
     *   Orders are submitted in sell-first then buy-second order to reduce cash-lock conflicts.

@@ -118,12 +118,12 @@ def test_order_target_percent_sizes_off_execution_in_broker_live() -> None:
     assert execution.orders[0]["quantity"] == 500.0  # 10000*0.5/10
 
 
-def test_order_target_weights_sizes_off_execution_in_broker_live() -> None:
-    """order_target_weights 在 broker_live 下按 execution 组合价值/持仓 sizing."""
+def test_rebalance_weights_sizes_off_execution_in_broker_live() -> None:
+    """rebalance_weights 在 broker_live 下按 execution 组合价值/持仓 sizing."""
     execution = _CapExecution(broker_live=True, portfolio_value=10000.0)
     strategy = _Strategy(execution)
 
-    api.order_target_weights(
+    api.rebalance_weights(
         strategy,
         target_weights={"600000.SH": 0.5},
         price_map={"600000.SH": 10.0},

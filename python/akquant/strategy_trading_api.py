@@ -46,7 +46,7 @@ def get_positions(strategy: Any) -> Dict[str, float]:
 
 
 def get_last_target_positions_plan(strategy: Any) -> Dict[str, Any]:
-    """获取最近一次 order_target_positions() 生成的调仓计划."""
+    """获取最近一次 rebalance_positions() 生成的调仓计划."""
     plan = getattr(strategy, "_last_target_positions_plan", None)
     if isinstance(plan, dict):
         return cast(Dict[str, Any], plan)
@@ -1061,7 +1061,7 @@ def order_target_percent(
     return order_target_value(strategy, symbol, target_value, price, **kwargs)
 
 
-def order_target_weights(
+def rebalance_weights(
     strategy: Any,
     target_weights: Dict[str, float],
     price_map: Optional[Dict[str, float]] = None,
@@ -1152,7 +1152,7 @@ def order_target_weights(
     return order_ids
 
 
-def order_target_positions(
+def rebalance_positions(
     strategy: Any,
     target_positions: Dict[str, float],
     price_map: Optional[Dict[str, float]] = None,
@@ -1297,7 +1297,7 @@ def order_target_positions(
             if normalized_missing_price_mode == "fail":
                 missing_price_error = (
                     f"missing price_map entry for symbol '{symbol}' "
-                    "in order_target_positions"
+                    "in rebalance_positions"
                 )
                 plan["status"] = "rejected"
                 plan["reject_reason"] = missing_price_error
@@ -1335,7 +1335,7 @@ def order_target_positions(
             if normalized_missing_price_mode == "fail":
                 missing_price_error = (
                     f"missing price_map entry for symbol '{symbol}' "
-                    "in order_target_positions"
+                    "in rebalance_positions"
                 )
                 plan["status"] = "rejected"
                 plan["reject_reason"] = missing_price_error

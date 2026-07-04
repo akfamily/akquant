@@ -152,7 +152,7 @@ trader.place_order(
   本就是柜台单号）；`cancel_all_orders(symbol=None)` 遍历 `sync_open_orders()` 逐个撤，
   可按 `symbol` 过滤。
 - **组合目标类下单已支持**：`order_target` / `order_target_value` /
-  `order_target_percent` / `order_target_weights` 在 `broker_live` 下现按柜台真实
+  `order_target_percent` / `rebalance_weights` 在 `broker_live` 下现按柜台真实
   持仓/资金 sizing 下单——经统一执行接口 `ExecutionBackend`，与回测下走
   `SimExecution` 是同一套调用方式，不再报错。
 

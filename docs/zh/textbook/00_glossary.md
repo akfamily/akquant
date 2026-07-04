@@ -53,7 +53,7 @@
 ## 四、订单与交易
 
 - **订单状态机** —— New → Submitted → Accepted → (Partially)Filled / Cancelled / Rejected 的状态流转。（第 4、15 章）
-- **`order_target_percent` / `order_target_positions`** —— 目标权重调仓接口与目标持仓数量调仓接口。（第 5 章）
+- **`order_target_percent` / `rebalance_positions`** —— 目标权重调仓接口与目标持仓数量调仓接口。（第 5 章）
 - **开平语义 (`position_effect`)** —— 方向（Buy/Sell）之外的 open / close / close_today 等开平标记。（第 5 章）
 - **T+1 制度** —— A 股当日买入次日方可卖出的交收规则，引擎以"可用持仓"建模。（第 6 章）
 

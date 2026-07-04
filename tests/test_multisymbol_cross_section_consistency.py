@@ -205,13 +205,13 @@ class TargetWeightsStrategy(Strategy):
         self.pending.pop(bar.timestamp, None)
 
         if self.rebalance_count == 0:
-            self.order_target_weights(
+            self.rebalance_weights(
                 {"AAA": 0.9},
                 liquidate_unmentioned=True,
                 rebalance_tolerance=0.0,
             )
         elif self.rebalance_count in (1, 2):
-            self.order_target_weights(
+            self.rebalance_weights(
                 {"BBB": 0.9},
                 liquidate_unmentioned=True,
                 rebalance_tolerance=0.0,
@@ -238,7 +238,7 @@ class TargetWeightsSplitStrategy(Strategy):
         self.pending.pop(bar.timestamp, None)
 
         if not self.rebalanced:
-            self.order_target_weights(
+            self.rebalance_weights(
                 {"AAA": 0.6, "BBB": 0.3},
                 liquidate_unmentioned=True,
                 rebalance_tolerance=0.0,
@@ -267,13 +267,13 @@ class TargetWeightsSellThenBuyStrategy(Strategy):
         self.pending.pop(bar.timestamp, None)
 
         if self.rebalance_count == 0:
-            self.order_target_weights(
+            self.rebalance_weights(
                 {"AAA": 0.9},
                 liquidate_unmentioned=True,
                 rebalance_tolerance=0.0,
             )
         elif self.rebalance_count == 1:
-            self.order_target_weights(
+            self.rebalance_weights(
                 {"BBB": 0.9},
                 liquidate_unmentioned=True,
                 rebalance_tolerance=0.0,
@@ -305,7 +305,7 @@ class ExplicitQuantityRejectStrategy(Strategy):
         self.submitted = True
 
 
-def test_order_target_weights_rotation_liquidates_unmentioned_symbols() -> None:
+def test_rebalance_weights_rotation_liquidates_unmentioned_symbols() -> None:
     """Target weights should support one-call rotation and clear old holdings."""
     timestamps = [
         pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai"),
@@ -338,7 +338,7 @@ def test_order_target_weights_rotation_liquidates_unmentioned_symbols() -> None:
     assert float(final_positions.get("BBB", 0.0)) > 0.0
 
 
-def test_order_target_weights_uses_sell_proceeds_before_same_cycle_buy() -> None:
+def test_rebalance_weights_uses_sell_proceeds_before_same_cycle_buy() -> None:
     """Rotation should use pending sell proceeds instead of shrinking the buy leg."""
     timestamps = [
         pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai"),
@@ -391,7 +391,7 @@ def test_order_target_weights_uses_sell_proceeds_before_same_cycle_buy() -> None
     assert float(final_positions.get("BBB", 0.0)) == 9000.0
 
 
-def test_order_target_positions_supports_same_cycle_long_short_rotation() -> None:
+def test_rebalance_positions_supports_same_cycle_long_short_rotation() -> None:
     """Advanced target positions should support one-call long-short rotation."""
     timestamps = [
         pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai"),
@@ -425,7 +425,7 @@ def test_order_target_positions_supports_same_cycle_long_short_rotation() -> Non
     assert float(final_positions.get("BBB", 0.0)) == 50.0
 
 
-def test_order_target_weights_split_allocation_is_close_to_target() -> None:
+def test_rebalance_weights_split_allocation_is_close_to_target() -> None:
     """Target weights should allocate multi-symbol positions by portfolio ratio."""
     timestamps = [
         pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai"),
@@ -500,32 +500,32 @@ def _build_validation_strategy() -> Strategy:
     return strategy
 
 
-def test_order_target_weights_rejects_negative_tolerance() -> None:
+def test_rebalance_weights_rejects_negative_tolerance() -> None:
     """Reject negative rebalance tolerance values."""
     strategy = _build_validation_strategy()
     with pytest.raises(ValueError, match="rebalance_tolerance must be >= 0"):
-        strategy.order_target_weights({"AAA": 0.5}, rebalance_tolerance=-0.01)
+        strategy.rebalance_weights({"AAA": 0.5}, rebalance_tolerance=-0.01)
 
 
-def test_order_target_weights_rejects_weight_sum_over_one_without_leverage() -> None:
+def test_rebalance_weights_rejects_weight_sum_over_one_without_leverage() -> None:
     """Reject total weights above one when leverage is disabled."""
     strategy = _build_validation_strategy()
     with pytest.raises(ValueError, match="exceeds 1.0"):
-        strategy.order_target_weights({"AAA": 0.7, "BBB": 0.4})
+        strategy.rebalance_weights({"AAA": 0.7, "BBB": 0.4})
 
 
-def test_order_target_weights_rejects_negative_weight() -> None:
+def test_rebalance_weights_rejects_negative_weight() -> None:
     """Reject negative target weight input."""
     strategy = _build_validation_strategy()
     with pytest.raises(ValueError, match="must be >= 0"):
-        strategy.order_target_weights({"AAA": -0.1})
+        strategy.rebalance_weights({"AAA": -0.1})
 
 
-def test_order_target_weights_rejects_empty_symbol() -> None:
+def test_rebalance_weights_rejects_empty_symbol() -> None:
     """Reject empty symbol key in target weights."""
     strategy = _build_validation_strategy()
     with pytest.raises(ValueError, match="must be non-empty"):
-        strategy.order_target_weights({"": 0.2})
+        strategy.rebalance_weights({"": 0.2})
 
 
 class SellThenBuySameCycleStrategy(Strategy):
@@ -605,17 +605,17 @@ class DailyRebalanceAfterBarCrossSymbolCarryoverStrategy(Strategy):
         """Rotate targets across days while retaining one drifting position."""
         _ = (trading_date, timestamp)
         if self.step == 0:
-            self.order_target_weights(
+            self.rebalance_weights(
                 {"AAA": 0.49, "BBB": 0.49},
                 liquidate_unmentioned=True,
             )
         elif self.step == 1:
-            self.order_target_weights(
+            self.rebalance_weights(
                 {"BBB": 0.49, "CCC": 0.49},
                 liquidate_unmentioned=True,
             )
         elif self.step == 2:
-            self.order_target_weights(
+            self.rebalance_weights(
                 {"BBB": 0.90},
                 liquidate_unmentioned=True,
             )
@@ -638,9 +638,9 @@ class TargetPositionsLongShortRotationStrategy(Strategy):
         if bar.symbol != "BBB":
             return
         if self.step == 0:
-            self.order_target_positions({"AAA": 100.0}, liquidate_unmentioned=True)
+            self.rebalance_positions({"AAA": 100.0}, liquidate_unmentioned=True)
         elif self.step == 1:
-            self.order_target_positions(
+            self.rebalance_positions(
                 {"AAA": -100.0, "BBB": 50.0},
                 liquidate_unmentioned=True,
             )

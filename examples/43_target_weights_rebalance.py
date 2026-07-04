@@ -84,7 +84,7 @@ class TargetWeightsRebalanceStrategy(Strategy):
 
         # 4) 一次调用完成组合调仓
         #    liquidate_unmentioned=True 会把不在 target_weights 的持仓清到 0
-        self.order_target_weights(
+        self.rebalance_weights(
             target_weights=target_weights,
             liquidate_unmentioned=True,
             rebalance_tolerance=0.01,

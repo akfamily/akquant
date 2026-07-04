@@ -544,7 +544,7 @@ In AKQuant, order status transitions are as follows:
     ```
     Rebalance multiple symbols with a single target-weight call:
     ```python
-    self.order_target_weights(
+    self.rebalance_weights(
         target_weights={"AAPL": 0.4, "MSFT": 0.3, "GOOGL": 0.2},
         liquidate_unmentioned=True,
         rebalance_tolerance=0.01,

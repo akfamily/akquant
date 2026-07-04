@@ -212,7 +212,7 @@ result = aq.run_backtest(
 *   融资融券 / 期货 / 方向切换
 *   更强调实盘语义一致性的调仓
 
-请优先使用后面的 `order_target_positions()`。
+请优先使用后面的 `rebalance_positions()`。
 
 *   `target=0.5`: 买入直到持仓占总资产的 50%。
 *   `target=0.0`: 清仓卖出所有持仓。
@@ -229,12 +229,12 @@ result = aq.run_backtest(
 
 一键平仓。无论当前持有多头还是空头，都会发出相反方向的市价单将其平掉。
 
-### 5.3.4 `order_target_positions(target_positions, ...)`
+### 5.3.4 `rebalance_positions(target_positions, ...)`
 
 这是面向高级调仓场景的新接口。它按“目标持仓数量”工作，而不是按目标权重工作。
 
 ```python
-self.order_target_positions(
+self.rebalance_positions(
     target_positions={"IF2406": -2, "510300": 1000},
     liquidate_unmentioned=True,
     allow_short=True,

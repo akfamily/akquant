@@ -705,11 +705,11 @@ class MyStrategy(Strategy):
     *   `self.order_target(target=100, symbol="AAPL")`: 调整持仓数量至 100 股。
     *   `self.order_target_percent(target_percent=0.5, symbol="AAPL")`: 调整持仓至总资产的 50%。
     *   `self.order_target_value(target_value=10000, symbol="AAPL")`: 调整持仓至 10000 元市值。
-    *   `self.order_target_weights(target_weights={"AAPL":0.4,"MSFT":0.3}, liquidate_unmentioned=True, rebalance_tolerance=0.01)`: 按多标的权重统一调仓。
+    *   `self.rebalance_weights(target_weights={"AAPL":0.4,"MSFT":0.3}, liquidate_unmentioned=True, rebalance_tolerance=0.01)`: 按多标的权重统一调仓。
         *   默认权重和不超过 `1.0`，如需超过请设置 `allow_leverage=True`。
-        *   该接口仍然更偏向 long-only 组合管理；如需正负目标仓位，请优先使用 `order_target_positions()`。
+        *   该接口仍然更偏向 long-only 组合管理；如需正负目标仓位，请优先使用 `rebalance_positions()`。
         *   同周期调仓已升级为 `reduce-first` 语义：先执行释放约束的腿，再执行增加约束的腿。
-    *   `self.order_target_positions(target_positions={"IF2406": -2, "510300": 1000}, liquidate_unmentioned=True)`: 按多标的目标持仓数量统一调仓，支持正负仓位。
+    *   `self.rebalance_positions(target_positions={"IF2406": -2, "510300": 1000}, liquidate_unmentioned=True)`: 按多标的目标持仓数量统一调仓，支持正负仓位。
         *   `allow_short` 默认按当前执行环境自动推断；在 `cash` 或 broker 未声明支持做空时，负目标会被明确拒绝。
         *   `missing_price_mode="ignore" | "skip" | "fail"` 可控制 `price_map` 缺项时的处理方式。
         *   可通过 `self.get_last_target_positions_plan()` 查看最近一次调仓计划，确认哪些腿进入了 `reduce` / `increase`、哪些腿被跳过或拒绝。
@@ -717,7 +717,7 @@ class MyStrategy(Strategy):
 ```python
 def on_timer(self, payload: str):
     weights = {"sh600519": 0.35, "sz000858": 0.25, "sh601318": 0.20}
-    self.order_target_weights(
+    self.rebalance_weights(
         target_weights=weights,
         liquidate_unmentioned=True,
         rebalance_tolerance=0.01,
@@ -726,7 +726,7 @@ def on_timer(self, payload: str):
 
 ```python
 def on_timer(self, payload: str):
-    self.order_target_positions(
+    self.rebalance_positions(
         target_positions={"IF2406": -2, "510300": 1000},
         liquidate_unmentioned=True,
         allow_short=True,

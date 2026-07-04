@@ -18,7 +18,7 @@
 *   [函数式热启动示例](https://github.com/akfamily/akquant/blob/main/examples/56_functional_warm_start_demo.py): 演示函数式 `on_resume(ctx)`、`on_start(ctx)` 与 checkpoint 恢复后的状态延续。
 *   [函数式多 slot 热启动示例](https://github.com/akfamily/akquant/blob/main/examples/57_functional_multi_slot_warm_start_demo.py): 演示 `strategies_by_slot` 下主 slot 与副 slot 如何一起从 checkpoint 恢复，并分别触发 `on_resume(ctx)`。
 *   [多标的目标权重调仓最短路径](https://github.com/akfamily/akquant/blob/main/examples/43_target_weights_rebalance.py): TopN 动态调仓示例，展示同时间切片收齐后基于动量的组合再平衡。
-*   [高级目标仓位与多空切换最短路径](https://github.com/akfamily/akquant/blob/main/examples/strategies/08_target_positions_long_short.py): 演示 `order_target_positions()`、负目标仓位、`allow_short=True` 与 `get_last_target_positions_plan()` 的最小闭环。
+*   [高级目标仓位与多空切换最短路径](https://github.com/akfamily/akquant/blob/main/examples/strategies/08_target_positions_long_short.py): 演示 `rebalance_positions()`、负目标仓位、`allow_short=True` 与 `get_last_target_positions_plan()` 的最小闭环。
 *   [指标组合 Playbook 示例](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py): 演示 `EMA/ADX/NATR` 与 `BBANDS/RSI/MOM` 组合在同一策略中的落地方式，并支持 `--data-source akshare` 真实数据模式。
 
 > 数据源约定：除特别标注需要模拟数据外，本页示例默认使用 AKShare 获取真实市场数据。
@@ -413,7 +413,7 @@ class AdjSignal(Strategy):
 **核心概念**:
 在一个调用里直接表达“谁要减仓、谁要反手、谁要新开仓”，更适合融资融券、期货和需要逐步对接实盘语义的策略。
 
-- 使用 `order_target_positions()` 按目标数量调仓，而不是按权重调仓。
+- 使用 `rebalance_positions()` 按目标数量调仓，而不是按权重调仓。
 - 支持正负目标仓位，例如 `{"AAA": -100.0, "BBB": 50.0}`。
 - 同周期调仓采用 `reduce-first` 语义，先释放约束，再执行增加仓位的腿。
 
@@ -427,12 +427,12 @@ class AdjSignal(Strategy):
 class TargetPositionsDemoStrategy(Strategy):
     def on_bar(self, bar):
         if self.step == 0:
-            self.order_target_positions(
+            self.rebalance_positions(
                 {"AAA": 100.0},
                 liquidate_unmentioned=True,
             )
         elif self.step == 1:
-            self.order_target_positions(
+            self.rebalance_positions(
                 {"AAA": -100.0, "BBB": 50.0},
                 liquidate_unmentioned=True,
                 allow_short=True,
@@ -538,7 +538,7 @@ class TargetPositionsDemoStrategy(Strategy):
     *   输出 `bundle.metadata` 以确认自定义 broker 已被工厂解析。
 
 *   **[43_target_weights_rebalance.py](https://github.com/akfamily/akquant/blob/main/examples/43_target_weights_rebalance.py)**:
-    *   演示 TopN 动态权重调仓：先按动量打分选强势标的，再通过 `order_target_weights` 一次性完成组合再平衡。
+    *   演示 TopN 动态权重调仓：先按动量打分选强势标的，再通过 `rebalance_weights` 一次性完成组合再平衡。
     *   展示 `liquidate_unmentioned` 与 `rebalance_tolerance` 的组合用法，并输出 `selected_history` / `final_positions` / `final_equity`。
 
 *   **[46_broker_profile_demo.py](https://github.com/akfamily/akquant/blob/main/examples/46_broker_profile_demo.py)**:

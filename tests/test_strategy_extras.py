@@ -328,7 +328,7 @@ class TopNRebalanceStrategy(Strategy):
         """Initialize call snapshots."""
         self.calls: list[dict[str, Any]] = []
 
-    def order_target_weights(
+    def rebalance_weights(
         self,
         target_weights: dict[str, float],
         price_map: dict[str, float] | None = None,
@@ -5003,8 +5003,8 @@ def test_strategy_submit_order_accepts_close_today_position_effect() -> None:
     assert first_call.kwargs["position_effect"] == PositionEffect.CloseToday
 
 
-def test_strategy_order_target_positions_supports_signed_targets() -> None:
-    """order_target_positions should route long/short target deltas via order_target."""
+def test_strategy_rebalance_positions_supports_signed_targets() -> None:
+    """rebalance_positions should route long/short target deltas via order_target."""
 
     class _TargetSpyStrategy(MyStrategy):
         def __init__(self) -> None:
@@ -5063,7 +5063,7 @@ def test_strategy_order_target_positions_supports_signed_targets() -> None:
     ctx.risk_config = SimpleNamespace(account_mode="margin", enable_short_sell=True)
     strategy.ctx = ctx
 
-    strategy.order_target_positions({"AAA": -50.0, "BBB": 25.0})
+    strategy.rebalance_positions({"AAA": -50.0, "BBB": 25.0})
 
     assert strategy.calls == [
         ("Sell", "AAA", 150.0, "auto", False),
@@ -5071,9 +5071,7 @@ def test_strategy_order_target_positions_supports_signed_targets() -> None:
     ]
 
 
-def test_strategy_order_target_positions_rejects_negative_targets_in_cash_mode() -> (
-    None
-):
+def test_strategy_rebalance_positions_rejects_negative_targets_in_cash_mode() -> None:
     """Negative target positions should fail fast when short selling is unavailable."""
     strategy = MyStrategy()
     ctx = MagicMock(spec=StrategyContext)
@@ -5085,10 +5083,10 @@ def test_strategy_order_target_positions_rejects_negative_targets_in_cash_mode()
     with pytest.raises(
         ValueError, match="negative target positions require allow_short=True"
     ):
-        strategy.order_target_positions({"AAA": -10.0})
+        strategy.rebalance_positions({"AAA": -10.0})
 
 
-def test_strategy_order_target_positions_rejects_when_short_is_disallowed() -> None:
+def test_strategy_rebalance_positions_rejects_when_short_is_disallowed() -> None:
     """Negative targets should respect strict broker short-sell capability checks."""
     strategy = MyStrategy()
     ctx = MagicMock(spec=StrategyContext)
@@ -5109,10 +5107,10 @@ def test_strategy_order_target_positions_rejects_when_short_is_disallowed() -> N
     strategy.execution = _CapExecution()
 
     with pytest.raises(RuntimeError, match="does not advertise short-sell support"):
-        strategy.order_target_positions({"AAA": -10.0}, allow_short=True)
+        strategy.rebalance_positions({"AAA": -10.0}, allow_short=True)
 
 
-def test_strategy_order_target_positions_can_bypass_strict_short_capability() -> None:
+def test_strategy_rebalance_positions_can_bypass_strict_short_capability() -> None:
     """Opting out should allow negative targets with unknown broker capability."""
 
     class _TargetSpyStrategy(MyStrategy):
@@ -5184,7 +5182,7 @@ def test_strategy_order_target_positions_can_bypass_strict_short_capability() ->
 
     strategy.execution = _CapExecution()
 
-    strategy.order_target_positions(
+    strategy.rebalance_positions(
         {"AAA": -10.0},
         allow_short=True,
         strict_short_capability=False,
@@ -5193,7 +5191,7 @@ def test_strategy_order_target_positions_can_bypass_strict_short_capability() ->
     assert strategy.calls == [("Sell", "AAA", 10.0)]
 
 
-def test_strategy_order_target_positions_missing_price_mode_fail() -> None:
+def test_strategy_rebalance_positions_missing_price_mode_fail() -> None:
     """missing_price_mode=fail should reject symbols absent from price_map."""
     strategy = MyStrategy()
     ctx = MagicMock(spec=StrategyContext)
@@ -5205,14 +5203,14 @@ def test_strategy_order_target_positions_missing_price_mode_fail() -> None:
     strategy.ctx = ctx
 
     with pytest.raises(RuntimeError, match="missing price_map entry for symbol 'BBB'"):
-        strategy.order_target_positions(
+        strategy.rebalance_positions(
             {"AAA": 0.0, "BBB": 5.0},
             price_map={"AAA": 10.0},
             missing_price_mode="fail",
         )
 
 
-def test_strategy_order_target_positions_missing_price_mode_skip() -> None:
+def test_strategy_rebalance_positions_missing_price_mode_skip() -> None:
     """missing_price_mode=skip should drop legs whose price_map entry is missing."""
 
     class _TargetSpyStrategy(MyStrategy):
@@ -5271,7 +5269,7 @@ def test_strategy_order_target_positions_missing_price_mode_skip() -> None:
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
     strategy.ctx = ctx
 
-    strategy.order_target_positions(
+    strategy.rebalance_positions(
         {"AAA": 0.0, "BBB": 5.0},
         price_map={"AAA": 10.0},
         missing_price_mode="skip",
@@ -5280,7 +5278,7 @@ def test_strategy_order_target_positions_missing_price_mode_skip() -> None:
     assert strategy.calls == [("Sell", "AAA", 10.0, 10.0)]
 
 
-def test_strategy_order_target_positions_missing_price_mode_ignore() -> None:
+def test_strategy_rebalance_positions_missing_price_mode_ignore() -> None:
     """Default ignore mode should still submit legs without explicit prices."""
 
     class _TargetSpyStrategy(MyStrategy):
@@ -5339,7 +5337,7 @@ def test_strategy_order_target_positions_missing_price_mode_ignore() -> None:
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
     strategy.ctx = ctx
 
-    strategy.order_target_positions(
+    strategy.rebalance_positions(
         {"AAA": 0.0, "BBB": 5.0},
         price_map={"AAA": 10.0},
     )
@@ -5350,8 +5348,8 @@ def test_strategy_order_target_positions_missing_price_mode_ignore() -> None:
     ]
 
 
-def test_strategy_order_target_positions_records_explainable_plan() -> None:
-    """order_target_positions should expose the last generated rebalance plan."""
+def test_strategy_rebalance_positions_records_explainable_plan() -> None:
+    """rebalance_positions should expose the last generated rebalance plan."""
 
     class _TargetSpyStrategy(MyStrategy):
         def __init__(self) -> None:
@@ -5409,7 +5407,7 @@ def test_strategy_order_target_positions_records_explainable_plan() -> None:
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
     strategy.ctx = ctx
 
-    strategy.order_target_positions(
+    strategy.rebalance_positions(
         {"AAA": 0.0, "BBB": 5.0},
         price_map={"AAA": 10.0, "BBB": 20.0},
     )
@@ -5422,7 +5420,7 @@ def test_strategy_order_target_positions_records_explainable_plan() -> None:
     assert [leg["phase"] for leg in plan["submitted_legs"]] == ["reduce", "increase"]
 
 
-def test_strategy_order_target_positions_plan_tracks_skipped_legs() -> None:
+def test_strategy_rebalance_positions_plan_tracks_skipped_legs() -> None:
     """Plan should record skipped legs when missing_price_mode=skip."""
 
     class _TargetSpyStrategy(MyStrategy):
@@ -5481,7 +5479,7 @@ def test_strategy_order_target_positions_plan_tracks_skipped_legs() -> None:
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
     strategy.ctx = ctx
 
-    strategy.order_target_positions(
+    strategy.rebalance_positions(
         {"AAA": 0.0, "BBB": 5.0},
         price_map={"AAA": 10.0},
         missing_price_mode="skip",
@@ -5508,7 +5506,7 @@ def test_strategy_order_target_positions_plan_tracks_skipped_legs() -> None:
     ]
 
 
-def test_strategy_order_target_positions_plan_tracks_reject_reason() -> None:
+def test_strategy_rebalance_positions_plan_tracks_reject_reason() -> None:
     """Plan should retain reject_reason when validation fails."""
     strategy = MyStrategy()
     ctx = MagicMock(spec=StrategyContext)
@@ -5520,7 +5518,7 @@ def test_strategy_order_target_positions_plan_tracks_reject_reason() -> None:
     with pytest.raises(
         ValueError, match="negative target positions require allow_short=True"
     ):
-        strategy.order_target_positions({"AAA": -1.0})
+        strategy.rebalance_positions({"AAA": -1.0})
 
     plan = strategy.get_last_target_positions_plan()
     assert plan["status"] == "rejected"

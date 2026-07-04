@@ -9,7 +9,7 @@
 - 报告与分析: [11_plot_visualization.py](./11_plot_visualization.py) -> [33_report_and_analysis_outputs.py](./33_report_and_analysis_outputs.py)
 - 流式监控: [26_streaming_quickstart.py](./26_streaming_quickstart.py) -> [27_streaming_monitoring_console.py](./27_streaming_monitoring_console.py)
 - 实时可视化: [31_streaming_live_console.py](./31_streaming_live_console.py) -> [32_streaming_live_web.py](./32_streaming_live_web.py)
-- 高级目标仓位: [strategies/08_target_positions_long_short.py](./strategies/08_target_positions_long_short.py) -> `order_target_positions` + `get_last_target_positions_plan`
+- 高级目标仓位: [strategies/08_target_positions_long_short.py](./strategies/08_target_positions_long_short.py) -> `rebalance_positions` + `get_last_target_positions_plan`
 
 ## 基础与能力示例
 
@@ -46,7 +46,7 @@
 - [40_functional_multi_slot_risk_demo.py](./40_functional_multi_slot_risk_demo.py): 函数式 + 多策略 slot + 风控限制端到端示例。
 - [41_live_multi_slot_orchestration_demo.py](./41_live_multi_slot_orchestration_demo.py): LiveRunner 多策略 slot 编排示例（paper）。
 - [42_live_broker_event_audit_demo.py](./42_live_broker_event_audit_demo.py): broker 事件审计与 owner_strategy_id 追踪示例。
-- [43_target_weights_rebalance.py](./43_target_weights_rebalance.py): TopN 动态权重调仓示例（横截面动量 + `order_target_weights`）。
+- [43_target_weights_rebalance.py](./43_target_weights_rebalance.py): TopN 动态权重调仓示例（横截面动量 + `rebalance_weights`）。
 - [44_strategy_source_loader_demo.py](./44_strategy_source_loader_demo.py): strategy_source + strategy_loader 动态加载示例（明文 + 外部解密）。
 - [45_talib_indicator_playbook_demo.py](./45_talib_indicator_playbook_demo.py): TA-Lib 指标组合模板示例（趋势跟随 + 均值回归 + 风险过滤，支持 `--data-source synthetic|akshare`）。
 - [46_broker_profile_demo.py](./46_broker_profile_demo.py): `broker_profile` 模板注入示例（默认费率/滑点/手数一键生效）。
@@ -84,5 +84,5 @@
 ## 相关子目录
 
 - [strategies/README.md](./strategies/README.md): 策略示例集合。
-- [strategies/08_target_positions_long_short.py](./strategies/08_target_positions_long_short.py): 高级目标仓位与多空切换最小示例，演示 `order_target_positions()`、`allow_short=True` 与调仓计划解释输出。
+- [strategies/08_target_positions_long_short.py](./strategies/08_target_positions_long_short.py): 高级目标仓位与多空切换最小示例，演示 `rebalance_positions()`、`allow_short=True` 与调仓计划解释输出。
 - [textbook/ch15_strategy_loader.py](./textbook/ch15_strategy_loader.py): 教程章节动态策略加载示例。

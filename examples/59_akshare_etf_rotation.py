@@ -139,7 +139,7 @@ class ETFMomentumRotationStrategy(Strategy):
             symbol: score for symbol, score in scores.items() if score > 0
         }
         if not positive_scores:
-            self.order_target_weights(target_weights={}, liquidate_unmentioned=True)
+            self.rebalance_weights(target_weights={}, liquidate_unmentioned=True)
             self.log("all ETF momentums are <= 0, stay in cash")
             return
 
@@ -151,7 +151,7 @@ class ETFMomentumRotationStrategy(Strategy):
         ]
         each_weight = 0.95 / float(len(selected_symbols))
         target_weights = {symbol: each_weight for symbol in selected_symbols}
-        self.order_target_weights(
+        self.rebalance_weights(
             target_weights=target_weights,
             liquidate_unmentioned=True,
             rebalance_tolerance=0.01,
