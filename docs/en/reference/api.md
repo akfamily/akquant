@@ -839,12 +839,13 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 
 **Trading Methods:**
 
-*   `buy(symbol, quantity, price=None, ...)`: Buy. Market order if `price` is not specified.
-*   `sell(symbol, quantity, price=None, ...)`: Sell.
+*   `buy(symbol, quantity, price=None, trigger_price=None, ...)`: Buy (open long / close short).
+    *   Market order if `price` is not specified.
+    *   Limit order if `price` is specified.
+    *   Stop order (Stop Market) if `trigger_price` is specified.
+*   `sell(symbol, quantity, price=None, trigger_price=None, ...)`: Sell (close long / open short). Same parameters as above.
 *   `short(symbol, quantity, price=None, ...)`: Short sell.
 *   `cover(symbol, quantity, price=None, ...)`: Buy to cover.
-*   `stop_buy(symbol, trigger_price, quantity, ...)`: Stop buy (Stop Market). Triggers a market buy order when price breaks above `trigger_price`.
-*   `stop_sell(symbol, trigger_price, quantity, ...)`: Stop sell (Stop Market). Triggers a market sell order when price drops below `trigger_price`.
 *   `submit_order(..., order_type="StopTrail", trail_offset=..., trail_reference_price=None)`: Submit a trailing stop order. `trail_offset` must be greater than 0.
 *   `submit_order(..., order_type="StopTrailLimit", price=..., trail_offset=..., trail_reference_price=None)`: Submit a trailing stop-limit order. `price` and `trail_offset` are required.
 *   `submit_order(..., broker_options={...})`: Optional broker extension fields passthrough (backtest currently records them on `order.broker_options` for debugging/audit).

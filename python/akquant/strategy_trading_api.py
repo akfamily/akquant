@@ -866,30 +866,6 @@ def _resolve_effective_order_commission(
     return dict(resolved)
 
 
-def stop_buy(
-    strategy: Any,
-    symbol: Optional[str] = None,
-    trigger_price: float = 0.0,
-    quantity: Optional[float] = None,
-    price: Optional[float] = None,
-    time_in_force: Optional[TimeInForce] = None,
-) -> None:
-    """发送止损买入单."""
-    buy(strategy, symbol, quantity, price, time_in_force, trigger_price=trigger_price)
-
-
-def stop_sell(
-    strategy: Any,
-    symbol: Optional[str] = None,
-    trigger_price: float = 0.0,
-    quantity: Optional[float] = None,
-    price: Optional[float] = None,
-    time_in_force: Optional[TimeInForce] = None,
-) -> None:
-    """发送止损卖出单."""
-    sell(strategy, symbol, quantity, price, time_in_force, trigger_price=trigger_price)
-
-
 def get_portfolio_value(strategy: Any) -> float:
     """计算当前投资组合总价值 (现金 + 持仓市值)（经执行后端）."""
     return float(strategy.execution.get_portfolio_value())
@@ -1379,27 +1355,6 @@ def order_target_positions(
             order_ids.append(oid)
     plan["status"] = "submitted"
     return order_ids
-
-
-def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
-    """全仓买入 (Buy All)."""
-    _require_execution_ready(strategy)
-    symbol = resolve_symbol(strategy, symbol)
-
-    price = 0.0
-    if strategy.current_bar and strategy.current_bar.symbol == symbol:
-        price = strategy.current_bar.close
-    elif strategy.current_tick and strategy.current_tick.symbol == symbol:
-        price = strategy.current_tick.price
-
-    if price <= 0:
-        return
-
-    cash = strategy.execution.get_cash()
-    quantity = int(cash / price)
-
-    if quantity > 0:
-        buy(strategy, symbol=symbol, quantity=quantity)
 
 
 def close_position(strategy: Any, symbol: Optional[str] = None) -> None:

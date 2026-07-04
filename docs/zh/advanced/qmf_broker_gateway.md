@@ -122,7 +122,7 @@ trader.place_order(
 ## 执行接口 ExecutionBackend（回测/实盘同一套）
 
 策略的状态读（`get_position`/`get_account`/…）、下单（`submit_order`）、撤单
-（`cancel_order`/`cancel_all_orders`）与组合目标类下单（`buy_all`/`order_target*`）
+（`cancel_order`/`cancel_all_orders`）与组合目标类下单（`order_target*`）
 统一经 `strategy.execution` 这一个 `ExecutionBackend` 接口调用，不再对策略对象
 做 `setattr` 猴补：
 
@@ -151,7 +151,7 @@ trader.place_order(
   （`broker_live` 下 `submit_order` 返回的即 broker_order_id，故策略持有的 `order_id`
   本就是柜台单号）；`cancel_all_orders(symbol=None)` 遍历 `sync_open_orders()` 逐个撤，
   可按 `symbol` 过滤。
-- **组合目标类下单已支持**：`buy_all` / `order_target` / `order_target_value` /
+- **组合目标类下单已支持**：`order_target` / `order_target_value` /
   `order_target_percent` / `order_target_weights` 在 `broker_live` 下现按柜台真实
   持仓/资金 sizing 下单——经统一执行接口 `ExecutionBackend`，与回测下走
   `SimExecution` 是同一套调用方式，不再报错。

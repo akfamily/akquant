@@ -531,7 +531,7 @@ In AKQuant, order status transitions are as follows:
     Converts to a market order when the market price touches the trigger price (`trigger_price`).
     ```python
     # Stop Sell (Market) when price drops below 140
-    self.stop_sell(symbol="AAPL", quantity=100, trigger_price=140.0)
+    self.sell(symbol="AAPL", quantity=100, trigger_price=140.0)
     ```
 *   **Target Orders**:
     Automatically calculates buy/sell quantities to adjust the position to a target value.

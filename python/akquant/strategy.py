@@ -87,9 +87,6 @@ from .strategy_trading_api import (
     buy as _buy_impl,
 )
 from .strategy_trading_api import (
-    buy_all as _buy_all_impl,
-)
-from .strategy_trading_api import (
     calculate_max_buy_qty as _calculate_max_buy_qty_impl,
 )
 from .strategy_trading_api import (
@@ -160,12 +157,6 @@ from .strategy_trading_api import (
 )
 from .strategy_trading_api import (
     short as _short_impl,
-)
-from .strategy_trading_api import (
-    stop_buy as _stop_buy_impl,
-)
-from .strategy_trading_api import (
-    stop_sell as _stop_sell_impl,
 )
 from .strategy_trading_api import (
     submit_order as _submit_order_impl,
@@ -2122,40 +2113,6 @@ class Strategy:
         """获取最近一次 order_target_positions() 生成的调仓计划."""
         return _get_last_target_positions_plan_impl(self)
 
-    def stop_buy(
-        self,
-        symbol: Optional[str] = None,
-        trigger_price: float = 0.0,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-    ) -> None:
-        """
-        发送止损买入单 (Stop Buy Order).
-
-        当市价上涨突破 trigger_price 时触发买入.
-        - 如果 price 为 None, 触发后转为市价单 (Stop Market).
-        - 如果 price 不为 None, 触发后转为限价单 (Stop Limit).
-        """
-        _stop_buy_impl(self, symbol, trigger_price, quantity, price, time_in_force)
-
-    def stop_sell(
-        self,
-        symbol: Optional[str] = None,
-        trigger_price: float = 0.0,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-    ) -> None:
-        """
-        发送止损卖出单 (Stop Sell Order).
-
-        当市价下跌跌破 trigger_price 时触发卖出.
-        - 如果 price 为 None, 触发后转为市价单 (Stop Market).
-        - 如果 price 不为 None, 触发后转为限价单 (Stop Limit).
-        """
-        _stop_sell_impl(self, symbol, trigger_price, quantity, price, time_in_force)
-
     def place_trailing_stop(
         self,
         symbol: str,
@@ -2355,17 +2312,6 @@ class Strategy:
             missing_price_mode,
             **kwargs,
         )
-
-    def buy_all(self, symbol: Optional[str] = None) -> None:
-        """
-        全仓买入 (Buy All).
-
-        使用当前所有可用资金买入.
-
-        Args:
-            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
-        """
-        _buy_all_impl(self, symbol)
 
     def close_position(self, symbol: Optional[str] = None) -> None:
         """
