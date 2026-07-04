@@ -179,6 +179,7 @@ def test_order_target_not_rejected_when_broker_live_absent() -> None:
             self.ctx = None
             self.execution = _PlainExecution()
             self.submit_order_calls: list = []
+            self.lot_size = 1
 
         def submit_order(self, **kwargs):
             self.submit_order_calls.append(kwargs)

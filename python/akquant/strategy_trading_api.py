@@ -990,24 +990,34 @@ def order_target(
     Returns:
         本次调仓产生的订单 ID; 若无需交易 (已在目标) 则返回 None.
     """
-    return _order_target_core(strategy, symbol, target, price, **kwargs)
+    return _target_to_orders(strategy, symbol, target, price, **kwargs)
 
 
-def _order_target_core(
+def _target_to_orders(
     strategy: Any,
     symbol: Optional[str] = None,
-    target: Optional[float] = None,
+    target_qty: Optional[float] = None,
     price: Optional[float] = None,
     **kwargs: Any,
 ) -> Optional[str]:
-    """order_target 的无守卫核心：供已自带能力校验的调仓入口内部复用."""
-    if target is None:
-        raise ValueError("order_target requires 'target' (目标持仓数量)")
+    """目标持仓 → 下单的共享核心：统一按 lot_size 取整 delta，不撤单."""
+    if target_qty is None:
+        raise ValueError("target requires a target quantity (目标持仓数量)")
     symbol = resolve_symbol(strategy, symbol)
-
     current_qty = float(strategy.execution.get_position(symbol))
+    delta_qty = target_qty - current_qty
 
-    delta_qty = target - current_qty
+    current_lot_size = 1
+    if isinstance(strategy.lot_size, int):
+        current_lot_size = int(strategy.lot_size)
+    elif isinstance(strategy.lot_size, dict):
+        val = strategy.lot_size.get(symbol, strategy.lot_size.get("DEFAULT", 1))
+        current_lot_size = int(val) if val is not None else 1
+    if current_lot_size > 0:
+        if delta_qty > 0:
+            delta_qty = (delta_qty // current_lot_size) * current_lot_size
+        elif delta_qty < 0:
+            delta_qty = -((abs(delta_qty) // current_lot_size) * current_lot_size)
 
     if delta_qty > 0:
         return buy(strategy, symbol, delta_qty, price, **kwargs)
@@ -1032,8 +1042,6 @@ def order_target_value(
         raise ValueError("order_target_value requires 'target_value' (目标持仓价值)")
     symbol = resolve_symbol(strategy, symbol)
 
-    cancel_all_orders(strategy, symbol=symbol)
-
     if price is not None:
         current_price = price
     else:
@@ -1051,29 +1059,8 @@ def order_target_value(
             )
             return None
 
-    current_qty = float(strategy.execution.get_position(symbol))
-
     target_qty = target_value / current_price
-    delta_qty = target_qty - current_qty
-
-    current_lot_size = 1
-    if isinstance(strategy.lot_size, int):
-        current_lot_size = strategy.lot_size
-    elif isinstance(strategy.lot_size, dict):
-        val = strategy.lot_size.get(symbol, strategy.lot_size.get("DEFAULT", 1))
-        current_lot_size = int(val) if val is not None else 1
-
-    if current_lot_size > 0:
-        if delta_qty > 0:
-            delta_qty = (delta_qty // current_lot_size) * current_lot_size
-        elif delta_qty < 0:
-            delta_qty = -((abs(delta_qty) // current_lot_size) * current_lot_size)
-
-    if delta_qty > 0:
-        return buy(strategy, symbol, delta_qty, price, **kwargs)
-    elif delta_qty < 0:
-        return sell(strategy, symbol, abs(delta_qty), price, **kwargs)
-    return None
+    return _target_to_orders(strategy, symbol, target_qty, price, **kwargs)
 
 
 def order_target_percent(
@@ -1339,7 +1326,7 @@ def order_target_positions(
                 plan["reject_reason"] = missing_price_error
                 raise RuntimeError(missing_price_error)
         leg_price = price_map.get(symbol) if price_map else None
-        oid = _order_target_core(strategy, symbol, target_qty, leg_price, **kwargs)
+        oid = _target_to_orders(strategy, symbol, target_qty, leg_price, **kwargs)
         plan["submitted_legs"].append(
             {
                 "symbol": symbol,
@@ -1377,7 +1364,7 @@ def order_target_positions(
                 plan["reject_reason"] = missing_price_error
                 raise RuntimeError(missing_price_error)
         leg_price = price_map.get(symbol) if price_map else None
-        oid = _order_target_core(strategy, symbol, target_qty, leg_price, **kwargs)
+        oid = _target_to_orders(strategy, symbol, target_qty, leg_price, **kwargs)
         plan["submitted_legs"].append(
             {
                 "symbol": symbol,

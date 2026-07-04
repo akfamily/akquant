@@ -27,6 +27,7 @@ class _S:
         self.ctx = None
         self.current_bar = None
         self.current_tick = None
+        self.lot_size = 1
 
     def submit_order(self, **kwargs):
         """镜像真实 Strategy.submit_order：统一转发到 execution.submit_order."""
