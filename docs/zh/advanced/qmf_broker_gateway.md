@@ -105,9 +105,9 @@ trader.place_order(
 （`broker_ready_timeout`，默认 10s）；就绪状态写回策略上下文的 `broker_ready` 属性。
 
 - 策略应以 `if ctx.broker_ready:` 门首单，而不是 `hasattr(ctx, "submit_order")`——
-  `submit_order` 在 `broker_live` 模式下总会被注入，但 broker 未就绪前调用它会直接
-  抛出清晰的 `RuntimeError`（`broker 尚未就绪，请在 broker_ready=True
-  (on_broker_connected 之后)再下单`）。
+  `submit_order` 在 `broker_live` 模式下经 `strategy.execution`（`BrokerExecution`）路由、
+  始终可调用，但 broker 未就绪前调用它会直接抛出清晰的 `RuntimeError`
+  （`broker 尚未就绪，请在 broker_ready=True (on_broker_connected 之后)再下单`）。
 - 就绪达成时，`LiveRunner` 会对策略与各 slot 触发 `on_broker_connected(ctx)`
   （策略方法与 `LiveRunner(on_broker_connected=...)` 函数式回调均支持）。
 - `paper`/其它非 `broker_live` 模式下 `broker_ready` 默认即为 `True`，不受该守卫影响。
