@@ -26,34 +26,23 @@ def resolve_symbol(strategy: Any, symbol: Optional[str]) -> str:
 
 
 def get_position(strategy: Any, symbol: Optional[str] = None) -> float:
-    """获取指定标的的持仓数量."""
-    if strategy.ctx is None:
-        return 0.0
-    symbol = resolve_symbol(strategy, symbol)
-    return float(strategy.ctx.get_position(symbol))
+    """获取指定标的持仓（经执行后端）."""
+    return float(strategy.execution.get_position(symbol))
 
 
 def get_available_position(strategy: Any, symbol: Optional[str] = None) -> float:
-    """获取指定标的的可用持仓数量."""
-    if strategy.ctx is None:
-        return 0.0
-    symbol = resolve_symbol(strategy, symbol)
-    return float(strategy.ctx.get_available_position(symbol))
+    """获取可用持仓（经执行后端）."""
+    return float(strategy.execution.get_available_position(symbol))
 
 
 def hold_bar(strategy: Any, symbol: Optional[str] = None) -> int:
-    """获取当前持仓持有的 Bar 数量."""
-    if strategy.ctx is None:
-        return 0
-    symbol = resolve_symbol(strategy, symbol)
-    return int(strategy._hold_bars[symbol])
+    """获取持仓持有 Bar 数（经执行后端）."""
+    return int(strategy.execution.hold_bar(symbol))
 
 
 def get_positions(strategy: Any) -> Dict[str, float]:
-    """获取所有持仓信息."""
-    if strategy.ctx is None:
-        raise RuntimeError("Context not ready")
-    return cast(Dict[str, float], strategy.ctx.positions)
+    """获取所有持仓（经执行后端）."""
+    return cast(Dict[str, float], strategy.execution.get_positions())
 
 
 def get_last_target_positions_plan(strategy: Any) -> Dict[str, Any]:
@@ -65,35 +54,8 @@ def get_last_target_positions_plan(strategy: Any) -> Dict[str, Any]:
 
 
 def get_open_orders(strategy: Any, symbol: Optional[str] = None) -> List[Any]:
-    """获取当前未完成的订单."""
-    if strategy.ctx is None:
-        return []
-
-    canceled_order_ids = {
-        str(order_id)
-        for order_id in getattr(strategy.ctx, "canceled_order_ids", [])
-        if order_id
-    }
-    pending_canceled_ids: Set[str] = getattr(
-        strategy, "_pending_canceled_order_ids", set()
-    )
-    if not isinstance(pending_canceled_ids, set):
-        pending_canceled_ids = set()
-        setattr(strategy, "_pending_canceled_order_ids", pending_canceled_ids)
-    canceled_order_ids.update(
-        str(order_id) for order_id in pending_canceled_ids if order_id
-    )
-
-    orders = [
-        o
-        for o in strategy.ctx.active_orders
-        if getattr(o, "id", "") not in canceled_order_ids
-        if o.status
-        in (OrderStatus.New, OrderStatus.Submitted, OrderStatus.PartiallyFilled)
-    ]
-    if symbol:
-        return [o for o in orders if o.symbol == symbol]
-    return orders
+    """获取当前未完成的订单（经执行后端）."""
+    return cast(List[Any], strategy.execution.get_open_orders(symbol=symbol))
 
 
 def get_order(strategy: Any, order_id: str) -> Optional[Any]:
@@ -176,36 +138,13 @@ def _attach_broker_options(strategy: Any, order_id: str, order: Any) -> None:
 
 
 def cancel_order(strategy: Any, order_id: str) -> None:
-    """取消指定订单."""
-    if strategy.ctx:
-        pending_canceled_ids: Set[str] = getattr(
-            strategy, "_pending_canceled_order_ids", set()
-        )
-        if not isinstance(pending_canceled_ids, set):
-            pending_canceled_ids = set()
-            setattr(strategy, "_pending_canceled_order_ids", pending_canceled_ids)
-        pending_canceled_ids.add(order_id)
-        strategy.ctx.cancel_order(order_id)
-        for order in strategy.ctx.active_orders:
-            if getattr(order, "id", "") != order_id:
-                continue
-            if getattr(order, "status", None) not in (
-                OrderStatus.New,
-                OrderStatus.Submitted,
-                OrderStatus.PartiallyFilled,
-            ):
-                continue
-            try:
-                order.status = OrderStatus.Cancelled
-            except Exception:
-                pass
-            break
+    """取消指定订单（经执行后端）."""
+    strategy.execution.cancel_order(order_id)
 
 
 def cancel_all_orders(strategy: Any, symbol: Optional[str] = None) -> None:
-    """取消当前所有未完成的订单."""
-    for order in get_open_orders(strategy, symbol=symbol):
-        cancel_order(strategy, order.id)
+    """取消所有未完成订单（经执行后端）."""
+    strategy.execution.cancel_all_orders(symbol=symbol)
 
 
 def buy(
@@ -656,41 +595,25 @@ def _submit_sell_side_orders(
 
 
 def get_execution_capabilities(strategy: Any) -> Dict[str, Any]:
-    """获取当前执行环境能力描述."""
-    injected_method = getattr(
-        getattr(strategy, "__dict__", {}), "get", lambda *_: None
-    )("get_execution_capabilities")
-    if callable(injected_method):
-        return cast(Dict[str, Any], injected_method())
-    risk_config = getattr(getattr(strategy, "ctx", None), "risk_config", None)
-    account_mode = str(getattr(risk_config, "account_mode", "cash")).strip().lower()
-    supports_short_sell = bool(getattr(risk_config, "enable_short_sell", False))
-    return {
-        "broker_live": False,
-        "client_order_id": False,
-        "order_type": True,
-        "time_in_force_str": False,
-        "position_effect": True,
-        "reduce_only": True,
-        "position_details": False,
-        "account_mode": account_mode,
-        "supports_short_sell": supports_short_sell,
-        "broker_extra_fields": [],
-    }
+    """获取当前执行环境能力描述（经执行后端）."""
+    execution = getattr(strategy, "execution", None)
+    if execution is not None:
+        return cast(Dict[str, Any], execution.capabilities())
+    return _sim_capabilities(strategy)
 
 
-def _reject_target_orders_in_broker_live(strategy: Any) -> None:
-    """Raise clearly for buy_all/order_target* helpers when running broker_live.
+def _require_execution_ready(strategy: Any) -> None:
+    """Fail fast when neither a backtest ctx nor a live broker backend is ready.
 
-    These helpers size off the (simulated) backtest ctx, which is not the
-    broker's source of truth in broker_live — raise instead of silently
-    mis-sizing.
+    broker_live binds a ready BrokerExecution while ctx stays None, so only
+    raise when ctx is None AND the backend is not broker_live-capable — this
+    preserves the old "Context not ready" fail-fast for backtest strategies
+    that call sizing helpers before the engine binds ctx (e.g. in __init__).
     """
-    if get_execution_capabilities(strategy).get("broker_live"):
-        raise RuntimeError(
-            "组合目标类下单(buy_all/order_target*)在 broker_live 暂不支持;"
-            "请用 submit_order/buy 并按 get_account()/get_position() 手动 sizing"
-        )
+    if getattr(strategy, "ctx", None) is None and not get_execution_capabilities(
+        strategy
+    ).get("broker_live"):
+        raise RuntimeError("Context not ready")
 
 
 def _normalize_position_effect(
@@ -752,97 +675,9 @@ def _resolve_auto_position_effect_legs(
     return legs
 
 
-def submit_order(
-    strategy: Any,
-    symbol: Optional[str] = None,
-    side: str = "Buy",
-    quantity: Optional[float] = None,
-    price: Optional[float] = None,
-    time_in_force: Optional[TimeInForce | str] = None,
-    trigger_price: Optional[float] = None,
-    tag: Optional[str] = None,
-    client_order_id: Optional[str] = None,
-    order_type: Optional[str] = None,
-    extra: Optional[Dict[str, Any]] = None,
-    broker_options: Optional[Dict[str, Any]] = None,
-    trail_offset: Optional[float] = None,
-    trail_reference_price: Optional[float] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
-    commission: Optional[OrderCommission] = None,
-    position_effect: Union[PositionEffect, str, None] = None,
-    reduce_only: bool = False,
-    asset_type: str = "stock",
-) -> str:
-    """统一下单接口."""
-    capabilities = get_execution_capabilities(strategy)
-    if client_order_id and not bool(capabilities.get("client_order_id", False)):
-        raise RuntimeError("client_order_id is not supported in current execution mode")
-    if extra:
-        raise RuntimeError(
-            "extra broker fields require broker_live mode "
-            "(not available in simulated/backtest execution)"
-        )
-    if normalize_asset_type(asset_type) != "stock":
-        raise RuntimeError(
-            "non-stock asset_type requires broker_live mode "
-            "(not available in simulated/backtest execution)"
-        )
-    order_type_key, order_type_enum = _parse_order_type(order_type)
-    if time_in_force is not None and not isinstance(time_in_force, TimeInForce):
-        raise RuntimeError(
-            "time_in_force string is not supported in current execution mode"
-        )
-    if order_type_key in {"stoptrail", "stoptraillimit"}:
-        if trail_offset is None or trail_offset <= 0:
-            raise RuntimeError("trail_offset must be > 0 for trailing orders")
-    if order_type_key == "stoptraillimit" and price is None:
-        raise RuntimeError("price must be provided for StopTrailLimit order")
-    if order_type_key in {"stoptrail", "stoptraillimit"} and order_type_enum is None:
-        raise RuntimeError("trailing order requires runtime with StopTrail support")
-
-    side_text = side.strip().lower()
-    if side_text == "buy":
-        order_ids = _submit_buy_side_orders(
-            strategy=strategy,
-            symbol=symbol,
-            quantity=quantity,
-            price=price,
-            time_in_force=time_in_force,
-            trigger_price=trigger_price,
-            tag=tag,
-            order_type=order_type_enum,
-            trail_offset=trail_offset,
-            trail_reference_price=trail_reference_price,
-            fill_policy=fill_policy,
-            slippage=slippage,
-            commission=commission,
-            position_effect=_normalize_position_effect(position_effect, "auto"),
-            reduce_only=reduce_only,
-        )
-        _record_broker_options(strategy, order_ids, broker_options)
-        return _first_order_id(order_ids)
-    if side_text == "sell":
-        order_ids = _submit_sell_side_orders(
-            strategy=strategy,
-            symbol=symbol,
-            quantity=quantity,
-            price=price,
-            time_in_force=time_in_force,
-            trigger_price=trigger_price,
-            tag=tag,
-            order_type=order_type_enum,
-            trail_offset=trail_offset,
-            trail_reference_price=trail_reference_price,
-            fill_policy=fill_policy,
-            slippage=slippage,
-            commission=commission,
-            position_effect=_normalize_position_effect(position_effect, "auto"),
-            reduce_only=reduce_only,
-        )
-        _record_broker_options(strategy, order_ids, broker_options)
-        return _first_order_id(order_ids)
-    raise ValueError(f"Unsupported side: {side}")
+def submit_order(strategy: Any, **kwargs: Any) -> str:
+    """统一下单接口（经执行后端）."""
+    return cast(str, strategy.execution.submit_order(**kwargs))
 
 
 def _parse_order_type(order_type: Optional[str]) -> Tuple[Optional[str], Optional[Any]]:
@@ -1056,39 +891,8 @@ def stop_sell(
 
 
 def get_portfolio_value(strategy: Any) -> float:
-    """计算当前投资组合总价值 (现金 + 持仓市值)."""
-    if strategy.ctx is None:
-        return 0.0
-    use_previous_snapshot = bool(
-        getattr(strategy, "_framework_use_previous_account_snapshot", False)
-    )
-    ctx_equity = (
-        getattr(strategy.ctx, "previous_account_equity", None)
-        if use_previous_snapshot
-        else getattr(strategy.ctx, "account_equity", None)
-    )
-    if isinstance(ctx_equity, (int, float)):
-        return float(ctx_equity)
-    engine = getattr(strategy, "_engine", None)
-    get_metrics = getattr(engine, "get_account_metrics", None)
-    if callable(get_metrics):
-        equity, _, _, _, _, _ = get_metrics()
-        return float(equity)
-
-    total_value = float(strategy.ctx.cash)
-    for sym, qty in strategy.ctx.positions.items():
-        if qty == 0:
-            continue
-
-        price = strategy._last_prices.get(sym, 0.0)
-        if price == 0.0:
-            if strategy.current_bar and strategy.current_bar.symbol == sym:
-                price = strategy.current_bar.close
-            elif strategy.current_tick and strategy.current_tick.symbol == sym:
-                price = strategy.current_tick.price
-
-        total_value += float(qty) * price
-    return total_value
+    """计算当前投资组合总价值 (现金 + 持仓市值)（经执行后端）."""
+    return float(strategy.execution.get_portfolio_value())
 
 
 def _resolve_mark_price(strategy: Any, symbol: str) -> float:
@@ -1132,117 +936,8 @@ def _supports_short_targets(
 
 
 def get_account(strategy: Any) -> Dict[str, Any]:
-    """获取账户资金详情快照."""
-    if strategy.ctx is None:
-        raise RuntimeError("Context not ready")
-
-    use_previous_snapshot = bool(
-        getattr(strategy, "_framework_use_previous_account_snapshot", False)
-    )
-    cash_source = (
-        getattr(strategy.ctx, "previous_cash", strategy.ctx.cash)
-        if use_previous_snapshot
-        else strategy.ctx.cash
-    )
-    cash = float(cash_source)
-    prefix = "previous_account_" if use_previous_snapshot else "account_"
-    ctx_market_value = getattr(strategy.ctx, f"{prefix}market_value", None)
-    ctx_notional_value = getattr(strategy.ctx, f"{prefix}notional_value", None)
-    ctx_used_margin = getattr(strategy.ctx, f"{prefix}used_margin", None)
-    ctx_unrealized_pnl = getattr(strategy.ctx, f"{prefix}unrealized_pnl", None)
-    ctx_maintenance_ratio = getattr(strategy.ctx, f"{prefix}maintenance_ratio", None)
-    ctx_equity = getattr(strategy.ctx, f"{prefix}equity", None)
-    engine = getattr(strategy, "_engine", None)
-    get_metrics = getattr(engine, "get_account_metrics", None)
-    notional_value = (
-        float(ctx_notional_value) if ctx_notional_value is not None else 0.0
-    )
-    unrealized_pnl = (
-        float(ctx_unrealized_pnl) if ctx_unrealized_pnl is not None else 0.0
-    )
-    if isinstance(ctx_equity, (int, float)):
-        equity = float(ctx_equity)
-        market_value = (
-            float(ctx_market_value)
-            if isinstance(ctx_market_value, (int, float))
-            else equity - cash
-        )
-        margin = (
-            float(ctx_used_margin) if isinstance(ctx_used_margin, (int, float)) else 0.0
-        )
-        maintenance_ratio = (
-            float(ctx_maintenance_ratio)
-            if isinstance(ctx_maintenance_ratio, (int, float))
-            else 0.0
-        )
-    elif callable(get_metrics):
-        (
-            equity,
-            market_value,
-            notional_value,
-            margin,
-            unrealized_pnl,
-            maintenance_ratio,
-        ) = get_metrics()
-        equity = float(equity)
-        market_value = float(market_value)
-        margin = float(margin)
-        maintenance_ratio = float(maintenance_ratio)
-    else:
-        equity = float(strategy.equity)
-        market_value = float(equity - cash)
-        margin = float(getattr(strategy.ctx, "account_used_margin", 0.0) or 0.0)
-        maintenance_ratio = 0.0
-    previous_details = (
-        getattr(strategy, "_framework_previous_account_details", None)
-        if use_previous_snapshot
-        else None
-    )
-    # frozen_cash / short_market_value are authoritative Rust values on the
-    # StrategyContext. On the previous-snapshot path they are read from the
-    # framework cache (which was populated from those same Rust values one
-    # period earlier); the Python re-implementations were removed.
-    if isinstance(previous_details, dict):
-        frozen_cash = float(previous_details.get("frozen_cash", 0.0))
-        short_market_value = float(previous_details.get("short_market_value", 0.0))
-    else:
-        frozen_cash = float(getattr(strategy.ctx, "account_frozen_cash", 0.0))
-        short_market_value = float(
-            getattr(strategy.ctx, "account_short_market_value", 0.0)
-        )
-    borrowed_cash = float(max(-cash, 0.0))
-    if ctx_equity is None and not callable(get_metrics):
-        denominator = market_value + short_market_value
-        maintenance_ratio = float(equity / denominator) if denominator > 0.0 else 0.0
-    account_mode = "margin" if _is_margin_account(strategy) else "cash"
-    if isinstance(previous_details, dict):
-        accrued_interest = float(previous_details.get("margin_accrued_interest", 0.0))
-        daily_interest = float(previous_details.get("margin_daily_interest", 0.0))
-    else:
-        accrued_interest = float(getattr(strategy.ctx, "margin_accrued_interest", 0.0))
-        daily_interest = float(getattr(strategy.ctx, "margin_daily_interest", 0.0))
-    # 可用保证金 = 总权益 - 已占用保证金.
-    # 与开仓资金校验(拒单信息中的 Available)口径一致.
-    # 期货保证金账户下, cash 仅为现金余额(开仓不扣保证金).
-    # 真正可用于新开仓的是 free_margin.
-    free_margin = equity - margin
-    return {
-        "cash": cash,
-        "equity": equity,
-        "market_value": market_value,
-        "notional_value": float(notional_value),
-        "frozen_cash": frozen_cash,
-        "margin": margin,
-        "used_margin": margin,
-        "free_margin": free_margin,
-        "unrealized_pnl": float(unrealized_pnl),
-        "borrowed_cash": borrowed_cash,
-        "short_market_value": float(short_market_value),
-        "maintenance_ratio": maintenance_ratio,
-        "account_mode": account_mode,
-        "accrued_interest": accrued_interest,
-        "daily_interest": daily_interest,
-    }
+    """获取账户资金详情快照（经执行后端）."""
+    return cast(Dict[str, Any], strategy.execution.get_account())
 
 
 def calculate_max_buy_qty(
@@ -1295,7 +990,6 @@ def order_target(
     Returns:
         本次调仓产生的订单 ID; 若无需交易 (已在目标) 则返回 None.
     """
-    _reject_target_orders_in_broker_live(strategy)
     return _order_target_core(strategy, symbol, target, price, **kwargs)
 
 
@@ -1311,9 +1005,7 @@ def _order_target_core(
         raise ValueError("order_target requires 'target' (目标持仓数量)")
     symbol = resolve_symbol(strategy, symbol)
 
-    current_qty = 0.0
-    if strategy.ctx:
-        current_qty = float(strategy.ctx.get_position(symbol))
+    current_qty = float(strategy.execution.get_position(symbol))
 
     delta_qty = target - current_qty
 
@@ -1336,7 +1028,6 @@ def order_target_value(
     Returns:
         本次调仓产生的订单 ID; 若无需交易或无法定价则返回 None.
     """
-    _reject_target_orders_in_broker_live(strategy)
     if target_value is None:
         raise ValueError("order_target_value requires 'target_value' (目标持仓价值)")
     symbol = resolve_symbol(strategy, symbol)
@@ -1360,9 +1051,7 @@ def order_target_value(
             )
             return None
 
-    current_qty = 0.0
-    if strategy.ctx:
-        current_qty = float(strategy.ctx.get_position(symbol))
+    current_qty = float(strategy.execution.get_position(symbol))
 
     target_qty = target_value / current_price
     delta_qty = target_qty - current_qty
@@ -1399,12 +1088,11 @@ def order_target_percent(
     Returns:
         本次调仓产生的订单 ID; 若无需交易则返回 None.
     """
-    _reject_target_orders_in_broker_live(strategy)
     if target_percent is None:
         raise ValueError(
             "order_target_percent requires 'target_percent' (目标持仓比例)"
         )
-    portfolio_value = get_portfolio_value(strategy)
+    portfolio_value = strategy.execution.get_portfolio_value()
     target_value = portfolio_value * float(target_percent)
     return order_target_value(strategy, symbol, target_value, price, **kwargs)
 
@@ -1423,10 +1111,7 @@ def order_target_weights(
     Returns:
         本次调仓产生的所有订单 ID 列表 (无交易时为空列表).
     """
-    _reject_target_orders_in_broker_live(strategy)
-    if strategy.ctx is None:
-        raise RuntimeError("Context not ready")
-
+    _require_execution_ready(strategy)
     if rebalance_tolerance < 0:
         raise ValueError("rebalance_tolerance must be >= 0")
 
@@ -1447,20 +1132,20 @@ def order_target_weights(
         )
 
     if liquidate_unmentioned:
-        for symbol, qty in strategy.ctx.positions.items():
+        for symbol, qty in strategy.execution.get_positions().items():
             if float(qty) != 0.0 and symbol not in normalized_weights:
                 normalized_weights[symbol] = 0.0
 
     if not normalized_weights:
         return []
 
-    portfolio_value = get_portfolio_value(strategy)
+    portfolio_value = strategy.execution.get_portfolio_value()
     abs_tolerance_value = abs(float(portfolio_value)) * float(rebalance_tolerance)
     planned: List[Tuple[str, float, float]] = []
 
     for symbol, weight in normalized_weights.items():
         target_value = float(portfolio_value) * float(weight)
-        current_qty = float(strategy.ctx.get_position(symbol))
+        current_qty = float(strategy.execution.get_position(symbol))
 
         current_price = strategy._last_prices.get(symbol, 0.0)
         if current_price == 0.0:
@@ -1519,9 +1204,7 @@ def order_target_positions(
     Returns:
         本次调仓产生的所有订单 ID 列表 (无交易时为空列表).
     """
-    if strategy.ctx is None:
-        raise RuntimeError("Context not ready")
-
+    _require_execution_ready(strategy)
     if rebalance_tolerance < 0:
         raise ValueError("rebalance_tolerance must be >= 0")
     normalized_missing_price_mode = str(missing_price_mode).strip().lower()
@@ -1579,7 +1262,7 @@ def order_target_positions(
             )
 
     if liquidate_unmentioned:
-        for symbol, qty in strategy.ctx.positions.items():
+        for symbol, qty in strategy.execution.get_positions().items():
             if float(qty) != 0.0 and symbol not in normalized_targets:
                 normalized_targets[str(symbol)] = 0.0
 
@@ -1591,7 +1274,7 @@ def order_target_positions(
     increase_legs: List[Tuple[str, float, float]] = []
 
     for symbol, target_qty in normalized_targets.items():
-        current_qty = float(strategy.ctx.get_position(symbol))
+        current_qty = float(strategy.execution.get_position(symbol))
         delta_qty = float(target_qty) - current_qty
         if abs(delta_qty) <= float(rebalance_tolerance):
             continue
@@ -1610,7 +1293,7 @@ def order_target_positions(
             "symbol": symbol,
             "target_quantity": float(target_qty),
             "delta_quantity": float(target_qty)
-            - float(strategy.ctx.get_position(symbol)),
+            - float(strategy.execution.get_position(symbol)),
             "phase": "reduce",
         }
         for symbol, target_qty, _ in reduce_legs
@@ -1620,7 +1303,7 @@ def order_target_positions(
             "symbol": symbol,
             "target_quantity": float(target_qty),
             "delta_quantity": float(target_qty)
-            - float(strategy.ctx.get_position(symbol)),
+            - float(strategy.execution.get_position(symbol)),
             "phase": "increase",
         }
         for symbol, target_qty, _ in increase_legs
@@ -1712,10 +1395,7 @@ def order_target_positions(
 
 def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
     """全仓买入 (Buy All)."""
-    _reject_target_orders_in_broker_live(strategy)
-    if strategy.ctx is None:
-        raise RuntimeError("Context not ready")
-
+    _require_execution_ready(strategy)
     symbol = resolve_symbol(strategy, symbol)
 
     price = 0.0
@@ -1727,7 +1407,7 @@ def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
     if price <= 0:
         return
 
-    cash = strategy.ctx.cash
+    cash = strategy.execution.get_cash()
     quantity = int(cash / price)
 
     if quantity > 0:
@@ -1849,7 +1529,7 @@ def cover(
     symbol = resolve_symbol(strategy, symbol)
 
     if quantity is None:
-        pos = strategy.ctx.get_position(symbol)
+        pos = strategy.execution.get_position(symbol)
         if pos < 0:
             quantity = abs(pos)
         else:
@@ -1873,7 +1553,356 @@ def cover(
 
 
 def get_cash(strategy: Any) -> float:
-    """获取现金."""
+    """获取现金（经执行后端）."""
+    return float(strategy.execution.get_cash())
+
+
+# --- SimExecution 后端原语（Task 1 引入；Task 3/4 让公共函数 delegate 到 execution）---
+def _sim_get_position(strategy: Any, symbol: Optional[str] = None) -> float:
+    if strategy.ctx is None:
+        return 0.0
+    return float(strategy.ctx.get_position(resolve_symbol(strategy, symbol)))
+
+
+def _sim_get_available_position(strategy: Any, symbol: Optional[str] = None) -> float:
+    if strategy.ctx is None:
+        return 0.0
+    return float(strategy.ctx.get_available_position(resolve_symbol(strategy, symbol)))
+
+
+def _sim_get_positions(strategy: Any) -> Dict[str, float]:
+    if strategy.ctx is None:
+        raise RuntimeError("Context not ready")
+    return cast(Dict[str, float], strategy.ctx.positions)
+
+
+def _sim_hold_bar(strategy: Any, symbol: Optional[str] = None) -> int:
+    if strategy.ctx is None:
+        return 0
+    return int(strategy._hold_bars[resolve_symbol(strategy, symbol)])
+
+
+def _sim_get_cash(strategy: Any) -> float:
     if strategy.ctx is None:
         return 0.0
     return float(strategy.ctx.cash)
+
+
+def _sim_get_open_orders(strategy: Any, symbol: Optional[str] = None) -> List[Any]:
+    """获取当前未完成的订单（_sim_ 原语，复制自 get_open_orders，逻辑一字不改）."""
+    if strategy.ctx is None:
+        return []
+
+    canceled_order_ids = {
+        str(order_id)
+        for order_id in getattr(strategy.ctx, "canceled_order_ids", [])
+        if order_id
+    }
+    pending_canceled_ids: Set[str] = getattr(
+        strategy, "_pending_canceled_order_ids", set()
+    )
+    if not isinstance(pending_canceled_ids, set):
+        pending_canceled_ids = set()
+        setattr(strategy, "_pending_canceled_order_ids", pending_canceled_ids)
+    canceled_order_ids.update(
+        str(order_id) for order_id in pending_canceled_ids if order_id
+    )
+
+    orders = [
+        o
+        for o in strategy.ctx.active_orders
+        if getattr(o, "id", "") not in canceled_order_ids
+        if o.status
+        in (OrderStatus.New, OrderStatus.Submitted, OrderStatus.PartiallyFilled)
+    ]
+    if symbol:
+        return [o for o in orders if o.symbol == symbol]
+    return orders
+
+
+def _sim_get_portfolio_value(strategy: Any) -> float:
+    """计算组合总价值（_sim_ 原语，复制自 get_portfolio_value，逻辑一字不改）."""
+    if strategy.ctx is None:
+        return 0.0
+    use_previous_snapshot = bool(
+        getattr(strategy, "_framework_use_previous_account_snapshot", False)
+    )
+    ctx_equity = (
+        getattr(strategy.ctx, "previous_account_equity", None)
+        if use_previous_snapshot
+        else getattr(strategy.ctx, "account_equity", None)
+    )
+    if isinstance(ctx_equity, (int, float)):
+        return float(ctx_equity)
+    engine = getattr(strategy, "_engine", None)
+    get_metrics = getattr(engine, "get_account_metrics", None)
+    if callable(get_metrics):
+        equity, _, _, _, _, _ = get_metrics()
+        return float(equity)
+
+    total_value = float(strategy.ctx.cash)
+    for sym, qty in strategy.ctx.positions.items():
+        if qty == 0:
+            continue
+
+        price = strategy._last_prices.get(sym, 0.0)
+        if price == 0.0:
+            if strategy.current_bar and strategy.current_bar.symbol == sym:
+                price = strategy.current_bar.close
+            elif strategy.current_tick and strategy.current_tick.symbol == sym:
+                price = strategy.current_tick.price
+
+        total_value += float(qty) * price
+    return total_value
+
+
+def _sim_get_account(strategy: Any) -> Dict[str, Any]:
+    """获取账户资金详情快照（_sim_ 原语，复制自 get_account，逻辑一字不改）."""
+    if strategy.ctx is None:
+        raise RuntimeError("Context not ready")
+
+    use_previous_snapshot = bool(
+        getattr(strategy, "_framework_use_previous_account_snapshot", False)
+    )
+    cash_source = (
+        getattr(strategy.ctx, "previous_cash", strategy.ctx.cash)
+        if use_previous_snapshot
+        else strategy.ctx.cash
+    )
+    cash = float(cash_source)
+    prefix = "previous_account_" if use_previous_snapshot else "account_"
+    ctx_market_value = getattr(strategy.ctx, f"{prefix}market_value", None)
+    ctx_notional_value = getattr(strategy.ctx, f"{prefix}notional_value", None)
+    ctx_used_margin = getattr(strategy.ctx, f"{prefix}used_margin", None)
+    ctx_unrealized_pnl = getattr(strategy.ctx, f"{prefix}unrealized_pnl", None)
+    ctx_maintenance_ratio = getattr(strategy.ctx, f"{prefix}maintenance_ratio", None)
+    ctx_equity = getattr(strategy.ctx, f"{prefix}equity", None)
+    engine = getattr(strategy, "_engine", None)
+    get_metrics = getattr(engine, "get_account_metrics", None)
+    notional_value = (
+        float(ctx_notional_value) if ctx_notional_value is not None else 0.0
+    )
+    unrealized_pnl = (
+        float(ctx_unrealized_pnl) if ctx_unrealized_pnl is not None else 0.0
+    )
+    if isinstance(ctx_equity, (int, float)):
+        equity = float(ctx_equity)
+        market_value = (
+            float(ctx_market_value)
+            if isinstance(ctx_market_value, (int, float))
+            else equity - cash
+        )
+        margin = (
+            float(ctx_used_margin) if isinstance(ctx_used_margin, (int, float)) else 0.0
+        )
+        maintenance_ratio = (
+            float(ctx_maintenance_ratio)
+            if isinstance(ctx_maintenance_ratio, (int, float))
+            else 0.0
+        )
+    elif callable(get_metrics):
+        (
+            equity,
+            market_value,
+            notional_value,
+            margin,
+            unrealized_pnl,
+            maintenance_ratio,
+        ) = get_metrics()
+        equity = float(equity)
+        market_value = float(market_value)
+        margin = float(margin)
+        maintenance_ratio = float(maintenance_ratio)
+    else:
+        equity = float(strategy.equity)
+        market_value = float(equity - cash)
+        margin = float(getattr(strategy.ctx, "account_used_margin", 0.0) or 0.0)
+        maintenance_ratio = 0.0
+    previous_details = (
+        getattr(strategy, "_framework_previous_account_details", None)
+        if use_previous_snapshot
+        else None
+    )
+    # frozen_cash / short_market_value are authoritative Rust values on the
+    # StrategyContext. On the previous-snapshot path they are read from the
+    # framework cache (which was populated from those same Rust values one
+    # period earlier); the Python re-implementations were removed.
+    if isinstance(previous_details, dict):
+        frozen_cash = float(previous_details.get("frozen_cash", 0.0))
+        short_market_value = float(previous_details.get("short_market_value", 0.0))
+    else:
+        frozen_cash = float(getattr(strategy.ctx, "account_frozen_cash", 0.0))
+        short_market_value = float(
+            getattr(strategy.ctx, "account_short_market_value", 0.0)
+        )
+    borrowed_cash = float(max(-cash, 0.0))
+    if ctx_equity is None and not callable(get_metrics):
+        denominator = market_value + short_market_value
+        maintenance_ratio = float(equity / denominator) if denominator > 0.0 else 0.0
+    account_mode = "margin" if _is_margin_account(strategy) else "cash"
+    if isinstance(previous_details, dict):
+        accrued_interest = float(previous_details.get("margin_accrued_interest", 0.0))
+        daily_interest = float(previous_details.get("margin_daily_interest", 0.0))
+    else:
+        accrued_interest = float(getattr(strategy.ctx, "margin_accrued_interest", 0.0))
+        daily_interest = float(getattr(strategy.ctx, "margin_daily_interest", 0.0))
+    # 可用保证金 = 总权益 - 已占用保证金.
+    # 与开仓资金校验(拒单信息中的 Available)口径一致.
+    # 期货保证金账户下, cash 仅为现金余额(开仓不扣保证金).
+    # 真正可用于新开仓的是 free_margin.
+    free_margin = equity - margin
+    return {
+        "cash": cash,
+        "equity": equity,
+        "market_value": market_value,
+        "notional_value": float(notional_value),
+        "frozen_cash": frozen_cash,
+        "margin": margin,
+        "used_margin": margin,
+        "free_margin": free_margin,
+        "unrealized_pnl": float(unrealized_pnl),
+        "borrowed_cash": borrowed_cash,
+        "short_market_value": float(short_market_value),
+        "maintenance_ratio": maintenance_ratio,
+        "account_mode": account_mode,
+        "accrued_interest": accrued_interest,
+        "daily_interest": daily_interest,
+    }
+
+
+def _sim_capabilities(strategy: Any) -> Dict[str, Any]:
+    risk_config = getattr(getattr(strategy, "ctx", None), "risk_config", None)
+    account_mode = str(getattr(risk_config, "account_mode", "cash")).strip().lower()
+    supports_short_sell = bool(getattr(risk_config, "enable_short_sell", False))
+    return {
+        "broker_live": False,
+        "client_order_id": False,
+        "order_type": True,
+        "time_in_force_str": False,
+        "position_effect": True,
+        "reduce_only": True,
+        "position_details": False,
+        "account_mode": account_mode,
+        "supports_short_sell": supports_short_sell,
+        "broker_extra_fields": [],
+    }
+
+
+def _sim_cancel_order(strategy: Any, order_id: str) -> None:
+    """取消指定订单（_sim_ 原语，复制自 cancel_order:178-202，逻辑一字不改）."""
+    if strategy.ctx:
+        pending_canceled_ids: Set[str] = getattr(
+            strategy, "_pending_canceled_order_ids", set()
+        )
+        if not isinstance(pending_canceled_ids, set):
+            pending_canceled_ids = set()
+            setattr(strategy, "_pending_canceled_order_ids", pending_canceled_ids)
+        pending_canceled_ids.add(order_id)
+        strategy.ctx.cancel_order(order_id)
+        for order in strategy.ctx.active_orders:
+            if getattr(order, "id", "") != order_id:
+                continue
+            if getattr(order, "status", None) not in (
+                OrderStatus.New,
+                OrderStatus.Submitted,
+                OrderStatus.PartiallyFilled,
+            ):
+                continue
+            try:
+                order.status = OrderStatus.Cancelled
+            except Exception:
+                pass
+            break
+
+
+def _sim_submit_order(
+    strategy: Any,
+    symbol: Optional[str] = None,
+    side: str = "Buy",
+    quantity: Optional[float] = None,
+    price: Optional[float] = None,
+    time_in_force: Optional[TimeInForce | str] = None,
+    trigger_price: Optional[float] = None,
+    tag: Optional[str] = None,
+    client_order_id: Optional[str] = None,
+    order_type: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+    broker_options: Optional[Dict[str, Any]] = None,
+    trail_offset: Optional[float] = None,
+    trail_reference_price: Optional[float] = None,
+    fill_policy: Optional[OrderFillPolicy] = None,
+    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    commission: Optional[OrderCommission] = None,
+    position_effect: Union[PositionEffect, str, None] = None,
+    reduce_only: bool = False,
+    asset_type: str = "stock",
+) -> str:
+    """统一下单接口（_sim_ 原语，复制自 submit_order:755-845，逻辑一字不改）."""
+    capabilities = get_execution_capabilities(strategy)
+    if client_order_id and not bool(capabilities.get("client_order_id", False)):
+        raise RuntimeError("client_order_id is not supported in current execution mode")
+    if extra:
+        raise RuntimeError(
+            "extra broker fields require broker_live mode "
+            "(not available in simulated/backtest execution)"
+        )
+    if normalize_asset_type(asset_type) != "stock":
+        raise RuntimeError(
+            "non-stock asset_type requires broker_live mode "
+            "(not available in simulated/backtest execution)"
+        )
+    order_type_key, order_type_enum = _parse_order_type(order_type)
+    if time_in_force is not None and not isinstance(time_in_force, TimeInForce):
+        raise RuntimeError(
+            "time_in_force string is not supported in current execution mode"
+        )
+    if order_type_key in {"stoptrail", "stoptraillimit"}:
+        if trail_offset is None or trail_offset <= 0:
+            raise RuntimeError("trail_offset must be > 0 for trailing orders")
+    if order_type_key == "stoptraillimit" and price is None:
+        raise RuntimeError("price must be provided for StopTrailLimit order")
+    if order_type_key in {"stoptrail", "stoptraillimit"} and order_type_enum is None:
+        raise RuntimeError("trailing order requires runtime with StopTrail support")
+
+    side_text = side.strip().lower()
+    if side_text == "buy":
+        order_ids = _submit_buy_side_orders(
+            strategy=strategy,
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            time_in_force=time_in_force,
+            trigger_price=trigger_price,
+            tag=tag,
+            order_type=order_type_enum,
+            trail_offset=trail_offset,
+            trail_reference_price=trail_reference_price,
+            fill_policy=fill_policy,
+            slippage=slippage,
+            commission=commission,
+            position_effect=_normalize_position_effect(position_effect, "auto"),
+            reduce_only=reduce_only,
+        )
+        _record_broker_options(strategy, order_ids, broker_options)
+        return _first_order_id(order_ids)
+    if side_text == "sell":
+        order_ids = _submit_sell_side_orders(
+            strategy=strategy,
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            time_in_force=time_in_force,
+            trigger_price=trigger_price,
+            tag=tag,
+            order_type=order_type_enum,
+            trail_offset=trail_offset,
+            trail_reference_price=trail_reference_price,
+            fill_policy=fill_policy,
+            slippage=slippage,
+            commission=commission,
+            position_effect=_normalize_position_effect(position_effect, "auto"),
+            reduce_only=reduce_only,
+        )
+        _record_broker_options(strategy, order_ids, broker_options)
+        return _first_order_id(order_ids)
+    raise ValueError(f"Unsupported side: {side}")

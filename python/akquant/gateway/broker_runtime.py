@@ -103,18 +103,16 @@ class BrokerRuntime:
         )
         self._submitter.install()
 
+        from .broker_execution import BrokerExecution
         from .broker_state_cache import BrokerStateCache
-        from .broker_strategy_api import (
-            install_broker_cancel,
-            install_broker_state_reads,
-        )
 
         # One cache per strategy target; a fill/order push must invalidate all of
         # them (single-field storage would only invalidate the last slot's cache).
         cache = BrokerStateCache(trader_gateway)
         self._broker_state_caches.append(cache)
-        install_broker_state_reads(strategy, cache)
-        install_broker_cancel(strategy, trader_gateway)
+        strategy.execution = BrokerExecution(
+            strategy, trader_gateway, cache, self._submitter
+        )
 
         return self._submitter
 

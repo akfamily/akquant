@@ -183,18 +183,12 @@ class BrokerOrderSubmitter:
         self._warned_ignored_params: set[str] = set()
 
     def install(self) -> None:
-        """Bind broker-live submit_order helpers onto the strategy object."""
-        setattr(self._strategy, "submit_order", self.submit_order)
-        setattr(
-            self._strategy,
-            "can_submit_client_order",
-            self._can_submit_client_order,
-        )
-        setattr(
-            self._strategy,
-            "get_execution_capabilities",
-            self._get_execution_capabilities,
-        )
+        """No-op: install now happens via `strategy.execution = BrokerExecution(...)`.
+
+        Kept for call-site compatibility (`BrokerRuntime.install_submitter` still
+        calls it) and as an extension point should submitter-only setup be
+        needed again without touching the strategy object directly.
+        """
 
     def submit_order(
         self,

@@ -1,4 +1,5 @@
 import pytest
+from akquant.execution.sim import SimExecution
 from akquant.strategy_trading_api import submit_order
 
 
@@ -6,16 +7,8 @@ class _SimStrategy:
     """Strategy stub whose execution mode reports simulated (no broker_live)."""
 
     def __init__(self) -> None:
-        """Inject simulated-mode capabilities on the instance dict.
-
-        ``get_execution_capabilities`` only honors an override found in the
-        instance ``__dict__`` (see strategy_trading_api), so a class method
-        would be ignored; inject it here to truly exercise simulated mode.
-        """
-        self.__dict__["get_execution_capabilities"] = lambda: {
-            "client_order_id": False,
-            "broker_live": False,
-        }
+        """Bind SimExecution, whose capabilities() always report simulated mode."""
+        self.execution = SimExecution(self)
 
 
 def test_sim_rejects_extra_with_clear_message() -> None:

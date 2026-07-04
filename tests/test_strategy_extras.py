@@ -5096,12 +5096,17 @@ def test_strategy_order_target_positions_rejects_when_short_is_disallowed() -> N
     ctx.get_position.return_value = 0.0
     ctx.risk_config = SimpleNamespace(account_mode="margin", enable_short_sell=False)
     strategy.ctx = ctx
-    strategy.__dict__["get_execution_capabilities"] = lambda: {
-        "broker_live": True,
-        "broker_name": "miniqmt",
-        "account_mode": "margin",
-        "supports_short_sell": False,
-    }
+
+    class _CapExecution:
+        def capabilities(self) -> dict:
+            return {
+                "broker_live": True,
+                "broker_name": "miniqmt",
+                "account_mode": "margin",
+                "supports_short_sell": False,
+            }
+
+    strategy.execution = _CapExecution()
 
     with pytest.raises(RuntimeError, match="does not advertise short-sell support"):
         strategy.order_target_positions({"AAA": -10.0}, allow_short=True)
@@ -5164,12 +5169,20 @@ def test_strategy_order_target_positions_can_bypass_strict_short_capability() ->
     ctx.get_position.return_value = 0.0
     ctx.risk_config = SimpleNamespace(account_mode="margin", enable_short_sell=False)
     strategy.ctx = ctx
-    strategy.__dict__["get_execution_capabilities"] = lambda: {
-        "broker_live": True,
-        "broker_name": "unknown",
-        "account_mode": "margin",
-        "supports_short_sell": False,
-    }
+
+    class _CapExecution:
+        def capabilities(self) -> dict:
+            return {
+                "broker_live": True,
+                "broker_name": "unknown",
+                "account_mode": "margin",
+                "supports_short_sell": False,
+            }
+
+        def get_position(self, symbol: str | None = None) -> float:
+            return 0.0
+
+    strategy.execution = _CapExecution()
 
     strategy.order_target_positions(
         {"AAA": -10.0},

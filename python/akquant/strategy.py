@@ -293,6 +293,7 @@ class Strategy:
 
     ctx: Optional[StrategyContext]
     execution_mode: Optional[Any]
+    execution: Any
     sizer: Sizer
     current_bar: Optional[Bar]
     current_tick: Optional[Tick]
@@ -393,6 +394,10 @@ class Strategy:
         instance._is_restored = False
         instance.ctx = None
         instance.execution_mode = None
+
+        from .execution.sim import SimExecution
+
+        instance.execution = SimExecution(instance)
         instance.sizer = FixedSize(100)
         instance.current_bar = None
         instance.current_tick = None
@@ -407,13 +412,18 @@ class Strategy:
         instance._last_position_signs = defaultdict(float)
         instance.timezone = getattr(instance, "timezone", "Asia/Shanghai")
         raw_runtime_config = getattr(instance, "_runtime_config", None)
-        class_enable_hooks = cls.__dict__.get(
-            "enable_precise_day_boundary_hooks", False
-        )
-        class_portfolio_eps = cls.__dict__.get("portfolio_update_eps", 0.0)
-        class_error_mode = cls.__dict__.get("error_mode", "raise")
-        class_re_raise = cls.__dict__.get("re_raise_on_error", True)
-        class_indicator_mode = cls.__dict__.get("indicator_mode", "precompute")
+
+        def _class_attr(name: str, default: Any) -> Any:
+            # 基类 Strategy 自身的 __dict__ 里这些名字是 property（数据描述符）；
+            # 只有子类真正用普通类属性覆盖时才应采用该值，否则退回默认值。
+            value = cls.__dict__.get(name, default)
+            return default if isinstance(value, property) else value
+
+        class_enable_hooks = _class_attr("enable_precise_day_boundary_hooks", False)
+        class_portfolio_eps = _class_attr("portfolio_update_eps", 0.0)
+        class_error_mode = _class_attr("error_mode", "raise")
+        class_re_raise = _class_attr("re_raise_on_error", True)
+        class_indicator_mode = _class_attr("indicator_mode", "precompute")
         if isinstance(raw_runtime_config, dict):
             instance.runtime_config = StrategyRuntimeConfig(**raw_runtime_config)
         elif isinstance(raw_runtime_config, StrategyRuntimeConfig):
@@ -591,6 +601,10 @@ class Strategy:
                 ),
             )
         self.ctx = None
+        if getattr(self, "execution", None) is None:
+            from .execution.sim import SimExecution
+
+            self.execution = SimExecution(self)
         self.current_bar = None
         self.current_tick = None
         self._framework_current_callback = None

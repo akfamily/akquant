@@ -1,5 +1,6 @@
+from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_models import UnifiedOrderSnapshot, UnifiedOrderStatus
-from akquant.gateway.broker_strategy_api import install_broker_cancel
+from akquant.gateway.broker_state_cache import BrokerStateCache
 
 
 class _Gw:
@@ -29,21 +30,23 @@ class _Strategy:
     """Bare strategy target."""
 
 
+def _make_execution(gw: _Gw) -> BrokerExecution:
+    return BrokerExecution(_Strategy(), gw, BrokerStateCache(gw), None)
+
+
 def test_cancel_order_forwards_broker_id() -> None:
     """cancel_order forwards the broker_order_id straight to the gateway."""
     gw = _Gw()
-    strategy = _Strategy()
-    install_broker_cancel(strategy, gw)
-    strategy.cancel_order("9000000001")  # 就是 submit_order 返回的 broker id
+    ex = _make_execution(gw)
+    ex.cancel_order("9000000001")  # 就是 submit_order 返回的 broker id
     assert gw.cancelled == ["9000000001"]
 
 
 def test_cancel_all_orders_cancels_open() -> None:
     """cancel_all_orders cancels every open order's broker_order_id."""
     gw = _Gw()
-    strategy = _Strategy()
-    install_broker_cancel(strategy, gw)
-    strategy.cancel_all_orders()
+    ex = _make_execution(gw)
+    ex.cancel_all_orders()
     assert gw.cancelled == ["9000000001"]
 
 
@@ -69,7 +72,6 @@ def test_cancel_all_orders_symbol_filter() -> None:
             ]
 
     gw = _MultiGw()
-    strategy = _Strategy()
-    install_broker_cancel(strategy, gw)
-    strategy.cancel_all_orders(symbol="000001.SZ")
+    ex = _make_execution(gw)
+    ex.cancel_all_orders(symbol="000001.SZ")
     assert gw.cancelled == ["9000000002"]

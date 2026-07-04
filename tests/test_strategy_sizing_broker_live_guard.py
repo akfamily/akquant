@@ -1,69 +1,183 @@
-"""组合目标类下单(buy_all/order_target*) 在 broker_live 下清晰报错."""
+"""组合目标类下单(buy_all/order_target*) 在 broker_live 下按柜台持仓 sizing 并真下单.
 
-import pytest
+历史上这些函数在 broker_live 下会抛 RuntimeError
+(见 _reject_target_orders_in_broker_live, Task 7 前); 现在它们的持仓/现金/组合价值
+读取全部改走 strategy.execution, 因此在 broker_live 下也能正确按柜台真实状态
+sizing 并下单, 不再需要守卫拒单。
+"""
+
 from akquant import strategy_trading_api as api
 
 
+class _CapExecution:
+    """Fake execution backend：固定 position/cash/portfolio_value + submit 记录."""
+
+    def __init__(
+        self,
+        broker_live: bool = True,
+        position: float = 0.0,
+        cash: float = 0.0,
+        portfolio_value: float = 0.0,
+    ) -> None:
+        """Bind fixed state to report from the execution reads."""
+        self._broker_live = broker_live
+        self._position = position
+        self._cash = cash
+        self._portfolio_value = portfolio_value
+        self.orders: list = []
+
+    def capabilities(self) -> dict:
+        """Report the fixed broker_live flag."""
+        return {"broker_live": self._broker_live, "supports_short_sell": False}
+
+    def get_position(self, symbol=None) -> float:
+        """Return the fixed position regardless of symbol."""
+        return self._position
+
+    def get_positions(self) -> dict:
+        """Return an empty position map (unused by these tests)."""
+        return {}
+
+    def get_cash(self) -> float:
+        """Return the fixed cash balance."""
+        return self._cash
+
+    def get_portfolio_value(self) -> float:
+        """Return the fixed portfolio value."""
+        return self._portfolio_value
+
+    def cancel_all_orders(self, symbol=None) -> None:
+        """No-op: no open orders to cancel in these tests."""
+        return None
+
+    def submit_order(self, **kwargs) -> str:
+        """Record the submitted order and return a fixed order id."""
+        self.orders.append(kwargs)
+        return "OID"
+
+
 class _Strategy:
-    """Strategy stub reporting broker_live capabilities."""
+    """Strategy stub whose submit_order mirrors real Strategy: forwards to execution."""
 
-    def __init__(self, broker_live: bool = True) -> None:
-        """Inject execution capabilities reporting the given broker_live flag."""
-        self.ctx = object()
-        self.__dict__["get_execution_capabilities"] = lambda: {
-            "broker_live": broker_live
-        }
+    def __init__(self, execution: _CapExecution) -> None:
+        """Bind the fake execution backend; ctx stays None like real broker_live."""
+        self.ctx = None
+        self.execution = execution
+        self.current_bar = None
+        self.current_tick = None
+        self.lot_size = 1
+        self._last_prices: dict = {}
 
-
-def test_buy_all_rejected_in_broker_live() -> None:
-    """buy_all raises clearly in broker_live (sizes off sim otherwise)."""
-    with pytest.raises(RuntimeError, match="broker_live|柜台|不支持"):
-        api.buy_all(_Strategy(), symbol="600000.SH")
-
-
-def test_order_target_rejected_in_broker_live() -> None:
-    """order_target raises clearly in broker_live."""
-    with pytest.raises(RuntimeError, match="broker_live|柜台|不支持"):
-        api.order_target(_Strategy(), symbol="600000.SH", target=100)
+    def submit_order(self, **kwargs):
+        """Mirror real Strategy.submit_order: forward unconditionally to execution."""
+        return self.execution.submit_order(**kwargs)
 
 
-def test_order_target_value_rejected_in_broker_live() -> None:
-    """order_target_value raises clearly in broker_live."""
-    with pytest.raises(RuntimeError, match="broker_live|柜台|不支持"):
-        api.order_target_value(_Strategy(), symbol="600000.SH", target_value=1000)
+class _Bar:
+    """Minimal bar stub exposing symbol/close for price resolution."""
+
+    def __init__(self, symbol: str, close: float) -> None:
+        """Bind symbol and close price."""
+        self.symbol = symbol
+        self.close = close
 
 
-def test_order_target_percent_rejected_in_broker_live() -> None:
-    """order_target_percent raises clearly in broker_live."""
-    with pytest.raises(RuntimeError, match="broker_live|柜台|不支持"):
-        api.order_target_percent(_Strategy(), symbol="600000.SH", target_percent=0.5)
+def test_buy_all_sizes_off_execution_in_broker_live() -> None:
+    """buy_all 在 broker_live 下按 execution 现金 sizing 并真下单."""
+    execution = _CapExecution(broker_live=True, cash=1000.0)
+    strategy = _Strategy(execution)
+    strategy.current_bar = _Bar("600000.SH", 10.0)
+
+    api.buy_all(strategy, symbol="600000.SH")
+
+    assert len(execution.orders) == 1
+    assert execution.orders[0]["side"].lower() == "buy"
+    assert execution.orders[0]["quantity"] == 100.0  # 1000 // 10
 
 
-def test_order_target_weights_rejected_in_broker_live() -> None:
-    """order_target_weights raises clearly in broker_live."""
-    with pytest.raises(RuntimeError, match="broker_live|柜台|不支持"):
-        api.order_target_weights(_Strategy(), target_weights={"600000.SH": 0.5})
+def test_order_target_sizes_off_execution_in_broker_live() -> None:
+    """order_target 在 broker_live 下按 execution 持仓算 delta 并真下单."""
+    execution = _CapExecution(broker_live=True, position=300.0)
+    strategy = _Strategy(execution)
+
+    api.order_target(strategy, symbol="600000.SH", target=1000.0, price=10.0)
+
+    assert len(execution.orders) == 1
+    assert execution.orders[0]["side"].lower() == "buy"
+    assert execution.orders[0]["quantity"] == 700.0  # 1000 - 300
+
+
+def test_order_target_value_sizes_off_execution_in_broker_live() -> None:
+    """order_target_value 在 broker_live 下按 execution 持仓算 delta 并真下单."""
+    execution = _CapExecution(broker_live=True, position=100.0)
+    strategy = _Strategy(execution)
+
+    api.order_target_value(
+        strategy, symbol="600000.SH", target_value=2000.0, price=10.0
+    )
+
+    assert len(execution.orders) == 1
+    assert execution.orders[0]["side"].lower() == "buy"
+    assert execution.orders[0]["quantity"] == 100.0  # 2000/10 - 100
+
+
+def test_order_target_percent_sizes_off_execution_in_broker_live() -> None:
+    """order_target_percent 在 broker_live 下按 execution 组合价值 sizing 并真下单."""
+    execution = _CapExecution(broker_live=True, portfolio_value=10000.0)
+    strategy = _Strategy(execution)
+
+    api.order_target_percent(
+        strategy, symbol="600000.SH", target_percent=0.5, price=10.0
+    )
+
+    assert len(execution.orders) == 1
+    assert execution.orders[0]["side"].lower() == "buy"
+    assert execution.orders[0]["quantity"] == 500.0  # 10000*0.5/10
+
+
+def test_order_target_weights_sizes_off_execution_in_broker_live() -> None:
+    """order_target_weights 在 broker_live 下按 execution 组合价值/持仓 sizing."""
+    execution = _CapExecution(broker_live=True, portfolio_value=10000.0)
+    strategy = _Strategy(execution)
+
+    api.order_target_weights(
+        strategy,
+        target_weights={"600000.SH": 0.5},
+        price_map={"600000.SH": 10.0},
+    )
+
+    assert len(execution.orders) == 1
+    assert execution.orders[0]["side"].lower() == "buy"
+    assert execution.orders[0]["quantity"] == 500.0  # 10000*0.5/10
 
 
 def test_buy_all_not_rejected_when_broker_live_false() -> None:
-    """buy_all does not raise the broker_live guard when capability is False."""
-    strategy = _Strategy(broker_live=False)
+    """buy_all 在回测(broker_live=False, ctx 已就绪)下正常运行：无法定价时静默不下单."""
+    execution = _CapExecution(broker_live=False, cash=1000.0)
+    strategy = _Strategy(execution)
+    # ctx 已就绪 (真实回测中 engine 在调用 buy_all 前已绑定 ctx)；
+    # 这里只关心"无法定价 -> 静默跳过"这一分支，不是 ctx 未就绪场景
+    # (那由 test_composed_ctx_not_ready.py 覆盖)。
+    strategy.ctx = object()
     strategy.current_bar = None
     strategy.current_tick = None
-    # Should proceed past the guard; price resolves to 0 -> no-op, no exception.
+
     api.buy_all(strategy, symbol="600000.SH")
+
+    assert execution.orders == []
 
 
 def test_order_target_not_rejected_when_broker_live_absent() -> None:
-    """order_target does not raise the broker_live guard for a plain strategy."""
+    """order_target 对没有 capabilities() 的普通 execution 依然正常工作."""
 
-    class _PlainCtx:
+    class _PlainExecution:
         def get_position(self, symbol: str) -> float:
             return 0.0
 
     class _PlainStrategy:
         def __init__(self) -> None:
-            self.ctx = _PlainCtx()
+            self.ctx = None
+            self.execution = _PlainExecution()
             self.submit_order_calls: list = []
 
         def submit_order(self, **kwargs):
