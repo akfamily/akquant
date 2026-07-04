@@ -998,9 +998,10 @@ def _target_to_orders(
     symbol: Optional[str] = None,
     target_qty: Optional[float] = None,
     price: Optional[float] = None,
+    round_to_lot: bool = True,
     **kwargs: Any,
 ) -> Optional[str]:
-    """目标持仓 → 下单的共享核心：统一按 lot_size 取整 delta，不撤单."""
+    """目标持仓 → 下单的共享核心：按 lot_size 取整 delta（可关闭），不撤单."""
     if target_qty is None:
         raise ValueError("target requires a target quantity (目标持仓数量)")
     symbol = resolve_symbol(strategy, symbol)
@@ -1013,7 +1014,7 @@ def _target_to_orders(
     elif isinstance(strategy.lot_size, dict):
         val = strategy.lot_size.get(symbol, strategy.lot_size.get("DEFAULT", 1))
         current_lot_size = int(val) if val is not None else 1
-    if current_lot_size > 0:
+    if round_to_lot and current_lot_size > 0:
         if delta_qty > 0:
             delta_qty = (delta_qty // current_lot_size) * current_lot_size
         elif delta_qty < 0:
@@ -1402,9 +1403,9 @@ def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
 
 
 def close_position(strategy: Any, symbol: Optional[str] = None) -> None:
-    """平掉当前持仓（delegate 到 order_target(symbol, 0)）."""
+    """平掉当前持仓（全平，含 A 股零股；不按手数取整）."""
     symbol = resolve_symbol(strategy, symbol)
-    order_target(strategy, symbol=symbol, target=0)
+    _target_to_orders(strategy, symbol=symbol, target_qty=0, round_to_lot=False)
 
 
 def short(
