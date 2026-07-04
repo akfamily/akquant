@@ -52,3 +52,12 @@ def test_order_target_value_no_autocancel() -> None:
     api.order_target_value(s, symbol="600000.SH", target_value=1000.0, price=10.0)
     assert s.execution.canceled == 0  # 不再自动撤单
     assert s.execution.orders[0]["quantity"] == 100.0
+
+
+def test_rebalance_positions_rounds_delta_to_lot() -> None:
+    """rebalance_positions 对每个 leg 的 delta 也应按 lot_size 向下取整."""
+    s = _S(pos=0, lot=100)
+    api.rebalance_positions(s, {"600000.SH": 137})
+    # 137 → 向下取整到 100（与 order_target 共用 _target_to_orders 核心）
+    assert s.execution.orders[0]["quantity"] == 100.0
+    assert s.execution.orders[0]["side"].lower() == "buy"

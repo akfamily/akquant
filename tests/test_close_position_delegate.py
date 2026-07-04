@@ -59,3 +59,26 @@ def test_order_target_still_rounds_to_lot() -> None:
     api.order_target(s, symbol="600000.SH", target=137, price=10.0)
     assert s.execution.orders[0]["side"].lower() == "buy"
     assert s.execution.orders[0]["quantity"] == 100.0
+
+
+class _SNoLotSize:
+    """无 lot_size 属性的 strategy-like 对象（模拟精简/自定义 strategy）."""
+
+    def __init__(self, pos):
+        self.execution = _Exec(pos)
+        self.ctx = object()
+        self.current_bar = None
+        self.current_tick = None
+        self._last_prices = {}
+        # 有意不设置 self.lot_size
+
+    def submit_order(self, **kwargs):
+        return self.execution.submit_order(**kwargs)
+
+
+def test_close_position_without_lot_size_attr_does_not_raise() -> None:
+    """close_position 走 round_to_lot=False 分支，不应因缺失 lot_size 属性报错."""
+    s = _SNoLotSize(pos=150)
+    api.close_position(s, symbol="600000.SH")
+    assert s.execution.orders[0]["side"].lower() == "sell"
+    assert s.execution.orders[0]["quantity"] == 150.0

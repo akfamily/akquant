@@ -984,17 +984,19 @@ def _target_to_orders(
     current_qty = float(strategy.execution.get_position(symbol))
     delta_qty = target_qty - current_qty
 
-    current_lot_size = 1
-    if isinstance(strategy.lot_size, int):
-        current_lot_size = int(strategy.lot_size)
-    elif isinstance(strategy.lot_size, dict):
-        val = strategy.lot_size.get(symbol, strategy.lot_size.get("DEFAULT", 1))
-        current_lot_size = int(val) if val is not None else 1
-    if round_to_lot and current_lot_size > 0:
-        if delta_qty > 0:
-            delta_qty = (delta_qty // current_lot_size) * current_lot_size
-        elif delta_qty < 0:
-            delta_qty = -((abs(delta_qty) // current_lot_size) * current_lot_size)
+    if round_to_lot:
+        lot_size = getattr(strategy, "lot_size", 1)
+        current_lot_size = 1
+        if isinstance(lot_size, int):
+            current_lot_size = int(lot_size)
+        elif isinstance(lot_size, dict):
+            val = lot_size.get(symbol, lot_size.get("DEFAULT", 1))
+            current_lot_size = int(val) if val is not None else 1
+        if current_lot_size > 0:
+            if delta_qty > 0:
+                delta_qty = (delta_qty // current_lot_size) * current_lot_size
+            elif delta_qty < 0:
+                delta_qty = -((abs(delta_qty) // current_lot_size) * current_lot_size)
 
     if delta_qty > 0:
         return buy(strategy, symbol, delta_qty, price, **kwargs)
