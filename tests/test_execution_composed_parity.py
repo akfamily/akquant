@@ -1,4 +1,4 @@
-"""order_target 在 Sim 与 Broker 后端下都按后端持仓算 delta 并下单."""
+"""order_target 在 broker_live (execution 支撑) 下按后端持仓算 delta 并下单."""
 
 from akquant import strategy_trading_api as api
 
@@ -34,7 +34,7 @@ class _S:
 
 
 def test_order_target_sizes_off_execution_in_broker_live() -> None:
-    """order_target 在 Sim 与 Broker 后端下都按后端持仓算 delta 并下单."""
+    """order_target 在 broker_live (execution 支撑) 下按后端持仓算 delta 并下单."""
     s = _S(pos=300.0)
     api.order_target(s, symbol="600000.SH", target=1000.0, price=10.0)
     assert len(s.execution.orders) == 1

@@ -152,9 +152,13 @@ def test_order_target_weights_sizes_off_execution_in_broker_live() -> None:
 
 
 def test_buy_all_not_rejected_when_broker_live_false() -> None:
-    """buy_all 在回测(broker_live=False)下正常运行：无法定价时静默不下单."""
+    """buy_all 在回测(broker_live=False, ctx 已就绪)下正常运行：无法定价时静默不下单."""
     execution = _CapExecution(broker_live=False, cash=1000.0)
     strategy = _Strategy(execution)
+    # ctx 已就绪 (真实回测中 engine 在调用 buy_all 前已绑定 ctx)；
+    # 这里只关心"无法定价 -> 静默跳过"这一分支，不是 ctx 未就绪场景
+    # (那由 test_composed_ctx_not_ready.py 覆盖)。
+    strategy.ctx = object()
     strategy.current_bar = None
     strategy.current_tick = None
 

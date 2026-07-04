@@ -629,6 +629,20 @@ def get_execution_capabilities(strategy: Any) -> Dict[str, Any]:
     return _sim_capabilities(strategy)
 
 
+def _require_execution_ready(strategy: Any) -> None:
+    """Fail fast when neither a backtest ctx nor a live broker backend is ready.
+
+    broker_live binds a ready BrokerExecution while ctx stays None, so only
+    raise when ctx is None AND the backend is not broker_live-capable — this
+    preserves the old "Context not ready" fail-fast for backtest strategies
+    that call sizing helpers before the engine binds ctx (e.g. in __init__).
+    """
+    if getattr(strategy, "ctx", None) is None and not get_execution_capabilities(
+        strategy
+    ).get("broker_live"):
+        raise RuntimeError("Context not ready")
+
+
 def _normalize_position_effect(
     position_effect: Union[PositionEffect, str, None], default: str = "auto"
 ) -> str:
@@ -1264,6 +1278,7 @@ def order_target_weights(
     Returns:
         本次调仓产生的所有订单 ID 列表 (无交易时为空列表).
     """
+    _require_execution_ready(strategy)
     if rebalance_tolerance < 0:
         raise ValueError("rebalance_tolerance must be >= 0")
 
@@ -1356,6 +1371,7 @@ def order_target_positions(
     Returns:
         本次调仓产生的所有订单 ID 列表 (无交易时为空列表).
     """
+    _require_execution_ready(strategy)
     if rebalance_tolerance < 0:
         raise ValueError("rebalance_tolerance must be >= 0")
     normalized_missing_price_mode = str(missing_price_mode).strip().lower()
@@ -1546,6 +1562,7 @@ def order_target_positions(
 
 def buy_all(strategy: Any, symbol: Optional[str] = None) -> None:
     """全仓买入 (Buy All)."""
+    _require_execution_ready(strategy)
     symbol = resolve_symbol(strategy, symbol)
 
     price = 0.0
