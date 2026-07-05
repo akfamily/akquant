@@ -124,9 +124,6 @@ from .strategy_trading_api import (
     get_open_orders as _get_open_orders_impl,
 )
 from .strategy_trading_api import (
-    get_order as _get_order_impl,
-)
-from .strategy_trading_api import (
     get_portfolio_value as _get_portfolio_value_impl,
 )
 from .strategy_trading_api import (
@@ -1722,7 +1719,9 @@ class Strategy:
         Returns:
             Order: 订单对象，如果未找到则返回 None
         """
-        return _get_order_impl(self, order_id)
+        # 经执行后端(与 get_position/get_account 一致): 回测 SimExecution→ctx/
+        # _known_orders, broker_live BrokerExecution→柜台挂单扫描(否则恒 None)。
+        return self.execution.get_order(order_id)
 
     def get_account(self) -> Dict[str, Any]:
         """
