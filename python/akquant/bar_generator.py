@@ -44,7 +44,14 @@ class BarGenerator:
         self._freq = f"{window}{_INTERVAL_FREQ[interval]}"
         self._tz = timezone
         self._session_windows = session_windows
-        # symbol -> {"label_ns","open","high","low","close","volume"}
+        self._parsed_sessions = [
+            (
+                pd.Timestamp(f"2000-01-01 {s}").time(),
+                pd.Timestamp(f"2000-01-01 {e}").time(),
+            )
+            for (s, e) in (session_windows or [])
+        ]
+        # symbol -> {"label_ns","skey","open","high","low","close","volume"}
         self._states: dict[str, dict[str, Any]] = {}
 
     def _bucket_label_ns(self, ts_ns: int) -> int:
@@ -57,17 +64,33 @@ class BarGenerator:
             label = label.tz_convert("UTC")
         return int(label.value)
 
+    def _session_key(self, ts_ns: int) -> Any:
+        """返回 bar 所属 (本地日, session 序号); 无 session_windows 返回 None."""
+        if not self._session_windows:
+            return None
+        ts = pd.Timestamp(ts_ns, unit="ns")
+        if self._tz is not None:
+            ts = ts.tz_localize("UTC").tz_convert(self._tz)
+        t = ts.time()
+        for idx, (start, end) in enumerate(self._parsed_sessions):
+            if start <= t <= end:
+                return (ts.date(), idx)
+        return (ts.date(), -1)  # 段外(集合竞价等), 单独归一段
+
     def update_bar(self, bar: Bar) -> None:
-        """喂入一根 bar; 跨桶时闭合并回调上一窗口。假设时间戳非递减."""
+        """喂入一根 bar; 跨桶或跨 session 时闭合并回调上一窗口。假设时间戳非递减."""
         symbol = bar.symbol
-        label_ns = self._bucket_label_ns(int(bar.timestamp))
+        ts_ns = int(bar.timestamp)
+        label_ns = self._bucket_label_ns(ts_ns)
+        skey = self._session_key(ts_ns)
         st = self._states.get(symbol)
-        if st is not None and label_ns != st["label_ns"]:
+        if st is not None and (label_ns != st["label_ns"] or skey != st["skey"]):
             self._emit(symbol, st)
             st = None
         if st is None:
             self._states[symbol] = {
                 "label_ns": label_ns,
+                "skey": skey,
                 "open": bar.open,
                 "high": bar.high,
                 "low": bar.low,

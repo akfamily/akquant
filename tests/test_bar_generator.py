@@ -181,3 +181,105 @@ def test_invalid_params() -> None:
         BarGenerator(lambda b: None, window=0)
     with pytest.raises(ValueError):
         BarGenerator(lambda b: None, interval="weekly")
+
+
+def test_session_windows_no_cross_lunch() -> None:
+    """配 session: 11:30 前最后一窗段末闭合, 13:00 起新窗; 不并入同一 5min 桶.
+
+    afternoon 段起点用 13:01/13:02(非 13:00 整点), 理由同 test_close_timing_and_flush
+    等的 09:31 起点注释: 09:30/13:00 恰落在 5min 时钟网格边界上, ceil(freq) 下边界点
+    自成单独一桶(见 Task 1 report Deviation 1), 若从 13:00 整点起会在 13:00/13:01 间
+    产生一次与 session 无关的额外网格切分, 使 got 变 3 根(300/100/100)而非 2 根
+    (300/200), 与本用例断言不符。故此处如其余用例一样避开整点。
+    """
+    # 11:28,11:29,11:30(上午段末) + 13:01,13:02(下午段首, 避开 13:00 整点网格边界)
+    ts = [
+        "2024-01-02 11:28:00",
+        "2024-01-02 11:29:00",
+        "2024-01-02 11:30:00",
+        "2024-01-02 13:01:00",
+        "2024-01-02 13:02:00",
+    ]
+    bars = []
+    for i, t in enumerate(ts):
+        base = 10.0 + i
+        bars.append(Bar(int(pd.Timestamp(t).value), base, base, base, base, 100.0, "X"))
+    got = []
+    bg = BarGenerator(
+        lambda b: got.append(b),
+        window=5,
+        interval="minute",
+        session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
+    )
+    for b in bars:
+        bg.update_bar(b)
+    bg.flush()
+    # 上午段(11:26-11:30]窗 与 下午段窗 各自独立, 不合并
+    assert len(got) == 2
+    # 第一根窗口的成交量只含上午段的 3 根
+    assert got[0].volume == 300.0
+    assert got[1].volume == 200.0
+
+
+def test_no_session_windows_merges_across_gap() -> None:
+    """不配 session: 纯时钟对齐(对照组, 与上一个测试区分行为).
+
+    起点用 13:01(非 13:00 整点), 理由同上: 13:00 恰落在 5min 网格边界上会自成一桶,
+    使 3 根合并变 2 根(100/200), 与"同一 5min 桶归并"的本意不符。
+    """
+    # 同一 5min 时钟桶归并规则下 3 根应归并为 1 窗(仅验证不配 session 时不额外切分)
+    ts = ["2024-01-02 13:01:00", "2024-01-02 13:02:00", "2024-01-02 13:03:00"]
+    bars = [
+        Bar(int(pd.Timestamp(t).value), 10.0, 10.0, 10.0, 10.0, 100.0, "X") for t in ts
+    ]
+    got = []
+    bg = BarGenerator(lambda b: got.append(b), window=5, interval="minute")
+    for b in bars:
+        bg.update_bar(b)
+    bg.flush()
+    assert len(got) == 1  # 13:01-13:03 同一 (13:00,13:05] 桶
+
+
+def test_session_boundary_inside_clock_bucket_discriminates() -> None:
+    """判别性测试: session 边界落在同一时钟桶内 → 无 session 会合并, 有 session 才切分.
+
+    window=10min, 五根 10:01..10:05 全部 ceil 到同一 (10:00,10:10] 桶:
+    - 不配 session: 合并成 1 窗(vol 500)。
+    - 配 session 段界 10:03/10:04: 上午段(10:01-10:03)与下午段(10:04-10:05)切开
+      → 2 窗(vol 300 / 200)。二者标签同为 10:10 但 session_key 不同, 靠段变闭合。
+    这个用例在 session 逻辑缺失时会失败(得 1 窗), 故真正覆盖该特性。
+    """
+    ts = [
+        "2024-01-02 10:01:00",
+        "2024-01-02 10:02:00",
+        "2024-01-02 10:03:00",
+        "2024-01-02 10:04:00",
+        "2024-01-02 10:05:00",
+    ]
+    bars = [
+        Bar(int(pd.Timestamp(t).value), 10.0, 10.0, 10.0, 10.0, 100.0, "X") for t in ts
+    ]
+
+    # 对照: 不配 session → 同一 10min 桶合并为 1 窗
+    plain: list = []
+    bg_plain = BarGenerator(lambda b: plain.append(b), window=10, interval="minute")
+    for b in bars:
+        bg_plain.update_bar(b)
+    bg_plain.flush()
+    assert len(plain) == 1
+    assert plain[0].volume == 500.0
+
+    # 配 session: 段界落在桶内 → 切成 2 窗
+    got: list = []
+    bg = BarGenerator(
+        lambda b: got.append(b),
+        window=10,
+        interval="minute",
+        session_windows=[("10:00", "10:03"), ("10:04", "10:10")],
+    )
+    for b in bars:
+        bg.update_bar(b)
+    bg.flush()
+    assert len(got) == 2
+    assert got[0].volume == 300.0  # 上午段 10:01-10:03
+    assert got[1].volume == 200.0  # 下午段 10:04-10:05
