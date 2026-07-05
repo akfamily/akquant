@@ -198,12 +198,18 @@ trader.place_order(
   `cancel_order(本地 id)` 可撤（本地 id 形如 `LSTOP-N`，先查本地簿再回退柜台撤单）。
 - **无 `on_stop_order` 回调**：与回测行为一致，本地簿本身不触发策略回调；触发后
   提交的底层单走正常下单/成交回报路径，成交经 `on_trade` 正常回调。
-- **id 不做重映射**：触发后提交给柜台的底层单使用柜台返回的订单号，与触发前的
-  本地 `LSTOP-N` 是两个不同 id（本地 id 触发后即从止损簿移除，不再可查）；
-  本地 id → 柜台 id 的事件连续性重映射属于后续路线图。
+- **id 连续性**：本地止损触发后向柜台提交底层单，后续 `on_order`/`on_trade` 仍用
+  策略持有的本地 id（`LSTOP-n`）——`BrokerExecution` 记 `broker_order_id → 本地 id`，
+  `LiveRunner` 适配事件时覆盖 `id`/`order_id`（`broker_order_id`/`client_order_id`
+  字段仍保留柜台真实值），策略代码不必感知底层单号的切换。
+- **触发提交失败重试**：触发后底层单提交若失败（柜台未就绪/被拒），该止损单
+  重新入簿、下一 tick/bar 重试（上限 3 次），每次经 `on_error(exc, "stop_trigger",
+  order)` 上报；超限放弃。单次提交失败不会中断整个实盘 run。
 
 参见 `tests/test_local_stop_scenario.py`（端到端：提交 stop → 经
-`strategy_events._drive_local_stops` 喂价 → 触发提交底层单）。
+`strategy_events._drive_local_stops` 喂价 → 触发提交底层单）与
+`tests/test_stop_id_remap_scenario.py`（端到端：触发止损 → 记 remap →
+底层单成交推送经 `map_trade(local_id=...)` 还原为本地 `LSTOP-n`）。
 
 ## 范围与后续
 
