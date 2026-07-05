@@ -46,15 +46,40 @@ def test_tick_mode_uses_last_when_no_high_low() -> None:
 
 
 def test_trailing_sell_tracks_high_and_triggers_on_pullback() -> None:
-    """跟踪止损(卖)应随 high 上移 trigger, 并在回落触及时触发."""
+    """跟踪止损(卖)应随 high 上移 trigger, 并在同一 bar 内回落触及时触发.
+
+    对齐 Rust common.rs: 同一 bar 先用本 bar high/low 棘轮 trigger, 再用刚
+    更新出的 trigger 判触发, 因此允许"本 bar 棘轮、本 bar 触发".
+    """
     b = _book_with(
         LocalStopOrder("L4", "X", "Sell", 100, "stoptrail", trail_offset=1.0)
     )
-    b.check("X", last=100.0, high=100.0, low=99.5)  # ref=100, trigger=99
-    b.check("X", last=105.0, high=105.0, low=104.0)  # ref=105, trigger=104
-    assert b.open_orders() and b.open_orders()[0].trigger_price == 104.0
-    fired = b.check("X", last=103.5, high=104.5, low=103.5)  # low 103.5 <= 104 → fire
-    assert [o.local_id for o in fired] == ["L4"]
+    fired1 = b.check("X", last=100.0, high=100.0, low=99.5)  # ref=100,trigger=99
+    assert fired1 == []
+    assert b.open_orders()[0].trigger_price == 99.0
+    # bar2: ratchet ref=max(100,105)=105 → trigger=104; low=104<=104 → 同 bar 触发
+    fired2 = b.check("X", last=105.0, high=105.0, low=104.0)
+    assert [o.local_id for o in fired2] == ["L4"]
+    assert b.open_orders() == []
+
+
+def test_trailing_sell_ratchets_without_firing_then_fires_later_bar() -> None:
+    """跟踪止损(卖)棘轮但当 bar 未触及时不触发, 待后续 bar 回落触发."""
+    b = _book_with(
+        LocalStopOrder("L5", "X", "Sell", 100, "stoptrail", trail_offset=1.0)
+    )
+    fired1 = b.check("X", last=100.0, high=100.0, low=99.5)  # ref=100,trigger=99
+    assert fired1 == []
+    assert b.open_orders()[0].trigger_price == 99.0
+    # bar2: ratchet ref=max(100,105)=105 → trigger=104; low=104.5>104 → 不触发
+    fired2 = b.check("X", last=104.5, high=105.0, low=104.5)
+    assert fired2 == []
+    assert b.open_orders()[0].trigger_price == 104.0
+    # bar3: ratchet ref=max(105,104.6)=105(未刷新) → trigger 仍 104;
+    # low=103.5<=104 → 触发
+    fired3 = b.check("X", last=104.0, high=104.6, low=103.5)
+    assert [o.local_id for o in fired3] == ["L5"]
+    assert b.open_orders() == []
 
 
 def test_cancel_and_symbol_isolation() -> None:

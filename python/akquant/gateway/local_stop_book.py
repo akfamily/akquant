@@ -86,14 +86,16 @@ class LocalStopBook:
         for order in list(self._orders.values()):
             if order.symbol != symbol:
                 continue
+            # 对齐 Rust common.rs: 同一 bar 内先用本 bar high/low 棘轮更新
+            # trailing trigger, 再用刚更新出的 trigger 判触发(同 bar 语义,
+            # 允许本 bar 触发). 非 trailing 单 _update_trailing 为空操作.
+            self._update_trailing(order, last, high, low)
             if order.trigger_price is not None and self._is_triggered(
                 order.side, order.trigger_price, last, high, low
             ):
                 self._orders.pop(order.local_id, None)
                 order.status = "Triggered"
                 triggered.append(order)
-                continue
-            self._update_trailing(order, last, high, low)
         return triggered
 
     @staticmethod
