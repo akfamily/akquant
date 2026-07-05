@@ -145,12 +145,15 @@ def _to_tif(value: Any) -> Optional[Any]:
 
 
 def map_order_snapshot(
-    snapshot: Any, request: Any = None, owner_strategy_id: Optional[str] = None
+    snapshot: Any,
+    request: Any = None,
+    owner_strategy_id: Optional[str] = None,
+    local_id: Optional[str] = None,
 ) -> StrategyOrder:
     """把 UnifiedOrderSnapshot 映射成与回测 Order 同形状的 StrategyOrder."""
     broker_order_id = str(_get(snapshot, "broker_order_id", "") or "")
     return StrategyOrder(
-        id=broker_order_id,
+        id=local_id or broker_order_id,
         symbol=str(_get(snapshot, "symbol", "") or ""),
         status=_to_status(_get(snapshot, "status")),
         filled_quantity=float(_get(snapshot, "filled_quantity", 0.0) or 0.0),
@@ -187,12 +190,15 @@ def map_order_snapshot(
 
 
 def map_trade(
-    trade: Any, request: Any = None, owner_strategy_id: Optional[str] = None
+    trade: Any,
+    request: Any = None,
+    owner_strategy_id: Optional[str] = None,
+    local_id: Optional[str] = None,
 ) -> StrategyTrade:
     """把 UnifiedTrade 映射成与回测 Trade 同形状的 StrategyTrade."""
     return StrategyTrade(
         id=str(_get(trade, "trade_id", "") or ""),
-        order_id=str(_get(trade, "broker_order_id", "") or ""),
+        order_id=local_id or str(_get(trade, "broker_order_id", "") or ""),
         symbol=str(_get(trade, "symbol", "") or ""),
         side=_to_side(_get(trade, "side")) or OrderSide.Buy,
         timestamp=int(_get(trade, "timestamp_ns", 0) or 0),
