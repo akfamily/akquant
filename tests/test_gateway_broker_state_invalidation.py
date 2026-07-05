@@ -37,7 +37,12 @@ def test_trade_applies_signed_fill_and_invalidates_others_not_total() -> None:
     """Trade 事件叠总持仓 delta, 失效可用/资金/委托, 不全量失效."""
     cache, calls = _Cache(), []
     wrapped = _wrap(cache, calls)
-    payload = {"symbol": "600000.SH", "side": "Buy", "quantity": 100.0}
+    payload = {
+        "trade_id": "t1",
+        "symbol": "600000.SH",
+        "side": "Buy",
+        "quantity": 100.0,
+    }
     wrapped("trade", payload)
     assert calls == [("trade", payload)]
     assert cache.fills == [("600000.SH", 100.0)]  # Buy -> +
@@ -51,9 +56,39 @@ def test_trade_sell_is_negative_delta() -> None:
     """Sell 成交对应负 delta."""
     cache = _Cache()
     wrap_state_invalidation(lambda n, p: None, lambda: [cache])(
-        "trade", {"symbol": "X", "side": "Sell", "quantity": 30.0}
+        "trade", {"trade_id": "t2", "symbol": "X", "side": "Sell", "quantity": 30.0}
     )
     assert cache.fills == [("X", -30.0)]
+
+
+def test_duplicate_trade_id_applied_once() -> None:
+    """同一 trade_id 重放(恢复循环重放当日成交)只叠一次 delta, 防漂移."""
+    cache = _Cache()
+    wrapped = wrap_state_invalidation(lambda n, p: None, lambda: [cache])
+    payload = {"trade_id": "dup", "symbol": "X", "side": "Buy", "quantity": 50.0}
+    wrapped("trade", payload)
+    wrapped("trade", dict(payload))  # 重放同一 trade_id
+    wrapped("trade", dict(payload))
+    assert cache.fills == [("X", 50.0)]  # 仅一次
+
+
+def test_trade_without_id_falls_back_to_invalidate() -> None:
+    """无 trade_id 无法去重 → 退回幂等 invalidate(重查), 不叠 delta."""
+    cache = _Cache()
+    wrap_state_invalidation(lambda n, p: None, lambda: [cache])(
+        "trade", {"symbol": "X", "side": "Buy", "quantity": 10.0}
+    )
+    assert cache.fills == []  # 不叠 delta
+    assert cache.inv_all == 1  # 退回全量失效重查
+
+
+def test_unrecognized_side_is_zero_delta() -> None:
+    """方向无法识别 → 0 delta(不臆测为卖出)."""
+    cache = _Cache()
+    wrap_state_invalidation(lambda n, p: None, lambda: [cache])(
+        "trade", {"trade_id": "t3", "symbol": "X", "side": "???", "quantity": 10.0}
+    )
+    assert cache.fills == [("X", 0.0)]
 
 
 def test_order_invalidates_open_orders_and_account_not_positions() -> None:
@@ -78,7 +113,7 @@ def test_all_caches_get_fill_on_trade() -> None:
     """多 slot broker_live: 每个 target 缓存都叠同一笔成交 delta."""
     caches = [_Cache(), _Cache(), _Cache()]
     wrap_state_invalidation(lambda n, p: None, lambda: caches)(
-        "trade", {"symbol": "X", "side": "Buy", "quantity": 10.0}
+        "trade", {"trade_id": "t4", "symbol": "X", "side": "Buy", "quantity": 10.0}
     )
     assert all(c.fills == [("X", 10.0)] for c in caches)
 

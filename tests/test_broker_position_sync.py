@@ -87,9 +87,27 @@ def test_trade_event_through_wrap_keeps_get_position_synchronous() -> None:
     c = BrokerStateCache(gw)
     assert c.positions()["X"] == 1000.0  # seed, query #1
     wrapped = wrap_state_invalidation(lambda n, p: None, lambda: [c])
-    wrapped("trade", {"symbol": "X", "side": "Buy", "quantity": 100.0})
+    wrapped(
+        "trade", {"trade_id": "t1", "symbol": "X", "side": "Buy", "quantity": 100.0}
+    )
     assert c.positions()["X"] == 1100.0  # 同步 +100
     assert gw.pos_calls == 1  # 总持仓未重查
     # 可用被失效 -> 下次读会重查
     gw.rows = _rows(1000.0, 700.0)
     assert c.available_positions()["X"] == 700.0
+
+
+def test_recovery_replay_of_same_trade_does_not_drift_position() -> None:
+    """恢复循环重放同一 trade_id: 经 wrap 去重, 总持仓不漂移(仅叠一次)."""
+    from akquant.gateway.broker_strategy_api import wrap_state_invalidation
+
+    gw = _Gw(_rows(1000.0))
+    c = BrokerStateCache(gw)
+    assert c.positions()["X"] == 1000.0  # seed
+    wrapped = wrap_state_invalidation(lambda n, p: None, lambda: [c])
+    fill = {"trade_id": "F1", "symbol": "X", "side": "Buy", "quantity": 100.0}
+    wrapped("trade", fill)  # 实盘推送
+    wrapped("trade", dict(fill))  # 恢复重放同一笔
+    wrapped("trade", dict(fill))  # 再一周期重放
+    assert c.positions()["X"] == 1100.0  # 只叠一次, 不是 1300
+    assert gw.pos_calls == 1
