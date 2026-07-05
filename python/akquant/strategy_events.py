@@ -44,6 +44,20 @@ def _flush_indicator_snapshots(strategy: Any) -> None:
         recorder.flush_stream_snapshot()
 
 
+def _drive_local_stops(
+    strategy: Any,
+    symbol: str,
+    last: float,
+    high: float | None = None,
+    low: float | None = None,
+) -> None:
+    """broker_live: 每 bar/tick 盯价触发本地止损(回测无该方法则跳过)."""
+    execution = getattr(strategy, "execution", None)
+    check = getattr(execution, "check_stop_triggers", None)
+    if callable(check):
+        check(symbol, last, high=high, low=low)
+
+
 def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     """引擎调用的 Bar 回调 (Internal)."""
     ensure_framework_state(strategy)
@@ -88,6 +102,7 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
         mark_portfolio_dirty(strategy)
     dispatch_time_hooks(strategy)
     strategy.current_bar = bar
+    _drive_local_stops(strategy, bar.symbol, bar.close, high=bar.high, low=bar.low)
     if hasattr(strategy, "_update_incremental_indicators"):
         strategy._update_incremental_indicators(bar)
     strategy._last_prices[bar.symbol] = bar.close
@@ -151,6 +166,7 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
         mark_portfolio_dirty(strategy)
     dispatch_time_hooks(strategy)
     strategy.current_tick = tick
+    _drive_local_stops(strategy, tick.symbol, tick.price)
     strategy._last_prices[tick.symbol] = tick.price
     dispatch_portfolio_update(strategy)
     call_user_callback(strategy, "on_tick", tick, payload=tick)
