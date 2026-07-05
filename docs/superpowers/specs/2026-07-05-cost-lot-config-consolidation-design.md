@@ -26,9 +26,11 @@
 
 ## 决策（用户已定）
 
-- **统一**：费率 5 项 + `lot_size` 全部同一机制处理（只读 property + 报错 setter），不再拆分对待。
-- **写入即报错**（raise-on-write，非 warn-then-ignore）：把静默陷阱变成响亮、可教学的失败。个人/早期项目，干净硬改优于弃用周期。
-- **`commission_rate` 与 `commission_policy` 都保留**：前者是 percent 的习惯标量捷径（符合主流框架），后者是承载 fixed/per_unit 的超集（期货按手必需、Rust 已接）。不做 zipline 式模型对象改造——保持 `{"type","value"}` dict 与现有 `slippage`/`fill_policy` 一致。仅消除"实例两份可写副本"：**单一内部真源为归一后的 policy**，`commission_rate` 降为其只读派生视图（仍是合法配置入口）。
+- **统一的是内部存储（单一真源 `self._cost_config`）**，不是写策略。用法数据显示：全代码里**唯一被写的成本项是 `lot_size`**（7 处，含教材 ch09），且**写了就生效**（引擎注入有 `None` 守卫保留用户值）；**费率 5 项从无人写**、且被引擎无条件覆盖——纯 footgun。故按真实用法分设 setter：
+  - **费率 5 项**（`commission_rate`/`commission_policy`/`min_commission`/`stamp_tax_rate`/`transfer_fee_rate`）：**只读 property + 写入报错**（raise-on-write，非 warn-then-ignore），指向 `run_backtest(...)`/config。
+  - **`lot_size`**：**保持可写**——setter 写入 `_cost_config`（照旧在策略 `__init__` 里 `self.lot_size=1000` 生效，也可 `run_backtest(lot_size=)`）。文档化、通用、当前有效的写法零破坏。
+- 二者共用同一内部 `_cost_config`（统一真源，消除"实例上两份可写副本会打架"），差异只在 setter：footgun 项报错、合法项放行。
+- **`commission_rate` 与 `commission_policy` 都保留**：前者是 percent 的习惯标量捷径（符合主流框架），后者是承载 fixed/per_unit 的超集（期货按手必需、Rust 已接）。不做 zipline 式模型对象改造——保持 `{"type","value"}` dict 与现有 `slippage`/`fill_policy` 一致。**单一内部真源为归一后的 policy**，`commission_rate` 降为其只读派生视图（仍是合法配置入口）。
 
 ## 方案架构
 
@@ -50,18 +52,20 @@ instance._cost_config = {
 
 `commission_rate`(标量) **不再在实例上独立存储**（消除"两份可写副本"），改为从 `commission_policy` 派生的只读视图（`type=="percent"` 时取 `value`，否则 0.0，与旧引擎注入的数值一致）。它作为**配置输入**仍保留：`run_backtest(commission_rate=0.0003)` 照旧被引擎归一成 percent policy（现状不动，见非目标）。
 
-### 2. 六个只读 `@property` + 报错 setter
+### 2. 六个 `@property`（费率只读，lot_size 可写）
 
-在 `Strategy` 上定义（与 v2 的 `cash`/`equity`/`positions` 属性同一 idiom）：
+在 `Strategy` 上定义（与 v2 的 `cash`/`equity`/`positions` 属性同一 idiom），全部 getter 读 `self._cost_config`：
 
-- getter：读 `self._cost_config`（`commission_rate` 从 policy 派生）。
+**费率 5 项 —— 只读 + 报错 setter：**
+- getter：读 `self._cost_config`（`commission_rate` 从 `commission_policy` 派生）。
 - setter：`raise AttributeError(<指向 run_backtest/BacktestConfig 的引导信息>)`。
 
-引导信息示例（费率）：
+引导信息示例：
 > `commission_policy 是回测配置项，请用 run_backtest(commission_policy={"type":"percent","value":0.0003}) 或 BacktestConfig 设置，不要写 self.commission_policy。`
 
-引导信息示例（lot_size）：
-> `lot_size 是回测配置项，请用 run_backtest(lot_size=100)（A股）或 InstrumentConfig(lot_size=) 按标的设置，不要写 self.lot_size。`
+**`lot_size` —— 可写 property：**
+- getter：读 `self._cost_config["lot_size"]`。
+- setter：写 `self._cost_config["lot_size"] = value`（接受 int 或 `Dict[str, int]`；照旧支持策略 `__init__` 里赋值）。
 
 ### 3. 引擎注入改私有入口
 
@@ -89,21 +93,18 @@ strategy._inject_cost_config(
 
 ## 破坏性与迁移
 
-**破坏面**：任何 `self.commission_rate=`/`self.commission_policy=`/`self.min_commission=`/`self.stamp_tax_rate=`/`self.transfer_fee_rate=`/`self.lot_size=` 写入 → 现抛 `AttributeError`。
+**破坏面（对本仓库近乎为零）**：
+- **费率 5 项写入 → 现抛 `AttributeError`**。但全仓库**无任何 `self.commission_*`/`stamp_tax_rate=`/`transfer_fee_rate=`/`min_commission=` 写点**（已核）→ 零迁移。仅对外部用户曾经写费率属性的代码构成破坏（这正是要堵的 footgun）。
+- **`lot_size` 写入 → 照旧生效**（setter 写 `_cost_config`）。已知 7 处 `self.lot_size=` 写点（`examples/textbook/ch09_funds.py`、`tests/test_close_position_delegate.py`/`test_composed_ctx_not_ready.py`/`test_execution_composed_parity.py`/`test_strategy_sizing_broker_live_guard.py`(×2)/`test_target_orders_core.py`）**全部无需改动**。
 
-**迁移**：改为 `run_backtest(...)` 顶层参数或 `BacktestConfig`/`InstrumentConfig`。已知 ~9 处写点（examples/tests/docs）：
-- `examples/textbook/ch09_funds.py`
-- `tests/test_close_position_delegate.py`、`test_composed_ctx_not_ready.py`、`test_execution_composed_parity.py`、`test_strategy_sizing_broker_live_guard.py`、`test_target_orders_core.py`
-- 其中直接用 `Strategy.__new__(Strategy)` 后设裸属性的测试（含我方 P4b 系列不设这些，但成本相关测试会）→ 迁移为设 `_cost_config` 或经正规 config。
-- docs 中的 plan 文件不需运行，按需更新示例文字。
-
-**教材同步**（CLAUDE.md 约定）：若改到教材配套示例，需更新 `docs/zh/textbook/index.md` 的示例映射表与对应章「本章实践入口/快速运行」。
+**教材同步**（CLAUDE.md 约定）：本次不改教材示例逻辑（`ch09` 的 `self.lot_size=1000` 保持有效），故无需动 `docs/zh/textbook/index.md`。若最终仍触及教材配套示例，再按约定同步映射表与「本章实践入口/快速运行」。
 
 ## 测试策略
 
-- **property 只读**：读 6 项返回注入值；写任一 → `AttributeError`，信息含 `run_backtest`/config 指引。
+- **费率只读**：读 5 项返回注入值；写任一 → `AttributeError`，信息含 `run_backtest`/config 指引。
+- **lot_size 可写**：`s.lot_size = 1000` 后 `s.lot_size == 1000` 且 `s._cost_config["lot_size"] == 1000`；支持 `Dict[str,int]`。
 - **commission_rate 派生**：设 `commission_policy={"percent",0.0003}` 经注入 → `commission_rate==0.0003`；非 percent → 0.0。
-- **引擎注入生效**：跑一个带 `commission_policy`/`lot_size` 的 `run_backtest`，断言策略读到的值 == 传入值；`lot_size=None` 时保留默认。
+- **引擎注入生效**：跑一个带 `commission_policy`/`lot_size` 的 `run_backtest`，断言策略读到的值 == 传入值；`lot_size=None` 时保留 `__init__`/默认值。
 - **calculate_max_buy_qty 数值不变**：同输入下与改造前结果一致（golden 或等式断言）。
 - **pickle 往返**：`_cost_config` 入 snapshot、恢复一致；warm_start/checkpoint 测试绿。
 - **全量回归**：`tests/` 全绿（现 1043 passed）；成本相关 golden 不漂移（漂移则 `git checkout -- tests/golden/current/`）。
