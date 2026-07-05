@@ -755,6 +755,7 @@ class LiveRunner:
         self._client_to_broker_order_ids: dict[str, str] = {}
         self._broker_to_client_order_ids: dict[str, str] = {}
         self._order_requests: dict[str, Any] = {}
+        self._broker_to_local_stop_id: dict[str, str] = {}
         self._client_to_strategy_ids: dict[str, str] = {}
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
@@ -800,6 +801,7 @@ class LiveRunner:
             get_execution_capabilities=self.get_execution_capabilities,
             record_order_request=self._record_order_request,
             adapt_strategy_payload=self._adapt_strategy_payload,
+            record_stop_remap=self._record_stop_remap,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -1124,6 +1126,7 @@ class LiveRunner:
             self._broker_to_client_order_ids.pop(broker_order_id, None)
             self._broker_to_strategy_ids.pop(broker_order_id, None)
             self._closed_broker_order_ids.add(broker_order_id)
+            self._broker_to_local_stop_id.pop(str(broker_order_id), None)
 
     def _record_order_request(self, client_order_id: str, request: Any) -> None:
         self._order_requests[str(client_order_id)] = request
@@ -1135,18 +1138,27 @@ class LiveRunner:
             cid = self._broker_to_client_order_ids.get(str(bid)) if bid else None
         return self._order_requests.get(str(cid)) if cid else None
 
+    def _record_stop_remap(self, local_id: str, broker_order_id: str) -> None:
+        self._broker_to_local_stop_id[str(broker_order_id)] = str(local_id)
+
+    def _lookup_stop_local_id(self, payload: Any) -> Any:
+        bid = self._payload_field(payload, "broker_order_id")
+        return self._broker_to_local_stop_id.get(str(bid)) if bid else None
+
     def _adapt_strategy_payload(self, event_name: str, payload: Any) -> Any:
         if event_name == "order":
             return map_order_snapshot(
                 payload,
                 request=self._lookup_order_request(payload),
                 owner_strategy_id=self._resolve_owner_strategy_id(payload),
+                local_id=self._lookup_stop_local_id(payload),
             )
         if event_name == "trade":
             return map_trade(
                 payload,
                 request=self._lookup_order_request(payload),
                 owner_strategy_id=self._resolve_owner_strategy_id(payload),
+                local_id=self._lookup_stop_local_id(payload),
             )
         return payload
 

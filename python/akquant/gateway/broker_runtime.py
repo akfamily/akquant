@@ -36,6 +36,7 @@ class BrokerRuntime:
         get_execution_capabilities: Callable[[], dict[str, Any]],
         record_order_request: Callable[[str, Any], None],
         adapt_strategy_payload: Callable[[str, Any], Any],
+        record_stop_remap: Any = None,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -72,6 +73,7 @@ class BrokerRuntime:
         self._payload_field = payload_field
         self._get_execution_capabilities = get_execution_capabilities
         self._record_order_request = record_order_request
+        self._record_stop_remap = record_stop_remap
         self._submitter: BrokerOrderSubmitter | None = None
 
     @property
@@ -116,7 +118,11 @@ class BrokerRuntime:
         cache = BrokerStateCache(trader_gateway)
         self._broker_state_caches.append(cache)
         strategy.execution = BrokerExecution(
-            strategy, trader_gateway, cache, self._submitter
+            strategy,
+            trader_gateway,
+            cache,
+            self._submitter,
+            record_stop_remap=self._record_stop_remap,
         )
 
         return self._submitter

@@ -13,6 +13,8 @@ from .local_stop_book import (
     underlying_order_type,
 )
 
+MAX_STOP_SUBMIT_ATTEMPTS = 3
+
 
 class BrokerExecution:
     """broker_live 后端：柜台为唯一真相."""
@@ -23,12 +25,14 @@ class BrokerExecution:
         trader_gateway: Any,
         state_cache: BrokerStateCache,
         submitter: Any,
+        record_stop_remap: Any = None,
     ) -> None:
-        """绑定策略实例、柜台网关、状态缓存与下单器."""
+        """绑定策略实例、柜台网关、状态缓存、下单器与止损 remap 回调."""
         self._s = strategy
         self._gw = trader_gateway
         self._cache = state_cache
         self._submitter = submitter
+        self._record_stop_remap = record_stop_remap
         self._stop_book = LocalStopBook()
         self._stop_seq = 0
 
@@ -141,7 +145,7 @@ class BrokerExecution:
         high: float | None = None,
         low: float | None = None,
     ) -> None:
-        """盯价触发本地止损; 命中即提交底层市价/限价单到柜台."""
+        """盯价触发本地止损; 命中提交底层单; 失败重试(上限)+on_error, 成功记 remap."""
         for order in self._stop_book.check(symbol, last, high, low):
             ut = underlying_order_type(order.order_type)
             kwargs: dict[str, Any] = dict(
@@ -154,7 +158,28 @@ class BrokerExecution:
             )
             if order.time_in_force is not None:
                 kwargs["time_in_force"] = order.time_in_force
-            self._submitter.submit_order(**kwargs)
+            try:
+                broker_order_id = str(self._submitter.submit_order(**kwargs))
+            except Exception as exc:  # noqa: BLE001
+                order.submit_attempts += 1
+                if order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
+                    self._stop_book.register(order)  # 重入簿, 下 tick 重试
+                self._notify_stop_error(exc, order)
+                continue
+            if self._record_stop_remap is not None:
+                try:
+                    self._record_stop_remap(order.local_id, broker_order_id)
+                except Exception:  # noqa: BLE001
+                    pass  # remap 记录失败不影响触发/不中断 run
+
+    def _notify_stop_error(self, exc: Exception, order: Any) -> None:
+        """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""
+        on_error = getattr(self._s, "on_error", None)
+        if callable(on_error):
+            try:
+                on_error(exc, "stop_trigger", order)
+            except Exception:  # noqa: BLE001
+                pass
 
     def cancel_order(self, order_id: str) -> None:
         """取消指定订单(本地止损优先, 否则走柜台)."""
