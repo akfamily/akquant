@@ -77,3 +77,52 @@ replayed = feed.replay(
   - `feed_1m = ...`
   - `feed_15m = feed_1m.resample("15min")`
   - 策略内直接消费双时框 feed。
+
+## 运行时聚合（BarGenerator）
+
+`feed.resample`/`feed.replay` 是**离线**方案：在回测数据层面预先构造好多个
+频率的 feed，再喂给 `run_backtest(data=...)`，本质是回测专属的多 feed 编排。
+
+`BarGenerator` 是**运行时**方案：聚合逻辑内嵌在策略里，逐 bar 流式喂入，不
+依赖任何离线数据编排。回测与实盘用的是**同一句** `update_bar` 调用——策略
+代码本身不需要区分当前是在回测还是实盘运行。两者在相同参数下遵循同一套
+时钟对齐语义（`label="right"`, `closed="right"`，与 pandas
+`resample(label="right", closed="right")` 一致），因此同参数产出结果一致。
+
+最小用法：
+
+```python
+from akquant import BarGenerator, Strategy
+
+
+class MyStrategy(Strategy):
+    def __init__(self):
+        super().__init__()
+        # 把 1 分钟 bar 聚合为 5 分钟 bar，窗口闭合时回调 on_5m
+        self.bg = BarGenerator(self.on_5m, 5, "minute")
+
+    def on_bar(self, bar):
+        # 回测/实盘同一句调用
+        self.bg.update_bar(bar)
+
+    def on_5m(self, bar):
+        # 收到聚合后的 5 分钟 bar，写自己的信号逻辑
+        ...
+
+    def on_stop(self):
+        # 收尾时强制闭合尾部未满窗口，否则最后一根不完整窗口会被丢弃
+        self.bg.flush()
+```
+
+- `window`/`interval` 组合出目标周期（如 `BarGenerator(cb, 15, "minute")`、
+  `BarGenerator(cb, 1, "hour")`、`BarGenerator(cb, 1, "day")`）。
+- `session_windows` 用于按交易时段分段聚合，避免跨午休等段拼接出脏 bar，例如
+  `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`；不传则按纯时钟
+  对齐（跨会话边界不做特殊处理）。
+- `timezone` 指定时钟/session 对齐所在的市场时区（如 `"Asia/Shanghai"`）。
+- `current(symbol)` 可查看某标的当前正在形成、尚未闭合的窗口快照，不会触发
+  回调，适合盘中展示。
+- 多标的相互独立聚合，互不影响。
+
+完整可运行示例见
+[examples/65_bar_generator.py](https://github.com/akfamily/akquant/blob/main/examples/65_bar_generator.py)。
