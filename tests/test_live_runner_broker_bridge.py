@@ -5,6 +5,7 @@ from typing import Any, Callable, cast
 
 import akquant.live as live_module
 import pytest
+from akquant.akquant import OrderSide, OrderStatus
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.models import BrokerCapability, UnifiedPosition
 from akquant.live import LiveRunner
@@ -67,14 +68,46 @@ def test_live_runner_broker_bridge_dispatches_events() -> None:
     strategy = _DummyStrategy()
     runner._bind_broker_callbacks(gateway, cast(Any, strategy))
 
-    gateway.emit_order({"id": "o1"})
-    gateway.emit_trade({"id": "t1"})
+    gateway.emit_order(
+        {
+            "broker_order_id": "o1",
+            "client_order_id": "c-o1",
+            "symbol": "IF2406",
+            "status": "Filled",
+            "filled_quantity": 3.0,
+            "avg_fill_price": 10.0,
+        }
+    )
+    gateway.emit_trade(
+        {
+            "trade_id": "t1",
+            "broker_order_id": "o1",
+            "client_order_id": "c-o1",
+            "symbol": "IF2406",
+            "side": "Buy",
+            "quantity": 3.0,
+            "price": 10.0,
+        }
+    )
     gateway.emit_execution_report({"id": "r1"})
     time.sleep(0.2)
     runner._stop_broker_dispatcher()
 
-    assert strategy.orders == [{"id": "o1"}]
-    assert strategy.trades == [{"id": "t1"}]
+    # broker_live dispatch adapts order/trade payloads to the same shape as
+    # backtest Order/Trade objects before calling on_order/on_trade.
+    assert len(strategy.orders) == 1
+    order = strategy.orders[0]
+    assert order.symbol == "IF2406"
+    assert order.status is OrderStatus.Filled
+    assert order.filled_quantity == 3.0
+
+    assert len(strategy.trades) == 1
+    trade = strategy.trades[0]
+    assert trade.symbol == "IF2406"
+    assert trade.side is OrderSide.Buy
+    assert trade.price == 10.0
+
+    # execution_report is dispatched unchanged (raw payload).
     assert strategy.reports == [{"id": "r1"}]
 
 

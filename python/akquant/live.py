@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from .akquant import Bar, DataFeed, Engine, Instrument
+from .gateway.broker_event_adapter import map_order_snapshot, map_trade
 from .gateway.broker_runtime import BrokerRuntime
 from .gateway.factory import create_gateway_bundle
 from .gateway.models import BrokerCapability
@@ -753,6 +754,7 @@ class LiveRunner:
         self._broker_account_state: Any = None
         self._client_to_broker_order_ids: dict[str, str] = {}
         self._broker_to_client_order_ids: dict[str, str] = {}
+        self._order_requests: dict[str, Any] = {}
         self._client_to_strategy_ids: dict[str, str] = {}
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
@@ -796,6 +798,8 @@ class LiveRunner:
             bind_order_owner=self._bind_order_owner,
             payload_field=self._payload_field,
             get_execution_capabilities=self.get_execution_capabilities,
+            record_order_request=self._record_order_request,
+            adapt_strategy_payload=self._adapt_strategy_payload,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -995,6 +999,8 @@ class LiveRunner:
         if event_name == "order":
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             client_order_id = str(self._payload_field(payload, "client_order_id"))
+            if not client_order_id and broker_order_id:
+                client_order_id = self._resolve_client_order_id(broker_order_id)
             self._sync_order_id_mapping(client_order_id, broker_order_id)
             if broker_order_id:
                 self._broker_order_states[broker_order_id] = payload
@@ -1113,13 +1119,39 @@ class LiveRunner:
         if client_order_id:
             self._client_to_broker_order_ids.pop(client_order_id, None)
             self._client_to_strategy_ids.pop(client_order_id, None)
+            self._order_requests.pop(str(client_order_id), None)
         if broker_order_id:
             self._broker_to_client_order_ids.pop(broker_order_id, None)
             self._broker_to_strategy_ids.pop(broker_order_id, None)
             self._closed_broker_order_ids.add(broker_order_id)
 
+    def _record_order_request(self, client_order_id: str, request: Any) -> None:
+        self._order_requests[str(client_order_id)] = request
+
+    def _lookup_order_request(self, payload: Any) -> Any:
+        cid = self._payload_field(payload, "client_order_id")
+        if not cid:
+            bid = self._payload_field(payload, "broker_order_id")
+            cid = self._broker_to_client_order_ids.get(str(bid)) if bid else None
+        return self._order_requests.get(str(cid)) if cid else None
+
+    def _adapt_strategy_payload(self, event_name: str, payload: Any) -> Any:
+        if event_name == "order":
+            return map_order_snapshot(
+                payload,
+                request=self._lookup_order_request(payload),
+                owner_strategy_id=self._resolve_owner_strategy_id(payload),
+            )
+        if event_name == "trade":
+            return map_trade(
+                payload,
+                request=self._lookup_order_request(payload),
+                owner_strategy_id=self._resolve_owner_strategy_id(payload),
+            )
+        return payload
+
     def _is_terminal_status(self, status: Any) -> bool:
-        status_text = str(status).strip().lower()
+        status_text = str(getattr(status, "value", status)).strip().lower()
         return status_text in {"filled", "cancelled", "canceled", "rejected"}
 
     def can_submit_client_order(self, client_order_id: str) -> bool:

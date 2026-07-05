@@ -30,6 +30,7 @@ def _make_submitter(
         notify_strategy_error=lambda *_a, **_k: None,
         payload_field=lambda obj, name: getattr(obj, name, None),
         get_execution_capabilities=lambda: capability.as_execution_capabilities(),
+        record_order_request=lambda *_a: None,
     )
 
 

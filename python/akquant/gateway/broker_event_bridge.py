@@ -20,6 +20,7 @@ class BrokerEventBridge:
         resolve_owner_strategy_id: Callable[[Any], str],
         payload_to_dict: Callable[[Any], dict[str, Any]],
         safe_strategy_callback: Callable[[Any, str, Any], None],
+        adapt_strategy_payload: Callable[[str, Any], Any],
     ) -> None:
         """Bind the queue, state callbacks and observer fanout dependencies."""
         self._event_lock = event_lock
@@ -31,6 +32,7 @@ class BrokerEventBridge:
         self._resolve_owner_strategy_id = resolve_owner_strategy_id
         self._payload_to_dict = payload_to_dict
         self._safe_strategy_callback = safe_strategy_callback
+        self._adapt_strategy_payload = adapt_strategy_payload
 
     def queue_event(self, event_name: str, payload: Any) -> None:
         """Add a broker event to the dispatch queue with semantic deduplication."""
@@ -48,9 +50,10 @@ class BrokerEventBridge:
             self._event_store.clear()
             self._event_keys.clear()
         for event_name, payload in events:
+            adapted = self._adapt_strategy_payload(event_name, payload)
             self._update_broker_state(event_name, payload)
             self._emit_observer_event(event_name, payload)
-            self._dispatch_strategy_event(strategy, event_name, payload)
+            self._dispatch_strategy_event(strategy, event_name, adapted)
 
     def emit_observer_event(self, event_name: str, payload: Any) -> None:
         """Emit a normalized event snapshot to the optional observer hook."""
@@ -91,6 +94,8 @@ class BrokerEventBridge:
         event_name: str,
         payload: Any,
     ) -> None:
+        # `payload` is already adapted by `drain_events` (via `_adapt_strategy_payload`)
+        # while the request cache was still populated, so it's dispatched as-is here.
         if event_name == "order":
             self._safe_strategy_callback(strategy, "on_order", payload)
         elif event_name == "trade":

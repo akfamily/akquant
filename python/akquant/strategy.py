@@ -1421,6 +1421,10 @@ class Strategy:
         """
         pass
 
+    def on_execution_report(self, report: Any) -> None:
+        """执行回报回调（broker_live 专用；回测不触发）。默认 no-op，可覆盖."""
+        pass
+
     def on_session_start(self, session: Any, timestamp: int) -> None:
         """会话开始回调."""
         pass

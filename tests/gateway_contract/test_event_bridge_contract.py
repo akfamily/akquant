@@ -49,6 +49,7 @@ def _build_event_bridge() -> tuple[
             target,
             callback_name,
         )(payload),
+        adapt_strategy_payload=lambda event_name, payload: payload,
     )
     return bridge, strategy, update_calls, observed_events
 

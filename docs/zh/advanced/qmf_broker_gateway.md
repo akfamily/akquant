@@ -156,6 +156,31 @@ trader.place_order(
   持仓/资金 sizing 下单——经统一执行接口 `ExecutionBackend`，与回测下走
   `SimExecution` 是同一套调用方式，不再报错。
 
+## 事件模型统一（P2）
+
+`on_order`/`on_trade` 在回测与 `broker_live` 两种模式下收到**同一属性形状**的事件对象,
+策略代码不必按模式分支读字段:
+
+- **回测**：`on_order`/`on_trade` 收原生 Rust `Order`/`Trade` 对象,未改动,零回归。
+- **`broker_live`**：`Unified*`（`UnifiedOrderSnapshot`/`UnifiedTrade`）经
+  `python/akquant/gateway/broker_event_adapter.py` 的 `map_order_snapshot`/`map_trade`
+  适配为 `StrategyOrder`/`StrategyTrade`（dataclass）, 与回测 `Order`/`Trade` 同属性名、
+  同枚举类型：
+  - `status` 为 `OrderStatus` 枚举（非字符串）,`side` 为 `OrderSide` 枚举。
+  - 字段名对齐：`avg_fill_price` → `average_filled_price`;`broker_order_id` → `id`;
+    `trade_id` → `id`（Trade）;`broker_order_id` → `order_id`（Trade）;
+    `timestamp_ns` → `timestamp`（Trade）。
+  - `side`/`quantity`/`price`/`order_type`/`time_in_force` 等下单请求携带的字段,
+    由**提交请求缓存**（下单时记录的 `UnifiedOrderRequest`）回填;取不到时给合理默认
+    （如 `commission=0.0`、`side=None`）,不会 `AttributeError`。
+  - `owner_strategy_id` 与回测 `Order`/`Trade` 一样对外暴露（`broker_live` 下由
+    `LiveRunner` 按 client_order_id 解析后回填,取不到为 `None`）。
+- **`on_execution_report`** 为 `broker_live` 专属回调（柜台原始回报,回测无对应事件）；
+  策略基类已提供 no-op 默认实现,未定义该方法的策略在 `broker_live` 下不会崩。
+
+同一读字段逻辑（如 `order.status is OrderStatus.Filled` 后处理）可以直接复用在
+回测与实盘策略回调里,参见 `tests/test_event_model_parity.py`。
+
 ## 范围与后续
 
 组合策略（338013/14）、行权指派/交割管理、备兑划转、可交易数量(338010)、
