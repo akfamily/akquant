@@ -19,15 +19,16 @@
 1. **影子配置陷阱**：用户在策略 `__init__` 写 `self.commission_rate=0.001` 以为在设成本；但
    - 费率属性被引擎在 init 后**无条件覆盖**（`engine.py:2767-2779` 无 `None` 守卫），用户写被静默清掉；
    - 且真实核算读 Rust-from-config，根本不看该属性 → 用户的写**要么被覆盖、要么只微调买量估算**，两种都是静默错误。
-2. **冗余**：`commission_rate`(旧标量) 与 `commission_policy`(dict) 并存两种说法。
-3. **几乎纯影子**：唯一功能读取者是 `calculate_max_buy_qty`（`strategy_trading_api.py:926-941`），且只读 `commission_rate`/`min_commission`/`transfer_fee_rate` 三个；**`commission_policy` 与 `stamp_tax_rate` 在 Python 侧零读取**（引擎写进来后无人消费）。
+2. **实例上两份可写副本会打架**：`commission_rate`(标量) 与 `commission_policy`(dict) 在 Strategy 实例上**各存一份、都可写**，可能不一致。注意二者**不是有害冗余**——它们是同一旋钮的两层：`commission_rate` 是 percent 场景的习惯捷径（vnpy/backtrader/backtesting.py 都给标量入口），`commission_policy` 是能表达 fixed/per_unit 的超集（zipline 的 `PerDollar`/`PerTrade`/`PerShare`、backtrader 的 `commtype` 同概念，中国期货按手=per_unit 必需，且已完整接进 Rust 成本引擎 `src/context.rs`/`src/market/manager.rs`）。要修的是"实例上两份可写副本"，**不是砍掉标量、也不是砍掉 policy**。
+3. **几乎纯影子**：唯一功能读取者是 `calculate_max_buy_qty`（`strategy_trading_api.py:926-941`），且只读 `commission_rate`/`min_commission`/`transfer_fee_rate` 三个；**`commission_policy` 与 `stamp_tax_rate` 在 Python 侧零读取**（引擎写进来后无人消费；实际核算在 Rust）。
 
 **lot_size 的差异**：`lot_size` 注入有 `None` 守卫（`engine.py:2786`），且 docstring 明确 "A股回测请务必设置为 100" —— 是**文档承诺的便捷输入**，不是纯陷阱。但顶层 `run_backtest(lot_size=100)` 同样便捷，故本次**统一**处理（用户裸写 → 报错指向 `run_backtest(lot_size=)`），消除"两处能设、一处被覆盖一处不被"的不一致。
 
 ## 决策（用户已定）
 
-- **统一**：费率 5 项 + `lot_size` 全部同一机制处理，不再拆分对待。
+- **统一**：费率 5 项 + `lot_size` 全部同一机制处理（只读 property + 报错 setter），不再拆分对待。
 - **写入即报错**（raise-on-write，非 warn-then-ignore）：把静默陷阱变成响亮、可教学的失败。个人/早期项目，干净硬改优于弃用周期。
+- **`commission_rate` 与 `commission_policy` 都保留**：前者是 percent 的习惯标量捷径（符合主流框架），后者是承载 fixed/per_unit 的超集（期货按手必需、Rust 已接）。不做 zipline 式模型对象改造——保持 `{"type","value"}` dict 与现有 `slippage`/`fill_policy` 一致。仅消除"实例两份可写副本"：**单一内部真源为归一后的 policy**，`commission_rate` 降为其只读派生视图（仍是合法配置入口）。
 
 ## 方案架构
 
@@ -47,7 +48,7 @@ instance._cost_config = {
 }
 ```
 
-`commission_rate`(标量) **不再独立存储**，改为从 `commission_policy` 派生的只读视图（`type=="percent"` 时取 `value`，否则 0.0）——消除冗余。
+`commission_rate`(标量) **不再在实例上独立存储**（消除"两份可写副本"），改为从 `commission_policy` 派生的只读视图（`type=="percent"` 时取 `value`，否则 0.0，与旧引擎注入的数值一致）。它作为**配置输入**仍保留：`run_backtest(commission_rate=0.0003)` 照旧被引擎归一成 percent policy（现状不动，见非目标）。
 
 ### 2. 六个只读 `@property` + 报错 setter
 
