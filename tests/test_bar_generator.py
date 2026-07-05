@@ -88,7 +88,13 @@ def test_daily_aggregation() -> None:
         + _bars_1min(2, start="2024-01-04 09:30:00")
     )
     got = _collect((1, "day", "1D"), bars)
+    exp = _expected_resample(bars, "1D")
     assert len(got) == 3
+    # 日线标签也须与 pandas resample(label=right,closed=right) 一致(不止根数)
+    assert [b.timestamp for b in got] == [
+        int(pd.Timestamp(ts).value) for ts in exp.index
+    ]
+    assert [b.volume for b in got] == list(exp["volume"])
 
 
 def test_close_timing_and_flush() -> None:
