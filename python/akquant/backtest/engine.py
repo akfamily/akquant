@@ -2764,26 +2764,19 @@ def run_backtest(
             if hasattr(current_strategy, "risk_config"):
                 current_strategy.risk_config = config.strategy_config.risk  # type: ignore
 
-    # 注入费率配置到 Strategy 实例
+    # 注入费率/手数配置到 Strategy 实例(单一真源 _cost_config, 绕过费率只读 setter)。
+    # commission_policy 此处已归一(见上 resolved_commission_policy); commission_rate 由
+    # policy 派生, 不再单独注入。lot_size=None 时不覆盖(保留策略 __init__ 里的赋值)。
     for current_strategy in all_strategy_instances:
-        if hasattr(current_strategy, "commission_rate"):
-            current_strategy.commission_rate = commission_rate
-        if hasattr(current_strategy, "commission_policy"):
-            current_strategy.commission_policy = dict(commission_policy)
-        if hasattr(current_strategy, "min_commission"):
-            current_strategy.min_commission = min_commission
-        if hasattr(current_strategy, "stamp_tax_rate"):
-            current_strategy.stamp_tax_rate = stamp_tax_rate
-        if hasattr(current_strategy, "transfer_fee_rate"):
-            current_strategy.transfer_fee_rate = transfer_fee_rate
-
-    # 注入 lot_size
-    # lot_size 参数可能是 int 或 dict。
-    # 如果是 dict，则 Strategy._calculate_max_buy_qty 会自动处理
-    if lot_size is not None:
-        for current_strategy in all_strategy_instances:
-            if hasattr(current_strategy, "lot_size"):
-                current_strategy.lot_size = lot_size
+        inject = getattr(current_strategy, "_inject_cost_config", None)
+        if callable(inject):
+            inject(
+                commission_policy=commission_policy,
+                min_commission=min_commission,
+                stamp_tax_rate=stamp_tax_rate,
+                transfer_fee_rate=transfer_fee_rate,
+                lot_size=lot_size,
+            )
 
     preliminary_symbols: List[str] = list(effective_symbols)
     if config and config.instruments:

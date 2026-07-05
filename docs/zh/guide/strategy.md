@@ -847,6 +847,21 @@ class TrailingHelperStrategy(Strategy):
 
 完整可运行脚本见：`examples/36_trailing_orders.py`。
 
+### 6.2b 成本与手数配置（费率只读 / lot_size 可写）
+
+费率（`commission_rate`/`commission_policy`/`min_commission`/`stamp_tax_rate`/
+`transfer_fee_rate`）是**回测配置项**，请在 `run_backtest(...)`（或 `BacktestConfig`/
+`InstrumentConfig`）中设置——在策略里写 `self.commission_rate = ...` 会**抛
+`AttributeError`**。这些值由引擎从配置注入、实际成本核算在引擎侧，策略里写入无效，
+故直接报错以免踩坑。
+
+`commission_policy` 支持三种 `type`：`percent`（按成交额，A股/美股）、`fixed`（每单
+固定）、`per_unit`（每手/每股，如中国期货按手）；`commission_rate` 是 `percent`
+场景的标量捷径（`run_backtest(commission_rate=0.0003)`）。
+
+`lot_size`（最小交易单位）**仍可在策略里写**：`self.lot_size = 100`（A股）照旧生效，
+也可用 `run_backtest(lot_size=100)` 或 `InstrumentConfig(lot_size=)` 按标的设置。
+
 ### 6.3 市场规则与 T+1 (Market Rules)
 
 在 A 股市场回测中，**T+1 交易规则**是一个非常重要的限制：**当天买入的股票，第二个交易日才能卖出**。

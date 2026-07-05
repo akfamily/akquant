@@ -371,13 +371,8 @@ class Strategy:
 
     _trading_days: List[pd.Timestamp]
 
-    # Fee rates
-    commission_rate: float
-    commission_policy: Dict[str, Any]
-    min_commission: float
-    stamp_tax_rate: float
-    transfer_fee_rate: float
-    lot_size: Any  # Can be int or Dict[str, int]
+    # 成本/手数配置单一真源(经下方 property 暴露: 费率只读, lot_size 可写)
+    _cost_config: Dict[str, Any]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -466,15 +461,17 @@ class Strategy:
         # 初始化通常在 __init__ 中的属性，允许子类省略 super().__init__()
         instance.model = None
 
-        # 默认费率配置
-        instance.commission_rate = 0.0
-        instance.commission_policy = {"type": "percent", "value": 0.0}
-        instance.min_commission = 0.0
-        instance.stamp_tax_rate = 0.0
-        instance.transfer_fee_rate = 0.0
-        # lot_size 可以是 int (全局统一) 或 Dict[str, int] (按标的设置)
-        # 默认 1，这是最通用的设置（适用于美股、加密货币等）。A股回测请务必设置为 100。
-        instance.lot_size = 1
+        # 成本/手数配置单一真源。费率经只读 property 暴露(写入报错, 指向 run_backtest);
+        # lot_size 经可写 property 读写(照旧支持策略 __init__ 里赋值)。
+        # lot_size 可为 int(全局) 或 Dict[str, int](按标的);
+        # 默认 1(美股/加密), A股请设 100。
+        instance._cost_config = {
+            "commission_policy": {"type": "percent", "value": 0.0},
+            "min_commission": 0.0,
+            "stamp_tax_rate": 0.0,
+            "transfer_fee_rate": 0.0,
+            "lot_size": 1,
+        }
         instance._owner_strategy_id = None
         instance._framework_last_session = None
         instance._framework_last_local_date = None
@@ -572,6 +569,21 @@ class Strategy:
     def __setstate__(self, state: Dict[str, Any]) -> None:
         """Pickle 反序列化支持."""
         self.__dict__.update(state)
+        # 注意判 state 而非 self.__dict__: __new__ 已预置 _cost_config 默认,
+        # 故必须看"传入 snapshot 是否带 _cost_config"来区分新旧格式。
+        if "_cost_config" not in state:
+            # 兼容旧 snapshot(费率/lot 曾为裸属性, 无 _cost_config): 迁移进 _cost_config
+            self._cost_config = {
+                "commission_policy": self.__dict__.pop(
+                    "commission_policy", {"type": "percent", "value": 0.0}
+                ),
+                "min_commission": self.__dict__.pop("min_commission", 0.0),
+                "stamp_tax_rate": self.__dict__.pop("stamp_tax_rate", 0.0),
+                "transfer_fee_rate": self.__dict__.pop("transfer_fee_rate", 0.0),
+                "lot_size": self.__dict__.pop("lot_size", 1),
+            }
+            # 旧 snapshot 的 commission_rate 是派生量, 清掉避免遗留死数据
+            self.__dict__.pop("commission_rate", None)
         self._order_group_lock = threading.RLock()  # RLock 不入 pickle, 恢复时重建
         raw_runtime_config = self.__dict__.pop("runtime_config", None)
         if raw_runtime_config is not None:
@@ -2178,6 +2190,110 @@ class Strategy:
     def equity(self) -> float:
         """当前账户总权益（现金 + 持仓市值，权威只读；等同旧 get_portfolio_value()）."""
         return _get_portfolio_value_impl(self)
+
+    def _inject_cost_config(
+        self,
+        *,
+        commission_policy: Optional[Dict[str, Any]] = None,
+        min_commission: Optional[float] = None,
+        stamp_tax_rate: Optional[float] = None,
+        transfer_fee_rate: Optional[float] = None,
+        lot_size: Any = None,
+    ) -> None:
+        """框架内部写入成本/手数配置(绕过费率只读 setter)。None 表示不覆盖既有值."""
+        cfg = self._cost_config
+        if commission_policy is not None:
+            cfg["commission_policy"] = dict(commission_policy)
+        if min_commission is not None:
+            cfg["min_commission"] = float(min_commission)
+        if stamp_tax_rate is not None:
+            cfg["stamp_tax_rate"] = float(stamp_tax_rate)
+        if transfer_fee_rate is not None:
+            cfg["transfer_fee_rate"] = float(transfer_fee_rate)
+        if lot_size is not None:
+            cfg["lot_size"] = lot_size
+
+    @property
+    def commission_policy(self) -> Dict[str, Any]:
+        """佣金策略(只读; type: percent/fixed/per_unit).
+
+        经 run_backtest/BacktestConfig 配置。
+        """
+        return self._cost_config["commission_policy"]
+
+    @commission_policy.setter
+    def commission_policy(self, value: Any) -> None:
+        raise AttributeError(
+            "commission_policy 是回测配置项，请用 "
+            'run_backtest(commission_policy={"type":"percent","value":0.0003}) '
+            "或 BacktestConfig 设置，不要写 self.commission_policy。"
+        )
+
+    @property
+    def commission_rate(self) -> float:
+        """佣金率只读视图(percent 策略取 value, 否则 0.0).
+
+        写请用 run_backtest(commission_rate=)。
+        """
+        policy = self._cost_config["commission_policy"]
+        if str(policy.get("type", "percent")).strip().lower() == "percent":
+            return float(policy.get("value", 0.0) or 0.0)
+        return 0.0
+
+    @commission_rate.setter
+    def commission_rate(self, value: Any) -> None:
+        raise AttributeError(
+            "commission_rate 是回测配置项，请用 run_backtest(commission_rate=0.0003) "
+            "或 BacktestConfig 设置，不要写 self.commission_rate。"
+        )
+
+    @property
+    def min_commission(self) -> float:
+        """最低佣金(只读)。经 run_backtest(min_commission=)/BacktestConfig 配置."""
+        return float(self._cost_config["min_commission"])
+
+    @min_commission.setter
+    def min_commission(self, value: Any) -> None:
+        raise AttributeError(
+            "min_commission 是回测配置项，请用 run_backtest(min_commission=) "
+            "或 BacktestConfig 设置，不要写 self.min_commission。"
+        )
+
+    @property
+    def stamp_tax_rate(self) -> float:
+        """印花税率(只读; 卖出侧).
+
+        经 run_backtest(stamp_tax_rate=)/BacktestConfig 配置。
+        """
+        return float(self._cost_config["stamp_tax_rate"])
+
+    @stamp_tax_rate.setter
+    def stamp_tax_rate(self, value: Any) -> None:
+        raise AttributeError(
+            "stamp_tax_rate 是回测配置项，请用 run_backtest(stamp_tax_rate=) "
+            "或 BacktestConfig 设置，不要写 self.stamp_tax_rate。"
+        )
+
+    @property
+    def transfer_fee_rate(self) -> float:
+        """过户费率(只读)。经 run_backtest(transfer_fee_rate=)/BacktestConfig 配置."""
+        return float(self._cost_config["transfer_fee_rate"])
+
+    @transfer_fee_rate.setter
+    def transfer_fee_rate(self, value: Any) -> None:
+        raise AttributeError(
+            "transfer_fee_rate 是回测配置项，请用 run_backtest(transfer_fee_rate=) "
+            "或 BacktestConfig 设置，不要写 self.transfer_fee_rate。"
+        )
+
+    @property
+    def lot_size(self) -> Any:
+        """最小交易单位(可写; int 或 Dict[str, int])。默认 1(美股/加密), A股设 100."""
+        return self._cost_config["lot_size"]
+
+    @lot_size.setter
+    def lot_size(self, value: Any) -> None:
+        self._cost_config["lot_size"] = value
 
     def order_target(
         self,
