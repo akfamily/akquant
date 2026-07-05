@@ -156,6 +156,21 @@ trader.place_order(
   持仓/资金 sizing 下单——经统一执行接口 `ExecutionBackend`，与回测下走
   `SimExecution` 是同一套调用方式，不再报错。
 
+## 实盘持仓同步（成交即更新）
+
+`broker_live` 下成交事件由 `wrap_state_invalidation` 经 `BrokerStateCache.apply_fill`
+**同步**叠总持仓 delta，故 `get_position`/`positions`/`self.position` 成交后**立即准**
+（不再失效→异步重查而滞后）；**可用持仓**仍走柜台查询（成交后失效重查，T+1/T+0
+归柜台，可能滞后一个查询）；**按 `trade_id` 去重**——恢复循环每周期
+`sync_today_trades()` 会重放当日成交，`apply_fill` 是加性的，去重保证每笔只叠一次、
+不因重放漂移（无 `trade_id` 的成交退回幂等 `invalidate` 重查）；账户级（多 slot
+缓存都叠同一账户 delta）；**单一来源**（不新增 `self.pos`）。
+
+对账（v1 薄款，明确边界）：冷启动整柜台 seed 为权威基线，`invalidate()` 全量重 seed
+可用于对账；**会话中不自动对账**——事件流完整时事件溯源即准，但**漏接一笔成交事件**
+会使总持仓漂移，直到冷启动/显式 `invalidate()` 重 seed 自愈（会话内周期性重查或
+断线重连触发对账留作后续）。
+
 ## 事件模型统一（P2）
 
 `on_order`/`on_trade` 在回测与 `broker_live` 两种模式下收到**同一属性形状**的事件对象,
