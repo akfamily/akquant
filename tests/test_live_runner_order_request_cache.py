@@ -12,6 +12,7 @@ def _runner() -> LiveRunner:
     # 不做完整构造；只准备缓存/映射所需的最小状态（这些方法在 LiveRunner 上真实存在）。
     r = LiveRunner.__new__(LiveRunner)
     r._order_requests = {}
+    r._broker_to_local_stop_id = {}
     r._client_to_broker_order_ids = {}
     r._broker_to_client_order_ids = {}
     r._client_to_strategy_ids = {}
