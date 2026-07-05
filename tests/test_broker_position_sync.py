@@ -77,3 +77,19 @@ def test_granular_invalidate_methods() -> None:
     assert c.positions()["X"] == 1050.0
     assert c._account_loaded is False  # 正向确认标志翻转
     assert c._total_loaded is True  # 总持仓不受影响
+
+
+def test_trade_event_through_wrap_keeps_get_position_synchronous() -> None:
+    """经 wrap_state_invalidation 发 trade: positions() 同步反映 delta, 不重查."""
+    from akquant.gateway.broker_strategy_api import wrap_state_invalidation
+
+    gw = _Gw(_rows(1000.0))
+    c = BrokerStateCache(gw)
+    assert c.positions()["X"] == 1000.0  # seed, query #1
+    wrapped = wrap_state_invalidation(lambda n, p: None, lambda: [c])
+    wrapped("trade", {"symbol": "X", "side": "Buy", "quantity": 100.0})
+    assert c.positions()["X"] == 1100.0  # 同步 +100
+    assert gw.pos_calls == 1  # 总持仓未重查
+    # 可用被失效 -> 下次读会重查
+    gw.rows = _rows(1000.0, 700.0)
+    assert c.available_positions()["X"] == 700.0
