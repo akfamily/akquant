@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import (
@@ -508,6 +509,7 @@ class Strategy:
         instance._pending_engine_bracket_plans = []
         instance._pending_brackets = {}
         instance._order_group_seq = 0
+        instance._order_group_lock = threading.RLock()
         instance._pending_schedules = []
         instance._pending_daily_timers = []
         instance._instrument_snapshots = {}
@@ -558,6 +560,8 @@ class Strategy:
             del state["_framework_current_trade"]
         if "_indicator_recorder" in state:
             del state["_indicator_recorder"]
+        if "_order_group_lock" in state:
+            del state["_order_group_lock"]  # RLock 不可 pickle, __setstate__ 重建
         incremental_indicators = state.get("_incremental_indicators")
         if isinstance(incremental_indicators, dict):
             for name in incremental_indicators.keys():
@@ -568,6 +572,7 @@ class Strategy:
     def __setstate__(self, state: Dict[str, Any]) -> None:
         """Pickle 反序列化支持."""
         self.__dict__.update(state)
+        self._order_group_lock = threading.RLock()  # RLock 不入 pickle, 恢复时重建
         raw_runtime_config = self.__dict__.pop("runtime_config", None)
         if raw_runtime_config is not None:
             self.runtime_config = raw_runtime_config
@@ -1778,30 +1783,31 @@ class Strategy:
         if first == second:
             raise ValueError("OCO order ids must be different")
 
-        if group_id is None or not str(group_id).strip():
-            self._order_group_seq += 1
-            group_id = f"oco-{self._order_group_seq}"
-        group_key = str(group_id).strip()
+        with self._order_group_lock:
+            if group_id is None or not str(group_id).strip():
+                self._order_group_seq += 1
+                group_id = f"oco-{self._order_group_seq}"
+            group_key = str(group_id).strip()
 
-        engine = getattr(self, "_engine", None)
-        register_oco = getattr(engine, "register_oco_group", None)
-        if callable(register_oco):
-            try:
-                register_oco(group_key, first, second)
-                self._use_engine_oco = True
-                return group_key
-            except Exception:
-                self._pending_engine_oco_groups.append((group_key, first, second))
-                self._use_engine_oco = True
-                return group_key
+            engine = getattr(self, "_engine", None)
+            register_oco = getattr(engine, "register_oco_group", None)
+            if callable(register_oco):
+                try:
+                    register_oco(group_key, first, second)
+                    self._use_engine_oco = True
+                    return group_key
+                except Exception:
+                    self._pending_engine_oco_groups.append((group_key, first, second))
+                    self._use_engine_oco = True
+                    return group_key
 
-        self._detach_oco_order(first)
-        self._detach_oco_order(second)
+            self._detach_oco_order(first)
+            self._detach_oco_order(second)
 
-        self._oco_groups[group_key] = {first, second}
-        self._oco_order_to_group[first] = group_key
-        self._oco_order_to_group[second] = group_key
-        return group_key
+            self._oco_groups[group_key] = {first, second}
+            self._oco_order_to_group[first] = group_key
+            self._oco_order_to_group[second] = group_key
+            return group_key
 
     def place_bracket(
         self,
@@ -1835,23 +1841,13 @@ class Strategy:
         if not entry_order_id:
             raise RuntimeError("failed to submit bracket entry order")
 
-        engine = getattr(self, "_engine", None)
-        register_bracket = getattr(engine, "register_bracket_plan", None)
-        if callable(register_bracket):
-            try:
-                register_bracket(
-                    entry_order_id,
-                    stop_trigger_price,
-                    take_profit_price,
-                    time_in_force,
-                    stop_tag,
-                    take_profit_tag,
-                )
-                self._use_engine_bracket = True
-                return entry_order_id
-            except Exception:
-                self._pending_engine_bracket_plans.append(
-                    (
+        # self.buy(入场单) 在锁外提交; 仅 bracket 记账/引擎登记在锁内(与协调器互斥).
+        with self._order_group_lock:
+            engine = getattr(self, "_engine", None)
+            register_bracket = getattr(engine, "register_bracket_plan", None)
+            if callable(register_bracket):
+                try:
+                    register_bracket(
                         entry_order_id,
                         stop_trigger_price,
                         take_profit_price,
@@ -1859,24 +1855,37 @@ class Strategy:
                         stop_tag,
                         take_profit_tag,
                     )
-                )
-                self._use_engine_bracket = True
-                return entry_order_id
+                    self._use_engine_bracket = True
+                    return entry_order_id
+                except Exception:
+                    self._pending_engine_bracket_plans.append(
+                        (
+                            entry_order_id,
+                            stop_trigger_price,
+                            take_profit_price,
+                            time_in_force,
+                            stop_tag,
+                            take_profit_tag,
+                        )
+                    )
+                    self._use_engine_bracket = True
+                    return entry_order_id
 
-        self._pending_brackets[entry_order_id] = {
-            "symbol": symbol,
-            "quantity": float(quantity),
-            "stop_trigger_price": stop_trigger_price,
-            "take_profit_price": take_profit_price,
-            "time_in_force": time_in_force,
-            "stop_tag": stop_tag,
-            "take_profit_tag": take_profit_tag,
-        }
-        return entry_order_id
+            self._pending_brackets[entry_order_id] = {
+                "symbol": symbol,
+                "quantity": float(quantity),
+                "stop_trigger_price": stop_trigger_price,
+                "take_profit_price": take_profit_price,
+                "time_in_force": time_in_force,
+                "stop_tag": stop_tag,
+                "take_profit_tag": take_profit_tag,
+            }
+            return entry_order_id
 
     def _process_order_groups(self, trade: Any) -> None:
-        self._process_pending_bracket(trade)
-        self._process_oco_trade(trade)
+        with self._order_group_lock:
+            self._process_pending_bracket(trade)
+            self._process_oco_trade(trade)
 
     def _process_pending_bracket(self, trade: Any) -> None:
         if self._use_engine_bracket:
