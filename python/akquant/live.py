@@ -1128,6 +1128,11 @@ class LiveRunner:
             self._closed_broker_order_ids.add(broker_order_id)
             self._broker_to_local_stop_id.pop(str(broker_order_id), None)
 
+    # 线程安全说明: _order_requests / _broker_to_local_stop_id 由行情线程写
+    # (_record_order_request/_record_stop_remap 经 submit / check_stop_triggers)、
+    # 由 broker drain 线程读+清 (_lookup_* / _close_order_mapping)。每处都是单个
+    # dict get/set/pop——CPython GIL 下原子, 无跨线程复合读改写, 故无需加锁; lookup
+    # 与 pop 竞争只会得到 "命中" 或 None, 两者都是合法的事件时序结果。
     def _record_order_request(self, client_order_id: str, request: Any) -> None:
         self._order_requests[str(client_order_id)] = request
 
@@ -1283,7 +1288,18 @@ class LiveRunner:
             )
             on_error = getattr(strategy, "on_error", None)
             if on_error is not None and callback_name != "on_error":
-                on_error(exc, callback_name, payload)
+                # on_error 自身可能抛错; 不能让它逃出 → 否则会杀掉 broker drain 循环。
+                try:
+                    on_error(exc, callback_name, payload)
+                except Exception as on_error_exc:
+                    logger.warning(
+                        "Strategy on_error handler raised",
+                        exc_info=on_error_exc,
+                        extra=build_log_extra(
+                            phase="gateway",
+                            strategy_id=owner_strategy_id,
+                        ),
+                    )
 
     def _apply_time_limit(self, strategy: Strategy, duration_str: str) -> None:
         """Inject time check into strategy methods."""
