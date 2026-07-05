@@ -128,6 +128,7 @@ class BrokerExecution:
                 price=kwargs.get("price"),
                 trail_offset=kwargs.get("trail_offset"),
                 trail_reference_price=kwargs.get("trail_reference_price"),
+                time_in_force=kwargs.get("time_in_force"),
                 extra=extra,
             )
         )
@@ -143,7 +144,7 @@ class BrokerExecution:
         """盯价触发本地止损; 命中即提交底层市价/限价单到柜台."""
         for order in self._stop_book.check(symbol, last, high, low):
             ut = underlying_order_type(order.order_type)
-            self._submitter.submit_order(
+            kwargs: dict[str, Any] = dict(
                 symbol=order.symbol,
                 side=order.side,
                 quantity=order.quantity,
@@ -151,6 +152,9 @@ class BrokerExecution:
                 order_type=ut,
                 **order.extra,
             )
+            if order.time_in_force is not None:
+                kwargs["time_in_force"] = order.time_in_force
+            self._submitter.submit_order(**kwargs)
 
     def cancel_order(self, order_id: str) -> None:
         """取消指定订单(本地止损优先, 否则走柜台)."""

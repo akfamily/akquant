@@ -40,11 +40,6 @@ class _Submitter:
         return {"broker_live": True}
 
 
-class _Bar:
-    def __init__(self, symbol, o, h, lo, c):
-        self.symbol, self.open, self.high, self.low, self.close = symbol, o, h, lo, c
-
-
 def test_stop_fires_via_bar_hook_and_submits_underlying() -> None:
     """提交 stop 单 → 经 _drive_local_stops 喂 bar 价 → 触发提交底层单."""
     strat = SimpleNamespace()

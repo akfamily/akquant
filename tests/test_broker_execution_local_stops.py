@@ -122,3 +122,34 @@ def test_check_triggers_submits_underlying_limit() -> None:
     ex.check_stop_triggers("X", last=9.3, high=9.5, low=9.3)
     sub = ex._submitter.orders[0]
     assert sub["order_type"] == "Limit" and sub["price"] == 9.4
+
+
+def test_check_triggers_carries_time_in_force() -> None:
+    """带 time_in_force 的 stop 触发后, 底层单应带上同样的 time_in_force."""
+    ex = _exec()
+    ex.submit_order(
+        symbol="X",
+        side="Sell",
+        quantity=100,
+        order_type="StopMarket",
+        trigger_price=9.5,
+        time_in_force="IOC",
+    )
+    ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
+    sub = ex._submitter.orders[0]
+    assert sub["time_in_force"] == "IOC"
+
+
+def test_check_triggers_without_time_in_force_omits_key() -> None:
+    """未指定 time_in_force 的 stop 触发后, 底层单不应携带该 key(或为 None)."""
+    ex = _exec()
+    ex.submit_order(
+        symbol="X",
+        side="Sell",
+        quantity=100,
+        order_type="StopMarket",
+        trigger_price=9.5,
+    )
+    ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
+    sub = ex._submitter.orders[0]
+    assert sub.get("time_in_force") is None

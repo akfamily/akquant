@@ -34,6 +34,7 @@ class LocalStopOrder:
     price: Optional[float] = None
     trail_offset: Optional[float] = None
     trail_reference_price: Optional[float] = None
+    time_in_force: Any = None
     status: str = "Submitted"
     extra: dict = field(default_factory=dict)  # 透传其余下单参数
 
@@ -119,7 +120,11 @@ class LocalStopBook:
         high: Optional[float],
         low: Optional[float],
     ) -> None:
-        if order.order_type not in _TRAIL_TYPES or order.trail_offset is None:
+        if (
+            order.order_type not in _TRAIL_TYPES
+            or not order.trail_offset
+            or order.trail_offset <= 0
+        ):
             return
         if str(order.side).strip().lower() == "sell":
             observed = high if high is not None else last

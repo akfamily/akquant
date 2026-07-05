@@ -95,6 +95,23 @@ def test_cancel_and_symbol_isolation() -> None:
     assert b.open_orders() == []
 
 
+def test_trailing_with_nonpositive_offset_does_not_ratchet_or_fire() -> None:
+    """trail_offset<=0 应对齐 Rust: 不棘轮 trigger, 也不触发."""
+    b = _book_with(
+        LocalStopOrder("L6", "X", "Sell", 100, "stoptrail", trail_offset=0.0)
+    )
+    fired = b.check("X", last=100.0, high=100.0, low=99.5)
+    assert fired == []
+    assert b.open_orders()[0].trigger_price is None  # 未被棘轮更新
+
+    b2 = _book_with(
+        LocalStopOrder("L7", "X", "Sell", 100, "stoptrail", trail_offset=-1.0)
+    )
+    fired2 = b2.check("X", last=100.0, high=100.0, low=99.5)
+    assert fired2 == []
+    assert b2.open_orders()[0].trigger_price is None
+
+
 def test_helpers() -> None:
     """is_stop_order_type/underlying_order_type 的归一与映射规则."""
     assert is_stop_order_type("StopMarket") and is_stop_order_type("stoptrail")
