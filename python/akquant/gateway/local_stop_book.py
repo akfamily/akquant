@@ -37,6 +37,7 @@ class LocalStopOrder:
     time_in_force: Any = None
     status: str = "Submitted"
     extra: dict = field(default_factory=dict)  # 透传其余下单参数
+    submit_attempts: int = 0
 
 
 def is_stop_order_type(order_type: Any) -> bool:
