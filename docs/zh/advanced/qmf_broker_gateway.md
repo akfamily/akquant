@@ -211,6 +211,31 @@ trader.place_order(
 `tests/test_stop_id_remap_scenario.py`（端到端：触发止损 → 记 remap →
 底层单成交推送经 `map_trade(local_id=...)` 还原为本地 `LSTOP-n`）。
 
+## 实盘 OCO/Bracket（本地协调）
+
+`place_oco`/`place_bracket` 在 `broker_live` 与回测**共用同一套 Python 协调逻辑**
+（`Strategy._process_order_groups` → `_process_pending_bracket` + `_process_oco_trade`）；
+差别只在**由谁驱动**：回测由 Rust 引擎在成交时驱动，`broker_live` 由真实柜台成交经
+`BrokerEventBridge._dispatch_strategy_event` 的 `trade` 分支在 `on_trade` 之后驱动
+（经 `_safe_strategy_callback` 异常隔离；无组时 no-op）。
+
+- **OCO 一腿成交撤对手**：组内任一订单成交，协调器撤销同组其余订单
+  （`cancel_order` 经 `BrokerExecution`：本地 id `LSTOP-n` 走本地簿，柜台 id 走柜台）。
+- **Bracket 入场成交激活**：进场单成交后自动挂出止损腿（`trigger_price=` → 本地止损簿
+  `LSTOP-n`）与止盈腿（`price=` → 柜台限价单），并把两腿绑定为 OCO——止损触发成交或
+  止盈成交都会撤掉对手腿。
+- **止损触发也能撤止盈**：止损腿触发提交底层单后，其成交经 P4a 事件重映射仍以 `LSTOP-n`
+  上报（见上节「id 连续性」），故 `_process_oco_trade` 能据此撤掉止盈对手腿。
+- **并发安全**：协调器在 broker 事件派发线程运行，与引擎线程可能并发访问同一批
+  OCO/bracket 状态，故 `Strategy` 的 OCO/bracket 字典由 `RLock`（`_order_group_lock`，
+  不入 pickle、反序列化重建）、本地止损簿由内部 `Lock` 各自保护。
+- **异常不中断 run**：协调器抛错经 `on_error(exc, "_process_order_groups", trade)` 上报，
+  单笔成交的协调失败不会中断整个实盘 run。
+
+参见 `tests/test_oco_bracket_broker_live_scenario.py`（端到端：OCO 一腿成交撤对手；
+Bracket 入场成交激活止损=本地簿 + 止盈=柜台并自动 OCO）与
+`tests/test_broker_bridge_drives_order_groups.py`（桥在 `trade` 后驱动协调器且异常隔离）。
+
 ## 范围与后续
 
 组合策略（338013/14）、行权指派/交割管理、备兑划转、可交易数量(338010)、

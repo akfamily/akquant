@@ -31,6 +31,10 @@ class _Strat:
     def on_trade(self, t):
         self.trades.append(t)
 
+    def _process_order_groups(self, t):
+        # broker_live 成交后桥会额外驱动协调器; 本桩无 OCO/bracket 组, no-op。
+        pass
+
 
 def _bridge(adapt):
     store = []

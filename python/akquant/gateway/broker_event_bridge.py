@@ -100,6 +100,9 @@ class BrokerEventBridge:
             self._safe_strategy_callback(strategy, "on_order", payload)
         elif event_name == "trade":
             self._safe_strategy_callback(strategy, "on_trade", payload)
+            # broker_live 下由真实成交驱动 OCO/Bracket 协调(回测由引擎驱动);
+            # 经 _safe_strategy_callback 异常隔离, 无组时 no-op。
+            self._safe_strategy_callback(strategy, "_process_order_groups", payload)
         elif event_name == "execution_report":
             self._safe_strategy_callback(strategy, "on_execution_report", payload)
         elif event_name == "account":

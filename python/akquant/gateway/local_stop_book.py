@@ -6,6 +6,7 @@ broker_live 下订单经 BrokerExecution→柜台、不进 Rust 引擎, 故 Rust
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -60,18 +61,22 @@ class LocalStopBook:
     def __init__(self) -> None:
         """初始化空簿."""
         self._orders: dict[str, LocalStopOrder] = {}
+        self._lock = threading.Lock()
 
     def register(self, order: LocalStopOrder) -> None:
         """登记一个本地止损单."""
-        self._orders[order.local_id] = order
+        with self._lock:
+            self._orders[order.local_id] = order
 
     def cancel(self, local_id: str) -> bool:
         """按本地 id 撤销; 存在返回 True."""
-        return self._orders.pop(str(local_id), None) is not None
+        with self._lock:
+            return self._orders.pop(str(local_id), None) is not None
 
     def open_orders(self, symbol: Optional[str] = None) -> list[LocalStopOrder]:
         """列出挂着的本地止损单(可按 symbol 过滤)."""
-        vals = list(self._orders.values())
+        with self._lock:
+            vals = list(self._orders.values())
         if symbol is not None:
             return [o for o in vals if o.symbol == symbol]
         return vals
@@ -84,21 +89,22 @@ class LocalStopBook:
         low: Optional[float] = None,
     ) -> list[LocalStopOrder]:
         """按最新价盯触发该 symbol 挂单; 返回并移除已触发单."""
-        triggered: list[LocalStopOrder] = []
-        for order in list(self._orders.values()):
-            if order.symbol != symbol:
-                continue
-            # 对齐 Rust common.rs: 同一 bar 内先用本 bar high/low 棘轮更新
-            # trailing trigger, 再用刚更新出的 trigger 判触发(同 bar 语义,
-            # 允许本 bar 触发). 非 trailing 单 _update_trailing 为空操作.
-            self._update_trailing(order, last, high, low)
-            if order.trigger_price is not None and self._is_triggered(
-                order.side, order.trigger_price, last, high, low
-            ):
-                self._orders.pop(order.local_id, None)
-                order.status = "Triggered"
-                triggered.append(order)
-        return triggered
+        with self._lock:
+            triggered: list[LocalStopOrder] = []
+            for order in list(self._orders.values()):
+                if order.symbol != symbol:
+                    continue
+                # 对齐 Rust common.rs: 同一 bar 内先用本 bar high/low 棘轮更新
+                # trailing trigger, 再用刚更新出的 trigger 判触发(同 bar 语义,
+                # 允许本 bar 触发). 非 trailing 单 _update_trailing 为空操作.
+                self._update_trailing(order, last, high, low)
+                if order.trigger_price is not None and self._is_triggered(
+                    order.side, order.trigger_price, last, high, low
+                ):
+                    self._orders.pop(order.local_id, None)
+                    order.status = "Triggered"
+                    triggered.append(order)
+            return triggered
 
     @staticmethod
     def _is_triggered(
