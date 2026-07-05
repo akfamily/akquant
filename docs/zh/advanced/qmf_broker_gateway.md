@@ -181,6 +181,30 @@ trader.place_order(
 同一读字段逻辑（如 `order.status is OrderStatus.Filled` 后处理）可以直接复用在
 回测与实盘策略回调里,参见 `tests/test_event_model_parity.py`。
 
+## 实盘条件/止损单（本地）
+
+柜台不支持原生条件单，`broker_live` 下 `submit_order(order_type="StopMarket"/"StopLimit"/
+"StopTrail"/"StopTrailLimit", trigger_price=.../trail_offset=...)` 现由**客户端本地止损簿**
+（`python/akquant/gateway/local_stop_book.py`）盯价触发，不下发柜台：
+
+- **触发语义与回测 Rust 原生止损一致**：买方向 `>=`、卖方向 `<=`；行情来源上，
+  bar 用 `high`/`low`（`on_bar` 每根收盘后驱动一次），tick 用最新价（`on_tick`
+  每笔驱动一次）；`StopTrail`/`StopTrailLimit` 追踪止损按同 bar 内先棘轮更新
+  `high`/`low` 再判触发的语义（同 bar 内允许触发）。
+- **触发后动作**：命中即向柜台提交底层单——限价类（`StopLimit`/`StopTrailLimit`）
+  提交 `Limit`（带 `price`），其余提交 `Market`（`trigger_price=None`，已转为
+  普通单，不再是条件单）。
+- **可见与可撤**：挂单期间经 `get_open_orders()` 可见（与柜台真实挂单合并返回）；
+  `cancel_order(本地 id)` 可撤（本地 id 形如 `LSTOP-N`，先查本地簿再回退柜台撤单）。
+- **无 `on_stop_order` 回调**：与回测行为一致，本地簿本身不触发策略回调；触发后
+  提交的底层单走正常下单/成交回报路径，成交经 `on_trade` 正常回调。
+- **id 不做重映射**：触发后提交给柜台的底层单使用柜台返回的订单号，与触发前的
+  本地 `LSTOP-N` 是两个不同 id（本地 id 触发后即从止损簿移除，不再可查）；
+  本地 id → 柜台 id 的事件连续性重映射属于后续路线图。
+
+参见 `tests/test_local_stop_scenario.py`（端到端：提交 stop → 经
+`strategy_events._drive_local_stops` 喂价 → 触发提交底层单）。
+
 ## 范围与后续
 
 组合策略（338013/14）、行权指派/交割管理、备兑划转、可交易数量(338010)、

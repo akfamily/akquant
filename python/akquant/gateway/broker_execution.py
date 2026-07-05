@@ -6,6 +6,12 @@ from typing import Any
 
 from .broker_state_cache import BrokerStateCache
 from .broker_strategy_api import _account_to_dict, _resolve_symbol
+from .local_stop_book import (
+    LocalStopBook,
+    LocalStopOrder,
+    is_stop_order_type,
+    underlying_order_type,
+)
 
 
 class BrokerExecution:
@@ -23,6 +29,8 @@ class BrokerExecution:
         self._gw = trader_gateway
         self._cache = state_cache
         self._submitter = submitter
+        self._stop_book = LocalStopBook()
+        self._stop_seq = 0
 
     def get_position(self, symbol: str | None = None) -> float:
         """获取指定标的持仓数量."""
@@ -43,11 +51,11 @@ class BrokerExecution:
         return 0  # 柜台不提供持有 Bar 数；broker_live 下无意义
 
     def get_open_orders(self, symbol: str | None = None) -> list[Any]:
-        """获取未完成订单列表."""
+        """获取未完成订单列表(含本地止损)."""
         orders = self._cache.open_orders()
         if symbol is not None:
-            return [o for o in orders if getattr(o, "symbol", None) == symbol]
-        return list(orders)
+            orders = [o for o in orders if getattr(o, "symbol", None) == symbol]
+        return list(orders) + self._stop_book.open_orders(symbol)
 
     def get_order(self, order_id: str) -> Any | None:
         """按订单号获取订单."""
@@ -71,20 +79,93 @@ class BrokerExecution:
     def submit_order(self, **kwargs: Any) -> str:
         """提交订单，返回订单号.
 
+        条件/止损单（trigger_price/trail_offset 或止损类 order_type）拦截入
+        本地簿，不下发柜台；柜台不支持这类原生条件单。
+
         time_in_force=None（Strategy.submit_order 的缺省值）会显式覆盖
         submitter.submit_order 签名默认值 "GTC"；这里丢弃 None，
         保留旧 broker_live 行为：未指定 TIF 时默认为 "GTC"。
         """
+        if (
+            kwargs.get("trigger_price") is not None
+            or kwargs.get("trail_offset") is not None
+            or is_stop_order_type(kwargs.get("order_type"))
+        ):
+            return self._register_local_stop(**kwargs)
         if kwargs.get("time_in_force") is None:
             kwargs.pop("time_in_force", None)
         return str(self._submitter.submit_order(**kwargs))
 
+    def _next_local_stop_id(self) -> str:
+        self._stop_seq += 1
+        return f"LSTOP-{self._stop_seq}"
+
+    def _register_local_stop(self, **kwargs: Any) -> str:
+        local_id = self._next_local_stop_id()
+        symbol = _resolve_symbol(self._s, kwargs.get("symbol"))
+        known = {
+            "symbol",
+            "side",
+            "quantity",
+            "price",
+            "order_type",
+            "trigger_price",
+            "trail_offset",
+            "trail_reference_price",
+            "time_in_force",
+        }
+        extra = {k: v for k, v in kwargs.items() if k not in known}
+        self._stop_book.register(
+            LocalStopOrder(
+                local_id=local_id,
+                symbol=symbol,
+                side=str(kwargs.get("side", "Buy")),
+                quantity=float(kwargs.get("quantity") or 0.0),
+                order_type=str(kwargs.get("order_type") or "stopmarket")
+                .strip()
+                .lower(),
+                trigger_price=kwargs.get("trigger_price"),
+                price=kwargs.get("price"),
+                trail_offset=kwargs.get("trail_offset"),
+                trail_reference_price=kwargs.get("trail_reference_price"),
+                time_in_force=kwargs.get("time_in_force"),
+                extra=extra,
+            )
+        )
+        return local_id
+
+    def check_stop_triggers(
+        self,
+        symbol: str,
+        last: float,
+        high: float | None = None,
+        low: float | None = None,
+    ) -> None:
+        """盯价触发本地止损; 命中即提交底层市价/限价单到柜台."""
+        for order in self._stop_book.check(symbol, last, high, low):
+            ut = underlying_order_type(order.order_type)
+            kwargs: dict[str, Any] = dict(
+                symbol=order.symbol,
+                side=order.side,
+                quantity=order.quantity,
+                price=order.price if ut == "Limit" else None,
+                order_type=ut,
+                **order.extra,
+            )
+            if order.time_in_force is not None:
+                kwargs["time_in_force"] = order.time_in_force
+            self._submitter.submit_order(**kwargs)
+
     def cancel_order(self, order_id: str) -> None:
-        """取消指定订单."""
+        """取消指定订单(本地止损优先, 否则走柜台)."""
+        if self._stop_book.cancel(str(order_id)):
+            return
         self._gw.cancel_order(str(order_id))
 
     def cancel_all_orders(self, symbol: str | None = None) -> None:
-        """取消当前所有未完成的订单."""
+        """取消所有未完成订单(含本地止损)."""
+        for order in self._stop_book.open_orders(symbol):
+            self._stop_book.cancel(order.local_id)
         for order in self._gw.sync_open_orders():
             bid = getattr(order, "broker_order_id", "")
             if symbol is not None and getattr(order, "symbol", None) != symbol:
