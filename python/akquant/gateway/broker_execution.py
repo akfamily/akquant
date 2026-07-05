@@ -167,7 +167,10 @@ class BrokerExecution:
                 self._notify_stop_error(exc, order)
                 continue
             if self._record_stop_remap is not None:
-                self._record_stop_remap(order.local_id, broker_order_id)
+                try:
+                    self._record_stop_remap(order.local_id, broker_order_id)
+                except Exception:  # noqa: BLE001
+                    pass  # remap 记录失败不影响触发/不中断 run
 
     def _notify_stop_error(self, exc: Exception, order: Any) -> None:
         """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""
