@@ -166,6 +166,11 @@ trader.place_order(
 不因重放漂移（无 `trade_id` 的成交退回幂等 `invalidate` 重查）；账户级（多 slot
 缓存都叠同一账户 delta）；**单一来源**（不新增 `self.pos`）。
 
+此外，`BrokerEventBridge.queue_event` 在事件入队处对成交事件按 `trade_id`
+**会话级去重**——恢复循环每周期重放当日成交时不重复触发
+`on_trade`/`_process_order_groups`（补漏保留：断线期间漏推的新成交仍派发一次）；
+无 `trade_id` 的成交无法去重、照常派发。
+
 对账（v1 薄款，明确边界）：冷启动整柜台 seed 为权威基线，`invalidate()` 全量重 seed
 可用于对账；**会话中不自动对账**——事件流完整时事件溯源即准，但**漏接一笔成交事件**
 会使总持仓漂移，直到冷启动/显式 `invalidate()` 重 seed 自愈（会话内周期性重查或
