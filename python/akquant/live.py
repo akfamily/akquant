@@ -759,7 +759,6 @@ class LiveRunner:
         self._client_to_strategy_ids: dict[str, str] = {}
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
-        self._broker_trade_keys: set[str] = set()
         self._broker_report_keys: set[str] = set()
         self._broker_dispatch_stop: threading.Event | None = None
         self._broker_dispatch_thread: threading.Thread | None = None
@@ -1010,14 +1009,11 @@ class LiveRunner:
                 if self._is_terminal_status(status):
                     self._close_order_mapping(client_order_id, broker_order_id)
         elif event_name == "trade":
-            trade_key = str(self._payload_field(payload, "trade_id"))
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             client_order_id = str(self._payload_field(payload, "client_order_id"))
             if not client_order_id and broker_order_id:
                 client_order_id = self._resolve_client_order_id(broker_order_id)
             self._sync_order_id_mapping(client_order_id, broker_order_id)
-            if trade_key:
-                self._broker_trade_keys.add(trade_key)
         elif event_name == "execution_report":
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             client_order_id = str(self._payload_field(payload, "client_order_id"))

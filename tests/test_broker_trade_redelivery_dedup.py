@@ -5,6 +5,14 @@ import threading
 from akquant.gateway.broker_event_bridge import BrokerEventBridge
 
 
+def _tid(payload: object) -> object:
+    """取 trade_id: getattr 优先、dict 兜底(镜像真实 _payload_field 语义)."""
+    raw = getattr(payload, "trade_id", None)
+    if raw is None and isinstance(payload, dict):
+        raw = payload.get("trade_id")
+    return raw
+
+
 class _Strat:
     def __init__(self) -> None:
         self.trades: list = []
@@ -32,13 +40,11 @@ def _bridge(store: list) -> BrokerEventBridge:
         event_keys=set(),
         get_on_broker_event=lambda: None,
         make_event_key=lambda n, p: (
-            f"trade:{p.get('trade_id')}"
-            if n == "trade" and p.get("trade_id")
-            else f"{n}:{id(p)}"
+            f"trade:{_tid(p)}" if n == "trade" and _tid(p) else f"{n}:{id(p)}"
         ),
         update_broker_state=lambda n, p: None,
         resolve_owner_strategy_id=lambda p: "",
-        payload_to_dict=lambda p: dict(p),
+        payload_to_dict=lambda p: dict(p) if isinstance(p, dict) else {},
         safe_strategy_callback=safe,
         adapt_strategy_payload=lambda n, p: p,
     )
@@ -95,3 +101,22 @@ def test_distinct_trade_ids_not_dropped() -> None:
     b.queue_event("trade", {"trade_id": "A", "symbol": "X"})
     b.queue_event("trade", {"trade_id": "B", "symbol": "X"})
     assert len(store) == 2
+
+
+class _SlottedTrade:
+    """无 __dict__ 的成交 payload(验证 getattr 提取 trade_id)."""
+
+    __slots__ = ("trade_id", "symbol")
+
+    def __init__(self, trade_id: str, symbol: str) -> None:
+        self.trade_id = trade_id
+        self.symbol = symbol
+
+
+def test_dedup_works_on_slotted_object_payload() -> None:
+    """Slotted 对象 payload(无 __dict__)也能按 trade_id 去重(getattr 提取)."""
+    store: list = []
+    b = _bridge(store)
+    b.queue_event("trade", _SlottedTrade("T1", "X"))
+    b.queue_event("trade", _SlottedTrade("T1", "X"))  # 同 trade_id 重放
+    assert len(store) == 1  # 去重生效, 不依赖 __dict__

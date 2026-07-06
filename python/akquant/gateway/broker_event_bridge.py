@@ -42,7 +42,11 @@ class BrokerEventBridge:
         event_key = self._make_event_key(event_name, payload)
         trade_id = ""
         if event_name == "trade":
-            raw = self._payload_to_dict(payload).get("trade_id")
+            # getattr 优先、dict 兜底: 与 _make_event_key 的 _payload_field 语义一致,
+            # 且对 slotted payload 稳健(_payload_to_dict 依赖 __dict__ 会漏)。
+            raw = getattr(payload, "trade_id", None)
+            if raw is None and isinstance(payload, dict):
+                raw = payload.get("trade_id")
             trade_id = str(raw) if raw else ""
         with self._event_lock:
             if trade_id:

@@ -79,7 +79,7 @@ def test_live_runner_broker_bridge_recovers_from_sync() -> None:
     assert strategy.orders
     assert strategy.trades
     assert "b-sync-1" in runner._broker_order_states
-    assert "t-sync-1" in runner._broker_trade_keys
+    assert any(getattr(t, "id", None) == "t-sync-1" for t in strategy.trades)
 
 
 def test_live_runner_recovery_syncs_account_snapshot() -> None:
