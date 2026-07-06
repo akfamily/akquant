@@ -33,11 +33,22 @@ class BrokerEventBridge:
         self._payload_to_dict = payload_to_dict
         self._safe_strategy_callback = safe_strategy_callback
         self._adapt_strategy_payload = adapt_strategy_payload
+        # 会话级已入队 trade_id(不随 drain 清空): 防恢复循环重放同一成交
+        # 导致 on_trade/_process_order_groups 重复触发。
+        self._seen_trade_ids: set[str] = set()
 
     def queue_event(self, event_name: str, payload: Any) -> None:
         """Add a broker event to the dispatch queue with semantic deduplication."""
         event_key = self._make_event_key(event_name, payload)
+        trade_id = ""
+        if event_name == "trade":
+            raw = self._payload_to_dict(payload).get("trade_id")
+            trade_id = str(raw) if raw else ""
         with self._event_lock:
+            if trade_id:
+                if trade_id in self._seen_trade_ids:
+                    return  # 会话级: 该成交已入队(实盘推送/恢复重放), 丢弃
+                self._seen_trade_ids.add(trade_id)
             if event_key in self._event_keys:
                 return
             self._event_keys.add(event_key)
