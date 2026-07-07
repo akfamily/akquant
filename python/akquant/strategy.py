@@ -546,6 +546,16 @@ class Strategy:
             del state["_framework_stop_flushed"]
         if "_framework_boundary_timers_registered" in state:
             del state["_framework_boundary_timers_registered"]
+        # 派生态(性能短路标志 + 本地交易日缓存): 恢复时删除, 以强制
+        # ensure_framework_state 重建被重置字段, 并让日期缓存自我重建.
+        for _derived_key in (
+            "_framework_state_ready",
+            "_framework_local_date_cache",
+            "_framework_local_date_lo_ns",
+            "_framework_local_date_hi_ns",
+        ):
+            if _derived_key in state:
+                del state[_derived_key]
         if "_framework_current_callback" in state:
             del state["_framework_current_callback"]
         if "_framework_current_order" in state:

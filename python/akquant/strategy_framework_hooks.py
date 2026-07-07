@@ -308,8 +308,29 @@ def dispatch_time_hooks(strategy: Any) -> None:
     if current_time <= 0:
         return
 
-    ts = pd.to_datetime(current_time, unit="ns", utc=True).tz_convert(strategy.timezone)
-    current_date = ts.date()
+    # 性能: 逐 bar 的 pd.to_datetime(标量) 极慢(占回测总耗时约三成).
+    # 本地交易日在同一天内不变, 按 [当日 00:00, 次日 00:00) 的 ns 窗口缓存,
+    # 仅跨日时才走一次 pandas 转换. 语义与逐 bar 转换完全一致.
+    cache_lo = getattr(strategy, "_framework_local_date_lo_ns", None)
+    cache_hi = getattr(strategy, "_framework_local_date_hi_ns", None)
+    if (
+        cache_lo is not None
+        and cache_hi is not None
+        and cache_lo <= current_time < cache_hi
+    ):
+        current_date = strategy._framework_local_date_cache
+    else:
+        ts = pd.to_datetime(current_time, unit="ns", utc=True).tz_convert(
+            strategy.timezone
+        )
+        current_date = ts.date()
+        day_start = ts.normalize()
+        lo_ns = day_start.value
+        hi_ns = (day_start + pd.Timedelta(hours=24)).normalize().value
+        strategy._framework_local_date_cache = current_date
+        strategy._framework_local_date_lo_ns = lo_ns
+        # DST "回拨" 的 25h 日 hi<=lo, 令窗口为空以强制逐 bar 重算(仍正确).
+        strategy._framework_local_date_hi_ns = hi_ns if hi_ns > lo_ns else lo_ns
     current_session = getattr(strategy.ctx, "session", None)
     use_precise_boundaries = _use_precise_day_boundary_hooks(strategy)
 
@@ -716,6 +737,11 @@ def dispatch_shutdown_hooks(strategy: Any) -> None:
 
 def ensure_framework_state(strategy: Any) -> None:
     """确保框架级钩子状态字段存在."""
+    # 性能: 本函数幂等且每 bar 被调用多次, 首次初始化后直接短路,
+    # 避免逐 bar 数百次 hasattr 探测. checkpoint 恢复时 __getstate__ 会删除
+    # 此标志, 强制重新初始化被重置的字段.
+    if getattr(strategy, "_framework_state_ready", False):
+        return
     if not hasattr(strategy, "_framework_last_session"):
         strategy._framework_last_session = None
     if not hasattr(strategy, "_framework_last_local_date"):
@@ -764,3 +790,4 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._trading_day_after_bar_rebalance_timestamps = {}
     if not hasattr(strategy, "_framework_daily_rebalance_after_bar_timers_registered"):
         strategy._framework_daily_rebalance_after_bar_timers_registered = False
+    strategy._framework_state_ready = True
