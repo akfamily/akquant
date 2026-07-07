@@ -104,6 +104,20 @@ def _needs_time_hooks(strategy: Any) -> bool:
     return cached
 
 
+def _needs_portfolio_update(strategy: Any) -> bool:
+    """策略是否重写了 on_portfolio_update(按类判定, 结果缓存).
+
+    未重写则 dispatch_portfolio_update 只做无人消费的组合快照/取账户/变更检测,
+    其维护的 portfolio_dirty / last_portfolio_state / emit_previous 状态仅由本函数
+    自身消费(use_previous 标志则由 on_trade 的 try/finally 独立管理), 故可整段跳过.
+    """
+    cached = getattr(strategy, "_framework_needs_portfolio_update", None)
+    if cached is None:
+        cached = _strategy_overrides_callback(strategy, "on_portfolio_update")
+        strategy._framework_needs_portfolio_update = cached
+    return cached
+
+
 def _build_pre_open_event(
     strategy: Any,
     trading_date: Any,
@@ -654,6 +668,9 @@ def mark_portfolio_dirty(strategy: Any) -> None:
 def dispatch_portfolio_update(strategy: Any) -> None:
     """在账户状态变化时分发 on_portfolio_update."""
     if strategy.ctx is None:
+        return
+    # 性能: 策略未重写 on_portfolio_update 时, 跳过逐 bar 的组合快照/取账户/变更检测.
+    if not _needs_portfolio_update(strategy):
         return
     if (
         not getattr(strategy, "_framework_portfolio_dirty", True)
