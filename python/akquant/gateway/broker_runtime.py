@@ -37,6 +37,7 @@ class BrokerRuntime:
         record_order_request: Callable[[str, Any], None],
         adapt_strategy_payload: Callable[[str, Any], Any],
         record_stop_remap: Any = None,
+        should_replay_trades: Callable[[], bool] | None = None,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -63,6 +64,7 @@ class BrokerRuntime:
             get_recovery_mode=get_recovery_mode,
             get_last_error_key=get_last_error_key,
             set_last_error_key=set_last_error_key,
+            should_replay_trades=should_replay_trades,
         )
         self._resolve_trader_capabilities = resolve_trader_capabilities
         self._next_client_order_id = next_client_order_id
@@ -90,6 +92,11 @@ class BrokerRuntime:
     def submitter(self) -> BrokerOrderSubmitter | None:
         """Return the installed submitter, if broker live submit is enabled."""
         return self._submitter
+
+    @property
+    def state_caches(self) -> list[Any]:
+        """Expose per-slot BrokerStateCache list (启动激活 seed 用)."""
+        return self._broker_state_caches
 
     def install_submitter(
         self, trader_gateway: Any, strategy: Any

@@ -14,6 +14,7 @@ class BrokerRecovery:
         get_recovery_mode: Callable[[], str],
         get_last_error_key: Callable[[], str],
         set_last_error_key: Callable[[str], None],
+        should_replay_trades: Callable[[], bool] | None = None,
     ) -> None:
         """Bind gateway accessors and strict-mode error reporting hooks."""
         self._get_trader_gateway = get_trader_gateway
@@ -23,6 +24,7 @@ class BrokerRecovery:
         self._get_recovery_mode = get_recovery_mode
         self._get_last_error_key = get_last_error_key
         self._set_last_error_key = set_last_error_key
+        self._should_replay_trades = should_replay_trades
 
     def run_cycle(
         self,
@@ -77,7 +79,8 @@ class BrokerRecovery:
                 if self._get_recovery_mode() == "strict":
                     return
         sync_today_trades = getattr(gateway, "sync_today_trades", None)
-        if callable(sync_today_trades):
+        replay_ok = self._should_replay_trades is None or self._should_replay_trades()
+        if callable(sync_today_trades) and replay_ok:
             try:
                 for trade in sync_today_trades():
                     self._queue_broker_event("trade", trade)

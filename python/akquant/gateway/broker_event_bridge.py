@@ -1,4 +1,4 @@
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from ..log import build_log_extra, get_logger
 
@@ -36,6 +36,16 @@ class BrokerEventBridge:
         # 会话级已入队 trade_id(不随 drain 清空): 防恢复循环重放同一成交
         # 导致 on_trade/_process_order_groups 重复触发。
         self._seen_trade_ids: set[str] = set()
+
+    def mark_trades_seen(self, trade_ids: Iterable[str]) -> None:
+        """把 trade_id 灌入会话级 dedup 基线.
+
+        已烘进持仓快照的成交, 后续重放经 queue_event 丢弃。
+        """
+        with self._event_lock:
+            for tid in trade_ids:
+                if tid:
+                    self._seen_trade_ids.add(str(tid))
 
     def queue_event(self, event_name: str, payload: Any) -> None:
         """Add a broker event to the dispatch queue with semantic deduplication."""
