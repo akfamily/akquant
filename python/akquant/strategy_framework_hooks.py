@@ -77,6 +77,33 @@ def _strategy_overrides_callback(strategy: Any, callback_name: str) -> bool:
     return False
 
 
+# dispatch_time_hooks 可能触发的全部用户回调. 一个都没重写时整段可跳过.
+_TIME_HOOK_CALLBACKS = (
+    "on_before_trading",
+    "on_after_trading",
+    "on_session_start",
+    "on_session_end",
+    "on_daily_rebalance",
+)
+
+
+def _needs_time_hooks(strategy: Any) -> bool:
+    """策略是否重写了任一会话/交易日钩子(按类判定, 结果缓存).
+
+    未重写则 dispatch_time_hooks 不会触发任何回调, 其内部维护的 session/date
+    状态也无人在本模块外读取, 因此整段可安全跳过——省掉逐 bar 的 pandas 时间
+    转换与大量 getattr.
+    """
+    cached = getattr(strategy, "_framework_needs_time_hooks", None)
+    if cached is None:
+        cached = any(
+            _strategy_overrides_callback(strategy, name)
+            for name in _TIME_HOOK_CALLBACKS
+        )
+        strategy._framework_needs_time_hooks = cached
+    return cached
+
+
 def _build_pre_open_event(
     strategy: Any,
     trading_date: Any,
@@ -302,6 +329,10 @@ def call_user_callback(
 def dispatch_time_hooks(strategy: Any) -> None:
     """分发会话与交易日相关钩子."""
     if strategy.ctx is None:
+        return
+
+    # 性能: 策略未重写任何会话/交易日钩子时, 本函数不会触发回调, 直接跳过.
+    if not _needs_time_hooks(strategy):
         return
 
     current_time = int(getattr(strategy.ctx, "current_time", 0))
