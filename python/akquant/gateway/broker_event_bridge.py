@@ -47,6 +47,25 @@ class BrokerEventBridge:
                 if tid:
                     self._seen_trade_ids.add(str(tid))
 
+    def discard_pending_trades(self) -> None:
+        """丢弃队列中待派发的成交事件并标记其 trade_id 已见.
+
+        激活时: 这些成交已烘进持仓快照, 不应再 apply_fill/重放 on_trade。
+        仅动 trade 事件, order/account 保留。
+        """
+        with self._event_lock:
+            kept: list = []
+            for event_name, payload in self._event_store:
+                if event_name == "trade":
+                    raw = getattr(payload, "trade_id", None)
+                    if raw is None and isinstance(payload, dict):
+                        raw = payload.get("trade_id")
+                    if raw:
+                        self._seen_trade_ids.add(str(raw))
+                    continue  # 丢弃该 trade 事件
+                kept.append((event_name, payload))
+            self._event_store[:] = kept
+
     def queue_event(self, event_name: str, payload: Any) -> None:
         """Add a broker event to the dispatch queue with semantic deduplication."""
         event_key = self._make_event_key(event_name, payload)

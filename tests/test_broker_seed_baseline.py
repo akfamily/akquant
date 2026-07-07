@@ -95,10 +95,11 @@ def test_recovery_default_replays_when_no_gate() -> None:
     assert any(n == "trade" for n, _ in queued)
 
 
-def test_cold_start_no_double_count_via_baseline() -> None:
-    """Seed 含成交 T + 基线标 T seen → 恢复重放 T 被丢 → 持仓不双计."""
+def test_cold_start_pending_trade_discarded_no_double_count() -> None:
+    """激活前入队的成交(已烘进快照)在激活时被丢弃, drain 不再 apply_fill 双计."""
     from akquant.gateway.broker_models import UnifiedPosition
     from akquant.gateway.broker_state_cache import BrokerStateCache
+    from akquant.gateway.broker_strategy_api import wrap_state_invalidation
 
     class _G:
         def query_positions(self):
@@ -107,19 +108,36 @@ def test_cold_start_no_double_count_via_baseline() -> None:
             ]
 
     cache = BrokerStateCache(_G())
-    assert cache.positions()["X"] == 100.0  # seed 含 T
+    caches = [cache]
     store: list = []
-    b = _bridge(store)
-    # 基线: 把快照已含的 T 标 seen
-    b.mark_trades_seen(["T"])
-    # 恢复重放 T(经 wrap 应用 delta)——应被 queue 层丢弃
+    # bridge 的 update_broker_state 经 wrap → 真正会 apply_fill 到 cache
+    wrapped_update = wrap_state_invalidation(lambda n, p: None, lambda: caches)
+    b = BrokerEventBridge(
+        event_lock=threading.Lock(),
+        event_store=store,
+        event_keys=set(),
+        get_on_broker_event=lambda: None,
+        make_event_key=lambda n, p: (
+            f"trade:{p.get('trade_id')}"
+            if n == "trade" and p.get("trade_id")
+            else f"{n}:{id(p)}"
+        ),
+        update_broker_state=wrapped_update,
+        resolve_owner_strategy_id=lambda p: "",
+        payload_to_dict=lambda p: dict(p) if isinstance(p, dict) else {},
+        safe_strategy_callback=lambda s, n, p: None,
+        adapt_strategy_payload=lambda n, p: p,
+    )
+    # 盘中重启: 激活前一笔 live push T 已入队
     b.queue_event(
         "trade", {"trade_id": "T", "symbol": "X", "side": "Buy", "quantity": 100.0}
     )
-    b.drain_events(object())  # 无策略回调也无妨
-    # 直接验证: 被基线拦下的 T 不会到达 apply_fill(queue 已丢); 若未拦则会 200
-    assert store == []  # T 已 seen, 未入队
-    assert cache.positions()["X"] == 100.0  # 未双计
+    # 激活: 先丢弃待派发成交(T 已在快照里), 再 seed
+    b.discard_pending_trades()
+    assert cache.positions()["X"] == 100.0  # seed 快照(含 T)
+    # drain: T 已被丢弃, 不会 apply_fill
+    b.drain_events(object())
+    assert cache.positions()["X"] == 100.0  # 未双计(改前: 200)
 
 
 def test_baseline_broker_state_seeds_and_marks_seen() -> None:
