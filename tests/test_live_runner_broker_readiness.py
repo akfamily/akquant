@@ -32,6 +32,8 @@ def _runner(**over: Any) -> LiveRunner:
     runner.on_broker_connected = None
     runner.broker_ready_timeout = 10.0
     runner.broker_ready_required = False
+    # _await_broker_ready 就绪激活需要 _broker_runtime
+    runner._init_broker_bridge_state()
     for key, value in over.items():
         setattr(runner, key, value)
     return runner
