@@ -776,6 +776,7 @@ class LiveRunner:
             getattr(self, "gateway_options", {}).get("recovery_mode", "compatible")
         )
         self._broker_recovery_last_error_key = ""
+        self._broker_baseline_done = False
         self._broker_runtime = BrokerRuntime(
             event_lock=self._broker_event_lock,
             event_store=self._broker_events,
@@ -801,6 +802,7 @@ class LiveRunner:
             record_order_request=self._record_order_request,
             adapt_strategy_payload=self._adapt_strategy_payload,
             record_stop_remap=self._record_stop_remap,
+            should_replay_trades=lambda: self._broker_baseline_done,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -830,6 +832,39 @@ class LiveRunner:
             strategy,
         )
 
+    def _baseline_broker_state(self, trader_gateway: Any) -> None:
+        """就绪激活: 先丢弃待派发成交, 再急切 seed 各 slot 持仓, 最后灌 dedup 基线.
+
+        闭合 pre-seed 入队/post-seed drain 过计窗口。dispatch/recovery 线程在
+        ready 前已启动, 回调也已绑定, 故激活前可能已有实盘
+        推送的成交事件排队等待派发; 若在 seed 之后才被 dispatch 线程 drain, 会对
+        eager-seed 过的缓存 apply_fill 一次 delta, 而该成交其实已经烘进了快照 →
+        持仓过计。丢弃在先: 这些事件是历史(已含在快照里), 策略尚未激活, 不应
+        apply_fill/触发 on_trade 重放。
+
+        seed 先/基线后 → 两查询间隙成交残留为轻微低计(较高计安全)。此后仅激活后
+        新成交(新 trade_id)才 apply_fill; 基线前成交的恢复重放经 _seen 丢弃(不 apply、
+        不重放 on_trade)。恢复的成交重放由 _broker_baseline_done 门控, 激活前不跑。
+        """
+        try:
+            self._broker_event_bridge.discard_pending_trades()
+        except Exception:  # noqa: BLE001 保守: 失败不阻塞后续 seed
+            logger.exception("broker baseline discard pending trades failed")
+        for cache in self._broker_runtime.state_caches:
+            try:
+                cache.positions()
+            except Exception:  # noqa: BLE001 保守: 失败交给懒 seed
+                logger.exception("broker baseline seed positions failed")
+        sync = getattr(trader_gateway, "sync_today_trades", None)
+        if callable(sync):
+            try:
+                self._broker_event_bridge.mark_trades_seen(
+                    getattr(t, "trade_id", None) for t in sync()
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("broker baseline sync_today_trades failed")
+        self._broker_baseline_done = True
+
     def _await_broker_ready(self, trader_gateway: Any, targets: list) -> None:
         """Poll heartbeat() until ready/timeout; set broker_ready, fire callback."""
         deadline = time.monotonic() + float(self.broker_ready_timeout)
@@ -845,6 +880,7 @@ class LiveRunner:
         for target in targets:
             setattr(target, "broker_ready", ready)
         if ready:
+            self._baseline_broker_state(trader_gateway)
             self._dispatch_broker_connected(targets)
         else:
             logger.warning(

@@ -263,6 +263,7 @@ def test_live_runner_broker_bridge_recovers_from_sync() -> None:
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
     runner._bind_broker_callbacks(gateway, cast(Any, strategy))
+    runner._broker_baseline_done = True
     runner._run_broker_recovery_cycle()
     runner._drain_broker_events(cast(Any, strategy))
     runner._stop_broker_dispatcher()
@@ -355,6 +356,7 @@ def test_live_runner_strict_recovery_reports_sync_failure() -> None:
     runner.on_broker_event = broker_events.append
     runner._init_broker_bridge_state()
     runner._broker_trader_gateway = _DummyTraderGateway()
+    runner._broker_baseline_done = True
     strategy = _DummyStrategy()
 
     runner._run_broker_recovery_cycle(cast(Any, strategy))
