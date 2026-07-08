@@ -106,6 +106,21 @@ trader.place_order(
 与证券回报路径一致。去重（按 `trade_id`）与冷启动 seed（`query_trades()` 已合并期权成交）
 均自动继承，无需额外配置；未启用期权时不建立该连接。
 
+## 期权行权 + 备兑（Phase 3c）
+
+启用期权后，以下**便捷方法**（非 `TraderGateway` 协议，返回柜台原始行）可用；未启用期权时抛 `RuntimeError`：
+
+- 行权查询（只读）：`query_option_exercise_assignments()`（行权指派）、
+  `query_option_exercise_settlements()`（行权交割）、`query_option_exercise_debts()`（行权负债）、
+  `query_option_history_exercise_assignments(start_date, end_date)` /
+  `query_option_history_exercise_settlements(start_date, end_date)`（历史）。
+- 备兑：`query_option_covered_shortages()`（备兑不足，读）、
+  `query_option_covered_transferable(exchange_type, lock_direction, stock_code=None)`（可划转，读）、
+  `covered_transfer(exchange_type, stock_code, entrust_amount, lock_direction)`（**备兑证券划转，写**；
+  `lock_direction` 为 `"1"`=锁定 / `"2"`=解锁，返回柜台原始 `dict`）。
+
+期权账户字段由服务端按会话注入，调用方无需传递。
+
 ## 实盘就绪（broker_ready）
 
 `trading_mode="broker_live"` 下 `LiveRunner` 会先 `connect()`（登录）再 `start()`
