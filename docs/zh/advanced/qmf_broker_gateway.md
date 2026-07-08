@@ -98,6 +98,14 @@ trader.place_order(
   否则抛出 `RuntimeError`。
 - 以上方法均非 `TraderGateway` 协议方法，返回柜台**原始行** `list[dict]`（不做 Unified 建模）。
 
+## 期权实时回报（Phase 3b）
+
+启用期权会话（`enable_options=True`）后，`start()` 会在证券推送 WS 之外，额外建立一路
+绑定**期权 token** 的推送连接。服务端按 `(account_type, fund_account)` 路由，期权回报
+（issue_type 33011 成交 / 33012 委托）经该连接推送，分发到策略的 `on_trade` / `on_order`，
+与证券回报路径一致。去重（按 `trade_id`）与冷启动 seed（`query_trades()` 已合并期权成交）
+均自动继承，无需额外配置；未启用期权时不建立该连接。
+
 ## 实盘就绪（broker_ready）
 
 `trading_mode="broker_live"` 下 `LiveRunner` 会先 `connect()`（登录）再 `start()`
