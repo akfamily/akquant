@@ -249,3 +249,14 @@ class QMFTraderGateway(TraderGatewayBase):
             snapshot = mapper.parse_order(data, client_order_id)
             self._emit_order(snapshot)
             self._emit_exec_from_order(snapshot)
+
+    def _dispatch_option_push(self, event: str, data: dict[str, Any]) -> None:
+        """分发期权推送帧（issue_type 33011/33012）到成交/委托回调."""
+        broker_order_id = str(data.get("entrust_no", ""))
+        client_order_id = self.client_order_id_for(broker_order_id)
+        if event == "trade_update":
+            self._emit_trade(mapper.parse_option_trade(data, client_order_id))
+        elif event == "order_update":
+            snapshot = mapper.parse_option_order(data, client_order_id)
+            self._emit_order(snapshot)
+            self._emit_exec_from_order(snapshot)
