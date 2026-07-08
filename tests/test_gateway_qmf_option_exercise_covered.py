@@ -124,3 +124,115 @@ def test_covered_transfer_write() -> None:
         "lock_direction": "1",
     }
     assert result == {"entrust_no": "9000000009"}
+
+
+class _FakeOptionClient:
+    """Option client stub recording calls for adapter delegation tests."""
+
+    def __init__(self) -> None:
+        """Init token, fund account and call log."""
+        self.token = "gw-opt"
+        self.fund_account = "8888000001"
+        self.calls: list = []
+
+    def _record(self, name, *args):
+        """Record a call and return a name-tagged row."""
+        self.calls.append((name, args))
+        return [{"m": name}]
+
+    def query_option_exercise_assignments(self):
+        """Stub exercise assignments."""
+        return self._record("assignments")
+
+    def query_option_exercise_settlements(self):
+        """Stub exercise settlements."""
+        return self._record("settlements")
+
+    def query_option_exercise_debts(self):
+        """Stub exercise debts."""
+        return self._record("debts")
+
+    def query_option_history_exercise_assignments(self, start_date, end_date):
+        """Stub history exercise assignments."""
+        return self._record("hist_assignments", start_date, end_date)
+
+    def query_option_history_exercise_settlements(self, start_date, end_date):
+        """Stub history exercise settlements."""
+        return self._record("hist_settlements", start_date, end_date)
+
+    def query_option_covered_shortages(self):
+        """Stub covered shortages."""
+        return self._record("shortages")
+
+    def query_option_covered_transferable(
+        self, exchange_type, lock_direction, stock_code=None
+    ):
+        """Stub covered transferable."""
+        return self._record("transferable", exchange_type, lock_direction, stock_code)
+
+    def covered_transfer(
+        self, exchange_type, stock_code, entrust_amount, lock_direction
+    ):
+        """Stub covered transfer write."""
+        self.calls.append(
+            ("transfer", (exchange_type, stock_code, entrust_amount, lock_direction))
+        )
+        return {"entrust_no": "9000000009"}
+
+    def close(self):
+        """Ignore close."""
+
+
+def _gateway(option_client):
+    """Build a gateway with a securities stub and given option client."""
+    from akquant.gateway.brokers.qmf.adapter import QMFTraderGateway
+
+    class _Sec:
+        token = "gw-sec"
+        fund_account = "8888000001"
+
+        def close(self):
+            """Ignore close."""
+
+    return QMFTraderGateway(
+        client=_Sec(), ws_url="ws://gw.test/api/v1/stream", option_client=option_client
+    )
+
+
+def test_adapter_delegates_exercise_and_covered() -> None:
+    """Adapter convenience methods delegate to the option client with args intact."""
+    opt = _FakeOptionClient()
+    gw = _gateway(opt)
+
+    assert gw.query_option_exercise_assignments() == [{"m": "assignments"}]
+    assert gw.query_option_exercise_settlements() == [{"m": "settlements"}]
+    assert gw.query_option_exercise_debts() == [{"m": "debts"}]
+    assert gw.query_option_history_exercise_assignments("20260101", "20260131") == [
+        {"m": "hist_assignments"}
+    ]
+    assert gw.query_option_history_exercise_settlements("20260101", "20260131") == [
+        {"m": "hist_settlements"}
+    ]
+    assert gw.query_option_covered_shortages() == [{"m": "shortages"}]
+    assert gw.query_option_covered_transferable("1", "1", stock_code="600000") == [
+        {"m": "transferable"}
+    ]
+    assert gw.covered_transfer("1", "600000", "1000", "1") == {
+        "entrust_no": "9000000009"
+    }
+
+    assert ("hist_assignments", ("20260101", "20260131")) in opt.calls
+    assert ("transferable", ("1", "1", "600000")) in opt.calls
+    assert ("transfer", ("1", "600000", "1000", "1")) in opt.calls
+
+
+def test_adapter_exercise_covered_require_option_session() -> None:
+    """Without an option session, 3c convenience methods raise RuntimeError."""
+    gw = _gateway(None)
+    for call in (
+        lambda: gw.query_option_exercise_assignments(),
+        lambda: gw.query_option_covered_shortages(),
+        lambda: gw.covered_transfer("1", "600000", "1000", "1"),
+    ):
+        with pytest.raises(RuntimeError):
+            call()

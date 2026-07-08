@@ -222,6 +222,58 @@ class QMFTraderGateway(TraderGatewayBase):
             start_date, end_date
         )
 
+    def query_option_exercise_assignments(self) -> list[dict[str, Any]]:
+        """期权行权指派查询（原始行）."""
+        return self._require_option_client().query_option_exercise_assignments()
+
+    def query_option_exercise_settlements(self) -> list[dict[str, Any]]:
+        """期权行权交割查询（原始行）."""
+        return self._require_option_client().query_option_exercise_settlements()
+
+    def query_option_exercise_debts(self) -> list[dict[str, Any]]:
+        """期权行权负债查询（原始行）."""
+        return self._require_option_client().query_option_exercise_debts()
+
+    def query_option_history_exercise_assignments(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """期权历史行权指派查询（原始行）."""
+        return self._require_option_client().query_option_history_exercise_assignments(
+            start_date, end_date
+        )
+
+    def query_option_history_exercise_settlements(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """期权历史行权交割查询（原始行）."""
+        return self._require_option_client().query_option_history_exercise_settlements(
+            start_date, end_date
+        )
+
+    def query_option_covered_shortages(self) -> list[dict[str, Any]]:
+        """期权备兑不足查询（原始行）."""
+        return self._require_option_client().query_option_covered_shortages()
+
+    def query_option_covered_transferable(
+        self, exchange_type: str, lock_direction: str, stock_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """期权可划转备兑证券查询（原始行）."""
+        return self._require_option_client().query_option_covered_transferable(
+            exchange_type, lock_direction, stock_code
+        )
+
+    def covered_transfer(
+        self,
+        exchange_type: str,
+        stock_code: str,
+        entrust_amount: str,
+        lock_direction: str,
+    ) -> dict[str, Any]:
+        """备兑证券划转（写；lock_direction 1=锁定 2=解锁），返回原始 data."""
+        return self._require_option_client().covered_transfer(
+            exchange_type, stock_code, entrust_amount, lock_direction
+        )
+
     def _require_option_client(self) -> QMFHttpClient:
         """返回期权会话客户端；未启用期权时抛清晰错误."""
         if self._option_client is None:
