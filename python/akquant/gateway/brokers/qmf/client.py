@@ -239,6 +239,104 @@ class QMFHttpClient:
             )
         )
 
+    def query_option_exercise_assignments(self) -> list[dict[str, Any]]:
+        """查询期权行权指派（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/exercise-assignments",
+                {"fund_account": self.fund_account},
+            )
+        )
+
+    def query_option_exercise_settlements(self) -> list[dict[str, Any]]:
+        """查询期权行权交割（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/exercise-settlements",
+                {"fund_account": self.fund_account},
+            )
+        )
+
+    def query_option_exercise_debts(self) -> list[dict[str, Any]]:
+        """查询期权行权负债（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/exercise-debts",
+                {"fund_account": self.fund_account},
+            )
+        )
+
+    def query_option_history_exercise_assignments(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """查询期权历史行权指派（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/history-exercise-assignments",
+                {
+                    "fund_account": self.fund_account,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            )
+        )
+
+    def query_option_history_exercise_settlements(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """查询期权历史行权交割（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/history-exercise-settlements",
+                {
+                    "fund_account": self.fund_account,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            )
+        )
+
+    def query_option_covered_shortages(self) -> list[dict[str, Any]]:
+        """查询期权备兑不足（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/covered-shortages",
+                {"fund_account": self.fund_account},
+            )
+        )
+
+    def query_option_covered_transferable(
+        self, exchange_type: str, lock_direction: str, stock_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询期权可划转备兑证券（列表）."""
+        payload: dict[str, Any] = {
+            "fund_account": self.fund_account,
+            "exchange_type": exchange_type,
+            "lock_direction": lock_direction,
+        }
+        if stock_code is not None:
+            payload["stock_code"] = stock_code
+        return list(self._post("/api/v1/option/covered-transferable", payload))
+
+    def covered_transfer(
+        self,
+        exchange_type: str,
+        stock_code: str,
+        entrust_amount: str,
+        lock_direction: str,
+    ) -> dict[str, Any]:
+        """备兑证券划转（写；lock_direction 1=锁定 2=解锁），返回 data."""
+        return self._post(
+            "/api/v1/option/covered-transfer",
+            {
+                "fund_account": self.fund_account,
+                "exchange_type": exchange_type,
+                "stock_code": stock_code,
+                "entrust_amount": entrust_amount,
+                "lock_direction": lock_direction,
+            },
+        )
+
     def close(self) -> None:
         """关闭底层连接."""
         self._http.close()
