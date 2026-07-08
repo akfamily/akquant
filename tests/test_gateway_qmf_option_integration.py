@@ -49,3 +49,61 @@ def test_option_end_to_end() -> None:
     assert order_id
     assert any(p.symbol == "10003456.SH" for p in trader.query_positions())
     trader.disconnect()
+
+
+class _WsFake:
+    """Client stub exposing a token and a no-op close for WS wiring tests."""
+
+    def __init__(self, token: str) -> None:
+        """Record the session token."""
+        self.token = token
+        self.fund_account = "8888000001"
+
+    def close(self) -> None:
+        """Ignore close in wiring tests."""
+
+
+def test_start_opens_second_ws_bound_to_option_token(monkeypatch) -> None:
+    """Open a second push client bound to the option token; disconnect stops both."""
+    pytest.importorskip("websocket")
+    from akquant.gateway.brokers.qmf import adapter as adapter_mod
+    from akquant.gateway.brokers.qmf.adapter import QMFTraderGateway
+
+    started: list = []
+    stopped: list = []
+    monkeypatch.setattr(
+        adapter_mod.QMFPushClient, "start", lambda self: started.append(self._token)
+    )
+    monkeypatch.setattr(
+        adapter_mod.QMFPushClient, "stop", lambda self: stopped.append(self._token)
+    )
+
+    gw = QMFTraderGateway(
+        client=_WsFake("gw-sec"),
+        ws_url="ws://gw.test/api/v1/stream",
+        option_client=_WsFake("gw-opt"),
+    )
+    gw.start()
+    assert set(started) == {"gw-sec", "gw-opt"}
+    assert gw._option_push is not None
+    assert gw._option_push._token == "gw-opt"
+
+    gw.disconnect()
+    assert set(stopped) == {"gw-sec", "gw-opt"}
+
+
+def test_start_without_option_client_has_no_second_ws(monkeypatch) -> None:
+    """Without an option client, start() opens only the securities push client."""
+    pytest.importorskip("websocket")
+    from akquant.gateway.brokers.qmf import adapter as adapter_mod
+    from akquant.gateway.brokers.qmf.adapter import QMFTraderGateway
+
+    started: list = []
+    monkeypatch.setattr(
+        adapter_mod.QMFPushClient, "start", lambda self: started.append(self._token)
+    )
+
+    gw = QMFTraderGateway(client=_WsFake("gw-sec"), ws_url="ws://gw.test/api/v1/stream")
+    gw.start()
+    assert started == ["gw-sec"]
+    assert gw._option_push is None

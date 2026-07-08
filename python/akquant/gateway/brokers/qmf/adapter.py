@@ -49,6 +49,7 @@ class QMFTraderGateway(TraderGatewayBase):
         self._ws_url = ws_url
         self._capability = capability or default_capability(option_client is not None)
         self._push: QMFPushClient | None = None
+        self._option_push: QMFPushClient | None = None
         self._option_broker_ids: set[str] = set()
 
     # --- 生命周期 ---
@@ -62,18 +63,27 @@ class QMFTraderGateway(TraderGatewayBase):
         """停止推送并关闭 HTTP 连接."""
         if self._push is not None:
             self._push.stop()
+        if self._option_push is not None:
+            self._option_push.stop()
         self._client.close()
         if self._option_client is not None:
             self._option_client.close()
 
     def start(self) -> None:
-        """建立推送长连并把 push 帧分发到回调."""
+        """建立推送长连并把 push 帧分发到回调（启用期权时含第二路期权 WS）."""
         self._push = QMFPushClient(
             ws_url=self._ws_url,
             token=self._client.token,
             on_push=self._dispatch_push,
         )
         self._push.start()
+        if self._option_client is not None:
+            self._option_push = QMFPushClient(
+                ws_url=self._ws_url,
+                token=self._option_client.token,
+                on_push=self._dispatch_option_push,
+            )
+            self._option_push.start()
 
     def get_capabilities(self) -> BrokerCapability:
         """返回能力矩阵."""
