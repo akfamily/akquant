@@ -159,6 +159,20 @@ client 自动注入 `fund_account`；`entrust_prop`（转股/回售等）按柜�
 
 拆分（`comb_bs="2"`）时通常需送 `optcomb_id`（组合编码）。
 
+## 综合业务 + 期权尾巴（Phase G）
+
+**综合业务（证券侧，始终可用，无需 `enable_options`）**——便捷方法，原始行透传：
+
+- `place_composite_order(exchange_type, stock_account, stock_code, entrust_price, entrust_amount, entrust_prop, entrust_bs, extra=None)`（综合业务委托，写，`dict`；`entrust_prop` 如 `PFP`=盘后固定价格；其余约定号/协议号/联系人等可选字段经 `extra: dict` 透传）
+- `cancel_composite_order(entrust_no, entrust_reference=None)`（撤单，写，`dict`）
+- `query_composite_orders(**filters)` / `query_composite_trades(**filters)`（委托/成交查询，`list`；`filters` 透传可选过滤）
+
+**期权尾巴（期权侧，需 `enable_options`）**：
+
+- `option_contract_confirm(exchange_type, option_code)`（合约确认，`list`；可能带确认写副作用）
+- `query_option_history_bill(begin_date, end_date, money_type="0")`（历史账单，`list`）
+- `query_option_history_statements(begin_date, end_date, query_mode)`（历史对账单，`list`；`query_mode` `1`每日汇总/`2`时间段汇总）
+
 ## 实盘就绪（broker_ready）
 
 `trading_mode="broker_live"` 下 `LiveRunner` 会先 `connect()`（登录）再 `start()`
