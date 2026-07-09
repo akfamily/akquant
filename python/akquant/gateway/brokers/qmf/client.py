@@ -337,6 +337,98 @@ class QMFHttpClient:
             },
         )
 
+    def query_option_contracts(
+        self, stock_code: str | None = None, option_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询期权合约（列表）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        if stock_code is not None:
+            payload["stock_code"] = stock_code
+        if option_code is not None:
+            payload["option_code"] = option_code
+        return list(self._post("/api/v1/option/contracts", payload))
+
+    def query_option_underlyings(
+        self, stock_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询期权标的证券（列表）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        if stock_code is not None:
+            payload["stock_code"] = stock_code
+        return list(self._post("/api/v1/option/underlyings", payload))
+
+    def query_option_strategies(
+        self, optcomb_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询期权组合策略定义（列表）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        if optcomb_code is not None:
+            payload["optcomb_code"] = optcomb_code
+        return list(self._post("/api/v1/option/strategies", payload))
+
+    def query_option_position_limits(
+        self, stock_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询期权持仓限额（列表）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        if stock_code is not None:
+            payload["stock_code"] = stock_code
+        return list(self._post("/api/v1/option/position-limits", payload))
+
+    def query_option_contract_tips(self, money_type: str = "0") -> list[dict[str, Any]]:
+        """查询期权合约提示（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/contract-tips",
+                {"fund_account": self.fund_account, "money_type": money_type},
+            )
+        )
+
+    def query_option_enable_amount(
+        self,
+        exchange_type: str,
+        option_code: str,
+        opt_entrust_price: str,
+        entrust_prop: str,
+        entrust_bs: str,
+        entrust_oc: str,
+        covered_flag: str | None = None,
+    ) -> dict[str, Any]:
+        """查询期权可委托数量（下单前额度计算），返回 data."""
+        payload: dict[str, Any] = {
+            "fund_account": self.fund_account,
+            "exchange_type": exchange_type,
+            "option_code": option_code,
+            "opt_entrust_price": opt_entrust_price,
+            "entrust_prop": entrust_prop,
+            "entrust_bs": entrust_bs,
+            "entrust_oc": entrust_oc,
+        }
+        if covered_flag is not None:
+            payload["covered_flag"] = covered_flag
+        return self._post("/api/v1/option/enable-amount", payload)
+
+    def query_option_underlying_amount_tip(
+        self,
+        exchange_type: str,
+        option_code: str,
+        entrust_amount: str,
+        entrust_bs: str,
+        entrust_oc: str,
+    ) -> dict[str, Any]:
+        """查询期权标的持仓数量提示（下单前提示），返回 data."""
+        return self._post(
+            "/api/v1/option/underlying-amount-tip",
+            {
+                "fund_account": self.fund_account,
+                "exchange_type": exchange_type,
+                "option_code": option_code,
+                "entrust_amount": entrust_amount,
+                "entrust_bs": entrust_bs,
+                "entrust_oc": entrust_oc,
+            },
+        )
+
     def close(self) -> None:
         """关闭底层连接."""
         self._http.close()
