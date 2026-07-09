@@ -379,6 +379,78 @@ class QMFTraderGateway(TraderGatewayBase):
         """可转债回售信息查询（证券侧；原始行）."""
         return self._client.query_bond_putback_info(stock_code)
 
+    def place_option_combo_order(
+        self,
+        exchange_type: str,
+        optcomb_code: str,
+        first_option_code: str,
+        first_opthold_type: str,
+        second_option_code: str,
+        second_opthold_type: str,
+        entrust_amount: str,
+        comb_bs: str,
+        optcomb_id: str | None = None,
+    ) -> dict[str, Any]:
+        """期权组合策略下单（写；两腿；原始 data）."""
+        return self._require_option_client().place_option_combo_order(
+            exchange_type,
+            optcomb_code,
+            first_option_code,
+            first_opthold_type,
+            second_option_code,
+            second_opthold_type,
+            entrust_amount,
+            comb_bs,
+            optcomb_id,
+        )
+
+    def confirm_option_combo(
+        self,
+        exchange_type: str,
+        optcomb_code: str,
+        comb_bs: str,
+        first_option_code: str | None = None,
+        first_opthold_type: str | None = None,
+        second_option_code: str | None = None,
+        second_opthold_type: str | None = None,
+        optcomb_id: str | None = None,
+    ) -> dict[str, Any]:
+        """期权组合策略确认（写；原始 data）."""
+        return self._require_option_client().confirm_option_combo(
+            exchange_type,
+            optcomb_code,
+            comb_bs,
+            first_option_code,
+            first_opthold_type,
+            second_option_code,
+            second_opthold_type,
+            optcomb_id,
+        )
+
+    def query_option_combo_orders(
+        self, optcomb_code: str | None = None, optcomb_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """期权组合委托查询（原始行）."""
+        return self._require_option_client().query_option_combo_orders(
+            optcomb_code, optcomb_id
+        )
+
+    def query_option_combo_positions(
+        self, optcomb_code: str | None = None, query_mode: str | None = None
+    ) -> list[dict[str, Any]]:
+        """期权组合持仓查询（原始行）."""
+        return self._require_option_client().query_option_combo_positions(
+            optcomb_code, query_mode
+        )
+
+    def query_option_history_combo_orders(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """期权历史组合委托查询（原始行）."""
+        return self._require_option_client().query_option_history_combo_orders(
+            start_date, end_date
+        )
+
     def _require_option_client(self) -> QMFHttpClient:
         """返回期权会话客户端；未启用期权时抛清晰错误."""
         if self._option_client is None:
