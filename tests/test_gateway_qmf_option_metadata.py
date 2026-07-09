@@ -145,3 +145,110 @@ def test_underlying_amount_tip_returns_dict() -> None:
         "entrust_oc": "O",
     }
     assert result == {"tip_amount": "100"}
+
+
+class _FakeOptionClient:
+    """Option client stub recording metadata calls for adapter delegation tests."""
+
+    def __init__(self) -> None:
+        """Init token/fund account and call log."""
+        self.token = "gw-opt"
+        self.fund_account = "8888000001"
+        self.calls: list = []
+
+    def query_option_contracts(self, stock_code=None, option_code=None):
+        """Stub contracts."""
+        self.calls.append(("contracts", stock_code, option_code))
+        return [{"m": "contracts"}]
+
+    def query_option_underlyings(self, stock_code=None):
+        """Stub underlyings."""
+        self.calls.append(("underlyings", stock_code))
+        return [{"m": "underlyings"}]
+
+    def query_option_strategies(self, optcomb_code=None):
+        """Stub strategies."""
+        self.calls.append(("strategies", optcomb_code))
+        return [{"m": "strategies"}]
+
+    def query_option_position_limits(self, stock_code=None):
+        """Stub position limits."""
+        self.calls.append(("position_limits", stock_code))
+        return [{"m": "position_limits"}]
+
+    def query_option_contract_tips(self, money_type="0"):
+        """Stub contract tips."""
+        self.calls.append(("contract_tips", money_type))
+        return [{"m": "contract_tips"}]
+
+    def query_option_enable_amount(
+        self,
+        exchange_type,
+        option_code,
+        opt_entrust_price,
+        entrust_prop,
+        entrust_bs,
+        entrust_oc,
+        covered_flag=None,
+    ):
+        """Stub enable amount."""
+        self.calls.append(("enable_amount", exchange_type, option_code, covered_flag))
+        return {"enable_amount": "10"}
+
+    def query_option_underlying_amount_tip(
+        self, exchange_type, option_code, entrust_amount, entrust_bs, entrust_oc
+    ):
+        """Stub underlying amount tip."""
+        self.calls.append(("amount_tip", exchange_type, option_code, entrust_amount))
+        return {"tip_amount": "100"}
+
+    def close(self):
+        """Ignore close."""
+
+
+def _gateway(option_client):
+    """Build a gateway with a securities stub and given option client."""
+    from akquant.gateway.brokers.qmf.adapter import QMFTraderGateway
+
+    class _Sec:
+        token = "gw-sec"
+        fund_account = "8888000001"
+
+        def close(self):
+            """Ignore close."""
+
+    return QMFTraderGateway(
+        client=_Sec(), ws_url="ws://gw.test/api/v1/stream", option_client=option_client
+    )
+
+
+def test_adapter_delegates_metadata_reads() -> None:
+    """Adapter metadata convenience methods delegate to the option client."""
+    opt = _FakeOptionClient()
+    gw = _gateway(opt)
+
+    assert gw.query_option_contracts(stock_code="510300") == [{"m": "contracts"}]
+    assert gw.query_option_underlyings() == [{"m": "underlyings"}]
+    assert gw.query_option_strategies() == [{"m": "strategies"}]
+    assert gw.query_option_position_limits() == [{"m": "position_limits"}]
+    assert gw.query_option_contract_tips() == [{"m": "contract_tips"}]
+    assert gw.query_option_enable_amount("1", "10003456", "0.05", "F0", "1", "O") == {
+        "enable_amount": "10"
+    }
+    assert gw.query_option_underlying_amount_tip("1", "10003456", "1", "1", "O") == {
+        "tip_amount": "100"
+    }
+
+    assert ("contracts", "510300", None) in opt.calls
+    assert ("amount_tip", "1", "10003456", "1") in opt.calls
+
+
+def test_adapter_metadata_requires_option_session() -> None:
+    """Without an option session, metadata convenience methods raise RuntimeError."""
+    gw = _gateway(None)
+    for call in (
+        lambda: gw.query_option_contracts(),
+        lambda: gw.query_option_enable_amount("1", "c", "0.05", "F0", "1", "O"),
+    ):
+        with pytest.raises(RuntimeError):
+            call()

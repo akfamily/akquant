@@ -274,6 +274,70 @@ class QMFTraderGateway(TraderGatewayBase):
             exchange_type, stock_code, entrust_amount, lock_direction
         )
 
+    def query_option_contracts(
+        self, stock_code: str | None = None, option_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """期权合约查询（原始行）."""
+        return self._require_option_client().query_option_contracts(
+            stock_code, option_code
+        )
+
+    def query_option_underlyings(
+        self, stock_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """期权标的证券查询（原始行）."""
+        return self._require_option_client().query_option_underlyings(stock_code)
+
+    def query_option_strategies(
+        self, optcomb_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """期权组合策略定义查询（原始行）."""
+        return self._require_option_client().query_option_strategies(optcomb_code)
+
+    def query_option_position_limits(
+        self, stock_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """期权持仓限额查询（原始行）."""
+        return self._require_option_client().query_option_position_limits(stock_code)
+
+    def query_option_contract_tips(self, money_type: str = "0") -> list[dict[str, Any]]:
+        """期权合约提示查询（原始行）."""
+        return self._require_option_client().query_option_contract_tips(money_type)
+
+    def query_option_enable_amount(
+        self,
+        exchange_type: str,
+        option_code: str,
+        opt_entrust_price: str,
+        entrust_prop: str,
+        entrust_bs: str,
+        entrust_oc: str,
+        covered_flag: str | None = None,
+    ) -> dict[str, Any]:
+        """期权可委托数量查询（下单前额度，原始行）."""
+        return self._require_option_client().query_option_enable_amount(
+            exchange_type,
+            option_code,
+            opt_entrust_price,
+            entrust_prop,
+            entrust_bs,
+            entrust_oc,
+            covered_flag,
+        )
+
+    def query_option_underlying_amount_tip(
+        self,
+        exchange_type: str,
+        option_code: str,
+        entrust_amount: str,
+        entrust_bs: str,
+        entrust_oc: str,
+    ) -> dict[str, Any]:
+        """期权标的持仓数量提示查询（下单前提示，原始行）."""
+        return self._require_option_client().query_option_underlying_amount_tip(
+            exchange_type, option_code, entrust_amount, entrust_bs, entrust_oc
+        )
+
     def _require_option_client(self) -> QMFHttpClient:
         """返回期权会话客户端；未启用期权时抛清晰错误."""
         if self._option_client is None:
