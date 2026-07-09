@@ -145,6 +145,20 @@ trader.place_order(
 
 client 自动注入 `fund_account`；`entrust_prop`（转股/回售等）按柜台语义由调用方传原始值。
 
+## 期权组合策略（Phase 3d）
+
+启用期权后，以下**便捷方法**（非协议，原始行透传）支持**两腿**组合策略；未启用期权抛 `RuntimeError`。
+柜台把组合建模为固定两腿（`first_*` + `second_*`）+ 策略码 `optcomb_code` + 方向 `comb_bs`
+（`1`=组合 / `2`=拆分）：
+
+- `place_option_combo_order(exchange_type, optcomb_code, first_option_code, first_opthold_type, second_option_code, second_opthold_type, entrust_amount, comb_bs, optcomb_id=None)`（组合下单，写，`dict`）
+- `confirm_option_combo(exchange_type, optcomb_code, comb_bs, first_option_code=None, first_opthold_type=None, second_option_code=None, second_opthold_type=None, optcomb_id=None)`（组合确认，写，`dict`）
+- `query_option_combo_orders(optcomb_code=None, optcomb_id=None)`（组合委托，`list`）
+- `query_option_combo_positions(optcomb_code=None, query_mode=None)`（组合持仓，`list`；`query_mode` `0`明细/`1`汇总）
+- `query_option_history_combo_orders(start_date, end_date)`（历史组合委托，`list`）
+
+拆分（`comb_bs="2"`）时通常需送 `optcomb_id`（组合编码）。
+
 ## 实盘就绪（broker_ready）
 
 `trading_mode="broker_live"` 下 `LiveRunner` 会先 `connect()`（登录）再 `start()`
