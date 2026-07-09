@@ -116,3 +116,67 @@ def test_query_bond_putback_info_read() -> None:
     client2, seen2 = _capture([])
     client2.query_bond_putback_info(stock_code="113050")
     assert seen2["body"]["stock_code"] == "113050"
+
+
+class _FakeSecClient:
+    """Securities client stub recording convertible-bond calls."""
+
+    token = "gw-sec"
+    fund_account = "8888000001"
+
+    def __init__(self) -> None:
+        """Init the call log."""
+        self.calls: list = []
+
+    def place_convertible_bond_order(
+        self,
+        stock_code,
+        exchange_type,
+        entrust_prop,
+        entrust_amount,
+        stock_account=None,
+        stb_stock_property=None,
+    ):
+        """Stub convertible-bond order."""
+        self.calls.append(("place", stock_code, exchange_type, entrust_amount))
+        return {"entrust_no": "100000009"}
+
+    def cancel_convertible_bond_order(self, entrust_no):
+        """Stub convertible-bond cancel."""
+        self.calls.append(("cancel", entrust_no))
+        return {"error_no": "0"}
+
+    def query_convertible_bond_orders(
+        self, stock_code=None, entrust_no=None, query_flag=None, en_entrust_prop=None
+    ):
+        """Stub convertible-bond orders query."""
+        self.calls.append(("orders", stock_code, entrust_no))
+        return [{"m": "orders"}]
+
+    def query_bond_putback_info(self, stock_code=None):
+        """Stub bond putback info query."""
+        self.calls.append(("putback", stock_code))
+        return [{"m": "putback"}]
+
+    def close(self):
+        """Ignore close."""
+
+
+def test_adapter_delegates_convertible_bond_without_option_session() -> None:
+    """Delegate to the securities client; no option session required."""
+    from akquant.gateway.brokers.qmf.adapter import QMFTraderGateway
+
+    sec = _FakeSecClient()
+    gw = QMFTraderGateway(client=sec, ws_url="ws://gw.test/api/v1/stream")
+
+    assert gw.place_convertible_bond_order("113050", "1", "0", "10") == {
+        "entrust_no": "100000009"
+    }
+    assert gw.cancel_convertible_bond_order("100000009") == {"error_no": "0"}
+    assert gw.query_convertible_bond_orders(stock_code="113050") == [{"m": "orders"}]
+    assert gw.query_bond_putback_info() == [{"m": "putback"}]
+
+    assert ("place", "113050", "1", "10") in sec.calls
+    assert ("cancel", "100000009") in sec.calls
+    assert ("orders", "113050", None) in sec.calls
+    assert ("putback", None) in sec.calls

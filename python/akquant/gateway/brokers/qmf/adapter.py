@@ -338,6 +338,47 @@ class QMFTraderGateway(TraderGatewayBase):
             exchange_type, option_code, entrust_amount, entrust_bs, entrust_oc
         )
 
+    def place_convertible_bond_order(
+        self,
+        stock_code: str,
+        exchange_type: str,
+        entrust_prop: str,
+        entrust_amount: str,
+        stock_account: str | None = None,
+        stb_stock_property: str | None = None,
+    ) -> dict[str, Any]:
+        """可转债下单（证券侧；原始 data）."""
+        return self._client.place_convertible_bond_order(
+            stock_code,
+            exchange_type,
+            entrust_prop,
+            entrust_amount,
+            stock_account,
+            stb_stock_property,
+        )
+
+    def cancel_convertible_bond_order(self, entrust_no: str) -> dict[str, Any]:
+        """可转债撤单（证券侧；原始 data）."""
+        return self._client.cancel_convertible_bond_order(entrust_no)
+
+    def query_convertible_bond_orders(
+        self,
+        stock_code: str | None = None,
+        entrust_no: str | None = None,
+        query_flag: str | None = None,
+        en_entrust_prop: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """可转债委托查询（证券侧；原始行）."""
+        return self._client.query_convertible_bond_orders(
+            stock_code, entrust_no, query_flag, en_entrust_prop
+        )
+
+    def query_bond_putback_info(
+        self, stock_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """可转债回售信息查询（证券侧；原始行）."""
+        return self._client.query_bond_putback_info(stock_code)
+
     def _require_option_client(self) -> QMFHttpClient:
         """返回期权会话客户端；未启用期权时抛清晰错误."""
         if self._option_client is None:
