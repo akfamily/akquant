@@ -121,6 +121,19 @@ trader.place_order(
 
 期权账户字段由服务端按会话注入，调用方无需传递。
 
+## 期权合约 / 额度只读（Phase A）
+
+启用期权后，以下**便捷方法**（非协议，返回柜台原始行）提供合约元数据与下单前额度：
+
+- 合约元数据（列表）：`query_option_contracts(stock_code=None, option_code=None)`、
+  `query_option_underlyings(stock_code=None)`、`query_option_strategies(optcomb_code=None)`、
+  `query_option_position_limits(stock_code=None)`、`query_option_contract_tips(money_type="0")`。
+- 下单前额度/提示（`dict`）：
+  `query_option_enable_amount(exchange_type, option_code, opt_entrust_price, entrust_prop, entrust_bs, entrust_oc, covered_flag=None)`（可委托数量）、
+  `query_option_underlying_amount_tip(exchange_type, option_code, entrust_amount, entrust_bs, entrust_oc)`（标的持仓提示）。
+
+均需 `enable_options`，否则 `RuntimeError`；`entrust_bs` `1`买/`2`卖，`entrust_oc` `O`开/`C`平/`X`行权。
+
 ## 实盘就绪（broker_ready）
 
 `trading_mode="broker_live"` 下 `LiveRunner` 会先 `connect()`（登录）再 `start()`
