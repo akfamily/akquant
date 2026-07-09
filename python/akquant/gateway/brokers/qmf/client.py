@@ -632,6 +632,53 @@ class QMFHttpClient:
         payload.update({k: v for k, v in filters.items() if v is not None})
         return list(self._post("/api/v1/account/composite-trades", payload))
 
+    def option_contract_confirm(
+        self, exchange_type: str, option_code: str
+    ) -> list[dict[str, Any]]:
+        """期权合约确认（列表；可能带确认写副作用）."""
+        return list(
+            self._post(
+                "/api/v1/option/contract-confirm",
+                {
+                    "fund_account": self.fund_account,
+                    "exchange_type": exchange_type,
+                    "option_code": option_code,
+                },
+            )
+        )
+
+    def query_option_history_bill(
+        self, begin_date: str, end_date: str, money_type: str = "0"
+    ) -> list[dict[str, Any]]:
+        """查询期权历史账单（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/history-bill",
+                {
+                    "fund_account": self.fund_account,
+                    "begin_date": begin_date,
+                    "end_date": end_date,
+                    "money_type": money_type,
+                },
+            )
+        )
+
+    def query_option_history_statements(
+        self, begin_date: str, end_date: str, query_mode: str
+    ) -> list[dict[str, Any]]:
+        """查询期权历史对账单（列表；query_mode 1=每日汇总 2=时间段汇总）."""
+        return list(
+            self._post(
+                "/api/v1/option/history-statements",
+                {
+                    "fund_account": self.fund_account,
+                    "begin_date": begin_date,
+                    "end_date": end_date,
+                    "query_mode": query_mode,
+                },
+            )
+        )
+
     def close(self) -> None:
         """关闭底层连接."""
         self._http.close()

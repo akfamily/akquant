@@ -488,6 +488,30 @@ class QMFTraderGateway(TraderGatewayBase):
         """综合业务成交查询（证券侧；原始行）."""
         return self._client.query_composite_trades(**filters)
 
+    def option_contract_confirm(
+        self, exchange_type: str, option_code: str
+    ) -> list[dict[str, Any]]:
+        """期权合约确认（原始行；可能带确认写副作用）."""
+        return self._require_option_client().option_contract_confirm(
+            exchange_type, option_code
+        )
+
+    def query_option_history_bill(
+        self, begin_date: str, end_date: str, money_type: str = "0"
+    ) -> list[dict[str, Any]]:
+        """期权历史账单查询（原始行）."""
+        return self._require_option_client().query_option_history_bill(
+            begin_date, end_date, money_type
+        )
+
+    def query_option_history_statements(
+        self, begin_date: str, end_date: str, query_mode: str
+    ) -> list[dict[str, Any]]:
+        """期权历史对账单查询（原始行）."""
+        return self._require_option_client().query_option_history_statements(
+            begin_date, end_date, query_mode
+        )
+
     def _require_option_client(self) -> QMFHttpClient:
         """返回期权会话客户端；未启用期权时抛清晰错误."""
         if self._option_client is None:
