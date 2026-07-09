@@ -134,6 +134,17 @@ trader.place_order(
 
 均需 `enable_options`，否则 `RuntimeError`；`entrust_bs` `1`买/`2`卖，`entrust_oc` `O`开/`C`平/`X`行权。
 
+## 可转债交易（Phase F）
+
+走**证券会话**（始终可用，无需 `enable_options`）的**便捷方法**（非协议，原始行透传）：
+
+- `place_convertible_bond_order(stock_code, exchange_type, entrust_prop, entrust_amount, stock_account=None, stb_stock_property=None)`（下单，写，返回 `dict`）
+- `cancel_convertible_bond_order(entrust_no)`（撤单，写，返回 `dict`）
+- `query_convertible_bond_orders(stock_code=None, entrust_no=None, query_flag=None, en_entrust_prop=None)`（委托查询，`list`）
+- `query_bond_putback_info(stock_code=None)`（回售信息查询，`list`）
+
+client 自动注入 `fund_account`；`entrust_prop`（转股/回售等）按柜台语义由调用方传原始值。
+
 ## 实盘就绪（broker_ready）
 
 `trading_mode="broker_live"` 下 `LiveRunner` 会先 `connect()`（登录）再 `start()`
