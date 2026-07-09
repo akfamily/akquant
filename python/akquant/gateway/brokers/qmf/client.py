@@ -582,6 +582,56 @@ class QMFHttpClient:
             )
         )
 
+    def place_composite_order(
+        self,
+        exchange_type: str,
+        stock_account: str,
+        stock_code: str,
+        entrust_price: str,
+        entrust_amount: str,
+        entrust_prop: str,
+        entrust_bs: str,
+        extra: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """综合业务委托（写；7 必填 + extra 透传可选字段），返回 data."""
+        payload: dict[str, Any] = {
+            "fund_account": self.fund_account,
+            "exchange_type": exchange_type,
+            "stock_account": stock_account,
+            "stock_code": stock_code,
+            "entrust_price": entrust_price,
+            "entrust_amount": entrust_amount,
+            "entrust_prop": entrust_prop,
+            "entrust_bs": entrust_bs,
+        }
+        if extra:
+            payload.update(extra)
+        return self._post("/api/v1/trading/composite-order", payload)
+
+    def cancel_composite_order(
+        self, entrust_no: str, entrust_reference: str | None = None
+    ) -> dict[str, Any]:
+        """综合业务撤单（写），返回 data."""
+        payload: dict[str, Any] = {
+            "fund_account": self.fund_account,
+            "entrust_no": entrust_no,
+        }
+        if entrust_reference is not None:
+            payload["entrust_reference"] = entrust_reference
+        return self._post("/api/v1/trading/composite-cancel", payload)
+
+    def query_composite_orders(self, **filters: str) -> list[dict[str, Any]]:
+        """查询综合业务委托（列表；filters 透传可选过滤）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        payload.update({k: v for k, v in filters.items() if v is not None})
+        return list(self._post("/api/v1/account/composite-orders", payload))
+
+    def query_composite_trades(self, **filters: str) -> list[dict[str, Any]]:
+        """查询综合业务成交（列表；filters 透传可选过滤）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        payload.update({k: v for k, v in filters.items() if v is not None})
+        return list(self._post("/api/v1/account/composite-trades", payload))
+
     def close(self) -> None:
         """关闭底层连接."""
         self._http.close()
