@@ -451,6 +451,43 @@ class QMFTraderGateway(TraderGatewayBase):
             start_date, end_date
         )
 
+    def place_composite_order(
+        self,
+        exchange_type: str,
+        stock_account: str,
+        stock_code: str,
+        entrust_price: str,
+        entrust_amount: str,
+        entrust_prop: str,
+        entrust_bs: str,
+        extra: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """综合业务委托（证券侧；原始 data）."""
+        return self._client.place_composite_order(
+            exchange_type,
+            stock_account,
+            stock_code,
+            entrust_price,
+            entrust_amount,
+            entrust_prop,
+            entrust_bs,
+            extra,
+        )
+
+    def cancel_composite_order(
+        self, entrust_no: str, entrust_reference: str | None = None
+    ) -> dict[str, Any]:
+        """综合业务撤单（证券侧；原始 data）."""
+        return self._client.cancel_composite_order(entrust_no, entrust_reference)
+
+    def query_composite_orders(self, **filters: str) -> list[dict[str, Any]]:
+        """综合业务委托查询（证券侧；原始行）."""
+        return self._client.query_composite_orders(**filters)
+
+    def query_composite_trades(self, **filters: str) -> list[dict[str, Any]]:
+        """综合业务成交查询（证券侧；原始行）."""
+        return self._client.query_composite_trades(**filters)
+
     def _require_option_client(self) -> QMFHttpClient:
         """返回期权会话客户端；未启用期权时抛清晰错误."""
         if self._option_client is None:

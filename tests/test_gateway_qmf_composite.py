@@ -125,3 +125,56 @@ def test_query_composite_trades_filters() -> None:
     client2, seen2 = _capture([])
     client2.query_composite_trades(stock_code="600000")
     assert seen2["body"]["stock_code"] == "600000"
+
+
+class _FakeSecClient:
+    """Securities client stub recording composite calls."""
+
+    token = "gw-sec"
+    fund_account = "8888000001"
+
+    def __init__(self) -> None:
+        """Init the call log."""
+        self.calls: list = []
+
+    def place_composite_order(self, *args, **kwargs):
+        """Stub composite order."""
+        self.calls.append(("place", args, kwargs))
+        return {"entrust_no": "C1"}
+
+    def cancel_composite_order(self, entrust_no, entrust_reference=None):
+        """Stub composite cancel."""
+        self.calls.append(("cancel", entrust_no, entrust_reference))
+        return {"error_no": "0"}
+
+    def query_composite_orders(self, **filters):
+        """Stub composite orders query."""
+        self.calls.append(("orders", filters))
+        return [{"m": "orders"}]
+
+    def query_composite_trades(self, **filters):
+        """Stub composite trades query."""
+        self.calls.append(("trades", filters))
+        return [{"m": "trades"}]
+
+    def close(self):
+        """Ignore close."""
+
+
+def test_adapter_delegates_composite_without_option_session() -> None:
+    """Composite convenience methods delegate to securities client, no option needed."""
+    from akquant.gateway.brokers.qmf.adapter import QMFTraderGateway
+
+    sec = _FakeSecClient()
+    gw = QMFTraderGateway(client=sec, ws_url="ws://gw.test/api/v1/stream")
+
+    assert gw.place_composite_order("1", "A1", "600000", "10.0", "100", "PFP", "1") == {
+        "entrust_no": "C1"
+    }
+    assert gw.cancel_composite_order("C1") == {"error_no": "0"}
+    assert gw.query_composite_orders(stock_code="600000") == [{"m": "orders"}]
+    assert gw.query_composite_trades() == [{"m": "trades"}]
+
+    assert sec.calls[0][0] == "place"
+    assert ("cancel", "C1", None) in sec.calls
+    assert ("orders", {"stock_code": "600000"}) in sec.calls
