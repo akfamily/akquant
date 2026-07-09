@@ -429,6 +429,64 @@ class QMFHttpClient:
             },
         )
 
+    def place_convertible_bond_order(
+        self,
+        stock_code: str,
+        exchange_type: str,
+        entrust_prop: str,
+        entrust_amount: str,
+        stock_account: str | None = None,
+        stb_stock_property: str | None = None,
+    ) -> dict[str, Any]:
+        """可转债下单（写；自动注入 fund_account），返回 data."""
+        payload: dict[str, Any] = {
+            "fund_account": self.fund_account,
+            "stock_code": stock_code,
+            "exchange_type": exchange_type,
+            "entrust_prop": entrust_prop,
+            "entrust_amount": entrust_amount,
+        }
+        if stock_account is not None:
+            payload["stock_account"] = stock_account
+        if stb_stock_property is not None:
+            payload["stb_stock_property"] = stb_stock_property
+        return self._post("/api/v1/trading/convertible-bond-order", payload)
+
+    def cancel_convertible_bond_order(self, entrust_no: str) -> dict[str, Any]:
+        """可转债撤单（写），返回 data."""
+        return self._post(
+            "/api/v1/trading/convertible-bond-cancel",
+            {"fund_account": self.fund_account, "entrust_no": entrust_no},
+        )
+
+    def query_convertible_bond_orders(
+        self,
+        stock_code: str | None = None,
+        entrust_no: str | None = None,
+        query_flag: str | None = None,
+        en_entrust_prop: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """查询可转债委托（列表）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        if stock_code is not None:
+            payload["stock_code"] = stock_code
+        if entrust_no is not None:
+            payload["entrust_no"] = entrust_no
+        if query_flag is not None:
+            payload["query_flag"] = query_flag
+        if en_entrust_prop is not None:
+            payload["en_entrust_prop"] = en_entrust_prop
+        return list(self._post("/api/v1/account/convertible-bond-orders", payload))
+
+    def query_bond_putback_info(
+        self, stock_code: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询可转债回售信息（列表）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        if stock_code is not None:
+            payload["stock_code"] = stock_code
+        return list(self._post("/api/v1/account/bond-putback-info", payload))
+
     def close(self) -> None:
         """关闭底层连接."""
         self._http.close()
