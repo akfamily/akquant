@@ -487,6 +487,101 @@ class QMFHttpClient:
             payload["stock_code"] = stock_code
         return list(self._post("/api/v1/account/bond-putback-info", payload))
 
+    def place_option_combo_order(
+        self,
+        exchange_type: str,
+        optcomb_code: str,
+        first_option_code: str,
+        first_opthold_type: str,
+        second_option_code: str,
+        second_opthold_type: str,
+        entrust_amount: str,
+        comb_bs: str,
+        optcomb_id: str | None = None,
+    ) -> dict[str, Any]:
+        """期权组合策略下单（写；两腿；comb_bs 1=组合 2=拆分），返回 data."""
+        payload: dict[str, Any] = {
+            "fund_account": self.fund_account,
+            "exchange_type": exchange_type,
+            "optcomb_code": optcomb_code,
+            "first_option_code": first_option_code,
+            "first_opthold_type": first_opthold_type,
+            "second_option_code": second_option_code,
+            "second_opthold_type": second_opthold_type,
+            "entrust_amount": entrust_amount,
+            "comb_bs": comb_bs,
+        }
+        if optcomb_id is not None:
+            payload["optcomb_id"] = optcomb_id
+        return self._post("/api/v1/option/combo-order", payload)
+
+    def confirm_option_combo(
+        self,
+        exchange_type: str,
+        optcomb_code: str,
+        comb_bs: str,
+        first_option_code: str | None = None,
+        first_opthold_type: str | None = None,
+        second_option_code: str | None = None,
+        second_opthold_type: str | None = None,
+        optcomb_id: str | None = None,
+    ) -> dict[str, Any]:
+        """期权组合策略确认（写），返回 data."""
+        payload: dict[str, Any] = {
+            "fund_account": self.fund_account,
+            "exchange_type": exchange_type,
+            "optcomb_code": optcomb_code,
+            "comb_bs": comb_bs,
+        }
+        if first_option_code is not None:
+            payload["first_option_code"] = first_option_code
+        if first_opthold_type is not None:
+            payload["first_opthold_type"] = first_opthold_type
+        if second_option_code is not None:
+            payload["second_option_code"] = second_option_code
+        if second_opthold_type is not None:
+            payload["second_opthold_type"] = second_opthold_type
+        if optcomb_id is not None:
+            payload["optcomb_id"] = optcomb_id
+        return self._post("/api/v1/option/combo-confirm", payload)
+
+    def query_option_combo_orders(
+        self, optcomb_code: str | None = None, optcomb_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询期权组合委托（列表）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        if optcomb_code is not None:
+            payload["optcomb_code"] = optcomb_code
+        if optcomb_id is not None:
+            payload["optcomb_id"] = optcomb_id
+        return list(self._post("/api/v1/option/combo-orders", payload))
+
+    def query_option_combo_positions(
+        self, optcomb_code: str | None = None, query_mode: str | None = None
+    ) -> list[dict[str, Any]]:
+        """查询期权组合持仓（列表）."""
+        payload: dict[str, Any] = {"fund_account": self.fund_account}
+        if optcomb_code is not None:
+            payload["optcomb_code"] = optcomb_code
+        if query_mode is not None:
+            payload["query_mode"] = query_mode
+        return list(self._post("/api/v1/option/combo-positions", payload))
+
+    def query_option_history_combo_orders(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """查询期权历史组合委托（列表）."""
+        return list(
+            self._post(
+                "/api/v1/option/history-combo-orders",
+                {
+                    "fund_account": self.fund_account,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            )
+        )
+
     def close(self) -> None:
         """关闭底层连接."""
         self._http.close()
