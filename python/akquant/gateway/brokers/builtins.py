@@ -145,9 +145,52 @@ def _build_qmf(
     )
 
 
+def _build_middleware(
+    feed: DataFeed, symbols: Sequence[str], use_aggregator: bool, **kwargs: Any
+) -> GatewayBundle:
+    _ = (feed, symbols, use_aggregator)
+    try:
+        from .middleware.adapter import MiddlewareTraderGateway
+        from .middleware.client import MiddlewareClientConfig, MiddlewareHttpClient
+    except ImportError as exc:
+        raise ValueError(
+            "broker='middleware' 需要额外依赖: pip install httpx websocket-client"
+        ) from exc
+    ws_url = kwargs.get("ws_url")
+    if not ws_url:
+        raise ValueError("ws_url is required when broker='middleware'")
+    required = ("base_url", "broker_id", "fund_account", "password")
+    missing = [k for k in required if not kwargs.get(k)]
+    if missing:
+        raise ValueError(f"broker='middleware' 缺少必填项: {', '.join(missing)}")
+    config = MiddlewareClientConfig(
+        base_url=kwargs["base_url"],
+        broker_id=kwargs["broker_id"],
+        fund_account=kwargs["fund_account"],
+        password=kwargs["password"],
+        account_type=kwargs.get("account_type", "security"),
+        qmf_user_id=kwargs.get("qmf_user_id", ""),
+        token=kwargs.get("token", ""),
+        timeout=float(kwargs.get("timeout", 10.0)),
+        extra=dict(kwargs.get("extra", {})),
+    )
+    trader_gateway: TraderGateway | None = MiddlewareTraderGateway(
+        client=MiddlewareHttpClient(config),
+        ws_url=ws_url,
+        enable_options=bool(kwargs.get("enable_options", False)),
+    )
+    return GatewayBundle(
+        market_gateway=None,
+        trader_gateway=trader_gateway,
+        trader_capabilities=_resolve_trader_capabilities(trader_gateway),
+        metadata={"broker": "middleware"},
+    )
+
+
 def register_builtin_brokers() -> None:
     """Register all built-in brokers into the shared registry (idempotent)."""
     register_broker("ctp", _build_ctp)
     register_broker("miniqmt", _build_miniqmt)
     register_broker("ptrade", _build_ptrade)
     register_broker("qmf", _build_qmf)
+    register_broker("middleware", _build_middleware)
