@@ -805,6 +805,7 @@ class LiveRunner:
             record_stop_remap=self._record_stop_remap,
             should_replay_trades=lambda: self._broker_baseline_done,
             sync_group_mapping=self._sync_group_mapping,
+            group_broker_ids=self._broker_order_ids_for_group,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -1120,6 +1121,21 @@ class LiveRunner:
             bid = str(self._payload_field(payload, "broker_order_id") or "").strip()
             cid = self._broker_to_client_order_ids.get(bid, "") if bid else ""
         return self._client_to_group_ids.get(cid, cid)
+
+    def _broker_order_ids_for_group(self, group_id: str) -> list[str]:
+        gid = str(group_id)
+        result: list[str] = []
+        for cid, mapped in self._client_to_group_ids.items():
+            if mapped != gid:
+                continue
+            bid = self._client_to_broker_order_ids.get(cid, "")
+            if bid:
+                result.append(bid)
+        # group_id 本身即根 client id，可能未在 group 表内单独出现
+        root_bid = self._client_to_broker_order_ids.get(gid, "")
+        if root_bid and root_bid not in result:
+            result.insert(0, root_bid)
+        return result
 
     def _bind_order_owner(
         self, client_order_id: str, broker_order_id: str, owner_strategy_id: str

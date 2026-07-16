@@ -137,9 +137,20 @@ def _attach_broker_options(strategy: Any, order_id: str, order: Any) -> None:
         return
 
 
-def cancel_order(strategy: Any, order_id: str) -> None:
-    """取消指定订单（经执行后端）."""
-    strategy.execution.cancel_order(order_id)
+def cancel_order(strategy: Any, order_id: Any) -> None:
+    """取消指定订单（经执行后端）；order_id 可为 str 或 OrderReceipt（取 .primary）."""
+    strategy.execution.cancel_order(str(getattr(order_id, "primary", order_id)))
+
+
+def cancel_group(strategy: Any, group_id: Any) -> None:
+    """按 group_id（或 OrderReceipt）撤销一个逻辑委托的全部腿（经执行后端）."""
+    execution = strategy.execution
+    gid = str(getattr(group_id, "group_id", group_id))
+    cancel_group_method = getattr(execution, "cancel_group", None)
+    if callable(cancel_group_method):
+        cancel_group_method(gid)
+    else:  # 回测后端无 group 概念：退化为撤单
+        execution.cancel_order(gid)
 
 
 def cancel_all_orders(strategy: Any, symbol: Optional[str] = None) -> None:

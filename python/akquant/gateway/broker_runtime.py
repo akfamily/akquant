@@ -39,6 +39,7 @@ class BrokerRuntime:
         record_stop_remap: Any = None,
         should_replay_trades: Callable[[], bool] | None = None,
         sync_group_mapping: Callable[[str, str], None] = lambda _c, _g: None,
+        group_broker_ids: Callable[[str], list[str]] | None = None,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -78,6 +79,7 @@ class BrokerRuntime:
         self._record_order_request = record_order_request
         self._record_stop_remap = record_stop_remap
         self._sync_group_mapping = sync_group_mapping
+        self._group_broker_ids = group_broker_ids
         self._submitter: BrokerOrderSubmitter | None = None
 
     @property
@@ -133,6 +135,7 @@ class BrokerRuntime:
             cache,
             self._submitter,
             record_stop_remap=self._record_stop_remap,
+            group_broker_ids=self._group_broker_ids,
         )
 
         return self._submitter

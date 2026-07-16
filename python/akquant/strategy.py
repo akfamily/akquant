@@ -94,6 +94,9 @@ from .strategy_trading_api import (
     cancel_all_orders as _cancel_all_orders_impl,
 )
 from .strategy_trading_api import (
+    cancel_group as _cancel_group_impl,
+)
+from .strategy_trading_api import (
     cancel_order as _cancel_order_impl,
 )
 from .strategy_trading_api import (
@@ -1768,14 +1771,18 @@ class Strategy:
             return self.ctx.closed_trades
         return []
 
-    def cancel_order(self, order_id: str) -> None:
+    def cancel_order(self, order_id: Union[str, Any]) -> None:
         """
         取消指定订单.
 
         Args:
-            order_id: 订单 ID
+            order_id: 订单 ID，接受 str | OrderReceipt（传 OrderReceipt 时取 .primary）
         """
         _cancel_order_impl(self, order_id)
+
+    def cancel_group(self, group_id: Any) -> None:
+        """按 group_id（或 OrderReceipt）撤销一个逻辑委托的全部腿."""
+        _cancel_group_impl(self, group_id)
 
     def cancel_all_orders(self, symbol: Optional[str] = None) -> None:
         """

@@ -30,13 +30,15 @@ class BrokerExecution:
         state_cache: BrokerStateCache,
         submitter: Any,
         record_stop_remap: Any = None,
+        group_broker_ids: Any = None,
     ) -> None:
-        """绑定策略实例、柜台网关、状态缓存、下单器与止损 remap 回调."""
+        """绑定策略实例、柜台网关、状态缓存、下单器、止损 remap 与 group 反查回调."""
         self._s = strategy
         self._gw = trader_gateway
         self._cache = state_cache
         self._submitter = submitter
         self._record_stop_remap = record_stop_remap
+        self._group_broker_ids = group_broker_ids
         self._stop_book = LocalStopBook()
         self._stop_seq = 0
         self._warned_hold_bar = False
@@ -232,6 +234,15 @@ class BrokerExecution:
         if self._stop_book.cancel(str(order_id)):
             return
         self._gw.cancel_order(str(order_id))
+
+    def cancel_group(self, group_id: str) -> None:
+        """撤销一个逻辑委托的全部腿（按 group_id）."""
+        gid = str(group_id)
+        if self._group_broker_ids is None:
+            return
+        for broker_order_id in self._group_broker_ids(gid):
+            if broker_order_id:
+                self.cancel_order(str(broker_order_id))
 
     def cancel_all_orders(self, symbol: str | None = None) -> None:
         """取消所有未完成订单(含本地止损)."""
