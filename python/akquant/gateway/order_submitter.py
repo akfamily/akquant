@@ -38,49 +38,38 @@ def find_live_close_position(
     return None
 
 
-def resolve_live_order_legs(
+def _split_close_legs(
     trader_gateway: Any,
     capability: BrokerCapability,
     symbol: str,
     side: str,
     quantity: float,
-    position_effect: str,
-    reduce_only: bool,
+    supported_effects: set[str],
     payload_field: Callable[[Any, str], Any],
 ) -> list[tuple[str, float]]:
-    """Resolve close orders into close_today/close_yesterday legs when supported."""
-    normalized_effect = str(position_effect).strip().lower()
-    if quantity <= 0 or reduce_only or normalized_effect != "close":
-        return [(normalized_effect, quantity)]
-    supported_effects = {
-        str(item).strip().lower() for item in capability.supported_position_effects
-    }
+    """把一段平仓量拆成 close_today/close_yesterday；能力不足则整段 close."""
     if not capability.position_details:
-        return [(normalized_effect, quantity)]
+        return [("close", quantity)]
     if (
         "close_today" not in supported_effects
         or "close_yesterday" not in supported_effects
     ):
-        return [(normalized_effect, quantity)]
-
+        return [("close", quantity)]
     query_positions = getattr(trader_gateway, "query_positions", None)
     if not callable(query_positions):
-        return [(normalized_effect, quantity)]
+        return [("close", quantity)]
     try:
         positions = query_positions()
     except Exception:
-        return [(normalized_effect, quantity)]
-
+        return [("close", quantity)]
     target_position = find_live_close_position(positions, symbol, side, payload_field)
     if target_position is None:
-        return [(normalized_effect, quantity)]
-
+        return [("close", quantity)]
     available_today = max(
         0.0, float(getattr(target_position, "available_today_quantity", 0.0) or 0.0)
     )
     available_yesterday = max(
-        0.0,
-        float(getattr(target_position, "available_yesterday_quantity", 0.0) or 0.0),
+        0.0, float(getattr(target_position, "available_yesterday_quantity", 0.0) or 0.0)
     )
     split_quantity = min(quantity, available_today + available_yesterday)
     legs: list[tuple[str, float]] = []
@@ -97,6 +86,78 @@ def resolve_live_order_legs(
             ("close", unresolved_quantity if unresolved_quantity > 0 else quantity)
         )
     return legs
+
+
+def resolve_live_order_legs(
+    trader_gateway: Any,
+    capability: BrokerCapability,
+    symbol: str,
+    side: str,
+    quantity: float,
+    position_effect: str,
+    reduce_only: bool,
+    payload_field: Callable[[Any, str], Any],
+) -> list[tuple[str, float]]:
+    """Resolve close orders into close_today/close_yesterday legs when supported.
+
+    Also resolves `auto` reversal orders (sell/buy quantity exceeding the opposite
+    position) into close leg(s) plus a trailing `open` leg, unless the broker
+    declares it handles reversal itself via `"auto_reverse" in capability.features`.
+    """
+    normalized_effect = str(position_effect).strip().lower()
+    if quantity <= 0 or reduce_only:
+        return [(normalized_effect, quantity)]
+
+    supported_effects = {
+        str(item).strip().lower() for item in capability.supported_position_effects
+    }
+
+    # 反手：auto 单卖出量超过反向持仓可用量时，核心拆成 平仓 + 开仓。
+    # broker 若声明自身会反手(auto_reverse)，则不拆。
+    if normalized_effect == "auto":
+        if "auto_reverse" in capability.features:
+            return [(normalized_effect, quantity)]
+        if "open" not in supported_effects or "close" not in supported_effects:
+            return [(normalized_effect, quantity)]
+        query_positions = getattr(trader_gateway, "query_positions", None)
+        if not callable(query_positions):
+            return [(normalized_effect, quantity)]
+        try:
+            positions = query_positions()
+        except Exception:
+            return [(normalized_effect, quantity)]
+        target = find_live_close_position(positions, symbol, side, payload_field)
+        if target is None:
+            return [(normalized_effect, quantity)]
+        closable = abs(float(payload_field(target, "quantity") or 0.0))
+        if closable <= 0 or quantity <= closable:
+            return [(normalized_effect, quantity)]
+        close_qty = closable
+        open_qty = quantity - closable
+        legs = _split_close_legs(
+            trader_gateway,
+            capability,
+            symbol,
+            side,
+            close_qty,
+            supported_effects,
+            payload_field,
+        )
+        legs.append(("open", open_qty))
+        return legs
+
+    if normalized_effect != "close":
+        return [(normalized_effect, quantity)]
+
+    return _split_close_legs(
+        trader_gateway,
+        capability,
+        symbol,
+        side,
+        quantity,
+        supported_effects,
+        payload_field,
+    )
 
 
 def build_live_order_client_ids(
