@@ -4977,7 +4977,10 @@ def test_strategy_buy_auto_splits_cover_then_open() -> None:
 
     order_id = strategy.buy(symbol="AAPL", quantity=5.0)
 
-    assert order_id == "oid-close"
+    # 回测出口现返回 OrderReceipt：反手拆腿产生的 close/open 两条 id 均需保留。
+    assert isinstance(order_id, OrderReceipt)
+    assert order_id.order_ids == ("oid-close", "oid-open")
+    assert order_id.group_id == "oid-close"
     assert ctx.buy.call_count == 2
     first_call = ctx.buy.call_args_list[0]
     second_call = ctx.buy.call_args_list[1]
