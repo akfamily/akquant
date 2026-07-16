@@ -1,39 +1,49 @@
+# ── 构建产物 ──
 target/
+build/
+dist/
 site/
 refs/
+*.egg-info/
+
+# ── Python ──
 __pycache__/
 *.so
 *.dylib
 *.dSYM/
 *.pyd
 *.pdb
+
+# ── 环境 / 依赖 ──
 .env
 .venv
 venv/
-.DS_Store
 uv.lock
 
-# IDEs
+# ── IDE / 编辑器 ──
 .idea/
 .vscode/
 .trae/
 *.swp
 
-# Python distribution
-dist/
-build/
-*.egg-info/
+# ── 操作系统 ──
+.DS_Store
 
-# Logs
+# ── 日志 ──
 *.log
 *.err
 
-# Local cargo config
+# ── 本地配置 ──
 .cargo/config.toml
-/data_catalog/
-plans/
 CLAUDE.md
 
-# 外部前置机/回测服务子项目（vendored，独立仓库，不纳入本仓版本管理）
-/backtest_server3.0-develop/
-/py_jinrongjie_gateway_server-develop/
+# ── 本地数据 ──
+/data_catalog/
+
+# ── AI 工作流文档（内部，不公开）──
+docs/superpowers
+
+# ── 私有 broker 已拆分为独立包（akquant-qmf / akquant-middleware，独立私有仓）──
+
+# ── 外部前置机/回测服务子项目（vendored，独立仓库，不纳入本仓版本管理）──
+/vendor/
