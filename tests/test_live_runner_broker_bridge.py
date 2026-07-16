@@ -1508,6 +1508,100 @@ def test_live_runner_submitter_binds_owner_strategy_id_mapping() -> None:
     assert runner._broker_to_strategy_ids["b-coid-owner-1"] == "alpha"
 
 
+def test_live_runner_submitter_syncs_group_mapping() -> None:
+    """submit_order 应把每腿 client_order_id -> 根 client_order_id 映射同步进 runner."""
+
+    class _DummyTraderGateway:
+        def place_order(self, req: Any) -> str:
+            return f"b-{req.client_order_id}"
+
+    class _DummyStrategy:
+        def __init__(self) -> None:
+            self._owner_strategy_id = "alpha"
+            self.errors: list[tuple[str, Any]] = []
+
+        def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
+            self.errors.append((source, payload))
+
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    gateway = _DummyTraderGateway()
+    strategy = _DummyStrategy()
+    runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
+    strategy_any = cast(Any, strategy)
+    strategy_any.execution.submit_order(
+        symbol="000001.SZ",
+        side="Buy",
+        quantity=10.0,
+        client_order_id="coid-group-1",
+    )
+
+    assert runner._client_to_group_ids["coid-group-1"] == "coid-group-1"
+
+
+def test_live_runner_lookup_group_id_falls_back_to_broker_order_id() -> None:
+    """Payload 无 client_order_id 时, 经 broker_order_id 反查再取 group_id."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    runner._sync_group_mapping("c1-open-2", "c1")
+    runner._broker_to_client_order_ids["b2"] = "c1-open-2"
+
+    assert runner._lookup_group_id({"broker_order_id": "b2"}) == "c1"
+    assert runner._lookup_group_id({"client_order_id": "c1-open-2"}) == "c1"
+    # 未登记映射时退化为 client_order_id 本身（单腿场景 group_id==root cid）。
+    assert runner._lookup_group_id({"client_order_id": "unmapped"}) == "unmapped"
+
+
+def test_live_runner_emits_order_and_trade_with_group_id() -> None:
+    """order/trade 广播回填 group_id, 供策略按逻辑单据聚合分腿成交."""
+
+    class _DummyStrategy:
+        def __init__(self) -> None:
+            self.orders: list[Any] = []
+            self.trades: list[Any] = []
+
+        def on_order(self, order: Any) -> None:
+            self.orders.append(order)
+
+        def on_trade(self, trade: Any) -> None:
+            self.trades.append(trade)
+
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    runner._sync_group_mapping("coid-leg-2", "coid-root-1")
+    strategy = _DummyStrategy()
+
+    order_payload = {
+        "client_order_id": "coid-leg-2",
+        "broker_order_id": "b-leg-2",
+        "symbol": "000001.SZ",
+        "status": "Submitted",
+    }
+    runner._queue_broker_event("order", order_payload)
+    runner._drain_broker_events(cast(Any, strategy))
+
+    trade_payload = {
+        "trade_id": "t1",
+        "client_order_id": "coid-leg-2",
+        "broker_order_id": "b-leg-2",
+        "symbol": "000001.SZ",
+        "side": "Buy",
+        "quantity": 1.0,
+        "price": 10.0,
+        "timestamp_ns": 1,
+    }
+    runner._queue_broker_event("trade", trade_payload)
+    runner._drain_broker_events(cast(Any, strategy))
+
+    assert strategy.orders
+    assert strategy.orders[0].group_id == "coid-root-1"
+    assert strategy.trades
+    assert strategy.trades[0].group_id == "coid-root-1"
+
+
 def test_live_runner_emits_observable_broker_events_with_owner_strategy_id() -> None:
     """Emit broker event snapshots with resolved owner strategy id."""
     observed: list[dict[str, Any]] = []

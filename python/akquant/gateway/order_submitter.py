@@ -248,6 +248,7 @@ class BrokerOrderSubmitter:
         payload_field: Callable[[Any, str], Any],
         get_execution_capabilities: Callable[[], dict[str, Any]],
         record_order_request: Callable[[str, Any], None],
+        sync_group_mapping: Callable[[str, str], None] = lambda _c, _g: None,
     ) -> None:
         """Bind strategy injection hooks, id mapping and capability callbacks."""
         self._trader_gateway = trader_gateway
@@ -261,6 +262,7 @@ class BrokerOrderSubmitter:
         self._payload_field = payload_field
         self._get_execution_capabilities = get_execution_capabilities
         self._record_order_request = record_order_request
+        self._sync_group_mapping = sync_group_mapping
         self._warned_ignored_params: set[str] = set()
 
     def install(self) -> None:
@@ -389,6 +391,7 @@ class BrokerOrderSubmitter:
             self._bind_order_owner(
                 request.client_order_id, broker_order_id, owner_strategy_id
             )
+            self._sync_group_mapping(request.client_order_id, request_client_order_id)
             legs.append(
                 OrderLeg(
                     position_effect=leg_position_effect,

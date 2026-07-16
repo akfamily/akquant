@@ -139,3 +139,48 @@ def test_accepts_dict_payload() -> None:
     )
     assert o.id == "B9"
     assert o.status is OrderStatus.New
+
+
+def test_map_trade_carries_group_id() -> None:
+    """map_trade 把拆腿的 group_id(根 client_order_id)回填到 StrategyTrade."""
+    trade = UnifiedTrade(
+        trade_id="t1",
+        broker_order_id="b2",
+        client_order_id="c1-open-2",
+        symbol="rb2410.SHFE",
+        side="Sell",
+        quantity=1.0,
+        price=100.0,
+        timestamp_ns=0,
+    )
+    st = map_trade(trade, group_id="c1")
+    assert st.group_id == "c1"
+
+
+def test_map_trade_group_id_defaults_empty() -> None:
+    """未传 group_id 时默认空串，不影响既有调用方."""
+    t = map_trade(
+        UnifiedTrade(
+            trade_id="T1",
+            broker_order_id="B1",
+            client_order_id="c1",
+            symbol="600000.SH",
+            side="Sell",
+            quantity=100.0,
+            price=10.5,
+            timestamp_ns=123,
+        )
+    )
+    assert t.group_id == ""
+
+
+def test_map_order_snapshot_carries_group_id() -> None:
+    """map_order_snapshot 把 group_id 回填到 StrategyOrder."""
+    o = map_order_snapshot(_snap(), group_id="c1")
+    assert o.group_id == "c1"
+
+
+def test_map_order_snapshot_group_id_defaults_empty() -> None:
+    """未传 group_id 时默认空串，不影响既有调用方."""
+    o = map_order_snapshot(_snap())
+    assert o.group_id == ""

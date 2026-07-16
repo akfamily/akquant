@@ -38,6 +38,7 @@ class BrokerRuntime:
         adapt_strategy_payload: Callable[[str, Any], Any],
         record_stop_remap: Any = None,
         should_replay_trades: Callable[[], bool] | None = None,
+        sync_group_mapping: Callable[[str, str], None] = lambda _c, _g: None,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -76,6 +77,7 @@ class BrokerRuntime:
         self._get_execution_capabilities = get_execution_capabilities
         self._record_order_request = record_order_request
         self._record_stop_remap = record_stop_remap
+        self._sync_group_mapping = sync_group_mapping
         self._submitter: BrokerOrderSubmitter | None = None
 
     @property
@@ -114,6 +116,7 @@ class BrokerRuntime:
             payload_field=self._payload_field,
             get_execution_capabilities=self._get_execution_capabilities,
             record_order_request=self._record_order_request,
+            sync_group_mapping=self._sync_group_mapping,
         )
         self._submitter.install()
 

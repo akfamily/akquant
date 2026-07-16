@@ -44,6 +44,7 @@ class StrategyOrder:
     client_order_id: str = ""
     broker_order_id: str = ""
     owner_strategy_id: Optional[str] = None
+    group_id: str = ""
 
 
 @dataclass
@@ -62,6 +63,7 @@ class StrategyTrade:
     client_order_id: str = ""
     broker_order_id: str = ""
     owner_strategy_id: Optional[str] = None
+    group_id: str = ""
 
 
 _STATUS_MAP = {
@@ -149,6 +151,7 @@ def map_order_snapshot(
     request: Any = None,
     owner_strategy_id: Optional[str] = None,
     local_id: Optional[str] = None,
+    group_id: str = "",
 ) -> StrategyOrder:
     """把 UnifiedOrderSnapshot 映射成与回测 Order 同形状的 StrategyOrder."""
     broker_order_id = str(_get(snapshot, "broker_order_id", "") or "")
@@ -186,6 +189,7 @@ def map_order_snapshot(
         client_order_id=str(_get(snapshot, "client_order_id", "") or ""),
         broker_order_id=broker_order_id,
         owner_strategy_id=owner_strategy_id,
+        group_id=group_id,
     )
 
 
@@ -236,6 +240,7 @@ def map_trade(
     request: Any = None,
     owner_strategy_id: Optional[str] = None,
     local_id: Optional[str] = None,
+    group_id: str = "",
 ) -> StrategyTrade:
     """把 UnifiedTrade 映射成与回测 Trade 同形状的 StrategyTrade."""
     return StrategyTrade(
@@ -251,4 +256,5 @@ def map_trade(
         client_order_id=str(_get(trade, "client_order_id", "") or ""),
         broker_order_id=str(_get(trade, "broker_order_id", "") or ""),
         owner_strategy_id=owner_strategy_id,
+        group_id=group_id,
     )
