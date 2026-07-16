@@ -140,8 +140,8 @@ def _to_tif(value: Any) -> Optional[Any]:
         "GTC": TimeInForce.GTC,
         "IOC": TimeInForce.IOC,
         "FOK": TimeInForce.FOK,
-        "GTD": TimeInForce.GTD,
-        "DAY": TimeInForce.GTD,
+        "GTD": TimeInForce.Day,
+        "DAY": TimeInForce.Day,
     }
     return mapping.get(text)
 
