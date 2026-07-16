@@ -23,7 +23,8 @@ class TrailingOrderStrategy(Strategy):
             and not self.entry_order_id
             and not self.trailing_order_id
         ):
-            self.entry_order_id = self.buy(bar.symbol, 100, tag="trail-entry")
+            entry_receipt = self.buy(bar.symbol, 100, tag="trail-entry")
+            self.entry_order_id = str(getattr(entry_receipt, "primary", entry_receipt))
             print(
                 f"[{bar.timestamp_iso}] 提交进场单: {bar.symbol}, close={bar.close:.2f}"
             )
@@ -37,13 +38,16 @@ class TrailingOrderStrategy(Strategy):
         if trade.order_id == self.entry_order_id:
             self.entry_order_id = ""
             ref_price = self.last_close.get(trade.symbol, float(trade.price))
-            self.trailing_order_id = self.place_trailing_stop(
+            trailing_receipt = self.place_trailing_stop(
                 symbol=trade.symbol,
                 quantity=float(trade.quantity),
                 trail_offset=self.trail_offset,
                 side="Sell",
                 trail_reference_price=ref_price,
                 tag="trail-stop",
+            )
+            self.trailing_order_id = str(
+                getattr(trailing_receipt, "primary", trailing_receipt)
             )
             print(
                 f"[{trade.timestamp}] 提交 trailing stop: symbol={trade.symbol}, "

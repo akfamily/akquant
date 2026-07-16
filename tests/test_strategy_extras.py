@@ -36,6 +36,7 @@ from akquant.backtest.engine import (
     _prime_framework_pre_open_timers,
 )
 from akquant.config import RiskConfig
+from akquant.gateway.order_receipt import OrderReceipt
 from akquant.strategy import Strategy, StrategyRuntimeConfig
 from akquant.strategy_framework_hooks import (
     collect_boundary_timer_entries,
@@ -5000,7 +5001,9 @@ def test_strategy_submit_order_accepts_close_today_position_effect() -> None:
         position_effect="close_today",
     )
 
-    assert order_id == "oid-close-today"
+    # 回测出口现返回 OrderReceipt（封装全部拆腿 id），非纯字符串。
+    assert isinstance(order_id, OrderReceipt)
+    assert order_id.primary == "oid-close-today"
     first_call = ctx.buy.call_args_list[0]
     assert first_call.kwargs["position_effect"] == PositionEffect.CloseToday
 
@@ -5571,8 +5574,10 @@ def test_strategy_submit_order_records_broker_options_in_backtest_mode() -> None
         broker_options={"xt_price_type": "LATEST_PRICE", "order_remark": "demo"},
     )
 
-    assert order_id == "oid-broker-options"
-    queried = strategy.get_order(order_id)
+    # 回测出口现返回 OrderReceipt（封装全部拆腿 id），非纯字符串。
+    assert isinstance(order_id, OrderReceipt)
+    assert order_id.primary == "oid-broker-options"
+    queried = strategy.get_order(order_id.primary)
     assert queried is order
     assert getattr(queried, "broker_options") == {
         "xt_price_type": "LATEST_PRICE",
