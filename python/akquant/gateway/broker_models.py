@@ -195,6 +195,7 @@ class UnifiedOrderSnapshot:
     reject_reason: str = ""
     timestamp_ns: int = 0
     position_effect: str = "auto"
+    group_id: str = ""
 
 
 @dataclass
@@ -210,6 +211,7 @@ class UnifiedTrade:
     price: float
     timestamp_ns: int
     position_effect: str = "auto"
+    group_id: str = ""
 
 
 @dataclass
@@ -225,6 +227,7 @@ class UnifiedExecutionReport:
     reject_reason: str = ""
     timestamp_ns: int = 0
     position_effect: str = "auto"
+    group_id: str = ""
 
 
 @dataclass

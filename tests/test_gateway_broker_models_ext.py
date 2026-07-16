@@ -48,3 +48,43 @@ def test_capability_features_roundtrip() -> None:
     )
     assert restored.features == frozenset({"iceberg", "oco"})
     assert BrokerCapability(broker_name="y").features == frozenset()
+
+
+def test_group_id_defaults_empty_and_settable() -> None:
+    """Test that group_id defaults to empty string and is settable."""
+    from akquant.gateway.broker_models import (
+        UnifiedExecutionReport,
+        UnifiedOrderSnapshot,
+        UnifiedOrderStatus,
+        UnifiedTrade,
+    )
+
+    trade = UnifiedTrade(
+        trade_id="t1",
+        broker_order_id="b1",
+        client_order_id="c1",
+        symbol="rb2410.SHFE",
+        side="Sell",
+        quantity=1.0,
+        price=100.0,
+        timestamp_ns=0,
+    )
+    assert trade.group_id == ""
+    trade.group_id = "g1"
+    assert trade.group_id == "g1"
+
+    snap = UnifiedOrderSnapshot(
+        client_order_id="c1",
+        broker_order_id="b1",
+        symbol="rb2410.SHFE",
+        status=UnifiedOrderStatus.SUBMITTED,
+    )
+    assert snap.group_id == ""
+
+    report = UnifiedExecutionReport(
+        broker_order_id="b1",
+        client_order_id="c1",
+        status=UnifiedOrderStatus.FILLED,
+        symbol="rb2410.SHFE",
+    )
+    assert report.group_id == ""
