@@ -1125,13 +1125,22 @@ class LiveRunner:
     def _broker_order_ids_for_group(self, group_id: str) -> list[str]:
         gid = str(group_id)
         result: list[str] = []
-        for cid, mapped in self._client_to_group_ids.items():
+        # 用 list(...) 对 dict 做一次性快照: list() 构造在 CPython 下是单个
+        # C 级原子操作, 中途不会释放 GIL, 因此不会观察到 broker 派发线程
+        # (_close_order_mapping) 并发 pop 导致的 "dictionary changed size
+        # during iteration"; 直接 for 一个存活的 dict 则会在每次迭代之间让出
+        # GIL, 存在竞态崩溃风险。与本文件其余映射表的单操作原子性约定一致,
+        # 无需额外加锁。
+        for cid, mapped in list(self._client_to_group_ids.items()):
             if mapped != gid:
                 continue
             bid = self._client_to_broker_order_ids.get(cid, "")
             if bid:
                 result.append(bid)
-        # group_id 本身即根 client id，可能未在 group 表内单独出现
+        # group_id 本身即根 client id: 正常情况下 Task 5 已将根 leg 自身的
+        # client_order_id 同步进 _client_to_group_ids, 上面的主循环即可收集到
+        # 其 broker id; 这里保留作为防御性兜底 (belt-and-suspenders), 以防
+        # 未来同步路径变化导致根 leg 未被计入, 而非当前逻辑所必需。
         root_bid = self._client_to_broker_order_ids.get(gid, "")
         if root_bid and root_bid not in result:
             result.insert(0, root_bid)
