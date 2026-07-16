@@ -5,6 +5,7 @@ from typing import Any
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_models import UnifiedAccount, UnifiedPosition
 from akquant.gateway.broker_state_cache import BrokerStateCache
+from akquant.gateway.order_receipt import OrderReceipt
 
 
 class _Gw:
@@ -32,9 +33,9 @@ class _Submitter:
     def __init__(self) -> None:
         self.submitted: dict[str, Any] | None = None
 
-    def submit_order(self, **kwargs: Any) -> str:
+    def submit_order(self, **kwargs: Any) -> OrderReceipt:
         self.submitted = kwargs
-        return "BID-1"
+        return OrderReceipt.single(group_id="BID-1", broker_order_id="BID-1")
 
     def _get_execution_capabilities(self) -> dict[str, bool]:
         return {"broker_live": True, "client_order_id": True}

@@ -87,7 +87,7 @@ def test_submitter_contract_injects_strategy_api_and_maps_order_ids() -> None:
         client_order_id="coid-1",
     )
 
-    assert broker_order_id == "b-coid-1"
+    assert broker_order_id.primary == "b-coid-1"
     assert submitter._can_submit_client_order("free-coid") is True
     assert submitter._get_execution_capabilities()["broker_live"] is True
     assert client_to_broker == {"coid-1": "b-coid-1"}
@@ -159,7 +159,7 @@ def test_submitter_contract_splits_close_legs_when_position_details_available() 
         position_effect="close",
     )
 
-    assert broker_order_id == "b-coid-close"
+    assert broker_order_id.primary == "b-coid-close"
     assert len(gateway.requests) == 2
     assert gateway.requests[0].position_effect == "close_today"
     assert gateway.requests[0].quantity == 2.0

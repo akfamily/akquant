@@ -4,6 +4,7 @@ from typing import Any, cast
 
 from akquant.gateway.broker_execution import MAX_STOP_SUBMIT_ATTEMPTS, BrokerExecution
 from akquant.gateway.broker_state_cache import BrokerStateCache
+from akquant.gateway.order_receipt import OrderReceipt
 
 
 class _Cache:
@@ -32,9 +33,9 @@ class _OkSub:
     def __init__(self) -> None:
         self.n = 0
 
-    def submit_order(self, **kw: Any) -> str:
+    def submit_order(self, **kw: Any) -> OrderReceipt:
         self.n += 1
-        return "BID-9"
+        return OrderReceipt.single(group_id="BID-9", broker_order_id="BID-9")
 
 
 class _FailSub:

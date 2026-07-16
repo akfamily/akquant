@@ -4,6 +4,7 @@ from typing import cast
 
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_state_cache import BrokerStateCache
+from akquant.gateway.order_receipt import OrderReceipt
 from akquant.strategy import Strategy
 
 
@@ -36,9 +37,10 @@ class _Sub:
     def __init__(self) -> None:
         self.n = 0
 
-    def submit_order(self, **kw: object) -> str:
+    def submit_order(self, **kw: object) -> OrderReceipt:
         self.n += 1
-        return f"BID-{self.n}"
+        bid = f"BID-{self.n}"
+        return OrderReceipt.single(group_id=bid, broker_order_id=bid)
 
 
 class _Trade:

@@ -144,7 +144,7 @@ class BrokerExecution:
             return self._register_local_stop(**kwargs)
         if kwargs.get("time_in_force") is None:
             kwargs.pop("time_in_force", None)
-        return str(self._submitter.submit_order(**kwargs))
+        return str(self._submitter.submit_order(**kwargs).primary)
 
     def _next_local_stop_id(self) -> str:
         self._stop_seq += 1
@@ -205,7 +205,7 @@ class BrokerExecution:
             if order.time_in_force is not None:
                 kwargs["time_in_force"] = order.time_in_force
             try:
-                broker_order_id = str(self._submitter.submit_order(**kwargs))
+                broker_order_id = str(self._submitter.submit_order(**kwargs).primary)
             except Exception as exc:  # noqa: BLE001
                 order.submit_attempts += 1
                 if order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:

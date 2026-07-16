@@ -8,6 +8,7 @@ from .broker_models import (
     validate_broker_extra,
     validate_execution_semantics,
 )
+from .order_receipt import OrderLeg, OrderReceipt
 
 logger = get_logger("gateway.live")
 
@@ -291,7 +292,7 @@ class BrokerOrderSubmitter:
         trail_offset: float | None = None,
         trail_reference_price: float | None = None,
         broker_options: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> OrderReceipt:
         """Submit a live broker order using the unified strategy-facing signature."""
         if not getattr(self._strategy, "broker_ready", True):
             raise RuntimeError(
@@ -357,6 +358,7 @@ class BrokerOrderSubmitter:
             notify_strategy_error=self._notify_strategy_error,
         )
         broker_order_ids: list[str] = []
+        legs: list[OrderLeg] = []
         for leg_index, (leg_position_effect, leg_quantity) in enumerate(order_legs):
             request = UnifiedOrderRequest(
                 client_order_id=client_order_ids[leg_index],
@@ -378,4 +380,16 @@ class BrokerOrderSubmitter:
             self._bind_order_owner(
                 request.client_order_id, broker_order_id, owner_strategy_id
             )
-        return broker_order_ids[0]
+            legs.append(
+                OrderLeg(
+                    position_effect=leg_position_effect,
+                    quantity=leg_quantity,
+                    client_order_id=request.client_order_id,
+                    broker_order_id=broker_order_id,
+                )
+            )
+        return OrderReceipt(
+            group_id=request_client_order_id,
+            order_ids=tuple(broker_order_ids),
+            legs=tuple(legs),
+        )

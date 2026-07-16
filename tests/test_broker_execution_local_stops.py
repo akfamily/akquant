@@ -4,6 +4,7 @@ from typing import Any, cast
 
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_state_cache import BrokerStateCache
+from akquant.gateway.order_receipt import OrderReceipt
 
 
 class _Cache:
@@ -35,9 +36,9 @@ class _Submitter:
     def __init__(self) -> None:
         self.orders: list[dict[str, Any]] = []
 
-    def submit_order(self, **kw: Any) -> str:
+    def submit_order(self, **kw: Any) -> OrderReceipt:
         self.orders.append(kw)
-        return "BID-1"
+        return OrderReceipt.single(group_id="BID-1", broker_order_id="BID-1")
 
     def _get_execution_capabilities(self) -> dict[str, bool]:
         return {"broker_live": True}

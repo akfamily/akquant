@@ -6,6 +6,7 @@ from akquant.gateway.broker_event_adapter import map_trade
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_models import UnifiedTrade
 from akquant.gateway.broker_state_cache import BrokerStateCache
+from akquant.gateway.order_receipt import OrderReceipt
 
 
 class _Cache:
@@ -31,8 +32,8 @@ class _Gw:
 
 
 class _Sub:
-    def submit_order(self, **kw: Any) -> str:
-        return "B77"
+    def submit_order(self, **kw: Any) -> OrderReceipt:
+        return OrderReceipt.single(group_id="B77", broker_order_id="B77")
 
 
 class _S:
