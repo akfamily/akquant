@@ -94,7 +94,7 @@ class RebalanceStrategy(Strategy):
         # 获取当前总资产 (现金 + 持仓市值)
         # 注意：这里简化处理，假设当前时刻已获取到所有资产的最新价格
         # 在实盘中可能需要先查询所有持仓市值
-        total_value = self.get_portfolio_value()
+        total_value = self.equity
 
         if total_value <= 0:
             return

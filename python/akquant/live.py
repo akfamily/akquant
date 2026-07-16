@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from .akquant import Bar, DataFeed, Engine, Instrument
+from .gateway.broker_event_adapter import map_order_snapshot, map_trade
 from .gateway.broker_runtime import BrokerRuntime
 from .gateway.factory import create_gateway_bundle
 from .gateway.models import BrokerCapability
@@ -121,6 +122,9 @@ class LiveRunner:
         on_trade: Optional[Callable[[Any, Any], None]] = None,
         on_reject: Optional[Callable[[Any, Any], None]] = None,
         on_session_start: Optional[Callable[[Any, Any, int], None]] = None,
+        on_broker_connected: Optional[Callable[[Any], None]] = None,
+        broker_ready_timeout: float = 10.0,
+        broker_ready_required: bool = False,
         on_session_end: Optional[Callable[[Any, Any, int], None]] = None,
         on_before_trading: Optional[Callable[[Any, Any, int], None]] = None,
         on_after_trading: Optional[Callable[[Any, Any, int], None]] = None,
@@ -168,6 +172,12 @@ class LiveRunner:
         :param on_trade: Optional function-style on_trade callback.
         :param on_reject: Optional function-style on_reject callback.
         :param on_session_start: Optional function-style on_session_start callback.
+        :param on_broker_connected: Optional callback fired once the broker
+            trader gateway reports readiness (heartbeat) after connect+start.
+        :param broker_ready_timeout: Max seconds to poll trader_gateway.heartbeat()
+            before giving up (default 10.0).
+        :param broker_ready_required: If True, raise when broker readiness is not
+            reached within broker_ready_timeout (default False, only warns).
         :param on_session_end: Optional function-style on_session_end callback.
         :param on_before_trading: Optional function-style on_before_trading callback.
         :param on_after_trading: Optional function-style on_after_trading callback.
@@ -216,6 +226,9 @@ class LiveRunner:
         self.on_trade = on_trade
         self.on_reject = on_reject
         self.on_session_start = on_session_start
+        self.on_broker_connected = on_broker_connected
+        self.broker_ready_timeout = broker_ready_timeout
+        self.broker_ready_required = broker_ready_required
         self.on_session_end = on_session_end
         self.on_before_trading = on_before_trading
         self.on_after_trading = on_after_trading
@@ -304,12 +317,15 @@ class LiveRunner:
         )
         self._broker_capabilities = bundle.trader_capabilities
 
-        logger.info(
-            "Starting %s market gateway",
-            self.broker,
-            extra=self._runner_log_extra(phase="gateway"),
-        )
-        self._start_gateway_thread(bundle.market_gateway.start, f"{self.broker}-market")
+        if bundle.market_gateway is not None:
+            logger.info(
+                "Starting %s market gateway",
+                self.broker,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+            self._start_gateway_thread(
+                bundle.market_gateway.start, f"{self.broker}-market"
+            )
 
         if self.trading_mode == "broker_live":
             if bundle.trader_gateway is None:
@@ -317,13 +333,11 @@ class LiveRunner:
                     "trading_mode='broker_live' requires a trader gateway configuration"
                 )
             logger.info(
-                "Starting %s trader gateway",
+                "Connecting+starting %s trader gateway",
                 self.broker,
                 extra=self._runner_log_extra(phase="gateway"),
             )
-            self._start_gateway_thread(
-                bundle.trader_gateway.start, f"{self.broker}-trader"
-            )
+            self._connect_and_start_trader(bundle.trader_gateway)
 
         time.sleep(2.0)
 
@@ -334,7 +348,10 @@ class LiveRunner:
         self._configure_strategy_slots(
             strategy_instance, slot_strategy_instances, effective_strategy_id
         )
-        if bundle.trader_gateway is not None:
+        # Broker callbacks + submit/state/cancel overrides are broker_live-only.
+        # A non-broker_live run (e.g. paper) uses simulated execution, so must not
+        # route submit/reads/cancel to a real trader gateway even if one was built.
+        if self.trading_mode == "broker_live" and bundle.trader_gateway is not None:
             strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
             callback_target: Any = (
                 _StrategyCallbackFanout(strategy_targets)
@@ -344,6 +361,7 @@ class LiveRunner:
             self._bind_broker_callbacks(bundle.trader_gateway, callback_target)
             for target in strategy_targets:
                 self._install_broker_order_submitter(bundle.trader_gateway, target)
+            self._await_broker_ready(bundle.trader_gateway, strategy_targets)
 
         # Apply duration limit if specified
         if duration:
@@ -444,6 +462,10 @@ class LiveRunner:
         setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
         for slot_id, slot_strategy in slot_strategy_instances.items():
             setattr(slot_strategy, "_owner_strategy_id", slot_id)
+
+        default_ready = getattr(self, "trading_mode", "paper") != "broker_live"
+        for target in [strategy_instance, *slot_strategy_instances.values()]:
+            setattr(target, "broker_ready", default_ready)
 
         strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
         if self.context:
@@ -685,6 +707,31 @@ class LiveRunner:
         thread = threading.Thread(target=target, name=name, daemon=True)
         thread.start()
 
+    def _connect_and_start_trader(self, trader_gateway: Any) -> None:
+        """Run connect() then start() on the gateway thread.
+
+        connect() may block (CTP's connect() == start() enters the event loop
+        via Join()), so it must NOT run on the main thread. Running both on the
+        daemon thread fixes the QMF login gap (connect()=login before start()=WS)
+        without blocking run(); readiness is confirmed by the heartbeat poll.
+        """
+
+        def _run() -> None:
+            try:
+                connect = getattr(trader_gateway, "connect", None)
+                if callable(connect):
+                    connect()
+                trader_gateway.start()
+            except Exception:
+                # 登录/启动失败：记清晰日志（否则仅一条泛化的"未就绪"告警）；
+                # 就绪由 heartbeat 轮询裁定，broker_ready 保持 False。
+                logger.exception(
+                    "trader gateway connect/start failed",
+                    extra=self._runner_log_extra(phase="gateway"),
+                )
+
+        self._start_gateway_thread(_run, f"{self.broker}-trader")
+
     def _runner_log_extra(self, *, phase: str) -> dict[str, Any]:
         strategy_id = (
             str(getattr(self, "strategy_id", "_default")).strip() or "_default"
@@ -707,10 +754,11 @@ class LiveRunner:
         self._broker_account_state: Any = None
         self._client_to_broker_order_ids: dict[str, str] = {}
         self._broker_to_client_order_ids: dict[str, str] = {}
+        self._order_requests: dict[str, Any] = {}
+        self._broker_to_local_stop_id: dict[str, str] = {}
         self._client_to_strategy_ids: dict[str, str] = {}
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
-        self._broker_trade_keys: set[str] = set()
         self._broker_report_keys: set[str] = set()
         self._broker_dispatch_stop: threading.Event | None = None
         self._broker_dispatch_thread: threading.Thread | None = None
@@ -728,6 +776,7 @@ class LiveRunner:
             getattr(self, "gateway_options", {}).get("recovery_mode", "compatible")
         )
         self._broker_recovery_last_error_key = ""
+        self._broker_baseline_done = False
         self._broker_runtime = BrokerRuntime(
             event_lock=self._broker_event_lock,
             event_store=self._broker_events,
@@ -750,6 +799,10 @@ class LiveRunner:
             bind_order_owner=self._bind_order_owner,
             payload_field=self._payload_field,
             get_execution_capabilities=self.get_execution_capabilities,
+            record_order_request=self._record_order_request,
+            adapt_strategy_payload=self._adapt_strategy_payload,
+            record_stop_remap=self._record_stop_remap,
+            should_replay_trades=lambda: self._broker_baseline_done,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -778,6 +831,82 @@ class LiveRunner:
             trader_gateway,
             strategy,
         )
+
+    def _baseline_broker_state(self, trader_gateway: Any) -> None:
+        """就绪激活: 先丢弃待派发成交, 再急切 seed 各 slot 持仓, 最后灌 dedup 基线.
+
+        闭合 pre-seed 入队/post-seed drain 过计窗口。dispatch/recovery 线程在
+        ready 前已启动, 回调也已绑定, 故激活前可能已有实盘
+        推送的成交事件排队等待派发; 若在 seed 之后才被 dispatch 线程 drain, 会对
+        eager-seed 过的缓存 apply_fill 一次 delta, 而该成交其实已经烘进了快照 →
+        持仓过计。丢弃在先: 这些事件是历史(已含在快照里), 策略尚未激活, 不应
+        apply_fill/触发 on_trade 重放。
+
+        seed 先/基线后 → 两查询间隙成交残留为轻微低计(较高计安全)。此后仅激活后
+        新成交(新 trade_id)才 apply_fill; 基线前成交的恢复重放经 _seen 丢弃(不 apply、
+        不重放 on_trade)。恢复的成交重放由 _broker_baseline_done 门控, 激活前不跑。
+        """
+        try:
+            self._broker_event_bridge.discard_pending_trades()
+        except Exception:  # noqa: BLE001 保守: 失败不阻塞后续 seed
+            logger.exception("broker baseline discard pending trades failed")
+        for cache in self._broker_runtime.state_caches:
+            try:
+                cache.positions()
+            except Exception:  # noqa: BLE001 保守: 失败交给懒 seed
+                logger.exception("broker baseline seed positions failed")
+        sync = getattr(trader_gateway, "sync_today_trades", None)
+        if callable(sync):
+            try:
+                self._broker_event_bridge.mark_trades_seen(
+                    getattr(t, "trade_id", None) for t in sync()
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("broker baseline sync_today_trades failed")
+        self._broker_baseline_done = True
+
+    def _await_broker_ready(self, trader_gateway: Any, targets: list) -> None:
+        """Poll heartbeat() until ready/timeout; set broker_ready, fire callback."""
+        deadline = time.monotonic() + float(self.broker_ready_timeout)
+        ready = False
+        while time.monotonic() < deadline:
+            try:
+                if trader_gateway.heartbeat():
+                    ready = True
+                    break
+            except Exception:  # noqa: BLE001 heartbeat errors count as not-ready
+                pass
+            time.sleep(0.2)
+        for target in targets:
+            setattr(target, "broker_ready", ready)
+        if ready:
+            self._baseline_broker_state(trader_gateway)
+            self._dispatch_broker_connected(targets)
+        else:
+            logger.warning(
+                "broker not ready within %ss",
+                self.broker_ready_timeout,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+            if self.broker_ready_required:
+                raise RuntimeError(
+                    f"broker not ready within {self.broker_ready_timeout}s"
+                )
+
+    def _dispatch_broker_connected(self, targets: list) -> None:
+        """Fire on_broker_connected: strategy method(s) plus function-style callback."""
+        for target in targets:
+            method = getattr(target, "on_broker_connected", None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:  # noqa: BLE001
+                    logger.exception("strategy on_broker_connected failed")
+            if self.on_broker_connected is not None:
+                try:
+                    self.on_broker_connected(target)
+                except Exception:  # noqa: BLE001
+                    logger.exception("on_broker_connected callback failed")
 
     def _resolve_live_order_legs(
         self,
@@ -907,6 +1036,8 @@ class LiveRunner:
         if event_name == "order":
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             client_order_id = str(self._payload_field(payload, "client_order_id"))
+            if not client_order_id and broker_order_id:
+                client_order_id = self._resolve_client_order_id(broker_order_id)
             self._sync_order_id_mapping(client_order_id, broker_order_id)
             if broker_order_id:
                 self._broker_order_states[broker_order_id] = payload
@@ -914,14 +1045,11 @@ class LiveRunner:
                 if self._is_terminal_status(status):
                     self._close_order_mapping(client_order_id, broker_order_id)
         elif event_name == "trade":
-            trade_key = str(self._payload_field(payload, "trade_id"))
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             client_order_id = str(self._payload_field(payload, "client_order_id"))
             if not client_order_id and broker_order_id:
                 client_order_id = self._resolve_client_order_id(broker_order_id)
             self._sync_order_id_mapping(client_order_id, broker_order_id)
-            if trade_key:
-                self._broker_trade_keys.add(trade_key)
         elif event_name == "execution_report":
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             client_order_id = str(self._payload_field(payload, "client_order_id"))
@@ -1025,13 +1153,54 @@ class LiveRunner:
         if client_order_id:
             self._client_to_broker_order_ids.pop(client_order_id, None)
             self._client_to_strategy_ids.pop(client_order_id, None)
+            self._order_requests.pop(str(client_order_id), None)
         if broker_order_id:
             self._broker_to_client_order_ids.pop(broker_order_id, None)
             self._broker_to_strategy_ids.pop(broker_order_id, None)
             self._closed_broker_order_ids.add(broker_order_id)
+            self._broker_to_local_stop_id.pop(str(broker_order_id), None)
+
+    # 线程安全说明: _order_requests / _broker_to_local_stop_id 由行情线程写
+    # (_record_order_request/_record_stop_remap 经 submit / check_stop_triggers)、
+    # 由 broker drain 线程读+清 (_lookup_* / _close_order_mapping)。每处都是单个
+    # dict get/set/pop——CPython GIL 下原子, 无跨线程复合读改写, 故无需加锁; lookup
+    # 与 pop 竞争只会得到 "命中" 或 None, 两者都是合法的事件时序结果。
+    def _record_order_request(self, client_order_id: str, request: Any) -> None:
+        self._order_requests[str(client_order_id)] = request
+
+    def _lookup_order_request(self, payload: Any) -> Any:
+        cid = self._payload_field(payload, "client_order_id")
+        if not cid:
+            bid = self._payload_field(payload, "broker_order_id")
+            cid = self._broker_to_client_order_ids.get(str(bid)) if bid else None
+        return self._order_requests.get(str(cid)) if cid else None
+
+    def _record_stop_remap(self, local_id: str, broker_order_id: str) -> None:
+        self._broker_to_local_stop_id[str(broker_order_id)] = str(local_id)
+
+    def _lookup_stop_local_id(self, payload: Any) -> Any:
+        bid = self._payload_field(payload, "broker_order_id")
+        return self._broker_to_local_stop_id.get(str(bid)) if bid else None
+
+    def _adapt_strategy_payload(self, event_name: str, payload: Any) -> Any:
+        if event_name == "order":
+            return map_order_snapshot(
+                payload,
+                request=self._lookup_order_request(payload),
+                owner_strategy_id=self._resolve_owner_strategy_id(payload),
+                local_id=self._lookup_stop_local_id(payload),
+            )
+        if event_name == "trade":
+            return map_trade(
+                payload,
+                request=self._lookup_order_request(payload),
+                owner_strategy_id=self._resolve_owner_strategy_id(payload),
+                local_id=self._lookup_stop_local_id(payload),
+            )
+        return payload
 
     def _is_terminal_status(self, status: Any) -> bool:
-        status_text = str(status).strip().lower()
+        status_text = str(getattr(status, "value", status)).strip().lower()
         return status_text in {"filled", "cancelled", "canceled", "rejected"}
 
     def can_submit_client_order(self, client_order_id: str) -> bool:
@@ -1151,7 +1320,18 @@ class LiveRunner:
             )
             on_error = getattr(strategy, "on_error", None)
             if on_error is not None and callback_name != "on_error":
-                on_error(exc, callback_name, payload)
+                # on_error 自身可能抛错; 不能让它逃出 → 否则会杀掉 broker drain 循环。
+                try:
+                    on_error(exc, callback_name, payload)
+                except Exception as on_error_exc:
+                    logger.warning(
+                        "Strategy on_error handler raised",
+                        exc_info=on_error_exc,
+                        extra=build_log_extra(
+                            phase="gateway",
+                            strategy_id=owner_strategy_id,
+                        ),
+                    )
 
     def _apply_time_limit(self, strategy: Strategy, duration_str: str) -> None:
         """Inject time check into strategy methods."""

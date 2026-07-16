@@ -291,7 +291,7 @@ class ResolvedExecutionPolicy:
 class PreparedStreamRuntime:
     """Prepared stream runtime components shared by backtest/warm_start."""
 
-    stream_on_event: Callable[[BacktestStreamEvent], None]
+    stream_on_event: Optional[Callable[[BacktestStreamEvent], None]]
     indicator_stream_emitter: Optional[
         Callable[[str, Optional[str], str, Dict[str, str]], None]
     ]
@@ -640,6 +640,12 @@ def _prepare_stream_runtime(
     if stream_on_event is None:
         stream_on_event = _noop_stream_event_handler
     original_stream_handler = stream_on_event
+    # 性能: 无真实消费者(仅 noop)时, 引擎每笔 order/trade 仍跨回 Python 跑
+    # wrapped_stream_on_event 再丢弃(实测约占总耗时 20%). 返回 None 让下游守卫
+    # 跳过 set_stream_callback, emit_stream_event 无回调时本就 early-return.
+    # 代价: 非-streaming 回测 result._event_stats 为空(该字段是 streaming
+    # 可观测性特性, 无消费者时无意义).
+    has_stream_consumer = original_stream_handler is not _noop_stream_event_handler
     indicator_stream_point_interval = _parse_positive_int_option(
         "indicator_stream_point_interval",
         kwargs.pop("indicator_stream_point_interval", 1),
@@ -768,7 +774,7 @@ def _prepare_stream_runtime(
             "please use fill_policy"
         )
     return PreparedStreamRuntime(
-        stream_on_event=wrapped_stream_on_event,
+        stream_on_event=wrapped_stream_on_event if has_stream_consumer else None,
         indicator_stream_emitter=emit_indicator_stream_event,
         indicator_stream_point_interval=indicator_stream_point_interval,
         indicator_stream_snapshot_interval=indicator_stream_snapshot_interval,
@@ -2764,26 +2770,19 @@ def run_backtest(
             if hasattr(current_strategy, "risk_config"):
                 current_strategy.risk_config = config.strategy_config.risk  # type: ignore
 
-    # 注入费率配置到 Strategy 实例
+    # 注入费率/手数配置到 Strategy 实例(单一真源 _cost_config, 绕过费率只读 setter)。
+    # commission_policy 此处已归一(见上 resolved_commission_policy); commission_rate 由
+    # policy 派生, 不再单独注入。lot_size=None 时不覆盖(保留策略 __init__ 里的赋值)。
     for current_strategy in all_strategy_instances:
-        if hasattr(current_strategy, "commission_rate"):
-            current_strategy.commission_rate = commission_rate
-        if hasattr(current_strategy, "commission_policy"):
-            current_strategy.commission_policy = dict(commission_policy)
-        if hasattr(current_strategy, "min_commission"):
-            current_strategy.min_commission = min_commission
-        if hasattr(current_strategy, "stamp_tax_rate"):
-            current_strategy.stamp_tax_rate = stamp_tax_rate
-        if hasattr(current_strategy, "transfer_fee_rate"):
-            current_strategy.transfer_fee_rate = transfer_fee_rate
-
-    # 注入 lot_size
-    # lot_size 参数可能是 int 或 dict。
-    # 如果是 dict，则 Strategy._calculate_max_buy_qty 会自动处理
-    if lot_size is not None:
-        for current_strategy in all_strategy_instances:
-            if hasattr(current_strategy, "lot_size"):
-                current_strategy.lot_size = lot_size
+        inject = getattr(current_strategy, "_inject_cost_config", None)
+        if callable(inject):
+            inject(
+                commission_policy=commission_policy,
+                min_commission=min_commission,
+                stamp_tax_rate=stamp_tax_rate,
+                transfer_fee_rate=transfer_fee_rate,
+                lot_size=lot_size,
+            )
 
     preliminary_symbols: List[str] = list(effective_symbols)
     if config and config.instruments:

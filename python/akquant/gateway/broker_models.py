@@ -37,6 +37,7 @@ class BrokerCapability:
     supports_short_sell: bool = False
     broker_extra_fields: tuple[str, ...] = field(default_factory=tuple)
     supported_position_effects: tuple[str, ...] = ("auto",)
+    features: frozenset[str] = frozenset()
 
     def as_execution_capabilities(self) -> dict[str, Any]:
         """Return broker capabilities in the strategy-facing dict shape."""
@@ -51,6 +52,7 @@ class BrokerCapability:
             "supports_short_sell": self.supports_short_sell,
             "broker_extra_fields": list(self.broker_extra_fields),
             "supported_position_effects": list(self.supported_position_effects),
+            "features": sorted(self.features),
             "broker_name": self.broker_name,
         }
 
@@ -80,6 +82,7 @@ class BrokerCapability:
                     normalize_position_effect(item) for item in raw_supported
                 )
                 or ("auto",),
+                features=frozenset(str(item) for item in value.get("features", ())),
             )
         raise TypeError("broker capability must be a BrokerCapability or dict")
 
@@ -97,6 +100,8 @@ class UnifiedOrderRequest:
     time_in_force: str = "GTC"
     position_effect: str = "auto"
     reduce_only: bool = False
+    asset_type: str = "stock"
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 def normalize_position_effect(position_effect: str | None) -> str:
@@ -108,6 +113,44 @@ def normalize_position_effect(position_effect: str | None) -> str:
             "close_today, close_yesterday"
         )
     return normalized
+
+
+# 规范集(文档参考): stock/option/future/fund/bond/index/fx/crypto。
+# 别名映射到规范名；规范集外的值原样放行(保持对新品种可扩展)。
+_ASSET_TYPE_ALIASES = {
+    "opt": "option",
+    "stk": "stock",
+    "fut": "future",
+    "futures": "future",
+    "etf": "fund",
+}
+
+
+def normalize_asset_type(value: str | None) -> str:
+    """Normalize an asset type to its canonical name; pass unknowns through.
+
+    Canonical names: stock, option, future, fund, bond, index, fx, crypto.
+    Unknown values are returned lowercased so new products need no core change.
+    """
+    text = str(value or "stock").strip().lower()
+    if not text:
+        return "stock"
+    return _ASSET_TYPE_ALIASES.get(text, text)
+
+
+def validate_broker_extra(
+    capability: "BrokerCapability", extra: dict[str, Any] | None
+) -> None:
+    """Ensure every extra key is declared in capability.broker_extra_fields."""
+    if not extra:
+        return
+    declared = set(capability.broker_extra_fields)
+    unknown = sorted(k for k in extra if k not in declared)
+    if unknown:
+        raise RuntimeError(
+            f"broker '{capability.broker_name}' 未声明的 extra 字段: {unknown} "
+            f"(已声明: {sorted(declared)})"
+        )
 
 
 def validate_execution_semantics(

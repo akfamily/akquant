@@ -16,6 +16,10 @@ class _DummyStrategy:
     def on_trade(self, trade: Any) -> None:
         self.trades.append(trade)
 
+    def _process_order_groups(self, trade: Any) -> None:
+        # broker_live 成交后桥会额外驱动协调器; 本契约桩无 OCO/bracket 组, no-op。
+        pass
+
     def on_portfolio_update(self, payload: Any) -> None:
         self.portfolio_updates.append(payload)
 
@@ -49,6 +53,7 @@ def _build_event_bridge() -> tuple[
             target,
             callback_name,
         )(payload),
+        adapt_strategy_payload=lambda event_name, payload: payload,
     )
     return bridge, strategy, update_calls, observed_events
 

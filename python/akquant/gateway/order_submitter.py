@@ -4,6 +4,8 @@ from ..log import build_log_extra, get_logger
 from .broker_models import (
     BrokerCapability,
     UnifiedOrderRequest,
+    normalize_asset_type,
+    validate_broker_extra,
     validate_execution_semantics,
 )
 
@@ -166,6 +168,7 @@ class BrokerOrderSubmitter:
         notify_strategy_error: Callable[[Any, Exception, str, Any], None],
         payload_field: Callable[[Any, str], Any],
         get_execution_capabilities: Callable[[], dict[str, Any]],
+        record_order_request: Callable[[str, Any], None],
     ) -> None:
         """Bind strategy injection hooks, id mapping and capability callbacks."""
         self._trader_gateway = trader_gateway
@@ -178,20 +181,16 @@ class BrokerOrderSubmitter:
         self._notify_strategy_error = notify_strategy_error
         self._payload_field = payload_field
         self._get_execution_capabilities = get_execution_capabilities
+        self._record_order_request = record_order_request
+        self._warned_ignored_params: set[str] = set()
 
     def install(self) -> None:
-        """Bind broker-live submit_order helpers onto the strategy object."""
-        setattr(self._strategy, "submit_order", self.submit_order)
-        setattr(
-            self._strategy,
-            "can_submit_client_order",
-            self._can_submit_client_order,
-        )
-        setattr(
-            self._strategy,
-            "get_execution_capabilities",
-            self._get_execution_capabilities,
-        )
+        """No-op: install now happens via `strategy.execution = BrokerExecution(...)`.
+
+        Kept for call-site compatibility (`BrokerRuntime.install_submitter` still
+        calls it) and as an extension point should submitter-only setup be
+        needed again without touching the strategy object directly.
+        """
 
     def submit_order(
         self,
@@ -207,13 +206,46 @@ class BrokerOrderSubmitter:
         position_effect: str = "auto",
         reduce_only: bool = False,
         extra: dict[str, Any] | None = None,
+        asset_type: str = "stock",
+        fill_policy: Any = None,
+        slippage: Any = None,
+        commission: Any = None,
+        trail_offset: float | None = None,
+        trail_reference_price: float | None = None,
+        broker_options: dict[str, Any] | None = None,
     ) -> str:
         """Submit a live broker order using the unified strategy-facing signature."""
-        _ = trigger_price
-        _ = tag
-        if extra:
-            raise RuntimeError("extra broker fields are not supported")
+        if not getattr(self._strategy, "broker_ready", True):
+            raise RuntimeError(
+                "broker 尚未就绪，请在 broker_ready=True"
+                "(on_broker_connected 之后)再下单"
+            )
+        _ = tag  # 元数据，收下忽略
+        _ = trail_reference_price  # 仅随 trail_offset 生效；下方已拦截追踪单
+        order_type = order_type or "Market"  # buy()/sell() 缺省传 None → 用签名默认
+        if trigger_price is not None:
+            raise RuntimeError("broker_live 暂不支持条件/止损触发单(trigger_price)")
+        if trail_offset is not None or str(order_type).strip().lower() in {
+            "stoptrail",
+            "stoptraillimit",
+        }:
+            raise RuntimeError("broker_live 暂不支持追踪止损单(trail_offset/StopTrail)")
+        for _name, _val in (
+            ("fill_policy", fill_policy),
+            ("slippage", slippage),
+            ("commission", commission),
+            ("broker_options", broker_options),
+        ):
+            if _val is not None and _name not in self._warned_ignored_params:
+                self._warned_ignored_params.add(_name)
+                logger.warning(
+                    "broker_live 忽略回测模拟参数 %s",
+                    _name,
+                    extra=build_log_extra(phase="gateway"),
+                )
         capability = self._resolve_trader_capabilities(self._trader_gateway)
+        validate_broker_extra(capability, extra)
+        normalized_asset_type = normalize_asset_type(asset_type)
         normalized_position_effect = validate_execution_semantics(
             capability,
             position_effect,
@@ -258,10 +290,13 @@ class BrokerOrderSubmitter:
                 time_in_force=time_in_force,
                 position_effect=leg_position_effect,
                 reduce_only=reduce_only,
+                asset_type=normalized_asset_type,
+                extra=dict(extra or {}),
             )
             broker_order_id = str(self._trader_gateway.place_order(request))
             broker_order_ids.append(broker_order_id)
             self._sync_order_id_mapping(request.client_order_id, broker_order_id)
+            self._record_order_request(request.client_order_id, request)
             self._bind_order_owner(
                 request.client_order_id, broker_order_id, owner_strategy_id
             )

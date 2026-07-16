@@ -45,7 +45,7 @@ def initialize(ctx):
     ctx.sent = False
 
 def on_bar(ctx, bar):
-    if not ctx.sent and hasattr(ctx, "submit_order"):
+    if not ctx.sent and getattr(ctx, "broker_ready", False):
         ctx.submit_order(
             symbol=bar.symbol,
             side="Buy",
@@ -72,9 +72,10 @@ runner.run(duration="30s", show_progress=False)
 
 ## 4. 常见排查
 
-- `submit_order 尚未注入`
-  - 原因：网关尚未完成交易侧绑定。
-  - 处理：在 `on_bar` 中 `hasattr(ctx, "submit_order")` 判定后再下单。
+- `submit_order` 尚未就绪
+  - 原因：交易网关尚未完成连接/登录。
+  - 处理：在 `on_bar` 中用 `if getattr(ctx, "broker_ready", False):` 门首单
+    （broker 就绪由 LiveRunner 的 heartbeat 轮询裁定；就绪前调用会抛清晰错误）。
 - `duplicate active client_order_id`
   - 原因：重复提交活跃 client id。
   - 处理：每次下单生成新的 `client_order_id`。

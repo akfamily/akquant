@@ -1,4 +1,4 @@
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from ..log import build_log_extra, get_logger
 
@@ -20,6 +20,7 @@ class BrokerEventBridge:
         resolve_owner_strategy_id: Callable[[Any], str],
         payload_to_dict: Callable[[Any], dict[str, Any]],
         safe_strategy_callback: Callable[[Any, str, Any], None],
+        adapt_strategy_payload: Callable[[str, Any], Any],
     ) -> None:
         """Bind the queue, state callbacks and observer fanout dependencies."""
         self._event_lock = event_lock
@@ -31,11 +32,56 @@ class BrokerEventBridge:
         self._resolve_owner_strategy_id = resolve_owner_strategy_id
         self._payload_to_dict = payload_to_dict
         self._safe_strategy_callback = safe_strategy_callback
+        self._adapt_strategy_payload = adapt_strategy_payload
+        # 会话级已入队 trade_id(不随 drain 清空): 防恢复循环重放同一成交
+        # 导致 on_trade/_process_order_groups 重复触发。
+        self._seen_trade_ids: set[str] = set()
+
+    def mark_trades_seen(self, trade_ids: Iterable[str]) -> None:
+        """把 trade_id 灌入会话级 dedup 基线.
+
+        已烘进持仓快照的成交, 后续重放经 queue_event 丢弃。
+        """
+        with self._event_lock:
+            for tid in trade_ids:
+                if tid:
+                    self._seen_trade_ids.add(str(tid))
+
+    def discard_pending_trades(self) -> None:
+        """丢弃队列中待派发的成交事件并标记其 trade_id 已见.
+
+        激活时: 这些成交已烘进持仓快照, 不应再 apply_fill/重放 on_trade。
+        仅动 trade 事件, order/account 保留。
+        """
+        with self._event_lock:
+            kept: list = []
+            for event_name, payload in self._event_store:
+                if event_name == "trade":
+                    raw = getattr(payload, "trade_id", None)
+                    if raw is None and isinstance(payload, dict):
+                        raw = payload.get("trade_id")
+                    if raw:
+                        self._seen_trade_ids.add(str(raw))
+                    continue  # 丢弃该 trade 事件
+                kept.append((event_name, payload))
+            self._event_store[:] = kept
 
     def queue_event(self, event_name: str, payload: Any) -> None:
         """Add a broker event to the dispatch queue with semantic deduplication."""
         event_key = self._make_event_key(event_name, payload)
+        trade_id = ""
+        if event_name == "trade":
+            # getattr 优先、dict 兜底: 与 _make_event_key 的 _payload_field 语义一致,
+            # 且对 slotted payload 稳健(_payload_to_dict 依赖 __dict__ 会漏)。
+            raw = getattr(payload, "trade_id", None)
+            if raw is None and isinstance(payload, dict):
+                raw = payload.get("trade_id")
+            trade_id = str(raw) if raw else ""
         with self._event_lock:
+            if trade_id:
+                if trade_id in self._seen_trade_ids:
+                    return  # 会话级: 该成交已入队(实盘推送/恢复重放), 丢弃
+                self._seen_trade_ids.add(trade_id)
             if event_key in self._event_keys:
                 return
             self._event_keys.add(event_key)
@@ -48,9 +94,10 @@ class BrokerEventBridge:
             self._event_store.clear()
             self._event_keys.clear()
         for event_name, payload in events:
+            adapted = self._adapt_strategy_payload(event_name, payload)
             self._update_broker_state(event_name, payload)
             self._emit_observer_event(event_name, payload)
-            self._dispatch_strategy_event(strategy, event_name, payload)
+            self._dispatch_strategy_event(strategy, event_name, adapted)
 
     def emit_observer_event(self, event_name: str, payload: Any) -> None:
         """Emit a normalized event snapshot to the optional observer hook."""
@@ -91,10 +138,15 @@ class BrokerEventBridge:
         event_name: str,
         payload: Any,
     ) -> None:
+        # `payload` is already adapted by `drain_events` (via `_adapt_strategy_payload`)
+        # while the request cache was still populated, so it's dispatched as-is here.
         if event_name == "order":
             self._safe_strategy_callback(strategy, "on_order", payload)
         elif event_name == "trade":
             self._safe_strategy_callback(strategy, "on_trade", payload)
+            # broker_live 下由真实成交驱动 OCO/Bracket 协调(回测由引擎驱动);
+            # 经 _safe_strategy_callback 异常隔离, 无组时 no-op。
+            self._safe_strategy_callback(strategy, "_process_order_groups", payload)
         elif event_name == "execution_report":
             self._safe_strategy_callback(strategy, "on_execution_report", payload)
         elif event_name == "account":

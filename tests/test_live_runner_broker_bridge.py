@@ -5,6 +5,8 @@ from typing import Any, Callable, cast
 
 import akquant.live as live_module
 import pytest
+from akquant.akquant import OrderSide, OrderStatus
+from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.models import BrokerCapability, UnifiedPosition
 from akquant.live import LiveRunner
 from akquant.strategy import Strategy
@@ -66,14 +68,46 @@ def test_live_runner_broker_bridge_dispatches_events() -> None:
     strategy = _DummyStrategy()
     runner._bind_broker_callbacks(gateway, cast(Any, strategy))
 
-    gateway.emit_order({"id": "o1"})
-    gateway.emit_trade({"id": "t1"})
+    gateway.emit_order(
+        {
+            "broker_order_id": "o1",
+            "client_order_id": "c-o1",
+            "symbol": "IF2406",
+            "status": "Filled",
+            "filled_quantity": 3.0,
+            "avg_fill_price": 10.0,
+        }
+    )
+    gateway.emit_trade(
+        {
+            "trade_id": "t1",
+            "broker_order_id": "o1",
+            "client_order_id": "c-o1",
+            "symbol": "IF2406",
+            "side": "Buy",
+            "quantity": 3.0,
+            "price": 10.0,
+        }
+    )
     gateway.emit_execution_report({"id": "r1"})
     time.sleep(0.2)
     runner._stop_broker_dispatcher()
 
-    assert strategy.orders == [{"id": "o1"}]
-    assert strategy.trades == [{"id": "t1"}]
+    # broker_live dispatch adapts order/trade payloads to the same shape as
+    # backtest Order/Trade objects before calling on_order/on_trade.
+    assert len(strategy.orders) == 1
+    order = strategy.orders[0]
+    assert order.symbol == "IF2406"
+    assert order.status is OrderStatus.Filled
+    assert order.filled_quantity == 3.0
+
+    assert len(strategy.trades) == 1
+    trade = strategy.trades[0]
+    assert trade.symbol == "IF2406"
+    assert trade.side is OrderSide.Buy
+    assert trade.price == 10.0
+
+    # execution_report is dispatched unchanged (raw payload).
     assert strategy.reports == [{"id": "r1"}]
 
 
@@ -229,6 +263,7 @@ def test_live_runner_broker_bridge_recovers_from_sync() -> None:
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
     runner._bind_broker_callbacks(gateway, cast(Any, strategy))
+    runner._broker_baseline_done = True
     runner._run_broker_recovery_cycle()
     runner._drain_broker_events(cast(Any, strategy))
     runner._stop_broker_dispatcher()
@@ -236,7 +271,7 @@ def test_live_runner_broker_bridge_recovers_from_sync() -> None:
     assert strategy.orders
     assert strategy.trades
     assert "b-sync-1" in runner._broker_order_states
-    assert "t-sync-1" in runner._broker_trade_keys
+    assert any(getattr(t, "id", None) == "t-sync-1" for t in strategy.trades)
 
 
 def test_live_runner_recovery_syncs_account_snapshot() -> None:
@@ -310,6 +345,7 @@ def test_live_runner_strict_recovery_reports_sync_failure() -> None:
     class _DummyStrategy:
         def __init__(self) -> None:
             self.errors: list[tuple[str, Any]] = []
+            self.execution: Any | None = None
 
         def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
             self.errors.append((source, payload))
@@ -321,6 +357,7 @@ def test_live_runner_strict_recovery_reports_sync_failure() -> None:
     runner.on_broker_event = broker_events.append
     runner._init_broker_bridge_state()
     runner._broker_trader_gateway = _DummyTraderGateway()
+    runner._broker_baseline_done = True
     strategy = _DummyStrategy()
 
     runner._run_broker_recovery_cycle(cast(Any, strategy))
@@ -351,6 +388,7 @@ def test_live_runner_strict_recovery_reports_account_query_failure() -> None:
     class _DummyStrategy:
         def __init__(self) -> None:
             self.errors: list[tuple[str, Any]] = []
+            self.execution: Any | None = None
 
         def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
             self.errors.append((source, payload))
@@ -389,6 +427,7 @@ def test_live_runner_compatible_recovery_keeps_sync_failure_silent() -> None:
     class _DummyStrategy:
         def __init__(self) -> None:
             self.errors: list[tuple[str, Any]] = []
+            self.execution: Any | None = None
 
         def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
             self.errors.append((source, payload))
@@ -566,6 +605,7 @@ def test_live_runner_submitter_checks_idempotency_and_maps() -> None:
     class _DummyStrategy:
         def __init__(self) -> None:
             self.errors: list[tuple[str, Any]] = []
+            self.execution: Any | None = None
 
         def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
             self.errors.append((source, payload))
@@ -576,9 +616,10 @@ def test_live_runner_submitter_checks_idempotency_and_maps() -> None:
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
     runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
+    assert isinstance(strategy.execution, BrokerExecution)
     strategy_any = cast(Any, strategy)
 
-    broker_order_id = strategy_any.submit_order(
+    broker_order_id = strategy_any.execution.submit_order(
         symbol="000001.SZ",
         side="Buy",
         quantity=10.0,
@@ -616,7 +657,7 @@ def test_live_runner_submitter_forwards_duplicate_error(caplog: Any) -> None:
 
     with caplog.at_level("WARNING", logger="akquant.gateway.live"):
         try:
-            strategy_any.submit_order(
+            strategy_any.execution.submit_order(
                 symbol="000002.SZ",
                 side="Sell",
                 quantity=5.0,
@@ -668,13 +709,13 @@ def test_live_runner_submit_order_supports_buy_and_sell_side() -> None:
     runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
     strategy_any = cast(Any, strategy)
 
-    buy_broker_order_id = strategy_any.submit_order(
+    buy_broker_order_id = strategy_any.execution.submit_order(
         symbol="000001.SZ",
         side="Buy",
         quantity=10.0,
         client_order_id="coid-buy-1",
     )
-    sell_broker_order_id = strategy_any.submit_order(
+    sell_broker_order_id = strategy_any.execution.submit_order(
         symbol="000001.SZ",
         side="Sell",
         quantity=5.0,
@@ -715,7 +756,7 @@ def test_live_runner_submit_order_forwards_position_effect() -> None:
     runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
     strategy_any = cast(Any, strategy)
 
-    broker_order_id = strategy_any.submit_order(
+    broker_order_id = strategy_any.execution.submit_order(
         symbol="000001.SZ",
         side="Buy",
         quantity=10.0,
@@ -789,7 +830,7 @@ def test_live_runner_submit_order_auto_splits_close_today_and_yesterday() -> Non
     runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
     strategy_any = cast(Any, strategy)
 
-    broker_order_id = strategy_any.submit_order(
+    broker_order_id = strategy_any.execution.submit_order(
         symbol="au2606",
         side="Sell",
         quantity=4.0,
@@ -890,7 +931,7 @@ def test_live_runner_submit_order_falls_back_to_close_when_position_query_fails(
     runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
     strategy_any = cast(Any, strategy)
 
-    broker_order_id = strategy_any.submit_order(
+    broker_order_id = strategy_any.execution.submit_order(
         symbol="au2606",
         side="Sell",
         quantity=4.0,
@@ -940,7 +981,7 @@ def test_live_runner_submitter_respects_gateway_capabilities() -> None:
     strategy_any = cast(Any, strategy)
 
     with pytest.raises(RuntimeError, match="does not support explicit position_effect"):
-        strategy_any.submit_order(
+        strategy_any.execution.submit_order(
             symbol="000001.SZ",
             side="Buy",
             quantity=10.0,
@@ -949,7 +990,7 @@ def test_live_runner_submitter_respects_gateway_capabilities() -> None:
         )
 
     with pytest.raises(RuntimeError, match="does not support reduce_only"):
-        strategy_any.submit_order(
+        strategy_any.execution.submit_order(
             symbol="000001.SZ",
             side="Sell",
             quantity=10.0,
@@ -996,7 +1037,7 @@ def test_live_runner_injects_execution_capabilities() -> None:
     strategy = _DummyStrategy()
     runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
     strategy_any = cast(Any, strategy)
-    capabilities = strategy_any.get_execution_capabilities()
+    capabilities = strategy_any.execution.capabilities()
 
     assert capabilities["broker_live"] is True
     assert capabilities["client_order_id"] is True
@@ -1014,7 +1055,7 @@ def test_live_runner_injects_execution_capabilities() -> None:
 
 
 def test_live_runner_does_not_inject_removed_broker_aliases() -> None:
-    """Keep unified submit_order as the only injected order entry."""
+    """Keep BrokerExecution as the sole install target (no direct strategy setattrs)."""
 
     class _DummyTraderGateway:
         def place_order(self, req: Any) -> str:
@@ -1032,7 +1073,9 @@ def test_live_runner_does_not_inject_removed_broker_aliases() -> None:
     runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
     strategy_any = cast(Any, strategy)
 
-    assert hasattr(strategy_any, "submit_order")
+    assert isinstance(strategy_any.execution, BrokerExecution)
+    assert hasattr(strategy_any.execution, "submit_order")
+    assert "submit_order" not in strategy_any.__dict__
     assert not hasattr(strategy_any, "submit_broker_order")
     assert not hasattr(strategy_any, "broker_buy")
     assert not hasattr(strategy_any, "broker_sell")
@@ -1453,7 +1496,7 @@ def test_live_runner_submitter_binds_owner_strategy_id_mapping() -> None:
     strategy = _DummyStrategy()
     runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
     strategy_any = cast(Any, strategy)
-    broker_order_id = strategy_any.submit_order(
+    broker_order_id = strategy_any.execution.submit_order(
         symbol="000001.SZ",
         side="Buy",
         quantity=10.0,

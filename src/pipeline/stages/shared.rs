@@ -85,12 +85,16 @@ pub(crate) fn apply_execution_report(
     let report_status = order.status;
     let report_updated_at = order.updated_at;
     engine.state.order_manager.on_execution_report(order);
-    let updated_order = engine
-        .state
-        .order_manager
-        .get_all_orders()
-        .into_iter()
-        .find(|o| o.id == report_order_id);
+    // 性能: 原实现 get_all_orders() 会克隆整张订单表再 find, 每个成交回报做一次 →
+    // O(N²) 且是全程头号热点. 改为按引用扫描(与 get_all_orders 相同的 orders-first
+    // 优先级), 只克隆命中的那一个订单.
+    let om = &engine.state.order_manager;
+    let updated_order = om
+        .orders
+        .iter()
+        .chain(om.active_orders.iter())
+        .find(|o| o.id == report_order_id)
+        .cloned();
     if let Some(order_snapshot) = updated_order {
         if order_snapshot.status == OrderStatus::Rejected {
             engine
@@ -155,13 +159,15 @@ pub(crate) fn apply_execution_report(
             }
         }
 
-        if let Some(filled_order_snapshot) = engine
-            .state
-            .order_manager
-            .get_all_orders()
-            .into_iter()
+        // 性能: 同上, 避免克隆整张订单表; 按引用扫描只克隆命中项.
+        let om = &engine.state.order_manager;
+        let filled_order_snapshot = om
+            .orders
+            .iter()
+            .chain(om.active_orders.iter())
             .find(|o| o.id == report_order_id)
-        {
+            .cloned();
+        if let Some(filled_order_snapshot) = filled_order_snapshot {
             let bracket_exit_orders = engine
                 .state
                 .order_manager

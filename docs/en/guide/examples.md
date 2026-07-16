@@ -479,7 +479,7 @@ The `examples/` directory contains more scripts demonstrating AKShare integratio
     *   Prints `bundle.metadata` to confirm the custom broker is resolved by factory.
 
 *   **[43_target_weights_rebalance.py](https://github.com/akfamily/akquant/blob/main/examples/43_target_weights_rebalance.py)**:
-    *   Demonstrates TopN dynamic weights: rank symbols by momentum, select winners, then rebalance with `order_target_weights`.
+    *   Demonstrates TopN dynamic weights: rank symbols by momentum, select winners, then rebalance with `rebalance_weights`.
     *   Shows practical usage of `liquidate_unmentioned` and `rebalance_tolerance`, then prints `selected_history` / `final_positions` / `final_equity`.
 
 *   **[46_broker_profile_demo.py](https://github.com/akfamily/akquant/blob/main/examples/46_broker_profile_demo.py)**:

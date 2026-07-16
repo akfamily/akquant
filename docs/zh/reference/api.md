@@ -856,7 +856,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `self.position`: 当前标的持仓辅助对象 (`Position`)，包含 `size` 和 `available` 属性。
 *   `self.now`: 当前回测时间 (`pd.Timestamp`)。
 *   `self.runtime_config`: 运行时行为配置对象 (`StrategyRuntimeConfig`)。
-*   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` / `on_daily_rebalance` 中 `get_history()`、`get_account()`、`get_portfolio_value()` 等接口的可见数据窗口。
+*   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` / `on_daily_rebalance` 中 `get_history()`、`get_account()`、`equity` 等接口的可见数据窗口。
 *   `self.portfolio_update_eps`: 账户快照更新阈值，低于该变化量不触发 `on_portfolio_update`（默认 `0.0`）。
 *   `self.error_mode`: 错误处理模式，`"raise"` 或 `"continue"`（默认 `"raise"`）。
 *   `self.re_raise_on_error`: 用户回调异常后是否继续抛出（默认 `True`）。
@@ -874,15 +874,15 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `submit_order(..., broker_options={...})`: 可选 broker 扩展参数透传（回测阶段仅记录在订单对象 `order.broker_options` 上，便于联调与审计）。
 *   `place_trailing_stop(symbol, quantity, trail_offset, side="Sell", trail_reference_price=None, ...) -> str`: 跟踪止损助手，触发后按市价执行。
 *   `place_trailing_stop_limit(symbol, quantity, price, trail_offset, side="Sell", trail_reference_price=None, ...) -> str`: 跟踪止损限价助手，触发后按限价执行。
-*   `order_target_weights(target_weights, price_map=None, liquidate_unmentioned=False, allow_leverage=False, rebalance_tolerance=0.0, ...)`: 按多标的目标权重调仓。
+*   `rebalance_weights(target_weights, price_map=None, liquidate_unmentioned=False, allow_leverage=False, rebalance_tolerance=0.0, ...)`: 按多标的目标权重调仓。
     *   `target_weights` 形如 `{symbol: weight}`，默认要求权重和不超过 `1.0`。
     *   `liquidate_unmentioned=True` 时，会将未出现在目标字典中的现有持仓目标设为 `0`。
     *   执行顺序为先卖后买，减少现金约束导致的调仓失败。
     *   `rebalance_tolerance` 按组合市值比例跳过小偏差，降低无效换手。
 *   `cancel_order(order_id: str)`: 撤销指定订单。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
-*   `create_oco_order_group(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。
-*   `place_bracket_order(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO。
+*   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。
+*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO。
 
 **数据与工具:**
 
@@ -892,18 +892,18 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `get_history_df(count, symbol) -> pd.DataFrame`: 获取历史数据 DataFrame (OHLCV)。
 *   `get_position(symbol) -> float`: 获取当前持仓量。返回值仍为数量，不返回对象。
 *   `get_available_position(symbol) -> float`: 获取可用持仓量。
-*   `get_positions() -> Dict[str, float]`: 获取所有标的持仓。
+*   `positions -> Dict[str, float]`: 获取所有标的持仓（只读属性）。
 *   `self.position.entry_price -> float`: 通过 `Position` helper 获取当前标的持仓均价。
 *   `self.position.avg_price -> float`: `entry_price` 的别名。
 *   `ctx.get_position_entry_price(symbol) -> float`: 获取指定标的当前持仓均价。
 *   `ctx.get_position_entry_prices() -> Dict[str, float]`: 获取所有标的当前持仓均价。
-*   `hold_bar(symbol) -> int`: 获取当前持仓持有的 Bar 数量。
-*   `get_cash() -> float`: 获取当前可用资金。
+*   `get_holding_bars(symbol) -> int`: 获取当前持仓持有的 Bar 数量。
+*   `cash -> float`: 获取当前可用资金（只读属性）。
 *   `get_account() -> Dict[str, float]`: 获取账户详情快照。常见字段包括 `cash`、`equity`、`market_value`、`notional_value`、`frozen_cash`、`margin`、`used_margin`、`free_margin`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
     *   期货保证金账户下，`equity` 表示账户权益，`used_margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。
     *   `cash` 是现金余额，`free_margin`（= `equity - used_margin`）才是可用于新开仓的资金，与下单被拒时日志里的 `Available` 口径一致。期货保证金账户下开仓不从 `cash` 扣减保证金，因此 `cash` 通常大于 `free_margin`；股票现金账户下二者相等。
-    *   在策略回调内，如果你只想读取“当前账户总权益”，优先使用 `get_portfolio_value()`；其口径与 `get_account()["equity"]` 对齐。
+    *   在策略回调内，如果你只想读取“当前账户总权益”，优先使用 `equity`；其口径与 `get_account()["equity"]` 对齐。
 *   `get_order(order_id) -> Order`: 获取指定订单详情。
 *   `get_open_orders(symbol) -> List[Order]`: 获取当前未完成订单列表。
 *   `get_trades() -> List[ClosedTrade]`: 获取所有已平仓交易记录。

@@ -100,7 +100,7 @@ def on_start(self):
         self.log("Resumed from snapshot. Indicators retained.")
 
     # 2. 注册指标 (必须执行，以便 Engine 知道需要更新它)
-    self.register_indicator("sma", self.sma)
+    self.register_precomputed_indicator("sma", self.sma)
 
     # 3. 订阅行情 (必须执行，因为连接是临时的)
     self.subscribe(self.symbol)
@@ -131,7 +131,7 @@ class MyStrategy(Strategy):
     def on_start(self):
         if not self.is_restored:
             self.sma = SMA(10)
-        self.register_indicator("sma", self.sma)
+        self.register_precomputed_indicator("sma", self.sma)
 
 # ... 运行 Phase 1 ...
 save_snapshot(engine, strategy, "checkpoint.pkl")

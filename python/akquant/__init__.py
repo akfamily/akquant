@@ -23,6 +23,7 @@ from .backtest import (  # type: ignore
     run_backtest,
     run_warm_start,
 )
+from .bar_generator import BarGenerator
 from .checkpoint import save_snapshot, warm_start
 from .config import (
     BacktestConfig,
@@ -112,6 +113,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "Strategy",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
+        "BarGenerator",
         "register_strategy_loader",
         "resolve_strategy_input",
         "DataLoader",
@@ -194,6 +196,7 @@ else:
         "Strategy",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
+        "BarGenerator",
         "register_strategy_loader",
         "resolve_strategy_input",
         "DataLoader",

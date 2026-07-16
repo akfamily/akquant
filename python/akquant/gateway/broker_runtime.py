@@ -3,6 +3,7 @@ from typing import Any, Callable
 from .broker_event_bridge import BrokerEventBridge
 from .broker_models import BrokerCapability
 from .broker_recovery import BrokerRecovery
+from .broker_strategy_api import wrap_state_invalidation
 from .order_submitter import BrokerOrderSubmitter
 
 
@@ -33,8 +34,16 @@ class BrokerRuntime:
         bind_order_owner: Callable[[str, str, str], None],
         payload_field: Callable[[Any, str], Any],
         get_execution_capabilities: Callable[[], dict[str, Any]],
+        record_order_request: Callable[[str, Any], None],
+        adapt_strategy_payload: Callable[[str, Any], Any],
+        record_stop_remap: Any = None,
+        should_replay_trades: Callable[[], bool] | None = None,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
+        self._broker_state_caches: list[Any] = []
+        update_broker_state = wrap_state_invalidation(
+            update_broker_state, lambda: self._broker_state_caches
+        )
         self._event_bridge = BrokerEventBridge(
             event_lock=event_lock,
             event_store=event_store,
@@ -45,6 +54,7 @@ class BrokerRuntime:
             resolve_owner_strategy_id=resolve_owner_strategy_id,
             payload_to_dict=payload_to_dict,
             safe_strategy_callback=safe_strategy_callback,
+            adapt_strategy_payload=adapt_strategy_payload,
         )
         self._recovery = BrokerRecovery(
             get_trader_gateway=get_trader_gateway,
@@ -54,6 +64,7 @@ class BrokerRuntime:
             get_recovery_mode=get_recovery_mode,
             get_last_error_key=get_last_error_key,
             set_last_error_key=set_last_error_key,
+            should_replay_trades=should_replay_trades,
         )
         self._resolve_trader_capabilities = resolve_trader_capabilities
         self._next_client_order_id = next_client_order_id
@@ -63,6 +74,8 @@ class BrokerRuntime:
         self._notify_strategy_error = notify_strategy_error
         self._payload_field = payload_field
         self._get_execution_capabilities = get_execution_capabilities
+        self._record_order_request = record_order_request
+        self._record_stop_remap = record_stop_remap
         self._submitter: BrokerOrderSubmitter | None = None
 
     @property
@@ -80,6 +93,11 @@ class BrokerRuntime:
         """Return the installed submitter, if broker live submit is enabled."""
         return self._submitter
 
+    @property
+    def state_caches(self) -> list[Any]:
+        """Expose per-slot BrokerStateCache list (启动激活 seed 用)."""
+        return self._broker_state_caches
+
     def install_submitter(
         self, trader_gateway: Any, strategy: Any
     ) -> BrokerOrderSubmitter:
@@ -95,8 +113,25 @@ class BrokerRuntime:
             notify_strategy_error=self._notify_strategy_error,
             payload_field=self._payload_field,
             get_execution_capabilities=self._get_execution_capabilities,
+            record_order_request=self._record_order_request,
         )
         self._submitter.install()
+
+        from .broker_execution import BrokerExecution
+        from .broker_state_cache import BrokerStateCache
+
+        # One cache per strategy target; a fill/order push must invalidate all of
+        # them (single-field storage would only invalidate the last slot's cache).
+        cache = BrokerStateCache(trader_gateway)
+        self._broker_state_caches.append(cache)
+        strategy.execution = BrokerExecution(
+            strategy,
+            trader_gateway,
+            cache,
+            self._submitter,
+            record_stop_remap=self._record_stop_remap,
+        )
+
         return self._submitter
 
     def queue_event(self, event_name: str, payload: Any) -> None:

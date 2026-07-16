@@ -933,7 +933,7 @@ def test_futures_margin_portfolio_update_can_read_account_metrics() -> None:
             self.__class__.portfolio_updates.append(
                 {
                     "snapshot_equity": float(snapshot["equity"]),
-                    "portfolio_value": float(self.get_portfolio_value()),
+                    "portfolio_value": float(self.equity),
                     "account_equity": float(account["equity"]),
                     "used_margin": float(account["used_margin"]),
                     "notional_value": float(account["notional_value"]),

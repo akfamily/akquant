@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import (
@@ -87,9 +88,6 @@ from .strategy_trading_api import (
     buy as _buy_impl,
 )
 from .strategy_trading_api import (
-    buy_all as _buy_all_impl,
-)
-from .strategy_trading_api import (
     calculate_max_buy_qty as _calculate_max_buy_qty_impl,
 )
 from .strategy_trading_api import (
@@ -117,13 +115,13 @@ from .strategy_trading_api import (
     get_execution_capabilities as _get_execution_capabilities_impl,
 )
 from .strategy_trading_api import (
+    get_holding_bars as _get_holding_bars_impl,
+)
+from .strategy_trading_api import (
     get_last_target_positions_plan as _get_last_target_positions_plan_impl,
 )
 from .strategy_trading_api import (
     get_open_orders as _get_open_orders_impl,
-)
-from .strategy_trading_api import (
-    get_order as _get_order_impl,
 )
 from .strategy_trading_api import (
     get_portfolio_value as _get_portfolio_value_impl,
@@ -135,22 +133,19 @@ from .strategy_trading_api import (
     get_positions as _get_positions_impl,
 )
 from .strategy_trading_api import (
-    hold_bar as _hold_bar_impl,
-)
-from .strategy_trading_api import (
     order_target as _order_target_impl,
 )
 from .strategy_trading_api import (
     order_target_percent as _order_target_percent_impl,
 )
 from .strategy_trading_api import (
-    order_target_positions as _order_target_positions_impl,
-)
-from .strategy_trading_api import (
     order_target_value as _order_target_value_impl,
 )
 from .strategy_trading_api import (
-    order_target_weights as _order_target_weights_impl,
+    rebalance_positions as _rebalance_positions_impl,
+)
+from .strategy_trading_api import (
+    rebalance_weights as _rebalance_weights_impl,
 )
 from .strategy_trading_api import (
     resolve_symbol as _resolve_symbol_impl,
@@ -160,12 +155,6 @@ from .strategy_trading_api import (
 )
 from .strategy_trading_api import (
     short as _short_impl,
-)
-from .strategy_trading_api import (
-    stop_buy as _stop_buy_impl,
-)
-from .strategy_trading_api import (
-    stop_sell as _stop_sell_impl,
 )
 from .strategy_trading_api import (
     submit_order as _submit_order_impl,
@@ -293,6 +282,7 @@ class Strategy:
 
     ctx: Optional[StrategyContext]
     execution_mode: Optional[Any]
+    execution: Any
     sizer: Sizer
     current_bar: Optional[Bar]
     current_tick: Optional[Tick]
@@ -378,13 +368,8 @@ class Strategy:
 
     _trading_days: List[pd.Timestamp]
 
-    # Fee rates
-    commission_rate: float
-    commission_policy: Dict[str, Any]
-    min_commission: float
-    stamp_tax_rate: float
-    transfer_fee_rate: float
-    lot_size: Any  # Can be int or Dict[str, int]
+    # 成本/手数配置单一真源(经下方 property 暴露: 费率只读, lot_size 可写)
+    _cost_config: Dict[str, Any]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -393,6 +378,10 @@ class Strategy:
         instance._is_restored = False
         instance.ctx = None
         instance.execution_mode = None
+
+        from .execution.sim import SimExecution
+
+        instance.execution = SimExecution(instance)
         instance.sizer = FixedSize(100)
         instance.current_bar = None
         instance.current_tick = None
@@ -407,13 +396,18 @@ class Strategy:
         instance._last_position_signs = defaultdict(float)
         instance.timezone = getattr(instance, "timezone", "Asia/Shanghai")
         raw_runtime_config = getattr(instance, "_runtime_config", None)
-        class_enable_hooks = cls.__dict__.get(
-            "enable_precise_day_boundary_hooks", False
-        )
-        class_portfolio_eps = cls.__dict__.get("portfolio_update_eps", 0.0)
-        class_error_mode = cls.__dict__.get("error_mode", "raise")
-        class_re_raise = cls.__dict__.get("re_raise_on_error", True)
-        class_indicator_mode = cls.__dict__.get("indicator_mode", "precompute")
+
+        def _class_attr(name: str, default: Any) -> Any:
+            # 基类 Strategy 自身的 __dict__ 里这些名字是 property（数据描述符）；
+            # 只有子类真正用普通类属性覆盖时才应采用该值，否则退回默认值。
+            value = cls.__dict__.get(name, default)
+            return default if isinstance(value, property) else value
+
+        class_enable_hooks = _class_attr("enable_precise_day_boundary_hooks", False)
+        class_portfolio_eps = _class_attr("portfolio_update_eps", 0.0)
+        class_error_mode = _class_attr("error_mode", "raise")
+        class_re_raise = _class_attr("re_raise_on_error", True)
+        class_indicator_mode = _class_attr("indicator_mode", "precompute")
         if isinstance(raw_runtime_config, dict):
             instance.runtime_config = StrategyRuntimeConfig(**raw_runtime_config)
         elif isinstance(raw_runtime_config, StrategyRuntimeConfig):
@@ -464,15 +458,17 @@ class Strategy:
         # 初始化通常在 __init__ 中的属性，允许子类省略 super().__init__()
         instance.model = None
 
-        # 默认费率配置
-        instance.commission_rate = 0.0
-        instance.commission_policy = {"type": "percent", "value": 0.0}
-        instance.min_commission = 0.0
-        instance.stamp_tax_rate = 0.0
-        instance.transfer_fee_rate = 0.0
-        # lot_size 可以是 int (全局统一) 或 Dict[str, int] (按标的设置)
-        # 默认 1，这是最通用的设置（适用于美股、加密货币等）。A股回测请务必设置为 100。
-        instance.lot_size = 1
+        # 成本/手数配置单一真源。费率经只读 property 暴露(写入报错, 指向 run_backtest);
+        # lot_size 经可写 property 读写(照旧支持策略 __init__ 里赋值)。
+        # lot_size 可为 int(全局) 或 Dict[str, int](按标的);
+        # 默认 1(美股/加密), A股请设 100。
+        instance._cost_config = {
+            "commission_policy": {"type": "percent", "value": 0.0},
+            "min_commission": 0.0,
+            "stamp_tax_rate": 0.0,
+            "transfer_fee_rate": 0.0,
+            "lot_size": 1,
+        }
         instance._owner_strategy_id = None
         instance._framework_last_session = None
         instance._framework_last_local_date = None
@@ -507,6 +503,7 @@ class Strategy:
         instance._pending_engine_bracket_plans = []
         instance._pending_brackets = {}
         instance._order_group_seq = 0
+        instance._order_group_lock = threading.RLock()
         instance._pending_schedules = []
         instance._pending_daily_timers = []
         instance._instrument_snapshots = {}
@@ -549,6 +546,16 @@ class Strategy:
             del state["_framework_stop_flushed"]
         if "_framework_boundary_timers_registered" in state:
             del state["_framework_boundary_timers_registered"]
+        # 派生态(性能短路标志 + 本地交易日缓存): 恢复时删除, 以强制
+        # ensure_framework_state 重建被重置字段, 并让日期缓存自我重建.
+        for _derived_key in (
+            "_framework_state_ready",
+            "_framework_local_date_cache",
+            "_framework_local_date_lo_ns",
+            "_framework_local_date_hi_ns",
+        ):
+            if _derived_key in state:
+                del state[_derived_key]
         if "_framework_current_callback" in state:
             del state["_framework_current_callback"]
         if "_framework_current_order" in state:
@@ -557,6 +564,8 @@ class Strategy:
             del state["_framework_current_trade"]
         if "_indicator_recorder" in state:
             del state["_indicator_recorder"]
+        if "_order_group_lock" in state:
+            del state["_order_group_lock"]  # RLock 不可 pickle, __setstate__ 重建
         incremental_indicators = state.get("_incremental_indicators")
         if isinstance(incremental_indicators, dict):
             for name in incremental_indicators.keys():
@@ -567,6 +576,22 @@ class Strategy:
     def __setstate__(self, state: Dict[str, Any]) -> None:
         """Pickle 反序列化支持."""
         self.__dict__.update(state)
+        # 注意判 state 而非 self.__dict__: __new__ 已预置 _cost_config 默认,
+        # 故必须看"传入 snapshot 是否带 _cost_config"来区分新旧格式。
+        if "_cost_config" not in state:
+            # 兼容旧 snapshot(费率/lot 曾为裸属性, 无 _cost_config): 迁移进 _cost_config
+            self._cost_config = {
+                "commission_policy": self.__dict__.pop(
+                    "commission_policy", {"type": "percent", "value": 0.0}
+                ),
+                "min_commission": self.__dict__.pop("min_commission", 0.0),
+                "stamp_tax_rate": self.__dict__.pop("stamp_tax_rate", 0.0),
+                "transfer_fee_rate": self.__dict__.pop("transfer_fee_rate", 0.0),
+                "lot_size": self.__dict__.pop("lot_size", 1),
+            }
+            # 旧 snapshot 的 commission_rate 是派生量, 清掉避免遗留死数据
+            self.__dict__.pop("commission_rate", None)
+        self._order_group_lock = threading.RLock()  # RLock 不入 pickle, 恢复时重建
         raw_runtime_config = self.__dict__.pop("runtime_config", None)
         if raw_runtime_config is not None:
             self.runtime_config = raw_runtime_config
@@ -591,6 +616,10 @@ class Strategy:
                 ),
             )
         self.ctx = None
+        if getattr(self, "execution", None) is None:
+            from .execution.sim import SimExecution
+
+            self.execution = SimExecution(self)
         self.current_bar = None
         self.current_tick = None
         self._framework_current_callback = None
@@ -1003,7 +1032,7 @@ class Strategy:
         :param liquidate_unmentioned: 是否清仓未入选标的
         :param allow_leverage: 是否允许总权重超过 1.0
         :param rebalance_tolerance: 调仓容忍阈值（按组合市值比例）
-        :param kwargs: 透传到 order_target_weights 的下单参数
+        :param kwargs: 透传到 rebalance_weights 的下单参数
         :return: 入选标的列表（按分数从高到低）
         """
         if top_n <= 0:
@@ -1013,7 +1042,7 @@ class Strategy:
 
         if not scores:
             if liquidate_unmentioned:
-                self.order_target_weights(
+                self.rebalance_weights(
                     target_weights={},
                     liquidate_unmentioned=True,
                     allow_leverage=allow_leverage,
@@ -1040,7 +1069,7 @@ class Strategy:
 
         if not selected:
             if liquidate_unmentioned:
-                self.order_target_weights(
+                self.rebalance_weights(
                     target_weights={},
                     liquidate_unmentioned=True,
                     allow_leverage=allow_leverage,
@@ -1065,7 +1094,7 @@ class Strategy:
                 target_weights = {
                     symbol: clipped_scores[symbol] / score_sum for symbol in selected
                 }
-        self.order_target_weights(
+        self.rebalance_weights(
             target_weights=target_weights,
             liquidate_unmentioned=liquidate_unmentioned,
             allow_leverage=allow_leverage,
@@ -1139,15 +1168,6 @@ class Strategy:
     def set_sizer(self, sizer: Sizer) -> None:
         """设置仓位管理器."""
         self.sizer = sizer
-
-    def register_indicator(self, name: str, indicator: "Indicator") -> None:
-        """
-        Register an indicator.
-
-        This allows accessing the indicator via self.name and ensures it is
-        calculated before the backtest starts.
-        """
-        self.register_precomputed_indicator(name, indicator)
 
     def register_precomputed_indicator(self, name: str, indicator: "Indicator") -> None:
         """注册预计算指标."""
@@ -1425,6 +1445,10 @@ class Strategy:
         """
         pass
 
+    def on_execution_report(self, report: Any) -> None:
+        """执行回报回调（broker_live 专用；回测不触发）。默认 no-op，可覆盖."""
+        pass
+
     def on_session_start(self, session: Any, timestamp: int) -> None:
         """会话开始回调."""
         pass
@@ -1624,7 +1648,7 @@ class Strategy:
         """
         return _get_available_position_impl(self, symbol)
 
-    def hold_bar(self, symbol: Optional[str] = None) -> int:
+    def get_holding_bars(self, symbol: Optional[str] = None) -> int:
         """
         获取当前持仓持有的 Bar 数量.
 
@@ -1634,15 +1658,11 @@ class Strategy:
         Returns:
             int: 持有的 Bar 数量. 如果未持仓，返回 0.
         """
-        return _hold_bar_impl(self, symbol)
+        return _get_holding_bars_impl(self, symbol)
 
-    def get_positions(self) -> Dict[str, float]:
-        """
-        获取所有持仓信息.
-
-        Returns:
-            Dict[str, float]: 持仓字典 {symbol: quantity}
-        """
+    @property
+    def positions(self) -> Dict[str, float]:
+        """所有标的持仓 {symbol: qty}（等同旧 get_positions()）."""
         return _get_positions_impl(self)
 
     def _set_instrument_snapshots(
@@ -1709,7 +1729,9 @@ class Strategy:
         Returns:
             Order: 订单对象，如果未找到则返回 None
         """
-        return _get_order_impl(self, order_id)
+        # 经执行后端(与 get_position/get_account 一致): 回测 SimExecution→ctx/
+        # _known_orders, broker_live BrokerExecution→柜台挂单扫描(否则恒 None)。
+        return self.execution.get_order(order_id)
 
     def get_account(self) -> Dict[str, Any]:
         """
@@ -1764,7 +1786,7 @@ class Strategy:
         """
         _cancel_all_orders_impl(self, symbol)
 
-    def create_oco_order_group(
+    def place_oco(
         self,
         first_order_id: str,
         second_order_id: str,
@@ -1782,32 +1804,33 @@ class Strategy:
         if first == second:
             raise ValueError("OCO order ids must be different")
 
-        if group_id is None or not str(group_id).strip():
-            self._order_group_seq += 1
-            group_id = f"oco-{self._order_group_seq}"
-        group_key = str(group_id).strip()
+        with self._order_group_lock:
+            if group_id is None or not str(group_id).strip():
+                self._order_group_seq += 1
+                group_id = f"oco-{self._order_group_seq}"
+            group_key = str(group_id).strip()
 
-        engine = getattr(self, "_engine", None)
-        register_oco = getattr(engine, "register_oco_group", None)
-        if callable(register_oco):
-            try:
-                register_oco(group_key, first, second)
-                self._use_engine_oco = True
-                return group_key
-            except Exception:
-                self._pending_engine_oco_groups.append((group_key, first, second))
-                self._use_engine_oco = True
-                return group_key
+            engine = getattr(self, "_engine", None)
+            register_oco = getattr(engine, "register_oco_group", None)
+            if callable(register_oco):
+                try:
+                    register_oco(group_key, first, second)
+                    self._use_engine_oco = True
+                    return group_key
+                except Exception:
+                    self._pending_engine_oco_groups.append((group_key, first, second))
+                    self._use_engine_oco = True
+                    return group_key
 
-        self._detach_oco_order(first)
-        self._detach_oco_order(second)
+            self._detach_oco_order(first)
+            self._detach_oco_order(second)
 
-        self._oco_groups[group_key] = {first, second}
-        self._oco_order_to_group[first] = group_key
-        self._oco_order_to_group[second] = group_key
-        return group_key
+            self._oco_groups[group_key] = {first, second}
+            self._oco_order_to_group[first] = group_key
+            self._oco_order_to_group[second] = group_key
+            return group_key
 
-    def place_bracket_order(
+    def place_bracket(
         self,
         symbol: str,
         quantity: float,
@@ -1839,23 +1862,13 @@ class Strategy:
         if not entry_order_id:
             raise RuntimeError("failed to submit bracket entry order")
 
-        engine = getattr(self, "_engine", None)
-        register_bracket = getattr(engine, "register_bracket_plan", None)
-        if callable(register_bracket):
-            try:
-                register_bracket(
-                    entry_order_id,
-                    stop_trigger_price,
-                    take_profit_price,
-                    time_in_force,
-                    stop_tag,
-                    take_profit_tag,
-                )
-                self._use_engine_bracket = True
-                return entry_order_id
-            except Exception:
-                self._pending_engine_bracket_plans.append(
-                    (
+        # self.buy(入场单) 在锁外提交; 仅 bracket 记账/引擎登记在锁内(与协调器互斥).
+        with self._order_group_lock:
+            engine = getattr(self, "_engine", None)
+            register_bracket = getattr(engine, "register_bracket_plan", None)
+            if callable(register_bracket):
+                try:
+                    register_bracket(
                         entry_order_id,
                         stop_trigger_price,
                         take_profit_price,
@@ -1863,24 +1876,37 @@ class Strategy:
                         stop_tag,
                         take_profit_tag,
                     )
-                )
-                self._use_engine_bracket = True
-                return entry_order_id
+                    self._use_engine_bracket = True
+                    return entry_order_id
+                except Exception:
+                    self._pending_engine_bracket_plans.append(
+                        (
+                            entry_order_id,
+                            stop_trigger_price,
+                            take_profit_price,
+                            time_in_force,
+                            stop_tag,
+                            take_profit_tag,
+                        )
+                    )
+                    self._use_engine_bracket = True
+                    return entry_order_id
 
-        self._pending_brackets[entry_order_id] = {
-            "symbol": symbol,
-            "quantity": float(quantity),
-            "stop_trigger_price": stop_trigger_price,
-            "take_profit_price": take_profit_price,
-            "time_in_force": time_in_force,
-            "stop_tag": stop_tag,
-            "take_profit_tag": take_profit_tag,
-        }
-        return entry_order_id
+            self._pending_brackets[entry_order_id] = {
+                "symbol": symbol,
+                "quantity": float(quantity),
+                "stop_trigger_price": stop_trigger_price,
+                "take_profit_price": take_profit_price,
+                "time_in_force": time_in_force,
+                "stop_tag": stop_tag,
+                "take_profit_tag": take_profit_tag,
+            }
+            return entry_order_id
 
     def _process_order_groups(self, trade: Any) -> None:
-        self._process_pending_bracket(trade)
-        self._process_oco_trade(trade)
+        with self._order_group_lock:
+            self._process_pending_bracket(trade)
+            self._process_oco_trade(trade)
 
     def _process_pending_bracket(self, trade: Any) -> None:
         if self._use_engine_bracket:
@@ -1927,7 +1953,7 @@ class Strategy:
             )
 
         if stop_order_id and take_order_id:
-            self.create_oco_order_group(stop_order_id, take_order_id)
+            self.place_oco(stop_order_id, take_order_id)
 
     def _process_oco_trade(self, trade: Any) -> None:
         if self._use_engine_oco:
@@ -2061,6 +2087,7 @@ class Strategy:
         commission: Optional[Dict[str, Any]] = None,
         position_effect: Optional[str] = None,
         reduce_only: bool = False,
+        asset_type: str = "stock",
     ) -> str:
         """
         统一下单接口.
@@ -2087,6 +2114,7 @@ class Strategy:
             commission=commission,
             position_effect=position_effect,
             reduce_only=reduce_only,
+            asset_type=asset_type,
         )
 
     def can_submit_client_order(self, client_order_id: str) -> bool:
@@ -2103,42 +2131,8 @@ class Strategy:
         return _get_execution_capabilities_impl(self)
 
     def get_last_target_positions_plan(self) -> Dict[str, Any]:
-        """获取最近一次 order_target_positions() 生成的调仓计划."""
+        """获取最近一次 rebalance_positions() 生成的调仓计划."""
         return _get_last_target_positions_plan_impl(self)
-
-    def stop_buy(
-        self,
-        symbol: Optional[str] = None,
-        trigger_price: float = 0.0,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-    ) -> None:
-        """
-        发送止损买入单 (Stop Buy Order).
-
-        当市价上涨突破 trigger_price 时触发买入.
-        - 如果 price 为 None, 触发后转为市价单 (Stop Market).
-        - 如果 price 不为 None, 触发后转为限价单 (Stop Limit).
-        """
-        _stop_buy_impl(self, symbol, trigger_price, quantity, price, time_in_force)
-
-    def stop_sell(
-        self,
-        symbol: Optional[str] = None,
-        trigger_price: float = 0.0,
-        quantity: Optional[float] = None,
-        price: Optional[float] = None,
-        time_in_force: Optional[TimeInForce] = None,
-    ) -> None:
-        """
-        发送止损卖出单 (Stop Sell Order).
-
-        当市价下跌跌破 trigger_price 时触发卖出.
-        - 如果 price 为 None, 触发后转为市价单 (Stop Market).
-        - 如果 price 不为 None, 触发后转为限价单 (Stop Limit).
-        """
-        _stop_sell_impl(self, symbol, trigger_price, quantity, price, time_in_force)
 
     def place_trailing_stop(
         self,
@@ -2196,18 +2190,119 @@ class Strategy:
             trail_reference_price=trail_reference_price,
         )
 
-    def get_portfolio_value(self) -> float:
-        """计算当前投资组合总价值 (现金 + 持仓市值)."""
-        return _get_portfolio_value_impl(self)
+    @property
+    def cash(self) -> float:
+        """当前可用现金（等同旧 get_cash()）."""
+        return _get_cash_impl(self)
 
     @property
     def equity(self) -> float:
-        """
-        获取当前账户总权益 (现金 + 持仓市值).
+        """当前账户总权益（现金 + 持仓市值，权威只读；等同旧 get_portfolio_value()）."""
+        return _get_portfolio_value_impl(self)
 
-        等同于 get_portfolio_value().
+    def _inject_cost_config(
+        self,
+        *,
+        commission_policy: Optional[Dict[str, Any]] = None,
+        min_commission: Optional[float] = None,
+        stamp_tax_rate: Optional[float] = None,
+        transfer_fee_rate: Optional[float] = None,
+        lot_size: Any = None,
+    ) -> None:
+        """框架内部写入成本/手数配置(绕过费率只读 setter)。None 表示不覆盖既有值."""
+        cfg = self._cost_config
+        if commission_policy is not None:
+            cfg["commission_policy"] = dict(commission_policy)
+        if min_commission is not None:
+            cfg["min_commission"] = float(min_commission)
+        if stamp_tax_rate is not None:
+            cfg["stamp_tax_rate"] = float(stamp_tax_rate)
+        if transfer_fee_rate is not None:
+            cfg["transfer_fee_rate"] = float(transfer_fee_rate)
+        if lot_size is not None:
+            cfg["lot_size"] = lot_size
+
+    @property
+    def commission_policy(self) -> Dict[str, Any]:
+        """佣金策略(只读; type: percent/fixed/per_unit).
+
+        经 run_backtest/BacktestConfig 配置。
         """
-        return self.get_portfolio_value()
+        return cast(Dict[str, Any], self._cost_config["commission_policy"])
+
+    @commission_policy.setter
+    def commission_policy(self, value: Any) -> None:
+        raise AttributeError(
+            "commission_policy 是回测配置项，请用 "
+            'run_backtest(commission_policy={"type":"percent","value":0.0003}) '
+            "或 BacktestConfig 设置，不要写 self.commission_policy。"
+        )
+
+    @property
+    def commission_rate(self) -> float:
+        """佣金率只读视图(percent 策略取 value, 否则 0.0).
+
+        写请用 run_backtest(commission_rate=)。
+        """
+        policy = self._cost_config["commission_policy"]
+        if str(policy.get("type", "percent")).strip().lower() == "percent":
+            return float(policy.get("value", 0.0) or 0.0)
+        return 0.0
+
+    @commission_rate.setter
+    def commission_rate(self, value: Any) -> None:
+        raise AttributeError(
+            "commission_rate 是回测配置项，请用 run_backtest(commission_rate=0.0003) "
+            "或 BacktestConfig 设置，不要写 self.commission_rate。"
+        )
+
+    @property
+    def min_commission(self) -> float:
+        """最低佣金(只读)。经 run_backtest(min_commission=)/BacktestConfig 配置."""
+        return float(self._cost_config["min_commission"])
+
+    @min_commission.setter
+    def min_commission(self, value: Any) -> None:
+        raise AttributeError(
+            "min_commission 是回测配置项，请用 run_backtest(min_commission=) "
+            "或 BacktestConfig 设置，不要写 self.min_commission。"
+        )
+
+    @property
+    def stamp_tax_rate(self) -> float:
+        """印花税率(只读; 卖出侧).
+
+        经 run_backtest(stamp_tax_rate=)/BacktestConfig 配置。
+        """
+        return float(self._cost_config["stamp_tax_rate"])
+
+    @stamp_tax_rate.setter
+    def stamp_tax_rate(self, value: Any) -> None:
+        raise AttributeError(
+            "stamp_tax_rate 是回测配置项，请用 run_backtest(stamp_tax_rate=) "
+            "或 BacktestConfig 设置，不要写 self.stamp_tax_rate。"
+        )
+
+    @property
+    def transfer_fee_rate(self) -> float:
+        """过户费率(只读)。经 run_backtest(transfer_fee_rate=)/BacktestConfig 配置."""
+        return float(self._cost_config["transfer_fee_rate"])
+
+    @transfer_fee_rate.setter
+    def transfer_fee_rate(self, value: Any) -> None:
+        raise AttributeError(
+            "transfer_fee_rate 是回测配置项，请用 run_backtest(transfer_fee_rate=) "
+            "或 BacktestConfig 设置，不要写 self.transfer_fee_rate。"
+        )
+
+    @property
+    def lot_size(self) -> Any:
+        """最小交易单位(可写; int 或 Dict[str, int])。默认 1(美股/加密), A股设 100."""
+        return self._cost_config["lot_size"]
+
+    @lot_size.setter
+    def lot_size(self, value: Any) -> None:
+        self._cost_config["lot_size"] = value
 
     def order_target(
         self,
@@ -2274,7 +2369,7 @@ class Strategy:
         """
         return _order_target_percent_impl(self, symbol, target_percent, price, **kwargs)
 
-    def order_target_weights(
+    def rebalance_weights(
         self,
         target_weights: Dict[str, float],
         price_map: Optional[Dict[str, float]] = None,
@@ -2294,7 +2389,7 @@ class Strategy:
         :param kwargs: 其他下单参数
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
-        return _order_target_weights_impl(
+        return _rebalance_weights_impl(
             self,
             target_weights,
             price_map,
@@ -2304,7 +2399,7 @@ class Strategy:
             **kwargs,
         )
 
-    def order_target_positions(
+    def rebalance_positions(
         self,
         target_positions: Dict[str, float],
         price_map: Optional[Dict[str, float]] = None,
@@ -2328,7 +2423,7 @@ class Strategy:
         :param kwargs: 其他下单参数
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
-        return _order_target_positions_impl(
+        return _rebalance_positions_impl(
             self,
             target_positions,
             price_map,
@@ -2339,17 +2434,6 @@ class Strategy:
             missing_price_mode,
             **kwargs,
         )
-
-    def buy_all(self, symbol: Optional[str] = None) -> None:
-        """
-        全仓买入 (Buy All).
-
-        使用当前所有可用资金买入.
-
-        Args:
-            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
-        """
-        _buy_all_impl(self, symbol)
 
     def close_position(self, symbol: Optional[str] = None) -> None:
         """
@@ -2435,10 +2519,6 @@ class Strategy:
             commission,
             reduce_only,
         )
-
-    def get_cash(self) -> float:
-        """获取现金."""
-        return _get_cash_impl(self)
 
 
 class VectorizedStrategy(Strategy):

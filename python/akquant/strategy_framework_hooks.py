@@ -77,6 +77,47 @@ def _strategy_overrides_callback(strategy: Any, callback_name: str) -> bool:
     return False
 
 
+# dispatch_time_hooks 可能触发的全部用户回调. 一个都没重写时整段可跳过.
+_TIME_HOOK_CALLBACKS = (
+    "on_before_trading",
+    "on_after_trading",
+    "on_session_start",
+    "on_session_end",
+    "on_daily_rebalance",
+)
+
+
+def _needs_time_hooks(strategy: Any) -> bool:
+    """策略是否重写了任一会话/交易日钩子(按类判定, 结果缓存).
+
+    未重写则 dispatch_time_hooks 不会触发任何回调, 其内部维护的 session/date
+    状态也无人在本模块外读取, 因此整段可安全跳过——省掉逐 bar 的 pandas 时间
+    转换与大量 getattr.
+    """
+    cached = getattr(strategy, "_framework_needs_time_hooks", None)
+    if cached is None:
+        cached = any(
+            _strategy_overrides_callback(strategy, name)
+            for name in _TIME_HOOK_CALLBACKS
+        )
+        strategy._framework_needs_time_hooks = cached
+    return cached
+
+
+def _needs_portfolio_update(strategy: Any) -> bool:
+    """策略是否重写了 on_portfolio_update(按类判定, 结果缓存).
+
+    未重写则 dispatch_portfolio_update 只做无人消费的组合快照/取账户/变更检测,
+    其维护的 portfolio_dirty / last_portfolio_state / emit_previous 状态仅由本函数
+    自身消费(use_previous 标志则由 on_trade 的 try/finally 独立管理), 故可整段跳过.
+    """
+    cached = getattr(strategy, "_framework_needs_portfolio_update", None)
+    if cached is None:
+        cached = _strategy_overrides_callback(strategy, "on_portfolio_update")
+        strategy._framework_needs_portfolio_update = cached
+    return cached
+
+
 def _build_pre_open_event(
     strategy: Any,
     trading_date: Any,
@@ -304,12 +345,37 @@ def dispatch_time_hooks(strategy: Any) -> None:
     if strategy.ctx is None:
         return
 
+    # 性能: 策略未重写任何会话/交易日钩子时, 本函数不会触发回调, 直接跳过.
+    if not _needs_time_hooks(strategy):
+        return
+
     current_time = int(getattr(strategy.ctx, "current_time", 0))
     if current_time <= 0:
         return
 
-    ts = pd.to_datetime(current_time, unit="ns", utc=True).tz_convert(strategy.timezone)
-    current_date = ts.date()
+    # 性能: 逐 bar 的 pd.to_datetime(标量) 极慢(占回测总耗时约三成).
+    # 本地交易日在同一天内不变, 按 [当日 00:00, 次日 00:00) 的 ns 窗口缓存,
+    # 仅跨日时才走一次 pandas 转换. 语义与逐 bar 转换完全一致.
+    cache_lo = getattr(strategy, "_framework_local_date_lo_ns", None)
+    cache_hi = getattr(strategy, "_framework_local_date_hi_ns", None)
+    if (
+        cache_lo is not None
+        and cache_hi is not None
+        and cache_lo <= current_time < cache_hi
+    ):
+        current_date = strategy._framework_local_date_cache
+    else:
+        ts = pd.to_datetime(current_time, unit="ns", utc=True).tz_convert(
+            strategy.timezone
+        )
+        current_date = ts.date()
+        day_start = ts.normalize()
+        lo_ns = day_start.value
+        hi_ns = (day_start + pd.Timedelta(hours=24)).normalize().value
+        strategy._framework_local_date_cache = current_date
+        strategy._framework_local_date_lo_ns = lo_ns
+        # DST "回拨" 的 25h 日 hi<=lo, 令窗口为空以强制逐 bar 重算(仍正确).
+        strategy._framework_local_date_hi_ns = hi_ns if hi_ns > lo_ns else lo_ns
     current_session = getattr(strategy.ctx, "session", None)
     use_precise_boundaries = _use_precise_day_boundary_hooks(strategy)
 
@@ -603,6 +669,9 @@ def dispatch_portfolio_update(strategy: Any) -> None:
     """在账户状态变化时分发 on_portfolio_update."""
     if strategy.ctx is None:
         return
+    # 性能: 策略未重写 on_portfolio_update 时, 跳过逐 bar 的组合快照/取账户/变更检测.
+    if not _needs_portfolio_update(strategy):
+        return
     if (
         not getattr(strategy, "_framework_portfolio_dirty", True)
         and getattr(strategy, "_framework_last_portfolio_state", None) is not None
@@ -624,7 +693,7 @@ def dispatch_portfolio_update(strategy: Any) -> None:
     )
     strategy._framework_use_previous_account_snapshot = use_previous_snapshot
     try:
-        equity = float(strategy.get_portfolio_value())
+        equity = float(strategy.equity)
         market_value = float(equity - cash)
         account_snapshot = strategy.get_account()
     finally:
@@ -716,6 +785,11 @@ def dispatch_shutdown_hooks(strategy: Any) -> None:
 
 def ensure_framework_state(strategy: Any) -> None:
     """确保框架级钩子状态字段存在."""
+    # 性能: 本函数幂等且每 bar 被调用多次, 首次初始化后直接短路,
+    # 避免逐 bar 数百次 hasattr 探测. checkpoint 恢复时 __getstate__ 会删除
+    # 此标志, 强制重新初始化被重置的字段.
+    if getattr(strategy, "_framework_state_ready", False):
+        return
     if not hasattr(strategy, "_framework_last_session"):
         strategy._framework_last_session = None
     if not hasattr(strategy, "_framework_last_local_date"):
@@ -764,3 +838,4 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._trading_day_after_bar_rebalance_timestamps = {}
     if not hasattr(strategy, "_framework_daily_rebalance_after_bar_timers_registered"):
         strategy._framework_daily_rebalance_after_bar_timers_registered = False
+    strategy._framework_state_ready = True

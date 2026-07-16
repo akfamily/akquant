@@ -85,7 +85,7 @@
 * `on_before_trading` 在本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。
 * `on_pre_open` 在每个交易日的首个常规行情事件前，由框架预注册 timer 先触发一次。
 * `on_daily_rebalance` 与 `on_before_trading` 同一阶段触发，每个交易日最多触发一次。
-* `on_before_trading` / `on_daily_rebalance` 始终按“前一交易日/前一时点信息可见”的语义工作；在这些回调里，`get_history()`、`get_account()`、`get_portfolio_value()` 不应看到当日新 bar 或当日更新后的账户视图。
+* `on_before_trading` / `on_daily_rebalance` 始终按“前一交易日/前一时点信息可见”的语义工作；在这些回调里，`get_history()`、`get_account()`、`equity` 不应看到当日新 bar 或当日更新后的账户视图。
 * `on_daily_rebalance_after_bar` 会在框架见到当日首个“跨标的完整切片”后触发；在该回调里，可以看到当日历史和当前账户快照。
 * `on_after_trading` 在离开常规交易会话时触发；若先跨日再收到事件，会在下一事件补发上一交易日的 `on_after_trading`。
 * `on_pre_open` 内若直接调用 `buy/sell/order_target_*` 且未显式传 `fill_policy`，框架会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。
@@ -332,7 +332,7 @@ print(
 
 - 期货保证金账户开仓不会像股票现货买入那样扣减全额名义本金。
 - 因此，期货场景下应优先用 `equity` 观察账户净值变化，用 `used_margin` 观察保证金占用，用 `notional_value` 观察杠杆敞口。
-- 如果只需要一个“当前总权益”数值，优先使用 `get_portfolio_value()`，其口径与 `get_account()["equity"]` 对齐。
+- 如果只需要一个“当前总权益”数值，优先使用 `equity`，其口径与 `get_account()["equity"]` 对齐。
 
 ## 4. 常用工具 (Utilities)
 
@@ -705,11 +705,11 @@ class MyStrategy(Strategy):
     *   `self.order_target(target=100, symbol="AAPL")`: 调整持仓数量至 100 股。
     *   `self.order_target_percent(target_percent=0.5, symbol="AAPL")`: 调整持仓至总资产的 50%。
     *   `self.order_target_value(target_value=10000, symbol="AAPL")`: 调整持仓至 10000 元市值。
-    *   `self.order_target_weights(target_weights={"AAPL":0.4,"MSFT":0.3}, liquidate_unmentioned=True, rebalance_tolerance=0.01)`: 按多标的权重统一调仓。
+    *   `self.rebalance_weights(target_weights={"AAPL":0.4,"MSFT":0.3}, liquidate_unmentioned=True, rebalance_tolerance=0.01)`: 按多标的权重统一调仓。
         *   默认权重和不超过 `1.0`，如需超过请设置 `allow_leverage=True`。
-        *   该接口仍然更偏向 long-only 组合管理；如需正负目标仓位，请优先使用 `order_target_positions()`。
+        *   该接口仍然更偏向 long-only 组合管理；如需正负目标仓位，请优先使用 `rebalance_positions()`。
         *   同周期调仓已升级为 `reduce-first` 语义：先执行释放约束的腿，再执行增加约束的腿。
-    *   `self.order_target_positions(target_positions={"IF2406": -2, "510300": 1000}, liquidate_unmentioned=True)`: 按多标的目标持仓数量统一调仓，支持正负仓位。
+    *   `self.rebalance_positions(target_positions={"IF2406": -2, "510300": 1000}, liquidate_unmentioned=True)`: 按多标的目标持仓数量统一调仓，支持正负仓位。
         *   `allow_short` 默认按当前执行环境自动推断；在 `cash` 或 broker 未声明支持做空时，负目标会被明确拒绝。
         *   `missing_price_mode="ignore" | "skip" | "fail"` 可控制 `price_map` 缺项时的处理方式。
         *   可通过 `self.get_last_target_positions_plan()` 查看最近一次调仓计划，确认哪些腿进入了 `reduce` / `increase`、哪些腿被跳过或拒绝。
@@ -717,7 +717,7 @@ class MyStrategy(Strategy):
 ```python
 def on_timer(self, payload: str):
     weights = {"sh600519": 0.35, "sz000858": 0.25, "sh601318": 0.20}
-    self.order_target_weights(
+    self.rebalance_weights(
         target_weights=weights,
         liquidate_unmentioned=True,
         rebalance_tolerance=0.01,
@@ -726,7 +726,7 @@ def on_timer(self, payload: str):
 
 ```python
 def on_timer(self, payload: str):
-    self.order_target_positions(
+    self.rebalance_positions(
         target_positions={"IF2406": -2, "510300": 1000},
         liquidate_unmentioned=True,
         allow_short=True,
@@ -780,10 +780,10 @@ AKQuant 当前的订单语义已经不再是单纯的 `side`，而是 `side + po
 
 AKQuant 提供了两组交易助手，减少策略中手写订单联动逻辑：
 
-*   `self.create_oco_order_group(first_order_id, second_order_id, group_id=None)`
+*   `self.place_oco(first_order_id, second_order_id, group_id=None)`
     *   把两个订单绑定为 OCO（One-Cancels-the-Other）。
     *   任一订单成交后，另一订单会自动撤销。
-*   `self.place_bracket_order(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...)`
+*   `self.place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...)`
     *   一次性提交 Bracket 结构。
     *   进场单成交后，自动挂出止损/止盈；当止损与止盈同时存在时自动绑定 OCO。
 
@@ -798,7 +798,7 @@ class BracketHelperStrategy(Strategy):
         if self.get_position(bar.symbol) > 0 or self.entry_order_id:
             return
 
-        self.entry_order_id = self.place_bracket_order(
+        self.entry_order_id = self.place_bracket(
             symbol=bar.symbol,
             quantity=100,
             stop_trigger_price=bar.close * 0.98,
@@ -846,6 +846,21 @@ class TrailingHelperStrategy(Strategy):
 ```
 
 完整可运行脚本见：`examples/36_trailing_orders.py`。
+
+### 6.2b 成本与手数配置（费率只读 / lot_size 可写）
+
+费率（`commission_rate`/`commission_policy`/`min_commission`/`stamp_tax_rate`/
+`transfer_fee_rate`）是**回测配置项**，请在 `run_backtest(...)`（或 `BacktestConfig`/
+`InstrumentConfig`）中设置——在策略里写 `self.commission_rate = ...` 会**抛
+`AttributeError`**。这些值由引擎从配置注入、实际成本核算在引擎侧，策略里写入无效，
+故直接报错以免踩坑。
+
+`commission_policy` 支持三种 `type`：`percent`（按成交额，A股/美股）、`fixed`（每单
+固定）、`per_unit`（每手/每股，如中国期货按手）；`commission_rate` 是 `percent`
+场景的标量捷径（`run_backtest(commission_rate=0.0003)`）。
+
+`lot_size`（最小交易单位）**仍可在策略里写**：`self.lot_size = 100`（A股）照旧生效，
+也可用 `run_backtest(lot_size=100)` 或 `InstrumentConfig(lot_size=)` 按标的设置。
 
 ### 6.3 市场规则与 T+1 (Market Rules)
 
@@ -903,7 +918,7 @@ def on_bar(self, bar: Bar):
 除了 `get_position`，你还可以查询更多账户信息：
 
 *   **`self.ctx.cash`**: 当前账户可用资金。
-*   **`self.get_portfolio_value()`**: 当前账户总权益。
+*   **`self.equity`**: 当前账户总权益。
 *   **`self.get_account()`**: 当前账户快照；在保证金账户中可进一步读取 `used_margin`、`notional_value`、`unrealized_pnl`、`maintenance_ratio` 等字段。
 *   **`self.get_trades()`**: 获取历史所有已平仓交易记录（Closed Trades）。
 *   **`self.get_open_orders()`**: 获取当前未成交订单。
@@ -1084,7 +1099,7 @@ def on_start(self):
         self.log("Resumed from snapshot. Indicators retained.")
 
     # 2. 注册指标 (必须执行)
-    self.register_indicator("sma", self.sma)
+    self.register_precomputed_indicator("sma", self.sma)
 
     # 3. 订阅行情 (必须执行)
     self.subscribe(self.symbol)
