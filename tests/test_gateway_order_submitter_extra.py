@@ -195,3 +195,22 @@ def test_auto_no_split_when_within_position() -> None:
     )
     assert all(e != "open" for e, _ in legs)
     assert sum(q for _, q in legs) == 3.0
+
+
+def test_auto_reverse_no_split_when_fully_frozen() -> None:
+    """全冻结: broker 报可用 today0+yest0 → 不拆, 退回单腿 auto 交给柜台."""
+    pos = _Pos("rb2410.SHFE", "long", 5.0)
+    pos.available_today_quantity = 0.0
+    pos.available_yesterday_quantity = 0.0
+    gw = _GW([pos])
+    legs = resolve_live_order_legs(
+        trader_gateway=gw,
+        capability=_cap(),
+        symbol="rb2410.SHFE",
+        side="sell",
+        quantity=6.0,
+        position_effect="auto",
+        reduce_only=False,
+        payload_field=_field,
+    )
+    assert legs == [("auto", 6.0)]

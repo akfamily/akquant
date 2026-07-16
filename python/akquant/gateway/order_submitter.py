@@ -129,23 +129,22 @@ def resolve_live_order_legs(
         target = find_live_close_position(positions, symbol, side, payload_field)
         if target is None:
             return [(normalized_effect, quantity)]
-        available_today = max(
-            0.0, float(payload_field(target, "available_today_quantity") or 0.0)
+        raw_today = payload_field(target, "available_today_quantity")
+        raw_yesterday = payload_field(target, "available_yesterday_quantity")
+        raw_available = payload_field(target, "available_quantity")
+        has_availability = any(
+            value is not None for value in (raw_today, raw_yesterday, raw_available)
         )
-        available_yesterday = max(
-            0.0, float(payload_field(target, "available_yesterday_quantity") or 0.0)
+        available_split = max(0.0, float(raw_today or 0.0)) + max(
+            0.0, float(raw_yesterday or 0.0)
         )
-        available_split = available_today + available_yesterday
-        available_quantity = max(
-            0.0, float(payload_field(target, "available_quantity") or 0.0)
-        )
+        available_quantity = max(0.0, float(raw_available or 0.0))
         raw_quantity = abs(float(payload_field(target, "quantity") or 0.0))
-        # 可平口径与 _split_close_legs 一致: 优先今昨可用量, 其次 available_quantity,
-        # broker 完全不提供可用量时退回原始持仓。避免下发不可平的平仓腿。
-        if available_split > 0:
-            closable = available_split
-        elif available_quantity > 0:
-            closable = available_quantity
+        # 可平口径与 _split_close_legs 一致: broker 报可用量时优先用今昨可用量,
+        # 其次 available_quantity(即便为 0 也不回退——全冻结应交由下方 closable<=0
+        # 门槛退回单腿 auto); 仅当 broker 完全不提供可用量字段时才退回原始持仓。
+        if has_availability:
+            closable = available_split if available_split > 0 else available_quantity
         else:
             closable = raw_quantity
         if closable <= 0 or quantity <= closable:
