@@ -1192,7 +1192,9 @@ class LiveRunner:
             self._client_to_broker_order_ids.pop(client_order_id, None)
             self._client_to_strategy_ids.pop(client_order_id, None)
             self._order_requests.pop(str(client_order_id), None)
-            self._client_to_group_ids.pop(client_order_id, None)
+            # 注意: 不弹出 _client_to_group_ids —— 乱序到达的末笔成交仍需据此
+            # 解析 group_id; 条目极小且随会话生命周期存在, 保留以保证 group
+            # 关联正确 (见 #317 反手 open 腿)。
         if broker_order_id:
             self._broker_to_client_order_ids.pop(broker_order_id, None)
             self._broker_to_strategy_ids.pop(broker_order_id, None)

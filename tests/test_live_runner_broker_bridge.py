@@ -7,7 +7,7 @@ import akquant.live as live_module
 import pytest
 from akquant.akquant import OrderSide, OrderStatus
 from akquant.gateway.broker_execution import BrokerExecution
-from akquant.gateway.models import BrokerCapability, UnifiedPosition
+from akquant.gateway.models import BrokerCapability, UnifiedPosition, UnifiedTrade
 from akquant.live import LiveRunner
 from akquant.strategy import Strategy
 
@@ -1600,6 +1600,42 @@ def test_live_runner_emits_order_and_trade_with_group_id() -> None:
     assert strategy.orders[0].group_id == "coid-root-1"
     assert strategy.trades
     assert strategy.trades[0].group_id == "coid-root-1"
+
+
+def test_group_id_survives_terminal_cleanup_for_open_leg() -> None:
+    """乱序到达场景 (N1 回归): 终态 ORDER 先清理映射, 末笔 TRADE 仍需正确关联 group_id.
+
+    反手 open 腿的终态 ORDER/execution-report 事件先到达并触发
+    _close_order_mapping 清理, 随后到达的 TRADE 事件仍应能通过
+    _client_to_group_ids 解析出根 group_id, 而不是退化为该腿自己的
+    client_order_id (_lookup_group_id 的 get(cid, cid) 兜底)。
+    """
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+
+    # 2 腿组: 根腿 "root" 与反手 open 腿 "root-open-2", 均归组到 "root"。
+    runner._sync_group_mapping("root", "root")
+    runner._sync_group_mapping("root-open-2", "root")
+    runner._sync_order_id_mapping("root-open-2", "B-open")
+
+    # 模拟该 open 腿的终态 ORDER/execution-report 事件先被清理掉映射。
+    runner._close_order_mapping("root-open-2", "B-open")
+
+    # 随后到达同一条腿的末笔成交事件。
+    trade = UnifiedTrade(
+        trade_id="t-open-2",
+        broker_order_id="B-open",
+        client_order_id="root-open-2",
+        symbol="000001.SZ",
+        side="Buy",
+        quantity=1.0,
+        price=10.0,
+        timestamp_ns=1,
+    )
+    adapted = runner._adapt_strategy_payload("trade", trade)
+
+    assert adapted.group_id == "root"
 
 
 def test_live_runner_emits_observable_broker_events_with_owner_strategy_id() -> None:
