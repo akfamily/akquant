@@ -33,7 +33,10 @@ class _Gw:
 
 class _Sub:
     def submit_order(self, **kw: Any) -> OrderReceipt:
-        return OrderReceipt.single(group_id="B77", broker_order_id="B77")
+        # group_id(client) 与 broker_order_id 故意取不同值: 若 broker_execution.py
+        # 的 check_stop_triggers 误用 str(receipt)(=group_id)而非 receipt.primary
+        # (=broker_order_id), 下面对 "BID-77" 的断言会失败, 从而暴露回归。
+        return OrderReceipt.single(group_id="CID-77", broker_order_id="BID-77")
 
 
 class _S:
@@ -59,11 +62,11 @@ def test_triggered_stop_trade_reports_local_id() -> None:
         trigger_price=9.5,
     )
     ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
-    assert remap == {"B77": oid}
+    assert remap == {"BID-77": oid}
     # 柜台成交推送该底层单 → 适配时用 remap 得 local id
     trade = UnifiedTrade(
         trade_id="T1",
-        broker_order_id="B77",
+        broker_order_id="BID-77",
         client_order_id="c1",
         symbol="X",
         side="Sell",
@@ -71,5 +74,5 @@ def test_triggered_stop_trade_reports_local_id() -> None:
         price=9.4,
         timestamp_ns=1,
     )
-    local_id = remap.get("B77")
+    local_id = remap.get("BID-77")
     assert map_trade(trade, local_id=local_id).order_id == oid

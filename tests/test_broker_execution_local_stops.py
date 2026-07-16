@@ -38,7 +38,9 @@ class _Submitter:
 
     def submit_order(self, **kw: Any) -> OrderReceipt:
         self.orders.append(kw)
-        return OrderReceipt.single(group_id="BID-1", broker_order_id="BID-1")
+        # group_id(client) 与 broker_order_id 故意不同, 断言需锁定 broker_order_id
+        # (即 .primary), 避免 str(receipt)==broker_order_id 掩盖回归。
+        return OrderReceipt.single(group_id="CID-1", broker_order_id="BID-1")
 
     def _get_execution_capabilities(self) -> dict[str, bool]:
         return {"broker_live": True}

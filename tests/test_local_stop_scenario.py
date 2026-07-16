@@ -37,7 +37,9 @@ class _Submitter:
 
     def submit_order(self, **kw: Any) -> OrderReceipt:
         self.orders.append(kw)
-        return OrderReceipt.single(group_id="BID-1", broker_order_id="BID-1")
+        # group_id(client) 与 broker_order_id 故意不同: remap 断言锁定
+        # broker_order_id(.primary), 避免 str(receipt)==broker_order_id 掩盖回归。
+        return OrderReceipt.single(group_id="CID-1", broker_order_id="BID-1")
 
     def _get_execution_capabilities(self) -> dict[str, bool]:
         return {"broker_live": True}
@@ -46,11 +48,13 @@ class _Submitter:
 def test_stop_fires_via_bar_hook_and_submits_underlying() -> None:
     """提交 stop 单 → 经 _drive_local_stops 喂 bar 价 → 触发提交底层单."""
     strat = SimpleNamespace()
+    remap: dict[str, str] = {}
     strat.execution = BrokerExecution(
         strat,
         _Gw(),
         cast(BrokerStateCache, _Cache()),
         _Submitter(),
+        record_stop_remap=lambda lid, bid: remap.__setitem__(bid, lid),
     )
     # 挂一个卖出止损 @9.5
     oid = strat.execution.submit_order(
@@ -69,3 +73,6 @@ def test_stop_fires_via_bar_hook_and_submits_underlying() -> None:
     assert len(strat.execution._submitter.orders) == 1
     assert strat.execution._submitter.orders[0]["order_type"] == "Market"
     assert strat.execution.get_open_orders() == []
+    # remap 须以底层单的 broker_order_id(.primary)="BID-1" 为 key, 而非
+    # group_id/client_order_id="CID-1"。
+    assert remap == {"BID-1": oid}

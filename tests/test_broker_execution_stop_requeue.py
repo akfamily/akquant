@@ -35,7 +35,9 @@ class _OkSub:
 
     def submit_order(self, **kw: Any) -> OrderReceipt:
         self.n += 1
-        return OrderReceipt.single(group_id="BID-9", broker_order_id="BID-9")
+        # group_id(client) 与 broker_order_id 故意不同: remaps 断言锁定
+        # broker_order_id(.primary), 避免 str(receipt)==broker_order_id 掩盖回归。
+        return OrderReceipt.single(group_id="CID-9", broker_order_id="BID-9")
 
 
 class _FailSub:

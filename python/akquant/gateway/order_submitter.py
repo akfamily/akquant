@@ -293,7 +293,16 @@ class BrokerOrderSubmitter:
         trail_reference_price: float | None = None,
         broker_options: dict[str, Any] | None = None,
     ) -> OrderReceipt:
-        """Submit a live broker order using the unified strategy-facing signature."""
+        """Submit a live broker order using the unified strategy-facing signature.
+
+        Returns an `OrderReceipt`, not a single id string: a logical order can be
+        split into multiple legs (e.g. close_today/close_yesterday, or a reversal's
+        close+open legs), each with its own client/broker order id. `receipt.primary`
+        is the *first leg's* `broker_order_id` (the value production call sites use
+        as "the" order id); `str(receipt)` is the `group_id` (client order id) and is
+        a *different* id space in production brokers — do not use them
+        interchangeably.
+        """
         if not getattr(self._strategy, "broker_ready", True):
             raise RuntimeError(
                 "broker 尚未就绪，请在 broker_ready=True"
