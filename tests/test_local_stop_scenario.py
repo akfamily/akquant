@@ -64,7 +64,7 @@ def test_stop_fires_via_bar_hook_and_submits_underlying() -> None:
         order_type="StopMarket",
         trigger_price=9.5,
     )
-    assert oid.startswith("LSTOP-")
+    assert oid.primary.startswith("LSTOP-")
     # 未触发的一根 bar
     strategy_events._drive_local_stops(strat, "X", 9.8, high=9.9, low=9.6)
     assert strat.execution._submitter.orders == []
@@ -75,4 +75,4 @@ def test_stop_fires_via_bar_hook_and_submits_underlying() -> None:
     assert strat.execution.get_open_orders() == []
     # remap 须以底层单的 broker_order_id(.primary)="BID-1" 为 key, 而非
     # group_id/client_order_id="CID-1"。
-    assert remap == {"BID-1": oid}
+    assert remap == {"BID-1": oid.primary}

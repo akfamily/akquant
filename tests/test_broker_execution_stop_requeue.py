@@ -78,7 +78,7 @@ def test_success_records_remap() -> None:
         trigger_price=9.5,
     )
     ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
-    assert remaps == [(oid, "BID-9")]
+    assert remaps == [(oid.primary, "BID-9")]
 
 
 def test_failure_requeues_and_notifies_then_gives_up() -> None:

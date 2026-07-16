@@ -70,7 +70,8 @@ def test_conditional_order_registered_not_submitted() -> None:
         order_type="StopMarket",
         trigger_price=9.5,
     )
-    assert oid.startswith("LSTOP-")
+    assert isinstance(oid, OrderReceipt)
+    assert oid.primary.startswith("LSTOP-")
     assert ex._submitter.orders == []  # not sent to broker yet
     assert len(ex.get_open_orders("X")) == 1
 
@@ -81,7 +82,8 @@ def test_plain_order_passes_through() -> None:
     oid = ex.submit_order(
         symbol="X", side="Buy", quantity=100, price=10.0, order_type="Limit"
     )
-    assert oid == "BID-1"
+    assert isinstance(oid, OrderReceipt)
+    assert oid.primary == "BID-1"
     assert len(ex._submitter.orders) == 1
 
 
@@ -95,7 +97,7 @@ def test_cancel_local_stop() -> None:
         order_type="StopMarket",
         trigger_price=9.5,
     )
-    ex.cancel_order(oid)
+    ex.cancel_order(oid.primary)
     assert ex.get_open_orders() == []
     assert ex._gw.canceled == []  # local cancel, no broker call
 

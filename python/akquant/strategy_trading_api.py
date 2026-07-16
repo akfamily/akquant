@@ -175,12 +175,12 @@ def buy(
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
-) -> Union[str, OrderReceipt]:
+) -> OrderReceipt:
     """买入下单."""
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
         return cast(
-            Union[str, OrderReceipt],
+            OrderReceipt,
             submit_order_method(
                 symbol=symbol,
                 side="Buy",
@@ -235,12 +235,12 @@ def sell(
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
-) -> Union[str, OrderReceipt]:
+) -> OrderReceipt:
     """卖出下单."""
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
         return cast(
-            Union[str, OrderReceipt],
+            OrderReceipt,
             submit_order_method(
                 symbol=symbol,
                 side="Sell",
@@ -645,13 +645,6 @@ def _normalize_position_effect(
             "close_today, close_yesterday"
         )
     return value
-
-
-def _first_order_id(order_ids: List[str]) -> str:
-    for order_id in order_ids:
-        if order_id:
-            return str(order_id)
-    return ""
 
 
 def _orders_to_receipt(order_ids: List[str], position_effect: str) -> OrderReceipt:

@@ -62,7 +62,7 @@ def test_triggered_stop_trade_reports_local_id() -> None:
         trigger_price=9.5,
     )
     ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
-    assert remap == {"BID-77": oid}
+    assert remap == {"BID-77": oid.primary}
     # 柜台成交推送该底层单 → 适配时用 remap 得 local id
     trade = UnifiedTrade(
         trade_id="T1",
@@ -75,4 +75,4 @@ def test_triggered_stop_trade_reports_local_id() -> None:
         timestamp_ns=1,
     )
     local_id = remap.get("BID-77")
-    assert map_trade(trade, local_id=local_id).order_id == oid
+    assert map_trade(trade, local_id=local_id).order_id == oid.primary

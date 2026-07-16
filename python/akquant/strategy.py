@@ -2024,7 +2024,7 @@ class Strategy:
         fill_policy: Optional[Dict[str, Any]] = None,
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
-    ) -> Union[str, OrderReceipt]:
+    ) -> OrderReceipt:
         """
         买入下单.
 
@@ -2037,8 +2037,9 @@ class Strategy:
             tag: 订单标签
 
         Returns:
-            回测模式下为 OrderReceipt（拆腿时携带全部订单 id；str() 取 group_id）；
-            实盘模式下暂仍为 str（订单号）。
+            OrderReceipt: 下单回执，含全部腿 id（可能拆腿）；
+                str() 取 group_id，.primary 取首个订单 id，
+                .order_ids 取全部腿 id。回测与实盘均返回该类型。
         """
         return _buy_impl(
             self,
@@ -2064,7 +2065,7 @@ class Strategy:
         fill_policy: Optional[Dict[str, Any]] = None,
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
-    ) -> Union[str, OrderReceipt]:
+    ) -> OrderReceipt:
         """
         卖出下单.
 
@@ -2077,8 +2078,9 @@ class Strategy:
             tag: 订单标签
 
         Returns:
-            回测模式下为 OrderReceipt（拆腿时携带全部订单 id；str() 取 group_id）；
-            实盘模式下暂仍为 str（订单号）。
+            OrderReceipt: 下单回执，含全部腿 id（可能拆腿）；
+                str() 取 group_id，.primary 取首个订单 id，
+                .order_ids 取全部腿 id。回测与实盘均返回该类型。
         """
         return _sell_impl(
             self,
@@ -2114,15 +2116,16 @@ class Strategy:
         position_effect: Optional[str] = None,
         reduce_only: bool = False,
         asset_type: str = "stock",
-    ) -> Union[str, OrderReceipt]:
+    ) -> OrderReceipt:
         """
         统一下单接口.
 
         该接口在回测与实盘模式均可调用，实盘模式下会由 LiveRunner 注入增强能力。
 
         Returns:
-            回测模式下为 OrderReceipt（拆腿时携带全部订单 id；str() 取 group_id）；
-            实盘模式下暂仍为 str（订单号）。
+            OrderReceipt: 下单回执，含全部腿 id（可能拆腿）；
+                str() 取 group_id，.primary 取首个订单 id，
+                .order_ids 取全部腿 id。回测与实盘均返回该类型。
         """
         return _submit_order_impl(
             self,
@@ -2173,7 +2176,7 @@ class Strategy:
         trail_reference_price: Optional[float] = None,
         time_in_force: Optional[TimeInForce] = None,
         tag: Optional[str] = None,
-    ) -> Union[str, OrderReceipt]:
+    ) -> OrderReceipt:
         """创建跟踪止损单 (StopTrail)."""
         if quantity <= 0:
             raise ValueError("quantity must be > 0")
@@ -2200,7 +2203,7 @@ class Strategy:
         trail_reference_price: Optional[float] = None,
         time_in_force: Optional[TimeInForce] = None,
         tag: Optional[str] = None,
-    ) -> Union[str, OrderReceipt]:
+    ) -> OrderReceipt:
         """创建跟踪止损限价单 (StopTrailLimit)."""
         if quantity <= 0:
             raise ValueError("quantity must be > 0")

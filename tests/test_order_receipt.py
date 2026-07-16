@@ -50,3 +50,17 @@ def test_exported_from_package() -> None:
 
     assert akquant.OrderReceipt is OrderReceipt
     assert akquant.OrderLeg is OrderLeg
+
+
+def test_public_api_return_annotation() -> None:
+    """buy/sell/submit_order 对外统一标注为 OrderReceipt（回测+实盘一致）."""
+    import inspect
+
+    from akquant.strategy import Strategy
+
+    for name in ("buy", "sell", "submit_order"):
+        sig = inspect.signature(getattr(Strategy, name))
+        assert sig.return_annotation in ("OrderReceipt", OrderReceipt), (
+            f"Strategy.{name} return annotation should be OrderReceipt, "
+            f"got {sig.return_annotation!r}"
+        )

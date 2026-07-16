@@ -105,7 +105,7 @@ def test_get_open_orders_includes_local_stops_with_id() -> None:
         quantity=100,
         order_type="StopMarket",
         trigger_price=9.5,
-    )
+    ).primary
     assert stop_id.startswith("LSTOP-")
     orders = ex.get_open_orders()
     by_id = {o.id: o for o in orders}
@@ -136,7 +136,7 @@ def test_get_order_finds_local_stop_by_local_id() -> None:
         quantity=100,
         order_type="StopMarket",
         trigger_price=9.5,
-    )
+    ).primary
     o = ex.get_order(stop_id)
     assert o is not None
     assert o.id == stop_id

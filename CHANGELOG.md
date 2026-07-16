@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BacktestConfig` 新增 `days_per_year`（年化天数因子，默认 252；数字货币 24/7 市场可设 365）与 `risk_free_rate`（年化无风险利率，默认 0.0）两个字段，用于参数化 Sharpe/Sortino/波动率等风险指标的年化口径。`risk_free_rate` 默认 0 不改变任何现有数值。
 
 ### Changed
+- **`buy`/`sell`/`submit_order` 返回类型变更（破坏性）**：三者现统一返回 `OrderReceipt`（原为 `str` 订单号），回测与实盘（`broker_live`）两种模式返回类型一致；实盘 `submit_order` 此前会将多腿委托（如反手拆分的平仓+开仓、开平分离）收窄为单一 id 字符串，现已修复为返回携带全部腿 id 的完整 `OrderReceipt`。取单个订单 id 用 `receipt.primary`（首腿 broker_order_id，兼容旧用法），取全部腿 id 用 `receipt.order_ids`；`str(receipt)` 取 `group_id`（逻辑委托的客户端订单号），关联成交请用 `trade.group_id` 而非逐个 order_id 比对；新增 `cancel_group(group_id)` 用于一次性撤销一个逻辑委托的全部腿。
 - **回测指标口径变更（破坏性）**：Sharpe / Sortino 比率的分子改为「日收益算术均值 × `days_per_year`」做年化，替代原先的 CAGR（复合年化），与 pyfolio/empyrical/quantstats 等主流实现一致，并与分母 `√days_per_year` 的年化口径匹配。升级后历史报告的 Sharpe/Sortino 数值会变化，不可直接与旧版逐值对比；UPI 与 Calmar 仍沿用 CAGR 口径。
 - 策略交易日边界回调已硬切改名：`before_trading(trading_date, timestamp)` 更名为 `on_before_trading(trading_date, timestamp)`，`after_trading(trading_date, timestamp)` 更名为 `on_after_trading(trading_date, timestamp)`。
 - 旧回调名不再保留兼容别名；升级到当前版本后，若策略仍实现 `before_trading` / `after_trading`，将不会再被框架触发，请同步迁移到新名称。
