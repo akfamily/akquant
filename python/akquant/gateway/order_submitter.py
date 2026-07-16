@@ -129,7 +129,25 @@ def resolve_live_order_legs(
         target = find_live_close_position(positions, symbol, side, payload_field)
         if target is None:
             return [(normalized_effect, quantity)]
-        closable = abs(float(payload_field(target, "quantity") or 0.0))
+        available_today = max(
+            0.0, float(payload_field(target, "available_today_quantity") or 0.0)
+        )
+        available_yesterday = max(
+            0.0, float(payload_field(target, "available_yesterday_quantity") or 0.0)
+        )
+        available_split = available_today + available_yesterday
+        available_quantity = max(
+            0.0, float(payload_field(target, "available_quantity") or 0.0)
+        )
+        raw_quantity = abs(float(payload_field(target, "quantity") or 0.0))
+        # 可平口径与 _split_close_legs 一致: 优先今昨可用量, 其次 available_quantity,
+        # broker 完全不提供可用量时退回原始持仓。避免下发不可平的平仓腿。
+        if available_split > 0:
+            closable = available_split
+        elif available_quantity > 0:
+            closable = available_quantity
+        else:
+            closable = raw_quantity
         if closable <= 0 or quantity <= closable:
             return [(normalized_effect, quantity)]
         close_qty = closable

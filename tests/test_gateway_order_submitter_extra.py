@@ -75,10 +75,19 @@ def test_submit_with_undeclared_extra_raises() -> None:
 
 
 class _Pos:
-    def __init__(self, symbol: str, direction: str, quantity: float) -> None:
+    def __init__(
+        self,
+        symbol: str,
+        direction: str,
+        quantity: float,
+        available_today_quantity: float | None = None,
+        available_yesterday_quantity: float | None = None,
+    ) -> None:
         self.symbol = symbol
         self.direction = direction
         self.quantity = quantity
+        self.available_today_quantity = available_today_quantity
+        self.available_yesterday_quantity = available_yesterday_quantity
 
 
 class _GW:
@@ -126,6 +135,33 @@ def test_auto_reverse_splits_close_plus_open() -> None:
     assert legs[-1] == ("open", 1.0)
     assert sum(q for _, q in legs) == 6.0
     assert sum(q for e, q in legs if e != "open") == 5.0
+
+
+def test_auto_reverse_uses_available_when_frozen() -> None:
+    """部分冻结: raw 5, 可用 today0+yest3(冻2); 卖6 → 平3(可用)+开3, 无不可平腿."""
+    pos = _Pos(
+        "rb2410.SHFE",
+        "long",
+        5.0,
+        available_today_quantity=0.0,
+        available_yesterday_quantity=3.0,
+    )
+    gw = _GW([pos])
+    legs = resolve_live_order_legs(
+        trader_gateway=gw,
+        capability=_cap(),
+        symbol="rb2410.SHFE",
+        side="sell",
+        quantity=6.0,
+        position_effect="auto",
+        reduce_only=False,
+        payload_field=_field,
+    )
+    assert legs[-1] == ("open", 3.0)
+    assert sum(q for _, q in legs) == 6.0
+    close_sum = sum(q for e, q in legs if e != "open")
+    assert close_sum == 3.0
+    assert all(e in ("close_today", "close_yesterday", "open") for e, _ in legs)
 
 
 def test_auto_reverse_gated_off_when_broker_declares_feature() -> None:
