@@ -8,7 +8,7 @@ from akquant.gateway.broker_models import (
 )
 
 
-def _snap():
+def _snap() -> UnifiedOrderSnapshot:
     return UnifiedOrderSnapshot(
         client_order_id="c1",
         broker_order_id="B9",

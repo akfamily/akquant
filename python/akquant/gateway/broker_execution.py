@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..log import get_logger
+from .broker_event_adapter import map_local_stop, map_order_snapshot
 from .broker_state_cache import BrokerStateCache
 from .broker_strategy_api import _account_to_dict, _resolve_symbol
 from .local_stop_book import (
@@ -12,6 +14,8 @@ from .local_stop_book import (
     is_stop_order_type,
     underlying_order_type,
 )
+
+logger = get_logger("gateway.live")
 
 MAX_STOP_SUBMIT_ATTEMPTS = 3
 
@@ -35,6 +39,11 @@ class BrokerExecution:
         self._record_stop_remap = record_stop_remap
         self._stop_book = LocalStopBook()
         self._stop_seq = 0
+        self._warned_hold_bar = False
+
+    def _owner_strategy_id(self) -> str | None:
+        """本地止损/委托适配对象的归属策略 id(无则 None)."""
+        return getattr(self._s, "strategy_id", None)
 
     def get_position(self, symbol: str | None = None) -> float:
         """获取指定标的持仓数量."""
@@ -51,21 +60,58 @@ class BrokerExecution:
         return dict(self._cache.positions())
 
     def hold_bar(self, symbol: str | None = None) -> int:
-        """获取当前持仓持有的 Bar 数量."""
-        return 0  # 柜台不提供持有 Bar 数；broker_live 下无意义
+        """获取当前持仓持有的 Bar 数量.
+
+        柜台不提供持有 Bar 数, broker_live 下恒返回 0。首次调用发一次告警,
+        避免依赖持仓时长的离场逻辑在实盘静默失效(回测 hold_bar 有真实值)。
+        """
+        if not self._warned_hold_bar:
+            self._warned_hold_bar = True
+            logger.warning(
+                "broker_live 不提供 hold_bar(持有 Bar 数), 恒返回 0; "
+                "依赖持仓时长的离场逻辑在实盘不会触发"
+            )
+        return 0
 
     def get_open_orders(self, symbol: str | None = None) -> list[Any]:
-        """获取未完成订单列表(含本地止损)."""
-        orders = self._cache.open_orders()
+        """获取未完成订单列表(含本地止损).
+
+        经 broker_event_adapter 适配为与回测 Order 同形状的 StrategyOrder
+        (有 `.id`、status 为 OrderStatus 枚举), 以保证策略读路径两模式一致。
+        """
+        owner = self._owner_strategy_id()
+        snaps = self._cache.open_orders()
         if symbol is not None:
-            orders = [o for o in orders if getattr(o, "symbol", None) == symbol]
-        return list(orders) + self._stop_book.open_orders(symbol)
+            snaps = [o for o in snaps if getattr(o, "symbol", None) == symbol]
+        orders = [map_order_snapshot(s, owner_strategy_id=owner) for s in snaps]
+        stops = [
+            map_local_stop(o, owner_strategy_id=owner)
+            for o in self._stop_book.open_orders(symbol)
+        ]
+        return orders + stops
 
     def get_order(self, order_id: str) -> Any | None:
-        """按订单号获取订单."""
-        for o in self._cache.open_orders():
-            if getattr(o, "broker_order_id", None) == order_id:
-                return o
+        """按订单号获取订单(适配为与回测同形状的 StrategyOrder).
+
+        查找顺序: 本地止损簿(LSTOP-* id) → 柜台未完成委托(broker_order_id) →
+        柜台回查已完成委托(query_order, 对齐回测能取到已成交/已撤单)。
+        """
+        oid = str(order_id)
+        owner = self._owner_strategy_id()
+        for stop in self._stop_book.open_orders():
+            if stop.local_id == oid:
+                return map_local_stop(stop, owner_strategy_id=owner)
+        for snap in self._cache.open_orders():
+            if getattr(snap, "broker_order_id", None) == oid:
+                return map_order_snapshot(snap, owner_strategy_id=owner)
+        query_order = getattr(self._gw, "query_order", None)
+        if callable(query_order):
+            try:
+                snap = query_order(oid)
+            except Exception:  # noqa: BLE001 柜台回查失败 → 视为查无此单
+                snap = None
+            if snap is not None:
+                return map_order_snapshot(snap, owner_strategy_id=owner)
         return None
 
     def get_account(self) -> dict[str, Any]:

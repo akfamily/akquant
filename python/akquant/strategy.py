@@ -2228,7 +2228,7 @@ class Strategy:
 
         经 run_backtest/BacktestConfig 配置。
         """
-        return self._cost_config["commission_policy"]
+        return cast(Dict[str, Any], self._cost_config["commission_policy"])
 
     @commission_policy.setter
     def commission_policy(self, value: Any) -> None:

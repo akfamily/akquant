@@ -1,40 +1,42 @@
 """BrokerExecution：读走 cache、submit 走 submitter、cancel 走 gateway."""
 
+from typing import Any
+
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_models import UnifiedAccount, UnifiedPosition
 from akquant.gateway.broker_state_cache import BrokerStateCache
 
 
 class _Gw:
-    def __init__(self):
-        self.canceled = []
+    def __init__(self) -> None:
+        self.canceled: list[str] = []
 
-    def query_positions(self):
+    def query_positions(self) -> list[UnifiedPosition]:
         return [
             UnifiedPosition(symbol="600000.SH", quantity=1000, available_quantity=800)
         ]
 
-    def query_account(self):
+    def query_account(self) -> UnifiedAccount:
         return UnifiedAccount(
             account_id="a", equity=1500.0, cash=1000.0, available_cash=850.0
         )
 
-    def sync_open_orders(self):
+    def sync_open_orders(self) -> list[object]:
         return []
 
-    def cancel_order(self, bid):
+    def cancel_order(self, bid: str) -> None:
         self.canceled.append(bid)
 
 
 class _Submitter:
-    def __init__(self):
-        self.submitted = None
+    def __init__(self) -> None:
+        self.submitted: dict[str, Any] | None = None
 
-    def submit_order(self, **kwargs):
+    def submit_order(self, **kwargs: Any) -> str:
         self.submitted = kwargs
         return "BID-1"
 
-    def _get_execution_capabilities(self):
+    def _get_execution_capabilities(self) -> dict[str, bool]:
         return {"broker_live": True, "client_order_id": True}
 
 
@@ -69,6 +71,7 @@ def test_broker_execution_submit_order_drops_none_time_in_force() -> None:
     submitter = _Submitter()
     ex = BrokerExecution(_S(), gw, BrokerStateCache(gw), submitter)
     ex.submit_order(symbol="600000.SH", side="Buy", quantity=100, time_in_force=None)
+    assert submitter.submitted is not None
     assert "time_in_force" not in submitter.submitted
 
 
@@ -78,4 +81,5 @@ def test_broker_execution_submit_order_forwards_explicit_time_in_force() -> None
     submitter = _Submitter()
     ex = BrokerExecution(_S(), gw, BrokerStateCache(gw), submitter)
     ex.submit_order(symbol="600000.SH", side="Buy", quantity=100, time_in_force="IOC")
+    assert submitter.submitted is not None
     assert submitter.submitted["time_in_force"] == "IOC"

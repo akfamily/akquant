@@ -1,8 +1,9 @@
 """P4b/P1 评审 minors 清理: #1 on_error 自身抛错隔离; #3 get_order 经 execution 路由."""
 
-from typing import Any
+from typing import Any, cast
 
 from akquant.gateway.broker_execution import BrokerExecution
+from akquant.gateway.broker_state_cache import BrokerStateCache
 from akquant.live import LiveRunner
 from akquant.strategy import Strategy
 
@@ -26,7 +27,7 @@ def test_on_error_handler_raising_does_not_propagate(caplog: Any) -> None:
     with caplog.at_level("WARNING", logger="akquant.gateway.live"):
         # 不得抛出(否则会杀掉 broker drain 循环)
         runner._safe_strategy_callback(
-            _BadStrategy(), "on_trade", {"id": "t1", "symbol": "X"}
+            cast(Strategy, _BadStrategy()), "on_trade", {"id": "t1", "symbol": "X"}
         )
 
     assert any(
@@ -62,11 +63,16 @@ def test_get_order_broker_live_scans_open_orders() -> None:
             self.broker_order_id = bid
 
     class _Cache:
-        def open_orders(self) -> list:
+        def open_orders(self) -> list[_Order]:
             return [_Order("B1"), _Order("B2")]
 
     s = Strategy.__new__(Strategy)
-    s.execution = BrokerExecution(s, object(), _Cache(), object())
+    s.execution = BrokerExecution(
+        s,
+        object(),
+        cast(BrokerStateCache, _Cache()),
+        object(),
+    )
     found = s.get_order("B2")
     assert getattr(found, "broker_order_id", None) == "B2"
     assert s.get_order("nope") is None

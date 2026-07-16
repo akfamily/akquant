@@ -1,23 +1,25 @@
 """公共写自由函数经 strategy.execution."""
 
+from typing import Any
+
 from akquant import strategy_trading_api as api
 
 
 class _FakeExec:
-    def __init__(self):
-        self.submitted = None
-        self.canceled = None
+    def __init__(self) -> None:
+        self.submitted: dict[str, Any] | None = None
+        self.canceled: str | None = None
 
-    def submit_order(self, **kwargs):
+    def submit_order(self, **kwargs: Any) -> str:
         self.submitted = kwargs
         return "OID-1"
 
-    def cancel_order(self, order_id):
+    def cancel_order(self, order_id: str) -> None:
         self.canceled = order_id
 
 
 class _S:
-    def __init__(self):
+    def __init__(self) -> None:
         self.execution = _FakeExec()
         self.ctx = None
 
@@ -27,6 +29,7 @@ def test_submit_order_delegates() -> None:
     s = _S()
     oid = api.submit_order(s, symbol="600000.SH", side="Buy", quantity=100)
     assert oid == "OID-1"
+    assert s.execution.submitted is not None
     assert s.execution.submitted["symbol"] == "600000.SH"
 
 

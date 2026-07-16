@@ -8,6 +8,8 @@ get_open_orders 返回 []，而不是柜台侧真实数据（BrokerExecution 已
 断言它们确实路由到了 strategy.execution（此处绑定为 BrokerExecution）。
 """
 
+from typing import Any
+
 from akquant import strategy_trading_api as api
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_models import (
@@ -22,17 +24,17 @@ from akquant.gateway.broker_state_cache import BrokerStateCache
 class _Gw:
     """假柜台网关：持仓/资金/未完成委托均来自柜台侧真相."""
 
-    def query_positions(self):
+    def query_positions(self) -> list[UnifiedPosition]:
         return [
             UnifiedPosition(symbol="600000.SH", quantity=1000, available_quantity=800)
         ]
 
-    def query_account(self):
+    def query_account(self) -> UnifiedAccount:
         return UnifiedAccount(
             account_id="a", equity=1500.0, cash=1000.0, available_cash=850.0
         )
 
-    def sync_open_orders(self):
+    def sync_open_orders(self) -> list[UnifiedOrderSnapshot]:
         return [
             UnifiedOrderSnapshot(
                 client_order_id="c1",
@@ -48,15 +50,15 @@ class _Gw:
             ),
         ]
 
-    def cancel_order(self, bid):
-        pass
+    def cancel_order(self, bid: str) -> None:
+        return None
 
 
 class _Submitter:
-    def submit_order(self, **kwargs):
+    def submit_order(self, **kwargs: Any) -> str:
         return "BID-1"
 
-    def _get_execution_capabilities(self):
+    def _get_execution_capabilities(self) -> dict[str, bool]:
         return {"broker_live": True, "client_order_id": True}
 
 
@@ -67,7 +69,7 @@ class _BrokerLiveStrategy:
     current_bar = None
     current_tick = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         gw = _Gw()
         self.execution = BrokerExecution(self, gw, BrokerStateCache(gw), _Submitter())
 
@@ -109,8 +111,8 @@ def test_backtest_reads_still_go_through_sim_via_ctx() -> None:
     class _Ctx:
         account_equity = 999.0
         cash = 500.0
-        active_orders = []
-        canceled_order_ids = []
+        active_orders: list[Any] = []
+        canceled_order_ids: list[str] = []
         account_market_value = 0.0
         account_notional_value = 0.0
         account_used_margin = 0.0
@@ -122,7 +124,7 @@ def test_backtest_reads_still_go_through_sim_via_ctx() -> None:
         margin_daily_interest = 0.0
         risk_config = None
 
-        def get_position(self, symbol):
+        def get_position(self, symbol: str) -> float:
             return 0.0
 
     class _SimStrategy:
@@ -130,7 +132,7 @@ def test_backtest_reads_still_go_through_sim_via_ctx() -> None:
         current_tick = None
         equity = 999.0
 
-        def __init__(self):
+        def __init__(self) -> None:
             self.ctx = _Ctx()
             from akquant.execution.sim import SimExecution
 

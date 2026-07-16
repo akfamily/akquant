@@ -1,49 +1,56 @@
 """端到端: broker_live 提交 stop → 经 strategy_events 钩子喂价 → 触发提交底层单."""
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 from akquant import strategy_events
 from akquant.gateway.broker_execution import BrokerExecution
+from akquant.gateway.broker_state_cache import BrokerStateCache
 
 
 class _Cache:
-    def positions(self):
+    def positions(self) -> dict[str, float]:
         return {}
 
-    def available_positions(self):
+    def available_positions(self) -> dict[str, float]:
         return {}
 
-    def open_orders(self):
+    def open_orders(self) -> list[object]:
         return []
 
-    def account(self):
+    def account(self) -> None:
         return None
 
 
 class _Gw:
-    def cancel_order(self, bid):
-        pass
+    def cancel_order(self, bid: str) -> None:
+        return None
 
-    def sync_open_orders(self):
+    def sync_open_orders(self) -> list[object]:
         return []
 
 
 class _Submitter:
-    def __init__(self):
-        self.orders = []
+    def __init__(self) -> None:
+        self.orders: list[dict[str, Any]] = []
 
-    def submit_order(self, **kw):
+    def submit_order(self, **kw: Any) -> str:
         self.orders.append(kw)
         return "BID-1"
 
-    def _get_execution_capabilities(self):
+    def _get_execution_capabilities(self) -> dict[str, bool]:
         return {"broker_live": True}
 
 
 def test_stop_fires_via_bar_hook_and_submits_underlying() -> None:
     """提交 stop 单 → 经 _drive_local_stops 喂 bar 价 → 触发提交底层单."""
     strat = SimpleNamespace()
-    strat.execution = BrokerExecution(strat, _Gw(), _Cache(), _Submitter())
+    strat.execution = BrokerExecution(
+        strat,
+        _Gw(),
+        cast(BrokerStateCache, _Cache()),
+        _Submitter(),
+    )
     # 挂一个卖出止损 @9.5
     oid = strat.execution.submit_order(
         symbol="X",

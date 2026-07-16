@@ -13,7 +13,7 @@ class _Strategy:
         self.broker_ready = ready
 
 
-def _submitter(strategy) -> BrokerOrderSubmitter:
+def _submitter(strategy: _Strategy) -> BrokerOrderSubmitter:
     """Build a submitter over a no-op gateway."""
 
     class _Gw:

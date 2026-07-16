@@ -1,5 +1,7 @@
 """wrap_state_invalidation：trade 叠总持仓 delta；order 仅失效委托/资金."""
 
+from typing import Any, Callable
+
 from akquant.gateway.broker_strategy_api import wrap_state_invalidation
 
 
@@ -7,13 +9,13 @@ class _Cache:
     """Fake cache 记录各类调用."""
 
     def __init__(self) -> None:
-        self.fills: list = []
+        self.fills: list[tuple[str, float]] = []
         self.inv_available = 0
         self.inv_account = 0
         self.inv_open_orders = 0
         self.inv_all = 0
 
-    def apply_fill(self, symbol, signed_qty) -> None:
+    def apply_fill(self, symbol: str, signed_qty: float) -> None:
         self.fills.append((symbol, signed_qty))
 
     def invalidate_available(self) -> None:
@@ -29,13 +31,16 @@ class _Cache:
         self.inv_all += 1
 
 
-def _wrap(cache, calls):
+def _wrap(
+    cache: _Cache, calls: list[tuple[str, Any]]
+) -> Callable[[str, dict[str, Any]], None]:
     return wrap_state_invalidation(lambda n, p: calls.append((n, p)), lambda: [cache])
 
 
 def test_trade_applies_signed_fill_and_invalidates_others_not_total() -> None:
     """Trade 事件叠总持仓 delta, 失效可用/资金/委托, 不全量失效."""
-    cache, calls = _Cache(), []
+    cache = _Cache()
+    calls: list[tuple[str, Any]] = []
     wrapped = _wrap(cache, calls)
     payload = {
         "trade_id": "t1",
@@ -111,7 +116,7 @@ def test_bar_event_touches_nothing() -> None:
 
 def test_all_caches_get_fill_on_trade() -> None:
     """多 slot broker_live: 每个 target 缓存都叠同一笔成交 delta."""
-    caches = [_Cache(), _Cache(), _Cache()]
+    caches: list[_Cache] = [_Cache(), _Cache(), _Cache()]
     wrap_state_invalidation(lambda n, p: None, lambda: caches)(
         "trade", {"trade_id": "t4", "symbol": "X", "side": "Buy", "quantity": 10.0}
     )

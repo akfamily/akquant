@@ -138,8 +138,8 @@ def _to_tif(value: Any) -> Optional[Any]:
         "GTC": TimeInForce.GTC,
         "IOC": TimeInForce.IOC,
         "FOK": TimeInForce.FOK,
-        "GTD": TimeInForce.Day,
-        "DAY": TimeInForce.Day,
+        "GTD": TimeInForce.GTD,
+        "DAY": TimeInForce.GTD,
     }
     return mapping.get(text)
 
@@ -185,6 +185,48 @@ def map_order_snapshot(
         created_at=None,
         client_order_id=str(_get(snapshot, "client_order_id", "") or ""),
         broker_order_id=broker_order_id,
+        owner_strategy_id=owner_strategy_id,
+    )
+
+
+def map_local_stop(
+    order: Any,
+    owner_strategy_id: Optional[str] = None,
+) -> StrategyOrder:
+    """把客户端本地止损单(LocalStopOrder)映射成与回测 Order 同形状的 StrategyOrder.
+
+    本地止损单尚未下发柜台, 故 filled_quantity=0、broker_order_id 为空;
+    `.id` 用其本地 id(LSTOP-*), 以便策略 `get_open_orders()`/`get_order()`
+    读到的对象与回测 Rust Order 一致(有 `.id`、status 为 OrderStatus 枚举)。
+    """
+    status_text = str(_get(order, "status", "Submitted") or "Submitted").strip().lower()
+    status = (
+        OrderStatus.Cancelled if status_text == "cancelled" else OrderStatus.Submitted
+    )
+    qty = _get(order, "quantity")
+    price = _get(order, "price")
+    trigger = _get(order, "trigger_price")
+    return StrategyOrder(
+        id=str(_get(order, "local_id", "") or ""),
+        symbol=str(_get(order, "symbol", "") or ""),
+        status=status,
+        filled_quantity=0.0,
+        average_filled_price=None,
+        reject_reason="",
+        updated_at=0,
+        position_effect=_to_position_effect(_get(order, "position_effect", "auto")),
+        side=_to_side(_get(order, "side")),
+        order_type=_to_order_type(_get(order, "order_type")),
+        time_in_force=_get(order, "time_in_force"),  # 已是 TimeInForce 枚举或 None
+        quantity=float(qty) if qty is not None else None,
+        price=float(price) if price is not None else None,
+        trigger_price=float(trigger) if trigger is not None else None,
+        reduce_only=False,
+        tag="",
+        commission=0.0,
+        created_at=None,
+        client_order_id="",
+        broker_order_id="",
         owner_strategy_id=owner_strategy_id,
     )
 

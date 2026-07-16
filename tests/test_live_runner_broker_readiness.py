@@ -54,10 +54,13 @@ def test_connect_called_before_start() -> None:
 class _Target:
     """Minimal strategy target holding broker_ready."""
 
+    def __init__(self) -> None:
+        self.broker_ready = False
+
 
 def test_broker_ready_set_and_callback_fired() -> None:
     """Heartbeat True → targets.broker_ready=True and on_broker_connected fires."""
-    fired: list = []
+    fired: list[bool] = []
     runner = _runner(on_broker_connected=lambda ctx: fired.append(ctx.broker_ready))
     target = _Target()
     runner._await_broker_ready(_FakeTrader(hb=True), [target])
@@ -67,7 +70,7 @@ def test_broker_ready_set_and_callback_fired() -> None:
 
 def test_broker_not_ready_on_heartbeat_timeout() -> None:
     """Heartbeat always False → broker_ready False, callback not fired."""
-    fired: list = []
+    fired: list[int] = []
     runner = _runner(
         on_broker_connected=lambda ctx: fired.append(1),
         broker_ready_timeout=0.3,

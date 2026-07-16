@@ -1,6 +1,7 @@
 """同一 on_order/on_trade 回调读通用字段, 在回测风格对象与 broker 适配对象都工作."""
 
 from types import SimpleNamespace
+from typing import Any
 
 from akquant.akquant import OrderSide, OrderStatus
 from akquant.gateway.broker_event_adapter import map_order_snapshot, map_trade
@@ -12,7 +13,7 @@ from akquant.gateway.broker_models import (
 )
 
 
-def _read_order(order) -> tuple:
+def _read_order(order: Any) -> tuple[Any, Any, Any, Any, Any]:
     # 一个"策略回调"会读的通用字段（回测/实盘同名）
     return (
         order.symbol,
@@ -23,7 +24,7 @@ def _read_order(order) -> tuple:
     )
 
 
-def _read_trade(trade) -> tuple:
+def _read_trade(trade: Any) -> tuple[Any, Any, Any, Any]:
     return (trade.symbol, trade.side, trade.quantity, trade.price)
 
 

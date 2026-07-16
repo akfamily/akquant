@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from akquant.execution.sim import SimExecution
 from akquant.strategy_trading_api import submit_order
@@ -8,6 +10,9 @@ class _SimStrategy:
 
     def __init__(self) -> None:
         """Bind SimExecution, whose capabilities() always report simulated mode."""
+        self.ctx = None
+        self.current_bar: Any | None = None
+        self.current_tick: Any | None = None
         self.execution = SimExecution(self)
 
 
@@ -40,20 +45,24 @@ def test_sim_rejects_non_stock_asset_type() -> None:
         )
 
 
-def test_strategy_submit_order_forwards_asset_type(monkeypatch) -> None:
+def test_strategy_submit_order_forwards_asset_type(monkeypatch: Any) -> None:
     """Strategy.submit_order exposes and forwards asset_type to the impl."""
     from akquant import strategy as strat_mod
     from akquant.strategy import Strategy
 
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
-    def _fake_impl(_self, **kwargs):
+    def _fake_impl(_self: Any, **kwargs: Any) -> str:
         captured.update(kwargs)
         return "order-id"
 
     monkeypatch.setattr(strat_mod, "_submit_order_impl", _fake_impl)
     result = Strategy.submit_order(
-        object(), symbol="10004321.SH", side="Buy", quantity=1, asset_type="option"
+        Strategy.__new__(Strategy),
+        symbol="10004321.SH",
+        side="Buy",
+        quantity=1,
+        asset_type="option",
     )
     assert result == "order-id"
     assert captured["asset_type"] == "option"

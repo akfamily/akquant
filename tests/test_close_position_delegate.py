@@ -1,31 +1,33 @@
 """close_position 全平（含零股，不按手数取整），order_target 仍取整."""
 
+from typing import Any
+
 from akquant import strategy_trading_api as api
 
 
 class _Exec:
-    def __init__(self, pos):
+    def __init__(self, pos: float) -> None:
         self._pos = pos
-        self.orders = []
+        self.orders: list[dict[str, Any]] = []
 
-    def get_position(self, symbol=None):
+    def get_position(self, symbol: str | None = None) -> float:
         return self._pos
 
-    def submit_order(self, **kw):
+    def submit_order(self, **kw: Any) -> str:
         self.orders.append(kw)
         return "OID"
 
 
 class _S:
-    def __init__(self, pos, lot_size=100):
+    def __init__(self, pos: float, lot_size: int = 100) -> None:
         self.execution = _Exec(pos)
         self.ctx = object()
-        self.current_bar = None
-        self.current_tick = None
+        self.current_bar: Any | None = None
+        self.current_tick: Any | None = None
         self.lot_size = lot_size
-        self._last_prices = {}
+        self._last_prices: dict[str, float] = {}
 
-    def submit_order(self, **kwargs):
+    def submit_order(self, **kwargs: Any) -> str:
         """Mirror real Strategy.submit_order: forward unconditionally to execution."""
         return self.execution.submit_order(**kwargs)
 
@@ -64,15 +66,15 @@ def test_order_target_still_rounds_to_lot() -> None:
 class _SNoLotSize:
     """无 lot_size 属性的 strategy-like 对象（模拟精简/自定义 strategy）."""
 
-    def __init__(self, pos):
+    def __init__(self, pos: float) -> None:
         self.execution = _Exec(pos)
         self.ctx = object()
-        self.current_bar = None
-        self.current_tick = None
-        self._last_prices = {}
+        self.current_bar: Any | None = None
+        self.current_tick: Any | None = None
+        self._last_prices: dict[str, float] = {}
         # 有意不设置 self.lot_size
 
-    def submit_order(self, **kwargs):
+    def submit_order(self, **kwargs: Any) -> str:
         return self.execution.submit_order(**kwargs)
 
 

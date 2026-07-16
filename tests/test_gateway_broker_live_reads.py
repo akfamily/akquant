@@ -6,25 +6,29 @@ from akquant.gateway.broker_state_cache import BrokerStateCache
 class _Gw:
     """Fake trader gateway serving positions/account/orders."""
 
-    def query_positions(self):
+    def query_positions(self) -> list[UnifiedPosition]:
         """Return one position."""
         return [
             UnifiedPosition(symbol="600000.SH", quantity=1000, available_quantity=800)
         ]
 
-    def query_account(self):
+    def query_account(self) -> UnifiedAccount:
         """Return an account."""
         return UnifiedAccount(
             account_id="a", equity=1500.0, cash=1000.0, available_cash=850.0
         )
 
-    def sync_open_orders(self):
+    def sync_open_orders(self) -> list[object]:
         """Return no open orders."""
         return []
 
 
 class _Strategy:
     """Bare strategy target."""
+
+    def __init__(self) -> None:
+        self.current_bar: object | None = None
+        self.current_tick: object | None = None
 
 
 def test_broker_live_reads_route_to_gateway() -> None:

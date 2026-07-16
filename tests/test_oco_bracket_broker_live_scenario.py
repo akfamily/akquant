@@ -1,6 +1,9 @@
 """broker_live OCO/Bracket 端到端: 组建→一腿成交→撤对手/激活."""
 
+from typing import cast
+
 from akquant.gateway.broker_execution import BrokerExecution
+from akquant.gateway.broker_state_cache import BrokerStateCache
 from akquant.strategy import Strategy
 
 
@@ -45,7 +48,7 @@ class _Trade:
 
 def _strategy() -> Strategy:
     s = Strategy.__new__(Strategy)
-    s.execution = BrokerExecution(s, _Gw(), _Cache(), _Sub())
+    s.execution = BrokerExecution(s, _Gw(), cast(BrokerStateCache, _Cache()), _Sub())
     s._oco_groups = {}
     s._oco_order_to_group = {}
     s._pending_brackets = {}
@@ -81,9 +84,10 @@ def test_bracket_activates_on_entry_fill_then_stop_leg_is_local() -> None:
     )
     s._process_order_groups(_Trade("BID-E"))  # 入场成交→激活
     # 止损腿进本地簿(LSTOP), 止盈腿走柜台
+    # 读路径已统一适配为 StrategyOrder: 本地止损单以 `.id`(LSTOP-*)标识
     opens = s.execution.get_open_orders("X")
     assert any(
-        getattr(o, "local_id", "").startswith("LSTOP-") for o in opens
+        str(getattr(o, "id", "")).startswith("LSTOP-") for o in opens
     )  # 止损=本地
     # 止盈腿是柜台单(submitter 被调过)
     assert s.execution._submitter.n >= 1

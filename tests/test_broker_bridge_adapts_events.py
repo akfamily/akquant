@@ -21,23 +21,23 @@ from akquant.live import LiveRunner
 
 
 class _Strat:
-    def __init__(self):
-        self.orders = []
-        self.trades = []
+    def __init__(self) -> None:
+        self.orders: list[StrategyOrder] = []
+        self.trades: list[StrategyTrade] = []
 
-    def on_order(self, o):
+    def on_order(self, o: StrategyOrder) -> None:
         self.orders.append(o)
 
-    def on_trade(self, t):
+    def on_trade(self, t: StrategyTrade) -> None:
         self.trades.append(t)
 
-    def _process_order_groups(self, t):
+    def _process_order_groups(self, t: StrategyTrade) -> None:
         # broker_live 成交后桥会额外驱动协调器; 本桩无 OCO/bracket 组, no-op。
         pass
 
 
-def _bridge(adapt):
-    store = []
+def _bridge(adapt: Any) -> BrokerEventBridge:
+    store: list[tuple[str, Any]] = []
     return BrokerEventBridge(
         event_lock=threading.Lock(),
         event_store=store,
@@ -55,7 +55,7 @@ def _bridge(adapt):
 def test_bridge_dispatches_adapted_objects() -> None:
     """on_order/on_trade should get StrategyOrder/StrategyTrade, not raw Unified*."""
 
-    def adapt(name, payload):
+    def adapt(name: str, payload: Any) -> Any:
         if name == "order":
             return map_order_snapshot(payload)
         if name == "trade":

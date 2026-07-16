@@ -1,34 +1,37 @@
 """端到端: 触发止损→底层单成交推送→策略 on_trade 收到 order_id=LSTOP-n."""
 
+from typing import Any, cast
+
 from akquant.gateway.broker_event_adapter import map_trade
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_models import UnifiedTrade
+from akquant.gateway.broker_state_cache import BrokerStateCache
 
 
 class _Cache:
-    def positions(self):
+    def positions(self) -> dict[str, float]:
         return {}
 
-    def available_positions(self):
+    def available_positions(self) -> dict[str, float]:
         return {}
 
-    def open_orders(self):
+    def open_orders(self) -> list[object]:
         return []
 
-    def account(self):
+    def account(self) -> None:
         return None
 
 
 class _Gw:
-    def cancel_order(self, bid):
-        pass
+    def cancel_order(self, bid: str) -> None:
+        return None
 
-    def sync_open_orders(self):
+    def sync_open_orders(self) -> list[object]:
         return []
 
 
 class _Sub:
-    def submit_order(self, **kw):
+    def submit_order(self, **kw: Any) -> str:
         return "B77"
 
 
@@ -39,11 +42,11 @@ class _S:
 
 def test_triggered_stop_trade_reports_local_id() -> None:
     """触发止损后成交推送经 remap 还原为策略持有的本地 LSTOP-n id."""
-    remap = {}
+    remap: dict[str, str] = {}
     ex = BrokerExecution(
         _S(),
         _Gw(),
-        _Cache(),
+        cast(BrokerStateCache, _Cache()),
         _Sub(),
         record_stop_remap=lambda lid, bid: remap.__setitem__(bid, lid),
     )

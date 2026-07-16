@@ -8,7 +8,7 @@ from akquant.gateway.local_stop_book import (
 )
 
 
-def _book_with(order):
+def _book_with(order: LocalStopOrder) -> LocalStopBook:
     """构造仅含单个挂单的止损簿."""
     b = LocalStopBook()
     b.register(order)

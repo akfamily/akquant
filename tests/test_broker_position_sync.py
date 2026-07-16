@@ -5,16 +5,18 @@ from akquant.gateway.broker_state_cache import BrokerStateCache
 
 
 class _Gw:
-    def __init__(self, rows):
+    def __init__(self, rows: list[UnifiedPosition]) -> None:
         self.rows = rows
         self.pos_calls = 0
 
-    def query_positions(self):
+    def query_positions(self) -> list[UnifiedPosition]:
         self.pos_calls += 1
         return list(self.rows)
 
 
-def _rows(qty=1000.0, avail=800.0, symbol="X"):
+def _rows(
+    qty: float = 1000.0, avail: float = 800.0, symbol: str = "X"
+) -> list[UnifiedPosition]:
     return [UnifiedPosition(symbol=symbol, quantity=qty, available_quantity=avail)]
 
 

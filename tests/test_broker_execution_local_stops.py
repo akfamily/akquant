@@ -1,42 +1,45 @@
 """BrokerExecution 本地止损: 拦截/撤单/列单/触发提交底层单."""
 
+from typing import Any, cast
+
 from akquant.gateway.broker_execution import BrokerExecution
+from akquant.gateway.broker_state_cache import BrokerStateCache
 
 
 class _Cache:
-    def positions(self):
+    def positions(self) -> dict[str, float]:
         return {}
 
-    def available_positions(self):
+    def available_positions(self) -> dict[str, float]:
         return {}
 
-    def open_orders(self):
+    def open_orders(self) -> list[object]:
         return []
 
-    def account(self):
+    def account(self) -> None:
         return None
 
 
 class _Gw:
-    def __init__(self):
-        self.canceled = []
+    def __init__(self) -> None:
+        self.canceled: list[str] = []
 
-    def cancel_order(self, bid):
+    def cancel_order(self, bid: str) -> None:
         self.canceled.append(bid)
 
-    def sync_open_orders(self):
+    def sync_open_orders(self) -> list[object]:
         return []
 
 
 class _Submitter:
-    def __init__(self):
-        self.orders = []
+    def __init__(self) -> None:
+        self.orders: list[dict[str, Any]] = []
 
-    def submit_order(self, **kw):
+    def submit_order(self, **kw: Any) -> str:
         self.orders.append(kw)
         return "BID-1"
 
-    def _get_execution_capabilities(self):
+    def _get_execution_capabilities(self) -> dict[str, bool]:
         return {"broker_live": True}
 
 
@@ -45,8 +48,13 @@ class _S:
     current_tick = None
 
 
-def _exec():
-    return BrokerExecution(_S(), _Gw(), _Cache(), _Submitter())
+def _exec() -> BrokerExecution:
+    return BrokerExecution(
+        _S(),
+        _Gw(),
+        cast(BrokerStateCache, _Cache()),
+        _Submitter(),
+    )
 
 
 def test_conditional_order_registered_not_submitted() -> None:

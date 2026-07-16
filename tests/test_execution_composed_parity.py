@@ -1,35 +1,37 @@
 """order_target 在 broker_live (execution 支撑) 下按后端持仓算 delta 并下单."""
 
+from typing import Any
+
 from akquant import strategy_trading_api as api
 
 
 class _RecExec:
     """记录 submit 的 fake 后端."""
 
-    def __init__(self, pos):
+    def __init__(self, pos: float) -> None:
         self._pos = pos
-        self.orders = []
+        self.orders: list[dict[str, Any]] = []
 
-    def get_position(self, symbol=None):
+    def get_position(self, symbol: str | None = None) -> float:
         return self._pos
 
-    def submit_order(self, **kwargs):
+    def submit_order(self, **kwargs: Any) -> str:
         self.orders.append(kwargs)
         return "OID"
 
-    def capabilities(self):
+    def capabilities(self) -> dict[str, bool]:
         return {"broker_live": True, "supports_short_sell": False}
 
 
 class _S:
-    def __init__(self, pos):
+    def __init__(self, pos: float) -> None:
         self.execution = _RecExec(pos)
         self.ctx = None
-        self.current_bar = None
-        self.current_tick = None
+        self.current_bar: Any | None = None
+        self.current_tick: Any | None = None
         self.lot_size = 1
 
-    def submit_order(self, **kwargs):
+    def submit_order(self, **kwargs: Any) -> str:
         """镜像真实 Strategy.submit_order：统一转发到 execution.submit_order."""
         return self.execution.submit_order(**kwargs)
 

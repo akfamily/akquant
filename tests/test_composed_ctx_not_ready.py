@@ -16,6 +16,8 @@ order_target_value）从未调用过 _require_execution_ready，该守卫场景�
 broker_live 就绪的场景应正常按 execution 状态下单，不受影响。
 """
 
+from typing import Any
+
 import pytest
 from akquant import strategy_trading_api as api
 
@@ -35,17 +37,17 @@ class _CapExecution:
         self._position = position
         self._cash = cash
         self._portfolio_value = portfolio_value
-        self.orders: list = []
+        self.orders: list[dict[str, Any]] = []
 
-    def capabilities(self) -> dict:
+    def capabilities(self) -> dict[str, bool]:
         """Report the fixed broker_live flag."""
         return {"broker_live": self._broker_live, "supports_short_sell": False}
 
-    def get_position(self, symbol=None) -> float:
+    def get_position(self, symbol: str | None = None) -> float:
         """Return the fixed position regardless of symbol."""
         return self._position
 
-    def get_positions(self) -> dict:
+    def get_positions(self) -> dict[str, float]:
         """Return an empty position map (unused by these tests)."""
         return {}
 
@@ -57,11 +59,11 @@ class _CapExecution:
         """Return the fixed portfolio value."""
         return self._portfolio_value
 
-    def cancel_all_orders(self, symbol=None) -> None:
+    def cancel_all_orders(self, symbol: str | None = None) -> None:
         """No-op: no open orders to cancel in these tests."""
         return None
 
-    def submit_order(self, **kwargs) -> str:
+    def submit_order(self, **kwargs: Any) -> str:
         """Record the submitted order and return a fixed order id."""
         self.orders.append(kwargs)
         return "OID"
@@ -77,9 +79,9 @@ class _Strategy:
         self.current_bar = None
         self.current_tick = None
         self.lot_size = 1
-        self._last_prices: dict = {}
+        self._last_prices: dict[str, float] = {}
 
-    def submit_order(self, **kwargs):
+    def submit_order(self, **kwargs: Any) -> str:
         """Mirror real Strategy.submit_order: forward unconditionally to execution."""
         return self.execution.submit_order(**kwargs)
 

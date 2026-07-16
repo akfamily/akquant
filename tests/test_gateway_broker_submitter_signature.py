@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from akquant.gateway.broker_models import BrokerCapability, UnifiedOrderRequest
 from akquant.gateway.order_submitter import BrokerOrderSubmitter
@@ -9,8 +11,19 @@ class _Strategy:
     _owner_strategy_id = "_default"
     broker_ready = True
 
+    def submit_order(self, **kwargs: Any) -> str:
+        raise NotImplementedError
 
-def _submitter(captured: list) -> BrokerOrderSubmitter:
+
+class _StrategyWithSubmitter(_Strategy):
+    def __init__(self, submitter: BrokerOrderSubmitter) -> None:
+        self._submitter = submitter
+
+    def submit_order(self, **kwargs: Any) -> str:
+        return self._submitter.submit_order(**kwargs)
+
+
+def _submitter(captured: list[UnifiedOrderRequest]) -> BrokerOrderSubmitter:
     """Build a submitter whose gateway records placed requests."""
 
     class _Gw:
@@ -36,7 +49,7 @@ def _submitter(captured: list) -> BrokerOrderSubmitter:
 
 def test_accepts_full_signature_with_sim_knobs_none() -> None:
     """The full backtest signature (sim knobs None) reaches place_order."""
-    captured: list = []
+    captured: list[UnifiedOrderRequest] = []
     sub = _submitter(captured)
     bid = sub.submit_order(
         symbol="600000.SH",
@@ -55,11 +68,11 @@ def test_accepts_full_signature_with_sim_knobs_none() -> None:
     assert len(captured) == 1
 
 
-def test_sim_knobs_ignored_with_warning(caplog) -> None:
+def test_sim_knobs_ignored_with_warning(caplog: Any) -> None:
     """Non-None sim knobs are ignored (order still placed) and warned."""
     import logging
 
-    captured: list = []
+    captured: list[UnifiedOrderRequest] = []
     sub = _submitter(captured)
     with caplog.at_level(logging.WARNING):
         sub.submit_order(
@@ -108,9 +121,8 @@ def test_buy_convenience_path_no_typeerror() -> None:
     """buy() forwarding sim-knob kwargs no longer TypeErrors in broker_live."""
     from akquant import strategy_trading_api as api
 
-    captured: list = []
-    strategy = _Strategy()
-    strategy.submit_order = _submitter(captured).submit_order
+    captured: list[UnifiedOrderRequest] = []
+    strategy = _StrategyWithSubmitter(_submitter(captured))
     result = api.buy(strategy, symbol="600000.SH", quantity=100, price=10.5)
     assert result == "b1"
     assert len(captured) == 1
@@ -118,9 +130,7 @@ def test_buy_convenience_path_no_typeerror() -> None:
 
 def test_order_type_none_defaults_to_market() -> None:
     """order_type=None (as buy()/sell() forward) becomes the documented default."""
-    captured: list = []
+    captured: list[UnifiedOrderRequest] = []
     sub = _submitter(captured)
-    sub.submit_order(
-        symbol="600000.SH", side="Buy", quantity=100, price=10.5, order_type=None
-    )
+    sub.submit_order(symbol="600000.SH", side="Buy", quantity=100, price=10.5)
     assert captured[0].order_type == "Market"

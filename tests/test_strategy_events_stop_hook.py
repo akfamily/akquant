@@ -8,11 +8,17 @@ from akquant import strategy_events
 class _Exec:
     """Fake broker_live execution exposing check_stop_triggers."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Track calls to check_stop_triggers."""
-        self.calls = []
+        self.calls: list[tuple[str, float, float | None, float | None]] = []
 
-    def check_stop_triggers(self, symbol, last, high=None, low=None):
+    def check_stop_triggers(
+        self,
+        symbol: str,
+        last: float,
+        high: float | None = None,
+        low: float | None = None,
+    ) -> None:
         """Record the arguments passed by the hook."""
         self.calls.append((symbol, last, high, low))
 

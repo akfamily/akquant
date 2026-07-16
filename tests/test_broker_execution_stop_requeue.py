@@ -1,44 +1,47 @@
 """check_stop_triggers: 失败重试(不崩)+ on_error + 成功 remap 记录."""
 
+from typing import Any, cast
+
 from akquant.gateway.broker_execution import MAX_STOP_SUBMIT_ATTEMPTS, BrokerExecution
+from akquant.gateway.broker_state_cache import BrokerStateCache
 
 
 class _Cache:
-    def positions(self):
+    def positions(self) -> dict[str, float]:
         return {}
 
-    def available_positions(self):
+    def available_positions(self) -> dict[str, float]:
         return {}
 
-    def open_orders(self):
+    def open_orders(self) -> list[object]:
         return []
 
-    def account(self):
+    def account(self) -> None:
         return None
 
 
 class _Gw:
-    def cancel_order(self, bid):
-        pass
+    def cancel_order(self, bid: str) -> None:
+        return None
 
-    def sync_open_orders(self):
+    def sync_open_orders(self) -> list[object]:
         return []
 
 
 class _OkSub:
-    def __init__(self):
+    def __init__(self) -> None:
         self.n = 0
 
-    def submit_order(self, **kw):
+    def submit_order(self, **kw: Any) -> str:
         self.n += 1
         return "BID-9"
 
 
 class _FailSub:
-    def __init__(self):
+    def __init__(self) -> None:
         self.n = 0
 
-    def submit_order(self, **kw):
+    def submit_order(self, **kw: Any) -> str:
         self.n += 1
         raise RuntimeError("broker not ready")
 
@@ -47,20 +50,20 @@ class _S:
     current_bar = None
     current_tick = None
 
-    def __init__(self):
-        self.errors = []
+    def __init__(self) -> None:
+        self.errors: list[tuple[str, Any]] = []
 
-    def on_error(self, exc, source, payload=None):
+    def on_error(self, exc: Exception, source: str, payload: Any = None) -> None:
         self.errors.append((source, payload))
 
 
 def test_success_records_remap() -> None:
     """止损触发提交成功后应调用 record_stop_remap(local_id, broker_order_id)."""
-    remaps = []
+    remaps: list[tuple[str, str]] = []
     ex = BrokerExecution(
         _S(),
         _Gw(),
-        _Cache(),
+        cast(BrokerStateCache, _Cache()),
         _OkSub(),
         record_stop_remap=lambda lid, bid: remaps.append((lid, bid)),
     )
@@ -78,7 +81,7 @@ def test_success_records_remap() -> None:
 def test_failure_requeues_and_notifies_then_gives_up() -> None:
     """止损触发提交失败应重试(上限 MAX_STOP_SUBMIT_ATTEMPTS)+on_error, 不崩溃."""
     s = _S()
-    ex = BrokerExecution(s, _Gw(), _Cache(), _FailSub())
+    ex = BrokerExecution(s, _Gw(), cast(BrokerStateCache, _Cache()), _FailSub())
     ex.submit_order(
         symbol="X",
         side="Sell",

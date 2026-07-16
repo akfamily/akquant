@@ -8,13 +8,13 @@ class _Gw:
 
     def __init__(self) -> None:
         """Init cancel log."""
-        self.cancelled: list = []
+        self.cancelled: list[str] = []
 
     def cancel_order(self, broker_order_id: str) -> None:
         """Record a broker cancel."""
         self.cancelled.append(str(broker_order_id))
 
-    def sync_open_orders(self):
+    def sync_open_orders(self) -> list[UnifiedOrderSnapshot]:
         """Return one open option/stock order."""
         return [
             UnifiedOrderSnapshot(
@@ -54,7 +54,7 @@ def test_cancel_all_orders_symbol_filter() -> None:
     """cancel_all_orders(symbol=...) cancels only that symbol's broker ids."""
 
     class _MultiGw(_Gw):
-        def sync_open_orders(self):
+        def sync_open_orders(self) -> list[UnifiedOrderSnapshot]:
             """Return two open orders on different symbols."""
             return [
                 UnifiedOrderSnapshot(

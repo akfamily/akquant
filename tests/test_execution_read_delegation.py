@@ -4,10 +4,10 @@ from akquant import strategy_trading_api as api
 
 
 class _FakeExec:
-    def get_position(self, symbol=None):
+    def get_position(self, symbol: str | None = None) -> float:
         return 42.0
 
-    def get_cash(self):
+    def get_cash(self) -> float:
         return 999.0
 
 

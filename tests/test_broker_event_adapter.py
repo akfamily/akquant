@@ -1,5 +1,7 @@
 """broker_event_adapter：Unified* → 回测同形状对象（枚举/名对齐/回填）."""
 
+from typing import Any, cast
+
 from akquant.akquant import OrderSide, OrderStatus, PositionEffect
 from akquant.gateway.broker_event_adapter import map_order_snapshot, map_trade
 from akquant.gateway.broker_models import (
@@ -10,17 +12,21 @@ from akquant.gateway.broker_models import (
 )
 
 
-def _snap(**kw):
-    base = dict(
-        client_order_id="c1",
-        broker_order_id="B1",
-        symbol="600000.SH",
-        status=UnifiedOrderStatus.FILLED,
-        filled_quantity=100.0,
-        avg_fill_price=10.5,
+def _snap(**kw: Any) -> UnifiedOrderSnapshot:
+    client_order_id = cast(str, kw.get("client_order_id", "c1"))
+    broker_order_id = cast(str, kw.get("broker_order_id", "B1"))
+    symbol = cast(str, kw.get("symbol", "600000.SH"))
+    status = cast(UnifiedOrderStatus, kw.get("status", UnifiedOrderStatus.FILLED))
+    filled_quantity = cast(float, kw.get("filled_quantity", 100.0))
+    avg_fill_price = cast(float, kw.get("avg_fill_price", 10.5))
+    return UnifiedOrderSnapshot(
+        client_order_id=client_order_id,
+        broker_order_id=broker_order_id,
+        symbol=symbol,
+        status=status,
+        filled_quantity=filled_quantity,
+        avg_fill_price=avg_fill_price,
     )
-    base.update(kw)
-    return UnifiedOrderSnapshot(**base)
 
 
 def test_order_name_and_enum_alignment() -> None:

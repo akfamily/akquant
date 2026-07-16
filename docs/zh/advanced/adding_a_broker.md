@@ -239,8 +239,6 @@ register_broker("mybroker", build_mybroker)
 
 ## 参考实现与相关文档
 
-- [QMF（期魔方）Broker 网关](qmf_broker_gateway.md) —— 一个完整的纯交易
-  broker 范例（HTTP 下单/查询 + WebSocket 推送，`market_gateway=None`）。
 - [自定义 Broker 注册](custom_broker_registry.md) —— `register_broker` /
   `create_gateway_bundle` 等注册 API 的详细说明。
 - [Broker Capability Matrix](broker_capability_matrix.md) —— 各内置 broker

@@ -1,38 +1,40 @@
 """_target_to_orders：统一 delta 取整、不撤单（fake execution + submit spy）."""
 
+from typing import Any
+
 from akquant import strategy_trading_api as api
 
 
 class _Exec:
-    def __init__(self, pos):
+    def __init__(self, pos: float) -> None:
         self._pos = pos
-        self.orders = []
+        self.orders: list[dict[str, Any]] = []
         self.canceled = 0
 
-    def get_position(self, symbol=None):
+    def get_position(self, symbol: str | None = None) -> float:
         return self._pos
 
-    def submit_order(self, **kw):
+    def submit_order(self, **kw: Any) -> str:
         self.orders.append(kw)
         return "OID"
 
-    def cancel_all_orders(self, symbol=None):
+    def cancel_all_orders(self, symbol: str | None = None) -> None:
         self.canceled += 1
 
-    def capabilities(self):
+    def capabilities(self) -> dict[str, bool]:
         return {"broker_live": False}
 
 
 class _S:
-    def __init__(self, pos, lot=100):
+    def __init__(self, pos: float, lot: int = 100) -> None:
         self.execution = _Exec(pos)
         self.ctx = object()
-        self.current_bar = None
-        self.current_tick = None
+        self.current_bar: Any | None = None
+        self.current_tick: Any | None = None
         self.lot_size = lot
-        self._last_prices = {}
+        self._last_prices: dict[str, float] = {}
 
-    def submit_order(self, **kwargs):
+    def submit_order(self, **kwargs: Any) -> str:
         """Mirror real Strategy.submit_order: forward unconditionally to execution."""
         return self.execution.submit_order(**kwargs)
 

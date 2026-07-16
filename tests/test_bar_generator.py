@@ -1,11 +1,16 @@
 """BarGenerator: 流式多周期聚合, 与 pandas resample(label=right,closed=right) 一致."""
 
+from datetime import datetime
+from typing import cast
+
 import pandas as pd
 from akquant import BarGenerator
 from akquant.akquant import Bar
 
 
-def _bars_1min(n: int, symbol: str = "X", start="2024-01-02 09:30:00"):
+def _bars_1min(
+    n: int, symbol: str = "X", start: str = "2024-01-02 09:30:00"
+) -> list[Bar]:
     """造 n 根 1min bar(时间戳=右缘, 递增), OHLCV 可预期."""
     idx = pd.date_range(start, periods=n, freq="1min")
     bars = []
@@ -25,7 +30,7 @@ def _bars_1min(n: int, symbol: str = "X", start="2024-01-02 09:30:00"):
     return bars
 
 
-def _expected_resample(bars, freq):
+def _expected_resample(bars: list[Bar], freq: str) -> pd.DataFrame:
     """用 pandas resample 造期望窗口 bar(label=right, closed=right)."""
     df = pd.DataFrame(
         {
@@ -40,10 +45,10 @@ def _expected_resample(bars, freq):
     out = df.resample(freq, label="right", closed="right").agg(
         {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
     )
-    return out.dropna(subset=["open"])
+    return pd.DataFrame(out.dropna(subset=["open"]))
 
 
-def _collect(freq_window_interval, bars):
+def _collect(freq_window_interval: tuple[int, str, str], bars: list[Bar]) -> list[Bar]:
     window, interval, freq = freq_window_interval
     got = []
     bg = BarGenerator(lambda b: got.append(b), window=window, interval=interval)
@@ -60,7 +65,7 @@ def test_matches_pandas_resample_5min() -> None:
     exp = _expected_resample(bars, "5min")
     assert len(got) == len(exp)
     for gbar, (ts, row) in zip(got, exp.iterrows()):
-        assert gbar.timestamp == int(pd.Timestamp(ts).value)
+        assert gbar.timestamp == int(pd.Timestamp(cast(datetime, ts)).value)
         assert gbar.open == row["open"]
         assert gbar.high == row["high"]
         assert gbar.low == row["low"]

@@ -345,6 +345,7 @@ def test_live_runner_strict_recovery_reports_sync_failure() -> None:
     class _DummyStrategy:
         def __init__(self) -> None:
             self.errors: list[tuple[str, Any]] = []
+            self.execution: Any | None = None
 
         def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
             self.errors.append((source, payload))
@@ -387,6 +388,7 @@ def test_live_runner_strict_recovery_reports_account_query_failure() -> None:
     class _DummyStrategy:
         def __init__(self) -> None:
             self.errors: list[tuple[str, Any]] = []
+            self.execution: Any | None = None
 
         def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
             self.errors.append((source, payload))
@@ -425,6 +427,7 @@ def test_live_runner_compatible_recovery_keeps_sync_failure_silent() -> None:
     class _DummyStrategy:
         def __init__(self) -> None:
             self.errors: list[tuple[str, Any]] = []
+            self.execution: Any | None = None
 
         def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
             self.errors.append((source, payload))
@@ -602,6 +605,7 @@ def test_live_runner_submitter_checks_idempotency_and_maps() -> None:
     class _DummyStrategy:
         def __init__(self) -> None:
             self.errors: list[tuple[str, Any]] = []
+            self.execution: Any | None = None
 
         def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
             self.errors.append((source, payload))

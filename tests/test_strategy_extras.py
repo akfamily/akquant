@@ -4869,6 +4869,7 @@ def test_strategy_buy_sell_delegate_to_submit_order() -> None:
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
+            asset_type: str = "stock",
         ) -> str:
             _ = price
             _ = time_in_force
@@ -4929,6 +4930,7 @@ def test_strategy_short_cover_delegate_position_effect() -> None:
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
+            asset_type: str = "stock",
         ) -> str:
             _ = (
                 price,
@@ -5031,6 +5033,7 @@ def test_strategy_rebalance_positions_supports_signed_targets() -> None:
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
+            asset_type: str = "stock",
         ) -> str:
             _ = (
                 price,
@@ -5138,6 +5141,7 @@ def test_strategy_rebalance_positions_can_bypass_strict_short_capability() -> No
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
+            asset_type: str = "stock",
         ) -> str:
             _ = (
                 price,
@@ -5238,6 +5242,7 @@ def test_strategy_rebalance_positions_missing_price_mode_skip() -> None:
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
+            asset_type: str = "stock",
         ) -> str:
             _ = (
                 time_in_force,
@@ -5306,6 +5311,7 @@ def test_strategy_rebalance_positions_missing_price_mode_ignore() -> None:
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
+            asset_type: str = "stock",
         ) -> str:
             _ = (
                 time_in_force,
@@ -5375,6 +5381,7 @@ def test_strategy_rebalance_positions_records_explainable_plan() -> None:
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
+            asset_type: str = "stock",
         ) -> str:
             _ = (
                 symbol,
@@ -5447,6 +5454,7 @@ def test_strategy_rebalance_positions_plan_tracks_skipped_legs() -> None:
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
+            asset_type: str = "stock",
         ) -> str:
             _ = (
                 symbol,
@@ -6056,6 +6064,7 @@ def test_strategy_trailing_helpers_delegate_to_submit_order() -> None:
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
+            asset_type: str = "stock",
         ) -> str:
             _ = time_in_force
             _ = trigger_price

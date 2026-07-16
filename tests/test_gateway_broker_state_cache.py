@@ -1,3 +1,5 @@
+from typing import Callable
+
 from akquant.gateway.broker_models import UnifiedAccount, UnifiedPosition
 from akquant.gateway.broker_state_cache import BrokerStateCache
 
@@ -10,19 +12,19 @@ class _Gw:
         self.pos_calls = 0
         self.acct_calls = 0
 
-    def query_positions(self):
+    def query_positions(self) -> list[UnifiedPosition]:
         """Return one position, counting calls."""
         self.pos_calls += 1
         return [
             UnifiedPosition(symbol="600000.SH", quantity=1000, available_quantity=800)
         ]
 
-    def query_account(self):
+    def query_account(self) -> UnifiedAccount:
         """Return an account, counting calls."""
         self.acct_calls += 1
         return UnifiedAccount(account_id="a", equity=2.0, cash=1.0, available_cash=0.5)
 
-    def sync_open_orders(self):
+    def sync_open_orders(self) -> list[object]:
         """Return no open orders."""
         return []
 
@@ -47,10 +49,11 @@ def test_account_and_error_fallback() -> None:
     assert cache.account().equity == 2.0
     assert gw.acct_calls == 1
 
-    def _boom():
+    def _boom() -> UnifiedAccount:
         raise RuntimeError("down")
 
-    gw.query_account = _boom
+    boom_query: Callable[[], UnifiedAccount] = _boom
+    setattr(gw, "query_account", boom_query)
     cache.invalidate()
     # 异常 → 返回上次缓存(不抛)
     assert cache.account().equity == 2.0

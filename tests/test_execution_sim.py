@@ -1,6 +1,7 @@
 """SimExecution：回测后端读/写委托给 ctx（独立可测）."""
 
 from types import SimpleNamespace
+from typing import Any
 
 from akquant.execution.sim import SimExecution
 
@@ -12,25 +13,25 @@ class _Ctx:
         self.cash = 1000.0
         self.positions = {"600000.SH": 500.0}
         self.available_positions = {"600000.SH": 400.0}
-        self.active_orders: list = []
-        self.canceled_order_ids: list = []
+        self.active_orders: list[Any] = []
+        self.canceled_order_ids: list[str] = []
         self.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
 
-    def get_position(self, symbol):
+    def get_position(self, symbol: str) -> float:
         return self.positions.get(symbol, 0.0)
 
-    def get_available_position(self, symbol):
+    def get_available_position(self, symbol: str) -> float:
         return self.available_positions.get(symbol, 0.0)
 
 
 class _Strategy:
-    def __init__(self, ctx) -> None:
+    def __init__(self, ctx: _Ctx) -> None:
         self.ctx = ctx
         self._last_event_type = ""
         self.current_bar = SimpleNamespace(symbol="600000.SH")
         self.current_tick = None
         self._hold_bars = {"600000.SH": 3}
-        self._known_orders: dict = {}
+        self._known_orders: dict[str, Any] = {}
 
 
 def test_sim_execution_reads_route_to_ctx() -> None:

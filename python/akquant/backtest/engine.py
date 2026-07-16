@@ -291,7 +291,7 @@ class ResolvedExecutionPolicy:
 class PreparedStreamRuntime:
     """Prepared stream runtime components shared by backtest/warm_start."""
 
-    stream_on_event: Callable[[BacktestStreamEvent], None]
+    stream_on_event: Optional[Callable[[BacktestStreamEvent], None]]
     indicator_stream_emitter: Optional[
         Callable[[str, Optional[str], str, Dict[str, str]], None]
     ]
