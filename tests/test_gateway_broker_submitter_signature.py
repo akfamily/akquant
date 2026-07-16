@@ -1,7 +1,8 @@
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from akquant.gateway.broker_models import BrokerCapability, UnifiedOrderRequest
+from akquant.gateway.order_receipt import OrderReceipt
 from akquant.gateway.order_submitter import BrokerOrderSubmitter
 
 
@@ -11,7 +12,7 @@ class _Strategy:
     _owner_strategy_id = "_default"
     broker_ready = True
 
-    def submit_order(self, **kwargs: Any) -> str:
+    def submit_order(self, **kwargs: Any) -> OrderReceipt:
         raise NotImplementedError
 
 
@@ -19,7 +20,7 @@ class _StrategyWithSubmitter(_Strategy):
     def __init__(self, submitter: BrokerOrderSubmitter) -> None:
         self._submitter = submitter
 
-    def submit_order(self, **kwargs: Any) -> str:
+    def submit_order(self, **kwargs: Any) -> OrderReceipt:
         return self._submitter.submit_order(**kwargs)
 
 
@@ -64,7 +65,7 @@ def test_accepts_full_signature_with_sim_knobs_none() -> None:
         trail_reference_price=None,
         broker_options=None,
     )
-    assert bid == "b1"
+    assert bid.primary == "b1"
     assert len(captured) == 1
 
 
@@ -124,7 +125,7 @@ def test_buy_convenience_path_no_typeerror() -> None:
     captured: list[UnifiedOrderRequest] = []
     strategy = _StrategyWithSubmitter(_submitter(captured))
     result = api.buy(strategy, symbol="600000.SH", quantity=100, price=10.5)
-    assert result == "b1"
+    assert cast(OrderReceipt, result).primary == "b1"
     assert len(captured) == 1
 
 
@@ -134,3 +135,18 @@ def test_order_type_none_defaults_to_market() -> None:
     sub = _submitter(captured)
     sub.submit_order(symbol="600000.SH", side="Buy", quantity=100, price=10.5)
     assert captured[0].order_type == "Market"
+
+
+def test_submit_order_returns_receipt() -> None:
+    """submit_order returns an OrderReceipt carrying every leg's broker_order_id."""
+    sub = _submitter([])
+    receipt = sub.submit_order(
+        symbol="600000.SH",
+        side="Buy",
+        quantity=1.0,
+        order_type="Market",
+    )
+    assert isinstance(receipt, OrderReceipt)
+    assert receipt.primary == receipt.order_ids[0]
+    assert receipt.group_id  # = client_order_id 根
+    assert len(receipt.legs) == len(receipt.order_ids)

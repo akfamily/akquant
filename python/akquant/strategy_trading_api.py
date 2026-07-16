@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 
 from .akquant import OrderStatus, OrderType, PositionEffect, TimeInForce
 from .gateway.broker_models import normalize_asset_type
+from .gateway.order_receipt import OrderLeg, OrderReceipt
 
 OrderFillPolicy = Dict[str, Any]
 OrderSlippage = Dict[str, Any]
@@ -137,9 +138,20 @@ def _attach_broker_options(strategy: Any, order_id: str, order: Any) -> None:
         return
 
 
-def cancel_order(strategy: Any, order_id: str) -> None:
-    """取消指定订单（经执行后端）."""
-    strategy.execution.cancel_order(order_id)
+def cancel_order(strategy: Any, order_id: Any) -> None:
+    """取消指定订单（经执行后端）；order_id 可为 str 或 OrderReceipt（取 .primary）."""
+    strategy.execution.cancel_order(str(getattr(order_id, "primary", order_id)))
+
+
+def cancel_group(strategy: Any, group_id: Any) -> None:
+    """按 group_id（或 OrderReceipt）撤销一个逻辑委托的全部腿（经执行后端）."""
+    execution = strategy.execution
+    gid = str(getattr(group_id, "group_id", group_id))
+    cancel_group_method = getattr(execution, "cancel_group", None)
+    if callable(cancel_group_method):
+        cancel_group_method(gid)
+    else:  # 回测后端无 group 概念：退化为撤单
+        execution.cancel_order(gid)
 
 
 def cancel_all_orders(strategy: Any, symbol: Optional[str] = None) -> None:
@@ -163,12 +175,12 @@ def buy(
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
-) -> str:
+) -> OrderReceipt:
     """买入下单."""
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
         return cast(
-            str,
+            OrderReceipt,
             submit_order_method(
                 symbol=symbol,
                 side="Buy",
@@ -223,12 +235,12 @@ def sell(
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
-) -> str:
+) -> OrderReceipt:
     """卖出下单."""
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
         return cast(
-            str,
+            OrderReceipt,
             submit_order_method(
                 symbol=symbol,
                 side="Sell",
@@ -283,8 +295,8 @@ def _submit_buy_side(
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
     reduce_only: bool = False,
-) -> str:
-    return _first_order_id(
+) -> OrderReceipt:
+    return _orders_to_receipt(
         _submit_buy_side_orders(
             strategy=strategy,
             symbol=symbol,
@@ -301,7 +313,8 @@ def _submit_buy_side(
             commission=commission,
             position_effect=position_effect,
             reduce_only=reduce_only,
-        )
+        ),
+        position_effect=position_effect,
     )
 
 
@@ -449,8 +462,8 @@ def _submit_sell_side(
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
     reduce_only: bool = False,
-) -> str:
-    return _first_order_id(
+) -> OrderReceipt:
+    return _orders_to_receipt(
         _submit_sell_side_orders(
             strategy=strategy,
             symbol=symbol,
@@ -467,7 +480,8 @@ def _submit_sell_side(
             commission=commission,
             position_effect=position_effect,
             reduce_only=reduce_only,
-        )
+        ),
+        position_effect=position_effect,
     )
 
 
@@ -633,11 +647,23 @@ def _normalize_position_effect(
     return value
 
 
-def _first_order_id(order_ids: List[str]) -> str:
-    for order_id in order_ids:
-        if order_id:
-            return str(order_id)
-    return ""
+def _orders_to_receipt(order_ids: List[str], position_effect: str) -> OrderReceipt:
+    """将回测拆腿产生的全部订单 id 封装为 OrderReceipt（每 id 一腿）."""
+    ids = tuple(str(o) for o in order_ids if o)
+    legs = tuple(
+        OrderLeg(
+            position_effect=position_effect,
+            quantity=0.0,
+            client_order_id=oid,
+            broker_order_id=oid,
+        )
+        for oid in ids
+    )
+    return OrderReceipt(
+        group_id=ids[0] if ids else "",
+        order_ids=ids,
+        legs=legs,
+    )
 
 
 def _position_effect_enum(position_effect: str) -> PositionEffect:
@@ -675,9 +701,9 @@ def _resolve_auto_position_effect_legs(
     return legs
 
 
-def submit_order(strategy: Any, **kwargs: Any) -> str:
+def submit_order(strategy: Any, **kwargs: Any) -> OrderReceipt:
     """统一下单接口（经执行后端）."""
-    return cast(str, strategy.execution.submit_order(**kwargs))
+    return cast(OrderReceipt, strategy.execution.submit_order(**kwargs))
 
 
 def _parse_order_type(order_type: Optional[str]) -> Tuple[Optional[str], Optional[Any]]:
@@ -998,10 +1024,14 @@ def _target_to_orders(
             elif delta_qty < 0:
                 delta_qty = -((abs(delta_qty) // current_lot_size) * current_lot_size)
 
+    # buy()/sell() 现返回 OrderReceipt；order_target 系列对外仍以 str 订单号
+    # 为契约（不属于 Task 7 变更范围），故在此边界取 .primary 落地为字符串。
     if delta_qty > 0:
-        return buy(strategy, symbol, delta_qty, price, **kwargs)
+        receipt = buy(strategy, symbol, delta_qty, price, **kwargs)
+        return str(getattr(receipt, "primary", receipt)) or None
     elif delta_qty < 0:
-        return sell(strategy, symbol, abs(delta_qty), price, **kwargs)
+        receipt = sell(strategy, symbol, abs(delta_qty), price, **kwargs)
+        return str(getattr(receipt, "primary", receipt)) or None
     return None
 
 
@@ -1776,7 +1806,7 @@ def _sim_submit_order(
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
     asset_type: str = "stock",
-) -> str:
+) -> OrderReceipt:
     """统一下单接口（_sim_ 原语，复制自 submit_order:755-845，逻辑一字不改）."""
     capabilities = get_execution_capabilities(strategy)
     if client_order_id and not bool(capabilities.get("client_order_id", False)):
@@ -1805,6 +1835,7 @@ def _sim_submit_order(
         raise RuntimeError("trailing order requires runtime with StopTrail support")
 
     side_text = side.strip().lower()
+    normalized_position_effect = _normalize_position_effect(position_effect, "auto")
     if side_text == "buy":
         order_ids = _submit_buy_side_orders(
             strategy=strategy,
@@ -1820,11 +1851,11 @@ def _sim_submit_order(
             fill_policy=fill_policy,
             slippage=slippage,
             commission=commission,
-            position_effect=_normalize_position_effect(position_effect, "auto"),
+            position_effect=normalized_position_effect,
             reduce_only=reduce_only,
         )
         _record_broker_options(strategy, order_ids, broker_options)
-        return _first_order_id(order_ids)
+        return _orders_to_receipt(order_ids, position_effect=normalized_position_effect)
     if side_text == "sell":
         order_ids = _submit_sell_side_orders(
             strategy=strategy,
@@ -1840,9 +1871,9 @@ def _sim_submit_order(
             fill_policy=fill_policy,
             slippage=slippage,
             commission=commission,
-            position_effect=_normalize_position_effect(position_effect, "auto"),
+            position_effect=normalized_position_effect,
             reduce_only=reduce_only,
         )
         _record_broker_options(strategy, order_ids, broker_options)
-        return _first_order_id(order_ids)
+        return _orders_to_receipt(order_ids, position_effect=normalized_position_effect)
     raise ValueError(f"Unsupported side: {side}")

@@ -754,6 +754,7 @@ class LiveRunner:
         self._broker_account_state: Any = None
         self._client_to_broker_order_ids: dict[str, str] = {}
         self._broker_to_client_order_ids: dict[str, str] = {}
+        self._client_to_group_ids: dict[str, str] = {}
         self._order_requests: dict[str, Any] = {}
         self._broker_to_local_stop_id: dict[str, str] = {}
         self._client_to_strategy_ids: dict[str, str] = {}
@@ -803,6 +804,8 @@ class LiveRunner:
             adapt_strategy_payload=self._adapt_strategy_payload,
             record_stop_remap=self._record_stop_remap,
             should_replay_trades=lambda: self._broker_baseline_done,
+            sync_group_mapping=self._sync_group_mapping,
+            group_broker_ids=self._broker_order_ids_for_group,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -1108,6 +1111,41 @@ class LiveRunner:
             self._client_to_broker_order_ids[client_order_id] = broker_order_id
             self._broker_to_client_order_ids[broker_order_id] = client_order_id
 
+    def _sync_group_mapping(self, client_order_id: str, group_id: str) -> None:
+        if client_order_id and group_id:
+            self._client_to_group_ids[client_order_id] = group_id
+
+    def _lookup_group_id(self, payload: Any) -> str:
+        cid = str(self._payload_field(payload, "client_order_id") or "").strip()
+        if not cid:
+            bid = str(self._payload_field(payload, "broker_order_id") or "").strip()
+            cid = self._broker_to_client_order_ids.get(bid, "") if bid else ""
+        return self._client_to_group_ids.get(cid, cid)
+
+    def _broker_order_ids_for_group(self, group_id: str) -> list[str]:
+        gid = str(group_id)
+        result: list[str] = []
+        # 用 list(...) 对 dict 做一次性快照: list() 构造在 CPython 下是单个
+        # C 级原子操作, 中途不会释放 GIL, 因此不会观察到 broker 派发线程
+        # (_close_order_mapping) 并发 pop 导致的 "dictionary changed size
+        # during iteration"; 直接 for 一个存活的 dict 则会在每次迭代之间让出
+        # GIL, 存在竞态崩溃风险。与本文件其余映射表的单操作原子性约定一致,
+        # 无需额外加锁。
+        for cid, mapped in list(self._client_to_group_ids.items()):
+            if mapped != gid:
+                continue
+            bid = self._client_to_broker_order_ids.get(cid, "")
+            if bid:
+                result.append(bid)
+        # group_id 本身即根 client id: 正常情况下 Task 5 已将根 leg 自身的
+        # client_order_id 同步进 _client_to_group_ids, 上面的主循环即可收集到
+        # 其 broker id; 这里保留作为防御性兜底 (belt-and-suspenders), 以防
+        # 未来同步路径变化导致根 leg 未被计入, 而非当前逻辑所必需。
+        root_bid = self._client_to_broker_order_ids.get(gid, "")
+        if root_bid and root_bid not in result:
+            result.insert(0, root_bid)
+        return result
+
     def _bind_order_owner(
         self, client_order_id: str, broker_order_id: str, owner_strategy_id: str
     ) -> None:
@@ -1154,6 +1192,9 @@ class LiveRunner:
             self._client_to_broker_order_ids.pop(client_order_id, None)
             self._client_to_strategy_ids.pop(client_order_id, None)
             self._order_requests.pop(str(client_order_id), None)
+            # 注意: 不弹出 _client_to_group_ids —— 乱序到达的末笔成交仍需据此
+            # 解析 group_id; 条目极小且随会话生命周期存在, 保留以保证 group
+            # 关联正确 (见 #317 反手 open 腿)。
         if broker_order_id:
             self._broker_to_client_order_ids.pop(broker_order_id, None)
             self._broker_to_strategy_ids.pop(broker_order_id, None)
@@ -1189,6 +1230,7 @@ class LiveRunner:
                 request=self._lookup_order_request(payload),
                 owner_strategy_id=self._resolve_owner_strategy_id(payload),
                 local_id=self._lookup_stop_local_id(payload),
+                group_id=self._lookup_group_id(payload),
             )
         if event_name == "trade":
             return map_trade(
@@ -1196,6 +1238,7 @@ class LiveRunner:
                 request=self._lookup_order_request(payload),
                 owner_strategy_id=self._resolve_owner_strategy_id(payload),
                 local_id=self._lookup_stop_local_id(payload),
+                group_id=self._lookup_group_id(payload),
             )
         return payload
 

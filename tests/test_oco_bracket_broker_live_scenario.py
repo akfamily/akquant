@@ -4,6 +4,7 @@ from typing import cast
 
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_state_cache import BrokerStateCache
+from akquant.gateway.order_receipt import OrderReceipt
 from akquant.strategy import Strategy
 
 
@@ -36,9 +37,13 @@ class _Sub:
     def __init__(self) -> None:
         self.n = 0
 
-    def submit_order(self, **kw: object) -> str:
+    def submit_order(self, **kw: object) -> OrderReceipt:
         self.n += 1
-        return f"BID-{self.n}"
+        # group_id(client) 与 broker_order_id 故意不同: OCO 组里登记的应是
+        # broker_order_id(.primary), 避免 str(receipt)==broker_order_id 掩盖回归。
+        return OrderReceipt.single(
+            group_id=f"CID-{self.n}", broker_order_id=f"BID-{self.n}"
+        )
 
 
 class _Trade:
@@ -91,5 +96,8 @@ def test_bracket_activates_on_entry_fill_then_stop_leg_is_local() -> None:
     )  # 止损=本地
     # 止盈腿是柜台单(submitter 被调过)
     assert s.execution._submitter.n >= 1
-    # 止损(LSTOP)与止盈(BID)已绑 OCO
+    # 止损(LSTOP)与止盈(BID)已绑 OCO；止盈腿登记的须是 broker_order_id(.primary)
+    # ="BID-1", 而非 group_id/client_order_id="CID-1"。
     assert len(s._oco_groups) == 1
+    assert "BID-1" in s._oco_order_to_group
+    assert "CID-1" not in s._oco_order_to_group

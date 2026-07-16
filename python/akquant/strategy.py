@@ -27,6 +27,7 @@ from .akquant import (
     Tick,
     TimeInForce,
 )
+from .gateway.order_receipt import OrderReceipt
 from .indicator_recording import IndicatorRecorder
 from .sizer import FixedSize, Sizer
 from .strategy_events import (
@@ -92,6 +93,9 @@ from .strategy_trading_api import (
 )
 from .strategy_trading_api import (
     cancel_all_orders as _cancel_all_orders_impl,
+)
+from .strategy_trading_api import (
+    cancel_group as _cancel_group_impl,
 )
 from .strategy_trading_api import (
     cancel_order as _cancel_order_impl,
@@ -1768,14 +1772,18 @@ class Strategy:
             return self.ctx.closed_trades
         return []
 
-    def cancel_order(self, order_id: str) -> None:
+    def cancel_order(self, order_id: Union[str, Any]) -> None:
         """
         取消指定订单.
 
         Args:
-            order_id: 订单 ID
+            order_id: 订单 ID，接受 str | OrderReceipt（传 OrderReceipt 时取 .primary）
         """
         _cancel_order_impl(self, order_id)
+
+    def cancel_group(self, group_id: Any) -> None:
+        """按 group_id（或 OrderReceipt）撤销一个逻辑委托的全部腿."""
+        _cancel_group_impl(self, group_id)
 
     def cancel_all_orders(self, symbol: Optional[str] = None) -> None:
         """
@@ -1788,17 +1796,25 @@ class Strategy:
 
     def place_oco(
         self,
-        first_order_id: str,
-        second_order_id: str,
+        first_order_id: Union[str, OrderReceipt],
+        second_order_id: Union[str, OrderReceipt],
         group_id: Optional[str] = None,
     ) -> str:
         """
         创建 OCO 订单组.
 
         当组内任一订单成交时，自动撤销另一订单。
+
+        Args:
+            first_order_id: 订单 ID，接受 str | OrderReceipt
+                （传 OrderReceipt 时取 .primary）
+            second_order_id: 同上
         """
-        first = first_order_id.strip()
-        second = second_order_id.strip()
+        # first_order_id/second_order_id 现可能是 buy()/sell() 返回的 OrderReceipt
+        # （回测拆腿产生多个 id 时）；取其 .primary（首腿 broker_order_id）落地为
+        # 引擎/OCO 簿实际使用的单一订单号字符串。
+        first = str(getattr(first_order_id, "primary", first_order_id)).strip()
+        second = str(getattr(second_order_id, "primary", second_order_id)).strip()
         if not first or not second:
             raise ValueError("OCO order ids cannot be empty")
         if first == second:
@@ -1852,15 +1868,19 @@ class Strategy:
         if stop_trigger_price is None and take_profit_price is None:
             raise ValueError("stop_trigger_price or take_profit_price must be provided")
 
-        entry_order_id = self.buy(
+        entry_receipt = self.buy(
             symbol=symbol,
             quantity=quantity,
             price=entry_price,
             time_in_force=time_in_force,
             tag=entry_tag,
         )
-        if not entry_order_id:
+        if not entry_receipt:
             raise RuntimeError("failed to submit bracket entry order")
+        # self.buy() 现返回 OrderReceipt（回测拆腿产生多个 id 时）；取其
+        # .primary（首腿 broker_order_id）落地为下方引擎登记/挂起字典使用的
+        # 单一订单号字符串，与 trade.order_id（Rust 侧始终为 str）保持可比对。
+        entry_order_id: str = str(getattr(entry_receipt, "primary", entry_receipt))
 
         # self.buy(入场单) 在锁外提交; 仅 bracket 记账/引擎登记在锁内(与协调器互斥).
         with self._order_group_lock:
@@ -1935,22 +1955,26 @@ class Strategy:
         time_in_force = cast(Optional[TimeInForce], bracket["time_in_force"])
 
         if stop_trigger_price is not None:
-            stop_order_id = self.sell(
+            # self.sell() 现返回 OrderReceipt；取其 .primary 落地为下方 place_oco
+            # 使用的单一订单号字符串（与 place_bracket 的规整方式一致）。
+            stop_receipt = self.sell(
                 symbol=symbol,
                 quantity=quantity,
                 trigger_price=float(stop_trigger_price),
                 time_in_force=time_in_force,
                 tag=cast(Optional[str], bracket["stop_tag"]),
             )
+            stop_order_id = str(getattr(stop_receipt, "primary", stop_receipt))
 
         if take_profit_price is not None:
-            take_order_id = self.sell(
+            take_receipt = self.sell(
                 symbol=symbol,
                 quantity=quantity,
                 price=float(take_profit_price),
                 time_in_force=time_in_force,
                 tag=cast(Optional[str], bracket["take_profit_tag"]),
             )
+            take_order_id = str(getattr(take_receipt, "primary", take_receipt))
 
         if stop_order_id and take_order_id:
             self.place_oco(stop_order_id, take_order_id)
@@ -2000,7 +2024,7 @@ class Strategy:
         fill_policy: Optional[Dict[str, Any]] = None,
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> OrderReceipt:
         """
         买入下单.
 
@@ -2013,7 +2037,9 @@ class Strategy:
             tag: 订单标签
 
         Returns:
-            str: 订单 ID
+            OrderReceipt: 下单回执，含全部腿 id（可能拆腿）；
+                str() 取 group_id，.primary 取首个订单 id，
+                .order_ids 取全部腿 id。回测与实盘均返回该类型。
         """
         return _buy_impl(
             self,
@@ -2039,7 +2065,7 @@ class Strategy:
         fill_policy: Optional[Dict[str, Any]] = None,
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> OrderReceipt:
         """
         卖出下单.
 
@@ -2052,7 +2078,9 @@ class Strategy:
             tag: 订单标签
 
         Returns:
-            str: 订单 ID
+            OrderReceipt: 下单回执，含全部腿 id（可能拆腿）；
+                str() 取 group_id，.primary 取首个订单 id，
+                .order_ids 取全部腿 id。回测与实盘均返回该类型。
         """
         return _sell_impl(
             self,
@@ -2088,11 +2116,16 @@ class Strategy:
         position_effect: Optional[str] = None,
         reduce_only: bool = False,
         asset_type: str = "stock",
-    ) -> str:
+    ) -> OrderReceipt:
         """
         统一下单接口.
 
         该接口在回测与实盘模式均可调用，实盘模式下会由 LiveRunner 注入增强能力。
+
+        Returns:
+            OrderReceipt: 下单回执，含全部腿 id（可能拆腿）；
+                str() 取 group_id，.primary 取首个订单 id，
+                .order_ids 取全部腿 id。回测与实盘均返回该类型。
         """
         return _submit_order_impl(
             self,
@@ -2143,7 +2176,7 @@ class Strategy:
         trail_reference_price: Optional[float] = None,
         time_in_force: Optional[TimeInForce] = None,
         tag: Optional[str] = None,
-    ) -> str:
+    ) -> OrderReceipt:
         """创建跟踪止损单 (StopTrail)."""
         if quantity <= 0:
             raise ValueError("quantity must be > 0")
@@ -2170,7 +2203,7 @@ class Strategy:
         trail_reference_price: Optional[float] = None,
         time_in_force: Optional[TimeInForce] = None,
         tag: Optional[str] = None,
-    ) -> str:
+    ) -> OrderReceipt:
         """创建跟踪止损限价单 (StopTrailLimit)."""
         if quantity <= 0:
             raise ValueError("quantity must be > 0")

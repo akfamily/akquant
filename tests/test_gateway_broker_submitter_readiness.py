@@ -59,4 +59,4 @@ def test_submit_when_ready_ok() -> None:
         price=10.5,
         order_type="Limit",
     )
-    assert bid == "b1"
+    assert bid.primary == "b1"

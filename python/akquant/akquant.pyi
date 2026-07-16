@@ -112,7 +112,7 @@ class TimeInForce:
     GTC: typing.ClassVar["TimeInForce"]
     IOC: typing.ClassVar["TimeInForce"]
     FOK: typing.ClassVar["TimeInForce"]
-    GTD: typing.ClassVar["TimeInForce"]
+    Day: typing.ClassVar["TimeInForce"]
 
 class TradingSession:
     Normal: typing.ClassVar["TradingSession"]

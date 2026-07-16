@@ -7,7 +7,7 @@ import akquant.live as live_module
 import pytest
 from akquant.akquant import OrderSide, OrderStatus
 from akquant.gateway.broker_execution import BrokerExecution
-from akquant.gateway.models import BrokerCapability, UnifiedPosition
+from akquant.gateway.models import BrokerCapability, UnifiedPosition, UnifiedTrade
 from akquant.live import LiveRunner
 from akquant.strategy import Strategy
 
@@ -626,7 +626,7 @@ def test_live_runner_submitter_checks_idempotency_and_maps() -> None:
         client_order_id="coid-1",
     )
 
-    assert broker_order_id == "b-coid-1"
+    assert broker_order_id.primary == "b-coid-1"
     assert runner._resolve_broker_order_id("coid-1") == "b-coid-1"
     assert runner._resolve_client_order_id("b-coid-1") == "coid-1"
 
@@ -722,8 +722,8 @@ def test_live_runner_submit_order_supports_buy_and_sell_side() -> None:
         client_order_id="coid-sell-1",
     )
 
-    assert buy_broker_order_id == "b-Buy-coid-buy-1"
-    assert sell_broker_order_id == "b-Sell-coid-sell-1"
+    assert buy_broker_order_id.primary == "b-Buy-coid-buy-1"
+    assert sell_broker_order_id.primary == "b-Sell-coid-sell-1"
     assert runner._resolve_broker_order_id("coid-buy-1") == "b-Buy-coid-buy-1"
     assert runner._resolve_broker_order_id("coid-sell-1") == "b-Sell-coid-sell-1"
 
@@ -765,7 +765,7 @@ def test_live_runner_submit_order_forwards_position_effect() -> None:
         reduce_only=True,
     )
 
-    assert broker_order_id == "b-coid-effect-1"
+    assert broker_order_id.primary == "b-coid-effect-1"
     assert gateway.last_position_effect == "close"
     assert gateway.last_reduce_only is True
 
@@ -838,7 +838,7 @@ def test_live_runner_submit_order_auto_splits_close_today_and_yesterday() -> Non
         position_effect="close",
     )
 
-    assert broker_order_id == "b-coid-close-split"
+    assert broker_order_id.primary == "b-coid-close-split"
     assert len(gateway.requests) == 2
     assert gateway.requests[0].client_order_id == "coid-close-split"
     assert gateway.requests[0].position_effect == "close_today"
@@ -939,7 +939,7 @@ def test_live_runner_submit_order_falls_back_to_close_when_position_query_fails(
         position_effect="close",
     )
 
-    assert broker_order_id == "b-coid-close-fallback"
+    assert broker_order_id.primary == "b-coid-close-fallback"
     assert len(gateway.requests) == 1
     assert gateway.requests[0].client_order_id == "coid-close-fallback"
     assert gateway.requests[0].position_effect == "close"
@@ -1503,9 +1503,139 @@ def test_live_runner_submitter_binds_owner_strategy_id_mapping() -> None:
         client_order_id="coid-owner-1",
     )
 
-    assert broker_order_id == "b-coid-owner-1"
+    assert broker_order_id.primary == "b-coid-owner-1"
     assert runner._client_to_strategy_ids["coid-owner-1"] == "alpha"
     assert runner._broker_to_strategy_ids["b-coid-owner-1"] == "alpha"
+
+
+def test_live_runner_submitter_syncs_group_mapping() -> None:
+    """submit_order 应把每腿 client_order_id -> 根 client_order_id 映射同步进 runner."""
+
+    class _DummyTraderGateway:
+        def place_order(self, req: Any) -> str:
+            return f"b-{req.client_order_id}"
+
+    class _DummyStrategy:
+        def __init__(self) -> None:
+            self._owner_strategy_id = "alpha"
+            self.errors: list[tuple[str, Any]] = []
+
+        def on_error(self, error: Exception, source: str, payload: Any = None) -> None:
+            self.errors.append((source, payload))
+
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    gateway = _DummyTraderGateway()
+    strategy = _DummyStrategy()
+    runner._install_broker_order_submitter(cast(Any, gateway), cast(Any, strategy))
+    strategy_any = cast(Any, strategy)
+    strategy_any.execution.submit_order(
+        symbol="000001.SZ",
+        side="Buy",
+        quantity=10.0,
+        client_order_id="coid-group-1",
+    )
+
+    assert runner._client_to_group_ids["coid-group-1"] == "coid-group-1"
+
+
+def test_live_runner_lookup_group_id_falls_back_to_broker_order_id() -> None:
+    """Payload 无 client_order_id 时, 经 broker_order_id 反查再取 group_id."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    runner._sync_group_mapping("c1-open-2", "c1")
+    runner._broker_to_client_order_ids["b2"] = "c1-open-2"
+
+    assert runner._lookup_group_id({"broker_order_id": "b2"}) == "c1"
+    assert runner._lookup_group_id({"client_order_id": "c1-open-2"}) == "c1"
+    # 未登记映射时退化为 client_order_id 本身（单腿场景 group_id==root cid）。
+    assert runner._lookup_group_id({"client_order_id": "unmapped"}) == "unmapped"
+
+
+def test_live_runner_emits_order_and_trade_with_group_id() -> None:
+    """order/trade 广播回填 group_id, 供策略按逻辑单据聚合分腿成交."""
+
+    class _DummyStrategy:
+        def __init__(self) -> None:
+            self.orders: list[Any] = []
+            self.trades: list[Any] = []
+
+        def on_order(self, order: Any) -> None:
+            self.orders.append(order)
+
+        def on_trade(self, trade: Any) -> None:
+            self.trades.append(trade)
+
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    runner._sync_group_mapping("coid-leg-2", "coid-root-1")
+    strategy = _DummyStrategy()
+
+    order_payload = {
+        "client_order_id": "coid-leg-2",
+        "broker_order_id": "b-leg-2",
+        "symbol": "000001.SZ",
+        "status": "Submitted",
+    }
+    runner._queue_broker_event("order", order_payload)
+    runner._drain_broker_events(cast(Any, strategy))
+
+    trade_payload = {
+        "trade_id": "t1",
+        "client_order_id": "coid-leg-2",
+        "broker_order_id": "b-leg-2",
+        "symbol": "000001.SZ",
+        "side": "Buy",
+        "quantity": 1.0,
+        "price": 10.0,
+        "timestamp_ns": 1,
+    }
+    runner._queue_broker_event("trade", trade_payload)
+    runner._drain_broker_events(cast(Any, strategy))
+
+    assert strategy.orders
+    assert strategy.orders[0].group_id == "coid-root-1"
+    assert strategy.trades
+    assert strategy.trades[0].group_id == "coid-root-1"
+
+
+def test_group_id_survives_terminal_cleanup_for_open_leg() -> None:
+    """乱序到达场景 (N1 回归): 终态 ORDER 先清理映射, 末笔 TRADE 仍需正确关联 group_id.
+
+    反手 open 腿的终态 ORDER/execution-report 事件先到达并触发
+    _close_order_mapping 清理, 随后到达的 TRADE 事件仍应能通过
+    _client_to_group_ids 解析出根 group_id, 而不是退化为该腿自己的
+    client_order_id (_lookup_group_id 的 get(cid, cid) 兜底)。
+    """
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+
+    # 2 腿组: 根腿 "root" 与反手 open 腿 "root-open-2", 均归组到 "root"。
+    runner._sync_group_mapping("root", "root")
+    runner._sync_group_mapping("root-open-2", "root")
+    runner._sync_order_id_mapping("root-open-2", "B-open")
+
+    # 模拟该 open 腿的终态 ORDER/execution-report 事件先被清理掉映射。
+    runner._close_order_mapping("root-open-2", "B-open")
+
+    # 随后到达同一条腿的末笔成交事件。
+    trade = UnifiedTrade(
+        trade_id="t-open-2",
+        broker_order_id="B-open",
+        client_order_id="root-open-2",
+        symbol="000001.SZ",
+        side="Buy",
+        quantity=1.0,
+        price=10.0,
+        timestamp_ns=1,
+    )
+    adapted = runner._adapt_strategy_payload("trade", trade)
+
+    assert adapted.group_id == "root"
 
 
 def test_live_runner_emits_observable_broker_events_with_owner_strategy_id() -> None:

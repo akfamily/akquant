@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .. import strategy_trading_api as api
+from ..gateway.order_receipt import OrderReceipt
 
 
 class SimExecution:
@@ -50,8 +51,8 @@ class SimExecution:
         """获取现金."""
         return api._sim_get_cash(self._s)
 
-    def submit_order(self, **kwargs: Any) -> str:
-        """提交订单，返回订单号."""
+    def submit_order(self, **kwargs: Any) -> OrderReceipt:
+        """提交订单，返回 OrderReceipt（携带回测拆腿产生的全部订单 id）."""
         return api._sim_submit_order(self._s, **kwargs)
 
     def cancel_order(self, order_id: str) -> None:

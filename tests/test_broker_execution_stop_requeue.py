@@ -4,6 +4,7 @@ from typing import Any, cast
 
 from akquant.gateway.broker_execution import MAX_STOP_SUBMIT_ATTEMPTS, BrokerExecution
 from akquant.gateway.broker_state_cache import BrokerStateCache
+from akquant.gateway.order_receipt import OrderReceipt
 
 
 class _Cache:
@@ -32,9 +33,11 @@ class _OkSub:
     def __init__(self) -> None:
         self.n = 0
 
-    def submit_order(self, **kw: Any) -> str:
+    def submit_order(self, **kw: Any) -> OrderReceipt:
         self.n += 1
-        return "BID-9"
+        # group_id(client) 与 broker_order_id 故意不同: remaps 断言锁定
+        # broker_order_id(.primary), 避免 str(receipt)==broker_order_id 掩盖回归。
+        return OrderReceipt.single(group_id="CID-9", broker_order_id="BID-9")
 
 
 class _FailSub:
@@ -75,7 +78,7 @@ def test_success_records_remap() -> None:
         trigger_price=9.5,
     )
     ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
-    assert remaps == [(oid, "BID-9")]
+    assert remaps == [(oid.primary, "BID-9")]
 
 
 def test_failure_requeues_and_notifies_then_gives_up() -> None:

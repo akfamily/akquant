@@ -4,6 +4,7 @@ from typing import Any, cast
 
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_state_cache import BrokerStateCache
+from akquant.gateway.order_receipt import OrderReceipt
 
 
 class _Cache:
@@ -35,9 +36,11 @@ class _Submitter:
     def __init__(self) -> None:
         self.orders: list[dict[str, Any]] = []
 
-    def submit_order(self, **kw: Any) -> str:
+    def submit_order(self, **kw: Any) -> OrderReceipt:
         self.orders.append(kw)
-        return "BID-1"
+        # group_id(client) 与 broker_order_id 故意不同, 断言需锁定 broker_order_id
+        # (即 .primary), 避免 str(receipt)==broker_order_id 掩盖回归。
+        return OrderReceipt.single(group_id="CID-1", broker_order_id="BID-1")
 
     def _get_execution_capabilities(self) -> dict[str, bool]:
         return {"broker_live": True}
@@ -67,7 +70,8 @@ def test_conditional_order_registered_not_submitted() -> None:
         order_type="StopMarket",
         trigger_price=9.5,
     )
-    assert oid.startswith("LSTOP-")
+    assert isinstance(oid, OrderReceipt)
+    assert oid.primary.startswith("LSTOP-")
     assert ex._submitter.orders == []  # not sent to broker yet
     assert len(ex.get_open_orders("X")) == 1
 
@@ -78,7 +82,8 @@ def test_plain_order_passes_through() -> None:
     oid = ex.submit_order(
         symbol="X", side="Buy", quantity=100, price=10.0, order_type="Limit"
     )
-    assert oid == "BID-1"
+    assert isinstance(oid, OrderReceipt)
+    assert oid.primary == "BID-1"
     assert len(ex._submitter.orders) == 1
 
 
@@ -92,7 +97,7 @@ def test_cancel_local_stop() -> None:
         order_type="StopMarket",
         trigger_price=9.5,
     )
-    ex.cancel_order(oid)
+    ex.cancel_order(oid.primary)
     assert ex.get_open_orders() == []
     assert ex._gw.canceled == []  # local cancel, no broker call
 

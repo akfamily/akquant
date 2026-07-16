@@ -36,6 +36,7 @@ from akquant.backtest.engine import (
     _prime_framework_pre_open_timers,
 )
 from akquant.config import RiskConfig
+from akquant.gateway.order_receipt import OrderReceipt
 from akquant.strategy import Strategy, StrategyRuntimeConfig
 from akquant.strategy_framework_hooks import (
     collect_boundary_timer_entries,
@@ -4870,7 +4871,7 @@ def test_strategy_buy_sell_delegate_to_submit_order() -> None:
             position_effect: str | None = None,
             reduce_only: bool = False,
             asset_type: str = "stock",
-        ) -> str:
+        ) -> Any:
             _ = price
             _ = time_in_force
             _ = trigger_price
@@ -4931,7 +4932,7 @@ def test_strategy_short_cover_delegate_position_effect() -> None:
             position_effect: str | None = None,
             reduce_only: bool = False,
             asset_type: str = "stock",
-        ) -> str:
+        ) -> Any:
             _ = (
                 price,
                 time_in_force,
@@ -4976,7 +4977,10 @@ def test_strategy_buy_auto_splits_cover_then_open() -> None:
 
     order_id = strategy.buy(symbol="AAPL", quantity=5.0)
 
-    assert order_id == "oid-close"
+    # 回测出口现返回 OrderReceipt：反手拆腿产生的 close/open 两条 id 均需保留。
+    assert isinstance(order_id, OrderReceipt)
+    assert order_id.order_ids == ("oid-close", "oid-open")
+    assert order_id.group_id == "oid-close"
     assert ctx.buy.call_count == 2
     first_call = ctx.buy.call_args_list[0]
     second_call = ctx.buy.call_args_list[1]
@@ -5000,7 +5004,9 @@ def test_strategy_submit_order_accepts_close_today_position_effect() -> None:
         position_effect="close_today",
     )
 
-    assert order_id == "oid-close-today"
+    # 回测出口现返回 OrderReceipt（封装全部拆腿 id），非纯字符串。
+    assert isinstance(order_id, OrderReceipt)
+    assert order_id.primary == "oid-close-today"
     first_call = ctx.buy.call_args_list[0]
     assert first_call.kwargs["position_effect"] == PositionEffect.CloseToday
 
@@ -5034,7 +5040,7 @@ def test_strategy_rebalance_positions_supports_signed_targets() -> None:
             position_effect: str | None = None,
             reduce_only: bool = False,
             asset_type: str = "stock",
-        ) -> str:
+        ) -> Any:
             _ = (
                 price,
                 time_in_force,
@@ -5142,7 +5148,7 @@ def test_strategy_rebalance_positions_can_bypass_strict_short_capability() -> No
             position_effect: str | None = None,
             reduce_only: bool = False,
             asset_type: str = "stock",
-        ) -> str:
+        ) -> Any:
             _ = (
                 price,
                 time_in_force,
@@ -5243,7 +5249,7 @@ def test_strategy_rebalance_positions_missing_price_mode_skip() -> None:
             position_effect: str | None = None,
             reduce_only: bool = False,
             asset_type: str = "stock",
-        ) -> str:
+        ) -> Any:
             _ = (
                 time_in_force,
                 trigger_price,
@@ -5312,7 +5318,7 @@ def test_strategy_rebalance_positions_missing_price_mode_ignore() -> None:
             position_effect: str | None = None,
             reduce_only: bool = False,
             asset_type: str = "stock",
-        ) -> str:
+        ) -> Any:
             _ = (
                 time_in_force,
                 trigger_price,
@@ -5382,7 +5388,7 @@ def test_strategy_rebalance_positions_records_explainable_plan() -> None:
             position_effect: str | None = None,
             reduce_only: bool = False,
             asset_type: str = "stock",
-        ) -> str:
+        ) -> Any:
             _ = (
                 symbol,
                 side,
@@ -5455,7 +5461,7 @@ def test_strategy_rebalance_positions_plan_tracks_skipped_legs() -> None:
             position_effect: str | None = None,
             reduce_only: bool = False,
             asset_type: str = "stock",
-        ) -> str:
+        ) -> Any:
             _ = (
                 symbol,
                 side,
@@ -5571,8 +5577,10 @@ def test_strategy_submit_order_records_broker_options_in_backtest_mode() -> None
         broker_options={"xt_price_type": "LATEST_PRICE", "order_remark": "demo"},
     )
 
-    assert order_id == "oid-broker-options"
-    queried = strategy.get_order(order_id)
+    # 回测出口现返回 OrderReceipt（封装全部拆腿 id），非纯字符串。
+    assert isinstance(order_id, OrderReceipt)
+    assert order_id.primary == "oid-broker-options"
+    queried = strategy.get_order(order_id.primary)
     assert queried is order
     assert getattr(queried, "broker_options") == {
         "xt_price_type": "LATEST_PRICE",
@@ -6065,7 +6073,7 @@ def test_strategy_trailing_helpers_delegate_to_submit_order() -> None:
             position_effect: str | None = None,
             reduce_only: bool = False,
             asset_type: str = "stock",
-        ) -> str:
+        ) -> Any:
             _ = time_in_force
             _ = trigger_price
             _ = client_order_id
@@ -6294,7 +6302,7 @@ def test_bracket_prefers_engine_registration_when_available() -> None:
             fill_policy: dict[str, Any] | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
-        ) -> str:
+        ) -> Any:
             self.buy_calls.append(
                 {
                     "symbol": symbol,
@@ -6366,7 +6374,7 @@ def test_bracket_falls_back_to_deferred_engine_queue_on_runtime_error() -> None:
             fill_policy: dict[str, Any] | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
-        ) -> str:
+        ) -> Any:
             _ = (
                 symbol,
                 quantity,
@@ -6422,7 +6430,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             fill_policy: dict[str, Any] | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
-        ) -> str:
+        ) -> Any:
             self.buy_calls.append(
                 {
                     "symbol": symbol,
@@ -6449,7 +6457,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             fill_policy: dict[str, Any] | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
-        ) -> str:
+        ) -> Any:
             self._sell_counter += 1
             order_id = f"exit-{self._sell_counter}"
             self.sell_calls.append(

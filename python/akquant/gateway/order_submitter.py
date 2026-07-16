@@ -8,6 +8,7 @@ from .broker_models import (
     validate_broker_extra,
     validate_execution_semantics,
 )
+from .order_receipt import OrderLeg, OrderReceipt
 
 logger = get_logger("gateway.live")
 
@@ -38,49 +39,38 @@ def find_live_close_position(
     return None
 
 
-def resolve_live_order_legs(
+def _split_close_legs(
     trader_gateway: Any,
     capability: BrokerCapability,
     symbol: str,
     side: str,
     quantity: float,
-    position_effect: str,
-    reduce_only: bool,
+    supported_effects: set[str],
     payload_field: Callable[[Any, str], Any],
 ) -> list[tuple[str, float]]:
-    """Resolve close orders into close_today/close_yesterday legs when supported."""
-    normalized_effect = str(position_effect).strip().lower()
-    if quantity <= 0 or reduce_only or normalized_effect != "close":
-        return [(normalized_effect, quantity)]
-    supported_effects = {
-        str(item).strip().lower() for item in capability.supported_position_effects
-    }
+    """把一段平仓量拆成 close_today/close_yesterday；能力不足则整段 close."""
     if not capability.position_details:
-        return [(normalized_effect, quantity)]
+        return [("close", quantity)]
     if (
         "close_today" not in supported_effects
         or "close_yesterday" not in supported_effects
     ):
-        return [(normalized_effect, quantity)]
-
+        return [("close", quantity)]
     query_positions = getattr(trader_gateway, "query_positions", None)
     if not callable(query_positions):
-        return [(normalized_effect, quantity)]
+        return [("close", quantity)]
     try:
         positions = query_positions()
     except Exception:
-        return [(normalized_effect, quantity)]
-
+        return [("close", quantity)]
     target_position = find_live_close_position(positions, symbol, side, payload_field)
     if target_position is None:
-        return [(normalized_effect, quantity)]
-
+        return [("close", quantity)]
     available_today = max(
         0.0, float(getattr(target_position, "available_today_quantity", 0.0) or 0.0)
     )
     available_yesterday = max(
-        0.0,
-        float(getattr(target_position, "available_yesterday_quantity", 0.0) or 0.0),
+        0.0, float(getattr(target_position, "available_yesterday_quantity", 0.0) or 0.0)
     )
     split_quantity = min(quantity, available_today + available_yesterday)
     legs: list[tuple[str, float]] = []
@@ -97,6 +87,95 @@ def resolve_live_order_legs(
             ("close", unresolved_quantity if unresolved_quantity > 0 else quantity)
         )
     return legs
+
+
+def resolve_live_order_legs(
+    trader_gateway: Any,
+    capability: BrokerCapability,
+    symbol: str,
+    side: str,
+    quantity: float,
+    position_effect: str,
+    reduce_only: bool,
+    payload_field: Callable[[Any, str], Any],
+) -> list[tuple[str, float]]:
+    """Resolve close orders into close_today/close_yesterday legs when supported.
+
+    Also resolves `auto` reversal orders (sell/buy quantity exceeding the opposite
+    position) into close leg(s) plus a trailing `open` leg, unless the broker
+    declares it handles reversal itself via `"auto_reverse" in capability.features`.
+    """
+    normalized_effect = str(position_effect).strip().lower()
+    if quantity <= 0 or reduce_only:
+        return [(normalized_effect, quantity)]
+
+    supported_effects = {
+        str(item).strip().lower() for item in capability.supported_position_effects
+    }
+
+    # 反手：auto 单卖出量超过反向持仓可用量时，核心拆成 平仓 + 开仓。
+    # broker 若声明自身会反手(auto_reverse)，则不拆。
+    if normalized_effect == "auto":
+        if "auto_reverse" in capability.features:
+            return [(normalized_effect, quantity)]
+        if "open" not in supported_effects or "close" not in supported_effects:
+            return [(normalized_effect, quantity)]
+        query_positions = getattr(trader_gateway, "query_positions", None)
+        if not callable(query_positions):
+            return [(normalized_effect, quantity)]
+        try:
+            positions = query_positions()
+        except Exception:
+            return [(normalized_effect, quantity)]
+        target = find_live_close_position(positions, symbol, side, payload_field)
+        if target is None:
+            return [(normalized_effect, quantity)]
+        raw_today = payload_field(target, "available_today_quantity")
+        raw_yesterday = payload_field(target, "available_yesterday_quantity")
+        raw_available = payload_field(target, "available_quantity")
+        has_availability = any(
+            value is not None for value in (raw_today, raw_yesterday, raw_available)
+        )
+        available_split = max(0.0, float(raw_today or 0.0)) + max(
+            0.0, float(raw_yesterday or 0.0)
+        )
+        available_quantity = max(0.0, float(raw_available or 0.0))
+        raw_quantity = abs(float(payload_field(target, "quantity") or 0.0))
+        # 可平口径与 _split_close_legs 一致: broker 报可用量时优先用今昨可用量,
+        # 其次 available_quantity(即便为 0 也不回退——全冻结应交由下方 closable<=0
+        # 门槛退回单腿 auto); 仅当 broker 完全不提供可用量字段时才退回原始持仓。
+        if has_availability:
+            closable = available_split if available_split > 0 else available_quantity
+        else:
+            closable = raw_quantity
+        if closable <= 0 or quantity <= closable:
+            return [(normalized_effect, quantity)]
+        close_qty = closable
+        open_qty = quantity - closable
+        legs = _split_close_legs(
+            trader_gateway,
+            capability,
+            symbol,
+            side,
+            close_qty,
+            supported_effects,
+            payload_field,
+        )
+        legs.append(("open", open_qty))
+        return legs
+
+    if normalized_effect != "close":
+        return [(normalized_effect, quantity)]
+
+    return _split_close_legs(
+        trader_gateway,
+        capability,
+        symbol,
+        side,
+        quantity,
+        supported_effects,
+        payload_field,
+    )
 
 
 def build_live_order_client_ids(
@@ -169,6 +248,7 @@ class BrokerOrderSubmitter:
         payload_field: Callable[[Any, str], Any],
         get_execution_capabilities: Callable[[], dict[str, Any]],
         record_order_request: Callable[[str, Any], None],
+        sync_group_mapping: Callable[[str, str], None] = lambda _c, _g: None,
     ) -> None:
         """Bind strategy injection hooks, id mapping and capability callbacks."""
         self._trader_gateway = trader_gateway
@@ -182,6 +262,7 @@ class BrokerOrderSubmitter:
         self._payload_field = payload_field
         self._get_execution_capabilities = get_execution_capabilities
         self._record_order_request = record_order_request
+        self._sync_group_mapping = sync_group_mapping
         self._warned_ignored_params: set[str] = set()
 
     def install(self) -> None:
@@ -213,8 +294,17 @@ class BrokerOrderSubmitter:
         trail_offset: float | None = None,
         trail_reference_price: float | None = None,
         broker_options: dict[str, Any] | None = None,
-    ) -> str:
-        """Submit a live broker order using the unified strategy-facing signature."""
+    ) -> OrderReceipt:
+        """Submit a live broker order using the unified strategy-facing signature.
+
+        Returns an `OrderReceipt`, not a single id string: a logical order can be
+        split into multiple legs (e.g. close_today/close_yesterday, or a reversal's
+        close+open legs), each with its own client/broker order id. `receipt.primary`
+        is the *first leg's* `broker_order_id` (the value production call sites use
+        as "the" order id); `str(receipt)` is the `group_id` (client order id) and is
+        a *different* id space in production brokers — do not use them
+        interchangeably.
+        """
         if not getattr(self._strategy, "broker_ready", True):
             raise RuntimeError(
                 "broker 尚未就绪，请在 broker_ready=True"
@@ -279,6 +369,7 @@ class BrokerOrderSubmitter:
             notify_strategy_error=self._notify_strategy_error,
         )
         broker_order_ids: list[str] = []
+        legs: list[OrderLeg] = []
         for leg_index, (leg_position_effect, leg_quantity) in enumerate(order_legs):
             request = UnifiedOrderRequest(
                 client_order_id=client_order_ids[leg_index],
@@ -300,4 +391,17 @@ class BrokerOrderSubmitter:
             self._bind_order_owner(
                 request.client_order_id, broker_order_id, owner_strategy_id
             )
-        return broker_order_ids[0]
+            self._sync_group_mapping(request.client_order_id, request_client_order_id)
+            legs.append(
+                OrderLeg(
+                    position_effect=leg_position_effect,
+                    quantity=leg_quantity,
+                    client_order_id=request.client_order_id,
+                    broker_order_id=broker_order_id,
+                )
+            )
+        return OrderReceipt(
+            group_id=request_client_order_id,
+            order_ids=tuple(broker_order_ids),
+            legs=tuple(legs),
+        )

@@ -17,6 +17,7 @@ def _runner() -> LiveRunner:
     r._broker_to_client_order_ids = {}
     r._client_to_strategy_ids = {}
     r._broker_to_strategy_ids = {}
+    r._client_to_group_ids = {}
     r._broker_order_states = {}
     r._closed_broker_order_ids = set()
     return r

@@ -1,6 +1,11 @@
+from typing import Any
+
 import pytest
 from akquant.gateway.broker_models import BrokerCapability, UnifiedOrderRequest
-from akquant.gateway.order_submitter import BrokerOrderSubmitter
+from akquant.gateway.order_submitter import (
+    BrokerOrderSubmitter,
+    resolve_live_order_legs,
+)
 
 
 class _Strategy:
@@ -67,3 +72,145 @@ def test_submit_with_undeclared_extra_raises() -> None:
             order_type="Limit",
             extra={"nope": "1"},
         )
+
+
+class _Pos:
+    def __init__(
+        self,
+        symbol: str,
+        direction: str,
+        quantity: float,
+        available_today_quantity: float | None = None,
+        available_yesterday_quantity: float | None = None,
+    ) -> None:
+        self.symbol = symbol
+        self.direction = direction
+        self.quantity = quantity
+        self.available_today_quantity = available_today_quantity
+        self.available_yesterday_quantity = available_yesterday_quantity
+
+
+class _GW:
+    def __init__(self, positions: list[_Pos]) -> None:
+        self._positions = positions
+
+    def query_positions(self) -> list[_Pos]:
+        return self._positions
+
+
+def _field(pos: Any, name: str) -> Any:
+    return getattr(pos, name, None)
+
+
+def _cap(**kw: Any) -> BrokerCapability:
+    base: dict[str, Any] = dict(
+        broker_name="t",
+        position_effect=True,
+        position_details=True,
+        supported_position_effects=(
+            "auto",
+            "open",
+            "close",
+            "close_today",
+            "close_yesterday",
+        ),
+    )
+    base.update(kw)
+    return BrokerCapability(**base)
+
+
+def test_auto_reverse_splits_close_plus_open() -> None:
+    """持多 5，卖 6 → 平 5 + 开 1."""
+    gw = _GW([_Pos("rb2410.SHFE", "long", 5.0)])
+    legs = resolve_live_order_legs(
+        trader_gateway=gw,
+        capability=_cap(),
+        symbol="rb2410.SHFE",
+        side="sell",
+        quantity=6.0,
+        position_effect="auto",
+        reduce_only=False,
+        payload_field=_field,
+    )
+    assert legs[-1] == ("open", 1.0)
+    assert sum(q for _, q in legs) == 6.0
+    assert sum(q for e, q in legs if e != "open") == 5.0
+
+
+def test_auto_reverse_uses_available_when_frozen() -> None:
+    """部分冻结: raw 5, 可用 today0+yest3(冻2); 卖6 → 平3(可用)+开3, 无不可平腿."""
+    pos = _Pos(
+        "rb2410.SHFE",
+        "long",
+        5.0,
+        available_today_quantity=0.0,
+        available_yesterday_quantity=3.0,
+    )
+    gw = _GW([pos])
+    legs = resolve_live_order_legs(
+        trader_gateway=gw,
+        capability=_cap(),
+        symbol="rb2410.SHFE",
+        side="sell",
+        quantity=6.0,
+        position_effect="auto",
+        reduce_only=False,
+        payload_field=_field,
+    )
+    assert legs[-1] == ("open", 3.0)
+    assert sum(q for _, q in legs) == 6.0
+    close_sum = sum(q for e, q in legs if e != "open")
+    assert close_sum == 3.0
+    assert all(e in ("close_today", "close_yesterday", "open") for e, _ in legs)
+
+
+def test_auto_reverse_gated_off_when_broker_declares_feature() -> None:
+    """当 broker 声明 auto_reverse 时，核心不拆腿."""
+    gw = _GW([_Pos("rb2410.SHFE", "long", 5.0)])
+    legs = resolve_live_order_legs(
+        trader_gateway=gw,
+        capability=_cap(features=frozenset({"auto_reverse"})),
+        symbol="rb2410.SHFE",
+        side="sell",
+        quantity=6.0,
+        position_effect="auto",
+        reduce_only=False,
+        payload_field=_field,
+    )
+    assert legs == [("auto", 6.0)]
+
+
+def test_auto_no_split_when_within_position() -> None:
+    """持多 5，卖 3 → 不反手（不产生 open 腿）."""
+    gw = _GW([_Pos("rb2410.SHFE", "long", 5.0)])
+    legs = resolve_live_order_legs(
+        trader_gateway=gw,
+        capability=_cap(),
+        symbol="rb2410.SHFE",
+        side="sell",
+        quantity=3.0,
+        position_effect="auto",
+        reduce_only=False,
+        payload_field=_field,
+    )
+    assert all(e != "open" for e, _ in legs)
+    assert sum(q for _, q in legs) == 3.0
+
+
+def test_auto_reverse_no_split_when_fully_frozen() -> None:
+    """全冻结: broker 报可用 today0+yest0 → 不拆, 退回单腿 auto 交给柜台."""
+    pos = _Pos("rb2410.SHFE", "long", 5.0)
+    pos.available_today_quantity = 0.0
+    pos.available_yesterday_quantity = 0.0
+    gw = _GW([pos])
+    legs = resolve_live_order_legs(
+        trader_gateway=gw,
+        capability=_cap(),
+        symbol="rb2410.SHFE",
+        side="sell",
+        quantity=6.0,
+        position_effect="auto",
+        reduce_only=False,
+        payload_field=_field,
+    )
+    assert legs == [("auto", 6.0)]

@@ -774,7 +774,43 @@ AKQuant 当前的订单语义已经不再是单纯的 `side`，而是 `side + po
 
 *   **撤单 (Cancel Order)**:
     *   `self.cancel_order(order_id)`: 撤销指定订单。
+    *   `self.cancel_group(group_id)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。
     *   `self.cancel_all_orders()`: 撤销当前所有未成交订单。
+
+### 7.2.2 OrderReceipt：下单回执与 group_id
+
+`buy()` / `sell()` / `submit_order()` 统一返回 `OrderReceipt`（回测与
+`broker_live` 实盘两种模式返回类型一致，不再是裸 `str` 订单号）：
+
+*   `receipt.primary`：首腿的订单 id（`broker_order_id`），多数场景下当作
+    "这笔下单的订单号" 使用，等价于旧版直接拿到的 `str`。
+*   `receipt.order_ids`：全部腿的订单 id 元组。一次 `side + position_effect="auto"`
+    调用在持有反向仓位时会被自动拆成 `close` + `open` 两腿（或期货 `close_today`
+    / `close_yesterday` 两腿），此时 `order_ids` 长度 > 1，`primary` 只是其中一腿。
+*   `str(receipt)`：逻辑委托的 `group_id`（客户端订单号），用于把拆出的多腿关联为
+    "同一次下单"；与 `receipt.primary` 是两个不同的 id 空间，不要混用。
+*   关联成交回报时优先用 `trade.group_id` 而不是逐个 `order_id` 比对，这样无论
+    该笔委托是否被拆腿都能正确聚合。
+
+跨 `close + open` 的反手示例（先平后开，两腿在同一次 `buy()`/`sell()` 调用里发出）：
+
+```python
+def on_bar(self, bar):
+    # 当前持有空头仓位，买入 300 手：自动拆成「平空 200 手」+「开多 100 手」两腿
+    receipt = self.buy(bar.symbol, quantity=300)  # position_effect 默认 "auto"
+
+    print(receipt.primary)      # 首腿(平仓腿)的订单 id，兼容旧版单一 str 用法
+    print(receipt.order_ids)    # (平仓腿 id, 开仓腿 id) —— 全部腿
+    print(str(receipt))         # group_id：这次逻辑委托的客户端订单号
+
+    # 想整单撤销（两腿都撤）：
+    self.cancel_group(receipt)  # 等价于 self.cancel_group(str(receipt))
+
+def on_trade(self, trade):
+    # 用 group_id 聚合同一次逻辑委托拆出的多腿成交，而不是比较单个 order_id
+    if trade.group_id == self._entry_group_id:
+        ...
+```
 
 ### 7.3 OCO 与 Bracket 助手
 

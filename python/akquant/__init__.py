@@ -52,6 +52,7 @@ from .feed_adapter import (
     ReplayFeedAdapter,
     ResampledFeedAdapter,
 )
+from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .indicator import Indicator, IndicatorSet
 from .indicator_stream import (
     is_indicator_stream_event,
@@ -181,6 +182,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "validate_strategy_params",
         "extract_runtime_kwargs",
         "build_param_grid_from_search_space",
+        "OrderLeg",
+        "OrderReceipt",
         "talib",
     ]
 else:
@@ -259,6 +262,8 @@ else:
         "validate_strategy_params",
         "extract_runtime_kwargs",
         "build_param_grid_from_search_space",
+        "OrderLeg",
+        "OrderReceipt",
         "talib",
     ]
 

@@ -39,7 +39,7 @@ def test_live_runner_submitter_checks_idempotency_and_maps() -> None:
         client_order_id="coid-1",
     )
 
-    assert broker_order_id == "b-coid-1"
+    assert broker_order_id.primary == "b-coid-1"
     assert runner._resolve_broker_order_id("coid-1") == "b-coid-1"
     assert runner._resolve_client_order_id("b-coid-1") == "coid-1"
 
@@ -135,8 +135,8 @@ def test_live_runner_submit_order_supports_buy_and_sell_side() -> None:
         client_order_id="coid-sell-1",
     )
 
-    assert buy_broker_order_id == "b-Buy-coid-buy-1"
-    assert sell_broker_order_id == "b-Sell-coid-sell-1"
+    assert buy_broker_order_id.primary == "b-Buy-coid-buy-1"
+    assert sell_broker_order_id.primary == "b-Sell-coid-sell-1"
     assert runner._resolve_broker_order_id("coid-buy-1") == "b-Buy-coid-buy-1"
     assert runner._resolve_broker_order_id("coid-sell-1") == "b-Sell-coid-sell-1"
 
@@ -178,7 +178,7 @@ def test_live_runner_submit_order_forwards_position_effect() -> None:
         reduce_only=True,
     )
 
-    assert broker_order_id == "b-coid-effect-1"
+    assert broker_order_id.primary == "b-coid-effect-1"
     assert gateway.last_position_effect == "close"
     assert gateway.last_reduce_only is True
 
@@ -251,7 +251,7 @@ def test_live_runner_submit_order_auto_splits_close_today_and_yesterday() -> Non
         position_effect="close",
     )
 
-    assert broker_order_id == "b-coid-close-split"
+    assert broker_order_id.primary == "b-coid-close-split"
     assert len(gateway.requests) == 2
     assert gateway.requests[0].client_order_id == "coid-close-split"
     assert gateway.requests[0].position_effect == "close_today"
@@ -352,7 +352,7 @@ def test_live_runner_submit_order_falls_back_to_close_when_position_query_fails(
         position_effect="close",
     )
 
-    assert broker_order_id == "b-coid-close-fallback"
+    assert broker_order_id.primary == "b-coid-close-fallback"
     assert len(gateway.requests) == 1
     assert gateway.requests[0].client_order_id == "coid-close-fallback"
     assert gateway.requests[0].position_effect == "close"
@@ -523,6 +523,6 @@ def test_live_runner_submitter_binds_owner_strategy_id_mapping() -> None:
         client_order_id="coid-owner-1",
     )
 
-    assert broker_order_id == "b-coid-owner-1"
+    assert broker_order_id.primary == "b-coid-owner-1"
     assert runner._client_to_strategy_ids["coid-owner-1"] == "alpha"
     assert runner._broker_to_strategy_ids["b-coid-owner-1"] == "alpha"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from ..log import get_logger
 from .broker_event_adapter import map_local_stop, map_order_snapshot
@@ -14,6 +14,7 @@ from .local_stop_book import (
     is_stop_order_type,
     underlying_order_type,
 )
+from .order_receipt import OrderReceipt
 
 logger = get_logger("gateway.live")
 
@@ -30,13 +31,15 @@ class BrokerExecution:
         state_cache: BrokerStateCache,
         submitter: Any,
         record_stop_remap: Any = None,
+        group_broker_ids: Any = None,
     ) -> None:
-        """绑定策略实例、柜台网关、状态缓存、下单器与止损 remap 回调."""
+        """绑定策略实例、柜台网关、状态缓存、下单器、止损 remap 与 group 反查回调."""
         self._s = strategy
         self._gw = trader_gateway
         self._cache = state_cache
         self._submitter = submitter
         self._record_stop_remap = record_stop_remap
+        self._group_broker_ids = group_broker_ids
         self._stop_book = LocalStopBook()
         self._stop_seq = 0
         self._warned_hold_bar = False
@@ -126,11 +129,12 @@ class BrokerExecution:
         """获取现金."""
         return float(getattr(self._cache.account(), "cash", 0.0) or 0.0)
 
-    def submit_order(self, **kwargs: Any) -> str:
-        """提交订单，返回订单号.
+    def submit_order(self, **kwargs: Any) -> OrderReceipt:
+        """提交订单，返回下单回执（OrderReceipt，含全部腿 id）.
 
         条件/止损单（trigger_price/trail_offset 或止损类 order_type）拦截入
-        本地簿，不下发柜台；柜台不支持这类原生条件单。
+        本地簿，不下发柜台；柜台不支持这类原生条件单——本地止损单只有单一
+        本地 id，封装为单腿 OrderReceipt 以保持返回类型与柜台下单一致。
 
         time_in_force=None（Strategy.submit_order 的缺省值）会显式覆盖
         submitter.submit_order 签名默认值 "GTC"；这里丢弃 None，
@@ -141,10 +145,16 @@ class BrokerExecution:
             or kwargs.get("trail_offset") is not None
             or is_stop_order_type(kwargs.get("order_type"))
         ):
-            return self._register_local_stop(**kwargs)
+            local_id = self._register_local_stop(**kwargs)
+            return OrderReceipt.single(
+                group_id=local_id,
+                broker_order_id=local_id,
+                position_effect=str(kwargs.get("position_effect") or "auto"),
+                client_order_id=local_id,
+            )
         if kwargs.get("time_in_force") is None:
             kwargs.pop("time_in_force", None)
-        return str(self._submitter.submit_order(**kwargs))
+        return cast(OrderReceipt, self._submitter.submit_order(**kwargs))
 
     def _next_local_stop_id(self) -> str:
         self._stop_seq += 1
@@ -205,7 +215,7 @@ class BrokerExecution:
             if order.time_in_force is not None:
                 kwargs["time_in_force"] = order.time_in_force
             try:
-                broker_order_id = str(self._submitter.submit_order(**kwargs))
+                broker_order_id = str(self._submitter.submit_order(**kwargs).primary)
             except Exception as exc:  # noqa: BLE001
                 order.submit_attempts += 1
                 if order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
@@ -232,6 +242,15 @@ class BrokerExecution:
         if self._stop_book.cancel(str(order_id)):
             return
         self._gw.cancel_order(str(order_id))
+
+    def cancel_group(self, group_id: str) -> None:
+        """撤销一个逻辑委托的全部腿（按 group_id）."""
+        gid = str(group_id)
+        if self._group_broker_ids is None:
+            return
+        for broker_order_id in self._group_broker_ids(gid):
+            if broker_order_id:
+                self.cancel_order(str(broker_order_id))
 
     def cancel_all_orders(self, symbol: str | None = None) -> None:
         """取消所有未完成订单(含本地止损)."""
