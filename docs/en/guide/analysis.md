@@ -116,7 +116,7 @@ aqp.plot_pnl_vs_duration(result.trades_df)
 | `open_position_count` | Open Position Count | Int | Number of symbols still carrying open positions at the end of the backtest. |
 | `initial_market_value` | Initial Market Value | Float | Initial capital (usually Cash). |
 | `end_market_value` | End Market Value | Float | Total asset value at the end (Cash + Position Value). |
-| `total_pnl` | Total PnL | Float | `end_market_value - initial_market_value`. |
+| `total_pnl` | Total PnL | Float | `end_market_value - initial_market_value` (portfolio-level: realized net PnL + unrealized floating PnL). Note it is NOT equal to `total_profit + total_loss` (which is the trade-level realized gross PnL, before commission and excluding floating PnL); for the trade-level realized gross PnL use `result.trade_metrics.gross_pnl`. |
 | `unrealized_pnl` | Unrealized PnL | Float | Floating PnL of open positions at the end. |
 | `total_return_pct` | Total Return | **%** | `(End MV - Initial MV) / Initial MV * 100`. |
 | `annualized_return` | Annualized Return | Ratio | `(1 + Total Return)^(1/Years) - 1`. |
