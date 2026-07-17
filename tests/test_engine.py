@@ -7122,6 +7122,79 @@ def test_run_backtest_same_bar_sell_funds_buy_next_open() -> None:
     assert strat.b_filled == pytest.approx(5000.0)
 
 
+def test_full_switch_sell_proceeds_fund_same_bar_buy_next_open() -> None:
+    """Issue #307 core: fully switching A->B in one bar must let A's sale fund B.
+
+    Selling all of A and reinvesting the whole resulting buying power into B
+    (cost > residual cash) must fill under the default next-open policy. This is
+    checked for both symbol orderings so the fix does not rely on feed order.
+    """
+    dates = pd.to_datetime(
+        ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08"]
+    )
+    price = 10.0
+
+    def _mk(sym: str) -> pd.DataFrame:
+        df = pd.DataFrame(index=dates)
+        df.index.name = "date"
+        for col in ("open", "high", "low", "close"):
+            df[col] = price
+        df["volume"] = 10_000_000
+        df["symbol"] = sym
+        return df
+
+    def _run(symbols: list) -> tuple:
+        data = {s: _mk(s) for s in symbols}
+
+        class SwitchStrategy(akquant.Strategy):
+            """day1 buy A x5000; day3 sell all A, reinvest full buying power in B."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._days: set = set()
+                self.b_filled = 0.0
+                self.rejects: list = []
+
+            def on_bar(self, bar: akquant.Bar) -> None:
+                day = pd.Timestamp(bar.timestamp).normalize()
+                if day in self._days:
+                    return
+                self._days.add(day)
+                idx = len(self._days)
+                if idx == 1:
+                    self.buy(symbol="A", quantity=5000)
+                elif idx == 3 and self.get_position("A") > 0:
+                    self.sell(symbol="A", quantity=self.get_position("A"))
+                    qty_b = int(self.buying_power / price / 100) * 100
+                    if qty_b > 0:
+                        self.buy(symbol="B", quantity=qty_b)
+
+            def on_trade(self, trade: akquant.Trade) -> None:
+                if trade.symbol == "B":
+                    self.b_filled += float(trade.quantity)
+
+            def on_reject(self, order: akquant.Order) -> None:
+                self.rejects.append(order.symbol)
+
+        strat = SwitchStrategy()
+        akquant.run_backtest(
+            data=data,
+            strategy=strat,
+            symbols=symbols,
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            t_plus_one=True,
+            lot_size=100,
+            show_progress=False,
+        )
+        return strat.rejects, strat.b_filled
+
+    for order in (["A", "B"], ["B", "A"]):
+        rejects, b_filled = _run(order)
+        assert rejects == [], f"unexpected rejects for symbol order {order}: {rejects}"
+        assert b_filled >= 9800.0, f"B underfilled for symbol order {order}: {b_filled}"
+
+
 def test_strategy_buying_power_reflects_same_bar_pending_sell() -> None:
     """buying_power must include a same-callback pending sell's expected proceeds."""
     dates = pd.to_datetime(
