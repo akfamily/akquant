@@ -1527,6 +1527,11 @@ def get_cash(strategy: Any) -> float:
     return float(strategy.execution.get_cash())
 
 
+def get_buying_power(strategy: Any) -> float:
+    """获取可用买入力（经执行后端）."""
+    return float(strategy.execution.get_buying_power())
+
+
 # --- SimExecution 后端原语（Task 1 引入；Task 3/4 让公共函数 delegate 到 execution）---
 def _sim_get_position(strategy: Any, symbol: Optional[str] = None) -> float:
     if strategy.ctx is None:
@@ -1556,6 +1561,12 @@ def _sim_get_cash(strategy: Any) -> float:
     if strategy.ctx is None:
         return 0.0
     return float(strategy.ctx.cash)
+
+
+def _sim_get_buying_power(strategy: Any) -> float:
+    if strategy.ctx is None:
+        return 0.0
+    return float(strategy.ctx.buying_power)
 
 
 def _sim_get_open_orders(strategy: Any, symbol: Optional[str] = None) -> List[Any]:

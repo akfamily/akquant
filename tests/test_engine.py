@@ -7120,3 +7120,63 @@ def test_run_backtest_same_bar_sell_funds_buy_next_open() -> None:
 
     assert strat.rejects == []
     assert strat.b_filled == pytest.approx(5000.0)
+
+
+def test_strategy_buying_power_reflects_same_bar_pending_sell() -> None:
+    """buying_power must include a same-callback pending sell's expected proceeds."""
+    dates = pd.to_datetime(
+        ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08"]
+    )
+    price = 10.0
+
+    def _mk(sym: str) -> pd.DataFrame:
+        df = pd.DataFrame(index=dates)
+        df.index.name = "date"
+        for col in ("open", "high", "low", "close"):
+            df[col] = price
+        df["volume"] = 10_000_000
+        df["symbol"] = sym
+        return df
+
+    data = {"A": _mk("A"), "B": _mk("B")}
+
+    class BpStrategy(akquant.Strategy):
+        """Record buying_power before and after a same-bar sell on day 3."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._days: set = set()
+            self.bp_before: float = -1.0
+            self.bp_after: float = -1.0
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            day = pd.Timestamp(bar.timestamp).normalize()
+            if day in self._days:
+                return
+            self._days.add(day)
+            idx = len(self._days)
+            if idx == 1:
+                self.buy(symbol="A", quantity=5000)
+            elif idx == 3 and self.get_position("A") > 0:
+                self.bp_before = self.buying_power
+                self.sell(symbol="A", quantity=self.get_position("A"))
+                self.bp_after = self.buying_power
+
+    strat = BpStrategy()
+    akquant.run_backtest(
+        data=data,
+        strategy=strat,
+        symbols=["A", "B"],
+        initial_cash=100_000.0,
+        commission_rate=0.0,
+        t_plus_one=True,
+        lot_size=100,
+        show_progress=False,
+    )
+
+    # buying_power mirrors the gate's `available` = free_margin * (1 - safety_margin);
+    # default safety_margin 0.0001, so 50_000 -> 49_995 and 100_000 -> 99_990.
+    assert strat.bp_before == pytest.approx(49_995.0, rel=1e-6)
+    # After submitting the same-bar sell of 5000@10, proceeds roughly double it.
+    assert strat.bp_after == pytest.approx(99_990.0, rel=1e-6)
+    assert strat.bp_after == pytest.approx(strat.bp_before * 2, rel=1e-6)

@@ -2585,6 +2585,7 @@ class StrategyContext:
     last_closed_trade: typing.Optional[ClosedTrade]
     closed_trades: list[ClosedTrade]
     cash: float
+    buying_power: float
     positions: dict[str, float]
     available_positions: dict[str, float]
     def __new__(

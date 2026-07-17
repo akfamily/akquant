@@ -51,6 +51,10 @@ class SimExecution:
         """获取现金."""
         return api._sim_get_cash(self._s)
 
+    def get_buying_power(self) -> float:
+        """获取可用买入力."""
+        return api._sim_get_buying_power(self._s)
+
     def submit_order(self, **kwargs: Any) -> OrderReceipt:
         """提交订单，返回 OrderReceipt（携带回测拆腿产生的全部订单 id）."""
         return api._sim_submit_order(self._s, **kwargs)

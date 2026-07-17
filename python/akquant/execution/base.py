@@ -36,6 +36,9 @@ class ExecutionBackend(Protocol):
     def get_cash(self) -> float:
         """获取现金."""
 
+    def get_buying_power(self) -> float:
+        """获取可用买入力."""
+
     def submit_order(self, **kwargs: Any) -> str:
         """提交订单，返回订单号."""
 

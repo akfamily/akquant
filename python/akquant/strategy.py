@@ -113,6 +113,9 @@ from .strategy_trading_api import (
     get_available_position as _get_available_position_impl,
 )
 from .strategy_trading_api import (
+    get_buying_power as _get_buying_power_impl,
+)
+from .strategy_trading_api import (
     get_cash as _get_cash_impl,
 )
 from .strategy_trading_api import (
@@ -2227,6 +2230,11 @@ class Strategy:
     def cash(self) -> float:
         """当前可用现金（等同旧 get_cash()）."""
         return _get_cash_impl(self)
+
+    @property
+    def buying_power(self) -> float:
+        """可用买入力（含本回调已提交卖单的预期回笼；用于卖出后为买单定量）."""
+        return _get_buying_power_impl(self)
 
     @property
     def equity(self) -> float:
