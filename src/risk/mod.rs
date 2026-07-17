@@ -50,6 +50,7 @@ mod tests {
                 lot_size: Decimal::from(100),
                 tick_size: Decimal::from_str("0.01").unwrap(),
                 expiry_date: None,
+                sellable_after_days: 1,
             }),
             AssetType::Futures => InstrumentEnum::Futures(FuturesInstrument {
                 symbol: symbol.to_string(),

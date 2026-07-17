@@ -194,19 +194,31 @@ impl SimulatedExecutionClient {
         Self::is_same_cycle_close_policy(Self::effective_policy(order, ctx))
     }
 
-    fn has_cross_symbol_reduce_pending(
+    /// Whether the order is scheduled to attempt its fill during the current
+    /// timestamp. Same-cycle-close orders fill at the close of their creation
+    /// bar (created_at == now); next-open orders fill at the open of the first
+    /// bar after submission (created_at < now while still active).
+    fn fills_current_cycle(&self, order: &Order, ctx: &crate::context::EngineContext) -> bool {
+        let policy = Self::effective_policy(order, ctx);
+        if Self::is_same_cycle_close_policy(policy) {
+            order.created_at == ctx.current_time
+        } else {
+            order.created_at < ctx.current_time
+        }
+    }
+
+    /// A co-submitted (same created_at) cross-symbol reduce/close order that
+    /// also fills this cycle — its proceeds should fund `order` before it fills.
+    fn has_cosubmitted_cross_symbol_reduce_pending(
         &self,
-        event: &Event,
+        order: &Order,
         ctx: &crate::context::EngineContext,
     ) -> bool {
-        let Some(event_symbol) = Self::event_symbol(event) else {
-            return false;
-        };
         self.orders.values().any(|candidate| {
             Self::is_order_active(candidate)
-                && candidate.created_at == ctx.current_time
-                && candidate.symbol != event_symbol
-                && self.is_same_cycle_close_order(candidate, ctx)
+                && candidate.symbol != order.symbol
+                && candidate.created_at == order.created_at
+                && self.fills_current_cycle(candidate, ctx)
                 && crate::model::is_reduce_first_order(candidate.side, candidate.position_effect)
         })
     }
@@ -217,7 +229,7 @@ impl SimulatedExecutionClient {
         event: &Event,
         ctx: &crate::context::EngineContext,
     ) -> bool {
-        if order.created_at != ctx.current_time || !self.is_same_cycle_close_order(order, ctx) {
+        if !self.fills_current_cycle(order, ctx) {
             return false;
         }
         if crate::model::is_reduce_first_order(order.side, order.position_effect) {
@@ -226,15 +238,15 @@ impl SimulatedExecutionClient {
         Self::event_symbol(event)
             .map(|symbol| order.symbol == symbol)
             .unwrap_or(false)
-            && self.has_cross_symbol_reduce_pending(event, ctx)
+            && self.has_cosubmitted_cross_symbol_reduce_pending(order, ctx)
     }
 
     fn should_finalize_order(&self, order: &Order, ctx: &crate::context::EngineContext) -> bool {
-        order.created_at == ctx.current_time
-            && Self::is_order_active(order)
-            && self.is_same_cycle_close_order(order, ctx)
-            && (!self.attempted_same_cycle_order_ids.contains(&order.id)
-                || self.deferred_same_cycle_order_ids.contains(&order.id))
+        Self::is_order_active(order)
+            && (self.deferred_same_cycle_order_ids.contains(&order.id)
+                || (order.created_at == ctx.current_time
+                    && self.is_same_cycle_close_order(order, ctx)
+                    && !self.attempted_same_cycle_order_ids.contains(&order.id)))
     }
 
     fn sorted_queue(&self) -> Vec<String> {
@@ -309,6 +321,21 @@ impl SimulatedExecutionClient {
                     continue;
                 };
                 if !Self::is_order_active(&order_snapshot) || !order_filter(&order_snapshot, event)
+                {
+                    continue;
+                }
+
+                // A next-open (bar_offset>=1) order must not fill on any event at or
+                // before its submission timestamp — including a same-timestamp bar of a
+                // different symbol processed after the order was queued (e.g. a strategy
+                // that submits a cross-symbol order inside another symbol's bar callback).
+                // Without this, such an order fills on its own creation-timestamp bar
+                // instead of the next one, skewing cross-symbol switch timing (#307).
+                let order_policy = Self::effective_policy(&order_snapshot, ctx);
+                if order_policy.bar_offset >= 1
+                    && Self::event_timestamp(event)
+                        .map(|ts| ts <= order_snapshot.created_at)
+                        .unwrap_or(false)
                 {
                     continue;
                 }
@@ -794,6 +821,7 @@ mod tests {
                 lot_size: Decimal::from(100),
                 tick_size: Decimal::new(1, 2),
                 expiry_date: None,
+                sellable_after_days: 1,
             }),
         };
         map.insert("AAPL".to_string(), aapl);
@@ -1261,6 +1289,7 @@ mod tests {
                     lot_size: Decimal::from(100),
                     tick_size: Decimal::new(1, 2),
                     expiry_date: None,
+                    sellable_after_days: 1,
                 }),
             },
         );
@@ -1372,6 +1401,7 @@ mod tests {
                     lot_size: Decimal::from(100),
                     tick_size: Decimal::new(1, 2),
                     expiry_date: None,
+                    sellable_after_days: 1,
                 }),
             },
         );

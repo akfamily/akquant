@@ -372,6 +372,7 @@ mod tests {
                 lot_size: Decimal::from(100),
                 tick_size: Decimal::new(1, 2),
                 expiry_date: None,
+                sellable_after_days: 1,
             }),
         };
         instruments.insert("AAPL".to_string(), instr);

@@ -765,6 +765,7 @@ impl Engine {
                             .margin_daily_interest
                             .to_f64()
                             .unwrap_or_default(),
+                        last_prices: Arc::new(self.last_prices.clone()),
                     });
                 }
                 Ok::<_, PyErr>(py_ctx)
@@ -1148,6 +1149,8 @@ impl Engine {
                 .unwrap_or_default(),
             margin_accrued_interest: self.margin_accrued_interest.to_f64().unwrap_or_default(),
             margin_daily_interest: self.margin_daily_interest.to_f64().unwrap_or_default(),
+            instruments: Arc::new(self.instruments.clone()),
+            last_prices: Arc::new(self.last_prices.clone()),
         })
     }
 

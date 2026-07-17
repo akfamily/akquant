@@ -440,8 +440,13 @@ pub(crate) fn check_affordability(
     let projected_portfolio =
         project_active_orders_into(portfolio, active_orders, prices, instruments);
 
-    let margin_delta =
-        calc_required_margin_delta(order, instruments, config, &prices_for_order, &projected_portfolio)?;
+    let margin_delta = calc_required_margin_delta(
+        order,
+        instruments,
+        config,
+        &prices_for_order,
+        &projected_portfolio,
+    )?;
 
     // Commission after the checked margin delta so overflow surfaces via the
     // margin path rather than panicking in the market model's raw arithmetic.
@@ -474,7 +479,9 @@ pub(crate) fn check_affordability(
     // dominant cash/stock path, so this matches the prior resize seed.
     let max_affordable_qty = if affordable {
         order.quantity
-    } else if required > Decimal::ZERO && available > Decimal::ZERO && order.quantity > Decimal::ZERO
+    } else if required > Decimal::ZERO
+        && available > Decimal::ZERO
+        && order.quantity > Decimal::ZERO
     {
         let raw = order.quantity * available / required;
         let lot = instruments
@@ -517,6 +524,7 @@ mod tests {
                 lot_size: dec!(100),
                 tick_size: dec!(0.01),
                 expiry_date: None,
+                sellable_after_days: 1,
             }),
         }
     }

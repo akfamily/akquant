@@ -129,6 +129,10 @@ class BrokerExecution:
         """获取现金."""
         return float(getattr(self._cache.account(), "cash", 0.0) or 0.0)
 
+    def get_buying_power(self) -> float:
+        """获取可用买入力（实盘暂以可用现金近似）."""
+        return self.get_cash()
+
     def submit_order(self, **kwargs: Any) -> OrderReceipt:
         """提交订单，返回下单回执（OrderReceipt，含全部腿 id）.
 

@@ -71,6 +71,8 @@ pub struct ContextInit {
     pub previous_account_maintenance_ratio: f64,
     pub margin_accrued_interest: f64,
     pub margin_daily_interest: f64,
+    pub instruments: Arc<HashMap<String, Instrument>>,
+    pub last_prices: Arc<HashMap<String, Decimal>>,
 }
 
 pub struct ContextUpdate {
@@ -102,6 +104,7 @@ pub struct ContextUpdate {
     pub previous_account_maintenance_ratio: f64,
     pub margin_accrued_interest: f64,
     pub margin_daily_interest: f64,
+    pub last_prices: Arc<HashMap<String, Decimal>>,
 }
 
 #[gen_stub_pyclass]
@@ -294,6 +297,7 @@ impl StrategyContext {
         self.positions = update.positions;
         self.available_positions = update.available_positions;
         self.position_entry_prices = update.position_entry_prices;
+        self.last_prices = update.last_prices;
         self.session = update.session;
         self.current_time = update.current_time;
         self.active_orders_arc = update.active_orders.clone();
@@ -379,6 +383,10 @@ pub struct StrategyContext {
     pub canceled_order_ids_arc: Arc<RwLock<Vec<String>>>,
     pub active_orders_arc: Arc<Vec<Order>>,
     pub timers_arc: Arc<RwLock<Vec<Timer>>>,
+
+    // Snapshots for buying-power computation (set at construction / each bar).
+    pub instruments: Arc<HashMap<String, Instrument>>,
+    pub last_prices: Arc<HashMap<String, Decimal>>,
 
     pub cash: Decimal,
     pub previous_cash: Decimal,
@@ -484,6 +492,8 @@ impl StrategyContext {
             previous_account_maintenance_ratio: init.previous_account_maintenance_ratio,
             margin_accrued_interest: init.margin_accrued_interest,
             margin_daily_interest: init.margin_daily_interest,
+            instruments: init.instruments,
+            last_prices: init.last_prices,
         }
     }
 }
@@ -589,6 +599,8 @@ impl StrategyContext {
             previous_account_maintenance_ratio: previous_account_maintenance_ratio.unwrap_or(0.0),
             margin_accrued_interest: margin_accrued_interest.unwrap_or(0.0),
             margin_daily_interest: margin_daily_interest.unwrap_or(0.0),
+            instruments: Arc::new(HashMap::new()),
+            last_prices: Arc::new(HashMap::new()),
         })
     }
 
@@ -674,6 +686,46 @@ impl StrategyContext {
     #[getter]
     fn get_cash(&self) -> f64 {
         self.cash.to_f64().unwrap_or_default()
+    }
+
+    /// 可用买入力:现金 + 本回调及既有挂单的净预期回笼,投影后按风控口径
+    /// 计算 free_margin × (1 - safety_margin)。用于在同一 on_bar 内、卖出后
+    /// 为买单定量(卖出资金当日可复用)。
+    #[getter]
+    fn get_buying_power(&self) -> f64 {
+        let portfolio = crate::portfolio::Portfolio {
+            cash: self.cash,
+            positions: self.positions.clone(),
+            available_positions: self.available_positions.clone(),
+        };
+        let mut pending: Vec<Order> =
+            Vec::with_capacity(self.active_orders.len() + self.orders.len());
+        pending.extend(self.active_orders.iter().cloned());
+        pending.extend(self.orders.iter().cloned());
+        let projected = crate::risk::common::project_active_orders_into(
+            &portfolio,
+            &pending,
+            &self.last_prices,
+            &self.instruments,
+        );
+        let stock_ratio_override = if self.risk_config.is_margin_account() {
+            Some(self.risk_config.stock_initial_margin_ratio())
+        } else {
+            None
+        };
+        let free_margin = projected.calculate_free_margin_with_stock_ratio(
+            &self.last_prices,
+            &self.instruments,
+            stock_ratio_override,
+        );
+        let safety = Decimal::from_f64(self.risk_config.safety_margin).unwrap_or(Decimal::ZERO);
+        let factor = (Decimal::ONE - safety).max(Decimal::ZERO);
+        free_margin
+            .checked_mul(factor)
+            .unwrap_or(Decimal::ZERO)
+            .max(Decimal::ZERO)
+            .to_f64()
+            .unwrap_or_default()
     }
 
     #[getter]

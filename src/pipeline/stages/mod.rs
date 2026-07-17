@@ -36,6 +36,7 @@ mod tests {
                 lot_size: dec!(100),
                 tick_size: dec!(0.01),
                 expiry_date: None,
+                sellable_after_days: 1,
             }),
         }
     }

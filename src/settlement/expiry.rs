@@ -117,6 +117,7 @@ mod tests {
                     lot_size: dec!(1),
                     tick_size: dec!(0.01),
                     expiry_date: Some(20260131),
+                    sellable_after_days: 1,
                 }),
             },
         );

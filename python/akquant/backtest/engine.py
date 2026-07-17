@@ -2838,8 +2838,8 @@ def run_backtest(
                 option_margin_model=_option_margin_model_to_upper_name(
                     getattr(prebuilt, "option_margin_model", None)
                 ),
-                tick_size=float(getattr(prebuilt, "tick_size", 0.01)),
-                lot_size=float(getattr(prebuilt, "lot_size", 1.0)),
+                tick_size=float(getattr(prebuilt, "tick_size", 0.01) or 0.01),
+                lot_size=float(getattr(prebuilt, "lot_size", 1.0) or 1.0),
                 implied_volatility=(
                     float(getattr(prebuilt, "implied_volatility"))
                     if getattr(prebuilt, "implied_volatility", None) is not None
@@ -3661,6 +3661,15 @@ def run_backtest(
     ):
         has_futures_instruments = True
 
+    # Any explicit per-instrument T+1 (sellable_after_days>=1) needs ChinaMarket so
+    # on_day_close releases the lock; otherwise a T+1 instrument under t_plus_one=False
+    # (SimpleMarket) would silently never become sellable.
+    any_t_plus_one_instrument = any(
+        getattr(ic, "sellable_after_days", None) is not None
+        and getattr(ic, "sellable_after_days", 0) >= 1
+        for ic in (kwargs.get("instruments") or [])
+    )
+
     if china_futures_config and has_futures_instruments:
         if (
             not china_futures_config.use_china_futures_market
@@ -3683,9 +3692,10 @@ def run_backtest(
                 engine.use_simple_market(commission_rate)
         if t_plus_one:
             engine.set_t_plus_one(True)
-    elif t_plus_one:
+    elif t_plus_one or any_t_plus_one_instrument:
         engine.use_china_market()
-        engine.set_t_plus_one(True)
+        if t_plus_one:
+            engine.set_t_plus_one(True)
     else:
         if hasattr(engine, "use_simple_market_policy"):
             cast(Any, engine).use_simple_market_policy(
@@ -4097,8 +4107,8 @@ def run_backtest(
                 option_margin_model=_option_margin_model_to_upper_name(
                     getattr(prebuilt, "option_margin_model", None)
                 ),
-                tick_size=float(getattr(prebuilt, "tick_size", 0.01)),
-                lot_size=float(getattr(prebuilt, "lot_size", 1.0)),
+                tick_size=float(getattr(prebuilt, "tick_size", 0.01) or 0.01),
+                lot_size=float(getattr(prebuilt, "lot_size", 1.0) or 1.0),
                 implied_volatility=(
                     float(getattr(prebuilt, "implied_volatility"))
                     if getattr(prebuilt, "implied_volatility", None) is not None
@@ -4170,6 +4180,11 @@ def run_backtest(
                 i_conf.settlement_type
             )
             p_settlement_price = i_conf.settlement_price
+            p_sellable_after_days = (
+                i_conf.sellable_after_days
+                if i_conf.sellable_after_days is not None
+                else (1 if t_plus_one else 0)
+            )
             static_attrs = getattr(i_conf, "static_attrs", {})
             if static_attrs is None:
                 static_attrs = {}
@@ -4222,6 +4237,7 @@ def run_backtest(
                 default_settlement_type
             )
             p_settlement_price = default_settlement_price
+            p_sellable_after_days = 1 if t_plus_one else 0
             static_attrs = {}
 
         if p_asset_type != AssetType.Futures:
@@ -4265,6 +4281,7 @@ def run_backtest(
             p_option_margin_model,
             p_implied_volatility,
             p_reference_volatility,
+            p_sellable_after_days,
         )
         engine.add_instrument(instr)
         instrument_snapshots[sym] = InstrumentSnapshot(
@@ -5305,8 +5322,8 @@ def run_warm_start(
                 option_margin_model=_option_margin_model_to_upper_name(
                     getattr(prebuilt, "option_margin_model", None)
                 ),
-                tick_size=float(getattr(prebuilt, "tick_size", 0.01)),
-                lot_size=float(getattr(prebuilt, "lot_size", 1.0)),
+                tick_size=float(getattr(prebuilt, "tick_size", 0.01) or 0.01),
+                lot_size=float(getattr(prebuilt, "lot_size", 1.0) or 1.0),
                 option_type=_option_type_to_upper_name(
                     getattr(prebuilt, "option_type", None)
                 ),
@@ -5418,6 +5435,11 @@ def run_warm_start(
             p_implied_volatility = None
             p_reference_volatility = None
 
+        p_sellable_after_days = (
+            conf.sellable_after_days
+            if conf is not None and conf.sellable_after_days is not None
+            else None
+        )
         instr = Instrument(
             symbol=sym,
             asset_type=p_asset_type,
@@ -5434,6 +5456,7 @@ def run_warm_start(
             option_margin_model=p_option_margin_model,
             implied_volatility=p_implied_volatility,
             reference_volatility=p_reference_volatility,
+            sellable_after_days=p_sellable_after_days,
         )
         engine.add_instrument(instr)
         warm_start_instrument_snapshots[sym] = InstrumentSnapshot(

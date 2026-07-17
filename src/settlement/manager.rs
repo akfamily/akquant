@@ -489,6 +489,7 @@ mod tests {
                 lot_size: Decimal::ONE,
                 tick_size: Decimal::new(1, 2),
                 expiry_date: None,
+                sellable_after_days: 1,
             }),
         }
     }

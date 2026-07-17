@@ -241,6 +241,31 @@ impl Processor for ChannelProcessor {
                         pending_order_requests.extend(increase_orders);
                         run_intermediate_reduce_match = true;
                     }
+                } else if has_reduce && has_increase {
+                    // Next-open (bar_offset=1) path: two-phase intra-bar matching is
+                    // unavailable, so without this branch the increase's affordability
+                    // check runs in the same drain pass — before the reduce's
+                    // OrderValidated event lands in active_orders — and a buy funded by a
+                    // same-bar sell is wrongly rejected (issue #307). Validate the reduces
+                    // now, re-queue the increases, and `continue`: the next loop turn
+                    // drains the reduce OrderValidated events into active_orders so the
+                    // increase projection (risk/common.rs project_active_orders_into) can
+                    // credit the freed cash. Reduces stay `New` (they match next bar), so
+                    // the projection sees them as pending sells.
+                    let mut reduce_orders = Vec::new();
+                    let mut increase_orders = Vec::new();
+                    for order in pending_order_requests.drain(..) {
+                        if is_reduce_first_order(&order) {
+                            reduce_orders.push(order);
+                        } else {
+                            increase_orders.push(order);
+                        }
+                    }
+                    for order in reduce_orders {
+                        process_order_request(engine, py, order);
+                    }
+                    pending_order_requests.extend(increase_orders);
+                    continue;
                 } else {
                     for order in pending_order_requests.drain(..) {
                         process_order_request(engine, py, order);

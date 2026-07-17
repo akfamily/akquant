@@ -77,6 +77,9 @@ pub struct StockInstrument {
     pub lot_size: Decimal,
     pub tick_size: Decimal,
     pub expiry_date: Option<u32>,
+    /// 买入份额需 N 个交易日后可卖(0=T+0,1=T+1)。
+    #[serde(default)]
+    pub sellable_after_days: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +87,9 @@ pub struct FundInstrument {
     pub symbol: String,
     pub lot_size: Decimal,
     pub tick_size: Decimal,
+    /// 买入份额需 N 个交易日后可卖(0=T+0,1=T+1)。
+    #[serde(default)]
+    pub sellable_after_days: u32,
     // Add other fund-specific fields if needed
 }
 
@@ -174,7 +180,7 @@ impl Instrument {
     /// :param settlement_type: 结算方式 (可选)
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (symbol, asset_type, multiplier=None, margin_ratio=None, tick_size=None, option_type=None, strike_price=None, expiry_date=None, lot_size=None, underlying_symbol=None, settlement_type=None, settlement_price=None, option_margin_model=None, implied_volatility=None, reference_volatility=None))]
+    #[pyo3(signature = (symbol, asset_type, multiplier=None, margin_ratio=None, tick_size=None, option_type=None, strike_price=None, expiry_date=None, lot_size=None, underlying_symbol=None, settlement_type=None, settlement_price=None, option_margin_model=None, implied_volatility=None, reference_volatility=None, sellable_after_days=None))]
     pub fn new(
         symbol: String,
         asset_type: AssetType,
@@ -191,8 +197,10 @@ impl Instrument {
         option_margin_model: Option<OptionMarginModel>,
         implied_volatility: Option<&Bound<'_, PyAny>>,
         reference_volatility: Option<&Bound<'_, PyAny>>,
+        sellable_after_days: Option<u32>,
     ) -> PyResult<Self> {
         let clean_symbol = symbol.trim().to_string();
+        let sellable_after_days_val = sellable_after_days.unwrap_or(1);
         let multiplier_val = multiplier
             .map(extract_decimal)
             .transpose()?
@@ -233,11 +241,13 @@ impl Instrument {
                 lot_size: lot_val,
                 tick_size: tick_val,
                 expiry_date,
+                sellable_after_days: sellable_after_days_val,
             }),
             AssetType::Fund => InstrumentEnum::Fund(FundInstrument {
                 symbol: clean_symbol.clone(),
                 lot_size: lot_val,
                 tick_size: tick_val,
+                sellable_after_days: sellable_after_days_val,
             }),
             AssetType::Futures => InstrumentEnum::Futures(FuturesInstrument {
                 symbol: clean_symbol.clone(),
@@ -282,6 +292,11 @@ impl Instrument {
     #[getter]
     pub fn get_symbol(&self) -> String {
         self.symbol().to_string()
+    }
+
+    #[getter]
+    pub fn get_sellable_after_days(&self) -> u32 {
+        self.sellable_after_days()
     }
 
     #[getter]
@@ -438,6 +453,15 @@ impl Instrument {
             _ => None,
         }
     }
+
+    /// 买入份额需 N 个交易日后可卖(0=T+0,1=T+1)。非股票/基金资产返回 0(T+0)。
+    pub fn sellable_after_days(&self) -> u32 {
+        match &self.inner {
+            InstrumentEnum::Stock(s) => s.sellable_after_days,
+            InstrumentEnum::Fund(f) => f.sellable_after_days,
+            _ => 0,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -491,6 +515,7 @@ mod tests {
             Some(20260101),
             None,
             Some("".to_string()),
+            None,
             None,
             None,
             None,

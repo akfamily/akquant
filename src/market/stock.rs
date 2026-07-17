@@ -67,9 +67,9 @@ pub fn calculate_commission(
     commission
 }
 
-/// 更新股票可用持仓 (处理 T+1)
+/// 更新股票可用持仓 (按 per-instrument sellable_after_days 处理 T+0/T+1)
 pub fn update_available_position(
-    config: &StockConfig,
+    sellable_after_days: u32,
     available_positions: &mut HashMap<String, Decimal>,
     symbol: &str,
     quantity: Decimal,
@@ -81,8 +81,8 @@ pub fn update_available_position(
                 .entry(symbol.to_string())
                 .or_insert(Decimal::ZERO);
 
-            // T+1 模式下，买入不立即增加可用持仓
-            if !config.t_plus_one
+            // T+0(==0)买入立即可卖;T+N(>=1)不立即增加可用持仓,待 on_day_close 解锁
+            if sellable_after_days == 0
                 && let Some(pos) = available_positions.get_mut(symbol)
             {
                 *pos += quantity;
@@ -111,6 +111,7 @@ mod tests {
                 lot_size: Decimal::from(100),
                 tick_size: Decimal::from_str("0.01").unwrap(),
                 expiry_date: None,
+                sellable_after_days: 1,
             }),
         }
     }
@@ -154,13 +155,12 @@ mod tests {
 
     #[test]
     fn test_stock_t_plus_one() {
-        let config = StockConfig::default();
         let instr = create_stock_instrument("600000");
         let mut available = HashMap::new();
 
-        // Buy 100. T+1 means available shouldn't increase immediately.
+        // Buy 100 under T+1 (sellable_after_days=1): available shouldn't increase immediately.
         update_available_position(
-            &config,
+            1,
             &mut available,
             instr.symbol(),
             Decimal::from(100),
