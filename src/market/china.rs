@@ -232,30 +232,22 @@ impl MarketModel for ChinaMarket {
         let symbol = &instrument.symbol();
         match instrument.asset_type {
             AssetType::Stock => {
-                if let Some(config) = &self.config.stock {
-                    stock::update_available_position(
-                        config,
-                        available_positions,
-                        symbol,
-                        quantity,
-                        side,
-                    );
-                } else {
-                    panic!("Stock market configuration not found for position update");
-                }
+                stock::update_available_position(
+                    instrument.sellable_after_days(),
+                    available_positions,
+                    symbol,
+                    quantity,
+                    side,
+                );
             }
             AssetType::Fund => {
-                if let Some(config) = &self.config.fund {
-                    fund::update_available_position(
-                        config,
-                        available_positions,
-                        symbol,
-                        quantity,
-                        side,
-                    );
-                } else {
-                    panic!("Fund market configuration not found for position update");
-                }
+                fund::update_available_position(
+                    instrument.sellable_after_days(),
+                    available_positions,
+                    symbol,
+                    quantity,
+                    side,
+                );
             }
             AssetType::Futures => {
                 if let Some(config) = &self.config.futures {
@@ -296,34 +288,14 @@ impl MarketModel for ChinaMarket {
         instruments: &HashMap<String, Instrument>,
     ) {
         for (symbol, quantity) in positions {
-            let is_t_plus_one_asset = if let Some(instr) = instruments.get(symbol) {
-                matches!(instr.asset_type, AssetType::Stock | AssetType::Fund)
-            } else {
-                false
-            };
-
-            // 使用各自配置中的 T+1 设置
-            let should_settle = if let Some(instr) = instruments.get(symbol) {
-                match instr.asset_type {
-                    AssetType::Stock => self
-                        .config
-                        .stock
-                        .as_ref()
-                        .map(|c| c.t_plus_one)
-                        .unwrap_or(false),
-                    AssetType::Fund => self
-                        .config
-                        .fund
-                        .as_ref()
-                        .map(|c| c.t_plus_one)
-                        .unwrap_or(false),
-                    _ => false,
-                }
-            } else {
-                false
-            };
-
-            if is_t_plus_one_asset && should_settle {
+            // sellable_after_days>=1 的标的:持有进入新交易日后全量可卖(T+1)。
+            // T+0(==0)标的的可卖量由 update_available_position 在成交时即时维护,
+            // 此处不覆盖。
+            let releases = instruments
+                .get(symbol)
+                .map(|instr| instr.sellable_after_days() >= 1)
+                .unwrap_or(false);
+            if releases {
                 available_positions.insert(symbol.clone(), *quantity);
             }
         }

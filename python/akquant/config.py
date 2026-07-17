@@ -185,6 +185,7 @@ class InstrumentConfig:
     reference_volatility: Optional[float] = None
     settlement_type: Optional[InstrumentSettlementTypeInput] = None
     settlement_price: Optional[float] = None
+    sellable_after_days: Optional[int] = None
     static_attrs: Dict[str, Union[str, int, float, bool]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -241,6 +242,14 @@ class InstrumentConfig:
             raise ValueError("lot_size must be > 0")
         if self.reference_volatility is not None and self.reference_volatility <= 0:
             raise ValueError("reference_volatility must be > 0")
+        if self.sellable_after_days is not None and self.sellable_after_days not in (
+            0,
+            1,
+        ):
+            raise ValueError(
+                "InstrumentConfig.sellable_after_days must be 0 (T+0) or 1 (T+1); "
+                f"got {self.sellable_after_days} (T+2+ not yet supported)"
+            )
 
 
 @dataclass

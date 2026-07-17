@@ -47,9 +47,9 @@ pub fn calculate_commission(
     commission
 }
 
-/// 更新基金可用持仓 (与股票类似，处理 T+1)
+/// 更新基金可用持仓 (按 per-instrument sellable_after_days 处理 T+0/T+1)
 pub fn update_available_position(
-    config: &FundConfig,
+    sellable_after_days: u32,
     available_positions: &mut HashMap<String, Decimal>,
     symbol: &str,
     quantity: Decimal,
@@ -61,7 +61,7 @@ pub fn update_available_position(
                 .entry(symbol.to_string())
                 .or_insert(Decimal::ZERO);
 
-            if !config.t_plus_one
+            if sellable_after_days == 0
                 && let Some(pos) = available_positions.get_mut(symbol)
             {
                 *pos += quantity;

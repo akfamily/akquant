@@ -794,6 +794,7 @@ mod tests {
                 lot_size: Decimal::from(100),
                 tick_size: Decimal::new(1, 2),
                 expiry_date: None,
+                sellable_after_days: 1,
             }),
         };
         map.insert("AAPL".to_string(), aapl);
@@ -1261,6 +1262,7 @@ mod tests {
                     lot_size: Decimal::from(100),
                     tick_size: Decimal::new(1, 2),
                     expiry_date: None,
+                    sellable_after_days: 1,
                 }),
             },
         );
@@ -1372,6 +1374,7 @@ mod tests {
                     lot_size: Decimal::from(100),
                     tick_size: Decimal::new(1, 2),
                     expiry_date: None,
+                    sellable_after_days: 1,
                 }),
             },
         );

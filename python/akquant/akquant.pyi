@@ -948,6 +948,7 @@ class Instrument:
     option_margin_model: typing.Optional[akquant.OptionMarginModel]
     implied_volatility: typing.Optional[float]
     reference_volatility: typing.Optional[float]
+    sellable_after_days: int
     def __new__(
         cls,
         symbol: str,
@@ -965,6 +966,7 @@ class Instrument:
         option_margin_model: typing.Optional[OptionMarginModel] = ...,
         implied_volatility: typing.Optional[float] = ...,
         reference_volatility: typing.Optional[float] = ...,
+        sellable_after_days: typing.Optional[int] = ...,
     ) -> "Instrument": ...
 
 class MACD:

@@ -7180,3 +7180,79 @@ def test_strategy_buying_power_reflects_same_bar_pending_sell() -> None:
     # After submitting the same-bar sell of 5000@10, proceeds roughly double it.
     assert strat.bp_after == pytest.approx(99_990.0, rel=1e-6)
     assert strat.bp_after == pytest.approx(strat.bp_before * 2, rel=1e-6)
+
+
+def test_instrument_config_rejects_unsupported_sellable_after_days() -> None:
+    """sellable_after_days>=2 is not yet supported (needs lot-aging)."""
+    from akquant.config import InstrumentConfig
+
+    InstrumentConfig(symbol="X", asset_type="STOCK", sellable_after_days=0)
+    InstrumentConfig(symbol="Y", asset_type="STOCK", sellable_after_days=1)
+    with pytest.raises(ValueError, match="sellable_after_days"):
+        InstrumentConfig(symbol="Z", asset_type="STOCK", sellable_after_days=2)
+
+
+def test_per_symbol_sellable_after_days_t0_vs_t1() -> None:
+    """A T+0 instrument becomes sellable one trading day earlier than a T+1 one.
+
+    Uses one single-symbol backtest per rule so the fill lands on the same bar
+    in both runs; multi-symbol runs can skew per-symbol fill bars.
+    """
+    dates = pd.to_datetime(
+        ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08"]
+    )
+    price = 10.0
+
+    def _mk(sym: str) -> pd.DataFrame:
+        df = pd.DataFrame(index=dates)
+        df.index.name = "date"
+        for col in ("open", "high", "low", "close"):
+            df[col] = price
+        df["volume"] = 10_000_000
+        df["symbol"] = sym
+        return df
+
+    def _first_available_day(n: int) -> int:
+        class AvailStrategy(akquant.Strategy):
+            """Buy 5000 on day 1; record available position each trading day."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._days: set = set()
+                self.avail: dict[int, float] = {}
+
+            def on_bar(self, bar: akquant.Bar) -> None:
+                day = pd.Timestamp(bar.timestamp).normalize()
+                if day in self._days:
+                    return
+                self._days.add(day)
+                idx = len(self._days)
+                self.avail[idx] = self.get_available_position("X")
+                if idx == 1:
+                    self.buy(symbol="X", quantity=5000)
+
+        strat = AvailStrategy()
+        akquant.run_backtest(
+            data={"X": _mk("X")},
+            strategy=strat,
+            symbols=["X"],
+            initial_cash=100_000.0,
+            commission_rate=0.0,
+            t_plus_one=True,
+            lot_size=100,
+            show_progress=False,
+            instruments=[
+                akquant.Instrument(
+                    symbol="X",
+                    asset_type=akquant.AssetType.Stock,
+                    lot_size=100,
+                    sellable_after_days=n,
+                ),
+            ],
+        )
+        return int(min(d for d, q in strat.avail.items() if q >= 5000.0))
+
+    t0_day = _first_available_day(0)
+    t1_day = _first_available_day(1)
+    # T+1 shares become sellable exactly one trading day after T+0 shares.
+    assert t1_day == t0_day + 1
