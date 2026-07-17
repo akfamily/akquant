@@ -567,7 +567,9 @@ impl BacktestResult {
         push_f64(open_position_count);
         push_f64(metrics.initial_market_value);
         push_f64(metrics.end_market_value);
-        push_f64(t_metrics.gross_pnl);
+        // total_pnl 为组合层总盈亏，与文档一致 = end_market_value - initial_market_value
+        // （即已实现净盈亏 + 未实现浮动盈亏）。逐笔已实现毛盈亏请用 trade_metrics.gross_pnl。
+        push_f64(metrics.end_market_value - metrics.initial_market_value);
         push_f64(t_metrics.unrealized_pnl);
         push_f64(metrics.total_return_pct);
         push_f64(metrics.annualized_return);

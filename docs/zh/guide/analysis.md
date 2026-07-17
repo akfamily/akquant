@@ -15,7 +15,7 @@
 | `open_position_count` | 未平仓标的数 | Int | 回测结束时仍有持仓的标的数量。 |
 | `initial_market_value` | 初始市值 | Float | 初始资金 (通常为 Cash)。 |
 | `end_market_value` | 结束市值 | Float | 回测结束时的总资产 (Cash + 持仓市值)。 |
-| `total_pnl` | 总盈亏 | Float | `end_market_value - initial_market_value`。 |
+| `total_pnl` | 总盈亏 | Float | `end_market_value - initial_market_value`（组合层：已实现净盈亏 + 未实现浮动盈亏）。注意它不等于 `total_profit + total_loss`（后者是逐笔已实现毛盈亏，未扣佣金、不含浮动盈亏）；若需逐笔已实现毛盈亏请用 `result.trade_metrics.gross_pnl`。 |
 | `unrealized_pnl` | 未实现盈亏 | Float | 结束时持仓的浮动盈亏。 |
 | `total_return_pct` | 总收益率 | **% (百分比)** | `(结束市值 - 初始市值) / 初始市值 * 100`。 |
 | `annualized_return` | 年化收益率 | Ratio (小数) | `(1 + 总收益率)^(1/年数) - 1`。注意这里是小数，如 0.2 表示 20%。 |

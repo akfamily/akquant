@@ -95,7 +95,7 @@ execution_count                                    134.0
 open_position_count                                  0.0
 initial_market_value                     100000.0
 end_market_value                      99100.68204
-total_pnl                                  -188.0
+total_pnl                              -899.31796
 unrealized_pnl                                0.0
 total_return_pct                        -0.899318
 annualized_return                       -0.008109
