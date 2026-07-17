@@ -7054,3 +7054,69 @@ def test_corporate_action_split_rejects_non_positive_ratio() -> None:
             akquant.CorporateActionType.Split,
             0.0,
         )
+
+
+def test_run_backtest_same_bar_sell_funds_buy_next_open() -> None:
+    """Same-bar sell frees cash for a same-bar buy under next-open fill.
+
+    Issue #307: under default next-open fill (bar_offset=1), a same-bar sell
+    must free cash so a same-bar buy of another symbol is not rejected.
+    """
+    dates = pd.to_datetime(
+        ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08"]
+    )
+    price = 10.0
+
+    def _mk(sym: str) -> pd.DataFrame:
+        df = pd.DataFrame(index=dates)
+        df.index.name = "date"
+        for col in ("open", "high", "low", "close"):
+            df[col] = price
+        df["volume"] = 10_000_000
+        df["symbol"] = sym
+        return df
+
+    data = {"A": _mk("A"), "B": _mk("B")}
+
+    class SwitchStrategy(akquant.Strategy):
+        """day1 buy A; day3 (A past T+1) sell A then buy B in the SAME callback."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._days: set = set()
+            self.b_filled = 0.0
+            self.rejects: list = []
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            day = pd.Timestamp(bar.timestamp).normalize()
+            if day in self._days:
+                return
+            self._days.add(day)
+            idx = len(self._days)
+            if idx == 1:
+                self.buy(symbol="A", quantity=5000)
+            elif idx == 3 and self.get_position("A") > 0:
+                self.sell(symbol="A", quantity=self.get_position("A"))
+                self.buy(symbol="B", quantity=5000)
+
+        def on_trade(self, trade: akquant.Trade) -> None:
+            if trade.symbol == "B":
+                self.b_filled += float(trade.quantity)
+
+        def on_reject(self, order: akquant.Order) -> None:
+            self.rejects.append(order.symbol)
+
+    strat = SwitchStrategy()
+    akquant.run_backtest(
+        data=data,
+        strategy=strat,
+        symbols=["A", "B"],
+        initial_cash=100_000.0,
+        commission_rate=0.0,
+        t_plus_one=True,
+        lot_size=100,
+        show_progress=False,
+    )
+
+    assert strat.rejects == []
+    assert strat.b_filled == pytest.approx(5000.0)
