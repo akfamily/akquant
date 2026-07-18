@@ -192,3 +192,46 @@ def test_coerce_leaves_other_types_untouched() -> None:
     assert coerce_to_pandas(df) is df
     marker = ["not", "a", "frame"]
     assert coerce_to_pandas(marker) is marker
+
+
+def test_run_backtest_accepts_string_date_and_polars() -> None:
+    """回归: run_backtest 接受"字符串日期列"的 pandas/polars 输入并结果一致.
+
+    覆盖 A.2b 修复的缺陷(pandas 2.x 下 set_index 得 str dtype 索引未转 datetime)
+    与 issue #298(polars 一等输入)。
+    """
+    from akquant import Strategy, run_backtest
+
+    rows = {
+        "date": [
+            "2023-01-03",
+            "2023-01-04",
+            "2023-01-05",
+            "2023-01-06",
+            "2023-01-09",
+        ],
+        "open": [10.0, 11.0, 12.0, 11.0, 10.0],
+        "high": [12.0, 12.0, 13.0, 12.0, 11.0],
+        "low": [9.0, 10.0, 11.0, 10.0, 9.0],
+        "close": [11.0, 12.0, 11.0, 10.0, 11.0],
+        "volume": [100.0] * 5,
+    }
+
+    class _Buy(Strategy):
+        def on_bar(self, bar: object) -> None:
+            if bar.close > bar.open:  # type: ignore[attr-defined]
+                self.buy(bar.symbol, 100)  # type: ignore[attr-defined]
+
+    def final_equity(result: object) -> float:
+        curve = result.equity_curve  # type: ignore[attr-defined]
+        values = curve.values if hasattr(curve, "values") else list(curve)
+        return round(float(np.asarray(values).ravel()[-1]), 6)
+
+    r_pd = run_backtest(
+        data=pd.DataFrame(rows), strategy=_Buy, symbols="X", initial_cash=100000
+    )
+    pl = pytest.importorskip("polars")
+    r_pl = run_backtest(
+        data=pl.DataFrame(rows), strategy=_Buy, symbols="X", initial_cash=100000
+    )
+    assert final_equity(r_pd) == final_equity(r_pl)

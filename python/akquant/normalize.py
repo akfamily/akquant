@@ -323,6 +323,54 @@ def to_frame(source: Any) -> pd.DataFrame:
     raise TypeError(f"unsupported data source type: {type(source)!r}")
 
 
+def to_indicator_frame(
+    df: pd.DataFrame,
+    date_col: Optional[str] = None,
+    tz: str = DEFAULT_INPUT_TIMEZONE,
+) -> pd.DataFrame:
+    """自动预处理 DataFrame, 处理时区并生成标准 ``timestamp`` 列(指标帧).
+
+    与旧 ``utils.prepare_dataframe`` 行为等价: 保留全部原始列, 将时间列/索引
+    统一转 UTC, 供 ``data_map_for_indicators`` 的交易日与指标预热消费.
+
+    :param df: 输入 DataFrame
+    :param date_col: 日期列名(为 None 则自动探测)
+    :param tz: 默认时区(数据为 naive 时假定为此时区)
+    :return: 处理后的 DataFrame(含 ``timestamp`` 列)
+    """
+    df = df.copy()
+
+    if date_col is None:
+        candidates = ["date", "datetime", "time", "timestamp", "日期", "时间"]
+        for c in candidates:
+            if c in df.columns:
+                date_col = c
+                break
+
+    if date_col and date_col in df.columns:
+        dt = pd.to_datetime(df[date_col], errors="coerce")
+        if dt.dt.tz is None:
+            dt = dt.astype("datetime64[ns]")
+            dt = dt.dt.tz_localize(tz, ambiguous="NaT", nonexistent="shift_forward")
+        dt = dt.dt.tz_convert("UTC")
+        df[date_col] = dt
+        df["timestamp"] = dt
+    elif isinstance(df.index, pd.DatetimeIndex):
+        dt_idx = df.index
+        if dt_idx.tz is None:
+            dt_idx = cast(pd.DatetimeIndex, dt_idx.astype("datetime64[ns]"))
+            dt_idx = dt_idx.tz_localize(
+                tz, ambiguous="NaT", nonexistent="shift_forward"
+            )
+        dt_idx = dt_idx.tz_convert("UTC")
+        df.index = dt_idx
+        df["timestamp"] = dt_idx
+    else:
+        pass
+
+    return df
+
+
 def coerce_to_pandas(data: Any) -> Any:
     """将 polars / pyarrow 输入转为 pandas DataFrame; 其余类型原样返回.
 

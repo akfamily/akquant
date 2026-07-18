@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from ..akquant import Bar
-from ..normalize import dataframe_to_arrays, dataframe_to_bars
+from ..normalize import dataframe_to_arrays, dataframe_to_bars, to_indicator_frame
 
 
 def load_bar_from_df(
@@ -188,55 +188,14 @@ def prepare_dataframe(
     r"""
     自动预处理 DataFrame，处理时区并生成标准时间戳列.
 
+    薄委托: 实现已下沉到 :func:`akquant.normalize.to_indicator_frame`(单一归一化实现).
+
     :param df: 输入 DataFrame
     :param date_col: 日期列名 (若为 None 则自动探测)
     :param tz: 默认时区 (若数据为 Naive 时间，则假定为此时区)
     :return: 处理后的 DataFrame (包含 'timestamp' 列)
     """
-    df = df.copy()
-
-    # 1. Auto-detect date column
-    if date_col is None:
-        candidates = ["date", "datetime", "time", "timestamp", "日期", "时间"]
-        for c in candidates:
-            if c in df.columns:
-                date_col = c
-                break
-
-    if date_col and date_col in df.columns:
-        # 2. Convert to datetime
-        dt = pd.to_datetime(df[date_col], errors="coerce")
-
-        # 3. Handle Timezone
-        if dt.dt.tz is None:
-            # Ensure ns for naive before localizing
-            dt = dt.astype("datetime64[ns]")
-            dt = dt.dt.tz_localize(tz, ambiguous="NaT", nonexistent="shift_forward")
-
-        # 4. Convert to UTC
-        dt = dt.dt.tz_convert("UTC")
-
-        # 5. Assign back
-        df[date_col] = dt
-        df["timestamp"] = dt
-    elif isinstance(df.index, pd.DatetimeIndex):
-        # Handle DatetimeIndex
-        dt_idx = df.index
-
-        if dt_idx.tz is None:
-            dt_idx = cast(pd.DatetimeIndex, dt_idx.astype("datetime64[ns]"))
-            dt_idx = dt_idx.tz_localize(
-                tz, ambiguous="NaT", nonexistent="shift_forward"
-            )
-
-        dt_idx = dt_idx.tz_convert("UTC")
-        df.index = dt_idx
-        df["timestamp"] = dt_idx
-    else:
-        # Warn or ignore? For now silent, user might be processing non-time data?
-        pass
-
-    return df
+    return to_indicator_frame(df, date_col, tz)
 
 
 _RATIO_PERCENT_METRICS = frozenset(
