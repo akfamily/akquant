@@ -12,7 +12,7 @@ The latest version features a modular design, independent portfolio management, 
 
 *   **High-Performance Core**: The core backtesting engine is written in Rust and exposed to Python via PyO3.
     *   **Practical Note**: The Rust core is designed to reduce Python-side overhead in event-driven backtests. Actual runtime depends on strategy logic, data size, callback frequency, and the execution environment.
-    *   **Zero-Copy Access (New)**: Historical data (`ctx.history`) maps directly to Rust memory via PyO3 Buffer Protocol / Numpy View, enabling zero-copy access and significantly boosting indicator calculation performance in Python.
+    *   **Efficient Data Path**: Data ingest (`add_arrays`) borrows NumPy buffers into the engine with zero copy. Historical reads (`get_history`) return a safe snapshot copy of the Rust rolling buffer (the window is small, so the cost is negligible); use `get_history_multi` to fetch several fields in a single FFI crossing.
 *   **Modular Architecture**:
     *   **Engine**: Event-driven core matching engine using BinaryHeap for event queue management.
     *   **Clock**: Trading clock precisely managing TradingSessions and time flow.
@@ -53,7 +53,7 @@ AKQuant aims to solve the performance bottlenecks of traditional Python backtest
 
 ### 1. Extreme Performance: Rust Core + Python Ecosystem
 *   **Hybrid Architecture**: The core computation layer (matching, capital, risk control) is written in **Rust** and exposed to Python via PyO3.
-*   **Zero-Copy Access**: Leveraging Rust's `arrow` and `numpy` view technologies, Python access to historical data (OHLCV, indicators) achieves **zero-copy**, avoiding massive memory copying overhead.
+*   **Efficient Data Path**: Bulk data ingest (`add_arrays`) borrows NumPy buffers into the engine with zero copy. Strategy-facing reads such as `get_history` / `ctx.positions` return **safe snapshot copies** (small windows, negligible cost) rather than views into the mutable engine state; batch multi-field reads with `get_history_multi`.
 *   **Performance Positioning**: The Rust core can reduce interpreter overhead in some event-driven workloads, but measured speedups are workload-dependent and should be validated with your own strategy and environment.
 *   **Incremental Calculation**: Internal indicator calculations use incremental update algorithms instead of full recalculation, suitable for ultra-long history backtesting.
 

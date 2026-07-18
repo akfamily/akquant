@@ -224,7 +224,8 @@ data_map = {
 
 在策略中，你可以随时获取过去 N 天的行情数据。
 
-*   `self.get_history(count, symbol, field)`: 返回 `numpy.ndarray`，性能极高（零拷贝）。
+*   `self.get_history(count, symbol, field)`: 返回 `numpy.ndarray`，是对 Rust 滚动缓冲的一次**安全快照拷贝**（并非零拷贝——底层为可变环形缓冲，返回视图会在下一根 Bar 后失效，故按拷贝返回）。窗口通常很小，拷贝开销可忽略。
+*   `self.get_history_multi(count, symbol, fields)` / `self.get_history_df(count, symbol)`: 一次跨界批量取回多字段，避免逐字段多次调用的边界开销，语义与逐字段 `get_history` 完全一致。
 *   `self.get_history_df(count, symbol)`: 返回 `pd.DataFrame`，方便使用 Pandas 计算。
 
 **注意**：`get_history` 获取的是**当前时刻之前**的数据，不包含当前 Bar（为了避免未来函数）。如果需要包含当前 Bar 的数据参与计算，可以手动 append。

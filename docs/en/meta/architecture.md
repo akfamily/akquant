@@ -44,7 +44,7 @@ akquant/
 │   ├── risk/           # Risk layer (Manager, Rule, Config, Asset-specific)
 │   ├── portfolio.rs    # Funds and position management
 │   ├── context.rs      # Strategy interaction context
-│   ├── history.rs      # Historical data management (Zero-Copy View)
+│   ├── history.rs      # Historical data management (ring buffer; reads returned as safe snapshot copies)
 │   ├── analysis/       # Performance analysis
 │   ├── pipeline/       # Pipeline processing
 │   ├── settlement/     # Settlement logic

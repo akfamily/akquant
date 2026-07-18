@@ -181,7 +181,7 @@ graph TD
 DataFeed 负责按时间顺序向引擎“滴灌”行情数据。在实现上，它在 Rust 中维护了一个时间排序的 B-Tree 或 Vec，确保数据严格按时间戳推送。也正是凭借这套有序结构，当回测多个标的时，DataFeed 能自动对齐时间，确保 `on_bar` 接收到的数据在时间轴上是同步的。
 
 #### 3. StrategyContext (策略上下文)
-StrategyContext 是 Python 策略与 Rust 引擎通信的桥梁。在数据共享上，`StrategyContext` 在 Rust 中持有对 Portfolio 和 Orders 的引用，并通过 PyO3 暴露给 Python。这种设计带来的直接好处是零拷贝访问：当你访问 `self.ctx.positions` 时，实际上是直接读取 Rust 的内存，没有任何数据复制。
+StrategyContext 是 Python 策略与 Rust 引擎通信的桥梁。`StrategyContext` 在 Rust 中持有 Portfolio、Orders 等状态，并通过 PyO3 暴露给 Python。为保证内存安全（引擎状态会随事件持续变动，视图交给 Python 后可能失效），`self.ctx.positions`、`get_history` 等策略侧读取返回的是**当次调用的安全快照拷贝**，而非直接映射 Rust 内存的零拷贝视图；由于持仓/历史窗口通常很小，拷贝开销可忽略。真正的零拷贝发生在数据导入侧（`add_arrays` 借用 NumPy 缓冲入引擎）。
 
 ## 4.3 [主线必学] 配置系统详解 (The Configuration System)
 

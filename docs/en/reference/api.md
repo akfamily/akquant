@@ -866,7 +866,8 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 
 **Data & Utilities:**
 
-*   `get_history(count, symbol, field="close") -> np.ndarray`: Get history data array (Zero-Copy). Supports `open/high/low/close/volume` and any numeric extra fields (e.g., `adj_close`, `adj_factor`).
+*   `get_history(count, symbol, field="close") -> np.ndarray`: Get history data array (a safe snapshot copy of the rolling buffer, not zero-copy). Supports `open/high/low/close/volume` and any numeric extra fields (e.g., `adj_close`, `adj_factor`).
+*   `get_history_multi(count, symbol, fields=("open","high","low","close","volume")) -> Dict[str, np.ndarray]`: Fetch multiple fields in a single FFI crossing; identical in behavior to per-field `get_history`, and used internally by `get_history_df`.
 *   `get_history_df(count, symbol) -> pd.DataFrame`: Get history data DataFrame (OHLCV).
 *   `get_position(symbol) -> float`: Get current position size. This still returns a numeric quantity, not an object.
 *   `get_available_position(symbol) -> float`: Get available position size.
