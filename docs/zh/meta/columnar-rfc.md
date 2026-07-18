@@ -419,6 +419,28 @@ def arrow_to_bars(tbl, symbol=None) -> list[Bar]: # 替代 load_bar_from_df
 
 **Rust 测试环境注**:`scripts/cargo-test.sh` 用 macOS 的 `DYLD_*`;Windows 下需把 base Python 目录(`sys.base_prefix`)加入 PATH 才能加载 pyo3 链接的 `pythonXX.dll`,否则测试二进制报 `STATUS_DLL_NOT_FOUND`。
 
+## 21. B.2 架构结论 + B2′ 实施记录(2026-07-18)
+
+### B.2(BarRef 零物化)判定为不可行 —— 已放弃
+
+深入 Rust 后确认原 §6 的"`Event::Bar(BarRef)` 零物化"在当前架构下**不可行且低价值**:
+
+- **自引用障碍**:`Engine` 同时持有 `state.feed`(列存)与 `current_event: Option<Event>`。让 `Event::Bar` 借用列存 = 同一结构体内自引用借用,安全 Rust 不允许。
+- **owned 事件流**:`DataProcessor` 为多标的对齐会 `clone` 事件进 `current_symbol_events`(owned);feed 在 `Arc<Mutex<Box<dyn DataClient>>>` 后,索引方案则每次读字段要加锁。
+- **低回报**:事件驱动撮合是逐 bar 串行,每事件物化一个 Bar 成本极小;cache/SIMD 红利在"扫整列"处,不在"一次一根"的撮合循环。
+
+要硬做需 unsafe 自引用或重写整个 事件+pipeline+对齐 系统,风险极高、收益极低。故**放弃 B.2-as-BarRef**,把"列式性能"重定向到真正有价值处 → **B2′**。
+
+### B2′(向量化列计算)—— 已落地
+
+- 新增 `src/data/compute.rs`:`&[f64]` 切片上的向量化批量原语(零拷贝、编译器可自动向量化、可直接作用于 B.1 的 `BarColumns` 列,与增量指标互补):`sma/ema/wma/rolling_sum/rolling_min/rolling_max/rolling_std(ddof=1)/zscore/returns/log_returns/cumsum`。
+- 11 个 numpy 零拷贝 Python 绑定 `vec_*`(`PyReadonlyArray1<f64>` 读入),注册进 `akquant` 模块 + `akquant.pyi` 手写存根(注:参数 `PyReadonlyArray1` 不满足 `PyStubType`,故这些函数不用 `#[gen_stub_pyfunction]`,存根手工维护)。
+- 语义对齐 pandas:`vec_sma`/`vec_rolling_std`/`vec_returns` 等与 pandas 逐位一致(NaN 位置一致、std 为样本 ddof=1)。
+
+**验证**:golden 不回归;**119 Rust(+6 compute)+ 28 Python(+11 vectorized)测试全过**;compute.rs clippy/ruff/mypy 干净。
+
+**定位**:B2′ 与 polars 因子引擎**互补**——polars 用于研究期向量化;`vec_*` 是 Rust 原生、可零拷贝作用于引擎内列存(BarColumns),无 pandas/polars 往返,适合生产/嵌入路径与 Rust 侧因子。
+
 ---
 
 *本 RFC 为设计基线,随分期实施更新;每期完成后回填「实际差异」与 golden 变更记录。*
