@@ -98,6 +98,9 @@ print(df.head())
 
 对于高频或海量数据，CSV 并非最佳选择，应改用更高效的二进制格式，且选型可随数据规模与应用层级递进。日常研究中最实用的是 **Parquet / Feather**，它采用列式存储，读取速度快、压缩率高，且 Pandas 完美支持；面向大规模数值矩阵存储则可选用 **HDF5**；而当应用进入机构级场景时，则会动用 **KDB+ / DolphinDB** 这类专业的时序数据库 (Time Series Database)。
 
+!!! tip "超出内存的数据集：out-of-core 流式回测"
+    当数据大到无法一次性放进内存（例如全市场多年分钟线）时，AKQuant 支持**有界内存流式回测**：先用 `akquant.write_canonical_parquet(源, "market.parquet")` 把任意来源规范化为按时间排序的 Parquet，再用 `akquant.DataFeed.from_parquet("market.parquet")` 分块流式喂给 `run_backtest`——回测**峰值内存与数据总量无关**。详见《数据准备与加载指南 · 2.6》。
+
 ### 3.3.3 标准化字段定义
 
 为了适配 `AKQuant` 引擎，所有数据必须被映射到以下标准字段：

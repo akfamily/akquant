@@ -6,6 +6,16 @@
 
 AKQuant 的核心引擎（Rust）和 Python 接口层主要通过 `pandas.DataFrame` 或 `List[Bar]` 进行交互。最推荐的方式是使用 **Pandas DataFrame**。
 
+除 pandas 外，`run_backtest(data=...)` 也接受 **`polars.DataFrame` / `polars.LazyFrame` / `pyarrow.Table`** 作为一等输入（内部会零成本转为 pandas 数据路径），无需你手动 `.to_pandas()`：
+
+```python
+import polars as pl
+from akquant import run_backtest
+
+pldf = pl.read_parquet("000001.parquet")
+result = run_backtest(data=pldf, strategy=MyStrategy, symbols="000001.SZ")
+```
+
 ### 1.1 必需列 (Required Columns)
 
 你的 DataFrame **必须** 包含以下列（列名不区分大小写，但在内部会被转换为小写）：
@@ -173,8 +183,44 @@ feed.add_tick(aq.Tick(...))
 补充说明：
 
 *   `DataFeed.from_csv(...)` 适合让 AKQuant 直接从 CSV 事件流读取数据。
+*   `DataFeed.from_parquet(...)` 适合**超大数据集的有界内存（out-of-core）流式回测**（见 2.6）。
 *   `add_bar(...)` / `add_bars(...)` / `add_arrays(...)` 适合你已经在 Python 侧拿到标准化行情对象或数组。
 *   如果 CSV 或数组里出现非法浮点值，Rust 侧会发出 warning，并通过 AKQuant 的 Python `logging` 输出，而不是静默吞掉。
+
+### 2.6 超大数据集：out-of-core 流式回测
+
+当数据大到无法一次性放进内存（例如全市场多年分钟线）时，可用 **流式 Parquet 数据源**：数据按块从磁盘读取，回测**峰值内存与数据总量无关**（有界内存）。
+
+第一步，用 `write_canonical_parquet` 把任意来源（pandas / polars / pyarrow / `List[Bar]`）规范化为可流式读取的 Parquet（列 `timestamp` 为纳秒 UTC 整数、按时间升序、zstd 压缩；含 `symbol` 列即天然支持多标的）：
+
+```python
+import akquant as aq
+
+# 任意来源 -> 规范 parquet（可多标的，单文件按时间全局排序）
+aq.write_canonical_parquet(df, "market.parquet")
+```
+
+第二步，用 `DataFeed.from_parquet` 流式喂给回测：
+
+```python
+import akquant as aq
+
+feed = aq.DataFeed.from_parquet("market.parquet", chunk_size=65536)
+result = aq.run_backtest(
+    data=feed,
+    strategy=MyStrategy,
+    symbols=["000001.SZ", "600000.SH"],  # 多标的
+    show_progress=False,
+)
+```
+
+要点：
+
+*   规范 Parquet 需**按 `timestamp` 升序**；`write_canonical_parquet` 会自动排序。
+*   `chunk_size` 控制每次读取的行数（默认 65536），即内存上界的量级。
+*   多标的只需在同一个按时间排序、带 `symbol` 列的文件里；流式源会按时间序跨标的产出。
+*   流式模式下**结果仍在内存累积**（资金曲线、成交等），若要跑到"数千万根 bar"，数据侧已有界，引擎侧吞吐是另一维度的优化。
+*   仓库内 `scripts/stress_out_of_core.py` 提供了峰值内存实测脚本。
 
 ---
 
