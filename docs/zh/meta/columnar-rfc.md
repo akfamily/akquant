@@ -441,6 +441,29 @@ def arrow_to_bars(tbl, symbol=None) -> list[Bar]: # 替代 load_bar_from_df
 
 **定位**:B2′ 与 polars 因子引擎**互补**——polars 用于研究期向量化;`vec_*` 是 Rust 原生、可零拷贝作用于引擎内列存(BarColumns),无 pandas/polars 往返,适合生产/嵌入路径与 Rust 侧因子。
 
+## 22. C.2 实施记录(2026-07-18)—— out-of-core 核心机制
+
+> **关键洞察**:out-of-core **契合现架构**(与 B.2 相反)——`DataClient` trait 本就是 pull-based(`peek_timestamp`/`next`),`CsvDataClient` 是现成流式模板,可复用 B.1 的时间戳归并。
+
+### C.2a/b 已落地
+
+- 新增 `src/data/parquet_stream.rs` 的 `ParquetStreamClient`(实现 `DataClient`):
+  - 经 polars `scan_parquet(PlPath).slice(offset, chunk).collect()` **分块读取**,内存占用约 `chunk_size` 行,**与文件总量无关**(有界内存 → out-of-core)。
+  - 逐块转 `Bar`(价格 `Decimal::from_f64`,与 `from_arrays` 一致);`next/peek` 从缓冲弹出,空则填充。
+  - 只读流式源(`add()` 返回错误);假定 parquet 按 `timestamp` 升序,`sort()` 空实现。
+  - 规范列:`timestamp`(i64 ns UTC)+ `open/high/low/close/volume`(f64)+ 可选 `symbol`(str)。
+- `DataFeed.from_parquet(path, symbol=None, chunk_size=None)` 静态构造器(默认 chunk 65536)+ pyi 存根。
+
+**验证**:2 个 Rust 单测(全量读取、时间戳升序、缓冲区 ≤ chunk)+ 2 个 Python 端到端(流式回测与等价内存回测**数值一致**、跨 chunk 边界不丢 bar);121 Rust 测试全过;golden 不回归;clippy/ruff/mypy 干净。
+
+**用法**:`feed = DataFeed.from_parquet(path, "600000"); run_backtest(data=feed, ...)` → 有界内存回测。
+
+### C.2 仍未做(留待后续)
+
+- **C.2c**:让 `run_backtest(catalog_path=...)` 自动走流式(现在 catalog 路径仍全量 pandas pre-load);catalog 写出**规范 parquet**(`timestamp` i64 ns UTC,替代当前 pandas 专有的 `__index_level_0__`/us/naive 格式);**多标的按时间 k 路归并**(多文件流式合并)。
+- **C.2d**:全 A 股分钟线 > 内存 stress 验收。
+- Windows 跑 Rust 测试需 `sys.base_prefix` 加 PATH(见 §20 注)。
+
 ---
 
 *本 RFC 为设计基线,随分期实施更新;每期完成后回填「实际差异」与 golden 变更记录。*
