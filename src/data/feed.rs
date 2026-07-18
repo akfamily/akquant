@@ -9,10 +9,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-use super::batch::from_arrays;
 use super::client::{
     CsvDataClient, DataClient, FeedAction, RealtimeDataClient, SimulatedDataClient,
 };
+use super::columns::BarColumns;
 
 fn clock_fallback_context(next_timer_ts: Option<i64>) -> AkqLogContext {
     let mut context = AkqLogContext::new().phase("data");
@@ -148,10 +148,18 @@ impl DataFeed {
         extra: Option<HashMap<String, Py<PyAny>>>,
         py: Python<'_>,
     ) -> PyResult<()> {
-        let bars = from_arrays(
+        let columns = BarColumns::from_py_arrays(
             timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra, py,
         )?;
-        self.add_bars(bars)
+        if self.live_sender.is_some() {
+            // 实时模式: 重构为 Bar 事件逐个发送
+            self.add_bars(columns.to_bars())
+        } else {
+            let mut provider = self.provider.lock().unwrap();
+            provider
+                .add_bar_columns(columns)
+                .map_err(|e| PyValueError::new_err(e.to_string()))
+        }
     }
 
     /// 对数据源进行排序 (按时间戳).

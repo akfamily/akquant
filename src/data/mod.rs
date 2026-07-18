@@ -1,6 +1,7 @@
 pub mod aggregator;
 pub mod batch;
 pub mod client;
+pub mod columns;
 pub mod feed;
 
 pub use aggregator::BarAggregator;

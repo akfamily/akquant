@@ -1,3 +1,4 @@
+use crate::data::columns::BarColumns;
 use crate::error::AkQuantError;
 use crate::event::Event;
 use crate::log_context::{AkqLogContext, format_event_time_nanos, render_log_message};
@@ -28,6 +29,17 @@ fn normalize_timestamp(ts: i64) -> i64 {
     }
 }
 
+/// 提取事件时间戳 (无时间戳的事件回退为 0).
+#[inline]
+fn event_timestamp(event: &Event) -> i64 {
+    match event {
+        Event::Bar(b) => b.timestamp,
+        Event::Tick(t) => t.timestamp,
+        Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
+        _ => 0,
+    }
+}
+
 /// Data Client Trait for streaming or in-memory data
 pub trait DataClient: Send {
     fn peek_timestamp(&mut self) -> Option<i64>;
@@ -37,6 +49,15 @@ pub trait DataClient: Send {
     fn len_hint(&self) -> Option<usize>;
     fn progress_len_hint(&self) -> Option<usize> {
         self.len_hint()
+    }
+
+    /// 批量添加列式 Bar 数据. 默认逐行重构为 Bar 后调用 [`DataClient::add`];
+    /// 支持列式存储的实现可覆盖以直接保存 (见 [`SimulatedDataClient`]).
+    fn add_bar_columns(&mut self, columns: BarColumns) -> Result<(), AkQuantError> {
+        for i in 0..columns.len() {
+            self.add(Event::Bar(columns.reconstruct_bar(i)))?;
+        }
+        Ok(())
     }
 
     /// 是否为实时数据源
@@ -50,31 +71,62 @@ pub trait DataClient: Send {
     }
 }
 
-/// Simulated Data Client (In-Memory)
+/// Simulated Data Client (In-Memory).
+///
+/// Bar 数据以列式 [`BarColumns`] 存储 (来自 `add_arrays`), 其余事件 (Tick /
+/// `List[Bar]` 等) 存于 `events`; 迭代时按时间戳流式归并两者。
 pub struct SimulatedDataClient {
+    pub bars: BarColumns,
+    pub bar_cursor: usize,
     pub events: VecDeque<Event>,
 }
 
 impl SimulatedDataClient {
     pub fn new() -> Self {
         Self {
+            bars: BarColumns::default(),
+            bar_cursor: 0,
             events: VecDeque::new(),
+        }
+    }
+
+    /// 当前列式游标处的 Bar 时间戳 (已消费完则为 None).
+    #[inline]
+    fn peek_bar_timestamp(&self) -> Option<i64> {
+        if self.bar_cursor < self.bars.len() {
+            Some(self.bars.timestamp_at(self.bar_cursor))
+        } else {
+            None
         }
     }
 }
 
 impl DataClient for SimulatedDataClient {
     fn peek_timestamp(&mut self) -> Option<i64> {
-        self.events.front().map(|e| match e {
-            Event::Bar(b) => b.timestamp,
-            Event::Tick(t) => t.timestamp,
-            Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
-            _ => 0, // Fallback for events without timestamp
-        })
+        match (self.peek_bar_timestamp(), self.events.front().map(event_timestamp)) {
+            (Some(b), Some(e)) => Some(b.min(e)),
+            (Some(b), None) => Some(b),
+            (None, Some(e)) => Some(e),
+            (None, None) => None,
+        }
     }
 
     fn next(&mut self) -> Option<Event> {
-        self.events.pop_front()
+        let bar_ts = self.peek_bar_timestamp();
+        let evt_ts = self.events.front().map(event_timestamp);
+        // 列式 Bar 与事件按时间戳归并; 相等时列式 Bar 优先 (确定性 tie-break).
+        let take_bar = match (bar_ts, evt_ts) {
+            (Some(b), Some(e)) => b <= e,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        if take_bar {
+            let bar = self.bars.reconstruct_bar(self.bar_cursor);
+            self.bar_cursor += 1;
+            Some(Event::Bar(bar))
+        } else {
+            self.events.pop_front()
+        }
     }
 
     fn add(&mut self, event: Event) -> Result<(), AkQuantError> {
@@ -82,28 +134,30 @@ impl DataClient for SimulatedDataClient {
         Ok(())
     }
 
+    fn add_bar_columns(&mut self, columns: BarColumns) -> Result<(), AkQuantError> {
+        self.bars.append(columns);
+        Ok(())
+    }
+
     fn sort(&mut self) {
-        self.events.make_contiguous().sort_by_key(|e| match e {
-            Event::Bar(b) => b.timestamp,
-            Event::Tick(t) => t.timestamp,
-            Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
-            _ => 0,
-        });
+        self.bars.sort_by_timestamp();
+        self.events.make_contiguous().sort_by_key(event_timestamp);
     }
 
     fn len_hint(&self) -> Option<usize> {
-        Some(self.events.len())
+        Some((self.bars.len() - self.bar_cursor) + self.events.len())
     }
 
     fn progress_len_hint(&self) -> Option<usize> {
         let mut timestamps = HashSet::new();
+        for i in self.bar_cursor..self.bars.len() {
+            let ts = self.bars.timestamp_at(i);
+            if ts > 0 {
+                timestamps.insert(ts);
+            }
+        }
         for event in &self.events {
-            let ts = match event {
-                Event::Bar(bar) => bar.timestamp,
-                Event::Tick(tick) => tick.timestamp,
-                Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
-                _ => 0,
-            };
+            let ts = event_timestamp(event);
             if ts > 0 {
                 timestamps.insert(ts);
             }
