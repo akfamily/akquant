@@ -26,7 +26,11 @@ pub mod statistics;
 
 use analysis::{BacktestResult, ClosedTrade, LiquidationAudit, PerformanceMetrics, TradePnL};
 use context::{ExpiryEvent, StrategyContext};
-use data::{BarAggregator, DataFeed, from_arrays};
+use data::{
+    BarAggregator, DataFeed, from_arrays, vec_cumsum, vec_ema, vec_log_returns, vec_returns,
+    vec_rolling_max, vec_rolling_min, vec_rolling_std, vec_rolling_sum, vec_sma, vec_wma,
+    vec_zscore,
+};
 use engine::Engine;
 use model::{
     AssetType, Bar, Instrument, OptionMarginModel, OptionType, Order, OrderRole, OrderSide,
@@ -43,6 +47,18 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = pyo3_log::init();
     m.add_class::<Bar>()?;
     m.add_function(wrap_pyfunction!(from_arrays, m)?)?;
+    // B2′ 向量化列计算原语
+    m.add_function(wrap_pyfunction!(vec_sma, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_ema, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_wma, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_rolling_sum, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_rolling_min, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_rolling_max, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_rolling_std, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_zscore, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_returns, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_log_returns, m)?)?;
+    m.add_function(wrap_pyfunction!(vec_cumsum, m)?)?;
     m.add_class::<Tick>()?;
     m.add_class::<DataFeed>()?;
     m.add_class::<BarAggregator>()?;
