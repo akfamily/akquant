@@ -398,6 +398,27 @@ def arrow_to_bars(tbl, symbol=None) -> list[Bar]: # 替代 load_bar_from_df
 
 **A.2 后仍未做(留待后续)**:`feed_adapter` 的 resample/replay 仍是 pandas 实现(C/D 期迁 polars);Catalog 仍是旧结构(C 期重写);Rust 边界仍收 numpy(B 期列式化)。
 
+## 20. B.1 实施记录(2026-07-18)
+
+> **混合路线确认**:价格/OHLCV 用 **f64 列存**(输入本就是 f64,零精度损失);"钱"(结算/PnL/保证金)**保留 Decimal**。重构 Bar 时价格用 `Decimal::from_f64`,与旧 `from_arrays` **完全一致** → golden 逐位不变。全 f64 计算(SIMD)属改数值的大动作,归 E 期后。
+
+**已落地**
+
+- 新增 `src/data/columns.rs` 的 `BarColumns`(SoA:`ts:Vec<i64>` + `open/high/low/close/volume:Vec<f64>` + `symbols:Vec<String>` + `extra:HashMap<String,Vec<f64>>`):
+  - `from_py_arrays`:与 `from_arrays` 相同的取数/校验/symbol 解析;
+  - `reconstruct_bar(i)`:价格→`Decimal::from_f64`(含 NaN→0.0 告警),逐位一致;
+  - `append`(多次 add_arrays 拼接)、`sort_by_timestamp`(稳定排序,等时间戳保插入序)。
+- `batch::from_arrays` 重构为 `BarColumns::from_py_arrays(...).to_bars()`,输出不变。
+- `SimulatedDataClient` 改为 **列式存 Bar(来自 `add_arrays`)+ `VecDeque<Event>` 存其余事件**(Tick / `List[Bar]` via add_bars);`peek/next` 按时间戳**流式归并**两者(等时列式 Bar 优先),`sort` 分别排序。
+- `DataFeed.add_arrays` 直接构建 `BarColumns` 零拷贝存入(实时 `live_sender` 模式回退为重构 Bar 事件发送)。
+- 无效数值告警源模块 `akquant.data.batch` → `akquant.data.columns`(消息/结构化上下文不变),同步更新 3 处测试断言。
+
+**验证**:golden 三用例逐位一致、`engine_rule_version` 仍 `1.3.0`;**113 Rust 测试 + 233 Python 测试全过**;`cargo build`/`clippy` 在改动文件零警告。
+
+**设计要点**:`Event` 枚举仍携 owned `Bar`,`next()` 仍按需重构 `Bar`(一次分配)——故 B.1 是**存储列式化 + 内存/地基**,尚未消灭消费端 AoS 物化。真正零物化的 `BarRef` 游标 + 撮合/结算读列 = **B.2**(需改 Event 枚举 + 全部消费者,巨大)。
+
+**Rust 测试环境注**:`scripts/cargo-test.sh` 用 macOS 的 `DYLD_*`;Windows 下需把 base Python 目录(`sys.base_prefix`)加入 PATH 才能加载 pyo3 链接的 `pythonXX.dll`,否则测试二进制报 `STATUS_DLL_NOT_FOUND`。
+
 ---
 
 *本 RFC 为设计基线,随分期实施更新;每期完成后回填「实际差异」与 golden 变更记录。*
