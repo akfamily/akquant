@@ -6,6 +6,7 @@ import sys
 import warnings
 from dataclasses import dataclass, fields
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -46,6 +47,7 @@ from ..data import ParquetDataCatalog
 from ..feed_adapter import DEFAULT_INPUT_TIMEZONE, DataFeedAdapter, FeedSlice
 from ..indicator_recording import IndicatorRecorder
 from ..log import build_log_extra, get_logger, has_configured_handler, register_logger
+from ..normalize import coerce_to_pandas
 from ..risk import apply_risk_config
 from ..strategy import (
     InstrumentAssetTypeName,
@@ -562,8 +564,21 @@ def _build_trading_day_metadata(
     return sorted(all_dates), day_bounds, day_rebalance_timestamps
 
 
+if TYPE_CHECKING:
+    import polars as pl
+    import pyarrow as pa
+
+# polars.DataFrame / pyarrow.Table 为平权一等输入(issue #298),
+# 运行时由 coerce_to_pandas 统一转 pandas 后走既有数据路径.
 BacktestDataInput = Union[
-    pd.DataFrame, Dict[str, pd.DataFrame], List[Bar], DataFeed, DataFeedAdapter
+    pd.DataFrame,
+    "pl.DataFrame",
+    "pl.LazyFrame",
+    "pa.Table",
+    Dict[str, pd.DataFrame],
+    List[Bar],
+    DataFeed,
+    DataFeedAdapter,
 ]
 
 _BROKER_PROFILE_TEMPLATES: Dict[str, Dict[str, Any]] = {
@@ -3034,6 +3049,8 @@ def run_backtest(
 
     # Determine Data Loading Strategy
     if data is not None:
+        # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
+        data = coerce_to_pandas(data)
         if isinstance(data, DataFeed):
             # Use provided DataFeed
             feed = data
@@ -4597,6 +4614,9 @@ def run_warm_start(
     # 1. 准备数据源
     feed = None
     data_map_for_indicators: Dict[str, pd.DataFrame] = {}
+
+    # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
+    data = coerce_to_pandas(data)
 
     if isinstance(data, DataFeed):
         feed = data

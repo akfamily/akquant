@@ -514,7 +514,9 @@ class DataFeed:
         lows: numpy.ndarray,
         closes: numpy.ndarray,
         volumes: numpy.ndarray,
-        symbol: str,
+        symbol: typing.Optional[str] = ...,
+        symbols: typing.Optional[typing.Sequence[str]] = ...,
+        extra: typing.Optional[typing.Mapping[str, typing.Any]] = ...,
     ) -> None: ...
     def __new__(
         cls,
