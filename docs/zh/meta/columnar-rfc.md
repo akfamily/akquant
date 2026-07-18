@@ -385,6 +385,19 @@ def arrow_to_bars(tbl, symbol=None) -> list[Bar]: # 替代 load_bar_from_df
 
 **A 期发现的既有缺陷(留待 A.2 修)**:engine 的 `pd.DataFrame` 分支对"字符串日期列 + 无 symbol 列"形状会 `set_index` 后丢失时间戳, 报 `Missing columns: ['timestamp']`(pandas 输入亦复现, 非本次回归)。A.2 将 engine 直接改走 `normalize` 漏斗, 顺带修复此形状。
 
+## 19. A.2 实施记录(2026-07-18)
+
+**已落地(全量走漏斗)**
+
+- `prepare_dataframe` 实现下沉为 `normalize.to_indicator_frame`(逐字移植, 行为不变);`utils.prepare_dataframe` 改薄委托。至此四处归一化逻辑全部收敛入 `normalize.py`。
+- engine 两处数据分派改为**直接使用** `normalize` 的 `dataframe_to_arrays` / `to_indicator_frame`, 移除对 `utils.df_to_arrays` / `prepare_dataframe` 的间接依赖。
+- **修复既有缺陷**:根因是 pandas 2.x 下 `set_index("date")` 得到 `str` dtype 索引, engine 旧判断 `index.dtype == "object"` 漏掉 → 索引未转 `DatetimeIndex` → 无 `timestamp`。改为稳健的 `not isinstance(index, pd.DatetimeIndex)` 判断(两处分支)。
+- 新增回归测试:`run_backtest` 接受"字符串日期列"的 pandas/polars 输入且结果一致。
+
+**验证**:golden 三用例逐位一致、`__engine_rule_version__` 仍 `1.3.0`;normalize+golden+engine 共 232 passed;字符串日期列 pandas/polars/arrow 三路 `run_backtest` 末值一致(100200.0);ruff + mypy(pre-commit 隔离环境)通过。
+
+**A.2 后仍未做(留待后续)**:`feed_adapter` 的 resample/replay 仍是 pandas 实现(C/D 期迁 polars);Catalog 仍是旧结构(C 期重写);Rust 边界仍收 numpy(B 期列式化)。
+
 ---
 
 *本 RFC 为设计基线,随分期实施更新;每期完成后回填「实际差异」与 golden 变更记录。*
