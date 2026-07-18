@@ -886,7 +886,8 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 
 **数据与工具:**
 
-*   `get_history(count, symbol, field="close") -> np.ndarray`: 获取历史数据数组 (Zero-Copy)。
+*   `get_history(count, symbol, field="close") -> np.ndarray`: 获取历史数据数组（返回滚动缓冲的安全快照拷贝，非零拷贝）。
+*   `get_history_multi(count, symbol, fields=("open","high","low","close","volume")) -> Dict[str, np.ndarray]`: 单次跨界批量取回多字段，语义等价于逐字段 `get_history`，`get_history_df` 内部即基于它。
 *   `get_history_map(count, symbols, field="close") -> Dict[str, np.ndarray]`: 批量获取多个标的历史数据。
 *   `rebalance_to_topn(scores, top_n, weight_mode="equal", ...) -> List[str]`: 根据打分选取 TopN 并执行调仓，支持等权或按分数归一化。
 *   `get_history_df(count, symbol) -> pd.DataFrame`: 获取历史数据 DataFrame (OHLCV)。

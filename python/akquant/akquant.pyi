@@ -2619,6 +2619,26 @@ class StrategyContext:
         """
         ...
 
+    def history_multi(
+        self,
+        symbol: str,
+        fields: list[str],
+        count: int,
+        end_before_ns: typing.Optional[int] = ...,
+    ) -> typing.Optional[dict[str, numpy.typing.NDArray[numpy.float64]]]:
+        r"""
+        批量获取多个字段的历史数据 (一次跨界返回).
+
+        语义与逐字段调用 history 一致, 但只锁一次缓冲、只跨一次 FFI 边界.
+
+        :param symbol: 标的代码
+        :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
+        :param count: 获取的数据长度
+        :param end_before_ns: 可选, 历史可见性截断时间戳 (纳秒)
+        :return: {field: numpy array} or None
+        """
+        ...
+
     def schedule(self, timestamp: int, payload: str) -> None:
         r"""
         注册定时器.

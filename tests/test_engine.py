@@ -7329,3 +7329,388 @@ def test_per_symbol_sellable_after_days_t0_vs_t1() -> None:
     t1_day = _first_available_day(1)
     # T+1 shares become sellable exactly one trading day after T+0 shares.
     assert t1_day == t0_day + 1
+
+
+def test_rebalance_weights_same_cycle_cross_symbol_sell_funds_buy() -> None:
+    """Cross-symbol rebalance_weights: a same-cycle sell must fund the buy (#292).
+
+    Regression for #292 (fixed under the #307 engine work): switching weights
+    from {AAA, BBB} to {BBB, CCC} liquidates AAA and buys CCC in the SAME
+    rebalance. The account is ~98% invested, so the CCC buy is only affordable
+    if the AAA sale proceeds are released within the same slice. Before the fix
+    the buy's affordability check saw pre-sale cash and was wrongly rejected,
+    leaving the portfolio short of target.
+
+    Covers the ``rebalance_weights`` + ``temporal="same_cycle"`` (``bar_offset=0``)
+    path specifically; the #307 test exercises the low-level buy/sell +
+    next-open path. Prices are constant and an explicit ``price_map`` is passed
+    so weight sizing matches the fill price exactly — the test isolates the
+    cross-symbol cash release, not weight-to-quantity drift.
+    """
+    dates = pd.to_datetime(
+        ["2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06", "2023-01-09"]
+    )
+    price_map = {"AAA": 1.0, "BBB": 1.0, "CCC": 1.0}
+
+    def _mk(sym: str) -> pd.DataFrame:
+        df = pd.DataFrame(index=dates)
+        df.index.name = "date"
+        for col in ("open", "high", "low", "close"):
+            df[col] = 1.0
+        df["volume"] = 10_000_000.0
+        df["symbol"] = sym
+        return df
+
+    data = {sym: _mk(sym) for sym in ("AAA", "BBB", "CCC")}
+
+    class SwitchStrategy(akquant.Strategy):
+        """day1 hold AAA+BBB; day3 (past T+1) drop AAA, keep BBB, add CCC."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._days: set = set()
+            self.rejects: list = []
+            self.final_positions: dict = {}
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            day = pd.Timestamp(bar.timestamp).normalize()
+            if day in self._days:
+                return
+            self._days.add(day)
+            idx = len(self._days)
+            if idx == 1:
+                self.rebalance_weights(
+                    {"AAA": 0.49, "BBB": 0.49},
+                    price_map=price_map,
+                    liquidate_unmentioned=True,
+                )
+            elif idx == 3:  # AAA/BBB are now past T+1 and sellable
+                self.rebalance_weights(
+                    {"BBB": 0.49, "CCC": 0.49},
+                    price_map=price_map,
+                    liquidate_unmentioned=True,
+                )
+
+        def on_reject(self, order: akquant.Order) -> None:
+            self.rejects.append(order.symbol)
+
+        def on_stop(self) -> None:
+            self.final_positions = {
+                sym: float(qty) for sym, qty in dict(self.positions).items()
+            }
+
+    strat = SwitchStrategy()
+    akquant.run_backtest(
+        data=data,
+        strategy=strat,
+        symbols=["AAA", "BBB", "CCC"],
+        initial_cash=1_000_000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        t_plus_one=True,
+        lot_size=100,
+        show_progress=False,
+        fill_policy={
+            "price_basis": "close",
+            "bar_offset": 0,
+            "temporal": "same_cycle",
+        },
+    )
+
+    # The CCC buy funded by the AAA sale must not be rejected.
+    assert strat.rejects == []
+    # Portfolio reaches the target: BBB kept, CCC bought, AAA fully liquidated.
+    assert strat.final_positions.get("BBB") == pytest.approx(490_000.0)
+    assert strat.final_positions.get("CCC") == pytest.approx(490_000.0)
+    assert strat.final_positions.get("AAA", 0.0) == pytest.approx(0.0)
+
+
+def _rebalance_hook_price_frames() -> dict[str, pd.DataFrame]:
+    """3-symbol daily frames with distinct open/close per day for hook tests.
+
+    Symbol "a": open_i = 10.1 + 0.1*i, close_i = open_i + 0.01. So day 1 has
+    open 10.10 / close 10.11 and day 2 has open 10.20 / close 10.21 — the fill
+    price alone identifies which bar an order landed on.
+    """
+    dates = pd.to_datetime(
+        ["2023-01-01", "2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"]
+    )
+    frames: dict[str, pd.DataFrame] = {}
+    for sym, base in (("a", 10.1), ("b", 20.1), ("c", 30.1)):
+        opens = [base + 0.1 * i for i in range(len(dates))]
+        df = pd.DataFrame(index=dates)
+        df.index.name = "date"
+        df["open"] = opens
+        df["high"] = [o + 0.02 for o in opens]
+        df["low"] = [o - 0.02 for o in opens]
+        df["close"] = [o + 0.01 for o in opens]
+        df["volume"] = 1_000_000.0
+        df["symbol"] = sym
+        frames[sym] = df
+    return frames
+
+
+def test_on_daily_rebalance_no_lookahead_and_precise_hook_independent_fill() -> None:
+    """`on_daily_rebalance` contract (#291): no lookahead, precise-independent.
+
+    The `enable_precise_day_boundary_hooks` toggle must not shift the fill bar.
+
+    * On day 1 ``get_history("a", "close")`` must NOT reveal the current-day
+      close (10.11); on day 2 it reveals day 1's close, i.e. history lags by a
+      trading day (the day-boundary "previous info visible" semantics).
+    * Buying on the first callback under next-open fill (``bar_offset=1``) fills
+      at day 2's open (10.20) regardless of the precise-hooks setting. Issue
+      #291 reported precise=True vs False diverging by a day here.
+    """
+
+    class RebalanceStrategy(akquant.Strategy):
+        def __init__(self, precise: bool) -> None:
+            super().__init__()
+            self.set_history_depth(1)
+            self.enable_precise_day_boundary_hooks = precise
+            self._seen: set = set()
+            self.hist_by_day: dict[int, float] = {}
+            self._bought = False
+            self.buy_price: float | None = None
+
+        def on_daily_rebalance(self, trading_date: Any, timestamp: int) -> None:
+            day = pd.Timestamp(trading_date).normalize()
+            if day in self._seen:
+                return
+            self._seen.add(day)
+            idx = len(self._seen)
+            hist = self.get_history(count=1, symbol="a", field="close")
+            self.hist_by_day[idx] = float("nan") if len(hist) == 0 else float(hist[-1])
+            if not self._bought:
+                self.buy("a", 1)
+                self._bought = True
+
+        def on_trade(self, trade: akquant.Trade) -> None:
+            if trade.symbol == "a" and trade.side == akquant.OrderSide.Buy:
+                self.buy_price = float(trade.price)
+
+    def _run(precise: bool) -> RebalanceStrategy:
+        strat = RebalanceStrategy(precise=precise)
+        akquant.run_backtest(
+            data=_rebalance_hook_price_frames(),
+            strategy=strat,
+            symbols=["a", "b", "c"],
+            initial_cash=1_000_000.0,
+            commission_rate=0.0,
+            stamp_tax_rate=0.0,
+            show_progress=False,
+            fill_policy={
+                "price_basis": "open",
+                "bar_offset": 1,
+                "temporal": "same_cycle",
+            },
+        )
+        return strat
+
+    precise_on = _run(True)
+    precise_off = _run(False)
+
+    # No lookahead: day 1 does not expose the current-day close (10.11).
+    assert np.isnan(precise_on.hist_by_day[1])
+    assert np.isnan(precise_off.hist_by_day[1])
+    # History lags by one trading day: day 2 sees day 1's close.
+    assert precise_on.hist_by_day[2] == pytest.approx(10.11)
+    assert precise_off.hist_by_day[2] == pytest.approx(10.11)
+    # Precise-hooks toggle must not move the fill: both land on day 2's open.
+    assert precise_on.buy_price == pytest.approx(10.20)
+    assert precise_off.buy_price == pytest.approx(10.20)
+
+
+def test_on_daily_rebalance_after_bar_sees_current_day_and_same_cycle_fill() -> None:
+    """`on_daily_rebalance_after_bar` contract (#291): current-day visibility.
+
+    Current-day data is visible and a same-cycle close order fills at the
+    current-day close. Fires after the day's first complete cross-symbol bar
+    slice, so day 1's
+    ``get_history("a", "close")`` already returns 10.11; under
+    ``price_basis="close", bar_offset=0, temporal="same_cycle"`` the buy fills
+    at that same-bar close (10.11), not the next bar.
+    """
+
+    class AfterBarStrategy(akquant.Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.set_history_depth(1)
+            self._seen: set = set()
+            self.hist_by_day: dict[int, float] = {}
+            self._bought = False
+            self.buy_price: float | None = None
+
+        def on_daily_rebalance_after_bar(
+            self, trading_date: Any, timestamp: int
+        ) -> None:
+            day = pd.Timestamp(trading_date).normalize()
+            if day in self._seen:
+                return
+            self._seen.add(day)
+            idx = len(self._seen)
+            hist = self.get_history(count=1, symbol="a", field="close")
+            self.hist_by_day[idx] = float("nan") if len(hist) == 0 else float(hist[-1])
+            if not self._bought:
+                self.buy("a", 1)
+                self._bought = True
+
+        def on_trade(self, trade: akquant.Trade) -> None:
+            if trade.symbol == "a" and trade.side == akquant.OrderSide.Buy:
+                self.buy_price = float(trade.price)
+
+    strat = AfterBarStrategy()
+    akquant.run_backtest(
+        data=_rebalance_hook_price_frames(),
+        strategy=strat,
+        symbols=["a", "b", "c"],
+        initial_cash=1_000_000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        show_progress=False,
+        fill_policy={
+            "price_basis": "close",
+            "bar_offset": 0,
+            "temporal": "same_cycle",
+        },
+    )
+
+    # Current-day data is visible: day 1 already sees day 1's close.
+    assert strat.hist_by_day[1] == pytest.approx(10.11)
+    # Same-cycle close order fills at the current-day close, not the next bar.
+    assert strat.buy_price == pytest.approx(10.11)
+
+
+def test_get_history_multi_matches_per_field_get_history() -> None:
+    """`get_history_multi` returns per-field arrays equal to `get_history` (#288).
+
+    One batched accessor must be behaviorally identical to calling
+    `get_history` once per field — same values and same left-NaN padding when
+    ``count`` exceeds the available history — so it can replace the 5 separate
+    FFI calls `get_history_df` makes without changing results.
+    """
+    dates = pd.to_datetime(
+        ["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06"]
+    )
+    opens = [1.0, 2.0, 3.0, 4.0, 5.0]
+    df = pd.DataFrame(index=dates)
+    df.index.name = "date"
+    df["open"] = opens
+    df["high"] = [o + 10.0 for o in opens]
+    df["low"] = [o - 1.0 for o in opens]
+    df["close"] = [o + 0.5 for o in opens]
+    df["volume"] = [o * 100.0 for o in opens]
+    df["symbol"] = "X"
+
+    fields = ("open", "high", "low", "close", "volume")
+
+    class MultiHistoryStrategy(akquant.Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.set_history_depth(5)
+            self._bars = 0
+            self.match_ok: bool | None = None
+            self.pad_ok: bool | None = None
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            # Check once enough history has accumulated (on the 5th bar).
+            self._bars += 1
+            if self._bars != len(dates):
+                return
+
+            per_field = {
+                f: self.get_history(count=3, symbol="X", field=f) for f in fields
+            }
+            multi = self.get_history_multi(count=3, symbol="X", fields=fields)
+            self.match_ok = set(multi.keys()) == set(fields) and all(
+                np.array_equal(multi[f], per_field[f], equal_nan=True) for f in fields
+            )
+
+            # Padding: request more than available -> left-padded with NaN,
+            # identical between the two accessors.
+            per_pad = self.get_history(count=9, symbol="X", field="close")
+            multi_pad = self.get_history_multi(count=9, symbol="X", fields=("close",))
+            self.pad_ok = (
+                len(multi_pad["close"]) == 9
+                and np.isnan(multi_pad["close"][0])
+                and np.array_equal(multi_pad["close"], per_pad, equal_nan=True)
+            )
+
+    strat = MultiHistoryStrategy()
+    akquant.run_backtest(
+        data={"X": df},
+        strategy=strat,
+        symbols=["X"],
+        initial_cash=1_000_000.0,
+        commission_rate=0.0,
+        show_progress=False,
+    )
+
+    assert strat.match_ok is True
+    assert strat.pad_ok is True
+
+
+def test_get_history_multi_matches_get_history_under_daily_rebalance_cutoff() -> None:
+    """`get_history_multi` equals per-field `get_history` on the cutoff path (#288).
+
+    In day-boundary phases (`on_daily_rebalance`) `get_history` applies a
+    history-visibility cutoff that hides the current day. `get_history_multi`
+    must resolve that cutoff identically, so `get_history_df` stays correct when
+    called from a rebalance hook — not only from `on_bar`.
+    """
+    dates = pd.to_datetime(
+        ["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06"]
+    )
+    # Distinct per-day closes so the cutoff (current day hidden) is observable.
+    closes = [10.0, 20.0, 30.0, 40.0, 50.0]
+    df = pd.DataFrame(index=dates)
+    df.index.name = "date"
+    df["open"] = [c + 0.1 for c in closes]
+    df["high"] = [c + 1.0 for c in closes]
+    df["low"] = [c - 1.0 for c in closes]
+    df["close"] = closes
+    df["volume"] = [c * 10.0 for c in closes]
+    df["symbol"] = "X"
+
+    fields = ("open", "high", "low", "close", "volume")
+
+    class RebalanceHistoryStrategy(akquant.Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.set_history_depth(5)
+            self._days = 0
+            self.match_ok: bool | None = None
+            self.cutoff_active: bool | None = None
+
+        def on_daily_rebalance(self, trading_date: Any, timestamp: int) -> None:
+            # The 4th trading day has days 1-3 visible under the cutoff.
+            self._days += 1
+            if self._days != 4:
+                return
+
+            per_field = {
+                f: self.get_history(count=2, symbol="X", field=f) for f in fields
+            }
+            multi = self.get_history_multi(count=2, symbol="X", fields=fields)
+            self.match_ok = set(multi.keys()) == set(fields) and all(
+                np.array_equal(multi[f], per_field[f], equal_nan=True) for f in fields
+            )
+            # Cutoff active: current day (close 40.0) is hidden; the last visible
+            # close is the previous day's (30.0), proving we exercise the cutoff
+            # branch rather than the on_bar path.
+            self.cutoff_active = float(per_field["close"][-1]) == pytest.approx(30.0)
+
+    strat = RebalanceHistoryStrategy()
+    akquant.run_backtest(
+        data={"X": df},
+        strategy=strat,
+        symbols=["X"],
+        initial_cash=1_000_000.0,
+        commission_rate=0.0,
+        show_progress=False,
+    )
+
+    assert strat.cutoff_active is True
+    assert strat.match_ok is True

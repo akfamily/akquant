@@ -54,19 +54,52 @@ def get_history(
     return cast(np.ndarray, arr)
 
 
+def get_history_multi(
+    strategy: Any,
+    count: int,
+    symbol: Optional[str] = None,
+    fields: tuple[str, ...] = ("open", "high", "low", "close", "volume"),
+) -> dict[str, np.ndarray]:
+    """批量获取多个字段的历史数据 (单次跨界).
+
+    行为与逐字段调用 :func:`get_history` 完全一致(相同的左侧 NaN 填充与
+    截断语义),但只锁一次 Rust 缓冲、只跨一次 FFI 边界。返回按 ``fields``
+    顺序建键的 ``{field: np.ndarray}``。
+    """
+    if strategy._history_depth == 0:
+        raise RuntimeError(
+            "History tracking is not enabled. Call set_history_depth() first."
+        )
+
+    if strategy.ctx is None:
+        raise RuntimeError("Context not ready")
+
+    symbol = strategy._resolve_symbol(symbol)
+    normalized_fields = [field.lower() for field in fields]
+    history_cutoff = _resolve_history_cutoff(strategy)
+    raw = strategy.ctx.history_multi(symbol, normalized_fields, count, history_cutoff)
+
+    out: dict[str, np.ndarray] = {}
+    for field in normalized_fields:
+        arr = None if raw is None else raw.get(field)
+        if arr is None:
+            out[field] = np.full(count, np.nan)
+        elif len(arr) < count:
+            padding = np.full(count - len(arr), np.nan)
+            out[field] = np.concatenate((padding, arr))
+        else:
+            out[field] = arr
+    return out
+
+
 def get_history_df(
     strategy: Any, count: int, symbol: Optional[str] = None
 ) -> pd.DataFrame:
     """获取历史数据 DataFrame (Open, High, Low, Close, Volume)."""
     symbol = strategy._resolve_symbol(symbol)
-
-    data = {
-        "open": get_history(strategy, count, symbol, "open"),
-        "high": get_history(strategy, count, symbol, "high"),
-        "low": get_history(strategy, count, symbol, "low"),
-        "close": get_history(strategy, count, symbol, "close"),
-        "volume": get_history(strategy, count, symbol, "volume"),
-    }
+    data = get_history_multi(
+        strategy, count, symbol, ("open", "high", "low", "close", "volume")
+    )
     return pd.DataFrame(data)
 
 

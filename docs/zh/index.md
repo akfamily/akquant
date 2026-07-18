@@ -13,7 +13,7 @@
 *   **高性能内核**: Rust 核心引擎 + Python 接口，旨在减少事件驱动回测中的 Python 开销；实际性能表现取决于策略实现、数据规模与运行环境。
 *   **原生机器学习**: 内置 Walk-forward Validation 和 PyTorch/Scikit-learn 适配器。
 *   **生产级风控**: 内置 Rust 层 RiskManager，严格执行 T+1 和资金风控。
-*   **零拷贝数据**: 历史数据通过 Numpy View 直接映射 Rust 内存，无复制开销。
+*   **高效数据通路**: 数据导入 (`add_arrays`) 借用 NumPy 缓冲、零拷贝入引擎；历史数据读取 (`get_history`) 返回安全快照拷贝（窗口小、开销可忽略），多字段可用 `get_history_multi` 单次取回。
 *   **灵活架构**: 事件驱动设计，支持盘中定时任务和多资产混合回测。
 
 👉 **[查看完整架构与特性文档](meta/architecture.md)**

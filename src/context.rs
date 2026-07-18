@@ -673,6 +673,82 @@ impl StrategyContext {
         Ok(None)
     }
 
+    /// 批量获取多个字段的历史数据 (一次跨界返回).
+    ///
+    /// 语义与逐字段调用 `history` 完全一致(同一份 cutoff/上一交易日快照解析),
+    /// 但只锁一次缓冲、只跨一次 FFI 边界,供 `get_history_df` / `get_rolling_data`
+    /// 复用以减少调用开销。左侧不足的填充交由 Python 层处理(与 `history` 相同)。
+    ///
+    /// :param symbol: 标的代码
+    /// :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
+    /// :param count: 获取的数据长度
+    /// :param end_before_ns: 可选,历史可见性截断时间戳 (纳秒)
+    /// :return: {field: numpy array} 或 None
+    fn history_multi<'py>(
+        &self,
+        py: Python<'py>,
+        symbol: String,
+        fields: Vec<String>,
+        count: usize,
+        end_before_ns: Option<i64>,
+    ) -> PyResult<Option<HashMap<String, Bound<'py, PyArray1<f64>>>>> {
+        if let Some(ref buffer_lock) = self.history_buffer {
+            let buffer = buffer_lock.read().unwrap();
+            let history = match (buffer.get_history(&symbol), end_before_ns) {
+                (Some(history), Some(cutoff))
+                    if history
+                        .timestamps
+                        .back()
+                        .is_some_and(|timestamp| *timestamp >= cutoff) =>
+                {
+                    buffer.get_previous_history(&symbol).unwrap_or(history)
+                }
+                (Some(history), _) => history,
+                (None, _) => return Ok(None),
+            };
+
+            let len = match end_before_ns {
+                Some(cutoff) => history
+                    .timestamps
+                    .iter()
+                    .take_while(|timestamp| **timestamp < cutoff)
+                    .count(),
+                None => history.timestamps.len(),
+            };
+            if len == 0 {
+                return Ok(None);
+            }
+
+            let start = len.saturating_sub(count);
+            let mut out: HashMap<String, Bound<'py, PyArray1<f64>>> =
+                HashMap::with_capacity(fields.len());
+            for field in fields {
+                let series = match field.as_str() {
+                    "open" => &history.opens,
+                    "high" => &history.highs,
+                    "low" => &history.lows,
+                    "close" => &history.closes,
+                    "volume" => &history.volumes,
+                    _ => {
+                        if let Some(series) = history.extras.get(&field) {
+                            series
+                        } else {
+                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                                "Invalid field: '{}'. Available extra fields: {:?}",
+                                field,
+                                history.extras.keys()
+                            )));
+                        }
+                    }
+                };
+                let py_array = PyArray1::from_iter(py, series.iter().skip(start).cloned());
+                out.insert(field, py_array);
+            }
+            return Ok(Some(out));
+        }
+        Ok(None)
+    }
+
     #[getter]
     fn get_last_closed_trade(&self) -> Option<ClosedTrade> {
         self.closed_trades.last().cloned()

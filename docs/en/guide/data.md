@@ -224,7 +224,8 @@ When calculating technical indicators (e.g., MA60, MACD), the `warmup_period` me
 
 In a strategy, you can fetch historical market data for the past N days at any time.
 
-*   `self.get_history(n, symbol, field)`: Returns a `numpy.ndarray`, extremely high performance (zero-copy).
+*   `self.get_history(n, symbol, field)`: Returns a `numpy.ndarray` — a **safe snapshot copy** of the Rust rolling buffer (not zero-copy: the underlying store is a mutable ring buffer, so a view would dangle after the next Bar; it is returned as a copy). The window is usually small, so the copy cost is negligible.
+*   `self.get_history_multi(n, symbol, fields)` / `self.get_history_df(n, symbol)`: Fetch multiple fields in a single FFI crossing, avoiding the per-field call overhead; behavior is identical to calling `get_history` per field.
 *   `self.get_history_df(n, symbol)`: Returns a `pd.DataFrame`, convenient for Pandas calculations.
 
 **Note**: `get_history` fetches data **prior to the current moment**, excluding the current Bar (to avoid look-ahead bias). If you need the current Bar's data for calculation, append it manually.

@@ -24,7 +24,7 @@
 
 🚀 **核心亮点：**
 
-*   **高性能内核**：得益于 Rust 的零开销抽象与 **Zero-Copy** 数据架构，AKQuant 在部分回测场景下可显著降低 Python 层开销；实际运行速度取决于策略逻辑、数据规模、回调频率与运行环境。
+*   **高性能内核**：得益于 Rust 的零开销抽象与 **Zero-Copy 数据导入**（`add_arrays` 借用 NumPy 缓冲入引擎；策略侧 `get_history` 等读取则返回安全快照拷贝），AKQuant 在部分回测场景下可显著降低 Python 层开销；实际运行速度取决于策略逻辑、数据规模、回调频率与运行环境。
 *   **原生 ML 支持**：内置 **Walk-forward Validation**（滚动训练）框架，无缝集成 PyTorch/Scikit-learn，让 AI 策略开发从实验到回测一气呵成。
 *   **TA-Lib 指标生态**：内置 `akquant.talib` 双后端（`python/rust`）兼容能力，支持 **103 个指标**。
 *   **因子表达式引擎**：内置 **Polars** 驱动的高性能因子计算引擎，支持 `Rank(Ts_Mean(Close, 5))` 等 Alpha101 风格公式，自动处理并行计算与数据对齐。

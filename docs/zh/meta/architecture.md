@@ -15,7 +15,7 @@
 
 ### 接口层 (PyO3)
 *   利用 `PyO3` 将 Rust 的核心结构体 (`Engine`, `StrategyContext`, `Bar`, `Order`, `RiskManager`) 暴露为 Python 类。
-*   **Zero-Copy Access**: 利用 Rust 的 `arrow` 和 `numpy` 视图技术，历史数据 (`ctx.history`) 通过 PyO3 Buffer Protocol 直接映射 Rust 内存。
+*   **数据读取语义**: 历史数据 (`ctx.history` / `get_history`) 返回滚动缓冲的安全快照拷贝——底层为可变环形缓冲 (`VecDeque`)，直接映射的视图会在下一根 Bar 后失效，故按拷贝返回（窗口小，开销可忽略）。真正的零拷贝在数据导入侧 (`add_arrays` 借用 NumPy 缓冲)。
 *   **PyExecutionMatcher**: 支持在 Python 端实现自定义撮合逻辑，并注册到 Rust 引擎中。
 
 ### Python 用户层
@@ -69,7 +69,7 @@ akquant/
 │   ├── risk/           # 风控层 (Manager, Rule, Config, Common, Asset-Specific)
 │   ├── portfolio.rs    # 资金与持仓管理
 │   ├── context.rs      # 策略交互上下文
-│   ├── history.rs      # 历史数据管理 (Zero-Copy View)
+│   ├── history.rs      # 历史数据管理 (环形缓冲, 读取按安全快照拷贝返回)
 │   ├── analysis/       # 绩效分析
 │   ├── pipeline/       # 流水线处理架构
 │   ├── settlement/     # 结算逻辑

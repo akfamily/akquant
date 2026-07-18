@@ -56,6 +56,7 @@ from .strategy_framework_hooks import (
 )
 from .strategy_history import get_history as _get_history_impl
 from .strategy_history import get_history_df as _get_history_df_impl
+from .strategy_history import get_history_multi as _get_history_multi_impl
 from .strategy_history import get_rolling_data as _get_rolling_data_impl
 from .strategy_history import set_history_depth as _set_history_depth_impl
 from .strategy_history import set_rolling_window as _set_rolling_window_impl
@@ -1109,6 +1110,25 @@ class Strategy:
             **kwargs,
         )
         return selected
+
+    def get_history_multi(
+        self,
+        count: int,
+        symbol: Optional[str] = None,
+        fields: Tuple[str, ...] = ("open", "high", "low", "close", "volume"),
+    ) -> Dict[str, np.ndarray]:
+        """
+        批量获取多个字段的历史数据 (单次跨界).
+
+        行为等价于对每个字段分别调用 get_history, 但只锁一次 Rust 缓冲、
+        只跨一次 FFI 边界, 用于降低 get_history_df / 滚动训练等多字段场景的开销.
+
+        :param count: 获取的数据长度 (必须 <= history_depth)
+        :param symbol: 标的代码 (默认当前 Bar 的 symbol)
+        :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
+        :return: {field: np.ndarray}, 按 fields 顺序建键
+        """
+        return _get_history_multi_impl(self, count, symbol, fields)
 
     def get_history_df(self, count: int, symbol: Optional[str] = None) -> pd.DataFrame:
         """
