@@ -4,6 +4,7 @@ pub mod client;
 pub mod columns;
 pub mod compute;
 pub mod feed;
+pub mod parquet_stream;
 
 pub use aggregator::BarAggregator;
 pub use batch::from_arrays;

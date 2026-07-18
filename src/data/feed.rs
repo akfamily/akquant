@@ -13,6 +13,7 @@ use super::client::{
     CsvDataClient, DataClient, FeedAction, RealtimeDataClient, SimulatedDataClient,
 };
 use super::columns::BarColumns;
+use super::parquet_stream::{DEFAULT_CHUNK_ROWS, ParquetStreamClient};
 
 fn clock_fallback_context(next_timer_ts: Option<i64>) -> AkqLogContext {
     let mut context = AkqLogContext::new().phase("data");
@@ -65,6 +66,34 @@ impl DataFeed {
     #[staticmethod]
     pub fn from_csv(path: &str, symbol: &str) -> PyResult<Self> {
         let provider = CsvDataClient::new(path, symbol)?;
+        Ok(DataFeed {
+            provider: Arc::new(Mutex::new(Box::new(provider))),
+            live_sender: None,
+        })
+    }
+
+    /// 从 Parquet 文件创建**流式(out-of-core)**数据源.
+    ///
+    /// 有界内存: 按 chunk_size 行分块经 polars 读取, 内存与文件总量无关。
+    /// 要求 parquet 已按 `timestamp` (i64 纳秒 UTC) 升序, 规范列
+    /// `timestamp/open/high/low/close/volume` (+ 可选 `symbol`)。
+    ///
+    /// :param path: Parquet 文件路径
+    /// :param symbol: 无 symbol 列时使用的默认标的代码
+    /// :param chunk_size: 每次读取的行数 (默认 65536)
+    /// :return: DataFeed 实例
+    #[staticmethod]
+    #[pyo3(signature = (path, symbol=None, chunk_size=None))]
+    pub fn from_parquet(
+        path: &str,
+        symbol: Option<String>,
+        chunk_size: Option<usize>,
+    ) -> PyResult<Self> {
+        let provider = ParquetStreamClient::new(
+            path,
+            symbol.unwrap_or_else(|| "UNKNOWN".to_string()),
+            chunk_size.unwrap_or(DEFAULT_CHUNK_ROWS),
+        );
         Ok(DataFeed {
             provider: Arc::new(Mutex::new(Box::new(provider))),
             live_sender: None,
