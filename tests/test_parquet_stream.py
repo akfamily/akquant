@@ -83,3 +83,61 @@ def test_parquet_stream_visits_all_bars(tmp_path: Path) -> None:
 
     assert len(seen) == n
     assert seen == sorted(seen)  # 时间戳升序
+
+
+def test_write_canonical_parquet_multi_symbol_stream(tmp_path: Path) -> None:
+    """write_canonical_parquet 从任意源产出规范 parquet, 多标的流式回测闭环."""
+    from akquant import write_canonical_parquet
+
+    rows = []
+    for i in range(5):
+        day = f"2024-01-0{i + 1}"
+        rows.append(
+            {
+                "date": day,
+                "open": 10.0 + i,
+                "high": 11.0 + i,
+                "low": 9.0 + i,
+                "close": 10.5 + i,
+                "volume": 100.0,
+                "symbol": "A",
+            }
+        )
+        rows.append(
+            {
+                "date": day,
+                "open": 20.0 + i,
+                "high": 21.0 + i,
+                "low": 19.0 + i,
+                "close": 20.5 + i,
+                "volume": 200.0,
+                "symbol": "B",
+            }
+        )
+    path = tmp_path / "canon.parquet"
+    write_canonical_parquet(pd.DataFrame(rows), path)
+
+    # 规范列
+    import pyarrow.parquet as pq
+
+    assert pq.read_table(path).column_names == [
+        "timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "symbol",
+    ]
+
+    seen: dict[str, int] = {}
+
+    class _PerSymbol(akquant.Strategy):
+        def on_bar(self, bar: akquant.Bar) -> None:
+            seen[bar.symbol] = seen.get(bar.symbol, 0) + 1
+
+    feed = DataFeed.from_parquet(str(path), "UNKNOWN", 3)
+    run_backtest(
+        data=feed, strategy=_PerSymbol, symbols=["A", "B"], initial_cash=100000.0
+    )
+    assert seen == {"A": 5, "B": 5}

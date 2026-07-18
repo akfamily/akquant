@@ -14,7 +14,7 @@ A 期原则: 不动 Rust、不改数值、golden 全绿. 详见 docs/zh/meta/col
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -417,6 +417,41 @@ def normalize(source: Any, symbol: Optional[str] = None) -> pa.Table:
             columns[key] = arr
 
     return pa.table(columns)
+
+
+def write_canonical_parquet(
+    source: Any,
+    path: Union[str, Path],
+    *,
+    symbol: Optional[str] = None,
+) -> Path:
+    """将任意源规范化并写为可流式(out-of-core)读取的 parquet.
+
+    规范列: ``timestamp`` (i64 纳秒 UTC) + ``open/high/low/close/volume`` (f64) +
+    ``symbol`` (str), 按 ``timestamp`` 升序、zstd 压缩。产物可由
+    :meth:`akquant.DataFeed.from_parquet` 有界内存流式读取(全 A 股分钟线 > 内存)。
+
+    :param source: 任意受支持的数据源 (pandas/polars/pyarrow/路径/list[Bar])
+    :param path: 输出 parquet 路径
+    :param symbol: 无 symbol 列时使用的默认标的代码
+    :return: 写出的文件路径
+    """
+    import pyarrow.parquet as pq
+
+    table = normalize(source, symbol=symbol)
+    columns = {
+        "timestamp": table.column("ts_event").cast(pa.int64()),
+        "open": table.column("open"),
+        "high": table.column("high"),
+        "low": table.column("low"),
+        "close": table.column("close"),
+        "volume": table.column("volume"),
+        "symbol": table.column("instrument_id").cast(pa.string()),
+    }
+    canonical = pa.table(columns).sort_by("timestamp")
+    out_path = Path(path)
+    pq.write_table(canonical, out_path, compression="zstd")
+    return out_path
 
 
 def arrow_to_legacy_arrays(table: pa.Table) -> _LegacyArrays:

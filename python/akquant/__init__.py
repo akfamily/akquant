@@ -59,6 +59,10 @@ from .indicator_stream import (
     to_indicator_message,
     to_indicator_messages,
 )
+from .normalize import (
+    normalize,
+    write_canonical_parquet,
+)
 from .optimize import OptimizationResult, run_grid_search, run_walk_forward
 from .params import (
     BoolParam,
@@ -105,6 +109,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
     __all__ = [name for name in _akquant.__all__ if name != "ExecutionMode"] + [  # noqa: F405
         "load_bar_from_df",
         "prepare_dataframe",
+        "normalize",
+        "write_canonical_parquet",
         "fetch_akshare_symbol",
         "format_metric_value",
         "Sizer",
@@ -190,6 +196,8 @@ else:
     __all__ = [
         "load_bar_from_df",
         "prepare_dataframe",
+        "normalize",
+        "write_canonical_parquet",
         "fetch_akshare_symbol",
         "format_metric_value",
         "Sizer",
