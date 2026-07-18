@@ -458,10 +458,17 @@ def arrow_to_bars(tbl, symbol=None) -> list[Bar]: # 替代 load_bar_from_df
 
 **用法**:`feed = DataFeed.from_parquet(path, "600000"); run_backtest(data=feed, ...)` → 有界内存回测。
 
+### C.2c 已落地(2026-07-18)
+
+- 新增 `normalize.write_canonical_parquet(source, path, symbol=None)`:任意源(pandas/polars/pyarrow/路径/`list[Bar]`)经漏斗规范化 → 写出 `timestamp`(i64 ns UTC)+ OHLCV(f64)+ `symbol`(str)、**按 timestamp 升序**、zstd 压缩的 parquet;导出为 `akquant.write_canonical_parquet` / `akquant.normalize`。
+- **多标的 out-of-core 无需额外机制**:单个"按 ts 全局排序 + 带 symbol 列"的规范 parquet,经 `ParquetStreamClient`(读 symbol 列)流式产出即为跨标的按时序的 bar 流。已端到端验证(2 标的、小 chunk、`run_backtest(symbols=[A,B])`,各标的 bar 数正确)。
+- 完整闭环:`write_canonical_parquet(源) → DataFeed.from_parquet(path) → 多标的有界内存回测`。249 Python 测试通过,golden 不回归。
+
 ### C.2 仍未做(留待后续)
 
-- **C.2c**:让 `run_backtest(catalog_path=...)` 自动走流式(现在 catalog 路径仍全量 pandas pre-load);catalog 写出**规范 parquet**(`timestamp` i64 ns UTC,替代当前 pandas 专有的 `__index_level_0__`/us/naive 格式);**多标的按时间 k 路归并**(多文件流式合并)。
-- **C.2d**:全 A 股分钟线 > 内存 stress 验收。
+- **C.2d**:全 A 股分钟线 > 内存 stress 验收(构造大数据集实测峰值内存)。
+- **可选**:让 `run_backtest(catalog_path=...)` 自动走流式。**注意**:流式与 `data_map_for_indicators`(指标预计算 + 全量交易日元数据)本质冲突(out-of-core 不能全量在内存),故自动流式仅适用于**增量指标策略**;当前显式 `DataFeed.from_parquet` 路径已可用,自动接线价值有限、优先级低。
+- catalog 磁盘格式仍是 pandas 专有(`__index_level_0__`/us/naive);`write_canonical_parquet` 已提供规范格式的独立写路径,是否迁移旧 catalog 待定。
 - Windows 跑 Rust 测试需 `sys.base_prefix` 加 PATH(见 §20 注)。
 
 ---
