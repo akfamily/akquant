@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from importlib.metadata import entry_points
 
-logger = logging.getLogger(__name__)
+from ...log import get_logger
+
+logger = get_logger("gateway.brokers.plugins")
 
 ENTRY_POINT_GROUP = "akquant.brokers"
 _PLUGINS_LOADED = False

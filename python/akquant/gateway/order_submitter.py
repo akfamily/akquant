@@ -8,6 +8,7 @@ from .broker_models import (
     validate_broker_extra,
     validate_execution_semantics,
 )
+from .order_audit import record_reject, record_submit
 from .order_receipt import OrderLeg, OrderReceipt
 
 logger = get_logger("gateway.live")
@@ -199,6 +200,7 @@ def validate_live_order_client_ids(
     quantity: float,
     can_submit_client_order: Callable[[str], bool],
     notify_strategy_error: Callable[[Any, Exception, str, Any], None],
+    group_id: str | None = None,
 ) -> None:
     """Ensure all generated client order ids are available before submit."""
     owner_strategy_id = str(getattr(strategy, "_owner_strategy_id", "_default")).strip()
@@ -216,6 +218,15 @@ def validate_live_order_client_ids(
                 symbol=symbol,
                 client_order_id=client_order_id,
             ),
+        )
+        record_reject(
+            strategy_id=owner_strategy_id,
+            symbol=symbol,
+            client_order_id=client_order_id,
+            reason="duplicate active client_order_id",
+            side=side,
+            quantity=quantity,
+            trace_id=group_id,
         )
         notify_strategy_error(
             strategy,
@@ -367,6 +378,7 @@ class BrokerOrderSubmitter:
             quantity=quantity,
             can_submit_client_order=self._can_submit_client_order,
             notify_strategy_error=self._notify_strategy_error,
+            group_id=request_client_order_id,
         )
         broker_order_ids: list[str] = []
         legs: list[OrderLeg] = []
@@ -386,6 +398,17 @@ class BrokerOrderSubmitter:
             )
             broker_order_id = str(self._trader_gateway.place_order(request))
             broker_order_ids.append(broker_order_id)
+            record_submit(
+                strategy_id=owner_strategy_id,
+                symbol=symbol,
+                side=side,
+                quantity=leg_quantity,
+                price=price,
+                client_order_id=request.client_order_id,
+                broker_order_id=broker_order_id,
+                order_type=order_type,
+                trace_id=request_client_order_id,
+            )
             self._sync_order_id_mapping(request.client_order_id, broker_order_id)
             self._record_order_request(request.client_order_id, request)
             self._bind_order_owner(

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sys
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
@@ -22,7 +23,125 @@ CONTEXT_FIELDS = (
     "symbol",
     "order_id",
     "client_order_id",
+    # Correlation id spanning signal→submit→update→fill for one logical order
+    # (RFC G5). In broker_live this is the group/root client_order_id.
+    "trace_id",
+    # Order-lifecycle audit dimensions (RFC G1). Present on every record but
+    # only populated by build_order_audit_extra; None elsewhere (JSON skips it).
+    "event",
+    "side",
+    "price",
+    "quantity",
+    "order_status",
+    "order_type",
+    "trade_id",
+    "reason",
 )
+# The dedicated order-audit logger namespace (child of the root logger).
+ORDER_AUDIT_LOGGER_NAME = "audit.order"
+
+
+# Sensitive field masking (G2): keys whose values must never appear verbatim.
+# FULL_MASK keys (secrets/credentials) are replaced wholesale; TAIL_MASK keys
+# (account identifiers) keep only their last 4 chars for reconciliation.
+FULL_MASK_KEYS = frozenset(
+    {
+        "password",
+        "passwd",
+        "pwd",
+        "secret",
+        "token",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "apikey",
+        "app_key",
+        "appkey",
+        "app_secret",
+        "auth_code",
+        "authcode",
+        "private_key",
+    }
+)
+TAIL_MASK_KEYS = frozenset(
+    {
+        "user_id",
+        "userid",
+        "account",
+        "account_id",
+        "investor_id",
+        "broker_id",
+        "brokerid",
+    }
+)
+_FULL_MASK = "****"
+_MASK_TAIL_KEEP = 4
+# Match `key=value`, `key: value`, `key="value"` in rendered messages. Value runs
+# until whitespace, comma, or a closing quote — enough for id/secret tokens.
+_INLINE_SENSITIVE_RE = re.compile(
+    r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?P<sep>\s*[=:]\s*)"
+    r"(?P<quote>[\"']?)"
+    r"(?P<value>[^\s,;\"']+)"
+    r"(?P=quote)"
+)
+
+
+def _mask_tail(value: str) -> str:
+    """Mask a value keeping only its last few characters."""
+    if len(value) <= _MASK_TAIL_KEEP:
+        return _FULL_MASK
+    return f"{_FULL_MASK}{value[-_MASK_TAIL_KEEP:]}"
+
+
+def mask_sensitive_value(key: str, value: Any) -> Any:
+    """Mask a single value when its key is sensitive; else return unchanged."""
+    lowered = key.strip().lower()
+    if lowered in FULL_MASK_KEYS:
+        return _FULL_MASK
+    if lowered in TAIL_MASK_KEYS:
+        text = str(value).strip()
+        return _mask_tail(text) if text else value
+    return value
+
+
+def mask_sensitive_text(message: str) -> str:
+    """Mask inline `key=value` sensitive pairs embedded in a rendered message."""
+    if not message:
+        return message
+
+    def _replace(match: "re.Match[str]") -> str:
+        key = match.group("key")
+        masked = mask_sensitive_value(key, match.group("value"))
+        if masked == match.group("value"):
+            return match.group(0)
+        quote = match.group("quote")
+        return f"{key}{match.group('sep')}{quote}{masked}{quote}"
+
+    return _INLINE_SENSITIVE_RE.sub(_replace, message)
+
+
+class SensitiveFilter(logging.Filter):
+    """Redact sensitive credentials/account ids from records before emission.
+
+    Masking runs at the handler layer so every log statement is covered by
+    default — callers cannot leak a secret by forgetting to mask it themselves.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Mask sensitive structured extras and inline message pairs in place."""
+        for key, value in list(vars(record).items()):
+            if value is None:
+                continue
+            masked = mask_sensitive_value(key, value)
+            if masked is not value and masked != value:
+                setattr(record, key, masked)
+        message = record.getMessage()
+        redacted = mask_sensitive_text(message)
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
+        return True
 
 
 def _normalize_context_value(value: Any) -> Optional[str]:
@@ -119,6 +238,7 @@ class AKQuantFormatter(logging.Formatter):
             "symbol",
             "order_id",
             "client_order_id",
+            "trace_id",
             "event_time_iso",
         ):
             value = getattr(record, field_name, None)
@@ -228,6 +348,7 @@ def build_log_extra(
     symbol: Optional[str] = None,
     order_id: Optional[str] = None,
     client_order_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build a normalized AKQuant structured logging payload."""
     return {
@@ -239,6 +360,68 @@ def build_log_extra(
         "symbol": _normalize_context_value(symbol),
         "order_id": _normalize_context_value(order_id),
         "client_order_id": _normalize_context_value(client_order_id),
+        "trace_id": _normalize_context_value(trace_id),
+    }
+
+
+def _coerce_number(value: Any) -> Any:
+    """Keep numeric audit values numeric; drop empty/None; else stringify."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
+def build_order_audit_extra(
+    *,
+    event: str,
+    strategy_id: Optional[str] = None,
+    slot: Optional[str] = None,
+    symbol: Optional[str] = None,
+    side: Optional[str] = None,
+    price: Any = None,
+    quantity: Any = None,
+    client_order_id: Optional[str] = None,
+    order_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+    order_status: Optional[str] = None,
+    order_type: Optional[str] = None,
+    trade_id: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> dict[str, Any]:
+    """Build a structured order-lifecycle audit payload (RFC G1).
+
+    `order_id` carries the broker order id, matching the existing convention in
+    the gateway event bridge. `trace_id` is the logical-order correlation id
+    (group/root client_order_id) shared across a leg's submit→update→fill.
+    Numeric fields (price/quantity) stay numeric so the JSON audit line is
+    machine-parseable for reconciliation.
+    """
+    return {
+        "phase": "gateway",
+        "event": _normalize_context_value(event),
+        "strategy_id": _normalize_context_value(strategy_id),
+        "slot": _normalize_context_value(slot),
+        "symbol": _normalize_context_value(symbol),
+        "side": _normalize_context_value(side),
+        "price": _coerce_number(price),
+        "quantity": _coerce_number(quantity),
+        "client_order_id": _normalize_context_value(client_order_id),
+        "order_id": _normalize_context_value(order_id),
+        "trace_id": _normalize_context_value(trace_id),
+        "order_status": _normalize_context_value(order_status),
+        "order_type": _normalize_context_value(order_type),
+        "trade_id": _normalize_context_value(trade_id),
+        "reason": _normalize_context_value(reason),
     }
 
 
@@ -287,6 +470,13 @@ class LogConfig:
     profile: Optional[str] = None
     reset_handlers: bool = True
     propagate: bool = True
+    mask_sensitive: bool = True
+    # Dedicated order-lifecycle audit stream (RFC G1). When set, order audit
+    # records are additionally written as JSON lines to this rotating file.
+    order_audit_file: Optional[str] = None
+    order_audit_level: Union[str, int] = "INFO"
+    order_audit_max_bytes: Optional[int] = None
+    order_audit_backup_count: int = 5
 
 
 class Logger:
@@ -304,6 +494,8 @@ class Logger:
         self._logger.setLevel(logging.INFO)
         self._logger.propagate = True
         self._handlers: dict[str, logging.Handler] = {}  # key -> handler
+        self._sensitive_filter = SensitiveFilter()
+        self._order_audit_handler: Optional[logging.Handler] = None
 
         self._sync_handlers()
         if not self._logger.handlers:
@@ -354,6 +546,14 @@ class Logger:
         self._logger.removeHandler(handler)
         handler.close()
 
+    def _apply_sensitive_filter(self, handler: logging.Handler, enabled: bool) -> None:
+        """Attach or detach the shared sensitive-data filter on a handler."""
+        if enabled:
+            if self._sensitive_filter not in handler.filters:
+                handler.addFilter(self._sensitive_filter)
+        elif self._sensitive_filter in handler.filters:
+            handler.removeFilter(self._sensitive_filter)
+
     def _remove_null_handler(self) -> None:
         """Remove the fallback NullHandler before enabling visible handlers."""
         self._remove_handler("null")
@@ -363,6 +563,50 @@ class Logger:
         self._sync_handlers()
         for key in list(self._handlers):
             self._remove_handler(key)
+        self.disable_order_audit_file()
+
+    def _order_audit_logger(self) -> logging.Logger:
+        """Return the dedicated order-audit child logger."""
+        return logging.getLogger(f"{ROOT_LOGGER_NAME}.{ORDER_AUDIT_LOGGER_NAME}")
+
+    def enable_order_audit_file(
+        self,
+        filename: str,
+        *,
+        level: Union[str, int] = "INFO",
+        max_bytes: Optional[int] = None,
+        backup_count: int = 5,
+        mask_sensitive: bool = True,
+    ) -> None:
+        """Attach a dedicated JSON audit file to the order-audit logger (RFC G1)."""
+        self.disable_order_audit_file()
+        max_bytes_value = int(max_bytes) if max_bytes is not None else 0
+        if max_bytes_value > 0:
+            handler: logging.Handler = RotatingFileHandler(
+                filename=filename,
+                mode="a",
+                maxBytes=max_bytes_value,
+                backupCount=max(int(backup_count), 1),
+                encoding="utf-8",
+            )
+        else:
+            handler = logging.FileHandler(filename, mode="a", encoding="utf-8")
+        handler.setFormatter(AKQuantJsonFormatter(datefmt=DATE_FORMAT))
+        handler.setLevel(_normalize_level(level))
+        if mask_sensitive:
+            handler.addFilter(self._sensitive_filter)
+        audit_logger = self._order_audit_logger()
+        audit_logger.addHandler(handler)
+        audit_logger.setLevel(_normalize_level(level))
+        self._order_audit_handler = handler
+
+    def disable_order_audit_file(self) -> None:
+        """Detach and close the dedicated order-audit file handler if present."""
+        if self._order_audit_handler is None:
+            return
+        self._order_audit_logger().removeHandler(self._order_audit_handler)
+        self._order_audit_handler.close()
+        self._order_audit_handler = None
 
     def enable_console(
         self,
@@ -370,6 +614,7 @@ class Logger:
         level: Optional[Union[str, int]] = None,
         show_context: bool = False,
         json_output: bool = False,
+        mask_sensitive: bool = True,
     ) -> None:
         r"""
         启用控制台日志.
@@ -386,6 +631,7 @@ class Logger:
             handler = logging.StreamHandler(sys.stdout)
             self._logger.addHandler(handler)
             self._handlers["console"] = handler
+        self._apply_sensitive_filter(handler, mask_sensitive)
         handler.setFormatter(
             AKQuantJsonFormatter(datefmt=DATE_FORMAT)
             if json_output
@@ -413,6 +659,7 @@ class Logger:
         max_bytes: Optional[int] = None,
         backup_count: int = 3,
         json_output: bool = False,
+        mask_sensitive: bool = True,
     ) -> None:
         r"""
         启用文件日志.
@@ -451,6 +698,7 @@ class Logger:
                 handler = logging.FileHandler(filename, mode=mode, encoding="utf-8")
             self._logger.addHandler(handler)
             self._handlers[key] = handler
+        self._apply_sensitive_filter(handler, mask_sensitive)
         handler.setFormatter(
             AKQuantJsonFormatter(datefmt=DATE_FORMAT)
             if json_output
@@ -524,6 +772,7 @@ class Logger:
                 level=console_level,
                 show_context=console_show_context,
                 json_output=console_json,
+                mask_sensitive=config.mask_sensitive,
             )
             effective_levels.append(_normalize_level(console_level))
         else:
@@ -541,10 +790,22 @@ class Logger:
                 max_bytes=config.file_max_bytes,
                 backup_count=config.file_backup_count,
                 json_output=file_json,
+                mask_sensitive=config.mask_sensitive,
             )
             effective_levels.append(_normalize_level(file_level))
         else:
             self.disable_file()
+
+        if config.order_audit_file:
+            self.enable_order_audit_file(
+                filename=config.order_audit_file,
+                level=config.order_audit_level,
+                max_bytes=config.order_audit_max_bytes,
+                backup_count=config.order_audit_backup_count,
+                mask_sensitive=config.mask_sensitive,
+            )
+        else:
+            self.disable_order_audit_file()
 
         if effective_levels:
             self._logger.setLevel(min(effective_levels))

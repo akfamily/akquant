@@ -23,6 +23,8 @@ pub struct AkqLogContext {
     order_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     client_order_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<String>,
 }
 
 impl AkqLogContext {
@@ -70,6 +72,18 @@ impl AkqLogContext {
     #[must_use]
     pub fn order_id(mut self, value: impl Into<String>) -> Self {
         self.order_id = Some(value.into());
+        self
+    }
+
+    /// 逻辑订单关联 id(信号→下单→回报→成交贯穿, RFC G5)。
+    ///
+    /// 引擎 `Order` 目前尚无 trace 字段, 故执行链路暂不填充; 保留该 setter 与
+    /// 序列化字段, 使 Rust `[akq_ctx=...]` 载荷与 Python `CONTEXT_FIELDS` 的
+    /// schema 保持一致, 待 `Order.trace_id` 落地后即可点亮。
+    #[must_use]
+    #[allow(dead_code)] // schema 前瞻: 待 Order.trace_id 落地后接入执行链路
+    pub fn trace_id(mut self, value: impl Into<String>) -> Self {
+        self.trace_id = Some(value.into());
         self
     }
 }

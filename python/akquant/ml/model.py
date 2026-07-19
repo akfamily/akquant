@@ -6,6 +6,10 @@ from typing import Any, Literal, Optional, Union
 import numpy as np
 import pandas as pd
 
+from ..log import get_logger
+
+logger = get_logger("ml")
+
 # Define unified data input type
 DataType = Union[np.ndarray, pd.DataFrame]
 
@@ -126,7 +130,7 @@ class SklearnAdapter(QuantModel):
     def fit(self, X: DataType, y: DataType) -> None:
         """Train the sklearn model."""
         if self.validation_config and self.validation_config.verbose:
-            print(f"Training Sklearn Model: {type(self.model).__name__}")
+            logger.info("Training Sklearn Model: %s", type(self.model).__name__)
 
         if self.validation_config and self.validation_config.incremental:
             if hasattr(self.model, "partial_fit"):
@@ -136,11 +140,12 @@ class SklearnAdapter(QuantModel):
                     self.model.partial_fit(X, y)
                     return
                 except Exception as e:
-                    print(f"partial_fit failed: {e}. Falling back to fit.")
+                    logger.warning("partial_fit failed: %s. Falling back to fit.", e)
             else:
-                print(
-                    f"Warning: {type(self.model).__name__} does not support "
-                    "incremental learning (partial_fit). Retraining from scratch."
+                logger.warning(
+                    "%s does not support incremental learning (partial_fit). "
+                    "Retraining from scratch.",
+                    type(self.model).__name__,
                 )
 
         # Convert DataFrame to numpy if necessary, or let sklearn handle it
@@ -270,7 +275,9 @@ class PyTorchAdapter(QuantModel):
 
             if verbose:
                 avg_loss = total_loss / num_batches if num_batches > 0 else 0
-                print(f"Epoch [{epoch + 1}/{self.epochs}], Loss: {avg_loss:.4f}")
+                logger.info(
+                    "Epoch [%d/%d], Loss: %.4f", epoch + 1, self.epochs, avg_loss
+                )
 
     def predict(self, X: DataType) -> np.ndarray:
         """

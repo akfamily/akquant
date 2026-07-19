@@ -468,7 +468,9 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
 
     def OnFrontDisconnected(self, nReason: int) -> None:
         """Handle front disconnection event."""
-        logger.warning(
+        # 系统级致命: 交易前置断开后无法下单/撤单, 实盘失去执行能力, 需人工立即介入
+        # (CTP 会自动重连, 但重连成功前的委托意图无法送达)。
+        logger.critical(
             "CTP trader front disconnected: reason=%s",
             nReason,
             extra=self._log_extra(),

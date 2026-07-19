@@ -1,6 +1,7 @@
 from typing import Any, Callable, Iterable
 
 from ..log import build_log_extra, get_logger
+from .order_audit import record_broker_event
 
 logger = get_logger("gateway.live")
 
@@ -21,6 +22,7 @@ class BrokerEventBridge:
         payload_to_dict: Callable[[Any], dict[str, Any]],
         safe_strategy_callback: Callable[[Any, str, Any], None],
         adapt_strategy_payload: Callable[[str, Any], Any],
+        resolve_trace_id: Callable[[Any], str] | None = None,
     ) -> None:
         """Bind the queue, state callbacks and observer fanout dependencies."""
         self._event_lock = event_lock
@@ -30,6 +32,7 @@ class BrokerEventBridge:
         self._make_event_key = make_event_key
         self._update_broker_state = update_broker_state
         self._resolve_owner_strategy_id = resolve_owner_strategy_id
+        self._resolve_trace_id = resolve_trace_id
         self._payload_to_dict = payload_to_dict
         self._safe_strategy_callback = safe_strategy_callback
         self._adapt_strategy_payload = adapt_strategy_payload
@@ -97,6 +100,16 @@ class BrokerEventBridge:
             adapted = self._adapt_strategy_payload(event_name, payload)
             self._update_broker_state(event_name, payload)
             self._emit_observer_event(event_name, payload)
+            record_broker_event(
+                event_name,
+                payload,
+                owner_strategy_id=self._resolve_owner_strategy_id(payload),
+                trace_id=(
+                    self._resolve_trace_id(payload)
+                    if self._resolve_trace_id is not None
+                    else None
+                ),
+            )
             self._dispatch_strategy_event(strategy, event_name, adapted)
 
     def emit_observer_event(self, event_name: str, payload: Any) -> None:

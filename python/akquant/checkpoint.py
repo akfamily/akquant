@@ -4,6 +4,9 @@ from importlib import metadata
 from typing import Any, Optional, Tuple
 
 from .akquant import DataFeed, Engine
+from .log import get_logger
+
+logger = get_logger("checkpoint")
 
 try:
     _VERSION = metadata.version("akquant")
@@ -108,7 +111,7 @@ def save_snapshot(engine: Engine, strategy: Any, filepath: str) -> None:
         for current_strategy, attr_backup in transient_backups:
             for attr_name, attr_value in attr_backup.items():
                 setattr(current_strategy, attr_name, attr_value)
-    print(f"Snapshot saved to {filepath}")
+    logger.info("Snapshot saved to %s", filepath)
 
 
 def warm_start(

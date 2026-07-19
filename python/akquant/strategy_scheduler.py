@@ -3,6 +3,10 @@ from typing import Any, Union
 
 import pandas as pd
 
+from .log import get_logger
+
+logger = get_logger("scheduler")
+
 
 def schedule(
     strategy: Any, trigger_time: Union[str, dt.datetime, pd.Timestamp], payload: str
@@ -80,7 +84,7 @@ def add_daily_timer(strategy: Any, time_str: str, payload: str) -> None:
         try:
             t = pd.to_datetime(time_str).time()
         except Exception:
-            print(f"Error parsing time: {time_str}")
+            logger.warning("Error parsing time: %s", time_str)
             return
 
         now = pd.Timestamp.now(tz=strategy.timezone)
@@ -94,7 +98,7 @@ def add_daily_timer(strategy: Any, time_str: str, payload: str) -> None:
     try:
         t = pd.to_datetime(time_str).time()
     except Exception:
-        print(f"Error parsing time: {time_str}")
+        logger.warning("Error parsing time: %s", time_str)
         return
 
     for day in strategy._trading_days:

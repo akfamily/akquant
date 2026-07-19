@@ -1,6 +1,9 @@
 from typing import Any, Optional
 
+from .log import get_logger
 from .utils import parse_duration_to_bars
+
+logger = get_logger("ml")
 
 
 def _get_validation_model(strategy: Any) -> Any:
@@ -131,7 +134,7 @@ def auto_configure_model(strategy: Any) -> None:
             setattr(strategy, "_rolling_window_index", 0)
             setattr(strategy, "_rolling_next_train_bar", max(train_window, 1))
         except Exception as e:
-            print(f"Failed to configure model validation: {e}")
+            logger.warning("Failed to configure model validation: %s", e)
     else:
         setattr(strategy, "_ml_validation_lifecycle", False)
 
@@ -256,13 +259,15 @@ def on_train_signal(strategy: Any, context: Any) -> None:
                 test_window = int(getattr(strategy, "_rolling_test_window", 0))
                 window_index = int(getattr(strategy, "_ml_pending_window_index", 0))
                 activation_bar = getattr(strategy, "_ml_pending_activation_bar", None)
-                print(
-                    f"[{ts_str}] Auto-training triggered | "
-                    f"Window={window_index} | "
-                    f"Train Size={len(X_df)} | "
-                    f"Train Window={train_window} | "
-                    f"Test Window={test_window} | "
-                    f"Activation Bar={activation_bar}"
+                logger.info(
+                    "[%s] Auto-training triggered | Window=%s | Train Size=%s | "
+                    "Train Window=%s | Test Window=%s | Activation Bar=%s",
+                    ts_str,
+                    window_index,
+                    len(X_df),
+                    train_window,
+                    test_window,
+                    activation_bar,
                 )
 
             X, y = strategy.prepare_features(X_df, mode="training")
@@ -270,4 +275,4 @@ def on_train_signal(strategy: Any, context: Any) -> None:
         except NotImplementedError:
             pass
         except Exception as e:
-            print(f"Auto-training failed at bar {strategy._bar_count}: {e}")
+            logger.warning("Auto-training failed at bar %s: %s", strategy._bar_count, e)
