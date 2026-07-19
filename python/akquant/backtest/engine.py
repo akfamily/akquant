@@ -6,6 +6,7 @@ import sys
 import warnings
 from dataclasses import dataclass, fields
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -46,6 +47,7 @@ from ..data import ParquetDataCatalog
 from ..feed_adapter import DEFAULT_INPUT_TIMEZONE, DataFeedAdapter, FeedSlice
 from ..indicator_recording import IndicatorRecorder
 from ..log import build_log_extra, get_logger, has_configured_handler, register_logger
+from ..normalize import coerce_to_pandas, dataframe_to_arrays, to_indicator_frame
 from ..risk import apply_risk_config
 from ..strategy import (
     InstrumentAssetTypeName,
@@ -66,7 +68,6 @@ from ..strategy_framework_hooks import (
     collect_pre_open_timer_entries as _collect_pre_open_timer_entries_impl,
 )
 from ..strategy_loader import resolve_strategy_input
-from ..utils import df_to_arrays, prepare_dataframe
 from ..utils.inspector import infer_warmup_period
 from .result import BacktestResult
 
@@ -562,8 +563,21 @@ def _build_trading_day_metadata(
     return sorted(all_dates), day_bounds, day_rebalance_timestamps
 
 
+if TYPE_CHECKING:
+    import polars as pl
+    import pyarrow as pa
+
+# polars.DataFrame / pyarrow.Table 为平权一等输入(issue #298),
+# 运行时由 coerce_to_pandas 统一转 pandas 后走既有数据路径.
 BacktestDataInput = Union[
-    pd.DataFrame, Dict[str, pd.DataFrame], List[Bar], DataFeed, DataFeedAdapter
+    pd.DataFrame,
+    "pl.DataFrame",
+    "pl.LazyFrame",
+    "pa.Table",
+    Dict[str, pd.DataFrame],
+    List[Bar],
+    DataFeed,
+    DataFeedAdapter,
 ]
 
 _BROKER_PROFILE_TEMPLATES: Dict[str, Dict[str, Any]] = {
@@ -3034,6 +3048,8 @@ def run_backtest(
 
     # Determine Data Loading Strategy
     if data is not None:
+        # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
+        data = coerce_to_pandas(data)
         if isinstance(data, DataFeed):
             # Use provided DataFeed
             feed = data
@@ -3050,9 +3066,9 @@ def run_backtest(
                 timezone=timezone,
             )
             for sym, df in adapter_data_map.items():
-                df_prep = prepare_dataframe(df)
+                df_prep = to_indicator_frame(df)
                 data_map_for_indicators[sym] = df_prep
-                arrays = df_to_arrays(df_prep, symbol=sym)
+                arrays = dataframe_to_arrays(df_prep, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
                 if sym not in symbols:
                     symbols.append(sym)
@@ -3080,7 +3096,8 @@ def run_backtest(
             # Ensure index is pd.Timestamp compatible
             # (convert datetime.date to Timestamp)
             # This is handled by pd.to_datetime but let's be safe for object index
-            if df_input.index.dtype == "object":
+            # 非 DatetimeIndex 索引统一转 datetime(兼容 pandas 2.x str dtype)
+            if not isinstance(df_input.index, pd.DatetimeIndex):
                 try:
                     df_input.index = pd.to_datetime(df_input.index)
                 except Exception:
@@ -3109,7 +3126,7 @@ def run_backtest(
                         ts_end = _parse_runtime_boundary_timestamp(end_time, timezone)
                         df_input = df_input[df_input.index <= ts_end.date()]
 
-            df = prepare_dataframe(df_input)
+            df = to_indicator_frame(df_input)
             if "symbol" in df.columns:
                 df = df.copy()
                 df["symbol"] = df["symbol"].astype(str)
@@ -3117,7 +3134,7 @@ def run_backtest(
                 if filter_symbols:
                     df = df[df["symbol"].isin(symbols)]
                 if not df.empty:
-                    arrays = df_to_arrays(df)
+                    arrays = dataframe_to_arrays(df)
                     feed.add_arrays(*arrays)  # type: ignore
                     grouped = df.groupby("symbol", sort=False)
                     for grouped_symbol, grouped_df in grouped:
@@ -3134,7 +3151,7 @@ def run_backtest(
             else:
                 target_symbol = symbols[0] if symbols else "BENCHMARK"
                 data_map_for_indicators[target_symbol] = df
-                arrays = df_to_arrays(df, symbol=target_symbol)
+                arrays = dataframe_to_arrays(df, symbol=target_symbol)
                 feed.add_arrays(*arrays)  # type: ignore
                 feed.sort()
                 if target_symbol not in symbols:
@@ -3174,9 +3191,9 @@ def run_backtest(
                         timezone,
                     )
 
-                df_prep = prepare_dataframe(df)
+                df_prep = to_indicator_frame(df)
                 data_map_for_indicators[sym] = df_prep
-                arrays = df_to_arrays(df_prep, symbol=sym)
+                arrays = dataframe_to_arrays(df_prep, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
                 if sym not in symbols:
                     symbols.append(sym)
@@ -3245,9 +3262,9 @@ def run_backtest(
                 continue
 
             if not df.empty:
-                df = prepare_dataframe(df)
+                df = to_indicator_frame(df)
                 data_map_for_indicators[sym] = df
-                arrays = df_to_arrays(df, symbol=sym)
+                arrays = dataframe_to_arrays(df, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
                 loaded_count += 1
 
@@ -4598,6 +4615,9 @@ def run_warm_start(
     feed = None
     data_map_for_indicators: Dict[str, pd.DataFrame] = {}
 
+    # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
+    data = coerce_to_pandas(data)
+
     if isinstance(data, DataFeed):
         feed = data
     elif _is_data_feed_adapter(data):
@@ -4612,9 +4632,9 @@ def run_warm_start(
         loaded_count = 0
         for sym, df in adapter_data_map.items():
             if not df.empty:
-                df_prep = prepare_dataframe(df)
+                df_prep = to_indicator_frame(df)
                 data_map_for_indicators[sym] = df_prep
-                arrays = df_to_arrays(df_prep, symbol=sym)
+                arrays = dataframe_to_arrays(df_prep, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
                 loaded_count += 1
         if loaded_count > 0:
@@ -4642,7 +4662,8 @@ def run_warm_start(
                     except Exception:
                         pass
 
-            if df_input.index.dtype == "object":
+            # 非 DatetimeIndex 索引统一转 datetime(兼容 pandas 2.x str dtype)
+            if not isinstance(df_input.index, pd.DatetimeIndex):
                 try:
                     df_input.index = pd.to_datetime(df_input.index)
                 except Exception:
@@ -4656,7 +4677,7 @@ def run_warm_start(
                     timezone_name,
                 )
 
-            df_prepared = prepare_dataframe(df_input)
+            df_prepared = to_indicator_frame(df_input)
             if "symbol" in df_prepared.columns:
                 df_prepared = df_prepared.copy()
                 df_prepared["symbol"] = df_prepared["symbol"].astype(str)
@@ -4713,9 +4734,9 @@ def run_warm_start(
         loaded_count = 0
         for sym, df in data_map.items():
             if not df.empty:
-                df = prepare_dataframe(df)
+                df = to_indicator_frame(df)
                 data_map_for_indicators[sym] = df
-                arrays = df_to_arrays(df, symbol=sym)
+                arrays = dataframe_to_arrays(df, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
                 loaded_count += 1
 

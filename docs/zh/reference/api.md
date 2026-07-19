@@ -1226,3 +1226,59 @@ event_stats = result.get_event_stats()
 # - processed_events, dropped_event_count, callback_error_count,
 #   backpressure_policy, stream_mode, reason
 ```
+
+---
+
+## 7. 数据输入与向量化 (Data I/O & Vectorized Compute)
+
+### 7.1 `run_backtest` 的数据输入类型
+
+`run_backtest(data=...)` 接受多种输入,内部统一归一化后进入引擎:
+
+*   `pandas.DataFrame` / `Dict[str, pandas.DataFrame]`
+*   `polars.DataFrame` / `polars.LazyFrame` / `pyarrow.Table`(一等输入,内部零成本转 pandas 路径)
+*   `List[Bar]`
+*   `DataFeed`(含流式 `DataFeed.from_parquet`,见 7.3)/ `DataFeedAdapter`
+
+### 7.2 `akquant.write_canonical_parquet`
+
+```python
+def write_canonical_parquet(source, path, *, symbol=None) -> Path: ...
+```
+
+将任意来源(pandas / polars / pyarrow / 路径 / `List[Bar]`)规范化并写出**可流式(out-of-core)读取**的 Parquet:列 `timestamp`(int64 纳秒 UTC)+ `open/high/low/close/volume`(float64)+ `symbol`(str),按 `timestamp` 升序、zstd 压缩。产物可由 `DataFeed.from_parquet` 有界内存流式读取。
+
+### 7.3 `akquant.DataFeed.from_parquet`
+
+```python
+@staticmethod
+def from_parquet(path, symbol=None, chunk_size=None) -> DataFeed: ...
+```
+
+从规范 Parquet 创建**有界内存(out-of-core)流式**数据源:数据按 `chunk_size` 行(默认 65536)分块从磁盘读取,回测峰值内存与数据总量无关。要求 Parquet 按 `timestamp` 升序;含 `symbol` 列即支持多标的。详见「数据准备与加载指南 · 2.6」。
+
+### 7.4 向量化列计算 `akquant.vec_*`
+
+在 `numpy` 数组上零拷贝、向量化的批量列计算原语(与逐点增量指标互补,适合整列一次性求值):
+
+| 函数 | 说明 |
+| :--- | :--- |
+| `vec_sma(values, period)` | 简单移动平均 |
+| `vec_ema(values, period)` | 指数移动平均 |
+| `vec_wma(values, period)` | 加权移动平均 |
+| `vec_rolling_sum/min/max(values, period)` | 滚动求和 / 最小 / 最大 |
+| `vec_rolling_std(values, period)` | 滚动样本标准差(ddof=1) |
+| `vec_zscore(values, period)` | 滚动 z-score |
+| `vec_returns(values)` / `vec_log_returns(values)` | 简单 / 对数收益率 |
+| `vec_cumsum(values)` | 累积求和 |
+
+语义与 pandas 对齐(NaN 位置一致、`rolling_std` 为样本标准差)。
+
+```python
+import numpy as np
+import akquant as aq
+
+close = np.array([10.0, 11.0, 12.0, 11.0, 13.0])
+ma = aq.vec_sma(close, 3)     # 前 period-1 个为 NaN
+z = aq.vec_zscore(close, 3)
+```

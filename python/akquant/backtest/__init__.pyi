@@ -13,6 +13,8 @@ from typing import (
 )
 
 import pandas as pd
+import polars as pl
+import pyarrow as pa
 from typing_extensions import NotRequired
 
 from ..akquant import AssetType, Bar, DataFeed
@@ -22,7 +24,14 @@ from ..strategy import Strategy, StrategyRuntimeConfig
 from .result import BacktestResult
 
 BacktestDataInput = Union[
-    pd.DataFrame, Dict[str, pd.DataFrame], List[Bar], DataFeed, DataFeedAdapter
+    pd.DataFrame,
+    pl.DataFrame,
+    pl.LazyFrame,
+    pa.Table,
+    Dict[str, pd.DataFrame],
+    List[Bar],
+    DataFeed,
+    DataFeedAdapter,
 ]
 
 class FunctionalStrategy(Strategy):

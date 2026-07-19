@@ -1153,3 +1153,59 @@ event_stats = result.get_event_stats()
 # - processed_events, dropped_event_count, callback_error_count,
 #   backpressure_policy, stream_mode, reason
 ```
+
+---
+
+## 7. Data I/O & Vectorized Compute
+
+### 7.1 `run_backtest` data input types
+
+`run_backtest(data=...)` accepts several inputs, normalized uniformly before entering the engine:
+
+*   `pandas.DataFrame` / `Dict[str, pandas.DataFrame]`
+*   `polars.DataFrame` / `polars.LazyFrame` / `pyarrow.Table` (first-class inputs, coerced onto the pandas path at no cost)
+*   `List[Bar]`
+*   `DataFeed` (including the streaming `DataFeed.from_parquet`, see 7.3) / `DataFeedAdapter`
+
+### 7.2 `akquant.write_canonical_parquet`
+
+```python
+def write_canonical_parquet(source, path, *, symbol=None) -> Path: ...
+```
+
+Normalizes any source (pandas / polars / pyarrow / path / `List[Bar]`) and writes a **streamable (out-of-core)** Parquet: a `timestamp` column (int64 nanoseconds UTC) + `open/high/low/close/volume` (float64) + `symbol` (str), sorted ascending by `timestamp`, zstd-compressed. The output can be streamed with bounded memory by `DataFeed.from_parquet`.
+
+### 7.3 `akquant.DataFeed.from_parquet`
+
+```python
+@staticmethod
+def from_parquet(path, symbol=None, chunk_size=None) -> DataFeed: ...
+```
+
+Creates a **bounded-memory (out-of-core)** streaming feed from a canonical Parquet: data is read from disk in `chunk_size`-row blocks (default 65536), so backtest peak memory is independent of total data size. The Parquet must be sorted ascending by `timestamp`; a `symbol` column enables multi-symbol. See "Data Guide · 2.6".
+
+### 7.4 Vectorized column compute `akquant.vec_*`
+
+Zero-copy, vectorized batch column primitives over `numpy` arrays (complementary to incremental per-bar indicators; suited for evaluating a whole column at once):
+
+| Function | Description |
+| :--- | :--- |
+| `vec_sma(values, period)` | Simple moving average |
+| `vec_ema(values, period)` | Exponential moving average |
+| `vec_wma(values, period)` | Weighted moving average |
+| `vec_rolling_sum/min/max(values, period)` | Rolling sum / min / max |
+| `vec_rolling_std(values, period)` | Rolling sample std (ddof=1) |
+| `vec_zscore(values, period)` | Rolling z-score |
+| `vec_returns(values)` / `vec_log_returns(values)` | Simple / log returns |
+| `vec_cumsum(values)` | Cumulative sum |
+
+Semantics align with pandas (matching NaN positions, `rolling_std` is sample std).
+
+```python
+import numpy as np
+import akquant as aq
+
+close = np.array([10.0, 11.0, 12.0, 11.0, 13.0])
+ma = aq.vec_sma(close, 3)     # first period-1 values are NaN
+z = aq.vec_zscore(close, 3)
+```

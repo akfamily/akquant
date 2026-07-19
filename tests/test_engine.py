@@ -4926,14 +4926,14 @@ def test_rust_warnings_bridge_into_python_logging(caplog: Any) -> None:
     matching_record = next(
         record
         for record in caplog.records
-        if record.name == "akquant.data.batch"
+        if record.name == "akquant.data.columns"
         and "Invalid open price NaN, defaulting to 0.0" in record.getMessage()
     )
     assert matching_record.phase == "data"
     assert matching_record.symbol == "AAPL"
     assert matching_record.event_time_iso == "1970-01-01T00:00:00.000000001Z"
     assert any(
-        record.name == "akquant.data.batch"
+        record.name == "akquant.data.columns"
         and "Invalid open price NaN, defaulting to 0.0" in record.getMessage()
         for record in caplog.records
     )
@@ -5339,7 +5339,7 @@ def test_rust_warning_json_output_includes_structured_context(tmp_path: Path) ->
     )
 
     payload = json.loads(log_file.read_text(encoding="utf-8").strip())
-    assert payload["logger"] == "akquant.data.batch"
+    assert payload["logger"] == "akquant.data.columns"
     assert payload["message"] == "Invalid open price NaN, defaulting to 0.0"
     assert payload["phase"] == "data"
     assert payload["symbol"] == "AAPL"
@@ -5369,7 +5369,7 @@ def test_rust_warning_live_profile_renders_structured_context(
     )
 
     captured = capsys.readouterr()
-    assert "akquant.data.batch" in captured.out
+    assert "akquant.data.columns" in captured.out
     assert "Invalid open price NaN, defaulting to 0.0" in captured.out
     assert "phase=data" in captured.out
     assert "symbol=AAPL" in captured.out

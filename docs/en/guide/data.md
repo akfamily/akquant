@@ -6,6 +6,16 @@ Data is the cornerstone of quantitative backtesting. As a high-performance backt
 
 AKQuant's core engine (Rust) and Python interface layer primarily interact via `pandas.DataFrame` or `List[Bar]`. The most recommended way is to use **Pandas DataFrame**.
 
+Besides pandas, `run_backtest(data=...)` also accepts **`polars.DataFrame` / `polars.LazyFrame` / `pyarrow.Table`** as first-class inputs (internally coerced onto the pandas data path at no cost), so you do not need to call `.to_pandas()` yourself:
+
+```python
+import polars as pl
+from akquant import run_backtest
+
+pldf = pl.read_parquet("000001.parquet")
+result = run_backtest(data=pldf, strategy=MyStrategy, symbols="000001.SZ")
+```
+
 ### 1.1 Required Columns
 
 Your DataFrame **must** contain the following columns (column names are case-insensitive but are converted to lowercase internally):
@@ -173,8 +183,44 @@ feed.add_tick(aq.Tick(...))
 Notes:
 
 *   `DataFeed.from_csv(...)` is a good fit when you want AKQuant to read a CSV-backed event stream directly.
+*   `DataFeed.from_parquet(...)` fits **bounded-memory (out-of-core) streaming backtests over very large datasets** (see 2.6).
 *   `add_bar(...)`, `add_bars(...)`, and `add_arrays(...)` fit cases where you already have normalized market objects or arrays on the Python side.
 *   If CSV or array inputs contain invalid floating-point values, Rust emits warnings that are forwarded into AKQuant's Python `logging` pipeline instead of failing silently.
+
+### 2.6 Very Large Datasets: Out-of-Core Streaming Backtests
+
+When the data is too large to fit in memory at once (e.g. years of whole-market minute bars), use a **streaming Parquet feed**: data is read from disk in chunks, and the backtest's **peak memory is independent of total data size** (bounded memory).
+
+First, use `write_canonical_parquet` to normalize any source (pandas / polars / pyarrow / `List[Bar]`) into a streamable Parquet (a `timestamp` column of int64 nanoseconds UTC, sorted ascending, zstd-compressed; a `symbol` column enables multi-symbol naturally):
+
+```python
+import akquant as aq
+
+# any source -> canonical parquet (multi-symbol, single file globally sorted by time)
+aq.write_canonical_parquet(df, "market.parquet")
+```
+
+Then feed it to the backtest via `DataFeed.from_parquet`:
+
+```python
+import akquant as aq
+
+feed = aq.DataFeed.from_parquet("market.parquet", chunk_size=65536)
+result = aq.run_backtest(
+    data=feed,
+    strategy=MyStrategy,
+    symbols=["000001.SZ", "600000.SH"],  # multi-symbol
+    show_progress=False,
+)
+```
+
+Notes:
+
+*   The canonical Parquet must be **sorted ascending by `timestamp`**; `write_canonical_parquet` sorts it for you.
+*   `chunk_size` controls how many rows are read at a time (default 65536) — roughly the memory ceiling.
+*   Multi-symbol just means one file sorted by time with a `symbol` column; the streaming source emits bars across symbols in time order.
+*   In streaming mode **results still accumulate in memory** (equity curve, trades, etc.); the data side is bounded, while engine throughput is a separate optimization dimension.
+*   `scripts/stress_out_of_core.py` in the repo measures peak memory empirically.
 
 ---
 
