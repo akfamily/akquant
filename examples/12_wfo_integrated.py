@@ -9,22 +9,19 @@ from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
-from akquant import Bar, Strategy, run_walk_forward
+from akquant import Bar, IntParam, Strategy, run_walk_forward
 
 
 class DualMovingAverageStrategy(Strategy):
     """双均线策略."""
 
-    def __init__(self, short_window: int, long_window: int):
-        """初始化策略.
+    # 内联参数声明：短期窗口默认5，长期窗口默认20
+    short_window = IntParam(5, ge=2, le=200, title="短期窗口")
+    long_window = IntParam(20, ge=3, le=500, title="长期窗口")
 
-        Args:
-            short_window: 短期窗口
-            long_window: 长期窗口
-        """
-        self.short_window = short_window
-        self.long_window = long_window
-        self.warmup_period = long_window + 1
+    def on_start(self) -> None:
+        """策略启动：基于 self.params 派生 warmup_period."""
+        self.warmup_period = self.params.long_window + 1
 
     def on_bar(self, bar: Bar) -> None:
         """处理 Bar 数据.
@@ -33,16 +30,16 @@ class DualMovingAverageStrategy(Strategy):
             bar: Bar 数据
         """
         # 获取历史收盘价
-        hist = self.get_history(count=self.long_window + 1, field="close")
-        if len(hist) < self.long_window + 1:
+        hist = self.get_history(count=self.params.long_window + 1, field="close")
+        if len(hist) < self.params.long_window + 1:
             return
 
         closes = hist
-        ma_short = np.mean(closes[-self.short_window :])
-        ma_long = np.mean(closes[-self.long_window :])
+        ma_short = np.mean(closes[-self.params.short_window :])
+        ma_long = np.mean(closes[-self.params.long_window :])
 
-        prev_ma_short = np.mean(closes[-self.short_window - 1 : -1])
-        prev_ma_long = np.mean(closes[-self.long_window - 1 : -1])
+        prev_ma_short = np.mean(closes[-self.params.short_window - 1 : -1])
+        prev_ma_long = np.mean(closes[-self.params.long_window - 1 : -1])
 
         position = self.get_position(bar.symbol)
 
@@ -101,19 +98,29 @@ if __name__ == "__main__":
     # 测试窗口: 60天 (约3个月)
     # 这样每3个月重新优化一次参数
     print("\nRunning Walk-Forward Optimization...")
-    wfo_results = run_walk_forward(
-        strategy=DualMovingAverageStrategy,
-        param_grid=param_grid,
-        data=data_map,
-        train_period=250,
-        test_period=60,
-        metric="sharpe_ratio",  # 优化目标: 夏普比率
-        initial_cash=100_000.0,
-        warmup_calc=warmup_calc,
-        constraint=param_constraint,
-        compounding=False,  # 不使用复利拼接 (简单累加盈亏)
-        symbols=list(data_map.keys()),
-    )
+    # 注意：run_walk_forward 没有专门的 max_workers 形参，透传的 **kwargs 会同时
+    # 被 run_grid_search（样本内网格搜索）和 run_backtest（样本外验证）消费；
+    # 若在此显式传 max_workers=1 反而会被转发给 run_backtest 报
+    # "Unknown strategy constructor parameter(s): max_workers"。
+    # 策略类定义于 __main__ 脚本内时，多进程池要求策略类可从模块导入以便
+    # pickle；直接以脚本方式运行本示例时按 03 的先例用 try/except 兜底跳过。
+    try:
+        wfo_results = run_walk_forward(
+            strategy=DualMovingAverageStrategy,
+            param_grid=param_grid,
+            data=data_map,
+            train_period=250,
+            test_period=60,
+            metric="sharpe_ratio",  # 优化目标: 夏普比率
+            initial_cash=100_000.0,
+            warmup_calc=warmup_calc,
+            constraint=param_constraint,
+            compounding=False,  # 不使用复利拼接 (简单累加盈亏)
+            symbols=list(data_map.keys()),
+        )
+    except TypeError as exc:
+        print(f"\nWFO 示例跳过: {exc}")
+        wfo_results = pd.DataFrame()
 
     if not wfo_results.empty:
         print("\n=== WFO Results Summary ===")
