@@ -14,6 +14,7 @@ from .local_stop_book import (
     is_stop_order_type,
     underlying_order_type,
 )
+from .order_audit import record_cancel
 from .order_receipt import OrderReceipt
 
 logger = get_logger("gateway.live")
@@ -245,6 +246,10 @@ class BrokerExecution:
         """取消指定订单(本地止损优先, 否则走柜台)."""
         if self._stop_book.cancel(str(order_id)):
             return
+        record_cancel(
+            broker_order_id=str(order_id),
+            strategy_id=self._owner_strategy_id(),
+        )
         self._gw.cancel_order(str(order_id))
 
     def cancel_group(self, group_id: str) -> None:

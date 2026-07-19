@@ -4,6 +4,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 from .akquant import OrderStatus, OrderType, PositionEffect, TimeInForce
 from .gateway.broker_models import normalize_asset_type
 from .gateway.order_receipt import OrderLeg, OrderReceipt
+from .log import get_logger
+
+logger = get_logger("trading")
 
 OrderFillPolicy = Dict[str, Any]
 OrderSlippage = Dict[str, Any]
@@ -1062,9 +1065,8 @@ def order_target_value(
         elif strategy.current_tick and strategy.current_tick.symbol == symbol:
             current_price = strategy.current_tick.price
         else:
-            print(
-                f"Warning: Cannot determine price for {symbol}, "
-                "skipping order_target_value"
+            logger.warning(
+                "Cannot determine price for %s, skipping order_target_value", symbol
             )
             return None
 

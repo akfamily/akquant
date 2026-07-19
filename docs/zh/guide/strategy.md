@@ -390,6 +390,25 @@ akquant.configure_logging(
 * 如果你在 `on_order`、`on_trade`、`on_reject` 里写 `self.log()`，通常不需要再手动拼接订单 id
 * 如果你启用了 `akquant` logger handler，Rust 执行链路里的 warning 也会进入同一套输出。例如保证金不足拒单、收盘过期、取消未知订单、同一切片内 `same-cycle` 延后等日志，会自动带上 `phase=execution`，并在可用时附带 `symbol`、`order_id`、`strategy_id`、`slot`、`event_time_iso`；其中 `event_time_iso` 统一为 UTC ISO 8601
 
+#### 日志级别语义
+
+AKQuant 统一约定各级别的语义，便于按级别过滤与告警：
+
+| 级别 | 语义 | 量化场景示例 |
+| :--- | :--- | :--- |
+| `DEBUG` | 细粒度诊断，仅排障时开启 | 清理/推断失败的兜底分支 |
+| `INFO` | 正常运行的关键节点 | 订单提交/成交/撤单审计、训练进度、快照保存 |
+| `WARNING` | 可恢复的降级或非预期但不致命 | 保证金不足拒单、忽略不可撤订单、数据字段非法回退默认值 |
+| `ERROR` | 操作失败且不可恢复 | 自定义撮合回调抛异常导致订单未执行、Parquet 数据流读取/解析失败（样本被截断）|
+| `CRITICAL` | **系统级致命，需人工立即介入** | 实盘交易前置断连（无法下单）、实盘 runner 因未捕获异常整体停止 |
+
+> `CRITICAL` 只用于「框架已无法安全执行核心职能」的场景。实盘部署时建议对 `CRITICAL` 单独接告警通道（如短信/电话），与普通日志分流。
+
+#### 订单审计与敏感信息
+
+* **订单生命周期审计**：`broker_live` 下每一笔订单的 提交 / 回报 / 成交 / 撤单 / 拒单 都会经 `akquant.audit.order` 命名空间产出结构化 INFO 审计日志（含 `client_order_id`、`order_id`、`event`、`price`、`quantity` 等）。通过 `LogConfig(order_audit_file="logs/orders_audit.log")` 可另存一份纯审计 JSON 流，用于事后对账与复盘——**进程停止后仍可仅凭该文件重建订单生命周期**。
+* **敏感信息脱敏**：日志默认对密钥类字段（`password`/`token`/`api_key` 等）全掩码、对账户类字段（`user_id`/`account` 等）保留尾 4 位。此为 handler 层兜底，任何调用点忘记脱敏也不会泄漏；如需关闭，设 `LogConfig(mask_sensitive=False)`。
+
 ### 3.2 便捷数据访问 (Data Access)
 
 为了减少代码冗余，`Strategy` 类提供了当前 Bar/Tick 数据的快捷访问属性：

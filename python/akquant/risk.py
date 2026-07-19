@@ -1,13 +1,12 @@
-import logging
 from typing import TYPE_CHECKING, Optional
 
 from .config import RiskConfig as PyRiskConfig
-from .log import build_log_extra
+from .log import build_log_extra, get_logger
 
 if TYPE_CHECKING:
     from .akquant import Engine
 
-logger = logging.getLogger("akquant.risk")
+logger = get_logger("risk")
 
 
 def _build_risk_log_extra() -> dict[str, Optional[str]]:

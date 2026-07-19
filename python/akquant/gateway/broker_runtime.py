@@ -40,6 +40,7 @@ class BrokerRuntime:
         should_replay_trades: Callable[[], bool] | None = None,
         sync_group_mapping: Callable[[str, str], None] = lambda _c, _g: None,
         group_broker_ids: Callable[[str], list[str]] | None = None,
+        resolve_trace_id: Callable[[Any], str] | None = None,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -57,6 +58,7 @@ class BrokerRuntime:
             payload_to_dict=payload_to_dict,
             safe_strategy_callback=safe_strategy_callback,
             adapt_strategy_payload=adapt_strategy_payload,
+            resolve_trace_id=resolve_trace_id,
         )
         self._recovery = BrokerRecovery(
             get_trader_gateway=get_trader_gateway,

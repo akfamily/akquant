@@ -1,12 +1,12 @@
-import logging
 from typing import List, Optional
 
 import polars as pl
 
 from ..data import ParquetDataCatalog
+from ..log import get_logger
 from .parser import ExpressionParser
 
-logger = logging.getLogger("akquant.factor")
+logger = get_logger("factor")
 
 
 class FactorEngine:

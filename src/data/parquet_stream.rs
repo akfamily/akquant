@@ -65,7 +65,8 @@ impl ParquetStreamClient {
         let df = match self.read_chunk() {
             Ok(df) => df,
             Err(e) => {
-                log::warn!("ParquetStreamClient 读取失败 ({}): {e}", self.path);
+                // 数据读取失败会静默截断数据流, 回测样本不完整, 属错误级。
+                log::error!("ParquetStreamClient 读取失败 ({}): {e}", self.path);
                 self.exhausted = true;
                 return;
             }
@@ -79,7 +80,8 @@ impl ParquetStreamClient {
             return;
         }
         if let Err(e) = self.push_rows(&df, n) {
-            log::warn!("ParquetStreamClient 解析失败 ({}): {e}", self.path);
+            // 数据解析失败会静默截断数据流, 回测样本不完整, 属错误级。
+            log::error!("ParquetStreamClient 解析失败 ({}): {e}", self.path);
             self.exhausted = true;
         }
     }

@@ -375,9 +375,11 @@ class LiveRunner:
                 extra=self._runner_log_extra(phase="live"),
             )
         except Exception as exc:
-            logger.exception(
+            # 系统级致命: 实盘 runner 整体因未捕获异常停止, 交易中断, 需人工立即介入。
+            logger.critical(
                 "Stopping live runner due to error: %s",
                 exc,
+                exc_info=True,
                 extra=self._runner_log_extra(phase="live"),
             )
         finally:
@@ -792,6 +794,7 @@ class LiveRunner:
             should_replay_trades=lambda: self._broker_baseline_done,
             sync_group_mapping=self._sync_group_mapping,
             group_broker_ids=self._broker_order_ids_for_group,
+            resolve_trace_id=self._lookup_group_id,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery

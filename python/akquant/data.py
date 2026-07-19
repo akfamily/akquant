@@ -1,5 +1,4 @@
 import hashlib
-import logging
 from pathlib import Path
 from typing import List, Optional, Union, cast
 
@@ -7,9 +6,10 @@ import pandas as pd
 
 from .akquant import Bar
 from .feed_adapter import DEFAULT_INPUT_TIMEZONE
+from .log import get_logger
 from .utils import load_bar_from_df
 
-logger = logging.getLogger("akquant.data")
+logger = get_logger("data")
 
 
 def _parse_catalog_boundary_timestamp(

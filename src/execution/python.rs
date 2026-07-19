@@ -94,13 +94,15 @@ impl ExecutionMatcher for PyExecutionMatcher {
                         // 6. Return ExecutionReport
                         Some(Event::ExecutionReport(order.clone(), Some(trade)))
                     } else {
-                        log::warn!("{}", Self::invalid_result_warning(order, event));
+                        // 自定义撮合返回非 Trade 结果: 该单未能执行, 属执行错误。
+                        log::error!("{}", Self::invalid_result_warning(order, event));
                         None
                     }
                 }
                 Err(e) => {
+                    // 自定义撮合回调抛异常: 该单未能执行, 属执行错误。
                     let error_message = e.to_string();
-                    log::warn!("{}", Self::exception_warning(order, event, &error_message));
+                    log::error!("{}", Self::exception_warning(order, event, &error_message));
                     None
                 }
             }
