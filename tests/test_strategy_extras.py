@@ -1280,7 +1280,7 @@ class DeferredDailyRebalanceStrategy(Strategy):
         for symbol in self.all_symbols:
             self.subscribe(symbol)
 
-    def on_daily_rebalance_after_bar(self, trading_date: Any, timestamp: int) -> None:
+    def on_cross_section(self, trading_date: Any, timestamp: int) -> None:
         """Select the strongest two-bar momentum symbol on the target day."""
         if trading_date not in self.date2symbols:
             return
@@ -1324,9 +1324,7 @@ def _make_order_sensitive_multisymbol_bars(day3_order: list[str]) -> list[Bar]:
     return bars
 
 
-def test_run_backtest_daily_rebalance_after_bar_same_timestamp_order_insensitive() -> (
-    None
-):
+def test_run_backtest_cross_section_same_timestamp_order_insensitive() -> None:
     """After-bar rebalance should see a complete same-timestamp cross section."""
     target_day = pd.Timestamp("2023-01-03", tz="Asia/Shanghai").date()
     date2symbols = {target_day: {"AAA", "BBB"}}
@@ -3475,21 +3473,9 @@ class FrameworkHooksStrategy(Strategy):
         self.errors: list[tuple[str, str]] = []
         self.portfolio_updates = 0
 
-    def on_session_start(self, session: Any, timestamp: int) -> None:
-        """Record session start."""
-        self.events.append(f"session_start:{session}:{timestamp}")
-
-    def on_session_end(self, session: Any, timestamp: int) -> None:
-        """Record session end."""
-        self.events.append(f"session_end:{session}:{timestamp}")
-
     def on_before_trading(self, trading_date: Any, timestamp: int) -> None:
         """Record before trading hook."""
         self.events.append(f"before:{trading_date}:{timestamp}")
-
-    def on_daily_rebalance(self, trading_date: Any, timestamp: int) -> None:
-        """Record daily rebalance hook."""
-        self.events.append(f"rebalance:{trading_date}:{timestamp}")
 
     def on_after_trading(self, trading_date: Any, timestamp: int) -> None:
         """Record after trading hook."""
@@ -3557,9 +3543,7 @@ def test_framework_hooks_session_day_reject_and_portfolio() -> None:
     tick1 = Tick(timestamp=ctx.current_time, price=100.0, volume=1.0, symbol="AAPL")
     strategy._on_tick_event(tick1, ctx)
 
-    assert any(e.startswith("session_start:") for e in strategy.events)
     assert any(e.startswith("before:") for e in strategy.events)
-    assert any(e.startswith("rebalance:") for e in strategy.events)
     assert "order:rej1" in strategy.events
     assert "reject:rej1" in strategy.events
     assert strategy.events.index("order:rej1") < strategy.events.index("reject:rej1")
@@ -3570,25 +3554,19 @@ def test_framework_hooks_session_day_reject_and_portfolio() -> None:
     ctx.session = "postmarket"
     tick2 = Tick(timestamp=ctx.current_time, price=101.0, volume=1.0, symbol="AAPL")
     strategy._on_tick_event(tick2, ctx)
-    assert any(e.startswith("session_end:") for e in strategy.events)
     assert any(e.startswith("after:") for e in strategy.events)
-    same_day_rebalance_count = len(
-        [e for e in strategy.events if e.startswith("rebalance:2023-01-01")]
+    same_day_before_count = len(
+        [e for e in strategy.events if e.startswith("before:2023-01-01")]
     )
-    assert same_day_rebalance_count == 1
+    assert same_day_before_count == 1
 
     before_count = len([e for e in strategy.events if e.startswith("before:")])
-    rebalance_count = len([e for e in strategy.events if e.startswith("rebalance:")])
     ctx.current_time = pd.Timestamp("2023-01-02 09:31:00", tz="Asia/Shanghai").value
     ctx.session = "normal"
     tick3 = Tick(timestamp=ctx.current_time, price=102.0, volume=1.0, symbol="AAPL")
     strategy._on_tick_event(tick3, ctx)
     after_count = len([e for e in strategy.events if e.startswith("before:")])
-    rebalance_after_count = len(
-        [e for e in strategy.events if e.startswith("rebalance:")]
-    )
     assert after_count == before_count + 1
-    assert rebalance_after_count == rebalance_count + 1
 
 
 def test_framework_hooks_emits_reject_from_recent_rejected_orders() -> None:
@@ -3626,8 +3604,8 @@ def test_framework_hooks_emits_reject_from_recent_rejected_orders() -> None:
     )
 
 
-def test_daily_rebalance_fallback_when_session_missing() -> None:
-    """When session is missing, daily rebalance still runs once per day."""
+def test_before_trading_fallback_when_session_missing() -> None:
+    """When session is missing, on_before_trading still runs once per day."""
     strategy = FrameworkHooksStrategy()
     ctx = MagicMock(spec=StrategyContext)
     ctx.get_position.return_value = 0.0
@@ -3654,8 +3632,8 @@ def test_daily_rebalance_fallback_when_session_missing() -> None:
     ctx.current_time = ts3
     strategy._on_tick_event(tick3, ctx)
 
-    day1 = len([e for e in strategy.events if e.startswith("rebalance:2023-01-01")])
-    day2 = len([e for e in strategy.events if e.startswith("rebalance:2023-01-02")])
+    day1 = len([e for e in strategy.events if e.startswith("before:2023-01-01")])
+    day2 = len([e for e in strategy.events if e.startswith("before:2023-01-02")])
     assert day1 == 1
     assert day2 == 1
 
@@ -4103,8 +4081,8 @@ def test_run_backtest_runtime_config_override_false_keeps_strategy_config(
     assert "runtime_config_override=False" in caplog.text
 
 
-def test_stop_internal_flushes_session_and_on_after_trading_hooks() -> None:
-    """Stop phase should flush session_end and on_after_trading when pending."""
+def test_stop_internal_flushes_on_after_trading_hook() -> None:
+    """Stop phase should flush a pending on_after_trading."""
     strategy = FrameworkHooksStrategy()
     ctx = MagicMock(spec=StrategyContext)
     ctx.get_position.return_value = 0.0
@@ -4121,12 +4099,10 @@ def test_stop_internal_flushes_session_and_on_after_trading_hooks() -> None:
     strategy._on_tick_event(tick, ctx)
     assert any(e.startswith("before:") for e in strategy.events)
     assert not any(e.startswith("after:") for e in strategy.events)
-    assert not any(e.startswith("session_end:") for e in strategy.events)
 
     strategy._on_stop_internal()
 
     assert any(e.startswith("after:") for e in strategy.events)
-    assert any(e.startswith("session_end:") for e in strategy.events)
     assert strategy.events[-1] == "stop"
 
 
@@ -4158,7 +4134,6 @@ def test_boundary_timers_register_and_drive_day_hooks() -> None:
 
     strategy._on_timer_event("__framework_boundary__|before|2023-01-03", ctx)
     assert any(e.startswith("before:2023-01-03") for e in strategy.events)
-    assert any(e.startswith("rebalance:2023-01-03") for e in strategy.events)
 
     ctx.current_time = end_ts + 1
     strategy._on_timer_event("__framework_boundary__|after|2023-01-03", ctx)
@@ -4245,9 +4220,6 @@ def test_precise_boundary_hooks_delay_after_trading_until_day_end() -> None:
         def on_before_trading(self, trading_date: object, timestamp: int) -> None:
             self.events.append(("before", trading_date, timestamp))
 
-        def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
-            self.events.append(("rebalance", trading_date, timestamp))
-
         def on_after_trading(self, trading_date: object, timestamp: int) -> None:
             self.events.append(("after", trading_date, timestamp))
 
@@ -4293,16 +4265,14 @@ def test_precise_boundary_hooks_delay_after_trading_until_day_end() -> None:
     )
 
     day1_before = ("before", pd.Timestamp("2023-01-03").date(), day1_open)
-    day1_rebalance = ("rebalance", pd.Timestamp("2023-01-03").date(), day1_open)
     day1_last_bar = ("bar", "HOOKS_DEMO", day1_close)
     day1_after = ("after", pd.Timestamp("2023-01-03").date(), day1_close)
 
     assert day1_before in strategy.events
-    assert day1_rebalance in strategy.events
     assert day1_last_bar in strategy.events
     assert day1_after in strategy.events
     assert strategy.events.index(day1_before) < strategy.events.index(day1_last_bar)
-    assert strategy.events.index(day1_rebalance) < strategy.events.index(day1_after)
+    assert strategy.events.index(day1_before) < strategy.events.index(day1_after)
 
 
 def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> None:
@@ -4318,9 +4288,6 @@ def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> N
 
         def on_before_trading(self, trading_date: object, timestamp: int) -> None:
             self.events.append(("before", trading_date, timestamp))
-
-        def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
-            self.events.append(("rebalance", trading_date, timestamp))
 
         def on_after_trading(self, trading_date: object, timestamp: int) -> None:
             self.events.append(("after", trading_date, timestamp))
@@ -4361,28 +4328,23 @@ def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> N
     day1 = pd.Timestamp("2023-01-03").date()
     day2 = pd.Timestamp("2023-01-04").date()
     day1_before = ("before", day1, day1_open)
-    day1_rebalance = ("rebalance", day1, day1_open)
-    day1_after = ("after", day1, day2_open)
     day2_before = ("before", day2, day2_open)
-    day2_rebalance = ("rebalance", day2, day2_open)
 
     assert day1_before in strategy.events
-    assert day1_rebalance in strategy.events
-    assert day1_after in strategy.events
     assert day2_before in strategy.events
-    assert day2_rebalance in strategy.events
     assert strategy.events.index(day1_before) < strategy.events.index(
         ("bar", "HOOKS_DEMO", day1_open)
     )
-    assert strategy.events.index(day1_rebalance) < strategy.events.index(
-        ("bar", "HOOKS_DEMO", day1_open)
-    )
-    assert strategy.events.index(day1_after) < strategy.events.index(day2_before)
-    assert (
-        "after",
-        pd.Timestamp("2023-01-03").date(),
-        day1_open + 1,
-    ) not in strategy.events
+
+    # #324: in the default (non-precise) mode on_after_trading now fires at the
+    # day's session close (within day1, at/after its last bar), not lazily on the
+    # next day's bar. Firing at day1's close keeps a next-open order's created_at
+    # inside day1 so it fills on day2 (T+1) rather than T+2.
+    after_day1 = [e for e in strategy.events if e[0] == "after" and e[1] == day1]
+    assert len(after_day1) == 1, after_day1
+    after_day1_ts = after_day1[0][2]
+    assert day1_close <= after_day1_ts < day2_open, after_day1_ts
+    assert strategy.events.index(after_day1[0]) < strategy.events.index(day2_before)
 
 
 @pytest.mark.parametrize("precise_boundaries", [False, True])
@@ -4408,11 +4370,6 @@ def test_day_boundary_hooks_hide_current_bar_from_history_and_current_bar(
             self.before_histories.append(self.get_history(1, "HOOKS_DEMO"))
             self.before_current_bar_states.append(self.current_bar is None)
             self.events.append(("before", int(timestamp)))
-
-        def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
-            self.rebalance_histories.append(self.get_history(1, "HOOKS_DEMO"))
-            self.rebalance_current_bar_states.append(self.current_bar is None)
-            self.events.append(("rebalance", int(timestamp)))
 
         def on_bar(self, bar: Bar) -> None:
             self.events.append(("bar", int(bar.timestamp)))
@@ -4445,20 +4402,12 @@ def test_day_boundary_hooks_hide_current_bar_from_history_and_current_bar(
     )
 
     before_values = [float(history[0]) for history in strategy.before_histories[1:]]
-    rebalance_values = [
-        float(history[0]) for history in strategy.rebalance_histories[1:]
-    ]
     assert len(strategy.before_histories) == 3
-    assert len(strategy.rebalance_histories) == 3
     assert np.isnan(strategy.before_histories[0][0])
-    assert np.isnan(strategy.rebalance_histories[0][0])
     assert before_values == [10.0, 10.5]
-    assert rebalance_values == [10.0, 10.5]
     assert strategy.before_current_bar_states == [True, True, True]
-    assert strategy.rebalance_current_bar_states == [True, True, True]
-    assert strategy.events[:3] == [
+    assert strategy.events[:2] == [
         ("before", bars[0].timestamp),
-        ("rebalance", bars[0].timestamp),
         ("bar", bars[0].timestamp),
     ]
 
@@ -4474,8 +4423,6 @@ def test_day_boundary_hooks_use_previous_account_snapshot(
             self.enable_precise_day_boundary_hooks = precise_boundaries
             self.before_equities: list[float] = []
             self.before_portfolio_values: list[float] = []
-            self.rebalance_equities: list[float] = []
-            self.rebalance_portfolio_values: list[float] = []
             self.has_bought = False
 
         def on_start(self) -> None:
@@ -4485,11 +4432,6 @@ def test_day_boundary_hooks_use_previous_account_snapshot(
             account = self.get_account()
             self.before_equities.append(float(account["equity"]))
             self.before_portfolio_values.append(float(self.equity))
-
-        def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
-            account = self.get_account()
-            self.rebalance_equities.append(float(account["equity"]))
-            self.rebalance_portfolio_values.append(float(self.equity))
 
         def on_bar(self, bar: Bar) -> None:
             if not self.has_bought:
@@ -4524,13 +4466,11 @@ def test_day_boundary_hooks_use_previous_account_snapshot(
     )
 
     assert strategy.before_equities == [1000.0, 1000.0, 1001.0]
-    assert strategy.rebalance_equities == [1000.0, 1000.0, 1001.0]
     assert strategy.before_portfolio_values == [1000.0, 1000.0, 1001.0]
-    assert strategy.rebalance_portfolio_values == [1000.0, 1000.0, 1001.0]
 
 
 @pytest.mark.parametrize("precise_boundaries", [False, True])
-def test_daily_rebalance_after_bar_sees_current_day_history_and_runs_after_bar(
+def test_cross_section_sees_current_day_history_and_runs_after_bar(
     precise_boundaries: bool,
 ) -> None:
     """After-bar rebalance should observe the current completed slice."""
@@ -4546,9 +4486,7 @@ def test_daily_rebalance_after_bar_sees_current_day_history_and_runs_after_bar(
         def on_start(self) -> None:
             self.subscribe("HOOKS_DEMO")
 
-        def on_daily_rebalance_after_bar(
-            self, trading_date: object, timestamp: int
-        ) -> None:
+        def on_cross_section(self, trading_date: object, timestamp: int) -> None:
             self.after_bar_histories.append(self.get_history(1, "HOOKS_DEMO"))
             self.after_bar_current_bar_states.append(self.current_bar is None)
             self.events.append(("after_bar", int(timestamp)))
@@ -4596,7 +4534,7 @@ def test_daily_rebalance_after_bar_sees_current_day_history_and_runs_after_bar(
 
 
 @pytest.mark.parametrize("precise_boundaries", [False, True])
-def test_daily_rebalance_after_bar_uses_current_account_snapshot(
+def test_cross_section_uses_current_account_snapshot(
     precise_boundaries: bool,
 ) -> None:
     """After-bar rebalance should see the current-day marked account view."""
@@ -4611,9 +4549,7 @@ def test_daily_rebalance_after_bar_uses_current_account_snapshot(
         def on_start(self) -> None:
             self.subscribe("HOOKS_DEMO")
 
-        def on_daily_rebalance_after_bar(
-            self, trading_date: object, timestamp: int
-        ) -> None:
+        def on_cross_section(self, trading_date: object, timestamp: int) -> None:
             account = self.get_account()
             self.after_bar_equities.append(float(account["equity"]))
             self.after_bar_portfolio_values.append(float(self.equity))
@@ -4746,14 +4682,19 @@ def test_collect_pre_open_timers_and_prime_globally_once() -> None:
     strategy_a._trading_day_bounds = {"2023-01-03": (start_ts, start_ts + 1)}
     strategy_b._trading_day_bounds = {"2023-01-03": (start_ts, start_ts + 1)}
 
+    # #324: the pre-open timer fires 1ns before the day's first bar so an order
+    # placed in on_pre_open fills on this day's open; the payload keeps start_ts
+    # as the expected_open_at / history-cutoff source timestamp.
     entries = collect_pre_open_timer_entries(strategy_a)
-    assert entries == [(start_ts, f"__framework_pre_open__|2023-01-03|{start_ts}")]
+    assert entries == [(start_ts - 1, f"__framework_pre_open__|2023-01-03|{start_ts}")]
 
     fake_engine = SimpleNamespace(add_timer=MagicMock())
     _prime_framework_pre_open_timers([strategy_a, strategy_b], fake_engine)
 
     scheduled = [call.args for call in fake_engine.add_timer.call_args_list]
-    assert scheduled == [(start_ts, f"__framework_pre_open__|2023-01-03|{start_ts}")]
+    assert scheduled == [
+        (start_ts - 1, f"__framework_pre_open__|2023-01-03|{start_ts}")
+    ]
     assert strategy_a._framework_pre_open_timers_registered is True
     assert strategy_b._framework_pre_open_timers_registered is True
 

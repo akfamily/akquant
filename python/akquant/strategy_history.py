@@ -7,7 +7,7 @@ import pandas as pd
 def _resolve_history_cutoff(strategy: Any) -> Optional[int]:
     """Return a history cutoff for day-boundary phases."""
     phase = getattr(strategy, "_framework_phase", None)
-    if phase not in {"pre_open", "before_trading", "daily_rebalance"}:
+    if phase not in {"pre_open", "before_trading"}:
         return None
     cutoff = getattr(strategy, "_framework_history_cutoff_ns", None)
     if cutoff is None:

@@ -136,10 +136,8 @@ result = aq.run_backtest(
 | `on_order` | 订单事件 | 跟踪订单状态流转、联动撤单或重置状态 | `examples/08_event_callbacks.py` |
 | `on_trade` | 订单事件 | 记录成交、成交后风控、累计成交统计 | `examples/08_event_callbacks.py` |
 | `on_reject` | 订单事件 | 记录拒单原因、发告警、触发降级策略 | `examples/50_framework_hooks_demo.py` |
-| `on_session_start` | 框架边界 | 日盘/夜盘切换、session 级状态重置 | `examples/50_framework_hooks_demo.py` |
-| `on_session_end` | 框架边界 | 收盘后清理、session 结束打点与归档 | `examples/50_framework_hooks_demo.py` |
 | `on_before_trading` | 框架边界 | 盘前检查、生成交易日级信号、盘前风控 | `examples/50_framework_hooks_demo.py` |
-| `on_daily_rebalance` / `on_daily_rebalance_after_bar` | 框架边界 | 前一快照语义调仓 / 当日完整切片后的同周期调仓 | `examples/strategies/05_stock_momentum_rotation_timer.py`, `examples/strategies/09_stock_momentum_rotation_after_bar.py` |
+| `on_cross_section` | 框架边界 | 当日首个完整切片后的横截面同周期调仓 | `examples/strategies/09_stock_momentum_rotation_after_bar.py` |
 | `on_after_trading` | 框架边界 | 日终统计、收盘后归档、落盘或报表输出 | `examples/50_framework_hooks_demo.py` |
 | `on_portfolio_update` | 框架边界 | 账户权益变化监控、推送 UI 或风控告警 | `examples/50_framework_hooks_demo.py` |
 | `on_expiry` | 专项回调 | 期货/期权到期结算、换月、移除失效合约 | `examples/49_on_expiry_demo.py` |
@@ -149,7 +147,7 @@ result = aq.run_backtest(
 有两个实践判断非常重要：
 
 *   当逻辑依赖**价格数据本身**时，优先考虑 `on_bar` / `on_tick` / `on_timer`。
-*   当逻辑依赖**交易阶段边界**时，优先考虑 `on_before_trading` / `on_after_trading` / `on_session_*`，不要强行塞进 `on_bar`。
+*   当逻辑依赖**交易阶段边界**时，优先考虑 `on_before_trading` / `on_after_trading`，不要强行塞进 `on_bar`。
 
 关于 `on_pre_open`，再补一条非常实用的判断：
 
@@ -738,28 +736,25 @@ def on_expiry(self, event):
 
 很多初学者会把盘前准备、日终归档、交易日调仓都写进 `on_bar`。这在简单脚本里能跑，但一旦进入多标的、多 session、live/backtest 复用的场景，就容易变得难维护。更稳妥的做法是把逻辑写在对应的框架边界回调里：
 
-*   `on_before_trading(trading_date, timestamp)`: 本地交易日首次进入 `Normal` 会话时触发，适合做盘前检查、生成交易日级候选池。
-*   `on_daily_rebalance(trading_date, timestamp)`: 与 `on_before_trading` 同阶段，但每个交易日最多一次，适合基于前一交易日信息做横截面准备与统一调仓。
-*   `on_daily_rebalance_after_bar(trading_date, timestamp)`: 在框架见到当日首个“跨标的完整 bar 切片”后触发，适合依赖当日 bar 和当前账户快照做同周期调仓。
+*   `on_before_trading(trading_date, timestamp)`: 本地交易日首次进入 `Normal` 会话时触发，适合做盘前检查、生成交易日级候选池，以及基于前一交易日信息的横截面准备与统一调仓。
+*   `on_cross_section(trading_date, timestamp)`: 在框架见到当日首个“跨标的完整 bar 切片”后触发，适合依赖当日 bar 和当前账户快照做横截面同周期调仓。
 *   `on_after_trading(trading_date, timestamp)`: 离开 `Normal` 会话时触发，适合做日终归档、统计与报告。
-*   `on_session_start(session, timestamp)` / `on_session_end(session, timestamp)`: 适合夜盘/日盘切换、session 级状态管理。
 *   `on_portfolio_update(snapshot)`: 当账户权益、现金或持仓相关估值发生变化时增量触发，适合驱动监控面板。
 *   `on_reject(order)`: 当订单首次进入 `Rejected` 时触发，适合做拒单分类、重试和人工告警。
 *   `on_error(error, source, payload)`: 当用户回调抛异常时触发，可统一记录来源并决定是否继续。
 
-可以用一句话区分这两个“日级调仓”钩子：
+可以用一句话区分这两类“横截面调仓”时机：
 
-*   `on_daily_rebalance` 更像“交易日边界准备钩子”，只看前一交易日 / 前一账户快照。
-*   `on_daily_rebalance_after_bar` 更像“收齐当日首个完整切片后的执行钩子”，可以看到当日历史和当前账户状态。
+*   `on_before_trading` 更像“交易日边界准备钩子”，只看前一交易日 / 前一账户快照。
+*   `on_cross_section` 更像“收齐当日首个完整切片后的执行钩子”，可以看到当日历史和当前账户状态。
 
-最小可运行示例见：`examples/50_framework_hooks_demo.py`。若你重点关注调仓语义，可再对照 `examples/strategies/05_stock_momentum_rotation_timer.py`（`on_daily_rebalance`）与 `examples/strategies/09_stock_momentum_rotation_after_bar.py`（`on_daily_rebalance_after_bar`）。如果你只需要理解“哪个阶段该做什么”，可以先记住这条经验：
+最小可运行示例见：`examples/50_framework_hooks_demo.py`。若你重点关注调仓语义，可再对照 `examples/strategies/05_stock_momentum_rotation_timer.py`（`on_before_trading`）与 `examples/strategies/09_stock_momentum_rotation_after_bar.py`（`on_cross_section`）。如果你只需要理解“哪个阶段该做什么”，可以先记住这条经验：
 
-1.  **盘前信号、当日候选池、基于前一交易日信息的统一调仓**：放 `on_before_trading` / `on_daily_rebalance`。
-2.  **依赖当日首个完整横截面、希望按同周期 close 风格调仓**：放 `on_daily_rebalance_after_bar`。
+1.  **盘前信号、当日候选池、基于前一交易日信息的统一调仓**：放 `on_before_trading`。
+2.  **依赖当日首个完整横截面、希望按同周期 close 风格调仓**：放 `on_cross_section`。
 3.  **日终汇总、落盘、报表**：放 `on_after_trading`。
-4.  **日盘夜盘切换、session 内状态重置**：放 `on_session_start` / `on_session_end`。
-5.  **账户权益变化通知**：放 `on_portfolio_update`。
-6.  **拒单与异常治理**：分别放 `on_reject` 和 `on_error`。
+4.  **账户权益变化通知**：放 `on_portfolio_update`。
+5.  **拒单与异常治理**：分别放 `on_reject` 和 `on_error`。
 
 ### 5.7.5 `on_event`：策略外的统一事件流
 

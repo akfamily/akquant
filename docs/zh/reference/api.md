@@ -39,12 +39,9 @@ def run_backtest(
     on_order: Optional[Callable[[Any, Any], None]] = None,
     on_trade: Optional[Callable[[Any, Any], None]] = None,
     on_reject: Optional[Callable[[Any, Any], None]] = None,
-    on_session_start: Optional[Callable[[Any, Any, int], None]] = None,
-    on_session_end: Optional[Callable[[Any, Any, int], None]] = None,
     on_before_trading: Optional[Callable[[Any, Any, int], None]] = None,
     on_after_trading: Optional[Callable[[Any, Any, int], None]] = None,
-    on_daily_rebalance: Optional[Callable[[Any, Any, int], None]] = None,
-    on_daily_rebalance_after_bar: Optional[Callable[[Any, Any, int], None]] = None,
+    on_cross_section: Optional[Callable[[Any, Any, int], None]] = None,
     on_portfolio_update: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
     on_error: Optional[Callable[[Any, Exception, str, Any], None]] = None,
     on_expiry: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
@@ -198,7 +195,7 @@ def run_warm_start(
 *   `strategy`: 策略类、策略实例，或 `on_bar` 函数（函数式编程风格）。
 *   `strategy_source` / `strategy_loader` / `strategy_loader_options`: 动态策略加载入口。`strategy=None` 时可直接从源码、路径或自定义加载器构造策略。
 *   `initialize` / `on_start` / `on_resume` / `on_stop`: 函数式策略生命周期回调；其中 `on_resume(ctx)` 仅在 checkpoint 恢复后的热启动阶段触发，且先于 `on_start(ctx)`。
-*   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_session_start` / `on_session_end` / `on_before_trading` / `on_after_trading` / `on_daily_rebalance` / `on_daily_rebalance_after_bar` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: 函数式策略事件回调；其中 `on_expiry(ctx, event)` 在引擎实际执行到期结算后触发，`on_pre_open(ctx, event)` 在每个交易日首个常规行情事件前触发，适合“盘前决策，本次 open 成交”；`on_error(ctx, error, source, payload)` 会在其他用户回调抛出异常时触发；`on_train_signal(ctx)` 仅在 ML 滚动训练窗口触发。
+*   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: 函数式策略事件回调；其中 `on_expiry(ctx, event)` 在引擎实际执行到期结算后触发，`on_pre_open(ctx, event)` 在每个交易日首个常规行情事件前触发，适合“盘前决策，本次 open 成交”；`on_error(ctx, error, source, payload)` 会在其他用户回调抛出异常时触发；`on_train_signal(ctx)` 仅在 ML 滚动训练窗口触发。
 *   `symbols`: 标的代码或代码列表。
 *   `initial_cash`: 初始资金。未显式传入时会回落到 `StrategyConfig.initial_cash`，其默认值为 `100000.0`。
 *   `commission_policy`: 运行级默认佣金策略。支持三种模式：
@@ -825,12 +822,9 @@ def set_log_level(level: Union[str, int]) -> None
 *   `on_trade(trade: Trade)`: 订单成交时触发。
 *   `on_reject(order: Order)`: 订单首次进入 `Rejected` 时触发一次。
 *   `on_expiry(event: Dict[str, Any])`: 到期结算回调。仅当引擎实际执行 `expiry_date` 驱动的到期结算/移除后触发；回调时账户状态已更新。示例见：`examples/49_on_expiry_demo.py`。
-*   `on_session_start(session, timestamp)`: 会话切换开始时触发。
-*   `on_session_end(session, timestamp)`: 会话切换结束时触发。
 *   `on_before_trading(trading_date, timestamp)`: 每个本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。该回调按“前一交易日/前一时点信息可见”的语义工作。
 *   `on_pre_open(event: Dict[str, Any])`: 每个交易日首个常规行情事件前触发一次。适合“盘前决策，本次 open 成交”；默认下单语义会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。示例见：`examples/52_pre_open_demo.py`。
-*   `on_daily_rebalance(trading_date, timestamp)`: 交易日调仓钩子，每个交易日最多触发一次，与 `on_before_trading` 同阶段；该回调同样只暴露前一交易日/前一时点信息。
-*   `on_daily_rebalance_after_bar(trading_date, timestamp)`: 日内完整切片后的交易日调仓钩子。在框架看到当日首个“跨标的完整 bar 切片”后触发；与 `on_daily_rebalance` 不同，它可以看到当日历史和当前账户快照，适合收盘价同周期调仓。
+*   `on_cross_section(trading_date, timestamp)`: 横截面同周期调仓钩子。在框架看到当日首个“跨标的完整 bar 切片”后触发，每个交易日最多一次；与 `on_before_trading` 不同，它可以看到当日历史和当前账户快照，适合收盘价同周期调仓。调仓频率（日/周/月）在回调内用日历判断。
 *   `on_after_trading(trading_date, timestamp)`: 离开常规交易会话时触发；若先跨日则在下一事件补发。
 *   `on_portfolio_update(snapshot)`: 账户快照变化时触发。
 *   `on_error(error, source, payload=None)`: 用户回调抛异常时触发，默认触发后继续抛出。
@@ -856,7 +850,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `self.position`: 当前标的持仓辅助对象 (`Position`)，包含 `size` 和 `available` 属性。
 *   `self.now`: 当前回测时间 (`pd.Timestamp`)。
 *   `self.runtime_config`: 运行时行为配置对象 (`StrategyRuntimeConfig`)。
-*   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` / `on_daily_rebalance` 中 `get_history()`、`get_account()`、`equity` 等接口的可见数据窗口。
+*   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` 中 `get_history()`、`get_account()`、`equity` 等接口的可见数据窗口。
 *   `self.portfolio_update_eps`: 账户快照更新阈值，低于该变化量不触发 `on_portfolio_update`（默认 `0.0`）。
 *   `self.error_mode`: 错误处理模式，`"raise"` 或 `"continue"`（默认 `"raise"`）。
 *   `self.re_raise_on_error`: 用户回调异常后是否继续抛出（默认 `True`）。

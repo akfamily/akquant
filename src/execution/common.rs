@@ -14,7 +14,7 @@ impl CommonMatcher {
     fn effective_timer_execution_timestamp(timer: &Timer) -> i64 {
         timer
             .payload
-            .strip_prefix("__framework_after_bar_rebalance__|")
+            .strip_prefix("__framework_cross_section__|")
             .and_then(|payload| payload.rsplit('|').next())
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(timer.timestamp)

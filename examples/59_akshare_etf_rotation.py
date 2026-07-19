@@ -3,7 +3,7 @@
 本示例演示 AKQuant 推荐的多标写法：
 1. 用 AKShare 拉取多只 ETF 日线数据；
 2. 拼接成单个 DataFrame；
-3. 在 `on_daily_rebalance` 中做横截面动量轮动。
+3. 在 `on_before_trading` 中做横截面动量轮动。
 
 运行前请确保：
 - 已安装 `akshare`
@@ -108,7 +108,7 @@ class ETFMomentumRotationStrategy(Strategy):
             )
         )
 
-    def on_daily_rebalance(self, trading_date: Any, timestamp: int) -> None:
+    def on_before_trading(self, trading_date: Any, timestamp: int) -> None:
         """交易日级横截面轮动."""
         _ = timestamp
         history_map = self.get_history_map(

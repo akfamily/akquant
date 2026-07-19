@@ -1,4 +1,4 @@
-"""多股票轮动策略示例（on_daily_rebalance_after_bar 版本）."""
+"""多股票轮动策略示例（on_cross_section 版本）."""
 
 import math
 from typing import Any
@@ -71,7 +71,7 @@ def rebalance_to_best_symbol(
 
 
 class AfterBarMomentumRotationStrategy(Strategy):
-    """使用 on_daily_rebalance_after_bar 执行当日可见语义的横截面轮动."""
+    """使用 on_cross_section 执行当日可见语义的横截面轮动."""
 
     def __init__(self, lookback_period: int = 5, **kwargs: Any) -> None:
         """初始化策略参数."""
@@ -92,11 +92,9 @@ class AfterBarMomentumRotationStrategy(Strategy):
             "mode=after_bar"
         )
 
-    def on_daily_rebalance_after_bar(self, trading_date: Any, timestamp: int) -> None:
+    def on_cross_section(self, trading_date: Any, timestamp: int) -> None:
         """完整切片后的调仓回调."""
-        self.log(
-            f"on_daily_rebalance_after_bar date={trading_date} timestamp={timestamp}"
-        )
+        self.log(f"on_cross_section date={trading_date} timestamp={timestamp}")
         history_map = self.get_history_map(
             count=self.lookback_period,
             symbols=self.symbols,
@@ -121,7 +119,7 @@ class AfterBarMomentumRotationStrategy(Strategy):
             + ", ".join(f"{symbol}:{score:.2%}" for symbol, score in ranking)
         )
         best_symbol = rebalance_to_best_symbol(self, ranking, self.symbols)
-        self.log(f"action=after_bar_rebalance selected={best_symbol}")
+        self.log(f"action=cross_section selected={best_symbol}")
 
 
 if __name__ == "__main__":

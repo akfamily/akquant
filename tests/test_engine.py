@@ -7195,6 +7195,163 @@ def test_full_switch_sell_proceeds_fund_same_bar_buy_next_open() -> None:
         assert b_filled >= 9800.0, f"B underfilled for symbol order {order}: {b_filled}"
 
 
+def test_after_trading_next_open_order_fills_next_trading_day() -> None:
+    """Issue #324: a day-end next-open order must fill on the next trading day.
+
+    A next-open order submitted in on_after_trading(T) must fill on T+1, not T+2.
+    on_after_trading is a day-end hook. In the default (lazy) dispatch mode it
+    used to fire only once T+1's bar arrived, so the engine clock was already at
+    T+1 and the order's created_at was stamped at T+1; the #307 next-open guard
+    (`event_ts <= created_at`) then skipped the T+1 bar and pushed the fill to
+    T+2. The fix schedules the day-end boundary timer for on_after_trading in the
+    default mode too, so the callback fires at T's session close (created_at in
+    T) and the fill lands on T+1. Checked for both dispatch modes.
+    """
+    dates = pd.to_datetime(["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"])
+
+    def _mk() -> pd.DataFrame:
+        df = pd.DataFrame(index=dates)
+        df.index.name = "date"
+        for col in ("open", "high", "low", "close"):
+            df[col] = 1.0
+        df["volume"] = 1e7
+        df["symbol"] = "AAA"
+        return df
+
+    def _run(precise: bool) -> tuple:
+        class AfterTradingStrategy(akquant.Strategy):
+            def __init__(self) -> None:
+                super().__init__()
+                if precise:
+                    self.enable_precise_day_boundary_hooks = True
+                self.bar_ts: list[
+                    int
+                ] = []  # per-trading-day bar timestamps (ns), in order
+                self.ordered: bool = False
+                self.fill_ts: int | None = None
+
+            def on_bar(self, bar: akquant.Bar) -> None:
+                self.bar_ts.append(int(bar.timestamp))
+
+            def on_after_trading(self, trading_date: object, timestamp: int) -> None:
+                # First call is for the first trading day (bar_ts[0]).
+                if not self.ordered:
+                    self.ordered = True
+                    self.buy(
+                        "AAA",
+                        10000,
+                        fill_policy={
+                            "price_basis": "open",
+                            "bar_offset": 1,
+                            "temporal": "next_event",
+                        },
+                    )
+
+            def on_trade(self, trade: akquant.Trade) -> None:
+                if self.fill_ts is None:
+                    self.fill_ts = int(trade.timestamp)
+
+        strat = AfterTradingStrategy()
+        akquant.run_backtest(
+            data={"AAA": _mk()},
+            strategy=strat,
+            symbols=["AAA"],
+            initial_cash=1_000_000.0,
+            commission_rate=0.0,
+            lot_size=100,
+            t_plus_one=True,
+            show_progress=False,
+        )
+        return strat.bar_ts, strat.fill_ts
+
+    # Order is submitted in on_after_trading of the first trading day (bar_ts[0]);
+    # with a next-open policy it must fill at the open of the next trading day
+    # (bar_ts[1]). The #324 regression fills at bar_ts[2] (T+2) in default mode.
+    for precise in (False, True):
+        bar_ts, fill_ts = _run(precise)
+        assert fill_ts is not None, f"precise={precise}: order never filled"
+        fill_index = bar_ts.index(fill_ts)
+        assert fill_index == 1, (
+            f"precise={precise}: on_after_trading(day 0) next-open order filled on "
+            f"trading day index {fill_index}, expected 1 (next trading day). "
+            f"index 2 is the #324 off-by-one."
+        )
+
+
+def test_pre_open_default_order_fills_same_day_open() -> None:
+    """Issue #324 family: on_pre_open must fill on THIS day's open, not the next.
+
+    on_pre_open is the "decide before open, fill on this open" hook. Its pre-open
+    boundary timer used to be scheduled at the day's first bar timestamp (same
+    instant as that bar), so an order submitted inside it had created_at equal to
+    the bar timestamp and the next-open guard pushed the fill to the following
+    day's open. The fix schedules the pre-open timer strictly before the first
+    bar, so a default pre-open order (open / next bar) fills on the current day's
+    open as documented.
+    """
+    dates = pd.to_datetime(["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"])
+
+    def _mk() -> pd.DataFrame:
+        df = pd.DataFrame(index=dates)
+        df.index.name = "date"
+        df["open"] = [10.0, 11.0, 12.0, 13.0]
+        df["high"] = [10.0, 11.0, 12.0, 13.0]
+        df["low"] = [10.0, 11.0, 12.0, 13.0]
+        df["close"] = [10.0, 11.0, 12.0, 13.0]
+        df["volume"] = 1e7
+        df["symbol"] = "AAA"
+        return df
+
+    class PreOpenStrategy(akquant.Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.bar_ts: list[int] = []
+            self.ordered: bool = False
+            self.order_bar_index: int | None = None
+            self.fill_ts: int | None = None
+            self.fill_price: float | None = None
+
+        def on_start(self) -> None:
+            self.subscribe("AAA")
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            self.bar_ts.append(int(bar.timestamp))
+
+        def on_pre_open(self, event: dict) -> None:
+            if not self.ordered:
+                self.ordered = True
+                # bars seen so far == index of the day this pre_open precedes.
+                self.order_bar_index = len(self.bar_ts)
+                self.buy("AAA", 100)  # default pre_open policy: open / this open
+
+        def on_trade(self, trade: akquant.Trade) -> None:
+            if self.fill_ts is None:
+                self.fill_ts = int(trade.timestamp)
+                self.fill_price = float(trade.price)
+
+    strat = PreOpenStrategy()
+    akquant.run_backtest(
+        data={"AAA": _mk()},
+        strategy=strat,
+        symbols=["AAA"],
+        initial_cash=1_000_000.0,
+        commission_rate=0.0,
+        lot_size=100,
+        show_progress=False,
+    )
+
+    assert strat.ordered, "on_pre_open never fired"
+    assert strat.fill_ts is not None, "pre_open order never filled"
+    fill_index = strat.bar_ts.index(strat.fill_ts)
+    # pre_open(day D) fires before day D's bar (order_bar_index == D); the order
+    # must fill on day D's own open, not the next day's.
+    assert fill_index == strat.order_bar_index, (
+        f"on_pre_open order filled on bar index {fill_index}, expected "
+        f"{strat.order_bar_index} (this day's open). A later index is the #324 "
+        f"off-by-one; the pre_open contract is 'fill on this open'."
+    )
+
+
 def test_strategy_buying_power_reflects_same_bar_pending_sell() -> None:
     """buying_power must include a same-callback pending sell's expected proceeds."""
     dates = pd.to_datetime(
@@ -7452,8 +7609,8 @@ def _rebalance_hook_price_frames() -> dict[str, pd.DataFrame]:
     return frames
 
 
-def test_on_daily_rebalance_no_lookahead_and_precise_hook_independent_fill() -> None:
-    """`on_daily_rebalance` contract (#291): no lookahead, precise-independent.
+def test_on_before_trading_no_lookahead_and_precise_hook_independent_fill() -> None:
+    """`on_before_trading` contract (#291): no lookahead, precise-independent.
 
     The `enable_precise_day_boundary_hooks` toggle must not shift the fill bar.
 
@@ -7475,7 +7632,7 @@ def test_on_daily_rebalance_no_lookahead_and_precise_hook_independent_fill() -> 
             self._bought = False
             self.buy_price: float | None = None
 
-        def on_daily_rebalance(self, trading_date: Any, timestamp: int) -> None:
+        def on_before_trading(self, trading_date: Any, timestamp: int) -> None:
             day = pd.Timestamp(trading_date).normalize()
             if day in self._seen:
                 return
@@ -7523,8 +7680,8 @@ def test_on_daily_rebalance_no_lookahead_and_precise_hook_independent_fill() -> 
     assert precise_off.buy_price == pytest.approx(10.20)
 
 
-def test_on_daily_rebalance_after_bar_sees_current_day_and_same_cycle_fill() -> None:
-    """`on_daily_rebalance_after_bar` contract (#291): current-day visibility.
+def test_on_cross_section_sees_current_day_and_same_cycle_fill() -> None:
+    """`on_cross_section` contract (#291): current-day visibility.
 
     Current-day data is visible and a same-cycle close order fills at the
     current-day close. Fires after the day's first complete cross-symbol bar
@@ -7543,9 +7700,7 @@ def test_on_daily_rebalance_after_bar_sees_current_day_and_same_cycle_fill() -> 
             self._bought = False
             self.buy_price: float | None = None
 
-        def on_daily_rebalance_after_bar(
-            self, trading_date: Any, timestamp: int
-        ) -> None:
+        def on_cross_section(self, trading_date: Any, timestamp: int) -> None:
             day = pd.Timestamp(trading_date).normalize()
             if day in self._seen:
                 return
@@ -7652,13 +7807,13 @@ def test_get_history_multi_matches_per_field_get_history() -> None:
     assert strat.pad_ok is True
 
 
-def test_get_history_multi_matches_get_history_under_daily_rebalance_cutoff() -> None:
+def test_get_history_multi_matches_get_history_under_before_trading_cutoff() -> None:
     """`get_history_multi` equals per-field `get_history` on the cutoff path (#288).
 
-    In day-boundary phases (`on_daily_rebalance`) `get_history` applies a
+    In day-boundary phases (`on_before_trading`) `get_history` applies a
     history-visibility cutoff that hides the current day. `get_history_multi`
     must resolve that cutoff identically, so `get_history_df` stays correct when
-    called from a rebalance hook — not only from `on_bar`.
+    called from a day-boundary hook — not only from `on_bar`.
     """
     dates = pd.to_datetime(
         ["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06"]
@@ -7684,7 +7839,7 @@ def test_get_history_multi_matches_get_history_under_daily_rebalance_cutoff() ->
             self.match_ok: bool | None = None
             self.cutoff_active: bool | None = None
 
-        def on_daily_rebalance(self, trading_date: Any, timestamp: int) -> None:
+        def on_before_trading(self, trading_date: Any, timestamp: int) -> None:
             # The 4th trading day has days 1-3 visible under the cutoff.
             self._days += 1
             if self._days != 4:

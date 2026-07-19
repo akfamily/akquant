@@ -235,7 +235,7 @@ impl Engine {
     fn effective_terminal_timestamp_for_timer(timer: &Timer) -> Option<i64> {
         if let Some(source_ts) = timer
             .payload
-            .strip_prefix("__framework_after_bar_rebalance__|")
+            .strip_prefix("__framework_cross_section__|")
             .and_then(|payload| payload.rsplit('|').next())
             .and_then(|value| value.parse::<i64>().ok())
         {
