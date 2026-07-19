@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
-from pydantic.fields import FieldInfo
 
 
 class ParamModel(BaseModel):
@@ -56,10 +55,17 @@ class DateRange(BaseModel):
 
 @dataclass(frozen=True)
 class ParamSpec:
-    """内联参数字段规格：携带 python 类型与 pydantic FieldInfo."""
+    """内联参数字段规格：携带 python 类型与 pydantic FieldInfo.
+
+    :ivar field_info: 实际运行期总是 ``pydantic.fields.FieldInfo``；
+        标注为 ``Any`` 是因为 ``pydantic.Field()`` 的静态返回类型会
+        随默认值的类型（``int``/``float``/``bool``/``str``/``DateRange | None``
+        等）变化而变化，与固定的 ``FieldInfo`` 标注冲突，此处放宽以消除
+        误报，不影响运行期行为。
+    """
 
     python_type: type
-    field_info: FieldInfo
+    field_info: Any
 
 
 def IntParam(

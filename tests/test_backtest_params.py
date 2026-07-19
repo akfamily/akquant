@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from akquant import Strategy, run_backtest
+from akquant import Bar, Strategy, run_backtest
 from akquant.params import IntParam
 
 
@@ -10,17 +10,17 @@ class PStrat(Strategy):
 
     fast = IntParam(5, ge=2, le=100)
 
-    def on_start(self):
+    def on_start(self) -> None:
         """Subscribe to the test symbol and set warmup from the param."""
         self.subscribe("X")
         self.warmup_period = self.params.fast
 
-    def on_bar(self, bar):
+    def on_bar(self, bar: Bar) -> None:
         """Record the resolved param value for inspection."""
         self._seen_fast = self.params.fast
 
 
-def _data():
+def _data() -> pd.DataFrame:
     idx = pd.date_range("2023-01-01", periods=30)
     close = 100 + np.arange(30, dtype=float)
     return pd.DataFrame(
@@ -36,7 +36,7 @@ def _data():
     )
 
 
-def test_strategy_params_injected():
+def test_strategy_params_injected() -> None:
     """Test strategy_params flows through __param_model__ validation into params."""
     result = run_backtest(
         data=_data(),
@@ -48,7 +48,7 @@ def test_strategy_params_injected():
     assert result is not None  # 跑通即可
 
 
-def test_unknown_strategy_param_raises():
+def test_unknown_strategy_param_raises() -> None:
     """Test unknown strategy_params keys raise under strict_strategy_params."""
     with pytest.raises((TypeError, ValueError)):
         run_backtest(

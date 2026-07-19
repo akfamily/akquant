@@ -46,7 +46,7 @@ def test_params_is_frozen() -> None:
     """Params 实例应只读，赋值触发校验错误."""
     s = ParamStrategy()
     with pytest.raises(ValidationError):
-        s.params.fast = 1
+        setattr(s.params, "fast", 1)
 
 
 def test_inheritance_merge_child_overrides() -> None:

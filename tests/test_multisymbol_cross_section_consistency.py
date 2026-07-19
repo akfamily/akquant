@@ -69,7 +69,7 @@ def _run_multisymbol_bucket(
 ) -> Any:
     return run_backtest(
         data=data_map,
-        strategy=BucketCrossSectionStrategy,
+        strategy=BucketCrossSectionStrategy(symbols=symbols),
         symbols=symbols,
         initial_cash=100000.0,
         commission_rate=0.0,
@@ -321,7 +321,7 @@ def test_rebalance_weights_rotation_liquidates_unmentioned_symbols() -> None:
 
     result = run_backtest(
         data=data_map,
-        strategy=TargetWeightsStrategy,
+        strategy=TargetWeightsStrategy(symbols=["AAA", "BBB"]),
         symbols=["AAA", "BBB"],
         initial_cash=100000.0,
         commission_rate=0.0,
@@ -352,7 +352,7 @@ def test_rebalance_weights_uses_sell_proceeds_before_same_cycle_buy() -> None:
 
     result = run_backtest(
         data=data_map,
-        strategy=TargetWeightsSellThenBuyStrategy,
+        strategy=TargetWeightsSellThenBuyStrategy(symbols=["AAA", "BBB"]),
         symbols=["AAA", "BBB"],
         initial_cash=100000.0,
         commission_rate=0.0,
@@ -438,7 +438,7 @@ def test_rebalance_weights_split_allocation_is_close_to_target() -> None:
 
     result = run_backtest(
         data=data_map,
-        strategy=TargetWeightsSplitStrategy,
+        strategy=TargetWeightsSplitStrategy(symbols=["AAA", "BBB"]),
         symbols=["AAA", "BBB"],
         initial_cash=100000.0,
         commission_rate=0.0,

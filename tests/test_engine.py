@@ -48,10 +48,7 @@ class RegressionStrategy(akquant.Strategy):
 class NoopStrategy(akquant.Strategy):
     """No-op strategy used for performance baselines."""
 
-    def __init__(self, dummy: int = 0) -> None:
-        """Initialize no-op strategy parameter holder."""
-        super().__init__()
-        self.dummy = int(dummy)
+    dummy = akquant.IntParam(0)
 
     def on_bar(self, bar: akquant.Bar) -> None:
         """Handle bar events without generating orders."""
@@ -73,17 +70,17 @@ class FailingOnStopStrategy(akquant.Strategy):
 class WorkerLogStrategy(akquant.Strategy):
     """Strategy used to verify worker log forwarding in parallel optimization."""
 
-    def __init__(self, dummy: int = 0) -> None:
-        """Initialize strategy with deterministic log payload."""
-        super().__init__()
-        self.dummy = int(dummy)
+    dummy = akquant.IntParam(0)
+
+    def on_start(self) -> None:
+        """Reset the one-shot logging guard."""
         self._logged = False
 
     def on_bar(self, bar: akquant.Bar) -> None:
         """Log once per task to test cross-process log forwarding."""
         if self._logged:
             return
-        self.log(f"worker-log-{self.dummy}")
+        self.log(f"worker-log-{self.params.dummy}")
         self._logged = True
 
 
@@ -4735,9 +4732,7 @@ def test_run_grid_search_strict_params_raises_on_constructor_mismatch() -> None:
             return
 
     data = _build_benchmark_data(n=20, symbol="OPT_STRICT_PARAMS")
-    with pytest.raises(
-        TypeError, match="Unknown strategy constructor parameter\\(s\\)"
-    ):
+    with pytest.raises(TypeError, match="Unknown strategy param\\(s\\) in param_grid"):
         akquant.run_grid_search(
             strategy=StrictParamStrategy,
             param_grid={"not_exist": [1, 2]},
