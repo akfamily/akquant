@@ -706,7 +706,7 @@ result = run_backtest(
 
 *   **简单脚本**: 直接使用 `run_backtest` 的扁平参数（如 `initial_cash`, `start_time`）。
 *   **生产/复杂策略**: 构建完整的 `BacktestConfig` 对象，以便于版本管理和复用。
-*   **页面化参数输入**: 在策略类中声明 `PARAM_MODEL`（`akquant.ParamModel`），并使用 `get_strategy_param_schema` / `validate_strategy_params` 完成前后端参数联动与校验。
+*   **页面化参数输入**: 在策略类中内联声明参数字段（`IntParam` 等，例如 `fast_period = IntParam(10, ge=2, le=200)`，运行时通过 `self.params.fast_period` 访问），并使用 `get_strategy_param_schema` / `validate_strategy_params` 完成前后端参数联动与校验。
 *   **参数调优**: 使用 `run_grid_search` 时，通常通过修改 Config 对象或传入 override 参数来实现。
 
 ### 日志配置 API (Logging)

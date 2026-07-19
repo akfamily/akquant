@@ -155,7 +155,7 @@ run_backtest(strategy=MyStrategy, data=df, symbols="600000")
 ## 参数模型化入口
 
 *   参数优化指南（推荐工作流）：[参数模型驱动优化](guide/optimization.md)
-*   示例集合（页面化参数配置）：[页面化参数配置（PARAM_MODEL）](guide/examples.md)
+*   示例集合（页面化参数配置）：[页面化参数配置（内联参数字段）](guide/examples.md)
 *   API 最佳实践（前后端联动）：[页面化参数输入](reference/api.md)
 *   示例脚本入口：[examples/02_parameter_optimization.py](https://github.com/akfamily/akquant/blob/main/examples/02_parameter_optimization.py)
 
