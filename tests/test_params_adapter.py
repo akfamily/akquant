@@ -1,82 +1,62 @@
-from typing import Any
-
 import pytest
-from akquant.params import DateRange, DateRangeParam, IntParam, ParamModel
+from akquant import Strategy
+from akquant.params import IntParam
 from akquant.params_adapter import (
-    extract_runtime_kwargs,
+    build_param_grid_from_search_space,
     get_strategy_param_schema,
+    resolve_param_model,
     validate_strategy_params,
 )
-from akquant.strategy import Strategy
+from pydantic import ValidationError
 
 
-class DemoParams(ParamModel):
-    """用于测试的参数模型."""
+class S(Strategy):
+    """带内联 ParamSpec 字段的测试策略."""
 
-    fast_period: int = IntParam(5, ge=2, le=100)
-    slow_period: int = IntParam(20, ge=3, le=300)
-    date_range: DateRange = DateRangeParam()
+    fast = IntParam(10, ge=2, le=200, title="快线")
 
 
-class DemoStrategy(Strategy):
-    """用于测试的带 PARAM_MODEL 策略."""
-
-    PARAM_MODEL = DemoParams
-
-    def __init__(self, fast_period: int = 5, slow_period: int = 20) -> None:
-        """初始化测试策略."""
-        self.fast_period = fast_period
-        self.slow_period = slow_period
-
-    def on_bar(self, bar: Any) -> None:
-        """处理 bar 事件."""
-        return
+class NoParam(Strategy):
+    """无内联参数字段的测试策略."""
 
 
-class LegacyStrategy(Strategy):
-    """用于测试签名推断的旧风格策略."""
-
-    def __init__(self, period: int, use_exit: bool = True) -> None:
-        """初始化旧风格测试策略."""
-        self.period = period
-        self.use_exit = use_exit
-
-    def on_bar(self, bar: Any) -> None:
-        """处理 bar 事件."""
-        return
+def test_resolve_returns_param_model() -> None:
+    """resolve_param_model 应恒返回 cls.__param_model__（含无字段策略）."""
+    assert resolve_param_model(S) is S.__param_model__
+    assert resolve_param_model(NoParam) is NoParam.__param_model__
 
 
-def test_get_strategy_param_schema_uses_param_model() -> None:
-    """PARAM_MODEL 策略应返回模型 schema."""
-    schema = get_strategy_param_schema(DemoStrategy)
-    properties = schema.get("properties", {})
-    assert "fast_period" in properties
-    assert "date_range" in properties
+def test_schema_from_model() -> None:
+    """Schema 应来自参数模型，且保留字段 title."""
+    schema = get_strategy_param_schema(S)
+    assert "fast" in schema["properties"]
+    assert schema["properties"]["fast"]["title"] == "快线"
 
 
-def test_validate_strategy_params_with_model_and_runtime_kwargs() -> None:
-    """参数模型应完成校验并导出运行时 kwargs."""
-    payload = {
-        "fast_period": 8,
-        "slow_period": 26,
-        "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
-    }
-    validated = validate_strategy_params(DemoStrategy, payload)
-    assert validated["fast_period"] == 8
-    kwargs = extract_runtime_kwargs(DemoStrategy, payload)
-    assert kwargs["start_time"] == "2024-01-01"
-    assert kwargs["end_time"] == "2024-12-31"
+def test_validate_ok() -> None:
+    """合法参数应校验通过并原样返回."""
+    assert validate_strategy_params(S, {"fast": 20}) == {"fast": 20}
 
 
-def test_validate_strategy_params_rejects_unknown_fields() -> None:
-    """未知字段应被拒绝."""
-    payload = {"fast_period": 8, "slow_period": 20, "unknown": 1}
-    with pytest.raises(Exception):
-        validate_strategy_params(DemoStrategy, payload)
+def test_validate_rejects_unknown() -> None:
+    """未知字段应被模型拒绝."""
+    with pytest.raises(ValidationError):
+        validate_strategy_params(S, {"nope": 1})
 
 
-def test_validate_strategy_params_signature_fallback() -> None:
-    """无参数模型时应回退到 __init__ 签名推断."""
-    validated = validate_strategy_params(LegacyStrategy, {"period": "10"})
-    assert validated["period"] == 10
-    assert validated["use_exit"] is True
+def test_validate_rejects_out_of_range() -> None:
+    """越界字段应被模型拒绝."""
+    with pytest.raises(ValidationError):
+        validate_strategy_params(S, {"fast": 1})
+
+
+def test_no_param_schema_empty() -> None:
+    """无字段策略的 schema 应无 properties."""
+    schema = get_strategy_param_schema(NoParam)
+    assert schema.get("properties", {}) == {}
+
+
+def test_build_param_grid() -> None:
+    """search_space 应原样归一化为 param_grid."""
+    grid = build_param_grid_from_search_space({"fast": [5, 10]})
+    assert grid == {"fast": [5, 10]}
