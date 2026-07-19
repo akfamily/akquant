@@ -126,28 +126,28 @@ if __name__ == "__main__":
 
 ### 11.4.1 参数模型驱动（适合页面化）
 
-在面向页面配置、策略市场、研究平台等场景中，推荐采用以下分层：
+在面向页面配置、策略市场、研究平台等场景中，推荐直接用**内联参数字段**声明
+参数：
 
-*   **参数模型层**：在策略类中声明 `PARAM_MODEL`（基于 `akquant.params.ParamModel`）。
-    *   用于参数类型约束、默认值管理、前端 JSON Schema 导出。
+*   **参数声明层**：在策略类体内用 `IntParam` / `FloatParam` / ... 内联声明字段。
+    *   用于参数类型约束、默认值管理、前端 JSON Schema 导出；经
+        `self.params.<name>` 只读访问，`self.params` 在实例构造期即已就绪。
 *   **优化搜索层**：继续使用 `run_grid_search(param_grid=...)`。
-    *   `param_grid` 只负责离散候选值，不承担复杂对象校验。
+    *   `param_grid` 只负责离散候选值，键名须与内联字段名一致，不承担复杂对象校验。
 
-推荐这样做的核心原因是：**运行参数校验**与**参数组合搜索**在职责上是不同问题，拆开后更清晰、更稳健。
+推荐这样做的核心原因是：**运行参数校验**与**参数组合搜索**在职责上是不同问题，
+但共享同一套字段声明，拆开后更清晰、更稳健，也不需要再单独维护一个
+`ParamModel` 子类。
 
 策略示意（节选）：
 
 ```python
-from akquant import IntParam, ParamModel, Strategy
-
-
-class SmaParams(ParamModel):
-    fast_period: int = IntParam(10, ge=2, le=200)
-    slow_period: int = IntParam(30, ge=3, le=500)
+from akquant import IntParam, Strategy
 
 
 class SmaStrategy(Strategy):
-    PARAM_MODEL = SmaParams
+    fast_period = IntParam(10, ge=2, le=200)
+    slow_period = IntParam(30, ge=3, le=500)
 ```
 
 ### 11.4.2 代码示例
@@ -164,8 +164,8 @@ class SmaStrategy(Strategy):
     *   `False`（默认）：性能优先，子进程日志可能在主进程不可见；
     *   `True`：将子进程 `self.log()` 聚合回主进程，适合排障与教学演示。
 *   `strict_strategy_params`（`run_backtest`，默认 `True`）：
-    *   严格校验策略构造参数；
-    *   当 `param_grid` 中存在策略不接受的参数时，立即抛错，避免静默回退导致“看似跑完但结果无效”。
+    *   严格校验策略内联参数字段（`IntParam`/`FloatParam`/... 声明）；
+    *   当 `param_grid` 中存在策略未声明的参数、或取值越界时，立即抛错，避免静默回退导致“看似跑完但结果无效”。
 *   `run_walk_forward` 也支持通过 `**kwargs` 透传这两个参数：
     *   `forward_worker_logs` 作用于样本内优化阶段（内部 `run_grid_search`）；
     *   `strict_strategy_params` 在样本内优化与样本外验证阶段都生效。

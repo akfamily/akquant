@@ -662,6 +662,64 @@ class MyStrategy(Strategy):
             self.sell(symbol=bar.symbol, quantity=100)
 ```
 
+### 6.4 参数声明 (Parameter Declaration) {: #param-declaration }
+
+AKQuant 推荐用**内联字段**声明策略参数：直接在类体内用 `IntParam` /
+`FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` 赋值，无需再单独
+定义 `ParamModel` 子类或手写 `__init__` 签名。
+
+```python
+from akquant import IntParam, Indicator, Strategy
+
+
+class SMACrossStrategy(Strategy):
+    """双均线交叉策略（内联参数声明）。"""
+
+    fast_period = IntParam(10, ge=2, le=200, title="快线周期")
+    slow_period = IntParam(30, ge=3, le=500, title="慢线周期")
+
+    def on_start(self):
+        # 派生初始化（如指标）统一放在 on_start，此时 self.params 已就绪
+        self.sma_fast = Indicator(
+            "sma_fast",
+            lambda df: df["close"].rolling(self.params.fast_period).mean(),
+        )
+        self.sma_slow = Indicator(
+            "sma_slow",
+            lambda df: df["close"].rolling(self.params.slow_period).mean(),
+        )
+        self._indicators = [self.sma_fast, self.sma_slow]
+
+    def on_bar(self, bar):
+        fast = self.sma_fast.get_value(bar.symbol, bar.timestamp)
+        slow = self.sma_slow.get_value(bar.symbol, bar.timestamp)
+        qty = self.get_position(bar.symbol)
+        if fast > slow and qty <= 0:
+            self.buy(symbol=bar.symbol, quantity=100)
+        elif fast < slow and qty > 0:
+            self.sell(symbol=bar.symbol, quantity=100)
+```
+
+要点：
+
+*   **只读访问**：所有内联字段在实例构造期就已校验完成，统一经
+    `self.params.<name>` 访问（例如 `self.params.fast_period`）；`self.params`
+    是 frozen 对象，不支持在运行期赋值修改。
+*   **派生初始化放 `on_start`**：需要基于参数派生的对象（指标、缓存结构等），
+    应在 `on_start` 中读取 `self.params.<name>` 后再构造，而不是在类体或
+    `__init__` 阶段——`__init__` 之前 `self.params` 尚未注入完毕。
+*   **静态类型需要**：如果你希望 IDE/mypy 能推断具体字段类型，可以显式标注
+    右侧表达式的类型，例如 `fast: int = IntParam(10, ge=2, le=200)`。
+*   **与优化联动**：`run_grid_search(..., param_grid={...})` 的
+    `param_grid` 键名必须和内联字段名完全一致；键名拼写错误或取值越界
+    （超出 `ge`/`le`、不在 `choices` 内）都会在校验阶段直接报错，而不是
+    静默忽略。
+*   `get_strategy_param_schema(StrategyCls)` 可导出参数的 JSON Schema；
+    `validate_strategy_params(StrategyCls, payload)` 可在构造策略前单独校验
+    一份参数字典，两者都读取同一套内联字段声明，不需要额外维护 Schema。
+
+完整可运行示例见：`examples/02_parameter_optimization.py`。
+
 ## 7. 订单与交易详解 (Orders & Execution)
 
 ### 7.1 订单生命周期

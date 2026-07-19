@@ -6,7 +6,7 @@
 
 import datetime as dt
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic.fields import FieldInfo
@@ -20,6 +20,14 @@ class ParamModel(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, frozen=True)
+
+    if TYPE_CHECKING:
+        # 仅供 mypy 静态检查使用：内联参数字段（如 ``fast = IntParam(10)``）
+        # 是在 Strategy 子类上动态声明的，mypy 无法从 ParamModel 基类推断出
+        # 具体字段名。加上这个 `__getattr__` 让 `self.params.<field>` 在类型
+        # 检查时退化为 ``Any``，避免误报 "ParamModel" has no attribute "xxx"。
+        # 运行期该分支不会被执行，不影响 Pydantic 的实际属性访问与校验行为。
+        def __getattr__(self, name: str) -> Any: ...  # noqa: D105
 
 
 class DateRange(BaseModel):
