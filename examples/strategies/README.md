@@ -48,8 +48,8 @@
     - 跨标的动量比较与换仓逻辑.
     - `order_target_percent` 的正确使用。
 
-### 5. [05_stock_momentum_rotation_timer.py](./05_stock_momentum_rotation_timer.py) - `on_daily_rebalance` 横截面轮动
-- **目标**: 演示 `on_daily_rebalance` 的前一快照语义。
+### 5. [05_stock_momentum_rotation_timer.py](./05_stock_momentum_rotation_timer.py) - `on_before_trading` 横截面轮动
+- **目标**: 演示 `on_before_trading` 的前一快照语义。
 - **策略**: 交易日边界触发的动量轮动策略。
 - **核心点**:
     - 每个交易日最多触发一次。
@@ -80,8 +80,8 @@
     - `allow_short=True` 与 `RiskConfig(account_mode="margin", enable_short_sell=True)` 的配合。
     - `get_last_target_positions_plan()` 用于解释最近一次调仓计划。
 
-### 9. [09_stock_momentum_rotation_after_bar.py](./09_stock_momentum_rotation_after_bar.py) - `on_daily_rebalance_after_bar` 横截面轮动
-- **目标**: 演示 `on_daily_rebalance_after_bar` 的当日可见语义。
+### 9. [09_stock_momentum_rotation_after_bar.py](./09_stock_momentum_rotation_after_bar.py) - `on_cross_section` 横截面轮动
+- **目标**: 演示 `on_cross_section` 的当日可见语义。
 - **策略**: 首个跨标的完整 bar 切片后的动量轮动策略。
 - **核心点**:
     - 框架会在当日首个完整切片后触发一次。

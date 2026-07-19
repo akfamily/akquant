@@ -165,7 +165,7 @@ impl Processor for DataProcessor {
                 if let Some(timer) = engine.timers.pop() {
                     if timer
                         .payload
-                        .starts_with("__framework_after_bar_rebalance__|")
+                        .starts_with("__framework_cross_section__|")
                     {
                         self.finalize_current_timestamp(engine, py);
                     }

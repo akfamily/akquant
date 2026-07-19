@@ -18,16 +18,6 @@ class FrameworkHooksDemoStrategy(Strategy):
         self.subscribe("HOOKS_DEMO")
         self.log("strategy started")
 
-    def on_session_start(self, session: object, timestamp: int) -> None:
-        """Record when a trading session begins."""
-        self.event_log.append(f"session_start:{session}")
-        self.log(f"on_session_start session={session} time={pd.Timestamp(timestamp)}")
-
-    def on_session_end(self, session: object, timestamp: int) -> None:
-        """Record when a trading session ends."""
-        self.event_log.append(f"session_end:{session}")
-        self.log(f"on_session_end session={session} time={pd.Timestamp(timestamp)}")
-
     def on_before_trading(self, trading_date: object, timestamp: int) -> None:
         """Observe the trading-day boundary before the normal session opens."""
         self.event_log.append(f"before:{trading_date}")
@@ -35,12 +25,10 @@ class FrameworkHooksDemoStrategy(Strategy):
             f"on_before_trading date={trading_date} time={pd.Timestamp(timestamp)}"
         )
 
-    def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
-        """Show the once-per-day rebalance hook."""
-        self.event_log.append(f"rebalance:{trading_date}")
-        self.log(
-            f"on_daily_rebalance date={trading_date} time={pd.Timestamp(timestamp)}"
-        )
+    def on_cross_section(self, trading_date: object, timestamp: int) -> None:
+        """Show the once-per-day cross-section hook (first complete bar slice)."""
+        self.event_log.append(f"cross_section:{trading_date}")
+        self.log(f"on_cross_section date={trading_date} time={pd.Timestamp(timestamp)}")
 
     def on_after_trading(self, trading_date: object, timestamp: int) -> None:
         """Observe the trading-day boundary after the normal session closes."""

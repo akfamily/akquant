@@ -558,9 +558,7 @@ class DailyRebalanceAfterBarSellThenBuySameCycleStrategy(Strategy):
         self.order_events: list[tuple[str, str, str]] = []
         self.trade_events: list[tuple[str, str]] = []
 
-    def on_daily_rebalance_after_bar(
-        self, trading_date: object, timestamp: int
-    ) -> None:
+    def on_cross_section(self, trading_date: object, timestamp: int) -> None:
         """Rotate from AAA to BBB during the after-bar rebalance hook."""
         _ = (trading_date, timestamp)
         if self.step == 1:
@@ -599,9 +597,7 @@ class DailyRebalanceAfterBarCrossSymbolCarryoverStrategy(Strategy):
         self.step = 0
         self.rejected_reasons: list[str] = []
 
-    def on_daily_rebalance_after_bar(
-        self, trading_date: object, timestamp: int
-    ) -> None:
+    def on_cross_section(self, trading_date: object, timestamp: int) -> None:
         """Rotate targets across days while retaining one drifting position."""
         _ = (trading_date, timestamp)
         if self.step == 0:
@@ -695,7 +691,7 @@ def test_same_cycle_sell_then_buy_uses_post_sell_cash_for_sizing() -> None:
     assert float(final_positions.get("BBB", 0.0)) >= 499.0
 
 
-def test_daily_rebalance_after_bar_same_cycle_terminal_fill_emits_callbacks() -> None:
+def test_cross_section_same_cycle_terminal_fill_emits_callbacks() -> None:
     """Last-timestamp same-cycle fills should still reach order/trade callbacks."""
     timestamps = [
         pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai"),

@@ -53,7 +53,7 @@
 - [47_margin_liquidation_audit_demo.py](./47_margin_liquidation_audit_demo.py): 信用账户强平审计示例（`margin` 模式 + `liquidation_audit_df` + 报告输出）。
 - [48_margin_liquidation_priority_compare.py](./48_margin_liquidation_priority_compare.py): 强平顺序对比示例（`short_first` vs `long_first`）。
 - [49_on_expiry_demo.py](./49_on_expiry_demo.py): `on_expiry` 回调与流式 `expiry` 事件最小示例（期货到期结算后通知）。
-- [50_framework_hooks_demo.py](./50_framework_hooks_demo.py): `on_session_start/on_session_end/on_before_trading/on_after_trading/on_portfolio_update/on_reject` 框架级钩子最小示例。
+- [50_framework_hooks_demo.py](./50_framework_hooks_demo.py): `on_before_trading/on_after_trading/on_portfolio_update/on_reject` 框架级钩子最小示例。
 - [51_class_tick_callbacks_demo.py](./51_class_tick_callbacks_demo.py): 类风格 `on_tick` 最小示例（含 `on_order/on_trade/on_timer` 相邻回调）。
 - [52_pre_open_demo.py](./52_pre_open_demo.py): `on_pre_open` 最小示例，演示“盘前决策，本次 open 成交”的推荐写法。
 - [53_timer_to_pre_open_demo.py](./53_timer_to_pre_open_demo.py): “前一交易日更晚的 `on_timer` 准备，下一交易日 `on_pre_open` 执行”的双阶段示例。

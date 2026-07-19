@@ -121,15 +121,12 @@ class LiveRunner:
         on_order: Optional[Callable[[Any, Any], None]] = None,
         on_trade: Optional[Callable[[Any, Any], None]] = None,
         on_reject: Optional[Callable[[Any, Any], None]] = None,
-        on_session_start: Optional[Callable[[Any, Any, int], None]] = None,
         on_broker_connected: Optional[Callable[[Any], None]] = None,
         broker_ready_timeout: float = 10.0,
         broker_ready_required: bool = False,
-        on_session_end: Optional[Callable[[Any, Any, int], None]] = None,
         on_before_trading: Optional[Callable[[Any, Any, int], None]] = None,
         on_after_trading: Optional[Callable[[Any, Any, int], None]] = None,
-        on_daily_rebalance: Optional[Callable[[Any, Any, int], None]] = None,
-        on_daily_rebalance_after_bar: Optional[Callable[[Any, Any, int], None]] = None,
+        on_cross_section: Optional[Callable[[Any, Any, int], None]] = None,
         on_portfolio_update: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
         on_error: Optional[Callable[[Any, Exception, str, Any], None]] = None,
         on_timer: Optional[Callable[[Any, str], None]] = None,
@@ -171,19 +168,16 @@ class LiveRunner:
         :param on_order: Optional function-style on_order callback.
         :param on_trade: Optional function-style on_trade callback.
         :param on_reject: Optional function-style on_reject callback.
-        :param on_session_start: Optional function-style on_session_start callback.
         :param on_broker_connected: Optional callback fired once the broker
             trader gateway reports readiness (heartbeat) after connect+start.
         :param broker_ready_timeout: Max seconds to poll trader_gateway.heartbeat()
             before giving up (default 10.0).
         :param broker_ready_required: If True, raise when broker readiness is not
             reached within broker_ready_timeout (default False, only warns).
-        :param on_session_end: Optional function-style on_session_end callback.
         :param on_before_trading: Optional function-style on_before_trading callback.
         :param on_after_trading: Optional function-style on_after_trading callback.
-        :param on_daily_rebalance: Optional function-style on_daily_rebalance callback.
-        :param on_daily_rebalance_after_bar:
-            Optional function-style on_daily_rebalance_after_bar callback.
+        :param on_cross_section:
+            Optional function-style on_cross_section callback.
         :param on_portfolio_update:
             Optional function-style on_portfolio_update callback.
         :param on_error: Optional function-style on_error callback.
@@ -225,15 +219,12 @@ class LiveRunner:
         self.on_order = on_order
         self.on_trade = on_trade
         self.on_reject = on_reject
-        self.on_session_start = on_session_start
         self.on_broker_connected = on_broker_connected
         self.broker_ready_timeout = broker_ready_timeout
         self.broker_ready_required = broker_ready_required
-        self.on_session_end = on_session_end
         self.on_before_trading = on_before_trading
         self.on_after_trading = on_after_trading
-        self.on_daily_rebalance = on_daily_rebalance
-        self.on_daily_rebalance_after_bar = on_daily_rebalance_after_bar
+        self.on_cross_section = on_cross_section
         self.on_portfolio_update = on_portfolio_update
         self.on_error = on_error
         self.on_timer = on_timer
@@ -421,14 +412,9 @@ class LiveRunner:
                 on_order=getattr(self, "on_order", None),
                 on_trade=getattr(self, "on_trade", None),
                 on_reject=getattr(self, "on_reject", None),
-                on_session_start=getattr(self, "on_session_start", None),
-                on_session_end=getattr(self, "on_session_end", None),
                 on_before_trading=getattr(self, "on_before_trading", None),
                 on_after_trading=getattr(self, "on_after_trading", None),
-                on_daily_rebalance=getattr(self, "on_daily_rebalance", None),
-                on_daily_rebalance_after_bar=getattr(
-                    self, "on_daily_rebalance_after_bar", None
-                ),
+                on_cross_section=getattr(self, "on_cross_section", None),
                 on_portfolio_update=getattr(self, "on_portfolio_update", None),
                 on_error=getattr(self, "on_error", None),
                 on_timer=getattr(self, "on_timer", None),

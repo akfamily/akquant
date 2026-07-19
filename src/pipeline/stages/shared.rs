@@ -36,7 +36,7 @@ pub(crate) fn should_run_phase_for_current_event(
                         && (!timer.payload.starts_with("__framework_")
                             || timer
                                 .payload
-                                .starts_with("__framework_after_bar_rebalance__|"))
+                                .starts_with("__framework_cross_section__|"))
                 }
                 _ => false,
             }

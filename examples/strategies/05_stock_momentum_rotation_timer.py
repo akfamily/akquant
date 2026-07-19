@@ -1,4 +1,4 @@
-"""多股票轮动策略示例（on_daily_rebalance 版本）."""
+"""多股票轮动策略示例（on_before_trading 版本）."""
 
 import math
 from typing import Any
@@ -71,7 +71,7 @@ def rebalance_to_best_symbol(
 
 
 class DailyBoundaryMomentumRotationStrategy(Strategy):
-    """使用 on_daily_rebalance 执行前一快照语义的横截面轮动."""
+    """使用 on_before_trading 执行前一快照语义的横截面轮动."""
 
     def __init__(self, lookback_period: int = 5, **kwargs: Any) -> None:
         """初始化策略参数."""
@@ -87,10 +87,10 @@ class DailyBoundaryMomentumRotationStrategy(Strategy):
             self.subscribe(symbol)
         self.log(f"on_start subscribe={self.symbols} lookback={self.lookback_period}")
 
-    def on_daily_rebalance(self, trading_date: Any, timestamp: int) -> None:
-        """交易日边界调仓回调."""
+    def on_before_trading(self, trading_date: Any, timestamp: int) -> None:
+        """交易日盘前调仓回调（前一快照可见）."""
         _ = timestamp
-        self.log(f"on_daily_rebalance date={trading_date}")
+        self.log(f"on_before_trading date={trading_date}")
         history_map = self.get_history_map(
             count=self.lookback_period,
             symbols=self.symbols,

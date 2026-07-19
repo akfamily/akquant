@@ -327,7 +327,6 @@ class Strategy:
     _last_event_type: str = ""  # "bar" or "tick"
     _hold_bars: "defaultdict[str, int]"
     _last_position_signs: "defaultdict[str, float]"
-    _framework_last_session: Any
     _framework_last_local_date: Optional[dt.date]
     _framework_before_trading_done_date: Optional[dt.date]
     _framework_after_trading_done_date: Optional[dt.date]
@@ -348,10 +347,10 @@ class Strategy:
     _framework_current_callback: Optional[str]
     _framework_current_order: Optional[Any]
     _framework_current_trade: Optional[Any]
-    _framework_daily_rebalance_after_bar_done_date: Optional[dt.date]
-    _framework_daily_rebalance_after_bar_timers_registered: bool
+    _framework_cross_section_done_date: Optional[dt.date]
+    _framework_cross_section_timers_registered: bool
     _trading_day_bounds: Dict[str, Tuple[int, int]]
-    _trading_day_after_bar_rebalance_timestamps: Dict[str, int]
+    _trading_day_cross_section_timestamps: Dict[str, int]
     _oco_groups: Dict[str, set[str]]
     _oco_order_to_group: Dict[str, str]
     _use_engine_oco: bool
@@ -478,7 +477,6 @@ class Strategy:
             "lot_size": 1,
         }
         instance._owner_strategy_id = None
-        instance._framework_last_session = None
         instance._framework_last_local_date = None
         instance._framework_before_trading_done_date = None
         instance._framework_after_trading_done_date = None
@@ -499,10 +497,10 @@ class Strategy:
         instance._framework_current_callback = None
         instance._framework_current_order = None
         instance._framework_current_trade = None
-        instance._framework_daily_rebalance_after_bar_done_date = None
-        instance._framework_daily_rebalance_after_bar_timers_registered = False
+        instance._framework_cross_section_done_date = None
+        instance._framework_cross_section_timers_registered = False
         instance._trading_day_bounds = {}
-        instance._trading_day_after_bar_rebalance_timestamps = {}
+        instance._trading_day_cross_section_timestamps = {}
         instance._oco_groups = {}
         instance._oco_order_to_group = {}
         instance._use_engine_oco = False
@@ -536,8 +534,6 @@ class Strategy:
             del state["current_bar"]
         if "current_tick" in state:
             del state["current_tick"]
-        if "_framework_last_session" in state:
-            del state["_framework_last_session"]
         if "_framework_last_local_date" in state:
             del state["_framework_last_local_date"]
         if "_framework_before_trading_done_date" in state:
@@ -1476,26 +1472,16 @@ class Strategy:
         """执行回报回调（broker_live 专用；回测不触发）。默认 no-op，可覆盖."""
         pass
 
-    def on_session_start(self, session: Any, timestamp: int) -> None:
-        """会话开始回调."""
-        pass
-
-    def on_session_end(self, session: Any, timestamp: int) -> None:
-        """会话结束回调."""
-        pass
-
     def on_before_trading(self, trading_date: dt.date, timestamp: int) -> None:
         """交易日开始前回调."""
         pass
 
-    def on_daily_rebalance(self, trading_date: dt.date, timestamp: int) -> None:
-        """交易日调仓回调（每天最多一次）."""
-        pass
+    def on_cross_section(self, trading_date: dt.date, timestamp: int) -> None:
+        """横截面回调：当日首个跨标的完整 bar 切片就绪后触发（每天最多一次）.
 
-    def on_daily_rebalance_after_bar(
-        self, trading_date: dt.date, timestamp: int
-    ) -> None:
-        """完整时间片后的交易日调仓回调（每天最多一次）."""
+        可在此看到当日所有标的的当拍 bar 与当前账户快照，适合做跨标的同周期
+        处理（如横截面调仓）。调仓频率（日/周/月）请在回调内用日历判断。
+        """
         pass
 
     def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:

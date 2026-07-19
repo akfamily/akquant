@@ -62,7 +62,7 @@ from ..strategy_framework_hooks import (
     collect_boundary_timer_entries as _collect_boundary_timer_entries_impl,
 )
 from ..strategy_framework_hooks import (
-    collect_daily_rebalance_after_bar_timer_entries,
+    collect_cross_section_timer_entries,
 )
 from ..strategy_framework_hooks import (
     collect_pre_open_timer_entries as _collect_pre_open_timer_entries_impl,
@@ -72,9 +72,7 @@ from ..utils.inspector import infer_warmup_period
 from .result import BacktestResult
 
 _RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
-_collect_after_bar_rebalance_entries_impl = (
-    collect_daily_rebalance_after_bar_timer_entries
-)
+_collect_cross_section_entries_impl = collect_cross_section_timer_entries
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 _RUNTIME_EXECUTION_MODE = getattr(cast(Any, _akquant_module), "ExecutionMode", None)
 _RUNTIME_MODE_NEXT_OPEN = getattr(_RUNTIME_EXECUTION_MODE, "NextOpen", "next_open")
@@ -252,7 +250,7 @@ def _prime_framework_boundary_timers(
         add_timer(timestamp_ns, payload)
 
 
-def _prime_framework_daily_rebalance_after_bar_timers(
+def _prime_framework_cross_section_timers(
     strategies: Sequence[Strategy], engine: Any
 ) -> None:
     """Prime daily after-bar rebalance timers before the event loop starts."""
@@ -262,11 +260,9 @@ def _prime_framework_daily_rebalance_after_bar_timers(
 
     unique_timers: dict[str, int] = {}
     for current_strategy in strategies:
-        entries = _collect_after_bar_rebalance_entries_impl(current_strategy)
+        entries = _collect_cross_section_entries_impl(current_strategy)
         if entries:
-            current_strategy._framework_daily_rebalance_after_bar_timers_registered = (
-                True
-            )
+            current_strategy._framework_cross_section_timers_registered = True
         for timestamp_ns, payload in entries:
             unique_timers[payload] = int(timestamp_ns)
 
@@ -1672,12 +1668,9 @@ def _build_strategy_instance(
     on_order: Optional[Callable[[Any, Any], None]],
     on_trade: Optional[Callable[[Any, Any], None]],
     on_reject: Optional[Callable[[Any, Any], None]],
-    on_session_start: Optional[Callable[[Any, Any, int], None]],
-    on_session_end: Optional[Callable[[Any, Any, int], None]],
     on_before_trading: Optional[Callable[[Any, Any, int], None]],
     on_after_trading: Optional[Callable[[Any, Any, int], None]],
-    on_daily_rebalance: Optional[Callable[[Any, Any, int], None]],
-    on_daily_rebalance_after_bar: Optional[Callable[[Any, Any, int], None]],
+    on_cross_section: Optional[Callable[[Any, Any, int], None]],
     on_portfolio_update: Optional[Callable[[Any, Dict[str, Any]], None]],
     on_error: Optional[Callable[[Any, Exception, str, Any], None]],
     on_expiry: Optional[Callable[[Any, Dict[str, Any]], None]],
@@ -1731,12 +1724,9 @@ def _build_strategy_instance(
             on_order=on_order,
             on_trade=on_trade,
             on_reject=on_reject,
-            on_session_start=on_session_start,
-            on_session_end=on_session_end,
             on_before_trading=on_before_trading,
             on_after_trading=on_after_trading,
-            on_daily_rebalance=on_daily_rebalance,
-            on_daily_rebalance_after_bar=on_daily_rebalance_after_bar,
+            on_cross_section=on_cross_section,
             on_portfolio_update=on_portfolio_update,
             on_error=on_error,
             on_expiry=on_expiry,
@@ -1764,12 +1754,9 @@ class FunctionalStrategy(Strategy):
         on_order: Optional[Callable[[Any, Any], None]] = None,
         on_trade: Optional[Callable[[Any, Any], None]] = None,
         on_reject: Optional[Callable[[Any, Any], None]] = None,
-        on_session_start: Optional[Callable[[Any, Any, int], None]] = None,
-        on_session_end: Optional[Callable[[Any, Any, int], None]] = None,
         on_before_trading: Optional[Callable[[Any, Any, int], None]] = None,
         on_after_trading: Optional[Callable[[Any, Any, int], None]] = None,
-        on_daily_rebalance: Optional[Callable[[Any, Any, int], None]] = None,
-        on_daily_rebalance_after_bar: Optional[Callable[[Any, Any, int], None]] = None,
+        on_cross_section: Optional[Callable[[Any, Any, int], None]] = None,
         on_portfolio_update: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
         on_error: Optional[Callable[[Any, Exception, str, Any], None]] = None,
         on_expiry: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
@@ -1789,12 +1776,9 @@ class FunctionalStrategy(Strategy):
         self._on_order_func = on_order
         self._on_trade_func = on_trade
         self._on_reject_func = on_reject
-        self._on_session_start_func = on_session_start
-        self._on_session_end_func = on_session_end
         self._on_before_trading_func = on_before_trading
         self._on_after_trading_func = on_after_trading
-        self._on_daily_rebalance_func = on_daily_rebalance
-        self._on_daily_rebalance_after_bar_func = on_daily_rebalance_after_bar
+        self._on_cross_section_func = on_cross_section
         self._on_portfolio_update_func = on_portfolio_update
         self._on_error_func = on_error
         self._on_expiry_func = on_expiry
@@ -1856,16 +1840,6 @@ class FunctionalStrategy(Strategy):
         if self._on_reject_func is not None:
             self._on_reject_func(self, order)
 
-    def on_session_start(self, session: Any, timestamp: int) -> None:
-        """Delegate on_session_start event to the user-provided function."""
-        if self._on_session_start_func is not None:
-            self._on_session_start_func(self, session, timestamp)
-
-    def on_session_end(self, session: Any, timestamp: int) -> None:
-        """Delegate on_session_end event to the user-provided function."""
-        if self._on_session_end_func is not None:
-            self._on_session_end_func(self, session, timestamp)
-
     def on_before_trading(self, trading_date: Any, timestamp: int) -> None:
         """Delegate on_before_trading event to the user-provided function."""
         if self._on_before_trading_func is not None:
@@ -1876,15 +1850,10 @@ class FunctionalStrategy(Strategy):
         if self._on_after_trading_func is not None:
             self._on_after_trading_func(self, trading_date, timestamp)
 
-    def on_daily_rebalance(self, trading_date: Any, timestamp: int) -> None:
-        """Delegate on_daily_rebalance event to the user-provided function."""
-        if self._on_daily_rebalance_func is not None:
-            self._on_daily_rebalance_func(self, trading_date, timestamp)
-
-    def on_daily_rebalance_after_bar(self, trading_date: Any, timestamp: int) -> None:
-        """Delegate on_daily_rebalance_after_bar to the user-provided function."""
-        if self._on_daily_rebalance_after_bar_func is not None:
-            self._on_daily_rebalance_after_bar_func(self, trading_date, timestamp)
+    def on_cross_section(self, trading_date: Any, timestamp: int) -> None:
+        """Delegate on_cross_section to the user-provided function."""
+        if self._on_cross_section_func is not None:
+            self._on_cross_section_func(self, trading_date, timestamp)
 
     def on_portfolio_update(self, snapshot: Dict[str, Any]) -> None:
         """Delegate on_portfolio_update event to the user-provided function."""
@@ -2194,12 +2163,9 @@ def run_backtest(
     on_order: Optional[Callable[[Any, Any], None]] = None,
     on_trade: Optional[Callable[[Any, Any], None]] = None,
     on_reject: Optional[Callable[[Any, Any], None]] = None,
-    on_session_start: Optional[Callable[[Any, Any, int], None]] = None,
-    on_session_end: Optional[Callable[[Any, Any, int], None]] = None,
     on_before_trading: Optional[Callable[[Any, Any, int], None]] = None,
     on_after_trading: Optional[Callable[[Any, Any, int], None]] = None,
-    on_daily_rebalance: Optional[Callable[[Any, Any, int], None]] = None,
-    on_daily_rebalance_after_bar: Optional[Callable[[Any, Any, int], None]] = None,
+    on_cross_section: Optional[Callable[[Any, Any, int], None]] = None,
     on_portfolio_update: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
     on_error: Optional[Callable[[Any, Exception, str, Any], None]] = None,
     on_expiry: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
@@ -2647,12 +2613,9 @@ def run_backtest(
         on_order,
         on_trade,
         on_reject,
-        on_session_start,
-        on_session_end,
         on_before_trading,
         on_after_trading,
-        on_daily_rebalance,
-        on_daily_rebalance_after_bar,
+        on_cross_section,
         on_portfolio_update,
         on_error,
         on_expiry,
@@ -2691,12 +2654,9 @@ def run_backtest(
                 on_order,
                 on_trade,
                 on_reject,
-                on_session_start,
-                on_session_end,
                 on_before_trading,
                 on_after_trading,
-                on_daily_rebalance,
-                on_daily_rebalance_after_bar,
+                on_cross_section,
                 on_portfolio_update,
                 on_error,
                 on_expiry,
@@ -3284,7 +3244,7 @@ def run_backtest(
         (
             all_dates,
             day_bounds,
-            day_after_bar_rebalance_timestamps,
+            day_cross_section_timestamps,
         ) = _build_trading_day_metadata(data_map_for_indicators, timezone)
 
         for current_strategy in all_strategy_instances:
@@ -3292,9 +3252,9 @@ def run_backtest(
                 current_strategy._trading_days = all_dates
             if hasattr(current_strategy, "_trading_day_bounds"):
                 current_strategy._trading_day_bounds = day_bounds
-            if hasattr(current_strategy, "_trading_day_after_bar_rebalance_timestamps"):
-                current_strategy._trading_day_after_bar_rebalance_timestamps = (
-                    day_after_bar_rebalance_timestamps
+            if hasattr(current_strategy, "_trading_day_cross_section_timestamps"):
+                current_strategy._trading_day_cross_section_timestamps = (
+                    day_cross_section_timestamps
                 )
 
     # 4. 配置引擎
@@ -3303,7 +3263,7 @@ def run_backtest(
     for current_strategy in all_strategy_instances:
         setattr(current_strategy, "_engine", engine)
     _prime_framework_boundary_timers(all_strategy_instances, engine)
-    _prime_framework_daily_rebalance_after_bar_timers(all_strategy_instances, engine)
+    _prime_framework_cross_section_timers(all_strategy_instances, engine)
     _prime_framework_pre_open_timers(all_strategy_instances, engine)
     if analyzer_manager.plugins:
         try:
@@ -4805,12 +4765,9 @@ def run_warm_start(
                 on_order=None,
                 on_trade=None,
                 on_reject=None,
-                on_session_start=None,
-                on_session_end=None,
                 on_before_trading=None,
                 on_after_trading=None,
-                on_daily_rebalance=None,
-                on_daily_rebalance_after_bar=None,
+                on_cross_section=None,
                 on_portfolio_update=None,
                 on_error=None,
                 on_expiry=None,
@@ -5152,7 +5109,7 @@ def run_warm_start(
         (
             all_dates,
             day_bounds,
-            day_after_bar_rebalance_timestamps,
+            day_cross_section_timestamps,
         ) = _build_trading_day_metadata(data_map_for_indicators, timezone_name)
 
         for current_strategy in all_strategy_instances:
@@ -5160,9 +5117,9 @@ def run_warm_start(
                 current_strategy._trading_days = all_dates
             if hasattr(current_strategy, "_trading_day_bounds"):
                 current_strategy._trading_day_bounds = day_bounds
-            if hasattr(current_strategy, "_trading_day_after_bar_rebalance_timestamps"):
-                current_strategy._trading_day_after_bar_rebalance_timestamps = (
-                    day_after_bar_rebalance_timestamps
+            if hasattr(current_strategy, "_trading_day_cross_section_timestamps"):
+                current_strategy._trading_day_cross_section_timestamps = (
+                    day_cross_section_timestamps
                 )
             setattr(current_strategy, "_engine", engine)
 
@@ -5637,7 +5594,7 @@ def run_warm_start(
             stream_mode,
         )
     _prime_framework_boundary_timers(all_strategy_instances, engine)
-    _prime_framework_daily_rebalance_after_bar_timers(all_strategy_instances, engine)
+    _prime_framework_cross_section_timers(all_strategy_instances, engine)
     _prime_framework_pre_open_timers(all_strategy_instances, engine)
 
     if hasattr(strategy_instance, "_on_start_internal"):
@@ -5677,6 +5634,7 @@ def run_warm_start(
                     )
 
     # 4. 运行
+
     engine_summary: str = ""
     try:
         engine_summary = str(engine.run(strategy_instance, show_progress))
