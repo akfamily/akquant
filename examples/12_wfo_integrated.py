@@ -98,29 +98,25 @@ if __name__ == "__main__":
     # 测试窗口: 60天 (约3个月)
     # 这样每3个月重新优化一次参数
     print("\nRunning Walk-Forward Optimization...")
-    # 注意：run_walk_forward 没有专门的 max_workers 形参，透传的 **kwargs 会同时
-    # 被 run_grid_search（样本内网格搜索）和 run_backtest（样本外验证）消费；
-    # 若在此显式传 max_workers=1 反而会被转发给 run_backtest 报
-    # "Unknown strategy constructor parameter(s): max_workers"。
-    # 策略类定义于 __main__ 脚本内时，多进程池要求策略类可从模块导入以便
-    # pickle；直接以脚本方式运行本示例时按 03 的先例用 try/except 兜底跳过。
-    try:
-        wfo_results = run_walk_forward(
-            strategy=DualMovingAverageStrategy,
-            param_grid=param_grid,
-            data=data_map,
-            train_period=250,
-            test_period=60,
-            metric="sharpe_ratio",  # 优化目标: 夏普比率
-            initial_cash=100_000.0,
-            warmup_calc=warmup_calc,
-            constraint=param_constraint,
-            compounding=False,  # 不使用复利拼接 (简单累加盈亏)
-            symbols=list(data_map.keys()),
-        )
-    except TypeError as exc:
-        print(f"\nWFO 示例跳过: {exc}")
-        wfo_results = pd.DataFrame()
+    # 注意：run_walk_forward 的 **kwargs 会同时透传给 run_grid_search（样本内网格
+    # 搜索）和 run_backtest（样本外验证），但仅 run_grid_search / 进程池专用的键
+    # （如 max_workers）会在转发给 run_backtest 前被过滤掉，因此这里可以放心显式
+    # 传入 max_workers=1：策略类定义于本模块顶层（非 __main__ 内联），单进程运行
+    # 可避免 spawn 方式下的 pickle 限制。
+    wfo_results = run_walk_forward(
+        strategy=DualMovingAverageStrategy,
+        param_grid=param_grid,
+        data=data_map,
+        train_period=250,
+        test_period=60,
+        metric="sharpe_ratio",  # 优化目标: 夏普比率
+        initial_cash=100_000.0,
+        warmup_calc=warmup_calc,
+        constraint=param_constraint,
+        compounding=False,  # 不使用复利拼接 (简单累加盈亏)
+        symbols=list(data_map.keys()),
+        max_workers=1,
+    )
 
     if not wfo_results.empty:
         print("\n=== WFO Results Summary ===")

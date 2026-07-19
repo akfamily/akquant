@@ -40,6 +40,18 @@ _WORKER_LOG_QUEUE: Any = None
 OptimizationData = Union[pd.DataFrame, Dict[str, pd.DataFrame]]
 logger = get_logger("optimize")
 
+# run_grid_search / 进程池专用的关键字参数：这些键在 run_backtest 中没有对应形参，
+# 一旦透传给 run_backtest 会落入 strategy_kwargs，被 strict_strategy_params 校验拒绝。
+# run_walk_forward 的样本外验证 (run_backtest) 调用前必须过滤掉它们。
+_GRID_SEARCH_ONLY_KWARGS = frozenset(
+    {
+        "max_workers",
+        "db_path",
+        "forward_worker_logs",
+        "return_df",
+    }
+)
+
 
 def _normalize_backtest_symbol_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(kwargs)
@@ -967,7 +979,9 @@ def run_walk_forward(
         # 4. 样本外验证 (Backtest)
         # 使用最佳参数运行回测
         # 注意：这里我们使用一个新的 initial_cash 进行回测，后续再拼接
-        backtest_kwargs = kwargs.copy()
+        backtest_kwargs = {
+            k: v for k, v in kwargs.items() if k not in _GRID_SEARCH_ONLY_KWARGS
+        }
         backtest_kwargs.update(best_params)
         backtest_kwargs["initial_cash"] = initial_cash
         backtest_kwargs["warmup_period"] = current_warmup
