@@ -8,24 +8,19 @@ from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
-from akquant import Bar, Strategy
+from akquant import Bar, IntParam, Strategy
 
 
 class DualMovingAverageStrategy(Strategy):
     """Dual Moving Average Strategy for parameter optimization."""
 
-    def __init__(self, short_window: int, long_window: int):
-        """Initialize the strategy.
+    # 内联参数声明：短期窗口默认5，长期窗口默认20
+    short_window = IntParam(5, ge=2, le=200, title="短期窗口")
+    long_window = IntParam(20, ge=3, le=500, title="长期窗口")
 
-        Args:
-            short_window: The short moving average window.
-            long_window: The long moving average window.
-        """
-        super().__init__()
-        # 定义策略参数：短期窗口5，长期窗口20
-        self.short_window = short_window
-        self.long_window = long_window
-        self.warmup_period = long_window + 1
+    def on_start(self) -> None:
+        """策略启动：基于 self.params 派生 warmup_period."""
+        self.warmup_period = self.params.long_window + 1
 
     def on_bar(self, bar: Bar) -> None:
         """Handle new bar data.
@@ -35,20 +30,20 @@ class DualMovingAverageStrategy(Strategy):
         """
         # 获取历史收盘价数据
         # history_data 返回的是一个 DataFrame
-        hist = self.get_history(count=self.long_window + 1, field="close")
+        hist = self.get_history(count=self.params.long_window + 1, field="close")
 
         # 如果数据不足，无法计算均线，直接返回
-        if len(hist) < self.long_window + 1:
+        if len(hist) < self.params.long_window + 1:
             return
 
         # 计算短期和长期均线
         closes = hist
-        ma_short = np.mean(closes[-self.short_window :])
-        ma_long = np.mean(closes[-self.long_window :])
+        ma_short = np.mean(closes[-self.params.short_window :])
+        ma_long = np.mean(closes[-self.params.long_window :])
 
         # 获取上一时刻的均线值（用于判断交叉）
-        prev_ma_short = np.mean(closes[-self.short_window - 1 : -1])
-        prev_ma_long = np.mean(closes[-self.long_window - 1 : -1])
+        prev_ma_short = np.mean(closes[-self.params.short_window - 1 : -1])
+        prev_ma_long = np.mean(closes[-self.params.long_window - 1 : -1])
 
         # 获取当前持仓
         position = self.get_position(bar.symbol)
