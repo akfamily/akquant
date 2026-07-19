@@ -466,6 +466,7 @@ def _validate_strategy_param_grid_keys(
     strategy: Type[Strategy], param_grid: Mapping[str, Sequence[Any]]
 ) -> None:
     """按 __param_model__ 校验网格键名/类型/约束（越界即报错）."""
+    # 防御性：若传入的不是 Strategy 子类（如函数式策略），无 __param_model__ 则跳过校验
     model = getattr(strategy, "__param_model__", None)
     if model is None:
         return

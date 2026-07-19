@@ -904,9 +904,8 @@ def _strategy_param_field_names(
 ) -> set[str]:
     """Return the declared __param_model__ field names for a Strategy subclass."""
     if isinstance(strategy_input, type) and issubclass(strategy_input, Strategy):
-        model = getattr(strategy_input, "__param_model__", None)
-        if model is not None:
-            return set(model.model_fields)
+        # 任一 Strategy 子类都由 __init_subclass__/基类保证 __param_model__ 恒存在
+        return set(strategy_input.__param_model__.model_fields)
     return set()
 
 
