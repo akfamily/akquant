@@ -4,7 +4,6 @@
 提供类似 Backtrader optstrategy 的网格搜索功能.
 """
 
-import inspect
 import itertools
 import json
 import logging
@@ -34,6 +33,7 @@ from tqdm import tqdm  # type: ignore
 
 from .backtest import run_backtest
 from .log import get_logger
+from .params_adapter import validate_strategy_params
 from .strategy import Strategy
 
 _WORKER_LOG_QUEUE: Any = None
@@ -453,38 +453,21 @@ def _assert_parallel_pickleable(
 def _validate_strategy_param_grid_keys(
     strategy: Type[Strategy], param_grid: Mapping[str, Sequence[Any]]
 ) -> None:
-    """Validate that param_grid keys can be passed to strategy constructor."""
-    try:
-        signature = inspect.signature(strategy.__init__)
-    except (TypeError, ValueError):
+    """按 __param_model__ 校验网格键名/类型/约束（越界即报错）."""
+    model = getattr(strategy, "__param_model__", None)
+    if model is None:
         return
-
-    supports_var_kwargs = any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    )
-    if supports_var_kwargs:
-        return
-
-    accepted_names = {
-        parameter_name
-        for parameter_name, parameter in signature.parameters.items()
-        if parameter_name != "self"
-        and parameter.kind
-        in {
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        }
-    }
-    unknown_keys = sorted(
-        key for key in param_grid.keys() if str(key) not in accepted_names
-    )
-    if unknown_keys:
-        unknown_keys_text = ", ".join(str(key) for key in unknown_keys)
+    field_names = set(model.model_fields)
+    unknown = sorted(str(k) for k in param_grid if str(k) not in field_names)
+    if unknown:
         raise TypeError(
-            "Unknown strategy constructor parameter(s) in param_grid: "
-            f"{unknown_keys_text}. Strategy={strategy.__module__}.{strategy.__name__}"
+            "Unknown strategy param(s) in param_grid: "
+            f"{', '.join(unknown)}. Strategy={strategy.__module__}.{strategy.__name__}"
         )
+    # 逐参数逐候选值校验（含类型/ge/le/choices），失败信息包含字段名
+    for key, values in param_grid.items():
+        for value in values:
+            validate_strategy_params(strategy, {str(key): value})
 
 
 def _save_result_to_db(
