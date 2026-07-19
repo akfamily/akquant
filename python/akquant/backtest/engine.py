@@ -1,5 +1,4 @@
 import datetime as dt_module
-import inspect
 import logging
 import os
 import sys
@@ -22,6 +21,7 @@ from typing import (
 )
 
 import pandas as pd
+from pydantic import ValidationError
 
 from .. import akquant as _akquant_module
 from ..akquant import (
@@ -899,64 +899,36 @@ def _resolve_effective_symbols(
     return symbols, effective_symbols
 
 
+def _strategy_param_field_names(
+    strategy_input: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
+) -> set:
+    """Return the declared __param_model__ field names for a Strategy subclass."""
+    if isinstance(strategy_input, type) and issubclass(strategy_input, Strategy):
+        model = getattr(strategy_input, "__param_model__", None)
+        if model is not None:
+            return set(model.model_fields)
+    return set()
+
+
 def _accepts_strategy_kwarg(
     strategy_input: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
     kwarg_name: str,
 ) -> bool:
-    """Return whether strategy constructor supports a keyword argument."""
-    if not isinstance(strategy_input, type) or not issubclass(strategy_input, Strategy):
-        return False
-    try:
-        signature = inspect.signature(strategy_input.__init__)
-    except (TypeError, ValueError):
-        return False
-
-    if kwarg_name in signature.parameters:
-        return True
-
-    return any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    )
+    """Return whether the strategy declares this kwarg as a __param_model__ field."""
+    return kwarg_name in _strategy_param_field_names(strategy_input)
 
 
 def _split_strategy_kwargs(
     strategy_input: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
     strategy_kwargs: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], List[str]]:
-    """Split kwargs into constructor-accepted kwargs and unknown keys."""
+    """Split kwargs by __param_model__ field membership."""
     if not isinstance(strategy_input, type) or not issubclass(strategy_input, Strategy):
         return strategy_kwargs, []
-
-    try:
-        signature = inspect.signature(strategy_input.__init__)
-    except (TypeError, ValueError):
-        return strategy_kwargs, []
-
-    supports_var_kwargs = any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    )
-    if supports_var_kwargs:
-        return strategy_kwargs, []
-
-    accepted_names = {
-        parameter_name
-        for parameter_name, parameter in signature.parameters.items()
-        if parameter_name != "self"
-        and parameter.kind
-        in {
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        }
-    }
-    accepted_kwargs = {
-        key: value for key, value in strategy_kwargs.items() if key in accepted_names
-    }
-    unknown_keys = sorted(
-        key for key in strategy_kwargs.keys() if key not in accepted_names
-    )
-    return accepted_kwargs, unknown_keys
+    field_names = _strategy_param_field_names(strategy_input)
+    accepted = {k: v for k, v in strategy_kwargs.items() if k in field_names}
+    unknown = sorted(k for k in strategy_kwargs if k not in field_names)
+    return accepted, unknown
 
 
 def _resolve_broker_profile(profile: Optional[str]) -> Dict[str, Any]:
@@ -1699,7 +1671,7 @@ def _build_strategy_instance(
             )
         try:
             return cast(Strategy, strategy(**accepted_kwargs))
-        except TypeError as e:
+        except (TypeError, ValidationError) as e:
             if strict_strategy_params:
                 raise TypeError(
                     "Failed to instantiate strategy with provided parameters: "
