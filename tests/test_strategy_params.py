@@ -62,6 +62,17 @@ def test_unknown_kwarg_rejected() -> None:
         ParamStrategy(unknown=1)
 
 
+def test_unknown_kwarg_rejected_alongside_valid_field() -> None:
+    """声明了字段的策略类，构造时混入额外非法字段名也应被拒绝(extra="forbid").
+
+    即便随同一个合法字段 (fast) 一起传入，未声明的 bogus 键仍应触发
+    ValidationError, 而非被静默忽略——固化"声明字段的类拒绝任何未知 kwarg"
+    这一比原 spec 措辞更严格(fail-fast)的实际语义。
+    """
+    with pytest.raises(ValidationError):
+        ParamStrategy(fast=10, bogus=1)
+
+
 def test_out_of_range_rejected() -> None:
     """超出约束范围的字段值应被拒绝."""
     with pytest.raises(ValidationError):

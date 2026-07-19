@@ -583,9 +583,9 @@ class Strategy:
         # 若该类声明了任何字段，则所有 kwargs 均须经 pydantic 校验
         # （未知字段/越界均拒绝）；若未声明任何字段（含尚未迁移的遗留策略），
         # 则不做字段校验，kwargs 原样透传给 __init__。
-        model_cls = getattr(cls, "__param_model__", None)
-        if model_cls is None:
-            model_cls = create_model("StrategyParams", __base__=ParamModel)
+        # __param_model__ 恒存在：基类在类体中显式赋值，子类由
+        # __init_subclass__ 覆盖，故此处无需 None 兜底。
+        model_cls = cls.__param_model__
         field_names = set(model_cls.model_fields)
         if field_names:
             instance.params = model_cls(**kwargs)

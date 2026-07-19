@@ -901,7 +901,7 @@ def _resolve_effective_symbols(
 
 def _strategy_param_field_names(
     strategy_input: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
-) -> set:
+) -> set[str]:
     """Return the declared __param_model__ field names for a Strategy subclass."""
     if isinstance(strategy_input, type) and issubclass(strategy_input, Strategy):
         model = getattr(strategy_input, "__param_model__", None)
@@ -1658,13 +1658,12 @@ def _build_strategy_instance(
             unknown_keys_text = ", ".join(unknown_keys)
             if strict_strategy_params:
                 raise TypeError(
-                    "Unknown strategy constructor parameter(s): "
+                    "Unknown strategy param(s): "
                     f"{unknown_keys_text}. Strategy={strategy.__module__}."
                     f"{strategy.__name__}"
                 )
             logger.warning(
-                "Ignoring unknown strategy constructor parameter(s): %s. "
-                "Strategy=%s.%s",
+                "Ignoring unknown strategy param(s): %s. Strategy=%s.%s",
                 unknown_keys_text,
                 strategy.__module__,
                 strategy.__name__,

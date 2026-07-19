@@ -3,7 +3,7 @@
 修复前：run_walk_forward 里 `backtest_kwargs = kwargs.copy()` 会把 max_workers
 等键一并带入 run_backtest 调用；run_backtest 无对应形参，落入
 strategy_kwargs 后被 strict_strategy_params 校验拒绝，抛出
-`TypeError: Unknown strategy constructor parameter(s): max_workers`.
+`TypeError: Unknown strategy param(s): max_workers`.
 """
 
 import akquant

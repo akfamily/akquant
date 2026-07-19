@@ -867,7 +867,11 @@ def run_walk_forward(
     :param compounding: 是否使用复利拼接结果 (True=复利, False=累加盈亏, 默认: False)
     :param timeout: 单次优化任务超时时间 (秒)
     :param max_tasks_per_child: Worker 重启频率
-    :param kwargs: 透传给 run_grid_search 和 run_backtest 的其他参数
+    :param kwargs: 透传给 run_grid_search 和 run_backtest 的其他参数。
+                   其中 max_workers/db_path/forward_worker_logs/return_df 等
+                   仅 run_grid_search 专用的键，在转发给样本外 run_backtest 前
+                   会被过滤掉（参见 ``_GRID_SEARCH_ONLY_KWARGS``），不会传给
+                   run_backtest。
     :return: 包含拼接后资金曲线的 DataFrame
     """
     kwargs = _resolve_optimization_backtest_kwargs(data, kwargs)
