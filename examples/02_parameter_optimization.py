@@ -11,7 +11,6 @@ import pandas as pd
 from akquant import (
     Indicator,
     IntParam,
-    ParamModel,
     Strategy,
     get_strategy_param_schema,
     run_grid_search,
@@ -19,36 +18,28 @@ from akquant import (
 )
 
 
-class SMACrossParams(ParamModel):
-    """双均线参数模型."""
-
-    fast_period: int = IntParam(10, ge=2, le=200, title="快线周期")
-    slow_period: int = IntParam(30, ge=3, le=500, title="慢线周期")
-
-
 class SMACrossStrategy(Strategy):
     """
-    双均线交叉策略 (Double SMA Crossover).
+    双均线交叉策略 (Double SMA Crossover, 内联参数声明).
 
     参数:
         fast_period (int): 快线周期
         slow_period (int): 慢线周期
     """
 
-    PARAM_MODEL = SMACrossParams
+    fast_period = IntParam(10, ge=2, le=200, title="快线周期")
+    slow_period = IntParam(30, ge=3, le=500, title="慢线周期")
 
-    def __init__(self, fast_period: int = 10, slow_period: int = 30):
-        """初始化策略."""
-        super().__init__()
-        self.fast_period = fast_period
-        self.slow_period = slow_period
-
+    def on_start(self) -> None:
+        """策略启动：基于 self.params 派生指标."""
         # 定义指标
         self.sma_fast = Indicator(
-            "sma_fast", lambda df: df["close"].rolling(fast_period).mean()
+            "sma_fast",
+            lambda df: df["close"].rolling(self.params.fast_period).mean(),
         )
         self.sma_slow = Indicator(
-            "sma_slow", lambda df: df["close"].rolling(slow_period).mean()
+            "sma_slow",
+            lambda df: df["close"].rolling(self.params.slow_period).mean(),
         )
 
         # 订阅指标 (自动计算)
@@ -109,14 +100,15 @@ if __name__ == "__main__":
     }
 
     # 运行
-    # max_workers=2 for demo safety
+    # max_workers=1：策略类定义于 __main__ 脚本内，多进程池要求策略类可从
+    # 模块导入以便 pickle；直接以脚本方式运行示例时用单进程演示网格搜索。
     results = run_grid_search(
         strategy=SMACrossStrategy,
         param_grid=param_grid,
         data=data_map,
         symbols=symbols,
         sort_by="total_return",  # 按总收益排序
-        max_workers=2,
+        max_workers=1,
     )
 
     if isinstance(results, pd.DataFrame):

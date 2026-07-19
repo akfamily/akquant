@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+import sys
 import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from typing import (
 
 import numpy as np
 import pandas as pd
+from pydantic import create_model
 
 from .akquant import (
     Bar,
@@ -29,6 +31,7 @@ from .akquant import (
 )
 from .gateway.order_receipt import OrderReceipt
 from .indicator_recording import IndicatorRecorder
+from .params import ParamModel, ParamSpec
 from .sizer import FixedSize, Sizer
 from .strategy_events import (
     flush_pending_order_events as _flush_pending_order_events_impl,
@@ -281,6 +284,26 @@ class InstrumentSnapshot:
     static_attrs: Dict[str, InstrumentStaticValue] = field(default_factory=dict)
 
 
+def _finalize_param_model(model_cls: type, *, module_name: str, name: str) -> type:
+    """
+    为动态生成的参数模型类修正 __module__/__qualname__ 并注册到目标模块.
+
+    pydantic ``create_model`` 生成的类默认不是模块的可寻址属性，
+    直接 pickle 其实例会因找不到类而失败；注册后可正常按模块+名称定位。
+
+    :param model_cls: 待修正的动态模型类
+    :param module_name: 目标模块名（通常取自拥有该模型的 Strategy 子类 ``__module__``）
+    :param name: 注册到目标模块的属性名
+    :return: 修正后的模型类
+    """
+    model_cls.__module__ = module_name
+    model_cls.__qualname__ = name
+    target_module = sys.modules.get(module_name)
+    if target_module is not None:
+        setattr(target_module, name, model_cls)
+    return model_cls
+
+
 class Strategy:
     """
     策略基类 (Base Strategy Class).
@@ -377,6 +400,47 @@ class Strategy:
 
     # 成本/手数配置单一真源(经下方 property 暴露: 费率只读, lot_size 可写)
     _cost_config: Dict[str, Any]
+
+    __param_model__: "type[ParamModel]"
+    params: "ParamModel"
+    # 本类命名空间中直接声明的 ParamSpec 字段快照（供子类沿 MRO 合并；
+    # 因基类字段在自身 __init_subclass__ 中即被 delattr，不能再从 vars(base)
+    # 重新扫描）。
+    __own_param_specs__: Dict[str, ParamSpec] = {}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """收集子类内联声明的 ParamSpec 字段，构建只读 __param_model__."""
+        super().__init_subclass__(**kwargs)
+        # 记录当前类命名空间中直接声明的字段
+        own_specs: Dict[str, ParamSpec] = {
+            name: value
+            for name, value in list(vars(cls).items())
+            if isinstance(value, ParamSpec)
+        }
+        cls.__own_param_specs__ = own_specs
+        # 沿 MRO 合并各级自身声明的字段（子类覆盖父类同名字段）
+        collected: Dict[str, ParamSpec] = {}
+        for base in reversed(cls.__mro__):
+            collected.update(vars(base).get("__own_param_specs__", {}))
+        # 从当前类命名空间移除字段属性，强制走 self.params
+        for name in own_specs:
+            delattr(cls, name)
+        field_defs: Dict[str, Any] = {
+            name: (spec.python_type, spec.field_info)
+            for name, spec in collected.items()
+        }
+        model_name = f"{cls.__name__}Params"
+        model_cls = create_model(model_name, __base__=ParamModel, **field_defs)
+        cls.__param_model__ = _finalize_param_model(
+            model_cls, module_name=cls.__module__, name=model_name
+        )
+
+    # 基类默认空模型；子类由 __init_subclass__ 覆盖
+    __param_model__ = _finalize_param_model(
+        create_model("StrategyParams", __base__=ParamModel),
+        module_name=__name__,
+        name="StrategyParams",
+    )
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
@@ -515,10 +579,23 @@ class Strategy:
         instance._instrument_snapshots = {}
         instance._indicator_recorder = None
 
+        # 参数注入：校验后 frozen 挂到 params。
+        # 若该类声明了任何字段，则所有 kwargs 均须经 pydantic 校验
+        # （未知字段/越界均拒绝）；若未声明任何字段（含尚未迁移的遗留策略），
+        # 则不做字段校验，kwargs 原样透传给 __init__。
+        # __param_model__ 恒存在：基类在类体中显式赋值，子类由
+        # __init_subclass__ 覆盖，故此处无需 None 兜底。
+        model_cls = cls.__param_model__
+        field_names = set(model_cls.model_fields)
+        if field_names:
+            instance.params = model_cls(**kwargs)
+        else:
+            instance.params = model_cls()
+
         return instance
 
-    def __init__(self) -> None:
-        """初始化."""
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """初始化（参数已在 __new__ 注入 self.params，此处吞掉多余 kwargs）."""
         self._owner_strategy_id: Optional[str] = None
 
     def __getstate__(self) -> Dict[str, Any]:

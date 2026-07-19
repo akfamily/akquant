@@ -19,14 +19,13 @@
 >
 > Style hint: start with `08_event_callbacks.py`, `50_framework_hooks_demo.py`, and `51_class_tick_callbacks_demo.py` for class-based callbacks; if your workflow is "signal before the open, fill on the current open", continue with `52_pre_open_demo.py`; if you also need a staged "prepare yesterday, execute next pre-open" pattern, continue with `53_timer_to_pre_open_demo.py`; use `23_functional_callbacks_demo.py` and `24_functional_tick_simulation_demo.py` when migrating script-style strategies.
 
-### UI-Driven Strategy Parameterization (PARAM_MODEL)
+### UI-Driven Strategy Parameterization (Inline Param Fields)
 
-For UI/API integration scenarios, you can declare a strategy-side parameter model and keep optimization search space separate:
+For UI/API integration scenarios, declare parameter fields inline on the strategy class and keep the optimization search space (`param_grid`) separate:
 
 ```python
 from akquant import (
     IntParam,
-    ParamModel,
     Strategy,
     get_strategy_param_schema,
     validate_strategy_params,
@@ -34,17 +33,13 @@ from akquant import (
 )
 
 
-class SmaParams(ParamModel):
-    fast_period: int = IntParam(10, ge=2, le=200)
-    slow_period: int = IntParam(30, ge=3, le=500)
-
-
 class SmaStrategy(Strategy):
-    PARAM_MODEL = SmaParams
+    fast_period = IntParam(10, ge=2, le=200)
+    slow_period = IntParam(30, ge=3, le=500)
 
-    def __init__(self, fast_period: int = 10, slow_period: int = 30):
-        self.fast_period = fast_period
-        self.slow_period = slow_period
+    def on_start(self):
+        # Derived initialization goes in on_start, where self.params is ready
+        ...
 
 
 schema = get_strategy_param_schema(SmaStrategy)

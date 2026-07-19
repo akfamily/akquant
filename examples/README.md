@@ -5,7 +5,7 @@
 ## 最短执行路径
 
 - 5 分钟入门: [01_quickstart.py](./01_quickstart.py) -> [17_readme_demo.py](./17_readme_demo.py)
-- 页面化参数配置: [02_parameter_optimization.py](./02_parameter_optimization.py) -> `PARAM_MODEL` + `get_strategy_param_schema` + `validate_strategy_params`
+- 页面化参数配置: [02_parameter_optimization.py](./02_parameter_optimization.py) -> 内联参数字段（如 `fast_period = IntParam(...)`）+ `get_strategy_param_schema` + `validate_strategy_params`
 - 报告与分析: [11_plot_visualization.py](./11_plot_visualization.py) -> [33_report_and_analysis_outputs.py](./33_report_and_analysis_outputs.py)
 - 流式监控: [26_streaming_quickstart.py](./26_streaming_quickstart.py) -> [27_streaming_monitoring_console.py](./27_streaming_monitoring_console.py)
 - 实时可视化: [31_streaming_live_console.py](./31_streaming_live_console.py) -> [32_streaming_live_web.py](./32_streaming_live_web.py)
@@ -14,7 +14,7 @@
 ## 基础与能力示例
 
 - [01_quickstart.py](./01_quickstart.py): 多标的快速开始回测。
-- [02_parameter_optimization.py](./02_parameter_optimization.py): 参数优化基础示例（含 `PARAM_MODEL`、schema 导出、参数校验演示）。
+- [02_parameter_optimization.py](./02_parameter_optimization.py): 参数优化基础示例（含内联参数字段声明、schema 导出、参数校验演示）。
 - [03_parameter_optimization_advanced.py](./03_parameter_optimization_advanced.py): 参数优化进阶示例。
 - [04_mixed_assets.py](./04_mixed_assets.py): 混合资产回测示例。
 - [05_live_trading_ctp.py](./05_live_trading_ctp.py): CTP 实盘接口示例。

@@ -5,7 +5,8 @@
 """
 
 import datetime as dt
-from typing import Any, Mapping, Sequence, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -17,7 +18,15 @@ class ParamModel(BaseModel):
     :cvar model_config: Pydantic 配置，默认禁止未知字段。
     """
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, frozen=True)
+
+    if TYPE_CHECKING:
+        # 仅供 mypy 静态检查使用：内联参数字段（如 ``fast = IntParam(10)``）
+        # 是在 Strategy 子类上动态声明的，mypy 无法从 ParamModel 基类推断出
+        # 具体字段名。加上这个 `__getattr__` 让 `self.params.<field>` 在类型
+        # 检查时退化为 ``Any``，避免误报 "ParamModel" has no attribute "xxx"。
+        # 运行期该分支不会被执行，不影响 Pydantic 的实际属性访问与校验行为。
+        def __getattr__(self, name: str) -> Any: ...  # noqa: D105
 
 
 class DateRange(BaseModel):
@@ -44,6 +53,21 @@ class DateRange(BaseModel):
         return self
 
 
+@dataclass(frozen=True)
+class ParamSpec:
+    """内联参数字段规格：携带 python 类型与 pydantic FieldInfo.
+
+    :ivar field_info: 实际运行期总是 ``pydantic.fields.FieldInfo``；
+        标注为 ``Any`` 是因为 ``pydantic.Field()`` 的静态返回类型会
+        随默认值的类型（``int``/``float``/``bool``/``str``/``DateRange | None``
+        等）变化而变化，与固定的 ``FieldInfo`` 标注冲突，此处放宽以消除
+        误报，不影响运行期行为。
+    """
+
+    python_type: type
+    field_info: Any
+
+
 def IntParam(
     default: int,
     *,
@@ -51,7 +75,7 @@ def IntParam(
     le: int | None = None,
     title: str | None = None,
     description: str | None = None,
-) -> Any:
+) -> ParamSpec:
     """
     声明整型参数字段.
 
@@ -60,9 +84,11 @@ def IntParam(
     :param le: 最大值约束
     :param title: 展示标题
     :param description: 描述
-    :return: Pydantic 字段定义
+    :return: 参数规格
     """
-    return Field(default, ge=ge, le=le, title=title, description=description)
+    return ParamSpec(
+        int, Field(default, ge=ge, le=le, title=title, description=description)
+    )
 
 
 def FloatParam(
@@ -72,7 +98,7 @@ def FloatParam(
     le: float | None = None,
     title: str | None = None,
     description: str | None = None,
-) -> Any:
+) -> ParamSpec:
     """
     声明浮点参数字段.
 
@@ -81,9 +107,11 @@ def FloatParam(
     :param le: 最大值约束
     :param title: 展示标题
     :param description: 描述
-    :return: Pydantic 字段定义
+    :return: 参数规格
     """
-    return Field(default, ge=ge, le=le, title=title, description=description)
+    return ParamSpec(
+        float, Field(default, ge=ge, le=le, title=title, description=description)
+    )
 
 
 def BoolParam(
@@ -91,16 +119,16 @@ def BoolParam(
     *,
     title: str | None = None,
     description: str | None = None,
-) -> Any:
+) -> ParamSpec:
     """
     声明布尔参数字段.
 
     :param default: 默认值
     :param title: 展示标题
     :param description: 描述
-    :return: Pydantic 字段定义
+    :return: 参数规格
     """
-    return Field(default, title=title, description=description)
+    return ParamSpec(bool, Field(default, title=title, description=description))
 
 
 def ChoiceParam(
@@ -109,7 +137,7 @@ def ChoiceParam(
     choices: Sequence[str],
     title: str | None = None,
     description: str | None = None,
-) -> Any:
+) -> ParamSpec:
     """
     声明枚举参数字段.
 
@@ -117,16 +145,19 @@ def ChoiceParam(
     :param choices: 可选值列表
     :param title: 展示标题
     :param description: 描述
-    :return: Pydantic 字段定义
+    :return: 参数规格
     :raises ValueError: choices 为空
     """
     if not choices:
         raise ValueError("choices cannot be empty")
-    return Field(
-        default,
-        title=title,
-        description=description,
-        json_schema_extra={"enum": list(choices)},
+    return ParamSpec(
+        str,
+        Field(
+            default,
+            title=title,
+            description=description,
+            json_schema_extra={"enum": list(choices)},
+        ),
     )
 
 
@@ -135,16 +166,16 @@ def DateRangeParam(
     default: DateRange | None = None,
     title: str | None = None,
     description: str | None = None,
-) -> Any:
+) -> ParamSpec:
     """
     声明日期区间参数字段.
 
     :param default: 默认值
     :param title: 展示标题
     :param description: 描述
-    :return: Pydantic 字段定义
+    :return: 参数规格
     """
-    return Field(default, title=title, description=description)
+    return ParamSpec(DateRange, Field(default, title=title, description=description))
 
 
 def model_to_schema(model_cls: type[ParamModel]) -> dict[str, Any]:
@@ -211,6 +242,7 @@ def _to_iso(value: Any) -> str:
 
 __all__ = [
     "ParamModel",
+    "ParamSpec",
     "DateRange",
     "IntParam",
     "FloatParam",

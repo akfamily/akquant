@@ -4,7 +4,6 @@
 提供类似 Backtrader optstrategy 的网格搜索功能.
 """
 
-import inspect
 import itertools
 import json
 import logging
@@ -34,11 +33,24 @@ from tqdm import tqdm  # type: ignore
 
 from .backtest import run_backtest
 from .log import get_logger
+from .params_adapter import validate_strategy_params
 from .strategy import Strategy
 
 _WORKER_LOG_QUEUE: Any = None
 OptimizationData = Union[pd.DataFrame, Dict[str, pd.DataFrame]]
 logger = get_logger("optimize")
+
+# run_grid_search / 进程池专用的关键字参数：这些键在 run_backtest 中没有对应形参，
+# 一旦透传给 run_backtest 会落入 strategy_kwargs，被 strict_strategy_params 校验拒绝。
+# run_walk_forward 的样本外验证 (run_backtest) 调用前必须过滤掉它们。
+_GRID_SEARCH_ONLY_KWARGS = frozenset(
+    {
+        "max_workers",
+        "db_path",
+        "forward_worker_logs",
+        "return_df",
+    }
+)
 
 
 def _normalize_backtest_symbol_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -453,38 +465,22 @@ def _assert_parallel_pickleable(
 def _validate_strategy_param_grid_keys(
     strategy: Type[Strategy], param_grid: Mapping[str, Sequence[Any]]
 ) -> None:
-    """Validate that param_grid keys can be passed to strategy constructor."""
-    try:
-        signature = inspect.signature(strategy.__init__)
-    except (TypeError, ValueError):
+    """按 __param_model__ 校验网格键名/类型/约束（越界即报错）."""
+    # 防御性：若传入的不是 Strategy 子类（如函数式策略），无 __param_model__ 则跳过校验
+    model = getattr(strategy, "__param_model__", None)
+    if model is None:
         return
-
-    supports_var_kwargs = any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    )
-    if supports_var_kwargs:
-        return
-
-    accepted_names = {
-        parameter_name
-        for parameter_name, parameter in signature.parameters.items()
-        if parameter_name != "self"
-        and parameter.kind
-        in {
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        }
-    }
-    unknown_keys = sorted(
-        key for key in param_grid.keys() if str(key) not in accepted_names
-    )
-    if unknown_keys:
-        unknown_keys_text = ", ".join(str(key) for key in unknown_keys)
+    field_names = set(model.model_fields)
+    unknown = sorted(str(k) for k in param_grid if str(k) not in field_names)
+    if unknown:
         raise TypeError(
-            "Unknown strategy constructor parameter(s) in param_grid: "
-            f"{unknown_keys_text}. Strategy={strategy.__module__}.{strategy.__name__}"
+            "Unknown strategy param(s) in param_grid: "
+            f"{', '.join(unknown)}. Strategy={strategy.__module__}.{strategy.__name__}"
         )
+    # 逐参数逐候选值校验（含类型/ge/le/choices），失败信息包含字段名
+    for key, values in param_grid.items():
+        for value in values:
+            validate_strategy_params(strategy, {str(key): value})
 
 
 def _save_result_to_db(
@@ -872,7 +868,11 @@ def run_walk_forward(
     :param compounding: 是否使用复利拼接结果 (True=复利, False=累加盈亏, 默认: False)
     :param timeout: 单次优化任务超时时间 (秒)
     :param max_tasks_per_child: Worker 重启频率
-    :param kwargs: 透传给 run_grid_search 和 run_backtest 的其他参数
+    :param kwargs: 透传给 run_grid_search 和 run_backtest 的其他参数。
+                   其中 max_workers/db_path/forward_worker_logs/return_df 等
+                   仅 run_grid_search 专用的键，在转发给样本外 run_backtest 前
+                   会被过滤掉（参见 ``_GRID_SEARCH_ONLY_KWARGS``），不会传给
+                   run_backtest。
     :return: 包含拼接后资金曲线的 DataFrame
     """
     kwargs = _resolve_optimization_backtest_kwargs(data, kwargs)
@@ -984,7 +984,9 @@ def run_walk_forward(
         # 4. 样本外验证 (Backtest)
         # 使用最佳参数运行回测
         # 注意：这里我们使用一个新的 initial_cash 进行回测，后续再拼接
-        backtest_kwargs = kwargs.copy()
+        backtest_kwargs = {
+            k: v for k, v in kwargs.items() if k not in _GRID_SEARCH_ONLY_KWARGS
+        }
         backtest_kwargs.update(best_params)
         backtest_kwargs["initial_cash"] = initial_cash
         backtest_kwargs["warmup_period"] = current_warmup

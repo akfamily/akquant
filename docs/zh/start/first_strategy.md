@@ -18,7 +18,7 @@
 ```python
 import pandas as pd
 import numpy as np
-from akquant import Strategy, run_backtest
+from akquant import IntParam, Strategy, run_backtest
 
 # --------------------------
 # 第一步：准备数据
@@ -59,14 +59,10 @@ class DualMAStrategy(Strategy):
     # 优先级: 动态属性 (self.warmup_period) > 类属性 (warmup_period) > AST 自动推断
     warmup_period = 40 # 30日均线 + 10 安全余量
 
-    def __init__(self, fast_window=10, slow_window=30):
-        # 定义策略参数：快线周期和慢线周期
-        self.fast_window = fast_window
-        self.slow_window = slow_window
-
-        # 进阶技巧：动态设置预热期
-        # 如果均线周期是动态传入的，建议在这里根据参数覆盖 warmup_period
-        self.warmup_period = slow_window + 10
+    # 参数声明 (推荐)：直接在类体内用 IntParam 内联声明
+    # 经 self.params.<name> 只读访问；self.params 在实例构造期即已就绪
+    fast_window = IntParam(10, ge=2, le=200, title="快线周期")
+    slow_window = IntParam(30, ge=3, le=500, title="慢线周期")
 
     def on_start(self):
         """
@@ -76,10 +72,14 @@ class DualMAStrategy(Strategy):
         print("策略启动...")
         self.subscribe("AAPL")
 
-        # 方式 1 (推荐)：使用 warmup_period (支持 类属性 / 实例属性 / AST自动推断)
-        # 方式 2 (旧版)：手动调用 self.set_history_depth(self.slow_window + 10)
+        # 进阶技巧：动态设置预热期
+        # 如果均线周期是可配置的，可以在 on_start 中根据 self.params 覆盖
+        # 类属性 warmup_period（此时 self.params 已注入完毕）
+        self.warmup_period = self.params.slow_window + 10
 
-        # 由于我们已经配置了 warmup_period，这里无需做任何操作
+        # 方式 1 (推荐)：使用 warmup_period (支持 类属性 / 实例属性 / AST自动推断)
+        # 方式 2 (旧版)：手动调用 self.set_history_depth(self.params.slow_window + 10)
+
         # 框架会自动取 max(warmup_period, ast_inferred_value, run_backtest_history_depth)
 
     def on_bar(self, bar):
@@ -90,16 +90,16 @@ class DualMAStrategy(Strategy):
 
         # 1. 获取历史收盘价
         # get_history 返回的是一个 numpy 数组，包含最近 N 天的数据
-        closes = self.get_history(count=self.slow_window, symbol=bar.symbol, field="close")
+        closes = self.get_history(count=self.params.slow_window, symbol=bar.symbol, field="close")
 
         # 如果数据还不够计算长均线（比如刚开始回测的前几天），就直接返回，不操作
-        if len(closes) < self.slow_window:
+        if len(closes) < self.params.slow_window:
             return
 
         # 2. 计算均线
         # 使用 numpy 计算平均值
-        fast_ma = np.mean(closes[-self.fast_window:]) # 取最后 fast_window 个数据求平均
-        slow_ma = np.mean(closes[-self.slow_window:]) # 取最后 slow_window 个数据求平均
+        fast_ma = np.mean(closes[-self.params.fast_window:]) # 取最后 fast_window 个数据求平均
+        slow_ma = np.mean(closes[-self.params.slow_window:]) # 取最后 slow_window 个数据求平均
 
         # 3. 获取当前持仓
         # 如果没持仓返回 0，持有 1000 股返回 1000
@@ -142,13 +142,16 @@ if __name__ == "__main__":
 ## 3. 代码详细解析
 
 ### 3.1 策略结构
-每一个 AKQuant 策略都是一个 Python 类，继承自 `Strategy`。你需要关注三个主要方法：
+每一个 AKQuant 策略都是一个 Python 类，继承自 `Strategy`。你需要关注以下几个部分：
 
-*   **`__init__`**: 设置策略的参数（如均线周期）。
-*   **`on_start`**: 初始化工作。
+*   **参数声明 (类体内联字段)**：用 `IntParam` / `FloatParam` / `BoolParam` /
+    `ChoiceParam` / `DateRangeParam` 直接在类体内声明参数（如均线周期），无需
+    再手写 `__init__`。所有字段经 `self.params.<name>` 只读访问，`self.params`
+    在实例构造期即已校验就绪。
+*   **`on_start`**: 初始化工作（订阅标的、根据 `self.params` 派生的初始化都放这里）。
     *   **数据预热 (新版推荐)**：设置 `warmup_period`。
         *   **静态设置**: 类属性 `warmup_period = 40`。
-        *   **动态设置**: 在 `__init__` 中 `self.warmup_period = slow_window + 10`。
+        *   **动态设置**: 在 `on_start` 中 `self.warmup_period = self.params.slow_window + 10`。
         *   **自动推断**: 如果代码中有 `SMA(30)`，框架也会尝试自动推断 (AST)。
     *   **数据预热 (旧版兼容)**：调用 `self.set_history_depth(40)`。如果不设置，`get_history` 会报错。
 *   **`on_bar`**: 这是一个死循环，系统会按时间顺序把每一根 K 线传给你。你在这里做决策：买还是卖？

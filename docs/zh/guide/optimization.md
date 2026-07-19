@@ -23,14 +23,16 @@
 使用 `akquant.run_grid_search` 函数：
 
 ```python
-from akquant import run_grid_search, Strategy
+from akquant import FloatParam, IntParam, run_grid_search, Strategy
 
-# 1. 定义策略
+# 1. 定义策略：参数用内联字段声明，经 self.params.<name> 访问
 class MyStrategy(Strategy):
-    def __init__(self, ma_period, stop_loss):
-        # ...
+    ma_period = IntParam(10, ge=2, le=200)
+    stop_loss = FloatParam(0.02, ge=0.0, le=1.0)
 
-# 2. 定义参数网格
+    # ... on_start / on_bar 中用 self.params.ma_period / self.params.stop_loss
+
+# 2. 定义参数网格（键名须与内联字段名一致）
 param_grid = {
     "ma_period": [10, 20, 30],
     "stop_loss": [0.01, 0.02, 0.05]
@@ -50,17 +52,14 @@ print(results.head())
 
 ### 参数模型驱动优化（推荐）
 
-当你需要把策略接入页面配置（例如 Web UI / API）时，建议采用 **`PARAM_MODEL + param_grid` 双层结构**：
-
-1. `PARAM_MODEL`（来自 `akquant.params`）用于**单次回测参数校验与 schema 导出**；
-2. `param_grid`（`run_grid_search` 原生接口）用于**离散参数组合搜索**。
-
-这样既保留了优化内核的稳定性，也能让前端自动生成参数表单。
+当你需要把策略接入页面配置（例如 Web UI / API）时，AKQuant 的内联参数字段
+天然就是**单一事实来源**：同一套 `IntParam` / `FloatParam` / ... 声明，既用于
+`self.params.<name>` 运行期访问，也可以直接导出 schema、单独校验参数，或喂给
+`param_grid` 做离散组合搜索——不需要再单独维护一个 `ParamModel` 子类。
 
 ```python
 from akquant import (
     IntParam,
-    ParamModel,
     Strategy,
     get_strategy_param_schema,
     validate_strategy_params,
@@ -68,17 +67,13 @@ from akquant import (
 )
 
 
-class SmaParams(ParamModel):
-    fast_period: int = IntParam(10, ge=2, le=200, title="快线")
-    slow_period: int = IntParam(30, ge=3, le=500, title="慢线")
-
-
 class SmaStrategy(Strategy):
-    PARAM_MODEL = SmaParams
+    fast_period = IntParam(10, ge=2, le=200, title="快线")
+    slow_period = IntParam(30, ge=3, le=500, title="慢线")
 
-    def __init__(self, fast_period: int = 10, slow_period: int = 30):
-        self.fast_period = fast_period
-        self.slow_period = slow_period
+    def on_start(self):
+        # 派生初始化统一放在 on_start，此时 self.params 已就绪
+        ...
 
 
 schema = get_strategy_param_schema(SmaStrategy)
@@ -94,7 +89,9 @@ results = run_grid_search(
 )
 ```
 
-如果策略没有声明 `PARAM_MODEL`，适配层会回退到 `__init__` 签名做基础推断，以兼容历史策略。
+`param_grid` 的键名必须和内联字段名完全一致；`strict_strategy_params=True`
+（默认）下，未知键或越界取值（超出 `ge`/`le`、不在 `choices` 内）都会在校验阶段
+直接报错，而不是静默回退到默认值。
 
 ### 多目标优化 (Multi-Objective Optimization)
 
@@ -146,8 +143,9 @@ results = run_grid_search(
     *   `False` (默认): 性能更优，日志可能在主进程不可见。
     *   `True`: 主进程可聚合子进程日志，适合排障与教学演示。
 *   `strict_strategy_params`: (默认 `True`，由 `run_grid_search` 注入到 `run_backtest`)。
-    *   启用后会严格校验 `param_grid` 是否与策略构造函数参数匹配；
-    *   发现未知参数时立即抛错，避免“静默回退”导致优化结果失真。
+    *   启用后会严格校验 `param_grid` 是否与策略内联参数字段（`IntParam`/`FloatParam`/... 声明）匹配；
+    *   发现未知参数或越界取值时立即抛错，避免“静默回退”导致优化结果失真；
+    *   关闭时 (`False`) 未知键会回退到字段默认值构造，而不是报错。
 
 ### 资源控制与异常处理 (Resource Control & Error Handling)
 

@@ -38,7 +38,7 @@ You can still browse the full chapter structure in English and jump to the Chine
 
 Recent updates in the Chinese textbook:
 
-* Chapter 11 includes the `PARAM_MODEL + param_grid` workflow for UI-driven parameter optimization.
+* Chapter 11 includes the inline parameter field (`IntParam`/`FloatParam`/...) + `param_grid` workflow for UI-driven parameter optimization.
 * Chapter 15 has been aligned with current live-trading APIs, including warm-start and strategy-loader paths.
 * Chapter 5 now includes the full `on_xxx` callback map, framework hooks, class-style Tick callback study path, `on_pre_open` guidance, and a staged next-day execution example.
 * Textbook chapter structure and example chapter labels are now synchronized.

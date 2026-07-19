@@ -25,14 +25,13 @@
 >
 > 风格建议：想先学类风格事件回调，优先从 `08_event_callbacks.py`、`50_framework_hooks_demo.py`、`51_class_tick_callbacks_demo.py` 开始；如果你的场景是“盘前信号，本次 open 成交”，类风格先看 `52_pre_open_demo.py`，函数式可直接看 `54_functional_pre_open_demo.py`；如果你还需要“前一日准备、次日盘前执行”的双阶段写法，再看 `53_timer_to_pre_open_demo.py`；想迁移脚本式策略，再看 `23_functional_callbacks_demo.py`、`24_functional_tick_simulation_demo.py`；如果你做函数式 ML 滚动训练，直接看 `55_functional_ml_walk_forward.py`；如果你做函数式 checkpoint 恢复，先看 `56_functional_warm_start_demo.py`；如果你还要验证多 slot 一起恢复，再看 `57_functional_multi_slot_warm_start_demo.py`。
 
-### 页面化参数配置（PARAM_MODEL）
+### 页面化参数配置（内联参数字段）
 
-在 Web UI / API 场景中，建议在策略中声明参数模型，并将优化搜索空间保持为独立的 `param_grid`：
+在 Web UI / API 场景中，建议直接在策略类上内联声明参数字段，并将优化搜索空间保持为独立的 `param_grid`：
 
 ```python
 from akquant import (
     IntParam,
-    ParamModel,
     Strategy,
     get_strategy_param_schema,
     validate_strategy_params,
@@ -40,17 +39,13 @@ from akquant import (
 )
 
 
-class SmaParams(ParamModel):
-    fast_period: int = IntParam(10, ge=2, le=200)
-    slow_period: int = IntParam(30, ge=3, le=500)
-
-
 class SmaStrategy(Strategy):
-    PARAM_MODEL = SmaParams
+    fast_period = IntParam(10, ge=2, le=200)
+    slow_period = IntParam(30, ge=3, le=500)
 
-    def __init__(self, fast_period: int = 10, slow_period: int = 30):
-        self.fast_period = fast_period
-        self.slow_period = slow_period
+    def on_start(self):
+        # 派生初始化放在 on_start 中，此时 self.params 已就绪
+        ...
 
 
 schema = get_strategy_param_schema(SmaStrategy)

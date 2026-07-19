@@ -23,14 +23,16 @@ Grid Search is an exhaustive parameter optimization method. It iterates through 
 Use the `akquant.run_grid_search` function:
 
 ```python
-from akquant import run_grid_search, Strategy
+from akquant import FloatParam, IntParam, run_grid_search, Strategy
 
-# 1. Define Strategy
+# 1. Define Strategy: declare params as inline fields, access via self.params.<name>
 class MyStrategy(Strategy):
-    def __init__(self, ma_period, stop_loss):
-        # ...
+    ma_period = IntParam(10, ge=2, le=200)
+    stop_loss = FloatParam(0.02, ge=0.0, le=1.0)
 
-# 2. Define Parameter Grid
+    # ... use self.params.ma_period / self.params.stop_loss in on_start / on_bar
+
+# 2. Define Parameter Grid (keys must match the inline field names)
 param_grid = {
     "ma_period": [10, 20, 30],
     "stop_loss": [0.01, 0.02, 0.05]
@@ -50,17 +52,16 @@ print(results.head())
 
 ### Parameter-Model-Driven Optimization (Recommended)
 
-When you need to expose strategy parameters in Web UI / API workflows, use a **`PARAM_MODEL + param_grid` dual-layer pattern**:
-
-1. `PARAM_MODEL` (from `akquant.params`) handles **single-run validation and schema export**.
-2. `param_grid` (native `run_grid_search` input) handles **discrete combination search**.
-
-This keeps the optimization engine stable while enabling frontend auto-generated forms.
+When you need to expose strategy parameters in Web UI / API workflows, AKQuant's
+inline parameter fields are naturally a **single source of truth**: the same
+`IntParam` / `FloatParam` / ... declarations are used both for runtime access via
+`self.params.<name>` and for schema export, standalone parameter validation, or
+feeding `param_grid` for discrete combination search — there is no separate
+`ParamModel` subclass to maintain.
 
 ```python
 from akquant import (
     IntParam,
-    ParamModel,
     Strategy,
     get_strategy_param_schema,
     validate_strategy_params,
@@ -68,17 +69,13 @@ from akquant import (
 )
 
 
-class SmaParams(ParamModel):
-    fast_period: int = IntParam(10, ge=2, le=200, title="Fast Window")
-    slow_period: int = IntParam(30, ge=3, le=500, title="Slow Window")
-
-
 class SmaStrategy(Strategy):
-    PARAM_MODEL = SmaParams
+    fast_period = IntParam(10, ge=2, le=200, title="Fast Window")
+    slow_period = IntParam(30, ge=3, le=500, title="Slow Window")
 
-    def __init__(self, fast_period: int = 10, slow_period: int = 30):
-        self.fast_period = fast_period
-        self.slow_period = slow_period
+    def on_start(self):
+        # Derived initialization goes in on_start, where self.params is ready
+        ...
 
 
 schema = get_strategy_param_schema(SmaStrategy)
@@ -94,7 +91,10 @@ results = run_grid_search(
 )
 ```
 
-If a strategy does not declare `PARAM_MODEL`, the adapter falls back to `__init__` signature inference for backward compatibility.
+`param_grid` keys must exactly match the inline field names. Under
+`strict_strategy_params=True` (the default), an unknown key or an out-of-range
+value (outside `ge`/`le`, or not in `choices`) raises immediately during
+validation instead of silently falling back to the default value.
 
 ### Multi-Objective Optimization
 

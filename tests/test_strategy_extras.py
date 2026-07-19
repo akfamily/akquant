@@ -1333,21 +1333,23 @@ def test_run_backtest_cross_section_same_timestamp_order_insensitive() -> None:
 
     first = run_backtest(
         data=_make_order_sensitive_multisymbol_bars(["AAA", "BBB"]),
-        strategy=DeferredDailyRebalanceStrategy,
+        strategy=DeferredDailyRebalanceStrategy(
+            all_symbols=["AAA", "BBB"],
+            date2symbols=date2symbols,
+            capture=first_capture,
+        ),
         symbols=["AAA", "BBB"],
-        all_symbols=["AAA", "BBB"],
-        date2symbols=date2symbols,
-        capture=first_capture,
         initial_cash=100000.0,
         show_progress=False,
     )
     second = run_backtest(
         data=_make_order_sensitive_multisymbol_bars(["BBB", "AAA"]),
-        strategy=DeferredDailyRebalanceStrategy,
+        strategy=DeferredDailyRebalanceStrategy(
+            all_symbols=["BBB", "AAA"],
+            date2symbols=date2symbols,
+            capture=second_capture,
+        ),
         symbols=["AAA", "BBB"],
-        all_symbols=["BBB", "AAA"],
-        date2symbols=date2symbols,
-        capture=second_capture,
         initial_cash=100000.0,
         show_progress=False,
     )
