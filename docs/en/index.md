@@ -216,7 +216,7 @@ For more examples, please refer to the `examples/` directory.
 ## Parameter Modeling Entry
 
 *   Optimization guide (recommended workflow): [Parameter-Model-Driven Optimization](guide/optimization.md)
-*   Examples guide (UI-driven setup): [UI-Driven Strategy Parameterization (PARAM_MODEL)](guide/examples.md)
+*   Examples guide (UI-driven setup): [UI-Driven Strategy Parameterization (Inline Param Fields)](guide/examples.md)
 *   API best practices (frontend-backend consistency): [UI-Driven Parameter Input](reference/api.md)
 *   Example script entry: [examples/02_parameter_optimization.py](https://github.com/akfamily/akquant/blob/main/examples/02_parameter_optimization.py)
 

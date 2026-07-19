@@ -651,7 +651,7 @@ result = run_backtest(
 
 *   **Simple Scripts**: Use flat parameters of `run_backtest` directly (e.g., `initial_cash`, `start_time`).
 *   **Production/Complex Strategies**: Build a complete `BacktestConfig` object for version control and reuse.
-*   **UI-Driven Parameter Input**: Declare `PARAM_MODEL` in strategy classes (`akquant.ParamModel`) and use `get_strategy_param_schema` / `validate_strategy_params` for frontend-backend parameter consistency.
+*   **UI-Driven Parameter Input**: Declare parameter fields inline on the strategy class (e.g. `fast_period = IntParam(10, ge=2, le=200)`, accessed at runtime via `self.params.fast_period`) and use `get_strategy_param_schema` / `validate_strategy_params` for frontend-backend parameter consistency.
 *   **Parameter Tuning**: When using `run_grid_search`, modify the Config object or pass override parameters as needed.
 
 ### Logging API
