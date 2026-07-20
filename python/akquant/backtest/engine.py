@@ -519,44 +519,43 @@ def _build_trading_day_metadata(
     data_map_for_indicators: Dict[str, pd.DataFrame], timezone: str
 ) -> Tuple[List[pd.Timestamp], Dict[str, Tuple[int, int]], Dict[str, int]]:
     """Build sorted trading days, per-day bounds, and rebalance timestamps."""
-    all_dates: set[pd.Timestamp] = set()
-    day_bounds: Dict[str, Tuple[int, int]] = {}
-    day_first_symbol_timestamps: Dict[str, Dict[str, int]] = {}
+    frames = {
+        str(symbol): df
+        for symbol, df in data_map_for_indicators.items()
+        if not df.empty and isinstance(df.index, pd.DatetimeIndex)
+    }
+    if not frames:
+        return [], {}, {}
 
-    for symbol, df in data_map_for_indicators.items():
-        if df.empty or not isinstance(df.index, pd.DatetimeIndex):
-            continue
+    big_index = pd.concat(frames, names=["symbol"]).index
+    dates = big_index.get_level_values(-1)
+    if dates.tz is None:
+        dates = dates.tz_localize("UTC")
+    local_index = dates.tz_convert(timezone)
+    normalized_index = cast(pd.DatetimeIndex, local_index.normalize())
+    all_dates = sorted(set(normalized_index.unique()))
 
-        local_index = _index_to_local_trading_days(
-            cast(pd.DatetimeIndex, df.index), timezone
-        )
-        normalized_index = cast(pd.DatetimeIndex, local_index.normalize())
-        all_dates.update(normalized_index.unique())
+    # pandas datetime64 may use a non-nanosecond unit (e.g. us from polars);
+    # normalize to ns so integer values match Timestamp.value semantics.
+    ns = local_index.tz_convert("UTC").astype("datetime64[ns, UTC]").asi8
+    symbols = big_index.get_level_values(0).astype(str)
 
-        grouped = df.groupby(normalized_index, sort=False)
-        for day_ts, day_df in grouped:
-            day_key = pd.Timestamp(day_ts).date().isoformat()
-            start_ns = int(day_df.index.min().value)
-            end_ns = int(day_df.index.max().value)
-            day_first_symbol_timestamps.setdefault(day_key, {})[str(symbol)] = start_ns
-            if day_key in day_bounds:
-                prev_start, prev_end = day_bounds[day_key]
-                day_bounds[day_key] = (
-                    min(prev_start, start_ns),
-                    max(prev_end, end_ns),
-                )
-            else:
-                day_bounds[day_key] = (start_ns, end_ns)
+    base = pd.DataFrame({"day": normalized_index, "sym": symbols, "ns": ns})
 
-    day_rebalance_timestamps: Dict[str, int] = {}
-    for day_key, symbol_timestamps in day_first_symbol_timestamps.items():
-        if not symbol_timestamps:
-            continue
-        day_rebalance_timestamps[day_key] = max(
-            int(timestamp_ns) for timestamp_ns in symbol_timestamps.values()
-        )
+    bounds = base.groupby("day", sort=False)["ns"].agg(["min", "max"])
+    day_bounds: Dict[str, Tuple[int, int]] = {
+        day_ts.date().isoformat(): (int(start_ns), int(end_ns))
+        for day_ts, start_ns, end_ns in bounds.itertuples()
+    }
 
-    return sorted(all_dates), day_bounds, day_rebalance_timestamps
+    rebalance = (
+        base.groupby(["day", "sym"], sort=False)["ns"].min().groupby("day").max()
+    )
+    day_rebalance_timestamps: Dict[str, int] = {
+        day_ts.date().isoformat(): int(v) for day_ts, v in rebalance.items()
+    }
+
+    return all_dates, day_bounds, day_rebalance_timestamps
 
 
 if TYPE_CHECKING:

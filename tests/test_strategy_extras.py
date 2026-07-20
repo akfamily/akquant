@@ -4206,6 +4206,88 @@ def test_build_trading_day_metadata_merges_multi_symbol_day_bounds() -> None:
     }
 
 
+def _reference_build_trading_day_metadata(
+    data_map: dict[str, pd.DataFrame], timezone: str
+) -> tuple[list, dict, dict]:
+    """原逐组迭代实现（对照用，与向量化替换前的生产实现一致）。"""
+    all_dates: set = set()
+    day_bounds: dict = {}
+    day_first_symbol_timestamps: dict = {}
+
+    for symbol, df in data_map.items():
+        if df.empty or not isinstance(df.index, pd.DatetimeIndex):
+            continue
+        local_index = df.index
+        if local_index.tz is None:
+            local_index = local_index.tz_localize("UTC")
+        local_index = local_index.tz_convert(timezone)
+        normalized_index = local_index.normalize()
+        all_dates.update(normalized_index.unique())
+        grouped = df.groupby(normalized_index, sort=False)
+        for day_ts, day_df in grouped:
+            day_key = pd.Timestamp(day_ts).date().isoformat()
+            start_ns = int(day_df.index.min().value)
+            end_ns = int(day_df.index.max().value)
+            day_first_symbol_timestamps.setdefault(day_key, {})[str(symbol)] = start_ns
+            if day_key in day_bounds:
+                prev_start, prev_end = day_bounds[day_key]
+                day_bounds[day_key] = (min(prev_start, start_ns), max(prev_end, end_ns))
+            else:
+                day_bounds[day_key] = (start_ns, end_ns)
+
+    day_rebalance_timestamps: dict = {}
+    for day_key, symbol_timestamps in day_first_symbol_timestamps.items():
+        if symbol_timestamps:
+            day_rebalance_timestamps[day_key] = max(symbol_timestamps.values())
+    return sorted(all_dates), day_bounds, day_rebalance_timestamps
+
+
+def _metadata_fixture() -> dict[str, pd.DataFrame]:
+    days = pd.date_range("2023-01-03", periods=5, freq="B", tz="UTC")
+    data_map = {}
+    for i, symbol in enumerate(["AAA", "BBB", "CCC", "DDD"]):
+        idx = days.append(days[:2] + pd.Timedelta(hours=1))
+        data_map[symbol] = pd.DataFrame(
+            {"close": [10.0 + i + j * 0.01 for j in range(len(idx))]}, index=idx
+        )
+    return data_map
+
+
+def test_build_trading_day_metadata_matches_reference_groupby() -> None:
+    """向量化实现与原逐组迭代实现在多标的多日数据上输出一致。"""
+    data_map = _metadata_fixture()
+    expected = _reference_build_trading_day_metadata(data_map, "Asia/Shanghai")
+    actual = _build_trading_day_metadata(data_map, "Asia/Shanghai")
+    assert actual == expected
+
+
+def test_build_trading_day_metadata_us_unit_and_naive() -> None:
+    """us 单位 datetime64 与 tz-naive 索引口径与原实现一致。"""
+    data_map = _metadata_fixture()
+    for df in data_map.values():
+        df.index = df.index.as_unit("us").tz_localize(None)
+    expected = _reference_build_trading_day_metadata(data_map, "Asia/Shanghai")
+    actual = _build_trading_day_metadata(data_map, "Asia/Shanghai")
+    assert actual == expected
+
+
+def test_build_trading_day_metadata_skips_empty_and_non_datetime() -> None:
+    """空 frame 与非 DatetimeIndex 被跳过；全空时返回空三元组。"""
+    fixture = _metadata_fixture()
+    data_map = {
+        "EMPTY": pd.DataFrame({"close": []}),
+        "RANGER": pd.DataFrame({"close": [1.0, 2.0]}),
+        "AAA": fixture["AAA"],
+    }
+    expected = _reference_build_trading_day_metadata(data_map, "Asia/Shanghai")
+    actual = _build_trading_day_metadata(data_map, "Asia/Shanghai")
+    assert actual == expected
+
+    assert _build_trading_day_metadata(
+        {"X": pd.DataFrame({"close": []})}, "Asia/Shanghai"
+    ) == ([], {}, {})
+
+
 def test_precise_boundary_hooks_delay_after_trading_until_day_end() -> None:
     """Precise boundary hooks should not emit after_trading during same-day timers."""
 
