@@ -13,7 +13,7 @@ class TimerToPreOpenStrategy(Strategy):
     def on_start(self) -> None:
         """Subscribe the demo symbol and register a daily preparation timer."""
         self.subscribe("TIMER_PREOPEN")
-        self.add_daily_timer("15:00:00", "prepare_next_day")
+        self.schedule_daily("15:00:00", "prepare_next_day")
 
     def on_timer(self, payload: str) -> None:
         """Prepare the next-day plan using end-of-day information."""

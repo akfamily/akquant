@@ -27,7 +27,7 @@ def on_bar(ctx: Any, bar: Any) -> None:
     ctx.events.append(f"bar:{bar.symbol}:{ctx.bar_count}")
 
     if not ctx.timer_registered:
-        ctx.add_daily_timer("14:50:00", "rebalance")
+        ctx.schedule_daily("14:50:00", "rebalance")
         ctx.timer_registered = True
 
     pos = ctx.get_position(bar.symbol)

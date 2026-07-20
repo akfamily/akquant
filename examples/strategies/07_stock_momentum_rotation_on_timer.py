@@ -65,7 +65,7 @@ class OnTimerMomentumRotationStrategy(Strategy):
         """策略启动时注册固定时点调仓定时器."""
         for symbol in self.symbols:
             self.subscribe(symbol)
-        self.add_daily_timer("10:00:00", "rebalance")
+        self.schedule_daily("10:00:00", "rebalance")
         self.log(
             "on_start "
             f"subscribe={self.symbols} "
