@@ -474,14 +474,17 @@ def on_bar(self, bar):
 
 除了底层的 `schedule` 方法，AKQuant 提供了更便捷的定时任务注册方式：
 
-*   **`add_daily_timer(time_str, payload)`**: 每天在指定时间触发。
+*   **`schedule_daily(time_str, payload)`**: 每个交易日在指定时间触发。
     *   **支持实盘**: 在回测模式下预生成所有触发时间；在实盘模式下，每日自动调度下一次触发。
-*   **`schedule(trigger_time, payload)`**: 在指定时间点（一次性）触发。
+*   **`schedule_weekly(time_str, payload)`** / **`schedule_monthly(time_str, payload)`**: 在每周/每月的**首个交易日**触发（节假日或停牌自动顺延）。仅回测（交易日历已知）有效。
+*   **`schedule(trigger_time, payload)`**: 在指定时间点（一次性）触发。月末、偏移、每两周等非常规节奏，可用 `self.trading_days` 与 `nth_trading_day_of_month/week` 等日历辅助自行枚举，再逐个调 `schedule`。
+
+> 提示：若目的是横截面/定期调仓，优先使用 `on_cross_section`（由框架托管、成交时序对齐）；`schedule_*` + `on_timer` 面向通用自定义时点任务。
 
 ```python
 def on_start(self):
     # 每天 14:55:00 触发收盘检查
-    self.add_daily_timer("14:55:00", "daily_check")
+    self.schedule_daily("14:55:00", "daily_check")
 
     # 在特定日期时间触发
     self.schedule("2023-01-01 09:30:00", "special_event")

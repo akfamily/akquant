@@ -33,7 +33,7 @@ class MyTimerStrategy(Strategy):
         # Test manual timer
         self.schedule("2023-01-01 10:00:00", "manual_timer")
         # Test daily timer
-        self.add_daily_timer("14:55:00", "daily_timer")
+        self.schedule_daily("14:55:00", "daily_timer")
 
     def on_timer(self, payload: str) -> None:
         """On timer."""

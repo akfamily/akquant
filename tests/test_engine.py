@@ -323,7 +323,7 @@ class DailyTimerBuyStrategy(akquant.Strategy):
 
     def on_start(self) -> None:
         """Register a daily timer at session close."""
-        self.add_daily_timer("15:00:00", "daily_buy")
+        self.schedule_daily("15:00:00", "daily_buy")
 
     def on_bar(self, bar: akquant.Bar) -> None:
         """Close the position on the first bar after timer entry."""
@@ -357,8 +357,8 @@ class DailyTimerOrderLevelCurrentCloseStrategy(akquant.Strategy):
 
     def on_start(self) -> None:
         """Register opening and closing daily timers."""
-        self.add_daily_timer("09:25:00", "daily_buy")
-        self.add_daily_timer("14:56:00", "daily_sell")
+        self.schedule_daily("09:25:00", "daily_buy")
+        self.schedule_daily("14:56:00", "daily_sell")
 
     def on_timer(self, payload: str) -> None:
         """Buy at the first timer and sell available shares at the second."""

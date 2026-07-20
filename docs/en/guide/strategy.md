@@ -33,7 +33,7 @@ A strategy goes through the following stages from start to finish:
 *   `on_portfolio_update`: Triggered when portfolio snapshot changes.
 *   `on_error`: Triggered when user callback raises an exception, then exception is re-raised by default.
 *   `on_timer`: Called when a timer triggers (needs manual registration).
-    > Recommended: Use `self.add_daily_timer("14:55:00", "payload")`.
+    > Recommended: Use `self.schedule_daily("14:55:00", "payload")`.
 *   `on_stop`: Called when the strategy stops, suitable for resource cleanup or result statistics (refer to Backtrader `stop` / Nautilus `on_stop`).
 *   `on_train_signal`: Triggered for rolling training signals (only in ML mode).
 
@@ -338,14 +338,14 @@ def on_bar(self, bar):
 
 In addition to the low-level `schedule` method, AKQuant provides more convenient ways to register timers:
 
-*   **`add_daily_timer(time_str, payload)`**: Triggers daily at a specified time.
+*   **`schedule_daily(time_str, payload)`**: Triggers daily at a specified time.
     *   **Live Mode Supported**: Pre-generates triggers in Backtest mode; Automatically schedules the next trigger daily in Live mode.
 *   **`schedule(trigger_time, payload)`**: Triggers once at a specified datetime.
 
 ```python
 def on_start(self):
     # Daily check at 14:55:00
-    self.add_daily_timer("14:55:00", "daily_check")
+    self.schedule_daily("14:55:00", "daily_check")
 
     # Specific event
     self.schedule("2023-01-01 09:30:00", "special_event")
@@ -373,7 +373,7 @@ class CrossSectionStrategy(Strategy):
         self.warmup_period = lookback + 1
 
     def on_start(self):
-        self.add_daily_timer("14:55:00", "rebalance")
+        self.schedule_daily("14:55:00", "rebalance")
 
     def on_timer(self, payload):
         if payload != "rebalance":

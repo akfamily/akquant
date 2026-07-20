@@ -71,7 +71,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
         ```
 
 6.  **Timers**:
-    *   **Daily**: `self.add_daily_timer("14:55:00", "eod_check")`.
+    *   **Daily**: `self.schedule_daily("14:55:00", "eod_check")`.
     *   **One-off**: `self.schedule(timestamp, "payload")`.
     *   **Callback**: Implement `on_timer(self, payload: str)`.
 

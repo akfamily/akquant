@@ -3173,7 +3173,7 @@ class TimerIdempotencyStrategy(Strategy):
         """Register timers once."""
         self.events.append("on_start")
         self.schedule("2023-01-01 10:00:00", "manual_timer")
-        self.add_daily_timer("14:55:00", "daily_timer")
+        self.schedule_daily("14:55:00", "daily_timer")
 
     def on_timer(self, payload: str) -> None:
         """Count timer callbacks."""

@@ -38,7 +38,7 @@ def initialize(ctx: Any) -> None:
 def on_bar(ctx: Any, bar: Bar) -> None:
     """Handle bar events and submit simple alternating orders."""
     if not ctx.timer_registered:
-        ctx.add_daily_timer("00:00:00", "daily_probe")
+        ctx.schedule_daily("00:00:00", "daily_probe")
         ctx.timer_registered = True
     ctx.events.append(f"bar:{bar.symbol}")
     pos = ctx.get_position(bar.symbol)

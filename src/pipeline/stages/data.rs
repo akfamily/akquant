@@ -74,7 +74,14 @@ impl DataProcessor {
             .iter()
             .filter(|order| {
                 matches!(order.status, OrderStatus::New | OrderStatus::Submitted)
-                    && order.created_at == self.last_timestamp
+                    // `<=` (not `==`): a timer-created order carries the timer's
+                    // timestamp (e.g. 09:00) while the day's bar timestamp is
+                    // 00:00, so `== last_timestamp` never matched timer orders —
+                    // a suspended symbol's order then lived forever as New,
+                    // piling into free-margin projection until trading froze
+                    // (issue #329). Rejecting once its matchable slice has passed
+                    // without a bar gives it a terminal state instead.
+                    && order.created_at <= self.last_timestamp
                     && !self.seen_symbols.contains(&order.symbol)
                     && effective_execution_policy_for_order(engine, order).bar_offset == 1
             })
@@ -163,10 +170,17 @@ impl Processor for DataProcessor {
             }
             FeedAction::Timer(_timestamp) => {
                 if let Some(timer) = engine.timers.pop() {
-                    if timer
-                        .payload
-                        .starts_with("__framework_cross_section__|")
-                    {
+                    // Invariant: finalize the current timestamp before any timer
+                    // advances the clock past it. Previously only framework
+                    // cross-section timers did this; user timers
+                    // (add_daily_timer / schedule) skipped it, so same-cycle
+                    // deferred orders were stranded — the timer's on_event wiped
+                    // the slice-tracking registry before the slice was ever
+                    // finalized, leaving phantom New buys that zeroed out free
+                    // margin and froze trading permanently (issue #329). Framework
+                    // cross-section timers are scheduled at source_ts + 1, so they
+                    // always satisfy this condition and keep their prior behavior.
+                    if timer.timestamp > self.last_timestamp {
                         self.finalize_current_timestamp(engine, py);
                     }
                     let local_time = engine.local_time_from_ns(timer.timestamp);
@@ -378,6 +392,13 @@ impl Processor for DataProcessor {
                     }
 
                     for o in expired_orders {
+                        // Tell the execution client to drop the order too. Daily
+                        // settlement only flips the order-manager copy to Expired;
+                        // without this the simulated client keeps it New in its own
+                        // book and a later bar crossing the limit fills the zombie
+                        // long after it should have died (issue #329 hygiene item).
+                        // Mirrors the reject path above (reject_missing_symbol_orders).
+                        engine.execution_model.on_cancel(&o.id);
                         engine.state.order_manager.orders.push(o);
                     }
                 }

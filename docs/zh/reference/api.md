@@ -910,7 +910,11 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `subscribe(instrument_id: str)`: 订阅行情。
 *   `log(msg: str, level: int)`: 输出带时间戳的日志。
 *   `schedule(trigger_time, payload)`: 注册单次定时任务。
-*   `add_daily_timer(time_str, payload)`: 注册每日定时任务。
+*   `schedule_daily(time_str, payload)`: 注册每日定时任务(每个交易日触发)。
+*   `schedule_weekly(time_str, payload)`: 每周首个交易日触发(节假日/停牌自动顺延)。
+*   `schedule_monthly(time_str, payload)`: 每月首个交易日触发(节假日/停牌自动顺延)。
+*   `trading_days -> List[pd.Timestamp]`: 只读交易日序列，配合 `schedule` 自定义节奏。
+*   `nth_trading_day_of_month(n)` / `nth_last_trading_day_of_month(n)` / `nth_trading_day_of_week(n)`: 交易日历辅助，返回每月/周第 n 个(或倒数第 n 个)交易日。
 *   `to_local_time(timestamp) -> pd.Timestamp`: 将 UTC 时间戳转换为本地时间。
 *   `format_time(timestamp, fmt) -> str`: 格式化时间戳。
 

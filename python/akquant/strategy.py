@@ -84,8 +84,11 @@ from .strategy_order_events import (
     trade_event_key as _trade_event_key_impl,
 )
 from .strategy_position import Position
-from .strategy_scheduler import add_daily_timer as _add_daily_timer_impl
+from .strategy_scheduler import _nth_per_group as _nth_per_group_impl
 from .strategy_scheduler import schedule as _schedule_impl
+from .strategy_scheduler import schedule_daily as _schedule_daily_impl
+from .strategy_scheduler import schedule_monthly as _schedule_monthly_impl
+from .strategy_scheduler import schedule_weekly as _schedule_weekly_impl
 from .strategy_time import format_time as _format_time_impl
 from .strategy_time import now as _now_impl
 from .strategy_time import to_local_time as _to_local_time_impl
@@ -995,14 +998,79 @@ class Strategy:
         """
         _schedule_impl(self, trigger_time, payload)
 
-    def add_daily_timer(self, time_str: str, payload: str) -> None:
+    def schedule_daily(self, time_str: str, payload: str) -> None:
         """
         注册每日定时任务 (Daily Timer).
+
+        每个交易日在 ``time_str`` 时点触发一次 :meth:`on_timer` 回调。
+
+        提示: 若目的是横截面/定期调仓, 优先使用 :meth:`on_cross_section` ——
+        它由框架托管、成交时序对齐; ``schedule_daily`` + :meth:`on_timer`
+        面向通用自定义时点任务。
 
         :param time_str: 时间字符串 (例如 "14:55:00")
         :param payload: 回调标识
         """
-        _add_daily_timer_impl(self, time_str, payload)
+        _schedule_daily_impl(self, time_str, payload)
+
+    def schedule_weekly(self, time_str: str, payload: str) -> None:
+        """
+        注册每周定时任务 (Weekly Timer).
+
+        在每个 ISO 周的**首个交易日**的 ``time_str`` 时点触发一次
+        :meth:`on_timer`; 若该周首日休市/停牌, 自动顺延到该周首个有交易的日子。
+        仅在回测(交易日历已知)时有效。
+
+        :param time_str: 时间字符串 (例如 "09:30:00")
+        :param payload: 回调标识
+        """
+        _schedule_weekly_impl(self, time_str, payload)
+
+    def schedule_monthly(self, time_str: str, payload: str) -> None:
+        """
+        注册每月定时任务 (Monthly Timer).
+
+        在每个自然月的**首个交易日**的 ``time_str`` 时点触发一次
+        :meth:`on_timer`; 若该月首日休市/停牌, 自动顺延到该月首个有交易的日子。
+        仅在回测(交易日历已知)时有效。需要月末/偏移等非常规节奏时,
+        请改用 :meth:`schedule` + :attr:`trading_days` 自行枚举。
+
+        :param time_str: 时间字符串 (例如 "09:30:00")
+        :param payload: 回调标识
+        """
+        _schedule_monthly_impl(self, time_str, payload)
+
+    @property
+    def trading_days(self) -> "List[pd.Timestamp]":
+        """引擎已知的交易日序列(只读). 回测下可用于在 :meth:`schedule` 上自定义节奏."""
+        return list(self._trading_days)
+
+    def nth_trading_day_of_month(self, n: int) -> "List[pd.Timestamp]":
+        """每个自然月的第 n 个交易日(n 从 1 开始; 该月不足 n 个则跳过).
+
+        便于在 :meth:`schedule` 上表达非常规节奏, 例如::
+
+            for day in self.nth_trading_day_of_month(1):
+                self.schedule(day.replace(hour=9, minute=30), "rebalance")
+        """
+        return _nth_per_group_impl(
+            self._trading_days, lambda d: (d.year, d.month), n, from_end=False
+        )
+
+    def nth_last_trading_day_of_month(self, n: int) -> "List[pd.Timestamp]":
+        """每个自然月的倒数第 n 个交易日(n 从 1 开始; 该月不足 n 个则跳过)."""
+        return _nth_per_group_impl(
+            self._trading_days, lambda d: (d.year, d.month), n, from_end=True
+        )
+
+    def nth_trading_day_of_week(self, n: int) -> "List[pd.Timestamp]":
+        """每个 ISO 周的第 n 个交易日(n 从 1 开始; 该周不足 n 个则跳过)."""
+        return _nth_per_group_impl(
+            self._trading_days,
+            lambda d: (d.isocalendar()[0], d.isocalendar()[1]),
+            n,
+            from_end=False,
+        )
 
     def to_local_time(self, timestamp: int) -> pd.Timestamp:
         """

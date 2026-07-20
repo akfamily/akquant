@@ -3208,7 +3208,7 @@ def run_backtest(
     for current_strategy in all_strategy_instances:
         current_strategy.timezone = timezone
 
-    # Inject trading days to strategy (for add_daily_timer)
+    # Inject trading days to strategy (for schedule_daily)
     all_strategy_instances = [strategy_instance, *slot_strategy_instances.values()]
     if data_map_for_indicators:
         (

@@ -51,7 +51,7 @@ class EventCallbacksStrategy(Strategy):
         """Register subscriptions and timers."""
         print("\n=== 策略启动 ===")
         self.subscribe("MOCK_STOCK")
-        self.add_daily_timer("14:55:00", "close_check")
+        self.schedule_daily("14:55:00", "close_check")
 
     def on_bar(self, bar: Bar) -> None:
         """Submit one rejected order and one valid order using bar events."""
