@@ -14,23 +14,23 @@ AKQuant 提供了强大的**热启动 (Warm Start)** 功能，允许你保存回
 
 ### 2.1 保存快照 (Phase 1)
 
-在第一阶段回测结束时（或在策略逻辑中任意时刻），调用 `save_snapshot` 保存状态。
+在第一阶段回测结束时（或在策略逻辑中任意时刻），调用 `save_checkpoint` 保存状态。
 
 ```python
-from akquant.checkpoint import save_snapshot
+from akquant.checkpoint import save_checkpoint
 
 # 运行第一阶段回测
 result1 = run_backtest(data=data_phase1, strategy=MyStrategy, ...)
 
 # 保存快照到文件
 checkpoint_file = "checkpoint_phase1.pkl"
-save_snapshot(result1.engine, result1.strategy, checkpoint_file)
+save_checkpoint(result1.engine, result1.strategy, checkpoint_file)
 print(f"Snapshot saved to {checkpoint_file}")
 ```
 
 ### 2.2 恢复并继续运行 (Phase 2)
 
-使用 `run_warm_start` 函数从快照恢复，并传入第二阶段的数据。
+使用 `run_from_checkpoint` 函数从快照恢复，并传入第二阶段的数据。
 
 **注意**：快照仅保存了动态状态（Portfolio, Orders, Strategy Attributes），**不包含** 静态配置（Instrument, MarketModel）。因此在恢复时，你**必须**重新配置这些静态信息。
 
@@ -49,7 +49,7 @@ config = aq.BacktestConfig(
 )
 
 # 从快照恢复并运行
-result2 = aq.run_warm_start(
+result2 = aq.run_from_checkpoint(
     checkpoint_path="checkpoint_phase1.pkl",
     data=data_phase2,
     symbols="AAPL",  # 你的主要标的
@@ -112,14 +112,14 @@ AKQuant 内置的指标（如 `SMA`, `EMA`）已经支持 Pickle 序列化。如
 
 ## 4. 注意事项
 
-1.  **Instrument 需重新注册**：`run_warm_start` 会尝试自动为新数据中的 Symbol 注册默认 Instrument。如果你的策略依赖特定的 `lot_size` 或 `multiplier`，建议在 `on_start` 中手动检查并调用 `self.ctx.engine.add_instrument(...)`。
-2.  **MarketModel 重置**：费用设置（佣金、印花税）和交易规则（T+1）不会保存在快照中。务必在 `run_warm_start` 参数中重新传入正确配置（可通过显式参数或 `config.strategy_config`），包括 `commission_policy` / `commission_rate`、`stamp_tax_rate`、`transfer_fee_rate`（`stamp_tax`、`transfer_fee` 仍兼容）。
+1.  **Instrument 需重新注册**：`run_from_checkpoint` 会尝试自动为新数据中的 Symbol 注册默认 Instrument。如果你的策略依赖特定的 `lot_size` 或 `multiplier`，建议在 `on_start` 中手动检查并调用 `self.ctx.engine.add_instrument(...)`。
+2.  **MarketModel 重置**：费用设置（佣金、印花税）和交易规则（T+1）不会保存在快照中。务必在 `run_from_checkpoint` 参数中重新传入正确配置（可通过显式参数或 `config.strategy_config`），包括 `commission_policy` / `commission_rate`、`stamp_tax_rate`、`transfer_fee_rate`（`stamp_tax`、`transfer_fee` 仍兼容）。
 3.  **初始资金显示**：`result2.metrics.initial_cash` 会自动调整为恢复时的资金，确保收益率计算是基于第二阶段的实际起始资金，而不是账户的历史初始资金。
 4.  **数据连续性**：确保 Phase 1 的结束时间与 Phase 2 的开始时间是连续的。如果中间有长时间中断，指标计算可能会出现跳跃。
-5.  **`get_history()` 连续性**：新版本快照会一并保存并恢复历史缓冲，因此 `run_warm_start` 恢复后，`get_history()`、`get_history_map()` 等接口会延续 Phase 1 的历史窗口；正常续跑时不再需要额外手工拼接 lookback 数据。
+5.  **`get_history()` 连续性**：新版本快照会一并保存并恢复历史缓冲，因此 `run_from_checkpoint` 恢复后，`get_history()`、`get_history_map()` 等接口会延续 Phase 1 的历史窗口；正常续跑时不再需要额外手工拼接 lookback 数据。
 6.  **运行时配置注入**：可通过 `strategy_runtime_config` 在恢复阶段覆盖错误处理和快照阈值等运行时行为。
 7.  **策略级风控状态可恢复**：策略限额、策略现金流、日损基线、回撤峰值、仅平仓激活态等会随快照保存并恢复，便于断点续跑后保持风控行为连续。
-8.  **默认时区**：`run_warm_start` 未显式传入 `timezone` 时，默认使用 `Asia/Shanghai`。
+8.  **默认时区**：`run_from_checkpoint` 未显式传入 `timezone` 时，默认使用 `Asia/Shanghai`。
 
 ## 5. 完整示例
 
@@ -134,14 +134,42 @@ class MyStrategy(Strategy):
         self.register_precomputed_indicator("sma", self.sma)
 
 # ... 运行 Phase 1 ...
-save_snapshot(engine, strategy, "checkpoint.pkl")
+save_checkpoint(engine, strategy, "checkpoint.pkl")
 
 # ... 运行 Phase 2 ...
-run_warm_start("checkpoint.pkl", data_new, ...)
+run_from_checkpoint("checkpoint.pkl", data_new, ...)
 ```
+
+## 5.x 多阶段结果合并 (`merge_results`)
+
+分阶段续跑时，每段 `BacktestResult` 的曲线只覆盖本段。用 `merge_results` 把多段按
+时间顺序拼成一条完整曲线，无需手写循环拼接：
+
+```python
+import akquant as aq
+
+r1 = aq.run_backtest(data=phase1, strategy=MyStrategy, symbols="X", initial_cash=1e6)
+aq.save_checkpoint(r1.engine, r1.strategy, "ckpt.pkl")
+r2 = aq.run_from_checkpoint("ckpt.pkl", data=phase2, symbols="X")
+
+merged = aq.merge_results(r1, r2)
+print(merged.equity_curve)          # 跨两段的完整权益曲线
+print(merged.metrics.total_return_pct)
+returns = merged.to_quantstats()    # 交给 quantstats 出报告
+```
+
+要点：
+
+- 各段须**时间递增、互不重叠**（允许 gap）；重叠会抛 `ValueError`。
+- `dedupe_boundary=True`（默认）去除相邻段的边界重复时间戳。
+- `drop_expired_instruments=True`（默认）依据 instrument snapshot 的 `expiry_date`
+  清理已退市合约持仓，避免长区间资产爆炸。
+- `merged.metrics` 为**核心指标子集**（total_return / max_drawdown / sharpe /
+  sortino / calmar / win_rate / profit_factor 等），口径对齐单段回测；依赖引擎内部
+  态的完整 60 项指标请在单段 `BacktestResult` 上读取。
 
 ## 6. 推荐阅读
 
-- `run_warm_start` 参数详情：[API 参考](../reference/api.md#akquantrun_warm_start)
+- `run_from_checkpoint` 参数详情：[API 参考](../reference/api.md#akquantrun_from_checkpoint)
 - 恢复阶段运行时覆盖：[Runtime Config 指南](runtime_config.md)
 - 多 slot 连续性与策略级风控映射：[多策略指南](multi_strategy_guide.md)

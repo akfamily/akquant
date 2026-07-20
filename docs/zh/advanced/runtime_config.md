@@ -14,7 +14,7 @@
 该能力同时支持：
 
 - `run_backtest(...)`
-- `run_warm_start(...)`
+- `run_from_checkpoint(...)`
 
 ## 2. 基础用法
 
@@ -71,7 +71,7 @@ result = run_backtest(
 从快照恢复时也可以覆盖运行时行为：
 
 ```python
-result = run_warm_start(
+result = run_from_checkpoint(
     checkpoint_path="snapshot.pkl",
     data=new_data,
     symbols="TEST",
@@ -147,9 +147,9 @@ result = run_backtest(
 )
 ```
 
-### 9.3 与 run_warm_start 的关系
+### 9.3 与 run_from_checkpoint 的关系
 
-`run_warm_start(...)` 当前从 checkpoint 恢复策略实例，不会通过
+`run_from_checkpoint(...)` 当前从 checkpoint 恢复策略实例，不会通过
 `strategy_source` / `strategy_loader` 重新加载策略实现。
 
 ## 10. broker_profile 选择建议

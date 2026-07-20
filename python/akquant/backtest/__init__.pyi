@@ -21,6 +21,8 @@ from ..akquant import AssetType, Bar, DataFeed
 from ..config import BacktestConfig, RiskConfig
 from ..feed_adapter import DataFeedAdapter
 from ..strategy import Strategy, StrategyRuntimeConfig
+from .merge import MergedResult as MergedResult
+from .merge import merge_results as merge_results
 from .result import BacktestResult
 
 BacktestDataInput = Union[
@@ -180,7 +182,7 @@ def run_backtest(
     strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult: ...
-def run_warm_start(
+def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = ...,
     show_progress: bool = ...,
@@ -217,7 +219,9 @@ def run_warm_start(
 __all__ = [
     "BacktestResult",
     "BacktestStreamEvent",
+    "MergedResult",
     "run_backtest",
-    "run_warm_start",
+    "run_from_checkpoint",
+    "merge_results",
     "FunctionalStrategy",
 ]

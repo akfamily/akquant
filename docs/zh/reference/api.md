@@ -150,12 +150,12 @@ def run_walk_forward(
 *   因此，`forward_worker_logs` 可用于控制样本内并行优化日志回传。
 *   同时，`strict_strategy_params` 会在优化与回测阶段保持严格参数校验语义（默认严格）。
 
-### `akquant.run_warm_start`
+### `akquant.run_from_checkpoint`
 
 从快照恢复并继续运行回测（支持多策略 slot 执行）。
 
 ```python
-def run_warm_start(
+def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
@@ -186,10 +186,10 @@ def run_warm_start(
 ) -> BacktestResult
 ```
 
-`run_warm_start` 使用与 `run_backtest` 相同的策略 slot、策略级风控与成交默认项；
+`run_from_checkpoint` 使用与 `run_backtest` 相同的策略 slot、策略级风控与成交默认项；
 对这些字段，优先级为：显式函数参数 > `config.strategy_config` > checkpoint 恢复值 / 默认值。
 
-**通用行为说明（主要对应 `run_backtest`，`run_warm_start` 共享其中的成交/风控/策略映射规则）:**
+**通用行为说明（主要对应 `run_backtest`，`run_from_checkpoint` 共享其中的成交/风控/策略映射规则）:**
 
 *   `data`: 回测数据。支持单个 DataFrame，`{symbol: DataFrame}` 字典，`List[Bar]`，`DataFeed`，或实现 `DataFeedAdapter.load(request)` 的对象。
 *   `strategy`: 策略类、策略实例，或 `on_bar` 函数（函数式编程风格）。
@@ -314,7 +314,7 @@ result = aq.run_backtest(
 *   `align="session"`: 按交易日分区，可叠加 `session_windows`。
 *   `align="day"`: 按日分区，不接收 `session_windows`；`day_mode` 支持 `trading/calendar`。
 *   `align="global"`: 按全局时间轴聚合，不按交易日切段。
-*   参数建议：统一使用 `symbols`。`run_backtest`/`run_warm_start` 已不再接受 `symbol` 参数。
+*   参数建议：统一使用 `symbols`。`run_backtest`/`run_from_checkpoint` 已不再接受 `symbol` 参数。
 
 **兼容与迁移说明:**
 
@@ -333,6 +333,36 @@ result = aq.run_backtest(
 *   PyCharm 看不到进度条怎么办？先确认 `show_progress=True`，并在 Run 配置中开启 `Emulate terminal in output console`；若仍不可见，使用 `on_event` 消费 `progress` 事件打印文本进度。
 *   线上出现问题如何回退？使用版本级回滚，不再支持 `_engine_mode` 参数级回切。
 *   还可以继续用 `symbol` 吗？不可以。请统一迁移到 `symbols`。
+
+### `akquant.merge_results`
+
+```python
+def merge_results(
+    *results: BacktestResult,
+    drop_expired_instruments: bool = True,
+    dedupe_boundary: bool = True,
+) -> MergedResult
+```
+
+把 `run_from_checkpoint` 分阶段续跑产生的多段 `BacktestResult` 按时间顺序合并成
+一个 `MergedResult`，提供与 `BacktestResult` 一致的只读视图（`equity_curve` /
+`cash_curve` / `margin_curve` / `orders_df` / `trades_df` / `executions_df` /
+`positions_df` / `daily_returns` / `to_quantstats`）。
+
+**行为:**
+
+*   曲线与订单/交易/执行/持仓按时间戳拼接；`dedupe_boundary=True` 时去除相邻段
+    重叠的边界时间戳（同戳保留后一段，对齐引擎 upsert 语义）。
+*   各段必须**时间递增、互不重叠**（允许 gap）；重叠段抛 `ValueError`。
+*   `drop_expired_instruments=True` 时，依据各段策略 instrument snapshot 的
+    `expiry_date` 清理已过期合约的持仓行，避免长区间资产爆炸。
+
+**metrics 为核心子集:** `MergedResult.metrics` / `metrics_df` 仅重算能从合并权益
+曲线 + 交易明细无歧义推导的指标(`total_return_pct` / `max_drawdown` /
+`sharpe_ratio` / `sortino_ratio` / `calmar_ratio` / `volatility` /
+`annualized_return` / `win_rate` / `profit_factor` / `end_market_value` 等，
+口径对齐单段回测)。其余依赖引擎内部态的字段不提供,访问时抛 `AttributeError`;
+如需完整 60 项指标,请在单段完整回测的 `BacktestResult` 上读取。
 
 ### 流式参数与事件 (`run_backtest`)
 
@@ -677,14 +707,14 @@ BacktestConfig (回测场景)
 
 #### 4. 策略运行时配置注入 (Strategy Runtime Config Injection)
 
-`run_backtest` 与 `run_warm_start` 支持 `strategy_runtime_config` 参数：
+`run_backtest` 与 `run_from_checkpoint` 支持 `strategy_runtime_config` 参数：
 
 *   支持 `StrategyRuntimeConfig` 对象或 `dict`。
 *   用于在不修改策略类代码的前提下注入运行时行为开关。
 *   示例：`run_backtest(..., strategy_runtime_config={"error_mode": "continue"})`。
 *   校验行为：未知字段或非法值会快速失败，并给出字段级错误信息。
 *   冲突处理：`runtime_config_override=True` 时应用外部配置；`False` 时保留策略侧配置。
-*   上述冲突规则在 `run_backtest` 与 `run_warm_start` 中保持一致。
+*   上述冲突规则在 `run_backtest` 与 `run_from_checkpoint` 中保持一致。
 *   对同一策略实例、同一冲突内容，告警日志会自动去重。
 *   优先级规则：显式传入的 `strategy_runtime_config` 参数高于转发配置映射中的同名配置。
 *   故障速查入口：参考 [Runtime Config 指南](../advanced/runtime_config.md)。

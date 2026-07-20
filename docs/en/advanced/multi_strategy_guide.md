@@ -90,7 +90,7 @@ Checks:
 
 ### 4.4 Validate Warm-Start Continuity
 
-- save snapshot and resume via `run_warm_start`
+- save snapshot and resume via `run_from_checkpoint`
 - use the same `config` to keep strategy topology/risk mapping centralized
 - verify default strategy id, slot topology, and risk runtime states are preserved
 

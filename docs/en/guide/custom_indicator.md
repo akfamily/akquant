@@ -167,7 +167,7 @@ Runnable example:
 
 ## Warm Start And Serialization
 
-If the strategy uses `run_warm_start`, your custom indicator must preserve its internal state correctly.
+If the strategy uses `run_from_checkpoint`, your custom indicator must preserve its internal state correctly.
 
 Practical rules:
 

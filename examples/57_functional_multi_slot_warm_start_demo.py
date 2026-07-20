@@ -111,9 +111,9 @@ def main() -> None:
     )
     if result1.engine is None:
         raise RuntimeError("Engine should not be None")
-    aq.save_snapshot(result1.engine, result1.strategy, str(checkpoint_path))
+    aq.save_checkpoint(result1.engine, result1.strategy, str(checkpoint_path))
 
-    result2 = aq.run_warm_start(
+    result2 = aq.run_from_checkpoint(
         checkpoint_path=str(checkpoint_path),
         data=phase2,
         symbols="FUNC_SLOT_WARM",

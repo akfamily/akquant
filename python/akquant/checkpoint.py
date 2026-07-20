@@ -33,13 +33,38 @@ def _iter_strategy_graph(root_strategy: Any) -> list[Any]:
     return collected
 
 
-def save_snapshot(engine: Engine, strategy: Any, filepath: str) -> None:
+def _extract_resolved_config(config: Any) -> Optional[dict[str, Any]]:
+    """Normalize the save_checkpoint config argument into a plain dict or None.
+
+    Accepts a BacktestResult (reads .resolved_config), a plain dict, or None.
     """
-    保存当前运行状态到文件.
+    if config is None:
+        return None
+    resolved = getattr(config, "resolved_config", None)
+    if isinstance(resolved, dict):
+        return dict(resolved)
+    if isinstance(config, dict):
+        return dict(config)
+    return None
+
+
+def save_checkpoint(
+    engine: Engine,
+    strategy: Any,
+    filepath: str,
+    *,
+    config: Any = None,
+) -> None:
+    """
+    保存当前运行状态到检查点文件 (checkpoint).
 
     :param engine: akquant.Engine 实例
     :param strategy: 策略实例
     :param filepath: 保存路径 (包含文件名)
+    :param config: 可选。已解析运行时配置来源，用于热启动自动继承滑点/费率/
+        fill_policy 等 (issue #282)。可传 BacktestResult (自动读取
+        result.resolved_config) 或直接传配置 dict。为 None 时快照不含配置，
+        热启动降级到逐项推导 (向后兼容)。
     """
     # 1. Get binary state from Rust Engine
     # Note: engine.get_state_bytes returns bytes directly in Python
@@ -83,6 +108,8 @@ def save_snapshot(engine: Engine, strategy: Any, filepath: str) -> None:
     if default_strategy_id not in slot_ids:
         slot_ids.insert(0, default_strategy_id)
 
+    backtest_config = _extract_resolved_config(config)
+
     snapshot = {
         "engine_state": engine_bytes,
         "strategy": strategy,
@@ -93,6 +120,7 @@ def save_snapshot(engine: Engine, strategy: Any, filepath: str) -> None:
         "snapshot_features": {
             "history_buffer_snapshot": True,
         },
+        "backtest_config": backtest_config,
         "version": _VERSION,
     }
 
@@ -111,21 +139,21 @@ def save_snapshot(engine: Engine, strategy: Any, filepath: str) -> None:
         for current_strategy, attr_backup in transient_backups:
             for attr_name, attr_value in attr_backup.items():
                 setattr(current_strategy, attr_name, attr_value)
-    logger.info("Snapshot saved to %s", filepath)
+    logger.info("Checkpoint saved to %s", filepath)
 
 
-def warm_start(
+def load_checkpoint(
     filepath: str, data_feed: Optional[DataFeed] = None
 ) -> Tuple[Engine, Any]:
     """
-    从快照恢复并热启动.
+    从检查点文件恢复引擎与策略状态 (checkpoint restore).
 
-    :param filepath: 快照文件路径
+    :param filepath: 检查点文件路径
     :param data_feed: 新的数据源 (可选). 如果为 None，则引擎无数据源，需后续手动添加.
     :return: (engine, strategy)
     """
     if not os.path.exists(filepath):
-        raise FileNotFoundError(f"Snapshot file not found: {filepath}")
+        raise FileNotFoundError(f"Checkpoint file not found: {filepath}")
 
     with open(filepath, "rb") as f:
         snapshot = pickle.load(f)
@@ -166,6 +194,13 @@ def warm_start(
         if normalized_slot_ids:
             setattr(strategy, "_strategy_slot_ids", normalized_slot_ids)
     setattr(strategy, "_warm_start_snapshot_features", dict(snapshot_features))
+    # 携带检查点持久化的运行时配置，供 run_from_checkpoint 自动继承 (issue #282)
+    restored_config = snapshot.get("backtest_config")
+    setattr(
+        strategy,
+        "_warm_start_backtest_config",
+        dict(restored_config) if isinstance(restored_config, dict) else None,
+    )
     # print(f"Warm start loaded from {filepath}. Snapshot time: {engine.snapshot_time}")
 
     return engine, strategy

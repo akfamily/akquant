@@ -375,7 +375,7 @@ def arrow_to_bars(tbl, symbol=None) -> list[Bar]: # 替代 load_bar_from_df
 - 新增 `python/akquant/schema.py`:`DEFAULT_INPUT_TIMEZONE`、`COLUMN_ALIASES`、`REQUIRED_FIELDS`、`OHLCV_FIELDS`、`BAR_SCHEMA` 单一定义源。
 - 新增 `python/akquant/normalize.py`:`_timestamps_to_utc_ns`(共享 tz 助手)、`dataframe_to_arrays`/`dataframe_to_bars`(单一实现)、`to_frame`/`normalize`(多源漏斗)、`arrow_to_legacy_arrays`/`arrow_to_bars`(Arrow 过渡桥)、`coerce_to_pandas`。
 - `utils.df_to_arrays` / `utils.load_bar_from_df` 改为对 `normalize` 的薄委托(去重, 签名不变)。
-- `run_backtest` / `run_warm_start` 两处分派入口加 `coerce_to_pandas`,`BacktestDataInput` 纳入 `pl.DataFrame`/`pl.LazyFrame`/`pa.Table`(issue #298)。
+- `run_backtest` / `run_from_checkpoint` 两处分派入口加 `coerce_to_pandas`,`BacktestDataInput` 纳入 `pl.DataFrame`/`pl.LazyFrame`/`pa.Table`(issue #298)。
 - 修正 `akquant.pyi` 的 `DataFeed.add_arrays` 为 9 参(补 `symbols`/`extra`)。
 - 新增 `tests/test_normalize.py`(14 用例, 覆盖并集清单 + 多源输入)。
 
