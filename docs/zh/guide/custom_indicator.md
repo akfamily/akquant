@@ -169,7 +169,7 @@ self.register_incremental_indicator("mom10", self.mom10, source="close")
 
 ## 热启动与序列化
 
-如果你的策略会使用 `run_warm_start`，自定义指标需要考虑状态持久化。
+如果你的策略会使用 `run_from_checkpoint`，自定义指标需要考虑状态持久化。
 
 原则如下：
 

@@ -286,7 +286,7 @@ class ResolvedExecutionPolicy:
 
 @dataclass
 class PreparedStreamRuntime:
-    """Prepared stream runtime components shared by backtest/warm_start."""
+    """Prepared stream runtime components shared by backtest/checkpoint resume."""
 
     stream_on_event: Optional[Callable[[BacktestStreamEvent], None]]
     indicator_stream_emitter: Optional[
@@ -825,6 +825,44 @@ def _attach_result_runtime_metadata(
         result.resolved_execution_policy = cast(
             Dict[str, Any], getattr(result, "_resolved_execution_policy")
         )
+
+
+def _build_resolved_backtest_config(
+    *,
+    slippage_policy: SlippagePolicy,
+    volume_limit_pct: float,
+    commission_policy: CommissionPolicy,
+    stamp_tax_rate: float,
+    transfer_fee_rate: float,
+    min_commission: float,
+    t_plus_one: bool,
+    timezone: str,
+    history_depth: int,
+    resolved_policy: Optional[ResolvedExecutionPolicy],
+) -> Dict[str, Any]:
+    """Snapshot-friendly resolved runtime config (issue #282).
+
+    Single source of truth for what checkpoint resume must re-apply. Kept as a plain
+    JSON-able dict so it pickles cleanly and stays forward-compatible.
+    """
+    resolved: Dict[str, Any] = {
+        "slippage": dict(slippage_policy),
+        "volume_limit_pct": float(volume_limit_pct),
+        "commission_policy": dict(commission_policy),
+        "stamp_tax_rate": float(stamp_tax_rate),
+        "transfer_fee_rate": float(transfer_fee_rate),
+        "min_commission": float(min_commission),
+        "t_plus_one": bool(t_plus_one),
+        "timezone": str(timezone),
+        "history_depth": int(history_depth),
+    }
+    if resolved_policy is not None:
+        resolved["fill_policy"] = {
+            "price_basis": resolved_policy.price_basis,
+            "bar_offset": resolved_policy.bar_offset,
+            "temporal": resolved_policy.temporal,
+        }
+    return resolved
 
 
 def _attach_indicator_recorder(
@@ -4372,6 +4410,19 @@ def run_backtest(
         owner_strategy_id=effective_strategy_id,
         resolved_policy=resolved_policy,
     )
+    # 挂载已解析运行时配置，作为快照持久化的单一来源 (issue #282)
+    result.resolved_config = _build_resolved_backtest_config(
+        slippage_policy=normalized_global_slippage,
+        volume_limit_pct=volume_limit_pct,
+        commission_policy=commission_policy,
+        stamp_tax_rate=stamp_tax_rate,
+        transfer_fee_rate=transfer_fee_rate,
+        min_commission=min_commission,
+        t_plus_one=t_plus_one,
+        timezone=timezone,
+        history_depth=history_depth,
+        resolved_policy=resolved_policy,
+    )
     analyzer_outputs: Dict[str, Dict[str, Any]] = {}
     if analyzer_manager.plugins:
         try:
@@ -4393,7 +4444,7 @@ def run_backtest(
     return result
 
 
-def run_warm_start(
+def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
@@ -4427,9 +4478,9 @@ def run_warm_start(
     **kwargs: Any,
 ) -> BacktestResult:
     """
-    热启动回测 (Warm Start Backtest).
+    从检查点续跑回测 (Resume Backtest from Checkpoint).
 
-    注意：当前 run_warm_start 的策略实例来自 checkpoint 恢复，
+    注意：当前 run_from_checkpoint 的策略实例来自 checkpoint 恢复，
     不会通过 strategy_source / strategy_loader 重新加载策略类。
     如需替换策略实现，请优先使用 run_backtest 或在恢复后通过
     strategies_by_slot 覆盖 slot 策略。
@@ -4441,7 +4492,7 @@ def run_warm_start(
     """
     import os
 
-    from ..checkpoint import warm_start
+    from ..checkpoint import load_checkpoint
 
     logger = get_logger("backtest")
     if not has_configured_handler(logger.name, namespace_only=True):
@@ -4528,14 +4579,14 @@ def run_warm_start(
     _raise_if_legacy_execution_policy_used(
         legacy_mode_used=legacy_mode_override,
         legacy_timer_used=legacy_timer_override,
-        api_name="run_warm_start",
+        api_name="run_from_checkpoint",
     )
     fill_policy_override = cast(Optional[FillPolicy], kwargs.pop("fill_policy", None))
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
     symbols, effective_symbols = _resolve_effective_symbols(
         symbols=symbols,
         kwargs=kwargs,
-        api_name="run_warm_start",
+        api_name="run_from_checkpoint",
     )
 
     if not os.path.exists(checkpoint_path):
@@ -4624,8 +4675,7 @@ def run_warm_start(
                 data_map = {symbols[0]: df_prepared}
             else:
                 raise ValueError(
-                    "Warm start multi-symbol DataFrame input must contain "
-                    "a 'symbol' column"
+                    "Multi-symbol DataFrame input must contain a 'symbol' column"
                 )
         elif isinstance(data, list) and data and isinstance(data[0], Bar):
             # Convert List[Bar] to DataFrame for indicators
@@ -4674,7 +4724,13 @@ def run_warm_start(
             feed.sort()
 
     logger.info(f"Resuming from checkpoint: {checkpoint_path}")
-    engine, strategy_instance = warm_start(checkpoint_path, feed)
+    engine, strategy_instance = load_checkpoint(checkpoint_path, feed)
+    # 快照持久化的运行时配置 (issue #282)；旧快照为 None，走逐项推导降级路径
+    restored_backtest_config = getattr(
+        strategy_instance, "_warm_start_backtest_config", None
+    )
+    if not isinstance(restored_backtest_config, dict):
+        restored_backtest_config = {}
     restored_strategy_id = str(
         getattr(strategy_instance, "_owner_strategy_id", "") or ""
     ).strip()
@@ -5069,7 +5125,7 @@ def run_warm_start(
     if history_tracking_enabled and not history_buffer_snapshot_available:
         warning_message = (
             "The checkpoint was created by an older AKQuant version and does not "
-            "include the history buffer snapshot. Warm start can continue, but "
+            "include the history buffer snapshot. Checkpoint resume can continue, but "
             "`get_history()` / `get_history_map()` may differ from a full backtest "
             "until the checkpoint is regenerated with a newer version."
         )
@@ -5307,7 +5363,9 @@ def run_warm_start(
                     else None
                 ),
             )
-            logger.info(f"Re-registered configured instrument for warm start: {sym}")
+            logger.info(
+                f"Re-registered configured instrument for checkpoint resume: {sym}"
+            )
             continue
 
         symbol_lot_size: Optional[float] = None
@@ -5441,7 +5499,7 @@ def run_warm_start(
             ),
             static_attrs=dict(static_attrs),
         )
-        logger.info(f"Re-registered configured instrument for warm start: {sym}")
+        logger.info(f"Re-registered configured instrument for checkpoint resume: {sym}")
 
     merged_instrument_snapshots = dict(existing_instrument_snapshots)
     merged_instrument_snapshots.update(warm_start_instrument_snapshots)
@@ -5458,14 +5516,32 @@ def run_warm_start(
         commission_policy = cast(
             Optional[CommissionPolicy], kwargs.get("commission_policy")
         )
+    # 费率优先级：显式入参 > 快照配置 > _resolve_stock_fee_rules 内部默认。
+    # commission_policy 覆盖快照的 commission_policy；其余标量缺省时回退快照。
+    if commission_policy is None:
+        restored_commission = restored_backtest_config.get("commission_policy")
+        if isinstance(restored_commission, dict):
+            commission_policy = cast(CommissionPolicy, dict(restored_commission))
     commission_rate_value = cast(Optional[float], kwargs.get("commission_rate"))
     stamp_tax_rate_value = cast(
         Optional[float], kwargs.get("stamp_tax_rate", kwargs.get("stamp_tax"))
     )
+    if stamp_tax_rate_value is None:
+        stamp_tax_rate_value = cast(
+            Optional[float], restored_backtest_config.get("stamp_tax_rate")
+        )
     transfer_fee_rate_value = cast(
         Optional[float], kwargs.get("transfer_fee_rate", kwargs.get("transfer_fee"))
     )
+    if transfer_fee_rate_value is None:
+        transfer_fee_rate_value = cast(
+            Optional[float], restored_backtest_config.get("transfer_fee_rate")
+        )
     min_commission_value = cast(Optional[float], kwargs.get("min_commission"))
+    if min_commission_value is None:
+        min_commission_value = cast(
+            Optional[float], restored_backtest_config.get("min_commission")
+        )
     (
         resolved_commission_policy,
         stamp_tax,
@@ -5481,6 +5557,8 @@ def run_warm_start(
         strategy_config=strategy_config,
     )
     t_plus_one = kwargs.get("t_plus_one", False)
+    if "t_plus_one" not in kwargs and "t_plus_one" in restored_backtest_config:
+        t_plus_one = bool(restored_backtest_config.get("t_plus_one"))
 
     if t_plus_one:
         # ChinaMarket implies T+1 and specific fee rules
@@ -5526,6 +5604,55 @@ def run_warm_start(
         )
         engine.set_stock_fee_rules(commission, stamp_tax, transfer_fee, min_commission)
         logger.info(f"Re-configured market fees: comm={commission}, stamp={stamp_tax}")
+
+    # 2.7 Re-configure Slippage & Volume Limit (issue #282)
+    # 引擎状态不保留滑点/量比配置，热启动须与 run_backtest 一样重新应用，
+    # 否则二阶段会按原价撮合。显式入参优先，缺省时回退 config.strategy_config。
+    # 优先级：显式入参 > config.strategy_config > 快照配置 > 默认
+    warm_start_slippage: SlippageInput = cast(SlippageInput, kwargs.get("slippage"))
+    if warm_start_slippage is None and strategy_config is not None:
+        warm_start_slippage = strategy_config.slippage
+    if warm_start_slippage is None:
+        warm_start_slippage = cast(
+            SlippageInput, restored_backtest_config.get("slippage")
+        )
+    if warm_start_slippage is None:
+        warm_start_slippage = 0.0
+    normalized_global_slippage = _normalize_slippage_policy(
+        warm_start_slippage,
+        instrument_snapshots=merged_instrument_snapshots,
+        logger=logger,
+        scope="Global",
+    )
+    if (
+        normalized_global_slippage["type"] != "zero"
+        and normalized_global_slippage["value"] > 0
+    ):
+        if hasattr(engine, "set_slippage"):
+            engine.set_slippage(
+                normalized_global_slippage["type"],
+                normalized_global_slippage["value"],
+            )
+        else:
+            logger.warning(
+                "Slippage policy %s set but not supported by Engine.",
+                normalized_global_slippage,
+            )
+
+    warm_start_volume_limit = cast(Optional[float], kwargs.get("volume_limit_pct"))
+    if warm_start_volume_limit is None and strategy_config is not None:
+        warm_start_volume_limit = strategy_config.volume_limit_pct
+    if warm_start_volume_limit is None:
+        warm_start_volume_limit = cast(
+            Optional[float], restored_backtest_config.get("volume_limit_pct")
+        )
+    if (
+        warm_start_volume_limit is not None
+        and warm_start_volume_limit != 0.25
+        and hasattr(engine, "set_volume_limit")
+    ):
+        engine.set_volume_limit(warm_start_volume_limit)
+
     restored_initial_market_value = float(restored_cash)
     if hasattr(engine, "get_account_metrics"):
         try:
@@ -5536,12 +5663,20 @@ def run_warm_start(
             restored_initial_market_value = float(restored_cash)
     if hasattr(engine, "set_initial_cash_reference"):
         cast(Any, engine).set_initial_cash_reference(restored_initial_market_value)
+    # fill_policy 优先级：显式入参 > 快照配置。缺省时继承快照 (issue #282)
+    effective_fill_policy = fill_policy_override
+    apply_fill_policy = has_fill_policy_override
+    if not apply_fill_policy:
+        restored_fill_policy = restored_backtest_config.get("fill_policy")
+        if isinstance(restored_fill_policy, dict):
+            effective_fill_policy = cast(FillPolicy, dict(restored_fill_policy))
+            apply_fill_policy = True
     resolved_policy_warm_start: Optional[ResolvedExecutionPolicy] = None
-    if has_fill_policy_override:
+    if apply_fill_policy:
         resolved_policy_warm_start = _resolve_execution_policy(
             execution_mode="next_open",
             timer_execution_policy="same_cycle",
-            fill_policy=fill_policy_override,
+            fill_policy=effective_fill_policy,
             logger=logger,
         )
         if not hasattr(engine, "set_fill_policy"):
@@ -5591,7 +5726,9 @@ def run_warm_start(
                 try:
                     current_strategy._prepare_indicators(data_map_for_indicators)
                 except Exception as e:
-                    logger.error(f"Failed to update indicators for warm start: {e}")
+                    logger.error(
+                        f"Failed to update indicators for checkpoint resume: {e}"
+                    )
             if hasattr(current_strategy, "_bootstrap_incremental_indicators"):
                 try:
                     current_strategy._bootstrap_incremental_indicators(
@@ -5599,8 +5736,7 @@ def run_warm_start(
                     )
                 except Exception as e:
                     logger.error(
-                        "Failed to bootstrap incremental indicators for warm start: "
-                        f"{e}"
+                        f"Failed to bootstrap incremental indicators on resume: {e}"
                     )
 
     # 4. 运行
@@ -5610,7 +5746,7 @@ def run_warm_start(
         engine_summary = str(engine.run(strategy_instance, show_progress))
     except Exception as e:
         logger.error(
-            "Warm start backtest failed: %s",
+            "Checkpoint resume backtest failed: %s",
             e,
             extra=_build_backtest_log_extra(
                 phase="backtest",

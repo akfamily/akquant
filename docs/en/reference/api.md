@@ -252,12 +252,12 @@ def run_walk_forward(
 *   Therefore, `forward_worker_logs` controls worker-log forwarding during in-sample parallel optimization.
 *   `strict_strategy_params` stays effective across optimization and validation phases (strict by default).
 
-### `akquant.run_warm_start`
+### `akquant.run_from_checkpoint`
 
 Resume a backtest from snapshot state and continue execution.
 
 ```python
-def run_warm_start(
+def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
@@ -288,7 +288,7 @@ def run_warm_start(
 ) -> BacktestResult
 ```
 
-`run_warm_start` uses the same strategy-slot, strategy-level risk, and strategy-level execution defaults as `run_backtest`.
+`run_from_checkpoint` uses the same strategy-slot, strategy-level risk, and strategy-level execution defaults as `run_backtest`.
 For these fields, priority is:
 
 1. explicit function arguments
@@ -322,8 +322,8 @@ result = aq.run_backtest(
 *   `align="session"`: Partition by trading day, optionally with `session_windows`.
 *   `align="day"`: Partition by day without `session_windows`; `day_mode` supports `trading/calendar`.
 *   `align="global"`: Aggregate on the full timeline without day partitioning.
-*   Parameter recommendation: always use `symbols`. `run_backtest`/`run_warm_start` no longer accept `symbol`.
-*   Migration status: `symbol` has been removed from `run_backtest`/`run_warm_start`; migrate all calls to `symbols`.
+*   Parameter recommendation: always use `symbols`. `run_backtest`/`run_from_checkpoint` no longer accept `symbol`.
+*   Migration status: `symbol` has been removed from `run_backtest`/`run_from_checkpoint`; migrate all calls to `symbols`.
 
 **Compatibility & Migration Notes:**
 
@@ -340,6 +340,40 @@ result = aq.run_backtest(
 *   Can `run_backtest` still be called without `on_event`? Yes, and result-return semantics stay the same.
 *   How do we roll back in production? Use release-level rollback; `_engine_mode` runtime fallback is removed.
 *   Can we still use `symbol`? No. Migrate to `symbols`.
+
+### `akquant.merge_results`
+
+```python
+def merge_results(
+    *results: BacktestResult,
+    drop_expired_instruments: bool = True,
+    dedupe_boundary: bool = True,
+) -> MergedResult
+```
+
+Merges multiple `BacktestResult` segments produced by staged
+`run_from_checkpoint` runs into one time-ordered `MergedResult`, exposing the
+same read-only views as `BacktestResult` (`equity_curve` / `cash_curve` /
+`margin_curve` / `orders_df` / `trades_df` / `executions_df` / `positions_df` /
+`daily_returns` / `to_quantstats`).
+
+**Behavior:**
+
+*   Curves and order/trade/execution/position frames are concatenated by
+    timestamp; `dedupe_boundary=True` drops overlapping boundary timestamps
+    (same-ts keeps the later segment, matching the engine upsert semantics).
+*   Segments must be **time-increasing and non-overlapping** (gaps allowed);
+    overlapping segments raise `ValueError`.
+*   `drop_expired_instruments=True` removes position rows for instruments past
+    their snapshot `expiry_date`, preventing asset blow-up over long ranges.
+
+**Metrics are a core subset:** `MergedResult.metrics` / `metrics_df` only
+recompute metrics unambiguously derivable from the merged equity curve + trades
+(`total_return_pct` / `max_drawdown` / `sharpe_ratio` / `sortino_ratio` /
+`calmar_ratio` / `volatility` / `annualized_return` / `win_rate` /
+`profit_factor` / `end_market_value`, matching the single-run definitions). Fields that
+depend on engine-internal state are not provided and raise `AttributeError`; read
+the full 60-field metrics from a single-run `BacktestResult`.
 
 ### Stream Parameters & Events (`run_backtest`)
 
@@ -622,14 +656,14 @@ The `risk_config` parameter has special handling logic designed to support a "Ba
 
 #### 4. Strategy Runtime Config Injection
 
-`run_backtest` and `run_warm_start` support `strategy_runtime_config`:
+`run_backtest` and `run_from_checkpoint` support `strategy_runtime_config`:
 
 *   Accepted formats: `StrategyRuntimeConfig` or `dict`.
 *   Purpose: Inject runtime behavior switches without modifying strategy class code.
 *   Example: `run_backtest(..., strategy_runtime_config={"error_mode": "continue"})`.
 *   Validation: Unknown keys and invalid values fail fast with field-level errors.
 *   Conflict handling: `runtime_config_override=True` applies external config; `False` keeps strategy-side config.
-*   The same conflict rules apply consistently to both `run_backtest` and `run_warm_start`.
+*   The same conflict rules apply consistently to both `run_backtest` and `run_from_checkpoint`.
 *   Conflict warnings are deduplicated per strategy instance for identical conflict payloads.
 *   Priority rule: explicit `strategy_runtime_config` parameter has higher priority than forwarded config maps.
 *   Troubleshooting quick lookup: see [Runtime Config Guide](../advanced/runtime_config.md).

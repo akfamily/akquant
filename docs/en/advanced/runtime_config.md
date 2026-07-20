@@ -14,7 +14,7 @@ This page explains how to control strategy runtime behavior from backtest entry 
 It works for both:
 
 - `run_backtest(...)`
-- `run_warm_start(...)`
+- `run_from_checkpoint(...)`
 
 ## 2. Basic Usage
 
@@ -71,7 +71,7 @@ Identical conflict warnings are deduplicated per strategy instance.
 You can override runtime behavior when resuming from snapshot:
 
 ```python
-result = run_warm_start(
+result = run_from_checkpoint(
     checkpoint_path="snapshot.pkl",
     data=new_data,
     symbols="TEST",
@@ -147,9 +147,9 @@ result = run_backtest(
 )
 ```
 
-### 9.3 Relation to `run_warm_start`
+### 9.3 Relation to `run_from_checkpoint`
 
-`run_warm_start(...)` currently restores strategy instance from checkpoint and does not
+`run_from_checkpoint(...)` currently restores strategy instance from checkpoint and does not
 reload strategy implementation via `strategy_source` / `strategy_loader`.
 
 ## 10. broker_profile Selection Guide

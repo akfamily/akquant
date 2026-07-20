@@ -6,7 +6,7 @@ Strategy runtime_config demo.
 Scenarios:
 1) run_backtest with strategy_runtime_config override enabled.
 2) run_backtest with runtime_config_override=False.
-3) run_warm_start with strategy_runtime_config override enabled.
+3) run_from_checkpoint with strategy_runtime_config override enabled.
 """
 
 import os
@@ -124,9 +124,9 @@ def scenario_warm_start_override_true() -> None:
         symbols="TEST",
         show_progress=False,
     )
-    aq.save_snapshot(result1.engine, result1.strategy, checkpoint_path)  # type: ignore[arg-type]
+    aq.save_checkpoint(result1.engine, result1.strategy, checkpoint_path)  # type: ignore[arg-type]
 
-    result2 = aq.run_warm_start(
+    result2 = aq.run_from_checkpoint(
         checkpoint_path=checkpoint_path,
         data=phase2,
         symbols="TEST",

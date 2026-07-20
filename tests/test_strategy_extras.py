@@ -18,8 +18,8 @@ from akquant import (
     register_logger,
     register_strategy_loader,
     run_backtest,
-    run_warm_start,
-    save_snapshot,
+    run_from_checkpoint,
+    save_checkpoint,
 )
 from akquant.akquant import (
     Bar,
@@ -1805,9 +1805,9 @@ def test_run_warm_start_end_to_end_lifecycle(tmp_path: Path) -> None:
         show_progress=False,
     )
 
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -1845,8 +1845,8 @@ def test_run_warm_start_preserves_get_history_window(tmp_path: Path) -> None:
         initial_cash=100000.0,
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
-    warm_result = run_warm_start(
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    warm_result = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -1884,7 +1884,7 @@ def test_run_warm_start_warns_for_legacy_checkpoint_without_history_feature_mark
         initial_cash=100000.0,
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with checkpoint.open("rb") as fh:
         snapshot = pickle.load(fh)
@@ -1893,7 +1893,7 @@ def test_run_warm_start_warns_for_legacy_checkpoint_without_history_feature_mark
         pickle.dump(snapshot, fh)
 
     with pytest.warns(RuntimeWarning, match="history buffer snapshot"):
-        result2 = run_warm_start(
+        result2 = run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -1916,9 +1916,9 @@ def test_run_warm_start_respects_instruments_config_and_merges_snapshots(
         symbols="BASE",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="OPT2402C",
@@ -1954,6 +1954,179 @@ def test_run_warm_start_respects_instruments_config_and_merges_snapshots(
     assert strategy.captured_counts == [1, 2]
 
 
+class _WarmStartBuyOnceStrategy(Strategy):
+    """Buy exactly one lot on the first phase-2 (restored) bar.
+
+    Phase 1 stays flat so the checkpoint has no pending order to pickle.
+    """
+
+    def __init__(self) -> None:
+        self.has_bought = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if self.is_restored and not self.has_bought:
+            self.buy(symbol=bar.symbol, quantity=1.0, tag="warm-slippage")
+            self.has_bought = True
+
+
+def _warm_start_phase2_fill_price(
+    tmp_path: Path, slippage: Any, filename: str
+) -> float:
+    """Run cold->warm with a given global slippage and return phase-2 fill price."""
+    checkpoint = tmp_path / filename
+    phase1 = _make_bars("2023-01-01", 2, symbol="SLIP")
+    phase2 = _make_bars("2023-02-01", 3, symbol="SLIP", start_price=200.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_WarmStartBuyOnceStrategy,
+        symbols="SLIP",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        config=BacktestConfig(strategy_config=StrategyConfig(slippage=slippage)),
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="SLIP",
+        show_progress=False,
+        # 关键：只通过 config.strategy_config 传滑点，不显式传 slippage 入参
+        config=BacktestConfig(strategy_config=StrategyConfig(slippage=slippage)),
+    )
+    filled = result2.orders_df[
+        result2.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    assert len(filled) >= 1, "warm start phase-2 order did not fill"
+    return float(filled.iloc[0]["avg_price"])
+
+
+def test_run_warm_start_inherits_global_slippage_from_config(tmp_path: Path) -> None:
+    """Global slippage in config.strategy_config must apply in warm start (issue #282).
+
+    热启动此前完全不应用全局滑点，二阶段按原价撮合。此用例对比有/无滑点两次
+    热启动的成交价，锁定继承路径。
+    """
+    price_with_slippage = _warm_start_phase2_fill_price(
+        tmp_path, {"type": "percent", "value": 0.1}, "snapshot_slip_on.pkl"
+    )
+    price_no_slippage = _warm_start_phase2_fill_price(
+        tmp_path, 0.0, "snapshot_slip_off.pkl"
+    )
+    # 10% 买入滑点必须抬高成交价；未继承时两者相等（旧 bug）
+    assert price_with_slippage > price_no_slippage
+    assert price_with_slippage == pytest.approx(price_no_slippage * 1.1)
+
+
+def test_run_warm_start_inherits_config_from_snapshot(tmp_path: Path) -> None:
+    """save_checkpoint(config=result) 持久化配置，热启动零显式入参自动继承 (issue #282).
+
+    这是配置继承的根治路径：用户只在完整回测里配一次滑点，分阶段热启动无需
+    重复传参即可继承。
+    """
+    checkpoint = tmp_path / "snapshot_cfg.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="SLIP")
+    phase2 = _make_bars("2023-02-01", 3, symbol="SLIP", start_price=200.0)
+    slippage = {"type": "percent", "value": 0.1}
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_WarmStartBuyOnceStrategy,
+        symbols="SLIP",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        config=BacktestConfig(strategy_config=StrategyConfig(slippage=slippage)),
+    )
+    # 关键：把 result 作为 config 传入，持久化已解析配置
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint), config=result1)  # type: ignore[arg-type]
+
+    # 热启动完全不传 slippage / config
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="SLIP",
+        show_progress=False,
+    )
+    filled = result2.orders_df[
+        result2.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    assert len(filled) >= 1
+    price = float(filled.iloc[0]["avg_price"])
+    # 首根 restored bar 下单，次根 bar open=201.0 撮合，10% 买入滑点 -> 221.1
+    assert price == pytest.approx(201.0 * 1.1)
+
+
+def test_run_warm_start_without_snapshot_config_is_backward_compatible(
+    tmp_path: Path,
+) -> None:
+    """旧快照 (不传 config) 无 backtest_config，热启动降级不报错 (issue #282)."""
+    checkpoint = tmp_path / "snapshot_legacy.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="SLIP")
+    phase2 = _make_bars("2023-02-01", 3, symbol="SLIP", start_price=200.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_WarmStartBuyOnceStrategy,
+        symbols="SLIP",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        config=BacktestConfig(
+            strategy_config=StrategyConfig(slippage={"type": "percent", "value": 0.1})
+        ),
+    )
+    # 不传 config，模拟旧快照
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    # 无快照配置、无显式入参 -> 无滑点，按原价撮合，且不抛错
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="SLIP",
+        show_progress=False,
+    )
+    filled = result2.orders_df[
+        result2.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    assert len(filled) >= 1
+    assert float(filled.iloc[0]["avg_price"]) == pytest.approx(201.0)
+
+
+def test_run_warm_start_explicit_arg_overrides_snapshot_config(
+    tmp_path: Path,
+) -> None:
+    """显式入参优先级高于快照配置 (issue #282)."""
+    checkpoint = tmp_path / "snapshot_override.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="SLIP")
+    phase2 = _make_bars("2023-02-01", 3, symbol="SLIP", start_price=200.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_WarmStartBuyOnceStrategy,
+        symbols="SLIP",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        config=BacktestConfig(
+            strategy_config=StrategyConfig(slippage={"type": "percent", "value": 0.1})
+        ),
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint), config=result1)  # type: ignore[arg-type]
+
+    # 显式传 5% 覆盖快照里的 10%
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="SLIP",
+        show_progress=False,
+        slippage={"type": "percent", "value": 0.05},
+    )
+    filled = result2.orders_df[
+        result2.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    assert len(filled) >= 1
+    assert float(filled.iloc[0]["avg_price"]) == pytest.approx(201.0 * 1.05)
+
+
 def test_run_warm_start_functional_lifecycle(tmp_path: Path) -> None:
     """Functional warm start should preserve callbacks, order, and state."""
     checkpoint = tmp_path / "snapshot_functional.pkl"
@@ -1971,9 +2144,9 @@ def test_run_warm_start_functional_lifecycle(tmp_path: Path) -> None:
         show_progress=False,
     )
 
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="FUNC",
@@ -2015,9 +2188,9 @@ def test_run_warm_start_restores_functional_slot_strategies(tmp_path: Path) -> N
         strategies_by_slot={"beta": _functional_warm_beta_on_bar},
     )
 
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="FUNC_SLOT",
@@ -2068,9 +2241,9 @@ def test_run_warm_start_accepts_symbols_alias(tmp_path: Path) -> None:
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2095,10 +2268,10 @@ def test_run_warm_start_rejects_legacy_symbol_keyword_alias(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="no longer accepts `symbol`"):
-        run_warm_start(
+        run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbol="TEST",
@@ -2118,10 +2291,10 @@ def test_run_warm_start_rejects_conflicting_symbol_and_symbols(tmp_path: Path) -
         symbols="AAA",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="no longer accepts `symbol`"):
-        run_warm_start(
+        run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbol="AAA",
@@ -2142,9 +2315,9 @@ def test_run_warm_start_accepts_strategy_runtime_config(tmp_path: Path) -> None:
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2169,9 +2342,9 @@ def test_run_warm_start_exposes_resolved_execution_policy(tmp_path: Path) -> Non
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2201,14 +2374,14 @@ def test_run_warm_start_rejects_legacy_execution_overrides_without_fill_policy(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(
         ValueError,
-        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+        match="run_from_checkpoint no longer accepts",
     ):
         legacy_kwargs: dict[str, Any] = {"execution_mode": "current_close"}
-        _ = run_warm_start(
+        _ = run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2231,14 +2404,14 @@ def test_run_warm_start_rejects_legacy_timer_override_without_fill_policy(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(
         ValueError,
-        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+        match="run_from_checkpoint no longer accepts",
     ):
         legacy_kwargs: dict[str, Any] = {"timer_execution_policy": "next_event"}
-        _ = run_warm_start(
+        _ = run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2261,14 +2434,14 @@ def test_run_warm_start_rejects_legacy_execution_overrides_when_compat_disabled(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(
         ValueError,
-        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+        match="run_from_checkpoint no longer accepts",
     ):
         legacy_kwargs: dict[str, Any] = {"execution_mode": "current_close"}
-        _ = run_warm_start(
+        _ = run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2291,13 +2464,13 @@ def test_run_warm_start_rejects_non_bool_legacy_execution_policy_compat(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(
         TypeError, match="legacy_execution_policy_compat is no longer supported"
     ):
         compat_kwargs: dict[str, Any] = {"legacy_execution_policy_compat": "false"}
-        _ = run_warm_start(
+        _ = run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2321,14 +2494,14 @@ def test_run_warm_start_rejects_legacy_by_env_default(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(
         ValueError,
-        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+        match="run_from_checkpoint no longer accepts",
     ):
         legacy_kwargs: dict[str, Any] = {"execution_mode": "current_close"}
-        _ = run_warm_start(
+        _ = run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2351,9 +2524,9 @@ def test_run_warm_start_rejects_invalid_legacy_env_default(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
     monkeypatch.setenv("AKQ_LEGACY_EXECUTION_POLICY_COMPAT", "bad")
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2377,14 +2550,14 @@ def test_run_warm_start_explicit_compat_overrides_env_default(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
     monkeypatch.setenv("AKQ_LEGACY_EXECUTION_POLICY_COMPAT", "false")
     with pytest.raises(
         ValueError,
-        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+        match="run_from_checkpoint no longer accepts",
     ):
         legacy_kwargs: dict[str, Any] = {"execution_mode": "current_close"}
-        _ = run_warm_start(
+        _ = run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2395,7 +2568,7 @@ def test_run_warm_start_explicit_compat_overrides_env_default(
         TypeError, match="legacy_execution_policy_compat is no longer supported"
     ):
         compat_kwargs: dict[str, Any] = {"legacy_execution_policy_compat": True}
-        _ = run_warm_start(
+        _ = run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2423,9 +2596,9 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
         strategy_max_order_size={"alpha": 5.0, "beta": 20.0},
         strategy_risk_cooldown_bars={"alpha": 2},
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2470,9 +2643,9 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2515,9 +2688,9 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
         show_progress=False,
         config=config,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2558,9 +2731,9 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
         show_progress=False,
         config=config,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2594,9 +2767,9 @@ def test_run_warm_start_accepts_fee_rate_names_and_default_timezone(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2623,10 +2796,10 @@ def test_run_warm_start_rejects_unknown_broker_profile(tmp_path: Path) -> None:
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="Unknown broker_profile"):
-        run_warm_start(
+        run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2649,10 +2822,10 @@ def test_run_warm_start_runtime_config_override_true_by_default(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with caplog.at_level(logging.WARNING, logger="akquant"):
-        result2 = run_warm_start(
+        result2 = run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2681,11 +2854,11 @@ def test_run_warm_start_runtime_config_override_false_keeps_strategy_config(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with caplog.at_level(logging.WARNING, logger="akquant"):
         with pytest.raises(ValueError, match="warm_conflict_boom"):
-            run_warm_start(
+            run_from_checkpoint(
                 checkpoint_path=str(checkpoint),
                 data=phase2,
                 symbols="TEST",
@@ -2712,10 +2885,10 @@ def test_run_warm_start_rejects_invalid_strategy_runtime_config_type(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(TypeError, match="strategy_runtime_config"):
-        run_warm_start(
+        run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2738,11 +2911,11 @@ def test_run_warm_start_rejects_invalid_runtime_config_from_forwarded_kwargs(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     forwarded_kwargs = cast(Any, {"strategy_runtime_config": "invalid"})
     with pytest.raises(TypeError, match="strategy_runtime_config"):
-        run_warm_start(
+        run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2765,12 +2938,12 @@ def test_run_warm_start_accepts_runtime_config_from_forwarded_kwargs(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     forwarded_kwargs = cast(
         Any, {"strategy_runtime_config": {"error_mode": "continue"}}
     )
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
@@ -2797,10 +2970,10 @@ def test_run_warm_start_rejects_unknown_strategy_runtime_config_fields(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="unknown fields: unknown_flag"):
-        run_warm_start(
+        run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2823,10 +2996,10 @@ def test_run_warm_start_rejects_invalid_strategy_runtime_config_values(
         symbols="TEST",
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="invalid strategy_runtime_config"):
-        run_warm_start(
+        run_from_checkpoint(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbols="TEST",
@@ -2933,9 +3106,9 @@ def test_run_warm_start_multi_symbol_continuity(tmp_path: Path) -> None:
         show_progress=False,
     )
 
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="BENCHMARK",
@@ -2977,9 +3150,9 @@ def test_run_warm_start_multi_symbol_dataframe_continuity(tmp_path: Path) -> Non
         initial_cash=100000.0,
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    warm_result = run_warm_start(
+    warm_result = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols=["AAA", "BBB"],
@@ -3040,9 +3213,9 @@ def test_run_warm_start_open_position_preserves_initial_market_value(
         fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         config=config,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="FUT",
@@ -3138,9 +3311,9 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
         fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
     )
-    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    result2 = run_warm_start(
+    result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="BENCHMARK",

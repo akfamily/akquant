@@ -193,7 +193,7 @@ def main() -> None:
     # 保存快照
     print(f"\n[System] 保存快照到 {checkpoint_file}...")
     # 类型忽略: run_backtest 返回的 result.engine 类型可能未被mypy完全识别为 Engine
-    aq.save_snapshot(result1.engine, result1.strategy, checkpoint_file)  # type: ignore[arg-type]
+    aq.save_checkpoint(result1.engine, result1.strategy, checkpoint_file)  # type: ignore[arg-type]
 
     print("\n" + "=" * 50)
     print("阶段二：热启动续跑 (2022-01-01 -> 2023-12-31)")
@@ -209,12 +209,12 @@ def main() -> None:
 
     print(f"[System] 准备数据: 新数据 {len(data_new)} 条")
 
-    # 使用 run_warm_start 从快照恢复
+    # 使用 run_from_checkpoint 从检查点恢复
     # 注意：
     # 1. 不需要传入 strategy 类，因为策略实例已从快照恢复
     # 2. 不需要传入 initial_cash，资金状态已恢复
     # 3. 传入拼接后的数据 data_phase2
-    result2 = aq.run_warm_start(
+    result2 = aq.run_from_checkpoint(
         checkpoint_path=checkpoint_file,
         data=data_phase2,
         symbols=symbol,

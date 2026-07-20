@@ -484,7 +484,7 @@ class TargetPositionsDemoStrategy(Strategy):
     *   使用两段合成 `Bar` 数据完成最小热启动闭环，并以 `done_functional_warm_start_demo` 作为结束标记。
 
 *   **[57_functional_multi_slot_warm_start_demo.py](https://github.com/akfamily/akquant/blob/main/examples/57_functional_multi_slot_warm_start_demo.py)**:
-    *   演示函数式主 slot 与 `strategies_by_slot` 副 slot 如何各自保存状态，并在 `run_warm_start()` 后分别触发 `on_resume(ctx)` 与 `on_start(ctx)`。
+    *   演示函数式主 slot 与 `strategies_by_slot` 副 slot 如何各自保存状态，并在 `run_from_checkpoint()` 后分别触发 `on_resume(ctx)` 与 `on_start(ctx)`。
     *   输出主副 slot 的事件序列、累计 close 列表与恢复计数，并以 `done_functional_multi_slot_warm_start_demo` 作为结束标记。
 
 *   **[25_streaming_backtest_demo.py](https://github.com/akfamily/akquant/blob/main/examples/25_streaming_backtest_demo.py)**:

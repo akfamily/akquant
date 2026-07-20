@@ -15,23 +15,23 @@ With warm start, you can:
 
 ### 2.1 Save Snapshot (Phase 1)
 
-At the end of phase 1 (or at any strategy checkpoint), save state with `save_snapshot`.
+At the end of phase 1 (or at any strategy checkpoint), save state with `save_checkpoint`.
 
 ```python
-from akquant.checkpoint import save_snapshot
+from akquant.checkpoint import save_checkpoint
 
 # Run phase 1
 result1 = run_backtest(data=data_phase1, strategy=MyStrategy, ...)
 
 # Save snapshot file
 checkpoint_file = "checkpoint_phase1.pkl"
-save_snapshot(result1.engine, result1.strategy, checkpoint_file)
+save_checkpoint(result1.engine, result1.strategy, checkpoint_file)
 print(f"Snapshot saved to {checkpoint_file}")
 ```
 
 ### 2.2 Resume and Continue (Phase 2)
 
-Use `run_warm_start` with the snapshot path and phase-2 data.
+Use `run_from_checkpoint` with the snapshot path and phase-2 data.
 
 Important: snapshots only store dynamic runtime state (`Portfolio`, `Orders`, strategy attributes). Static configuration (`Instrument`, `MarketModel`) is not persisted and must be reconfigured on resume.
 
@@ -50,7 +50,7 @@ config = aq.BacktestConfig(
 )
 
 # Resume from snapshot and continue
-result2 = aq.run_warm_start(
+result2 = aq.run_from_checkpoint(
     checkpoint_path="checkpoint_phase1.pkl",
     data=data_phase2,
     symbols="AAPL",
@@ -104,14 +104,14 @@ Built-in indicators (`SMA`, `EMA`, etc.) support pickle serialization. For custo
 
 ## 4. Notes
 
-1. **Instrument re-registration**: `run_warm_start` auto-registers default instrument info for symbols in new data. If your strategy depends on custom `lot_size` or `multiplier`, verify and override in `on_start`.
+1. **Instrument re-registration**: `run_from_checkpoint` auto-registers default instrument info for symbols in new data. If your strategy depends on custom `lot_size` or `multiplier`, verify and override in `on_start`.
 2. **MarketModel reset**: Fee settings and trading rules (for example T+1) are not persisted in snapshots. Re-pass them via explicit args or `config.strategy_config` on resume, including `commission_policy` / `commission_rate`, taxes, and transfer-fee settings.
 3. **Initial cash display**: `result2.metrics.initial_cash` is adjusted to resumed-phase starting cash, so phase-2 return metrics remain interpretable.
 4. **Data continuity**: Keep phase-1 end and phase-2 start continuous to avoid indicator jumps.
 5. **`get_history()` continuity**: New snapshots also persist the history buffer, so `get_history()` and `get_history_map()` resume with the phase-1 rolling window intact. In the normal warm-start path you no longer need to manually prepend extra lookback bars.
-6. **Runtime config injection**: Use `strategy_runtime_config` in `run_warm_start` to override runtime behavior at resume.
+6. **Runtime config injection**: Use `strategy_runtime_config` in `run_from_checkpoint` to override runtime behavior at resume.
 7. **Strategy-level risk state continuity**: Strategy limits, strategy cashflow, daily-loss baseline, drawdown peak, and reduce-only activation state are persisted and restored.
-8. **Default timezone**: If `timezone` is not explicitly provided to `run_warm_start`, default is `Asia/Shanghai`.
+8. **Default timezone**: If `timezone` is not explicitly provided to `run_from_checkpoint`, default is `Asia/Shanghai`.
 
 ## 5. Full Example
 
@@ -125,14 +125,47 @@ class MyStrategy(Strategy):
         self.register_precomputed_indicator("sma", self.sma)
 
 # ... run phase 1 ...
-save_snapshot(engine, strategy, "checkpoint.pkl")
+save_checkpoint(engine, strategy, "checkpoint.pkl")
 
 # ... run phase 2 ...
-run_warm_start("checkpoint.pkl", data_new, ...)
+run_from_checkpoint("checkpoint.pkl", data_new, ...)
 ```
+
+## 5.x Merging Multi-Phase Results (`merge_results`)
+
+Each segment's `BacktestResult` only covers its own window. Use `merge_results`
+to stitch multiple segments into one continuous result instead of hand-rolling a
+concatenation loop:
+
+```python
+import akquant as aq
+
+r1 = aq.run_backtest(data=phase1, strategy=MyStrategy, symbols="X", initial_cash=1e6)
+aq.save_checkpoint(r1.engine, r1.strategy, "ckpt.pkl")
+r2 = aq.run_from_checkpoint("ckpt.pkl", data=phase2, symbols="X")
+
+merged = aq.merge_results(r1, r2)
+print(merged.equity_curve)           # full curve across both segments
+print(merged.metrics.total_return_pct)
+returns = merged.to_quantstats()     # feed quantstats for reporting
+```
+
+Notes:
+
+- Segments must be **time-ordered and non-overlapping** (gaps allowed);
+  overlapping segments raise `ValueError`.
+- `dedupe_boundary=True` (default) drops duplicated boundary timestamps between
+  adjacent segments.
+- `drop_expired_instruments=True` (default) removes expired-instrument position
+  rows using each segment's instrument-snapshot `expiry_date`, preventing asset
+  blow-up over long ranges.
+- `merged.metrics` is a **core subset** (total_return / max_drawdown / sharpe /
+  sortino / calmar / win_rate / profit_factor, matching the single-run definitions).
+  Engine-internal-state metrics are not provided on merged results; read the full
+  60-field metrics from a single-run `BacktestResult`.
 
 ## 6. Further Reading
 
-- API reference for `run_warm_start`: [API Reference](../reference/api.md#akquantrun_warm_start)
+- API reference for `run_from_checkpoint`: [API Reference](../reference/api.md#akquantrun_from_checkpoint)
 - Runtime behavior overrides during resume: [Runtime Config Guide](runtime_config.md)
 - Multi-slot continuity and strategy-level risk mapping: [Multi-Strategy Guide](multi_strategy_guide.md)

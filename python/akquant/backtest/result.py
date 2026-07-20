@@ -50,6 +50,8 @@ class BacktestResult:
         self.engine = engine
         self.analyzer_outputs: dict[str, dict[str, Any]] = {}
         self.resolved_execution_policy: Optional[dict[str, Any]] = None
+        # 已解析运行时配置，供 save_checkpoint 持久化以便续跑继承 (issue #282)
+        self.resolved_config: Optional[dict[str, Any]] = None
         self.stream_run_id: Optional[str] = None
         self.indicator_outputs: Dict[str, List[Dict[str, Any]]] = (
             indicator_outputs

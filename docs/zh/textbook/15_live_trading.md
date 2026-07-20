@@ -93,7 +93,7 @@ bundle = create_gateway_bundle(
 4. **网关选型要清醒**：内置 `MiniQMT/PTrade` 当前更偏占位骨架与联调层，**不应视为已完成生产级 A 股适配**；集合竞价专用委托、打新等场景通常需自定义 broker 或增强 adapter（见 15.1.2 与《自定义 Broker 注册/生产接入清单》）。
 5. **成交语义从严**：CTP 链路使用 `execution_semantics_mode="strict"`（默认、推荐生产）——撤单/拒单/成交等**终态一律以柜台 `OnRtnOrder` 回报为准**，不要凭本地请求成功就推进状态（详见 15.2.2）。
 6. **风控前置必须开**：实盘务必显式配置 RMS 前置风控（单笔最大委托量、资金使用率、日内撤单次数、策略级止损），它是防"乌龙指"的最后一道防线（见 15.3）。
-7. **状态可恢复**：用 `save_snapshot` 定期落盘、`run_warm_start` 重启后续跑，保证宕机后"断点续传"（见 15.5.4、15.6.2）。
+7. **状态可恢复**：用 `save_checkpoint` 定期落盘、`run_from_checkpoint` 重启后续跑，保证宕机后"断点续传"（见 15.5.4、15.6.2）。
 8. **可观测性到位**：启动前用 `akquant.configure_logging(LogConfig(profile="live", file_json=True, ...))` 打开结构化日志，并接入监控告警（见 15.5.2、15.8）。
 
 一句话原则：**先 paper 后实盘、先查能力后下单、终态以柜台回报为准、风控与可观测性先于收益。**
@@ -226,23 +226,23 @@ akquant.configure_logging(
 
 **1. 保存状态 (Checkpoint)**
 
-在每日收盘后或定期调用 `save_snapshot`：
+在每日收盘后或定期调用 `save_checkpoint`：
 
 ```python
 import akquant as aq
 # 保存当前引擎状态和策略变量
-aq.save_snapshot(engine, strategy, "strategy_checkpoint.pkl")
+aq.save_checkpoint(engine, strategy, "strategy_checkpoint.pkl")
 ```
 
 **2. 恢复运行 (Restore)**
 
-系统重启后，使用 `run_warm_start` 加载快照并注入新的数据源：
+系统重启后，使用 `run_from_checkpoint` 加载快照并注入新的数据源：
 
 ```python
 # 加载最新的数据源 (包含历史数据 + 今日新数据)
 data_feed = aq.CSVFeedAdapter(path_template="latest_data_{symbol}.csv")
 
-engine_result = aq.run_warm_start(
+engine_result = aq.run_from_checkpoint(
     checkpoint_path="strategy_checkpoint.pkl",
     data=data_feed,
     symbols="rb2310",
@@ -253,7 +253,7 @@ engine = engine_result.engine
 strategy = engine_result.strategy
 ```
 
-`run_warm_start` 会恢复 checkpoint 中的策略实例，不会通过 `strategy_source/strategy_loader` 重新加载策略实现。
+`run_from_checkpoint` 会恢复 checkpoint 中的策略实例，不会通过 `strategy_source/strategy_loader` 重新加载策略实现。
 
 ### 15.5.5 动态策略加载 (Strategy Loader)
 
@@ -399,7 +399,7 @@ GPU 擅长大规模并行计算，因此常用于深度学习训练 (Training) �
 
     **基础题**：以 `paper` 模式启动，调用 `configure_logging(..., file_json=True)`，记录 `order_id`、`client_order_id`、`strategy_id`、`symbol` 等结构化字段。
 
-    **应用题**：`save_snapshot` 落盘 → 模拟中断 → `run_warm_start` 加载快照并注入新数据源，验证持仓与指标缓存恢复一致、无重复下单。
+    **应用题**：`save_checkpoint` 落盘 → 模拟中断 → `run_from_checkpoint` 加载快照并注入新数据源，验证持仓与指标缓存恢复一致、无重复下单。
 
     **综合题**：参见 15.1.3 的切换清单——paper 验证、能力查询、CTP strict 终态、RMS 前置风控、热启动、监控告警、灰度发布。
 
