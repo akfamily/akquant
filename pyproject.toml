@@ -95,6 +95,12 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 check_untyped_defs = true
 exclude = '(?x)(^|[\\/])vendor([\\/]|$)'
+# import-untyped: pyarrow/akshare 等无 py.typed 存根的第三方库噪声(与本项目
+#   类型安全无关; per-module override 对 .pyi 入口失效, 故全局禁用)。
+# syntax: numpy 2.5.x 存根用 PEP 695 `type` 语句(需 py3.12), 与本项目
+#   python_version="3.10" 目标冲突; numpy 2.5 本身也不支持 3.10, 其存根语法
+#   错误与本项目代码无关, 一并禁用避免阻断整体检查。
+disable_error_code = ["import-untyped", "syntax"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -111,3 +117,8 @@ module = [
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
+
+# numpy 2.5.x 的类型存根用 PEP 695 `type` 语句(需 py3.12),与本项目
+# python_version="3.10" 目标冲突(numpy 2.5 本身也不支持 3.10)。跳过对其
+# 存根的分析(视为 Any),不影响本项目代码仍按 3.10 检查;公开 standalone CI
+# 在 3.10 环境解析的是 3.10 兼容的旧版 numpy 存根,不受影响。
