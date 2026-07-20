@@ -222,12 +222,18 @@ class IndicatorExportStrategy(Strategy):
             name="intrabar_spread",
             value=spread,
             display_name="Intra Bar Spread",
-            pane="sub",
+            pane="sub1",
             render_type="line",
             precision=4,
             meta={"source": ["high", "low"]},
         )
 ```
+
+!!! note "关于 `pane` 取值"
+    `pane` 会被规范化为统一的字符串标签：`"main"`（主图，等价于 `0` / `"主图"`）、
+    `"sub1"`..`"sub4"`（副图，等价于整数 `1`..`4` 或 `"副图1"`..`"副图4"`）、以及特殊的
+    `"signal"`。为向后兼容，省略 `pane` 或传入历史写法 `"sub"` 都会归一化为 `"sub1"`。
+    这保证同一份 `record_indicator` 调用在纯回测导出与前端流式桥接两条路径上得到一致的 `pane`。
 
 运行结束后：
 
@@ -393,6 +399,10 @@ UV_INDEX_URL=https://pypi.org/simple uv run python examples/64_indicator_live_we
 - 指标定义：如 `display_name`、`pane`、`render_type`
 - 指标实例：按 `strategy/symbol/indicator/meta` 归并后的实例信息
 - 指标点位：按时间记录的数值序列
+
+每个指标点位同时带有 `timestamp`（纳秒）与 `timestamp_ms`（毫秒）两个时间字段：前者供
+Python 侧按纳秒解析，后者可被前端图表库直接使用，无需再做单位换算。指标 `meta` 采用
+`ensure_ascii=False` 序列化，中文等非 ASCII 字符保持可读。
 
 这三层结构的目的，是让 AKQuant 负责“生产标准化指标数据”，而不是直接耦合某个具体前端图表库。
 

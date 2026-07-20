@@ -220,12 +220,21 @@ class IndicatorExportStrategy(Strategy):
             name="intrabar_spread",
             value=spread,
             display_name="Intra Bar Spread",
-            pane="sub",
+            pane="sub1",
             render_type="line",
             precision=4,
             meta={"source": ["high", "low"]},
         )
 ```
+
+!!! note "About the `pane` value"
+    `pane` is normalized into a canonical string label: `"main"` (the main pane,
+    equivalent to `0` / `"主图"`), `"sub1"`..`"sub4"` (sub panes, equivalent to the
+    integers `1`..`4` or `"副图1"`..`"副图4"`), plus the special `"signal"`. For
+    backward compatibility, omitting `pane` or passing the legacy `"sub"` both
+    normalize to `"sub1"`. This guarantees the same `record_indicator` call yields
+    an identical `pane` on both the plain backtest export and the frontend stream
+    bridge paths.
 
 After the run:
 
@@ -393,6 +402,8 @@ The first implementation exposes three structured layers:
 - indicator definitions, such as `display_name`, `pane`, and `render_type`
 - indicator instances grouped by `strategy/symbol/indicator/meta`
 - indicator points as the actual time series values
+
+Each indicator point carries both `timestamp` (nanoseconds) and `timestamp_ms` (milliseconds): the former is for nanosecond parsing on the Python side, while the latter can be consumed directly by frontend charting libraries without any unit conversion. Indicator `meta` is serialized with `ensure_ascii=False`, so non-ASCII characters (e.g. CJK) stay readable.
 
 This keeps AKQuant focused on producing stable indicator data instead of coupling the framework to a specific charting library.
 
