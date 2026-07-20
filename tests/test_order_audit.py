@@ -18,12 +18,131 @@ from akquant.gateway.order_audit import (
     record_submit,
 )
 from akquant.log import (
+    AKQuantFormatter,
     LogConfig,
+    build_log_extra,
     build_order_audit_extra,
     configure_logging,
+    render_audit_message,
 )
 
 _FILLED = UnifiedOrderStatus.FILLED
+
+
+def _build_fill_fields() -> dict[str, object]:
+    """Build a canonical fill payload for audit-rendering tests."""
+    return build_order_audit_extra(
+        event="order_fill",
+        side="Buy",
+        quantity=100,
+        price=10.55,
+        symbol="600000.SH",
+        client_order_id="C1",
+        order_id="B1",
+        trade_id="T1",
+    )
+
+
+class TestRenderAuditMessage:
+    """render_audit_message builds the human line from structured fields (G6)."""
+
+    def test_english_is_canonical(self) -> None:
+        """English rendering is the default/canonical."""
+        fields = _build_fill_fields()
+        assert (
+            render_audit_message("order_fill", fields)
+            == "fill Buy 100 600000.SH @10.55 [C1->B1 T1]"
+        )
+
+    def test_chinese_is_a_pure_presentation_over_same_fields(self) -> None:
+        """Chinese rendering reads the same fields, differs only in prose."""
+        fields = _build_fill_fields()
+        assert (
+            render_audit_message("order_fill", fields, "zh")
+            == "成交 Buy 100 600000.SH @10.55 [C1→B1 T1]"
+        )
+
+    def test_market_order_price_word_is_localized(self) -> None:
+        """A submit with no price renders market/市价 per language."""
+        fields = build_order_audit_extra(
+            event="order_submit", side="Buy", quantity=1, symbol="X", price=None
+        )
+        assert "market" in render_audit_message("order_submit", fields, "en")
+        assert "市价" in render_audit_message("order_submit", fields, "zh")
+
+
+class TestAuditConsoleRendering:
+    """Console formatter: english canonical by default, opt-in zh re-render (G6)."""
+
+    def _format(self, name: str, message: str, extra: dict, language: str) -> str:
+        formatter = AKQuantFormatter(
+            "%(name)s | %(message)s", include_context=True, language=language
+        )
+        record = logging.LogRecord(
+            name=name,
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg=message,
+            args=(),
+            exc_info=None,
+        )
+        for key, value in extra.items():
+            setattr(record, key, value)
+        return formatter.format(record)
+
+    def test_audit_english_console_no_suffix(self) -> None:
+        """Default (en) console shows the canonical english line, no `phase=` tail."""
+        out = self._format(
+            "akquant.audit.order",
+            "fill Buy 100 600000.SH @10.55 [C1->B1 T1]",
+            _build_fill_fields(),
+            language="en",
+        )
+        assert out == "akquant.audit.order | fill Buy 100 600000.SH @10.55 [C1->B1 T1]"
+        assert "phase=" not in out
+
+    def test_audit_zh_console_rerenders_from_fields(self) -> None:
+        """Chinese console rebuilds the line from the structured fields."""
+        out = self._format(
+            "akquant.audit.order",
+            "fill Buy 100 600000.SH @10.55 [C1->B1 T1]",  # english canonical in
+            _build_fill_fields(),
+            language="zh",
+        )
+        assert "成交" in out
+        assert "600000.SH" in out and "C1" in out and "B1" in out
+        assert "phase=" not in out
+
+    def test_zh_render_restores_canonical_msg(self) -> None:
+        """After zh rendering the record's msg stays english (file/JSON stay en)."""
+        extra = _build_fill_fields()
+        formatter = AKQuantFormatter("%(message)s", include_context=True, language="zh")
+        record = logging.LogRecord(
+            name="akquant.audit.order",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="fill Buy 100 600000.SH @10.55 [C1->B1 T1]",
+            args=(),
+            exc_info=None,
+        )
+        for key, value in extra.items():
+            setattr(record, key, value)
+        out = formatter.format(record)
+        assert "成交" in out
+        assert record.msg == "fill Buy 100 600000.SH @10.55 [C1->B1 T1]"
+
+    def test_non_audit_keeps_suffix_and_ignores_language(self) -> None:
+        """Free-text records keep the suffix and are unaffected by language."""
+        out = self._format(
+            "akquant.gateway.live",
+            "Connecting native CTP trader gateway to tcp://x",
+            build_log_extra(phase="gateway", strategy_id="s1"),
+            language="zh",
+        )
+        assert "phase=gateway" in out and "strategy_id=s1" in out
+        assert "Connecting native CTP trader gateway" in out
 
 
 class _CaptureHandler(logging.Handler):
@@ -98,6 +217,13 @@ class TestRecordFunctions:
         assert getattr(rec, "client_order_id") == "C1"
         assert getattr(rec, "order_id") == "B1"
         assert rec.levelno == logging.INFO
+        # 展示给用户: message 自带方向/量/价/id, 控制台一眼可读(不依赖结构化后缀)
+        message = rec.getMessage()
+        assert "Buy" in message
+        assert "100" in message
+        assert "10.5" in message
+        assert "600000.SH" in message
+        assert "C1" in message and "B1" in message
 
     def test_record_reject_is_warning(self, capture_audit: _CaptureHandler) -> None:
         """A reject is a WARNING with a reason."""

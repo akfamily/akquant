@@ -676,6 +676,11 @@ Core fields:
 *   `profile`: preset profile, one of `research`, `optimize`, or `live`.
 *   `reset_handlers`: whether to reset AKQuant-managed handlers.
 *   `propagate`: whether records should propagate to parent loggers.
+*   `mask_sensitive`: redact sensitive fields (default `True`). Credential-class keys (`password`/`token`/`api_key`, …) are fully masked and account-class keys (`user_id`/`account`, …) keep only their last 4 chars. Masking runs at the handler layer, so a caller can never leak a secret by forgetting to mask it.
+*   `order_audit_file`: path to a dedicated JSON file for live order auditing. When set, every order submit/update/fill/cancel/reject under `broker_live` is additionally written as a JSON line (the `akquant.audit.order` namespace) for later reconciliation and post-mortem.
+*   `order_audit_level`: level for the audit file, default `INFO`.
+*   `order_audit_max_bytes` / `order_audit_backup_count`: size-based rotation threshold and retention count for the audit file (default keeps 5 backups).
+*   `language`: **console** audit message language, `"en"` (default) / `"zh"`. It only re-renders the console order-audit line; files and JSON stay the english canonical, and structured fields (`event`/`side`/`price`, …) never change — so grep/alerting/reconciliation never fork by language.
 
 #### `akquant.configure_logging`
 

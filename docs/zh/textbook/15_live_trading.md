@@ -19,6 +19,7 @@
 
 - 主示例：[examples/textbook/ch15_live_trading.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading.py)
 - 进阶示例：[examples/textbook/ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py)
+- 日志/审计示例（自包含，无需网关）：[examples/66_logging_audit_demo.py](https://github.com/akfamily/akquant/blob/main/examples/66_logging_audit_demo.py)
 - 对应指南：[实盘函数式指南](../advanced/live_functional_quickstart.md)
 
 ## 快速运行与验收
@@ -26,6 +27,7 @@
 ```bash
 python examples/textbook/ch15_live_trading.py
 python examples/textbook/ch15_strategy_loader.py
+python examples/66_logging_audit_demo.py
 ```
 
 验收要点：
@@ -33,6 +35,7 @@ python examples/textbook/ch15_strategy_loader.py
 1. 示例可启动并完成最小实盘流程演示。
 2. 日志中可观察到订单状态、网关事件或风控检查信息。
 3. 调整风控参数后，策略行为变化符合预期。
+4. `66_logging_audit_demo.py` 能看到：敏感字段被脱敏、订单审计单独落 JSON 文件、`language="zh"` 只改控制台审计行而文件恒英文。
 
 ## 15.1 实盘架构与接口
 
@@ -181,6 +184,28 @@ akquant.configure_logging(
 *   `on_order` / `on_trade` / `on_reject` 中的策略日志会自动携带 `order_id`、`client_order_id`、`strategy_id`、`symbol` 等结构化字段。
 *   网关与执行链路中的 warning 也会进入同一套日志管线；例如拒单、未知撤单、收盘过期、严格语义下终态尚未确认等问题，都更容易统一排查。
 *   如果打开 `file_json=True`，后续接入日志平台、告警系统或审计落盘会更顺手。
+
+**订单审计（可脱机复盘的凭证）。** 在 `broker_live` 下，每一笔订单的提交 / 回报 / 成交 / 撤单 / 拒单都会经 `akquant.audit.order` 命名空间产出结构化 INFO 审计。设置 `order_audit_file` 后，这些审计还会以 JSON line 单独落到一份纯审计文件——**进程停止后仍可仅凭它重建订单全生命周期，用于对账与事故复盘**：
+
+```python
+akquant.configure_logging(
+    akquant.LogConfig(
+        profile="live",
+        console=True,
+        console_level="WARNING",          # 控制台只留需人关注的拒单/断连
+        filename="logs/live.log",
+        file_level="INFO",
+        order_audit_file="logs/orders_audit.log",  # 逐笔订单审计 JSON 流
+        order_audit_level="INFO",
+    )
+)
+```
+
+高频策略实盘时强烈建议这样分流：控制台 `WARNING` 保持清爽，逐笔 INFO 审计单独落盘，避免刷屏又不丢凭证。
+
+**敏感脱敏（默认开启）。** 日志默认对密钥类字段（`password`/`token`/`api_key` 等）全掩码、对账户类字段（`user_id`/`account` 等）保留尾 4 位。这是 handler 层兜底——即便某处新增日志忘了脱敏，账号密钥也不会明文落盘；如需关闭设 `mask_sensitive=False`。
+
+**日志语言。** 日志消息默认英文（可搜索、可协作、可被告警/日志系统消费的通用契约），结构化字段（`event`/`side`/`price`）也恒为英文。如偏好中文控制台，设 `language="zh"`——它只把**控制台的订单审计行**渲染成中文，**文件与 JSON 审计流仍是英文**，因此 grep/对账/告警不会因语言分裂。`CRITICAL` 用于交易前置断连、runner 崩溃等系统级致命事件，建议单独接告警通道。
 
 ### 15.5.3 代码示例：启动实盘
 

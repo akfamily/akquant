@@ -258,6 +258,58 @@ Practical guidance:
 * Inside `on_order`, `on_trade`, and `on_reject`, you usually do not need to manually concatenate order ids into the message
 * Once an `akquant` logger handler is enabled, Rust execution-path warnings also flow through the same pipeline. That includes insufficient-margin rejects, session-close expiry, unknown cancel requests, and same-slice `same-cycle` deferrals, typically with `phase=execution` plus fields such as `symbol`, `order_id`, `strategy_id`, `slot`, and `event_time_iso` when available; `event_time_iso` is always emitted as UTC ISO 8601
 
+#### Log level semantics
+
+AKQuant standardizes level semantics so you can filter and alert consistently:
+
+| Level | Meaning | Trading example |
+| :--- | :--- | :--- |
+| `DEBUG` | Fine-grained diagnostics, enabled only while troubleshooting | Cleanup/inference fallbacks |
+| `INFO` | Key operational milestones | Order submit/fill/cancel audit, training progress, snapshot saved |
+| `WARNING` | Recoverable degradation, unexpected but not fatal | Insufficient-margin reject, ignored non-cancellable order, invalid data field falling back to default |
+| `ERROR` | An operation failed and cannot recover | A custom matcher raised so the order was not executed; Parquet stream read/parse failure (samples truncated) |
+| `CRITICAL` | **System-level fatal, needs immediate human attention** | Live trading front disconnected (cannot place orders); the live runner stops on an uncaught exception |
+
+> `CRITICAL` is reserved for "the framework can no longer safely perform its core job". In production, route `CRITICAL` to a dedicated alert channel (SMS/phone), separate from ordinary logs.
+
+#### Order auditing & sensitive data
+
+* **Order-lifecycle auditing**: under `broker_live`, every order's submit / update / fill / cancel / reject is logged as a structured INFO record under the `akquant.audit.order` namespace (with `client_order_id`, `order_id`, `event`, `price`, `quantity`, …). Set `LogConfig(order_audit_file="logs/orders_audit.log")` to also persist a dedicated audit JSON stream for reconciliation and post-mortem — **the full order lifecycle can be reconstructed from that file alone, even after the process stops**.
+* **Sensitive masking**: logs mask credential-class fields (`password`/`token`/`api_key`, …) fully and account-class fields (`user_id`/`account`, …) keeping the last 4 chars, by default. This is a handler-layer backstop; disable with `LogConfig(mask_sensitive=False)`.
+
+In the console, audit messages are **self-contained** (e.g. `fill Buy 100 600000.SH @10.55 [C1->B1 T1]`) and skip the redundant structured suffix; the full structured fields still go to the JSON audit file for machine consumption.
+
+#### Log language (english by default, optional zh console)
+
+Logs follow industry practice (cf. nautilus_trader / structlog): **messages are english by default** — a searchable, collaboration-friendly contract consumable by alerting/log systems; **structured fields stay english too** (`event=order_fill`, `side`, `price`, …), unaffected by the switch. If you prefer a Chinese console, set `language="zh"`:
+
+```python
+akquant.configure_logging(akquant.LogConfig(profile="live", language="zh"))
+```
+
+It only re-renders the **console order-audit line** from the structured fields; **files and JSON audit streams stay english**, so grep/reconciliation/alerting never fork by language. Free-text diagnostic logs (connect/login/settlement, …) stay english regardless.
+
+#### Recommended live logging config
+
+For a high-frequency live strategy the per-order audit (submit/update/fill) at INFO would flood the console. Raise the **console to `WARNING`** (only human-relevant events) and send the full **INFO audit to `order_audit_file`**:
+
+```python
+import akquant
+
+akquant.configure_logging(
+    akquant.LogConfig(
+        profile="live",
+        console=True,
+        console_level="WARNING",          # console only keeps human-relevant events
+        filename="logs/live.log",         # main log (incl. INFO) to file
+        file_level="INFO",
+        order_audit_file="logs/orders_audit.log",  # dedicated order-audit JSON stream
+        order_audit_level="INFO",
+        # language="zh",                  # optional: Chinese console audit lines (files stay english)
+    )
+)
+```
+
 ### 3.2 Data Access (Syntactic Sugar)
 
 The `Strategy` class provides properties for quick access to current Bar/Tick data:
