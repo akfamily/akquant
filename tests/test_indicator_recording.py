@@ -107,6 +107,56 @@ def test_indicator_recording_round_trip(tmp_path: Path) -> None:
     assert len(payload["points"]) == 6
 
 
+class DefaultPaneStrategy(Strategy):
+    """Record an indicator without specifying a pane (exercises the default)."""
+
+    def on_bar(self, bar: Bar) -> None:
+        """Record one point relying on the default pane value."""
+        self.record_indicator(name="default_pane", value=bar.close)
+
+
+def test_indicator_points_expose_millisecond_timestamp() -> None:
+    """Recorded points carry a millisecond timestamp alongside the ns value."""
+    result = run_backtest(
+        data=_build_data(),
+        strategy=IndicatorRecordingStrategy,
+        symbols="IND",
+        initial_cash=100000.0,
+        show_progress=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+    )
+
+    points = result.indicator_outputs["points"]
+    assert points, "expected recorded indicator points"
+    for point in points:
+        assert "timestamp_ms" in point
+        assert point["timestamp_ms"] == point["timestamp"] // 1_000_000
+
+
+def test_default_pane_normalizes_without_crashing() -> None:
+    """Omitting pane resolves to a canonical sub pane label, not a bare 'sub'."""
+    result = run_backtest(
+        data=_build_data(),
+        strategy=DefaultPaneStrategy,
+        symbols="IND",
+        initial_cash=100000.0,
+        show_progress=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+    )
+
+    definitions = result.indicator_definitions
+    assert len(definitions) == 1
+    assert definitions.iloc[0]["pane"] == "sub1"
+
+
 def test_legacy_strategy_without_indicator_recording_stays_empty() -> None:
     """Legacy strategies should still work and expose empty indicator outputs."""
     result = run_backtest(

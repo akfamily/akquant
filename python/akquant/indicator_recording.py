@@ -1,7 +1,14 @@
 import json
 from typing import Any, Callable, Dict, Optional, Tuple
 
-import pandas as pd
+from .chart import (
+    normalize_meta_json as _normalize_meta_json,
+)
+from .chart import (
+    normalize_pane_label,
+    timestamp_ms_from_ns,
+    timestamp_to_ms_and_ns,
+)
 
 
 def _normalize_text(value: Any, default: str = "") -> str:
@@ -9,16 +16,9 @@ def _normalize_text(value: Any, default: str = "") -> str:
     return text or default
 
 
-def _normalize_meta_json(meta: Optional[Dict[str, Any]]) -> str:
-    if not meta:
-        return ""
-    return json.dumps(meta, ensure_ascii=True, sort_keys=True, default=str)
-
-
 def _normalize_timestamp_ns(timestamp: Any) -> int:
-    if isinstance(timestamp, pd.Timestamp):
-        return int(timestamp.value)
-    return int(pd.Timestamp(timestamp).value)
+    _, timestamp_ns = timestamp_to_ms_and_ns(timestamp)
+    return timestamp_ns
 
 
 class IndicatorRecorder:
@@ -75,13 +75,14 @@ class IndicatorRecorder:
 
         symbol_text = _normalize_text(symbol, default="_unknown")
         strategy_id = _normalize_text(owner_strategy_id, default="_default")
-        pane_text = _normalize_text(pane, default="sub")
+        pane_text = normalize_pane_label(pane)
         render_type_text = _normalize_text(render_type, default="line")
         display_name_text = _normalize_text(display_name, default=indicator_key)
         unit_text = _normalize_text(unit)
         color_text = _normalize_text(color)
         meta_json = _normalize_meta_json(meta)
         timestamp_ns = _normalize_timestamp_ns(timestamp)
+        timestamp_ms = timestamp_ms_from_ns(timestamp_ns)
 
         try:
             numeric_value = float(value)
@@ -132,6 +133,7 @@ class IndicatorRecorder:
                 "symbol": symbol_text,
                 "indicator_key": indicator_key,
                 "timestamp": timestamp_ns,
+                "timestamp_ms": timestamp_ms,
                 "value": numeric_value,
                 "warmup": bool(warmup),
             }
@@ -149,6 +151,7 @@ class IndicatorRecorder:
                     "render_type": render_type_text,
                     "symbol": symbol_text,
                     "timestamp": str(timestamp_ns),
+                    "timestamp_ms": str(timestamp_ms),
                     "value": repr(numeric_value),
                     "warmup": str(bool(warmup)).lower(),
                     "meta_json": meta_json,
@@ -184,6 +187,7 @@ class IndicatorRecorder:
                     "owner_strategy_id": strategy_id,
                     "symbol": symbol_text,
                     "timestamp": str(timestamp_ns),
+                    "timestamp_ms": str(timestamp_ms_from_ns(timestamp_ns)),
                     "indicator_count": str(len(items)),
                     "items_json": json.dumps(
                         items,
