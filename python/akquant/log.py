@@ -39,6 +39,9 @@ CONTEXT_FIELDS = (
 )
 # The dedicated order-audit logger namespace (child of the root logger).
 ORDER_AUDIT_LOGGER_NAME = "audit.order"
+# Records under this namespace carry self-contained human-readable messages, so
+# the text console formatter omits the (redundant) structured context suffix.
+AUDIT_NAME_PREFIX = f"{ROOT_LOGGER_NAME}.audit."
 
 
 # Sensitive field masking (G2): keys whose values must never appear verbatim.
@@ -215,10 +218,12 @@ class AKQuantFormatter(logging.Formatter):
         *,
         datefmt: str = DATE_FORMAT,
         include_context: bool = False,
+        language: str = "en",
     ) -> None:
         """Initialize a formatter with optional AKQuant context rendering."""
         super().__init__(fmt, datefmt=datefmt)
         self.include_context = include_context
+        self.language = language
 
     def format(self, record: logging.LogRecord) -> str:
         """Format a log record and optionally append structured context text."""
@@ -226,8 +231,26 @@ class AKQuantFormatter(logging.Formatter):
             if not hasattr(record, field_name):
                 setattr(record, field_name, None)
 
+        is_audit = str(record.name).startswith(AUDIT_NAME_PREFIX)
+        # Localized console rendering (RFC G6): rebuild the audit line from the
+        # structured fields in the target language, then RESTORE the canonical
+        # english msg so other handlers (file/JSON) still emit english.
+        event = getattr(record, "event", None)
+        if is_audit and self.language != "en" and event:
+            original_msg, original_args = record.msg, record.args
+            record.msg = render_audit_message(event, record.__dict__, self.language)
+            record.args = ()
+            try:
+                return super().format(record)
+            finally:
+                record.msg, record.args = original_msg, original_args
+
         rendered = super().format(record)
         if not self.include_context:
+            return rendered
+        # Audit records are self-contained (message already carries the key
+        # fields), so skip the redundant structured suffix in the console text.
+        if is_audit:
             return rendered
 
         context_parts: list[str] = []
@@ -425,6 +448,99 @@ def build_order_audit_extra(
     }
 
 
+# --- Order-audit message rendering (RFC G6) -------------------------------
+# The audit *record* is language-neutral (english `event` code + structured
+# fields). The human-readable message is a *rendering* concern: english is the
+# canonical (files/JSON/grep), and a localized console renderer can rebuild the
+# line from the same structured fields. This mirrors structlog's "swap the
+# final renderer" and nautilus_trader's english-only structured logs — we never
+# fork message prose across the business code.
+SUPPORTED_LANGUAGES = ("en", "zh")
+_AUDIT_MESSAGE_TEMPLATES: dict[str, dict[str, str]] = {
+    "en": {
+        "order_submit": "submit {side} {quantity} {symbol} {price} "
+        "[{client_order_id}->{order_id}]",
+        "order_fill": "fill {side} {quantity} {symbol} {price} "
+        "[{client_order_id}->{order_id} {trade_id}]",
+        "order_reject": "reject {symbol} [{client_order_id}] reason: {reason}",
+        "order_cancel": "cancel {symbol} [{order_id}]",
+        "order_update": "update {symbol} status={order_status} "
+        "filled={quantity} [{client_order_id}->{order_id}]",
+    },
+    "zh": {
+        "order_submit": "下单 {side} {quantity} {symbol} {price} "
+        "[{client_order_id}→{order_id}]",
+        "order_fill": "成交 {side} {quantity} {symbol} {price} "
+        "[{client_order_id}→{order_id} {trade_id}]",
+        "order_reject": "拒单 {symbol} [{client_order_id}] 原因: {reason}",
+        "order_cancel": "撤单请求 {symbol} [{order_id}]",
+        "order_update": "订单更新 {symbol} 状态={order_status} "
+        "已成={quantity} [{client_order_id}→{order_id}]",
+    },
+}
+_MARKET_PRICE_TEXT = {"en": "market", "zh": "市价"}
+
+
+def _compact_number(value: Any) -> str:
+    """Render a numeric audit value compactly (drop trailing .0)."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def render_audit_message(
+    event: Optional[str],
+    fields: Any,
+    language: str = "en",
+) -> str:
+    """Render one order-audit line from structured fields in the given language.
+
+    `fields` is any mapping/record-dict carrying the audit fields (side, price,
+    symbol, ids, …) — typically the `build_order_audit_extra` payload or a
+    LogRecord's ``__dict__``. English is the canonical; other languages are a
+    pure presentation over the same fields.
+    """
+    lang = language if language in _AUDIT_MESSAGE_TEMPLATES else "en"
+    template = _AUDIT_MESSAGE_TEMPLATES[lang].get(str(event or ""))
+    if template is None:
+        return str(event or "")
+
+    def _get(name: str) -> Any:
+        if isinstance(fields, dict):
+            return fields.get(name)
+        return getattr(fields, name, None)
+
+    price = _get("price")
+    if str(event) == "order_submit" and price in (None, ""):
+        price_display = _MARKET_PRICE_TEXT[lang]
+    elif price in (None, ""):
+        price_display = ""
+    else:
+        price_display = f"@{_compact_number(price)}"
+
+    display = {
+        "side": _get("side") or "",
+        "quantity": _compact_number(_get("quantity")),
+        "symbol": _get("symbol") or "",
+        "price": price_display,
+        "client_order_id": _get("client_order_id") or "?",
+        "order_id": _get("order_id") or "?",
+        "trade_id": _get("trade_id") or "",
+        "order_status": _get("order_status") or "?",
+        "reason": _get("reason") or "",
+    }
+    text = template.format_map(display)
+    # An "update" carrying a reject reason appends it (kept out of the template
+    # so the common no-reason path stays clean).
+    if str(event) == "order_update" and display["reason"]:
+        suffix = "原因" if lang == "zh" else "reason"
+        text = f"{text} {suffix}: {display['reason']}"
+    # Collapse the double spaces left by empty optional fields.
+    return " ".join(text.split())
+
+
 _install_log_record_factory()
 
 
@@ -471,6 +587,10 @@ class LogConfig:
     reset_handlers: bool = True
     propagate: bool = True
     mask_sensitive: bool = True
+    # Console message language (RFC G6). English is always the canonical stored
+    # message (files/JSON); this only re-renders the *console* audit line. Files
+    # and JSON stay english regardless, so grep/alerting never fork by language.
+    language: str = "en"
     # Dedicated order-lifecycle audit stream (RFC G1). When set, order audit
     # records are additionally written as JSON lines to this rotating file.
     order_audit_file: Optional[str] = None
@@ -615,6 +735,7 @@ class Logger:
         show_context: bool = False,
         json_output: bool = False,
         mask_sensitive: bool = True,
+        language: str = "en",
     ) -> None:
         r"""
         启用控制台日志.
@@ -623,6 +744,8 @@ class Logger:
         :type format_str: str
         :param level: 控制台日志等级，为 None 时不修改
         :type level: str | int, optional
+        :param language: 控制台审计消息语言（"en"/"zh"）；文件/JSON 恒英文
+        :type language: str
         """
         self._sync_handlers()
         self._remove_null_handler()
@@ -639,6 +762,7 @@ class Logger:
                 format_str,
                 datefmt=DATE_FORMAT,
                 include_context=show_context,
+                language=language,
             )
         )
         if level is not None:
@@ -773,6 +897,7 @@ class Logger:
                 show_context=console_show_context,
                 json_output=console_json,
                 mask_sensitive=config.mask_sensitive,
+                language=config.language,
             )
             effective_levels.append(_normalize_level(console_level))
         else:

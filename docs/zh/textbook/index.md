@@ -109,6 +109,7 @@
     *   实盘与回测的差异处理
     *   主示例：实盘启动与网关接入 ([examples/textbook/ch15_live_trading.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading.py))
     *   进阶示例：动态策略加载与运行时注入 ([examples/textbook/ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py))
+    *   日志/审计示例：订单审计落盘、敏感脱敏、日志语言 ([examples/66_logging_audit_demo.py](https://github.com/akfamily/akquant/blob/main/examples/66_logging_audit_demo.py))
     *   风控与熔断机制
 
 ### 第六部分：指标工程与工具链 (Indicator Engineering)
@@ -145,7 +146,7 @@
 | 第 12 章 | [ch12_ml.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch12_ml.py) | [10_ml_walk_forward.py](https://github.com/akfamily/akquant/blob/main/examples/10_ml_walk_forward.py), [55_functional_ml_walk_forward.py](https://github.com/akfamily/akquant/blob/main/examples/55_functional_ml_walk_forward.py) | [机器学习指南](../advanced/ml.md) |
 | 第 13 章 | [ch13_visualization.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch13_visualization.py) | [11_plot_visualization.py](https://github.com/akfamily/akquant/blob/main/examples/11_plot_visualization.py) | [可视化指南](../guide/visualization.md) |
 | 第 14 章 | [ch14_factor.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch14_factor.py) | [16_adj_returns_signal.py](https://github.com/akfamily/akquant/blob/main/examples/16_adj_returns_signal.py) | [因子指南](../guide/factor.md) |
-| 第 15 章 | [ch15_live_trading.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading.py) | [ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py) | [实盘函数式指南](../advanced/live_functional_quickstart.md) |
+| 第 15 章 | [ch15_live_trading.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading.py) | [ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py), [66_logging_audit_demo.py](https://github.com/akfamily/akquant/blob/main/examples/66_logging_audit_demo.py) | [实盘函数式指南](../advanced/live_functional_quickstart.md) |
 | 第 16 章 | [ch16_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators.py) | [45_talib_indicator_playbook_demo.py](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py), [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py), [62_indicator_streaming_demo.py](https://github.com/akfamily/akquant/blob/main/examples/62_indicator_streaming_demo.py) | [AKQuant 指标全量说明](../guide/rust_indicator_reference.md) |
 
 ---

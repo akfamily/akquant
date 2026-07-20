@@ -731,6 +731,11 @@ AKQuant 作为库使用时默认保持静默；未显式配置前，`akquant` �
 *   `profile`: 预设 profile，支持 `research`、`optimize`、`live`。
 *   `reset_handlers`: 是否重置 AKQuant 自己管理的 handler。
 *   `propagate`: 是否向上游 logger 传播。
+*   `mask_sensitive`: 是否对敏感字段脱敏（默认 `True`）。密钥类（`password`/`token`/`api_key` 等）全掩码、账户类（`user_id`/`account` 等）保留尾 4 位；在 handler 层兜底，任何调用点忘记脱敏也不会泄漏。
+*   `order_audit_file`: 实盘订单审计的独立 JSON 文件路径。设置后，`broker_live` 下每一笔订单的提交/回报/成交/撤单/拒单会额外以 JSON line 写入该文件（`akquant.audit.order` 命名空间），用于事后对账与复盘。
+*   `order_audit_level`: 审计文件级别，默认 `INFO`。
+*   `order_audit_max_bytes` / `order_audit_backup_count`: 审计文件按大小轮转的阈值与保留份数（默认保留 5 份）。
+*   `language`: **控制台**审计消息语言，`"en"`（默认）/`"zh"`。仅影响控制台的订单审计行渲染；文件与 JSON 恒为英文 canonical，结构化字段（`event`/`side`/`price` 等）任何语言下不变，因此 grep/告警/对账不会因语言分裂。
 
 #### `akquant.configure_logging`
 

@@ -28,6 +28,12 @@ class LogConfig:
     profile: typing.Optional[str]
     reset_handlers: bool
     propagate: bool
+    mask_sensitive: bool
+    language: str
+    order_audit_file: typing.Optional[str]
+    order_audit_level: typing.Union[str, int]
+    order_audit_max_bytes: typing.Optional[int]
+    order_audit_backup_count: int
     def __init__(
         self,
         level: typing.Union[str, int] = ...,
@@ -47,6 +53,12 @@ class LogConfig:
         profile: typing.Optional[str] = ...,
         reset_handlers: bool = ...,
         propagate: bool = ...,
+        mask_sensitive: bool = ...,
+        language: str = ...,
+        order_audit_file: typing.Optional[str] = ...,
+        order_audit_level: typing.Union[str, int] = ...,
+        order_audit_max_bytes: typing.Optional[int] = ...,
+        order_audit_backup_count: int = ...,
     ) -> None: ...
 
 def get_logger(name: typing.Optional[str] = ...) -> logging.Logger: ...

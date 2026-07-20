@@ -409,6 +409,43 @@ AKQuant 统一约定各级别的语义，便于按级别过滤与告警：
 * **订单生命周期审计**：`broker_live` 下每一笔订单的 提交 / 回报 / 成交 / 撤单 / 拒单 都会经 `akquant.audit.order` 命名空间产出结构化 INFO 审计日志（含 `client_order_id`、`order_id`、`event`、`price`、`quantity` 等）。通过 `LogConfig(order_audit_file="logs/orders_audit.log")` 可另存一份纯审计 JSON 流，用于事后对账与复盘——**进程停止后仍可仅凭该文件重建订单生命周期**。
 * **敏感信息脱敏**：日志默认对密钥类字段（`password`/`token`/`api_key` 等）全掩码、对账户类字段（`user_id`/`account` 等）保留尾 4 位。此为 handler 层兜底，任何调用点忘记脱敏也不会泄漏；如需关闭，设 `LogConfig(mask_sensitive=False)`。
 
+在控制台里，审计日志的 message 是**自包含**的（如 `fill Buy 100 600000.SH @10.55 [C1->B1 T1]`），一眼可读、不再追加冗余的结构化后缀；而完整结构化字段仍进 JSON 审计文件供机器对账。
+
+#### 日志语言（默认英文，可选中文控制台）
+
+AKQuant 的日志遵循业界惯例（对标 nautilus_trader / structlog）：**message 默认英文**——作为可搜索、可协作、可被告警/日志系统消费的通用契约；**结构化字段永远英文**（`event=order_fill`、`side`、`price`…），语言开关不影响它们。
+
+如果你更习惯中文控制台，可开 `language="zh"`：
+
+```python
+akquant.configure_logging(akquant.LogConfig(profile="live", language="zh"))
+```
+
+它只把**控制台的订单审计行**按中文模板从结构化字段重新渲染（如 `成交 Buy 100 600000.SH @10.55 [C1→B1 T1]`）；**文件与 JSON 审计流恒为英文**，因此 grep/对账/告警不会因语言分裂。散文类诊断日志（连接/登录/结算等）统一英文，不随该开关变化。
+
+#### 实盘推荐日志配置
+
+高频策略实盘时，逐笔审计（提交/回报/成交）默认 INFO，会在控制台刷屏。推荐把**控制台调高到 `WARNING`**（只看告警/拒单/断连等需要人关注的事件），把**完整 INFO 审计单独落到 `order_audit_file`**（脱机对账、复盘的凭证）：
+
+```python
+import akquant
+
+akquant.configure_logging(
+    akquant.LogConfig(
+        profile="live",
+        console=True,
+        console_level="WARNING",          # 控制台只留需要人关注的事件
+        filename="logs/live.log",         # 主日志（含 INFO）落文件
+        file_level="INFO",
+        order_audit_file="logs/orders_audit.log",  # 纯订单审计 JSON 流
+        order_audit_level="INFO",
+        # language="zh",                  # 可选：控制台审计行渲染中文（文件仍英文）
+    )
+)
+```
+
+这样：控制台清爽（拒单 `WARNING`、断连 `CRITICAL` 才跳出来），而每一笔订单的完整生命周期都留在 `orders_audit.log`，进程停止后仍可仅凭它重建与对账。
+
 ### 3.2 便捷数据访问 (Data Access)
 
 为了减少代码冗余，`Strategy` 类提供了当前 Bar/Tick 数据的快捷访问属性：

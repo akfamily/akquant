@@ -1,8 +1,12 @@
-"""实盘订单生命周期审计日志 (RFC G1).
+"""实盘订单生命周期审计日志 (RFC G1 / G6).
 
 在 submit / update / fill / cancel / reject 五个跃迁点产出结构化 INFO 审计,
 统一走 ``akquant.audit.order`` 命名空间, 可经 ``LogConfig.order_audit_file``
 落到独立 JSON 审计文件, 用于事后对账、复盘与追责。
+
+**语言中立**(G6): 审计记录只带英文 ``event`` 码 + 结构化字段; 人类可读的
+message 由 ``log.render_audit_message`` 渲染, 英文为 canonical(文件/JSON/grep),
+控制台可选按 ``LogConfig.language`` 渲染其他语言——业务代码不写任何语言散文。
 
 审计是**旁路**关切: 任何埋点异常都不得中断下单/回报主流程, 因此所有对外
 函数都经 ``_safe_emit`` 吞掉自身异常(仅退化为一条 debug), 绝不上抛。
@@ -13,14 +17,20 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from ..log import ORDER_AUDIT_LOGGER_NAME, build_order_audit_extra, get_logger
+from ..log import (
+    ORDER_AUDIT_LOGGER_NAME,
+    build_order_audit_extra,
+    get_logger,
+    render_audit_message,
+)
 
 audit_logger = get_logger(ORDER_AUDIT_LOGGER_NAME)
 
 
-def _safe_emit(level: int, message: str, extra: dict[str, Any]) -> None:
-    """Emit one audit record, never propagating an audit-side failure."""
+def _safe_emit(level: int, extra: dict[str, Any]) -> None:
+    """Emit one audit record with an english canonical message, never raising."""
     try:
+        message = render_audit_message(extra.get("event"), extra)
         audit_logger.log(level, message, extra=extra)
     except Exception:  # noqa: BLE001 审计旁路: 失败绝不影响交易主流程
         try:
@@ -62,7 +72,6 @@ def record_submit(
     """Audit a successful order leg submission to the broker."""
     _safe_emit(
         logging.INFO,
-        "order submitted",
         build_order_audit_extra(
             event="order_submit",
             strategy_id=strategy_id,
@@ -91,7 +100,6 @@ def record_reject(
     """Audit a locally-rejected order (never reached the broker)."""
     _safe_emit(
         logging.WARNING,
-        "order rejected",
         build_order_audit_extra(
             event="order_reject",
             strategy_id=strategy_id,
@@ -115,7 +123,6 @@ def record_cancel(
     """Audit a cancel request dispatched to the broker."""
     _safe_emit(
         logging.INFO,
-        "order cancel requested",
         build_order_audit_extra(
             event="order_cancel",
             strategy_id=strategy_id,
@@ -134,33 +141,18 @@ def record_broker_event(
     trace_id: Optional[str] = None,
 ) -> None:
     """Audit an inbound broker push (order update / trade fill / exec report)."""
-    if event_name == "order":
+    symbol = _pick(payload, "symbol")
+    broker_order_id = _pick(payload, "broker_order_id")
+    client_order_id = _pick(payload, "client_order_id")
+    if event_name == "trade":
         _safe_emit(
             logging.INFO,
-            "order update",
-            build_order_audit_extra(
-                event="order_update",
-                strategy_id=owner_strategy_id,
-                symbol=_pick(payload, "symbol"),
-                order_id=_pick(payload, "broker_order_id"),
-                client_order_id=_pick(payload, "client_order_id"),
-                trace_id=trace_id,
-                order_status=_status_text(_pick(payload, "status")),
-                quantity=_pick(payload, "filled_quantity"),
-                price=_pick(payload, "avg_fill_price"),
-                reason=_pick(payload, "reject_reason") or None,
-            ),
-        )
-    elif event_name == "trade":
-        _safe_emit(
-            logging.INFO,
-            "order fill",
             build_order_audit_extra(
                 event="order_fill",
                 strategy_id=owner_strategy_id,
-                symbol=_pick(payload, "symbol"),
-                order_id=_pick(payload, "broker_order_id"),
-                client_order_id=_pick(payload, "client_order_id"),
+                symbol=symbol,
+                order_id=broker_order_id,
+                client_order_id=client_order_id,
                 trace_id=trace_id,
                 side=_pick(payload, "side"),
                 quantity=_pick(payload, "quantity"),
@@ -168,16 +160,15 @@ def record_broker_event(
                 trade_id=_pick(payload, "trade_id"),
             ),
         )
-    elif event_name == "execution_report":
+    elif event_name in ("order", "execution_report"):
         _safe_emit(
             logging.INFO,
-            "order execution report",
             build_order_audit_extra(
                 event="order_update",
                 strategy_id=owner_strategy_id,
-                symbol=_pick(payload, "symbol"),
-                order_id=_pick(payload, "broker_order_id"),
-                client_order_id=_pick(payload, "client_order_id"),
+                symbol=symbol,
+                order_id=broker_order_id,
+                client_order_id=client_order_id,
                 trace_id=trace_id,
                 order_status=_status_text(_pick(payload, "status")),
                 quantity=_pick(payload, "filled_quantity"),

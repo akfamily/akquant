@@ -2,7 +2,7 @@
 
 > **状态**:全部落地(G1–G5) · **日期**:2026-07-20 · **范围**:AKQuant 核心(Python `log.py` + gateway 实盘链路 + Rust 桥接),偏增量演进、保持向后兼容
 >
-> **进度**:✅ G2 敏感信息脱敏(`SensitiveFilter`,默认开启) · ✅ G1 实盘订单审计(`gateway/order_audit.py` + `LogConfig.order_audit_file`) · ✅ G3 print→logging 收敛 · ✅ G4 级别语义(CRITICAL + Rust error 分级 + 级别语义表) · ✅ G5 贯穿式 trace_id
+> **进度**:✅ G2 敏感信息脱敏(`SensitiveFilter`,默认开启) · ✅ G1 实盘订单审计(`gateway/order_audit.py` + `LogConfig.order_audit_file`) · ✅ G3 print→logging 收敛 · ✅ G4 级别语义(CRITICAL + Rust error 分级 + 级别语义表) · ✅ G5 贯穿式 trace_id · ✅ G6 展示给用户强化 + 语言方案(结构化事件+可插拔渲染;默认英文,中文为控制台皮肤)
 >
 > 本文源于用户反馈「日志好像不够完善」。经全仓盘点,结论是:**日志基础设施(中央封装、结构化、Rust 桥接、多进程聚合)已相当成熟,真正的缺口集中在「实盘审计」这一量化特有场景**。本 RFC 把评估固化为可分期实施与评审的跟踪基线。对标实现:**nautilus_trader**(`Logger` + 每笔订单事件落盘审计)、**vnpy**(`OmsEngine` 订单/成交流水 + `LogEngine`)、**Zipline / backtrader**(标准 logging 分层)。
 
@@ -95,6 +95,8 @@
 
 **已落地(2026-07-20)**:审计走 `akquant.audit.order` 命名空间;`gateway/order_audit.py` 提供 `record_submit`/`record_reject`/`record_cancel`/`record_broker_event`,全部防御式(审计异常绝不中断交易主流程);埋点接入提交(`order_submitter` place_order 成功后)、拒单(重复 client_order_id)、回报/成交(`broker_event_bridge.drain_events`)、撤单(`broker_execution.cancel_order`);审计记录默认随主日志落盘,`order_audit_file` 另存纯审计 JSON 流。`trace_id` 全链路贯穿仍属 G5。
 
+**展示给用户的可读性(2026-07-20 补强)**:遵循「message 面向人、extra 面向机器」——审计 message 自带人类可读关键信息(动作+方向+量+价+id),如 `下单 Buy 100 600000.SH @10.55 [C1→B1]`、`成交 Buy 100 600000.SH @10.55 [C1→B1 T1]`、`拒单 600000.SH [C2] 原因: ...`;结构化 `extra` 与 JSON 审计文件不变,仍供机器对账。修复了此前 message 贫瘠(`order fill` 零信息)、且价量字段只进 JSON、控制台用户看不到成交价量的问题。
+
 ### G2 — 敏感信息脱敏(🟠 P0)
 
 **现状**:登录成功日志明文记录 `user_id`(账户号)与 `broker_id`(`ctp/native.py:422-428`、`:1007-1013`)。密码目前未进日志(`ctp/native.py:400` 附近仅打 `req_id`),但**无任何统一脱敏层**——任何人新增一行 debug 即可能泄漏。
@@ -171,6 +173,37 @@
 - Python:`CONTEXT_FIELDS` 增 `trace_id`;`build_log_extra`/`build_order_audit_extra` 均支持透传;文本 formatter 上下文后缀也带上。
 - 贯穿链路:submit 直接用 `request_client_order_id`(group 根)作 trace_id;fill/回报经 `resolve_trace_id` 回调(接 `live.py::_lookup_group_id`,复用既有 `client_order_id→group_id` 映射)继承同一 trace_id——`broker_event_bridge`→`broker_runtime`→`live` 镜像 `resolve_owner_strategy_id` 的传递链;拒单用 group 根;撤单暂留空(broker_order_id 已足够关联)。
 - Rust:`AkqLogContext` 增 `trace_id` 字段 + builder,使 `[akq_ctx=...]` 载荷与 Python schema 一致。因引擎 `Order` 尚无 trace 字段,执行链路暂不填充(标 `#[allow(dead_code)]`),待 `Order.trace_id` 落地后点亮。
+
+### G6 — 展示给用户强化 + 语言方案(🟢 收尾)
+
+**动机**:前五项把日志做得「对机器友好」(结构化/JSON/审计/trace),但用户在**终端实际看到**的体验仍有短板。实证发现:审计行 `order fill` 看不到成交价量、message 贫瘠、控制台后缀冗余。随后就「是否中文/双语」做了一轮设计:先尝试全量中文化,再对照顶级同类方案纠偏。
+
+**对标结论**:日志 i18n 的最佳实践是**不在日志层翻译**——
+- **MS 全球化规范**:日志/调试串与"用户可见字符串"分离,保持单一语言(英文);翻译日志会破坏 grep/跨区域关联/检索。
+- **nautilus_trader**(Rust+Python 同类):纯英文日志,`LogLine` 用结构化 key-value + `correlation_id`(≈ 我们的 `trace_id`)做追踪;控制台彩色渲染、结构化输出并存。
+- **structlog**:写 `event`(稳定英文 snake_case)+ 键值上下文,不写散文;human vs machine **不二选一**——按环境换渲染器(TTY 彩色 / 生产 JSON)。
+
+**最终方案:结构化事件 + 可插拔渲染(默认英文,中文为控制台皮肤)**。语言差异只在**渲染层**,业务代码只发 `event + 字段`,不写任何语言散文:
+
+```
+业务/审计 ──emit──> event(order_fill) + 字段(side/price/qty/trace_id)   ← 单一事实,永远英文
+                     ├─ 文件/JSON handler → 英文 canonical message(grep/告警/对账契约)
+                     └─ 控制台 handler    → language="en"(默认)英文 / "zh" 从字段重渲染中文
+```
+
+**已落地(2026-07-20)**:
+
+1. **审计 message 人类可读且语言中立**:`order_audit.py` 只发 `event`+字段;英文 canonical 由 `log.render_audit_message` 集中渲染(如 `fill Buy 100 600000.SH @10.55 [C1->B1 T1]`)。模板表 `_AUDIT_MESSAGE_TEMPLATES`(en/zh)集中在 `log.py`,单一事实、零业务侧散文。
+2. **`LogConfig.language`(默认 "en")**:仅重渲染**控制台审计行**;`AKQuantFormatter(language=...)` 从 record 结构化字段用目标语言模板重建 message,**渲染后还原 record.msg**,保证文件/JSON handler 恒英文。结构化字段(`event`/`side`/…)任何语言下不变。
+3. **散文诊断日志回退英文**:`live.py`/`ctp/native.py`/`risk.py`/gateway 的连接/登录/结算/断连/订阅、交易摘要、风控告警等回退英文(业界共识:日志单一语言,对国际用户友好)。
+4. **审计 console 精简**:`AKQuantFormatter` 对 `akquant.audit.*` 跳过冗余结构化后缀(message 已自包含)。
+5. **实盘推荐日志配置**:`docs/zh/guide/strategy.md` 增「日志语言」+「实盘推荐日志配置」——控制台 `WARNING` + `order_audit_file` 落 INFO 审计;`language="zh"` 为可选控制台皮肤。
+
+**取舍**:Rust 撮合诊断与少量 `RuntimeError`(异常范畴)本轮保持英文,不纳入。任意第三语言可扩展 `_AUDIT_MESSAGE_TEMPLATES`,无需引入 gettext/babel。
+
+**测试**:`tests/test_order_audit.py`(`TestRenderAuditMessage` en/zh 渲染 + 市价词本地化;`TestAuditConsoleRendering` en canonical / zh 重渲染 / msg 还原 / 非审计不受影响);既有测试断言回退英文(live_runner / ctp_native / account_risk_rules)。
+
+对标来源:[MS 全球化规范](https://learn.microsoft.com/en-us/globalization/methodology/software-internationalization) · [nautilus_trader Logging](https://nautilustrader.io/docs/latest/concepts/logging/) · [structlog Why](https://www.structlog.org/en/stable/why.html)。
 
 ## 5. 实施分期
 
