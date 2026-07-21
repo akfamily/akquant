@@ -44,7 +44,7 @@ class IndicatorStreamingStrategy(Strategy):
             name="close_echo",
             value=bar.close,
             display_name="Close Echo",
-            pane="main",
+            pane=0,
             render_type="line",
             precision=2,
         )
@@ -52,7 +52,7 @@ class IndicatorStreamingStrategy(Strategy):
             name="intrabar_range",
             value=bar.high - bar.low,
             display_name="Intrabar Range",
-            pane="signal",
+            pane=1,
             render_type="bar",
             precision=2,
         )

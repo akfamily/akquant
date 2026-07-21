@@ -78,7 +78,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
             "owner_strategy_id": str(payload.get("owner_strategy_id", "")),
             "indicator_key": str(payload.get("indicator_key", "")),
             "display_name": str(payload.get("display_name", "")),
-            "pane": str(payload.get("pane", "")),
+            "pane": _to_int(payload.get("pane", 0)),
             "render_type": str(payload.get("render_type", "")),
             "symbol": _normalize_symbol(payload.get("symbol")),
             "timestamp": _to_int(payload.get("timestamp", 0)),
@@ -98,7 +98,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
                 {
                     "indicator_key": str(raw_item.get("indicator_key", "")),
                     "display_name": str(raw_item.get("display_name", "")),
-                    "pane": str(raw_item.get("pane", "")),
+                    "pane": _to_int(raw_item.get("pane", 0)),
                     "render_type": str(raw_item.get("render_type", "")),
                     "value": _to_float_or_text(raw_item.get("value")),
                     "warmup": _to_bool(raw_item.get("warmup", False)),
@@ -107,7 +107,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
             )
 
     indicator_keys = [item["indicator_key"] for item in items if item["indicator_key"]]
-    panes = sorted({item["pane"] for item in items if item["pane"]})
+    panes = sorted({item["pane"] for item in items})
     render_types = sorted(
         {item["render_type"] for item in items if item["render_type"]}
     )

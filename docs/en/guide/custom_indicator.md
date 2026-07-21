@@ -220,7 +220,7 @@ class IndicatorExportStrategy(Strategy):
             name="intrabar_spread",
             value=spread,
             display_name="Intra Bar Spread",
-            pane="sub1",
+            pane=1,
             render_type="line",
             precision=4,
             meta={"source": ["high", "low"]},
@@ -228,13 +228,34 @@ class IndicatorExportStrategy(Strategy):
 ```
 
 !!! note "About the `pane` value"
-    `pane` is normalized into a canonical string label: `"main"` (the main pane,
-    equivalent to `0` / `"主图"`), `"sub1"`..`"sub4"` (sub panes, equivalent to the
-    integers `1`..`4` or `"副图1"`..`"副图4"`), plus the special `"signal"`. For
-    backward compatibility, omitting `pane` or passing the legacy `"sub"` both
-    normalize to `"sub1"`. This guarantees the same `record_indicator` call yields
-    an identical `pane` on both the plain backtest export and the frontend stream
-    bridge paths.
+    `pane` is an **integer row index**: `0` is the main (price) pane and `1`..`4`
+    are sub panes stacked below it. Omitting `pane` defaults to the main pane
+    (`0`). Values outside `0..4` raise an error. This matches what chart renderers
+    actually consume, and `record_indicator` emits the same integer `pane` on both
+    the plain backtest export and the frontend stream bridge paths.
+
+!!! warning "Breaking change since 0.3"
+    Earlier versions accepted string panes such as `"main"` / `"sub1"` / `"主图"` /
+    `"signal"`; these have been removed. Use integer indices instead. The former
+    `pane="signal"` semantics (drawing trade signals) is now expressed with
+    `render_type="signal"` rendered on the main pane (`pane=0`).
+
+!!! note "About the `render_type` value"
+    `render_type` is a **closed enum** of 7 values, so consumers can implement
+    exhaustive rendering branches:
+
+    | Value | Rendering |
+    | :--- | :--- |
+    | `line` | Connected line (default) |
+    | `area` | Line filled to zero |
+    | `bar` | Vertical bars |
+    | `column` | Alias of `bar` (semantic: categorical columns) |
+    | `histogram` | Alias of `bar` (semantic: distribution bars) |
+    | `scatter` | Disconnected point markers |
+    | `signal` | Trade-signal markers, drawn on the main pane |
+
+    Passing a value outside the enum raises `ValueError` (fail-fast) rather than
+    silently degrading to a line.
 
 After the run:
 

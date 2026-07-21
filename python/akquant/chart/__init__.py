@@ -7,16 +7,20 @@ backtest path and any frontend chart bridge emit identical payloads.
 
 from ._normalize import (
     MAX_SUB_PANES,
+    RENDER_TYPE_CANONICAL,
     normalize_meta_json,
-    normalize_pane_label,
+    normalize_pane_index,
+    normalize_render_type,
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
 
 __all__ = [
     "MAX_SUB_PANES",
+    "RENDER_TYPE_CANONICAL",
     "normalize_meta_json",
-    "normalize_pane_label",
+    "normalize_pane_index",
+    "normalize_render_type",
     "timestamp_ms_from_ns",
     "timestamp_to_ms_and_ns",
 ]

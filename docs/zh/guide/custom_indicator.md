@@ -222,7 +222,7 @@ class IndicatorExportStrategy(Strategy):
             name="intrabar_spread",
             value=spread,
             display_name="Intra Bar Spread",
-            pane="sub1",
+            pane=1,
             render_type="line",
             precision=4,
             meta={"source": ["high", "low"]},
@@ -230,10 +230,29 @@ class IndicatorExportStrategy(Strategy):
 ```
 
 !!! note "关于 `pane` 取值"
-    `pane` 会被规范化为统一的字符串标签：`"main"`（主图，等价于 `0` / `"主图"`）、
-    `"sub1"`..`"sub4"`（副图，等价于整数 `1`..`4` 或 `"副图1"`..`"副图4"`）、以及特殊的
-    `"signal"`。为向后兼容，省略 `pane` 或传入历史写法 `"sub"` 都会归一化为 `"sub1"`。
-    这保证同一份 `record_indicator` 调用在纯回测导出与前端流式桥接两条路径上得到一致的 `pane`。
+    `pane` 是**整数行索引**：`0` 表示主图（价格图），`1`..`4` 表示主图下方堆叠的副图。
+    省略 `pane` 默认落在主图（`0`）。取值超出 `0..4` 会直接报错。这与图表渲染器实际消费的
+    形态一致，`record_indicator` 在纯回测导出与前端流式桥接两条路径上输出相同的整数 `pane`。
+
+!!! warning "0.3 起的破坏性变更"
+    早期版本 `pane` 曾支持 `"main"` / `"sub1"` / `"主图"` / `"signal"` 等字符串写法，现已移除。
+    请改用整数索引；原先画交易信号用的 `pane="signal"` 语义，改为用 `render_type="signal"`
+    在主图（`pane=0`）上渲染标记。
+
+!!! note "关于 `render_type` 取值"
+    `render_type` 是一个**封闭枚举**，共 7 个值，消费者可据此穷举渲染分支：
+
+    | 值 | 渲染 |
+    | :--- | :--- |
+    | `line` | 折线（默认） |
+    | `area` | 折线 + 向零填充 |
+    | `bar` | 垂直柱 |
+    | `column` | `bar` 的别名（语义化：分类柱） |
+    | `histogram` | `bar` 的别名（语义化：分布柱） |
+    | `scatter` | 离散点标记 |
+    | `signal` | 交易信号标记，渲染在主图 |
+
+    传入枚举以外的值会直接抛 `ValueError`（fail-fast），不会静默退化成折线。
 
 运行结束后：
 

@@ -39,6 +39,8 @@ CLAUDE.md
 
 # ── 本地数据 ──
 /data_catalog/
+/examples/indicator_visualization_preview.html
+/examples/indicator_visualization_outputs.json
 
 # ── AI 工作流文档（内部，不公开）──
 docs/superpowers

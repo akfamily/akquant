@@ -51,15 +51,31 @@ class IndicatorPlotStrategy(Strategy):
             name="close_echo",
             value=bar.close,
             display_name="Close Echo",
-            pane="main",
+            pane=0,
             render_type="line",
         )
         self.record_indicator(
             name="distance_from_ten",
             value=bar.close - 10.0,
             display_name="Distance From Ten",
-            pane="signal",
+            pane=1,
             render_type="bar",
+        )
+
+
+class RenderTypeStrategy(Strategy):
+    """Record indicators covering the area, scatter, and signal render types."""
+
+    def on_bar(self, bar: Bar) -> None:
+        """Emit one series per non-line render type on the main pane."""
+        self.record_indicator(
+            name="area_series", value=bar.close, pane=0, render_type="area"
+        )
+        self.record_indicator(
+            name="scatter_series", value=bar.high, pane=0, render_type="scatter"
+        )
+        self.record_indicator(
+            name="signal_series", value=bar.low, pane=0, render_type="signal"
         )
 
 
@@ -420,6 +436,36 @@ def test_backtest_result_exposes_structured_benchmark_analysis() -> None:
     assert payload["series"][0]["date"] == "2023-01-01"
 
 
+def test_export_benchmark_analysis_keeps_cjk_label_readable(tmp_path: Path) -> None:
+    """Exported benchmark JSON keeps CJK labels readable, like export_indicators."""
+    result = run_backtest(
+        data=_build_data(),
+        strategy=RoundTripStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        lot_size=1,
+        show_progress=False,
+    )
+    benchmark_returns = pd.Series(
+        [0.0, 0.001, -0.0005, 0.0008, 0.0],
+        index=pd.date_range("2023-01-01", periods=5, freq="D"),
+        name="沪深300指数",
+    )
+
+    export_path = tmp_path / "benchmark.json"
+    result.export_benchmark_analysis(
+        str(export_path), benchmark=benchmark_returns, curve_freq="D"
+    )
+    raw_text = export_path.read_text(encoding="utf-8")
+    assert "沪深300指数" in raw_text
+    assert "\\u" not in raw_text
+
+
 def test_report_shows_notice_for_range_index_benchmark(tmp_path: Path) -> None:
     """RangeIndex benchmark input should render a clear validation notice."""
     _skip_if_no_plotly()
@@ -614,8 +660,8 @@ def test_indicator_plot_functions_return_multi_pane_figures() -> None:
         "Distance From Ten",
     }
     assert [annotation.text for annotation in fig.layout.annotations] == [
-        "main",
-        "signal",
+        "Main",
+        "Sub 1",
     ]
 
     filtered_fig = result.plot_indicators(name="distance_from_ten", show=False)
@@ -623,6 +669,36 @@ def test_indicator_plot_functions_return_multi_pane_figures() -> None:
     assert len(filtered_fig.data) == 1
     assert filtered_fig.data[0].name == "Distance From Ten"
     assert filtered_fig.data[0].type == "bar"
+
+
+def test_indicator_plot_renders_each_render_type() -> None:
+    """area/scatter/signal render types map to distinct, non-line traces."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=RenderTypeStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        lot_size=1,
+        show_progress=False,
+    )
+
+    fig = plot_indicators(result, show=False)
+    assert fig is not None
+    traces = {trace.name: trace for trace in fig.data}
+    assert set(traces) == {"area_series", "scatter_series", "signal_series"}
+    # area is a filled line
+    assert traces["area_series"].mode == "lines"
+    assert traces["area_series"].fill == "tozeroy"
+    # scatter and signal are marker series
+    assert traces["scatter_series"].mode == "markers"
+    assert traces["signal_series"].mode == "markers"
+    assert traces["signal_series"].marker.symbol == "triangle-up"
 
 
 def test_indicator_plot_returns_none_without_indicator_data() -> None:

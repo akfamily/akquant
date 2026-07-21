@@ -5,7 +5,8 @@ from .chart import (
     normalize_meta_json as _normalize_meta_json,
 )
 from .chart import (
-    normalize_pane_label,
+    normalize_pane_index,
+    normalize_render_type,
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
@@ -60,7 +61,7 @@ class IndicatorRecorder:
         timestamp: Any,
         owner_strategy_id: str,
         display_name: Optional[str] = None,
-        pane: str = "sub",
+        pane: int = 0,
         render_type: str = "line",
         unit: Optional[str] = None,
         precision: Optional[int] = None,
@@ -75,8 +76,8 @@ class IndicatorRecorder:
 
         symbol_text = _normalize_text(symbol, default="_unknown")
         strategy_id = _normalize_text(owner_strategy_id, default="_default")
-        pane_text = normalize_pane_label(pane)
-        render_type_text = _normalize_text(render_type, default="line")
+        pane_index = normalize_pane_index(pane)
+        render_type_text = normalize_render_type(render_type)
         display_name_text = _normalize_text(display_name, default=indicator_key)
         unit_text = _normalize_text(unit)
         color_text = _normalize_text(color)
@@ -94,7 +95,7 @@ class IndicatorRecorder:
             self._definitions[indicator_key] = {
                 "indicator_key": indicator_key,
                 "display_name": display_name_text,
-                "pane": pane_text,
+                "pane": pane_index,
                 "render_type": render_type_text,
                 "unit": unit_text,
                 "precision": precision,
@@ -103,8 +104,8 @@ class IndicatorRecorder:
         else:
             if not definition.get("display_name"):
                 definition["display_name"] = display_name_text
-            if not definition.get("pane"):
-                definition["pane"] = pane_text
+            if definition.get("pane") is None:
+                definition["pane"] = pane_index
             if not definition.get("render_type"):
                 definition["render_type"] = render_type_text
             if not definition.get("unit"):
@@ -147,7 +148,7 @@ class IndicatorRecorder:
                     "owner_strategy_id": strategy_id,
                     "indicator_key": indicator_key,
                     "display_name": display_name_text,
-                    "pane": pane_text,
+                    "pane": str(pane_index),
                     "render_type": render_type_text,
                     "symbol": symbol_text,
                     "timestamp": str(timestamp_ns),
@@ -163,7 +164,7 @@ class IndicatorRecorder:
                 {
                     "indicator_key": indicator_key,
                     "display_name": display_name_text,
-                    "pane": pane_text,
+                    "pane": pane_index,
                     "render_type": render_type_text,
                     "value": numeric_value,
                     "warmup": bool(warmup),
@@ -191,7 +192,7 @@ class IndicatorRecorder:
                     "indicator_count": str(len(items)),
                     "items_json": json.dumps(
                         items,
-                        ensure_ascii=True,
+                        ensure_ascii=False,
                         sort_keys=True,
                         default=str,
                     ),

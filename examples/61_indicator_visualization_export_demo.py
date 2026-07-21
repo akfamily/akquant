@@ -46,7 +46,7 @@ class IndicatorVisualizationStrategy(Strategy):
             name="intrabar_spread",
             value=intrabar_spread,
             display_name="Intra Bar Spread",
-            pane="sub",
+            pane=1,
             render_type="line",
             precision=4,
             meta={"source": ["high", "low"]},

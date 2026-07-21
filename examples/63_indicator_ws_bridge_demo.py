@@ -44,7 +44,7 @@ class IndicatorBridgeStrategy(Strategy):
             name="close_echo",
             value=bar.close,
             display_name="Close Echo",
-            pane="main",
+            pane=0,
             render_type="line",
             meta={"source": "close"},
         )
@@ -52,7 +52,7 @@ class IndicatorBridgeStrategy(Strategy):
             name="daily_range",
             value=bar.high - bar.low,
             display_name="Daily Range",
-            pane="signal",
+            pane=1,
             render_type="bar",
             meta={"source": ["high", "low"]},
         )
