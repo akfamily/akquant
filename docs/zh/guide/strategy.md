@@ -82,6 +82,7 @@
 * `on_before_trading` 始终按“前一交易日/前一时点信息可见”的语义工作；在该回调里，`get_history()`、`get_account()`、`equity` 不应看到当日新 bar 或当日更新后的账户视图。
 * `on_cross_section` 会在框架见到当日首个“跨标的完整切片”后触发；在该回调里，可以看到当日历史和当前账户快照。
 * `on_after_trading` 是**结束/收尾型钩子**，定位为日终的统计、清理与归档。框架已让它在**当日收盘点的独立事件**（早于下一根 bar）触发，因此在其中提交的 `bar_offset=1` next-open 单会落在下一根 bar（而非再晚一格，#324）。但若你的意图是“收盘决策、次日开盘成交”，更清晰的写法是在 `on_bar`（next-open）或 `on_pre_open` 中下单。
+* **`TimeInForce.Day` 与 next-open 的过期语义**：日终结算会把当日仍未成交的 Day 单置为 `Expired`。对于在收盘后（如 `on_cross_section` / `on_after_trading`）提交的 `bar_offset=1` next-open Day 单，其唯一可撮合切片是**次日开盘**，晚于结算时点——框架据此豁免这类订单一次，让它先获得次日开盘的成交机会；只有当次日开盘仍未成交（如次日停牌），才在次日结算时过期（#334）。同一时点（`bar_offset=0`）的 Day 单其可撮合切片就在创建当日，因此仍在次日结算时按常规过期。若希望“收盘决策、次日成交”的委托不受当日过期约束，也可直接使用默认的 `GTC`。
 * 需要按**会话**(如期货日盘/夜盘)分支时,框架不再提供 `on_session_*` 回调;请在 `on_bar` / `on_tick` 内读取 `self.ctx.session`(`TradingSession` 枚举)自行判断,例如 `if self.ctx.session == TradingSession.Continuous: ...`。
 * `on_pre_open` 内若直接调用 `buy/sell/order_target_*` 且未显式传 `fill_policy`，框架会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。
 * 这里表达的是框架侧“盘前决策，本次 open 成交”的时序语义，不等同于交易所或券商柜台已经实现了集合竞价专用报单、撤单窗口控制或专有价格类型。

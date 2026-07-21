@@ -11,7 +11,7 @@ use crate::risk::RiskConfig;
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -30,6 +30,11 @@ pub struct SettlementContext<'a> {
     pub timestamp: i64,
     pub bar_index: usize,
     pub default_strategy_id: Option<String>,
+    /// IDs of Day orders whose matchable slice has not yet arrived and so must
+    /// be spared from expiry this settlement (a next-open order created after
+    /// the previous close fills at *this* day's open, matched after settlement).
+    /// The caller (which owns execution-policy/timezone knowledge) computes this.
+    pub day_orders_awaiting_fill_slice: &'a HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -162,10 +167,18 @@ impl SettlementManager {
         }
 
         // 4. Order Expiration (Day Orders)
-        // Partition orders into expired and kept
+        // Partition orders into expired and kept. A Day order is expired at
+        // settlement UNLESS it is in `day_orders_awaiting_fill_slice` — orders
+        // whose matchable slice has not yet arrived (a next-open order created
+        // after the previous day's close fills at *this* day's open, which the
+        // caller matches *after* settlement). Expiring those before their only
+        // fill chance meant on_cross_section + TimeInForce.Day never traded.
         let (expired, kept): (Vec<Order>, Vec<Order>) = active_orders
             .drain(..)
-            .partition(|o| o.time_in_force == TimeInForce::Day);
+            .partition(|o| {
+                o.time_in_force == TimeInForce::Day
+                    && !ctx.day_orders_awaiting_fill_slice.contains(&o.id)
+            });
 
         *active_orders = kept;
 
@@ -479,6 +492,12 @@ mod tests {
     use crate::analysis::TradeTracker;
     use crate::model::instrument::{InstrumentEnum, StockInstrument};
     use crate::model::types::AssetType;
+
+    /// Shared empty exemption set for settlement tests that carry no Day orders.
+    fn empty_pending() -> &'static HashSet<String> {
+        static EMPTY: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(HashSet::new)
+    }
     use std::str::FromStr;
 
     fn stock_instrument(symbol: &str) -> Instrument {
@@ -523,6 +542,7 @@ mod tests {
             timestamp: 0,
             bar_index: 0,
             default_strategy_id: None,
+            day_orders_awaiting_fill_slice: empty_pending(),
         };
         let outcome = SettlementManager::new().process_daily_settlement(
             &mut portfolio,
@@ -570,6 +590,7 @@ mod tests {
             timestamp: 0,
             bar_index: 0,
             default_strategy_id: None,
+            day_orders_awaiting_fill_slice: empty_pending(),
         };
         let outcome = SettlementManager::new().process_daily_settlement(
             &mut portfolio,
@@ -627,6 +648,7 @@ mod tests {
             timestamp: 0,
             bar_index: 0,
             default_strategy_id: None,
+            day_orders_awaiting_fill_slice: empty_pending(),
         };
         let outcome_short_first = SettlementManager::new().process_daily_settlement(
             &mut portfolio_short_first,
@@ -655,6 +677,7 @@ mod tests {
             timestamp: 0,
             bar_index: 0,
             default_strategy_id: None,
+            day_orders_awaiting_fill_slice: empty_pending(),
         };
         let outcome_long_first = SettlementManager::new().process_daily_settlement(
             &mut portfolio_long_first,

@@ -1,6 +1,6 @@
 [package]
 name = "akquant"
-version = "0.3.14"
+version = "0.3.15"
 edition = "2024"
 description = "High-performance quantitative trading framework based on Rust and Python"
 license = "MIT"
@@ -39,3 +39,12 @@ serde_json = "1.0"
 default = []
 extension-module = ["pyo3/extension-module"]
 test-utils = ["pyo3/auto-initialize"]
+
+[profile.release]
+# Strip debug symbols from the compiled extension. The release build statically
+# links all Rust deps (polars, etc.); without stripping, their debug symbols
+# roughly triple the .pyd size. This is the dominant lever on wheel size.
+strip = "symbols"
+# Thin LTO trims dead code across crates for a smaller, faster artifact at a
+# modest compile-time cost.
+lto = "thin"
