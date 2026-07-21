@@ -41,7 +41,7 @@ class IndicatorRecordingStrategy(Strategy):
             name="close_echo",
             value=bar.close,
             display_name="Close Echo",
-            pane="main",
+            pane=0,
             render_type="line",
             precision=2,
             meta={"source": "close"},
@@ -50,8 +50,8 @@ class IndicatorRecordingStrategy(Strategy):
             name="range_echo",
             value=bar.high - bar.low,
             display_name="Range Echo",
-            pane="signal",
-            render_type="bar",
+            pane=1,
+            render_type="signal",
             meta={"source": ["high", "low"]},
             warmup=bar.close < 10.5,
         )
@@ -92,7 +92,7 @@ def test_indicator_recording_round_trip(tmp_path: Path) -> None:
     definitions = result.indicator_definitions
     assert len(definitions) == 2
     assert definitions.iloc[0]["display_name"] == "Close Echo"
-    assert definitions.iloc[0]["pane"] == "main"
+    assert definitions.iloc[0]["pane"] == 0
     assert definitions.iloc[0]["render_type"] == "line"
     assert definitions.iloc[1]["display_name"] == "Range Echo"
 
@@ -137,8 +137,70 @@ def test_indicator_points_expose_millisecond_timestamp() -> None:
         assert point["timestamp_ms"] == point["timestamp"] // 1_000_000
 
 
-def test_default_pane_normalizes_without_crashing() -> None:
-    """Omitting pane resolves to a canonical sub pane label, not a bare 'sub'."""
+class CjkMetaStrategy(Strategy):
+    """Record an indicator carrying CJK display name and metadata."""
+
+    def on_bar(self, bar: Bar) -> None:
+        """Record one point with non-ASCII metadata."""
+        self.record_indicator(
+            name="均线",
+            value=bar.close,
+            display_name="五日均线",
+            meta={"名称": "五日线"},
+        )
+
+
+def test_indicator_df_and_export_agree_on_timestamp_ms(tmp_path: Path) -> None:
+    """timestamp_ms must be present on the DataFrame, export JSON, and raw points."""
+    result = run_backtest(
+        data=_build_data(),
+        strategy=IndicatorRecordingStrategy,
+        symbols="IND",
+        initial_cash=100000.0,
+        show_progress=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+    )
+
+    frame = result.indicator_df()
+    assert "timestamp_ms" in frame.columns
+    assert (frame["timestamp_ms"] == frame["timestamp"] // 1_000_000).all()
+
+    export_path = tmp_path / "indicators.json"
+    result.export_indicators(str(export_path), format="json")
+    payload = json.loads(export_path.read_text(encoding="utf-8"))
+    for point in payload["points"]:
+        assert "timestamp_ms" in point
+        assert point["timestamp_ms"] == point["timestamp"] // 1_000_000
+
+
+def test_export_indicators_keeps_cjk_readable(tmp_path: Path) -> None:
+    """Exported JSON must keep CJK metadata readable, matching the stream path."""
+    result = run_backtest(
+        data=_build_data(),
+        strategy=CjkMetaStrategy,
+        symbols="IND",
+        initial_cash=100000.0,
+        show_progress=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+    )
+
+    export_path = tmp_path / "indicators.json"
+    result.export_indicators(str(export_path), format="json")
+    raw_text = export_path.read_text(encoding="utf-8")
+    assert "五日均线" in raw_text
+    assert "\\u" not in raw_text
+
+
+def test_default_pane_is_main() -> None:
+    """Omitting pane resolves to the main pane (index 0)."""
     result = run_backtest(
         data=_build_data(),
         strategy=DefaultPaneStrategy,
@@ -154,7 +216,32 @@ def test_default_pane_normalizes_without_crashing() -> None:
 
     definitions = result.indicator_definitions
     assert len(definitions) == 1
-    assert definitions.iloc[0]["pane"] == "sub1"
+    assert definitions.iloc[0]["pane"] == 0
+
+
+class BadRenderTypeStrategy(Strategy):
+    """Record an indicator with a render type outside the canonical enum."""
+
+    def on_bar(self, bar: Bar) -> None:
+        """Attempt to record with an unsupported render type."""
+        self.record_indicator(name="broken", value=bar.close, render_type="candlestick")
+
+
+def test_record_indicator_rejects_unknown_render_type() -> None:
+    """An unsupported render type fails fast rather than degrading silently."""
+    with pytest.raises(ValueError, match="render_type"):
+        run_backtest(
+            data=_build_data(),
+            strategy=BadRenderTypeStrategy,
+            symbols="IND",
+            initial_cash=100000.0,
+            show_progress=False,
+            commission_rate=0.0,
+            stamp_tax_rate=0.0,
+            transfer_fee_rate=0.0,
+            min_commission=0.0,
+            lot_size=1,
+        )
 
 
 def test_legacy_strategy_without_indicator_recording_stays_empty() -> None:
@@ -309,7 +396,7 @@ def test_indicator_stream_bridge_builds_frontend_messages() -> None:
     first_point = next(message for message in messages if message["type"] == "point")
     assert first_point["indicator"]["indicator_key"] == "close_echo"
     assert first_point["indicator"]["display_name"] == "Close Echo"
-    assert first_point["indicator"]["pane"] == "main"
+    assert first_point["indicator"]["pane"] == 0
     assert first_point["indicator"]["render_type"] == "line"
     assert first_point["indicator"]["value"] == 10.0
     assert first_point["indicator"]["meta"] == {"source": "close"}
@@ -327,15 +414,15 @@ def test_indicator_stream_bridge_builds_frontend_messages() -> None:
     assert first_snapshot["snapshot"]["items"][1]["warmup"] is True
     assert first_snapshot["snapshot"]["items"][1]["meta"] == {"source": ["high", "low"]}
     assert first_snapshot["snapshot"]["indicator_keys"] == ["close_echo", "range_echo"]
-    assert first_snapshot["snapshot"]["panes"] == ["main", "signal"]
-    assert first_snapshot["snapshot"]["render_types"] == ["bar", "line"]
+    assert first_snapshot["snapshot"]["panes"] == [0, 1]
+    assert first_snapshot["snapshot"]["render_types"] == ["line", "signal"]
     assert first_snapshot["snapshot"]["value_by_key"]["close_echo"] == pytest.approx(
         10.0
     )
     assert first_snapshot["snapshot"]["value_by_key"]["range_echo"] == pytest.approx(
         0.4
     )
-    assert first_snapshot["snapshot"]["items_by_key"]["range_echo"]["pane"] == "signal"
+    assert first_snapshot["snapshot"]["items_by_key"]["range_echo"]["pane"] == 1
     assert first_snapshot["snapshot"]["warmup_count"] == 1
     assert first_snapshot["snapshot"]["has_warmup"] is True
 
@@ -370,7 +457,7 @@ def test_indicator_stream_bridge_normalizes_unknown_symbols() -> None:
             "owner_strategy_id": "_default",
             "indicator_key": "close_echo",
             "display_name": "Close Echo",
-            "pane": "main",
+            "pane": "0",
             "render_type": "line",
             "symbol": "_unknown",
             "timestamp": "1",
@@ -396,7 +483,7 @@ def test_indicator_stream_bridge_normalizes_unknown_symbols() -> None:
                     {
                         "indicator_key": "close_echo",
                         "display_name": "Close Echo",
-                        "pane": "main",
+                        "pane": "0",
                         "render_type": "line",
                         "value": 10.0,
                         "warmup": False,
@@ -436,7 +523,7 @@ def test_indicator_stream_bridge_accepts_predecoded_payloads() -> None:
                 {
                     "indicator_key": "close_echo",
                     "display_name": "Close Echo",
-                    "pane": "main",
+                    "pane": "0",
                     "render_type": "line",
                     "value": 10.5,
                     "warmup": False,
@@ -445,8 +532,8 @@ def test_indicator_stream_bridge_accepts_predecoded_payloads() -> None:
                 {
                     "indicator_key": "range_echo",
                     "display_name": "Range Echo",
-                    "pane": "signal",
-                    "render_type": "bar",
+                    "pane": "1",
+                    "render_type": "signal",
                     "value": 0.4,
                     "warmup": True,
                     "meta_json": {"source": ["high", "low"]},

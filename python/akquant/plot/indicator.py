@@ -1,6 +1,6 @@
 """Indicator plotting module."""
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import pandas as pd
 
@@ -8,6 +8,73 @@ from .utils import check_plotly, get_color, go, make_subplots
 
 if TYPE_CHECKING:
     from ..backtest import BacktestResult
+
+
+def _pane_title(pane: int) -> str:
+    """Render a human-readable pane title from its integer index."""
+    return "Main" if int(pane) == 0 else f"Sub {int(pane)}"
+
+
+def _build_indicator_trace(
+    *,
+    render_type: str,
+    x_data: "pd.Series[Any]",
+    y_data: "pd.Series[Any]",
+    trace_name: str,
+    color_value: Any,
+    use_webgl: bool,
+) -> Any:
+    """Build a Plotly trace for one indicator series by canonical render type.
+
+    Every value in ``RENDER_TYPE_CANONICAL`` has an explicit rendering here so no
+    render type silently degrades to a line.
+    """
+    if render_type in {"bar", "column", "histogram"}:
+        return go.Bar(
+            x=x_data,
+            y=y_data,
+            name=trace_name,
+            marker=dict(color=color_value) if color_value else None,
+        )
+
+    scatter_type = go.Scattergl if use_webgl else go.Scatter
+    if render_type == "scatter":
+        return scatter_type(
+            x=x_data,
+            y=y_data,
+            mode="markers",
+            name=trace_name,
+            marker=dict(color=color_value) if color_value else None,
+        )
+    if render_type == "signal":
+        return scatter_type(
+            x=x_data,
+            y=y_data,
+            mode="markers",
+            name=trace_name,
+            marker=dict(
+                symbol="triangle-up",
+                size=10,
+                color=color_value if color_value else None,
+            ),
+        )
+    if render_type == "area":
+        return scatter_type(
+            x=x_data,
+            y=y_data,
+            mode="lines",
+            name=trace_name,
+            fill="tozeroy",
+            line=dict(color=color_value, width=2) if color_value else dict(width=2),
+        )
+    # render_type == "line" (canonical default)
+    return scatter_type(
+        x=x_data,
+        y=y_data,
+        mode="lines",
+        name=trace_name,
+        line=dict(color=color_value, width=2) if color_value else dict(width=2),
+    )
 
 
 def _build_trace_name(
@@ -76,7 +143,9 @@ def plot_indicators(
         suffixes=("", "_definition"),
     )
     merged["display_name"] = merged["display_name"].fillna(merged["indicator_key"])
-    merged["pane"] = merged["pane"].fillna("main").replace("", "main")
+    merged["pane"] = (
+        pd.to_numeric(merged["pane"], errors="coerce").fillna(0).astype(int)
+    )
     merged["render_type"] = merged["render_type"].fillna("line").replace("", "line")
     merged["owner_strategy_id"] = merged["owner_strategy_id"].fillna("").astype(str)
     merged["symbol"] = merged["symbol"].fillna("").astype(str)
@@ -87,8 +156,8 @@ def plot_indicators(
         print("No indicator data available after filtering invalid rows.")
         return None
 
-    panes = merged["pane"].drop_duplicates().tolist()
-    subplot_titles = [str(pane) for pane in panes]
+    panes = sorted(merged["pane"].drop_duplicates().tolist())
+    subplot_titles = [_pane_title(pane) for pane in panes]
     row_count = max(len(panes), 1)
 
     fig = make_subplots(
@@ -133,36 +202,20 @@ def plot_indicators(
             x_data = series_frame["datetime"]
             y_data = series_frame["value"].astype(float)
 
-            if render_type in {"bar", "histogram", "column"}:
-                fig.add_trace(
-                    go.Bar(
-                        x=x_data,
-                        y=y_data,
-                        name=trace_name,
-                        marker=dict(color=color_value) if color_value else None,
-                    ),
-                    row=row_index,
-                    col=1,
-                )
-            else:
-                trace_type = go.Scattergl if use_webgl else go.Scatter
-                fig.add_trace(
-                    trace_type(
-                        x=x_data,
-                        y=y_data,
-                        mode="lines",
-                        name=trace_name,
-                        line=(
-                            dict(color=color_value, width=2)
-                            if color_value
-                            else dict(width=2)
-                        ),
-                    ),
-                    row=row_index,
-                    col=1,
-                )
+            fig.add_trace(
+                _build_indicator_trace(
+                    render_type=render_type,
+                    x_data=x_data,
+                    y_data=y_data,
+                    trace_name=trace_name,
+                    color_value=color_value,
+                    use_webgl=use_webgl,
+                ),
+                row=row_index,
+                col=1,
+            )
 
-            fig.update_yaxes(title_text=str(pane_name), row=row_index, col=1)
+            fig.update_yaxes(title_text=_pane_title(pane_name), row=row_index, col=1)
 
     xaxis_format = "%Y-%m-%d"
     if len(merged) > 1:

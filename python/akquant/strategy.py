@@ -1744,7 +1744,7 @@ class Strategy:
         *,
         timestamp: Optional[Any] = None,
         display_name: Optional[str] = None,
-        pane: str = "sub",
+        pane: int = 0,
         render_type: str = "line",
         unit: Optional[str] = None,
         precision: Optional[int] = None,

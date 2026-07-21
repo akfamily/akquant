@@ -1593,6 +1593,7 @@ class BacktestResult:
             "symbol",
             "indicator_key",
             "timestamp",
+            "timestamp_ms",
             "value",
             "warmup",
         ]
@@ -1604,6 +1605,14 @@ class BacktestResult:
                 frame[column] = None
         frame["timestamp"] = pd.to_numeric(frame["timestamp"], errors="coerce").astype(
             "Int64"
+        )
+        # ``timestamp_ms`` mirrors ``timestamp`` for frontend charting libraries
+        # that expect epoch milliseconds; derive it when a legacy payload omits it.
+        frame["timestamp_ms"] = pd.to_numeric(
+            frame["timestamp_ms"], errors="coerce"
+        ).astype("Int64")
+        frame["timestamp_ms"] = frame["timestamp_ms"].fillna(
+            frame["timestamp"] // 1_000_000
         )
         frame["datetime"] = pd.to_datetime(
             frame["timestamp"],
@@ -1645,8 +1654,10 @@ class BacktestResult:
                 "points": self._json_ready_records(self._indicator_points_df),
             }
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            # ``ensure_ascii=False`` keeps CJK metadata readable and matches the
+            # indicator collection layer, so the export and stream paths agree.
             output_path.write_text(
-                json.dumps(payload, ensure_ascii=True, indent=2),
+                json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             return
@@ -1691,8 +1702,10 @@ class BacktestResult:
         )
         if output_format == "json":
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            # ``ensure_ascii=False`` keeps CJK benchmark labels readable, matching
+            # export_indicators so all structured exports share one encoding.
             output_path.write_text(
-                json.dumps(payload, ensure_ascii=True, indent=2),
+                json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             return
@@ -1703,7 +1716,7 @@ class BacktestResult:
             metadata = dict(payload)
             metadata.pop("series", None)
             (output_path / "metadata.json").write_text(
-                json.dumps(metadata, ensure_ascii=True, indent=2),
+                json.dumps(metadata, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             return

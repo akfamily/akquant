@@ -3,13 +3,16 @@
 These functions are the single source of truth shared by the core
 ``IndicatorRecorder`` (pure backtest path) and any frontend chart backend.
 Keeping them here guarantees that the same ``record_indicator`` call produces an
-identical pane label, timestamp, and metadata encoding regardless of whether the
+identical pane index, render type, and metadata encoding regardless of whether the
 run feeds a plain backtest export or a live chart bridge.
 
-Pane semantics are **string labels** (``"main"`` / ``"sub1".."sub4"`` /
-``"signal"``), matching the contract locked by the backtest result API and the
-indicator stream. This differs from the integer pane index used internally by
-the d3kline renderer; the renderer is free to map these labels to indices.
+Pane semantics are **integer row indices** (``0`` = main price pane,
+``1``..``MAX_SUB_PANES`` = stacked sub panes).  Unknown or string pane values
+raise ``ValueError`` immediately rather than silently degrading.
+
+``render_type`` is a **closed string enum** (``RENDER_TYPE_CANONICAL``).
+Unknown render types also raise ``ValueError`` so that downstream chart renderers
+can implement exhaustive branches without encountering undefined values.
 """
 
 import json
@@ -20,56 +23,76 @@ import pandas as pd
 # Main pane plus up to four stacked sub panes.
 MAX_SUB_PANES = 4
 
+# Closed set of render types a chart renderer must handle. Each value has a
+# defined rendering in ``akquant.plot.indicator`` and is documented in the guide.
+#   line      -> connected line series
+#   area      -> line series with fill to zero
+#   bar       -> vertical bars
+#   column    -> alias of bar (semantic label for categorical columns)
+#   histogram -> alias of bar (semantic label for distribution-style bars)
+#   scatter   -> disconnected point markers
+#   signal    -> trade-signal markers, drawn on the main price pane
+RENDER_TYPE_CANONICAL = (
+    "line",
+    "area",
+    "bar",
+    "column",
+    "histogram",
+    "scatter",
+    "signal",
+)
 
-def normalize_pane_label(pane: Any, default: str = "sub1") -> str:
-    """Normalize a pane specifier into a canonical string label.
 
-    Accepts the historical spellings used across the codebase and the frontend:
-    ``main`` / ``主图`` / ``0`` -> ``"main"``; ``sub`` / ``sub1`` / ``副图1`` /
-    integer ``1`` -> ``"sub1"``; ``signal`` is preserved verbatim. A bare
-    ``"sub"`` (the historical default) resolves to ``default`` instead of
-    raising, fixing a crash on the frontend bridge path.
+def normalize_render_type(render_type: Any = "line") -> str:
+    """Normalize a render-type specifier against the canonical enum.
 
-    :param pane: Raw pane specifier (str or int).
-    :param default: Label used when the value is empty or a bare ``"sub"``.
-    :return: Canonical pane label.
+    :param render_type: Render type. Empty/``None`` resolves to ``"line"``.
+    :return: A canonical render type from :data:`RENDER_TYPE_CANONICAL`.
+    :raises ValueError: If the value is not a recognized render type.
+    """
+    if render_type is None:
+        return "line"
+    text = str(render_type).strip().lower()
+    if not text:
+        return "line"
+    if text not in RENDER_TYPE_CANONICAL:
+        raise ValueError(
+            "render_type must be one of %s" % ", ".join(RENDER_TYPE_CANONICAL)
+        )
+    return text
+
+
+def normalize_pane_index(pane: Any = 0) -> int:
+    """Normalize a pane specifier into a canonical integer index.
+
+    Panes are plain integer row indices, matching what chart renderers actually
+    consume: ``0`` is the main (price) pane and ``1..MAX_SUB_PANES`` are stacked
+    sub panes below it. ``None`` resolves to the main pane.
+
+    :param pane: Pane index. Accepts ``int`` or an all-digit ``str``.
+    :return: Pane index in ``0..MAX_SUB_PANES``.
+    :raises ValueError: If the pane is out of range or not an integer index.
     """
     if pane is None:
-        return "main"
+        return 0
     if isinstance(pane, bool):
-        raise ValueError("pane must be a string label or integer index")
+        raise ValueError("pane must be an integer index in 0..%d" % MAX_SUB_PANES)
+    if isinstance(pane, str):
+        text = pane.strip()
+        if not text:
+            return 0
+        if not (text.lstrip("+").isdigit()):
+            raise ValueError(
+                "pane must be an integer index in 0..%d (0=main)" % MAX_SUB_PANES
+            )
+        pane = int(text)
     if isinstance(pane, int):
-        return _sub_label_from_index(pane)
-
-    text = str(pane).strip().lower()
-    if not text:
-        return default
-    if text in {"signal"}:
-        return "signal"
-    if text in {"0", "main", "主图"}:
-        return "main"
-    if text == "sub":
-        return default
-    if text.startswith("sub"):
-        text = text[3:]
-    elif text.startswith("副图"):
-        text = text[2:]
-    elif text == "副图":
-        return default
-    if not text:
-        return default
-    if text.isdigit():
-        return _sub_label_from_index(int(text))
-    raise ValueError("pane must be main, sub1..sub4, signal, or 0..4")
-
-
-def _sub_label_from_index(index: int) -> str:
-    """Map an integer pane index to a canonical label."""
-    if index == 0:
-        return "main"
-    if 1 <= index <= MAX_SUB_PANES:
-        return f"sub{index}"
-    raise ValueError(f"pane index supports main plus 1..{MAX_SUB_PANES} sub panes")
+        if 0 <= pane <= MAX_SUB_PANES:
+            return pane
+        raise ValueError(
+            "pane index supports 0 (main) plus 1..%d sub panes" % MAX_SUB_PANES
+        )
+    raise ValueError("pane must be an integer index in 0..%d" % MAX_SUB_PANES)
 
 
 def timestamp_to_ms_and_ns(timestamp: Any) -> Tuple[int, int]:

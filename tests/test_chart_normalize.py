@@ -3,49 +3,67 @@
 import pandas as pd
 import pytest
 from akquant.chart import (
+    RENDER_TYPE_CANONICAL,
     normalize_meta_json,
-    normalize_pane_label,
+    normalize_pane_index,
+    normalize_render_type,
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
 
 
+@pytest.mark.parametrize("value", RENDER_TYPE_CANONICAL)
+def test_normalize_render_type_accepts_canonical(value: str) -> None:
+    """Every canonical render type normalizes to itself."""
+    assert normalize_render_type(value) == value
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(None, "line"), ("", "line"), ("  ", "line"), ("LINE", "line"), ("Bar", "bar")],
+)
+def test_normalize_render_type_defaults_and_casing(raw: object, expected: str) -> None:
+    """Empty values default to line and casing is normalized."""
+    assert normalize_render_type(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["candlestick", "spline", "pie", "unknown"])
+def test_normalize_render_type_rejects_unknown(raw: object) -> None:
+    """Render types outside the canonical enum raise ValueError (fail-fast)."""
+    with pytest.raises(ValueError):
+        normalize_render_type(raw)
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        (None, "main"),
-        ("main", "main"),
-        ("主图", "main"),
-        (0, "main"),
-        ("0", "main"),
-        ("signal", "signal"),
-        ("SIGNAL", "signal"),
-        ("sub", "sub1"),  # historical default must not crash
-        ("sub1", "sub1"),
-        ("sub4", "sub4"),
-        (1, "sub1"),
-        (4, "sub4"),
-        ("副图2", "sub2"),
+        (None, 0),
+        (0, 0),
+        ("0", 0),
+        (1, 1),
+        (4, 4),
+        ("2", 2),
+        ("", 0),
     ],
 )
-def test_normalize_pane_label_accepts_known_spellings(
-    raw: object, expected: str
+def test_normalize_pane_index_accepts_integer_specifiers(
+    raw: object, expected: int
 ) -> None:
-    """All historical pane spellings map to a canonical label."""
-    assert normalize_pane_label(raw) == expected
+    """Pane specifiers normalize to an integer row index (0=main)."""
+    assert normalize_pane_index(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["sub9", "副图9", "unknown", 9])
-def test_normalize_pane_label_rejects_out_of_range(raw: object) -> None:
-    """Out-of-range or unknown pane specifiers raise ValueError."""
+@pytest.mark.parametrize("raw", [5, 9, -1, "9", "main", "sub1", "副图2", "signal"])
+def test_normalize_pane_index_rejects_out_of_range_or_labels(raw: object) -> None:
+    """Out-of-range indices and legacy string labels raise ValueError."""
     with pytest.raises(ValueError):
-        normalize_pane_label(raw)
+        normalize_pane_index(raw)
 
 
-def test_normalize_pane_label_rejects_bool() -> None:
+def test_normalize_pane_index_rejects_bool() -> None:
     """Booleans are not valid pane specifiers even though they are ints."""
     with pytest.raises(ValueError):
-        normalize_pane_label(True)
+        normalize_pane_index(True)
 
 
 def test_timestamp_to_ms_and_ns_from_pandas_timestamp() -> None:
