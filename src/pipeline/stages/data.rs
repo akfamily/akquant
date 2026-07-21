@@ -16,6 +16,12 @@ pub struct DataProcessor {
     last_timestamp: i64,
     finalized_timestamp: i64,
     seen_symbols: HashSet<String>,
+    // Symbols with a *tradable* bar this slice (volume > 0). `seen_symbols`
+    // tracks "did a bar appear at all" (drives synthetic-bar backfill); this
+    // tracks "was it matchable". A suspended symbol emits a volume=0 placeholder
+    // bar — present in `seen_symbols` but absent here — so it must not look
+    // tradable to the terminal-state path (issue #334).
+    tradable_symbols: HashSet<String>,
     current_symbol_events: HashMap<String, Event>,
 }
 
@@ -32,6 +38,7 @@ impl DataProcessor {
             last_timestamp: 0,
             finalized_timestamp: 0,
             seen_symbols: HashSet::new(),
+            tradable_symbols: HashSet::new(),
             current_symbol_events: HashMap::new(),
         }
     }
@@ -82,17 +89,36 @@ impl DataProcessor {
                     // (issue #329). Rejecting once its matchable slice has passed
                     // without a bar gives it a terminal state instead.
                     && order.created_at <= self.last_timestamp
-                    && !self.seen_symbols.contains(&order.symbol)
+                    // Was there a *tradable* (volume>0) bar this slice, not merely
+                    // any bar? A suspended symbol emits a volume=0 placeholder bar
+                    // that the matcher skips (execution/common.rs volume<=0 => None)
+                    // but that still landed in `seen_symbols`, so the old check let
+                    // the order live forever until the symbol resumed (issue #334).
+                    // Keying off tradability aligns this terminal-state path with
+                    // the matcher and generalizes the #329 "no bar at all" case.
+                    && !self.tradable_symbols.contains(&order.symbol)
                     && effective_execution_policy_for_order(engine, order).bar_offset == 1
             })
             .cloned()
             .map(|mut order| {
                 order.status = OrderStatus::Rejected;
                 order.updated_at = self.last_timestamp;
-                order.reject_reason = format!(
-                    "Missing market data for symbol {} at execution timestamp {}",
-                    order.symbol, self.last_timestamp
-                );
+                // Distinguish the two untradable causes so audit/log analysis is
+                // not misled: a symbol present in `seen_symbols` did emit a bar
+                // this slice — it was just not tradable (volume=0 suspension,
+                // issue #334); one absent from it had no market data at all
+                // (issue #329).
+                order.reject_reason = if self.seen_symbols.contains(&order.symbol) {
+                    format!(
+                        "Symbol {} not tradable (zero volume, suspension) at execution timestamp {}",
+                        order.symbol, self.last_timestamp
+                    )
+                } else {
+                    format!(
+                        "Missing market data for symbol {} at execution timestamp {}",
+                        order.symbol, self.last_timestamp
+                    )
+                };
                 order
             })
             .collect();
@@ -208,6 +234,7 @@ impl Processor for DataProcessor {
                 if self.last_timestamp != 0 && timestamp > self.last_timestamp {
                     self.finalize_current_timestamp(engine, py);
                     self.seen_symbols.clear();
+                    self.tradable_symbols.clear();
                     self.current_symbol_events.clear();
 
                     if engine.is_active_timestamp(timestamp) {
@@ -237,6 +264,12 @@ impl Processor for DataProcessor {
                 let local_date = engine.local_date_from_ns(timestamp);
                 if engine.is_active_timestamp(timestamp) && engine.current_date != Some(local_date)
                 {
+                    // Captured before `current_date` is advanced below: the date
+                    // whose close this settlement follows. A next-open Day order
+                    // created on this date fills at *today's* open (matched after
+                    // settlement), so it must be spared from today's expiry sweep.
+                    let previous_trading_date = engine.current_date;
+
                     if engine.current_date.is_some() {
                         engine.statistics_manager.record_snapshot(
                             timestamp,
@@ -258,6 +291,29 @@ impl Processor for DataProcessor {
 
                     // Settlement Manager (T+1, Option Expiry, Day Order Expiry)
                     let mut expired_orders = Vec::new();
+                    // Day orders whose only matchable slice is *this* day's bar
+                    // (next-open, created after the previous close) must not be
+                    // expired by this settlement — they fill after it runs. Same-
+                    // cycle (bar_offset == 0) orders had their slice on their
+                    // creation day, so they still expire here.
+                    let day_orders_awaiting_fill_slice: HashSet<String> = previous_trading_date
+                        .map(|prev| {
+                            engine
+                                .state
+                                .order_manager
+                                .active_orders
+                                .iter()
+                                .filter(|order| {
+                                    order.time_in_force == crate::model::TimeInForce::Day
+                                        && effective_execution_policy_for_order(engine, order)
+                                            .bar_offset
+                                            == 1
+                                        && engine.local_date_from_ns(order.created_at) == prev
+                                })
+                                .map(|order| order.id.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     let settlement_ctx = crate::settlement::manager::SettlementContext {
                         date: local_date,
                         instruments: &engine.instruments,
@@ -268,6 +324,7 @@ impl Processor for DataProcessor {
                         timestamp,
                         bar_index: engine.bar_count,
                         default_strategy_id: engine.default_strategy_id.clone(),
+                        day_orders_awaiting_fill_slice: &day_orders_awaiting_fill_slice,
                     };
                     let settlement_outcome = engine.settlement_manager.process_daily_settlement(
                         &mut engine.state.portfolio,
@@ -405,6 +462,9 @@ impl Processor for DataProcessor {
 
                 if let Event::Bar(ref b) = event {
                     self.seen_symbols.insert(b.symbol.clone());
+                    if b.volume > Decimal::ZERO {
+                        self.tradable_symbols.insert(b.symbol.clone());
+                    }
                     self.current_symbol_events
                         .insert(b.symbol.clone(), Event::Bar(b.clone()));
                     // Update History Buffer
