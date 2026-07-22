@@ -228,11 +228,16 @@ class IndicatorExportStrategy(Strategy):
 ```
 
 !!! note "About the `pane` value"
-    `pane` is an **integer row index**: `0` is the main (price) pane and `1`..`4`
+    `pane` is an **integer row index**: `0` is the main (price) pane and `1`..`N`
     are sub panes stacked below it. Omitting `pane` defaults to the main pane
-    (`0`). Values outside `0..4` raise an error. This matches what chart renderers
-    actually consume, and `record_indicator` emits the same integer `pane` on both
-    the plain backtest export and the frontend stream bridge paths.
+    (`0`). The default cap `N` is `8` — a soft, screen-readability guideline
+    rather than a hard limit. Multi-factor or derivatives workflows that need
+    more sub panes can raise it by setting the `AKQUANT_MAX_SUB_PANES` environment
+    variable before the run. A `pane` outside `0..N` raises an error (fail-fast),
+    so a mistyped index never silently lands on the wrong pane. This matches what
+    chart renderers actually consume, and `record_indicator` emits the same
+    integer `pane` on both the plain backtest export and the frontend stream
+    bridge paths.
 
 !!! warning "Breaking change since 0.3"
     Earlier versions accepted string panes such as `"main"` / `"sub1"` / `"主图"` /

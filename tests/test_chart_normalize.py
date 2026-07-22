@@ -42,6 +42,7 @@ def test_normalize_render_type_rejects_unknown(raw: object) -> None:
         ("0", 0),
         (1, 1),
         (4, 4),
+        (8, 8),
         ("2", 2),
         ("", 0),
     ],
@@ -53,11 +54,38 @@ def test_normalize_pane_index_accepts_integer_specifiers(
     assert normalize_pane_index(raw) == expected
 
 
-@pytest.mark.parametrize("raw", [5, 9, -1, "9", "main", "sub1", "副图2", "signal"])
+@pytest.mark.parametrize("raw", [9, 12, -1, "9", "main", "sub1", "副图2", "signal"])
 def test_normalize_pane_index_rejects_out_of_range_or_labels(raw: object) -> None:
     """Out-of-range indices and legacy string labels raise ValueError."""
     with pytest.raises(ValueError):
         normalize_pane_index(raw)
+
+
+def test_normalize_pane_index_honors_per_call_override() -> None:
+    """An explicit max_sub_panes lifts the cap for that call only."""
+    assert normalize_pane_index(10, max_sub_panes=16) == 10
+    with pytest.raises(ValueError):
+        normalize_pane_index(17, max_sub_panes=16)
+    # The override does not leak into the default-capped path.
+    with pytest.raises(ValueError):
+        normalize_pane_index(10)
+
+
+def test_default_max_sub_panes_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AKQUANT_MAX_SUB_PANES overrides the default cap; junk falls back to 8."""
+    import importlib
+
+    import akquant.chart._normalize as norm
+
+    monkeypatch.setenv("AKQUANT_MAX_SUB_PANES", "12")
+    assert norm._default_max_sub_panes() == 12
+    monkeypatch.setenv("AKQUANT_MAX_SUB_PANES", "not-a-number")
+    assert norm._default_max_sub_panes() == 8
+    monkeypatch.setenv("AKQUANT_MAX_SUB_PANES", "0")
+    assert norm._default_max_sub_panes() == 8
+    monkeypatch.delenv("AKQUANT_MAX_SUB_PANES", raising=False)
+    assert norm._default_max_sub_panes() == 8
+    importlib.reload(norm)  # restore module-level MAX_SUB_PANES cleanly
 
 
 def test_normalize_pane_index_rejects_bool() -> None:
