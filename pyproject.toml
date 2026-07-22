@@ -76,6 +76,9 @@ dev = [
 features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "akquant.akquant"
+include = [
+    { path = "python/akquant/lwc/assets/*.js", format = ["wheel", "sdist"] },
+]
 
 [tool.ruff]
 line-length = 88
