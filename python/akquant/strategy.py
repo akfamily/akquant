@@ -1750,6 +1750,8 @@ class Strategy:
         precision: Optional[int] = None,
         color: Optional[str] = None,
         meta: Optional[Dict[str, Any]] = None,
+        reference_lines: Optional[list[Dict[str, Any]]] = None,
+        scale_group: Optional[str] = None,
         warmup: bool = False,
     ) -> None:
         """Record one indicator point for downstream visualization and export."""
@@ -1779,6 +1781,8 @@ class Strategy:
             precision=precision,
             color=color,
             meta=meta,
+            reference_lines=reference_lines,
+            scale_group=scale_group,
             warmup=warmup,
         )
 

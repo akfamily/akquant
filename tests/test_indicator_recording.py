@@ -703,3 +703,35 @@ def test_recorder_point_event_carries_scale_group() -> None:
     point_events = [p for (t, p) in events if t == "indicator_point"]
     assert point_events
     assert point_events[0]["scale_group"] == "percent"
+
+
+def test_record_indicator_end_to_end_reference_lines_and_scale_group() -> None:
+    """record_indicator should pass reference_lines and scale_group through."""
+
+    class _RefStrat(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            self.record_indicator(
+                name="rsi",
+                value=float(bar.close),
+                pane=1,
+                reference_lines=[{"value": 70, "label": "超买"}],
+                scale_group="percent",
+            )
+
+    result = run_backtest(
+        data=_build_data(),
+        strategy=_RefStrat,
+        symbols="IND",
+        initial_cash=100000.0,
+        show_progress=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+    )
+    definition = result.indicator_outputs["definitions"][0]
+    assert definition["scale_group"] == "percent"
+    assert definition["reference_lines"] == [
+        {"value": 70.0, "label": "超买", "color": ""}
+    ]
