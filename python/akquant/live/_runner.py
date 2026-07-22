@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from ..akquant import Bar, DataFeed, Engine, Instrument
+from ..backtest import BacktestStreamEvent
 from ..gateway.broker_event_adapter import map_order_snapshot, map_trade
 from ..gateway.broker_runtime import BrokerRuntime
 from ..gateway.factory import create_gateway_bundle
@@ -14,6 +15,7 @@ from ..gateway.order_submitter import (
     resolve_live_order_legs,
     validate_live_order_client_ids,
 )
+from ..indicator_recording import IndicatorSink
 from ..log import build_log_extra, get_logger
 from ..strategy import Strategy
 from ..strategy_loader import resolve_strategy_input
@@ -35,6 +37,7 @@ from ._strategy_maps import (
     normalize_strategy_int_map,
     validate_strategy_map_keys,
 )
+from ._stream_sink import StreamingIndicatorSink
 
 logger = get_logger("gateway.live")
 
@@ -270,10 +273,30 @@ class LiveRunner:
         self.risk_budget_mode = risk_budget_mode
         self.risk_budget_reset_daily = bool(risk_budget_reset_daily)
         self.on_broker_event = on_broker_event
+        # Indicator streaming wiring (set via set_indicator_stream / run_live).
+        self._indicator_recorder_override: Optional[IndicatorSink] = None
+        self._stream_on_event: Optional[Callable[[BacktestStreamEvent], None]] = None
         self._init_broker_bridge_state()
 
         self.feed = DataFeed.create_live()  # type: ignore
         self.engine = Engine()
+
+    def set_indicator_stream(
+        self,
+        *,
+        indicator_recorder: Optional[IndicatorSink] = None,
+        on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    ) -> None:
+        """Configure realtime indicator streaming for this live session.
+
+        :param indicator_recorder: Optional public :class:`IndicatorSink` to
+            collect indicator points; when omitted a streaming sink is used if
+            ``on_event`` is provided.
+        :param on_event: Optional stream event callback receiving
+            ``indicator_point`` / ``indicator_snapshot`` events.
+        """
+        self._indicator_recorder_override = indicator_recorder
+        self._stream_on_event = on_event
 
     def run(
         self,
@@ -348,6 +371,9 @@ class LiveRunner:
         )
         self._configure_strategy_slots(
             strategy_instance, slot_strategy_instances, effective_strategy_id
+        )
+        self._attach_indicator_stream(
+            [strategy_instance, *slot_strategy_instances.values()]
         )
         # Broker callbacks + submit/state/cancel overrides are broker_live-only.
         # A non-broker_live run (e.g. paper) uses simulated execution, so must not
@@ -486,6 +512,47 @@ class LiveRunner:
                 )
                 cast(Any, self.engine).set_strategy_for_slot(slot_index, assigned)
         self._apply_strategy_risk_controls(configured_slot_ids)
+
+    def _attach_indicator_stream(self, targets: list[Strategy]) -> None:
+        """Attach an indicator sink to strategies and flush snapshots per cycle.
+
+        Mirrors the backtest indicator recorder attachment. Uses the injected
+        ``indicator_recorder`` when provided, else a non-accumulating
+        :class:`StreamingIndicatorSink` when ``on_event`` is set. When neither is
+        configured, live runs record no indicators (unchanged legacy behavior).
+        """
+        recorder: Optional[IndicatorSink] = self._indicator_recorder_override
+        if recorder is None and self._stream_on_event is not None:
+            recorder = StreamingIndicatorSink(
+                self._stream_on_event,
+                run_id=str(self.strategy_id),
+            )
+        if recorder is None:
+            return
+        for target in targets:
+            setattr(target, "_indicator_recorder", recorder)
+        flush = getattr(recorder, "flush_stream_snapshot", None)
+        if not callable(flush):
+            return
+        for target in targets:
+            self._wrap_callback_with_flush(target, "on_bar", flush)
+            if hasattr(target, "on_tick"):
+                self._wrap_callback_with_flush(target, "on_tick", flush)
+
+    @staticmethod
+    def _wrap_callback_with_flush(
+        strategy: Strategy, method_name: str, flush: Callable[[], None]
+    ) -> None:
+        """Wrap a strategy callback so the indicator snapshot flushes after it."""
+        original = getattr(strategy, method_name, None)
+        if not callable(original):
+            return
+
+        def wrapped(event: Any, _original: Any = original) -> None:
+            _original(event)
+            flush()
+
+        setattr(strategy, method_name, wrapped)
 
     def _normalize_strategy_float_map(
         self, values: Optional[Dict[str, float]]

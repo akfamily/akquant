@@ -5,6 +5,7 @@ Public surface: :func:`run_live` (added in the symmetry refactor) mirrors
 re-exported here for backward compatibility.
 """
 
+from ._facade import run_live
 from ._runner import LiveRunner
 
-__all__ = ["LiveRunner"]
+__all__ = ["LiveRunner", "run_live"]
