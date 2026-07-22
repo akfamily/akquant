@@ -20,11 +20,11 @@ from typing import Any
 # Import akquant
 from akquant import AssetType, Bar, Instrument, Strategy
 
-# Import LiveRunner from akquant.live
+# Import run_live from akquant
 try:
-    from akquant.live import LiveRunner
+    from akquant import run_live
 except ImportError as e:
-    print(f"Error importing LiveRunner: {e}")
+    print(f"Error importing run_live: {e}")
     sys.exit(1)
 
 
@@ -135,19 +135,19 @@ def main() -> None:
         ),
     ]
 
-    # Create and Run LiveRunner
+    # Run via run_live (symmetric with run_backtest)
     # use_aggregator=False means we process every Tick as a Bar (High Frequency)
     # Set use_aggregator=True to enable 1-minute bar aggregation (default)
-    runner = LiveRunner(
+    # You can stop manually via Ctrl+C, or set a duration (e.g., duration="1h", "30m")
+    run_live(
         strategy_cls=DemoLiveStrategy,
         instruments=instruments,
         md_front=MD_FRONT,
         use_aggregator=False,  # Set to True for 1-minute bars
+        cash=1_000_000,
+        show_progress=False,
+        duration="1m",
     )
-
-    # Run the strategy
-    # You can stop manually via Ctrl+C, or set a duration (e.g., duration="1h", "30m")
-    runner.run(cash=1_000_000, show_progress=False, duration="1m")
 
 
 if __name__ == "__main__":

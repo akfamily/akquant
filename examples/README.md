@@ -41,10 +41,10 @@
 - [35_custom_broker_registry_demo.py](./35_custom_broker_registry_demo.py): 自定义 Broker 注册与工厂创建示例。
 - [36_trailing_orders.py](./36_trailing_orders.py): Trailing Stop/StopLimit 助手示例。
 - [37_feed_replay_alignment_demo.py](./37_feed_replay_alignment_demo.py): replay 的 session/day/global 与 day_mode 对齐差异示例。
-- [38_live_functional_strategy_demo.py](./38_live_functional_strategy_demo.py): LiveRunner 函数式策略入口示例。
+- [38_live_functional_strategy_demo.py](./38_live_functional_strategy_demo.py): run_live 函数式策略入口示例。
 - [39_live_broker_submit_order_demo.py](./39_live_broker_submit_order_demo.py): broker_live 下函数式 submit_order 最小闭环示例。
 - [40_functional_multi_slot_risk_demo.py](./40_functional_multi_slot_risk_demo.py): 函数式 + 多策略 slot + 风控限制端到端示例。
-- [41_live_multi_slot_orchestration_demo.py](./41_live_multi_slot_orchestration_demo.py): LiveRunner 多策略 slot 编排示例（paper）。
+- [41_live_multi_slot_orchestration_demo.py](./41_live_multi_slot_orchestration_demo.py): run_live 多策略 slot 编排示例（paper）。
 - [42_live_broker_event_audit_demo.py](./42_live_broker_event_audit_demo.py): broker 事件审计与 owner_strategy_id 追踪示例。
 - [43_target_weights_rebalance.py](./43_target_weights_rebalance.py): TopN 动态权重调仓示例（横截面动量 + `rebalance_weights`）。
 - [44_strategy_source_loader_demo.py](./44_strategy_source_loader_demo.py): strategy_source + strategy_loader 动态加载示例（明文 + 外部解密）。

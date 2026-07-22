@@ -4,7 +4,7 @@
 
 快速跳转：
 
-*   [LiveRunner broker_live 执行语义](#live-broker-semantics)
+*   [run_live broker_live 执行语义](#live-broker-semantics)
 
 ## 1. 高级入口 (High-Level API)
 
@@ -985,12 +985,14 @@ Tick 数据对象。
 *   `volume`: 成交量。
 *   `symbol`: 标的代码。
 
-### `akquant.live.LiveRunner`（broker_live 执行语义） {: #live-broker-semantics }
+### `akquant.run_live`（broker_live 执行语义） {: #live-broker-semantics }
 
 实盘 broker 路由可通过 `gateway_options` 传入网关特定参数：
 
 ```python
-runner = LiveRunner(
+from akquant import run_live
+
+run_live(
     strategy_cls=on_bar,
     instruments=instruments,
     broker="ctp",

@@ -1,7 +1,7 @@
 """LiveRunner 止损 remap: 记录/查找/终态清理 + 适配用 local id."""
 
 from akquant.gateway.broker_models import UnifiedTrade
-from akquant.live import LiveRunner
+from akquant.live._runner import LiveRunner
 
 
 def _runner() -> LiveRunner:

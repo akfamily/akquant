@@ -2274,7 +2274,7 @@ class Strategy:
         """
         统一下单接口.
 
-        该接口在回测与实盘模式均可调用，实盘模式下会由 LiveRunner 注入增强能力。
+        该接口在回测与实盘模式均可调用，实盘模式下会由 run_live 注入增强能力。
 
         Returns:
             OrderReceipt: 下单回执，含全部腿 id（可能拆腿）；
@@ -2308,7 +2308,7 @@ class Strategy:
         """
         检查 client_order_id 是否可再次提交.
 
-        该方法在 LiveRunner 的 broker_live 模式下会被注入真实实现。
+        该方法在 run_live 的 broker_live 模式下会被注入真实实现。
         """
         _ = client_order_id
         return True

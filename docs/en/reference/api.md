@@ -4,7 +4,7 @@ This API documentation covers the core classes and methods of AKQuant.
 
 Quick links:
 
-*   [LiveRunner broker-live semantics](#live-broker-semantics)
+*   [run_live broker-live semantics](#live-broker-semantics)
 
 ## 1. High-Level API
 
@@ -952,12 +952,14 @@ Bar data object.
 *   `open`, `high`, `low`, `close`, `volume`: OHLCV data.
 *   `symbol`: Instrument symbol.
 
-### `akquant.live.LiveRunner` (broker live semantics) {: #live-broker-semantics }
+### `akquant.run_live` (broker live semantics) {: #live-broker-semantics }
 
-For live broker routing, `LiveRunner` accepts broker-specific options through `gateway_options`.
+For live broker routing, `run_live` accepts broker-specific options through `gateway_options`.
 
 ```python
-runner = LiveRunner(
+from akquant import run_live
+
+run_live(
     strategy_cls=on_bar,
     instruments=instruments,
     broker="ctp",

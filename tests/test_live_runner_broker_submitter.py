@@ -3,7 +3,7 @@ from typing import Any, cast
 import pytest
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.models import BrokerCapability, UnifiedPosition
-from akquant.live import LiveRunner
+from akquant.live._runner import LiveRunner
 
 
 def test_live_runner_submitter_checks_idempotency_and_maps() -> None:

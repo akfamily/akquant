@@ -1,5 +1,5 @@
 import json
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Protocol, Tuple, runtime_checkable
 
 from .chart import (
     normalize_meta_json as _normalize_meta_json,
@@ -10,6 +10,58 @@ from .chart import (
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
+
+
+@runtime_checkable
+class IndicatorSink(Protocol):
+    """Public protocol for objects that collect indicator points during a run.
+
+    Pass an implementation to ``run_backtest(indicator_recorder=...)`` to route
+    every ``Strategy.record_indicator`` call into your own collector instead of
+    the built-in :class:`IndicatorRecorder`. This is the supported extension
+    point for chart backends and frontends: implement ``record`` to capture
+    points and ``build_payload`` to return the definitions/instances/points
+    payload attached to :class:`BacktestResult.indicator_outputs`.
+
+    The built-in :class:`IndicatorRecorder` satisfies this protocol.
+    """
+
+    def record(
+        self,
+        *,
+        name: str,
+        value: Any,
+        symbol: str,
+        timestamp: Any,
+        owner_strategy_id: str,
+        display_name: Optional[str] = ...,
+        pane: int = ...,
+        render_type: str = ...,
+        unit: Optional[str] = ...,
+        precision: Optional[int] = ...,
+        color: Optional[str] = ...,
+        meta: Optional[Dict[str, Any]] = ...,
+        warmup: bool = ...,
+    ) -> None:
+        """Record one indicator point."""
+        ...
+
+    def build_payload(self) -> Dict[str, list[Dict[str, Any]]]:
+        """Return the row-oriented definitions/instances/points payload."""
+        ...
+
+    def flush_stream_snapshot(self) -> None:
+        """Emit any buffered stream snapshot for the current callback cycle."""
+        ...
+
+    def set_stream_emitter(
+        self,
+        stream_emitter: Optional[
+            Callable[[str, Optional[str], str, Dict[str, str]], None]
+        ],
+    ) -> None:
+        """Attach or replace the runtime stream emitter."""
+        ...
 
 
 def _normalize_text(value: Any, default: str = "") -> str:
