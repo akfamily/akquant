@@ -6,7 +6,9 @@ from .chart import (
 )
 from .chart import (
     normalize_pane_index,
+    normalize_reference_lines,
     normalize_render_type,
+    normalize_scale_group,
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
@@ -41,6 +43,8 @@ class IndicatorSink(Protocol):
         precision: Optional[int] = ...,
         color: Optional[str] = ...,
         meta: Optional[Dict[str, Any]] = ...,
+        reference_lines: Optional[list[Dict[str, Any]]] = ...,
+        scale_group: Optional[str] = ...,
         warmup: bool = ...,
     ) -> None:
         """Record one indicator point."""
@@ -119,6 +123,8 @@ class IndicatorRecorder:
         precision: Optional[int] = None,
         color: Optional[str] = None,
         meta: Optional[Dict[str, Any]] = None,
+        reference_lines: Optional[list[Dict[str, Any]]] = None,
+        scale_group: Optional[str] = None,
         warmup: bool = False,
     ) -> None:
         """Record one indicator definition, instance, and point update."""
@@ -134,6 +140,8 @@ class IndicatorRecorder:
         unit_text = _normalize_text(unit)
         color_text = _normalize_text(color)
         meta_json = _normalize_meta_json(meta)
+        reference_lines_norm = normalize_reference_lines(reference_lines)
+        scale_group_norm = normalize_scale_group(scale_group)
         timestamp_ns = _normalize_timestamp_ns(timestamp)
         timestamp_ms = timestamp_ms_from_ns(timestamp_ns)
 
@@ -152,6 +160,8 @@ class IndicatorRecorder:
                 "unit": unit_text,
                 "precision": precision,
                 "color": color_text,
+                "reference_lines": reference_lines_norm,
+                "scale_group": scale_group_norm,
             }
         else:
             if not definition.get("display_name"):
@@ -166,6 +176,10 @@ class IndicatorRecorder:
                 definition["precision"] = precision
             if not definition.get("color"):
                 definition["color"] = color_text
+            if not definition.get("reference_lines") and reference_lines_norm:
+                definition["reference_lines"] = reference_lines_norm
+            if not definition.get("scale_group") and scale_group_norm:
+                definition["scale_group"] = scale_group_norm
 
         instance_key = (strategy_id, symbol_text, indicator_key, meta_json)
         instance = self._instances.get(instance_key)
@@ -207,6 +221,7 @@ class IndicatorRecorder:
                     "timestamp_ms": str(timestamp_ms),
                     "value": repr(numeric_value),
                     "warmup": str(bool(warmup)).lower(),
+                    "scale_group": scale_group_norm,
                     "meta_json": meta_json,
                 },
             )

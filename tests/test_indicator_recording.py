@@ -605,3 +605,101 @@ def test_indicator_stream_bridge_accepts_predecoded_payloads() -> None:
     assert message["snapshot"]["items"][1]["warmup"] is True
     assert message["snapshot"]["indicator_keys"] == ["close_echo", "range_echo"]
     assert message["snapshot"]["value_by_key"]["range_echo"] == pytest.approx(0.4)
+
+
+def test_recorder_captures_reference_lines_and_scale_group() -> None:
+    """Recorded indicator definition should capture reference_lines and scale_group."""
+    from akquant.indicator_recording import IndicatorRecorder
+
+    recorder = IndicatorRecorder()
+    recorder.record(
+        name="rsi",
+        value=55.0,
+        symbol="IND",
+        timestamp=pd.Timestamp("2024-01-01 10:00:00").value,
+        owner_strategy_id="s1",
+        pane=1,
+        reference_lines=[
+            {"value": 70, "label": "超买", "color": "#ef4444"},
+            {"value": 30, "label": "超卖"},
+        ],
+        scale_group="percent",
+    )
+    payload = recorder.build_payload()
+    definition = payload["definitions"][0]
+    assert definition["indicator_key"] == "rsi"
+    assert definition["scale_group"] == "percent"
+    assert definition["reference_lines"] == [
+        {"value": 70.0, "label": "超买", "color": "#ef4444"},
+        {"value": 30.0, "label": "超卖", "color": ""},
+    ]
+
+
+def test_recorder_defaults_reference_lines_and_scale_group() -> None:
+    """Omitting reference_lines and scale_group should default to empty values."""
+    from akquant.indicator_recording import IndicatorRecorder
+
+    recorder = IndicatorRecorder()
+    recorder.record(
+        name="ma",
+        value=10.0,
+        symbol="IND",
+        timestamp=pd.Timestamp("2024-01-01 10:00:00").value,
+        owner_strategy_id="s1",
+    )
+    definition = recorder.build_payload()["definitions"][0]
+    assert definition["reference_lines"] == []
+    assert definition["scale_group"] == ""
+
+
+def test_recorder_first_non_empty_wins_on_merge() -> None:
+    """When merging definitions, first non-empty values should win."""
+    from akquant.indicator_recording import IndicatorRecorder
+
+    recorder = IndicatorRecorder()
+    recorder.record(
+        name="rsi",
+        value=55.0,
+        symbol="IND",
+        timestamp=pd.Timestamp("2024-01-01 10:00").value,
+        owner_strategy_id="s1",
+        scale_group="percent",
+        reference_lines=[{"value": 70}],
+    )
+    recorder.record(
+        value=56.0,
+        timestamp=pd.Timestamp("2024-01-01 10:01").value,
+        name="rsi",
+        symbol="IND",
+        owner_strategy_id="s1",
+        scale_group="other",
+        reference_lines=[{"value": 99}],
+    )
+    definition = recorder.build_payload()["definitions"][0]
+    assert definition["scale_group"] == "percent"
+    assert definition["reference_lines"] == [{"value": 70.0, "label": "", "color": ""}]
+
+
+def test_recorder_point_event_carries_scale_group() -> None:
+    """Indicator point stream event payload should include scale_group."""
+    from akquant.indicator_recording import IndicatorRecorder
+
+    events: list[tuple] = []
+
+    def emitter(
+        event_type: str, symbol: str | None, level: str, payload: dict[str, str]
+    ) -> None:
+        events.append((event_type, payload))
+
+    recorder = IndicatorRecorder(stream_emitter=emitter)
+    recorder.record(
+        name="rsi",
+        value=55.0,
+        symbol="IND",
+        timestamp=pd.Timestamp("2024-01-01 10:00:00").value,
+        owner_strategy_id="s1",
+        scale_group="percent",
+    )
+    point_events = [p for (t, p) in events if t == "indicator_point"]
+    assert point_events
+    assert point_events[0]["scale_group"] == "percent"
