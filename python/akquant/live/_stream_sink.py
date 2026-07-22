@@ -15,6 +15,7 @@ from ..chart import (
     normalize_meta_json,
     normalize_pane_index,
     normalize_render_type,
+    normalize_scale_group,
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
@@ -68,6 +69,8 @@ class StreamingIndicatorSink:
         precision: Optional[int] = None,
         color: Optional[str] = None,
         meta: Optional[Dict[str, Any]] = None,
+        reference_lines: Optional[list[Dict[str, Any]]] = None,
+        scale_group: Optional[str] = None,
         warmup: bool = False,
     ) -> None:
         """Emit one ``indicator_point`` and buffer it for the next snapshot."""
@@ -80,6 +83,7 @@ class StreamingIndicatorSink:
         render = normalize_render_type(render_type)
         display = str(display_name or "").strip() or indicator_key
         meta_json = normalize_meta_json(meta)
+        scale_group_norm = normalize_scale_group(scale_group)
         _, timestamp_ns = timestamp_to_ms_and_ns(timestamp)
         timestamp_ms = timestamp_ms_from_ns(timestamp_ns)
         try:
@@ -101,6 +105,7 @@ class StreamingIndicatorSink:
                 "timestamp_ms": str(timestamp_ms),
                 "value": repr(numeric_value),
                 "warmup": str(bool(warmup)).lower(),
+                "scale_group": scale_group_norm,
                 "meta_json": meta_json,
             },
             timestamp_ns,

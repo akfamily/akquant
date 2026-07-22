@@ -523,12 +523,9 @@ class LiveRunner:
         """
         recorder: IndicatorSink | None = self._indicator_recorder_override
         if recorder is None and self._stream_on_event is not None:
-            recorder = cast(
-                IndicatorSink,
-                StreamingIndicatorSink(
-                    self._stream_on_event,
-                    run_id=str(self.strategy_id),
-                ),
+            recorder = StreamingIndicatorSink(
+                self._stream_on_event,
+                run_id=str(self.strategy_id),
             )
         if recorder is None:
             return
