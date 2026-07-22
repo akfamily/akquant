@@ -56,6 +56,7 @@ from .feed_adapter import (
 )
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .indicator import Indicator, IndicatorSet
+from .indicator_recording import IndicatorRecorder, IndicatorSink
 from .indicator_stream import (
     is_indicator_stream_event,
     to_indicator_message,
@@ -147,7 +148,9 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
         "Indicator",
+        "IndicatorRecorder",
         "IndicatorSet",
+        "IndicatorSink",
         "is_indicator_stream_event",
         "to_indicator_message",
         "to_indicator_messages",
@@ -231,7 +234,9 @@ else:
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
         "Indicator",
+        "IndicatorRecorder",
         "IndicatorSet",
+        "IndicatorSink",
         "is_indicator_stream_event",
         "to_indicator_message",
         "to_indicator_messages",

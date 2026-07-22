@@ -45,7 +45,7 @@ from ..config import (
 )
 from ..data import ParquetDataCatalog
 from ..feed_adapter import DEFAULT_INPUT_TIMEZONE, DataFeedAdapter, FeedSlice
-from ..indicator_recording import IndicatorRecorder
+from ..indicator_recording import IndicatorRecorder, IndicatorSink
 from ..log import build_log_extra, get_logger, has_configured_handler, register_logger
 from ..normalize import coerce_to_pandas, dataframe_to_arrays, to_indicator_frame
 from ..risk import apply_risk_config
@@ -872,9 +872,19 @@ def _attach_indicator_recorder(
     ] = None,
     strategy_instance: Strategy,
     slot_strategy_instances: Dict[str, Strategy],
-) -> IndicatorRecorder:
-    """Attach one shared indicator recorder to all strategy instances."""
-    recorder = IndicatorRecorder(stream_emitter=stream_emitter)
+    recorder: Optional[IndicatorSink] = None,
+) -> IndicatorSink:
+    """Attach one shared indicator recorder to all strategy instances.
+
+    When ``recorder`` is provided (a public :class:`IndicatorSink`), it is used
+    verbatim and the stream emitter is attached to it; otherwise a built-in
+    :class:`IndicatorRecorder` is created. This is the injection point behind
+    ``run_backtest(indicator_recorder=...)``.
+    """
+    if recorder is None:
+        recorder = IndicatorRecorder(stream_emitter=stream_emitter)
+    else:
+        recorder.set_stream_emitter(stream_emitter)
     setattr(strategy_instance, "_indicator_recorder", recorder)
     for slot_strategy in slot_strategy_instances.values():
         setattr(slot_strategy, "_indicator_recorder", recorder)
@@ -2215,6 +2225,7 @@ def run_backtest(
     risk_budget_reset_daily: bool = False,
     analyzer_plugins: Optional[Sequence[AnalyzerPlugin]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    indicator_recorder: Optional[IndicatorSink] = None,
     broker_profile: Optional[str] = None,
     fill_policy: Optional[FillPolicy] = None,
     strict_strategy_params: bool = True,
@@ -2698,6 +2709,7 @@ def run_backtest(
         stream_emitter=indicator_stream_emitter,
         strategy_instance=strategy_instance,
         slot_strategy_instances=slot_strategy_instances,
+        recorder=indicator_recorder,
     )
     setattr(strategy_instance, "_slot_strategies", dict(slot_strategy_instances))
     setattr(strategy_instance, "_strategy_slot_ids", list(configured_slot_ids))
@@ -4474,6 +4486,7 @@ def run_from_checkpoint(
     risk_budget_mode: str = "order_notional",
     risk_budget_reset_daily: bool = False,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    indicator_recorder: Optional[IndicatorSink] = None,
     config: Optional[BacktestConfig] = None,
     **kwargs: Any,
 ) -> BacktestResult:
@@ -4833,6 +4846,7 @@ def run_from_checkpoint(
         stream_emitter=indicator_stream_emitter,
         strategy_instance=strategy_instance,
         slot_strategy_instances=slot_strategy_instances,
+        recorder=indicator_recorder,
     )
     setattr(strategy_instance, "_slot_strategies", dict(slot_strategy_instances))
     setattr(strategy_instance, "_strategy_slot_ids", list(configured_slot_ids))
