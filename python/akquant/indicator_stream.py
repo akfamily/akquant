@@ -85,6 +85,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
             "symbol": _normalize_symbol(payload.get("symbol")),
             "timestamp": _to_int(payload.get("timestamp", 0)),
             "value": _to_float_or_text(payload.get("value")),
+            "scale_group": str(payload.get("scale_group", "")),
             "warmup": _to_bool(payload.get("warmup", False)),
             "meta": _json_loads_or_default(payload.get("meta_json"), {}),
         }

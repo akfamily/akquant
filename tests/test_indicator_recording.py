@@ -735,3 +735,33 @@ def test_record_indicator_end_to_end_reference_lines_and_scale_group() -> None:
     assert definition["reference_lines"] == [
         {"value": 70.0, "label": "超买", "color": ""}
     ]
+
+
+def test_indicator_bridge_exposes_scale_group() -> None:
+    """Indicator bridge should expose scale_group from point events."""
+
+    class _ScaleStrat(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            self.record_indicator(
+                name="rsi", value=float(bar.close), pane=1, scale_group="percent"
+            )
+
+    events: list[akquant.BacktestStreamEvent] = []
+    run_backtest(
+        data=_build_data(),
+        strategy=_ScaleStrat,
+        symbols="IND",
+        initial_cash=100000.0,
+        show_progress=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+        on_event=events.append,
+        stream_batch_size=1,
+        stream_max_buffer=128,
+    )
+    messages = to_indicator_messages(events)
+    point = next(m for m in messages if m["type"] == "point")
+    assert point["indicator"]["scale_group"] == "percent"
