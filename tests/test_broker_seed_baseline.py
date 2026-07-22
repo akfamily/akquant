@@ -142,7 +142,7 @@ def test_cold_start_pending_trade_discarded_no_double_count() -> None:
 
 def test_baseline_broker_state_seeds_and_marks_seen() -> None:
     """Baseline seeding should warm caches, mark seen trades, and set the flag."""
-    from akquant.live import LiveRunner
+    from akquant.live._runner import LiveRunner
 
     class _Cache:
         def __init__(self) -> None:

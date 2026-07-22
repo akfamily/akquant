@@ -4,7 +4,7 @@ from typing import Any, cast
 
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.broker_state_cache import BrokerStateCache
-from akquant.live import LiveRunner
+from akquant.live._runner import LiveRunner
 from akquant.strategy import Strategy
 
 # ---- #1: _safe_strategy_callback 里 on_error 自身抛错不得逃出 ----

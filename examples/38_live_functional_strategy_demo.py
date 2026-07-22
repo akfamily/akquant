@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-LiveRunner 函数式策略入口示例.
+run_live 函数式策略入口示例.
 
 说明:
-- 演示如何用函数式回调驱动 LiveRunner（而非继承 Strategy 类）。
+- 演示如何用函数式回调驱动 run_live（而非继承 Strategy 类）。
 - 可用于 paper / broker_live 模式。
 - 默认参数为占位示例，请替换为你自己的网关地址与账户信息。
 """
 
 from typing import Any
 
-from akquant import AssetType, Instrument
-from akquant.live import LiveRunner
+from akquant import AssetType, Instrument, run_live
 
 
 def initialize(ctx: Any) -> None:
@@ -62,7 +61,7 @@ def on_timer(ctx: Any, payload: str) -> None:
 
 
 def main() -> None:
-    """运行函数式 LiveRunner 示例."""
+    """运行函数式 run_live 示例."""
     instruments = [
         Instrument(
             symbol="IF2506",
@@ -77,7 +76,7 @@ def main() -> None:
         )
     ]
 
-    runner = LiveRunner(
+    run_live(
         strategy_cls=on_bar,
         initialize=initialize,
         on_order=on_order,
@@ -89,8 +88,10 @@ def main() -> None:
         trading_mode="paper",
         md_front="tcp://127.0.0.1:12345",
         use_aggregator=True,
+        cash=1_000_000,
+        show_progress=False,
+        duration="30s",
     )
-    runner.run(cash=1_000_000, show_progress=False, duration="30s")
 
 
 if __name__ == "__main__":

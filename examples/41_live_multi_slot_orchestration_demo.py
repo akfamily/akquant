@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-LiveRunner 多策略 slot 编排示例.
+run_live 多策略 slot 编排示例.
 
 演示目标:
-- 在 LiveRunner 中配置主策略与副策略 slot。
+- 在 run_live 中配置主策略与副策略 slot。
 - 主策略使用函数式 on_bar，副策略使用类风格 Strategy。
 - 使用 paper 模式进行编排验证。
 """
 
 from typing import Any
 
-from akquant import AssetType, Bar, Instrument, Strategy
-from akquant.live import LiveRunner
+from akquant import AssetType, Bar, Instrument, Strategy, run_live
 
 
 def primary_initialize(ctx: Any) -> None:
@@ -44,7 +43,7 @@ class SecondarySlotStrategy(Strategy):
 
 
 def main() -> None:
-    """运行 LiveRunner 多 slot 编排示例."""
+    """运行 run_live 多 slot 编排示例."""
     instruments = [
         Instrument(
             symbol="IF2506",
@@ -59,7 +58,7 @@ def main() -> None:
         )
     ]
 
-    runner = LiveRunner(
+    run_live(
         strategy_cls=primary_on_bar,
         instruments=instruments,
         strategy_id="alpha",
@@ -69,8 +68,10 @@ def main() -> None:
         trading_mode="paper",
         md_front="tcp://127.0.0.1:12345",
         use_aggregator=True,
+        cash=1_000_000,
+        show_progress=False,
+        duration="30s",
     )
-    runner.run(cash=1_000_000, show_progress=False, duration="30s")
 
 
 if __name__ == "__main__":

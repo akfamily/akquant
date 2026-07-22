@@ -8,7 +8,7 @@ import pytest
 from akquant.akquant import OrderSide, OrderStatus
 from akquant.gateway.broker_execution import BrokerExecution
 from akquant.gateway.models import BrokerCapability, UnifiedPosition, UnifiedTrade
-from akquant.live import LiveRunner
+from akquant.live._runner import LiveRunner
 from akquant.strategy import Strategy
 
 

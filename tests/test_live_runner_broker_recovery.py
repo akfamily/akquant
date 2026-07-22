@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from typing import Any, Callable, cast
 
-from akquant.live import LiveRunner
+from akquant.live._runner import LiveRunner
 
 
 def test_live_runner_broker_bridge_recovers_from_sync() -> None:

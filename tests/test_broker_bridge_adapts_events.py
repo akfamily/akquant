@@ -17,7 +17,7 @@ from akquant.gateway.broker_models import (
     UnifiedOrderStatus,
     UnifiedTrade,
 )
-from akquant.live import LiveRunner
+from akquant.live._runner import LiveRunner
 
 
 class _Strat:
