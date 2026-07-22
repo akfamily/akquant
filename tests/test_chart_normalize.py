@@ -135,3 +135,60 @@ def test_normalize_meta_json_empty() -> None:
     """Empty or missing metadata serializes to an empty string."""
     assert normalize_meta_json(None) == ""
     assert normalize_meta_json({}) == ""
+
+
+def test_normalize_reference_lines_normalizes_full_entries() -> None:
+    """Reference lines normalize value to float and preserve labels/colors."""
+    from akquant.chart import normalize_reference_lines
+
+    result = normalize_reference_lines(
+        [
+            {"value": 70, "label": "超买", "color": "#ef4444"},
+            {"value": "30", "label": "超卖"},
+        ]
+    )
+    assert result == [
+        {"value": 70.0, "label": "超买", "color": "#ef4444"},
+        {"value": 30.0, "label": "超卖", "color": ""},
+    ]
+
+
+def test_normalize_reference_lines_empty_and_none() -> None:
+    """None and empty lists return empty result."""
+    from akquant.chart import normalize_reference_lines
+
+    assert normalize_reference_lines(None) == []
+    assert normalize_reference_lines([]) == []
+
+
+def test_normalize_reference_lines_rejects_non_list() -> None:
+    """Non-list inputs raise ValueError (fail-fast)."""
+    from akquant.chart import normalize_reference_lines
+
+    with pytest.raises(ValueError):
+        normalize_reference_lines({"value": 70})
+
+
+def test_normalize_reference_lines_rejects_missing_value() -> None:
+    """Missing 'value' key raises ValueError."""
+    from akquant.chart import normalize_reference_lines
+
+    with pytest.raises(ValueError):
+        normalize_reference_lines([{"label": "超买"}])
+
+
+def test_normalize_reference_lines_rejects_non_numeric_value() -> None:
+    """Non-numeric 'value' raises ValueError."""
+    from akquant.chart import normalize_reference_lines
+
+    with pytest.raises(ValueError):
+        normalize_reference_lines([{"value": "high"}])
+
+
+def test_normalize_scale_group_strips_and_defaults() -> None:
+    """Scale group is stripped and None/empty default to empty string."""
+    from akquant.chart import normalize_scale_group
+
+    assert normalize_scale_group("  percent ") == "percent"
+    assert normalize_scale_group(None) == ""
+    assert normalize_scale_group("") == ""

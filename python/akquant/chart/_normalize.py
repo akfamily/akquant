@@ -184,3 +184,51 @@ def normalize_meta_json(meta: Optional[Dict[str, Any]]) -> str:
     if not meta:
         return ""
     return json.dumps(meta, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def normalize_reference_lines(value: Any = None) -> list[Dict[str, Any]]:
+    """Normalize static reference-line metadata attached to an indicator.
+
+    Each line carries a required numeric ``value`` plus optional ``label`` and
+    ``color``. Labels keep CJK text intact (rendered later with
+    ``ensure_ascii=False``). Non-list inputs, or entries whose ``value`` is
+    missing or non-numeric, fail fast rather than degrading silently.
+
+    :param value: A list of ``{"value", "label"?, "color"?}`` mappings.
+    :return: Normalized list of reference-line dicts; ``[]`` when empty/None.
+    :raises ValueError: If ``value`` is not a list or an entry is malformed.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("reference_lines must be a list of {value, label?, color?}")
+    lines: list[Dict[str, Any]] = []
+    for entry in value:
+        if not isinstance(entry, dict) or "value" not in entry:
+            raise ValueError("each reference line must be a dict with a 'value' key")
+        try:
+            line_value = float(entry["value"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("reference line 'value' must be numeric") from exc
+        lines.append(
+            {
+                "value": line_value,
+                "label": str(entry.get("label") or "").strip(),
+                "color": str(entry.get("color") or "").strip(),
+            }
+        )
+    return lines
+
+
+def normalize_scale_group(value: Any = None) -> str:
+    """Normalize a shared-scale group label (open-ended semantic tag).
+
+    Unlike pane/render_type this is not a closed enum: the group name is a free
+    semantic hint (e.g. ``"percent"``, ``"price"``) that a frontend interprets.
+
+    :param value: Group label or None.
+    :return: Stripped label, or ``""`` when empty/None.
+    """
+    if value is None:
+        return ""
+    return str(value).strip()
