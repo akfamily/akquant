@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, cast
 
-import akquant.live as live_module
+import akquant.live._runner as live_module
 import pytest
 from akquant.akquant import OrderSide, OrderStatus
 from akquant.gateway.broker_execution import BrokerExecution
