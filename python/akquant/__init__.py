@@ -88,6 +88,12 @@ from .plot import plot_indicators, plot_result
 from .sizer import AllInSizer, FixedSize, PercentSizer, Sizer
 from .strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
 from .strategy_loader import register_strategy_loader, resolve_strategy_input
+from .stream_schema import STREAM_SCHEMA_VERSION
+from .trade_stream import (
+    is_trade_stream_event,
+    to_trade_message,
+    to_trade_messages,
+)
 from .utils import (
     fetch_akshare_symbol,
     format_metric_value,
@@ -155,6 +161,10 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "is_indicator_stream_event",
         "to_indicator_message",
         "to_indicator_messages",
+        "is_trade_stream_event",
+        "to_trade_message",
+        "to_trade_messages",
+        "STREAM_SCHEMA_VERSION",
         "run_backtest",
         "run_from_checkpoint",
         "run_live",
@@ -242,6 +252,10 @@ else:
         "is_indicator_stream_event",
         "to_indicator_message",
         "to_indicator_messages",
+        "is_trade_stream_event",
+        "to_trade_message",
+        "to_trade_messages",
+        "STREAM_SCHEMA_VERSION",
         "run_backtest",
         "run_from_checkpoint",
         "run_live",

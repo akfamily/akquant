@@ -4,6 +4,7 @@ import json
 from typing import Any, Iterable, Optional
 
 from .backtest import BacktestStreamEvent
+from .stream_schema import STREAM_SCHEMA_VERSION
 
 
 def _to_int(value: Any, default: int = 0) -> int:
@@ -71,6 +72,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
         "ts": _to_int(event.get("ts", 0)),
         "symbol": symbol,
         "level": str(event.get("level", "info")),
+        "schema_version": STREAM_SCHEMA_VERSION,
     }
 
     if event_type == "indicator_point":

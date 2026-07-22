@@ -2263,6 +2263,15 @@ def to_indicator_message(
 def to_indicator_messages(
     events: typing.Iterable[typing.Any],
 ) -> list[dict[str, typing.Any]]: ...
+def is_trade_stream_event(event: typing.Any) -> bool: ...
+def to_trade_message(
+    event: typing.Any,
+) -> typing.Optional[dict[str, typing.Any]]: ...
+def to_trade_messages(
+    events: typing.Iterable[typing.Any],
+) -> list[dict[str, typing.Any]]: ...
+
+STREAM_SCHEMA_VERSION: str
 
 class SIGN:
     r"""符号变换指标 (SIGN)."""

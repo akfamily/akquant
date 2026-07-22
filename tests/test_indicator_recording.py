@@ -474,6 +474,13 @@ def test_indicator_stream_bridge_builds_frontend_messages() -> None:
     assert first_snapshot["snapshot"]["warmup_count"] == 1
     assert first_snapshot["snapshot"]["has_warmup"] is True
 
+    # Every message stamps the shared stream schema version so a frontend can
+    # negotiate or degrade when the contract evolves.
+    assert all(
+        message["schema_version"] == akquant.STREAM_SCHEMA_VERSION
+        for message in messages
+    )
+
 
 def test_indicator_stream_bridge_ignores_non_indicator_events() -> None:
     """Non-indicator stream events should not be converted into bridge messages."""
