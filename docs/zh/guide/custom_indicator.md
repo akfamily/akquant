@@ -370,6 +370,60 @@ def on_event(event):
 
 它不是新的传输层，只是把 AKQuant 的事件结构整理成更稳定的“前端消息对象”。
 
+### 注入自定义指标采集器（IndicatorSink）
+
+如果你想把指标点位直接接进自己的采集/转发逻辑（例如推进一个广播队列、写入时序库），
+不必去 monkey-patch 策略的私有属性。`run_backtest` / `run_live` 都接受一个公开的
+`indicator_recorder` 参数，它是一个实现 `akquant.IndicatorSink` 协议的对象：
+
+```python
+from akquant import IndicatorSink, run_backtest
+
+
+class QueueSink:
+    """把每个指标点位塞进自己的队列，而不在内存累积。"""
+
+    def record(self, *, name, value, symbol, timestamp, owner_strategy_id, **kwargs):
+        my_queue.put((name, symbol, timestamp, value))
+
+    def build_payload(self):
+        return {"definitions": [], "instances": [], "points": []}
+
+    def flush_stream_snapshot(self):
+        ...
+
+    def set_stream_emitter(self, emitter):
+        ...
+
+
+run_backtest(..., indicator_recorder=QueueSink())
+```
+
+`IndicatorSink` 是"指标采集器"的公开扩展点（对标 Backtrader 的 Analyzer/Observer）：
+- 内置的 `IndicatorRecorder` 天然满足该协议（回测默认用它，跑完 `build_payload` 累积导出）；
+- 你可以传入自己的实现，把指标数据接进任意下游，无需触碰 AKQuant 内部。
+
+### 实盘实时指标流
+
+回测与实盘的指标流是**同构**的：`run_live` 同样接受 `on_event` 与 `indicator_recorder`，
+产出与回测一致的 `indicator_point` / `indicator_snapshot` 事件，因此前端一套消费逻辑通吃。
+
+```python
+from akquant import run_live
+
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="ctp",
+    trading_mode="broker_live",
+    on_event=on_event,   # 与 run_backtest 相同的事件回调
+)
+```
+
+实盘是长跑进程，默认使用一个**只发不累积**的轻量流式 sink：它只发射 stream 事件、
+不在内存里堆积历史点位，避免长时间运行导致内存无界增长。若只传 `on_event`（不传
+`indicator_recorder`），`run_live` 会自动启用这个流式 sink。
+
 ### 零依赖浏览器实时预览
 
 如果你想先给业务方或前端同事一个“打开浏览器就能看到”的最小接入样板，而暂时不引入

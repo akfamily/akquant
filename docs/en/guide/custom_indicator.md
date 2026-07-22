@@ -375,6 +375,68 @@ which makes gateway-side wrapping easier.
 
 This is not a new transport layer. It is just a normalization layer that turns AKQuant stream events into steadier frontend message objects.
 
+### Injecting a custom collector (IndicatorSink)
+
+To route indicator points into your own collection/forwarding logic (e.g. push
+to a broadcast queue, write to a time-series DB), you don't need to monkey-patch
+private strategy attributes. Both `run_backtest` and `run_live` accept a public
+`indicator_recorder` argument — any object implementing the
+`akquant.IndicatorSink` protocol:
+
+```python
+from akquant import IndicatorSink, run_backtest
+
+
+class QueueSink:
+    """Push each indicator point into your own queue without accumulating."""
+
+    def record(self, *, name, value, symbol, timestamp, owner_strategy_id, **kwargs):
+        my_queue.put((name, symbol, timestamp, value))
+
+    def build_payload(self):
+        return {"definitions": [], "instances": [], "points": []}
+
+    def flush_stream_snapshot(self):
+        ...
+
+    def set_stream_emitter(self, emitter):
+        ...
+
+
+run_backtest(..., indicator_recorder=QueueSink())
+```
+
+`IndicatorSink` is the public extension point for indicator collectors
+(analogous to Backtrader's Analyzer/Observer):
+- the built-in `IndicatorRecorder` satisfies it (used by default in backtests,
+  accumulating points for `build_payload`);
+- you can pass your own implementation to route indicator data anywhere without
+  touching AKQuant internals.
+
+### Live realtime indicator streaming
+
+Backtest and live indicator streams are **isomorphic**: `run_live` also accepts
+`on_event` and `indicator_recorder`, producing the same `indicator_point` /
+`indicator_snapshot` events as backtests, so one frontend consumer handles both.
+
+```python
+from akquant import run_live
+
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="ctp",
+    trading_mode="broker_live",
+    on_event=on_event,   # same event callback as run_backtest
+)
+```
+
+A live session is a long-running process, so it defaults to a lightweight
+streaming sink that **only emits, never accumulates**: it fires stream events
+without retaining historical points in memory, avoiding unbounded growth over
+long runs. If you pass only `on_event` (no `indicator_recorder`), `run_live`
+enables this streaming sink automatically.
+
 ### Zero-Dependency Browser Live Preview
 
 If you want a browser-based demo that product or frontend teammates can open
