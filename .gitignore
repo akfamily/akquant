@@ -53,3 +53,6 @@ docs/superpowers
 # ── golden 测试的"当前运行"产物（每次运行由 runner 重新生成并与 baselines 比对，
 #    无需入库；baselines/ 才是锁定的参照）──
 /tests/golden/current/
+
+# local dev/test artifacts
+tmp_test/

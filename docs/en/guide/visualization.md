@@ -74,3 +74,39 @@ result.export_benchmark_analysis(
 
 - `series.parquet`: aligned benchmark time series
 - `metadata.json`: summary metrics and metadata
+
+## Lightweight Charts Report & Trade Review (plotly alternative)
+
+The `akquant.lwc` package provides a visualization path built on
+TradingView Lightweight Charts with no plotly dependency; the charting
+library is embedded into the report file, so it works offline:
+
+```python
+# Static single-file report: metrics + equity/drawdown + K-line trade review
+result.report_lwc(
+    market_data={"600000": df1, "600004": df2},  # {symbol: DataFrame}
+    filename="akquant_lwc_report.html",
+    show=True,
+)
+```
+
+The trade-review section supports **in-page hot switching** of the
+reviewed symbol: type (or pick from autocomplete) a stock code in the
+input box to switch the K-line buy/sell markers and the trade table.
+Click a trade row to zoom into its time range; hover a marker to see
+the trade details.
+
+To review symbols that are not embedded in the report, start the
+interactive review server instead; any resolvable code typed in the
+page is then loaded on demand by the server:
+
+```python
+result.serve_review(
+    market_data={"600000": df1},               # preloaded symbols (optional)
+    data_provider=lambda code: load_df(code),  # on-demand loader (optional)
+    port=8765,
+)
+```
+
+Module-level APIs are also available: `akquant.lwc.plot_report(...)`
+and `akquant.lwc.serve_review(...)`.

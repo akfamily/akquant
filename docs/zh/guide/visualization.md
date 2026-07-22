@@ -73,3 +73,35 @@ result.export_benchmark_analysis(
 
 - `series.parquet`: 逐点时间序列
 - `metadata.json`: 汇总指标与元信息
+
+## Lightweight Charts 报告与交易复盘（plotly 替代）
+
+`akquant.lwc` 提供基于 TradingView Lightweight Charts 的可视化路径，
+不依赖 plotly；图表库已内嵌进报告文件，离线可打开：
+
+```python
+# 静态单文件报告：绩效指标 + 净值/回撤 + K线买卖点复盘
+result.report_lwc(
+    market_data={"600000": df1, "600004": df2},  # {symbol: DataFrame}
+    filename="akquant_lwc_report.html",
+    show=True,
+)
+```
+
+报告的交易复盘区块支持**网页内热切换复盘标的**：在输入框中键入
+（或从自动补全中选择）股票代码即可切换 K 线买卖点图与交易明细表；
+点击明细行可定位到对应区间，悬停买卖点可查看该笔交易详情。
+
+如需复盘报告中未内嵌的标的，可启动交互式复盘服务，页面输入任意
+可解析的代码后由服务端按需加载：
+
+```python
+result.serve_review(
+    market_data={"600000": df1},            # 预加载标的（可选）
+    data_provider=lambda code: load_df(code),  # 按需解析新代码（可选）
+    port=8765,
+)
+```
+
+也可以直接调用模块级 API：`akquant.lwc.plot_report(...)` 与
+`akquant.lwc.serve_review(...)`。

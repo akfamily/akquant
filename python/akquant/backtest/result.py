@@ -1959,3 +1959,75 @@ class BacktestResult:
             benchmark=benchmark,
             curve_freq=curve_freq,
         )
+
+    def report_lwc(
+        self,
+        title: str = "AKQuant 策略回测报告 (Lightweight Charts)",
+        filename: str = "akquant_lwc_report.html",
+        show: bool = False,
+        market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
+        symbols: Optional[list[str]] = None,
+        plot_symbol: Optional[str] = None,
+    ) -> str:
+        """
+        生成基于 TradingView Lightweight Charts 的 HTML 回测报告 (plotly 替代).
+
+        报告为单文件 HTML（内嵌图表库，无 CDN 依赖），包含绩效指标、
+        净值/回撤曲线与交易复盘（K线买卖点）。被复盘的股票可在网页中
+        热切换：在输入框中键入代码即可切换复盘标的。
+
+        :param title: 报告标题
+        :param filename: 保存的文件名
+        :param show: 是否在浏览器中自动打开 (默认 False)
+        :param market_data: 可选行情数据；传入 ``{symbol: frame}`` 字典时
+            所有标的都会被内嵌进页面，可在页面上互相热切换
+        :param symbols: 可选标的子集，仅内嵌这些标的
+        :param plot_symbol: 可选标的代码，指定初始复盘标的
+        :return: 生成的 HTML 文件绝对路径
+        """
+        from ..lwc.report import plot_report as _plot_report_lwc
+
+        return _plot_report_lwc(
+            result=self,
+            title=title,
+            filename=filename,
+            show=show,
+            market_data=market_data,
+            symbols=symbols,
+            plot_symbol=plot_symbol,
+        )
+
+    def serve_review(
+        self,
+        market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
+        data_provider: Optional[Any] = None,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+        title: str = "AKQuant 交易复盘 (Lightweight Charts)",
+        open_browser: bool = True,
+    ) -> None:
+        """
+        启动交互式交易复盘 Web 服务 (阻塞, 基于 Lightweight Charts).
+
+        页面按需加载各标的 K 线与买卖点：在网页输入框中键入任意可解析的
+        股票代码即可热切换复盘标的，无需重新生成文件。
+
+        :param market_data: 可选预加载行情数据 ``{symbol: frame}``
+        :param data_provider: 可选回调 ``(code) -> DataFrame``，用于解析
+            ``market_data`` 中不存在的标的代码
+        :param host: 监听地址
+        :param port: 监听端口，0 表示自动选择空闲端口
+        :param title: 页面标题
+        :param open_browser: 启动后是否自动打开浏览器
+        """
+        from ..lwc.server import serve_review as _serve_review
+
+        return _serve_review(
+            result=self,
+            market_data=market_data,
+            data_provider=data_provider,
+            host=host,
+            port=port,
+            title=title,
+            open_browser=open_browser,
+        )
