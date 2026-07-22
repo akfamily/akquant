@@ -2,9 +2,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-import akquant.live as live_module
+import akquant.live._runner as live_module
 import pytest
-from akquant.live import LiveRunner
+from akquant.live._runner import LiveRunner
 from akquant.strategy import Strategy
 
 

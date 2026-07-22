@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-LiveRunner broker 事件审计示例.
+run_live broker 事件审计示例.
 
 演示目标:
 - 使用 on_broker_event 统一观察 order/trade/report 事件
@@ -9,8 +9,7 @@ LiveRunner broker 事件审计示例.
 
 from typing import Any
 
-from akquant import AssetType, Instrument
-from akquant.live import LiveRunner
+from akquant import AssetType, Instrument, run_live
 
 
 def initialize(ctx: Any) -> None:
@@ -60,7 +59,7 @@ def main() -> None:
             expiry_date=None,
         )
     ]
-    runner = LiveRunner(
+    run_live(
         strategy_cls=on_bar,
         strategy_id="alpha",
         initialize=initialize,
@@ -76,8 +75,10 @@ def main() -> None:
         app_id="simnow_client_test",
         auth_code="0000000000000000",
         use_aggregator=True,
+        cash=1_000_000,
+        show_progress=False,
+        duration="30s",
     )
-    runner.run(cash=1_000_000, show_progress=False, duration="30s")
 
 
 if __name__ == "__main__":

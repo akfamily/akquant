@@ -1,6 +1,6 @@
 # Live Functional Strategy Quickstart
 
-This guide focuses on function-style strategy entry with LiveRunner, covering both `paper` and `broker_live` modes.
+This guide focuses on function-style strategy entry with `run_live`, covering both `paper` and `broker_live` modes.
 
 ## 1. When to use this
 
@@ -55,7 +55,9 @@ def on_bar(ctx, bar):
         )
         ctx.sent = True
 
-runner = LiveRunner(
+from akquant import run_live
+
+run_live(
     strategy_cls=on_bar,
     initialize=initialize,
     on_order=on_order,
@@ -66,8 +68,9 @@ runner = LiveRunner(
     broker="ctp",
     trading_mode="broker_live",
     gateway_options={"execution_semantics_mode": "strict"},
+    duration="30s",
+    show_progress=False,
 )
-runner.run(duration="30s", show_progress=False)
 ```
 
 ## 4. Common troubleshooting
@@ -75,7 +78,7 @@ runner.run(duration="30s", show_progress=False)
 - `submit_order` not ready yet
   - Cause: the trader gateway has not finished connecting/logging in.
   - Fix: guard with `if getattr(ctx, "broker_ready", False):` before placing
-    (readiness is decided by LiveRunner's heartbeat poll; submitting before
+    (readiness is decided by run_live's heartbeat poll; submitting before
     ready raises a clear error).
 - `duplicate active client_order_id`
   - Cause: reused active client id.

@@ -499,11 +499,11 @@ Recommendations:
 
 *   Function-style callback baseline: `examples/23_functional_callbacks_demo.py`
 *   Function-style tick callback simulation: `examples/24_functional_tick_simulation_demo.py`
-*   LiveRunner supports function-style entry and multi-slot orchestration: `LiveRunner(strategy_cls=on_bar, strategy_id="alpha", strategies_by_slot={"beta": OtherStrategy}, initialize=..., on_tick=..., on_order=..., on_trade=..., on_timer=...)`
+*   run_live supports function-style entry and multi-slot orchestration: `run_live(strategy_cls=on_bar, strategy_id="alpha", strategies_by_slot={"beta": OtherStrategy}, initialize=..., on_tick=..., on_order=..., on_trade=..., on_timer=...)`
 *   For backtest multi-slot and strategy-level risk mapping, prefer centralized `BacktestConfig(strategy_config=StrategyConfig(...))`: `docs/en/advanced/multi_strategy_guide.md`
 *   broker_live function-style submit example: `examples/39_live_broker_submit_order_demo.py`
 *   Function-style multi-slot + risk example: `examples/40_functional_multi_slot_risk_demo.py`
-*   LiveRunner multi-slot orchestration example: `examples/41_live_multi_slot_orchestration_demo.py`
+*   run_live multi-slot orchestration example: `examples/41_live_multi_slot_orchestration_demo.py`
 *   Output markers:
     *   `done_functional_callbacks_demo`
     *   `done_functional_tick_simulation_demo`

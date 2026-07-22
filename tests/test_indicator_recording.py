@@ -244,6 +244,54 @@ def test_record_indicator_rejects_unknown_render_type() -> None:
         )
 
 
+class _CapturingSink:
+    """Minimal public IndicatorSink implementation used to verify injection."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self._emitter: object = None
+
+    def record(self, **kwargs: object) -> None:
+        self.calls.append(kwargs)
+
+    def build_payload(self) -> dict:
+        return {"definitions": [{"injected": True}], "instances": [], "points": []}
+
+    def flush_stream_snapshot(self) -> None:
+        return None
+
+    def set_stream_emitter(self, stream_emitter: object) -> None:
+        self._emitter = stream_emitter
+
+
+def test_run_backtest_accepts_injected_indicator_recorder() -> None:
+    """A public IndicatorSink can replace the built-in recorder via run_backtest."""
+    from akquant import IndicatorSink
+
+    sink = _CapturingSink()
+    assert isinstance(sink, IndicatorSink)
+
+    result = run_backtest(
+        data=_build_data(),
+        strategy=IndicatorRecordingStrategy,
+        symbols="IND",
+        initial_cash=100000.0,
+        show_progress=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+        indicator_recorder=sink,
+    )
+
+    # Every record_indicator call was routed into the injected sink.
+    assert len(sink.calls) == 6
+    assert {call["name"] for call in sink.calls} == {"close_echo", "range_echo"}
+    # The injected sink's payload is what lands on the result.
+    assert result.indicator_outputs["definitions"] == [{"injected": True}]
+
+
 def test_legacy_strategy_without_indicator_recording_stays_empty() -> None:
     """Legacy strategies should still work and expose empty indicator outputs."""
     result = run_backtest(

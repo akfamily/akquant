@@ -56,11 +56,13 @@ from .feed_adapter import (
 )
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .indicator import Indicator, IndicatorSet
+from .indicator_recording import IndicatorRecorder, IndicatorSink
 from .indicator_stream import (
     is_indicator_stream_event,
     to_indicator_message,
     to_indicator_messages,
 )
+from .live import run_live
 from .normalize import (
     normalize,
     write_canonical_parquet,
@@ -147,12 +149,15 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
         "Indicator",
+        "IndicatorRecorder",
         "IndicatorSet",
+        "IndicatorSink",
         "is_indicator_stream_event",
         "to_indicator_message",
         "to_indicator_messages",
         "run_backtest",
         "run_from_checkpoint",
+        "run_live",
         "merge_results",
         "make_fill_policy",
         "plot_result",
@@ -231,12 +236,15 @@ else:
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
         "Indicator",
+        "IndicatorRecorder",
         "IndicatorSet",
+        "IndicatorSink",
         "is_indicator_stream_event",
         "to_indicator_message",
         "to_indicator_messages",
         "run_backtest",
         "run_from_checkpoint",
+        "run_live",
         "merge_results",
         "make_fill_policy",
         "plot_result",

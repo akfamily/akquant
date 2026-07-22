@@ -18,7 +18,7 @@ This guide standardizes how teams choose between class-based and function-style 
 | State organization | Strong (OO structure) | Medium (`ctx` convention) |
 | Complex risk/modular workflows | Strong | Medium |
 | Backtest support | Full | Full |
-| LiveRunner support | Full | Full (callable + lifecycle) |
+| run_live support | Full | Full (callable + lifecycle) |
 | Multi-slot + risk controls | Full | Supported (validate in small scope first) |
 
 ## 3. Selection Rules

@@ -3,33 +3,46 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
-from .akquant import Bar, DataFeed, Engine, Instrument
-from .gateway.broker_event_adapter import map_order_snapshot, map_trade
-from .gateway.broker_runtime import BrokerRuntime
-from .gateway.factory import create_gateway_bundle
-from .gateway.models import BrokerCapability
-from .gateway.order_submitter import (
+from ..akquant import Bar, DataFeed, Engine, Instrument
+from ..backtest import BacktestStreamEvent
+from ..gateway.broker_event_adapter import map_order_snapshot, map_trade
+from ..gateway.broker_runtime import BrokerRuntime
+from ..gateway.factory import create_gateway_bundle
+from ..gateway.models import BrokerCapability
+from ..gateway.order_submitter import (
     build_live_order_client_ids,
     find_live_close_position,
     resolve_live_order_legs,
     validate_live_order_client_ids,
 )
-from .log import build_log_extra, get_logger
-from .strategy import Strategy
-from .strategy_loader import resolve_strategy_input
-from .utils import format_metric_value
+from ..indicator_recording import IndicatorSink
+from ..log import build_log_extra, get_logger
+from ..strategy import Strategy
+from ..strategy_loader import resolve_strategy_input
+from ..utils import format_metric_value
+from ._gateway_setup import (
+    LEGACY_GATEWAY_OPTION_KEYS,
+    normalize_gateway_options,
+    start_gateway_thread,
+)
+from ._payload_utils import (
+    is_terminal_status,
+    normalize_broker_recovery_mode,
+    payload_field,
+    payload_to_dict,
+)
+from ._strategy_maps import (
+    normalize_strategy_bool_map,
+    normalize_strategy_float_map,
+    normalize_strategy_int_map,
+    validate_strategy_map_keys,
+)
+from ._stream_sink import StreamingIndicatorSink
 
 logger = get_logger("gateway.live")
 
-_LEGACY_GATEWAY_OPTION_KEYS = (
-    "md_front",
-    "td_front",
-    "broker_id",
-    "user_id",
-    "password",
-    "app_id",
-    "auth_code",
-)
+# Backward-compatible alias; canonical definition lives in _gateway_setup.
+_LEGACY_GATEWAY_OPTION_KEYS = LEGACY_GATEWAY_OPTION_KEYS
 
 
 class _StrategyCallbackFanout:
@@ -260,10 +273,30 @@ class LiveRunner:
         self.risk_budget_mode = risk_budget_mode
         self.risk_budget_reset_daily = bool(risk_budget_reset_daily)
         self.on_broker_event = on_broker_event
+        # Indicator streaming wiring (set via set_indicator_stream / run_live).
+        self._indicator_recorder_override: Optional[IndicatorSink] = None
+        self._stream_on_event: Optional[Callable[[BacktestStreamEvent], None]] = None
         self._init_broker_bridge_state()
 
         self.feed = DataFeed.create_live()  # type: ignore
         self.engine = Engine()
+
+    def set_indicator_stream(
+        self,
+        *,
+        indicator_recorder: Optional[IndicatorSink] = None,
+        on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    ) -> None:
+        """Configure realtime indicator streaming for this live session.
+
+        :param indicator_recorder: Optional public :class:`IndicatorSink` to
+            collect indicator points; when omitted a streaming sink is used if
+            ``on_event`` is provided.
+        :param on_event: Optional stream event callback receiving
+            ``indicator_point`` / ``indicator_snapshot`` events.
+        """
+        self._indicator_recorder_override = indicator_recorder
+        self._stream_on_event = on_event
 
     def run(
         self,
@@ -338,6 +371,9 @@ class LiveRunner:
         )
         self._configure_strategy_slots(
             strategy_instance, slot_strategy_instances, effective_strategy_id
+        )
+        self._attach_indicator_stream(
+            [strategy_instance, *slot_strategy_instances.values()]
         )
         # Broker callbacks + submit/state/cancel overrides are broker_live-only.
         # A non-broker_live run (e.g. paper) uses simulated execution, so must not
@@ -477,62 +513,66 @@ class LiveRunner:
                 cast(Any, self.engine).set_strategy_for_slot(slot_index, assigned)
         self._apply_strategy_risk_controls(configured_slot_ids)
 
+    def _attach_indicator_stream(self, targets: list[Strategy]) -> None:
+        """Attach an indicator sink to strategies and flush snapshots per cycle.
+
+        Mirrors the backtest indicator recorder attachment. Uses the injected
+        ``indicator_recorder`` when provided, else a non-accumulating
+        :class:`StreamingIndicatorSink` when ``on_event`` is set. When neither is
+        configured, live runs record no indicators (unchanged legacy behavior).
+        """
+        recorder: Optional[IndicatorSink] = self._indicator_recorder_override
+        if recorder is None and self._stream_on_event is not None:
+            recorder = StreamingIndicatorSink(
+                self._stream_on_event,
+                run_id=str(self.strategy_id),
+            )
+        if recorder is None:
+            return
+        for target in targets:
+            setattr(target, "_indicator_recorder", recorder)
+        flush = getattr(recorder, "flush_stream_snapshot", None)
+        if not callable(flush):
+            return
+        for target in targets:
+            self._wrap_callback_with_flush(target, "on_bar", flush)
+            if hasattr(target, "on_tick"):
+                self._wrap_callback_with_flush(target, "on_tick", flush)
+
+    @staticmethod
+    def _wrap_callback_with_flush(
+        strategy: Strategy, method_name: str, flush: Callable[[], None]
+    ) -> None:
+        """Wrap a strategy callback so the indicator snapshot flushes after it."""
+        original = getattr(strategy, method_name, None)
+        if not callable(original):
+            return
+
+        def wrapped(event: Any, _original: Any = original) -> None:
+            _original(event)
+            flush()
+
+        setattr(strategy, method_name, wrapped)
+
     def _normalize_strategy_float_map(
         self, values: Optional[Dict[str, float]]
     ) -> Dict[str, float]:
-        if values is None:
-            return {}
-        if not isinstance(values, dict):
-            raise TypeError("strategy map must be a dict when provided")
-        normalized: Dict[str, float] = {}
-        for key, value in values.items():
-            key_str = str(key).strip()
-            if not key_str:
-                raise ValueError("strategy id cannot be empty")
-            normalized[key_str] = float(value)
-        return normalized
+        return normalize_strategy_float_map(values)
 
     def _normalize_strategy_int_map(
         self, values: Optional[Dict[str, int]]
     ) -> Dict[str, int]:
-        if values is None:
-            return {}
-        if not isinstance(values, dict):
-            raise TypeError("strategy map must be a dict when provided")
-        normalized: Dict[str, int] = {}
-        for key, value in values.items():
-            key_str = str(key).strip()
-            if not key_str:
-                raise ValueError("strategy id cannot be empty")
-            normalized[key_str] = int(value)
-        return normalized
+        return normalize_strategy_int_map(values)
 
     def _normalize_strategy_bool_map(
         self, values: Optional[Dict[str, bool]]
     ) -> Dict[str, bool]:
-        if values is None:
-            return {}
-        if not isinstance(values, dict):
-            raise TypeError("strategy map must be a dict when provided")
-        normalized: Dict[str, bool] = {}
-        for key, value in values.items():
-            key_str = str(key).strip()
-            if not key_str:
-                raise ValueError("strategy id cannot be empty")
-            normalized[key_str] = bool(value)
-        return normalized
+        return normalize_strategy_bool_map(values)
 
     def _validate_strategy_map_keys(
         self, values: Dict[str, Any], configured_slot_ids: List[str], field_name: str
     ) -> None:
-        if not values:
-            return
-        unknown = sorted(set(values.keys()).difference(set(configured_slot_ids)))
-        if unknown:
-            unknown_text = ", ".join(unknown)
-            raise ValueError(
-                f"{field_name} contains unknown strategy ids: {unknown_text}"
-            )
+        validate_strategy_map_keys(values, configured_slot_ids, field_name)
 
     def _apply_strategy_risk_controls(self, configured_slot_ids: List[str]) -> None:
         strategy_max_order_value = cast(
@@ -678,22 +718,13 @@ class LiveRunner:
         gateway_options: Optional[Dict[str, Any]],
         **legacy_values: Any,
     ) -> Dict[str, Any]:
-        normalized = dict(gateway_options or {})
-        for key in _LEGACY_GATEWAY_OPTION_KEYS:
-            if key in normalized:
-                continue
-            value = legacy_values.get(key)
-            if value is None or value == "":
-                continue
-            normalized[key] = value
-        return normalized
+        return normalize_gateway_options(gateway_options, **legacy_values)
 
     def _build_gateway_kwargs(self) -> Dict[str, Any]:
-        return dict(self.gateway_options)
+        return cast(Dict[str, Any], dict(self.gateway_options))
 
     def _start_gateway_thread(self, target: Any, name: str) -> None:
-        thread = threading.Thread(target=target, name=name, daemon=True)
-        thread.start()
+        start_gateway_thread(target, name)
 
     def _connect_and_start_trader(self, trader_gateway: Any) -> None:
         """Run connect() then start() on the gateway thread.
@@ -910,15 +941,18 @@ class LiveRunner:
         position_effect: str,
         reduce_only: bool,
     ) -> list[tuple[str, float]]:
-        return resolve_live_order_legs(
-            trader_gateway=trader_gateway,
-            capability=capability,
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            position_effect=position_effect,
-            reduce_only=reduce_only,
-            payload_field=self._payload_field,
+        return cast(
+            "list[tuple[str, float]]",
+            resolve_live_order_legs(
+                trader_gateway=trader_gateway,
+                capability=capability,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                position_effect=position_effect,
+                reduce_only=reduce_only,
+                payload_field=self._payload_field,
+            ),
         )
 
     def _find_live_close_position(
@@ -934,7 +968,10 @@ class LiveRunner:
     def _build_live_order_client_ids(
         self, request_client_order_id: str, order_legs: list[tuple[str, float]]
     ) -> list[str]:
-        return build_live_order_client_ids(request_client_order_id, order_legs)
+        return cast(
+            "list[str]",
+            build_live_order_client_ids(request_client_order_id, order_legs),
+        )
 
     def _validate_live_order_client_ids(
         self,
@@ -1082,9 +1119,7 @@ class LiveRunner:
         return f"{event_name}:{id(payload)}"
 
     def _payload_field(self, payload: Any, field: str) -> Any:
-        if isinstance(payload, dict):
-            return payload.get(field, "")
-        return getattr(payload, field, "")
+        return payload_field(payload, field)
 
     def _next_client_order_id(self) -> str:
         with self._broker_submit_lock:
@@ -1164,11 +1199,7 @@ class LiveRunner:
         return "_default"
 
     def _payload_to_dict(self, payload: Any) -> Dict[str, Any]:
-        if isinstance(payload, dict):
-            return dict(payload)
-        if hasattr(payload, "__dict__"):
-            return dict(getattr(payload, "__dict__"))
-        return {}
+        return payload_to_dict(payload)
 
     def _resolve_client_order_id(self, broker_order_id: str) -> str:
         return self._broker_to_client_order_ids.get(broker_order_id, "")
@@ -1232,8 +1263,7 @@ class LiveRunner:
         return payload
 
     def _is_terminal_status(self, status: Any) -> bool:
-        status_text = str(getattr(status, "value", status)).strip().lower()
-        return status_text in {"filled", "cancelled", "canceled", "rejected"}
+        return is_terminal_status(status)
 
     def can_submit_client_order(self, client_order_id: str) -> bool:
         """Check whether a client order id can be submitted again."""
@@ -1255,7 +1285,7 @@ class LiveRunner:
             gateway = getattr(self, "_broker_trader_gateway", None)
             capability = self._resolve_trader_capabilities(gateway)
             self._broker_capabilities = capability
-        return capability.as_execution_capabilities()
+        return cast("dict[str, Any]", capability.as_execution_capabilities())
 
     def _resolve_trader_capabilities(self, trader_gateway: Any) -> BrokerCapability:
         get_capabilities = getattr(trader_gateway, "get_capabilities", None)
@@ -1286,12 +1316,7 @@ class LiveRunner:
         )
 
     def _normalize_broker_recovery_mode(self, mode: Any) -> str:
-        normalized = str(mode or "compatible").strip().lower()
-        if normalized not in {"compatible", "strict"}:
-            raise ValueError(
-                "gateway_options.recovery_mode must be 'compatible' or 'strict'"
-            )
-        return normalized
+        return normalize_broker_recovery_mode(mode)
 
     def _handle_broker_recovery_error(
         self,

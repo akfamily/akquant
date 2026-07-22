@@ -1,7 +1,7 @@
 import time
 from typing import Any, cast
 
-from akquant.live import LiveRunner
+from akquant.live._runner import LiveRunner
 
 
 class _FakeTrader:

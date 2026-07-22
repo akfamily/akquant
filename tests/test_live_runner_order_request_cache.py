@@ -5,7 +5,7 @@ from akquant.gateway.broker_models import (
     UnifiedOrderSnapshot,
     UnifiedOrderStatus,
 )
-from akquant.live import LiveRunner
+from akquant.live._runner import LiveRunner
 
 
 def _runner() -> LiveRunner:

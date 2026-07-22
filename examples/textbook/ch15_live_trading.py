@@ -11,12 +11,11 @@ AKQuant 支持通过内置 broker 网关（ctp/miniqmt/ptrade）接入行情与�
 配置流程：
 1. 准备对应 broker 的账户凭证与连接参数。
 2. 获取行情与交易前置地址（若 broker 需要）。
-3. 配置 LiveRunner 并启动。
+3. 配置 run_live 并启动。
 """
 
 import akquant as aq
-from akquant import Bar, Instrument, Strategy
-from akquant.live import LiveRunner
+from akquant import Bar, Instrument, Strategy, run_live
 
 
 class LiveDemoStrategy(Strategy):
@@ -64,7 +63,8 @@ if __name__ == "__main__":
     }
 
     try:
-        runner = LiveRunner(
+        print("启动 CTP 接口...")
+        run_live(
             strategy_cls=LiveDemoStrategy,
             instruments=[rb2310],
             md_front=CTP_CONFIG["md_front"],
@@ -74,10 +74,8 @@ if __name__ == "__main__":
             password=CTP_CONFIG["password"],
             app_id=CTP_CONFIG["app_id"],
             auth_code=CTP_CONFIG["auth_code"],
+            cash=500_000,
         )
-
-        print("启动 CTP 接口...")
-        runner.run(cash=500_000)
 
     except ImportError:
         print(

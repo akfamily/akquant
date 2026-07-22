@@ -1,6 +1,6 @@
 # Live 函数式策略上手手册
 
-本文聚焦 LiveRunner 的函数式策略入口，帮助你在 `paper` 与 `broker_live` 两种模式下快速搭建最小闭环。
+本文聚焦 run_live 的函数式策略入口，帮助你在 `paper` 与 `broker_live` 两种模式下快速搭建最小闭环。
 
 ## 1. 适用场景
 
@@ -55,7 +55,9 @@ def on_bar(ctx, bar):
         )
         ctx.sent = True
 
-runner = LiveRunner(
+from akquant import run_live
+
+run_live(
     strategy_cls=on_bar,
     initialize=initialize,
     on_order=on_order,
@@ -66,8 +68,9 @@ runner = LiveRunner(
     broker="ctp",
     trading_mode="broker_live",
     gateway_options={"execution_semantics_mode": "strict"},
+    duration="30s",
+    show_progress=False,
 )
-runner.run(duration="30s", show_progress=False)
 ```
 
 ## 4. 常见排查
@@ -75,7 +78,7 @@ runner.run(duration="30s", show_progress=False)
 - `submit_order` 尚未就绪
   - 原因：交易网关尚未完成连接/登录。
   - 处理：在 `on_bar` 中用 `if getattr(ctx, "broker_ready", False):` 门首单
-    （broker 就绪由 LiveRunner 的 heartbeat 轮询裁定；就绪前调用会抛清晰错误）。
+    （broker 就绪由 run_live 的 heartbeat 轮询裁定；就绪前调用会抛清晰错误）。
 - `duplicate active client_order_id`
   - 原因：重复提交活跃 client id。
   - 处理：每次下单生成新的 `client_order_id`。

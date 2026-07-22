@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-LiveRunner broker_live + 函数式 submit_order 最小闭环示例.
+run_live broker_live + 函数式 submit_order 最小闭环示例.
 
 说明:
 - 该示例展示函数式策略在 broker_live 模式下使用 submit_order。
-- submit_order 由 LiveRunner 在连接交易网关后自动注入到策略上下文。
+- submit_order 由 run_live 在连接交易网关后自动注入到策略上下文。
 - 默认地址与账户参数为占位，请替换为实际网关配置。
 """
 
 from typing import Any
 
-from akquant import AssetType, Instrument
-from akquant.live import LiveRunner
+from akquant import AssetType, Instrument, run_live
 
 
 def initialize(ctx: Any) -> None:
@@ -91,7 +90,7 @@ def main() -> None:
         )
     ]
 
-    runner = LiveRunner(
+    run_live(
         strategy_cls=on_bar,
         initialize=initialize,
         on_order=on_order,
@@ -108,8 +107,10 @@ def main() -> None:
         app_id="simnow_client_test",
         auth_code="0000000000000000",
         use_aggregator=True,
+        cash=1_000_000,
+        show_progress=False,
+        duration="30s",
     )
-    runner.run(cash=1_000_000, show_progress=False, duration="30s")
 
 
 if __name__ == "__main__":

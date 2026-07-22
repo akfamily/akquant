@@ -20,6 +20,7 @@ from typing_extensions import NotRequired
 from ..akquant import AssetType, Bar, DataFeed
 from ..config import BacktestConfig, RiskConfig
 from ..feed_adapter import DataFeedAdapter
+from ..indicator_recording import IndicatorSink
 from ..strategy import Strategy, StrategyRuntimeConfig
 from .merge import MergedResult as MergedResult
 from .merge import merge_results as merge_results
@@ -176,6 +177,7 @@ def run_backtest(
     risk_budget_mode: Literal["order_notional", "trade_notional"] = ...,
     risk_budget_reset_daily: bool = ...,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
+    indicator_recorder: Optional[IndicatorSink] = ...,
     broker_profile: Optional[str] = ...,
     fill_policy: Optional[FillPolicyInput] = ...,
     stream_mode: Literal["observability", "audit"] = ...,
@@ -212,6 +214,7 @@ def run_from_checkpoint(
     risk_budget_mode: Literal["order_notional", "trade_notional"] = ...,
     risk_budget_reset_daily: bool = ...,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
+    indicator_recorder: Optional[IndicatorSink] = ...,
     config: Optional[BacktestConfig] = ...,
     **kwargs: Any,
 ) -> BacktestResult: ...
