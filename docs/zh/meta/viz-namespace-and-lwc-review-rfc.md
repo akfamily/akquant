@@ -33,7 +33,7 @@
 
 **非目标**
 
-- **不替换 plotly**:分析类图表(月度热力图、收益分布、滚动指标、风控/归因)永远归 plotly,LWC 只做时间序列 K 线。二者是分工,非替代(详见 [indicator-chart-contract.md](indicator-chart-contract.md) 之外的边界讨论)。
+- **不替换 plotly**:分析类图表(月度热力图、收益分布、滚动指标、风控/归因)永远归 plotly,LWC 只做时间序列 K 线。二者是分工,非替代。
 - **不做第一版服务端**:LWC v1 只出**静态自包含 HTML**;按需加载的 HTTP 服务后置(见 §9)。
 - **不改数据导出**:`result.to_quantstats()` 返回 `pd.Series`,是数据方法非可视化,**留在 `result` 顶层不动**。
 - **不碰引擎**:不动任何回测行为、不改 `__engine_rule_version__`。
@@ -230,7 +230,7 @@ def plot_kline_review(
 ## 9. 后续与非本 RFC 决策
 
 - **服务端按需加载(v3,可选)**:若多标的多到不宜全内嵌,再引入 HTTP 服务;届时**倾向做成插件路径**(与 broker 插件同模式,走 entry-point),避免核心背 HTTP 服务/生命周期。
-- **指标叠加(未来)**:复盘图可吃同一条 `IndicatorSink` 指标流,把回测指标叠加到 K 线上,与实盘/回测指标出口三处一致(见 [live-backtest-api-symmetry.md](live-backtest-api-symmetry.md)、[indicator-chart-contract.md](indicator-chart-contract.md))。**不进 v1**。
+- **指标叠加(未来)**:复盘图可吃同一条 `IndicatorSink` 指标流,把回测指标叠加到 K 线上,与实盘/回测指标出口三处一致。**不进 v1**。
 
 ## 10. 备选方案与否决理由
 
