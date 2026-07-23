@@ -8,11 +8,11 @@ AKQuant provides a comprehensive visualization module to analyze backtest result
 
 ### Quick Start
 
-The easiest way to visualize your backtest results is using the `report()` method:
+The easiest way to visualize your backtest results is using the `viz.report()` method:
 
 ```python
 # Generate a full HTML report
-result.report(
+result.viz.report(
     title="My Strategy Report",
     filename="report.html",
     show=True,  # Set to True to open in browser automatically (default is False)
@@ -24,7 +24,7 @@ result.report(
 If you prefer raw amount precision in report tables:
 
 ```python
-result.report(
+result.viz.report(
     title="My Strategy Report",
     filename="report_raw_amount.html",
     compact_currency=False,
@@ -53,7 +53,7 @@ print(summary["information_ratio"])
 print(series[:2])
 ```
 
-The structured benchmark analysis shares the same alignment and calculation logic as `result.report(..., benchmark=...)`, making it suitable as a long-term frontend/API contract:
+The structured benchmark analysis shares the same alignment and calculation logic as `result.viz.report(..., benchmark=...)`, making it suitable as a long-term frontend/API contract:
 
 - `summary`: aggregate relative metrics
 - `series`: aligned daily time series
@@ -198,7 +198,7 @@ The `result` object provides equity/cash/margin curves over time, useful for plo
 For long intraday backtests, you can speed up HTML report rendering by using daily curve mode:
 
 ```python
-result.report(filename="report_daily.html", curve_freq="D")
+result.viz.report(filename="report_daily.html", curve_freq="D")
 ```
 
 ## Trades
@@ -289,7 +289,7 @@ risk_trend_by_strategy = result.risk_rejections_trend_by_strategy(freq="D")
 liquidation_audit = result.liquidation_audit_df
 ```
 
-When margin mode is enabled and forced liquidation occurs, `result.report(...)` automatically includes:
+When margin mode is enabled and forced liquidation occurs, `result.viz.report(...)` automatically includes:
 
 - a forced liquidation audit table (date, daily interest, symbols, priority)
 - daily liquidation charts in the risk chart section (shown when data exists)

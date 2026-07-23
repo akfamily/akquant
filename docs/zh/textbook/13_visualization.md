@@ -70,13 +70,13 @@ import akquant as aq
 result = aq.run_backtest(...)
 
 # 生成交互式仪表盘
-fig = result.plot(show=False, title="Strategy Dashboard")
+fig = result.viz.dashboard(show=False, title="Strategy Dashboard")
 fig.write_html("dashboard.html")
 ```
 
 ### 13.3.2 策略报告与基准对比 (Plotly)
 
-`result.report` 会生成整合版策略报告，默认包含：
+`result.viz.report` 会生成整合版策略报告，默认包含：
 
 1. 核心指标与权益回撤图
 2. 收益分布与滚动指标
@@ -88,7 +88,7 @@ benchmark_returns = (
     benchmark_df.set_index("date")["close"].pct_change().fillna(0.0)
 )
 
-result.report(
+result.viz.report(
     title="Alpha Strategy Report",
     filename="akquant_report.html",
     show=False,
@@ -126,7 +126,7 @@ print(payload["series"][:2])
 
 1. 回测结束后由后端调用 `result.benchmark_analysis(...)`
 2. 将 `summary + series + meta` 直接返回给前端
-3. `result.report(..., benchmark=...)` 与前端页面复用同一套 benchmark analysis 逻辑
+3. `result.viz.report(..., benchmark=...)` 与前端页面复用同一套 benchmark analysis 逻辑
 
 这样可以避免前端再次计算超额收益、IR、Beta、Alpha，减少口径漂移。
 
@@ -153,7 +153,7 @@ print(liq_audit.head())
 使用内置报告：
 
 ```python
-result.report(filename="report_margin.html", show=False)
+result.viz.report(filename="report_margin.html", show=False)
 ```
 
 报告会自动包含：
@@ -174,7 +174,7 @@ pip install quantstats
 ### 13.4.2 生成综合报告
 
 ```python
-result.report_quantstats(
+result.viz.quantstats(
     benchmark="000300.SH",
     filename="qs_stats.html",
     title="Alpha Strategy QuantStats Report",
@@ -279,7 +279,7 @@ ax.set_zlabel('Implied Volatility')
 
 - [QuantStats（Ran Aroussi）](https://github.com/ranaroussi/quantstats) —— 本章 13.4 集成的第三方组合分析库，提供 stats / plots / reports 三大模块与 Tearsheet 报告。
 - [mplfinance](https://github.com/matplotlib/mplfinance) —— 本章 13.6 用于绘制专业 K 线与成交量、叠加买卖点信号的 Matplotlib 金融图表库。
-- [AKQuant 可视化指南](../guide/visualization.md) —— `result.plot`、`result.report`、`benchmark_analysis` 等内置绘图与报告接口的权威说明，对应本章 13.3。
+- [AKQuant 可视化指南](../guide/visualization.md) —— `result.viz.dashboard`、`result.viz.report`、`benchmark_analysis` 等内置绘图与报告接口的权威说明，对应本章 13.3。
 
 **本书相关**
 

@@ -23,6 +23,7 @@ uv.lock
 # ── IDE / 编辑器 ──
 .idea/
 .vscode/
+.agents/
 .trae/
 *.swp
 

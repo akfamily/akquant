@@ -322,49 +322,10 @@ class BacktestResult:
     @property
     def indicator_instances(self) -> typing.Any: ...
     def export_indicators(self, path: str, format: str = ...) -> None: ...
-    def plot(
-        self,
-        symbol: typing.Optional[str] = ...,
-        show: bool = ...,
-        title: str = ...,
-    ) -> typing.Any: ...
-    def plot_indicators(
-        self,
-        name: typing.Optional[str] = ...,
-        symbol: typing.Optional[str] = ...,
-        include_warmup: bool = ...,
-        show: bool = ...,
-        title: str = ...,
-        theme: str = ...,
-        filename: typing.Optional[str] = ...,
-    ) -> typing.Any: ...
     def top_reject_reasons(self, top_n: int = ...) -> typing.Any: ...
     def top_reject_reason_types(self, top_n: int = ...) -> typing.Any: ...
-    def report(
-        self,
-        title: str = ...,
-        filename: str = ...,
-        show: bool = ...,
-        compact_currency: bool = ...,
-        market_data: typing.Optional[
-            typing.Union[typing.Any, dict[str, typing.Any]]
-        ] = ...,
-        plot_symbol: typing.Optional[str] = ...,
-        include_trade_kline: bool = ...,
-        include_indicators: bool = ...,
-        indicator_name: typing.Optional[str] = ...,
-        indicator_symbol: typing.Optional[str] = ...,
-        indicator_include_warmup: bool = ...,
-        benchmark: typing.Optional[typing.Union[str, typing.Any]] = ...,
-        curve_freq: str = ...,
-    ) -> None: ...
-    def report_quantstats(
-        self,
-        benchmark: typing.Optional[typing.Union[str, typing.Any]] = ...,
-        title: str = ...,
-        filename: str = ...,
-        **kwargs: typing.Any,
-    ) -> None: ...
+    @property
+    def viz(self) -> typing.Any: ...
     def to_quantstats(self) -> typing.Any: ...
 
 class Bar:

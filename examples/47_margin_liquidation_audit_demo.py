@@ -80,7 +80,7 @@ def run_example() -> None:
     print("liquidation_audit_df")
     print(result.liquidation_audit_df)
     report_file = "margin_liquidation_report.html"
-    result.report(filename=report_file, show=False)
+    result.viz.report(filename=report_file, show=False)
     print(f"report_saved={report_file}")
 
 

@@ -349,8 +349,8 @@ Requirements:
 *   **资金曲线**: `result.equity_curve` (DataFrame)。
 *   **交易记录**: `result.trades_df` (所有已平仓交易详情)。
 *   **可视化**:
-    *   `result.plot(symbol="...")`: 使用 Plotly 生成交互式图表（需安装 `plotly`）。
-    *   `result.report(filename="report.html")`: 生成完整的 HTML 回测报告。
+    *   `result.viz.dashboard(symbol="...")`: 使用 Plotly 生成交互式图表（需安装 `plotly`）。
+    *   `result.viz.report(filename="report.html")`: 生成完整的 HTML 回测报告。
 
 ### 4.2 风险管理 (Risk Management)
 

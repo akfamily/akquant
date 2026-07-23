@@ -170,7 +170,7 @@ if __name__ == "__main__":
     print("\nGenerating Visualization...")
     report_file = "akquant_report_minute.html"
 
-    result.report(
+    result.viz.report(
         title=f"AKQuant Intraday Report - {SYMBOL}", filename=report_file, show=True
     )
     print(f"  - Report saved to: {report_file}")

@@ -6,13 +6,13 @@
 
 ## 基准对比
 
-`BacktestResult.report` 支持直接传入基准收益率序列：
+`BacktestResult.viz.report` 支持直接传入基准收益率序列：
 
 ```python
 benchmark_returns = (
     benchmark_df.set_index("date")["close"].pct_change().fillna(0.0)
 )
-result.report(
+result.viz.report(
     filename="akquant_report.html",
     benchmark=benchmark_returns,
     show=False,
@@ -54,7 +54,7 @@ print(payload["series"][0])
 
 - 后端负责准备 benchmark 收益率序列并调用 `result.benchmark_analysis(...)`
 - 前端直接消费 `summary + series + meta`
-- `result.report(..., benchmark=...)` 与前端页面应复用同一份 benchmark analysis 逻辑，而不是各自重新计算
+- `result.viz.report(..., benchmark=...)` 与前端页面应复用同一份 benchmark analysis 逻辑，而不是各自重新计算
 
 ## 导出给前端或归档
 
@@ -73,3 +73,31 @@ result.export_benchmark_analysis(
 
 - `series.parquet`: 逐点时间序列
 - `metadata.json`: 汇总指标与元信息
+
+## LWC 交互式交易复盘
+
+`result.viz.review()` 基于 [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) 生成**离线自包含**的单文件 HTML，在 K 线上标注买卖点，面向大数据量 / 日内的交易复盘。
+
+它与 `result.viz.report()` 是**互补而非替代**：分析类图表（权益曲线、回撤、热力图、归因等）仍由 `report()` 的 plotly 负责；`review()` 只补足「交互式 K 线 + 买卖点」这一场景，适合逐笔复盘成交时机。
+
+```python
+# market_data 为单个 DataFrame 或 {symbol: df} 字典
+path = result.viz.review(
+    market_data=df,
+    title="AKQuant 交易复盘",
+    theme="dark",          # 初始主题 "light" / "dark"，页面内可即时切换
+    filename="akquant_review.html",
+    show=False,            # True 则自动打开浏览器
+)
+```
+
+要点：
+
+- 生成的 HTML 内联了 lightweight-charts，**无 CDN 依赖**，可离线打开与归档。
+- 页面顶部有**明暗主题切换按钮**，`theme` 参数只决定初始主题；切换时即时重着色，无需重新生成文件。
+- 多标的行情（`{symbol: df}`）会在页面顶部提供标的切换下拉，`initial_symbol` 可指定初始展示标的。
+- 行情列名大小写不敏感，并兼容中文列名（`开盘/最高/最低/收盘/成交量/日期` 等）。
+- 日频数据用 `YYYY-MM-DD` 时间轴，日内数据自动切换为带时分的时间轴。
+- 面向**大数据量 / 日内**优化:payload 用向量化构建、时间戳自动去重,数万根 K 线也能流畅复盘(这正是相对 plotly 分析图的核心优势)。
+
+完整示例见 `examples/67_lwc_trade_review.py`。

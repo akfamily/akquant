@@ -53,7 +53,7 @@ def main() -> None:
     )
 
     report_path = Path(__file__).with_name("report_and_analysis_outputs.html").resolve()
-    result.report(filename=str(report_path), show=False, compact_currency=True)
+    result.viz.report(filename=str(report_path), show=False, compact_currency=True)
 
     exposure = result.exposure_df()
     attribution_by_symbol = result.attribution_df(by="symbol")

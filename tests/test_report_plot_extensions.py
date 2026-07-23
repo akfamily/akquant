@@ -6,7 +6,7 @@ from typing import cast
 import pandas as pd
 import pytest
 from akquant import Bar, Strategy, run_backtest
-from akquant.backtest.result import BacktestResult
+from akquant.backtest._viz import VizNamespace
 from akquant.config import RiskConfig
 from akquant.plot import (
     plot_dashboard,
@@ -236,7 +236,7 @@ def test_report_contains_new_analysis_sections(tmp_path: Path) -> None:
     )
 
     report_path = tmp_path / "report_with_analysis.html"
-    result.report(filename=str(report_path), show=False)
+    result.viz.report(filename=str(report_path), show=False)
     html = report_path.read_text(encoding="utf-8")
     assert "组合归因与容量分析 (Attribution & Capacity)" in html
     assert "最新净暴露比 (Latest Net Exposure %)" in html
@@ -265,7 +265,7 @@ def test_report_includes_trade_kline_with_market_data(tmp_path: Path) -> None:
     )
 
     report_path = tmp_path / "report_with_trade_kline.html"
-    result.report(
+    result.viz.report(
         filename=str(report_path),
         show=False,
         market_data=_build_market_df(symbol="TEST"),
@@ -296,7 +296,7 @@ def test_report_accepts_uppercase_market_data_columns(tmp_path: Path) -> None:
     )
 
     report_path = tmp_path / "report_with_uppercase_market_data.html"
-    result.report(
+    result.viz.report(
         filename=str(report_path),
         show=False,
         market_data=_build_market_df_uppercase(symbol="TEST"),
@@ -325,7 +325,7 @@ def test_report_accepts_market_data_alias_columns(tmp_path: Path) -> None:
     )
 
     report_path = tmp_path / "report_with_alias_market_data.html"
-    result.report(
+    result.viz.report(
         filename=str(report_path),
         show=False,
         market_data=_build_market_df_aliases(symbol="TEST"),
@@ -359,7 +359,7 @@ def test_report_includes_benchmark_comparison_sections(tmp_path: Path) -> None:
         name="CSI300",
     )
     report_path = tmp_path / "report_with_benchmark.html"
-    result.report(
+    result.viz.report(
         filename=str(report_path),
         show=False,
         benchmark=benchmark_returns,
@@ -394,7 +394,7 @@ def test_report_aligns_naive_benchmark_dates_without_notice(tmp_path: Path) -> N
         name="NAIVE_BENCH",
     )
     report_path = tmp_path / "report_with_naive_benchmark.html"
-    result.report(
+    result.viz.report(
         filename=str(report_path),
         show=False,
         benchmark=benchmark_returns,
@@ -486,7 +486,7 @@ def test_report_shows_notice_for_range_index_benchmark(tmp_path: Path) -> None:
         [0.0, 0.001, -0.0005, 0.0008, 0.0], name="RANGE_BENCH"
     )
     report_path = tmp_path / "report_with_range_index_benchmark.html"
-    result.report(
+    result.viz.report(
         filename=str(report_path),
         show=False,
         benchmark=benchmark_returns,
@@ -514,7 +514,7 @@ def test_report_handles_string_benchmark_with_notice(tmp_path: Path) -> None:
         show_progress=False,
     )
     report_path = tmp_path / "report_with_benchmark_string.html"
-    result.report(
+    result.viz.report(
         filename=str(report_path),
         show=False,
         benchmark="000300.SH",
@@ -542,7 +542,7 @@ def test_report_handles_empty_trade_analysis_blocks(tmp_path: Path) -> None:
     )
 
     report_path = tmp_path / "report_empty_trades.html"
-    result.report(filename=str(report_path), show=False)
+    result.viz.report(filename=str(report_path), show=False)
     html = report_path.read_text(encoding="utf-8")
     assert "暂无归因数据" in html
 
@@ -565,7 +565,7 @@ def test_report_optionally_includes_indicator_panel(tmp_path: Path) -> None:
     )
 
     report_path = tmp_path / "report_with_indicators.html"
-    result.report(
+    result.viz.report(
         filename=str(report_path),
         show=False,
         include_indicators=True,
@@ -598,7 +598,7 @@ def test_report_indicator_panel_handles_empty_indicator_outputs(tmp_path: Path) 
     )
 
     report_path = tmp_path / "report_indicator_panel_empty.html"
-    result.report(filename=str(report_path), show=False, include_indicators=True)
+    result.viz.report(filename=str(report_path), show=False, include_indicators=True)
     html = report_path.read_text(encoding="utf-8")
     assert "自定义指标 (Custom Indicators)" in html
     assert "暂无指标数据" in html
@@ -664,7 +664,7 @@ def test_indicator_plot_functions_return_multi_pane_figures() -> None:
         "Sub 1",
     ]
 
-    filtered_fig = result.plot_indicators(name="distance_from_ten", show=False)
+    filtered_fig = result.viz.indicators(name="distance_from_ten", show=False)
     assert filtered_fig is not None
     assert len(filtered_fig.data) == 1
     assert filtered_fig.data[0].name == "Distance From Ten"
@@ -718,7 +718,7 @@ def test_indicator_plot_returns_none_without_indicator_data() -> None:
         show_progress=False,
     )
 
-    assert result.plot_indicators(show=False) is None
+    assert result.viz.indicators(show=False) is None
 
 
 def test_daily_curve_properties_reduce_intraday_points() -> None:
@@ -790,13 +790,13 @@ def test_report_accepts_curve_freq_daily(tmp_path: Path) -> None:
         show_progress=False,
     )
     report_path = tmp_path / "report_curve_freq_daily.html"
-    result.report(filename=str(report_path), show=False, curve_freq="D")
+    result.viz.report(filename=str(report_path), show=False, curve_freq="D")
     assert report_path.exists()
 
 
 def test_report_defaults_curve_freq_to_daily() -> None:
     """Report API should default to daily curve frequency for lighter HTML."""
-    default_value = inspect.signature(BacktestResult.report)
+    default_value = inspect.signature(VizNamespace.report)
     assert default_value.parameters["curve_freq"].default == "D"
 
 
@@ -818,7 +818,7 @@ def test_report_rejects_invalid_curve_freq(tmp_path: Path) -> None:
     )
     report_path = tmp_path / "report_curve_freq_invalid.html"
     with pytest.raises(ValueError):
-        result.report(filename=str(report_path), show=False, curve_freq="W")
+        result.viz.report(filename=str(report_path), show=False, curve_freq="W")
 
 
 def test_report_displays_normalized_reject_reason_types(tmp_path: Path) -> None:
@@ -853,7 +853,7 @@ def test_report_displays_normalized_reject_reason_types(tmp_path: Path) -> None:
         }
     )
     report_path = tmp_path / "report_reject_reason_types.html"
-    result.report(filename=str(report_path), show=False)
+    result.viz.report(filename=str(report_path), show=False)
     html = report_path.read_text(encoding="utf-8")
     assert "拒单类型 (Reject Type)" in html
     assert "示例详情 (Sample Detail)" in html
@@ -915,7 +915,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
         ),
     )
     report_path = tmp_path / "report_with_liquidation_audit.html"
-    result.report(filename=str(report_path), show=False)
+    result.viz.report(filename=str(report_path), show=False)
     html = report_path.read_text(encoding="utf-8")
     assert "强平审计明细 (Forced Liquidation Audit)" in html
     assert "强平标的 (Liquidated Symbols)" in html

@@ -271,8 +271,8 @@ The `BacktestResult` object returned by `run_backtest` contains rich data for de
 *   **Equity Curve**: `result.equity_curve` (DataFrame).
 *   **Trade Records**: `result.trades_df` (Details of all closed trades).
 *   **Visualization**:
-    *   `result.plot(symbol="...")`: Generate interactive charts using Plotly (requires `plotly` installed).
-    *   `result.report(filename="report.html")`: Generate a full HTML backtest report.
+    *   `result.viz.dashboard(symbol="...")`: Generate interactive charts using Plotly (requires `plotly` installed).
+    *   `result.viz.report(filename="report.html")`: Generate a full HTML backtest report.
 
 ### 4.2 Risk Management
 

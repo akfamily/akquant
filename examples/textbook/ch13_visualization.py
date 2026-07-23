@@ -6,7 +6,7 @@
 演示内容：
 1. 运行一个简单的策略。
 2. 构造一个简单基准收益序列。
-3. 使用 `result.report(..., benchmark=...)` 生成交互式 HTML 报告。
+3. 使用 `result.viz.report(..., benchmark=...)` 生成交互式 HTML 报告。
 """
 
 import akquant as aq
@@ -81,7 +81,7 @@ if __name__ == "__main__":
     benchmark_returns = (
         df.set_index("date")["close"].pct_change().fillna(0.0).rename("MOCK_BENCH")
     )
-    result.report(
+    result.viz.report(
         title="AKQuant Chapter 13 - Visualization with Benchmark",
         filename="ch13_report_with_benchmark.html",
         show=False,

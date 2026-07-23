@@ -96,8 +96,8 @@ def run_example() -> None:
 
     short_report = "margin_liquidation_priority_short_first.html"
     long_report = "margin_liquidation_priority_long_first.html"
-    result_short_first.report(filename=short_report, show=False)
-    result_long_first.report(filename=long_report, show=False)
+    result_short_first.viz.report(filename=short_report, show=False)
+    result_long_first.viz.report(filename=long_report, show=False)
     print(f"report_saved={short_report}")
     print(f"report_saved={long_report}")
 
