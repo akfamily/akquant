@@ -765,3 +765,70 @@ def test_indicator_bridge_exposes_scale_group() -> None:
     messages = to_indicator_messages(events)
     point = next(m for m in messages if m["type"] == "point")
     assert point["indicator"]["scale_group"] == "percent"
+
+
+def _run_ref_result() -> "akquant.backtest.result.BacktestResult":
+    class _RefStrat(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            self.record_indicator(
+                name="rsi",
+                value=float(bar.close),
+                pane=1,
+                reference_lines=[{"value": 70, "label": "超买", "color": "#ef4444"}],
+                scale_group="percent",
+            )
+
+    return run_backtest(
+        data=_build_data(),
+        strategy=_RefStrat,
+        symbols="IND",
+        initial_cash=100000.0,
+        show_progress=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+    )
+
+
+def test_indicator_definitions_dataframe_has_new_columns() -> None:
+    """indicator_definitions should expose reference_lines and scale_group columns."""
+    result = _run_ref_result()
+    frame = result.indicator_definitions
+    assert "reference_lines" in frame.columns
+    assert "scale_group" in frame.columns
+    row = frame[frame["indicator_key"] == "rsi"].iloc[0]
+    assert row["scale_group"] == "percent"
+    assert row["reference_lines"] == [
+        {"value": 70.0, "label": "超买", "color": "#ef4444"}
+    ]
+
+
+def test_export_indicators_json_roundtrip(tmp_path: Path) -> None:
+    """JSON export should carry structured reference_lines and scale_group."""
+    result = _run_ref_result()
+    out = tmp_path / "ind.json"
+    result.export_indicators(str(out), format="json")
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    definition = next(d for d in payload["definitions"] if d["indicator_key"] == "rsi")
+    assert definition["scale_group"] == "percent"
+    assert definition["reference_lines"] == [
+        {"value": 70.0, "label": "超买", "color": "#ef4444"}
+    ]
+
+
+def test_export_indicators_parquet_roundtrip(tmp_path: Path) -> None:
+    """Parquet export should serialize reference_lines as a JSON string column."""
+    import pandas as _pd
+
+    result = _run_ref_result()
+    out_dir = tmp_path / "bundle"
+    result.export_indicators(str(out_dir), format="parquet")
+    defs = _pd.read_parquet(out_dir / "definitions.parquet")
+    row = defs[defs["indicator_key"] == "rsi"].iloc[0]
+    assert row["scale_group"] == "percent"
+    # parquet 里 reference_lines 是 JSON 字符串,解析后与源一致
+    assert json.loads(row["reference_lines"]) == [
+        {"value": 70.0, "label": "超买", "color": "#ef4444"}
+    ]
