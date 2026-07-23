@@ -521,7 +521,7 @@ class LiveRunner:
         :class:`StreamingIndicatorSink` when ``on_event`` is set. When neither is
         configured, live runs record no indicators (unchanged legacy behavior).
         """
-        recorder: Optional[IndicatorSink] = self._indicator_recorder_override
+        recorder: IndicatorSink | None = self._indicator_recorder_override
         if recorder is None and self._stream_on_event is not None:
             recorder = StreamingIndicatorSink(
                 self._stream_on_event,

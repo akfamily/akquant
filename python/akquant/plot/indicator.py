@@ -217,6 +217,30 @@ def plot_indicators(
 
             fig.update_yaxes(title_text=_pane_title(pane_name), row=row_index, col=1)
 
+        # 参考线:对该 pane 下每个带 reference_lines 的指标画静态横线。
+        definitions_df = result.indicator_definitions
+        pane_defs = definitions_df[definitions_df["pane"] == pane_name]
+        for _, def_row in pane_defs.iterrows():
+            ref_lines = def_row.get("reference_lines") or []
+            for line in ref_lines:
+                fig.add_hline(
+                    y=line["value"],
+                    line_dash="dash",
+                    line_color=line.get("color") or None,
+                    annotation_text=line.get("label") or None,
+                    row=row_index,
+                    col=1,
+                )
+        # 刻度分组:在 y 轴标题追加语义组名提示。
+        groups = [
+            g for g in pane_defs.get("scale_group", pd.Series(dtype=str)).tolist() if g
+        ]
+        if groups:
+            base_title = _pane_title(pane_name)
+            fig.update_yaxes(
+                title_text=f"{base_title} · {groups[0]}", row=row_index, col=1
+            )
+
     xaxis_format = "%Y-%m-%d"
     if len(merged) > 1:
         datetimes = merged["datetime"].sort_values()

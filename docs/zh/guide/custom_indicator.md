@@ -230,9 +230,12 @@ class IndicatorExportStrategy(Strategy):
 ```
 
 !!! note "关于 `pane` 取值"
-    `pane` 是**整数行索引**：`0` 表示主图（价格图），`1`..`4` 表示主图下方堆叠的副图。
-    省略 `pane` 默认落在主图（`0`）。取值超出 `0..4` 会直接报错。这与图表渲染器实际消费的
-    形态一致，`record_indicator` 在纯回测导出与前端流式桥接两条路径上输出相同的整数 `pane`。
+    `pane` 是**整数行索引**：`0` 表示主图（价格图），`1`..`N` 表示主图下方堆叠的副图。
+    省略 `pane` 默认落在主图（`0`）。默认上限 `N` 为 `8`——这是一个基于屏幕可读性的
+    **软上限**，而非硬性限制。多因子或衍生品场景若需要更多副图，可在运行前设置环境变量
+    `AKQUANT_MAX_SUB_PANES` 抬高上限。取值超出 `0..N` 会直接报错（fail-fast），
+    确保写错的索引不会被静默塞进错误的窗格。这与图表渲染器实际消费的形态一致，
+    `record_indicator` 在纯回测导出与前端流式桥接两条路径上输出相同的整数 `pane`。
 
 !!! warning "0.3 起的破坏性变更"
     早期版本 `pane` 曾支持 `"main"` / `"sub1"` / `"主图"` / `"signal"` 等字符串写法，现已移除。
@@ -253,6 +256,27 @@ class IndicatorExportStrategy(Strategy):
     | `signal` | 交易信号标记，渲染在主图 |
 
     传入枚举以外的值会直接抛 `ValueError`（fail-fast），不会静默退化成折线。
+
+!!! note "关于 `reference_lines` 与 `scale_group`"
+    - `reference_lines`：可选，静态参考线列表，每项 `{"value": 数值, "label": 文字, "color": 颜色}`；
+      用于超买/超卖线、0 轴等固定横线。会动的线请用独立指标逐 bar 记录。
+    - `scale_group`：可选，共享刻度分组的语义组名（如 `"percent"`），纯提示，前端据此判断
+      同量纲指标；不改变 `pane` 决定的行布局。
+
+带参考线与刻度分组的 RSI 示例：
+
+```python
+self.record_indicator(
+    name="rsi",
+    value=rsi_value,
+    pane=1,
+    reference_lines=[
+        {"value": 70, "label": "超买", "color": "#ef4444"},
+        {"value": 30, "label": "超卖", "color": "#22c55e"},
+    ],
+    scale_group="percent",
+)
+```
 
 运行结束后：
 

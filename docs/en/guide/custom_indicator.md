@@ -228,11 +228,16 @@ class IndicatorExportStrategy(Strategy):
 ```
 
 !!! note "About the `pane` value"
-    `pane` is an **integer row index**: `0` is the main (price) pane and `1`..`4`
+    `pane` is an **integer row index**: `0` is the main (price) pane and `1`..`N`
     are sub panes stacked below it. Omitting `pane` defaults to the main pane
-    (`0`). Values outside `0..4` raise an error. This matches what chart renderers
-    actually consume, and `record_indicator` emits the same integer `pane` on both
-    the plain backtest export and the frontend stream bridge paths.
+    (`0`). The default cap `N` is `8` — a soft, screen-readability guideline
+    rather than a hard limit. Multi-factor or derivatives workflows that need
+    more sub panes can raise it by setting the `AKQUANT_MAX_SUB_PANES` environment
+    variable before the run. A `pane` outside `0..N` raises an error (fail-fast),
+    so a mistyped index never silently lands on the wrong pane. This matches what
+    chart renderers actually consume, and `record_indicator` emits the same
+    integer `pane` on both the plain backtest export and the frontend stream
+    bridge paths.
 
 !!! warning "Breaking change since 0.3"
     Earlier versions accepted string panes such as `"main"` / `"sub1"` / `"主图"` /
@@ -256,6 +261,30 @@ class IndicatorExportStrategy(Strategy):
 
     Passing a value outside the enum raises `ValueError` (fail-fast) rather than
     silently degrading to a line.
+
+!!! note "About `reference_lines` and `scale_group`"
+    - `reference_lines`: optional, a list of static reference lines, each item
+      `{"value": number, "label": text, "color": color}`; used for overbought/oversold
+      lines, a zero axis, or other fixed horizontal lines. For lines that move over
+      time, record them as an independent indicator bar by bar.
+    - `scale_group`: optional, a semantic group name for sharing a scale (e.g.
+      `"percent"`), a pure hint frontends use to detect indicators with the same
+      unit; it does not change the row layout decided by `pane`.
+
+RSI example with reference lines and a scale group:
+
+```python
+self.record_indicator(
+    name="rsi",
+    value=rsi_value,
+    pane=1,
+    reference_lines=[
+        {"value": 70, "label": "超买", "color": "#ef4444"},
+        {"value": 30, "label": "超卖", "color": "#22c55e"},
+    ],
+    scale_group="percent",
+)
+```
 
 After the run:
 

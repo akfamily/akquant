@@ -10,7 +10,9 @@ from ._normalize import (
     RENDER_TYPE_CANONICAL,
     normalize_meta_json,
     normalize_pane_index,
+    normalize_reference_lines,
     normalize_render_type,
+    normalize_scale_group,
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
@@ -20,7 +22,9 @@ __all__ = [
     "RENDER_TYPE_CANONICAL",
     "normalize_meta_json",
     "normalize_pane_index",
+    "normalize_reference_lines",
     "normalize_render_type",
+    "normalize_scale_group",
     "timestamp_ms_from_ns",
     "timestamp_to_ms_and_ns",
 ]

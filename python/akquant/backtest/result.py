@@ -1552,6 +1552,8 @@ class BacktestResult:
             "unit",
             "precision",
             "color",
+            "reference_lines",
+            "scale_group",
         ]
         if not rows:
             return pd.DataFrame(columns=columns)
@@ -1663,7 +1665,18 @@ class BacktestResult:
             return
         if output_format == "parquet":
             output_path.mkdir(parents=True, exist_ok=True)
-            self.indicator_definitions.to_parquet(output_path / "definitions.parquet")
+            definitions_frame = self.indicator_definitions.copy()
+            if "reference_lines" in definitions_frame.columns:
+                definitions_frame["reference_lines"] = definitions_frame[
+                    "reference_lines"
+                ].map(
+                    lambda v: (
+                        json.dumps(v, ensure_ascii=False)
+                        if isinstance(v, (list, dict))
+                        else json.dumps([])
+                    )
+                )
+            definitions_frame.to_parquet(output_path / "definitions.parquet")
             self.indicator_instances.to_parquet(output_path / "instances.parquet")
             self._indicator_points_df.to_parquet(output_path / "points.parquet")
             return
@@ -1729,7 +1742,9 @@ class BacktestResult:
             normalized: Dict[str, Any] = {}
             for key, value in row.items():
                 key_str = str(key)
-                if pd.isna(value):
+                if isinstance(value, (list, dict)):
+                    normalized[key_str] = value
+                elif pd.isna(value):
                     normalized[key_str] = None
                 elif isinstance(value, pd.Timestamp):
                     normalized[key_str] = value.isoformat()
