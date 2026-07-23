@@ -19,6 +19,11 @@ from ..analysis.benchmark import (
     resolve_equity_curve as _resolve_equity_curve,
 )
 from ..utils import format_metric_value
+from ._market_data import (
+    extract_symbol_market_data,
+    normalize_market_data_frame,
+    resolve_market_data_column,
+)
 from .analysis import (
     plot_pnl_vs_duration,
     plot_returns_distribution,
@@ -901,108 +906,11 @@ def _select_plot_symbol(
     return None
 
 
-def _resolve_market_data_column(
-    data: pd.DataFrame, candidates: list[str]
-) -> Optional[str]:
-    """Resolve a market-data column name with case-insensitive matching."""
-    columns = list(data.columns)
-    lowered = {str(col).lower(): str(col) for col in columns}
-    for candidate in candidates:
-        if candidate in columns:
-            return candidate
-        resolved = lowered.get(candidate.lower())
-        if resolved is not None:
-            return resolved
-    return None
-
-
-def _normalize_market_data_frame(data: pd.DataFrame) -> pd.DataFrame:
-    """Normalize report market data into a canonical OHLCV schema."""
-    normalized = data.copy()
-    resolved_columns = {
-        "timestamp": _resolve_market_data_column(
-            normalized,
-            ["date", "timestamp", "datetime", "time", "trade_date", "日期", "时间"],
-        ),
-        "open": _resolve_market_data_column(normalized, ["open", "open_price", "开盘"]),
-        "high": _resolve_market_data_column(normalized, ["high", "high_price", "最高"]),
-        "low": _resolve_market_data_column(normalized, ["low", "low_price", "最低"]),
-        "close": _resolve_market_data_column(
-            normalized, ["close", "close_price", "收盘"]
-        ),
-        "volume": _resolve_market_data_column(normalized, ["volume", "vol", "成交量"]),
-        "symbol": _resolve_market_data_column(
-            normalized, ["symbol", "code", "ticker", "ts_code", "股票代码"]
-        ),
-    }
-    rename_map = {
-        source: target
-        for target, source in resolved_columns.items()
-        if source is not None and source != target
-    }
-    if rename_map:
-        normalized = normalized.rename(columns=rename_map)
-
-    if "symbol" in normalized.columns:
-        normalized["symbol"] = normalized["symbol"].astype(str).str.strip()
-
-    if not isinstance(normalized.index, pd.DatetimeIndex):
-        if "timestamp" in normalized.columns:
-            normalized = normalized.set_index("timestamp")
-        else:
-            normalized.index = pd.to_datetime(normalized.index, errors="coerce")
-
-    normalized.index = pd.to_datetime(normalized.index, errors="coerce")
-    valid_index_mask = ~normalized.index.to_series().isna()
-    normalized = normalized.loc[valid_index_mask].copy()
-    if normalized.empty:
-        return cast(pd.DataFrame, normalized)
-
-    numeric_columns = ["open", "high", "low", "close", "volume"]
-    for column in numeric_columns:
-        if column in normalized.columns:
-            normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
-
-    required_cols = {"open", "high", "low", "close"}
-    if not required_cols.issubset(set(normalized.columns)):
-        return pd.DataFrame()
-
-    normalized = normalized.dropna(subset=list(required_cols), how="any")
-    if normalized.empty:
-        return cast(pd.DataFrame, normalized)
-
-    normalized = normalized.sort_index()
-    return cast(pd.DataFrame, normalized)
-
-
-def _extract_symbol_market_data(
-    market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]], symbol: str
-) -> pd.DataFrame:
-    if market_data is None:
-        return pd.DataFrame()
-    if isinstance(market_data, dict):
-        matched_key = None
-        target_symbol = str(symbol).strip()
-        for key in market_data.keys():
-            if str(key).strip() == target_symbol:
-                matched_key = key
-                break
-        if matched_key is None:
-            return pd.DataFrame()
-        data = market_data.get(matched_key, pd.DataFrame()).copy()
-    elif isinstance(market_data, pd.DataFrame):
-        data = market_data.copy()
-    else:
-        return pd.DataFrame()
-
-    data = _normalize_market_data_frame(data)
-    if data.empty:
-        return cast(pd.DataFrame, data)
-    if "symbol" in data.columns:
-        target_symbol = str(symbol).strip()
-        symbol_mask = data["symbol"].astype(str).str.strip() == target_symbol
-        data = data[symbol_mask].copy()
-    return cast(pd.DataFrame, data)
+# 行情规范化工具已抽取至 plot/_market_data.py 供 lwc 复用;此处保留模块级
+# 私有别名,维持本文件既有调用点不变(零行为变化)。
+_resolve_market_data_column = resolve_market_data_column
+_normalize_market_data_frame = normalize_market_data_frame
+_extract_symbol_market_data = extract_symbol_market_data
 
 
 def _build_chart_html_sections(

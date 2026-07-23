@@ -413,7 +413,7 @@ AKQuant 提供了内置的绘图功能。
 # 在 run_backtest 后添加
 
 # 绘制资金曲线
-result.report(show=True)
+result.viz.report(show=True)
 ```
 
 ### 3.5 参数调优 (Parameter Optimization)

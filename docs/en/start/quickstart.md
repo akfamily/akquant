@@ -69,7 +69,7 @@ benchmark_returns = (
     df.set_index("date")["close"].pct_change().fillna(0.0).rename("SIMPLE_BENCH")
 )
 
-result.report(
+result.viz.report(
     filename="quickstart_report.html",
     show=False,
     benchmark=benchmark_returns,
@@ -283,14 +283,14 @@ You can view detailed trade metrics via `print(result.trades_df)`.
 After the backtest, you can generate an interactive report directly:
 
 ```python
-result.report(
+result.viz.report(
     show=True,
     filename="report.html",
     compact_currency=True,
     curve_freq="D",
 )
 
-result.report(
+result.viz.report(
     show=False,
     filename="report_raw_amount.html",
     compact_currency=False,
@@ -488,7 +488,7 @@ After the run, inspect the audit output directly:
 
 ```python
 print(result.liquidation_audit_df)
-result.report(filename="report_margin.html", show=False)
+result.viz.report(filename="report_margin.html", show=False)
 ```
 
 The generated report includes:

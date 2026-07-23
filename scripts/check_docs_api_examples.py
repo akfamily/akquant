@@ -10,6 +10,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LEGACY_FIELD_PATTERNS = {
     "legacy_result_field_final_value": re.compile(r"\bresult\.final_value\b"),
     "legacy_result_field_total_return": re.compile(r"\bresult\.total_return\b"),
+    # 可视化方法已收敛到 result.viz.* 命名空间(见
+    # docs/zh/meta/viz-namespace-and-lwc-review-rfc.md);旧的顶层方法已删除。
+    # 负向零宽断言排除新命名空间形式(result.viz.report( 等)。
+    "legacy_viz_report": re.compile(r"(?<!viz)\.report\("),
+    "legacy_viz_report_quantstats": re.compile(r"\.report_quantstats\("),
+    "legacy_viz_plot_indicators": re.compile(r"\.plot_indicators\("),
+    "legacy_viz_plot": re.compile(r"(?<![a-z_])result[a-z_]*\.plot\("),
 }
 RUN_BACKTEST_RENAMES = {
     "cash": "initial_cash",

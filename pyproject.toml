@@ -76,6 +76,11 @@ dev = [
 features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "akquant.akquant"
+# vendored 前端资源(LWC standalone JS + LICENSE)随 wheel 一同分发,
+# 保证 result.viz.review() 生成的 HTML 离线自包含。
+include = [
+    { path = "python/akquant/lwc/assets/*", format = ["sdist", "wheel"] },
+]
 
 [tool.ruff]
 line-length = 88

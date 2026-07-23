@@ -3,6 +3,7 @@ import re
 from functools import cached_property
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Any,
     Dict,
     List,
@@ -10,6 +11,9 @@ from typing import (
     Union,
     cast,
 )
+
+if TYPE_CHECKING:
+    from ._viz import VizNamespace
 
 import pandas as pd
 
@@ -1767,73 +1771,25 @@ class BacktestResult:
         """Return the list of attributes including raw result attributes."""
         return list(set(dir(self._raw) + list(self.__dict__.keys()) + ["positions"]))
 
-    def plot(
-        self,
-        symbol: Optional[str] = None,
-        show: bool = True,
-        title: str = "Backtest Result",
-    ) -> Any:
+    @property
+    def viz(self) -> "VizNamespace":
+        """可视化方法命名空间.
+
+        聚合全部绘图/报告能力,按"用户要做的事"命名:
+
+        - ``result.viz.dashboard()`` —— 交互式总览(权益/回撤)。
+        - ``result.viz.indicators()`` —— 指标序列预览。
+        - ``result.viz.report()`` —— akquant 原生全量静态 HTML 报告。
+        - ``result.viz.quantstats()`` —— QuantStats 版式报告。
+        - ``result.viz.review()`` —— LWC 交互式 K 线交易复盘。
+
+        本属性不触发任何绘图库导入;各方法内部惰性导入对应后端。
+
+        :return: :class:`akquant.backtest._viz.VizNamespace` 实例。
         """
-        Plot the backtest results using Plotly dashboard.
+        from ._viz import VizNamespace
 
-        :param symbol: Reserved for backward compatibility.
-        :param show: Whether to display the plot immediately.
-        :param title: Title of the plot.
-        :return: Plotly Figure object.
-        """
-        _ = symbol
-        try:
-            from ..plot import plot_dashboard
-        except ImportError:
-            print(
-                "Plotly is not installed. Please install it using `pip install plotly` "
-                "or `pip install akquant[plot]`."
-            )
-            return None
-
-        return plot_dashboard(result=self, show=show, title=title)
-
-    def plot_indicators(
-        self,
-        name: Optional[str] = None,
-        symbol: Optional[str] = None,
-        include_warmup: bool = True,
-        show: bool = True,
-        title: str = "Indicator History",
-        theme: str = "light",
-        filename: Optional[str] = None,
-    ) -> Any:
-        """
-        Plot recorded indicator history in a lightweight multi-pane figure.
-
-        :param name: Optional indicator key filter.
-        :param symbol: Optional symbol filter.
-        :param include_warmup: Whether to keep warmup points.
-        :param show: Whether to display the plot immediately.
-        :param title: Figure title.
-        :param theme: Plot theme key.
-        :param filename: Optional HTML output path.
-        :return: Plotly Figure object.
-        """
-        try:
-            from ..plot import plot_indicators
-        except ImportError:
-            print(
-                "Plotly is not installed. Please install it using `pip install plotly` "
-                "or `pip install akquant[plot]`."
-            )
-            return None
-
-        return plot_indicators(
-            result=self,
-            name=name,
-            symbol=symbol,
-            include_warmup=include_warmup,
-            show=show,
-            title=title,
-            theme=theme,
-            filename=filename,
-        )
+        return VizNamespace(self)
 
     def to_quantstats(self) -> pd.Series:
         """
@@ -1861,101 +1817,3 @@ class BacktestResult:
             returns.index = idx.tz_localize(None)
 
         return returns
-
-    def report_quantstats(
-        self,
-        benchmark: Optional[Union[str, pd.Series]] = None,
-        title: str = "Strategy Report",
-        filename: str = "quantstats-report.html",
-        **kwargs: Any,
-    ) -> None:
-        """
-        Generate a QuantStats HTML report.
-
-        :param benchmark: Benchmark ticker (e.g. "SPY") or pd.Series.
-        :param title: Report title.
-        :param filename: Output filename.
-        :param kwargs: Additional arguments passed to qs.reports.html.
-        """
-        try:
-            import quantstats as qs
-        except ImportError:
-            print(
-                "QuantStats is not installed. Please install it using "
-                "`pip install quantstats` or `pip install akquant[quantstats]`."
-            )
-            return
-
-        # Extend pandas functionality (optional, but good practice for QS)
-        qs.extend_pandas()
-
-        returns = self.to_quantstats()
-
-        if returns.empty:
-            print("No returns data available to generate report.")
-            return
-
-        print(f"Generating QuantStats report to {filename}...")
-        qs.reports.html(
-            returns, benchmark=benchmark, title=title, output=filename, **kwargs
-        )
-        print("Done.")
-
-    def report(
-        self,
-        title: str = "AKQuant 策略回测报告",
-        filename: str = "akquant_report.html",
-        show: bool = False,
-        compact_currency: bool = True,
-        market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
-        plot_symbol: Optional[str] = None,
-        include_trade_kline: bool = True,
-        include_indicators: bool = False,
-        indicator_name: Optional[str] = None,
-        indicator_symbol: Optional[str] = None,
-        indicator_include_warmup: bool = True,
-        benchmark: Optional[Union[str, pd.Series]] = None,
-        curve_freq: str = "D",
-    ) -> None:
-        """
-        生成 HTML 策略回测报告 (便捷方法).
-
-        该方法是 akquant.plot.report.plot_report 的快捷入口。
-
-        :param title: 报告标题
-        :param filename: 保存的文件名
-        :param show: 是否在浏览器中自动打开 (默认 False)
-        :param compact_currency: 是否将金额用 K/M/B 紧凑显示 (默认 True)
-        :param market_data: 可选行情数据，用于绘制 K 线买卖点图
-        :param plot_symbol: 可选标的代码，指定 K 线复盘标的
-        :param include_trade_kline: 是否在报告中包含 K 线复盘图
-        :param include_indicators: 是否在报告中包含自定义指标预览区块
-        :param indicator_name: 可选指标键过滤，仅展示指定指标
-        :param indicator_symbol: 可选标的过滤，仅展示指定标的指标
-        :param indicator_include_warmup: 是否在指标报告区块中保留预热点
-        :param benchmark: 基准收益序列 (pd.Series) 或基准标识字符串
-        :param curve_freq: 曲线频率，默认 "D" 为日频末值，"raw" 为原始频率
-        """
-        # 延迟导入，避免循环引用和非必要的 Plotly 依赖
-        try:
-            from ..plot.report import plot_report
-        except ImportError:
-            print("Plot module not found. Please install akquant[plot] or plotly.")
-            return
-
-        return plot_report(
-            result=self,
-            title=title,
-            filename=filename,
-            show=show,
-            compact_currency=compact_currency,
-            market_data=market_data,
-            plot_symbol=plot_symbol,
-            include_trade_kline=include_trade_kline,
-            include_indicators=include_indicators,
-            indicator_name=indicator_name,
-            indicator_symbol=indicator_symbol,
-            indicator_include_warmup=indicator_include_warmup,
-            benchmark=benchmark,
-            curve_freq=curve_freq,
-        )

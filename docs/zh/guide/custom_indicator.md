@@ -287,7 +287,7 @@ result = ...
 indicator_df = result.indicator_df(name="intrabar_spread", symbol="AAPL")
 
 # 2) 在本地做一个轻量预览
-fig = result.plot_indicators(
+fig = result.viz.indicators(
     name="intrabar_spread",
     symbol="AAPL",
     show=False,
@@ -305,12 +305,12 @@ result.export_indicators("indicator_outputs", format="parquet")
 
 如果你只是想快速确认指标历史形态，而不是立刻接入完整前端，可以直接使用：
 
-- `result.plot_indicators(...)`
+- `result.viz.indicators(...)`
 - `from akquant.plot import plot_indicators`
 
 这条内置路径的定位是“轻量 history preview”，特点是：
 
-- 保持现有 `result.plot()` 继续只做账户 dashboard；
+- 保持现有 `result.viz.dashboard()` 继续只做账户 dashboard；
 - 按 `pane` 自动拆分子图；
 - 复用 `render_type`，第一版支持常见的 `line` / `bar`；
 - 支持 `name`、`symbol`、`include_warmup` 过滤；
@@ -319,7 +319,7 @@ result.export_indicators("indicator_outputs", format="parquet")
 例如：
 
 ```python
-fig = result.plot_indicators(
+fig = result.viz.indicators(
     name="intrabar_spread",
     symbol="AAPL",
     include_warmup=False,
@@ -336,7 +336,7 @@ fig = result.plot_indicators(
 如果你希望把指标预览放进内置 HTML 报告，而不是单独输出一个图，也可以显式开启：
 
 ```python
-result.report(
+result.viz.report(
     filename="akquant_report.html",
     show=False,
     include_indicators=True,

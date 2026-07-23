@@ -106,7 +106,7 @@ if __name__ == "__main__":
 
     # Generate Consolidated Report
     # Using the new object-oriented API
-    result.report(
+    result.viz.report(
         title=f"AKQuant Report - {SYMBOL}",
         filename=report_file,
         show=True,  # Open automatically in browser
@@ -114,7 +114,7 @@ if __name__ == "__main__":
         plot_symbol=SYMBOL,
         include_trade_kline=True,
     )
-    # result.report_quantstats(
+    # result.viz.quantstats(
     #     benchmark=None, filename=report_file, title="Test Report"
     # )
 

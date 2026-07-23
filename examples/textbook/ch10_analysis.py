@@ -143,6 +143,6 @@ if __name__ == "__main__":
 
     # 执行分析函数
     analyze_results(result)
-    result.report(
+    result.viz.report(
         filename="ch10_analysis_report_daily.html", show=False, curve_freq="D"
     )

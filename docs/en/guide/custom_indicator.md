@@ -295,7 +295,7 @@ result = ...
 indicator_df = result.indicator_df(name="intrabar_spread", symbol="AAPL")
 
 # 2) Generate a lightweight local preview
-fig = result.plot_indicators(
+fig = result.viz.indicators(
     name="intrabar_spread",
     symbol="AAPL",
     show=False,
@@ -313,12 +313,12 @@ When available, the JSON export also includes a top-level `run_id` so downstream
 
 If you only want a quick history preview before wiring a full frontend, use:
 
-- `result.plot_indicators(...)`
+- `result.viz.indicators(...)`
 - `from akquant.plot import plot_indicators`
 
 This built-in path is intentionally lightweight:
 
-- it keeps `result.plot()` focused on the existing account dashboard;
+- it keeps `result.viz.dashboard()` focused on the existing account dashboard;
 - it splits subplots by `pane`;
 - it reuses `render_type`, with day-one support for common `line` and `bar`;
 - it supports filtering by `name`, `symbol`, and `include_warmup`;
@@ -327,7 +327,7 @@ This built-in path is intentionally lightweight:
 Example:
 
 ```python
-fig = result.plot_indicators(
+fig = result.viz.indicators(
     name="intrabar_spread",
     symbol="AAPL",
     include_warmup=False,
@@ -344,7 +344,7 @@ If you need enterprise-grade multi-panel UX, persistence, permissions, or realti
 If you want the indicator preview embedded into the built-in HTML report instead of a separate figure, enable it explicitly:
 
 ```python
-result.report(
+result.viz.report(
     filename="akquant_report.html",
     show=False,
     include_indicators=True,

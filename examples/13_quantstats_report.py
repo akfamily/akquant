@@ -61,7 +61,7 @@ try:
     # Use a mock benchmark to avoid network calls if possible, or just None
     # QS usually downloads SPY by default if benchmark is not None.
     # We pass None to skip benchmark download for speed/offline test.
-    result.report_quantstats(benchmark=None, filename=report_file, title="Test Report")
+    result.viz.quantstats(benchmark=None, filename=report_file, title="Test Report")
 
     if os.path.exists(report_file):
         print(f"Success! Report generated at {report_file}")

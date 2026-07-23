@@ -89,14 +89,14 @@ print(result)
 benchmark_returns = (
     df.set_index("date")["close"].pct_change().fillna(0.0).rename("SIMPLE_BENCH")
 )
-result.report(
+result.viz.report(
     filename="quickstart_report.html",
     show=False,
     benchmark=benchmark_returns,
 )
 ```
 
-调用 `result.report(..., benchmark=...)` 后，报告会新增“基准对比 (Benchmark Comparison)”区块，展示策略/基准/超额累计收益曲线，以及累计超额收益、年化超额收益、跟踪误差、信息比率、Beta、Alpha 等相对指标。
+调用 `result.viz.report(..., benchmark=...)` 后，报告会新增“基准对比 (Benchmark Comparison)”区块，展示策略/基准/超额累计收益曲线，以及累计超额收益、年化超额收益、跟踪误差、信息比率、Beta、Alpha 等相对指标。
 
 **运行结果示例:**
 
@@ -244,13 +244,13 @@ AKQuant 内置了基于 **Plotly** 的强大可视化模块，仅需一行代码
 
 ```python
 # 生成交互式 HTML 报告，自动在浏览器中打开
-result.report(
+result.viz.report(
     show=True,
     compact_currency=True,  # 金额列按 K/M/B 紧凑显示（默认 True）
 )
 
 # 如果你希望金额列保留原始数值精度（不缩写），可关闭：
-result.report(
+result.viz.report(
     show=False,
     filename="report_raw_amount.html",
     compact_currency=False,

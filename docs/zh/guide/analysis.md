@@ -174,7 +174,7 @@ AKQuant 提供了强大的可视化工具，帮助用户直观地分析策略表
 
 ```python
 # 生成完整的 HTML 报告
-result.report(
+result.viz.report(
     title="我的策略报告",
     filename="report.html",
     show=True,  # 设为 True 以自动在浏览器中打开 (默认为 False)
@@ -186,7 +186,7 @@ result.report(
 如果你希望报告表格中的金额保留原始精度（不缩写为 K/M/B），可以关闭该选项：
 
 ```python
-result.report(
+result.viz.report(
     title="我的策略报告",
     filename="report_raw_amount.html",
     compact_currency=False,
@@ -215,7 +215,7 @@ print(summary["information_ratio"])
 print(series[:2])
 ```
 
-结构化 benchmark analysis 与 `result.report(..., benchmark=...)` 共用同一套对齐和计算逻辑，因此适合作为长期数据契约：
+结构化 benchmark analysis 与 `result.viz.report(..., benchmark=...)` 共用同一套对齐和计算逻辑，因此适合作为长期数据契约：
 
 - `summary`: 汇总指标
 - `series`: 逐日对齐序列
@@ -259,19 +259,19 @@ risk_trend_by_strategy = result.risk_rejections_trend_by_strategy(freq="D")
 liquidation_audit = result.liquidation_audit_df
 ```
 
-当启用信用账户并触发强平后，`result.report(...)` 的 HTML 报告会自动包含：
+当启用信用账户并触发强平后，`result.viz.report(...)` 的 HTML 报告会自动包含：
 
 - 强平审计明细表（日期、当日计息、强平标的、强平顺序）
 - 风险图表区中的按日强平统计图（有数据时展示）
 
-或者使用 `plot` 方法快速预览特定图表：
+或者使用 `viz.dashboard` 方法快速预览交互式面板：
 
 ```python
 # 绘制权益曲线
-result.plot(kind="equity")
+result.viz.dashboard()
 
 # 绘制月度热力图
-result.plot(kind="heatmap")
+result.viz.dashboard()
 ```
 
 ### 进阶绘图 (Advanced Plotting)

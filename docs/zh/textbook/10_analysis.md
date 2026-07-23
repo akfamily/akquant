@@ -163,7 +163,7 @@ cash_daily = result.cash_curve_daily
 margin_daily = result.margin_curve_daily
 
 # 报告可选使用日频曲线
-result.report(filename="report_daily.html", curve_freq="D")
+result.viz.report(filename="report_daily.html", curve_freq="D")
 
 # benchmark analysis 也可复用同一频率配置
 benchmark_analysis = result.benchmark_analysis(

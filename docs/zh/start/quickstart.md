@@ -69,7 +69,7 @@ benchmark_returns = (
     df.set_index("date")["close"].pct_change().fillna(0.0).rename("SIMPLE_BENCH")
 )
 
-result.report(
+result.viz.report(
     filename="quickstart_report.html",
     show=False,
     benchmark=benchmark_returns,
@@ -317,14 +317,14 @@ class BracketQuickStrategy(Strategy):
 回测完成后，你可以直接生成交互式报告：
 
 ```python
-result.report(
+result.viz.report(
     show=True,
     filename="report.html",
     compact_currency=True,
     curve_freq="D",
 )
 
-result.report(
+result.viz.report(
     show=False,
     filename="report_raw_amount.html",
     compact_currency=False,
@@ -536,7 +536,7 @@ result = run_backtest(
 
 ```python
 print(result.liquidation_audit_df)
-result.report(filename="report_margin.html", show=False)
+result.viz.report(filename="report_margin.html", show=False)
 ```
 
 `report_margin.html` 会包含：

@@ -71,7 +71,7 @@ def main() -> None:
     indicator_df = result.indicator_df(name="intrabar_spread", symbol="VIS")
     html_path = Path(__file__).with_name("indicator_visualization_preview.html")
     export_path = Path(__file__).with_name("indicator_visualization_outputs.json")
-    result.plot_indicators(
+    result.viz.indicators(
         name="intrabar_spread",
         symbol="VIS",
         show=False,
