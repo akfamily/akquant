@@ -528,23 +528,36 @@ def _build_trading_day_metadata(
         return [], {}, {}
 
     big_index = pd.concat(frames, names=["symbol"]).index
-    dates = big_index.get_level_values(-1)
+    dates = cast(pd.DatetimeIndex, big_index.get_level_values(-1))
     if dates.tz is None:
         dates = dates.tz_localize("UTC")
     local_index = dates.tz_convert(timezone)
     normalized_index = cast(pd.DatetimeIndex, local_index.normalize())
-    all_dates = sorted(set(normalized_index.unique()))
 
     # pandas datetime64 may use a non-nanosecond unit (e.g. us from polars);
     # normalize to ns so integer values match Timestamp.value semantics.
-    ns = local_index.tz_convert("UTC").astype("datetime64[ns, UTC]").asi8
+    utc_index = cast(
+        pd.DatetimeIndex, local_index.tz_convert("UTC").astype("datetime64[ns, UTC]")
+    )
+    ns = pd.Series(utc_index, copy=False).astype("int64").to_numpy()
     symbols = big_index.get_level_values(0).astype(str)
 
     base = pd.DataFrame({"day": normalized_index, "sym": symbols, "ns": ns})
+    # Drop NaT-indexed rows before aggregating: `asi8` maps NaT to int64's
+    # sentinel min, which the vectorized path would otherwise fold into a
+    # day's min/max across *all* symbols (the per-symbol loop only tainted
+    # that symbol's own NaT bucket). Dropping keeps a stray NaT bar from
+    # silently corrupting every symbol's bounds on that slice.
+    if normalized_index.hasnans:
+        base = base[base["day"].notna()]
+        if base.empty:
+            return [], {}, {}
+
+    all_dates = sorted(set(base["day"].unique()))
 
     bounds = base.groupby("day", sort=False)["ns"].agg(["min", "max"])
     day_bounds: Dict[str, Tuple[int, int]] = {
-        day_ts.date().isoformat(): (int(start_ns), int(end_ns))
+        pd.Timestamp(day_ts).date().isoformat(): (int(start_ns), int(end_ns))
         for day_ts, start_ns, end_ns in bounds.itertuples()
     }
 
@@ -552,7 +565,8 @@ def _build_trading_day_metadata(
         base.groupby(["day", "sym"], sort=False)["ns"].min().groupby("day").max()
     )
     day_rebalance_timestamps: Dict[str, int] = {
-        day_ts.date().isoformat(): int(v) for day_ts, v in rebalance.items()
+        cast(pd.Timestamp, day_ts).date().isoformat(): int(v)
+        for day_ts, v in rebalance.items()
     }
 
     return all_dates, day_bounds, day_rebalance_timestamps
