@@ -836,7 +836,7 @@ def test_export_indicators_parquet_roundtrip(tmp_path: Path) -> None:
 
 def test_plot_indicators_renders_reference_lines_without_error() -> None:
     """plot_indicators should draw static reference lines from indicator_definitions."""
-    pytest.importorskip("plotly")  # noqa: F841
+    pytest.importorskip("plotly")
     from akquant.plot.indicator import plot_indicators
 
     result = _run_ref_result()
