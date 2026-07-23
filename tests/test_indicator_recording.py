@@ -832,3 +832,16 @@ def test_export_indicators_parquet_roundtrip(tmp_path: Path) -> None:
     assert json.loads(row["reference_lines"]) == [
         {"value": 70.0, "label": "超买", "color": "#ef4444"}
     ]
+
+
+def test_plot_indicators_renders_reference_lines_without_error() -> None:
+    """plot_indicators should draw static reference lines from indicator_definitions."""
+    pytest.importorskip("plotly")  # noqa: F841
+    from akquant.plot.indicator import plot_indicators
+
+    result = _run_ref_result()
+    fig = plot_indicators(result, show=False)
+    assert fig is not None
+    # 参考线以 shapes/hlines 形式存在;断言图对象构建成功且含至少一个横线形状
+    shape_ys = [s.y0 for s in fig.layout.shapes] if fig.layout.shapes else []
+    assert 70.0 in shape_ys
