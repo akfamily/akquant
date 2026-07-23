@@ -257,6 +257,27 @@ class IndicatorExportStrategy(Strategy):
 
     传入枚举以外的值会直接抛 `ValueError`（fail-fast），不会静默退化成折线。
 
+!!! note "关于 `reference_lines` 与 `scale_group`"
+    - `reference_lines`：可选，静态参考线列表，每项 `{"value": 数值, "label": 文字, "color": 颜色}`；
+      用于超买/超卖线、0 轴等固定横线。会动的线请用独立指标逐 bar 记录。
+    - `scale_group`：可选，共享刻度分组的语义组名（如 `"percent"`），纯提示，前端据此判断
+      同量纲指标；不改变 `pane` 决定的行布局。
+
+带参考线与刻度分组的 RSI 示例：
+
+```python
+self.record_indicator(
+    name="rsi",
+    value=rsi_value,
+    pane=1,
+    reference_lines=[
+        {"value": 70, "label": "超买", "color": "#ef4444"},
+        {"value": 30, "label": "超卖", "color": "#22c55e"},
+    ],
+    scale_group="percent",
+)
+```
+
 运行结束后：
 
 ```python

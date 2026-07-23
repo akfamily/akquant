@@ -262,6 +262,30 @@ class IndicatorExportStrategy(Strategy):
     Passing a value outside the enum raises `ValueError` (fail-fast) rather than
     silently degrading to a line.
 
+!!! note "About `reference_lines` and `scale_group`"
+    - `reference_lines`: optional, a list of static reference lines, each item
+      `{"value": number, "label": text, "color": color}`; used for overbought/oversold
+      lines, a zero axis, or other fixed horizontal lines. For lines that move over
+      time, record them as an independent indicator bar by bar.
+    - `scale_group`: optional, a semantic group name for sharing a scale (e.g.
+      `"percent"`), a pure hint frontends use to detect indicators with the same
+      unit; it does not change the row layout decided by `pane`.
+
+RSI example with reference lines and a scale group:
+
+```python
+self.record_indicator(
+    name="rsi",
+    value=rsi_value,
+    pane=1,
+    reference_lines=[
+        {"value": 70, "label": "超买", "color": "#ef4444"},
+        {"value": 30, "label": "超卖", "color": "#22c55e"},
+    ],
+    scale_group="percent",
+)
+```
+
 After the run:
 
 ```python
