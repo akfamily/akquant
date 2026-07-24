@@ -1072,7 +1072,7 @@ def _apply_strategy_config_overrides(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]],
     strategy_priority: Optional[Dict[str, int]],
     strategy_risk_budget: Optional[Dict[str, float]],
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]],
+    strategy_fill_policy: Optional[Dict[str, FillMode]],
     strategy_slippage: Optional[Dict[str, SlippageInput]],
     strategy_commission: Optional[Dict[str, CommissionPolicy]],
     portfolio_risk_budget: Optional[float],
@@ -1092,7 +1092,7 @@ def _apply_strategy_config_overrides(
     Optional[Dict[str, int]],
     Optional[Dict[str, int]],
     Optional[Dict[str, float]],
-    Optional[Dict[str, FillPolicy]],
+    Optional[Dict[str, FillMode]],
     Optional[Dict[str, SlippageInput]],
     Optional[Dict[str, CommissionPolicy]],
     Optional[float],
@@ -1180,7 +1180,7 @@ def _apply_strategy_config_overrides(
         )
     if strategy_fill_policy is None:
         strategy_fill_policy = cast(
-            Optional[Dict[str, FillPolicy]],
+            Optional[Dict[str, FillMode]],
             getattr(strategy_config, "strategy_fill_policy", None),
         )
     if strategy_slippage is None:
@@ -1305,7 +1305,7 @@ def _validate_strategy_risk_inputs(
 
 
 def _normalize_strategy_fill_policy_map(
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]],
+    strategy_fill_policy: Optional[Dict[str, FillMode]],
     configured_slot_ids: Sequence[str],
     logger: logging.Logger,
 ) -> Optional[Dict[str, FillPolicy]]:
@@ -1318,20 +1318,16 @@ def _normalize_strategy_fill_policy_map(
         strategy_key_str = str(strategy_key).strip()
         if not strategy_key_str:
             raise ValueError("strategy_fill_policy contains empty strategy id")
-        if not isinstance(raw_policy, dict):
+        if not isinstance(raw_policy, FillMode):
             raise TypeError(
-                f"strategy_fill_policy[{strategy_key_str}] must be a dict FillPolicy"
+                f"strategy_fill_policy[{strategy_key_str}] must be a FillMode "
+                "(NextOpen(), CurrentClose(...), ...)"
             )
-        resolved = _resolve_execution_policy(
-            execution_mode="next_open",
-            timer_execution_policy="same_cycle",
-            fill_policy=cast(FillPolicy, raw_policy),
-            logger=logger,
-        )
+        price_basis, bar_offset, temporal = raw_policy._to_core()
         normalized[strategy_key_str] = {
-            "price_basis": resolved.price_basis,
-            "bar_offset": int(resolved.bar_offset),
-            "temporal": resolved.temporal,
+            "price_basis": price_basis,
+            "bar_offset": int(bar_offset),
+            "temporal": temporal,
         }
     unknown_keys = sorted(set(normalized.keys()).difference(set(configured_slot_ids)))
     if unknown_keys:
@@ -2194,7 +2190,7 @@ def run_backtest(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = None,
     strategy_slippage: Optional[Dict[str, SlippageInput]] = None,
     strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,
@@ -4452,7 +4448,7 @@ def run_from_checkpoint(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = None,
     strategy_slippage: Optional[Dict[str, SlippageInput]] = None,
     strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,

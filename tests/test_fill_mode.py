@@ -293,3 +293,51 @@ def test_legacy_dict_error_contains_mapping() -> None:
     msg = str(exc.value)
     assert 'CurrentClose(timer_fill_timing="deferred")' in msg
     assert "NextOpen()" in msg
+
+
+# --- Task 6: strategy_fill_policy multi-slot map + checkpoint roundtrip ---
+
+
+def test_strategy_fill_policy_accepts_fillmode_map() -> None:
+    """strategy_fill_policy accepts a Dict[str, FillMode] map (type-level smoke test).
+
+    Slot id resolution is unrelated to this task: an unrecognized slot id
+    raises ValueError, which is the expected (and only) outcome here since no
+    "slot0" slot is configured. What matters is that a FillMode value is
+    accepted past the type check instead of being rejected as "not a dict".
+    """
+    with pytest.raises(ValueError, match="unknown strategy id"):
+        akquant.run_backtest(
+            data=_one_bar_data(),
+            strategy=lambda c, b: None,
+            symbols="X",
+            strategy_fill_policy={"slot0": NextClose()},
+            initial_cash=100000.0,
+            show_progress=False,
+        )
+
+
+def test_strategy_fill_policy_rejects_legacy_dict() -> None:
+    """strategy_fill_policy rejects a legacy dict value with TypeError."""
+    with pytest.raises(TypeError):
+        akquant.run_backtest(
+            data=_one_bar_data(),
+            strategy=lambda c, b: None,
+            symbols="X",
+            strategy_fill_policy={
+                "slot0": {"price_basis": "close", "bar_offset": 0}  # type: ignore[dict-item]
+            },
+            initial_cash=100000.0,
+            show_progress=False,
+        )
+
+
+def test_checkpoint_fill_policy_roundtrip() -> None:
+    """Core triple survives dict serialization used by checkpoint warm-start."""
+    for mode in (NextClose(), CurrentClose(timer_fill_timing="deferred")):
+        pb, bo, tp = mode._to_core()
+        d: dict[str, str | int] = {"price_basis": pb, "bar_offset": bo, "temporal": tp}
+        restored = fill_mode_from_core(
+            str(d["price_basis"]), int(d["bar_offset"]), str(d["temporal"])
+        )
+        assert restored._to_core() == mode._to_core()
