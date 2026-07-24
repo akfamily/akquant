@@ -104,8 +104,10 @@ def test_t_plus_one_mechanics() -> None:
     engine.set_cash(1_000_000.0)
 
     # Ensure execution policy allows filling on the same day (close + bar_offset=0)
-    if hasattr(engine, "set_fill_policy"):
-        cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    if hasattr(engine, "set_fill_mode"):
+        cast(Any, engine).set_fill_mode(
+            akquant.ExecutionMode.CurrentClose, "same_cycle"
+        )
 
     # Add instrument
     instr = Instrument(

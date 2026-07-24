@@ -1789,7 +1789,7 @@ def test_engine_run_with_configured_slot_strategy() -> None:
     symbol = "SLOT_RUN"
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
 
@@ -1817,7 +1817,7 @@ def test_backtest_regression_baseline() -> None:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
     engine.set_t_plus_one(False)
@@ -1877,7 +1877,7 @@ def test_metrics_df_exposes_display_friendly_trade_counts() -> None:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
     engine.set_t_plus_one(False)
@@ -1949,9 +1949,9 @@ def test_metrics_df_exposes_display_friendly_trade_counts() -> None:
 def test_engine_set_fill_policy_roundtrip() -> None:
     """Engine fill policy API should expose three-axis tuple."""
     engine = akquant.Engine()
-    if not hasattr(engine, "set_fill_policy"):
+    if not hasattr(engine, "set_fill_mode"):
         pytest.skip("Engine binary does not expose fill policy methods")
-    cast(Any, engine).set_fill_policy("close", 1, "next_event")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.NextClose, "next_event")
     basis, bar_offset, temporal = cast(
         tuple[str, int, str], cast(Any, engine).get_fill_policy()
     )
@@ -1966,7 +1966,7 @@ def test_position_helper_exposes_runtime_entry_price() -> None:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
     engine.set_t_plus_one(False)
@@ -2008,15 +2008,6 @@ def test_position_helper_exposes_runtime_entry_price() -> None:
     assert strategy.snapshots[4]["available"] == pytest.approx(0.0, rel=1e-9)
     assert strategy.snapshots[4]["entry_price"] == pytest.approx(0.0, rel=1e-9)
     assert "entry_price=0.0" in cast(str, strategy.snapshots[4]["repr"])
-
-
-def test_engine_set_fill_policy_invalid_combo() -> None:
-    """Engine fill policy should reject invalid basis/offset combos."""
-    engine = akquant.Engine()
-    if not hasattr(engine, "set_fill_policy"):
-        pytest.skip("Engine binary does not expose fill policy methods")
-    with pytest.raises(ValueError, match="requires bar_offset=1"):
-        cast(Any, engine).set_fill_policy("open", 0, "same_cycle")
 
 
 def test_backtest_performance_baseline() -> None:
@@ -5150,7 +5141,7 @@ def test_engine_tick_ioc_cancel_bridges_rust_warning(caplog: Any) -> None:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
     engine.add_instrument(

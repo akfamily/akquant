@@ -3565,13 +3565,12 @@ def run_backtest(
         fill_policy=fill_policy,
         logger=logger,
     )
-    if not hasattr(engine, "set_fill_policy"):
+    if not hasattr(engine, "set_fill_mode"):
         raise RuntimeError(
-            "Engine binary does not expose set_fill_policy; please rebuild bindings"
+            "Engine binary does not expose set_fill_mode; please rebuild bindings"
         )
-    cast(Any, engine).set_fill_policy(
-        resolved_policy.price_basis,
-        resolved_policy.bar_offset,
+    cast(Any, engine).set_fill_mode(
+        resolved_policy.execution_mode,
         resolved_policy.temporal,
     )
     default_fill_policy: FillPolicy = {
@@ -5662,13 +5661,12 @@ def run_from_checkpoint(
             fill_policy=effective_fill_policy,
             logger=logger,
         )
-        if not hasattr(engine, "set_fill_policy"):
+        if not hasattr(engine, "set_fill_mode"):
             raise RuntimeError(
-                "Engine binary does not expose set_fill_policy; please rebuild bindings"
+                "Engine binary does not expose set_fill_mode; please rebuild bindings"
             )
-        cast(Any, engine).set_fill_policy(
-            resolved_policy_warm_start.price_basis,
-            resolved_policy_warm_start.bar_offset,
+        cast(Any, engine).set_fill_mode(
+            resolved_policy_warm_start.execution_mode,
             resolved_policy_warm_start.temporal,
         )
     if stream_on_event is not None:

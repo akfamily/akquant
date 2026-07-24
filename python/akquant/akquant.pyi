@@ -609,11 +609,10 @@ class Engine:
         """
         ...
 
-    def set_fill_policy(
+    def set_fill_mode(
         self,
-        price_basis: typing.Literal["open", "close", "ohlc4", "hl2"],
-        bar_offset: int,
-        temporal: typing.Literal["same_cycle", "next_event"],
+        mode: akquant.ExecutionMode,
+        timer_timing: str,
     ) -> None: ...
     def get_fill_policy(self) -> tuple[str, int, str]: ...
     def use_simple_market(self, commission_rate: float) -> None:
