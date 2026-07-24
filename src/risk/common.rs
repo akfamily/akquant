@@ -169,6 +169,13 @@ impl RiskRule for CashMarginRule {
     }
 
     fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
+        // Futures in a margin account are intentionally delegated to
+        // FuturesMarginRule (maintenance-ratio based), so this cash/free-margin
+        // gate steps aside. This is an UNCONDITIONAL hand-off: it relies on
+        // FuturesMarginRule being registered for AssetType::Futures in
+        // RiskManager::init_rules. If that registration is ever removed, futures
+        // margin accounts would lose ALL submission-time margin checks silently.
+        // `risk_rules_cover_futures_margin_account` guards that invariant.
         if ctx.config.is_margin_account() && ctx.instrument.asset_type == AssetType::Futures {
             return Ok(());
         }
