@@ -2242,11 +2242,14 @@ def run_backtest(
                      {"type": "ticks", "value": 1}。
                      裸 float 仍兼容，但已不推荐，且按 percent 语义解析。
     :param volume_limit_pct: 成交量限制比例 (默认 0.25)
-    :param fill_policy: 统一成交语义配置（可选），格式:
-        {"price_basis": "open|close|ohlc4|hl2",
-         "bar_offset": "0|1",
-         "temporal": "same_cycle|next_event"}。
-        预留未实现 price_basis: mid_quote、vwap_window、twap_window。
+    :param fill_policy: 统一成交语义配置（可选），传入 ``FillMode`` 对象:
+        ``NextOpen()`` 下一根开盘价、``NextClose()`` 下一根收盘价、
+        ``CurrentClose()`` 当根收盘价、``NextAverage()`` 下一根 OHLC4 均价、
+        ``NextHighLowMid()`` 下一根 HL2 中位价。
+        ``CurrentClose`` 可选 ``timer_fill_timing="immediate"|"deferred"`` 控制
+        定时器触发下单是否延迟到下一事件成交。
+        旧的 dict 形式与 ``make_fill_policy(...)`` 已移除，
+        传入 dict 会抛出 ``TypeError``。
     :param legacy_execution_policy_compat: 已移除，不再支持。
     :param strict_strategy_params: 是否严格校验策略构造参数。True 时若参数不匹配将抛错；
                                    False 时保持兼容行为（忽略未知参数并在失败时
