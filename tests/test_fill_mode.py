@@ -127,3 +127,36 @@ def test_fillmode_importable_from_top_level() -> None:
     """FillMode subclasses are importable from the top-level akquant package."""
     assert hasattr(akquant, "NextOpen")
     assert hasattr(akquant, "CurrentClose")
+
+
+# --- Task 3: resolver trusts pre-translated fill_policy dict ---
+
+
+def test_resolver_trusts_translated_dict() -> None:
+    """_resolve_execution_policy trusts an already-translated fill_policy dict."""
+    import logging
+
+    from akquant.backtest.engine import _resolve_execution_policy
+
+    r = _resolve_execution_policy(
+        execution_mode="next_open",
+        timer_execution_policy="same_cycle",
+        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "next_event"},
+        logger=logging.getLogger("test"),
+    )
+    assert (r.price_basis, r.bar_offset, r.temporal) == ("close", 0, "next_event")
+
+
+def test_resolver_default_is_next_open() -> None:
+    """_resolve_execution_policy defaults to next_open when fill_policy is None."""
+    import logging
+
+    from akquant.backtest.engine import _resolve_execution_policy
+
+    r = _resolve_execution_policy(
+        execution_mode="next_open",
+        timer_execution_policy="same_cycle",
+        fill_policy=None,
+        logger=logging.getLogger("test"),
+    )
+    assert (r.price_basis, r.bar_offset, r.temporal) == ("open", 1, "same_cycle")

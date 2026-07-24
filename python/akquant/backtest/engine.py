@@ -307,16 +307,24 @@ class PreparedStreamRuntime:
     stream_mode: str
 
 
-_SUPPORTED_FILL_PRICE_BASIS: set[str] = {"open", "close", "ohlc4", "hl2"}
-_RESERVED_FILL_PRICE_BASIS: set[str] = {"mid_quote", "vwap_window", "twap_window"}
 _SUPPORTED_FILL_TEMPORAL: set[str] = {"same_cycle", "next_event"}
-_SUPPORTED_FILL_BAR_OFFSET: set[int] = {0, 1}
-_DEFAULT_FILL_BAR_OFFSET: Dict[str, int] = {
-    "open": 1,
-    "close": 0,
-    "ohlc4": 1,
-    "hl2": 1,
-}
+
+
+def _basis_offset_to_mode(price_basis: str, bar_offset: int) -> Any:
+    """Map an already-validated (price_basis, bar_offset) pair to a mode enum.
+
+    No validation, no raise: callers must pass a triple that FillMode._to_core()
+    already produced (see FillMode/fill_mode_from_core for the legality rules).
+    """
+    if price_basis == "open":
+        return _RUNTIME_MODE_NEXT_OPEN
+    if price_basis == "close":
+        return (
+            _RUNTIME_MODE_CURRENT_CLOSE if bar_offset == 0 else _RUNTIME_MODE_NEXT_CLOSE
+        )
+    if price_basis == "ohlc4":
+        return _RUNTIME_MODE_NEXT_AVERAGE
+    return _RUNTIME_MODE_NEXT_HIGH_LOW_MID
 
 
 def _resolve_execution_policy(
@@ -332,65 +340,13 @@ def _resolve_execution_policy(
     resolved_source: Literal["fill_policy", "legacy"] = "legacy"
     if fill_policy is not None:
         if not isinstance(fill_policy, dict):
-            raise TypeError("fill_policy must be a dict")
-        raw_basis = str(fill_policy.get("price_basis", "open")).strip().lower()
-        raw_temporal = str(fill_policy.get("temporal", "same_cycle")).strip().lower()
-        if raw_basis not in _SUPPORTED_FILL_PRICE_BASIS:
-            if raw_basis in _RESERVED_FILL_PRICE_BASIS:
-                raise NotImplementedError(
-                    "fill_policy.price_basis='%s' is reserved but not implemented yet"
-                    % raw_basis
-                )
-            raise ValueError(
-                "fill_policy.price_basis must be one of: "
-                "open, close, ohlc4, hl2; "
-                "reserved: mid_quote, vwap_window, twap_window"
-            )
-        if raw_temporal not in _SUPPORTED_FILL_TEMPORAL:
-            raise ValueError(
-                "fill_policy.temporal must be one of: same_cycle, next_event"
-            )
-        raw_offset_value = fill_policy.get(
-            "bar_offset", _DEFAULT_FILL_BAR_OFFSET.get(raw_basis, 1)
+            raise TypeError("internal: fill_policy must be pre-translated to dict")
+        resolved_price_basis = str(fill_policy["price_basis"])
+        resolved_bar_offset = int(fill_policy["bar_offset"])
+        resolved_timer_policy = str(fill_policy["temporal"])
+        resolved_execution_mode = _basis_offset_to_mode(
+            resolved_price_basis, resolved_bar_offset
         )
-        try:
-            raw_offset = int(raw_offset_value)
-        except (TypeError, ValueError):
-            raise ValueError("fill_policy.bar_offset must be 0 or 1") from None
-        if raw_offset not in _SUPPORTED_FILL_BAR_OFFSET:
-            raise ValueError("fill_policy.bar_offset must be 0 or 1")
-        if raw_basis == "open":
-            if raw_offset != 1:
-                raise ValueError("fill_policy(open) requires bar_offset=1")
-            basis_mode = _RUNTIME_MODE_NEXT_OPEN
-        elif raw_basis == "close":
-            basis_mode = (
-                _RUNTIME_MODE_CURRENT_CLOSE
-                if raw_offset == 0
-                else _RUNTIME_MODE_NEXT_CLOSE
-            )
-        elif raw_basis == "ohlc4":
-            if raw_offset != 1:
-                raise ValueError("fill_policy(ohlc4) requires bar_offset=1")
-            basis_mode = _RUNTIME_MODE_NEXT_AVERAGE
-        else:
-            if raw_offset != 1:
-                raise ValueError("fill_policy(hl2) requires bar_offset=1")
-            basis_mode = _RUNTIME_MODE_NEXT_HIGH_LOW_MID
-        if execution_mode != _RUNTIME_MODE_NEXT_OPEN:
-            logger.warning(
-                "fill_policy overrides execution_mode=%s",
-                execution_mode,
-            )
-        if str(timer_execution_policy).strip().lower() != "same_cycle":
-            logger.warning(
-                "fill_policy overrides timer_execution_policy=%s",
-                timer_execution_policy,
-            )
-        resolved_execution_mode = basis_mode
-        resolved_timer_policy = raw_temporal
-        resolved_price_basis = raw_basis
-        resolved_bar_offset = raw_offset
         resolved_source = "fill_policy"
 
     if isinstance(resolved_execution_mode, str):

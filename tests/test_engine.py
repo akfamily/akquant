@@ -1027,7 +1027,7 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
         (
             "next_open",
             "same_cycle",
-            {"price_basis": "ohlc4", "temporal": "next_event"},
+            {"price_basis": "ohlc4", "bar_offset": 1, "temporal": "next_event"},
             "ohlc4",
             "next_event",
             "fill_policy",
@@ -1035,7 +1035,7 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
         (
             "current_close",
             "next_event",
-            {"price_basis": "hl2", "temporal": "same_cycle"},
+            {"price_basis": "hl2", "bar_offset": 1, "temporal": "same_cycle"},
             "hl2",
             "same_cycle",
             "fill_policy",
