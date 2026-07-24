@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import numpy as np
 import pandas as pd
+from akquant import CurrentClose
 from akquant.backtest import run_backtest
 from akquant.ml import SklearnAdapter
 from sklearn.linear_model import LogisticRegression  # type: ignore
@@ -144,7 +145,7 @@ def main() -> None:
         on_train_signal=on_train_signal,
         symbols="TEST",
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         history_depth=60,
     )
     print("done_functional_ml_walk_forward")

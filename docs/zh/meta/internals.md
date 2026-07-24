@@ -85,7 +85,7 @@ akquant/
 为了保证跨语言交互的性能与类型安全，核心数据结构均在 Rust 中定义并导出。
 
 *   **`types.rs`**:
-    *   `ExecutionPolicyCore`:
+    *   `ExecutionPolicyCore`（引擎内部三元组表示；公开 API 请使用 `FillMode` 对象，由 Python 层翻译到此三元组）：
         *   `price_basis`: `open` / `close` / `ohlc4` / `hl2`。
         *   `bar_offset`: `0` / `1`。
         *   `temporal`: `same_cycle` / `next_event`。
@@ -152,7 +152,7 @@ AKQuant 在数据处理阶段集成了高级的市场特性支持：
     *   **滑点模型 (`slippage.rs`)**: 支持 `FixedSlippage` (固定金额) 和 `PercentSlippage` (百分比)。
 *   **撮合机制 (`matcher.rs`)**:
     *   **限价单 (Limit)**: 买入需 `Low <= Price`，卖出需 `High >= Price`。
-    *   **市价单 (Market)**: 根据三轴 `fill_policy` 决定成交价格与时序。
+    *   **市价单 (Market)**: 根据 `ExecutionPolicyCore`（由公开 `FillMode` 翻译而来）决定成交价格与时序。
     *   **触发机制**: 支持 `trigger_price` (止损/止盈单)。
 
 ### 2.3 市场规则层 (`src/market/`)
@@ -238,12 +238,12 @@ AKQuant 在数据处理阶段集成了高级的市场特性支持：
 
 ## 3. 关键工作流详解
 
-### 3.1 回测主循环与三轴执行语义
+### 3.1 回测主循环与执行语义
 
-`Engine::run` 的流程依赖三轴执行语义：
+`Engine::run` 的流程依赖内部执行三元组（公开 API 由 `FillMode` 对象翻译得到，见 `reference/api.md`）：
 
 *   `price_basis + bar_offset`: 决定使用当前/下一根 Bar 的 `open/close/ohlc4/hl2` 价格基准。
-*   `temporal`: 控制 timer 订单在当前周期或下一事件撮合。
+*   `temporal`: 控制 timer 订单在当前周期或下一事件撮合（仅 `CurrentClose` 的 `timer_fill_timing` 会改变此项）。
 
 ### 3.2 订单全生命周期
 

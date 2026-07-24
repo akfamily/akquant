@@ -80,10 +80,10 @@ Notes:
 * `on_before_trading` always use a "previous trading day / previous snapshot only" visibility model; inside these callbacks, `get_history()`, `get_account()`, and `equity` must not expose the current day's new bar or the current day's updated account view.
 * `on_cross_section` runs after the framework has seen the first complete cross-symbol slice for the trading day; inside this callback, current-day history and the current account snapshot are visible.
 * `on_after_trading` is emitted once per local trading date when leaving the regular trading session, or on the next event if day rollover occurs first.
-* `on_after_trading` is an **end/wind-down hook** intended for end-of-day statistics, cleanup, and archiving. The framework fires it in a **dedicated event at the day's close** (before the next bar), so a `bar_offset=1` next-open order submitted inside it fills on the next bar rather than one bar later (#324). If your intent is "decide at close, execute at the next open", the clearer place to order is `on_bar` (next-open) or `on_pre_open`.
-* **`TimeInForce.Day` and next-open expiry semantics**: end-of-day settlement marks any Day order still unfilled that day as `Expired`. For a `bar_offset=1` next-open Day order submitted after the close (e.g. in `on_cross_section` / `on_after_trading`), its only matchable slice is the **next day's open**, which comes *after* settlement — so the framework spares such an order once, letting it get that next-open fill chance; it only expires at the next day's settlement if it is still unfilled then (e.g. the symbol is suspended, #334). A same-cycle (`bar_offset=0`) Day order had its matchable slice on its creation day and so still expires at the next settlement as usual. If you want a "decide at close, fill next day" order that is not subject to same-day expiry, just use the default `GTC`.
+* `on_after_trading` is an **end/wind-down hook** intended for end-of-day statistics, cleanup, and archiving. The framework fires it in a **dedicated event at the day's close** (before the next bar), so a `NextOpen()` order submitted inside it fills on the next bar rather than one bar later (#324). If your intent is "decide at close, execute at the next open", the clearer place to order is `on_bar` (next-open) or `on_pre_open`.
+* **`TimeInForce.Day` and next-open expiry semantics**: end-of-day settlement marks any Day order still unfilled that day as `Expired`. For a `NextOpen()` Day order submitted after the close (e.g. in `on_cross_section` / `on_after_trading`), its only matchable slice is the **next day's open**, which comes *after* settlement — so the framework spares such an order once, letting it get that next-open fill chance; it only expires at the next day's settlement if it is still unfilled then (e.g. the symbol is suspended, #334). A same-cycle `CurrentClose()` Day order had its matchable slice on its creation day and so still expires at the next settlement as usual. If you want a "decide at close, fill next day" order that is not subject to same-day expiry, just use the default `GTC`.
 * To branch on the trading **session** (e.g. futures day/night), the framework no longer exposes `on_session_*` callbacks; read `self.ctx.session` (a `TradingSession` enum) inside `on_bar` / `on_tick`, e.g. `if self.ctx.session == TradingSession.Continuous: ...`.
-* Inside `on_pre_open`, plain `buy/sell/order_target_*` calls automatically resolve to `price_basis=open, bar_offset=1, temporal=same_cycle` unless an explicit `fill_policy` is provided.
+* Inside `on_pre_open`, plain `buy/sell/order_target_*` calls automatically resolve to `NextOpen()` semantics unless an explicit `fill_mode` is provided.
 * Set `self.enable_precise_day_boundary_hooks = True` to enable boundary-timer based precise day hooks; this switch changes trigger precision only, not the history/account visibility window seen inside day-boundary callbacks.
 * `on_portfolio_update` is incremental: emitted once at initialization, then only on order/trade or position-relevant price changes.
 * Use `self.portfolio_update_eps` to filter tiny equity/cash changes (default `0.0`).
@@ -174,7 +174,7 @@ class AuctionSignalStrategy(Strategy):
 
         signal = self.compute_pre_open_signal()
         if signal > 0:
-            # Without an explicit fill_policy, this defaults to current-open semantics.
+            # Without an explicit fill_mode, this defaults to NextOpen() semantics.
             self.buy("000001", quantity=100)
         elif signal < 0:
             self.sell("000001", quantity=100)
@@ -184,7 +184,7 @@ Practical tips:
 
 * Keep `on_pre_open` focused on the final decision and order submission.
 * You can prepare scans, candidate lists, and risk checks earlier, but leave the final open-fill decision to `on_pre_open`.
-* If you pass an explicit `fill_policy`, the explicit policy wins.
+* If you pass an explicit `fill_mode`, the explicit mode wins.
 
 Timing note:
 
@@ -438,7 +438,7 @@ Recommendation: use Plan A by default; use Plan B only when a stable rebalance t
 
 *   **Suspensions / missing bars**: Plan B may not trigger if some symbols have no bar at a timestamp; add timeout fallback or minimum-valid-sample execution.
 *   **Universe drift**: If constituents change but your universe list is stale, weights and ranks diverge from target; refresh periodically and track effective date.
-*   **Rebalance time vs fill policy mismatch**: With `fill_policy={"price_basis":"open","bar_offset":1}`, close-time signals are filled on the next bar; use `fill_policy.temporal` to make timer fill timing explicit.
+*   **Rebalance time vs fill mode mismatch**: With `fill_policy=NextOpen()`, close-time signals are filled on the next bar; use `CurrentClose(timer_fill_timing=...)` to make timer fill timing explicit.
 *   **Insufficient history windows**: Newly listed or recently resumed symbols may fail window requirements; check `len(closes)` and skip invalid samples.
 *   **Position convergence lag**: Multi-asset sell-then-buy cycles can leave partial allocations in one event; use target-position APIs and converge again on next cycle.
 
@@ -604,13 +604,17 @@ In AKQuant, order status transitions are as follows:
     self.cancel_all_orders()    # Cancel all open orders
     ```
 
-### 5.3 Execution Policy (Three-Axis)
+### 5.3 Execution Policy (Fill Mode)
 
-Set via `engine.set_fill_policy(price_basis, bar_offset, temporal)`:
+Pass a `FillMode` object via `run_backtest(..., fill_policy=...)`, or at order level via `fill_mode=`. The five named modes are:
 
-*   `price_basis`: `open | close | ohlc4 | hl2`
-*   `bar_offset`: `0 | 1`
-*   `temporal`: `same_cycle | next_event` (timer order timing)
+*   `NextOpen()`: fill at the next bar's open (default; no look-ahead).
+*   `NextClose()`: fill at the next bar's close.
+*   `NextAverage()`: fill at the next bar's OHLC4 average.
+*   `NextHighLowMid()`: fill at the next bar's HL2 midpoint.
+*   `CurrentClose()`: fill at the current bar's close. Use `CurrentClose(timer_fill_timing="deferred")` to defer timer-triggered fills to the next event (default `"immediate"`).
+
+At the engine level, set it via `engine.set_fill_mode(mode, timer_timing)`, where `mode` is an `akquant.ExecutionMode` value and `timer_timing` is `"same_cycle"` or `"next_event"`.
 
 ### 5.4 Event Callbacks {: #callbacks }
 

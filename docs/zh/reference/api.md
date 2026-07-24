@@ -71,7 +71,7 @@ def run_backtest(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = None,
     strategy_slippage: Optional[Dict[str, SlippageInput]] = None,
     strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,
@@ -80,7 +80,7 @@ def run_backtest(
     analyzer_plugins: Optional[Sequence[AnalyzerPlugin]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     broker_profile: Optional[str] = None,
-    fill_policy: Optional[FillPolicy] = None,
+    fill_policy: Optional[FillMode] = None,
     strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult
@@ -174,7 +174,7 @@ def run_from_checkpoint(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = None,
     strategy_slippage: Optional[Dict[str, SlippageInput]] = None,
     strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,
@@ -205,13 +205,15 @@ def run_from_checkpoint(
     *   若显式提供，优先级高于 `commission_rate`；`commission_rate` 仍保留为兼容入口。
 *   legacy 价格基准参数：已移除。
 *   legacy 时序参数：已移除。
-*   `fill_policy`: 统一成交语义配置。
-    *   `price_basis`: `open`、`close`、`ohlc4`（OHLC 平均价）或 `hl2`（高低中价）。
-    *   `bar_offset`: `0` 或 `1`，用于完整三轴语义。
-    *   预留（暂未实现）: `mid_quote`、`vwap_window`、`twap_window`（当前会抛出 `NotImplementedError`）。
-    *   `temporal`: `same_cycle` 或 `next_event`。
+*   `fill_policy`: 运行级默认成交语义，接受一个 `FillMode` 对象（从 `akquant` 顶层导入）。五个命名模式：
+    *   `NextOpen()`: 下一根 K 线开盘价成交（默认，无未来函数）。
+    *   `NextClose()`: 下一根 K 线收盘价成交。
+    *   `NextAverage()`: 下一根 K 线 OHLC4 均价成交。
+    *   `NextHighLowMid()`: 下一根 K 线 HL2（高低中价）成交。
+    *   `CurrentClose(timer_fill_timing="immediate"|"deferred")`: 当根收盘价成交；`timer_fill_timing` 仅影响 `on_timer` 触发的订单如何撮合（`immediate` 当期成交，`deferred` 顺延到下一根 bar）。
+*   旧的 `fill_policy=dict`（`price_basis`/`bar_offset`/`temporal`）与 `make_fill_policy(...)` 已移除，传入 dict 会抛出 `TypeError`。请改用上述 `FillMode` 构造器。
 *   `legacy_execution_policy_compat`（通过 `**kwargs`）: 已移除。
-*   迁移建议：legacy 执行参数已不再接受，统一使用 `fill_policy`。
+*   迁移建议：legacy 执行参数已不再接受，统一使用 `FillMode` 对象。
 *   `strict_strategy_params`: 是否严格校验策略构造参数（默认 `True`）。
     *   当传入策略不接受的参数时会立即抛错；
     *   推荐保持默认值，避免参数错配被静默忽略导致回测结果偏差。
@@ -227,8 +229,8 @@ def run_from_checkpoint(
 *   `risk_config`: 风控配置。支持字典 (e.g., `{"max_position_pct": 0.1}`) 或 `RiskConfig` 对象。如果同时提供了 `config.strategy_config.risk`，此参数将覆盖其中的同名字段。
 *   `strategy_runtime_config` / `runtime_config_override`: 运行时行为注入与冲突处理开关，支持 `StrategyRuntimeConfig` 或 `dict`。
 *   `strategies_by_slot`: 可选多策略映射。键为 slot id，值为策略类/实例/函数式 on_bar 回调；用于启用 slot 迭代执行。
-*   `strategy_fill_policy`: 可选策略级默认成交策略映射（`strategy_id -> fill_policy`）。
-    下单时优先级：订单级 `fill_policy` > `strategy_fill_policy[strategy_id]` > 运行级 `fill_policy`。
+*   `strategy_fill_policy`: 可选策略级默认成交策略映射（`strategy_id -> FillMode`）。
+    下单时优先级：订单级 `fill_mode` > `strategy_fill_policy[strategy_id]` > 运行级 `fill_policy`。
 *   `strategy_slippage`: 可选策略级默认滑点映射（`strategy_id -> slippage`）。
     下单时优先级：订单级 `slippage` > `strategy_slippage[strategy_id]` > 运行级 `slippage`。
 *   `strategy_commission`: 可选策略级默认佣金映射（`strategy_id -> commission`）。
@@ -255,37 +257,39 @@ def run_from_checkpoint(
 **fill_policy 推荐示例（主路径）：**
 
 ```python
+import akquant as aq
+from akquant import NextClose, CurrentClose
+
 # 下一根 K 线收盘价成交
 result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "close", "bar_offset": 1, "temporal": "same_cycle"},
+    fill_policy=NextClose(),
 )
 
-# 当前收盘价 + next_event 时序
+# 当根收盘价 + timer 订单顺延到下一根 bar
 result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "next_event"},
+    fill_policy=CurrentClose(timer_fill_timing="deferred"),
 )
 ```
 
-**执行语义速查（三轴主路径）：**
+**执行语义速查（五个命名模式）：**
 
-| 场景 | `fill_policy` |
+| 场景 | `FillMode` |
 | :--- | :--- |
-| next-open 风格成交 | `{"price_basis":"open","bar_offset":1,"temporal":"same_cycle"}` |
-| current-close 风格成交 | `{"price_basis":"close","bar_offset":0,"temporal":"same_cycle"}` |
-| 下一根收盘价成交 | `{"price_basis":"close","bar_offset":1,"temporal":"same_cycle"}` |
-| 下一根 OHLC 均价成交 | `{"price_basis":"ohlc4","bar_offset":1,"temporal":"same_cycle"}` |
-| 下一根 HL2 成交 | `{"price_basis":"hl2","bar_offset":1,"temporal":"same_cycle"}` |
+| next-open 风格成交（默认） | `NextOpen()` |
+| 当根收盘价成交 | `CurrentClose()` |
+| 下一根收盘价成交 | `NextClose()` |
+| 下一根 OHLC 均价成交 | `NextAverage()` |
+| 下一根 HL2 成交 | `NextHighLowMid()` |
 
 说明：
-* 对 `open/ohlc4/hl2` 这三种 `price_basis`，`bar_offset` 固定为 `1`（不支持 `0`）。
-* 对 `close + bar_offset=1`（下一根收盘价）场景，核心时间位移语义由 `bar_offset` 决定；`temporal` 建议固定写 `same_cycle` 以减少歧义。
-* `temporal` 的差异主要体现在 `close + bar_offset=0`（当前收盘价）场景。
+* 只有 `CurrentClose` 支持 `timer_fill_timing` 参数；其余模式的 `on_timer` 订单均在下一根 bar 成交。
+* `timer_fill_timing="immediate"`（默认）：timer 触发即在当根收盘价成交；`"deferred"`：timer 不构成成交点，顺延到下一根 bar。它只影响 `on_timer` 订单，对普通 `on_bar` 订单无影响。
 
 **DataFeedAdapter 用法（多时间框）:**
 
@@ -322,7 +326,7 @@ result = aq.run_backtest(
 *   流式场景统一使用 `run_backtest(..., on_event=...)`。
 *   legacy 执行语义兼容开关已移除。
 *   legacy 执行参数与 `legacy_execution_policy_compat` 不再接受。
-*   公开执行配置全量统一使用 `fill_policy`。
+*   公开执行配置全量统一使用 `FillMode` 对象（`fill_policy=NextOpen()` 等）。
 *   在 PyCharm 中若未开启终端仿真，原生进度条可能不可见；可开启 `Emulate terminal in output console` 或改用 `on_event` 的 `progress` 事件输出文本进度。
 *   阶段 5 后不再提供运行时参数级回滚开关；如需回滚请使用版本级回滚策略。
 
@@ -858,7 +862,7 @@ def set_log_level(level: Union[str, int]) -> None
 *   `on_reject(order: Order)`: 订单首次进入 `Rejected` 时触发一次。
 *   `on_expiry(event: Dict[str, Any])`: 到期结算回调。仅当引擎实际执行 `expiry_date` 驱动的到期结算/移除后触发；回调时账户状态已更新。示例见：`examples/49_on_expiry_demo.py`。
 *   `on_before_trading(trading_date, timestamp)`: 每个本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。该回调按“前一交易日/前一时点信息可见”的语义工作。
-*   `on_pre_open(event: Dict[str, Any])`: 每个交易日首个常规行情事件前触发一次。适合“盘前决策，本次 open 成交”；默认下单语义会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。示例见：`examples/52_pre_open_demo.py`。
+*   `on_pre_open(event: Dict[str, Any])`: 每个交易日首个常规行情事件前触发一次。适合“盘前决策，本次 open 成交”；默认下单语义等价于 `NextOpen()`（下一根 open 成交）。示例见：`examples/52_pre_open_demo.py`。
 *   `on_cross_section(trading_date, timestamp)`: 横截面同周期调仓钩子。在框架看到当日首个“跨标的完整 bar 切片”后触发，每个交易日最多一次；与 `on_before_trading` 不同，它可以看到当日历史和当前账户快照，适合收盘价同周期调仓。调仓频率（日/周/月）在回调内用日历判断。
 *   `on_after_trading(trading_date, timestamp)`: 离开常规交易会话时触发；若先跨日则在下一事件补发。
 *   `on_portfolio_update(snapshot)`: 账户快照变化时触发。
@@ -876,7 +880,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
         self.buy("000001", quantity=100)
 ```
 
-说明：若这里不显式传 `fill_policy`，框架会默认按当日 `open` 语义处理订单。
+说明：若这里不显式传 `fill_mode`，框架会默认按 `NextOpen()`（当日 open）语义处理订单。
 
 **属性与快捷访问:**
 
@@ -1024,8 +1028,8 @@ run_live(
 *   `set_timezone_name(timezone: str)`: 设置 IANA 时区名称，例如 `Asia/Shanghai`、`UTC`、`US/Eastern`。推荐优先使用此方法，以正确处理 DST 和历史时区规则。
 *   `set_timezone(offset: int)`: 设置固定时区偏移秒数。仅作为兼容接口保留，不包含 DST / 历史时区规则。
 *   `use_simulated_execution()` / `use_realtime_execution()`: 设置执行环境。
-*   `set_fill_policy(price_basis, bar_offset, temporal)`: 设置统一三轴执行策略（推荐）。
-*   `get_fill_policy()`: 获取当前三轴执行策略。
+*   `set_fill_mode(mode: ExecutionMode, timer_timing: str)`: 设置运行级默认执行模式。`mode` 取 `ExecutionMode` 枚举（`NextOpen`/`NextClose`/`NextAverage`/`NextHighLowMid`/`CurrentClose`），`timer_timing` 取 `"same_cycle"`/`"next_event"`（仅对 `CurrentClose` 有意义）。日常使用推荐通过 `run_backtest(..., fill_policy=NextOpen())` 传入 `FillMode` 对象，由框架翻译到该底层方法。
+*   `get_fill_policy()`: 获取当前执行模式对应的核心三元组 `(price_basis, bar_offset, temporal)`（内部表示）。
 *   `set_history_depth(depth)`: 设置历史数据缓存长度。
 
 **市场与费率配置:**

@@ -1,5 +1,5 @@
 import pandas as pd
-from akquant import Bar, Strategy, run_backtest
+from akquant import Bar, CurrentClose, Strategy, run_backtest
 from akquant.config import RiskConfig
 
 
@@ -63,7 +63,7 @@ def run_example() -> None:
         strategy=MarginLiquidationAuditStrategy,
         symbols="LIQ",
         initial_cash=10000.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         risk_config=RiskConfig(

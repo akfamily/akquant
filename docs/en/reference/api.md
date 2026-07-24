@@ -71,7 +71,7 @@ def run_backtest(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = None,
     strategy_slippage: Optional[Dict[str, SlippageInput]] = None,
     strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,
@@ -80,7 +80,7 @@ def run_backtest(
     analyzer_plugins: Optional[Sequence[AnalyzerPlugin]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     broker_profile: Optional[str] = None,
-    fill_policy: Optional[FillPolicy] = None,
+    fill_policy: Optional[FillMode] = None,
     strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult
@@ -102,13 +102,15 @@ def run_backtest(
     *   When explicitly provided, it takes precedence over `commission_rate`; `commission_rate` remains as a backward-compatible shorthand for percent mode.
 *   Legacy price-basis parameter: Removed.
 *   Legacy timer-temporal parameter: Removed.
-*   `fill_policy`: Unified fill semantics.
-    *   `price_basis`: `open`, `close`, `ohlc4` (OHLC average), or `hl2` (high-low midpoint).
-    *   `bar_offset`: `0` or `1`. Required for full three-axis semantics.
-    *   Reserved (not implemented yet): `mid_quote`, `vwap_window`, `twap_window` (currently raises `NotImplementedError`).
-    *   `temporal`: `same_cycle` or `next_event`.
+*   `fill_policy`: A `FillMode` object expressing unified fill semantics. One of five named modes:
+    *   `NextOpen()`: fill at the next bar's open (default; no look-ahead).
+    *   `NextClose()`: fill at the next bar's close.
+    *   `NextAverage()`: fill at the next bar's OHLC4 average.
+    *   `NextHighLowMid()`: fill at the next bar's HL2 (high-low) midpoint.
+    *   `CurrentClose()`: fill at the current bar's close. Pass `CurrentClose(timer_fill_timing="deferred")` to defer timer-triggered fills to the next event (default `"immediate"`).
+    *   The old dict form (`{"price_basis": ..., "bar_offset": ..., "temporal": ...}`) and `make_fill_policy(...)` are removed and now raise `TypeError`.
 *   `legacy_execution_policy_compat` (via `**kwargs`): Removed.
-*   Migration hint: legacy execution parameters are no longer accepted; use `fill_policy`.
+*   Migration hint: legacy execution parameters and the `fill_policy` dict are no longer accepted; pass a `FillMode` object.
 *   `strict_strategy_params`: Whether to strictly validate strategy constructor parameters (default `True`).
     *   Raises immediately if unsupported constructor parameters are provided.
     *   Recommended to keep enabled to avoid silent parameter mismatch and distorted backtest results.
@@ -127,8 +129,8 @@ def run_backtest(
 *   `strategy_max_daily_loss` / `strategy_max_drawdown`: Optional strategy-level stop maps keyed by strategy id.
 *   `strategy_reduce_only_after_risk` / `strategy_risk_cooldown_bars`: Optional post-risk behavior maps keyed by strategy id.
 *   `strategy_priority` / `strategy_risk_budget` / `portfolio_risk_budget`: Optional scheduling/budget controls.
-*   `strategy_fill_policy`: Optional strategy-level default fill policy map keyed by strategy id.
-    Resolution order at submit time: order-level `fill_policy` > `strategy_fill_policy[strategy_id]` > run-level `fill_policy`.
+*   `strategy_fill_policy`: Optional strategy-level default `FillMode` map keyed by strategy id.
+    Resolution order at submit time: order-level `fill_mode` > `strategy_fill_policy[strategy_id]` > run-level `fill_policy`.
 *   `strategy_slippage`: Optional strategy-level default slippage map keyed by strategy id.
     Resolution order at submit time: order-level `slippage` > `strategy_slippage[strategy_id]` > run-level `slippage`.
 *   `strategy_commission`: Optional strategy-level default commission map keyed by strategy id.
@@ -161,32 +163,33 @@ result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "close", "bar_offset": 1, "temporal": "same_cycle"},
+    fill_policy=aq.NextClose(),
 )
 
-# Current-close price with next-event temporal matching
+# Current-close price, deferring timer-triggered fills to the next event
 result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "next_event"},
+    fill_policy=aq.CurrentClose(timer_fill_timing="deferred"),
 )
 ```
 
-**Execution semantics quick map (three-axis only):**
+**Execution semantics quick map:**
 
 | Scenario | `fill_policy` |
 | :--- | :--- |
-| Next-open style fill | `{"price_basis":"open","bar_offset":1,"temporal":"same_cycle"}` |
-| Current-close style fill | `{"price_basis":"close","bar_offset":0,"temporal":"same_cycle"}` |
-| Next-bar close fill | `{"price_basis":"close","bar_offset":1,"temporal":"same_cycle"}` |
-| Next-bar OHLC average fill | `{"price_basis":"ohlc4","bar_offset":1,"temporal":"same_cycle"}` |
-| Next-bar HL2 fill | `{"price_basis":"hl2","bar_offset":1,"temporal":"same_cycle"}` |
+| Next-open style fill | `aq.NextOpen()` |
+| Current-close style fill | `aq.CurrentClose()` |
+| Next-bar close fill | `aq.NextClose()` |
+| Next-bar OHLC average fill | `aq.NextAverage()` |
+| Next-bar HL2 fill | `aq.NextHighLowMid()` |
 
 Notes:
-* For `open/ohlc4/hl2`, `bar_offset` is fixed to `1` (`0` is not supported).
-* For `close + bar_offset=1` (next-bar close), the primary time-shift semantics come from `bar_offset`; keep `temporal="same_cycle"` to avoid confusion.
-* `temporal` differences are mainly meaningful for `close + bar_offset=0` (current-close) scenarios.
+* `NextOpen`, `NextAverage`, and `NextHighLowMid` always fill on the next bar; there is no current-bar variant.
+* `NextClose()` fills at the next bar's close; `CurrentClose()` fills at the current bar's close.
+* `timer_fill_timing` is meaningful only for `CurrentClose`: it controls whether an `on_timer`-triggered fill happens in the same cycle (`"immediate"`, default) or defers to the next event (`"deferred"`). It has no effect on plain bar orders.
+* Order-level fills use the `fill_mode=` argument on `buy`/`sell`; run-level fills use the `fill_policy=` argument on `run_backtest`.
 
 ### `akquant.run_grid_search`
 
@@ -276,7 +279,7 @@ def run_from_checkpoint(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = None,
     strategy_slippage: Optional[Dict[str, SlippageInput]] = None,
     strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,
@@ -838,7 +841,7 @@ Strategy base class. Users should inherit from this class and override callback 
 *   `on_reject(order)`: Triggered once when an order becomes `Rejected`.
 *   `on_expiry(event: Dict[str, Any])`: Triggered after an `expiry_date` driven settlement/removal is actually executed. Portfolio state is already updated when the callback runs. See `examples/49_on_expiry_demo.py` for a runnable example.
 *   `on_before_trading(trading_date, timestamp)`: Triggered once when the regular trading session starts each local day; on the default backtest path this session is usually exposed as `Continuous`. This callback follows a "previous trading day / previous snapshot only" visibility model.
-*   `on_pre_open(event: Dict[str, Any])`: Triggered once before the first regular event of each trading day. Use it for "pre-open decision, current open fill" workflows; default order semantics resolve to `price_basis=open, bar_offset=1, temporal=same_cycle`. See `examples/52_pre_open_demo.py`.
+*   `on_pre_open(event: Dict[str, Any])`: Triggered once before the first regular event of each trading day. Use it for "pre-open decision, current open fill" workflows; default order semantics resolve to `NextOpen()`. See `examples/52_pre_open_demo.py`.
 *   `on_cross_section(trading_date, timestamp)`: Cross-sectional same-cycle rebalance hook that runs after the first complete cross-symbol bar slice of the trading day, at most once per trading day. Unlike `on_before_trading`, it can see the current day's bar history and current account snapshot, and is intended for same-cycle close-style rebalances. Rebalance cadence (daily/weekly/monthly) is decided with a calendar check inside the hook.
 *   `on_after_trading(trading_date, timestamp)`: Triggered when leaving the regular trading session, or replayed on next event after day rollover.
 *   `on_portfolio_update(snapshot)`: Triggered when cash/equity/position snapshot changes.
@@ -856,7 +859,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
         self.buy("000001", quantity=100)
 ```
 
-Note: if you do not pass an explicit `fill_policy` here, the framework defaults to current-open order semantics.
+Note: if you do not pass an explicit `fill_mode` here, the framework defaults to `NextOpen()` order semantics.
 
 **Properties & Shortcuts:**
 
@@ -991,8 +994,8 @@ The main entry point for the backtesting engine (usually used implicitly via `ru
 *   `set_timezone_name(timezone: str)`: Set an IANA timezone name such as `Asia/Shanghai`, `UTC`, or `US/Eastern`. This is the recommended API because it preserves DST and historical timezone rules.
 *   `set_timezone(offset: int)`: Set a fixed timezone offset in seconds. Kept only as a compatibility fallback and does not preserve DST or historical timezone rules.
 *   `use_simulated_execution()` / `use_realtime_execution()`: Set execution environment.
-*   `set_fill_policy(price_basis, bar_offset, temporal)`: Set unified three-axis execution policy (recommended).
-*   `get_fill_policy()`: Get current three-axis execution policy.
+*   `set_fill_mode(mode, timer_timing)`: Set the execution fill mode, where `mode` is an `akquant.ExecutionMode` value (`CurrentClose`, `NextOpen`, `NextClose`, `NextAverage`, `NextHighLowMid`) and `timer_timing` is `"same_cycle"` or `"next_event"` (recommended).
+*   `get_fill_policy()`: Get the current execution policy as an internal `(price_basis, bar_offset, temporal)` triple.
 *   `set_history_depth(depth)`: Set history data cache length.
 
 **Market & Fee Configuration:**

@@ -176,7 +176,7 @@ def run_example(
         min_commission=0.0,
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=aq.CurrentClose(),
         lot_size=1,
         show_progress=False,
     )

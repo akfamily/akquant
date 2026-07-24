@@ -165,9 +165,9 @@ if __name__ == "__main__":
         strategy=FuturesTrendStrategy,
         data=df,
         config=config,
-        # 对很多“按当根收盘价记交易”的期货策略，显式指定 fill_policy
+        # 对很多“按当根收盘价记交易”的期货策略，显式指定 fill_policy=aq.CurrentClose()
         # 会比默认的“下一根开盘成交”更贴近人工记录口径。
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=aq.CurrentClose(),
         # 注意：推荐显式声明滑点类型。
         # 0.0002 = 2 bps；如果写成 0.2，表示 20% 滑点，不是 0.2 个点。
         slippage={"type": "percent", "value": 0.0002},

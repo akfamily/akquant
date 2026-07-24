@@ -35,7 +35,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
         *   `self.sell(symbol, quantity, price=None)`: Sell.
         *   `self.order_target_percent(target, symbol)`: Adjust position to target percentage.
         *   `self.order_target_value(target, symbol)`: Adjust position to target value.
-        *   在 `fill_policy={"price_basis":"close","bar_offset":0}` 下，同一事件周期中若同时存在卖单与买单，撮合采用先卖后买语义：先处理卖单成交并结算资金，再进行买单风控与下单数量计算。
+        *   在 `fill_policy=CurrentClose()`（当根收盘价成交）下，同一事件周期中若同时存在卖单与买单，撮合采用先卖后买语义：先处理卖单成交并结算资金，再进行买单风控与下单数量计算。
     *   **Position**: `self.get_position(symbol)` returns current holding (float). `self.position.entry_price` or `self.ctx.get_position_entry_price(symbol)` returns runtime average entry price.
     *   **Account**: `self.ctx.cash`, `self.equity`, `self.get_account()`.
 
@@ -52,8 +52,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
         *   `symbol`: Benchmark symbol or list of symbols.
         *   `initial_cash`: Float (e.g., 100_000.0).
         *   `warmup_period`: Int (optional override).
-        *   `fill_policy`: 三轴统一语义（推荐），例如
-            `{"price_basis": "close", "bar_offset": 1, "temporal": "same_cycle"}`。
+        *   `fill_policy`: `FillMode` 对象（从 `akquant` 导入），五选一：`NextOpen()`（默认）、`NextClose()`、`NextAverage()`、`NextHighLowMid()`、`CurrentClose(timer_fill_timing="immediate"|"deferred")`。例如 `fill_policy=NextClose()`。
         *   `timezone`: Default "Asia/Shanghai".
         *   `risk_config`: Use `engine.risk_manager` to set pre-trade checks (Position Limit, Sector Limit, Leverage).
         *   `risk_config.account_mode`: `"cash"`（默认）或 `"margin"`，信用账户回测需设置为 `"margin"`。

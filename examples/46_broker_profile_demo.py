@@ -1,5 +1,5 @@
 import pandas as pd
-from akquant import Bar, Strategy, run_backtest
+from akquant import Bar, CurrentClose, Strategy, run_backtest
 
 
 class BrokerProfileDemoStrategy(Strategy):
@@ -49,7 +49,7 @@ def run_example() -> None:
         data=_build_data(),
         strategy=BrokerProfileDemoStrategy,
         symbols="PROFILE",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         broker_profile="cn_stock_t1_low_fee",
         show_progress=False,
     )

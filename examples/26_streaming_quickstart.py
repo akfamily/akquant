@@ -75,7 +75,7 @@ def main() -> None:
         transfer_fee_rate=0.0,
         min_commission=5.0,
         lot_size=1,
-        fill_policy={"price_basis": "ohlc4", "temporal": "same_cycle"},
+        fill_policy=aq.NextAverage(),
         config=backtest_config,
         start_time="20250101",
         end_time="20250105",

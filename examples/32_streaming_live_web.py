@@ -353,7 +353,7 @@ def run_backtest_thread(
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=aq.CurrentClose(),
         lot_size=1,
         on_event=on_event,
         stream_progress_interval=3,

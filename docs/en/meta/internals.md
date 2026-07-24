@@ -73,7 +73,7 @@ akquant/
 To ensure cross-language interaction performance and type safety, core data structures are defined in Rust and exported.
 
 *   **`types.rs`**:
-    *   `ExecutionPolicyCore`: unified three-axis execution semantics (`price_basis`, `bar_offset`, `temporal`).
+    *   `ExecutionPolicyCore`: unified three-axis execution semantics (`price_basis`, `bar_offset`, `temporal`). This is the **internal** core representation; the public API expresses it through `FillMode` objects (`CurrentClose`, `NextOpen`, `NextClose`, `NextAverage`, `NextHighLowMid`), which are translated to this triple at a single point.
     *   `OrderSide`: `Buy` / `Sell`.
     *   `OrderType`: `Market`, `Limit`.
     *   `TimeInForce`: `Day`, `GTC`, `IOC`/`FOK`.
@@ -86,7 +86,7 @@ To ensure cross-language interaction performance and type safety, core data stru
 
 *   **Matching Mechanism**:
     *   **Limit Order**: Buy requires `Low <= Price`, Sell requires `High >= Price`.
-    *   **Market Order**: Price basis and timing are resolved from three-axis `fill_policy`.
+    *   **Market Order**: Price basis and timing are resolved from the internal three-axis policy that the public `FillMode` object maps to.
 *   **Trigger Mechanism**: Supports `trigger_price` (Stop Loss/Take Profit orders).
 
 ### 2.3 Market Rule Layer (`src/market/`)
@@ -163,7 +163,7 @@ Follows standard PnL calculation: `Gross PnL`, `Net PnL`, `Commission`.
 `Engine::run` flow depends on three-axis execution semantics:
 
 *   `price_basis + bar_offset` determine which bar price (`open/close/ohlc4/hl2`) is used.
-*   `temporal` controls whether timer orders match in the same cycle or on the next event.
+*   `temporal` controls whether timer orders match in the same cycle or on the next event. On the public API this axis is exposed as `CurrentClose(timer_fill_timing="immediate"|"deferred")`, which maps to the internal `same_cycle`/`next_event`.
 
 ### 3.2 Order Lifecycle
 

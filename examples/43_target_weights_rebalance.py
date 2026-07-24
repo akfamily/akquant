@@ -105,7 +105,7 @@ def main() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=aq.CurrentClose(),
         # get_history 依赖历史缓存深度，这里设置为 lookback 对应长度
         history_depth=3,
         show_progress=False,

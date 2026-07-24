@@ -481,7 +481,7 @@ stateDiagram-v2
 对于每一根新的 Bar (或 Tick)，引擎会遍历所有活跃订单进行撮合：
 
 1.  **市价单 (Market Order)**：
-    *   **成交价**：取决于 `fill_policy` 三轴（见下文）。
+    *   **成交价**：取决于 `fill_policy` 指定的 `FillMode`（见下文）。
     *   **成交量**：尽可能全部成交，除非受限于当根 Bar 的成交量（Volume Limit）。
 
 2.  **限价单 (Limit Order)**：
@@ -494,32 +494,41 @@ stateDiagram-v2
     *   当市场价格突破触发价 (`Trigger Price`) 时，止损单会转化为市价单或限价单。
     *   `AKQuant` 支持**穿透检查 (Gap Detection)**：例如，昨日收盘 100，今日跳空低开 90，如果你有 95 的止损卖单，引擎会正确地在 90 成交（而不是 95），真实模拟跳空风险。
 
-### 4.10.2 三轴成交语义 (Three-Axis Fill Policy)
+### 4.10.2 成交模式 (Fill Mode)
 
-为了平衡回测的严谨性和灵活性，`AKQuant` 使用三轴成交策略：
+为了平衡回测的严谨性和灵活性，`AKQuant` 提供五个命名成交模式（`FillMode`），从 `akquant` 顶层导入：
 
-| 维度 | 取值 | 描述 |
+| `FillMode` | 成交价 | 说明 |
 | :--- | :--- | :--- |
-| `price_basis` | `open` / `close` / `ohlc4` / `hl2` | 使用哪种价格基准 |
-| `bar_offset` | `0` / `1` | 使用当前 Bar 还是下一根 Bar |
-| `temporal` | `same_cycle` / `next_event` | timer 订单在当前周期或下一事件撮合 |
+| `NextOpen()` | 下一根 Bar 开盘价 | 默认，无未来函数 |
+| `NextClose()` | 下一根 Bar 收盘价 | |
+| `NextAverage()` | 下一根 Bar OHLC4 均价 | |
+| `NextHighLowMid()` | 下一根 Bar HL2（高低中价） | |
+| `CurrentClose()` | 当根 Bar 收盘价 | 支持 `timer_fill_timing` 参数 |
 
-### 4.10.3 成交时序策略 (Temporal Policy)
+早期版本使用扁平的 `fill_policy` dict（`price_basis` × `bar_offset` × `temporal`），其笛卡尔积会产生非法/无效组合。新版收敛为上述命名模式，每个模式只携带对其有意义的参数。旧的 dict 形式与 `make_fill_policy(...)` 已移除，传入会抛出 `TypeError`。
 
-AKQuant 通过 `fill_policy.temporal` 控制 `on_timer` 下单的撮合时点：
+### 4.10.3 成交时序策略 (Timer Fill Timing)
 
-| 时序策略 | 描述 | 典型场景 |
+只有 `CurrentClose` 支持 `timer_fill_timing` 参数，用于控制 `on_timer` 下单的撮合时点（akquant 的 timer 是一等成交事件）：
+
+| `timer_fill_timing` | 描述 | 典型场景 |
 | :--- | :--- | :--- |
-| `same_cycle` (默认) | 在当前 timer 事件周期内撮合 | 定时调仓后立即成交的仿真 |
-| `next_event` | 延后到下一条行情事件撮合 | 更保守的“信号与成交分离”建模 |
+| `"immediate"` (默认) | timer 触发即在当根收盘价成交 | 定时调仓后立即成交的仿真 |
+| `"deferred"` | timer 不构成成交点，顺延到下一根 Bar | 更保守的“信号与成交分离”建模 |
+
+它只影响 `on_timer` 订单，对普通 `on_bar` 订单无影响。其余四个模式的 `on_timer` 订单都在下一根 Bar 成交。
 
 推荐统一使用：
 
 ```python
+import akquant
+from akquant import CurrentClose
+
 result = akquant.run_backtest(
     data=data,
     strategy=MyStrategy,
-    fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "next_event"},
+    fill_policy=CurrentClose(timer_fill_timing="deferred"),
 )
 ```
 
@@ -538,9 +547,9 @@ $$ \text{Final Price} = \text{Execution Price} \times (1 \pm \text{Slippage Rate
 
 `AKQuant` 在成交相关参数上采用统一的四层覆盖模型（从高到低）：
 
-1.  **订单级**：`buy/sell/submit_order` 传入 `fill_policy/slippage/commission`。
-2.  **策略映射级**：`strategy_fill_policy/strategy_slippage/strategy_commission`（按 `strategy_id/slot`）。
-3.  **运行级**：`run_backtest(...)` 全局参数（例如 `fill_policy/slippage`）。
+1.  **订单级**：`buy/sell/submit_order` 传入 `fill_mode/slippage/commission`（`fill_mode` 为 `FillMode` 对象）。
+2.  **策略映射级**：`strategy_fill_policy/strategy_slippage/strategy_commission`（按 `strategy_id/slot`，`strategy_fill_policy` 值为 `FillMode`）。
+3.  **运行级**：`run_backtest(...)` 全局参数（例如 `fill_policy=NextOpen()`、`slippage`）。
 4.  **市场默认**：market model 的内建默认规则（费率、制度等）。
 
 实务建议：

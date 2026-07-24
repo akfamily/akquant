@@ -62,7 +62,7 @@ def run_single_strategy() -> Any:
         strategy=AlphaStrategy,
         symbols="MULTI",
         config=config,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=aq.CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -89,7 +89,7 @@ def run_multi_strategy() -> Any:
         strategy=AlphaStrategy,
         symbols="MULTI",
         config=config,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=aq.CurrentClose(),
         lot_size=1,
         show_progress=False,
     )

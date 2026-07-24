@@ -51,8 +51,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
         *   `symbol`: Benchmark symbol or list of symbols.
         *   `initial_cash`: Float (e.g., 100_000.0).
         *   `warmup_period`: Int (optional override).
-        *   `fill_policy`: Unified three-axis semantics (recommended), e.g.
-            `{"price_basis": "close", "bar_offset": 1, "temporal": "same_cycle"}`.
+        *   `fill_policy`: A `FillMode` object for unified execution semantics (recommended), e.g. `NextClose()`.
         *   `timezone`: Default "Asia/Shanghai".
         *   `risk_config.account_mode`: `"cash"` (default) or `"margin"` for margin-account backtests.
         *   `risk_config.enable_short_sell`: Whether stock short opening is allowed in margin mode.
@@ -66,7 +65,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
             strategy=MyStrategy,
             initial_cash=100000.0,
             warmup_period=50,
-            fill_policy={"price_basis": "open", "bar_offset": 1, "temporal": "same_cycle"},
+            fill_policy=NextOpen(),
         )
         ```
 

@@ -2,6 +2,7 @@ import pandas as pd
 from akquant import (
     BacktestConfig,
     Bar,
+    CurrentClose,
     InstrumentConfig,
     Strategy,
     StrategyConfig,
@@ -73,7 +74,7 @@ def run_example() -> None:
         symbols=["FUT_EXP_DEMO"],
         lot_size=1,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         on_event=stream_events.append,
         config=BacktestConfig(
             strategy_config=StrategyConfig(),

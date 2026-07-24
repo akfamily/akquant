@@ -205,7 +205,7 @@ rb_config = InstrumentConfig(
 防踩坑提醒：
 
 *   期货策略请显式配置 `InstrumentConfig(asset_type="FUTURES", multiplier=..., margin_ratio=...)`，不要依赖默认资产类型。
-*   如果你的人工记录按“当根收盘信号、当根收盘附近成交”统计，请显式设置 `fill_policy={"price_basis":"close","bar_offset":0,"temporal":"same_cycle"}`。默认语义通常是“当根算信号、下一根开盘成交”。
+*   如果你的人工记录按“当根收盘信号、当根收盘附近成交”统计，请显式设置 `fill_policy=CurrentClose()`（从 `akquant` 导入）。默认语义 `NextOpen()` 通常是“当根算信号、下一根开盘成交”。
 *   `run_backtest(..., slippage=...)` 建议显式写成 policy，例如 `{"type":"percent","value":0.0002}`、`{"type":"fixed","value":0.2}` 或 `{"type":"ticks","value":1}`。其中百分比语义下，`0.0002 = 2 bps`，如果写成 `0.2`，表示 `20%` 滑点，而不是 `0.2` 个点。
 *   需要表达固定点差时，优先使用订单级滑点配置，例如 `slippage={"type":"fixed","value":0.2}`。
 

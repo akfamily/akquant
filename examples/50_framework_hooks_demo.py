@@ -1,5 +1,5 @@
 import pandas as pd
-from akquant import Bar, Strategy, run_backtest
+from akquant import Bar, CurrentClose, Strategy, run_backtest
 
 
 class FrameworkHooksDemoStrategy(Strategy):
@@ -107,7 +107,7 @@ def main() -> None:
         initial_cash=1000.0,
         lot_size=1,
         show_progress=False,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         strategy_max_position_size={"_default": 10},
     )
 
