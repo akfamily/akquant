@@ -63,3 +63,21 @@ def test_base_class_to_core_raises() -> None:
     """FillMode base class raises NotImplementedError."""
     with pytest.raises(NotImplementedError):
         FillMode()._to_core()
+
+
+def test_unrepresentable_core_triple_raises() -> None:
+    """fill_mode_from_core raises ValueError on unrepresentable triples."""
+    with pytest.raises(ValueError, match="Unrepresentable core triple"):
+        fill_mode_from_core("open", 0, "same_cycle")
+
+
+def test_invalid_timer_fill_timing_raises() -> None:
+    """CurrentClose raises ValueError on invalid timer_fill_timing."""
+    with pytest.raises(ValueError, match="timer_fill_timing"):
+        CurrentClose(timer_fill_timing="Immediate")  # type: ignore[arg-type]
+
+
+def test_invalid_temporal_in_fill_mode_from_core_raises() -> None:
+    """fill_mode_from_core raises ValueError on invalid temporal for close/0."""
+    with pytest.raises(ValueError, match="temporal"):
+        fill_mode_from_core("close", 0, "bogus")

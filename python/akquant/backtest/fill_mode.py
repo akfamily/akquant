@@ -9,14 +9,14 @@ on :class:`CurrentClose`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Tuple
+from typing import Literal
 
 
 @dataclass(frozen=True)
 class FillMode:
     """Base class. Do not instantiate directly."""
 
-    def _to_core(self) -> Tuple[str, int, str]:
+    def _to_core(self) -> tuple[str, int, str]:
         """Translate to the engine core triple ``(price_basis, bar_offset, temporal)``.
 
         This is the single source of truth for mode → core mapping.
@@ -28,7 +28,7 @@ class FillMode:
 class NextOpen(FillMode):
     """Fill at the open of the next bar (default; no look-ahead)."""
 
-    def _to_core(self) -> Tuple[str, int, str]:
+    def _to_core(self) -> tuple[str, int, str]:
         return ("open", 1, "same_cycle")
 
 
@@ -36,7 +36,7 @@ class NextOpen(FillMode):
 class NextClose(FillMode):
     """Fill at the close of the next bar."""
 
-    def _to_core(self) -> Tuple[str, int, str]:
+    def _to_core(self) -> tuple[str, int, str]:
         return ("close", 1, "same_cycle")
 
 
@@ -44,7 +44,7 @@ class NextClose(FillMode):
 class NextAverage(FillMode):
     """Fill at next bar's OHLC4 average."""
 
-    def _to_core(self) -> Tuple[str, int, str]:
+    def _to_core(self) -> tuple[str, int, str]:
         return ("ohlc4", 1, "same_cycle")
 
 
@@ -52,7 +52,7 @@ class NextAverage(FillMode):
 class NextHighLowMid(FillMode):
     """Fill at next bar's (high+low)/2."""
 
-    def _to_core(self) -> Tuple[str, int, str]:
+    def _to_core(self) -> tuple[str, int, str]:
         return ("hl2", 1, "same_cycle")
 
 
@@ -69,7 +69,15 @@ class CurrentClose(FillMode):
 
     timer_fill_timing: Literal["immediate", "deferred"] = "immediate"
 
-    def _to_core(self) -> Tuple[str, int, str]:
+    def __post_init__(self) -> None:
+        """Validate timer_fill_timing at construction time."""
+        if self.timer_fill_timing not in ("immediate", "deferred"):
+            raise ValueError(
+                f"timer_fill_timing must be 'immediate' or 'deferred', "
+                f"got {self.timer_fill_timing!r}"
+            )
+
+    def _to_core(self) -> tuple[str, int, str]:
         temporal = (
             "same_cycle" if self.timer_fill_timing == "immediate" else "next_event"
         )
@@ -88,6 +96,11 @@ def fill_mode_from_core(price_basis: str, bar_offset: int, temporal: str) -> Fil
     if key == ("hl2", 1):
         return NextHighLowMid()
     if key == ("close", 0):
+        if temporal not in ("same_cycle", "next_event"):
+            raise ValueError(
+                f"temporal must be 'same_cycle' or 'next_event' for close/0, "
+                f"got {temporal!r}"
+            )
         return CurrentClose(
             timer_fill_timing="deferred" if temporal == "next_event" else "immediate"
         )
