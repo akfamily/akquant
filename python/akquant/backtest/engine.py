@@ -76,7 +76,15 @@ _RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
 _collect_cross_section_entries_impl = collect_cross_section_timer_entries
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 _LEGACY_FILL_POLICY_DICT_MSG = (
-    "fill_policy no longer accepts a dict; use a FillMode object"
+    "fill_policy no longer accepts a dict. Use a FillMode object instead:\n"
+    '  {"price_basis": "open"}                                   -> NextOpen()\n'
+    '  {"price_basis": "close", "bar_offset": 0}                 -> CurrentClose()\n'
+    '  {"price_basis": "close", "bar_offset": 0,\n'
+    '   "temporal": "next_event"}                                -> '
+    'CurrentClose(timer_fill_timing="deferred")\n'
+    '  {"price_basis": "close", "bar_offset": 1}                 -> NextClose()\n'
+    '  {"price_basis": "ohlc4"}                                  -> NextAverage()\n'
+    '  {"price_basis": "hl2"}                                    -> NextHighLowMid()'
 )
 _RUNTIME_EXECUTION_MODE = getattr(cast(Any, _akquant_module), "ExecutionMode", None)
 _RUNTIME_MODE_NEXT_OPEN = getattr(_RUNTIME_EXECUTION_MODE, "NextOpen", "next_open")
@@ -151,17 +159,13 @@ def _normalize_commission_policy(
     return {"type": raw_type, "value": value}
 
 
-def make_fill_policy(
-    *,
-    price_basis: str,
-    temporal: str,
-    bar_offset: Optional[int] = None,
-) -> FillPolicy:
-    """Build a fill policy payload."""
-    policy: FillPolicy = {"price_basis": price_basis, "temporal": temporal}
-    if bar_offset is not None:
-        policy["bar_offset"] = bar_offset
-    return policy
+def make_fill_policy(*args: object, **kwargs: object) -> "FillMode":
+    """Raise TypeError; use FillMode objects (NextOpen(), CurrentClose(...)) instead."""
+    raise TypeError(
+        "make_fill_policy() has been removed. Use a FillMode object directly: "
+        "NextOpen(), NextClose(), NextAverage(), NextHighLowMid(), "
+        'CurrentClose(timer_fill_timing="immediate"|"deferred")'
+    )
 
 
 def _extract_strategy_log_context(

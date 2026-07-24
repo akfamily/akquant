@@ -261,3 +261,35 @@ def test_order_level_rejects_legacy_dict() -> None:
             initial_cash=100000.0,
             show_progress=False,
         )
+
+
+# --- Task 5: hard cutoff for legacy dict / make_fill_policy ---
+
+
+def test_make_fill_policy_stub_raises_with_guidance() -> None:
+    """make_fill_policy() is removed and raises TypeError with guidance."""
+    from akquant.backtest.engine import make_fill_policy
+
+    with pytest.raises(TypeError) as exc:
+        make_fill_policy(price_basis="open", temporal="same_cycle")
+    assert "NextOpen" in str(exc.value)
+
+
+def test_legacy_dict_error_contains_mapping() -> None:
+    """A legacy fill_policy dict raises TypeError with a full migration mapping."""
+    with pytest.raises(TypeError) as exc:
+        akquant.run_backtest(
+            data=_one_bar_data(),
+            strategy=lambda c, b: None,
+            symbols="X",
+            fill_policy={
+                "price_basis": "close",
+                "bar_offset": 0,
+                "temporal": "next_event",
+            },
+            initial_cash=100000.0,
+            show_progress=False,
+        )
+    msg = str(exc.value)
+    assert 'CurrentClose(timer_fill_timing="deferred")' in msg
+    assert "NextOpen()" in msg

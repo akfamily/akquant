@@ -15,7 +15,6 @@ from typing import (
 import pandas as pd
 import polars as pl
 import pyarrow as pa
-from typing_extensions import NotRequired
 
 from ..akquant import AssetType, Bar, DataFeed
 from ..config import BacktestConfig, RiskConfig
@@ -76,27 +75,6 @@ class BacktestStreamEvent(TypedDict):
     level: str
     payload: Dict[str, Any]
 
-ImplementedPriceBasis = Literal[
-    "open",
-    "close",
-    "ohlc4",
-    "hl2",
-]
-
-ExperimentalPriceBasis = Literal["mid_quote", "vwap_window", "twap_window"]
-
-class FillPolicy(TypedDict):
-    price_basis: ImplementedPriceBasis
-    bar_offset: NotRequired[Literal[0, 1]]
-    temporal: Literal["same_cycle", "next_event"]
-
-class ExperimentalFillPolicy(TypedDict):
-    price_basis: ExperimentalPriceBasis
-    bar_offset: NotRequired[Literal[0, 1]]
-    temporal: Literal["same_cycle", "next_event"]
-
-FillPolicyInput = Union[FillPolicy, Dict[str, Any]]
-
 class SlippagePolicy(TypedDict, total=False):
     type: Literal["percent", "fixed", "ticks", "zero"]
     value: float
@@ -109,12 +87,7 @@ class CommissionPolicy(TypedDict):
 
 CommissionPolicyInput = Union[CommissionPolicy, Dict[str, Any]]
 
-def make_fill_policy(
-    *,
-    price_basis: ImplementedPriceBasis,
-    temporal: Literal["same_cycle", "next_event"],
-    bar_offset: Optional[Literal[0, 1]] = ...,
-) -> FillPolicy: ...
+def make_fill_policy(*args: Any, **kwargs: Any) -> FillMode: ...
 def run_backtest(
     data: Optional[BacktestDataInput] = ...,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = ...,
@@ -176,7 +149,7 @@ def run_backtest(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = ...,
     strategy_priority: Optional[Dict[str, int]] = ...,
     strategy_risk_budget: Optional[Dict[str, float]] = ...,
-    strategy_fill_policy: Optional[Dict[str, FillPolicyInput]] = ...,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = ...,
     strategy_slippage: Optional[Dict[str, Union[float, SlippagePolicyInput]]] = ...,
     strategy_commission: Optional[Dict[str, CommissionPolicyInput]] = ...,
     portfolio_risk_budget: Optional[float] = ...,
@@ -185,7 +158,7 @@ def run_backtest(
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
     indicator_recorder: Optional[IndicatorSink] = ...,
     broker_profile: Optional[str] = ...,
-    fill_policy: Optional[Union[FillMode, FillPolicyInput]] = ...,
+    fill_policy: Optional[FillMode] = ...,
     stream_mode: Literal["observability", "audit"] = ...,
     strict_strategy_params: bool = True,
     **kwargs: Any,
@@ -213,7 +186,7 @@ def run_from_checkpoint(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = ...,
     strategy_priority: Optional[Dict[str, int]] = ...,
     strategy_risk_budget: Optional[Dict[str, float]] = ...,
-    strategy_fill_policy: Optional[Dict[str, FillPolicyInput]] = ...,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = ...,
     strategy_slippage: Optional[Dict[str, SlippagePolicyInput]] = ...,
     strategy_commission: Optional[Dict[str, CommissionPolicyInput]] = ...,
     portfolio_risk_budget: Optional[float] = ...,
