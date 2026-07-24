@@ -22,6 +22,12 @@ from ..config import BacktestConfig, RiskConfig
 from ..feed_adapter import DataFeedAdapter
 from ..indicator_recording import IndicatorSink
 from ..strategy import Strategy, StrategyRuntimeConfig
+from .fill_mode import CurrentClose as CurrentClose
+from .fill_mode import FillMode as FillMode
+from .fill_mode import NextAverage as NextAverage
+from .fill_mode import NextClose as NextClose
+from .fill_mode import NextHighLowMid as NextHighLowMid
+from .fill_mode import NextOpen as NextOpen
 from .merge import MergedResult as MergedResult
 from .merge import merge_results as merge_results
 from .result import BacktestResult
@@ -179,7 +185,7 @@ def run_backtest(
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
     indicator_recorder: Optional[IndicatorSink] = ...,
     broker_profile: Optional[str] = ...,
-    fill_policy: Optional[FillPolicyInput] = ...,
+    fill_policy: Optional[Union[FillMode, FillPolicyInput]] = ...,
     stream_mode: Literal["observability", "audit"] = ...,
     strict_strategy_params: bool = True,
     **kwargs: Any,
@@ -226,5 +232,12 @@ __all__ = [
     "run_backtest",
     "run_from_checkpoint",
     "merge_results",
+    "make_fill_policy",
+    "FillMode",
+    "NextOpen",
+    "NextClose",
+    "NextAverage",
+    "NextHighLowMid",
+    "CurrentClose",
     "FunctionalStrategy",
 ]

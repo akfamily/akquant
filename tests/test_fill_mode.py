@@ -1,5 +1,6 @@
 """Tests for FillMode classes and core translation."""
 
+import akquant
 import pytest
 from akquant.backtest.fill_mode import (
     CurrentClose,
@@ -81,3 +82,48 @@ def test_invalid_temporal_in_fill_mode_from_core_raises() -> None:
     """fill_mode_from_core raises ValueError on invalid temporal for close/0."""
     with pytest.raises(ValueError, match="temporal"):
         fill_mode_from_core("close", 0, "bogus")
+
+
+# --- Task 2: run_backtest(fill_policy=) integration tests ---
+
+
+def _one_bar_data(symbol: str = "X") -> list:
+    import pandas as pd
+
+    ts = pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai").value
+    ts2 = pd.Timestamp("2023-01-02 10:01:00", tz="Asia/Shanghai").value
+    return [
+        akquant.Bar(ts, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
+        akquant.Bar(ts2, 11.0, 11.0, 11.0, 11.0, 1000.0, symbol),
+    ]
+
+
+def test_run_backtest_accepts_fillmode_object() -> None:
+    """run_backtest accepts a FillMode object without raising."""
+    akquant.run_backtest(
+        data=_one_bar_data(),
+        strategy=lambda ctx, bar: None,
+        symbols="X",
+        fill_policy=NextClose(),
+        initial_cash=100000.0,
+        show_progress=False,
+    )
+
+
+def test_run_backtest_rejects_legacy_dict() -> None:
+    """run_backtest rejects a legacy fill_policy dict with TypeError."""
+    with pytest.raises(TypeError):
+        akquant.run_backtest(
+            data=_one_bar_data(),
+            strategy=lambda ctx, bar: None,
+            symbols="X",
+            fill_policy={"price_basis": "close", "bar_offset": 0},
+            initial_cash=100000.0,
+            show_progress=False,
+        )
+
+
+def test_fillmode_importable_from_top_level() -> None:
+    """FillMode subclasses are importable from the top-level akquant package."""
+    assert hasattr(akquant, "NextOpen")
+    assert hasattr(akquant, "CurrentClose")

@@ -69,11 +69,15 @@ from ..strategy_framework_hooks import (
 )
 from ..strategy_loader import resolve_strategy_input
 from ..utils.inspector import infer_warmup_period
+from .fill_mode import FillMode
 from .result import BacktestResult
 
 _RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
 _collect_cross_section_entries_impl = collect_cross_section_timer_entries
 DEFAULT_TIMEZONE = "Asia/Shanghai"
+_LEGACY_FILL_POLICY_DICT_MSG = (
+    "fill_policy no longer accepts a dict; use a FillMode object"
+)
 _RUNTIME_EXECUTION_MODE = getattr(cast(Any, _akquant_module), "ExecutionMode", None)
 _RUNTIME_MODE_NEXT_OPEN = getattr(_RUNTIME_EXECUTION_MODE, "NextOpen", "next_open")
 _RUNTIME_MODE_CURRENT_CLOSE = getattr(
@@ -2240,7 +2244,7 @@ def run_backtest(
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
     broker_profile: Optional[str] = None,
-    fill_policy: Optional[FillPolicy] = None,
+    fill_policy: Optional[Union[FillMode, FillPolicy]] = None,
     strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult:
@@ -3592,6 +3596,13 @@ def run_backtest(
                     e,
                 )
 
+    if fill_policy is not None:
+        if isinstance(fill_policy, FillMode):
+            _pb, _bo, _tp = fill_policy._to_core()
+            fill_policy = {"price_basis": _pb, "bar_offset": _bo, "temporal": _tp}
+        elif isinstance(fill_policy, dict):
+            raise TypeError(_LEGACY_FILL_POLICY_DICT_MSG)
+
     resolved_policy = _resolve_execution_policy(
         execution_mode="next_open",
         timer_execution_policy="same_cycle",
@@ -3614,17 +3625,6 @@ def run_backtest(
     }
     for current_strategy in all_strategy_instances:
         setattr(current_strategy, "_default_fill_policy", dict(default_fill_policy))
-    timer_policy = resolved_policy.temporal
-    if (
-        not (resolved_policy.price_basis == "close" and resolved_policy.bar_offset == 0)
-        and timer_policy == "same_cycle"
-    ):
-        logger.info(
-            "temporal=%s has no effect when price_basis=%s and bar_offset=%s",
-            timer_policy,
-            resolved_policy.price_basis,
-            resolved_policy.bar_offset,
-        )
 
     # 4.1 市场规则配置
     china_futures_config: Optional[ChinaFuturesConfig] = None
