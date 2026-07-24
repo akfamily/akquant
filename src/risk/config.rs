@@ -6,7 +6,12 @@ use rust_decimal::prelude::*;
 
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
+// NOTE: `Default` is hand-written (see `impl Default` below) to delegate to
+// `new()`, NOT derived. A derived `Default` would zero-value `check_cash` to
+// `false`, silently disabling cash/margin checks — the opposite of the safe
+// default `new()` guarantees. Keeping both in sync via a single source of
+// truth avoids that footgun (see #280 follow-up).
 /// 风控配置.
 pub struct RiskConfig {
     pub max_order_size: Option<Decimal>,
@@ -36,6 +41,15 @@ pub struct RiskConfig {
     pub allow_force_liquidation: bool,
     #[pyo3(get, set)]
     pub liquidation_priority: String,
+}
+
+impl Default for RiskConfig {
+    /// Delegate to `new()` so `default()` and `new()` never diverge — in
+    /// particular `check_cash` stays `true`. Do not replace with a derived
+    /// `Default`.
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[pymethods]
@@ -120,5 +134,22 @@ impl RiskConfig {
 
     pub fn liquidation_short_first(&self) -> bool {
         !self.liquidation_priority.eq_ignore_ascii_case("long_first")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_matches_new_and_keeps_check_cash_enabled() {
+        // Guards against re-deriving `Default` (which would zero-value
+        // `check_cash` to `false` and silently disable cash/margin checks).
+        let default = RiskConfig::default();
+        let new = RiskConfig::new();
+        assert!(default.check_cash, "default() must keep check_cash enabled");
+        assert_eq!(default.check_cash, new.check_cash);
+        assert_eq!(default.safety_margin, new.safety_margin);
+        assert_eq!(default.account_mode, new.account_mode);
     }
 }
