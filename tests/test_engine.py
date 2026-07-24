@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from akquant.backtest import engine as backtest_engine
+from akquant.backtest.fill_mode import CurrentClose, NextOpen
 from akquant.data import ParquetDataCatalog
 
 
@@ -349,11 +350,7 @@ class DailyTimerOrderLevelCurrentCloseStrategy(akquant.Strategy):
         """Initialize symbol and order-level fill policy."""
         super().__init__()
         self.symbol_ref = symbol
-        self.fill_policy = {
-            "price_basis": "close",
-            "bar_offset": 0,
-            "temporal": "same_cycle",
-        }
+        self.fill_mode = CurrentClose()
 
     def on_start(self) -> None:
         """Register opening and closing daily timers."""
@@ -367,7 +364,7 @@ class DailyTimerOrderLevelCurrentCloseStrategy(akquant.Strategy):
                 symbol=self.symbol_ref,
                 quantity=1,
                 tag="timer-buy",
-                fill_policy=self.fill_policy,
+                fill_mode=self.fill_mode,
             )
             return
         if payload != "daily_sell":
@@ -379,7 +376,7 @@ class DailyTimerOrderLevelCurrentCloseStrategy(akquant.Strategy):
             symbol=self.symbol_ref,
             quantity=available,
             tag="timer-sell",
-            fill_policy=self.fill_policy,
+            fill_mode=self.fill_mode,
         )
 
 
@@ -7235,11 +7232,7 @@ def test_after_trading_next_open_order_fills_next_trading_day() -> None:
                     self.buy(
                         "AAA",
                         10000,
-                        fill_policy={
-                            "price_basis": "open",
-                            "bar_offset": 1,
-                            "temporal": "next_event",
-                        },
+                        fill_mode=NextOpen(),
                     )
 
             def on_trade(self, trade: akquant.Trade) -> None:

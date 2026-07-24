@@ -23,6 +23,15 @@ class FillMode:
         """
         raise NotImplementedError("FillMode is abstract; use a concrete subclass")
 
+    def to_execution_mode(self):  # type: ignore[no-untyped-def]
+        """Map this mode to ``(akquant.ExecutionMode, timer_timing_str)``.
+
+        Thin delegate to :func:`_mode_to_execution_enum` so callers can write
+        ``mode.to_execution_mode()``. ``_to_core()`` remains the single source
+        of truth; this only re-expresses the same triple as the Rust enum.
+        """
+        return _mode_to_execution_enum(self)
+
 
 @dataclass(frozen=True)
 class NextOpen(FillMode):
@@ -82,6 +91,21 @@ class CurrentClose(FillMode):
             "same_cycle" if self.timer_fill_timing == "immediate" else "next_event"
         )
         return ("close", 0, temporal)
+
+
+def _mode_to_execution_enum(mode: "FillMode"):  # type: ignore[no-untyped-def]
+    """Map a FillMode to ``(akquant.ExecutionMode, timer timing str)``."""
+    import akquant
+
+    basis, offset, temporal = mode._to_core()
+    enum_map = {
+        ("open", 1): akquant.ExecutionMode.NextOpen,
+        ("close", 1): akquant.ExecutionMode.NextClose,
+        ("ohlc4", 1): akquant.ExecutionMode.NextAverage,
+        ("hl2", 1): akquant.ExecutionMode.NextHighLowMid,
+        ("close", 0): akquant.ExecutionMode.CurrentClose,
+    }
+    return enum_map[(basis, int(offset))], temporal
 
 
 def fill_mode_from_core(price_basis: str, bar_offset: int, temporal: str) -> FillMode:

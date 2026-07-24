@@ -58,7 +58,7 @@ def test_accepts_full_signature_with_sim_knobs_none() -> None:
         quantity=100,
         price=10.5,
         order_type="Limit",
-        fill_policy=None,
+        fill_mode=None,
         slippage=None,
         commission=None,
         trail_offset=None,

@@ -175,6 +175,7 @@ from .strategy_trading_api import (
 )
 
 if TYPE_CHECKING:
+    from .backtest.fill_mode import FillMode
     from .indicator import Indicator
     from .ml.model import QuantModel
 
@@ -2179,7 +2180,7 @@ class Strategy:
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
-        fill_policy: Optional[Dict[str, Any]] = None,
+        fill_mode: Optional["FillMode"] = None,
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
     ) -> OrderReceipt:
@@ -2207,7 +2208,7 @@ class Strategy:
             time_in_force,
             trigger_price,
             tag,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
         )
@@ -2220,7 +2221,7 @@ class Strategy:
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
-        fill_policy: Optional[Dict[str, Any]] = None,
+        fill_mode: Optional["FillMode"] = None,
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
     ) -> OrderReceipt:
@@ -2248,7 +2249,7 @@ class Strategy:
             time_in_force,
             trigger_price,
             tag,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
         )
@@ -2268,7 +2269,7 @@ class Strategy:
         broker_options: Optional[Dict[str, Any]] = None,
         trail_offset: Optional[float] = None,
         trail_reference_price: Optional[float] = None,
-        fill_policy: Optional[Dict[str, Any]] = None,
+        fill_mode: Optional["FillMode"] = None,
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
         position_effect: Optional[str] = None,
@@ -2300,7 +2301,7 @@ class Strategy:
             broker_options=broker_options,
             trail_offset=trail_offset,
             trail_reference_price=trail_reference_price,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
             position_effect=position_effect,
@@ -2650,7 +2651,7 @@ class Strategy:
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
-        fill_policy: Optional[Dict[str, Any]] = None,
+        fill_mode: Optional["FillMode"] = None,
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
         reduce_only: bool = False,
@@ -2673,7 +2674,7 @@ class Strategy:
             time_in_force,
             trigger_price,
             tag,
-            fill_policy,
+            fill_mode,
             slippage,
             commission,
             reduce_only,
@@ -2687,7 +2688,7 @@ class Strategy:
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
-        fill_policy: Optional[Dict[str, Any]] = None,
+        fill_mode: Optional["FillMode"] = None,
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
         reduce_only: bool = False,
@@ -2710,7 +2711,7 @@ class Strategy:
             time_in_force,
             trigger_price,
             tag,
-            fill_policy,
+            fill_mode,
             slippage,
             commission,
             reduce_only,

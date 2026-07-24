@@ -160,3 +160,104 @@ def test_resolver_default_is_next_open() -> None:
         logger=logging.getLogger("test"),
     )
     assert (r.price_basis, r.bar_offset, r.temporal) == ("open", 1, "same_cycle")
+
+
+# --- Task 4 Step 0: FillMode.to_execution_mode() ---
+
+
+def test_to_execution_mode_maps_all_modes() -> None:
+    """Each mode maps to the expected ExecutionMode variant + timer timing."""
+    assert NextOpen().to_execution_mode() == (
+        akquant.ExecutionMode.NextOpen,
+        "same_cycle",
+    )
+    assert NextClose().to_execution_mode() == (
+        akquant.ExecutionMode.NextClose,
+        "same_cycle",
+    )
+    assert NextAverage().to_execution_mode() == (
+        akquant.ExecutionMode.NextAverage,
+        "same_cycle",
+    )
+    assert NextHighLowMid().to_execution_mode() == (
+        akquant.ExecutionMode.NextHighLowMid,
+        "same_cycle",
+    )
+    assert CurrentClose().to_execution_mode() == (
+        akquant.ExecutionMode.CurrentClose,
+        "same_cycle",
+    )
+    assert CurrentClose(timer_fill_timing="deferred").to_execution_mode() == (
+        akquant.ExecutionMode.CurrentClose,
+        "next_event",
+    )
+
+
+# --- Task 4: order-level fill_mode via public Strategy.buy(fill_mode=) ---
+
+
+class _OrderLevelStrategy(akquant.Strategy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_bar(self, bar) -> None:  # type: ignore[no-untyped-def]
+        if not self.done:
+            self.buy("X", 100, fill_mode=CurrentClose(timer_fill_timing="deferred"))
+            self.done = True
+
+
+def test_order_level_fill_mode_accepted() -> None:
+    """Placing an order via public Strategy.buy(fill_mode=) must not raise."""
+    akquant.run_backtest(
+        data=_one_bar_data(),
+        strategy=_OrderLevelStrategy(),
+        symbols="X",
+        initial_cash=100000.0,
+        show_progress=False,
+    )
+
+
+def test_order_level_fill_mode_sell_accepted() -> None:
+    """Sell side also accepts fill_mode via public path."""
+
+    class _SellStrat(akquant.Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.bought = False
+
+        def on_bar(self, bar) -> None:  # type: ignore[no-untyped-def]
+            if not self.bought:
+                self.buy("X", 100)
+                self.bought = True
+            else:
+                self.sell("X", 100, fill_mode=NextClose())
+
+    akquant.run_backtest(
+        data=_one_bar_data(),
+        strategy=_SellStrat(),
+        symbols="X",
+        initial_cash=100000.0,
+        show_progress=False,
+    )
+
+
+def test_order_level_rejects_legacy_dict() -> None:
+    """Passing a legacy dict to Strategy.buy(fill_mode=) raises TypeError."""
+
+    class _Legacy(akquant.Strategy):
+        def on_bar(self, bar) -> None:  # type: ignore[no-untyped-def]
+            self.buy(
+                "X",
+                100,
+                fill_mode={"price_basis": "close", "bar_offset": 0},  # type: ignore[arg-type]
+            )
+
+    with pytest.raises(TypeError):
+        akquant.run_backtest(
+            data=_one_bar_data(),
+            strategy=_Legacy(),
+            symbols="X",
+            initial_cash=100000.0,
+            show_progress=False,
+        )

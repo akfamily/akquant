@@ -23,6 +23,7 @@ from akquant import (
 )
 from akquant.akquant import (
     Bar,
+    ExecutionMode,
     OrderStatus,
     PositionEffect,
     StrategyContext,
@@ -34,6 +35,11 @@ from akquant.backtest.engine import (
     _build_trading_day_metadata,
     _prime_framework_boundary_timers,
     _prime_framework_pre_open_timers,
+)
+from akquant.backtest.fill_mode import (
+    FillMode,
+    NextClose,
+    NextOpen,
 )
 from akquant.config import RiskConfig
 from akquant.gateway.order_receipt import OrderReceipt
@@ -5074,7 +5080,11 @@ def test_pre_open_timer_dispatch_uses_next_open_fill_policy_by_default() -> None
     assert strategy._framework_in_pre_open_phase is False
     args = ctx.buy.call_args.args
     assert args[0:2] == ("AAPL", 1.0)
-    assert args[9:12] == ("open", 1, "same_cycle")
+    # Task 4: ctx.buy 的 3 个 fill 参数 (price_basis, bar_offset, temporal)
+    # 收敛为 2 个 (fill_mode: ExecutionMode, fill_timer_timing: str)。
+    # 默认 pre-open 注入 {open,1,same_cycle} → NextOpen + same_cycle。
+    assert args[9] == ExecutionMode.NextOpen
+    assert args[10] == "same_cycle"
 
     dispatch_pre_open_timer(strategy, f"__framework_pre_open__|2023-01-03|{start_ts}")
     assert ctx.buy.call_count == 1
@@ -5151,7 +5161,7 @@ def test_strategy_buy_sell_delegate_to_submit_order() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
@@ -5168,7 +5178,7 @@ def test_strategy_buy_sell_delegate_to_submit_order() -> None:
             _ = broker_options
             _ = trail_offset
             _ = trail_reference_price
-            _ = fill_policy
+            _ = fill_mode
             _ = slippage
             _ = commission
             assert symbol is not None
@@ -5212,7 +5222,7 @@ def test_strategy_short_cover_delegate_position_effect() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
@@ -5230,7 +5240,7 @@ def test_strategy_short_cover_delegate_position_effect() -> None:
                 broker_options,
                 trail_offset,
                 trail_reference_price,
-                fill_policy,
+                fill_mode,
                 slippage,
                 commission,
             )
@@ -5320,7 +5330,7 @@ def test_strategy_rebalance_positions_supports_signed_targets() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
@@ -5338,7 +5348,7 @@ def test_strategy_rebalance_positions_supports_signed_targets() -> None:
                 broker_options,
                 trail_offset,
                 trail_reference_price,
-                fill_policy,
+                fill_mode,
                 slippage,
                 commission,
             )
@@ -5428,7 +5438,7 @@ def test_strategy_rebalance_positions_can_bypass_strict_short_capability() -> No
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
@@ -5446,7 +5456,7 @@ def test_strategy_rebalance_positions_can_bypass_strict_short_capability() -> No
                 broker_options,
                 trail_offset,
                 trail_reference_price,
-                fill_policy,
+                fill_mode,
                 slippage,
                 commission,
                 position_effect,
@@ -5529,7 +5539,7 @@ def test_strategy_rebalance_positions_missing_price_mode_skip() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
@@ -5546,7 +5556,7 @@ def test_strategy_rebalance_positions_missing_price_mode_skip() -> None:
                 broker_options,
                 trail_offset,
                 trail_reference_price,
-                fill_policy,
+                fill_mode,
                 slippage,
                 commission,
                 position_effect,
@@ -5598,7 +5608,7 @@ def test_strategy_rebalance_positions_missing_price_mode_ignore() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
@@ -5615,7 +5625,7 @@ def test_strategy_rebalance_positions_missing_price_mode_ignore() -> None:
                 broker_options,
                 trail_offset,
                 trail_reference_price,
-                fill_policy,
+                fill_mode,
                 slippage,
                 commission,
                 position_effect,
@@ -5668,7 +5678,7 @@ def test_strategy_rebalance_positions_records_explainable_plan() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
@@ -5689,7 +5699,7 @@ def test_strategy_rebalance_positions_records_explainable_plan() -> None:
                 broker_options,
                 trail_offset,
                 trail_reference_price,
-                fill_policy,
+                fill_mode,
                 slippage,
                 commission,
                 position_effect,
@@ -5741,7 +5751,7 @@ def test_strategy_rebalance_positions_plan_tracks_skipped_legs() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
@@ -5762,7 +5772,7 @@ def test_strategy_rebalance_positions_plan_tracks_skipped_legs() -> None:
                 broker_options,
                 trail_offset,
                 trail_reference_price,
-                fill_policy,
+                fill_mode,
                 slippage,
                 commission,
                 position_effect,
@@ -5889,22 +5899,14 @@ class _OrderLevelFillPolicyStrategy(Strategy):
             side="Buy",
             quantity=1.0,
             tag="order-open",
-            fill_policy={
-                "price_basis": "open",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            },
+            fill_mode=NextOpen(),
         )
         self.submit_order(
             symbol=bar.symbol,
             side="Buy",
             quantity=1.0,
             tag="order-close",
-            fill_policy={
-                "price_basis": "close",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            },
+            fill_mode=NextClose(),
         )
 
 
@@ -6003,11 +6005,7 @@ class _OrderLevelSlippageStrategy(Strategy):
             side="Buy",
             quantity=1.0,
             tag="slippage-fixed",
-            fill_policy={
-                "price_basis": "open",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            },
+            fill_mode=NextOpen(),
             slippage={"type": "fixed", "value": 0.5},
         )
         self.submit_order(
@@ -6015,11 +6013,7 @@ class _OrderLevelSlippageStrategy(Strategy):
             side="Buy",
             quantity=1.0,
             tag="slippage-percent",
-            fill_policy={
-                "price_basis": "open",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            },
+            fill_mode=NextOpen(),
             slippage={"type": "percent", "value": 0.1},
         )
         self.submit_order(
@@ -6027,11 +6021,7 @@ class _OrderLevelSlippageStrategy(Strategy):
             side="Buy",
             quantity=1.0,
             tag="slippage-ticks",
-            fill_policy={
-                "price_basis": "open",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            },
+            fill_mode=NextOpen(),
             slippage={"type": "ticks", "value": 2},
         )
 
@@ -6192,11 +6182,7 @@ class _OrderLevelCommissionStrategy(Strategy):
             side="Buy",
             quantity=1.0,
             tag="commission-fixed",
-            fill_policy={
-                "price_basis": "open",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            },
+            fill_mode=NextOpen(),
             commission={"type": "fixed", "value": 3.0},
         )
         self.submit_order(
@@ -6204,11 +6190,7 @@ class _OrderLevelCommissionStrategy(Strategy):
             side="Buy",
             quantity=1.0,
             tag="commission-percent",
-            fill_policy={
-                "price_basis": "open",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            },
+            fill_mode=NextOpen(),
             commission={"type": "percent", "value": 0.01},
         )
         self.submit_order(
@@ -6216,11 +6198,7 @@ class _OrderLevelCommissionStrategy(Strategy):
             side="Buy",
             quantity=3.0,
             tag="commission-per-unit",
-            fill_policy={
-                "price_basis": "open",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            },
+            fill_mode=NextOpen(),
             commission={"type": "per_unit", "value": 0.5},
         )
 
@@ -6353,7 +6331,7 @@ def test_strategy_trailing_helpers_delegate_to_submit_order() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
@@ -6365,7 +6343,7 @@ def test_strategy_trailing_helpers_delegate_to_submit_order() -> None:
             _ = client_order_id
             _ = extra
             _ = broker_options
-            _ = fill_policy
+            _ = fill_mode
             _ = slippage
             _ = commission
             _ = position_effect
@@ -6585,7 +6563,7 @@ def test_bracket_prefers_engine_registration_when_available() -> None:
             time_in_force: Any = None,
             trigger_price: float | None = None,
             tag: str | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
         ) -> Any:
@@ -6597,7 +6575,7 @@ def test_bracket_prefers_engine_registration_when_available() -> None:
                     "time_in_force": time_in_force,
                     "trigger_price": trigger_price,
                     "tag": tag,
-                    "fill_policy": fill_policy,
+                    "fill_mode": fill_mode,
                     "slippage": slippage,
                     "commission": commission,
                 }
@@ -6657,7 +6635,7 @@ def test_bracket_falls_back_to_deferred_engine_queue_on_runtime_error() -> None:
             time_in_force: Any = None,
             trigger_price: float | None = None,
             tag: str | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
         ) -> Any:
@@ -6668,7 +6646,7 @@ def test_bracket_falls_back_to_deferred_engine_queue_on_runtime_error() -> None:
                 time_in_force,
                 trigger_price,
                 tag,
-                fill_policy,
+                fill_mode,
                 slippage,
                 commission,
             )
@@ -6713,7 +6691,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             time_in_force: Any = None,
             trigger_price: float | None = None,
             tag: str | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
         ) -> Any:
@@ -6725,7 +6703,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
                     "time_in_force": time_in_force,
                     "trigger_price": trigger_price,
                     "tag": tag,
-                    "fill_policy": fill_policy,
+                    "fill_mode": fill_mode,
                     "slippage": slippage,
                     "commission": commission,
                 }
@@ -6740,7 +6718,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             time_in_force: Any = None,
             trigger_price: float | None = None,
             tag: str | None = None,
-            fill_policy: dict[str, Any] | None = None,
+            fill_mode: FillMode | None = None,
             slippage: float | dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
         ) -> Any:
@@ -6755,7 +6733,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
                     "time_in_force": time_in_force,
                     "trigger_price": trigger_price,
                     "tag": tag,
-                    "fill_policy": fill_policy,
+                    "fill_mode": fill_mode,
                     "slippage": slippage,
                     "commission": commission,
                 }
@@ -6785,7 +6763,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             "time_in_force": None,
             "trigger_price": None,
             "tag": "entry",
-            "fill_policy": None,
+            "fill_mode": None,
             "slippage": None,
             "commission": None,
         }
@@ -6799,7 +6777,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             "time_in_force": None,
             "trigger_price": 95.0,
             "tag": "stop",
-            "fill_policy": None,
+            "fill_mode": None,
             "slippage": None,
             "commission": None,
         },
@@ -6811,7 +6789,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             "time_in_force": None,
             "trigger_price": None,
             "tag": "take",
-            "fill_policy": None,
+            "fill_mode": None,
             "slippage": None,
             "commission": None,
         },
