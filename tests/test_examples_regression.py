@@ -156,9 +156,7 @@ def test_textbook_futures_example_documents_fill_policy_and_bps_slippage() -> No
     source = (root / "examples" / "textbook" / "ch07_futures.py").read_text(
         encoding="utf-8"
     )
-    assert '"price_basis": "close"' in source
-    assert '"bar_offset": 0' in source
-    assert '"temporal": "same_cycle"' in source
+    assert "fill_policy=aq.CurrentClose()" in source
     assert 'slippage={"type": "percent", "value": 0.0002}' in source
 
 
