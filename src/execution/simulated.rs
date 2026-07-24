@@ -439,7 +439,18 @@ impl SimulatedExecutionClient {
                                 // gate uses portfolio free margin at the last/limit
                                 // price with a safety buffer — a deliberate
                                 // forecast-vs-actual split, not duplicated logic.
-                                if total_required > current_free_margin {
+                                //
+                                // When check_cash is disabled the account owner has
+                                // opted into overdrafting (negative cash/margin) so
+                                // the backtest can run to completion — the submission
+                                // gate already skips its check (risk::common /
+                                // risk::futures), so this execution gate must skip
+                                // too. Both auto-resize and rejection are bypassed:
+                                // there is no affordability budget to size against,
+                                // so the order fills in full (#280).
+                                if ctx.risk_config.check_cash
+                                    && total_required > current_free_margin
+                                {
                                     if report_order.allow_quantity_auto_resize {
                                         let lot_size = instrument.lot_size();
                                         let safety_factor =
@@ -1479,6 +1490,125 @@ mod tests {
                 .reject_reason
                 .contains("Insufficient margin at execution")
         );
+    }
+
+    #[test]
+    fn test_short_option_fills_when_check_cash_disabled_despite_insufficient_margin() {
+        // #280: with check_cash=false the account owner opts into overdrafting,
+        // so the execution-time margin gate must not reject — the order fills in
+        // full and cash/margin is allowed to go negative. Mirrors the rejection
+        // test above but flips check_cash off.
+        use crate::model::instrument::{InstrumentEnum, OptionInstrument, StockInstrument};
+        use crate::model::{OptionMarginModel, OptionType};
+        use rust_decimal_macros::dec;
+
+        let mut sim = SimulatedExecutionClient::new();
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "OPT_P".to_string(),
+            Instrument {
+                asset_type: AssetType::Option,
+                inner: InstrumentEnum::Option(OptionInstrument {
+                    symbol: "OPT_P".to_string(),
+                    multiplier: dec!(100),
+                    margin_ratio: dec!(0.2),
+                    tick_size: dec!(0.01),
+                    option_margin_model: OptionMarginModel::USBrokerSingleLegVolAdjusted,
+                    option_type: OptionType::Put,
+                    strike_price: dec!(100),
+                    expiry_date: 20260101,
+                    underlying_symbol: "UL".to_string(),
+                    settlement_type: None,
+                    implied_volatility: Some(dec!(0.3)),
+                    reference_volatility: Some(dec!(0.2)),
+                }),
+            },
+        );
+        instruments.insert(
+            "UL".to_string(),
+            Instrument {
+                asset_type: AssetType::Stock,
+                inner: InstrumentEnum::Stock(StockInstrument {
+                    symbol: "UL".to_string(),
+                    lot_size: Decimal::from(100),
+                    tick_size: Decimal::new(1, 2),
+                    expiry_date: None,
+                    sellable_after_days: 1,
+                }),
+            },
+        );
+
+        let order = create_test_order(
+            "OPT_P",
+            crate::model::OrderSide::Sell,
+            crate::model::OrderType::Market,
+            Decimal::from(2),
+            None,
+        );
+        sim.on_order(order);
+
+        let bar = create_test_bar(
+            "OPT_P",
+            Decimal::from(4),
+            Decimal::from(4),
+            Decimal::from(4),
+            Decimal::from(4),
+        );
+        let event = Event::Bar(bar);
+
+        let portfolio = crate::portfolio::Portfolio {
+            cash: Decimal::from(6000),
+            positions: HashMap::new().into(),
+            available_positions: HashMap::new().into(),
+        };
+        let mut last_prices = HashMap::new();
+        last_prices.insert("UL".to_string(), Decimal::from(95));
+        let mut risk_manager = crate::risk::RiskManager::new();
+        risk_manager.config.check_cash = false;
+        let trade_tracker = crate::analysis::TradeTracker::new();
+
+        let china_config = crate::market::ChinaMarketConfig {
+            stock: Some(crate::market::stock::StockConfig::default()),
+            option: Some(crate::market::option::OptionConfig::default()),
+            ..Default::default()
+        };
+        let market_config = crate::market::MarketConfig::China(china_config);
+        let market_model = market_config.create_model();
+
+        let ctx = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &last_prices,
+            trade_tracker: &trade_tracker,
+            market_model: market_model.as_ref(),
+            execution_policy_core: ExecutionPolicyCore::default(),
+            bar_index: 0,
+            current_time: 0,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+            risk_config: &risk_manager.config,
+            timezone_name: None,
+            timezone_offset: 0,
+        };
+
+        let events = sim.on_event(&event, &ctx);
+
+        let reports: Vec<_> = events
+            .iter()
+            .filter_map(|e| {
+                if let Event::ExecutionReport(order, trade) = e {
+                    Some((order, trade))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(reports.len(), 1);
+        // Order fills in full (quantity 2), not rejected, not resized.
+        let (_, trade) = &reports[0];
+        let trade = trade.as_ref().expect("order should fill, not reject");
+        assert_eq!(trade.quantity, Decimal::from(2));
+        assert_eq!(trade.price, Decimal::from(4));
     }
 
     #[test]

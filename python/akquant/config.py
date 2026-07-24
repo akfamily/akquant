@@ -463,7 +463,16 @@ class RiskConfig:
 
     **Order & Position Limits:**
     :param active: Master switch to enable/disable risk checks. Default True.
-    :param check_cash: Enable cash/margin sufficiency checks. Default True.
+    :param check_cash: Enable cash/margin sufficiency checks at order time.
+                       Default True. This gates BOTH the submission-time and the
+                       execution-time (fill) affordability checks, for stock,
+                       futures and option orders alike. When set to False the
+                       account may overdraft (cash/margin can go negative) so the
+                       backtest runs to completion. Note it only affects order-time
+                       checks: it does NOT disable the day-end forced liquidation
+                       of a margin account, which is governed independently by
+                       ``allow_force_liquidation``. To let a margin account run
+                       fully underwater, also set ``allow_force_liquidation=False``.
     :param safety_margin: Cash buffer to reserve (e.g., 0.0001 to avoid precision
                           issues).
     :param max_order_size: Max quantity per order.

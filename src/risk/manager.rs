@@ -173,7 +173,12 @@ impl RiskManager {
             .or_default()
             .push(Box::new(StockAvailablePositionRule));
 
-        // Futures rules
+        // Futures rules. FuturesMarginRule is REQUIRED here: CashMarginRule
+        // unconditionally steps aside for futures in a margin account (see
+        // risk::common::CashMarginRule::check) and hands the margin check to this
+        // rule. Removing it would silently drop all submission-time margin checks
+        // for futures margin accounts. Guarded by the test
+        // `risk_rules_cover_futures_margin_account`.
         self.asset_rules
             .entry(AssetType::Futures)
             .or_default()
@@ -195,7 +200,22 @@ impl RiskManager {
         if let Err(err) = self.check_internal(order, ctx) {
             let err_msg = err.to_string();
             // Check for insufficient cash/margin to attempt auto-reduction
-            // This logic was moved from OrderManager
+            // This logic was moved from OrderManager.
+            //
+            // NOTE on the `side == Buy` guard: submission-time auto-resize is
+            // buy-only. The execution-time gate (execution::simulated) resizes
+            // either side, so there is a narrow, currently-UNREACHABLE asymmetry:
+            // a short-opening sell that is affordable at the submission price but
+            // not at the real fill price would be resized at execution, whereas an
+            // unaffordable-at-submission short sell is rejected here rather than
+            // resized. It is unreachable because the public API (`ctx.sell`)
+            // hardcodes `allow_quantity_auto_resize = false` for sells — only
+            // directly-constructed orders (e.g. tests) can trigger the execution
+            // path. Aligning the two would also require deciding whether resizing
+            // a *reducing/closing* sell is ever correct (it is not — a close
+            // should always be allowed even below the commission budget), which is
+            // a separate concern from cash/margin gating. Left buy-only pending
+            // that design decision; do not "fix" by simply dropping this guard.
             if order.allow_quantity_auto_resize
                 && (err_msg.contains("Insufficient cash")
                     || err_msg.contains("Insufficient margin"))
@@ -286,5 +306,29 @@ impl RiskManager {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn risk_rules_cover_futures_margin_account() {
+        // CashMarginRule delegates futures margin accounts to FuturesMarginRule
+        // (see risk::common::CashMarginRule::check). This asserts the delegate is
+        // actually registered, so the hand-off never leaves futures margin
+        // accounts with no submission-time margin check.
+        let manager = RiskManager::new();
+        let futures_rules = manager
+            .asset_rules
+            .get(&AssetType::Futures)
+            .expect("Futures asset rules must be registered");
+        assert!(
+            futures_rules
+                .iter()
+                .any(|rule| rule.name() == "FuturesMarginRule"),
+            "FuturesMarginRule must be registered for AssetType::Futures"
+        );
     }
 }
