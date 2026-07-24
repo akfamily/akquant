@@ -8,6 +8,7 @@ from akquant import (
     Bar,
     ChinaFuturesConfig,
     ChinaFuturesInstrumentTemplateConfig,
+    CurrentClose,
     InstrumentConfig,
     Strategy,
     StrategyConfig,
@@ -66,7 +67,7 @@ def test_account_max_drawdown_rule_rejects_new_orders() -> None:
         symbols="RISK",
         initial_cash=100000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         risk_config=RiskConfig(max_account_drawdown=0.01),
     )
@@ -89,7 +90,7 @@ def test_account_max_daily_loss_rule_rejects_new_orders_same_day() -> None:
         symbols="RISK",
         initial_cash=100000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         risk_config=RiskConfig(max_daily_loss=0.01),
     )
@@ -112,7 +113,7 @@ def test_account_stop_loss_threshold_rule_rejects_new_orders() -> None:
         symbols="RISK",
         initial_cash=100000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         risk_config=RiskConfig(stop_loss_threshold=0.99),
     )
@@ -212,7 +213,7 @@ def test_short_option_margin_is_checked_and_account_margin_updates() -> None:
         data={"PUT_OPT": data_opt, "UL": data_ul},
         strategy=ShortPutStrategy,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(
                 initial_cash=50000.0,
@@ -294,7 +295,7 @@ def test_vol_adjusted_short_option_margin_is_checked() -> None:
         data={"PUT_VOL": data_opt, "UL": data_ul},
         strategy=VolAdjustedShortPutStrategy,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(
                 initial_cash=6000.0,
@@ -382,7 +383,7 @@ def test_check_cash_false_lets_short_option_overdraft_at_execution() -> None:
         data={"PUT_VOL": data_opt, "UL": data_ul},
         strategy=OverdraftShortPutStrategy,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(
                 initial_cash=6000.0,
@@ -441,7 +442,7 @@ def test_margin_account_allows_short_sell_when_enabled() -> None:
         symbols="SHORTABLE",
         initial_cash=100000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         risk_config=RiskConfig(account_mode="margin", enable_short_sell=True),
     )
@@ -485,7 +486,7 @@ def test_margin_account_stock_buy_uses_initial_margin_ratio() -> None:
         symbols="MARGIN_BUY",
         initial_cash=100000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         risk_config=RiskConfig(
             account_mode="margin",
@@ -564,7 +565,7 @@ def test_margin_account_same_cycle_cover_then_reopen_short_releases_margin() -> 
         symbols=["AAA", "BBB"],
         initial_cash=5000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         risk_config=RiskConfig(
             account_mode="margin",
@@ -619,7 +620,7 @@ def test_margin_account_daily_financing_interest_is_deducted() -> None:
         symbols="INTEREST",
         initial_cash=10000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         risk_config=RiskConfig(
             account_mode="margin",
@@ -671,7 +672,7 @@ def test_margin_account_force_liquidation_on_maintenance_breach() -> None:
         symbols="LIQ",
         initial_cash=10000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         risk_config=RiskConfig(
             account_mode="margin",
@@ -727,7 +728,7 @@ def test_futures_margin_account_snapshot_uses_margin_accounting() -> None:
         strategy=FuturesAccountProbeStrategy,
         symbols="RB2305",
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(
                 initial_cash=500000.0,
@@ -824,7 +825,7 @@ def test_futures_short_overnight_avoids_spurious_liquidation() -> None:
         strategy=FuturesShortOvernightProbeStrategy,
         symbols="RB2305",
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(
                 initial_cash=500000.0,
@@ -934,7 +935,7 @@ def test_futures_force_liquidation_emits_callbacks_and_realizes_pnl_only() -> No
         strategy=FuturesForcedLiquidationProbeStrategy,
         symbols="RB2305",
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(
                 initial_cash=5000.0,
@@ -1040,7 +1041,7 @@ def test_futures_margin_portfolio_update_can_read_account_metrics() -> None:
         strategy=FuturesPortfolioUpdateProbeStrategy,
         symbols="RB2305",
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(
                 initial_cash=500000.0,

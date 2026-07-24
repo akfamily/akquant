@@ -37,6 +37,7 @@ from akquant.backtest.engine import (
     _prime_framework_pre_open_timers,
 )
 from akquant.backtest.fill_mode import (
+    CurrentClose,
     FillMode,
     NextClose,
     NextOpen,
@@ -2536,7 +2537,7 @@ def test_run_warm_start_rejects_invalid_legacy_env_default(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
         show_progress=False,
     )
     assert result2.resolved_execution_policy is not None
@@ -2579,7 +2580,11 @@ def test_run_warm_start_explicit_compat_overrides_env_default(
             data=phase2,
             symbols="TEST",
             show_progress=False,
-            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+            fill_policy={
+                "price_basis": "close",
+                "bar_offset": 0,
+                "temporal": "same_cycle",
+            },
             **compat_kwargs,
         )
 
@@ -2595,7 +2600,7 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
         initial_cash=100000.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -2608,7 +2613,11 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy={
+            "price_basis": "close",
+            "bar_offset": 0,
+            "temporal": "same_cycle",
+        },
         show_progress=False,
     )
     engine = result2.engine
@@ -2644,7 +2653,7 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
         initial_cash=100000.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -2655,7 +2664,11 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy={
+            "price_basis": "close",
+            "bar_offset": 0,
+            "temporal": "same_cycle",
+        },
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -2690,7 +2703,7 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
         config=config,
     )
@@ -2700,7 +2713,11 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy={
+            "price_basis": "close",
+            "bar_offset": 0,
+            "temporal": "same_cycle",
+        },
         show_progress=False,
         config=config,
     )
@@ -2733,7 +2750,7 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
         config=config,
     )
@@ -2743,7 +2760,11 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy={
+            "price_basis": "close",
+            "bar_offset": 0,
+            "temporal": "same_cycle",
+        },
         show_progress=False,
         config=config,
         strategy_max_order_size={"alpha": 20.0, "beta": 5.0},
@@ -3216,7 +3237,7 @@ def test_run_warm_start_open_position_preserves_initial_market_value(
         symbols="FUT",
         initial_cash=100000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=config,
     )
     save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -3226,7 +3247,11 @@ def test_run_warm_start_open_position_preserves_initial_market_value(
         data=phase2,
         symbols="FUT",
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy={
+            "price_basis": "close",
+            "bar_offset": 0,
+            "temporal": "same_cycle",
+        },
         config=config,
     )
 
@@ -3314,7 +3339,7 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
         strategy=WarmStartEventIdempotencyStrategy,
         symbols="BENCHMARK",
         initial_cash=100000.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
     save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -4612,7 +4637,7 @@ def test_precise_boundary_hooks_delay_after_trading_until_day_end() -> None:
         symbols=["HOOKS_DEMO"],
         initial_cash=1000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
     )
 
     day1_before = ("before", pd.Timestamp("2023-01-03").date(), day1_open)
@@ -4673,7 +4698,7 @@ def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> N
         symbols=["HOOKS_DEMO"],
         initial_cash=1000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
     )
 
     day1 = pd.Timestamp("2023-01-03").date()
@@ -4749,7 +4774,7 @@ def test_day_boundary_hooks_hide_current_bar_from_history_and_current_bar(
         symbols=["HOOKS_DEMO"],
         initial_cash=1000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
     )
 
     before_values = [float(history[0]) for history in strategy.before_histories[1:]]
@@ -4813,7 +4838,7 @@ def test_day_boundary_hooks_use_previous_account_snapshot(
         symbols=["HOOKS_DEMO"],
         initial_cash=1000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
     )
 
     assert strategy.before_equities == [1000.0, 1000.0, 1001.0]
@@ -4869,7 +4894,7 @@ def test_cross_section_sees_current_day_history_and_runs_after_bar(
         symbols=["HOOKS_DEMO"],
         initial_cash=1000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
     )
 
     assert [float(history[0]) for history in strategy.after_bar_histories] == [
@@ -4934,7 +4959,7 @@ def test_cross_section_uses_current_account_snapshot(
         symbols=["HOOKS_DEMO"],
         initial_cash=1000.0,
         show_progress=False,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
     )
 
     assert strategy.after_bar_equities == [1000.0, 1001.0, 1002.0]
@@ -5930,7 +5955,7 @@ def test_order_level_fill_policy_overrides_engine_fill_policy() -> None:
         symbols="AAPL",
         initial_cash=100000.0,
         show_progress=False,
-        fill_policy={"price_basis": "open", "bar_offset": 1, "temporal": "same_cycle"},
+        fill_policy=NextOpen(),
     )
     filled_orders = result.orders_df[
         result.orders_df["status"].astype(str).str.lower() == "filled"
@@ -5975,14 +6000,8 @@ def test_strategy_level_fill_policy_applies_when_order_policy_missing() -> None:
         symbols="AAPL",
         initial_cash=100000.0,
         show_progress=False,
-        fill_policy={"price_basis": "open", "bar_offset": 1, "temporal": "same_cycle"},
-        strategy_fill_policy={
-            "_default": {
-                "price_basis": "close",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            }
-        },
+        fill_policy=NextOpen(),
+        strategy_fill_policy={"_default": NextClose()},
     )
     filled_orders = result.orders_df[
         result.orders_df["status"].astype(str).str.lower() == "filled"

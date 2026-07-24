@@ -1,5 +1,5 @@
 import pandas as pd
-from akquant import Bar, OrderStatus, Strategy, run_backtest
+from akquant import Bar, CurrentClose, OrderStatus, Strategy, run_backtest
 
 
 class PartialFillOpenOrderStrategy(Strategy):
@@ -50,7 +50,7 @@ def test_partial_filled_status_and_open_orders_visibility() -> None:
         min_commission=0.0,
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         volume_limit_pct=0.1,
         show_progress=False,

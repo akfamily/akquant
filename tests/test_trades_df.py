@@ -4,6 +4,7 @@ from akquant import (
     Bar,
     ChinaFuturesConfig,
     ChinaFuturesInstrumentTemplateConfig,
+    CurrentClose,
     InstrumentConfig,
     Strategy,
     StrategyConfig,
@@ -127,7 +128,7 @@ def test_futures_trades_df_respects_contract_multiplier() -> None:
         strategy=FuturesTradesTestStrategy,
         symbols="RB2310",
         show_progress=False,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(
                 initial_cash=500000.0,
