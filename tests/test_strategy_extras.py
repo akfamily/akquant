@@ -2356,14 +2356,16 @@ def test_run_warm_start_exposes_resolved_execution_policy(tmp_path: Path) -> Non
         data=phase2,
         symbols="TEST",
         show_progress=False,
-        fill_policy={"price_basis": "close", "bar_offset": 1, "temporal": "next_event"},
+        fill_policy=NextClose(),
     )
 
     policy = result2.resolved_execution_policy
     assert policy is not None
     assert policy["price_basis"] == "close"
     assert int(policy["bar_offset"]) == 1
-    assert policy["temporal"] == "next_event"
+    # NextClose collapses close+1+next_event → same_cycle
+    # (temporal inert for non-close+0 modes)
+    assert policy["temporal"] == "same_cycle"
     assert policy["source"] == "fill_policy"
 
 
@@ -2537,11 +2539,39 @@ def test_run_warm_start_rejects_invalid_legacy_env_default(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
     assert result2.resolved_execution_policy is not None
     assert result2.resolved_execution_policy["source"] == "fill_policy"
+
+
+def test_run_warm_start_explicit_fill_policy_dict_raises(tmp_path: Path) -> None:
+    """Explicit fill_policy dict override is hard-cut (symmetric with run_backtest)."""
+    checkpoint = tmp_path / "snapshot_dict_reject.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
+    phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="no longer accepts a dict"):
+        _ = run_from_checkpoint(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbols="TEST",
+            show_progress=False,
+            fill_policy={
+                "price_basis": "close",
+                "bar_offset": 0,
+                "temporal": "same_cycle",
+            },
+        )
 
 
 def test_run_warm_start_explicit_compat_overrides_env_default(
@@ -2580,11 +2610,7 @@ def test_run_warm_start_explicit_compat_overrides_env_default(
             data=phase2,
             symbols="TEST",
             show_progress=False,
-            fill_policy={
-                "price_basis": "close",
-                "bar_offset": 0,
-                "temporal": "same_cycle",
-            },
+            fill_policy=CurrentClose(),
             **compat_kwargs,
         )
 
@@ -2613,11 +2639,7 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={
-            "price_basis": "close",
-            "bar_offset": 0,
-            "temporal": "same_cycle",
-        },
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
     engine = result2.engine
@@ -2664,11 +2686,7 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={
-            "price_basis": "close",
-            "bar_offset": 0,
-            "temporal": "same_cycle",
-        },
+        fill_policy=CurrentClose(),
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -2713,11 +2731,7 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={
-            "price_basis": "close",
-            "bar_offset": 0,
-            "temporal": "same_cycle",
-        },
+        fill_policy=CurrentClose(),
         show_progress=False,
         config=config,
     )
@@ -2760,11 +2774,7 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={
-            "price_basis": "close",
-            "bar_offset": 0,
-            "temporal": "same_cycle",
-        },
+        fill_policy=CurrentClose(),
         show_progress=False,
         config=config,
         strategy_max_order_size={"alpha": 20.0, "beta": 5.0},
@@ -3247,11 +3257,7 @@ def test_run_warm_start_open_position_preserves_initial_market_value(
         data=phase2,
         symbols="FUT",
         show_progress=False,
-        fill_policy={
-            "price_basis": "close",
-            "bar_offset": 0,
-            "temporal": "same_cycle",
-        },
+        fill_policy=CurrentClose(),
         config=config,
     )
 

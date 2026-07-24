@@ -1,5 +1,7 @@
 """Tests for FillMode classes and core translation."""
 
+from typing import Any, cast
+
 import akquant
 import pytest
 from akquant.backtest.fill_mode import (
@@ -117,7 +119,7 @@ def test_run_backtest_rejects_legacy_dict() -> None:
             data=_one_bar_data(),
             strategy=lambda ctx, bar: None,
             symbols="X",
-            fill_policy={"price_basis": "close", "bar_offset": 0},
+            fill_policy=cast(Any, {"price_basis": "close", "bar_offset": 0}),
             initial_cash=100000.0,
             show_progress=False,
         )
@@ -282,11 +284,14 @@ def test_legacy_dict_error_contains_mapping() -> None:
             data=_one_bar_data(),
             strategy=lambda c, b: None,
             symbols="X",
-            fill_policy={
-                "price_basis": "close",
-                "bar_offset": 0,
-                "temporal": "next_event",
-            },
+            fill_policy=cast(
+                Any,
+                {
+                    "price_basis": "close",
+                    "bar_offset": 0,
+                    "temporal": "next_event",
+                },
+            ),
             initial_cash=100000.0,
             show_progress=False,
         )

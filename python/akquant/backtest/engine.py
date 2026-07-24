@@ -4563,6 +4563,19 @@ def run_from_checkpoint(
         api_name="run_from_checkpoint",
     )
     fill_policy_override = cast(Optional[FillPolicy], kwargs.pop("fill_policy", None))
+    # 显式 fill_policy 覆盖与 run_backtest 对称：接 FillMode、拒 dict（硬切断）。
+    # 注意：这里只处理"用户显式入参"，不影响下方 restored_backtest_config 快照分支
+    # ——那是 checkpoint 文件里的内部序列化 dict，不是公共 API 输入，须原样透传。
+    if fill_policy_override is not None:
+        if isinstance(fill_policy_override, FillMode):
+            _pb, _bo, _tp = fill_policy_override._to_core()
+            fill_policy_override = {
+                "price_basis": _pb,
+                "bar_offset": _bo,
+                "temporal": _tp,
+            }
+        elif isinstance(fill_policy_override, dict):
+            raise TypeError(_LEGACY_FILL_POLICY_DICT_MSG)
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
     symbols, effective_symbols = _resolve_effective_symbols(
         symbols=symbols,

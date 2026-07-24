@@ -1315,36 +1315,6 @@ def test_fill_policy_hl2_maps_to_next_high_low_mid() -> None:
     assert strategy.trade_price == pytest.approx(12.0)
 
 
-def test_fill_policy_reserved_mid_quote_raises_not_implemented() -> None:
-    """Reserved price_basis mid_quote should raise NotImplementedError."""
-    bars = _build_benchmark_data(3, "RESERVED_BASIS")
-    with pytest.raises(NotImplementedError, match="mid_quote"):
-        akquant.run_backtest(
-            data=bars,
-            strategy=SingleBuyStrategy,
-            symbols="RESERVED_BASIS",
-            fill_policy=cast(
-                Any, {"price_basis": "mid_quote", "temporal": "same_cycle"}
-            ),
-            show_progress=False,
-        )
-
-
-def test_fill_policy_reserved_vwap_window_raises_not_implemented() -> None:
-    """Reserved price_basis vwap_window should raise NotImplementedError."""
-    bars = _build_benchmark_data(3, "RESERVED_BASIS")
-    with pytest.raises(NotImplementedError, match="vwap_window"):
-        akquant.run_backtest(
-            data=bars,
-            strategy=SingleBuyStrategy,
-            symbols="RESERVED_BASIS",
-            fill_policy=cast(
-                Any, {"price_basis": "vwap_window", "temporal": "same_cycle"}
-            ),
-            show_progress=False,
-        )
-
-
 def test_run_backtest_accepts_data_feed_adapter() -> None:
     """run_backtest should accept objects implementing DataFeedAdapter.load."""
 
