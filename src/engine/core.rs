@@ -50,6 +50,20 @@ pub struct StrategySlot {
 pub struct Engine {
     pub(crate) state: SharedState,
     pub(crate) last_prices: HashMap<String, Decimal>,
+    /// last_prices 每次写入 +1，与 account_version 一起作为指标缓存的键。
+    pub(crate) last_prices_version: u64,
+    /// 账户状态（portfolio/trade_tracker）每次变更 +1：全部成交经由
+    /// flush_accumulated_trades、日结经由 process_daily_settlement、
+    /// 除权除息经由 process_date 三处汇入点统一递增，保证指标缓存
+    /// 不可能返回陈旧值。
+    pub(crate) account_version: u64,
+    /// current_account_metrics 的缓存，键为
+    /// (last_prices_version, account_version)：价格或账户状态变化即失效。
+    /// 同一事件内 strategy/statistics/flush 等多个消费者共享一次计算。
+    pub(crate) metrics_cache: Option<(u64, u64, AccountMetrics)>,
+    /// build_position_entry_prices 的缓存，键为 account_version
+    ///（positions 仅随成交/结算/除权变化）。
+    pub(crate) entry_prices_cache: Option<(u64, Arc<HashMap<String, Decimal>>)>,
     pub(crate) instruments: HashMap<String, Instrument>,
     pub(crate) current_date: Option<NaiveDate>,
     pub(crate) market_manager: MarketManager,
@@ -140,14 +154,22 @@ pub(crate) struct PendingStreamEvent {
 
 // Internal implementation of Engine (not exposed to Python)
 impl Engine {
-    fn current_account_metrics(&self) -> AccountMetrics {
-        calculate_account_metrics(
+    pub(crate) fn current_account_metrics(&mut self) -> AccountMetrics {
+        let key = (self.last_prices_version, self.account_version);
+        if let Some((pv, ev, metrics)) = &self.metrics_cache {
+            if (*pv, *ev) == key {
+                return *metrics;
+            }
+        }
+        let metrics = calculate_account_metrics(
             &self.state.portfolio,
             &self.last_prices,
             &self.instruments,
             &self.state.order_manager.trade_tracker,
             &self.risk_manager.config,
-        )
+        );
+        self.metrics_cache = Some((key.0, key.1, metrics));
+        metrics
     }
 
     /// Cash/margin reserved by open (non-terminal) orders: the incremental used
@@ -155,6 +177,18 @@ impl Engine {
     /// account's `frozen_cash`, computed in Rust so it cannot drift from the
     /// engine's own margin accounting (the Python re-implementation was removed).
     fn current_frozen_cash(&self, active_orders: &[Order]) -> Decimal {
+        // 快速路径：无非终态订单时冻结现金恒为 0（投影与原值相同），
+        // 跳过 portfolio.clone() 与两轮 O(P) used_margin 计算。
+        if !active_orders.iter().any(|order| {
+            matches!(
+                order.status,
+                crate::model::OrderStatus::New
+                    | crate::model::OrderStatus::Submitted
+                    | crate::model::OrderStatus::PartiallyFilled
+            )
+        }) {
+            return Decimal::ZERO;
+        }
         let stock_ratio_override = if self.risk_manager.config.is_margin_account() {
             Some(self.risk_manager.config.stock_initial_margin_ratio())
         } else {
@@ -202,7 +236,12 @@ impl Engine {
         (projected_used - base_used).max(Decimal::ZERO)
     }
 
-    fn build_position_entry_prices(&self) -> Arc<HashMap<String, Decimal>> {
+    fn build_position_entry_prices(&mut self) -> Arc<HashMap<String, Decimal>> {
+        if let Some((av, cached)) = &self.entry_prices_cache {
+            if *av == self.account_version {
+                return Arc::clone(cached);
+            }
+        }
         let mut entry_prices = HashMap::new();
         for (symbol, quantity) in self.state.portfolio.positions.iter() {
             if quantity.is_zero() {
@@ -215,7 +254,9 @@ impl Engine {
                 .get_average_price(symbol);
             entry_prices.insert(symbol.clone(), average_price);
         }
-        Arc::new(entry_prices)
+        let entry_prices = Arc::new(entry_prices);
+        self.entry_prices_cache = Some((self.account_version, Arc::clone(&entry_prices)));
+        entry_prices
     }
 
     pub(crate) fn is_active_timestamp(&self, timestamp: i64) -> bool {
@@ -1080,7 +1121,7 @@ impl Engine {
     }
 
     pub(crate) fn create_context(
-        &self,
+        &mut self,
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
         step_rejected_orders: Vec<Order>,
@@ -1217,6 +1258,7 @@ impl Engine {
                 let previous_cash = self.state.portfolio.cash;
                 let previous_account_metrics = self.current_account_metrics();
                 self.last_prices.insert(b.symbol.clone(), b.close);
+                self.last_prices_version = self.last_prices_version.wrapping_add(1);
                 let py_ctx = self.get_or_create_strategy_context(
                     slot_index,
                     active_orders,
@@ -1259,6 +1301,7 @@ impl Engine {
                 let previous_cash = self.state.portfolio.cash;
                 let previous_account_metrics = self.current_account_metrics();
                 self.last_prices.insert(t.symbol.clone(), t.price);
+                self.last_prices_version = self.last_prices_version.wrapping_add(1);
                 let py_ctx = self.get_or_create_strategy_context(
                     slot_index,
                     active_orders,

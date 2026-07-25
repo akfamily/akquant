@@ -58,6 +58,8 @@ pub(crate) fn flush_accumulated_trades(engine: &mut Engine, trades_to_process: &
     if trades_to_process.is_empty() {
         return;
     }
+    // 账户状态变更汇入点：递增版本号使指标/成本价缓存失效。
+    engine.account_version = engine.account_version.wrapping_add(1);
     engine.state.order_manager.process_trades(
         std::mem::take(trades_to_process),
         &mut engine.state.portfolio,

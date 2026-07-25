@@ -283,6 +283,7 @@ impl Processor for DataProcessor {
                     engine.current_date = Some(local_date);
 
                     // Process Corporate Actions (Split/Dividend)
+                    engine.account_version = engine.account_version.wrapping_add(1);
                     engine.corporate_action_manager.process_date(
                         local_date,
                         &mut engine.state.portfolio,
@@ -326,6 +327,7 @@ impl Processor for DataProcessor {
                         default_strategy_id: engine.default_strategy_id.clone(),
                         day_orders_awaiting_fill_slice: &day_orders_awaiting_fill_slice,
                     };
+                    engine.account_version = engine.account_version.wrapping_add(1);
                     let settlement_outcome = engine.settlement_manager.process_daily_settlement(
                         &mut engine.state.portfolio,
                         &mut engine.state.order_manager.active_orders,

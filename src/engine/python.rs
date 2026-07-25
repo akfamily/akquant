@@ -507,6 +507,10 @@ impl Engine {
         Engine {
             state: SharedState::new(initial_cash),
             last_prices: HashMap::new(),
+            last_prices_version: 0,
+            account_version: 0,
+            metrics_cache: None,
+            entry_prices_cache: None,
             instruments: HashMap::new(),
             current_date: None,
             market_manager: MarketManager::new(),

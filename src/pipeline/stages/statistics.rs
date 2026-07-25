@@ -1,4 +1,3 @@
-use crate::account::calculate_account_metrics;
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::pipeline::processor::{Processor, ProcessorResult};
@@ -18,18 +17,11 @@ impl Processor for StatisticsProcessor {
             && let Some(timestamp) = engine.clock.timestamp()
             && engine.is_active_timestamp(timestamp)
         {
-            let equity = calculate_account_metrics(
-                &engine.state.portfolio,
-                &engine.last_prices,
-                &engine.instruments,
-                &engine.state.order_manager.trade_tracker,
-                &engine.risk_manager.config,
-            )
-            .equity;
-            let margin = engine
-                .state
-                .portfolio
-                .calculate_used_margin(&engine.last_prices, &engine.instruments);
+            // 复用引擎每事件指标缓存：同一事件内 strategy 阶段已算过一次，
+            // 此处零成本命中；used_margin 直接取指标字段，不再重复 O(P) 计算。
+            let metrics = engine.current_account_metrics();
+            let equity = metrics.equity;
+            let margin = metrics.used_margin;
             engine.statistics_manager.update(
                 timestamp,
                 equity,
