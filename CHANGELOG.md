@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- 新增 `scripts/bench_engine_perbar.py` 引擎每 bar 固定开销基准脚本：合成宽宇宙负载（默认 4500 标的 × 120 交易日），输出 bars/sec 与确定性成交计数，作为性能优化前后对比的统一度量衡。
 - `get_account()` 账户快照新增 `free_margin` 字段（= `equity - used_margin`），表示真正可用于新开仓的可用保证金，与下单因保证金不足被拒时日志里的 `Available` 口径一致；期货保证金账户下 `cash`（现金余额）通常大于 `free_margin`，股票现金账户下二者相等。同时修正了 `cash` 在文档与 docstring 中「可用资金」的误导性表述，明确其为「现金余额」。
 - `BacktestConfig` 新增 `days_per_year`（年化天数因子，默认 252；数字货币 24/7 市场可设 365）与 `risk_free_rate`（年化无风险利率，默认 0.0）两个字段，用于参数化 Sharpe/Sortino/波动率等风险指标的年化口径。`risk_free_rate` 默认 0 不改变任何现有数值。
 
