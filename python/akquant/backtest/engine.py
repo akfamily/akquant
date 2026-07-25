@@ -2168,6 +2168,29 @@ def _normalize_slippage_policy(
     )
 
 
+
+def _assert_strategy_bar_hooks_inert(strategy: "Strategy") -> None:
+    """校验策略没有任何 bar 级 Python 钩子（skip_inert_bar_hooks 的前置条件）."""
+    reasons: list[str] = []
+    if type(strategy).on_bar is not Strategy.on_bar:
+        reasons.append("策略覆写了 on_bar")
+    if int(getattr(strategy, "_rolling_step", 0) or 0) > 0:
+        reasons.append("启用了滚动训练（_rolling_step > 0）")
+    if hasattr(strategy, "_update_incremental_indicators"):
+        reasons.append("使用了增量指标（_update_incremental_indicators）")
+    if getattr(strategy, "_pending_schedules", None):
+        reasons.append("存在 schedule 定时任务")
+    if getattr(strategy, "_indicator_recorder", None) is not None:
+        reasons.append("启用了指标记录（indicator_recorder）")
+    if int(getattr(strategy, "warmup_period", 0) or 0) > 0:
+        reasons.append("设置了 warmup_period")
+    if reasons:
+        raise ValueError(
+            "skip_inert_bar_hooks=True 要求策略没有任何 bar 级 Python 钩子，"
+            "当前策略不满足：" + "；".join(reasons)
+        )
+
+
 def run_backtest(
     data: Optional[BacktestDataInput] = None,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
@@ -2236,6 +2259,7 @@ def run_backtest(
     portfolio_risk_budget: Optional[float] = None,
     risk_budget_mode: str = "order_notional",
     risk_budget_reset_daily: bool = False,
+    skip_inert_bar_hooks: bool = False,
     analyzer_plugins: Optional[Sequence[AnalyzerPlugin]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
@@ -2347,6 +2371,13 @@ def run_backtest(
     :param portfolio_risk_budget: 可选账户级累计风险预算上限
     :param risk_budget_mode: 风险预算口径，支持 order_notional/trade_notional
     :param risk_budget_reset_daily: 风险预算是否按交易日重置
+    :param skip_inert_bar_hooks: 跳过每 bar 的 on_bar Python 回调（默认 False）。
+        仅当策略未覆写 on_bar 且未使用任何 bar 级钩子（滚动训练、增量指标、
+        schedule 定时任务、指标记录、warmup_period）时允许开启，否则抛出
+        ValueError。开启后 on_order/on_trade 仍按 bar 送达，
+        on_cross_section（timer 驱动）不受影响；注意 get_holding_bars 与
+        策略内部 `_last_prices` 簿记会停止更新。Analyzer 插件依赖 on_bar，
+        存在插件时不允许开启。
     :param analyzer_plugins: Analyzer 插件列表，
                              接收 on_start/on_bar/on_trade/on_finish 生命周期事件
     :param on_event: 可选流式事件回调。阶段 5 后 `run_backtest` 始终走统一事件内核；
@@ -2475,6 +2506,7 @@ def run_backtest(
         risk_budget_mode=risk_budget_mode,
     )
     risk_budget_reset_daily = bool(risk_budget_reset_daily)
+    skip_inert_bar_hooks = bool(skip_inert_bar_hooks)
     effective_strategy_id = strategy_id or "_default"
     indicator_stream_requested = (
         on_event is not None or kwargs.get("_stream_on_event") is not None
@@ -3397,6 +3429,16 @@ def run_backtest(
         cast(Any, engine).set_risk_budget_mode(risk_budget_mode)
     if hasattr(engine, "set_risk_budget_reset_daily"):
         cast(Any, engine).set_risk_budget_reset_daily(risk_budget_reset_daily)
+    if skip_inert_bar_hooks:
+        if normalized_analyzers:
+            raise ValueError(
+                "skip_inert_bar_hooks=True 与 Analyzer 插件不兼容"
+                "（插件依赖 on_bar 回调）"
+            )
+        for current_strategy in all_strategy_instances:
+            _assert_strategy_bar_hooks_inert(current_strategy)
+    if hasattr(engine, "set_skip_on_bar_event"):
+        cast(Any, engine).set_skip_on_bar_event(skip_inert_bar_hooks)
     if strategy_max_order_value and hasattr(
         engine, "set_strategy_max_order_value_limits"
     ):

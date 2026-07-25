@@ -50,6 +50,11 @@ pub struct StrategySlot {
 pub struct Engine {
     pub(crate) state: SharedState,
     pub(crate) last_prices: HashMap<String, Decimal>,
+    /// 开关：跳过每 bar 的 `_on_bar_event` Python 调用（默认 false）。
+    /// 仅在 Python 侧校验策略未覆写 `on_bar` 且无其他 bar 级钩子后，
+    /// 由 `skip_inert_bar_hooks` 配置开启；`_flush_pending_order_events`
+    /// 与 Timer 驱动的 on_cross_section 等回调不受影响。
+    pub(crate) skip_on_bar_event: bool,
     pub(crate) instruments: HashMap<String, Instrument>,
     pub(crate) current_date: Option<NaiveDate>,
     pub(crate) market_manager: MarketManager,
@@ -1226,12 +1231,13 @@ impl Engine {
                     previous_account_metrics,
                 )?;
 
-                let args = Python::attach(|py| {
-                    let bar = b.clone();
-                    (bar, py_ctx.clone_ref(py))
-                });
-
-                strategy.call_method1("_on_bar_event", args)?;
+                if !self.skip_on_bar_event {
+                    let args = Python::attach(|py| {
+                        let bar = b.clone();
+                        (bar, py_ctx.clone_ref(py))
+                    });
+                    strategy.call_method1("_on_bar_event", args)?;
+                }
                 Python::attach(|py| {
                     strategy.call_method1("_flush_pending_order_events", (py_ctx.clone_ref(py),))
                 })?;

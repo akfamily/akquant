@@ -498,6 +498,16 @@ impl Engine {
         self.risk_budget_reset_daily = enabled;
     }
 
+    /// 设置是否跳过每 bar 的 `_on_bar_event` Python 调用.
+    ///
+    /// 仅在策略未覆写 `on_bar` 且无其他 bar 级钩子时由 Python 侧校验开启；
+    /// `_flush_pending_order_events` 与 Timer 驱动的 on_cross_section 不受影响。
+    ///
+    /// :param enabled: 是否跳过
+    fn set_skip_on_bar_event(&mut self, enabled: bool) {
+        self.skip_on_bar_event = enabled;
+    }
+
     /// 初始化回测引擎.
     ///
     /// :return: Engine 实例
@@ -507,6 +517,7 @@ impl Engine {
         Engine {
             state: SharedState::new(initial_cash),
             last_prices: HashMap::new(),
+            skip_on_bar_event: false,
             instruments: HashMap::new(),
             current_date: None,
             market_manager: MarketManager::new(),
