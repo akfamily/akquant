@@ -2236,6 +2236,7 @@ def run_backtest(
     portfolio_risk_budget: Optional[float] = None,
     risk_budget_mode: str = "order_notional",
     risk_budget_reset_daily: bool = False,
+    last_prices_snapshot_per_timestamp: bool = False,
     analyzer_plugins: Optional[Sequence[AnalyzerPlugin]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
@@ -2347,6 +2348,12 @@ def run_backtest(
     :param portfolio_risk_budget: 可选账户级累计风险预算上限
     :param risk_budget_mode: 风险预算口径，支持 order_notional/trade_notional
     :param risk_budget_reset_daily: 风险预算是否按交易日重置
+    :param last_prices_snapshot_per_timestamp: 策略 context 的 last_prices 是否按
+        时间片快照共享（默认 False，逐 bar 快照）。开启后 Bar/Tick 事件的
+        context 共享时间片边界的不可变快照（O(1)），不再每 bar 全表克隆，
+        宽宇宙回测（数千标的）可显著降低每 bar 固定开销；Timer/成交等事件
+        的 context 仍使用即时快照。注意：开启后 on_bar/on_tick 内
+        `ctx.last_prices`/`ctx.buying_power` 看到的是上一时间片结束时的价格。
     :param analyzer_plugins: Analyzer 插件列表，
                              接收 on_start/on_bar/on_trade/on_finish 生命周期事件
     :param on_event: 可选流式事件回调。阶段 5 后 `run_backtest` 始终走统一事件内核；
@@ -2475,6 +2482,7 @@ def run_backtest(
         risk_budget_mode=risk_budget_mode,
     )
     risk_budget_reset_daily = bool(risk_budget_reset_daily)
+    last_prices_snapshot_per_timestamp = bool(last_prices_snapshot_per_timestamp)
     effective_strategy_id = strategy_id or "_default"
     indicator_stream_requested = (
         on_event is not None or kwargs.get("_stream_on_event") is not None
@@ -3397,6 +3405,10 @@ def run_backtest(
         cast(Any, engine).set_risk_budget_mode(risk_budget_mode)
     if hasattr(engine, "set_risk_budget_reset_daily"):
         cast(Any, engine).set_risk_budget_reset_daily(risk_budget_reset_daily)
+    if hasattr(engine, "set_last_prices_snapshot_per_timestamp"):
+        cast(Any, engine).set_last_prices_snapshot_per_timestamp(
+            last_prices_snapshot_per_timestamp
+        )
     if strategy_max_order_value and hasattr(
         engine, "set_strategy_max_order_value_limits"
     ):

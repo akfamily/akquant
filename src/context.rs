@@ -835,6 +835,17 @@ impl StrategyContext {
             .collect()
     }
 
+    /// 最近价格快照（symbol -> price）。逐 bar 快照或时间片快照取决于
+    /// 引擎的 `last_prices_snapshot_per_timestamp` 配置。按需克隆，不要
+    /// 在每 bar 热路径中反复访问。
+    #[getter]
+    fn get_last_prices(&self) -> HashMap<String, f64> {
+        self.last_prices
+            .iter()
+            .map(|(k, v)| (k.clone(), v.to_f64().unwrap_or_default()))
+            .collect()
+    }
+
     /// 注册定时器.
     ///
     /// :param timestamp: 触发时间戳 (纳秒)

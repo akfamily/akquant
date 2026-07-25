@@ -498,6 +498,17 @@ impl Engine {
         self.risk_budget_reset_daily = enabled;
     }
 
+    /// 设置策略 context 的 last_prices 是否按时间片快照共享.
+    ///
+    /// 开启后 Bar/Tick 事件的 context 使用时间片边界的不可变快照（O(1) 共享），
+    /// 不再每 bar 全表克隆；Timer/成交等事件仍使用即时快照（现行为）。
+    /// 宽宇宙回测（数千标的）可显著降低每 bar 固定开销。默认 false。
+    ///
+    /// :param enabled: 是否启用时间片快照
+    fn set_last_prices_snapshot_per_timestamp(&mut self, enabled: bool) {
+        self.last_prices_snapshot_per_timestamp = enabled;
+    }
+
     /// 初始化回测引擎.
     ///
     /// :return: Engine 实例
@@ -507,6 +518,8 @@ impl Engine {
         Engine {
             state: SharedState::new(initial_cash),
             last_prices: HashMap::new(),
+            last_prices_snapshot: Arc::new(HashMap::new()),
+            last_prices_snapshot_per_timestamp: false,
             instruments: HashMap::new(),
             current_date: None,
             market_manager: MarketManager::new(),

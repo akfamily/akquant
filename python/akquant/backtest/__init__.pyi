@@ -213,6 +213,7 @@ def run_from_checkpoint(
     portfolio_risk_budget: Optional[float] = ...,
     risk_budget_mode: Literal["order_notional", "trade_notional"] = ...,
     risk_budget_reset_daily: bool = ...,
+    last_prices_snapshot_per_timestamp: bool = ...,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
     indicator_recorder: Optional[IndicatorSink] = ...,
     config: Optional[BacktestConfig] = ...,

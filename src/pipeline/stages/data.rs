@@ -173,6 +173,9 @@ impl DataProcessor {
         }
         self.fill_missing_bars(engine);
         self.reject_missing_symbol_orders(engine);
+        // 时间片收尾：发布 last_prices 不可变快照（仅在开关开启时生效），
+        // 供下一时间片 Bar/Tick 事件的策略 context 以 O(1) 共享。
+        engine.publish_last_prices_snapshot();
         self.finalized_timestamp = self.last_timestamp;
         self.current_symbol_events.clear();
     }

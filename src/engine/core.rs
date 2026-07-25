@@ -50,6 +50,14 @@ pub struct StrategySlot {
 pub struct Engine {
     pub(crate) state: SharedState,
     pub(crate) last_prices: HashMap<String, Decimal>,
+    /// 时间片粒度的 last_prices 不可变快照（仅在
+    /// `last_prices_snapshot_per_timestamp` 开启时于时间片边界发布）。
+    /// Bar/Tick 事件的策略 context 共享该 Arc（O(1)），避免每 bar 全表克隆；
+    /// Timer/成交等其他事件仍使用工作副本的即时克隆，保证 buying_power
+    /// 在 cross-section 等回调中使用最新价格。
+    pub(crate) last_prices_snapshot: Arc<HashMap<String, Decimal>>,
+    /// 开关：context 的 last_prices 改为时间片快照（默认 false，保持逐 bar 快照）。
+    pub(crate) last_prices_snapshot_per_timestamp: bool,
     pub(crate) instruments: HashMap<String, Instrument>,
     pub(crate) current_date: Option<NaiveDate>,
     pub(crate) market_manager: MarketManager,
@@ -140,6 +148,26 @@ pub(crate) struct PendingStreamEvent {
 
 // Internal implementation of Engine (not exposed to Python)
 impl Engine {
+    /// 策略 context 使用的 last_prices：开关开启且为 Bar/Tick 事件时共享
+    /// 时间片快照（O(1) Arc 克隆），否则回退为工作副本的即时全表克隆（现行为）。
+    pub(crate) fn context_last_prices(
+        &self,
+        use_snapshot: bool,
+    ) -> Arc<HashMap<String, Decimal>> {
+        if use_snapshot && self.last_prices_snapshot_per_timestamp {
+            Arc::clone(&self.last_prices_snapshot)
+        } else {
+            Arc::new(self.last_prices.clone())
+        }
+    }
+
+    /// 在时间片边界发布 last_prices 不可变快照（仅在开关开启时生效）。
+    pub(crate) fn publish_last_prices_snapshot(&mut self) {
+        if self.last_prices_snapshot_per_timestamp {
+            self.last_prices_snapshot = Arc::new(self.last_prices.clone());
+        }
+    }
+
     fn current_account_metrics(&self) -> AccountMetrics {
         calculate_account_metrics(
             &self.state.portfolio,
@@ -677,6 +705,7 @@ impl Engine {
         step_rejected_orders: Vec<Order>,
         previous_cash: Decimal,
         previous_account_metrics: AccountMetrics,
+        use_last_prices_snapshot: bool,
     ) -> PyResult<Py<StrategyContext>> {
         self.ensure_strategy_context_capacity();
         let account_metrics = self.current_account_metrics();
@@ -685,6 +714,7 @@ impl Engine {
             .current_frozen_cash(&active_orders)
             .to_f64()
             .unwrap_or_default();
+        let last_prices = self.context_last_prices(use_last_prices_snapshot);
         if let Some(existing_ctx) = self
             .strategy_contexts
             .get(slot_index)
@@ -765,7 +795,7 @@ impl Engine {
                             .margin_daily_interest
                             .to_f64()
                             .unwrap_or_default(),
-                        last_prices: Arc::new(self.last_prices.clone()),
+                        last_prices: last_prices.clone(),
                     });
                 }
                 Ok::<_, PyErr>(py_ctx)
@@ -783,6 +813,7 @@ impl Engine {
             strategy_id,
             previous_cash,
             previous_account_metrics,
+            use_last_prices_snapshot,
         );
         let (py_ctx, persistent_ref) = Python::attach(|py| {
             let py_ctx = Py::new(py, ctx).unwrap();
@@ -1087,6 +1118,7 @@ impl Engine {
         strategy_id: Option<String>,
         previous_cash: Decimal,
         previous_account_metrics: AccountMetrics,
+        use_last_prices_snapshot: bool,
     ) -> StrategyContext {
         let account_metrics = self.current_account_metrics();
         let position_entry_prices = self.build_position_entry_prices();
@@ -1150,7 +1182,7 @@ impl Engine {
             margin_accrued_interest: self.margin_accrued_interest.to_f64().unwrap_or_default(),
             margin_daily_interest: self.margin_daily_interest.to_f64().unwrap_or_default(),
             instruments: Arc::new(self.instruments.clone()),
-            last_prices: Arc::new(self.last_prices.clone()),
+            last_prices: self.context_last_prices(use_last_prices_snapshot),
         })
     }
 
@@ -1224,6 +1256,7 @@ impl Engine {
                     step_rejected_orders,
                     previous_cash,
                     previous_account_metrics,
+                    true,
                 )?;
 
                 let args = Python::attach(|py| {
@@ -1266,6 +1299,7 @@ impl Engine {
                     step_rejected_orders,
                     previous_cash,
                     previous_account_metrics,
+                    true,
                 )?;
 
                 let args = Python::attach(|py| {
@@ -1306,6 +1340,7 @@ impl Engine {
                     step_rejected_orders,
                     previous_cash,
                     previous_account_metrics,
+                    false,
                 )?;
 
                 let args = Python::attach(|py| {
@@ -1379,6 +1414,7 @@ impl Engine {
                 step_rejected_orders.clone(),
                 previous_cash,
                 previous_account_metrics,
+                false,
             )?;
             let slot_strategy = self
                 .strategy_slot_strategies
