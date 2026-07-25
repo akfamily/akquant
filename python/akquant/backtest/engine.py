@@ -2176,12 +2176,10 @@ def _assert_strategy_bar_hooks_inert(strategy: "Strategy") -> None:
         reasons.append("策略覆写了 on_bar")
     if int(getattr(strategy, "_rolling_step", 0) or 0) > 0:
         reasons.append("启用了滚动训练（_rolling_step > 0）")
-    if hasattr(strategy, "_update_incremental_indicators"):
-        reasons.append("使用了增量指标（_update_incremental_indicators）")
+    if getattr(strategy, "_incremental_indicators", None):
+        reasons.append("注册了增量指标（_incremental_indicators）")
     if getattr(strategy, "_pending_schedules", None):
         reasons.append("存在 schedule 定时任务")
-    if getattr(strategy, "_indicator_recorder", None) is not None:
-        reasons.append("启用了指标记录（indicator_recorder）")
     if int(getattr(strategy, "warmup_period", 0) or 0) > 0:
         reasons.append("设置了 warmup_period")
     if reasons:

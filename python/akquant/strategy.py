@@ -1677,8 +1677,13 @@ class Strategy:
     def _on_timer_event(self, payload: str, ctx: StrategyContext) -> None:
         _on_timer_event_impl(self, payload, ctx)
 
-    def _flush_pending_order_events(self, ctx: StrategyContext) -> None:
-        _flush_pending_order_events_impl(self, ctx)
+    def _flush_pending_order_events(
+        self,
+        ctx: StrategyContext,
+        price_symbol: Optional[str] = None,
+        price: Optional[float] = None,
+    ) -> None:
+        _flush_pending_order_events_impl(self, ctx, price_symbol, price)
 
     def on_bar(self, bar: Bar) -> None:
         """

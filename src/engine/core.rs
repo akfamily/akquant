@@ -1238,8 +1238,14 @@ impl Engine {
                     });
                     strategy.call_method1("_on_bar_event", args)?;
                 }
+                // 顺带把本 bar 最新价带给策略级 _last_prices：
+                // skip_on_bar_event 模式下 on_bar_event 不运行，
+                // 定量 API（order_target_percent 等）依赖该簿记。
                 Python::attach(|py| {
-                    strategy.call_method1("_flush_pending_order_events", (py_ctx.clone_ref(py),))
+                    strategy.call_method1(
+                        "_flush_pending_order_events",
+                        (py_ctx.clone_ref(py), Some(b.symbol.as_str()), b.close.to_f64()),
+                    )
                 })?;
 
                 // Extract orders and timers
@@ -1281,7 +1287,10 @@ impl Engine {
 
                 strategy.call_method1("_on_tick_event", args)?;
                 Python::attach(|py| {
-                    strategy.call_method1("_flush_pending_order_events", (py_ctx.clone_ref(py),))
+                    strategy.call_method1(
+                        "_flush_pending_order_events",
+                        (py_ctx.clone_ref(py), Some(t.symbol.as_str()), t.price.to_f64()),
+                    )
                 })?;
 
                 // Extract orders and timers
@@ -1321,7 +1330,10 @@ impl Engine {
 
                 strategy.call_method1("_on_timer_event", args)?;
                 Python::attach(|py| {
-                    strategy.call_method1("_flush_pending_order_events", (py_ctx.clone_ref(py),))
+                    strategy.call_method1(
+                        "_flush_pending_order_events",
+                        (py_ctx.clone_ref(py), None::<&str>, None::<f64>),
+                    )
                 })?;
 
                 // Extract orders and timers
@@ -1394,9 +1406,15 @@ impl Engine {
             if let Some(ref slot_py) = slot_strategy {
                 slot_py
                     .bind(py)
-                    .call_method1("_flush_pending_order_events", (py_ctx.clone_ref(py),))?;
+                    .call_method1(
+                        "_flush_pending_order_events",
+                        (py_ctx.clone_ref(py), None::<&str>, None::<f64>),
+                    )?;
             } else {
-                strategy.call_method1("_flush_pending_order_events", (py_ctx,))?;
+                strategy.call_method1(
+                    "_flush_pending_order_events",
+                    (py_ctx, None::<&str>, None::<f64>),
+                )?;
             }
         }
 

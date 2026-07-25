@@ -246,8 +246,17 @@ def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
     _flush_indicator_snapshots(strategy)
 
 
-def flush_pending_order_events(strategy: Any, ctx: StrategyContext) -> None:
+def flush_pending_order_events(
+    strategy: Any,
+    ctx: StrategyContext,
+    price_symbol: Any = None,
+    price: Any = None,
+) -> None:
     """Flush pending order/trade callbacks without invoking a user market callback."""
     ensure_framework_state(strategy)
     strategy.ctx = ctx
+    if price_symbol is not None and price is not None:
+        # skip_on_bar_event 模式下 on_bar_event 不运行，
+        # 在此维护策略级最新价（order_target_percent 等定量 API 依赖）。
+        strategy._last_prices[price_symbol] = float(price)
     strategy._check_order_events()
