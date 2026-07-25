@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `run_backtest` 新增 `skip_inert_bar_hooks`（默认 False）：策略未覆写 `on_bar` 且未使用任何 bar 级钩子（滚动训练、增量指标、schedule 定时任务、指标记录、warmup_period）时，跳过每 bar 的 `on_bar` Python 回调以消除空转开销；开启前强制校验，不满足条件抛出 ValueError。`on_order`/`on_trade` 仍按 bar 送达，`on_cross_section`（timer 驱动）不受影响。
 - `get_account()` 账户快照新增 `free_margin` 字段（= `equity - used_margin`），表示真正可用于新开仓的可用保证金，与下单因保证金不足被拒时日志里的 `Available` 口径一致；期货保证金账户下 `cash`（现金余额）通常大于 `free_margin`，股票现金账户下二者相等。同时修正了 `cash` 在文档与 docstring 中「可用资金」的误导性表述，明确其为「现金余额」。
 - `BacktestConfig` 新增 `days_per_year`（年化天数因子，默认 252；数字货币 24/7 市场可设 365）与 `risk_free_rate`（年化无风险利率，默认 0.0）两个字段，用于参数化 Sharpe/Sortino/波动率等风险指标的年化口径。`risk_free_rate` 默认 0 不改变任何现有数值。
 
