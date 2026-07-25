@@ -78,7 +78,7 @@ def test_run_backtest_catalog_path_naive_boundaries_follow_timezone(
         start_time="2024-01-02 13:00:00",
         end_time="2024-01-02 14:00:00",
         timezone="UTC",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=akquant.CurrentClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,

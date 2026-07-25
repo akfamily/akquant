@@ -69,11 +69,23 @@ from ..strategy_framework_hooks import (
 )
 from ..strategy_loader import resolve_strategy_input
 from ..utils.inspector import infer_warmup_period
+from .fill_mode import FillMode
 from .result import BacktestResult
 
 _RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
 _collect_cross_section_entries_impl = collect_cross_section_timer_entries
 DEFAULT_TIMEZONE = "Asia/Shanghai"
+_LEGACY_FILL_POLICY_DICT_MSG = (
+    "fill_policy no longer accepts a dict. Use a FillMode object instead:\n"
+    '  {"price_basis": "open"}                                   -> NextOpen()\n'
+    '  {"price_basis": "close", "bar_offset": 0}                 -> CurrentClose()\n'
+    '  {"price_basis": "close", "bar_offset": 0,\n'
+    '   "temporal": "next_event"}                                -> '
+    'CurrentClose(timer_fill_timing="deferred")\n'
+    '  {"price_basis": "close", "bar_offset": 1}                 -> NextClose()\n'
+    '  {"price_basis": "ohlc4"}                                  -> NextAverage()\n'
+    '  {"price_basis": "hl2"}                                    -> NextHighLowMid()'
+)
 _RUNTIME_EXECUTION_MODE = getattr(cast(Any, _akquant_module), "ExecutionMode", None)
 _RUNTIME_MODE_NEXT_OPEN = getattr(_RUNTIME_EXECUTION_MODE, "NextOpen", "next_open")
 _RUNTIME_MODE_CURRENT_CLOSE = getattr(
@@ -147,17 +159,13 @@ def _normalize_commission_policy(
     return {"type": raw_type, "value": value}
 
 
-def make_fill_policy(
-    *,
-    price_basis: str,
-    temporal: str,
-    bar_offset: Optional[int] = None,
-) -> FillPolicy:
-    """Build a fill policy payload."""
-    policy: FillPolicy = {"price_basis": price_basis, "temporal": temporal}
-    if bar_offset is not None:
-        policy["bar_offset"] = bar_offset
-    return policy
+def make_fill_policy(*args: object, **kwargs: object) -> "FillMode":
+    """Raise TypeError; use FillMode objects (NextOpen(), CurrentClose(...)) instead."""
+    raise TypeError(
+        "make_fill_policy() has been removed. Use a FillMode object directly: "
+        "NextOpen(), NextClose(), NextAverage(), NextHighLowMid(), "
+        'CurrentClose(timer_fill_timing="immediate"|"deferred")'
+    )
 
 
 def _extract_strategy_log_context(
@@ -303,16 +311,24 @@ class PreparedStreamRuntime:
     stream_mode: str
 
 
-_SUPPORTED_FILL_PRICE_BASIS: set[str] = {"open", "close", "ohlc4", "hl2"}
-_RESERVED_FILL_PRICE_BASIS: set[str] = {"mid_quote", "vwap_window", "twap_window"}
 _SUPPORTED_FILL_TEMPORAL: set[str] = {"same_cycle", "next_event"}
-_SUPPORTED_FILL_BAR_OFFSET: set[int] = {0, 1}
-_DEFAULT_FILL_BAR_OFFSET: Dict[str, int] = {
-    "open": 1,
-    "close": 0,
-    "ohlc4": 1,
-    "hl2": 1,
-}
+
+
+def _basis_offset_to_mode(price_basis: str, bar_offset: int) -> Any:
+    """Map an already-validated (price_basis, bar_offset) pair to a mode enum.
+
+    No validation, no raise: callers must pass a triple that FillMode._to_core()
+    already produced (see FillMode/fill_mode_from_core for the legality rules).
+    """
+    if price_basis == "open":
+        return _RUNTIME_MODE_NEXT_OPEN
+    if price_basis == "close":
+        return (
+            _RUNTIME_MODE_CURRENT_CLOSE if bar_offset == 0 else _RUNTIME_MODE_NEXT_CLOSE
+        )
+    if price_basis == "ohlc4":
+        return _RUNTIME_MODE_NEXT_AVERAGE
+    return _RUNTIME_MODE_NEXT_HIGH_LOW_MID
 
 
 def _resolve_execution_policy(
@@ -328,65 +344,13 @@ def _resolve_execution_policy(
     resolved_source: Literal["fill_policy", "legacy"] = "legacy"
     if fill_policy is not None:
         if not isinstance(fill_policy, dict):
-            raise TypeError("fill_policy must be a dict")
-        raw_basis = str(fill_policy.get("price_basis", "open")).strip().lower()
-        raw_temporal = str(fill_policy.get("temporal", "same_cycle")).strip().lower()
-        if raw_basis not in _SUPPORTED_FILL_PRICE_BASIS:
-            if raw_basis in _RESERVED_FILL_PRICE_BASIS:
-                raise NotImplementedError(
-                    "fill_policy.price_basis='%s' is reserved but not implemented yet"
-                    % raw_basis
-                )
-            raise ValueError(
-                "fill_policy.price_basis must be one of: "
-                "open, close, ohlc4, hl2; "
-                "reserved: mid_quote, vwap_window, twap_window"
-            )
-        if raw_temporal not in _SUPPORTED_FILL_TEMPORAL:
-            raise ValueError(
-                "fill_policy.temporal must be one of: same_cycle, next_event"
-            )
-        raw_offset_value = fill_policy.get(
-            "bar_offset", _DEFAULT_FILL_BAR_OFFSET.get(raw_basis, 1)
+            raise TypeError("internal: fill_policy must be pre-translated to dict")
+        resolved_price_basis = str(fill_policy["price_basis"])
+        resolved_bar_offset = int(fill_policy["bar_offset"])
+        resolved_timer_policy = str(fill_policy["temporal"])
+        resolved_execution_mode = _basis_offset_to_mode(
+            resolved_price_basis, resolved_bar_offset
         )
-        try:
-            raw_offset = int(raw_offset_value)
-        except (TypeError, ValueError):
-            raise ValueError("fill_policy.bar_offset must be 0 or 1") from None
-        if raw_offset not in _SUPPORTED_FILL_BAR_OFFSET:
-            raise ValueError("fill_policy.bar_offset must be 0 or 1")
-        if raw_basis == "open":
-            if raw_offset != 1:
-                raise ValueError("fill_policy(open) requires bar_offset=1")
-            basis_mode = _RUNTIME_MODE_NEXT_OPEN
-        elif raw_basis == "close":
-            basis_mode = (
-                _RUNTIME_MODE_CURRENT_CLOSE
-                if raw_offset == 0
-                else _RUNTIME_MODE_NEXT_CLOSE
-            )
-        elif raw_basis == "ohlc4":
-            if raw_offset != 1:
-                raise ValueError("fill_policy(ohlc4) requires bar_offset=1")
-            basis_mode = _RUNTIME_MODE_NEXT_AVERAGE
-        else:
-            if raw_offset != 1:
-                raise ValueError("fill_policy(hl2) requires bar_offset=1")
-            basis_mode = _RUNTIME_MODE_NEXT_HIGH_LOW_MID
-        if execution_mode != _RUNTIME_MODE_NEXT_OPEN:
-            logger.warning(
-                "fill_policy overrides execution_mode=%s",
-                execution_mode,
-            )
-        if str(timer_execution_policy).strip().lower() != "same_cycle":
-            logger.warning(
-                "fill_policy overrides timer_execution_policy=%s",
-                timer_execution_policy,
-            )
-        resolved_execution_mode = basis_mode
-        resolved_timer_policy = raw_temporal
-        resolved_price_basis = raw_basis
-        resolved_bar_offset = raw_offset
         resolved_source = "fill_policy"
 
     if isinstance(resolved_execution_mode, str):
@@ -1108,7 +1072,7 @@ def _apply_strategy_config_overrides(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]],
     strategy_priority: Optional[Dict[str, int]],
     strategy_risk_budget: Optional[Dict[str, float]],
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]],
+    strategy_fill_policy: Optional[Dict[str, FillMode]],
     strategy_slippage: Optional[Dict[str, SlippageInput]],
     strategy_commission: Optional[Dict[str, CommissionPolicy]],
     portfolio_risk_budget: Optional[float],
@@ -1128,7 +1092,7 @@ def _apply_strategy_config_overrides(
     Optional[Dict[str, int]],
     Optional[Dict[str, int]],
     Optional[Dict[str, float]],
-    Optional[Dict[str, FillPolicy]],
+    Optional[Dict[str, FillMode]],
     Optional[Dict[str, SlippageInput]],
     Optional[Dict[str, CommissionPolicy]],
     Optional[float],
@@ -1216,7 +1180,7 @@ def _apply_strategy_config_overrides(
         )
     if strategy_fill_policy is None:
         strategy_fill_policy = cast(
-            Optional[Dict[str, FillPolicy]],
+            Optional[Dict[str, FillMode]],
             getattr(strategy_config, "strategy_fill_policy", None),
         )
     if strategy_slippage is None:
@@ -1341,7 +1305,7 @@ def _validate_strategy_risk_inputs(
 
 
 def _normalize_strategy_fill_policy_map(
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]],
+    strategy_fill_policy: Optional[Dict[str, FillMode]],
     configured_slot_ids: Sequence[str],
     logger: logging.Logger,
 ) -> Optional[Dict[str, FillPolicy]]:
@@ -1354,20 +1318,16 @@ def _normalize_strategy_fill_policy_map(
         strategy_key_str = str(strategy_key).strip()
         if not strategy_key_str:
             raise ValueError("strategy_fill_policy contains empty strategy id")
-        if not isinstance(raw_policy, dict):
+        if not isinstance(raw_policy, FillMode):
             raise TypeError(
-                f"strategy_fill_policy[{strategy_key_str}] must be a dict FillPolicy"
+                f"strategy_fill_policy[{strategy_key_str}] must be a FillMode "
+                "(NextOpen(), CurrentClose(...), ...)"
             )
-        resolved = _resolve_execution_policy(
-            execution_mode="next_open",
-            timer_execution_policy="same_cycle",
-            fill_policy=cast(FillPolicy, raw_policy),
-            logger=logger,
-        )
+        price_basis, bar_offset, temporal = raw_policy._to_core()
         normalized[strategy_key_str] = {
-            "price_basis": resolved.price_basis,
-            "bar_offset": int(resolved.bar_offset),
-            "temporal": resolved.temporal,
+            "price_basis": price_basis,
+            "bar_offset": int(bar_offset),
+            "temporal": temporal,
         }
     unknown_keys = sorted(set(normalized.keys()).difference(set(configured_slot_ids)))
     if unknown_keys:
@@ -2230,7 +2190,7 @@ def run_backtest(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = None,
     strategy_slippage: Optional[Dict[str, SlippageInput]] = None,
     strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,
@@ -2240,7 +2200,7 @@ def run_backtest(
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
     broker_profile: Optional[str] = None,
-    fill_policy: Optional[FillPolicy] = None,
+    fill_policy: Optional[Union[FillMode, FillPolicy]] = None,
     strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult:
@@ -2282,11 +2242,14 @@ def run_backtest(
                      {"type": "ticks", "value": 1}。
                      裸 float 仍兼容，但已不推荐，且按 percent 语义解析。
     :param volume_limit_pct: 成交量限制比例 (默认 0.25)
-    :param fill_policy: 统一成交语义配置（可选），格式:
-        {"price_basis": "open|close|ohlc4|hl2",
-         "bar_offset": "0|1",
-         "temporal": "same_cycle|next_event"}。
-        预留未实现 price_basis: mid_quote、vwap_window、twap_window。
+    :param fill_policy: 统一成交语义配置（可选），传入 ``FillMode`` 对象:
+        ``NextOpen()`` 下一根开盘价、``NextClose()`` 下一根收盘价、
+        ``CurrentClose()`` 当根收盘价、``NextAverage()`` 下一根 OHLC4 均价、
+        ``NextHighLowMid()`` 下一根 HL2 中位价。
+        ``CurrentClose`` 可选 ``timer_fill_timing="immediate"|"deferred"`` 控制
+        定时器触发下单是否延迟到下一事件成交。
+        旧的 dict 形式与 ``make_fill_policy(...)`` 已移除，
+        传入 dict 会抛出 ``TypeError``。
     :param legacy_execution_policy_compat: 已移除，不再支持。
     :param strict_strategy_params: 是否严格校验策略构造参数。True 时若参数不匹配将抛错；
                                    False 时保持兼容行为（忽略未知参数并在失败时
@@ -3592,19 +3555,25 @@ def run_backtest(
                     e,
                 )
 
+    if fill_policy is not None:
+        if isinstance(fill_policy, FillMode):
+            _pb, _bo, _tp = fill_policy._to_core()
+            fill_policy = {"price_basis": _pb, "bar_offset": _bo, "temporal": _tp}
+        elif isinstance(fill_policy, dict):
+            raise TypeError(_LEGACY_FILL_POLICY_DICT_MSG)
+
     resolved_policy = _resolve_execution_policy(
         execution_mode="next_open",
         timer_execution_policy="same_cycle",
         fill_policy=fill_policy,
         logger=logger,
     )
-    if not hasattr(engine, "set_fill_policy"):
+    if not hasattr(engine, "set_fill_mode"):
         raise RuntimeError(
-            "Engine binary does not expose set_fill_policy; please rebuild bindings"
+            "Engine binary does not expose set_fill_mode; please rebuild bindings"
         )
-    cast(Any, engine).set_fill_policy(
-        resolved_policy.price_basis,
-        resolved_policy.bar_offset,
+    cast(Any, engine).set_fill_mode(
+        resolved_policy.execution_mode,
         resolved_policy.temporal,
     )
     default_fill_policy: FillPolicy = {
@@ -3614,17 +3583,6 @@ def run_backtest(
     }
     for current_strategy in all_strategy_instances:
         setattr(current_strategy, "_default_fill_policy", dict(default_fill_policy))
-    timer_policy = resolved_policy.temporal
-    if (
-        not (resolved_policy.price_basis == "close" and resolved_policy.bar_offset == 0)
-        and timer_policy == "same_cycle"
-    ):
-        logger.info(
-            "temporal=%s has no effect when price_basis=%s and bar_offset=%s",
-            timer_policy,
-            resolved_policy.price_basis,
-            resolved_policy.bar_offset,
-        )
 
     # 4.1 市场规则配置
     china_futures_config: Optional[ChinaFuturesConfig] = None
@@ -4492,7 +4450,7 @@ def run_from_checkpoint(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
-    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillMode]] = None,
     strategy_slippage: Optional[Dict[str, SlippageInput]] = None,
     strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,
@@ -4608,6 +4566,19 @@ def run_from_checkpoint(
         api_name="run_from_checkpoint",
     )
     fill_policy_override = cast(Optional[FillPolicy], kwargs.pop("fill_policy", None))
+    # 显式 fill_policy 覆盖与 run_backtest 对称：接 FillMode、拒 dict（硬切断）。
+    # 注意：这里只处理"用户显式入参"，不影响下方 restored_backtest_config 快照分支
+    # ——那是 checkpoint 文件里的内部序列化 dict，不是公共 API 输入，须原样透传。
+    if fill_policy_override is not None:
+        if isinstance(fill_policy_override, FillMode):
+            _pb, _bo, _tp = fill_policy_override._to_core()
+            fill_policy_override = {
+                "price_basis": _pb,
+                "bar_offset": _bo,
+                "temporal": _tp,
+            }
+        elif isinstance(fill_policy_override, dict):
+            raise TypeError(_LEGACY_FILL_POLICY_DICT_MSG)
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
     symbols, effective_symbols = _resolve_effective_symbols(
         symbols=symbols,
@@ -5706,13 +5677,12 @@ def run_from_checkpoint(
             fill_policy=effective_fill_policy,
             logger=logger,
         )
-        if not hasattr(engine, "set_fill_policy"):
+        if not hasattr(engine, "set_fill_mode"):
             raise RuntimeError(
-                "Engine binary does not expose set_fill_policy; please rebuild bindings"
+                "Engine binary does not expose set_fill_mode; please rebuild bindings"
             )
-        cast(Any, engine).set_fill_policy(
-            resolved_policy_warm_start.price_basis,
-            resolved_policy_warm_start.bar_offset,
+        cast(Any, engine).set_fill_mode(
+            resolved_policy_warm_start.execution_mode,
             resolved_policy_warm_start.temporal,
         )
     if stream_on_event is not None:

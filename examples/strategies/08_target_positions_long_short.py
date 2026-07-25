@@ -105,7 +105,7 @@ if __name__ == "__main__":
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=aq.CurrentClose(),
         risk_config=RiskConfig(account_mode="margin", enable_short_sell=True),
         show_progress=False,
     )

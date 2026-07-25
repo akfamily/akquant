@@ -146,7 +146,7 @@ def main() -> None:
         symbols="MOCK_STOCK",
         initial_cash=1000.0,
         commission_rate=0.0003,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=aq.CurrentClose(),
         show_progress=False,
     )
 

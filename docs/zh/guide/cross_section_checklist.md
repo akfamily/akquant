@@ -5,7 +5,7 @@
 ## 1. 设计阶段
 
 *   明确横截面触发机制：优先 `on_timer`，无固定时点再考虑时间片收齐方案。
-*   明确信号时点与成交时点关系：特别是 `fill_policy={"price_basis":"open","bar_offset":1,"temporal":"same_cycle"}` 的跨 Bar 成交。
+*   明确信号时点与成交时点关系：特别是 `fill_policy=NextOpen()` 的跨 Bar 成交。
 *   固定并版本化 `universe` 来源，记录成分生效日期与调仓周期。
 *   定义持仓约束：单标的上限、行业集中度、现金留存、最小交易单位。
 

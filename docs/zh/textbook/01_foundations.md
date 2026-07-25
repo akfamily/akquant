@@ -30,7 +30,7 @@ python examples/textbook/ch01_quickstart.py
 1. 脚本可在本地直接运行完成，无异常退出。
 2. 终端输出包含回测结果统计字段（如 `total_return_pct`、`max_drawdown_pct`）。
 3. 能基于输出解释“收益”和“回撤”两个核心指标。
-4. 理解本示例默认采用三轴语义 `fill_policy={"price_basis":"open","bar_offset":1,"temporal":"same_cycle"}`，即“当根算信号、下一根开盘成交”。
+4. 理解本示例默认采用 `fill_policy=NextOpen()` 语义，即“当根算信号、下一根开盘成交”。
 
 ## 1.1 量化投资的定义与特征
 
@@ -211,7 +211,7 @@ JetBrains 出品的专业 Python IDE。
 
 3.  **回测配置与运行**：
     *   `aq.run_backtest`：启动回测引擎，并传入初始资金、手续费和最小交易单位等参数。
-    *   默认执行策略为 `fill_policy={"price_basis":"open","bar_offset":1,"temporal":"same_cycle"}`（下一根开盘成交）。
+    *   默认执行策略为 `fill_policy=NextOpen()`（下一根开盘成交）。
 
 ### 代码解析补充：先建立正确的时间心智模型
 

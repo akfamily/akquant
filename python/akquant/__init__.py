@@ -19,7 +19,13 @@ from .analyzer_plugin import AnalyzerManager, AnalyzerTemplate
 from .backtest import (  # type: ignore
     BacktestResult,
     BacktestStreamEvent,
+    CurrentClose,
+    FillMode,
     MergedResult,
+    NextAverage,
+    NextClose,
+    NextHighLowMid,
+    NextOpen,
     make_fill_policy,
     merge_results,
     run_backtest,
@@ -116,7 +122,7 @@ else:
 
 __doc__ = _akquant.__doc__
 if hasattr(_akquant, "__all__"):  # noqa: F405
-    __all__ = [name for name in _akquant.__all__ if name != "ExecutionMode"] + [  # noqa: F405
+    __all__ = list(_akquant.__all__) + [  # noqa: F405
         "load_bar_from_df",
         "prepare_dataframe",
         "normalize",
@@ -170,6 +176,12 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "run_live",
         "merge_results",
         "make_fill_policy",
+        "FillMode",
+        "NextOpen",
+        "NextClose",
+        "NextAverage",
+        "NextHighLowMid",
+        "CurrentClose",
         "plot_result",
         "plot_indicators",
         "BacktestResult",
@@ -261,6 +273,12 @@ else:
         "run_live",
         "merge_results",
         "make_fill_policy",
+        "FillMode",
+        "NextOpen",
+        "NextClose",
+        "NextAverage",
+        "NextHighLowMid",
+        "CurrentClose",
         "plot_result",
         "plot_indicators",
         "BacktestResult",

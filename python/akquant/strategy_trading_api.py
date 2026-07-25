@@ -1,7 +1,10 @@
 import warnings
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 
 from .akquant import OrderStatus, OrderType, PositionEffect, TimeInForce
+
+if TYPE_CHECKING:
+    from .backtest.fill_mode import FillMode
 from .gateway.broker_models import normalize_asset_type
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .log import get_logger
@@ -11,6 +14,19 @@ logger = get_logger("trading")
 OrderFillPolicy = Dict[str, Any]
 OrderSlippage = Dict[str, Any]
 OrderCommission = Dict[str, Any]
+
+
+def _reject_legacy_fill_mode(fill_mode: Any) -> None:
+    """公开下单入口的硬切断:``fill_mode`` 仅接受 :class:`FillMode`,dict → TypeError.
+
+    内部 dict 注入路径(pre-open / strategy map)不经此关卡,继续以 dict 流转。
+    """
+    from .backtest.fill_mode import FillMode
+
+    if fill_mode is not None and not isinstance(fill_mode, FillMode):
+        from .backtest.engine import _LEGACY_FILL_POLICY_DICT_MSG
+
+        raise TypeError(_LEGACY_FILL_POLICY_DICT_MSG)
 
 
 def resolve_symbol(strategy: Any, symbol: Optional[str]) -> str:
@@ -173,13 +189,14 @@ def buy(
     order_type: Optional[str] = None,
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
+    fill_mode: Optional["FillMode"] = None,
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
 ) -> OrderReceipt:
     """买入下单."""
+    _reject_legacy_fill_mode(fill_mode)
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
         return cast(
@@ -195,7 +212,7 @@ def buy(
                 order_type=order_type,
                 trail_offset=trail_offset,
                 trail_reference_price=trail_reference_price,
-                fill_policy=fill_policy,
+                fill_mode=fill_mode,
                 slippage=slippage,
                 commission=commission,
                 position_effect=_normalize_position_effect(position_effect, "auto"),
@@ -214,7 +231,7 @@ def buy(
         order_type=order_type_enum,
         trail_offset=trail_offset,
         trail_reference_price=trail_reference_price,
-        fill_policy=fill_policy,
+        fill_mode=fill_mode,
         slippage=slippage,
         commission=commission,
         position_effect=_normalize_position_effect(position_effect, "auto"),
@@ -233,13 +250,14 @@ def sell(
     order_type: Optional[str] = None,
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
+    fill_mode: Optional["FillMode"] = None,
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
 ) -> OrderReceipt:
     """卖出下单."""
+    _reject_legacy_fill_mode(fill_mode)
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
         return cast(
@@ -255,7 +273,7 @@ def sell(
                 order_type=order_type,
                 trail_offset=trail_offset,
                 trail_reference_price=trail_reference_price,
-                fill_policy=fill_policy,
+                fill_mode=fill_mode,
                 slippage=slippage,
                 commission=commission,
                 position_effect=_normalize_position_effect(position_effect, "auto"),
@@ -274,7 +292,7 @@ def sell(
         order_type=order_type_enum,
         trail_offset=trail_offset,
         trail_reference_price=trail_reference_price,
-        fill_policy=fill_policy,
+        fill_mode=fill_mode,
         slippage=slippage,
         commission=commission,
         position_effect=_normalize_position_effect(position_effect, "auto"),
@@ -293,7 +311,7 @@ def _submit_buy_side(
     order_type: Optional[Any] = None,
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
+    fill_mode: Optional["FillMode"] = None,
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
@@ -311,7 +329,7 @@ def _submit_buy_side(
             order_type=order_type,
             trail_offset=trail_offset,
             trail_reference_price=trail_reference_price,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
             position_effect=position_effect,
@@ -332,7 +350,7 @@ def _submit_buy_side_orders(
     order_type: Optional[Any] = None,
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
+    fill_mode: Optional["FillMode"] = None,
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
@@ -374,7 +392,7 @@ def _submit_buy_side_orders(
                     order_type=order_type,
                     trail_offset=trail_offset,
                     trail_reference_price=trail_reference_price,
-                    fill_policy=fill_policy,
+                    fill_mode=fill_mode,
                     slippage=slippage,
                     commission=commission,
                     position_effect=leg_effect,
@@ -383,8 +401,11 @@ def _submit_buy_side_orders(
             )
         return order_ids
 
-    effective_fill_policy = _resolve_effective_order_fill_policy(strategy, fill_policy)
-    fill_price_basis, fill_bar_offset, fill_temporal = _normalize_order_fill_policy(
+    explicit_fill_dict = _fill_mode_to_dict(fill_mode)
+    effective_fill_policy = _resolve_effective_order_fill_policy(
+        strategy, explicit_fill_dict
+    )
+    fill_mode_enum, fill_timer_timing = _normalize_order_fill_policy(
         effective_fill_policy
     )
     effective_slippage = _resolve_effective_order_slippage(strategy, slippage)
@@ -434,9 +455,8 @@ def _submit_buy_side_orders(
                 order_type,
                 trail_offset,
                 trail_reference_price,
-                fill_price_basis,
-                fill_bar_offset,
-                fill_temporal,
+                fill_mode_enum,
+                fill_timer_timing,
                 fill_slippage_type,
                 fill_slippage_value,
                 fill_commission_type,
@@ -460,7 +480,7 @@ def _submit_sell_side(
     order_type: Optional[Any] = None,
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
+    fill_mode: Optional["FillMode"] = None,
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
@@ -478,7 +498,7 @@ def _submit_sell_side(
             order_type=order_type,
             trail_offset=trail_offset,
             trail_reference_price=trail_reference_price,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
             position_effect=position_effect,
@@ -499,7 +519,7 @@ def _submit_sell_side_orders(
     order_type: Optional[Any] = None,
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
+    fill_mode: Optional["FillMode"] = None,
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
@@ -538,7 +558,7 @@ def _submit_sell_side_orders(
                     order_type=order_type,
                     trail_offset=trail_offset,
                     trail_reference_price=trail_reference_price,
-                    fill_policy=fill_policy,
+                    fill_mode=fill_mode,
                     slippage=slippage,
                     commission=commission,
                     position_effect=leg_effect,
@@ -547,8 +567,11 @@ def _submit_sell_side_orders(
             )
         return order_ids
 
-    effective_fill_policy = _resolve_effective_order_fill_policy(strategy, fill_policy)
-    fill_price_basis, fill_bar_offset, fill_temporal = _normalize_order_fill_policy(
+    explicit_fill_dict = _fill_mode_to_dict(fill_mode)
+    effective_fill_policy = _resolve_effective_order_fill_policy(
+        strategy, explicit_fill_dict
+    )
+    fill_mode_enum, fill_timer_timing = _normalize_order_fill_policy(
         effective_fill_policy
     )
     effective_slippage = _resolve_effective_order_slippage(strategy, slippage)
@@ -597,9 +620,8 @@ def _submit_sell_side_orders(
                 order_type,
                 trail_offset,
                 trail_reference_price,
-                fill_price_basis,
-                fill_bar_offset,
-                fill_temporal,
+                fill_mode_enum,
+                fill_timer_timing,
                 fill_slippage_type,
                 fill_slippage_value,
                 fill_commission_type,
@@ -731,34 +753,44 @@ def _parse_order_type(order_type: Optional[str]) -> Tuple[Optional[str], Optiona
     return key, getattr(OrderType, attr_name, None)
 
 
+def _fill_mode_to_dict(fill_mode: Optional["FillMode"]) -> Optional[OrderFillPolicy]:
+    """把公开传入的 ``FillMode`` 转为内部 dict,与内部注入 dict 统一流转.
+
+    ``None`` 透传(交由 ``_resolve_effective_order_fill_policy`` 决定 pre-open /
+    strategy map 注入)。硬切断(dict → TypeError)已在公开入口
+    :func:`_reject_legacy_fill_mode` 完成,此处仅翻译 FillMode。
+    """
+    if fill_mode is None:
+        return None
+    price_basis, bar_offset, temporal = fill_mode._to_core()
+    return {
+        "price_basis": price_basis,
+        "bar_offset": bar_offset,
+        "temporal": temporal,
+    }
+
+
 def _normalize_order_fill_policy(
     fill_policy: Optional[OrderFillPolicy],
-) -> Tuple[Optional[str], Optional[int], Optional[str]]:
+) -> Tuple[Optional[Any], Optional[str]]:
+    """内部 dict → ``(ExecutionMode, timer_timing)`` 的唯一收口.
+
+    内部注入路径(pre-open / strategy map)与公开 ``fill_mode`` 翻译后的 dict
+    在此统一。合法性由 :func:`fill_mode_from_core` 在枚举层保证(非法三元组不可
+    表达),故此处不再重复 ``open|ohlc4|hl2 requires bar_offset=1`` 校验。
+    """
     if fill_policy is None:
-        return None, None, None
+        return None, None
     if not isinstance(fill_policy, dict):
-        raise TypeError("fill_policy must be a dict when provided")
+        raise TypeError("internal: fill_policy must be a dict when provided")
+    from .backtest.fill_mode import fill_mode_from_core
+
     raw_basis = str(fill_policy.get("price_basis", "open")).strip().lower()
+    raw_offset = int(fill_policy.get("bar_offset", 0 if raw_basis == "close" else 1))
     raw_temporal = str(fill_policy.get("temporal", "same_cycle")).strip().lower()
-    if raw_basis not in {"open", "close", "ohlc4", "hl2"}:
-        raise ValueError(
-            "fill_policy.price_basis must be one of: open, close, ohlc4, hl2"
-        )
-    if raw_temporal not in {"same_cycle", "next_event"}:
-        raise ValueError("fill_policy.temporal must be one of: same_cycle, next_event")
-    raw_offset_value = fill_policy.get(
-        "bar_offset",
-        0 if raw_basis == "close" else 1,
-    )
-    try:
-        raw_offset = int(raw_offset_value)
-    except (TypeError, ValueError):
-        raise ValueError("fill_policy.bar_offset must be 0 or 1") from None
-    if raw_offset not in {0, 1}:
-        raise ValueError("fill_policy.bar_offset must be 0 or 1")
-    if raw_basis in {"open", "ohlc4", "hl2"} and raw_offset != 1:
-        raise ValueError(f"fill_policy({raw_basis}) requires bar_offset=1")
-    return raw_basis, raw_offset, raw_temporal
+    mode = fill_mode_from_core(raw_basis, raw_offset, raw_temporal)
+    mode_enum, timer_timing = mode.to_execution_mode()
+    return mode_enum, timer_timing
 
 
 def _normalize_order_slippage(
@@ -1405,12 +1437,13 @@ def short(
     time_in_force: Optional[TimeInForce] = None,
     trigger_price: Optional[float] = None,
     tag: Optional[str] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
+    fill_mode: Optional["FillMode"] = None,
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     reduce_only: bool = False,
 ) -> None:
     """卖出开空 (Short Sell)."""
+    _reject_legacy_fill_mode(fill_mode)
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
         submit_order_method(
@@ -1421,7 +1454,7 @@ def short(
             time_in_force=time_in_force,
             trigger_price=trigger_price,
             tag=tag,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
             position_effect="open",
@@ -1456,7 +1489,7 @@ def short(
             time_in_force=time_in_force,
             trigger_price=trigger_price,
             tag=tag,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
             position_effect="open",
@@ -1472,12 +1505,13 @@ def cover(
     time_in_force: Optional[TimeInForce] = None,
     trigger_price: Optional[float] = None,
     tag: Optional[str] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
+    fill_mode: Optional["FillMode"] = None,
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     reduce_only: bool = False,
 ) -> None:
     """买入平空 (Buy to Cover)."""
+    _reject_legacy_fill_mode(fill_mode)
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
         submit_order_method(
@@ -1488,7 +1522,7 @@ def cover(
             time_in_force=time_in_force,
             trigger_price=trigger_price,
             tag=tag,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
             position_effect="close",
@@ -1516,7 +1550,7 @@ def cover(
             time_in_force=time_in_force,
             trigger_price=trigger_price,
             tag=tag,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
             position_effect="close",
@@ -1813,7 +1847,7 @@ def _sim_submit_order(
     broker_options: Optional[Dict[str, Any]] = None,
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
-    fill_policy: Optional[OrderFillPolicy] = None,
+    fill_mode: Optional["FillMode"] = None,
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
@@ -1821,6 +1855,7 @@ def _sim_submit_order(
     asset_type: str = "stock",
 ) -> OrderReceipt:
     """统一下单接口（_sim_ 原语，复制自 submit_order:755-845，逻辑一字不改）."""
+    _reject_legacy_fill_mode(fill_mode)
     capabilities = get_execution_capabilities(strategy)
     if client_order_id and not bool(capabilities.get("client_order_id", False)):
         raise RuntimeError("client_order_id is not supported in current execution mode")
@@ -1861,7 +1896,7 @@ def _sim_submit_order(
             order_type=order_type_enum,
             trail_offset=trail_offset,
             trail_reference_price=trail_reference_price,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
             position_effect=normalized_position_effect,
@@ -1881,7 +1916,7 @@ def _sim_submit_order(
             order_type=order_type_enum,
             trail_offset=trail_offset,
             trail_reference_price=trail_reference_price,
-            fill_policy=fill_policy,
+            fill_mode=fill_mode,
             slippage=slippage,
             commission=commission,
             position_effect=normalized_position_effect,

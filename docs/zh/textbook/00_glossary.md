@@ -46,7 +46,7 @@
 
 - **事件驱动回测 (Event-Driven Backtesting)** —— 按时间逐事件推进、逐 Bar 撮合的回测范式，对应向量化回测。（第 4 章）
 - **撮合引擎 (Matching Engine)** —— 根据行情判断订单是否成交及成交价的模块。（第 4 章）
-- **三轴成交语义 (`fill_policy`)** —— 由 `price_basis`、`bar_offset`、`temporal` 三个维度共同决定成交价与成交时点。（第 4 章）
+- **成交模式 (`FillMode`)** —— 决定成交价与成交时点的命名执行模式，五种：`NextOpen()`、`NextClose()`、`NextAverage()`、`NextHighLowMid()`、`CurrentClose(timer_fill_timing=...)`。通过 `run_backtest(..., fill_policy=NextOpen())` 或订单级 `fill_mode=` 传入。（第 4 章）
 - **滑点与冲击成本 (Slippage / Market Impact)** —— 成交价劣于预期价的部分；冲击成本常用平方根法则刻画。（第 4 章）
 - **风控引擎 (RiskManager)** —— 引擎层独立于策略的预交易硬性风控。（第 4 章）
 

@@ -81,10 +81,10 @@
 * `on_pre_open` 在每个交易日的首个常规行情事件前，由框架预注册 timer 先触发一次。
 * `on_before_trading` 始终按“前一交易日/前一时点信息可见”的语义工作；在该回调里，`get_history()`、`get_account()`、`equity` 不应看到当日新 bar 或当日更新后的账户视图。
 * `on_cross_section` 会在框架见到当日首个“跨标的完整切片”后触发；在该回调里，可以看到当日历史和当前账户快照。
-* `on_after_trading` 是**结束/收尾型钩子**，定位为日终的统计、清理与归档。框架已让它在**当日收盘点的独立事件**（早于下一根 bar）触发，因此在其中提交的 `bar_offset=1` next-open 单会落在下一根 bar（而非再晚一格，#324）。但若你的意图是“收盘决策、次日开盘成交”，更清晰的写法是在 `on_bar`（next-open）或 `on_pre_open` 中下单。
-* **`TimeInForce.Day` 与 next-open 的过期语义**：日终结算会把当日仍未成交的 Day 单置为 `Expired`。对于在收盘后（如 `on_cross_section` / `on_after_trading`）提交的 `bar_offset=1` next-open Day 单，其唯一可撮合切片是**次日开盘**，晚于结算时点——框架据此豁免这类订单一次，让它先获得次日开盘的成交机会；只有当次日开盘仍未成交（如次日停牌），才在次日结算时过期（#334）。同一时点（`bar_offset=0`）的 Day 单其可撮合切片就在创建当日，因此仍在次日结算时按常规过期。若希望“收盘决策、次日成交”的委托不受当日过期约束，也可直接使用默认的 `GTC`。
+* `on_after_trading` 是**结束/收尾型钩子**，定位为日终的统计、清理与归档。框架已让它在**当日收盘点的独立事件**（早于下一根 bar）触发，因此在其中提交的 `NextOpen()` 单会落在下一根 bar（而非再晚一格，#324）。但若你的意图是“收盘决策、次日开盘成交”，更清晰的写法是在 `on_bar`（next-open）或 `on_pre_open` 中下单。
+* **`TimeInForce.Day` 与 next-open 的过期语义**：日终结算会把当日仍未成交的 Day 单置为 `Expired`。对于在收盘后（如 `on_cross_section` / `on_after_trading`）提交的 `NextOpen()` next-open Day 单，其唯一可撮合切片是**次日开盘**，晚于结算时点——框架据此豁免这类订单一次，让它先获得次日开盘的成交机会；只有当次日开盘仍未成交（如次日停牌），才在次日结算时过期（#334）。同一时点成交（`CurrentClose()`）的 Day 单其可撮合切片就在创建当日，因此仍在次日结算时按常规过期。若希望“收盘决策、次日成交”的委托不受当日过期约束，也可直接使用默认的 `GTC`。
 * 需要按**会话**(如期货日盘/夜盘)分支时,框架不再提供 `on_session_*` 回调;请在 `on_bar` / `on_tick` 内读取 `self.ctx.session`(`TradingSession` 枚举)自行判断,例如 `if self.ctx.session == TradingSession.Continuous: ...`。
-* `on_pre_open` 内若直接调用 `buy/sell/order_target_*` 且未显式传 `fill_policy`，框架会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。
+* `on_pre_open` 内若直接调用 `buy/sell/order_target_*` 且未显式传 `fill_mode`，框架会自动按 `NextOpen()`（下一根 open 成交）解析。
 * 这里表达的是框架侧“盘前决策，本次 open 成交”的时序语义，不等同于交易所或券商柜台已经实现了集合竞价专用报单、撤单窗口控制或专有价格类型。
 * 新股/新债打新不属于 `on_pre_open` 或当前统一 `submit_order(...)` 的默认承诺范围；若要支持，通常需要补齐 broker 专有字段与业务路由。
 * 若需要更精确的交易日边界触发，可在策略中设置 `self.enable_precise_day_boundary_hooks = True`；该开关只影响 `on_before_trading` / `on_after_trading` 的触发精度，不改变这些日边界回调中的历史数据与账户快照可见窗口。
@@ -174,7 +174,7 @@ class AuctionSignalStrategy(Strategy):
 
         signal = self.compute_pre_open_signal()
         if signal > 0:
-            # 不显式传 fill_policy 时，默认按当日 open 语义处理
+            # 不显式传 fill_mode 时，默认按 NextOpen()（当日 open）语义处理
             self.buy("000001", quantity=100)
         elif signal < 0:
             self.sell("000001", quantity=100)
@@ -184,7 +184,7 @@ class AuctionSignalStrategy(Strategy):
 
 * `on_pre_open` 里尽量只放“最后决策”和“下单”逻辑。
 * 盘前扫描、候选池更新、风控检查可以提前准备，但最终是否成交的决策留在 `on_pre_open`。
-* 如果你显式传入 `fill_policy`，将以你的显式配置为准。
+* 如果你显式传入 `fill_mode`（`FillMode` 对象），将以你的显式配置为准。
 
 时序提醒：
 
@@ -586,7 +586,7 @@ class CrossSectionBucketStrategy(Strategy):
 
 *   **停牌/缺失数据**：某些标的当日无 Bar 时，方案 B 可能不触发；可设置超时降级，或允许“有效样本数达阈值”即执行。
 *   **Universe 漂移**：成分股调整后若仍用旧列表，会出现权重与真实池不一致；建议定期刷新并记录生效日期。
-*   **调仓时点与成交策略错配**：例如 `fill_policy={"price_basis":"open","bar_offset":1}` 时，收盘时点信号会在下一根撮合；应结合 `fill_policy.temporal` 明确 timer 是否当期成交。
+*   **调仓时点与成交策略错配**：例如 `fill_policy=NextOpen()` 时，收盘时点信号会在下一根撮合；若用 `CurrentClose(...)`，应结合 `timer_fill_timing` 明确 timer 是否当期成交。
 *   **历史长度不足**：新上市或停牌恢复标的数据窗口不完整；评分前统一做 `len(closes)` 检查并跳过不足样本。
 *   **仓位未收敛**：多标的先卖后买若资金未及时释放，可能导致买入不足；可采用目标仓位 API 并在下一时点二次收敛。
 

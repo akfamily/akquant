@@ -13,6 +13,13 @@ import numpy as np
 import pandas as pd
 import pytest
 from akquant.backtest import engine as backtest_engine
+from akquant.backtest.fill_mode import (
+    CurrentClose,
+    NextAverage,
+    NextClose,
+    NextHighLowMid,
+    NextOpen,
+)
 from akquant.data import ParquetDataCatalog
 
 
@@ -349,11 +356,7 @@ class DailyTimerOrderLevelCurrentCloseStrategy(akquant.Strategy):
         """Initialize symbol and order-level fill policy."""
         super().__init__()
         self.symbol_ref = symbol
-        self.fill_policy = {
-            "price_basis": "close",
-            "bar_offset": 0,
-            "temporal": "same_cycle",
-        }
+        self.fill_mode = CurrentClose()
 
     def on_start(self) -> None:
         """Register opening and closing daily timers."""
@@ -367,7 +370,7 @@ class DailyTimerOrderLevelCurrentCloseStrategy(akquant.Strategy):
                 symbol=self.symbol_ref,
                 quantity=1,
                 tag="timer-buy",
-                fill_policy=self.fill_policy,
+                fill_mode=self.fill_mode,
             )
             return
         if payload != "daily_sell":
@@ -379,7 +382,7 @@ class DailyTimerOrderLevelCurrentCloseStrategy(akquant.Strategy):
             symbol=self.symbol_ref,
             quantity=available,
             tag="timer-sell",
-            fill_policy=self.fill_policy,
+            fill_mode=self.fill_mode,
         )
 
 
@@ -543,7 +546,7 @@ def test_current_close_timer_order_should_fill_at_timer_timestamp() -> None:
         data=bars,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -579,7 +582,7 @@ def test_daily_timer_trading_day_alignment_uses_local_calendar_day() -> None:
         data=data,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         t_plus_one=True,
         initial_cash=100000.0,
         commission_rate=0.0,
@@ -682,7 +685,7 @@ def test_current_close_timer_order_next_event_policy_fills_on_next_bar() -> None
         data=bars,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "next_event"},
+        fill_policy=CurrentClose(timer_fill_timing="deferred"),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -720,7 +723,7 @@ def test_current_close_bar_fill_unchanged_with_next_event_timer_policy() -> None
         data=bars,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "next_event"},
+        fill_policy=CurrentClose(timer_fill_timing="deferred"),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -753,7 +756,7 @@ def test_current_close_mixed_bar_timer_next_event_policy() -> None:
         data=bars,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "next_event"},
+        fill_policy=CurrentClose(timer_fill_timing="deferred"),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -802,7 +805,7 @@ def test_fill_policy_same_cycle_matches_legacy_parameters() -> None:
         data=bars,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -837,7 +840,7 @@ def test_fill_policy_next_event_matches_legacy_parameters() -> None:
         data=bars,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "next_event"},
+        fill_policy=CurrentClose(timer_fill_timing="deferred"),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -873,7 +876,7 @@ def test_run_backtest_catalog_path_loads_data(tmp_path: Path) -> None:
         strategy=SingleBuyStrategy,
         symbols=symbol,
         catalog_path=str(catalog_root),
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -891,7 +894,7 @@ def test_backtest_result_top_reject_reasons_and_lot_size_category() -> None:
         data=bars,
         strategy=SingleBuyStrategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=100,
         show_progress=False,
     )
@@ -917,7 +920,7 @@ def test_backtest_result_top_reject_reason_types_normalizes_dynamic_details() ->
         data=_build_regression_bars("REJECT_REASON_TYPE"),
         strategy=SingleBuyStrategy,
         symbols="REJECT_REASON_TYPE",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -1027,7 +1030,7 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
         (
             "next_open",
             "same_cycle",
-            {"price_basis": "ohlc4", "temporal": "next_event"},
+            {"price_basis": "ohlc4", "bar_offset": 1, "temporal": "next_event"},
             "ohlc4",
             "next_event",
             "fill_policy",
@@ -1035,7 +1038,7 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
         (
             "current_close",
             "next_event",
-            {"price_basis": "hl2", "temporal": "same_cycle"},
+            {"price_basis": "hl2", "bar_offset": 1, "temporal": "same_cycle"},
             "hl2",
             "same_cycle",
             "fill_policy",
@@ -1162,7 +1165,7 @@ def test_run_backtest_rejects_invalid_legacy_env_default(
         data=bars,
         strategy=NoopStrategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
     assert result.resolved_execution_policy is not None
@@ -1204,7 +1207,7 @@ def test_fill_policy_next_close_maps_to_next_bar_close() -> None:
         data=bars,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "bar_offset": 1, "temporal": "same_cycle"},
+        fill_policy=NextClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -1269,7 +1272,7 @@ def test_fill_policy_ohlc4_maps_to_next_average() -> None:
         data=bars,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "ohlc4", "temporal": "same_cycle"},
+        fill_policy=NextAverage(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -1298,7 +1301,7 @@ def test_fill_policy_hl2_maps_to_next_high_low_mid() -> None:
         data=bars,
         strategy=strategy,
         symbols=symbol,
-        fill_policy={"price_basis": "hl2", "temporal": "same_cycle"},
+        fill_policy=NextHighLowMid(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -1310,36 +1313,6 @@ def test_fill_policy_hl2_maps_to_next_high_low_mid() -> None:
 
     assert strategy.trade_timestamp == second_ts
     assert strategy.trade_price == pytest.approx(12.0)
-
-
-def test_fill_policy_reserved_mid_quote_raises_not_implemented() -> None:
-    """Reserved price_basis mid_quote should raise NotImplementedError."""
-    bars = _build_benchmark_data(3, "RESERVED_BASIS")
-    with pytest.raises(NotImplementedError, match="mid_quote"):
-        akquant.run_backtest(
-            data=bars,
-            strategy=SingleBuyStrategy,
-            symbols="RESERVED_BASIS",
-            fill_policy=cast(
-                Any, {"price_basis": "mid_quote", "temporal": "same_cycle"}
-            ),
-            show_progress=False,
-        )
-
-
-def test_fill_policy_reserved_vwap_window_raises_not_implemented() -> None:
-    """Reserved price_basis vwap_window should raise NotImplementedError."""
-    bars = _build_benchmark_data(3, "RESERVED_BASIS")
-    with pytest.raises(NotImplementedError, match="vwap_window"):
-        akquant.run_backtest(
-            data=bars,
-            strategy=SingleBuyStrategy,
-            symbols="RESERVED_BASIS",
-            fill_policy=cast(
-                Any, {"price_basis": "vwap_window", "temporal": "same_cycle"}
-            ),
-            show_progress=False,
-        )
 
 
 def test_run_backtest_accepts_data_feed_adapter() -> None:
@@ -1373,7 +1346,7 @@ def test_run_backtest_accepts_data_feed_adapter() -> None:
         data=adapter,
         strategy=SingleBuyStrategy,
         symbols=symbol,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -1395,7 +1368,7 @@ def test_run_backtest_accepts_symbols_alias_for_single_symbol() -> None:
         data=data,
         strategy=SingleBuyStrategy,
         symbols="ALIAS_SYMBOL",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -1416,7 +1389,7 @@ def test_run_backtest_rejects_legacy_symbol_keyword_alias() -> None:
             data=data,
             strategy=SingleBuyStrategy,
             symbol="DEPREC_SYMBOL",
-            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+            fill_policy=CurrentClose(),
             initial_cash=100000.0,
             commission_rate=0.0,
             stamp_tax_rate=0.0,
@@ -1436,7 +1409,7 @@ def test_run_backtest_uses_symbols_without_deprecation_warnings() -> None:
             data=data,
             strategy=SingleBuyStrategy,
             symbols="NO_WARN_SYMBOLS",
-            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+            fill_policy=CurrentClose(),
             initial_cash=100000.0,
             commission_rate=0.0,
             stamp_tax_rate=0.0,
@@ -1529,7 +1502,7 @@ def test_run_backtest_dataframe_multisymbol_preserves_bar_symbol() -> None:
         symbols=["IF2401.CFX", "IF2402.CFX"],
         start_time="2024-01-02",
         end_time="2024-01-03",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -1578,7 +1551,7 @@ def test_run_backtest_naive_dataframe_boundaries_follow_configured_timezone() ->
         start_time="2024-01-02 13:00:00",
         end_time="2024-01-02 14:00:00",
         timezone="UTC",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -1639,7 +1612,7 @@ def test_run_backtest_dataframe_multisymbol_row_order_keeps_metrics_stable() -> 
         symbols=["AAA", "BBB"],
         start_time="2024-01-02",
         end_time="2024-01-05",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -1718,7 +1691,7 @@ def test_run_backtest_list_boundaries_follow_configured_timezone() -> None:
         start_time="2024-01-02 13:00:00",
         end_time="2024-01-02 14:00:00",
         timezone="UTC",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -1792,7 +1765,7 @@ def test_engine_run_with_configured_slot_strategy() -> None:
     symbol = "SLOT_RUN"
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
 
@@ -1820,7 +1793,7 @@ def test_backtest_regression_baseline() -> None:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
     engine.set_t_plus_one(False)
@@ -1880,7 +1853,7 @@ def test_metrics_df_exposes_display_friendly_trade_counts() -> None:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
     engine.set_t_plus_one(False)
@@ -1952,9 +1925,9 @@ def test_metrics_df_exposes_display_friendly_trade_counts() -> None:
 def test_engine_set_fill_policy_roundtrip() -> None:
     """Engine fill policy API should expose three-axis tuple."""
     engine = akquant.Engine()
-    if not hasattr(engine, "set_fill_policy"):
+    if not hasattr(engine, "set_fill_mode"):
         pytest.skip("Engine binary does not expose fill policy methods")
-    cast(Any, engine).set_fill_policy("close", 1, "next_event")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.NextClose, "next_event")
     basis, bar_offset, temporal = cast(
         tuple[str, int, str], cast(Any, engine).get_fill_policy()
     )
@@ -1969,7 +1942,7 @@ def test_position_helper_exposes_runtime_entry_price() -> None:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
     engine.set_t_plus_one(False)
@@ -2013,15 +1986,6 @@ def test_position_helper_exposes_runtime_entry_price() -> None:
     assert "entry_price=0.0" in cast(str, strategy.snapshots[4]["repr"])
 
 
-def test_engine_set_fill_policy_invalid_combo() -> None:
-    """Engine fill policy should reject invalid basis/offset combos."""
-    engine = akquant.Engine()
-    if not hasattr(engine, "set_fill_policy"):
-        pytest.skip("Engine binary does not expose fill policy methods")
-    with pytest.raises(ValueError, match="requires bar_offset=1"):
-        cast(Any, engine).set_fill_policy("open", 0, "same_cycle")
-
-
 def test_backtest_performance_baseline() -> None:
     """Verify minimum throughput for a no-op strategy."""
     data = _build_benchmark_data(n=3000, symbol="PERF")
@@ -2035,7 +1999,7 @@ def test_backtest_performance_baseline() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -2086,7 +2050,7 @@ def test_run_backtest_engine_oco_avoids_same_batch_double_fill() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -2157,7 +2121,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -2183,7 +2147,7 @@ def test_run_backtest_on_event_emits_ordered_events() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         on_event=on_event,
@@ -2219,7 +2183,7 @@ def test_run_backtest_progress_total_uses_unique_timestamps_for_multisymbol() ->
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         on_event=events.append,
@@ -2281,7 +2245,7 @@ def test_run_backtest_on_event_matches_run_backtest_result() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -2322,7 +2286,7 @@ def test_run_backtest_on_event_emits_owner_strategy_id_for_trade_events() -> Non
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         on_event=events.append,
@@ -2350,7 +2314,7 @@ def test_run_backtest_without_on_event_keeps_legacy_semantics() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -2372,7 +2336,7 @@ def test_run_backtest_strategy_id_propagates_to_orders() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -2395,7 +2359,7 @@ def test_run_backtest_accepts_strategies_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategies_by_slot={"beta": NoopStrategy},
@@ -2421,7 +2385,7 @@ def test_run_backtest_multi_slot_owner_strategy_ids_mixed() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -2469,7 +2433,7 @@ def test_run_backtest_functional_on_start_on_stop_callbacks() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         initialize=initialize,
@@ -2535,7 +2499,7 @@ def test_run_backtest_functional_multi_slot_risk_matrix(
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -2583,7 +2547,7 @@ def test_run_backtest_strategy_max_order_value_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -2618,7 +2582,7 @@ def test_run_backtest_strategy_max_order_size_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -2658,7 +2622,7 @@ def test_run_backtest_strategy_slot_risk_from_config() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         config=config,
@@ -2687,7 +2651,7 @@ def test_run_backtest_unknown_risk_config_key_includes_structured_context(
             stamp_tax_rate=0.0,
             transfer_fee_rate=0.0,
             min_commission=0.0,
-            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+            fill_policy=CurrentClose(),
             lot_size=1,
             show_progress=False,
             strategy_id="alpha",
@@ -2720,7 +2684,7 @@ def test_run_backtest_slot_on_stop_error_includes_structured_context(
             stamp_tax_rate=0.0,
             transfer_fee_rate=0.0,
             min_commission=0.0,
-            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+            fill_policy=CurrentClose(),
             lot_size=1,
             show_progress=False,
             strategy_id="alpha",
@@ -2762,7 +2726,7 @@ def test_run_backtest_explicit_strategy_slot_risk_overrides_config() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         config=config,
@@ -2796,7 +2760,7 @@ def test_backtest_result_strategy_level_views() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -2827,7 +2791,7 @@ def test_backtest_result_risk_rejections_by_strategy_view() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -2864,7 +2828,7 @@ def test_backtest_result_risk_rejections_trend_view() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -2898,7 +2862,7 @@ def test_backtest_result_risk_rejections_trend_by_strategy_view() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -2983,7 +2947,7 @@ def test_run_backtest_strategy_max_position_size_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3032,7 +2996,7 @@ def test_run_backtest_strategy_max_daily_loss_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3081,7 +3045,7 @@ def test_run_backtest_strategy_max_drawdown_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3130,7 +3094,7 @@ def test_run_backtest_reduce_only_after_risk_allows_only_closing_orders() -> Non
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3161,7 +3125,7 @@ def test_run_backtest_strategy_risk_cooldown_blocks_orders() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3268,7 +3232,7 @@ def test_run_backtest_strategy_id_propagates_to_executions_df() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha_exec",
@@ -3292,7 +3256,7 @@ def test_run_backtest_with_on_event_matches_stream_entry() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -3349,7 +3313,7 @@ def test_run_backtest_on_event_multi_slot_owner_strategy_ids_mixed() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3387,7 +3351,7 @@ def test_run_backtest_on_event_strategy_priority_orders_requests_by_priority() -
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3427,7 +3391,7 @@ def test_run_backtest_on_event_portfolio_risk_budget_respects_priority_order() -
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3476,7 +3440,7 @@ def test_run_backtest_trade_notional_budget_blocks_later_orders() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3502,7 +3466,7 @@ def test_run_backtest_trade_notional_budget_resets_daily() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3531,7 +3495,7 @@ def test_run_backtest_on_event_strategy_max_order_value_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3568,7 +3532,7 @@ def test_run_backtest_on_event_strategy_max_order_size_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3605,7 +3569,7 @@ def test_run_backtest_on_event_strategy_max_position_size_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3642,7 +3606,7 @@ def test_run_backtest_on_event_strategy_max_daily_loss_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3679,7 +3643,7 @@ def test_run_backtest_on_event_strategy_max_drawdown_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3716,7 +3680,7 @@ def test_run_backtest_on_event_reduce_only_after_risk_by_slot() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -3765,7 +3729,7 @@ def test_run_backtest_on_event_high_frequency_keeps_critical_events() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         on_event=events.append,
@@ -3966,7 +3930,7 @@ def test_run_backtest_broker_profile_applies_defaults() -> None:
         data=_build_regression_bars("PROFILE"),
         strategy=ProfileCaptureStrategy,
         symbols="PROFILE",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         broker_profile="cn_stock_miniqmt",
         show_progress=False,
     )
@@ -3985,7 +3949,7 @@ def test_run_backtest_broker_profile_explicit_args_override_profile() -> None:
         data=_build_regression_bars("PROFILE_OVERRIDE"),
         strategy=ProfileCaptureStrategy,
         symbols="PROFILE_OVERRIDE",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         broker_profile="cn_stock_miniqmt",
         commission_rate=0.0011,
         stamp_tax_rate=0.0022,
@@ -4010,7 +3974,7 @@ def test_run_backtest_commission_policy_per_unit_overrides_rate_defaults() -> No
         data=_build_regression_bars("PROFILE_POLICY"),
         strategy=ProfileCaptureStrategy,
         symbols="PROFILE_POLICY",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         commission_policy={"type": "per_unit", "value": 0.5},
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
@@ -4030,7 +3994,7 @@ def test_run_backtest_broker_profile_explicit_zero_values_are_preserved() -> Non
         data=_build_regression_bars("PROFILE_ZERO"),
         strategy=ProfileCaptureStrategy,
         symbols="PROFILE_ZERO",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         broker_profile="cn_stock_miniqmt",
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
@@ -4071,7 +4035,7 @@ def test_run_backtest_broker_profile_additional_templates(
         data=_build_regression_bars("PROFILE_EXTRA"),
         strategy=ProfileCaptureStrategy,
         symbols="PROFILE_EXTRA",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         broker_profile=profile,
         show_progress=False,
     )
@@ -4139,7 +4103,7 @@ def test_run_backtest_analyzer_plugins_lifecycle_and_output() -> None:
         data=_build_regression_bars("ANALYZER"),
         strategy=RegressionStrategy,
         symbols="ANALYZER",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
         analyzer_plugins=[analyzer],
     )
@@ -4187,7 +4151,7 @@ def test_run_backtest_analyzer_plugins_multi_slot_owner_context() -> None:
         data=_build_regression_bars("ANALYZER_SLOT"),
         strategy=RegressionStrategy,
         symbols="ANALYZER_SLOT",
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": RegressionStrategy},
@@ -4241,7 +4205,7 @@ def test_run_backtest_china_futures_validation_prefix_override() -> None:
         strategy=FractionalFuturesBuyStrategy,
         symbols=symbol,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=config_reject,
     )
     reject_reasons = (
@@ -4277,7 +4241,7 @@ def test_run_backtest_china_futures_validation_prefix_override() -> None:
         strategy=FractionalFuturesBuyStrategy,
         symbols=symbol,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=config_accept,
     )
     accept_reject_reasons = (
@@ -4329,7 +4293,7 @@ def test_run_backtest_china_futures_instrument_template_multiplier() -> None:
         strategy=BuyAndHoldOnceStrategy,
         symbols=symbol,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=config,
     )
     final_equity = float(result.equity_curve.iloc[-1])
@@ -4384,7 +4348,7 @@ def test_run_backtest_instrument_lot_size_explicit_one_overrides_template() -> N
         strategy=LotProbeStrategy,
         symbols=symbol,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=config,
     )
     strategy = cast(LotProbeStrategy, result.strategy)
@@ -4460,7 +4424,7 @@ def test_run_backtest_china_futures_template_commission_prefix() -> None:
         strategy=BuyAndHoldOnceStrategy,
         symbols=symbol,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=base_config,
     )
     result_high_fee = akquant.run_backtest(
@@ -4468,7 +4432,7 @@ def test_run_backtest_china_futures_template_commission_prefix() -> None:
         strategy=BuyAndHoldOnceStrategy,
         symbols=symbol,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=high_fee_config,
     )
     assert float(result_high_fee.equity_curve.iloc[-1]) < float(
@@ -4619,7 +4583,7 @@ def test_run_backtest_china_options_fee_prefix() -> None:
         strategy=BuyAndHoldOnceStrategy,
         symbols=symbol,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=base_config,
     )
     result_high_fee = akquant.run_backtest(
@@ -4627,7 +4591,7 @@ def test_run_backtest_china_options_fee_prefix() -> None:
         strategy=BuyAndHoldOnceStrategy,
         symbols=symbol,
         show_progress=False,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         config=high_fee_config,
     )
     assert float(result_high_fee.equity_curve.iloc[-1]) < float(
@@ -4690,7 +4654,7 @@ def test_run_grid_search_parallel_accepts_fill_policy() -> None:
         param_grid={"dummy": [1, 2]},
         data=data,
         symbol="OPT_EXEC_MODE_ENUM",
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         max_workers=2,
         return_df=True,
         show_progress=False,
@@ -4991,7 +4955,7 @@ def test_run_backtest_lot_size_rejection_bridges_rust_warning(caplog: Any) -> No
             data=_build_regression_bars("LOT_WARN"),
             symbols="LOT_WARN",
             show_progress=False,
-            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+            fill_policy=CurrentClose(),
             lot_size=100,
         )
 
@@ -5040,7 +5004,7 @@ def test_run_backtest_futures_validation_rejection_bridges_rust_warning(
             data=_build_regression_bars("RB2310"),
             symbols="RB2310",
             show_progress=False,
-            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+            fill_policy=CurrentClose(),
             config=akquant.BacktestConfig(
                 strategy_config=akquant.StrategyConfig(initial_cash=1_000_000.0),
                 instruments_config=[
@@ -5111,7 +5075,7 @@ def test_run_backtest_ioc_cancel_bridges_rust_warning(caplog: Any) -> None:
             data=_build_regression_bars("IOC_WARN"),
             symbols="IOC_WARN",
             show_progress=False,
-            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+            fill_policy=CurrentClose(),
         )
 
     assert result is not None
@@ -5153,7 +5117,7 @@ def test_engine_tick_ioc_cancel_bridges_rust_warning(caplog: Any) -> None:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
     engine.add_instrument(
@@ -5249,7 +5213,7 @@ def test_run_backtest_stop_limit_deferred_bridges_rust_warning(caplog: Any) -> N
             data=bars,
             symbols="STOP_LIMIT_WARN",
             show_progress=False,
-            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+            fill_policy=CurrentClose(),
         )
 
     assert result is not None
@@ -5750,7 +5714,7 @@ def test_run_backtest_live_profile_renders_risk_context(
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",
@@ -7235,11 +7199,7 @@ def test_after_trading_next_open_order_fills_next_trading_day() -> None:
                     self.buy(
                         "AAA",
                         10000,
-                        fill_policy={
-                            "price_basis": "open",
-                            "bar_offset": 1,
-                            "temporal": "next_event",
-                        },
+                        fill_mode=NextOpen(),
                     )
 
             def on_trade(self, trade: akquant.Trade) -> None:
@@ -7564,11 +7524,7 @@ def test_rebalance_weights_same_cycle_cross_symbol_sell_funds_buy() -> None:
         t_plus_one=True,
         lot_size=100,
         show_progress=False,
-        fill_policy={
-            "price_basis": "close",
-            "bar_offset": 0,
-            "temporal": "same_cycle",
-        },
+        fill_policy=CurrentClose(),
     )
 
     # The CCC buy funded by the AAA sale must not be rejected.
@@ -7653,11 +7609,7 @@ def test_on_before_trading_no_lookahead_and_precise_hook_independent_fill() -> N
             commission_rate=0.0,
             stamp_tax_rate=0.0,
             show_progress=False,
-            fill_policy={
-                "price_basis": "open",
-                "bar_offset": 1,
-                "temporal": "same_cycle",
-            },
+            fill_policy=NextOpen(),
         )
         return strat
 
@@ -7720,11 +7672,7 @@ def test_on_cross_section_sees_current_day_and_same_cycle_fill() -> None:
         commission_rate=0.0,
         stamp_tax_rate=0.0,
         show_progress=False,
-        fill_policy={
-            "price_basis": "close",
-            "bar_offset": 0,
-            "temporal": "same_cycle",
-        },
+        fill_policy=CurrentClose(),
     )
 
     # Current-day data is visible: day 1 already sees day 1's close.

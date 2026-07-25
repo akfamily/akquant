@@ -3,7 +3,7 @@
 This chapter is currently maintained in Chinese first.
 
 - Chinese chapter: [第 4 章：事件驱动回测原理 (Event-Driven Architecture)](../../zh/textbook/04_backtest_engine.md)
-- New three-axis note: `fill_policy={"price_basis": "...", "bar_offset": 0_or_1, "temporal": "..."}` is now the recommended public style.
+- Fill mode note: `fill_policy=<FillMode>` (one of `CurrentClose()`, `NextOpen()`, `NextClose()`, `NextAverage()`, `NextHighLowMid()`) is now the recommended public style.
 - Configuration layering note (highest to lowest): order-level > strategy-map level (`strategy_*`) > run-level > market defaults.
 - Commission layering note: `commission_policy` is now the recommended run-level entry for `percent`, `fixed`, and `per_unit`; legacy `commission_rate` remains as a percent-only shorthand.
 - T+1 scope note: `t_plus_one` currently remains a run/market-level switch, not a per-strategy layered setting.

@@ -299,7 +299,7 @@ class BrokerOrderSubmitter:
         reduce_only: bool = False,
         extra: dict[str, Any] | None = None,
         asset_type: str = "stock",
-        fill_policy: Any = None,
+        fill_mode: Any = None,
         slippage: Any = None,
         commission: Any = None,
         trail_offset: float | None = None,
@@ -332,7 +332,7 @@ class BrokerOrderSubmitter:
         }:
             raise RuntimeError("broker_live 暂不支持追踪止损单(trail_offset/StopTrail)")
         for _name, _val in (
-            ("fill_policy", fill_policy),
+            ("fill_mode", fill_mode),
             ("slippage", slippage),
             ("commission", commission),
             ("broker_options", broker_options),

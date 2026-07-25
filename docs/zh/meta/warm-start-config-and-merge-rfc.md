@@ -59,6 +59,7 @@ snapshot = {
     "backtest_config": {              # 新增,可选
         "slippage": {"type": "percent", "value": 0.0001},
         "volume_limit_pct": 0.25,
+        # 内部序列化格式：仍以三元组落盘；公开入参 fill_policy 传 FillMode 对象
         "fill_policy": {"price_basis": "open", "temporal": "next_event", "bar_offset": 1},
         "commission_policy": {"type": "percent", "value": 0.0003},
         "stamp_tax_rate": 0.0,

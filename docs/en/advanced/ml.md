@@ -71,7 +71,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
-from akquant import Strategy, run_backtest
+from akquant import CurrentClose, Strategy, run_backtest
 from akquant.ml import SklearnAdapter
 
 class WalkForwardStrategy(Strategy):
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         strategy=WalkForwardStrategy,
         symbols="TEST",
         lot_size=1,
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"}, # Match at close of current bar
+        fill_policy=CurrentClose(),  # Match at close of current bar
         history_depth=60,
         warmup_period=50,
     )

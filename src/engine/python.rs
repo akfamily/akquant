@@ -19,7 +19,7 @@ use crate::history::HistoryBuffer;
 use crate::market::corporate_action::CorporateActionManager;
 use crate::market::manager::MarketManager;
 use crate::model::{
-    Bar, ExecutionPolicyCore, Instrument, Order, PriceBasis, TemporalPolicy, Timer, Trade,
+    Bar, ExecutionMode, ExecutionPolicyCore, Instrument, Order, PriceBasis, Timer, Trade,
     TradingSession, corporate_action::CorporateAction,
 };
 use crate::portfolio::Portfolio;
@@ -784,53 +784,14 @@ impl Engine {
             .register_matcher(asset_type, py_matcher);
     }
 
-    fn set_fill_policy(
-        &mut self,
-        price_basis: &str,
-        bar_offset: u8,
-        temporal: &str,
-    ) -> PyResult<()> {
-        let normalized_basis = price_basis.trim().to_lowercase();
-        let basis = match normalized_basis.as_str() {
-            "open" => PriceBasis::Open,
-            "close" => PriceBasis::Close,
-            "ohlc4" => PriceBasis::Ohlc4,
-            "hl2" => PriceBasis::Hl2,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "Unknown price_basis '{}', expected one of: open, close, ohlc4, hl2",
-                    price_basis
-                )));
-            }
-        };
-        if bar_offset > 1 {
-            return Err(PyValueError::new_err("bar_offset must be 0 or 1"));
+    fn set_fill_mode(&mut self, mode: ExecutionMode, timer_timing: &str) -> PyResult<()> {
+        let timing = timer_timing.trim().to_ascii_lowercase();
+        if timing != "same_cycle" && timing != "next_event" {
+            return Err(PyValueError::new_err(
+                "timer_timing must be one of: same_cycle, next_event",
+            ));
         }
-        let normalized_temporal = temporal.trim().to_lowercase();
-        let temporal_policy = match normalized_temporal.as_str() {
-            "same_cycle" => TemporalPolicy::SameCycle,
-            "next_event" => TemporalPolicy::NextEvent,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "Unknown temporal '{}', expected one of: same_cycle, next_event",
-                    temporal
-                )));
-            }
-        };
-        match basis {
-            PriceBasis::Open | PriceBasis::Ohlc4 | PriceBasis::Hl2 if bar_offset != 1 => {
-                return Err(PyValueError::new_err(
-                    "price_basis=open|ohlc4|hl2 requires bar_offset=1",
-                ));
-            }
-            _ => {}
-        }
-        let policy = ExecutionPolicyCore {
-            price_basis: basis,
-            bar_offset,
-            temporal: temporal_policy,
-        };
-        self.set_execution_policy_core(policy);
+        self.set_execution_policy_core(ExecutionPolicyCore::from_legacy(mode, &timing));
         Ok(())
     }
 

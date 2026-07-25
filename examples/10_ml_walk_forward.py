@@ -1,5 +1,6 @@
 from typing import Any, cast
 
+import akquant as aq
 import numpy as np
 import pandas as pd
 from akquant.akquant import Bar
@@ -180,7 +181,7 @@ if __name__ == "__main__":
         strategy=WalkForwardStrategy,
         symbols="TEST",
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=aq.CurrentClose(),
         history_depth=60,  # Explicitly pass history depth to ensure engine enables it
     )
     print("Backtest finished.")

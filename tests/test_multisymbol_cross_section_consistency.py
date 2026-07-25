@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
-from akquant import Bar, Strategy, run_backtest
+from akquant import Bar, CurrentClose, Strategy, run_backtest
 
 
 def _build_symbol_df(
@@ -77,7 +77,7 @@ def _run_multisymbol_bucket(
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         history_depth=2,
         show_progress=False,
     )
@@ -329,7 +329,7 @@ def test_rebalance_weights_rotation_liquidates_unmentioned_symbols() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
 
@@ -360,7 +360,7 @@ def test_rebalance_weights_uses_sell_proceeds_before_same_cycle_buy() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
 
@@ -413,7 +413,7 @@ def test_rebalance_positions_supports_same_cycle_long_short_rotation() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         risk_config={"account_mode": "margin", "enable_short_sell": True},
         show_progress=False,
     )
@@ -446,7 +446,7 @@ def test_rebalance_weights_split_allocation_is_close_to_target() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
 
@@ -476,7 +476,7 @@ def test_explicit_buy_quantity_is_rejected_without_resizing() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
 
@@ -665,7 +665,7 @@ def test_same_cycle_sell_then_buy_uses_post_sell_cash_for_sizing() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
 
@@ -714,7 +714,7 @@ def test_cross_section_same_cycle_terminal_fill_emits_callbacks() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
 
@@ -749,7 +749,7 @@ def test_after_bar_same_cycle_fill_preserves_all_order_callbacks() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
 
@@ -794,7 +794,7 @@ def test_after_bar_same_cycle_fill_preserves_result_views() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
 
@@ -894,7 +894,7 @@ def test_after_bar_uses_complete_timestamp_prices_for_cross_symbol_targets() -> 
         lot_size=100,
         history_depth=2,
         start_time="2023-01-02",
-        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         show_progress=False,
     )
 

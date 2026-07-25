@@ -5,7 +5,7 @@ Use this checklist to move a cross-section strategy from "it runs" to "it is rep
 ## 1. Design
 
 *   Select trigger model explicitly: prefer `on_timer`; use timestamp-completion only when no stable rebalance time exists.
-*   Define signal-to-fill timing clearly, especially for `fill_policy={"price_basis":"open","bar_offset":1,"temporal":"same_cycle"}`.
+*   Define signal-to-fill timing clearly, especially for `fill_policy=NextOpen()`.
 *   Version your `universe` source and track constituent effective dates.
 *   Define position constraints: max symbol weight, sector cap, cash buffer, lot-size rules.
 

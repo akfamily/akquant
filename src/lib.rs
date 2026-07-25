@@ -33,8 +33,8 @@ use data::{
 };
 use engine::Engine;
 use model::{
-    AssetType, Bar, Instrument, OptionMarginModel, OptionType, Order, OrderRole, OrderSide,
-    OrderStatus, OrderType, PositionEffect, SettlementType, Tick, TimeInForce, Trade,
+    AssetType, Bar, ExecutionMode, Instrument, OptionMarginModel, OptionType, Order, OrderRole,
+    OrderSide, OrderStatus, OrderType, PositionEffect, SettlementType, Tick, TimeInForce, Trade,
     TradingSession,
     corporate_action::{CorporateAction, CorporateActionType},
 };
@@ -68,6 +68,7 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Order>()?;
     m.add_class::<Trade>()?;
     m.add_class::<OrderType>()?;
+    m.add_class::<ExecutionMode>()?;
     m.add_class::<OrderRole>()?;
     m.add_class::<OrderSide>()?;
     m.add_class::<PositionEffect>()?;

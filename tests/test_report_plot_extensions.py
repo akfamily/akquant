@@ -5,7 +5,7 @@ from typing import cast
 
 import pandas as pd
 import pytest
-from akquant import Bar, Strategy, run_backtest
+from akquant import Bar, CurrentClose, Strategy, run_backtest
 from akquant.backtest._viz import VizNamespace
 from akquant.config import RiskConfig
 from akquant.plot import (
@@ -230,7 +230,7 @@ def test_report_contains_new_analysis_sections(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -259,7 +259,7 @@ def test_report_includes_trade_kline_with_market_data(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -290,7 +290,7 @@ def test_report_accepts_uppercase_market_data_columns(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -319,7 +319,7 @@ def test_report_accepts_market_data_alias_columns(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -348,7 +348,7 @@ def test_report_includes_benchmark_comparison_sections(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -384,7 +384,7 @@ def test_report_aligns_naive_benchmark_dates_without_notice(tmp_path: Path) -> N
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -416,7 +416,7 @@ def test_backtest_result_exposes_structured_benchmark_analysis() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -447,7 +447,7 @@ def test_export_benchmark_analysis_keeps_cjk_label_readable(tmp_path: Path) -> N
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -478,7 +478,7 @@ def test_report_shows_notice_for_range_index_benchmark(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -509,7 +509,7 @@ def test_report_handles_string_benchmark_with_notice(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -536,7 +536,7 @@ def test_report_handles_empty_trade_analysis_blocks(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -559,7 +559,7 @@ def test_report_optionally_includes_indicator_panel(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -592,7 +592,7 @@ def test_report_indicator_panel_handles_empty_indicator_outputs(tmp_path: Path) 
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -617,7 +617,7 @@ def test_plot_functions_return_figures_for_non_empty_result() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -646,7 +646,7 @@ def test_indicator_plot_functions_return_multi_pane_figures() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -683,7 +683,7 @@ def test_indicator_plot_renders_each_render_type() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -713,7 +713,7 @@ def test_indicator_plot_returns_none_without_indicator_data() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -732,7 +732,7 @@ def test_daily_curve_properties_reduce_intraday_points() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -757,7 +757,7 @@ def test_daily_curve_properties_follow_local_timezone_day() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -785,7 +785,7 @@ def test_report_accepts_curve_freq_daily(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -812,7 +812,7 @@ def test_report_rejects_invalid_curve_freq(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -833,7 +833,7 @@ def test_report_displays_normalized_reject_reason_types(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
     )
@@ -901,7 +901,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         lot_size=1,
         show_progress=False,
         risk_config=RiskConfig(

@@ -2,7 +2,7 @@ from typing import Any, Tuple
 
 import numpy as np
 import pandas as pd
-from akquant import Bar
+from akquant import Bar, CurrentClose
 from akquant.backtest import run_backtest
 from akquant.ml import SklearnAdapter
 from akquant.strategy import Strategy
@@ -139,7 +139,7 @@ if __name__ == "__main__":
         strategy=WalkForwardStrategy,
         symbols="TEST",
         lot_size=1,
-        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        fill_policy=CurrentClose(),
         history_depth=60,
         warmup_period=50,
     )
