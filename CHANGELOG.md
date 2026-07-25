@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BacktestConfig` 新增 `days_per_year`（年化天数因子，默认 252；数字货币 24/7 市场可设 365）与 `risk_free_rate`（年化无风险利率，默认 0.0）两个字段，用于参数化 Sharpe/Sortino/波动率等风险指标的年化口径。`risk_free_rate` 默认 0 不改变任何现有数值。
 
 ### Changed
+- 性能：账户指标与持仓成本价按版本缓存，同一时间片内策略回调、统计与订单事件共享一次计算（宽宇宙负载下减少每 bar 重复 O(P) 计算）；无非终态订单时冻结现金直接返回 0，跳过组合克隆与两轮保证金计算。行为完全等价（golden 净值曲线不变）。
 - **策略参数声明改为内联字段（破坏性）**：策略参数的单一事实来源现在是类体内联字段——直接用 `IntParam` / `FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` 赋值（如 `fast = IntParam(10, ge=2, le=200)`），经 `self.params.fast` 只读访问；`self.params` 在实例构造期即已校验就绪且 frozen，不支持运行期赋值。
     - **移除**：构造函数签名参数风格（`__init__(self, fast=10): self.fast=fast` 不再作为参数声明入口）、`PARAM_MODEL = XxxParams` 间接层（不再需要单独定义 `ParamModel` 子类）、适配层内部的 `_validate_with_signature` / `_build_signature_schema` 签名回退路径。`get_strategy_param_schema` / `validate_strategy_params` 现在只读取内联字段，不再回退到 `__init__` 签名推断。
     - **行为变更**：`start_time` / `symbols` / `end_time` 现在仅在策略显式声明为对应字段时才会被注入，不再隐式兜底；`strict_strategy_params=True`（默认）下，`param_grid` 或运行期 payload 中的未知键、越界取值（超出 `ge`/`le`、不在 `choices` 内）会直接报错，不再静默忽略；`strict_strategy_params=False` 时未知键会回退到字段默认值构造。
