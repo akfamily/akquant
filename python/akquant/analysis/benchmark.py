@@ -38,6 +38,9 @@ def normalize_returns_series_with_reason(
     series: pd.Series, series_label: str = "收益序列"
 ) -> tuple[pd.Series, Optional[str]]:
     """Normalize returns to a daily index and report validation errors."""
+    # pandas >= 2.3 的 dropna 会把 RangeIndex 物化为普通 Index，
+    # 必须在清洗前记录，否则 RangeIndex 会落入数值索引分支、丢失专属提示。
+    is_range_index = isinstance(series.index, pd.RangeIndex)
     cleaned = series.copy()
     cleaned = pd.to_numeric(cleaned, errors="coerce")
     cleaned = cast(pd.Series, cleaned.dropna())
@@ -45,7 +48,7 @@ def normalize_returns_series_with_reason(
         return cast(pd.Series, cleaned), f"{series_label}为空"
 
     raw_index = cleaned.index
-    if isinstance(raw_index, pd.RangeIndex):
+    if is_range_index or isinstance(raw_index, pd.RangeIndex):
         return (
             pd.Series(dtype=float),
             f"{series_label}索引必须为日期索引，当前为 RangeIndex",
