@@ -1097,7 +1097,9 @@ class MyStrategy(Strategy):
 *   `self.get_instrument_config(symbol, fields=None)`: 兼容接口；支持单字段或多字段批量读取。
 *   `self.get_instruments(symbols=None)`: 返回多个标的的快照字典。
 
-这些接口在 `on_start` 即可使用（回测启动阶段已注入快照）。
+这些接口在 `on_start` 即可使用：回测在启动阶段由 `InstrumentConfig` 注入快照，实盘（`run_live`）由传入的 `Instrument` 列表注入。
+
+注意两者字段覆盖不同：实盘入口只接 `Instrument` 对象，`option_type` / `strike_price` / `expiry_date` / `underlying_symbol` / `settlement_*` 在该对象上只作为构造入参存在、无法回读，因此实盘快照中这些字段为 `None`。上面例子里的 `expiry_date` / `strike_price` 读取在回测可用，实盘需自行通过策略参数或 `context` 传入。字段清单见 [InstrumentSnapshot](../reference/api.md#akquantinstrumentsnapshot)。
 
 ```python
 import akquant

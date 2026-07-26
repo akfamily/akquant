@@ -611,6 +611,7 @@ Notes:
 *   `expiry_date` uses `int(YYYYMMDD)` semantics.
 *   Snapshot data is available in `on_start`.
 *   Prefer `get_instrument` / `get_instrument_config` / `get_instrument_field` in strategy code.
+*   **Field coverage differs between backtest and live.** Backtest snapshots are populated from `InstrumentConfig` and carry every field. Live (`run_live`) only accepts `Instrument` objects, which expose just `symbol` / `asset_type` / `multiplier` / `margin_ratio` / `tick_size` / `lot_size` / `option_margin_model` / `implied_volatility` / `reference_volatility` for read-back, so `option_type` / `strike_price` / `expiry_date` / `underlying_symbol` / `settlement_type` / `settlement_price` / `static_attrs` are `None` (or empty) in live snapshots. Option strategies that depend on those fields must pass them in via strategy params or `context`.
 
 ### Configuration System Explained
 
@@ -875,11 +876,14 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
 
 **Trading Methods:**
 
-*   `buy(symbol, quantity, price=None, trigger_price=None, ...)`: Buy (open long / close short).
+*   `buy(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: Buy (open long / close short).
     *   Market order if `price` is not specified.
     *   Limit order if `price` is specified.
     *   Stop order (Stop Market) if `trigger_price` is specified.
-*   `sell(symbol, quantity, price=None, trigger_price=None, ...)`: Sell (close long / open short). Same parameters as above.
+    *   Omitting `symbol` uses the current bar/tick symbol; callbacks without market context (e.g. `on_start`) must pass it explicitly.
+    *   Omitting `quantity` sizes the order via `self.sizer` (defaults to `FixedSize(100)`, replaceable with `set_sizer()`).
+*   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: Sell (close long / open short). Same parameters as above, except that **omitting `quantity` does not use the sizer — it closes the whole position**: total position in backtest, available position under `broker_live` (China A-share T+1 freezes same-day buys, so sizing off the total gets the whole order rejected by the broker).
+*   When the resolved quantity is `<= 0`, no order is placed and an empty receipt is returned (`len(receipt) == 0`, `receipt.primary == ""`).
 *   `short(symbol, quantity, price=None, ...)`: Short sell.
 *   `cover(symbol, quantity, price=None, ...)`: Buy to cover.
 *   `submit_order(..., order_type="StopTrail", trail_offset=..., trail_reference_price=None)`: Submit a trailing stop order. `trail_offset` must be greater than 0.

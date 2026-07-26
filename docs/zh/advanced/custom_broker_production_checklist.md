@@ -15,6 +15,8 @@
 - 重复提交时返回已存在 `broker_order_id`，不重复报单
 - 撤单接口支持幂等（重复撤单不抛异常）
 - 订单状态机覆盖 `Submitted/PartiallyFilled/Filled/Cancelled/Rejected`
+- 若把 `client_order_id` 当幂等键：AKQuant 生成的格式为 `{broker}-{会话标记}-{会话内序号}`，会话标记每次 `run_live` 重新生成，因此跨重启与多进程并行都不会撞号；不要假设该 id 在重启后可复现
+- 声明 `supports_short_sell` 要与真实能力一致：声明 `False` 时，`side=Sell` + `position_effect=open` 会被 AKQuant 在下单前本地拒绝，不会下发柜台
 
 ## 3. 回报与状态同步
 

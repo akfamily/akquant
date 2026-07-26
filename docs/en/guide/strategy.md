@@ -695,7 +695,9 @@ Available APIs:
 *   `self.get_instrument_config(symbol, fields=None)`: Compatibility API for single or batch field access.
 *   `self.get_instruments(symbols=None)`: Returns snapshot dict for multiple symbols.
 
-These APIs are available in `on_start` (snapshots are injected before strategy start callbacks).
+These APIs are available in `on_start`: backtest injects snapshots from `InstrumentConfig`, live (`run_live`) injects them from the `Instrument` list you pass in.
+
+Field coverage differs between the two. The live entry point only accepts `Instrument` objects, and `option_type` / `strike_price` / `expiry_date` / `underlying_symbol` / `settlement_*` exist there only as constructor arguments — they cannot be read back — so those fields are `None` in live snapshots. The `expiry_date` / `strike_price` reads in the example below work in backtest; live strategies must pass them in via strategy params or `context`. See [InstrumentSnapshot](../reference/api.md#akquantinstrumentsnapshot) for the field list.
 
 ```python
 from akquant import Bar, Strategy
