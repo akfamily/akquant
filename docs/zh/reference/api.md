@@ -594,6 +594,7 @@ class InstrumentSnapshot:
 *   `expiry_date` 使用 `int(YYYYMMDD)` 语义。
 *   快照在 `on_start` 即可访问。
 *   建议在策略中通过 `get_instrument` / `get_instrument_config` / `get_instrument_field` 访问。
+*   **回测与实盘的字段覆盖不同**：回测快照由 `InstrumentConfig` 灌入，字段齐全；实盘（`run_live`）只接 `Instrument` 对象，它仅能回读 `symbol` / `asset_type` / `multiplier` / `margin_ratio` / `tick_size` / `lot_size` / `option_margin_model` / `implied_volatility` / `reference_volatility`，因此 `option_type` / `strike_price` / `expiry_date` / `underlying_symbol` / `settlement_type` / `settlement_price` / `static_attrs` 在实盘快照里为 `None`（或空 dict）。期权策略若依赖这些字段，需自行通过策略参数或 `context` 传入。
 
 ### 配置系统详解 (Configuration System)
 
@@ -897,11 +898,14 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 
 **交易方法:**
 
-*   `buy(symbol, quantity, price=None, trigger_price=None, ...)`: 买入（开多/平空）。
+*   `buy(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: 买入（开多/平空）。
     *   如果不指定 `price`，则为市价单。
     *   如果指定 `price`，则为限价单。
     *   如果指定 `trigger_price`，则为止损/止盈单 (Stop Market)。
-*   `sell(symbol, quantity, price=None, trigger_price=None, ...)`: 卖出（平多/开空）。参数同上。
+    *   不传 `symbol` 时取当前 bar/tick 的标的；在无行情上下文的回调（如 `on_start`）中必须显式传入。
+    *   不传 `quantity` 时按 `self.sizer` 计算下单量（默认 `FixedSize(100)`，可用 `set_sizer()` 替换）。
+*   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: 卖出（平多/开空）。参数同上，但**不传 `quantity` 时不走 sizer，而是全平当前持仓**：回测取总持仓，`broker_live` 取可用持仓（A 股 T+1 下当日买入部分不可卖，按总量报单会被柜台整单拒绝）。
+*   解析后下单量 `<= 0` 时不报单，返回空回执（`len(receipt) == 0`、`receipt.primary == ""`）。
 *   `submit_order(..., order_type="StopTrail", trail_offset=..., trail_reference_price=None)`: 提交跟踪止损单。`trail_offset` 必须大于 0。
 *   `submit_order(..., order_type="StopTrailLimit", price=..., trail_offset=..., trail_reference_price=None)`: 提交跟踪止损限价单。`price` 与 `trail_offset` 必填。
 *   `submit_order(..., broker_options={...})`: 可选 broker 扩展参数透传（回测阶段仅记录在订单对象 `order.broker_options` 上，便于联调与审计）。

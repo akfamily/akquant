@@ -15,6 +15,8 @@ Use this checklist to move a custom broker from "works in demo" to "production-r
 - Return existing `broker_order_id` on duplicate active submission
 - Make cancel requests idempotent
 - Cover full order lifecycle states: `Submitted/PartiallyFilled/Filled/Cancelled/Rejected`
+- If you treat `client_order_id` as an idempotency key: AKQuant generates `{broker}-{session tag}-{sequence}`, where the session tag is regenerated on every `run_live`, so ids never collide across restarts or parallel processes. Do not assume the id is reproducible after a restart.
+- Declare `supports_short_sell` truthfully: when it is `False`, AKQuant rejects `side=Sell` + `position_effect=open` locally before the order reaches your gateway.
 
 ## 3. Reports and State Sync
 

@@ -157,8 +157,15 @@ def validate_execution_semantics(
     capability: BrokerCapability,
     position_effect: str | None,
     reduce_only: bool = False,
+    side: str | None = None,
 ) -> str:
-    """Validate order semantics against the declared broker capability matrix."""
+    """Validate order semantics against the declared broker capability matrix.
+
+    `side` 可选(缺省 None 保持既有调用点兼容)。传入时额外校验卖空:
+    `side='sell'` + `position_effect='open'` 是开空语义, broker 若声明
+    `supports_short_sell=False` 则本地拒单——该字段此前在 broker_live 路径上
+    无任何消费者, 声明了也不生效, 只能等柜台报错。
+    """
     normalized_effect = normalize_position_effect(position_effect)
     supported = tuple(
         normalize_position_effect(item)
@@ -167,6 +174,15 @@ def validate_execution_semantics(
     if reduce_only and not capability.reduce_only:
         raise RuntimeError(
             f"broker '{capability.broker_name}' does not support reduce_only orders"
+        )
+    if (
+        str(side or "").strip().lower() == "sell"
+        and normalized_effect == "open"
+        and not capability.supports_short_sell
+    ):
+        raise RuntimeError(
+            f"broker '{capability.broker_name}' does not support short sell "
+            "(supports_short_sell=False)"
         )
     if normalized_effect != "auto" and not capability.position_effect:
         raise RuntimeError(

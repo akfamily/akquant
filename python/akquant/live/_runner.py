@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import threading
 import time
+import uuid
 from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from ..akquant import Bar, DataFeed, Engine, Instrument
@@ -17,7 +18,7 @@ from ..gateway.order_submitter import (
 )
 from ..indicator_recording import IndicatorSink
 from ..log import build_log_extra, get_logger
-from ..strategy import Strategy
+from ..strategy import InstrumentSnapshot, Strategy
 from ..strategy_loader import resolve_strategy_input
 from ..utils import format_metric_value
 from ._gateway_setup import (
@@ -43,6 +44,55 @@ logger = get_logger("gateway.live")
 
 # Backward-compatible alias; canonical definition lives in _gateway_setup.
 _LEGACY_GATEWAY_OPTION_KEYS = LEGACY_GATEWAY_OPTION_KEYS
+
+
+def _instruments_to_snapshots(
+    instruments: List[Instrument],
+) -> Dict[str, InstrumentSnapshot]:
+    """把 live 的 ``Instrument`` 列表转成策略侧可读的标的快照.
+
+    回测在 ``run_backtest`` 里把 ``InstrumentConfig`` 灌进
+    ``Strategy._set_instrument_snapshots``；live 此前完全没有这一步，
+    ``_instrument_snapshots`` 恒为空 dict，导致 ``get_instrument()`` /
+    ``get_instrument_field()`` 在实盘对**任何** symbol 都抛 KeyError。
+
+    覆盖范围受 live 入口形态限制: ``run_live`` 只接 ``Instrument``(Rust 对象)，
+    而它仅暴露 symbol/asset_type/multiplier/margin_ratio/tick_size/lot_size/
+    option_margin_model/implied_volatility/reference_volatility 九个可读字段。
+    option_type/strike_price/expiry_date/underlying_symbol/settlement_* 只在
+    构造入参上存在、不可回读，故实盘快照里保持 None——期权策略若依赖这些字段，
+    仍需自行传入，不能指望 ``get_instrument()``。
+    """
+    from ..backtest.engine import (
+        _asset_type_to_upper_name,
+        _option_margin_model_to_upper_name,
+    )
+
+    snapshots: Dict[str, InstrumentSnapshot] = {}
+    for inst in instruments or []:
+        symbol = str(inst.symbol)
+        snapshots[symbol] = InstrumentSnapshot(
+            symbol=symbol,
+            asset_type=_asset_type_to_upper_name(inst.asset_type),
+            multiplier=float(inst.multiplier),
+            margin_ratio=float(inst.margin_ratio),
+            tick_size=float(inst.tick_size),
+            lot_size=float(inst.lot_size),
+            option_margin_model=_option_margin_model_to_upper_name(
+                inst.option_margin_model
+            ),
+            implied_volatility=(
+                float(inst.implied_volatility)
+                if inst.implied_volatility is not None
+                else None
+            ),
+            reference_volatility=(
+                float(inst.reference_volatility)
+                if inst.reference_volatility is not None
+                else None
+            ),
+        )
+    return snapshots
 
 
 class _StrategyCallbackFanout:
@@ -492,6 +542,12 @@ class LiveRunner:
             setattr(target, "broker_ready", default_ready)
 
         strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
+        # getattr 兜底与同方法内 trading_mode 一致: 允许绕过 __init__ 的调用方。
+        instrument_snapshots = _instruments_to_snapshots(
+            getattr(self, "instruments", None) or []
+        )
+        for target in strategy_targets:
+            target._set_instrument_snapshots(instrument_snapshots)
         if self.context:
             for target in strategy_targets:
                 if hasattr(target, "_context"):
@@ -791,6 +847,8 @@ class LiveRunner:
         self._broker_event_bridge: Any = None
         self._broker_recovery: Any = None
         self._broker_submit_seq = 0
+        # 会话标记: 让 client_order_id 跨进程/跨重启唯一(见 _next_client_order_id)。
+        self._broker_session_tag = uuid.uuid4().hex[:8]
         self._broker_submit_lock = threading.Lock()
         self._broker_recovery_mode = self._normalize_broker_recovery_mode(
             getattr(self, "gateway_options", {}).get("recovery_mode", "compatible")
@@ -1122,9 +1180,18 @@ class LiveRunner:
         return payload_field(payload, field)
 
     def _next_client_order_id(self) -> str:
+        """生成 client_order_id: ``{broker}-{会话标记}-{会话内序号}``.
+
+        序号是实例字段, 每次 run_live 从 0 起。若只用序号(旧格式
+        ``{broker}-coid-{seq}``), 重启后第一笔单又是 ``...-coid-1``, 会与柜台
+        里同名的历史委托撞号——把 client_order_id 当幂等键的柜台会直接拒单
+        (实测中间件返回 409 Conflict)。加 8 位会话标记后, 同一进程内递增序号
+        保证顺序可读, 跨重启与多进程并行则由标记区分。
+        """
         with self._broker_submit_lock:
             self._broker_submit_seq += 1
-            return f"{self.broker}-coid-{self._broker_submit_seq}"
+            tag = getattr(self, "_broker_session_tag", "") or "nosess"
+            return f"{self.broker}-{tag}-{self._broker_submit_seq}"
 
     def _sync_order_id_mapping(
         self,

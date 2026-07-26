@@ -47,6 +47,10 @@ python examples/66_logging_audit_demo.py
 | **成交机制** | 假设成交 (Perfect Fill) | 真实撮合 (Partial/Reject) |
 | **延迟** | 零延迟 (Zero Latency) | 网络延迟 + 内部处理延迟 |
 | **状态管理** | 内存状态 (Transient) | 持久化状态 (Persistent) |
+| **缺省卖出量** | `sell()` 不传量时平总持仓 | 平**可用**持仓（T+1 当日买入部分不可卖） |
+| **标的静态属性** | `InstrumentConfig` 注入，字段齐全 | 仅 `Instrument` 可回读字段，期权/结算类字段为 `None` |
+
+前两行是数据与撮合层面的固有差异，后两行是接口层面的差异：同一段策略代码在两侧都能跑，但缺省下单量与可读的标的字段不完全一致，写策略时不要假设"回测读得到的字段实盘也读得到"。
 
 ### 15.1.2 交易接口 (Gateway)
 

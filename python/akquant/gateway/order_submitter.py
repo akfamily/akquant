@@ -8,6 +8,7 @@ from .broker_models import (
     validate_broker_extra,
     validate_execution_semantics,
 )
+from .broker_strategy_api import _resolve_symbol
 from .order_audit import record_reject, record_submit
 from .order_receipt import OrderLeg, OrderReceipt
 
@@ -276,6 +277,56 @@ class BrokerOrderSubmitter:
         self._sync_group_mapping = sync_group_mapping
         self._warned_ignored_params: set[str] = set()
 
+    def _resolve_quantity(
+        self,
+        symbol: str,
+        side: str,
+        price: float | None,
+        quantity: float | None,
+    ) -> float:
+        """把 ``quantity=None`` 解析为具体下单量, 对齐回测的缺省量语义.
+
+        回测两侧口径不同(见 `strategy_trading_api`):
+        买入侧 (`_submit_buy_side_orders`) 走 `sizer.get_size(...)`;
+        卖出侧 (`_submit_sell_side_orders`) 不走 sizer, 而是全平当前持仓。
+        broker_live 此前完全不做这一步, `quantity=None` 直接透传到
+        `resolve_live_order_legs`, 在 `quantity <= 0` 处以 TypeError 崩掉
+        —— 等价于 `set_sizer()` 在实盘静默失效。
+
+        与回测的一处有意偏离: 卖出全平取**可用**持仓而非总持仓。A 股 T+1
+        下总持仓含当日不可卖部分, 按总量报单会被柜台整单拒绝(硬失败),
+        取可用量则退化为部分卖出(软降级), 更贴近用户意图。
+        """
+        if quantity is not None:
+            return float(quantity)
+
+        execution = getattr(self._strategy, "execution", None)
+        if str(side).strip().lower() == "sell":
+            if execution is None:
+                raise RuntimeError(
+                    "quantity 未指定且执行后端未就绪, 无法按持仓推断卖出量"
+                )
+            return float(execution.get_available_position(symbol) or 0.0)
+
+        sizer = getattr(self._strategy, "sizer", None)
+        if sizer is None:
+            raise RuntimeError("quantity 未指定且策略未配置 sizer, 无法推断买入量")
+        ref_price = price
+        if ref_price is None:
+            last_prices = getattr(self._strategy, "_last_prices", None) or {}
+            ref_price = float(last_prices.get(symbol, 0.0) or 0.0)
+        cash = float(execution.get_cash()) if execution is not None else 0.0
+        # 实盘无回测 ctx(为 None); 自定义 sizer 若依赖 context 需自行兼容。
+        size = sizer.get_size(
+            float(ref_price), cash, getattr(self._strategy, "ctx", None), symbol
+        )
+        if size is None:
+            raise RuntimeError(
+                f"sizer {type(sizer).__name__}.get_size() 返回 None "
+                "(get_size 是否漏了 return?)"
+            )
+        return float(size)
+
     def install(self) -> None:
         """No-op: install now happens via `strategy.execution = BrokerExecution(...)`.
 
@@ -286,9 +337,9 @@ class BrokerOrderSubmitter:
 
     def submit_order(
         self,
-        symbol: str,
-        side: str,
-        quantity: float,
+        symbol: str | None = None,
+        side: str = "Buy",
+        quantity: float | None = None,
         price: float | None = None,
         client_order_id: str | None = None,
         order_type: str = "Market",
@@ -315,6 +366,11 @@ class BrokerOrderSubmitter:
         as "the" order id); `str(receipt)` is the `group_id` (client order id) and is
         a *different* id space in production brokers — do not use them
         interchangeably.
+
+        `symbol=None` / `quantity=None` 按回测同口径解析(见
+        :meth:`_resolve_quantity`): symbol 取当前 bar/tick, 买入量走
+        `strategy.sizer`, 卖出量取可用持仓。解析后 `quantity <= 0` 返回空回执,
+        不向柜台报单。
         """
         if not getattr(self._strategy, "broker_ready", True):
             raise RuntimeError(
@@ -346,11 +402,21 @@ class BrokerOrderSubmitter:
                 )
         capability = self._resolve_trader_capabilities(self._trader_gateway)
         validate_broker_extra(capability, extra)
+        # symbol/quantity 的缺省解析: 回测在 strategy_trading_api 内完成,
+        # broker_live 此前整条缺失(仅本地止损路径解析过 symbol), 这里补齐。
+        symbol = _resolve_symbol(self._strategy, symbol)
+        quantity = self._resolve_quantity(
+            symbol=symbol, side=side, price=price, quantity=quantity
+        )
+        if quantity <= 0:
+            # 回测对 quantity<=0 返回空单(不报单); 此前实盘会把 0 手单发给柜台。
+            return OrderReceipt(group_id="", order_ids=(), legs=())
         normalized_asset_type = normalize_asset_type(asset_type)
         normalized_position_effect = validate_execution_semantics(
             capability,
             position_effect,
             reduce_only,
+            side=side,
         )
         owner_strategy_id = str(
             getattr(self._strategy, "_owner_strategy_id", "_default")
