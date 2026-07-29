@@ -53,9 +53,24 @@ pub struct Engine {
     /// 克隆:该表从不暴露给 Python(无 getter,Python 侧另有 strategy._last_prices),
     /// 消费者仅在回调期间做键查找,故共享活视图与逐 bar 快照取值等价。
     ///
-    /// 锁纪律:写锁仅 core.rs 的 Bar/Tick 分支与 python.rs 的快照恢复三处,
-    /// 均不在任何 Python 调用内且无读锁存活。任何 guard 不得跨
-    /// call_method1 / Python::attach 存活(RwLock 写不可重入,会死锁)。
+    /// 锁纪律(真实机制,而非"guard 不跨 Python"这种过于乐观的表述):
+    /// 读锁**确实会**跨越到 Python 里去——`pipeline/stages/{channel,execution,
+    /// data}.rs` 里构造 EngineContext 时持有的读锁,会经
+    /// `execution_model.on_event` / `finalize_timestamp` 一路调进
+    /// `SimulatedExecutionClient` 再到用户通过 `register_custom_matcher`
+    /// 注册的自定义撮合器(`PyExecutionMatcher::match_order` 内部
+    /// `Python::attach` + `call_method1`),届时读锁是跨 Python 调用存活的。
+    /// 真正兜底的是:写锁只有 3 处(本文件 Bar/Tick 分支的 get-or-insert 快
+    /// 路径、python.rs 快照恢复),而这 3 处全部要求 `&mut Engine`——
+    /// `run(&mut self, ...)` 执行期间 Engine 的 PyCell 处于可变借用中,任何
+    /// 从自定义撮合器的 Python 代码再入 Engine 的 pymethod 都会触发
+    /// `PyBorrowMutError` 而不是被挂起,所以今天不会死锁。这条防线依赖
+    /// **不存在任何 `&self` 可达的 Python API 会去拿写锁**——`StrategyContext`
+    /// 目前也只有读路径(`get_buying_power`),同线程嵌套读在无写者排队时
+    /// 是安全的。一旦未来出现"以 `&self` 暴露、内部却写 last_prices"的
+    /// pymethod,或 StrategyContext 长出写路径,或撮合器路径上加了
+    /// `py.detach()`/`allow_threads`,这条防线就会失效并造成永久死锁
+    /// (std 的 RwLock 写锁请求会排队等待,不可重入)。
     pub(crate) last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
     pub(crate) instruments: HashMap<String, Instrument>,
     pub(crate) current_date: Option<NaiveDate>,

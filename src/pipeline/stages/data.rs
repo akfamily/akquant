@@ -138,6 +138,11 @@ impl DataProcessor {
         }
         let current_events: Vec<Event> = self.current_symbol_events.values().cloned().collect();
         if !current_events.is_empty() {
+            // 注意:此读锁会跨越下面的 finalize_timestamp 调用,自定义撮合器
+            // (register_custom_matcher)会经此路径调回用户 Python 代码。
+            // 安全性同 core.rs Engine.last_prices 字段注释:写锁只有 3 处
+            // 且都要求 &mut Engine,run() 期间该借用被占用,再入会
+            // PyBorrowMutError 而非阻塞。
             let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
             let ctx = EngineContext {
                 instruments: &engine.instruments,

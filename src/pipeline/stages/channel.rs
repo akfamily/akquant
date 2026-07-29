@@ -127,6 +127,11 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
         return;
     }
 
+    // 注意:此读锁会跨越下面的 on_event 调用,而 on_event 在装了自定义撮合器
+    // (register_custom_matcher)时会一路调进用户 Python 代码。这是安全的——
+    // 详见 core.rs Engine.last_prices 字段上的锁纪律说明:写锁只有 3 处且都
+    // 要求 &mut Engine,run() 期间该借用被占用,任何再入都会 PyBorrowMutError
+    // 而非阻塞,不会与本处的读锁死锁。
     let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
     let ctx = EngineContext {
         instruments: &engine.instruments,
