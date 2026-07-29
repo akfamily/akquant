@@ -1681,6 +1681,25 @@ class Strategy:
     def _flush_pending_order_events(self, ctx: StrategyContext) -> None:
         _flush_pending_order_events_impl(self, ctx)
 
+    def _on_bar_event_and_flush(self, bar: Bar, ctx: StrategyContext) -> None:
+        """引擎单次调用入口: Bar 回调 + 订单事件收尾 (Internal).
+
+        合并原先引擎侧的两次跨界(_on_bar_event 与 _flush_pending_order_events).
+        必须调用 self._on_bar_event 而非直接调 impl, 以保留子类覆写链——
+        VectorizedStrategy 在 super() 之后自增 cursors, 该顺序必须保持在
+        _check_order_events 之前.
+
+        不使用 try/finally: 原先 Rust 侧 `call_method1(...)?` 在 _on_bar_event
+        抛异常时不会执行第二次调用, 此处的顺序调用与该行为一致.
+        """
+        self._on_bar_event(bar, ctx)
+        self._check_order_events()
+
+    def _on_tick_event_and_flush(self, tick: Tick, ctx: StrategyContext) -> None:
+        """引擎单次调用入口: Tick 回调 + 订单事件收尾 (Internal)."""
+        self._on_tick_event(tick, ctx)
+        self._check_order_events()
+
     def on_bar(self, bar: Bar) -> None:
         """
         策略逻辑入口 (Bar 数据).
