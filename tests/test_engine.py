@@ -2130,6 +2130,91 @@ def test_run_backtest_engine_bracket_activates_exit_orders() -> None:
     assert {"entry", "stop", "take"}.issubset(tags)
 
 
+def test_run_backtest_engine_bracket_activates_exit_orders_from_timer() -> None:
+    """Engine bracket plan placed from on_timer(而非 on_bar)也应正确激活 exit orders.
+
+    Task 4 把 OCO/bracket 待注册计划从「Rust 侧每 bar getattr 轮询」改成
+    「_on_*_event_and_flush 的返回值通道」, Timer 分支是本任务新增的调用点
+    (`_on_timer_event_and_flush`, 见 src/engine/core.rs), 覆盖率最薄弱——
+    若该分支返回的 pending plans 被丢弃(例如误写成 `Ok((..., None))`),
+    全量测试与既有 Bar 路径的 oco/bracket 测试都不会变红, 只有从 Timer
+    回调下单的 bracket 会静默失去 stop/take 两条腿。本测试专门堵住这个口子。
+    """
+
+    class BracketFromTimerStrategy(akquant.Strategy):
+        """在 on_timer(而非 on_bar)中提交 bracket.
+
+        验证 Timer 分支的返回值通道确实把 pending plans 落地到引擎。
+        """
+
+        def __init__(self) -> None:
+            """Initialize one-shot timer state."""
+            super().__init__()
+            self.timer_fired = False
+
+        def on_start(self) -> None:
+            """注册一个落在 bar1/bar2 之间的一次性定时任务."""
+            self.schedule(
+                pd.Timestamp("2023-01-02 15:00:01", tz="UTC"), "timer_bracket"
+            )
+
+        def on_timer(self, payload: str) -> None:
+            """定时任务触发时提交 bracket(入场单在此立即以当前收盘价成交)."""
+            if payload != "timer_bracket" or self.timer_fired:
+                return
+            self.timer_fired = True
+            self.place_bracket(
+                symbol="BRACKET_TIMER",
+                quantity=1.0,
+                entry_price=100.0,
+                stop_trigger_price=95.0,
+                take_profit_price=110.0,
+                entry_tag="entry",
+                stop_tag="stop",
+                take_profit_tag="take",
+            )
+
+    symbol = "BRACKET_TIMER"
+    bars = [
+        akquant.Bar(
+            _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc)),
+            100.0,
+            100.0,
+            100.0,
+            100.0,
+            1000.0,
+            symbol,
+        ),
+        akquant.Bar(
+            _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc)),
+            110.0,
+            111.0,
+            100.0,
+            110.0,
+            1000.0,
+            symbol,
+        ),
+    ]
+    strategy = BracketFromTimerStrategy()
+    result = akquant.run_backtest(
+        data=bars,
+        strategy=strategy,
+        symbols=symbol,
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy=CurrentClose(),
+        lot_size=1,
+        show_progress=False,
+    )
+
+    assert strategy.timer_fired is True
+    tags = set(result.orders_df["tag"].astype(str))
+    assert {"entry", "stop", "take"}.issubset(tags)
+
+
 def test_run_backtest_on_event_emits_ordered_events() -> None:
     """Stream API should emit ordered lifecycle events."""
     data = _build_benchmark_data(n=20, symbol="STREAM")
