@@ -49,7 +49,14 @@ pub struct StrategySlot {
 #[pyclass]
 pub struct Engine {
     pub(crate) state: SharedState,
-    pub(crate) last_prices: HashMap<String, Decimal>,
+    /// 每 bar 交给 StrategyContext 的价格表。用 Arc<RwLock<..>> 而非每 bar
+    /// 克隆:该表从不暴露给 Python(无 getter,Python 侧另有 strategy._last_prices),
+    /// 消费者仅在回调期间做键查找,故共享活视图与逐 bar 快照取值等价。
+    ///
+    /// 锁纪律:写锁仅 core.rs 的 Bar/Tick 分支与 python.rs 的快照恢复三处,
+    /// 均不在任何 Python 调用内且无读锁存活。任何 guard 不得跨
+    /// call_method1 / Python::attach 存活(RwLock 写不可重入,会死锁)。
+    pub(crate) last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
     pub(crate) instruments: HashMap<String, Instrument>,
     pub(crate) current_date: Option<NaiveDate>,
     pub(crate) market_manager: MarketManager,
@@ -155,9 +162,10 @@ pub(crate) struct PendingEnginePlans {
 // Internal implementation of Engine (not exposed to Python)
 impl Engine {
     fn current_account_metrics(&self) -> AccountMetrics {
+        let prices = self.last_prices.read().expect("last_prices 读锁被污染");
         calculate_account_metrics(
             &self.state.portfolio,
-            &self.last_prices,
+            &prices,
             &self.instruments,
             &self.state.order_manager.trade_tracker,
             &self.risk_manager.config,
@@ -174,8 +182,9 @@ impl Engine {
         } else {
             None
         };
+        let prices = self.last_prices.read().expect("last_prices 读锁被污染");
         let base_used = self.state.portfolio.calculate_used_margin_with_stock_ratio(
-            &self.last_prices,
+            &prices,
             &self.instruments,
             stock_ratio_override,
         );
@@ -209,7 +218,7 @@ impl Engine {
             projected.adjust_position(&order.symbol, next_pos - current_pos);
         }
         let projected_used = projected.calculate_used_margin_with_stock_ratio(
-            &self.last_prices,
+            &prices,
             &self.instruments,
             stock_ratio_override,
         );
@@ -322,7 +331,11 @@ impl Engine {
         let price = if let Some(p) = order.price {
             Some(p)
         } else {
-            self.last_prices.get(&order.symbol).copied()
+            self.last_prices
+                .read()
+                .expect("last_prices 读锁被污染")
+                .get(&order.symbol)
+                .copied()
         }?;
         Some((price * order.quantity).abs())
     }
@@ -426,7 +439,11 @@ impl Engine {
         let price = if let Some(p) = order.price {
             Some(p)
         } else {
-            self.last_prices.get(&order.symbol).copied()
+            self.last_prices
+                .read()
+                .expect("last_prices 读锁被污染")
+                .get(&order.symbol)
+                .copied()
         }?;
         let value = price * order.quantity;
         if value > *max_value {
@@ -509,6 +526,7 @@ impl Engine {
             .get(strategy_id)
             .copied()
             .unwrap_or(Decimal::ZERO);
+        let prices = self.last_prices.read().expect("last_prices 读锁被污染");
         let mark_to_market = self
             .strategy_positions
             .get(strategy_id)
@@ -516,11 +534,7 @@ impl Engine {
                 positions
                     .iter()
                     .map(|(symbol, qty)| {
-                        let price = self
-                            .last_prices
-                            .get(symbol)
-                            .copied()
-                            .unwrap_or(Decimal::ZERO);
+                        let price = prices.get(symbol).copied().unwrap_or(Decimal::ZERO);
                         *qty * price
                     })
                     .sum::<Decimal>()
@@ -770,7 +784,7 @@ impl Engine {
                         .to_f64()
                         .unwrap_or_default(),
                     margin_daily_interest: self.margin_daily_interest.to_f64().unwrap_or_default(),
-                    last_prices: Arc::new(self.last_prices.clone()),
+                    last_prices: Arc::clone(&self.last_prices),
                 });
             }
             return Ok(py_ctx);
@@ -1152,7 +1166,7 @@ impl Engine {
             margin_accrued_interest: self.margin_accrued_interest.to_f64().unwrap_or_default(),
             margin_daily_interest: self.margin_daily_interest.to_f64().unwrap_or_default(),
             instruments: Arc::new(self.instruments.clone()),
-            last_prices: Arc::new(self.last_prices.clone()),
+            last_prices: Arc::clone(&self.last_prices),
         })
     }
 
@@ -1225,11 +1239,15 @@ impl Engine {
                 let previous_cash = self.state.portfolio.cash;
                 let previous_account_metrics = self.current_account_metrics();
                 // 快路径:symbol 通常已存在于 last_prices,get_mut 命中即可原地更新,
-                // 避免每 bar 都为 insert 克隆一次 String。
-                match self.last_prices.get_mut(&b.symbol) {
-                    Some(slot) => *slot = b.close,
-                    None => {
-                        self.last_prices.insert(b.symbol.clone(), b.close);
+                // 避免每 bar 都为 insert 克隆一次 String。写锁显式限定在本块内,
+                // 在调用 get_or_create_strategy_context / Python 之前释放。
+                {
+                    let mut prices = self.last_prices.write().expect("last_prices 写锁被污染");
+                    match prices.get_mut(&b.symbol) {
+                        Some(slot) => *slot = b.close,
+                        None => {
+                            prices.insert(b.symbol.clone(), b.close);
+                        }
                     }
                 }
                 let py_ctx = self.get_or_create_strategy_context(
@@ -1277,10 +1295,13 @@ impl Engine {
             Event::Tick(t) => {
                 let previous_cash = self.state.portfolio.cash;
                 let previous_account_metrics = self.current_account_metrics();
-                match self.last_prices.get_mut(&t.symbol) {
-                    Some(slot) => *slot = t.price,
-                    None => {
-                        self.last_prices.insert(t.symbol.clone(), t.price);
+                {
+                    let mut prices = self.last_prices.write().expect("last_prices 写锁被污染");
+                    match prices.get_mut(&t.symbol) {
+                        Some(slot) => *slot = t.price,
+                        None => {
+                            prices.insert(t.symbol.clone(), t.price);
+                        }
                     }
                 }
                 let py_ctx = self.get_or_create_strategy_context(

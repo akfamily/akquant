@@ -47,10 +47,11 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
     let check_result = if let Some(err) = strategy_limit_err {
         Err(err)
     } else {
+        let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
         let ctx = EngineContext {
             instruments: &engine.instruments,
             portfolio: &engine.state.portfolio,
-            last_prices: &engine.last_prices,
+            last_prices: &prices,
             trade_tracker: &engine.state.order_manager.trade_tracker,
             market_model: engine.market_manager.model.as_ref(),
             execution_policy_core: engine.execution_policy_core(),
@@ -126,10 +127,11 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
         return;
     }
 
+    let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
     let ctx = EngineContext {
         instruments: &engine.instruments,
         portfolio: &engine.state.portfolio,
-        last_prices: &engine.last_prices,
+        last_prices: &prices,
         trade_tracker: &engine.state.order_manager.trade_tracker,
         market_model: engine.market_manager.model.as_ref(),
         execution_policy_core: engine.execution_policy_core(),
@@ -143,6 +145,8 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
     };
 
     let reports = engine.execution_model.on_event(&event, &ctx);
+    drop(ctx);
+    drop(prices);
     for report in reports {
         let _ = engine.event_manager.send(report);
     }

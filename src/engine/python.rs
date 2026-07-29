@@ -52,9 +52,10 @@ impl Engine {
     }
 
     fn get_account_metrics(&self) -> (f64, f64, f64, f64, f64, f64) {
+        let prices = self.last_prices.read().expect("last_prices 读锁被污染");
         let metrics = calculate_account_metrics(
             &self.state.portfolio,
-            &self.last_prices,
+            &prices,
             &self.instruments,
             &self.state.order_manager.trade_tracker,
             &self.risk_manager.config,
@@ -506,7 +507,7 @@ impl Engine {
         let initial_cash = Decimal::from(100_000);
         Engine {
             state: SharedState::new(initial_cash),
-            last_prices: HashMap::new(),
+            last_prices: Arc::new(RwLock::new(HashMap::new())),
             instruments: HashMap::new(),
             current_date: None,
             market_manager: MarketManager::new(),
@@ -594,7 +595,11 @@ impl Engine {
             current_time: self.clock.timestamp().unwrap_or(0),
             portfolio: self.state.portfolio.clone(),
             order_manager: self.state.order_manager.clone(),
-            last_prices: self.last_prices.clone(),
+            last_prices: self
+                .last_prices
+                .read()
+                .expect("last_prices 读锁被污染")
+                .clone(),
             instruments: self.instruments.clone(),
             initial_cash: Some(self.initial_cash),
             margin_accrued_interest: self.margin_accrued_interest,
@@ -646,7 +651,10 @@ impl Engine {
 
         self.state.portfolio = snapshot.portfolio;
         self.state.order_manager = snapshot.order_manager;
-        self.last_prices = snapshot.last_prices;
+        *self
+            .last_prices
+            .write()
+            .expect("last_prices 写锁被污染") = snapshot.last_prices;
         self.instruments = snapshot.instruments;
         self.initial_cash = snapshot.initial_cash.unwrap_or(self.state.portfolio.cash);
         self.margin_accrued_interest = snapshot.margin_accrued_interest;
@@ -1144,10 +1152,8 @@ impl Engine {
 
         // Record initial equity
         if self.state.feed.peek_timestamp().is_some() {
-            let _equity = self
-                .state
-                .portfolio
-                .calculate_equity(&self.last_prices, &self.instruments);
+            let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+            let _equity = self.state.portfolio.calculate_equity(&prices, &self.instruments);
         }
 
         // Initialize Pipeline
@@ -1173,11 +1179,12 @@ impl Engine {
         if self.current_date.is_some()
             && let Some(timestamp) = self.terminal_result_timestamp()
         {
+            let prices = self.last_prices.read().expect("last_prices 读锁被污染");
             self.statistics_manager.record_snapshot(
                 timestamp,
                 &self.state.portfolio,
                 &self.instruments,
-                &self.last_prices,
+                &prices,
                 &self.state.order_manager.trade_tracker,
                 &self.risk_manager.config,
             );
@@ -1202,10 +1209,11 @@ impl Engine {
     ///
     /// :return: BacktestResult
     fn get_results(&self) -> BacktestResult {
+        let prices = self.last_prices.read().expect("last_prices 读锁被污染");
         self.statistics_manager.generate_backtest_result(
             &self.state.portfolio,
             &self.instruments,
-            &self.last_prices,
+            &prices,
             &self.state.order_manager,
             &self.risk_manager.config,
             self.initial_cash,
