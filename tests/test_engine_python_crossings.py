@@ -8,7 +8,7 @@
   getattr _pending_engine_oco_groups      1.02
   getattr _pending_engine_bracket_plans   1.02
 
-改动后(合并 Bar/Tick 两次调用)真实跨界降到约 3.0 次/bar:
+Task 3 后(合并 Bar/Tick 两次调用)真实跨界降到约 3.0 次/bar:
   _on_bar_event_and_flush           1.00 (Rust 侧单次 call_method1, 取代原
                                           _on_bar_event + _flush_pending_order_events)
   getattr _pending_engine_oco_groups      1.02
@@ -16,6 +16,16 @@
 注意不是 3.06——包装方法内部 self._on_bar_event(...) 是纯 Python 内部调用,
 不跨 pyo3 边界, 因此 _on_bar_event/_on_tick_event 不再计入 _WATCHED(见下方说明),
 3.0 也不是"3.06 少了 0.06"的巧合, 而是去掉了一次原本就不该计的 Python 内部属性访问。
+
+Task 4 后(OCO/bracket 待注册计划改由 _on_*_event_and_flush 的返回值携带,
+不再由 Rust 侧每 bar getattr 轮询)真实跨界收敛到约 1.0 次/bar:
+  _on_bar_event_and_flush            1.00 (Rust 侧单次 call_method1;
+                                           返回 Optional[Tuple[oco, bracket]])
+自 Task 4 起, `_pending_engine_oco_groups` / `_pending_engine_bracket_plans`
+只由 Python 内部方法 `_take_pending_engine_plans` 读取(self 属性访问,
+不跨 pyo3 边界), 因此这两个名字从 _WATCHED 中移除——若仍保留,
+__getattribute__ 会把这类纯 Python 内部读取误记成"跨界", 使本测试对
+Task 4 的收益完全测不出来(该陷阱与 Task 3 对 _on_bar_event 的处理同源)。
 
 本测试把收敛结果锁成可回归的不变量, 而非一次性测量.
 """
@@ -25,7 +35,6 @@ from typing import Any, Dict
 import akquant as aq
 import numpy as np
 import pandas as pd
-import pytest
 
 N_SYM = 50
 N_DAY = 4
@@ -41,22 +50,26 @@ TZ = "Asia/Shanghai"
 # 内部调用被误记而报出 2.0/bar, 恰好卡在预算线上"侥幸"通过, 从此不再测量
 # 它声称测量的东西——这是本次修复要防止的退化。
 #
-# 当前 Rust 侧调用点(改动后):
-#   src/engine/core.rs         -> _on_bar_event_and_flush(Bar 分支)
-#                                  _on_tick_event_and_flush(Tick 分支)
-#                                  _on_timer_event(Timer 分支, 未改动)
-#                                  _flush_pending_order_events(Timer 分支, 未改动)
-#   src/pipeline/stages/strategy.rs -> getattr("_pending_engine_oco_groups")
-#                                       getattr("_pending_engine_bracket_plans")
+# 当前 Rust 侧调用点(Task 4 改动后):
+#   src/engine/core.rs -> _on_bar_event_and_flush(Bar 分支)
+#                         _on_tick_event_and_flush(Tick 分支)
+#                         _on_timer_event_and_flush(Timer 分支; 紧邻替换原
+#                           _on_timer_event + _flush_pending_order_events 配对)
+#                         _flush_pending_order_events(仅 flush_terminal_
+#                           pending_order_events 的 finalize 路径调用,
+#                           与逐 bar 的 Timer 分支无关, 未合并、保留原样)
+# 上述三个 _*_and_flush 包装方法均以返回值(Optional[Tuple[oco, bracket]])
+# 携带待注册的 OCO 组/bracket 计划, 因此 Rust 侧不再对
+# `_pending_engine_oco_groups` / `_pending_engine_bracket_plans` 发起 getattr——
+# 这两个名字现在只由 Python 内部的 `_take_pending_engine_plans` 读取
+# (self 属性访问, 不跨 pyo3 边界), 故从本集合移除。
 # 若上述文件的调用点改变(新增/改名/删除), 必须同步更新本集合, 否则本测试
 # 会静默停止测量它声称测量的跨界次数.
 _WATCHED = (
     "_on_bar_event_and_flush",
     "_on_tick_event_and_flush",
-    "_on_timer_event",
+    "_on_timer_event_and_flush",
     "_flush_pending_order_events",
-    "_pending_engine_oco_groups",
-    "_pending_engine_bracket_plans",
 )
 
 
@@ -101,14 +114,6 @@ def _count_crossings() -> Dict[str, int]:
     return counts
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Task 3 只把跨界从 4.08 降到约 3.0/bar(合并 Bar/Tick 两次调用). "
-        "Task 4 消除两处 per-bar getattr 后本测试转绿, 届时移除本标记。"
-        "strict=True 保证一旦转绿即报错, 故遗忘收紧不会静默发生。"
-    ),
-)
 def test_per_bar_python_crossings_within_budget() -> None:
     """未覆写 on_bar、无订单的策略, 每 bar 跨界不得超过 2 次."""
     bars = N_SYM * N_DAY

@@ -1681,8 +1681,24 @@ class Strategy:
     def _flush_pending_order_events(self, ctx: StrategyContext) -> None:
         _flush_pending_order_events_impl(self, ctx)
 
-    def _on_bar_event_and_flush(self, bar: Bar, ctx: StrategyContext) -> None:
-        """引擎单次调用入口: Bar 回调 + 订单事件收尾 (Internal).
+    def _take_pending_engine_plans(self) -> Optional[Tuple[Any, Any]]:
+        """取出并清空待注册的 OCO 组与 bracket 计划 (Internal).
+
+        常态返回 None, 使引擎侧无需每 bar getattr 这两个列表.
+        """
+        oco = self._pending_engine_oco_groups
+        bracket = self._pending_engine_bracket_plans
+        if not oco and not bracket:
+            return None
+        taken = (list(oco), list(bracket))
+        oco.clear()
+        bracket.clear()
+        return taken
+
+    def _on_bar_event_and_flush(
+        self, bar: Bar, ctx: StrategyContext
+    ) -> Optional[Tuple[Any, Any]]:
+        """引擎单次调用入口: Bar 回调 + 订单事件收尾 + 取待注册计划 (Internal).
 
         合并原先引擎侧的两次跨界(_on_bar_event 与 _flush_pending_order_events).
         必须调用 self._on_bar_event 而非直接调 impl, 以保留子类覆写链——
@@ -1691,14 +1707,29 @@ class Strategy:
 
         不使用 try/finally: 原先 Rust 侧 `call_method1(...)?` 在 _on_bar_event
         抛异常时不会执行第二次调用, 此处的顺序调用与该行为一致.
+
+        返回值取代原先 Rust 侧对 _pending_engine_oco_groups /
+        _pending_engine_bracket_plans 的每 bar getattr 轮询.
         """
         self._on_bar_event(bar, ctx)
         self._check_order_events()
+        return self._take_pending_engine_plans()
 
-    def _on_tick_event_and_flush(self, tick: Tick, ctx: StrategyContext) -> None:
-        """引擎单次调用入口: Tick 回调 + 订单事件收尾 (Internal)."""
+    def _on_tick_event_and_flush(
+        self, tick: Tick, ctx: StrategyContext
+    ) -> Optional[Tuple[Any, Any]]:
+        """引擎单次调用入口: Tick 回调 + 订单事件收尾 + 取待注册计划 (Internal)."""
         self._on_tick_event(tick, ctx)
         self._check_order_events()
+        return self._take_pending_engine_plans()
+
+    def _on_timer_event_and_flush(
+        self, payload: str, ctx: StrategyContext
+    ) -> Optional[Tuple[Any, Any]]:
+        """引擎单次调用入口: Timer 回调 + 订单事件收尾 + 取待注册计划 (Internal)."""
+        self._on_timer_event(payload, ctx)
+        self._check_order_events()
+        return self._take_pending_engine_plans()
 
     def on_bar(self, bar: Bar) -> None:
         """

@@ -7,49 +7,18 @@ use std::sync::Arc;
 
 pub struct StrategyProcessor;
 
-fn flush_pending_engine_oco_groups(
+fn apply_pending_engine_plans(
     engine: &mut Engine,
-    strategy_obj: &Bound<'_, PyAny>,
-) -> PyResult<()> {
-    let pending_any = match strategy_obj.getattr("_pending_engine_oco_groups") {
-        Ok(v) => v,
-        Err(_) => return Ok(()),
+    plans: Option<crate::engine::core::PendingEnginePlans>,
+) {
+    let Some(plans) = plans else {
+        return;
     };
-    let pending_groups: Vec<(String, String, String)> = pending_any.extract().unwrap_or_default();
-    if pending_groups.is_empty() {
-        return Ok(());
-    }
-    for (group_id, first_order_id, second_order_id) in pending_groups {
+    for (group_id, first_order_id, second_order_id) in plans.oco_groups {
         engine
             .state
             .order_manager
             .register_oco_group(group_id, first_order_id, second_order_id);
-    }
-    strategy_obj.setattr(
-        "_pending_engine_oco_groups",
-        Vec::<(String, String, String)>::new(),
-    )?;
-    Ok(())
-}
-
-fn flush_pending_engine_bracket_plans(
-    engine: &mut Engine,
-    strategy_obj: &Bound<'_, PyAny>,
-) -> PyResult<()> {
-    let pending_any = match strategy_obj.getattr("_pending_engine_bracket_plans") {
-        Ok(v) => v,
-        Err(_) => return Ok(()),
-    };
-    let pending_plans: Vec<(
-        String,
-        Option<f64>,
-        Option<f64>,
-        Option<crate::model::TimeInForce>,
-        Option<String>,
-        Option<String>,
-    )> = pending_any.extract().unwrap_or_default();
-    if pending_plans.is_empty() {
-        return Ok(());
     }
     for (
         entry_order_id,
@@ -58,7 +27,7 @@ fn flush_pending_engine_bracket_plans(
         time_in_force,
         stop_tag,
         take_profit_tag,
-    ) in pending_plans
+    ) in plans.bracket_plans
     {
         let stop_trigger_decimal = stop_trigger_price.and_then(rust_decimal::Decimal::from_f64);
         let take_profit_decimal = take_profit_price.and_then(rust_decimal::Decimal::from_f64);
@@ -71,18 +40,6 @@ fn flush_pending_engine_bracket_plans(
             take_profit_tag,
         );
     }
-    strategy_obj.setattr(
-        "_pending_engine_bracket_plans",
-        Vec::<(
-            String,
-            Option<f64>,
-            Option<f64>,
-            Option<crate::model::TimeInForce>,
-            Option<String>,
-            Option<String>,
-        )>::new(),
-    )?;
-    Ok(())
 }
 
 impl Processor for StrategyProcessor {
@@ -113,29 +70,29 @@ impl Processor for StrategyProcessor {
                 let (new_orders, new_timers, canceled_ids) =
                     if let Some(ref slot_py) = slot_strategy {
                         let slot_bound = slot_py.bind(py);
-                        let result = engine.call_strategy_for_slot(
-                            slot_bound,
-                            &event,
-                            slot_index,
-                            active_orders.clone(),
-                            step_trades.clone(),
-                            step_rejected_orders.clone(),
-                        )?;
-                        flush_pending_engine_oco_groups(engine, slot_bound)?;
-                        flush_pending_engine_bracket_plans(engine, slot_bound)?;
-                        result
+                        let (orders, timers, canceled, plans) = engine
+                            .call_strategy_for_slot(
+                                slot_bound,
+                                &event,
+                                slot_index,
+                                active_orders.clone(),
+                                step_trades.clone(),
+                                step_rejected_orders.clone(),
+                            )?;
+                        apply_pending_engine_plans(engine, plans);
+                        (orders, timers, canceled)
                     } else {
-                        let result = engine.call_strategy_for_slot(
-                            strategy,
-                            &event,
-                            slot_index,
-                            active_orders.clone(),
-                            step_trades.clone(),
-                            step_rejected_orders.clone(),
-                        )?;
-                        flush_pending_engine_oco_groups(engine, strategy)?;
-                        flush_pending_engine_bracket_plans(engine, strategy)?;
-                        result
+                        let (orders, timers, canceled, plans) = engine
+                            .call_strategy_for_slot(
+                                strategy,
+                                &event,
+                                slot_index,
+                                active_orders.clone(),
+                                step_trades.clone(),
+                                step_rejected_orders.clone(),
+                            )?;
+                        apply_pending_engine_plans(engine, plans);
+                        (orders, timers, canceled)
                     };
 
                 for id in canceled_ids {

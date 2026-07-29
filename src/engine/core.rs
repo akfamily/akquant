@@ -138,6 +138,20 @@ pub(crate) struct PendingStreamEvent {
     pub(crate) payload: Vec<(String, String)>,
 }
 
+/// 策略回调返回的待注册引擎级计划(OCO 组 / bracket 计划)。
+/// 常态为 None,避免每 bar 对策略对象做两次 getattr。
+pub(crate) struct PendingEnginePlans {
+    pub oco_groups: Vec<(String, String, String)>,
+    pub bracket_plans: Vec<(
+        String,
+        Option<f64>,
+        Option<f64>,
+        Option<crate::model::TimeInForce>,
+        Option<String>,
+        Option<String>,
+    )>,
+}
+
 // Internal implementation of Engine (not exposed to Python)
 impl Engine {
     fn current_account_metrics(&self) -> AccountMetrics {
@@ -1210,7 +1224,7 @@ impl Engine {
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
         step_rejected_orders: Vec<Order>,
-    ) -> PyResult<(Vec<Order>, Vec<Timer>, Vec<String>)> {
+    ) -> PyResult<(Vec<Order>, Vec<Timer>, Vec<String>, Option<PendingEnginePlans>)> {
         self.active_strategy_slot = slot_index;
         match event {
             Event::Bar(b) => {
@@ -1231,7 +1245,16 @@ impl Engine {
                     (bar, py_ctx.clone_ref(py))
                 });
 
-                strategy.call_method1("_on_bar_event_and_flush", args)?;
+                let ret = strategy.call_method1("_on_bar_event_and_flush", args)?;
+                let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
+                    None
+                } else {
+                    let (oco, bracket) = ret.extract()?;
+                    Some(PendingEnginePlans {
+                        oco_groups: oco,
+                        bracket_plans: bracket,
+                    })
+                };
 
                 // Extract orders and timers
                 let mut new_orders = Vec::new();
@@ -1250,7 +1273,7 @@ impl Engine {
                         canceled_ids.extend(canceled.clone());
                     }
                 });
-                Ok((new_orders, new_timers, canceled_ids))
+                Ok((new_orders, new_timers, canceled_ids, pending_plans))
             }
             Event::Tick(t) => {
                 let previous_cash = self.state.portfolio.cash;
@@ -1270,7 +1293,16 @@ impl Engine {
                     (tick, py_ctx.clone_ref(py))
                 });
 
-                strategy.call_method1("_on_tick_event_and_flush", args)?;
+                let ret = strategy.call_method1("_on_tick_event_and_flush", args)?;
+                let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
+                    None
+                } else {
+                    let (oco, bracket) = ret.extract()?;
+                    Some(PendingEnginePlans {
+                        oco_groups: oco,
+                        bracket_plans: bracket,
+                    })
+                };
 
                 // Extract orders and timers
                 let mut new_orders = Vec::new();
@@ -1288,7 +1320,7 @@ impl Engine {
                         canceled_ids.extend(canceled.clone());
                     }
                 });
-                Ok((new_orders, new_timers, canceled_ids))
+                Ok((new_orders, new_timers, canceled_ids, pending_plans))
             }
             Event::Timer(timer) => {
                 let previous_cash = self.state.portfolio.cash;
@@ -1307,10 +1339,16 @@ impl Engine {
                     (payload, py_ctx.clone_ref(py))
                 });
 
-                strategy.call_method1("_on_timer_event", args)?;
-                Python::attach(|py| {
-                    strategy.call_method1("_flush_pending_order_events", (py_ctx.clone_ref(py),))
-                })?;
+                let ret = strategy.call_method1("_on_timer_event_and_flush", args)?;
+                let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
+                    None
+                } else {
+                    let (oco, bracket) = ret.extract()?;
+                    Some(PendingEnginePlans {
+                        oco_groups: oco,
+                        bracket_plans: bracket,
+                    })
+                };
 
                 // Extract orders and timers
                 let mut new_orders = Vec::new();
@@ -1328,10 +1366,10 @@ impl Engine {
                         canceled_ids.extend(canceled.clone());
                     }
                 });
-                Ok((new_orders, new_timers, canceled_ids))
+                Ok((new_orders, new_timers, canceled_ids, pending_plans))
             }
             Event::OrderRequest(_) | Event::OrderValidated(_) | Event::ExecutionReport(_, _) => {
-                Ok((Vec::new(), Vec::new(), Vec::new()))
+                Ok((Vec::new(), Vec::new(), Vec::new(), None))
             }
         }
     }
