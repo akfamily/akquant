@@ -1,11 +1,21 @@
 # -*- coding: utf-8 -*-
-"""每 bar 的 Python 跨界次数上限.
+"""每 bar 的 Python 跨界(Rust→Python pyo3 边界)次数上限.
 
-改动前实测 4.08 次/bar(未覆写 on_bar、全程无订单的 cross-section 策略):
+改动前实测 4.08 次/bar(未覆写 on_bar、全程无订单的 cross-section 策略),
+当时这四个名字全部由 Rust 侧发起, 故计数即等于真实跨界次数:
   _on_bar_event                     1.00
   _flush_pending_order_events       1.02
   getattr _pending_engine_oco_groups      1.02
   getattr _pending_engine_bracket_plans   1.02
+
+改动后(合并 Bar/Tick 两次调用)真实跨界降到约 3.0 次/bar:
+  _on_bar_event_and_flush           1.00 (Rust 侧单次 call_method1, 取代原
+                                          _on_bar_event + _flush_pending_order_events)
+  getattr _pending_engine_oco_groups      1.02
+  getattr _pending_engine_bracket_plans   1.02
+注意不是 3.06——包装方法内部 self._on_bar_event(...) 是纯 Python 内部调用,
+不跨 pyo3 边界, 因此 _on_bar_event/_on_tick_event 不再计入 _WATCHED(见下方说明),
+3.0 也不是"3.06 少了 0.06"的巧合, 而是去掉了一次原本就不该计的 Python 内部属性访问。
 
 本测试把收敛结果锁成可回归的不变量, 而非一次性测量.
 """
@@ -21,10 +31,29 @@ N_SYM = 50
 N_DAY = 4
 TZ = "Asia/Shanghai"
 
-# 引擎每 bar 可能发起的跨界点
+# 引擎每 bar 可能发起的跨界点.
+#
+# 此集合必须严格镜像 Rust 引擎实际发起的 call_method1/getattr 调用点——
+# 只收 Rust→Python 的 pyo3 边界穿越, 故意排除纯 Python 内部调用(例如
+# _on_bar_event_and_flush 包装方法内部对 self._on_bar_event 的调用: 那是
+# Python 对象上的一次属性查找, 不经过 pyo3, 不是"跨界"). 若把它们也计入,
+# Task 4 消除两处 getattr 后真实跨界会降到 1.0/bar, 但本集合会因这类
+# 内部调用被误记而报出 2.0/bar, 恰好卡在预算线上"侥幸"通过, 从此不再测量
+# 它声称测量的东西——这是本次修复要防止的退化。
+#
+# 当前 Rust 侧调用点(改动后):
+#   src/engine/core.rs         -> _on_bar_event_and_flush(Bar 分支)
+#                                  _on_tick_event_and_flush(Tick 分支)
+#                                  _on_timer_event(Timer 分支, 未改动)
+#                                  _flush_pending_order_events(Timer 分支, 未改动)
+#   src/pipeline/stages/strategy.rs -> getattr("_pending_engine_oco_groups")
+#                                       getattr("_pending_engine_bracket_plans")
+# 若上述文件的调用点改变(新增/改名/删除), 必须同步更新本集合, 否则本测试
+# 会静默停止测量它声称测量的跨界次数.
 _WATCHED = (
-    "_on_bar_event",
     "_on_bar_event_and_flush",
+    "_on_tick_event_and_flush",
+    "_on_timer_event",
     "_flush_pending_order_events",
     "_pending_engine_oco_groups",
     "_pending_engine_bracket_plans",
@@ -75,7 +104,7 @@ def _count_crossings() -> Dict[str, int]:
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Task 3 只把跨界从 4.08 降到约 3.06/bar(合并 Bar/Tick 两次调用). "
+        "Task 3 只把跨界从 4.08 降到约 3.0/bar(合并 Bar/Tick 两次调用). "
         "Task 4 消除两处 per-bar getattr 后本测试转绿, 届时移除本标记。"
         "strict=True 保证一旦转绿即报错, 故遗忘收紧不会静默发生。"
     ),
