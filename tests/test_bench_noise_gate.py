@@ -64,3 +64,37 @@ def test_regression_above_noise_band_is_regressed() -> None:
     verdict, effect, noise = m.verdict(base, cand)
     assert verdict == "REGRESSED"
     assert effect < 0
+
+
+def test_noise_band_must_use_base_spread_not_only_candidate() -> None:
+    """噪声带必须是 base 与 cand 离散度的最大值, 不能只信候选或取两者较小值.
+
+    这条测试专门用来抓这样的回归:有人"简化"实现, 认为新跑的候选轮次
+    更可信, 于是把噪声带只算 cand.spread(或退化成 min(base, cand)),
+    悄悄丢掉了 base.spread 这一侧. 前四个已有测试无法抓住这个回归 ——
+    在它们的数值下, 只用 cand.spread、用 min(base, cand)、用 max(base,
+    cand) 三种算法给出的判定完全相同, 回归可以从这些测试里"蒙混过关".
+
+    构造: base 离散度故意设得很大(0.30), cand 离散度故意设得很小
+    (0.05), 效应量卡在两者中间(0.15). 手算:
+        cand: rounds=[1.000, 1.025, 1.050]
+              min=1.000, max=1.050, spread = 1.050/1.000 - 1 = 0.05
+        base: rounds=[1.150, 1.300, 1.495]
+              min=1.150, max=1.495, spread = 1.495/1.150 - 1 = 0.30
+        effect = base.min/cand.min - 1 = 1.150/1.000 - 1 = 0.15
+
+    - 正确算法 max(base.spread, cand.spread) = 0.30 > 0.15 -> INCONCLUSIVE.
+    - 错误算法"只用 cand.spread" = 0.05 < 0.15 -> 会误判为 IMPROVED.
+    - 错误算法 min(base.spread, cand.spread) = 0.05, 同上, 也会误判为
+      IMPROVED.
+    因此本测试断言 INCONCLUSIVE 就足以让上述两种回归实现失败.
+    """
+    m = _load_module()
+    base = m.RunStats(profile="wide", bars=1000, rounds=[1.150, 1.300, 1.495])
+    cand = m.RunStats(profile="wide", bars=1000, rounds=[1.000, 1.025, 1.050])
+    assert abs(base.spread - 0.30) < 1e-9
+    assert abs(cand.spread - 0.05) < 1e-9
+    verdict, effect, noise = m.verdict(base, cand)
+    assert abs(effect - 0.15) < 1e-9
+    assert cand.spread < effect < base.spread  # 效应卡在两侧离散度之间
+    assert verdict == "INCONCLUSIVE"
