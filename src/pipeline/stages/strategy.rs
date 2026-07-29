@@ -70,27 +70,27 @@ impl Processor for StrategyProcessor {
                 let (new_orders, new_timers, canceled_ids) =
                     if let Some(ref slot_py) = slot_strategy {
                         let slot_bound = slot_py.bind(py);
-                        let (orders, timers, canceled, plans) = engine
-                            .call_strategy_for_slot(
-                                slot_bound,
-                                &event,
-                                slot_index,
-                                active_orders.clone(),
-                                step_trades.clone(),
-                                step_rejected_orders.clone(),
-                            )?;
+                        let (orders, timers, canceled, plans) = engine.call_strategy_for_slot(
+                            py,
+                            slot_bound,
+                            &event,
+                            slot_index,
+                            active_orders.clone(),
+                            step_trades.clone(),
+                            step_rejected_orders.clone(),
+                        )?;
                         apply_pending_engine_plans(engine, plans);
                         (orders, timers, canceled)
                     } else {
-                        let (orders, timers, canceled, plans) = engine
-                            .call_strategy_for_slot(
-                                strategy,
-                                &event,
-                                slot_index,
-                                active_orders.clone(),
-                                step_trades.clone(),
-                                step_rejected_orders.clone(),
-                            )?;
+                        let (orders, timers, canceled, plans) = engine.call_strategy_for_slot(
+                            py,
+                            strategy,
+                            &event,
+                            slot_index,
+                            active_orders.clone(),
+                            step_trades.clone(),
+                            step_rejected_orders.clone(),
+                        )?;
                         apply_pending_engine_plans(engine, plans);
                         (orders, timers, canceled)
                     };

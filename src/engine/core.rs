@@ -683,8 +683,9 @@ impl Engine {
         }
     }
 
-    pub(crate) fn get_or_create_strategy_context(
+    pub(crate) fn get_or_create_strategy_context<'py>(
         &mut self,
+        py: Python<'py>,
         slot_index: usize,
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
@@ -704,86 +705,75 @@ impl Engine {
             .get(slot_index)
             .and_then(|ctx| ctx.as_ref())
         {
-            return Python::attach(|py| {
-                let py_ctx = existing_ctx.clone_ref(py);
-                {
-                    let mut ctx_mut = py_ctx.borrow_mut(py);
-                    ctx_mut.update_state(crate::context::ContextUpdate {
-                        cash: self.state.portfolio.cash,
-                        previous_cash,
-                        positions: self.state.portfolio.positions.clone(),
-                        available_positions: self.state.portfolio.available_positions.clone(),
-                        position_entry_prices,
-                        session: self.clock.session,
-                        current_time: self.context_timestamp(),
-                        active_orders,
-                        closed_trades: self.state.order_manager.trade_tracker.closed_trades.clone(),
-                        recent_trades: step_trades,
-                        recent_rejected_orders: step_rejected_orders,
-                        recent_expiry_events: self.recent_expiry_events.clone(),
-                        account_equity: account_metrics.equity.to_f64().unwrap_or_default(),
-                        account_market_value: account_metrics
-                            .market_value
-                            .to_f64()
-                            .unwrap_or_default(),
-                        account_notional_value: account_metrics
-                            .notional_value
-                            .to_f64()
-                            .unwrap_or_default(),
-                        account_used_margin: account_metrics
-                            .used_margin
-                            .to_f64()
-                            .unwrap_or_default(),
-                        account_unrealized_pnl: account_metrics
-                            .unrealized_pnl
-                            .to_f64()
-                            .unwrap_or_default(),
-                        account_maintenance_ratio: account_metrics
-                            .maintenance_ratio
-                            .to_f64()
-                            .unwrap_or_default(),
-                        account_short_market_value: account_metrics
-                            .short_market_value
-                            .to_f64()
-                            .unwrap_or_default(),
-                        account_frozen_cash: frozen_cash,
-                        previous_account_equity: previous_account_metrics
-                            .equity
-                            .to_f64()
-                            .unwrap_or_default(),
-                        previous_account_market_value: previous_account_metrics
-                            .market_value
-                            .to_f64()
-                            .unwrap_or_default(),
-                        previous_account_notional_value: previous_account_metrics
-                            .notional_value
-                            .to_f64()
-                            .unwrap_or_default(),
-                        previous_account_used_margin: previous_account_metrics
-                            .used_margin
-                            .to_f64()
-                            .unwrap_or_default(),
-                        previous_account_unrealized_pnl: previous_account_metrics
-                            .unrealized_pnl
-                            .to_f64()
-                            .unwrap_or_default(),
-                        previous_account_maintenance_ratio: previous_account_metrics
-                            .maintenance_ratio
-                            .to_f64()
-                            .unwrap_or_default(),
-                        margin_accrued_interest: self
-                            .margin_accrued_interest
-                            .to_f64()
-                            .unwrap_or_default(),
-                        margin_daily_interest: self
-                            .margin_daily_interest
-                            .to_f64()
-                            .unwrap_or_default(),
-                        last_prices: Arc::new(self.last_prices.clone()),
-                    });
-                }
-                Ok::<_, PyErr>(py_ctx)
-            });
+            let py_ctx = existing_ctx.clone_ref(py);
+            {
+                let mut ctx_mut = py_ctx.borrow_mut(py);
+                ctx_mut.update_state(crate::context::ContextUpdate {
+                    cash: self.state.portfolio.cash,
+                    previous_cash,
+                    positions: self.state.portfolio.positions.clone(),
+                    available_positions: self.state.portfolio.available_positions.clone(),
+                    position_entry_prices,
+                    session: self.clock.session,
+                    current_time: self.context_timestamp(),
+                    active_orders,
+                    closed_trades: self.state.order_manager.trade_tracker.closed_trades.clone(),
+                    recent_trades: step_trades,
+                    recent_rejected_orders: step_rejected_orders,
+                    recent_expiry_events: self.recent_expiry_events.clone(),
+                    account_equity: account_metrics.equity.to_f64().unwrap_or_default(),
+                    account_market_value: account_metrics.market_value.to_f64().unwrap_or_default(),
+                    account_notional_value: account_metrics
+                        .notional_value
+                        .to_f64()
+                        .unwrap_or_default(),
+                    account_used_margin: account_metrics.used_margin.to_f64().unwrap_or_default(),
+                    account_unrealized_pnl: account_metrics
+                        .unrealized_pnl
+                        .to_f64()
+                        .unwrap_or_default(),
+                    account_maintenance_ratio: account_metrics
+                        .maintenance_ratio
+                        .to_f64()
+                        .unwrap_or_default(),
+                    account_short_market_value: account_metrics
+                        .short_market_value
+                        .to_f64()
+                        .unwrap_or_default(),
+                    account_frozen_cash: frozen_cash,
+                    previous_account_equity: previous_account_metrics
+                        .equity
+                        .to_f64()
+                        .unwrap_or_default(),
+                    previous_account_market_value: previous_account_metrics
+                        .market_value
+                        .to_f64()
+                        .unwrap_or_default(),
+                    previous_account_notional_value: previous_account_metrics
+                        .notional_value
+                        .to_f64()
+                        .unwrap_or_default(),
+                    previous_account_used_margin: previous_account_metrics
+                        .used_margin
+                        .to_f64()
+                        .unwrap_or_default(),
+                    previous_account_unrealized_pnl: previous_account_metrics
+                        .unrealized_pnl
+                        .to_f64()
+                        .unwrap_or_default(),
+                    previous_account_maintenance_ratio: previous_account_metrics
+                        .maintenance_ratio
+                        .to_f64()
+                        .unwrap_or_default(),
+                    margin_accrued_interest: self
+                        .margin_accrued_interest
+                        .to_f64()
+                        .unwrap_or_default(),
+                    margin_daily_interest: self.margin_daily_interest.to_f64().unwrap_or_default(),
+                    last_prices: Arc::new(self.last_prices.clone()),
+                });
+            }
+            return Ok(py_ctx);
         }
 
         let strategy_id = self
@@ -798,10 +788,8 @@ impl Engine {
             previous_cash,
             previous_account_metrics,
         );
-        let (py_ctx, persistent_ref) = Python::attach(|py| {
-            let py_ctx = Py::new(py, ctx).unwrap();
-            Ok::<_, PyErr>((py_ctx.clone_ref(py), py_ctx.clone_ref(py)))
-        })?;
+        let py_ctx = Py::new(py, ctx).unwrap();
+        let persistent_ref = py_ctx.clone_ref(py);
         if let Some(slot_ctx) = self.strategy_contexts.get_mut(slot_index) {
             *slot_ctx = Some(persistent_ref);
         }
@@ -1216,22 +1204,36 @@ impl Engine {
         )))
     }
 
-    pub(crate) fn call_strategy_for_slot(
+    pub(crate) fn call_strategy_for_slot<'py>(
         &mut self,
-        strategy: &Bound<'_, PyAny>,
+        py: Python<'py>,
+        strategy: &Bound<'py, PyAny>,
         event: &Event,
         slot_index: usize,
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
         step_rejected_orders: Vec<Order>,
-    ) -> PyResult<(Vec<Order>, Vec<Timer>, Vec<String>, Option<PendingEnginePlans>)> {
+    ) -> PyResult<(
+        Vec<Order>,
+        Vec<Timer>,
+        Vec<String>,
+        Option<PendingEnginePlans>,
+    )> {
         self.active_strategy_slot = slot_index;
         match event {
             Event::Bar(b) => {
                 let previous_cash = self.state.portfolio.cash;
                 let previous_account_metrics = self.current_account_metrics();
-                self.last_prices.insert(b.symbol.clone(), b.close);
+                // 快路径:symbol 通常已存在于 last_prices,get_mut 命中即可原地更新,
+                // 避免每 bar 都为 insert 克隆一次 String。
+                match self.last_prices.get_mut(&b.symbol) {
+                    Some(slot) => *slot = b.close,
+                    None => {
+                        self.last_prices.insert(b.symbol.clone(), b.close);
+                    }
+                }
                 let py_ctx = self.get_or_create_strategy_context(
+                    py,
                     slot_index,
                     active_orders,
                     step_trades,
@@ -1240,10 +1242,7 @@ impl Engine {
                     previous_account_metrics,
                 )?;
 
-                let args = Python::attach(|py| {
-                    let bar = b.clone();
-                    (bar, py_ctx.clone_ref(py))
-                });
+                let args = (b.clone(), py_ctx.clone_ref(py));
 
                 let ret = strategy.call_method1("_on_bar_event_and_flush", args)?;
                 let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
@@ -1260,7 +1259,7 @@ impl Engine {
                 let mut new_orders = Vec::new();
                 let mut new_timers = Vec::new();
                 let mut canceled_ids = Vec::new();
-                Python::attach(|py| {
+                {
                     let ctx_ref = py_ctx.borrow(py);
                     // Read from RwLock
                     if let Ok(orders) = ctx_ref.orders_arc.read() {
@@ -1272,14 +1271,20 @@ impl Engine {
                     if let Ok(canceled) = ctx_ref.canceled_order_ids_arc.read() {
                         canceled_ids.extend(canceled.clone());
                     }
-                });
+                }
                 Ok((new_orders, new_timers, canceled_ids, pending_plans))
             }
             Event::Tick(t) => {
                 let previous_cash = self.state.portfolio.cash;
                 let previous_account_metrics = self.current_account_metrics();
-                self.last_prices.insert(t.symbol.clone(), t.price);
+                match self.last_prices.get_mut(&t.symbol) {
+                    Some(slot) => *slot = t.price,
+                    None => {
+                        self.last_prices.insert(t.symbol.clone(), t.price);
+                    }
+                }
                 let py_ctx = self.get_or_create_strategy_context(
+                    py,
                     slot_index,
                     active_orders,
                     step_trades,
@@ -1288,10 +1293,7 @@ impl Engine {
                     previous_account_metrics,
                 )?;
 
-                let args = Python::attach(|py| {
-                    let tick = t.clone();
-                    (tick, py_ctx.clone_ref(py))
-                });
+                let args = (t.clone(), py_ctx.clone_ref(py));
 
                 let ret = strategy.call_method1("_on_tick_event_and_flush", args)?;
                 let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
@@ -1308,7 +1310,7 @@ impl Engine {
                 let mut new_orders = Vec::new();
                 let mut new_timers = Vec::new();
                 let mut canceled_ids = Vec::new();
-                Python::attach(|py| {
+                {
                     let ctx_ref = py_ctx.borrow(py);
                     if let Ok(orders) = ctx_ref.orders_arc.read() {
                         new_orders.extend(orders.clone());
@@ -1319,13 +1321,14 @@ impl Engine {
                     if let Ok(canceled) = ctx_ref.canceled_order_ids_arc.read() {
                         canceled_ids.extend(canceled.clone());
                     }
-                });
+                }
                 Ok((new_orders, new_timers, canceled_ids, pending_plans))
             }
             Event::Timer(timer) => {
                 let previous_cash = self.state.portfolio.cash;
                 let previous_account_metrics = self.current_account_metrics();
                 let py_ctx = self.get_or_create_strategy_context(
+                    py,
                     slot_index,
                     active_orders,
                     step_trades,
@@ -1334,10 +1337,7 @@ impl Engine {
                     previous_account_metrics,
                 )?;
 
-                let args = Python::attach(|py| {
-                    let payload = timer.payload.as_str();
-                    (payload, py_ctx.clone_ref(py))
-                });
+                let args = (timer.payload.as_str(), py_ctx.clone_ref(py));
 
                 let ret = strategy.call_method1("_on_timer_event_and_flush", args)?;
                 let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
@@ -1354,7 +1354,7 @@ impl Engine {
                 let mut new_orders = Vec::new();
                 let mut new_timers = Vec::new();
                 let mut canceled_ids = Vec::new();
-                Python::attach(|py| {
+                {
                     let ctx_ref = py_ctx.borrow(py);
                     if let Ok(orders) = ctx_ref.orders_arc.read() {
                         new_orders.extend(orders.clone());
@@ -1365,7 +1365,7 @@ impl Engine {
                     if let Ok(canceled) = ctx_ref.canceled_order_ids_arc.read() {
                         canceled_ids.extend(canceled.clone());
                     }
-                });
+                }
                 Ok((new_orders, new_timers, canceled_ids, pending_plans))
             }
             Event::OrderRequest(_) | Event::OrderValidated(_) | Event::ExecutionReport(_, _) => {
@@ -1405,6 +1405,7 @@ impl Engine {
         for slot_index in 0..slot_count {
             self.active_strategy_slot = slot_index;
             let py_ctx = self.get_or_create_strategy_context(
+                py,
                 slot_index,
                 active_orders.clone(),
                 step_trades.clone(),
