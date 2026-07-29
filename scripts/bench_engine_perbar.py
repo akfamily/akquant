@@ -110,7 +110,7 @@ def verdict(base: RunStats, cand: RunStats) -> Tuple[str, float, float]:
     """
     noise_band = max(base.spread, cand.spread)
     effect = base.min / cand.min - 1.0
-    if abs(effect) < noise_band:
+    if abs(effect) <= noise_band:
         return "INCONCLUSIVE", effect, noise_band
     return ("IMPROVED" if effect > 0 else "REGRESSED"), effect, noise_band
 
@@ -203,6 +203,17 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--json", type=Path, help="把本次统计写入 JSON")
     parser.add_argument("--baseline", type=Path, help="与该 JSON 基线比较")
     args = parser.parse_args(argv)
+
+    if args.rounds < 2:
+        print(
+            "错误: --rounds 必须 >= 2。噪声带定义为各轮次耗时的离散度"
+            "(max/min - 1),单轮运行没有多个样本可比较,无法计算离散度,"
+            "噪声闸门也就形同虚设(spread 恒为 0.0,任何效应都会被判定为"
+            "IMPROVED/REGRESSED 而不是 INCONCLUSIVE)。请提高 --rounds"
+            "(建议 >= 3)后重试。",
+            file=sys.stderr,
+        )
+        return 2
 
     stats = run_profile(args.profile, args.rounds, args.positions)
 

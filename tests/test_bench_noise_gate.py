@@ -98,3 +98,40 @@ def test_noise_band_must_use_base_spread_not_only_candidate() -> None:
     assert abs(effect - 0.15) < 1e-9
     assert cand.spread < effect < base.spread  # 效应卡在两侧离散度之间
     assert verdict == "INCONCLUSIVE"
+
+
+def test_single_round_spread_is_zero() -> None:
+    """只跑一轮时 max == min, 离散度必须恒为 0.0.
+
+    这正是"单轮跑分"这个反面案例的根源: 没有第二个样本, 就没有离散度
+    可言, spread 只能是 0.0, 噪声闸门因此彻底失去意义。main() 必须靠
+    "拒绝 --rounds < 2" 来堵住这个口子, 而不是指望 verdict() 本身能替
+    单轮跑分补上一个不存在的噪声估计。
+    """
+    m = _load_module()
+    stats = m.RunStats(profile="narrow", bars=1000, rounds=[1.234])
+    assert stats.min == 1.234
+    assert stats.max == 1.234
+    assert stats.spread == 0.0
+
+
+def test_zero_effect_zero_noise_is_inconclusive_not_regressed() -> None:
+    """噪声带为 0 且效应也为 0 时必须 INCONCLUSIVE, 不能落到 REGRESSED.
+
+    base 与 cand 都只跑了一轮且耗时恰好相同, 于是 base.spread ==
+    cand.spread == 0.0, noise_band == 0.0, effect == 0.0。守卫条件如果
+    写成 `abs(effect) < noise_band`(严格小于), `0.0 < 0.0` 为 False,
+    会直接跳过 INCONCLUSIVE 分支、落到 `effect > 0` 的判断, 而 0.0 不
+    大于 0, 于是被误判为 REGRESSED —— 明明什么都没变化, 却报"变慢了"。
+    必须改成 `<=` 才能让这种零效应/零噪声的比较正确落回 INCONCLUSIVE。
+    这条测试就是用来在有人把 `<=` 悄悄改回 `<` 时立刻失败的。
+    """
+    m = _load_module()
+    base = m.RunStats(profile="narrow", bars=1000, rounds=[1.5])
+    cand = m.RunStats(profile="narrow", bars=1000, rounds=[1.5])
+    assert base.spread == 0.0
+    assert cand.spread == 0.0
+    verdict, effect, noise = m.verdict(base, cand)
+    assert effect == 0.0
+    assert noise == 0.0
+    assert verdict == "INCONCLUSIVE"

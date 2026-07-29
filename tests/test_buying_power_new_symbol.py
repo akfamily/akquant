@@ -91,3 +91,10 @@ def test_fresh_symbol_order_is_projected_into_buying_power() -> None:
         f"新标的买单未被计入 buying_power 投影: "
         f"before={probe.before} after={probe.after}"
     )
+    # 以下两个精确值是 last_prices 迁移前记录的基线(特征化测试的核心断言):
+    # before = 1_000_000 * (1 - 0.0001) = 999900.0
+    # after  = 995000 * 0.9999 = 994900.5 (100 股 * 50.0 买入, 现金 -5000 后的投影)
+    # 若这两个值发生变化, 说明投影算术本身被改动了, 必须去排查原因,
+    # 而不是直接把新值重新灌进来当基线。
+    assert probe.before == 999900.0
+    assert probe.after == 994900.5
