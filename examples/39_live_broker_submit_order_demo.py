@@ -110,6 +110,11 @@ def main() -> None:
         cash=1_000_000,
         show_progress=False,
         duration="30s",
+        # 本示例用占位柜台地址, 连不上真实柜台。默认 broker_ready_required=True
+        # 会在就绪超时后直接中止启动(实盘就该如此), 这里显式放宽以便离线演示——
+        # on_bar 里已用 ctx.broker_ready 守卫, 未就绪时不会下单。
+        # 真实部署请保留默认值 True。
+        broker_ready_required=False,
     )
 
 

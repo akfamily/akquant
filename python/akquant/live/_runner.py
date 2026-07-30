@@ -16,6 +16,7 @@ from ..gateway.order_submitter import (
     resolve_live_order_legs,
     validate_live_order_client_ids,
 )
+from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink
 from ..log import build_log_extra, get_logger
 from ..strategy import InstrumentSnapshot, Strategy
@@ -185,8 +186,8 @@ class LiveRunner:
         on_trade: Optional[Callable[[Any, Any], None]] = None,
         on_reject: Optional[Callable[[Any, Any], None]] = None,
         on_broker_connected: Optional[Callable[[Any], None]] = None,
-        broker_ready_timeout: float = 10.0,
-        broker_ready_required: bool = False,
+        broker_ready_timeout: float = 30.0,
+        broker_ready_required: bool = True,
         on_before_trading: Optional[Callable[[Any, Any, int], None]] = None,
         on_after_trading: Optional[Callable[[Any, Any, int], None]] = None,
         on_cross_section: Optional[Callable[[Any, Any, int], None]] = None,
@@ -234,9 +235,16 @@ class LiveRunner:
         :param on_broker_connected: Optional callback fired once the broker
             trader gateway reports readiness (heartbeat) after connect+start.
         :param broker_ready_timeout: Max seconds to poll trader_gateway.heartbeat()
-            before giving up (default 10.0).
-        :param broker_ready_required: If True, raise when broker readiness is not
-            reached within broker_ready_timeout (default False, only warns).
+            before giving up (default 30.0, sized for a real broker login such as
+            QMF's dual-session login plus WS connect).
+        :param broker_ready_required: If True (default), raise when broker
+            readiness is not reached within broker_ready_timeout; pass False to
+            only warn. Readiness is only polled in ``trading_mode='broker_live'``,
+            so paper runs are unaffected. Defaulting to True is deliberate: while
+            not ready, every submit raises RuntimeError anyway (see
+            ``order_submitter``), so continuing to run buys no capability — it only
+            trades one easily-missed warning for a stream of hard-to-attribute
+            exceptions.
         :param on_before_trading: Optional function-style on_before_trading callback.
         :param on_after_trading: Optional function-style on_after_trading callback.
         :param on_cross_section:
@@ -835,7 +843,6 @@ class LiveRunner:
         self._client_to_strategy_ids: dict[str, str] = {}
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
-        self._broker_report_keys: set[str] = set()
         self._broker_dispatch_stop: threading.Event | None = None
         self._broker_dispatch_thread: threading.Thread | None = None
         self._broker_recovery_stop: threading.Event | None = None
@@ -946,8 +953,28 @@ class LiveRunner:
                 logger.exception("broker baseline sync_today_trades failed")
         self._broker_baseline_done = True
 
+    def _warn_if_heartbeat_not_overridden(self, trader_gateway: Any) -> None:
+        """Warn when a gateway inherits the always-true default heartbeat.
+
+        ``TraderGatewayBase.heartbeat`` returns True unconditionally, so a custom
+        broker that forgets to override it is always judged ready and
+        ``broker_ready_required`` silently has no effect on it — a failed login
+        would still be let through to order submission.
+        """
+        base_heartbeat = getattr(TraderGatewayBase, "heartbeat", None)
+        gateway_heartbeat = getattr(type(trader_gateway), "heartbeat", None)
+        if base_heartbeat is None or gateway_heartbeat is not base_heartbeat:
+            return
+        logger.warning(
+            "%s 未覆写 heartbeat(), 将始终判定为已就绪; broker_ready_required "
+            "对该 gateway 无效——请实现 heartbeat() 返回真实登录/连接状态",
+            type(trader_gateway).__name__,
+            extra=self._runner_log_extra(phase="gateway"),
+        )
+
     def _await_broker_ready(self, trader_gateway: Any, targets: list) -> None:
         """Poll heartbeat() until ready/timeout; set broker_ready, fire callback."""
+        self._warn_if_heartbeat_not_overridden(trader_gateway)
         deadline = time.monotonic() + float(self.broker_ready_timeout)
         ready = False
         while time.monotonic() < deadline:
@@ -970,6 +997,10 @@ class LiveRunner:
                 extra=self._runner_log_extra(phase="gateway"),
             )
             if self.broker_ready_required:
+                # dispatcher/recovery 线程已在 _bind_broker_callbacks 中启动, 而本次
+                # raise 发生在 run() 的 try 之外(finally 的清理不会执行)。此处不收尾,
+                # 一次失败的启动就会留下一个每秒轮询柜台的 recovery 线程。
+                self._stop_broker_dispatcher()
                 raise RuntimeError(
                     f"broker not ready within {self.broker_ready_timeout}s"
                 )
@@ -1144,13 +1175,6 @@ class LiveRunner:
             status = self._payload_field(payload, "status")
             if self._is_terminal_status(status):
                 self._close_order_mapping(client_order_id, broker_order_id)
-            report_key = (
-                f"{self._payload_field(payload, 'broker_order_id')}-"
-                f"{self._payload_field(payload, 'status')}-"
-                f"{self._payload_field(payload, 'timestamp_ns')}"
-            )
-            if report_key:
-                self._broker_report_keys.add(report_key)
         elif event_name == "account":
             self._broker_account_state = payload
 

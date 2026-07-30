@@ -51,8 +51,8 @@ def run_live(
     on_trade: Optional[Callable[[Any, Any], None]] = None,
     on_reject: Optional[Callable[[Any, Any], None]] = None,
     on_broker_connected: Optional[Callable[[Any], None]] = None,
-    broker_ready_timeout: float = 10.0,
-    broker_ready_required: bool = False,
+    broker_ready_timeout: float = 30.0,
+    broker_ready_required: bool = True,
     on_before_trading: Optional[Callable[[Any, Any, int], None]] = None,
     on_after_trading: Optional[Callable[[Any, Any, int], None]] = None,
     on_cross_section: Optional[Callable[[Any, Any, int], None]] = None,
@@ -83,6 +83,12 @@ def run_live(
     :param cash: Initial cash (default 1,000,000).
     :param show_progress: Whether to show a progress bar.
     :param duration: Optional run duration (e.g. ``"1m"``, ``"30s"``).
+    :param broker_ready_timeout: Max seconds to poll ``trader_gateway.heartbeat()``
+        before giving up (default 30.0).
+    :param broker_ready_required: If True (default), abort the run when the broker
+        is not ready within ``broker_ready_timeout``. Only polled in
+        ``trading_mode='broker_live'``; paper runs are unaffected. Pass False to
+        restore the pre-0.3.25 behaviour of warning and continuing.
     :param indicator_recorder: Optional public :class:`IndicatorSink` to collect
         indicator points; defaults to a streaming sink when ``on_event`` is set.
     :param on_event: Optional stream event callback for realtime indicator flow.
