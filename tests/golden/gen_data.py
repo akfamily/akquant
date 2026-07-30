@@ -165,7 +165,34 @@ def gen_option_data() -> None:
     save_parquet_with_hash(df, "option_basic.parquet")
 
 
+def gen_cancel_data() -> None:
+    """Generate data for the order-cancel lifecycle test.
+
+    Flat prices with ample volume: fills are driven purely by the strategy's
+    order/cancel sequence, not by price moves.
+    """
+    dates = pd.date_range("2024-01-01", periods=6, freq="D", tz="Asia/Shanghai")
+
+    data = []
+    for i in range(6):
+        data.append(
+            {
+                "timestamp": dates[i],
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0,
+                "volume": 100000,
+                "symbol": "CANCEL_A",
+            }
+        )
+
+    df = pd.DataFrame(data)
+    save_parquet_with_hash(df, "order_cancel.parquet")
+
+
 if __name__ == "__main__":
     gen_stock_data()
     gen_future_data()
     gen_option_data()
+    gen_cancel_data()

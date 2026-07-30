@@ -1,3 +1,4 @@
+from collections import deque
 from typing import Any, Set, Tuple
 
 from .akquant import OrderStatus
@@ -6,6 +7,62 @@ from .strategy_framework_hooks import (
     ensure_framework_state,
     mark_portfolio_dirty,
 )
+
+_TERMINAL_ORDER_STATUSES = (
+    OrderStatus.Filled,
+    OrderStatus.Cancelled,
+    OrderStatus.Rejected,
+    OrderStatus.Expired,
+)
+
+
+def _is_terminal_order(order: Any) -> bool:
+    """判断订单是否已处于终态."""
+    return getattr(order, "status", None) in _TERMINAL_ORDER_STATUSES
+
+
+def remember_finalized_order(strategy: Any, order: Any) -> None:
+    """把进入终态的订单存入留档, 使 get_order() 在其离开在途账本后仍可查到.
+
+    容量按 FIFO 淘汰(同 remember_trade_key), 避免实盘长跑内存无界增长。
+    已按终态落档的订单不会被后来的非终态快照覆盖: 撤单当拍订单尚未进入
+    _known_orders, 需在 ctx.active_orders 上直接定终态落档, 而下一拍它从
+    active 消失时兜底路径持有的仍是撤单前的 New 快照。
+    """
+    order_id = str(getattr(order, "id", "") or "")
+    if not order_id:
+        return
+
+    finalized = getattr(strategy, "_finalized_orders", None)
+    if finalized is None:
+        finalized = {}
+        strategy._finalized_orders = finalized
+    order_ids = getattr(strategy, "_finalized_order_ids", None)
+    if order_ids is None:
+        order_ids = deque()
+        strategy._finalized_order_ids = order_ids
+
+    existing = finalized.get(order_id)
+    if existing is not None:
+        if _is_terminal_order(existing) and not _is_terminal_order(order):
+            return
+    else:
+        order_ids.append(order_id)
+    finalized[order_id] = order
+
+    limit = finalized_order_cache_limit(strategy)
+    while len(order_ids) > limit:
+        oldest = order_ids.popleft()
+        finalized.pop(oldest, None)
+
+
+def finalized_order_cache_limit(strategy: Any) -> int:
+    """获取终态订单留档上限."""
+    raw_limit = getattr(strategy, "finalized_order_cache_size", 10000)
+    try:
+        return max(1, int(raw_limit))
+    except (TypeError, ValueError):
+        return 10000
 
 
 def check_order_events(strategy: Any) -> None:
@@ -24,7 +81,24 @@ def check_order_events(strategy: Any) -> None:
                     pass
 
                 _emit_order_callback(strategy, order)
+                remember_finalized_order(strategy, order)
                 del strategy._known_orders[oid]
+                continue
+
+            # 撤单当拍订单可能还没被本函数后段从 active_orders 收录进
+            # _known_orders, 此时直接在在途账本上定终态落档; 否则下一拍它从
+            # active 消失时, 兜底路径只拿得到撤单前的 New 快照。
+            active_order = next(
+                (o for o in getattr(strategy.ctx, "active_orders", []) if o.id == oid),
+                None,
+            )
+            if active_order is None:
+                continue
+            try:
+                active_order.status = OrderStatus.Cancelled
+            except Exception:
+                pass
+            remember_finalized_order(strategy, active_order)
 
     if hasattr(strategy.ctx, "recent_rejected_orders"):
         for order in strategy.ctx.recent_rejected_orders:
@@ -75,10 +149,12 @@ def check_order_events(strategy: Any) -> None:
                 except Exception:
                     pass
                 _emit_order_callback(strategy, order)
+                remember_finalized_order(strategy, order)
                 del strategy._known_orders[oid]
             elif oid in pending_order_ids:
                 continue
             else:
+                remember_finalized_order(strategy, strategy._known_orders[oid])
                 del strategy._known_orders[oid]
 
     if hasattr(strategy.ctx, "recent_trades"):

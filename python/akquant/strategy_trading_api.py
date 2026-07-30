@@ -1,4 +1,5 @@
 import warnings
+from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 
 from .akquant import OrderStatus, OrderType, PositionEffect, TimeInForce
@@ -113,6 +114,21 @@ def get_order(strategy: Any, order_id: str) -> Optional[Any]:
                         pass
                 _attach_broker_options(strategy, order_id, o)
                 return o
+
+    # 终态订单已离开在途账本(_known_orders / ctx.active_orders), 回退查留档,
+    # 否则订单一旦成交/撤单/被拒就永久查不到。
+    finalized = getattr(strategy, "_finalized_orders", None)
+    if isinstance(finalized, dict):
+        order = finalized.get(order_id)
+        if order is not None:
+            if order_id in canceled_order_ids:
+                try:
+                    order.status = OrderStatus.Cancelled
+                except Exception:
+                    pass
+            _attach_broker_options(strategy, order_id, order)
+            return order
+
     return None
 
 
@@ -1805,31 +1821,47 @@ def _sim_capabilities(strategy: Any) -> Dict[str, Any]:
     }
 
 
+def _remember_pending_cancel(strategy: Any, order_id: str) -> None:
+    """记录撤单意图, 按 FIFO 淘汰(同 remember_trade_key).
+
+    ``ctx.canceled_order_ids`` 只是当拍增量, 该集合负责让撤单意图跨拍生效;
+    paper 模式走 SimExecution 且可长跑, 因此必须有上限。
+    """
+    pending: Set[str] = getattr(strategy, "_pending_canceled_order_ids", set())
+    if not isinstance(pending, set):
+        pending = set()
+        setattr(strategy, "_pending_canceled_order_ids", pending)
+    order_ids = getattr(strategy, "_pending_canceled_order_id_queue", None)
+    if not isinstance(order_ids, deque):
+        order_ids = deque()
+        setattr(strategy, "_pending_canceled_order_id_queue", order_ids)
+
+    if order_id not in pending:
+        pending.add(order_id)
+        order_ids.append(order_id)
+
+    raw_limit = getattr(strategy, "pending_cancel_cache_size", 50000)
+    try:
+        limit = max(1, int(raw_limit))
+    except (TypeError, ValueError):
+        limit = 50000
+    while len(order_ids) > limit:
+        oldest = order_ids.popleft()
+        pending.discard(oldest)
+
+
 def _sim_cancel_order(strategy: Any, order_id: str) -> None:
-    """取消指定订单（_sim_ 原语，复制自 cancel_order:178-202，逻辑一字不改）."""
+    """取消指定订单（_sim_ 原语）.
+
+    撤单意图记到 ``_pending_canceled_order_ids`` 后即透传引擎。不再尝试直接改写
+    ``ctx.active_orders`` 里的 ``status``: 该字段是 Rust 侧 ``Vec<Order>`` 经
+    ``#[pyo3(get)]`` 暴露的, 每次访问都克隆出新的 Python 包装对象, 写入不落回引擎
+    (下次读到的仍是撤单前状态)。状态呈现由 get_order / get_open_orders 按撤单意图
+    集合裁定。
+    """
     if strategy.ctx:
-        pending_canceled_ids: Set[str] = getattr(
-            strategy, "_pending_canceled_order_ids", set()
-        )
-        if not isinstance(pending_canceled_ids, set):
-            pending_canceled_ids = set()
-            setattr(strategy, "_pending_canceled_order_ids", pending_canceled_ids)
-        pending_canceled_ids.add(order_id)
+        _remember_pending_cancel(strategy, order_id)
         strategy.ctx.cancel_order(order_id)
-        for order in strategy.ctx.active_orders:
-            if getattr(order, "id", "") != order_id:
-                continue
-            if getattr(order, "status", None) not in (
-                OrderStatus.New,
-                OrderStatus.Submitted,
-                OrderStatus.PartiallyFilled,
-            ):
-                continue
-            try:
-                order.status = OrderStatus.Cancelled
-            except Exception:
-                pass
-            break
 
 
 def _sim_submit_order(

@@ -27,6 +27,7 @@ sys.path.append(str(Path(__file__).parent / "strategies"))
 
 from futures_margin import FutureMarginStrategy  # noqa: E402
 from option_basic import OptionBasicStrategy  # noqa: E402
+from order_cancel import OrderCancelStrategy  # noqa: E402
 from stock_t1 import StockT1Strategy  # noqa: E402
 
 BASE_DIR = Path(__file__).parent
@@ -200,7 +201,37 @@ def compare_results(baseline_dir: Path, current_dir: Path) -> List[str]:
             f"vs Curr {curr_trades_count}"
         )
 
+    # 4. Compare Order Status Distribution
+    # orders.parquet was already being written but never compared; order ids are
+    # random UUIDs so we compare the per-status counts, which are deterministic.
+    # This is what pins cancel/reject semantics — aggregates alone cannot.
+    errors.extend(_compare_order_statuses(baseline_dir, current_dir))
+
     return errors
+
+
+def _order_status_counts(orders_path: Path) -> Dict[str, int]:
+    """Return per-status order counts for one results dir (empty if absent)."""
+    if not orders_path.exists():
+        return {}
+    orders = pd.read_parquet(orders_path)
+    if "status" not in orders.columns:
+        return {}
+    counts = orders["status"].astype(str).value_counts().to_dict()
+    return {str(key): int(value) for key, value in counts.items()}
+
+
+def _compare_order_statuses(baseline_dir: Path, current_dir: Path) -> List[str]:
+    """Compare the order status distribution between baseline and current."""
+    base_counts = _order_status_counts(baseline_dir / "orders.parquet")
+    curr_counts = _order_status_counts(current_dir / "orders.parquet")
+
+    if base_counts == curr_counts:
+        return []
+    return [
+        f"Order Status Distribution Mismatch: Base {dict(sorted(base_counts.items()))} "
+        f"vs Curr {dict(sorted(curr_counts.items()))}"
+    ]
 
 
 def run_test(
@@ -443,6 +474,17 @@ def run_stream_consistency_suite() -> List[str]:
     )
     failures.extend(option_errors)
 
+    cancel_errors = run_stream_consistency_test(
+        "order_cancel",
+        OrderCancelStrategy,
+        "order_cancel.parquet",
+        {
+            "initial_cash": 100000.0,
+            "commission_rate": 0.0,
+        },
+    )
+    failures.extend(cancel_errors)
+
     return failures
 
 
@@ -535,6 +577,22 @@ def main(generate_baseline: bool = False) -> None:
     )
     if errs:
         failures.append("option_basic")
+
+    # 4. Order Cancel Lifecycle Test
+    # Rest 3 limit orders + 1 market buy; cancel one, query it across bars,
+    # then cancel_all_orders. Pins the撤单 bookkeeping no other scenario covers.
+    errs = run_test(
+        "order_cancel",
+        OrderCancelStrategy,
+        "order_cancel.parquet",
+        {
+            "initial_cash": 100000.0,
+            "commission_rate": 0.0,
+        },
+        generate_baseline,
+    )
+    if errs:
+        failures.append("order_cancel")
 
     if failures:
         print(f"\nGolden Suite FAILED: {failures}")
