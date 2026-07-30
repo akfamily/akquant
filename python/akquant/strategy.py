@@ -346,6 +346,10 @@ class Strategy:
     _ml_pending_window_start_bar: Optional[int]
     _ml_pending_window_end_bar: Optional[int]
     _known_orders: Dict[str, Order]
+    _finalized_orders: Dict[str, Order]
+    _finalized_order_ids: Deque[str]
+    _pending_canceled_order_ids: set[str]
+    _pending_canceled_order_id_queue: Deque[str]
     _seen_trade_keys: set[Tuple[Any, ...]]
     _seen_trade_key_order: Deque[Tuple[Any, ...]]
     timezone: str = "Asia/Shanghai"
@@ -465,6 +469,14 @@ class Strategy:
         instance._subscriptions = []
         instance._last_prices = {}
         instance._known_orders = {}
+        instance._finalized_orders = {}
+        instance._finalized_order_ids = deque()
+        # 撤单意图: 必须在此初始化。三处使用点都写作
+        # ``getattr(strategy, "_pending_canceled_order_ids", set())``, 该惯用法在
+        # 属性缺失时返回一个**临时** set, 其后的 isinstance 检查恒真 ⇒ setattr 永不
+        # 执行 ⇒ add 落到临时集合上随即丢弃。字段预先存在才能让 add 真正生效。
+        instance._pending_canceled_order_ids = set()
+        instance._pending_canceled_order_id_queue = deque()
         instance._seen_trade_keys = set()
         instance._seen_trade_key_order = deque()
         instance._hold_bars = defaultdict(int)
@@ -651,6 +663,12 @@ class Strategy:
             del state["_framework_current_order"]
         if "_framework_current_trade" in state:
             del state["_framework_current_trade"]
+        # 终态订单留档: 纯运行期缓存, 且持有不可 pickle 的 Rust Order 对象,
+        # 必须排除在快照之外(恢复后按需重新累积)。
+        if "_finalized_orders" in state:
+            del state["_finalized_orders"]
+        if "_finalized_order_ids" in state:
+            del state["_finalized_order_ids"]
         if "_indicator_recorder" in state:
             del state["_indicator_recorder"]
         if "_order_group_lock" in state:
@@ -722,6 +740,14 @@ class Strategy:
             self._incremental_indicators = {}
         if not hasattr(self, "_seen_trade_key_order"):
             self._seen_trade_key_order = deque()
+        if not hasattr(self, "_finalized_orders"):
+            self._finalized_orders = {}
+        if not hasattr(self, "_finalized_order_ids"):
+            self._finalized_order_ids = deque()
+        if not hasattr(self, "_pending_canceled_order_ids"):
+            self._pending_canceled_order_ids = set()
+        if not hasattr(self, "_pending_canceled_order_id_queue"):
+            self._pending_canceled_order_id_queue = deque()
         if not hasattr(self, "_oco_groups"):
             self._oco_groups = {}
         if not hasattr(self, "_oco_order_to_group"):
