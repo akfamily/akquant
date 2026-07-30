@@ -632,9 +632,13 @@ class Strategy:
         if "_framework_boundary_timers_registered" in state:
             del state["_framework_boundary_timers_registered"]
         # 派生态(性能短路标志 + 本地交易日缓存): 恢复时删除, 以强制
-        # ensure_framework_state 重建被重置字段, 并让日期缓存自我重建.
+        # ensure_framework_state 重建被重置字段, 并让日期缓存自我重建。
+        # 两个 _framework_needs_* 是按类判定的重写探测缓存, 同属派生态:
+        # 若随存档带走, 旧版本算错的 False 会在恢复后继续屏蔽钩子分发。
         for _derived_key in (
             "_framework_state_ready",
+            "_framework_needs_time_hooks",
+            "_framework_needs_portfolio_update",
             "_framework_local_date_cache",
             "_framework_local_date_lo_ns",
             "_framework_local_date_hi_ns",

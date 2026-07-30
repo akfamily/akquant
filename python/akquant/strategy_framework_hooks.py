@@ -85,10 +85,17 @@ def _is_pre_open_session(session: Any) -> bool:
 
 
 def _strategy_overrides_callback(strategy: Any, callback_name: str) -> bool:
+    """判断策略是否重写了框架钩子(相对框架基类的默认实现).
+
+    比较对象必须是 MRO 中**最基础**的那个定义, 即框架基类 ``Strategy`` 上的
+    默认实现。若改为比较"MRO 中第一个定义该方法的基类", 用户把钩子写在一层
+    公共基类里、具体策略只继承时会拿用户基类跟自己比, 得到 False, 钩子被
+    dispatch_time_hooks / collect_pre_open_timer_entries 整段跳过而静默失效。
+    """
     method = getattr(type(strategy), callback_name, None)
     if method is None:
         return False
-    for base in type(strategy).mro()[1:]:
+    for base in reversed(type(strategy).mro()[1:]):
         base_method = base.__dict__.get(callback_name)
         if base_method is not None:
             return method is not base_method
