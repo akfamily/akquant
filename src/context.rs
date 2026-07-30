@@ -72,7 +72,7 @@ pub struct ContextInit {
     pub margin_accrued_interest: f64,
     pub margin_daily_interest: f64,
     pub instruments: Arc<HashMap<String, Instrument>>,
-    pub last_prices: Arc<HashMap<String, Decimal>>,
+    pub last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
 }
 
 pub struct ContextUpdate {
@@ -104,7 +104,7 @@ pub struct ContextUpdate {
     pub previous_account_maintenance_ratio: f64,
     pub margin_accrued_interest: f64,
     pub margin_daily_interest: f64,
-    pub last_prices: Arc<HashMap<String, Decimal>>,
+    pub last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
 }
 
 #[gen_stub_pyclass]
@@ -334,7 +334,7 @@ pub struct StrategyContext {
 
     // Snapshots for buying-power computation (set at construction / each bar).
     pub instruments: Arc<HashMap<String, Instrument>>,
-    pub last_prices: Arc<HashMap<String, Decimal>>,
+    pub last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
 
     pub cash: Decimal,
     pub previous_cash: Decimal,
@@ -548,7 +548,7 @@ impl StrategyContext {
             margin_accrued_interest: margin_accrued_interest.unwrap_or(0.0),
             margin_daily_interest: margin_daily_interest.unwrap_or(0.0),
             instruments: Arc::new(HashMap::new()),
-            last_prices: Arc::new(HashMap::new()),
+            last_prices: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -726,10 +726,11 @@ impl StrategyContext {
             Vec::with_capacity(self.active_orders.len() + self.orders.len());
         pending.extend(self.active_orders.iter().cloned());
         pending.extend(self.orders.iter().cloned());
+        let prices = self.last_prices.read().expect("last_prices 读锁被污染");
         let projected = crate::risk::common::project_active_orders_into(
             &portfolio,
             &pending,
-            &self.last_prices,
+            &prices,
             &self.instruments,
         );
         let stock_ratio_override = if self.risk_config.is_margin_account() {
@@ -738,7 +739,7 @@ impl StrategyContext {
             None
         };
         let free_margin = projected.calculate_free_margin_with_stock_ratio(
-            &self.last_prices,
+            &prices,
             &self.instruments,
             stock_ratio_override,
         );

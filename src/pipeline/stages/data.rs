@@ -48,9 +48,10 @@ impl DataProcessor {
             return;
         }
         if let Ok(mut buffer) = engine.history_buffer.write() {
+            let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
             for symbol in engine.instruments.keys() {
                 if !self.seen_symbols.contains(symbol)
-                    && let Some(&last_price) = engine.last_prices.get(symbol)
+                    && let Some(&last_price) = prices.get(symbol)
                 {
                     // Create synthetic bar
                     let bar = Bar {
@@ -137,10 +138,16 @@ impl DataProcessor {
         }
         let current_events: Vec<Event> = self.current_symbol_events.values().cloned().collect();
         if !current_events.is_empty() {
+            // 注意:此读锁会跨越下面的 finalize_timestamp 调用,自定义撮合器
+            // (register_custom_matcher)会经此路径调回用户 Python 代码。
+            // 安全性同 core.rs Engine.last_prices 字段注释:写锁只有 3 处
+            // 且都要求 &mut Engine,run() 期间该借用被占用,再入会
+            // PyBorrowMutError 而非阻塞。
+            let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
             let ctx = EngineContext {
                 instruments: &engine.instruments,
                 portfolio: &engine.state.portfolio,
-                last_prices: &engine.last_prices,
+                last_prices: &prices,
                 trade_tracker: &engine.state.order_manager.trade_tracker,
                 market_model: engine.market_manager.model.as_ref(),
                 execution_policy_core: engine.execution_policy_core(),
@@ -155,6 +162,8 @@ impl DataProcessor {
             let reports = engine
                 .execution_model
                 .finalize_timestamp(&current_events, &ctx);
+            drop(ctx);
+            drop(prices);
             let mut trades_to_process = Vec::new();
             let mut oco_suppressed_fill_order_ids: HashSet<String> = HashSet::new();
             for report in reports {
@@ -271,11 +280,12 @@ impl Processor for DataProcessor {
                     let previous_trading_date = engine.current_date;
 
                     if engine.current_date.is_some() {
+                        let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
                         engine.statistics_manager.record_snapshot(
                             timestamp,
                             &engine.state.portfolio,
                             &engine.instruments,
-                            &engine.last_prices,
+                            &prices,
                             &engine.state.order_manager.trade_tracker,
                             &engine.risk_manager.config,
                         );
@@ -314,10 +324,12 @@ impl Processor for DataProcessor {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    let settlement_prices =
+                        engine.last_prices.read().expect("last_prices 读锁被污染");
                     let settlement_ctx = crate::settlement::manager::SettlementContext {
                         date: local_date,
                         instruments: &engine.instruments,
-                        last_prices: &engine.last_prices,
+                        last_prices: &settlement_prices,
                         market_manager: &engine.market_manager,
                         trade_tracker: &engine.state.order_manager.trade_tracker,
                         risk_config: &engine.risk_manager.config,
@@ -332,6 +344,8 @@ impl Processor for DataProcessor {
                         &mut expired_orders,
                         &settlement_ctx,
                     );
+                    drop(settlement_ctx);
+                    drop(settlement_prices);
                     engine.recent_expiry_events = settlement_outcome
                         .expiry_events
                         .iter()

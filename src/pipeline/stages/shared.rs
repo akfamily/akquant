@@ -58,6 +58,7 @@ pub(crate) fn flush_accumulated_trades(engine: &mut Engine, trades_to_process: &
     if trades_to_process.is_empty() {
         return;
     }
+    let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
     engine.state.order_manager.process_trades(
         std::mem::take(trades_to_process),
         &mut engine.state.portfolio,
@@ -65,7 +66,7 @@ pub(crate) fn flush_accumulated_trades(engine: &mut Engine, trades_to_process: &
         &engine.risk_manager.config,
         engine.market_manager.model.as_ref(),
         &engine.history_buffer,
-        &engine.last_prices,
+        &prices,
     );
 }
 

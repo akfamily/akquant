@@ -18,9 +18,10 @@ impl Processor for StatisticsProcessor {
             && let Some(timestamp) = engine.clock.timestamp()
             && engine.is_active_timestamp(timestamp)
         {
+            let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
             let equity = calculate_account_metrics(
                 &engine.state.portfolio,
-                &engine.last_prices,
+                &prices,
                 &engine.instruments,
                 &engine.state.order_manager.trade_tracker,
                 &engine.risk_manager.config,
@@ -29,7 +30,8 @@ impl Processor for StatisticsProcessor {
             let margin = engine
                 .state
                 .portfolio
-                .calculate_used_margin(&engine.last_prices, &engine.instruments);
+                .calculate_used_margin(&prices, &engine.instruments);
+            drop(prices);
             engine.statistics_manager.update(
                 timestamp,
                 equity,

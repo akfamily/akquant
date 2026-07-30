@@ -53,8 +53,16 @@ mod tests {
             .instruments
             .insert("B".to_string(), create_instrument("B"));
 
-        engine.last_prices.insert("A".to_string(), dec!(100));
-        engine.last_prices.insert("B".to_string(), dec!(200));
+        engine
+            .last_prices
+            .write()
+            .unwrap()
+            .insert("A".to_string(), dec!(100));
+        engine
+            .last_prices
+            .write()
+            .unwrap()
+            .insert("B".to_string(), dec!(200));
 
         let mut processor = DataProcessor::new();
 
@@ -115,7 +123,11 @@ mod tests {
                 assert_eq!(hist_b.volumes[0], 0.0);
             }
 
-            engine.last_prices.insert("B".to_string(), dec!(205));
+            engine
+                .last_prices
+                .write()
+                .unwrap()
+                .insert("B".to_string(), dec!(205));
 
             // Step 3: Process T3 A (Fill T2)
             processor.process(&mut engine, py, &strategy).unwrap();
@@ -143,8 +155,16 @@ mod tests {
             .instruments
             .insert("B".to_string(), create_instrument("B"));
         engine.state.portfolio.cash = dec!(50000);
-        engine.last_prices.insert("A".to_string(), dec!(100));
-        engine.last_prices.insert("B".to_string(), dec!(100));
+        engine
+            .last_prices
+            .write()
+            .unwrap()
+            .insert("A".to_string(), dec!(100));
+        engine
+            .last_prices
+            .write()
+            .unwrap()
+            .insert("B".to_string(), dec!(100));
 
         let mut pending_order =
             Order::test_new("order-b", "B", OrderSide::Buy, OrderType::Limit, dec!(300));

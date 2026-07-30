@@ -43,10 +43,16 @@ impl Processor for ExecutionProcessor {
             match event {
                 Event::Bar(_) | Event::Tick(_) | Event::Timer(_) => {
                     // Create Context
+                    // 注意:此读锁会跨越下面的 on_event 调用,自定义撮合器
+                    // (register_custom_matcher)会经此路径调回用户 Python
+                    // 代码。安全性同 core.rs Engine.last_prices 字段注释:
+                    // 写锁只有 3 处且都要求 &mut Engine,run() 期间该借用被
+                    // 占用,再入会 PyBorrowMutError 而非阻塞。
+                    let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
                     let ctx = EngineContext {
                         instruments: &engine.instruments,
                         portfolio: &engine.state.portfolio,
-                        last_prices: &engine.last_prices,
+                        last_prices: &prices,
                         trade_tracker: &engine.state.order_manager.trade_tracker,
                         market_model: engine.market_manager.model.as_ref(),
                         execution_policy_core: engine.execution_policy_core(),
@@ -60,6 +66,8 @@ impl Processor for ExecutionProcessor {
                     };
 
                     let reports = engine.execution_model.on_event(&event, &ctx);
+                    drop(ctx);
+                    drop(prices);
                     for report in reports {
                         let _ = engine.event_manager.send(report);
                     }
