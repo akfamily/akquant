@@ -88,9 +88,12 @@ class ReplayMarketGateway:
 
     @property
     def pending_events(self) -> List[Union[Bar, Tick]]:
-        """当前订阅集下将被推送的事件(已排序、已过滤)."""
-        if not self._symbols:
-            return list(self._all_events)
+        """当前订阅集下将被推送的事件(已排序、已过滤).
+
+        始终按当前订阅集过滤, 不对空集合做"不过滤"短路: ``unsubscribe`` 可以把
+        集合清空, 若此时放开过滤, 退订反而会推送**全部**品种——与订阅语义相反。
+        退订全部即推送 0 条。
+        """
         allowed = set(self._symbols)
         return [e for e in self._all_events if str(e.symbol) in allowed]
 

@@ -140,6 +140,26 @@ def test_unsubscribe_removes_symbol() -> None:
     assert [e.symbol for e in feed.pushed] == ["B"]
 
 
+def test_unsubscribe_all_pushes_nothing() -> None:
+    """退订全部后不得推送任何事件.
+
+    回归防护: 若 pending_events 把"过滤集为空"当成"无过滤", 退订反而会推送
+    **全部**品种(含从未订阅过的), 与订阅语义完全相反。
+    """
+    feed = _FakeFeed()
+    gateway = ReplayMarketGateway(
+        feed=feed,
+        symbols=["A"],
+        bars=[_bar(_ns(10), "A"), _bar(_ns(20), "B"), _bar(_ns(30), "C")],
+    )
+
+    gateway.unsubscribe(["A"])
+
+    assert gateway.pending_events == []
+    gateway.start()
+    assert feed.pushed == []
+
+
 def test_dataframe_input_matches_bar_list_input() -> None:
     """DataFrame 入参与 list[Bar] 入参产生相同事件序列.
 
