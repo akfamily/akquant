@@ -3,6 +3,9 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import pandas as pd
 
 from .akquant import TradingSession
+from .log import get_logger
+
+logger = get_logger("strategy")
 
 _RUNTIME_DEFAULTS = {
     "enable_precise_day_boundary_hooks": False,
@@ -467,6 +470,17 @@ def register_pre_open_timers(strategy: Any) -> None:
 
     entries = collect_pre_open_timer_entries(strategy)
     if not entries:
+        # 实盘: pre-open 定时器依赖逐交易日的 _trading_day_bounds, 而该字段只由
+        # 回测引擎填充, 实盘恒为空 ⇒ on_pre_open 永不触发。此处必须告警并停止
+        # 重试: 否则每根 bar/tick 都会重跑一次注册并再次失败(既无声又白做功)。
+        # 回测下 bounds 可能只是"还没填", 保持原样按 bar 重试(不告警, 避免误报)。
+        if getattr(strategy, "_live_market_data_owner", False):
+            logger.warning(
+                "实盘下 on_pre_open 不会触发: 该回调依赖回测交易日历推导的盘前"
+                "时点, 实盘无此数据源。请改用 schedule_daily(...) 在盘前时点"
+                "触发 on_timer, 或把盘前逻辑放到 on_before_trading 中"
+            )
+            strategy._framework_pre_open_timers_registered = True
         return
 
     current_time = int(getattr(strategy.ctx, "current_time", 0))

@@ -26,6 +26,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 教材第 5 章与教材目录页现已同步补充完整 `on_xxx` 回调地图、学习路径与相关示例入口，便于用户从教材直接理解各类回调的职责边界，并新增 `on_pre_open` 的推荐用法。
 - 示例体系已补充 `examples/50_framework_hooks_demo.py` 与 `examples/51_class_tick_callbacks_demo.py`，分别覆盖框架边界钩子与类风格 `on_tick` 的最小可运行案例。
 - 示例体系新增 `examples/52_pre_open_demo.py`，用于演示 `on_pre_open -> on_order/on_trade -> on_bar` 的触发顺序与当日 open 成交语义。
+- **策略 API 批量改名与硬删（破坏性，不保留兼容别名）**：0.3.x 期间对 `Strategy` 公开面做了一轮收敛，以下旧名**已从 `Strategy` 移除**，旧调用会直接 `AttributeError`。此前这些变更未记入本文件，特此补齐——从 0.2.x / 0.3.早期升级请按下表逐项迁移。
+
+    | 旧 API | 新 API | 迁移写法 |
+    | --- | --- | --- |
+    | `get_cash()` | `cash` 属性 | `self.get_cash()` → `self.cash` |
+    | `get_portfolio_value()` | `equity` 属性 | `self.get_portfolio_value()` → `self.equity` |
+    | `get_positions()` | `positions` 属性 | `self.get_positions()` → `self.positions` |
+    | `hold_bar(symbol)` | `get_holding_bars(symbol)` | 仅改名，签名不变 |
+    | `order_target_positions(...)` | `rebalance_positions(...)` | 仅改名，签名不变 |
+    | `order_target_weights(...)` | `rebalance_weights(...)` | 仅改名，签名不变 |
+    | `place_bracket_order(...)` | `place_bracket(...)` | 仅改名，签名不变 |
+    | `create_oco_order_group(a, b)` | `place_oco(a, b)` | 仅改名；新版两个入参同时接受订单 id 与 `OrderReceipt` |
+    | `register_indicator(name, ind)` | `register_precomputed_indicator(name, ind)` | 旧名本就是该方法的薄别名，去别名后请直接用全名 |
+    | `stop_buy(symbol, trigger_price, quantity, price)` | `submit_order(...)` | `submit_order(symbol=..., side="Buy", quantity=..., trigger_price=..., price=...)`；`price=None` 即触发后转市价 |
+    | `stop_sell(...)` | `submit_order(...)` | 同上，`side="Sell"` |
+    | `buy_all(symbol)` | `order_target_percent(...)` | `order_target_percent(symbol=..., target_percent=1.0)` |
+
+    注：`cash` / `equity` / `positions` 现为**只读属性**（`property`），不能再当方法调用——`self.cash()` 会抛 `TypeError`。执行后端（`strategy.execution`）层的同名方法未改动，自定义 broker 无需跟随调整。
+- **回测成交策略从 dict 收敛为 `FillMode` 对象（破坏性）**：`fill_policy` 不再接受 dict，`make_fill_policy()` 已移除（保留为抛 `TypeError` 的报错壳，错误信息内嵌完整迁移映射）；引擎侧 `set_fill_policy(price_basis, bar_offset, temporal)` 重塑为 `set_fill_mode(mode: ExecutionMode, timer_timing: str)`，非法的 `(basis, offset)` 组合在枚举层已不可表达。`get_fill_policy()` 保留不变（checkpoint 反查依赖）。**迁移映射**：
+
+    | 旧 dict | 新 `FillMode` |
+    | --- | --- |
+    | `{"price_basis": "open"}` | `NextOpen()` |
+    | `{"price_basis": "close", "bar_offset": 0}` | `CurrentClose()` |
+    | `{"price_basis": "close", "bar_offset": 0, "temporal": "next_event"}` | `CurrentClose(timer_fill_timing="deferred")` |
+    | `{"price_basis": "close", "bar_offset": 1}` | `NextClose()` |
+    | `{"price_basis": "ohlc4"}` | `NextAverage()` |
+    | `{"price_basis": "hl2"}` | `NextHighLowMid()` |
+- **`LiveRunner` 从公开 API 移除（破坏性）**：实盘入口统一为 `run_live(...)` 函数门面，与 `run_backtest` 对称。`from akquant import LiveRunner` 会 `ImportError`；原先 `LiveRunner(...).run(cash=..., duration=...)` 的两步用法改为单次 `run_live(..., cash=..., duration=...)` 调用，配置参数一一对应。
+- **`add_daily_timer` 已移除，更名为 `schedule_daily`（破坏性，不保留兼容别名）**：定时器注册端统一为 `schedule` / `schedule_daily` / `schedule_weekly` / `schedule_monthly` 家族（回调端 `on_timer` 不变）。升级后旧调用会直接 `AttributeError`。**迁移**：`self.add_daily_timer("14:55:00", "rebalance")` 改为 `self.schedule_daily("14:55:00", "rebalance")`，参数与触发语义完全一致。注意 `schedule_weekly` / `schedule_monthly` 依赖回测交易日历（`_trading_days`），在**实盘**下会记录一条 warning 并被忽略；实盘的周期性任务请用 `schedule_daily` 配合回调内的日历判断。详见 `docs/zh/meta/timer-api-rfc.md`。
+- **实盘 `subscribe()` 不再静默无效**：`Strategy.subscribe()` 只把标的写入 `_subscriptions`，而该列表**仅**被回测消费——实盘（`run_live`）的订阅集在会话启动时由 `instruments` 一次性交给行情网关，此后调用 `subscribe()` 不会触达任何网关。此前这一调用完全无声，用户以为订阅成功却收不到行情。现在实盘下调用 `subscribe()` 会记录一条 warning，指明应把该标的加入 `run_live(instruments=[...])`（每个标的只告警一次）。行为本身未变（仍会记录进 `_subscriptions`），回测语义完全不受影响。
 - **`supports_short_sell` 在 `broker_live` 下开始真正生效**：该字段此前在实盘下单路径上没有任何消费者（仅服务 `order_target*` 的目标仓位计算），broker 声明了 `False` 也照样把开空单发给柜台，只能等柜台报错。现在 `side=Sell` + `position_effect=open` 会在下单前被本地拒绝。内置 CTP 声明 `True`，不受影响；`ptrade` / `miniqmt` 只声明支持 `auto`，其显式 `open` 早已被 `supported_position_effects` 拦截，行为不变。若自定义 broker 实际支持融券却被拦，请修正其 `get_capabilities()` 中的 `supports_short_sell` 声明。
 
 ### Fixed
@@ -35,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 修复 `on_after_trading` 里下 next-open（`bar_offset=1`）单晚一格成交的问题（#324）。它原先在「下一根 bar」到来时才惰性补触发，引擎时钟已越过日界，其中提交的 next-open 单被撮合守卫推迟一格（盘后下单期望次日开盘成交，实际到第三日）。现改为按日终边界定时器在「当日收盘点」的独立事件里触发（早于下一根 bar），使其中提交的次日开盘单落在下一根 bar，而非晚一格。默认（非 precise）与 precise 模式下均已修正；`on_before_trading` 等开始型钩子本就与 `on_bar` 同拍触发，不受影响。`__engine_rule_version__` 相应升至 `1.3.1`。
 - 修复 `on_pre_open` 未兑现「本次 open 成交」契约的问题（#324 家族）。其盘前定时器原先排在当日首根 bar 的同一时刻，订单 `created_at` 与该 bar 同拍、被 next-open 守卫拦截，导致实际成交在**下一日 open**（可由 `examples/52_pre_open_demo.py` 复现）。现将盘前定时器排在首根 bar 之前 1ns，使 `on_pre_open` 中下的默认开盘单落在**当日 open**，与文档承诺一致。
 - 修复短回测区间下 Sharpe/Sortino 因「分子用 CAGR、分母用日波动 × √252」口径不一致而出现异常巨大值（如期货场景 Sharpe 高达数千万）的问题；改用日收益算术均值年化后数值回归合理量级。
-- 修复 `on_timer` / `add_daily_timer` 场景下，订单级 `fill_policy={"price_basis":"close","bar_offset":0,"temporal":"same_cycle"}` 未在当日 timer 事件内生效的问题；相关卖单现在会按当日 timer 时间与当日 close 成交，不再延后到下一交易日。
+- 修复 `on_timer` / `schedule_daily`（原 `add_daily_timer`）场景下，订单级 `fill_policy={"price_basis":"close","bar_offset":0,"temporal":"same_cycle"}` 未在当日 timer 事件内生效的问题；相关卖单现在会按当日 timer 时间与当日 close 成交，不再延后到下一交易日。
 - 修复 framework 内部 `__framework_rebalance__` / `__framework_boundary__` timer 被误参与 same-cycle 撮合与终态统计的问题，避免出现 `+1ns` 的伪成交、partial fill 被过早补满，以及权益曲线尾部多出额外采样点。
 - 修复 `on_pre_open` 首个交易日可能因延迟注册 timer 而不触发的问题；相关 framework timer 现会在回测事件循环开始前直接注入引擎，从而保证首日也能按预期开盘语义执行。
 
