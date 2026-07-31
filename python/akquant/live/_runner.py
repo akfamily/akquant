@@ -457,6 +457,24 @@ class LiveRunner:
             )
             self._apply_time_limit(strategy_instance, duration)
 
+        # 有界会话: broker 在 metadata 声明预期事件总数时, 事件放完即结束。
+        # 这是 runner 唯一读取 bundle.metadata 的地方; 键名不含具体 broker 名,
+        # 任何有界 live 数据源均可复用。duration 仍作安全网: 若该总数因故永远
+        # 达不到(例如数据含引擎会丢弃的事件), 墙钟兜底避免挂死。
+        bounded_total = 0
+        if bundle.metadata:
+            try:
+                bounded_total = int(bundle.metadata.get("bounded_event_total", 0) or 0)
+            except (TypeError, ValueError):
+                bounded_total = 0
+        if bounded_total > 0:
+            logger.info(
+                "Bounded live session: will stop after %s market events",
+                bounded_total,
+                extra=self._runner_log_extra(phase="live"),
+            )
+            self._apply_bounded_event_limit(strategy_instance, bounded_total)
+
         logger.info(
             "Running live strategy loop",
             extra=self._runner_log_extra(phase="live"),
@@ -1485,6 +1503,47 @@ class LiveRunner:
                             strategy_id=owner_strategy_id,
                         ),
                     )
+
+    def _apply_bounded_event_limit(self, strategy: Any, total_events: int) -> None:
+        """让有界 live 会话在收到 ``total_events`` 个行情事件后自行结束.
+
+        live 循环在 channel 空时返回 ``FeedAction::Wait`` 并无限循环
+        (``src/data/feed.rs:358-366``), 而 ``Engine`` 未向 Python 暴露 ``stop()``。
+        因此复用 ``duration`` 已验证的模式: 抛 ``KeyboardInterrupt``, 由 ``run()``
+        的 ``except`` 接住并走正常收尾。
+
+        计数点选在框架入口 ``_on_bar_event_and_flush`` /
+        ``_on_tick_event_and_flush``(Rust 调用点 ``src/engine/core.rs:1280`` 与
+        ``:1334``): 这两个是每个事件必经之路, warmup 与
+        ``_active_start_time_ns`` 预热过滤只影响用户的 ``on_bar``, 不影响这一层,
+        因此计数精确。
+
+        本机制不含具体 broker 语义: 任何在 ``GatewayBundle.metadata`` 中声明
+        ``bounded_event_total`` 的 broker 都能复用。
+        """
+        if total_events <= 0:
+            return
+
+        state = {"count": 0}
+
+        def _make_wrapper(original: Any) -> Any:
+            def wrapped(event: Any, ctx: Any) -> Any:
+                # 先处理完本事件再判断, 使第 N 个事件不被截断。
+                result = original(event, ctx)
+                state["count"] += 1
+                if state["count"] >= total_events:
+                    raise KeyboardInterrupt(
+                        f"bounded live session complete: {total_events} events"
+                    )
+                return result
+
+            return wrapped
+
+        for method_name in ("_on_bar_event_and_flush", "_on_tick_event_and_flush"):
+            original = getattr(strategy, method_name, None)
+            if original is None:
+                continue
+            setattr(strategy, method_name, _make_wrapper(original))
 
     def _apply_time_limit(self, strategy: Strategy, duration_str: str) -> None:
         """Inject time check into strategy methods."""
