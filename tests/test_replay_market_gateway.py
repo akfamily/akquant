@@ -251,3 +251,68 @@ def test_push_error_does_not_propagate(caplog: pytest.LogCaptureFixture) -> None
     gateway.start()
 
     assert any("replay" in r.getMessage().lower() for r in caplog.records)
+
+
+def test_build_bundle_declares_bounded_event_total() -> None:
+    """Builder 必须声明预期事件总数, runner 据此终止有界会话."""
+    from akquant.gateway.brokers.replay.gateway import build_replay_bundle
+
+    bundle = build_replay_bundle(
+        feed=_FakeFeed(),
+        symbols=["A"],
+        use_aggregator=True,
+        bars=[_bar(_ns(10), "A"), _bar(_ns(20), "A")],
+    )
+
+    assert bundle.metadata is not None
+    assert bundle.metadata["bounded_event_total"] == 2
+    assert bundle.metadata["broker"] == "replay"
+
+
+def test_build_bundle_has_no_trader_gateway() -> None:
+    """回放只提供行情, 不模拟成交."""
+    from akquant.gateway.brokers.replay.gateway import build_replay_bundle
+
+    bundle = build_replay_bundle(
+        feed=_FakeFeed(), symbols=["A"], use_aggregator=True, bars=[_bar(_ns(0), "A")]
+    )
+
+    assert bundle.trader_gateway is None
+    assert bundle.trader_capabilities is None
+    assert bundle.market_gateway is not None
+
+
+def test_build_bundle_counts_only_subscribed_symbols() -> None:
+    """bounded_event_total 只计入订阅内的事件, 否则计数永远达不到."""
+    from akquant.gateway.brokers.replay.gateway import build_replay_bundle
+
+    bundle = build_replay_bundle(
+        feed=_FakeFeed(),
+        symbols=["A"],
+        use_aggregator=True,
+        bars=[_bar(_ns(10), "A"), _bar(_ns(20), "B")],
+    )
+
+    assert bundle.metadata is not None
+    assert bundle.metadata["bounded_event_total"] == 1
+
+
+def test_build_bundle_rejects_empty_data() -> None:
+    """空数据必须早失败: 否则 live 循环会静默空跑挂死."""
+    from akquant.gateway.brokers.replay.gateway import build_replay_bundle
+
+    with pytest.raises(ValueError, match="replay"):
+        build_replay_bundle(feed=_FakeFeed(), symbols=["A"], use_aggregator=True)
+
+
+def test_build_bundle_rejects_all_filtered_out() -> None:
+    """数据非空但全被订阅集过滤掉, 同样是空跑, 须报错."""
+    from akquant.gateway.brokers.replay.gateway import build_replay_bundle
+
+    with pytest.raises(ValueError, match="replay"):
+        build_replay_bundle(
+            feed=_FakeFeed(),
+            symbols=["Z"],
+            use_aggregator=True,
+            bars=[_bar(_ns(10), "A")],
+        )

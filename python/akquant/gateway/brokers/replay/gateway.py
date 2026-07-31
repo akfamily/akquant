@@ -140,11 +140,42 @@ class ReplayMarketGateway:
 def build_replay_bundle(
     feed: Any,
     symbols: Sequence[str],
-    bars: ReplayBars | None = None,
-    ticks: Sequence[Tick] | None = None,
+    use_aggregator: bool,
+    **kwargs: Any,
 ) -> GatewayBundle:
-    """构建回放行情网关 bundle (MarketGateway 仅有, no trader)."""
-    market_gateway = ReplayMarketGateway(
-        feed=feed, symbols=symbols, bars=bars, ticks=ticks
+    """构建回放 broker 的 ``GatewayBundle``.
+
+    数据经 ``gateway_options`` 传入::
+
+        run_live(
+            broker="replay",
+            trading_mode="paper",
+            instruments=[...],
+            gateway_options={"bars": [...]},   # 或 {"bars": df} / {"ticks": [...]}
+        )
+
+    ``use_aggregator`` 不适用(回放数据已是最终形态, 无需 tick→bar 聚合), 收下忽略。
+
+    ``metadata["bounded_event_total"]`` 声明预期事件总数, ``LiveRunner`` 据此在
+    事件放完后终止会话——live 循环本身在 channel 空时会无限等待。
+    """
+    _ = use_aggregator
+    gateway = ReplayMarketGateway(
+        feed=feed,
+        symbols=symbols,
+        bars=kwargs.get("bars"),
+        ticks=kwargs.get("ticks"),
     )
-    return GatewayBundle(market_gateway=market_gateway, trader_gateway=None)
+    total = len(gateway.pending_events)
+    if total == 0:
+        raise ValueError(
+            "broker='replay' 需要非空行情数据: 请通过 "
+            "gateway_options={'bars': [...]} 或 {'ticks': [...]} 传入, "
+            "且至少有一条数据的 symbol 落在 instruments 之内"
+        )
+    return GatewayBundle(
+        market_gateway=gateway,
+        trader_gateway=None,
+        trader_capabilities=None,
+        metadata={"broker": "replay", "bounded_event_total": total},
+    )
