@@ -548,6 +548,11 @@ class LiveRunner:
         default_ready = getattr(self, "trading_mode", "paper") != "broker_live"
         for target in [strategy_instance, *slot_strategy_instances.values()]:
             setattr(target, "broker_ready", default_ready)
+            # 标记实盘: 让 Strategy.subscribe() 能告知用户它在实盘不生效
+            # (实盘订阅集来自 run_live(instruments=...))。
+            mark_live = getattr(target, "_set_live_market_data_owner", None)
+            if callable(mark_live):
+                mark_live()
 
         strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
         # getattr 兜底与同方法内 trading_mode 一致: 允许绕过 __init__ 的调用方。

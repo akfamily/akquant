@@ -31,6 +31,7 @@ from .akquant import (
 )
 from .gateway.order_receipt import OrderReceipt
 from .indicator_recording import IndicatorRecorder
+from .log import get_logger as _get_logger
 from .params import ParamModel, ParamSpec
 from .sizer import FixedSize, Sizer
 from .strategy_events import (
@@ -178,6 +179,9 @@ if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
     from .indicator import Indicator
     from .ml.model import QuantModel
+
+# 实盘 subscribe() 告警用: 与 strategy_logging 的 "strategy" 通道同源。
+_live_subscribe_logger = _get_logger("strategy")
 
 
 @dataclass
@@ -328,6 +332,8 @@ class Strategy:
     _precomputed_indicators: List["Indicator"]
     _incremental_indicators: Dict[str, IncrementalIndicatorRegistration]
     _subscriptions: List[str]
+    _live_market_data_owner: bool
+    _warned_live_subscriptions: set[str]
     _last_prices: Dict[str, float]
     _rolling_train_window: int
     _rolling_step: int
@@ -467,6 +473,11 @@ class Strategy:
         instance._precomputed_indicators = []
         instance._incremental_indicators = {}
         instance._subscriptions = []
+        # 实盘标记: LiveRunner 在 _configure_strategy_slots 里置位。subscribe()
+        # 据此告警——实盘订阅集来自 run_live(instruments=[...]), _subscriptions
+        # 仅被回测消费。
+        instance._live_market_data_owner = False
+        instance._warned_live_subscriptions = set()
         instance._last_prices = {}
         instance._known_orders = {}
         instance._finalized_orders = {}
@@ -748,6 +759,10 @@ class Strategy:
             self._pending_canceled_order_ids = set()
         if not hasattr(self, "_pending_canceled_order_id_queue"):
             self._pending_canceled_order_id_queue = deque()
+        if not hasattr(self, "_live_market_data_owner"):
+            self._live_market_data_owner = False
+        if not hasattr(self, "_warned_live_subscriptions"):
+            self._warned_live_subscriptions = set()
         if not hasattr(self, "_oco_groups"):
             self._oco_groups = {}
         if not hasattr(self, "_oco_order_to_group"):
@@ -1417,12 +1432,36 @@ class Strategy:
         )
         setattr(self, name, IncrementalIndicatorBinding(self, name))
 
+    def _set_live_market_data_owner(self) -> None:
+        """标记本策略运行于实盘(行情订阅集由 run_live 的 instruments 决定).
+
+        由 :class:`~akquant.live._runner.LiveRunner` 在装配阶段调用。
+        """
+        self._live_market_data_owner = True
+
     def subscribe(self, instrument_id: str) -> None:
         """
         Subscribe to market data for an instrument.
 
+        仅在**回测**生效: ``run_backtest`` 会把 ``_subscriptions`` 并入标的集合。
+        实盘(``run_live``)的订阅集在会话启动时由 ``instruments`` 一次性传给行情
+        网关, 此处调用不会触达任何网关, 因此会记录一条 warning。
+
         :param instrument_id: The instrument identifier (e.g., '600000').
         """
+        if getattr(self, "_live_market_data_owner", False):
+            warned = getattr(self, "_warned_live_subscriptions", None)
+            if warned is None:
+                warned = set()
+                self._warned_live_subscriptions = warned
+            # 逐 symbol 只告警一次: 用户可能在 on_bar 里按条件 subscribe。
+            if instrument_id not in warned:
+                warned.add(instrument_id)
+                _live_subscribe_logger.warning(
+                    "实盘下 subscribe(%r) 不会订阅行情: 实盘订阅集来自 "
+                    "run_live(instruments=[...]), 请把该标的加入 instruments",
+                    instrument_id,
+                )
         if instrument_id not in self._subscriptions:
             self._subscriptions.append(instrument_id)
 
