@@ -1832,6 +1832,9 @@ def test_backtest_regression_baseline() -> None:
         assert val == pytest.approx(exp_val, rel=1e-9)
 
     assert len(result.trades) == 1
+    assert float(result.metrics_df.loc["open_position_count", "value"]) == (
+        pytest.approx(0.0)
+    )
     trade = result.trades[0]
     assert trade.symbol == symbol
     assert trade.entry_time == day1

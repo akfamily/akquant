@@ -415,29 +415,16 @@ class BacktestResult:
             pass
 
         try:
+            # positions_df only retains snapshots for symbols that were held. Its
+            # latest date can therefore precede the backtest end after all assets
+            # have been sold. Use the final portfolio snapshot, which includes
+            # zero quantities, to determine the actual ending positions.
             open_position_count = 0.0
-            pos_df = self.positions_df
-            if not pos_df.empty and "date" in pos_df.columns:
-                latest_date = pos_df["date"].max()
-                latest_positions = pos_df[pos_df["date"] == latest_date].copy()
-                if "quantity" in latest_positions.columns:
-                    quantity = pd.to_numeric(
-                        latest_positions["quantity"], errors="coerce"
-                    ).fillna(0.0)
-                    open_position_count = float(quantity.ne(0.0).sum())
-                elif {
-                    "long_shares",
-                    "short_shares",
-                }.issubset(latest_positions.columns):
-                    long_shares = pd.to_numeric(
-                        latest_positions["long_shares"], errors="coerce"
-                    ).fillna(0.0)
-                    short_shares = pd.to_numeric(
-                        latest_positions["short_shares"], errors="coerce"
-                    ).fillna(0.0)
-                    open_position_count = float(
-                        (long_shares.ne(0.0) | short_shares.ne(0.0)).sum()
-                    )
+            positions = self.positions
+            if not positions.empty:
+                final_positions = positions.iloc[-1]
+                quantities = pd.to_numeric(final_positions, errors="coerce").fillna(0.0)
+                open_position_count = float(quantities.ne(0.0).sum())
             df.loc["open_position_count", "value"] = open_position_count
         except Exception:
             pass
