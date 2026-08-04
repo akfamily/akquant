@@ -356,6 +356,26 @@ class LiveRunner:
         self._indicator_recorder_override = indicator_recorder
         self._stream_on_event = on_event
 
+    def _all_instruments_are_futures(self) -> bool:
+        """本次会话的标的是否全为期货.
+
+        决定用哪种中国市场配置: ``use_china_futures_market()`` 只配期货费率,
+        ``stock`` / ``fund`` / ``option`` 均为 ``None``, Rust 侧撮合遇到非期货
+        订单会 panic(``src/market/china.rs``); ``use_china_market()`` 配齐四类。
+        与回测的资产类型分支(``backtest/engine.py``)对齐。
+
+        无标的时返回 True, 保持改动前的行为不变。
+        """
+        from ..backtest.engine import _asset_type_to_upper_name
+
+        instruments = getattr(self, "instruments", None) or []
+        if not instruments:
+            return True
+        return all(
+            _asset_type_to_upper_name(inst.asset_type) == "FUTURES"
+            for inst in instruments
+        )
+
     def run(
         self,
         cash: float = 1_000_000.0,
@@ -385,7 +405,13 @@ class LiveRunner:
         else:
             self.engine.use_simulated_execution()
 
-        self.engine.use_china_futures_market()
+        # 市场配置按资产类型分支: 只配期货费率时, 股票/基金/期权订单会在 Rust
+        # 撮合层 panic(找不到对应配置)。回测早有此分支, live 此前一直无条件用
+        # 期货配置, 导致任何含股票标的的 paper 会话下单即 panic。
+        if self._all_instruments_are_futures():
+            self.engine.use_china_futures_market()
+        else:
+            self.engine.use_china_market()
         self.engine.set_force_session_continuous(True)
 
         symbols = [inst.symbol for inst in self.instruments]
