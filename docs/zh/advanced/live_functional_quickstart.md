@@ -18,7 +18,7 @@
 - 典型参数：
   - `trading_mode="paper"`
   - `strategy_cls=on_bar`
-  - `initialize/on_order/on_trade/on_timer/context`
+  - `initialize/on_order/on_trade/context`
 
 ### 2.2 broker_live（网关真实下单）
 
@@ -112,3 +112,35 @@ akquant.configure_logging(
 - 第一步：先跑 paper 模式，确认回调顺序与策略状态变更。
 - 第二步：切换 broker_live，先用最小下单量做连通性验证。
 - 第三步：稳定后再增加复杂逻辑（定时器、风控、分批下单）。
+
+## 离线验证：`broker="replay"`
+
+`replay` 是内置的确定性回放行情源，用于在没有柜台的环境下验证策略的实盘数据
+通路是否通畅——策略能否收到 bar/tick、多品种是否都到齐、`current_tick` 是否
+正确。
+
+```python
+from akquant import AssetType, Instrument, run_live
+from akquant.akquant import Bar
+
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=[Instrument(symbol="DEMO_A", asset_type=AssetType.Stock, ...)],
+    broker="replay",
+    trading_mode="paper",
+    gateway_options={"bars": bars},   # list[Bar] / list[Tick] / DataFrame
+)
+```
+
+事件按时间戳升序推送，多品种全局交错。数据放完后会话自行结束。
+
+**适用边界**：
+
+- 只提供行情，**不模拟成交**（`trader_gateway=None`），因此不能用于
+  `trading_mode="broker_live"`——那会抛 `ValueError`。撮合由 paper 模式的
+  模拟执行后端负责。
+- **不覆盖 timer 语义**。回放数据带历史时间戳，而实盘引擎按墙钟判定 timer 是否
+  到期，两条时间线错位。`on_timer` / `schedule_daily` 在回放会话中的行为不作
+  保证；要验证定时任务请用回测。
+- 多品种 DataFrame 需提供 `股票代码` 列，否则会退化为单标的。多品种场景建议直接
+  用 `list[Bar]`。

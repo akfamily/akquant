@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `get_account()` 账户快照新增 `free_margin` 字段（= `equity - used_margin`），表示真正可用于新开仓的可用保证金，与下单因保证金不足被拒时日志里的 `Available` 口径一致；期货保证金账户下 `cash`（现金余额）通常大于 `free_margin`，股票现金账户下二者相等。同时修正了 `cash` 在文档与 docstring 中「可用资金」的误导性表述，明确其为「现金余额」。
 - `BacktestConfig` 新增 `days_per_year`（年化天数因子，默认 252；数字货币 24/7 市场可设 365）与 `risk_free_rate`（年化无风险利率，默认 0.0）两个字段，用于参数化 Sharpe/Sortino/波动率等风险指标的年化口径。`risk_free_rate` 默认 0 不改变任何现有数值。
+- **新增内置 broker `replay`：确定性回放行情源**。用于在没有真实柜台、也没有 `openctp-ctp` 等可选依赖的环境下跑通实盘数据通路（`DataFeed` → 引擎 → `on_bar` / `on_tick`），此前这条通路没有任何测试覆盖。行情数据经 `gateway_options` 传入，支持 `list[Bar]`、`list[Tick]` 与 `DataFrame`（DataFrame 走 `normalize.dataframe_to_bars`，多品种需提供 `股票代码` 列，否则退化为单标的）：
+
+    ```python
+    run_live(
+        strategy_cls=MyStrategy,
+        instruments=[...],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars},   # 或 {"bars": df} / {"ticks": ticks}
+    )
+    ```
+
+    事件按时间戳升序推送（多品种全局交错——live feed 无法排序，推送顺序即引擎所见顺序），数据放完后会话自行结束，无需依赖 `duration`。**限制**：该 broker 只提供行情，`trader_gateway=None`，不模拟撮合成交，因此不能用于 `trading_mode="broker_live"`；并且**不覆盖 timer 语义**——回放数据带历史时间戳，而 live 引擎用墙钟判定 timer 到期，两条时间线错位，`on_timer` / `schedule_daily` 在回放会话中的行为不作保证。`examples/38_live_functional_strategy_demo.py` 已改用该 broker，现可离线实跑。
 
 ### Changed
 - **策略参数声明改为内联字段（破坏性）**：策略参数的单一事实来源现在是类体内联字段——直接用 `IntParam` / `FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` 赋值（如 `fast = IntParam(10, ge=2, le=200)`），经 `self.params.fast` 只读访问；`self.params` 在实例构造期即已校验就绪且 frozen，不支持运行期赋值。
