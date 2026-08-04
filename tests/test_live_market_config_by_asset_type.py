@@ -9,7 +9,9 @@
 
 from typing import Any, List
 
-from akquant import AssetType, Instrument
+import pandas as pd
+from akquant import AssetType, Instrument, Strategy, run_live
+from akquant.akquant import Bar
 from akquant.live._runner import LiveRunner
 
 
@@ -26,22 +28,6 @@ def _instrument(symbol: str, asset_type: Any) -> Instrument:
         strike_price=None,
         expiry_date=None,
     )
-
-
-class _RecordingEngine:
-    """记录市场配置调用的假引擎."""
-
-    def __init__(self) -> None:
-        """初始化调用记录."""
-        self.calls: List[str] = []
-
-    def use_china_futures_market(self) -> None:
-        """记录期货配置调用."""
-        self.calls.append("futures")
-
-    def use_china_market(self) -> None:
-        """记录全资产配置调用."""
-        self.calls.append("all")
 
 
 def _runner_with(instruments: List[Instrument]) -> LiveRunner:
@@ -82,3 +68,61 @@ def test_empty_instruments_keeps_legacy_behavior() -> None:
     runner = _runner_with([])
 
     assert runner._all_instruments_are_futures() is True
+
+
+class _BuyingStrategy(Strategy):
+    """会真正下单的策略: 只有下单才会走到撮合与手续费计算(panic 发生处)."""
+
+    def __init__(self) -> None:
+        """初始化成交记录."""
+        self.trades: list[Any] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        """首根 bar 买入一手."""
+        if not self.trades and self.get_position(bar.symbol) == 0:
+            self.buy(bar.symbol, 1)
+
+    def on_trade(self, trade: Any) -> None:
+        """记录成交."""
+        self.trades.append(trade)
+
+
+def test_stock_paper_session_places_order_without_panic() -> None:
+    """含股票标的的 paper 会话必须能真正下单成交, 不 panic.
+
+    这是**防回归的关键测试**: 上面 4 个测试只验证纯分类器
+    ``_all_instruments_are_futures()``, 若 ``run()`` 不再咨询它(改回无条件调用
+    ``use_china_futures_market()``), 那 4 个测试仍会全绿——而本测试会因 Rust 撮合
+    层 panic 而失败(``Stock market configuration not found but received stock order``)。
+
+    必须让策略**真正下单**: 只记录事件的策略永远走不到撮合与手续费计算, 因此
+    发现不了这个缺陷(Task 4 的股票 e2e 测试就是这样才漏过去的)。
+    """
+    symbol = "MKTCFG_A"
+    stamps = ["2023-01-03 09:30:00", "2023-01-03 10:00:00"]
+    bars = [
+        Bar(
+            timestamp=int(pd.Timestamp(text, tz="Asia/Shanghai").value),
+            open=10.0,
+            high=10.5,
+            low=9.5,
+            close=10.0,
+            volume=1000.0,
+            symbol=symbol,
+        )
+        for text in stamps
+    ]
+
+    strategy = _BuyingStrategy()
+    run_live(
+        strategy_cls=strategy,
+        instruments=[_instrument(symbol, AssetType.Stock)],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars},
+        cash=1_000_000.0,
+        show_progress=False,
+        duration="60s",
+    )
+
+    assert strategy.trades, "股票 paper 会话未产生成交, 市场配置可能又退回期货专用"
