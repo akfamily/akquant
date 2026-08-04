@@ -144,3 +144,9 @@ run_live(
   保证；要验证定时任务请用回测。
 - 多品种 DataFrame 需提供 `股票代码` 列，否则会退化为单标的。多品种场景建议直接
   用 `list[Bar]`。
+- 自行结束依赖每条事件的时间戳为正数：非正时间戳会被引擎静默丢弃，导致声明的
+  事件总数永远达不到、会话挂死（常见诱因是数据源日期列存在
+  `pd.to_datetime(errors="coerce")` 无法解析的值，会产出 `NaT` 进而变成非正时间
+  戳）。`build_replay_bundle` 已在构建期校验并拒绝此类数据，但若数据源不完全受
+  你控制，仍建议显式传入 `duration` 作为安全网——这也是
+  `examples/38_live_functional_strategy_demo.py` 仍会传 `duration` 的原因。

@@ -166,12 +166,24 @@ def build_replay_bundle(
         bars=kwargs.get("bars"),
         ticks=kwargs.get("ticks"),
     )
-    total = len(gateway.pending_events)
+    pending = gateway.pending_events
+    total = len(pending)
     if total == 0:
         raise ValueError(
             "broker='replay' 需要非空行情数据: 请通过 "
             "gateway_options={'bars': [...]} 或 {'ticks': [...]} 传入, "
             "且至少有一条数据的 symbol 落在 instruments 之内"
+        )
+    bad_event = next((e for e in pending if int(e.timestamp) <= 0), None)
+    if bad_event is not None:
+        raise ValueError(
+            f"broker='replay' 检测到不可用时间戳: symbol={bad_event.symbol!r}, "
+            f"timestamp={int(bad_event.timestamp)} (须为正数)。引擎会静默丢弃"
+            "非正时间戳事件(见 src/pipeline/stages/data.rs 的 snapshot_time 比较), "
+            "导致 bounded_event_total 计数永远达不到、会话挂死。常见原因: "
+            "DataFrame 的日期列存在无法解析的值, pd.to_datetime(errors='coerce') "
+            "会把它转成 NaT 进而产生非正时间戳——请检查 gateway_options 中传入的 "
+            "'bars'/'ticks' 数据, 修正或剔除对应行"
         )
     return GatewayBundle(
         market_gateway=gateway,

@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     )
     ```
 
-    事件按时间戳升序推送（多品种全局交错——live feed 无法排序，推送顺序即引擎所见顺序），数据放完后会话自行结束，无需依赖 `duration`。**限制**：该 broker 只提供行情，`trader_gateway=None`，不模拟撮合成交，因此不能用于 `trading_mode="broker_live"`；并且**不覆盖 timer 语义**——回放数据带历史时间戳，而 live 引擎用墙钟判定 timer 到期，两条时间线错位，`on_timer` / `schedule_daily` 在回放会话中的行为不作保证。`examples/38_live_functional_strategy_demo.py` 已改用该 broker，现可离线实跑。
+    事件按时间戳升序推送（多品种全局交错——live feed 无法排序，推送顺序即引擎所见顺序），数据放完后会话自行结束，通常无需依赖 `duration`。**限制**：该 broker 只提供行情，`trader_gateway=None`，不模拟撮合成交，因此不能用于 `trading_mode="broker_live"`；并且**不覆盖 timer 语义**——回放数据带历史时间戳，而 live 引擎用墙钟判定 timer 到期，两条时间线错位，`on_timer` / `schedule_daily` 在回放会话中的行为不作保证。`build_replay_bundle` 会在构建时校验每条事件的时间戳为正数（非正时间戳会被引擎静默丢弃，导致声明的事件总数永远达不到、会话挂死），常见诱因是数据源日期列存在 `pd.to_datetime(errors="coerce")` 无法解析的值；若数据本身不受控，仍建议保留 `duration` 作为安全网。`examples/38_live_functional_strategy_demo.py` 已改用该 broker（并显式传入 `duration` 作为安全网），现可离线实跑。
 
 ### Changed
 - **策略参数声明改为内联字段（破坏性）**：策略参数的单一事实来源现在是类体内联字段——直接用 `IntParam` / `FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` 赋值（如 `fast = IntParam(10, ge=2, le=200)`），经 `self.params.fast` 只读访问；`self.params` 在实例构造期即已校验就绪且 frozen，不支持运行期赋值。

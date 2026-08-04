@@ -316,3 +316,83 @@ def test_build_bundle_rejects_all_filtered_out() -> None:
             use_aggregator=True,
             bars=[_bar(_ns(10), "A")],
         )
+
+
+def test_build_bundle_rejects_non_positive_timestamp_in_bar_list() -> None:
+    """list[Bar] 中出现非正时间戳必须早失败, 否则引擎静默丢弃导致计数永远达不到.
+
+    ``Bar`` 构造器的秒级->纳秒自动修正保留符号: 传入 ``-1`` 得到的是
+    ``-1_000_000_000``, 不是 ``-1`` 本身——断言要对真实值而非假设值。
+    """
+    from akquant.gateway.brokers.replay.gateway import build_replay_bundle
+
+    bad_bar = _bar(-1, "A")
+    assert bad_bar.timestamp == -1_000_000_000
+
+    with pytest.raises(ValueError, match="replay") as exc_info:
+        build_replay_bundle(
+            feed=_FakeFeed(),
+            symbols=["A"],
+            use_aggregator=True,
+            bars=[_bar(_ns(10), "A"), bad_bar],
+        )
+
+    message = str(exc_info.value)
+    assert "A" in message
+    assert "-1000000000" in message
+
+
+def test_build_bundle_rejects_unparseable_date_in_dataframe() -> None:
+    """DataFrame 中一行日期无法解析(NaT)会产生非正时间戳, 必须在 build 期报错.
+
+    这是最贴近真实用户的路径: ``pd.to_datetime(..., errors="coerce")`` 把无法
+    解析的日期变成 ``NaT``, ``_timestamps_to_utc_ns`` 把 ``NaT`` 填成 Epoch 0
+    再按时区本地化, 产出一个负的纳秒时间戳——引擎会把它当"早于快照时间"静默丢弃。
+    """
+    from akquant.gateway.brokers.replay.gateway import build_replay_bundle
+
+    df = pd.DataFrame(
+        [
+            {
+                "date": "2023-01-03 09:30:00",
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.5,
+                "close": 10.0,
+                "volume": 1000.0,
+                "股票代码": "A",
+            },
+            {
+                "date": "not-a-date",
+                "open": 11.0,
+                "high": 11.5,
+                "low": 10.5,
+                "close": 11.0,
+                "volume": 1000.0,
+                "股票代码": "A",
+            },
+        ]
+    )
+
+    with pytest.raises(ValueError, match="replay"):
+        build_replay_bundle(
+            feed=_FakeFeed(),
+            symbols=["A"],
+            use_aggregator=True,
+            bars=df,
+        )
+
+
+def test_build_bundle_accepts_valid_data_without_over_rejecting() -> None:
+    """回归防护: 新增的非正时间戳校验不能误伤合法数据."""
+    from akquant.gateway.brokers.replay.gateway import build_replay_bundle
+
+    bundle = build_replay_bundle(
+        feed=_FakeFeed(),
+        symbols=["A"],
+        use_aggregator=True,
+        bars=[_bar(_ns(10), "A"), _bar(_ns(20), "A")],
+    )
+
+    assert bundle.metadata is not None
+    assert bundle.metadata["bounded_event_total"] == 2
