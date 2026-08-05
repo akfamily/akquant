@@ -183,6 +183,19 @@ if TYPE_CHECKING:
 # 实盘 subscribe() 告警用: 与 strategy_logging 的 "strategy" 通道同源。
 _live_subscribe_logger = _get_logger("strategy")
 
+# Tick 只有 price / volume。指标的 source 词汇按 bar 定义(open/high/low/close/
+# volume), 故 tick 路径需名映射: 退化后 OHLC 四者都等于成交价。
+_TICK_SOURCE_ATTR = {
+    "open": "price",
+    "high": "price",
+    "low": "price",
+    "close": "price",
+    "volume": "volume",
+}
+
+# 这些模式需要真实的最高/最低价; tick 上 OHLC 恒等, 结果恒为 0。
+_TICK_UNSUPPORTED_INPUT_MODES = frozenset({"hl", "hlc", "ohlc"})
+
 
 @dataclass
 class StrategyRuntimeConfig:
@@ -1653,6 +1666,21 @@ class Strategy:
     def _build_incremental_indicator_args(
         self, payload: Any, source: str, input_mode: str
     ) -> Tuple[Any, ...]:
+        # Tick 无 open/high/low/close 属性, 直接 getattr 会抛 AttributeError,
+        # 故 tick payload 先走名映射; 需要真实 H/L 的模式直接拒绝。
+        if isinstance(payload, Tick):
+            if input_mode in _TICK_UNSUPPORTED_INPUT_MODES:
+                raise ValueError(
+                    f"input_mode={input_mode!r} 需要真实的最高/最低价, 而 tick 的 "
+                    "OHLC 恒等于成交价, ATR/振幅类指标会恒为 0。"
+                    "请给 run_backtest 传 freq(如 freq='1min') 把 tick 聚合成 bar, "
+                    "或改用单值模式 input_mode='source'"
+                )
+            if input_mode == "close_volume":
+                return (payload.price, payload.volume)
+            if input_mode == "source":
+                return (getattr(payload, _TICK_SOURCE_ATTR[source]),)
+            raise ValueError(f"Unsupported input_mode: {input_mode}")
         if input_mode == "source":
             return (getattr(payload, source),)
         if input_mode == "hl":

@@ -3026,6 +3026,22 @@ def run_backtest(
             not data or any(not isinstance(item, Bar) for item in data)
         ):
             bars_part, ticks_part = normalize_market_input(data)
+            # 预计算指标依赖 data_map_for_indicators, 而归一后走的 DataFeed 分支不
+            # 构建它。静默丢失指标比报错危险得多, 故显式拒绝并指向可用的替代方案。
+            #
+            # 判据是"是否真的注册了预计算指标"而非 indicator_mode: 后者默认就是
+            # "precompute"(strategy.py), 用它做判据会误伤所有未显式改模式的 tick 用户。
+            if ticks_part and any(
+                getattr(one_strategy, "_precomputed_indicators", None)
+                for one_strategy in all_strategy_instances
+            ):
+                raise ValueError(
+                    "已注册的预计算指标(precompute 模式)不支持含 Tick 的输入: "
+                    "预计算指标需要完整的 OHLC DataFrame, 而 tick 只有成交价。请改用 "
+                    "register_incremental_indicator(indicator_mode='incremental', "
+                    "tick 路径已支持单值指标), 或给 run_backtest 传 freq"
+                    "(如 freq='1min')把 tick 聚合成 bar。"
+                )
             tick_feed = DataFeed()
             if bars_part:
                 tick_feed.add_bars(bars_part)
