@@ -83,3 +83,35 @@ def parse_freq_to_interval_min(freq: str) -> int:
     if minutes <= 0:
         raise ValueError(f"freq={freq!r} 解析出的分钟数必须为正, 得到 {minutes}")
     return minutes
+
+
+def aggregate_ticks_into_feed(
+    feed: Any, ticks: Sequence[Tick], interval_min: int
+) -> None:
+    """经 ``BarAggregator`` 把 tick 聚合成 bar 并推入 ``feed``.
+
+    **volume 口径适配（必须切到单笔模式，不能用 live 默认口径）**:
+    ``BarAggregator`` 默认把 ``on_tick`` 的 ``volume`` 当累计量算差分——这与
+    CTP 的日累计 ``pDepthMarketData.Volume`` 吻合, 故 live 路径正确。但回测
+    调用方构造的 ``Tick(volume=100.0)`` 表达的是**单笔量**: 若仍按累计口径
+    处理, 每个 symbol 的**首笔量会被无条件丢弃**（首次差分恒为 0）。因此这里
+    显式传 ``volume_is_cumulative=False``, 让 ``BarAggregator`` 把 volume 当
+    单笔量直接计入, 不做差分（详见 ``src/data/aggregator.rs``）。
+
+    **末尾未满周期不发出**: ``BarAggregator`` 不提供 ``flush``, 最后一个未封闭
+    的周期不会产生 bar。这是既有行为, 调用方需知悉。
+
+    :param feed: 目标 ``DataFeed``（合成的 bar 会写入其中）
+    :param ticks: 已按时间戳升序的 tick 序列
+    :param interval_min: 聚合周期（整数分钟）
+    """
+    from ..akquant import BarAggregator
+
+    aggregator = BarAggregator(feed, interval_min, volume_is_cumulative=False)
+    for tick in ticks:
+        aggregator.on_tick(
+            str(tick.symbol),
+            float(tick.price),
+            float(tick.volume),
+            int(tick.timestamp),
+        )

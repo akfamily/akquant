@@ -72,7 +72,11 @@ from ..strategy_loader import resolve_strategy_input
 from ..utils.inspector import infer_warmup_period
 from .fill_mode import FillMode
 from .result import BacktestResult
-from .tick_input import normalize_market_input
+from .tick_input import (
+    aggregate_ticks_into_feed,
+    normalize_market_input,
+    parse_freq_to_interval_min,
+)
 
 _RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
 _collect_cross_section_entries_impl = collect_cross_section_timer_entries
@@ -2134,6 +2138,7 @@ def _normalize_slippage_policy(
 
 def run_backtest(
     data: Optional[BacktestDataInput] = None,
+    freq: Optional[str] = None,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
@@ -3010,6 +3015,16 @@ def run_backtest(
     if data is not None:
         # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
         data = coerce_to_pandas(data)
+        # freq 只对含 Tick 的列表有意义。放在归一之前做校验, 使 DataFrame /
+        # DataFeed / 纯 bar 列表配 freq 时也能早失败, 而不是静默忽略这个参数。
+        if freq is not None and not (
+            isinstance(data, list) and any(isinstance(item, Tick) for item in data)
+        ):
+            raise ValueError(
+                f"freq={freq!r} 只在 data 为含 Tick 的列表时有意义。"
+                "若要重采样 bar, 请用 akquant.feed_adapter 的 resample()"
+            )
+
         # 含 Tick(或需要校验)的列表先归一成 DataFeed, 交给下面既有的 DataFeed
         # 分支处理: 该路径已实测能正确投递 tick(feed.add_tick -> 引擎
         # Event::Tick), 无需重复实现。
@@ -3047,6 +3062,11 @@ def run_backtest(
                 tick_feed.add_bars(bars_part)
             for one_tick in ticks_part:
                 tick_feed.add_tick(one_tick)
+            if freq is not None:
+                # 原始 tick 仍投递, 合成 bar 进同一 feed。
+                aggregate_ticks_into_feed(
+                    tick_feed, ticks_part, parse_freq_to_interval_min(freq)
+                )
             tick_feed.sort()
             data = tick_feed
         if isinstance(data, DataFeed):

@@ -382,7 +382,12 @@ class BarAggregator:
     用于将 Tick 数据合成为 K 线 (Bar) 数据。
     """
 
-    def __new__(cls, feed: "DataFeed", interval_min: int = ...) -> "BarAggregator": ...
+    def __new__(
+        cls,
+        feed: "DataFeed",
+        interval_min: int = ...,
+        volume_is_cumulative: bool = ...,
+    ) -> "BarAggregator": ...
     def on_tick(
         self, symbol: str, price: float, volume: float, timestamp_ns: int
     ) -> None:
@@ -391,7 +396,8 @@ class BarAggregator:
 
         :param symbol: 标的代码
         :param price: 最新价
-        :param volume: 累计成交量 (TotalVolume)
+        :param volume: 成交量。`volume_is_cumulative=True` 时为累计成交量
+            (TotalVolume); 为 False 时为本笔成交量。
         :param timestamp_ns: 时间戳 (纳秒)
         """
         ...
