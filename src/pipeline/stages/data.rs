@@ -489,6 +489,15 @@ impl Processor for DataProcessor {
                 } else if let Event::Tick(ref t) = event {
                     self.current_symbol_events
                         .insert(t.symbol.clone(), Event::Tick(t.clone()));
+                    // tick 是本时间戳该 symbol 的真实行情, 必须登记为"已见"——否则
+                    // fill_missing_bars 会把它当成缺失并合成一根退化 bar, 导致每个
+                    // tick 被双写历史(一次 update_tick, 一次合成 bar)。
+                    self.seen_symbols.insert(t.symbol.clone());
+                    // tick 也写入历史缓冲区: 否则纯 tick 回测下 get_history 恒为空,
+                    // 且是静默的(不报错也不工作)。tick 以退化 bar 写入。
+                    if let Ok(mut buffer) = engine.history_buffer.write() {
+                        buffer.update_tick(t);
+                    }
                 }
 
                 engine.current_event = Some(event);
