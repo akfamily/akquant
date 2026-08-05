@@ -101,6 +101,23 @@ def test_tick_high_low_modes_raise(mode: str) -> None:
         probe._build_incremental_indicator_args(tick, "close", mode)
 
 
+class _PairRecorder:
+    """记录 (high, low) 二元组的最简增量指标."""
+
+    def __init__(self) -> None:
+        """初始化记录容器."""
+        self.pairs: List[Any] = []
+
+    def update(self, high: float, low: float) -> None:
+        """接收一对高低价."""
+        self.pairs.append((float(high), float(low)))
+
+    @property
+    def value(self) -> Any:
+        """最近一对; 无数据时为 None."""
+        return self.pairs[-1] if self.pairs else None
+
+
 class _SmaProbe(Strategy):
     """在 tick 路径上注册单值增量指标.
 
@@ -231,3 +248,95 @@ def test_mixed_input_with_precompute_mode_raises() -> None:
             show_progress=False,
             fill_policy=CurrentClose(),
         )
+
+
+def test_hl_indicator_works_with_freq_aggregation() -> None:
+    """文档承诺 freq 聚合后 H/L 类指标可用, 必须真的可用.
+
+    此前守卫按 ``isinstance(payload, Tick)`` 触发, 而 freq 按设计仍投递原始 tick,
+    于是 tick payload 照样到达指标参数构建器、照样报错——错误信息叫用户去做他刚做
+    过的事(传 freq)。
+    """
+
+    class _HLProbe(Strategy):
+        """在 freq 聚合的 bar 上用 H/L 指标."""
+
+        def __init__(self) -> None:
+            """初始化观测容器."""
+            self.recorder = _PairRecorder()
+
+        def on_start(self) -> None:
+            """订阅并注册 H/L 指标."""
+            self.subscribe(SYMBOL)
+            self.indicator_mode = "incremental"
+            self.register_incremental_indicator("hl", self.recorder, input_mode="hl")
+
+        def on_bar(self, bar: Any) -> None:
+            """不做任何事."""
+
+        def on_tick(self, tick: Any) -> None:
+            """不做任何事."""
+
+    strategy = _HLProbe()
+    run_backtest(
+        data=_ticks(8),
+        freq="1min",
+        strategy=strategy,
+        symbols=[SYMBOL],
+        initial_cash=100_000.0,
+        show_progress=False,
+        fill_policy=CurrentClose(),
+    )
+
+    assert strategy.recorder.pairs, "H/L 指标在 freq 聚合下未收到任何更新"
+
+
+def test_bar_hl_indicator_survives_added_tick() -> None:
+    """混合输入下, 为 bar 注册的 H/L 指标不得因为多了一个 tick 就报错.
+
+    给一份 bar 数据加一个 tick, 原本能用的 bar 指标坏掉 = 守卫过宽。
+    """
+    from akquant.akquant import Bar
+
+    class _HLOnBars(Strategy):
+        """在 bar 上用 H/L 指标."""
+
+        def __init__(self) -> None:
+            """初始化观测容器."""
+            self.recorder = _PairRecorder()
+
+        def on_start(self) -> None:
+            """订阅并注册."""
+            self.subscribe(SYMBOL)
+            self.indicator_mode = "incremental"
+            self.register_incremental_indicator("hl", self.recorder, input_mode="hl")
+
+        def on_bar(self, bar: Any) -> None:
+            """不做任何事."""
+
+        def on_tick(self, tick: Any) -> None:
+            """不做任何事."""
+
+    bars = [
+        Bar(
+            timestamp=_ns(i),
+            open=10.0,
+            high=10.5 + i * 0.1,
+            low=9.5 - i * 0.1,
+            close=10.0,
+            volume=1000.0,
+            symbol=SYMBOL,
+        )
+        for i in (1, 2, 3)
+    ]
+    strategy = _HLOnBars()
+    run_backtest(
+        data=[*bars, _ticks(1)[0]],
+        strategy=strategy,
+        symbols=[SYMBOL],
+        initial_cash=100_000.0,
+        show_progress=False,
+        fill_policy=CurrentClose(),
+    )
+
+    assert strategy.recorder.pairs, "bar 的 H/L 指标因混入 tick 而失效"

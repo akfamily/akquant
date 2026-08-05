@@ -250,6 +250,13 @@ class IncrementalIndicatorRegistration:
     base_indicator: Any = None
     primary_symbol: Optional[str] = None
     instances: Dict[str, Any] = field(default_factory=dict)
+    # 下面两个集合只用于 H/L 类 input_mode 的会话级覆盖率核验(见
+    # `Strategy._check_incremental_hl_bar_coverage`): bar_seen_symbols 记录
+    # 曾经收到过至少一个 bar 的 symbol; tick_only_symbols 记录曾经在
+    # H/L 模式下被 tick 跳过更新的 symbol。会话结束时两者做差集, 差集非空
+    # 说明该 symbol 全程只有 tick、从未有 bar, 需要报错而非静默不推进。
+    bar_seen_symbols: set[str] = field(default_factory=set)
+    tick_only_symbols: set[str] = field(default_factory=set)
 
 
 class IncrementalIndicatorBinding:
@@ -988,8 +995,17 @@ class Strategy:
         pass
 
     def _on_stop_internal(self) -> None:
-        """内部停止回调，用于补发框架级结束钩子."""
+        """内部停止回调，用于补发框架级结束钩子.
+
+        `_check_incremental_hl_bar_coverage` 放在这里(而非首个 tick 时)是有意
+        选择——见该方法的文档字符串。注意: `run_backtest`/`run_from_checkpoint`
+        对 `_on_stop_internal()` 的调用包在 `try/except Exception: logger.error(...)`
+        里且不重新抛出, 故这里抛出的 `ValueError` 到达调用方时会退化成一条 ERROR
+        级日志, 而非可见的异常——这是既有的、超出本轮修复范围的引擎行为, 不在此
+        改动。即便如此, 仍比原来的"静默不推进、什么都不提示"更好。
+        """
         _ensure_framework_state_impl(self)
+        self._check_incremental_hl_bar_coverage()
         _dispatch_shutdown_hooks_impl(self)
         _call_user_callback_impl(self, "on_stop")
 
@@ -1490,7 +1506,7 @@ class Strategy:
                 # Calculate and cache inside indicator
                 ind(df, sym)
 
-    def _update_incremental_indicators(self, bar: Bar) -> None:
+    def _update_incremental_indicators(self, bar: Union[Bar, Tick]) -> None:
         if self.indicator_mode != "incremental":
             return
         if not self._incremental_indicators:
@@ -1504,11 +1520,24 @@ class Strategy:
             < int(active_start_time_ns)
         ):
             return
+        is_tick_payload = isinstance(bar, Tick)
         for name in list(self._incremental_indicators.keys()):
             item = self._get_incremental_registration(name)
             symbol_filter = item.symbols
             if symbol_filter is not None and bar_symbol not in symbol_filter:
                 continue
+            if is_tick_payload and item.input_mode in _TICK_UNSUPPORTED_INPUT_MODES:
+                # H/L 类指标要真实的最高/最低价, tick 的 OHLC 恒等无法提供。
+                # `freq` 聚合会话与混合 [Bar, Tick] 输入下, 这个 symbol 的合成/
+                # 原始 bar 会驱动该指标, 这一笔 tick 只需跳过, 不该让整个会话
+                # 报错——是否"这个 symbol 真的从未有过 bar"要等会话结束才能
+                # 确知(见 `_check_incremental_hl_bar_coverage`), 这里只记录、不
+                # 报错。
+                if bar_symbol is not None:
+                    item.tick_only_symbols.add(str(bar_symbol))
+                continue
+            if not is_tick_payload and bar_symbol is not None:
+                item.bar_seen_symbols.add(str(bar_symbol))
             ind = self._get_incremental_indicator_instance(name, bar_symbol)
             args = self._build_incremental_indicator_args(
                 payload=bar,
@@ -1516,6 +1545,38 @@ class Strategy:
                 input_mode=item.input_mode,
             )
             ind.update(*args)
+
+    def _check_incremental_hl_bar_coverage(self) -> None:
+        """会话结束时核验: H/L 类指标是否有 symbol 全程只收到过 tick.
+
+        `_update_incremental_indicators` 把"tick 命中 H/L 模式"从报错改成跳过
+        (见上), 代价是纯 tick 会话(无 freq、无 bar)会静默地从头到尾不推进——
+        这比原来"任何 tick 命中 H/L 就报错"更危险, 因为它不报错。此处用
+        `tick_only_symbols - bar_seen_symbols` 找出这类 symbol, 在会话结束时
+        报错, 而不是在首个 tick 时报错。
+
+        **为何选会话结束而非首个 tick**: `freq` 聚合下, 一个 symbol 的第一个
+        合成 bar 要等到第一个聚合区间收尾(数个 tick 之后)才会发出——这正是
+        blocker 1 修复后的区间结束打戳语义。若在"首个 tick 且该 symbol 尚无
+        bar"时立即报错, 会错误地拒绝这个合法、最终会有 bar 的 freq 会话本身。
+        首个 tick 时无法确知"这个 symbol 会不会有 bar", 只有等会话结束才能
+        确知。代价是用户要等到回测/报告收尾才能看到这个错误, 而不是第一时间;
+        但比起误杀合法的 freq 会话, 这个代价可接受。
+        """
+        if not self._incremental_indicators:
+            return
+        for name in list(self._incremental_indicators.keys()):
+            item = self._get_incremental_registration(name)
+            never_had_bar = item.tick_only_symbols - item.bar_seen_symbols
+            if never_had_bar:
+                raise ValueError(
+                    f"增量指标 {name!r}(input_mode={item.input_mode!r}) 的标的 "
+                    f"{sorted(never_had_bar)!r} 全程只收到 tick、从未收到任何 bar: "
+                    "该 input_mode 需要真实的最高/最低价, tick 的 OHLC 恒等于成交价, "
+                    "ATR/振幅类指标会恒为 0。请给 run_backtest 传 freq"
+                    "(如 freq='1min')把 tick 聚合成 bar, 或改用单值模式 "
+                    "input_mode='source'"
+                )
 
     def _bootstrap_incremental_indicators(self, data: Dict[str, pd.DataFrame]) -> None:
         """在实时增量更新前，用历史数据预热增量指标."""
