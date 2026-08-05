@@ -32,6 +32,7 @@ from ..akquant import (
     Instrument,
     OptionMarginModel,
     SettlementType,
+    Tick,
     TradingSession,
 )
 from ..analyzer_plugin import AnalyzerManager, AnalyzerPlugin
@@ -71,6 +72,7 @@ from ..strategy_loader import resolve_strategy_input
 from ..utils.inspector import infer_warmup_period
 from .fill_mode import FillMode
 from .result import BacktestResult
+from .tick_input import normalize_market_input
 
 _RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
 _collect_cross_section_entries_impl = collect_cross_section_timer_entries
@@ -549,6 +551,8 @@ BacktestDataInput = Union[
     "pa.Table",
     Dict[str, pd.DataFrame],
     List[Bar],
+    List[Tick],
+    List[Union[Bar, Tick]],
     DataFeed,
     DataFeedAdapter,
 ]
@@ -3006,6 +3010,29 @@ def run_backtest(
     if data is not None:
         # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
         data = coerce_to_pandas(data)
+        # 含 Tick(或需要校验)的列表先归一成 DataFeed, 交给下面既有的 DataFeed
+        # 分支处理: 该路径已实测能正确投递 tick(feed.add_tick -> 引擎
+        # Event::Tick), 无需重复实现。
+        # 必须在整条 if/elif 分发链之前完成——一旦进入下面的 elif isinstance(data,
+        # list) 分支, 把 data 换成 DataFeed 也不会回退到 DataFeed 分支去。
+        #
+        # 触发条件不是"含 Tick"而是"非纯 Bar 列表"(空列表, 或含至少一个非 Bar
+        # 元素, Tick 也算非 Bar): 这样空列表与含非法元素的列表也会先过
+        # normalize_market_input 的校验(早失败, 报 ValueError/TypeError 且指名
+        # 位置), 而不是漏到下面 elif 分支里 .sort() 时抛出令人费解的
+        # AttributeError, 或静默跳过校验直接进入撮合。纯 Bar 列表(不含 Tick 也
+        # 不含非法元素)维持原分支不变, 避免多一趟遍历/排序的开销。
+        if isinstance(data, list) and (
+            not data or any(not isinstance(item, Bar) for item in data)
+        ):
+            bars_part, ticks_part = normalize_market_input(data)
+            tick_feed = DataFeed()
+            if bars_part:
+                tick_feed.add_bars(bars_part)
+            for one_tick in ticks_part:
+                tick_feed.add_tick(one_tick)
+            tick_feed.sort()
+            data = tick_feed
         if isinstance(data, DataFeed):
             # Use provided DataFeed
             feed = data
@@ -3168,10 +3195,14 @@ def run_backtest(
                     data = [b for b in data if b.timestamp <= ts_end_ns]  # type: ignore
 
                 data.sort(key=lambda b: b.timestamp)
-                feed.add_bars(data)
+                feed.add_bars(data)  # type: ignore[arg-type]
 
                 # Construct DataFrame for indicator calculation
                 # Group by symbol just in case
+                # 到达这里时 data 运行时必为 List[Bar](Tick/空/非法元素的列表已在
+                # 分发链之前被 normalize_market_input 拦截并转为 DataFeed 走别的
+                # 分支); mypy 静态上仍视 data 为 BacktestDataInput 的宽联合类型
+                # (加宽是 Step 3 的要求), 故下面的属性访问需要 ignore。
                 bars_by_sym: Dict[str, List[Dict[str, Any]]] = {}
                 for bar in data:
                     if bar.symbol not in bars_by_sym:
@@ -3181,10 +3212,10 @@ def run_backtest(
                             "timestamp": pd.Timestamp(
                                 bar.timestamp, unit="ns", tz="UTC"
                             ),
-                            "open": bar.open,
-                            "high": bar.high,
-                            "low": bar.low,
-                            "close": bar.close,
+                            "open": bar.open,  # type: ignore[union-attr]
+                            "high": bar.high,  # type: ignore[union-attr]
+                            "low": bar.low,  # type: ignore[union-attr]
+                            "close": bar.close,  # type: ignore[union-attr]
                             "volume": bar.volume,
                         }
                     )
@@ -4681,6 +4712,10 @@ def run_from_checkpoint(
 
             # Construct DataFrame for indicator calculation
             # Group by symbol just in case
+            # (BacktestDataInput 因 Task 4 加宽含 Tick, 但本分支的
+            # isinstance(data[0], Bar) 运行时守卫未变——run_from_checkpoint 的
+            # tick 支持不在本任务范围内, 这里只是 mypy 静态类型跟着别名变宽而已,
+            # 无逻辑改动)
             bars_by_sym: Dict[str, List[Dict[str, Any]]] = {}
             for bar in data:
                 if bar.symbol not in bars_by_sym:
@@ -4688,10 +4723,10 @@ def run_from_checkpoint(
                 bars_by_sym[bar.symbol].append(
                     {
                         "timestamp": pd.Timestamp(bar.timestamp, unit="ns", tz="UTC"),
-                        "open": bar.open,
-                        "high": bar.high,
-                        "low": bar.low,
-                        "close": bar.close,
+                        "open": bar.open,  # type: ignore[union-attr]
+                        "high": bar.high,  # type: ignore[union-attr]
+                        "low": bar.low,  # type: ignore[union-attr]
+                        "close": bar.close,  # type: ignore[union-attr]
                         "volume": bar.volume,
                     }
                 )
