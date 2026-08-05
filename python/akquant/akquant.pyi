@@ -387,6 +387,7 @@ class BarAggregator:
         feed: "DataFeed",
         interval_min: int = ...,
         volume_is_cumulative: bool = ...,
+        stamp_bar_at_interval_end: bool = ...,
     ) -> "BarAggregator": ...
     def on_tick(
         self, symbol: str, price: float, volume: float, timestamp_ns: int

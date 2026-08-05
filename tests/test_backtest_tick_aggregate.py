@@ -149,3 +149,41 @@ def test_no_freq_yields_no_bars() -> None:
 
     assert len(strategy.ticks) == 5
     assert strategy.bars == []
+
+
+def test_synthesized_bar_never_precedes_its_source_ticks() -> None:
+    """合成 bar 的时间戳必须 >= 形成它的最后一个 tick, 否则策略读到未来.
+
+    ``BarAggregator`` 给封闭的 bar 打**区间起点**时间戳。live 下无害: bar 是在下一
+    区间的 tick 到达时才发出的, 墙钟顺序保护了消费者。但回测里 ``run_backtest`` 会
+    ``feed.sort()``, 按该起点时间戳重排后 bar 落到形成它的 tick **之前**, 于是
+    ``on_bar`` 拿到的 high/low/close 来自尚未发生的 tick。
+
+    实测的错误顺序(第 1 分钟 60s=10.0, 90s=20.0 尖峰, 105s=10.5):
+        TICK off= 60s  10.0
+        BAR  off= 60s  high=20.0   <- 在尖峰发生前就知道它
+        TICK off= 90s  20.0
+    """
+    strategy = _BothRecorder()
+    run_backtest(
+        data=_minute_one_ticks(),
+        freq="1min",
+        strategy=strategy,
+        symbols=[SYMBOL],
+        initial_cash=100_000.0,
+        show_progress=False,
+        fill_policy=CurrentClose(),
+    )
+
+    assert strategy.bars, "未产生合成 bar"
+    first_bar_ts = int(strategy.bars[0].timestamp)
+    contributing = [
+        int(t.timestamp)
+        for t in strategy.ticks
+        if _ns(1, 0) <= int(t.timestamp) < _ns(2, 0)
+    ]
+    assert contributing, "第 1 分钟没有 tick"
+    assert first_bar_ts >= max(contributing), (
+        f"合成 bar 时间戳 {first_bar_ts} 早于其最后贡献 tick {max(contributing)}: "
+        "策略会读到未来数据"
+    )
