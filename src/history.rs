@@ -364,6 +364,24 @@ mod tests {
     }
 
     #[test]
+    fn push_tick_evicts_extras_columns_in_step() {
+        // 回归防护: 淘汰与 extras 补齐的交互点。二者顺序若被重排, 列长会失配,
+        // get_history 返回错位数据——且是静默的。
+        use super::SymbolHistory;
+        let mut history = SymbolHistory::new(2);
+        history.push(&make_bar(1, 10, Some(("factor", 1.5))));
+        history.push_tick(&make_tick(2, 11));
+        history.push_tick(&make_tick(3, 12));
+
+        let factor = history.extras.get("factor").expect("factor column missing");
+        assert_eq!(history.timestamps.len(), 2);
+        assert_eq!(factor.len(), history.timestamps.len());
+        assert_eq!(history.timestamps[0], 2);
+        assert!(factor[0].is_nan());
+        assert!(factor[1].is_nan());
+    }
+
+    #[test]
     fn update_tick_creates_symbol_history() {
         let mut buffer = HistoryBuffer::new(3);
         buffer.update_tick(&make_tick(1, 10));
@@ -371,6 +389,7 @@ mod tests {
         let history = buffer.get_history("TEST").expect("history missing");
         assert_eq!(history.closes[0], 10.0);
     }
+
 
 
     #[test]
