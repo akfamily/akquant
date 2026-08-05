@@ -103,11 +103,14 @@ def test_synthesized_bar_has_real_ohlc() -> None:
 
 
 def test_synthesized_bar_volume_sums_tick_volumes() -> None:
-    """Volume 累计适配(适配①): 合成 bar 的成交量等于区间内 tick 量之和.
+    """合成 bar 的成交量等于区间内 tick 量之和, 一笔不落.
 
-    BarAggregator.on_tick 的 volume 参数期望**累计**成交量(内部算差分), 与 CTP
-    的日累计 Volume 吻合。回测用户传的是**单笔量**, 直传会让 bar 成交量几乎全为
-    0。适配层须按 symbol 累加后再喂。
+    ``BarAggregator`` **默认**按累计口径解释 ``volume``(内部算差分), 那是 CTP 日累计
+    Volume 的语义; 该口径下每个 symbol 的**首笔**量会被丢弃——首次调用会把
+    ``last_cumulative_volumes[symbol]`` 播种为本次自己的 volume, 差分恒为 0。
+    回测传的是**单笔量**, 故适配层构造聚合器时传 ``volume_is_cumulative=False``,
+    让它直接计入每一笔, **不是**在 Python 侧做累加。
+    本测试守住这条: 100+200+150+50 必须得到 500; 得到 400 说明口径又回退成累计了。
     """
     strategy = _run(_minute_one_ticks(), freq="1min")
 
