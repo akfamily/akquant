@@ -265,7 +265,7 @@ result = aq.run_backtest(
 *   `get_history` / `get_history_multi` / `get_history_df` 可用，返回**成交价序列**：tick 以退化 bar 写入历史缓冲区（`open=high=low=close=price`），故 `get_history(count, symbol, "close")` 等价于取最近若干笔成交价。
 *   增量指标（`indicator_mode="incremental"`）的**单值模式**可用：`source` 取 `open`/`high`/`low`/`close` 均返回成交价，取 `volume` 返回单笔量；`close_volume` 模式同样可用。
 *   增量指标的 `input_mode` 为 `"hl"` / `"hlc"` / `"ohlc"` 时会抛 `ValueError`——tick 的最高/最低价恒等于成交价，ATR、振幅等依赖真实 H/L 的指标在这类数据上只会恒为 0，AKQuant 选择显式报错而非静默给出误导性的 0。
-*   混合输入 + 已注册的**预计算指标**（`indicator_mode="precompute"`）会抛 `ValueError`：归一后的混合数据走 `DataFeed` 分支，该分支不构建预计算指标所需的 DataFrame。需要指标时改用增量指标，或用下面的 `freq` 把 tick 聚合成 bar。
+*   输入含任意 `Tick`（**纯 tick 或混合皆然**）+ 已注册的**预计算指标**（`indicator_mode="precompute"`）会抛 `ValueError`：归一后走 `DataFeed` 分支，该分支不构建预计算指标所需的 DataFrame。护栏判据是「是否有 tick」，与是否同时有 bar 无关。需要指标时改用增量指标，或用下面的 `freq` 把 tick 聚合成 bar。
 
 **用 `freq` 把 tick 聚合成 bar：**
 
