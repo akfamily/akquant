@@ -85,3 +85,32 @@ def test_parse_freq_rejects_sub_minute() -> None:
     """秒级 freq 明确报错而非静默取整."""
     with pytest.raises(ValueError, match="整数分钟"):
         parse_freq_to_interval_min("30s")
+
+
+def test_parse_freq_rejects_zero() -> None:
+    """0 周期无意义, 须报错——它能通过正则, 所以要专门守住."""
+    with pytest.raises(ValueError, match="正"):
+        parse_freq_to_interval_min("0min")
+
+
+def test_parse_freq_rejects_pandas_incompatible_units() -> None:
+    """只收 min / h: 放宽会让同一字符串在两个入口行为分叉.
+
+    ``feed_adapter.resample`` 底层走 pandas ``to_offset``, 实测它拒绝 ``"m"``
+    (已废弃)且不认识 ``"hour"``。若这里收下它们, 用户会遇到
+    ``run_backtest(freq="5m")`` 可用而 ``resample("5m")`` 报错的分叉。
+    """
+    for bad in ("5m", "1hour", "1d"):
+        with pytest.raises(ValueError, match="整数分钟"):
+            parse_freq_to_interval_min(bad)
+
+
+def test_normalize_accepts_single_kind_input() -> None:
+    """只有 bar 或只有 tick 时, 另一组应为空列表而非报错."""
+    bars_only, ticks_empty = normalize_market_input([_bar(1), _bar(2)])
+    assert len(bars_only) == 2
+    assert ticks_empty == []
+
+    bars_empty, ticks_only = normalize_market_input([_tick(1)])
+    assert bars_empty == []
+    assert len(ticks_only) == 1

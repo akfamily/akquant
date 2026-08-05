@@ -13,7 +13,12 @@ from typing import Any, List, Sequence, Tuple
 from ..akquant import Bar, Tick
 
 # 只接受能用整数分钟表达的周期: BarAggregator 的 interval_min 是整数。
-_FREQ_PATTERN = re.compile(r"^\s*(\d+)\s*(min|m|h|hour)\s*$", re.IGNORECASE)
+#
+# 词汇刻意只收 min / h 两种单位, 与 pandas(feed_adapter.resample 底层用的
+# to_offset)保持一致——实测 to_offset 明确拒绝 "m"(已废弃)且不认识 "hour"。
+# 若这里放宽收下它们, 同一个 freq 字符串会在 run_backtest 被接受、在
+# feed_adapter.resample 被拒绝, 造成两个入口行为分叉。
+_FREQ_PATTERN = re.compile(r"^\s*(\d+)\s*(min|h)\s*$", re.IGNORECASE)
 
 
 def normalize_market_input(
@@ -74,7 +79,7 @@ def parse_freq_to_interval_min(freq: str) -> int:
 
     value = int(match.group(1))
     unit = match.group(2).lower()
-    minutes = value * 60 if unit in {"h", "hour"} else value
+    minutes = value * 60 if unit == "h" else value
     if minutes <= 0:
         raise ValueError(f"freq={freq!r} 解析出的分钟数必须为正, 得到 {minutes}")
     return minutes
