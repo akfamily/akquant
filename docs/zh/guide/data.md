@@ -264,7 +264,7 @@ result = aq.run_backtest(
 *   触发 `on_tick`，**不**触发 `on_bar`。
 *   `get_history` / `get_history_multi` / `get_history_df` 可用，返回**成交价序列**：tick 以退化 bar 写入历史缓冲区（`open=high=low=close=price`），故 `get_history(count, symbol, "close")` 等价于取最近若干笔成交价。
 *   增量指标（`indicator_mode="incremental"`）的**单值模式**可用：`source` 取 `open`/`high`/`low`/`close` 均返回成交价，取 `volume` 返回单笔量；`close_volume` 模式同样可用。
-*   增量指标的 `input_mode` 为 `"hl"` / `"hlc"` / `"ohlc"` 时会抛 `ValueError`——tick 的最高/最低价恒等于成交价，ATR、振幅等依赖真实 H/L 的指标在这类数据上只会恒为 0，AKQuant 选择显式报错而非静默给出误导性的 0。
+*   增量指标的 `input_mode` 为 `"hl"` / `"hlc"` / `"ohlc"` 时，tick 的最高/最低价恒等于成交价，ATR、振幅等依赖真实 H/L 的指标在这类数据上只会恒为 0。若该标的**同时**有 bar 来源（混合输入，或配合下面的 `freq` 把 tick 聚合成 bar），这类指标由 bar 驱动正常工作，tick 本身对它们静默跳过；只有当某个标的**全程只有 tick、从未有过任何 bar** 时，AKQuant 才会在会话结束时抛 `ValueError`——此时才是真正只能拿到恒为 0 的误导结果，故显式报错而非静默给出。
 *   输入含任意 `Tick`（**纯 tick 或混合皆然**）+ 已注册的**预计算指标**（`indicator_mode="precompute"`）会抛 `ValueError`：归一后走 `DataFeed` 分支，该分支不构建预计算指标所需的 DataFrame。护栏判据是「是否有 tick」，与是否同时有 bar 无关。需要指标时改用增量指标，或用下面的 `freq` 把 tick 聚合成 bar。
 
 **用 `freq` 把 tick 聚合成 bar：**
@@ -282,7 +282,8 @@ result = aq.run_backtest(
 传入 `freq` 后，原始 tick 仍照常投递给 `on_tick`，同时把 tick 聚合成 bar 投递给 `on_bar`，从而拿到完整 OHLC 语义与全部指标（含 ATR 等 H/L 类）。要点：
 
 *   词汇与 `feed_adapter.resample(freq=...)` 一致，但**只支持整数分钟**（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 等非整分周期会抛 `ValueError` 并指向 `feed_adapter.resample`，不会静默取整。
-*   `Tick.volume` 在回测里是**单笔量**，聚合器按累计成交量之和写入合成 bar 的 `volume`。
+*   适配层按**单笔口径**声明 `volume`（即每个 `Tick.volume` 就是这一笔的成交量，不是累计量），聚合器把区间内所有 tick 的 volume 直接求和写入合成 bar 的 `volume`。
+*   合成 bar 的时间戳打在**区间结束**（下一区间起点前 1 纳秒），而非区间起点：回测把合成 bar 与源 tick 放进同一个 feed 再按时间戳排序，若用区间起点，bar 会排到形成它的 tick **之前**，策略读到的 high/low/close 会是尚未发生的未来数据；打在区间结束保证 bar 严格晚于其所有源 tick。
 *   末尾未满一个周期的 tick 不会产生 bar（聚合器不提供 flush）。
 *   `data` 中不含任何 `Tick` 时传 `freq` 会抛 `ValueError`（参数无意义）。
 

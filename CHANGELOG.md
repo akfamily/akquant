@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     run_backtest(data=ticks, freq="1min", strategy=MyStrategy(), symbols=["600000"], ...)
     ```
 
-    `freq` 词汇与 `akquant.feed_adapter` 的 `resample(freq=...)` 一致，但聚合走 `BarAggregator`，**只支持整数分钟**（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 之类会抛 `ValueError` 并指向 `feed_adapter.resample`，不会静默取整。**成交量口径**：回测中 `Tick.volume` 是单笔量，适配层显式声明单笔口径（`volume_is_cumulative=False`）并把每笔量原样交给聚合器，由聚合器直接求和，故合成 bar 的成交量等于区间内 tick 量之和、一笔不落。末尾未满周期不产生 bar。`freq` 在数据不含 tick 时抛 `ValueError`（参数无意义）。
+    `freq` 词汇与 `akquant.feed_adapter` 的 `resample(freq=...)` 一致，但聚合走 `BarAggregator`，**只支持整数分钟**（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 之类会抛 `ValueError` 并指向 `feed_adapter.resample`，不会静默取整。**成交量口径**：回测中 `Tick.volume` 是单笔量，适配层显式声明单笔口径（`volume_is_cumulative=False`）并把每笔量原样交给聚合器，由聚合器直接求和，故合成 bar 的成交量等于区间内 tick 量之和、一笔不落。**时间戳口径**：合成 bar 打在**区间结束**（下一区间起点前 1 纳秒）而非区间起点——回测因果顺序要求：合成 bar 与源 tick 会被放进同一个 feed 再按时间戳排序，若打区间起点，bar 会排到形成它的 tick 之前，策略读到的是尚未发生的未来数据。末尾未满周期不产生 bar。`freq` 在数据不含 tick 时抛 `ValueError`（参数无意义）。
 
 ### Changed
 - **策略参数声明改为内联字段（破坏性）**：策略参数的单一事实来源现在是类体内联字段——直接用 `IntParam` / `FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` 赋值（如 `fast = IntParam(10, ge=2, le=200)`），经 `self.params.fast` 只读访问；`self.params` 在实例构造期即已校验就绪且 frozen，不支持运行期赋值。
