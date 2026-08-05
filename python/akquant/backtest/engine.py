@@ -2216,7 +2216,10 @@ def run_backtest(
     """
     简化版回测入口函数.
 
-    :param data: 回测数据，可以是 Pandas DataFrame 或 Bar 列表.
+    :param data: 回测数据，可以是 Pandas DataFrame、``Bar`` 列表、``Tick`` 列表，
+        或 ``Bar``/``Tick`` 混合列表。纯 tick 输入下 ``on_bar`` 不触发，
+        ``get_history`` 返回成交价序列（tick 以 ``open=high=low=close=price``
+        退化写入）；需要真实 OHLC 语义请配合 ``freq`` 聚合。
     :param custom_matchers: 自定义撮合器字典 {AssetType: MatcherInstance}
                  用于覆盖特定资产类型的默认撮合逻辑。
                  例如：传入一个实现了自定义成交规则的 Rust 撮合器实例，

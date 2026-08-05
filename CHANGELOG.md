@@ -23,6 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ```
 
     事件按时间戳升序推送（多品种全局交错——live feed 无法排序，推送顺序即引擎所见顺序），数据放完后会话自行结束，通常无需依赖 `duration`。**限制**：该 broker 只提供行情，`trader_gateway=None`，不模拟撮合成交，因此不能用于 `trading_mode="broker_live"`；并且**不覆盖 timer 语义**——回放数据带历史时间戳，而 live 引擎用墙钟判定 timer 到期，两条时间线错位，`on_timer` / `schedule_daily` 在回放会话中的行为不作保证。`build_replay_bundle` 会在构建时校验每条事件的时间戳为正数（非正时间戳会被引擎静默丢弃，导致声明的事件总数永远达不到、会话挂死），常见诱因是数据源日期列存在 `pd.to_datetime(errors="coerce")` 无法解析的值；若数据本身不受控，仍建议保留 `duration` 作为安全网。`examples/38_live_functional_strategy_demo.py` 已改用该 broker（并显式传入 `duration` 作为安全网），现可离线实跑。
+- **`run_backtest` 支持 tick 输入**。`data=` 现接受 `list[Tick]` 与 `list[Bar | Tick]` 混合列表（此前只接受 `list[Bar]`，传 Tick 会在 Rust 层抛 `TypeError`）。纯 tick 回测下 `get_history()` 与**单值**增量指标（SMA/EMA/RSI 等）现在可用——tick 以退化 bar 写入历史（`open=high=low=close=price`），故 `get_history(sym, "close", n)` 返回成交价序列：
+
+    ```python
+    run_backtest(data=ticks, strategy=MyStrategy(), symbols=["600000"], ...)
+    ```
+
+    **限制**：tick 的 OHLC 恒等，因此需要真实最高/最低价的指标模式（`input_mode` 为 `"hl"` / `"hlc"` / `"ohlc"`，如 ATR、振幅类）在 tick 数据上会抛 `ValueError` 而非静默返回 0——请先把 tick 聚合成 bar 再用这类指标。`source` 单值模式（`open`/`high`/`low`/`close` 均映射为成交价，`volume` 为单笔量）与 `close_volume` 模式正常可用。
+
+- **`run_backtest` 新增 `freq` 参数：把 tick 聚合成 bar**。传入后原始 tick 仍照常投递给 `on_tick`，同时额外合成 bar 投递给 `on_bar`，从而拿到完整 OHLC 语义与全部指标（含 ATR 等 H/L 类）：
+
+    ```python
+    run_backtest(data=ticks, freq="1min", strategy=MyStrategy(), symbols=["600000"], ...)
+    ```
+
+    `freq` 词汇与 `akquant.feed_adapter` 的 `resample(freq=...)` 一致，但聚合走 `BarAggregator`，**只支持整数分钟**（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 之类会抛 `ValueError` 并指向 `feed_adapter.resample`，不会静默取整。**成交量口径**：回测中 `Tick.volume` 是单笔量，适配层负责累加成累计量再交给聚合器，故合成 bar 的成交量等于区间内 tick 量之和。末尾未满周期不产生 bar。`freq` 在数据不含 tick 时抛 `ValueError`（参数无意义）。
 
 ### Changed
 - **策略参数声明改为内联字段（破坏性）**：策略参数的单一事实来源现在是类体内联字段——直接用 `IntParam` / `FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` 赋值（如 `fast = IntParam(10, ge=2, le=200)`），经 `self.params.fast` 只读访问；`self.params` 在实例构造期即已校验就绪且 frozen，不支持运行期赋值。
@@ -71,6 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`add_daily_timer` 已移除，更名为 `schedule_daily`（破坏性，不保留兼容别名）**：定时器注册端统一为 `schedule` / `schedule_daily` / `schedule_weekly` / `schedule_monthly` 家族（回调端 `on_timer` 不变）。升级后旧调用会直接 `AttributeError`。**迁移**：`self.add_daily_timer("14:55:00", "rebalance")` 改为 `self.schedule_daily("14:55:00", "rebalance")`，参数与触发语义完全一致。注意 `schedule_weekly` / `schedule_monthly` 依赖回测交易日历（`_trading_days`），在**实盘**下会记录一条 warning 并被忽略；实盘的周期性任务请用 `schedule_daily` 配合回调内的日历判断。详见 `docs/zh/meta/timer-api-rfc.md`。
 - **实盘 `subscribe()` 不再静默无效**：`Strategy.subscribe()` 只把标的写入 `_subscriptions`，而该列表**仅**被回测消费——实盘（`run_live`）的订阅集在会话启动时由 `instruments` 一次性交给行情网关，此后调用 `subscribe()` 不会触达任何网关。此前这一调用完全无声，用户以为订阅成功却收不到行情。现在实盘下调用 `subscribe()` 会记录一条 warning，指明应把该标的加入 `run_live(instruments=[...])`（每个标的只告警一次）。行为本身未变（仍会记录进 `_subscriptions`），回测语义完全不受影响。
 - **`supports_short_sell` 在 `broker_live` 下开始真正生效**：该字段此前在实盘下单路径上没有任何消费者（仅服务 `order_target*` 的目标仓位计算），broker 声明了 `False` 也照样把开空单发给柜台，只能等柜台报错。现在 `side=Sell` + `position_effect=open` 会在下单前被本地拒绝。内置 CTP 声明 `True`，不受影响；`ptrade` / `miniqmt` 只声明支持 `auto`，其显式 `open` 早已被 `supported_position_effects` 拦截，行为不变。若自定义 broker 实际支持融券却被拦，请修正其 `get_capabilities()` 中的 `supports_short_sell` 声明。
+- **tick 事件开始写入历史缓冲区、并推进增量指标（行为变更）**：此前 `Event::Tick` 只更新当前事件快照，既不进历史也不推进指标，且是**静默**的——不报错也不工作。现在两者都会发生。若既有策略在 tick 路径注册了增量指标并依赖它「不更新」，结果会变。`__engine_rule_version__` 已相应 bump。
+- **回测数据列表改为逐元素类型校验（破坏性）**：`run_backtest(data=[...])` 此前只检查首元素类型，`[Bar, "garbage"]` 会漏到 Rust 层抛出难以定位的错误。现在在 Python 层逐元素校验，抛 `TypeError` 并指名位置索引与实际类型；空列表抛 `ValueError`。
 
 ### Fixed
 - 修复 `broker_live` 下 `buy()` / `sell()` 缺省参数不解析的问题：`quantity=None` 原先直接透传到拆腿逻辑并以 `TypeError` 崩掉——等价于 `set_sizer()` 在实盘静默失效；`symbol=None` 原先会把 `None` 送进柜台请求。现按回测同口径解析：`symbol` 取当前 bar/tick，买入量走 `strategy.sizer`，卖出量全平持仓。另外解析后 `quantity <= 0` 时不再向柜台发 0 手单，改为返回空回执（与回测一致）。一处有意偏离：卖出全平在实盘取**可用**持仓而非总持仓，因为 A 股 T+1 下按总量报单会被柜台整单拒绝，取可用量退化为部分卖出。
