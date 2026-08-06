@@ -671,6 +671,10 @@ class Strategy:
             del state["current_bar"]
         if "current_tick" in state:
             del state["current_tick"]
+        # 实盘 subscribe 转发器: 闭包捕获了 LiveRunner 与行情网关, 不可 pickle
+        # (optimize.py 多进程会 pickle 策略), 且属于会话级运行时状态。
+        if "_live_subscription_forwarder" in state:
+            del state["_live_subscription_forwarder"]
         if "_framework_last_local_date" in state:
             del state["_framework_last_local_date"]
         if "_framework_before_trading_done_date" in state:
@@ -1486,27 +1490,39 @@ class Strategy:
         """
         Subscribe to market data for an instrument.
 
-        仅在**回测**生效: ``run_backtest`` 会把 ``_subscriptions`` 并入标的集合。
-        实盘(``run_live``)的订阅集在会话启动时由 ``instruments`` 一次性传给行情
-        网关, 此处调用不会触达任何网关, 因此会记录一条 warning。
+        回测: ``run_backtest`` 会把 ``_subscriptions`` 并入标的集合。
+
+        实盘: 由 ``run_live`` 装上转发器后, 调用会把 ``instruments`` 与各 slot
+        订阅的并集下发到行情网关(网关的 subscribe 是整集替换语义)。若该 broker
+        没有行情网关(如 ``broker='qmf'`` 的 ``market_gateway=None``), 则无处可
+        下发, 退回记录一条 warning。
 
         :param instrument_id: The instrument identifier (e.g., '600000').
         """
-        if getattr(self, "_live_market_data_owner", False):
-            warned = getattr(self, "_warned_live_subscriptions", None)
-            if warned is None:
-                warned = set()
-                self._warned_live_subscriptions = warned
-            # 逐 symbol 只告警一次: 用户可能在 on_bar 里按条件 subscribe。
-            if instrument_id not in warned:
-                warned.add(instrument_id)
-                _live_subscribe_logger.warning(
-                    "实盘下 subscribe(%r) 不会订阅行情: 实盘订阅集来自 "
-                    "run_live(instruments=[...]), 请把该标的加入 instruments",
-                    instrument_id,
-                )
+        # 先入账再转发: 转发器算的是 _subscriptions 的并集, 顺序颠倒会漏掉本次。
         if instrument_id not in self._subscriptions:
             self._subscriptions.append(instrument_id)
+
+        if not getattr(self, "_live_market_data_owner", False):
+            return
+
+        forwarder = getattr(self, "_live_subscription_forwarder", None)
+        if callable(forwarder):
+            forwarder()
+            return
+
+        warned = getattr(self, "_warned_live_subscriptions", None)
+        if warned is None:
+            warned = set()
+            self._warned_live_subscriptions = warned
+        # 逐 symbol 只告警一次: 用户可能在 on_bar 里按条件 subscribe。
+        if instrument_id not in warned:
+            warned.add(instrument_id)
+            _live_subscribe_logger.warning(
+                "实盘下 subscribe(%r) 不会订阅行情: 该 broker 未提供行情网关, "
+                "请把该标的加入 run_live(instruments=[...])",
+                instrument_id,
+            )
 
     def _prepare_indicators(self, data: Dict[str, pd.DataFrame]) -> None:
         """Pre-calculate indicators for precompute mode."""

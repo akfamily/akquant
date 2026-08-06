@@ -82,10 +82,34 @@ bundle = create_gateway_bundle(
 )
 ```
 
+一个 broker 并不必须同时提供行情与交易两条通道：`GatewayBundle` 的
+`market_gateway` 与 `trader_gateway` 是两个独立可选字段。内置的 `replay` 就只有
+行情（无法下单），而某些券商/柜台插件只有交易通道（收不到行情，`on_bar` /
+`on_tick` 不触发、`self.current_tick` 恒为 `None`）。
+
+这两类「单边 broker」可以组合使用：`broker` 是两侧的默认源，`market_broker` 与
+`trader_broker` 各自覆盖一侧。
+
+```python
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="my_trade_only_broker",   # 交易源
+    market_broker="replay",          # 行情源
+    trading_mode="paper",
+    gateway_options={"bars": bars},
+)
+```
+
+对称写法 `broker="replay", trader_broker="my_trade_only_broker"` 与上式等价。两侧
+都不传时行为与单 broker 完全一致。这个组合的价值在于：既能用确定性回放数据驱动
+策略，又能把订单真正发往柜台仿真环境做联调。
+
 建议结合以下文档落地：
 
 *   [自定义 Broker 注册](../advanced/custom_broker_registry.md)
 *   [自定义 Broker 生产接入清单](../advanced/custom_broker_production_checklist.md)
+*   [行情源与交易源分开指定](../reference/api.md#mixed-market-trader-broker)
 
 ### 15.1.3 回测 → 实盘最小切换清单
 
