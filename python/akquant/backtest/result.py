@@ -414,33 +414,11 @@ class BacktestResult:
         except Exception:
             pass
 
-        try:
-            open_position_count = 0.0
-            pos_df = self.positions_df
-            if not pos_df.empty and "date" in pos_df.columns:
-                latest_date = pos_df["date"].max()
-                latest_positions = pos_df[pos_df["date"] == latest_date].copy()
-                if "quantity" in latest_positions.columns:
-                    quantity = pd.to_numeric(
-                        latest_positions["quantity"], errors="coerce"
-                    ).fillna(0.0)
-                    open_position_count = float(quantity.ne(0.0).sum())
-                elif {
-                    "long_shares",
-                    "short_shares",
-                }.issubset(latest_positions.columns):
-                    long_shares = pd.to_numeric(
-                        latest_positions["long_shares"], errors="coerce"
-                    ).fillna(0.0)
-                    short_shares = pd.to_numeric(
-                        latest_positions["short_shares"], errors="coerce"
-                    ).fillna(0.0)
-                    open_position_count = float(
-                        (long_shares.ne(0.0) | short_shares.ne(0.0)).sum()
-                    )
-            df.loc["open_position_count", "value"] = open_position_count
-        except Exception:
-            pass
+        # `open_position_count` is intentionally left to the Rust layer, which
+        # counts the final portfolio snapshot. Do not recompute it from
+        # `positions_df`: that frame only carries rows for symbols actually held,
+        # so its latest date lags the backtest end once everything is closed out,
+        # and the last held snapshot gets misreported as the ending position.
 
         # Calculate additional margin/leverage metrics using snapshots
         try:

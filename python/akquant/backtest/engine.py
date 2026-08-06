@@ -32,6 +32,7 @@ from ..akquant import (
     Instrument,
     OptionMarginModel,
     SettlementType,
+    Tick,
     TradingSession,
 )
 from ..analyzer_plugin import AnalyzerManager, AnalyzerPlugin
@@ -56,6 +57,7 @@ from ..strategy import (
     InstrumentSettlementMode,
     InstrumentSnapshot,
     Strategy,
+    StrategyConfigurationError,
     StrategyRuntimeConfig,
 )
 from ..strategy_framework_hooks import (
@@ -71,6 +73,11 @@ from ..strategy_loader import resolve_strategy_input
 from ..utils.inspector import infer_warmup_period
 from .fill_mode import FillMode
 from .result import BacktestResult
+from .tick_input import (
+    aggregate_ticks_into_feed,
+    normalize_market_input,
+    parse_freq_to_interval_min,
+)
 
 _RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
 _collect_cross_section_entries_impl = collect_cross_section_timer_entries
@@ -549,6 +556,8 @@ BacktestDataInput = Union[
     "pa.Table",
     Dict[str, pd.DataFrame],
     List[Bar],
+    List[Tick],
+    List[Union[Bar, Tick]],
     DataFeed,
     DataFeedAdapter,
 ]
@@ -2130,6 +2139,7 @@ def _normalize_slippage_policy(
 
 def run_backtest(
     data: Optional[BacktestDataInput] = None,
+    freq: Optional[str] = None,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
@@ -2207,7 +2217,10 @@ def run_backtest(
     """
     简化版回测入口函数.
 
-    :param data: 回测数据，可以是 Pandas DataFrame 或 Bar 列表.
+    :param data: 回测数据，可以是 Pandas DataFrame、``Bar`` 列表、``Tick`` 列表，
+        或 ``Bar``/``Tick`` 混合列表。纯 tick 输入下 ``on_bar`` 不触发，
+        ``get_history`` 返回成交价序列（tick 以 ``open=high=low=close=price``
+        退化写入）；需要真实 OHLC 语义请配合 ``freq`` 聚合。
     :param custom_matchers: 自定义撮合器字典 {AssetType: MatcherInstance}
                  用于覆盖特定资产类型的默认撮合逻辑。
                  例如：传入一个实现了自定义成交规则的 Rust 撮合器实例，
@@ -3006,6 +3019,60 @@ def run_backtest(
     if data is not None:
         # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
         data = coerce_to_pandas(data)
+        # freq 只对含 Tick 的列表有意义。放在归一之前做校验, 使 DataFrame /
+        # DataFeed / 纯 bar 列表配 freq 时也能早失败, 而不是静默忽略这个参数。
+        if freq is not None and not (
+            isinstance(data, list) and any(isinstance(item, Tick) for item in data)
+        ):
+            raise ValueError(
+                f"freq={freq!r} 只在 data 为含 Tick 的列表时有意义。"
+                "若要重采样 bar, 请用 akquant.feed_adapter 的 resample()"
+            )
+
+        # 含 Tick(或需要校验)的列表先归一成 DataFeed, 交给下面既有的 DataFeed
+        # 分支处理: 该路径已实测能正确投递 tick(feed.add_tick -> 引擎
+        # Event::Tick), 无需重复实现。
+        # 必须在整条 if/elif 分发链之前完成——一旦进入下面的 elif isinstance(data,
+        # list) 分支, 把 data 换成 DataFeed 也不会回退到 DataFeed 分支去。
+        #
+        # 触发条件不是"含 Tick"而是"非纯 Bar 列表"(空列表, 或含至少一个非 Bar
+        # 元素, Tick 也算非 Bar): 这样空列表与含非法元素的列表也会先过
+        # normalize_market_input 的校验(早失败, 报 ValueError/TypeError 且指名
+        # 位置), 而不是漏到下面 elif 分支里 .sort() 时抛出令人费解的
+        # AttributeError, 或静默跳过校验直接进入撮合。纯 Bar 列表(不含 Tick 也
+        # 不含非法元素)维持原分支不变, 避免多一趟遍历/排序的开销。
+        if isinstance(data, list) and (
+            not data or any(not isinstance(item, Bar) for item in data)
+        ):
+            bars_part, ticks_part = normalize_market_input(data)
+            # 预计算指标依赖 data_map_for_indicators, 而归一后走的 DataFeed 分支不
+            # 构建它。静默丢失指标比报错危险得多, 故显式拒绝并指向可用的替代方案。
+            #
+            # 判据是"是否真的注册了预计算指标"而非 indicator_mode: 后者默认就是
+            # "precompute"(strategy.py), 用它做判据会误伤所有未显式改模式的 tick 用户。
+            if ticks_part and any(
+                getattr(one_strategy, "_precomputed_indicators", None)
+                for one_strategy in all_strategy_instances
+            ):
+                raise ValueError(
+                    "已注册的预计算指标(precompute 模式)不支持含 Tick 的输入: "
+                    "预计算指标需要完整的 OHLC DataFrame, 而 tick 只有成交价。请改用 "
+                    "register_incremental_indicator(indicator_mode='incremental', "
+                    "tick 路径已支持单值指标), 或给 run_backtest 传 freq"
+                    "(如 freq='1min')把 tick 聚合成 bar。"
+                )
+            tick_feed = DataFeed()
+            if bars_part:
+                tick_feed.add_bars(bars_part)
+            for one_tick in ticks_part:
+                tick_feed.add_tick(one_tick)
+            if freq is not None:
+                # 原始 tick 仍投递, 合成 bar 进同一 feed。
+                aggregate_ticks_into_feed(
+                    tick_feed, ticks_part, parse_freq_to_interval_min(freq)
+                )
+            tick_feed.sort()
+            data = tick_feed
         if isinstance(data, DataFeed):
             # Use provided DataFeed
             feed = data
@@ -3168,10 +3235,14 @@ def run_backtest(
                     data = [b for b in data if b.timestamp <= ts_end_ns]  # type: ignore
 
                 data.sort(key=lambda b: b.timestamp)
-                feed.add_bars(data)
+                feed.add_bars(data)  # type: ignore[arg-type]
 
                 # Construct DataFrame for indicator calculation
                 # Group by symbol just in case
+                # 到达这里时 data 运行时必为 List[Bar](Tick/空/非法元素的列表已在
+                # 分发链之前被 normalize_market_input 拦截并转为 DataFeed 走别的
+                # 分支); mypy 静态上仍视 data 为 BacktestDataInput 的宽联合类型
+                # (加宽是 Step 3 的要求), 故下面的属性访问需要 ignore。
                 bars_by_sym: Dict[str, List[Dict[str, Any]]] = {}
                 for bar in data:
                     if bar.symbol not in bars_by_sym:
@@ -3181,10 +3252,10 @@ def run_backtest(
                             "timestamp": pd.Timestamp(
                                 bar.timestamp, unit="ns", tz="UTC"
                             ),
-                            "open": bar.open,
-                            "high": bar.high,
-                            "low": bar.low,
-                            "close": bar.close,
+                            "open": bar.open,  # type: ignore[union-attr]
+                            "high": bar.high,  # type: ignore[union-attr]
+                            "low": bar.low,  # type: ignore[union-attr]
+                            "close": bar.close,  # type: ignore[union-attr]
                             "volume": bar.volume,
                         }
                     )
@@ -4331,6 +4402,11 @@ def run_backtest(
         if hasattr(strategy_instance, "_on_stop_internal"):
             try:
                 strategy_instance._on_stop_internal()
+            except StrategyConfigurationError:
+                # 框架配置校验失败必须让调用方看到: 吞掉它会让用户拿到静默失效的结果
+                # (例如 H/L 指标全程未更新、ATR 恒为 0)。用户 on_stop 的 bug 仍按下面
+                # 的分支容忍。
+                raise
             except Exception as e:
                 logger.error(
                     "Error in on_stop: %s",
@@ -4356,6 +4432,9 @@ def run_backtest(
             if hasattr(slot_strategy, "_on_stop_internal"):
                 try:
                     slot_strategy._on_stop_internal()
+                except StrategyConfigurationError:
+                    # 框架配置校验失败必须让调用方看到, 理由同主策略分支。
+                    raise
                 except Exception as e:
                     logger.error(
                         "Error in slot on_stop: %s",
@@ -4681,6 +4760,10 @@ def run_from_checkpoint(
 
             # Construct DataFrame for indicator calculation
             # Group by symbol just in case
+            # (BacktestDataInput 因 Task 4 加宽含 Tick, 但本分支的
+            # isinstance(data[0], Bar) 运行时守卫未变——run_from_checkpoint 的
+            # tick 支持不在本任务范围内, 这里只是 mypy 静态类型跟着别名变宽而已,
+            # 无逻辑改动)
             bars_by_sym: Dict[str, List[Dict[str, Any]]] = {}
             for bar in data:
                 if bar.symbol not in bars_by_sym:
@@ -4688,10 +4771,10 @@ def run_from_checkpoint(
                 bars_by_sym[bar.symbol].append(
                     {
                         "timestamp": pd.Timestamp(bar.timestamp, unit="ns", tz="UTC"),
-                        "open": bar.open,
-                        "high": bar.high,
-                        "low": bar.low,
-                        "close": bar.close,
+                        "open": bar.open,  # type: ignore[union-attr]
+                        "high": bar.high,  # type: ignore[union-attr]
+                        "low": bar.low,  # type: ignore[union-attr]
+                        "close": bar.close,  # type: ignore[union-attr]
                         "volume": bar.volume,
                     }
                 )
@@ -5761,6 +5844,11 @@ def run_from_checkpoint(
         if hasattr(strategy_instance, "_on_stop_internal"):
             try:
                 strategy_instance._on_stop_internal()
+            except StrategyConfigurationError:
+                # 框架配置校验失败必须让调用方看到: 吞掉它会让用户拿到静默失效的结果
+                # (例如 H/L 指标全程未更新、ATR 恒为 0)。用户 on_stop 的 bug 仍按下面
+                # 的分支容忍。
+                raise
             except Exception as e:
                 logger.error(
                     "Error in on_stop: %s",
@@ -5786,6 +5874,9 @@ def run_from_checkpoint(
             if hasattr(slot_strategy, "_on_stop_internal"):
                 try:
                     slot_strategy._on_stop_internal()
+                except StrategyConfigurationError:
+                    # 框架配置校验失败必须让调用方看到, 理由同主策略分支。
+                    raise
                 except Exception as e:
                     logger.error(
                         "Error in slot on_stop: %s",

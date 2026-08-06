@@ -10,6 +10,7 @@ from ..registry import register_broker
 from .ctp.adapter import CTPMarketAdapter, CTPTraderAdapter
 from .miniqmt.stub import MiniQMTMarketGateway, MiniQMTTraderGateway
 from .ptrade.stub import PTradeMarketGateway, PTradeTraderGateway
+from .replay.gateway import build_replay_bundle
 
 
 def _resolve_trader_capabilities(trader_gateway: TraderGateway | None) -> Any:
@@ -83,3 +84,4 @@ def register_builtin_brokers() -> None:
     register_broker("ctp", _build_ctp)
     register_broker("miniqmt", _build_miniqmt)
     register_broker("ptrade", _build_ptrade)
+    register_broker("replay", build_replay_bundle)

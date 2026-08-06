@@ -183,6 +183,32 @@ if TYPE_CHECKING:
 # 实盘 subscribe() 告警用: 与 strategy_logging 的 "strategy" 通道同源。
 _live_subscribe_logger = _get_logger("strategy")
 
+# Tick 只有 price / volume。指标的 source 词汇按 bar 定义(open/high/low/close/
+# volume), 故 tick 路径需名映射: 退化后 OHLC 四者都等于成交价。
+_TICK_SOURCE_ATTR = {
+    "open": "price",
+    "high": "price",
+    "low": "price",
+    "close": "price",
+    "volume": "volume",
+}
+
+# 这些模式需要真实的最高/最低价; tick 上 OHLC 恒等, 结果恒为 0。
+_TICK_UNSUPPORTED_INPUT_MODES = frozenset({"hl", "hlc", "ohlc"})
+
+
+class StrategyConfigurationError(ValueError):
+    """策略配置在会话结束时被判定为无效, 须让调用方看到.
+
+    继承 ``ValueError`` 以保持向后兼容: 既有代码若 ``except ValueError`` 仍能接住。
+
+    **为什么需要一个专用类型**: 这类校验从 ``_on_stop_internal`` 抛出, 而 engine 的
+    ``_on_stop_internal()`` 调用点刻意用 ``except Exception: logger.error(...)`` 容忍
+    **用户** ``on_stop`` 里的 bug——不让一个收尾期的用户错误毁掉整个回测结果。那份宽容
+    要保留, 但框架自己的配置校验必须穿透, 否则静默失效: 用户拿到全 0 的指标却毫不知情。
+    engine 的 handler 因此只重抛本类型。
+    """
+
 
 @dataclass
 class StrategyRuntimeConfig:
@@ -237,6 +263,13 @@ class IncrementalIndicatorRegistration:
     base_indicator: Any = None
     primary_symbol: Optional[str] = None
     instances: Dict[str, Any] = field(default_factory=dict)
+    # 下面两个集合只用于 H/L 类 input_mode 的会话级覆盖率核验(见
+    # `Strategy._check_incremental_hl_bar_coverage`): bar_seen_symbols 记录
+    # 曾经收到过至少一个 bar 的 symbol; tick_only_symbols 记录曾经在
+    # H/L 模式下被 tick 跳过更新的 symbol。会话结束时两者做差集, 差集非空
+    # 说明该 symbol 全程只有 tick、从未有 bar, 需要报错而非静默不推进。
+    bar_seen_symbols: set[str] = field(default_factory=set)
+    tick_only_symbols: set[str] = field(default_factory=set)
 
 
 class IncrementalIndicatorBinding:
@@ -975,8 +1008,18 @@ class Strategy:
         pass
 
     def _on_stop_internal(self) -> None:
-        """内部停止回调，用于补发框架级结束钩子."""
+        """内部停止回调，用于补发框架级结束钩子.
+
+        `_check_incremental_hl_bar_coverage` 放在这里(而非首个 tick 时)是有意
+        选择——见该方法的文档字符串。注意: `run_backtest`/`run_from_checkpoint`
+        对 `_on_stop_internal()` 的调用包在
+        `try/except Exception: logger.error(...)` 里, 用于容忍**用户** `on_stop`
+        里的 bug; 但这里抛出的 `StrategyConfigurationError`(`ValueError` 子类)
+        是框架自身的配置校验, engine 的 handler 会在记录日志前先重抛该类型, 使其
+        穿透到调用方——不会退化成一条静默的 ERROR 日志。
+        """
         _ensure_framework_state_impl(self)
+        self._check_incremental_hl_bar_coverage()
         _dispatch_shutdown_hooks_impl(self)
         _call_user_callback_impl(self, "on_stop")
 
@@ -1477,7 +1520,7 @@ class Strategy:
                 # Calculate and cache inside indicator
                 ind(df, sym)
 
-    def _update_incremental_indicators(self, bar: Bar) -> None:
+    def _update_incremental_indicators(self, bar: Union[Bar, Tick]) -> None:
         if self.indicator_mode != "incremental":
             return
         if not self._incremental_indicators:
@@ -1491,11 +1534,24 @@ class Strategy:
             < int(active_start_time_ns)
         ):
             return
+        is_tick_payload = isinstance(bar, Tick)
         for name in list(self._incremental_indicators.keys()):
             item = self._get_incremental_registration(name)
             symbol_filter = item.symbols
             if symbol_filter is not None and bar_symbol not in symbol_filter:
                 continue
+            if is_tick_payload and item.input_mode in _TICK_UNSUPPORTED_INPUT_MODES:
+                # H/L 类指标要真实的最高/最低价, tick 的 OHLC 恒等无法提供。
+                # `freq` 聚合会话与混合 [Bar, Tick] 输入下, 这个 symbol 的合成/
+                # 原始 bar 会驱动该指标, 这一笔 tick 只需跳过, 不该让整个会话
+                # 报错——是否"这个 symbol 真的从未有过 bar"要等会话结束才能
+                # 确知(见 `_check_incremental_hl_bar_coverage`), 这里只记录、不
+                # 报错。
+                if bar_symbol is not None:
+                    item.tick_only_symbols.add(str(bar_symbol))
+                continue
+            if not is_tick_payload and bar_symbol is not None:
+                item.bar_seen_symbols.add(str(bar_symbol))
             ind = self._get_incremental_indicator_instance(name, bar_symbol)
             args = self._build_incremental_indicator_args(
                 payload=bar,
@@ -1503,6 +1559,38 @@ class Strategy:
                 input_mode=item.input_mode,
             )
             ind.update(*args)
+
+    def _check_incremental_hl_bar_coverage(self) -> None:
+        """会话结束时核验: H/L 类指标是否有 symbol 全程只收到过 tick.
+
+        `_update_incremental_indicators` 把"tick 命中 H/L 模式"从报错改成跳过
+        (见上), 代价是纯 tick 会话(无 freq、无 bar)会静默地从头到尾不推进——
+        这比原来"任何 tick 命中 H/L 就报错"更危险, 因为它不报错。此处用
+        `tick_only_symbols - bar_seen_symbols` 找出这类 symbol, 在会话结束时
+        报错, 而不是在首个 tick 时报错。
+
+        **为何选会话结束而非首个 tick**: `freq` 聚合下, 一个 symbol 的第一个
+        合成 bar 要等到第一个聚合区间收尾(数个 tick 之后)才会发出——这正是
+        blocker 1 修复后的区间结束打戳语义。若在"首个 tick 且该 symbol 尚无
+        bar"时立即报错, 会错误地拒绝这个合法、最终会有 bar 的 freq 会话本身。
+        首个 tick 时无法确知"这个 symbol 会不会有 bar", 只有等会话结束才能
+        确知。代价是用户要等到回测/报告收尾才能看到这个错误, 而不是第一时间;
+        但比起误杀合法的 freq 会话, 这个代价可接受。
+        """
+        if not self._incremental_indicators:
+            return
+        for name in list(self._incremental_indicators.keys()):
+            item = self._get_incremental_registration(name)
+            never_had_bar = item.tick_only_symbols - item.bar_seen_symbols
+            if never_had_bar:
+                raise StrategyConfigurationError(
+                    f"增量指标 {name!r}(input_mode={item.input_mode!r}) 的标的 "
+                    f"{sorted(never_had_bar)!r} 全程只收到 tick、从未收到任何 bar: "
+                    "该 input_mode 需要真实的最高/最低价, tick 的 OHLC 恒等于成交价, "
+                    "ATR/振幅类指标会恒为 0。请给 run_backtest 传 freq"
+                    "(如 freq='1min')把 tick 聚合成 bar, 或改用单值模式 "
+                    "input_mode='source'"
+                )
 
     def _bootstrap_incremental_indicators(self, data: Dict[str, pd.DataFrame]) -> None:
         """在实时增量更新前，用历史数据预热增量指标."""
@@ -1653,6 +1741,21 @@ class Strategy:
     def _build_incremental_indicator_args(
         self, payload: Any, source: str, input_mode: str
     ) -> Tuple[Any, ...]:
+        # Tick 无 open/high/low/close 属性, 直接 getattr 会抛 AttributeError,
+        # 故 tick payload 先走名映射; 需要真实 H/L 的模式直接拒绝。
+        if isinstance(payload, Tick):
+            if input_mode in _TICK_UNSUPPORTED_INPUT_MODES:
+                raise ValueError(
+                    f"input_mode={input_mode!r} 需要真实的最高/最低价, 而 tick 的 "
+                    "OHLC 恒等于成交价, ATR/振幅类指标会恒为 0。"
+                    "请给 run_backtest 传 freq(如 freq='1min') 把 tick 聚合成 bar, "
+                    "或改用单值模式 input_mode='source'"
+                )
+            if input_mode == "close_volume":
+                return (payload.price, payload.volume)
+            if input_mode == "source":
+                return (getattr(payload, _TICK_SOURCE_ATTR[source]),)
+            raise ValueError(f"Unsupported input_mode: {input_mode}")
         if input_mode == "source":
             return (getattr(payload, source),)
         if input_mode == "hl":

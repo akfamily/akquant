@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import DefaultDict
+from typing import Any, DefaultDict
 
 import pandas as pd
 import pytest
@@ -23,6 +23,38 @@ class ExposureCapacityStrategy(Strategy):
             self.sell(symbol=bar.symbol, quantity=40, tag="reduce")
         elif self.step == 5:
             self.close_position(symbol=bar.symbol)
+
+
+class FlatAtEndStrategy(Strategy):
+    """Open on the first bar and fully close well before the final bar."""
+
+    def __init__(self) -> None:
+        """Initialize strategy state."""
+        super().__init__()
+        self.step = 0
+
+    def on_bar(self, bar: Bar) -> None:
+        """Enter once, then flatten so the run ends with no position."""
+        self.step += 1
+        if self.step == 1:
+            self.buy(symbol=bar.symbol, quantity=100, tag="entry")
+        elif self.step == 3:
+            self.close_position(symbol=bar.symbol)
+
+
+class HoldToEndStrategy(Strategy):
+    """Open on the first bar and hold the position to the end."""
+
+    def __init__(self) -> None:
+        """Initialize strategy state."""
+        super().__init__()
+        self.step = 0
+
+    def on_bar(self, bar: Bar) -> None:
+        """Enter once and never close."""
+        self.step += 1
+        if self.step == 1:
+            self.buy(symbol=bar.symbol, quantity=100, tag="entry")
 
 
 class AttributionBySymbolStrategy(Strategy):
@@ -186,3 +218,42 @@ def test_attribution_df_keeps_total_pnl_consistent() -> None:
         assert float(attribution_tag["contribution_pct"].sum()) == pytest.approx(
             1.0, rel=1e-9
         )
+
+
+def _run_single_symbol(strategy: type[Strategy]) -> Any:
+    """Run a single-symbol backtest through the Python result wrapper."""
+    return run_backtest(
+        data=_build_single_symbol_data(),
+        strategy=strategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy=CurrentClose(),
+        lot_size=1,
+        show_progress=False,
+    )
+
+
+def test_open_position_count_reflects_final_snapshot() -> None:
+    """`open_position_count` must track the final snapshot, not the last held one.
+
+    `positions_df` only carries rows for symbols actually held, so its latest
+    date lags the backtest end once everything is closed out. Reading the count
+    from there reported a stale open position in `backtest_report.html`.
+    """
+    flat = _run_single_symbol(FlatAtEndStrategy)
+    assert float(flat.metrics_df.loc["open_position_count", "value"]) == pytest.approx(
+        0.0
+    )
+    # The last held snapshot predates the backtest end, which is what used to
+    # leak through as a phantom open position.
+    assert flat.positions_df["date"].max() < flat.positions.index[-1]
+    assert float(flat.positions.iloc[-1].abs().sum()) == pytest.approx(0.0)
+
+    held = _run_single_symbol(HoldToEndStrategy)
+    assert float(held.metrics_df.loc["open_position_count", "value"]) == pytest.approx(
+        1.0
+    )

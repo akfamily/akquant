@@ -167,6 +167,8 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     dispatch_time_hooks(strategy)
     strategy.current_tick = tick
     _drive_local_stops(strategy, tick.symbol, tick.price)
+    if hasattr(strategy, "_update_incremental_indicators"):
+        strategy._update_incremental_indicators(tick)
     strategy._last_prices[tick.symbol] = tick.price
     dispatch_portfolio_update(strategy)
     call_user_callback(strategy, "on_tick", tick, payload=tick)

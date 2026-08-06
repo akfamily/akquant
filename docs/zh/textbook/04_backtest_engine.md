@@ -18,7 +18,7 @@
 ## 本章实践入口
 
 - 主示例：[examples/textbook/ch04_comparison.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch04_comparison.py)
-- 进阶示例：[examples/25_streaming_backtest_demo.py](https://github.com/akfamily/akquant/blob/main/examples/25_streaming_backtest_demo.py)
+- 进阶示例：[examples/25_streaming_backtest_demo.py](https://github.com/akfamily/akquant/blob/main/examples/25_streaming_backtest_demo.py), [examples/68_backtest_tick_demo.py](https://github.com/akfamily/akquant/blob/main/examples/68_backtest_tick_demo.py)（§4.16 Tick 输入与聚合语义）
 - 对应指南：[数据指南](../guide/data.md)
 
 ## 快速运行与验收
@@ -700,6 +700,57 @@ $$ \text{Total Equity} = \text{Cash} + \sum (\text{Market Value of Positions}) $
 1.  **避免 DataFrame 碎片化**：历史数据在 Rust 中以连续内存块（Vector）存储，而不是 Python 的分散对象。
 2.  **按需计算**：指标（Indicator）通常是增量计算的（Streaming），而不是每次重算整个序列。
 3.  **对象池 (Object Pooling)**：虽然目前主要通过栈分配优化，但设计上避免了频繁的大对象创建和销毁。
+
+---
+
+## 4.16 [进阶选读] Tick 输入与聚合语义 (Tick Input & Aggregation)
+
+前面各节的事件流都以 `Bar` 为单位。但引擎的事件层本就是 `Event::{Bar, Tick, ...}` 的枚举，撮合层同样认 tick——所以 `run_backtest(data=...)` 除 `Bar` 列表外，还接受 `Tick` 列表与两者的混合列表。
+
+这一节讲两种模式的取舍，以及三个**反直觉但必须理解**的语义。可运行的对照演示见 [examples/68_backtest_tick_demo.py](https://github.com/akfamily/akquant/blob/main/examples/68_backtest_tick_demo.py)。
+
+### 4.16.1 纯 tick 模式：退化 bar 表示法
+
+不传 `freq` 时，tick 直接进入事件流：只触发 `on_tick`，**不**触发 `on_bar`。
+
+关键设计是**退化 bar 表示法**：tick 写入历史缓冲区时，`open = high = low = close = price`。这样列式 OHLC 的存储结构与字段查询都无需改动，`get_history(count, symbol, "close")` 在 tick 历史上就是「最近若干笔成交价」。
+
+代价也从这个表示法直接推出：**tick 的最高价恒等于最低价**。于是 ATR、振幅这类依赖真实 H/L 的指标在纯 tick 数据上只会恒为 0。AKQuant 不让它静默返回 0——若某标的全程只有 tick、从未有过任何 bar，会话结束时会抛 `StrategyConfigurationError`。
+
+> **设计原则：静默失效比报错危险。** 一个恒为 0 的 ATR 不会让回测崩溃，它会让你基于无意义的数字做出决策。这类"不报错也不工作"的路径是本章 4.14 节排查清单的重点，也是 AKQuant 在 tick 支持上反复权衡的主轴。
+
+### 4.16.2 `freq` 聚合模式：因果顺序为什么决定时间戳约定
+
+传入 `freq="1min"` 后，原始 tick 仍照常投递给 `on_tick`，同时把区间内的 tick 聚合成 bar 投递给 `on_bar`——于是拿到完整 OHLC 语义与全部指标（含 ATR 等 H/L 类）。
+
+这里有一个值得单独理解的工程决策：**合成 bar 的时间戳打在区间结束（下一区间起点前 1 纳秒），而不是区间起点。**
+
+原因是回测与实盘的时间语义不同：
+
+| | 实盘 | 回测 |
+| --- | --- | --- |
+| bar 何时被消费 | 下一区间首个 tick 到达时才发出，**墙钟顺序即因果顺序** | tick 与合成 bar 进同一 feed，再按时间戳**排序** |
+| 用区间起点的后果 | 无害 | bar 排到形成它的 tick **之前** |
+
+用区间起点在回测里会造成**前视偏差**：策略在 09:30:00 就收到一根 `high` 来自 09:30:15 的 bar，等于读到了尚未发生的数据。示例 68 的输出可以直接核对这一点——合成 bar 落在 `09:30:59`，晚于形成它的全部 tick。
+
+### 4.16.3 成交量口径：单笔量与累计量
+
+聚合器的 `on_tick(symbol, price, volume, timestamp_ns)` 有两种 volume 口径，由构造参数选择：
+
+*   **累计口径**（实盘默认）：CTP 推来的 `Volume` 是当日累计量，聚合器算相邻两笔的差分。首笔会被播种为自身值（差分为 0），否则第一根 bar 会吞掉一整天的成交量。
+*   **单笔口径**（回测）：`Tick.volume` 就是这一笔的量，聚合器直接求和。
+
+两者不可混用：用累计口径处理单笔量，会让每个标的的**首笔成交量被丢弃**。示例 68 验证了 `100+200+150+50 = 500` 一笔不落。
+
+### 4.16.4 其余边界
+
+*   `freq` 只支持整数分钟（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 会报错并指向 `feed_adapter.resample`，不静默取整。词汇与 pandas `to_offset` 对齐。
+*   末尾未满一个周期的 tick 不产生 bar（聚合器不提供 flush）。
+*   预计算指标（`indicator_mode="precompute"`）不支持含 tick 的输入，请改用增量指标或 `freq` 聚合。
+*   构造 `Bar` / `Tick` 时**时间戳必须是真实纳秒**：构造器会把小于 `1e10` 的值乘 `1e9`，传 `100` 之类的小整数会被静默改写。
+
+完整清单见[数据指南的「Tick 输入」一节](../guide/data.md)。
 
 ---
 
