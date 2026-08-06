@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     run_backtest(data=ticks, strategy=MyStrategy(), symbols=["600000"], ...)
     ```
 
-    **限制**：tick 的 OHLC 恒等，因此需要真实最高/最低价的指标模式（`input_mode` 为 `"hl"` / `"hlc"` / `"ohlc"`，如 ATR、振幅类）在 tick 数据上会抛 `ValueError` 而非静默返回 0——请先把 tick 聚合成 bar 再用这类指标。`source` 单值模式（`open`/`high`/`low`/`close` 均映射为成交价，`volume` 为单笔量）与 `close_volume` 模式正常可用。
+    **限制**：tick 的 OHLC 恒等，因此需要真实最高/最低价的指标模式（`input_mode` 为 `"hl"` / `"hlc"` / `"ohlc"`，如 ATR、振幅类）在有 bar 来源（混合输入，或配合 `freq` 把 tick 聚合成 bar）时由 bar 驱动正常工作，tick 本身对它们静默跳过；只有当某个标的**全程只有 tick、从未有过任何 bar** 时，才会在会话结束时抛 `StrategyConfigurationError`（`ValueError` 子类）而非静默返回 0。`source` 单值模式（`open`/`high`/`low`/`close` 均映射为成交价，`volume` 为单笔量）与 `close_volume` 模式正常可用。
 
 - **`run_backtest` 新增 `freq` 参数：把 tick 聚合成 bar**。传入后原始 tick 仍照常投递给 `on_tick`，同时额外合成 bar 投递给 `on_bar`，从而拿到完整 OHLC 语义与全部指标（含 ATR 等 H/L 类）：
 
