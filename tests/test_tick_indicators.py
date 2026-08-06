@@ -340,3 +340,90 @@ def test_bar_hl_indicator_survives_added_tick() -> None:
     )
 
     assert strategy.recorder.pairs, "bar 的 H/L 指标因混入 tick 而失效"
+
+
+def test_pure_tick_hl_indicator_raises_to_caller() -> None:
+    """纯 tick 会话注册 H/L 指标, 异常必须到达 run_backtest 的调用方.
+
+    此前该校验放在 ``_on_stop_internal``, 而 ``engine.py`` 的四个调用点都把异常吞成
+    一行 ERROR 日志, 于是 ``run_backtest`` 正常返回、指标一次没更新, 用户拿到全 0 的
+    ATR 而不知情——把响亮的失败换成了安静的失败。
+
+    本测试走完整的 ``run_backtest`` 路径(不是直接调私有方法), 因为吞异常发生在
+    engine 层: 直接调私有方法的测试无法发现它。
+    """
+
+    class _HLOnTicksOnly(Strategy):
+        """纯 tick 会话里注册 H/L 指标."""
+
+        def __init__(self) -> None:
+            """初始化观测容器."""
+            self.recorder = _PairRecorder()
+
+        def on_start(self) -> None:
+            """订阅并注册 H/L 指标."""
+            self.subscribe(SYMBOL)
+            self.indicator_mode = "incremental"
+            self.register_incremental_indicator("hl", self.recorder, input_mode="hl")
+
+        def on_bar(self, bar: Any) -> None:
+            """不做任何事."""
+
+        def on_tick(self, tick: Any) -> None:
+            """不做任何事."""
+
+    with pytest.raises(ValueError, match="hl"):
+        run_backtest(
+            data=_ticks(5),
+            strategy=_HLOnTicksOnly(),
+            symbols=[SYMBOL],
+            initial_cash=100_000.0,
+            show_progress=False,
+            fill_policy=CurrentClose(),
+        )
+
+
+def test_user_on_stop_error_still_tolerated() -> None:
+    """用户 on_stop 里抛异常仍只记日志, 不毁掉回测结果.
+
+    engine 的四处 except 是有意的宽容。本轮只让**框架校验**异常穿透, 不得顺手把这
+    份宽容也拆掉。
+    """
+    from akquant.akquant import Bar
+
+    class _BadOnStop(Strategy):
+        """on_stop 里故意抛错的策略."""
+
+        def on_start(self) -> None:
+            """订阅标的."""
+            self.subscribe(SYMBOL)
+
+        def on_bar(self, bar: Any) -> None:
+            """不做任何事."""
+
+        def on_stop(self) -> None:
+            """故意抛一个用户级异常."""
+            raise RuntimeError("用户 on_stop 的 bug")
+
+    bars = [
+        Bar(
+            timestamp=_ns(i),
+            open=10.0,
+            high=10.5,
+            low=9.5,
+            close=10.0,
+            volume=1000.0,
+            symbol=SYMBOL,
+        )
+        for i in (1, 2, 3)
+    ]
+    result = run_backtest(
+        data=bars,
+        strategy=_BadOnStop(),
+        symbols=[SYMBOL],
+        initial_cash=100_000.0,
+        show_progress=False,
+        fill_policy=CurrentClose(),
+    )
+
+    assert result is not None, "用户 on_stop 的异常不应毁掉回测结果"

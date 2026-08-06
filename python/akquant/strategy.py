@@ -197,6 +197,19 @@ _TICK_SOURCE_ATTR = {
 _TICK_UNSUPPORTED_INPUT_MODES = frozenset({"hl", "hlc", "ohlc"})
 
 
+class StrategyConfigurationError(ValueError):
+    """策略配置在会话结束时被判定为无效, 须让调用方看到.
+
+    继承 ``ValueError`` 以保持向后兼容: 既有代码若 ``except ValueError`` 仍能接住。
+
+    **为什么需要一个专用类型**: 这类校验从 ``_on_stop_internal`` 抛出, 而 engine 的
+    ``_on_stop_internal()`` 调用点刻意用 ``except Exception: logger.error(...)`` 容忍
+    **用户** ``on_stop`` 里的 bug——不让一个收尾期的用户错误毁掉整个回测结果。那份宽容
+    要保留, 但框架自己的配置校验必须穿透, 否则静默失效: 用户拿到全 0 的指标却毫不知情。
+    engine 的 handler 因此只重抛本类型。
+    """
+
+
 @dataclass
 class StrategyRuntimeConfig:
     """策略运行时行为配置."""
@@ -999,10 +1012,11 @@ class Strategy:
 
         `_check_incremental_hl_bar_coverage` 放在这里(而非首个 tick 时)是有意
         选择——见该方法的文档字符串。注意: `run_backtest`/`run_from_checkpoint`
-        对 `_on_stop_internal()` 的调用包在 `try/except Exception: logger.error(...)`
-        里且不重新抛出, 故这里抛出的 `ValueError` 到达调用方时会退化成一条 ERROR
-        级日志, 而非可见的异常——这是既有的、超出本轮修复范围的引擎行为, 不在此
-        改动。即便如此, 仍比原来的"静默不推进、什么都不提示"更好。
+        对 `_on_stop_internal()` 的调用包在
+        `try/except Exception: logger.error(...)` 里, 用于容忍**用户** `on_stop`
+        里的 bug; 但这里抛出的 `StrategyConfigurationError`(`ValueError` 子类)
+        是框架自身的配置校验, engine 的 handler 会在记录日志前先重抛该类型, 使其
+        穿透到调用方——不会退化成一条静默的 ERROR 日志。
         """
         _ensure_framework_state_impl(self)
         self._check_incremental_hl_bar_coverage()
@@ -1569,7 +1583,7 @@ class Strategy:
             item = self._get_incremental_registration(name)
             never_had_bar = item.tick_only_symbols - item.bar_seen_symbols
             if never_had_bar:
-                raise ValueError(
+                raise StrategyConfigurationError(
                     f"增量指标 {name!r}(input_mode={item.input_mode!r}) 的标的 "
                     f"{sorted(never_had_bar)!r} 全程只收到 tick、从未收到任何 bar: "
                     "该 input_mode 需要真实的最高/最低价, tick 的 OHLC 恒等于成交价, "

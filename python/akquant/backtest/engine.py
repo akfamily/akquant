@@ -57,6 +57,7 @@ from ..strategy import (
     InstrumentSettlementMode,
     InstrumentSnapshot,
     Strategy,
+    StrategyConfigurationError,
     StrategyRuntimeConfig,
 )
 from ..strategy_framework_hooks import (
@@ -4401,6 +4402,11 @@ def run_backtest(
         if hasattr(strategy_instance, "_on_stop_internal"):
             try:
                 strategy_instance._on_stop_internal()
+            except StrategyConfigurationError:
+                # 框架配置校验失败必须让调用方看到: 吞掉它会让用户拿到静默失效的结果
+                # (例如 H/L 指标全程未更新、ATR 恒为 0)。用户 on_stop 的 bug 仍按下面
+                # 的分支容忍。
+                raise
             except Exception as e:
                 logger.error(
                     "Error in on_stop: %s",
@@ -4426,6 +4432,9 @@ def run_backtest(
             if hasattr(slot_strategy, "_on_stop_internal"):
                 try:
                     slot_strategy._on_stop_internal()
+                except StrategyConfigurationError:
+                    # 框架配置校验失败必须让调用方看到, 理由同主策略分支。
+                    raise
                 except Exception as e:
                     logger.error(
                         "Error in slot on_stop: %s",
@@ -5835,6 +5844,11 @@ def run_from_checkpoint(
         if hasattr(strategy_instance, "_on_stop_internal"):
             try:
                 strategy_instance._on_stop_internal()
+            except StrategyConfigurationError:
+                # 框架配置校验失败必须让调用方看到: 吞掉它会让用户拿到静默失效的结果
+                # (例如 H/L 指标全程未更新、ATR 恒为 0)。用户 on_stop 的 bug 仍按下面
+                # 的分支容忍。
+                raise
             except Exception as e:
                 logger.error(
                     "Error in on_stop: %s",
@@ -5860,6 +5874,9 @@ def run_from_checkpoint(
             if hasattr(slot_strategy, "_on_stop_internal"):
                 try:
                     slot_strategy._on_stop_internal()
+                except StrategyConfigurationError:
+                    # 框架配置校验失败必须让调用方看到, 理由同主策略分支。
+                    raise
                 except Exception as e:
                     logger.error(
                         "Error in slot on_stop: %s",
