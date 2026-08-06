@@ -1120,6 +1120,51 @@ bundle = create_gateway_bundle(
 )
 ```
 
+### 行情源与交易源分开指定 {: #mixed-market-trader-broker }
+
+`GatewayBundle` 的 `market_gateway` 与 `trader_gateway` 是两个独立可选字段，因此
+一个 broker 可以只提供其中一侧：`replay` 只有行情（`trader_gateway=None`，不能
+下单），而某些券商/柜台插件只有交易通道（`market_gateway=None`，收不到行情）。
+
+`create_gateway_bundle` 与 `run_live` 支持把两侧分开指定：
+
+*   `broker`: 两侧的**默认源**。
+*   `market_broker`: 只覆盖**行情**源（可选）。
+*   `trader_broker`: 只覆盖**交易**源（可选）。
+
+两侧都不传时行为与单 broker 完全一致。下面两种写法等价，都表示「行情来自
+`replay`、交易来自 `demo`」：
+
+```python
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="demo",            # 交易源
+    market_broker="replay",   # 行情源
+    trading_mode="paper",
+    gateway_options={"bars": bars},
+)
+
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="replay",          # 行情源
+    trader_broker="demo",     # 交易源
+    trading_mode="paper",
+    gateway_options={"bars": bars},
+)
+```
+
+要点：
+
+*   `gateway_options` 会**同时**传给两个 builder，两侧所需参数放在同一个 dict 里即可。
+*   覆盖项与 `broker` 同名时视为未覆盖，不会重复构建（builder 可能连柜台、起线程，
+    构建两次有副作用）。
+*   `metadata` 会记录 `market_broker` / `trader_broker` 便于排障；行情侧声明的
+    会话级信息（如 `replay` 的 `bounded_event_total`）不会因混搭而丢失。
+*   未注册的名字会报错并点名具体参数（`market_broker must be one of: ...`），
+    而不是静默缺失某一侧通道。
+
 ## 4. 交易对象 (Trading Objects)
 
 ### `akquant.Order`

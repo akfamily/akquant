@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **实盘 `subscribe()` 现在真正下发到行情网关**。`MarketGateway` 协议一直定义着 `subscribe(symbols)`，各内置网关（`ctp` / `replay` / `miniqmt` / `ptrade`）也都实现了它，但 `LiveRunner` 从不调用——订阅链路只接了一半：`instruments` 进得去，`Strategy.subscribe()` 出不来。此前用户在 `on_start` 里 `subscribe()` 一个标的只会拿到一条 warning。现在 `run_live` 会给主策略与各 slot 策略装上转发器，`subscribe()` 调用即刻把订阅集下发到行情网关。
+
+    下发的是 **`instruments` 与全部 slot 的 `_subscriptions` 的并集**：各网关的 `subscribe()` 是整集替换语义（`self.symbols = list(symbols)`），只下发增量会把其余标的静默退订。转发在 `subscribe()` 发生的当刻进行而非装配期——行情网关先于策略 `on_start` 启动，装配时还不知道策略要订什么。
+
+    没有行情网关的 broker（`market_gateway=None`）不装转发器，`subscribe()` 退回记录 warning（措辞已更新为「该 broker 未提供行情网关」），因为那类 broker 确实无处可下发。回测语义完全不变。
+
+- **行情源与交易源可分开指定**：`create_gateway_bundle` 与 `run_live` 新增 `market_broker` / `trader_broker` 两个可选参数。`broker` 是两侧的**默认源**，`market_broker` 只覆盖行情源、`trader_broker` 只覆盖交易源；两者都不传时行为与单 broker 完全一致。
+
+    这补齐了两类「单边 broker」的组合——`GatewayBundle` 的 `market_gateway` / `trader_gateway` 本就是两个独立可选字段，`replay` 只有行情（不能下单），而某些券商/柜台插件只有交易通道（收不到任何行情、`current_tick` 恒为 `None`），此前二者无法拼接。下面两种写法等价：
+
+    ```python
+    run_live(..., broker="my_trade_only_broker", market_broker="replay")
+    run_live(..., broker="replay", trader_broker="my_trade_only_broker")
+    ```
+
+    要点：`gateway_options` 同时传给两个 builder；覆盖项与 `broker` 同名时视为未覆盖、不重复构建（builder 可能连柜台、起线程）；`metadata` 记录 `market_broker` / `trader_broker` 便于排障，且行情侧声明的会话级信息（如 `replay` 的 `bounded_event_total`，`LiveRunner` 据此在事件放完后结束会话）不会因混搭而丢失；未注册的名字会报错并点名具体参数，而非静默缺失某一侧通道。副产品是「回放行情 + 真实柜台下单」的联调组合现在可行。
+
 - `get_account()` 账户快照新增 `free_margin` 字段（= `equity - used_margin`），表示真正可用于新开仓的可用保证金，与下单因保证金不足被拒时日志里的 `Available` 口径一致；期货保证金账户下 `cash`（现金余额）通常大于 `free_margin`，股票现金账户下二者相等。同时修正了 `cash` 在文档与 docstring 中「可用资金」的误导性表述，明确其为「现金余额」。
 - `BacktestConfig` 新增 `days_per_year`（年化天数因子，默认 252；数字货币 24/7 市场可设 365）与 `risk_free_rate`（年化无风险利率，默认 0.0）两个字段，用于参数化 Sharpe/Sortino/波动率等风险指标的年化口径。`risk_free_rate` 默认 0 不改变任何现有数值。
 - **新增内置 broker `replay`：确定性回放行情源**。用于在没有真实柜台、也没有 `openctp-ctp` 等可选依赖的环境下跑通实盘数据通路（`DataFeed` → 引擎 → `on_bar` / `on_tick`），此前这条通路没有任何测试覆盖。行情数据经 `gateway_options` 传入，支持 `list[Bar]`、`list[Tick]` 与 `DataFrame`（DataFrame 走 `normalize.dataframe_to_bars`，多品种需提供 `股票代码` 列，否则退化为单标的）：

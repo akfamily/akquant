@@ -150,3 +150,37 @@ run_live(
   戳）。`build_replay_bundle` 已在构建期校验并拒绝此类数据，但若数据源不完全受
   你控制，仍建议显式传入 `duration` 作为安全网——这也是
   `examples/38_live_functional_strategy_demo.py` 仍会传 `duration` 的原因。
+
+## 行情源与交易源分开指定
+
+上面提到 `replay` 只有行情、没有交易通道。反过来，有些券商/柜台插件只有交易通道
+（`market_gateway=None`），策略因此收不到任何行情——`on_bar` / `on_tick` 不触发，
+`self.current_tick` 始终是 `None`。
+
+这两类「单边 broker」可以拼起来用：
+
+- `broker`: 两侧的**默认源**。
+- `market_broker`: 只覆盖**行情**源。
+- `trader_broker`: 只覆盖**交易**源。
+
+```python
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="my_trade_only_broker",   # 交易源：只有交易通道的插件
+    market_broker="replay",          # 行情源：借用回放行情
+    trading_mode="paper",
+    gateway_options={"bars": bars},
+)
+```
+
+等价的对称写法是 `broker="replay", trader_broker="my_trade_only_broker"`——两者描述
+的是同一件事。两侧都不传时行为与单 broker 完全一致。
+
+几个要点：
+
+- `gateway_options` 会同时传给两个 builder，两侧参数放在同一个 dict 里即可。
+- 覆盖项与 `broker` 同名时视为未覆盖，不重复构建（builder 可能连柜台、起线程）。
+- 名字未注册会报错并点名具体参数，不会静默缺失某一侧通道。
+- 这个组合让「回放行情 + 真实柜台下单」的联调成为可能：用确定性数据驱动策略，
+  同时把订单真正发到柜台的仿真环境。注意此时仍受上面 timer 语义的限制。

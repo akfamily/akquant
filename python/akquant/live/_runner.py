@@ -176,6 +176,8 @@ class LiveRunner:
         auth_code: str = "",
         use_aggregator: bool = True,
         broker: str = "ctp",
+        market_broker: Optional[str] = None,
+        trader_broker: Optional[str] = None,
         trading_mode: str = "paper",
         gateway_options: Optional[Dict[str, Any]] = None,
         initialize: Optional[Callable[[Any], None]] = None,
@@ -282,6 +284,10 @@ class LiveRunner:
         self.auth_code = cast(str, self.gateway_options.get("auth_code", ""))
         self.use_aggregator = use_aggregator
         self.broker = broker
+        # 行情源与交易源可分别覆盖 broker: 补齐单边 broker
+        # (qmf 只有交易 / replay 只有行情)。
+        self.market_broker = market_broker
+        self.trader_broker = trader_broker
         self.trading_mode = trading_mode
         self.initialize = initialize
         self.on_start = on_start
@@ -418,12 +424,18 @@ class LiveRunner:
         gateway_kwargs = self._build_gateway_kwargs()
         bundle = create_gateway_bundle(
             broker=self.broker,
+            market_broker=getattr(self, "market_broker", None),
+            trader_broker=getattr(self, "trader_broker", None),
             feed=self.feed,
             symbols=symbols,
             use_aggregator=self.use_aggregator,
             **gateway_kwargs,
         )
         self._broker_capabilities = bundle.trader_capabilities
+        # 供 _configure_strategy_slots 装配 subscribe() 转发用: 行情网关在此刻已
+        # 建好, 但策略的 on_start(里面才调 subscribe)要等到 engine.run() 才触发,
+        # 所以只能存下网关引用, 到 subscribe 发生的当刻再运行期下发。
+        self._market_gateway = bundle.market_gateway
 
         if bundle.market_gateway is not None:
             logger.info(
@@ -599,6 +611,7 @@ class LiveRunner:
                 mark_live()
 
         strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
+        self._install_subscription_forwarder(strategy_targets)
         # getattr 兜底与同方法内 trading_mode 一致: 允许绕过 __init__ 的调用方。
         instrument_snapshots = _instruments_to_snapshots(
             getattr(self, "instruments", None) or []
@@ -625,6 +638,48 @@ class LiveRunner:
                 )
                 cast(Any, self.engine).set_strategy_for_slot(slot_index, assigned)
         self._apply_strategy_risk_controls(configured_slot_ids)
+
+    def _install_subscription_forwarder(self, targets: list[Strategy]) -> None:
+        """给各策略装上 subscribe() → 行情网关的运行期转发器.
+
+        没有行情网关时(如 ``broker='qmf'`` 的 ``market_gateway=None``)不装,
+        ``Strategy.subscribe()`` 便退回告警——那类 broker 确实无处可下发。
+
+        下发的是 ``instruments ∪ 全部 slot 的 _subscriptions`` 的**并集**:
+        网关的 ``subscribe()`` 是整集替换语义, 只发增量会静默退订其余标的。
+        """
+        market_gateway = getattr(self, "_market_gateway", None)
+        if market_gateway is None:
+            return
+        subscribe = getattr(market_gateway, "subscribe", None)
+        if not callable(subscribe):
+            return
+
+        def _forward() -> None:
+            symbols: list[str] = []
+            for instrument in getattr(self, "instruments", None) or []:
+                symbol = str(getattr(instrument, "symbol", "") or "").strip()
+                if symbol and symbol not in symbols:
+                    symbols.append(symbol)
+            for target in targets:
+                for symbol in getattr(target, "_subscriptions", None) or []:
+                    symbol = str(symbol).strip()
+                    if symbol and symbol not in symbols:
+                        symbols.append(symbol)
+            if not symbols:
+                return
+            try:
+                subscribe(symbols)
+            except Exception:  # noqa: BLE001 订阅失败不该打断策略回调
+                logger.exception(
+                    "forwarding subscribe(%s) to %s market gateway failed",
+                    symbols,
+                    self.broker,
+                    extra=self._runner_log_extra(phase="gateway"),
+                )
+
+        for target in targets:
+            setattr(target, "_live_subscription_forwarder", _forward)
 
     def _attach_indicator_stream(self, targets: list[Strategy]) -> None:
         """Attach an indicator sink to strategies and flush snapshots per cycle.
