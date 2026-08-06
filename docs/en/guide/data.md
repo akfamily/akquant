@@ -224,6 +224,75 @@ Notes:
 
 ---
 
+### 2.7 Tick Input
+
+Besides a list of `Bar`, `run_backtest(data=...)` accepts three more shapes:
+
+*   **Bars only**: `data=[Bar, Bar, ...]` (the existing usage).
+*   **Ticks only**: `data=[Tick, Tick, ...]`.
+*   **Mixed list**: `data=[Bar, Tick, ...]` in any order — AKQuant splits them and sorts each group by timestamp before feeding the engine.
+
+```python
+import akquant as aq
+
+# Timestamps must be real nanoseconds. The Bar/Tick constructors multiply any
+# timestamp below 1e10 by 1e9, so a small integer like 100 is silently rewritten.
+ticks = [
+    aq.Tick(timestamp=1704164400_000000000, price=10.00, volume=100, symbol="600000"),
+    aq.Tick(timestamp=1704164403_000000000, price=10.02, volume=200, symbol="600000"),
+    aq.Tick(timestamp=1704164407_000000000, price=10.01, volume=150, symbol="600000"),
+]
+
+
+class TickStrategy(aq.Strategy):
+    def on_start(self):
+        self.set_history_depth(5)
+
+    def on_tick(self, tick):
+        prices = self.get_history(2, tick.symbol, "close")
+        print(tick.symbol, tick.price, prices)
+
+
+result = aq.run_backtest(
+    data=ticks,
+    strategy=TickStrategy(),
+    symbols=["600000"],
+    show_progress=False,
+)
+```
+
+**What ticks-only mode can and cannot do:**
+
+*   `on_tick` fires; `on_bar` does **not**.
+*   `get_history` / `get_history_multi` / `get_history_df` all work and return a **series of trade prices**: a tick is written into the history buffer as a degenerate bar (`open=high=low=close=price`), so `get_history(count, symbol, "close")` gives you the most recent trade prices.
+*   Incremental indicators (`indicator_mode="incremental"`) work in **single-value** mode: `source` of `open`/`high`/`low`/`close` all return the trade price, `volume` returns the per-trade volume; `close_volume` mode works too.
+*   When an incremental indicator's `input_mode` is `"hl"` / `"hlc"` / `"ohlc"`, a tick's high and low are both the trade price, so ATR, range, and similar H/L-dependent indicators would be permanently 0 on such data. If that symbol **also** has a bar source (mixed input, or `freq` aggregation below), those indicators are driven by the bars and work normally while ticks are silently skipped for them. Only when a symbol has **nothing but ticks for the entire session** does AKQuant raise `StrategyConfigurationError` (a `ValueError` subclass) at session end — that is the case where the result really would be a misleading constant 0, so it fails loudly instead. The exception propagates to the `run_backtest` caller; it is not swallowed into a log.
+*   Any input containing a `Tick` (**ticks-only or mixed alike**) combined with a registered **precomputed indicator** (`indicator_mode="precompute"`) raises `ValueError`: normalized tick input flows through the `DataFeed` branch, which does not build the DataFrame precomputed indicators need. The guard keys on "is there a tick", independent of whether bars are present too. Use incremental indicators instead, or aggregate with `freq`.
+
+**Aggregating ticks into bars with `freq`:**
+
+```python
+result = aq.run_backtest(
+    data=ticks,
+    freq="1min",
+    strategy=MyStrategy(),
+    symbols=["600000"],
+    show_progress=False,
+)
+```
+
+With `freq`, the raw ticks still reach `on_tick` as usual, and the aggregated bars additionally reach `on_bar` — giving you full OHLC semantics and every indicator, including H/L-dependent ones like ATR. Key points:
+
+*   The vocabulary matches `feed_adapter.resample(freq=...)`, but only **whole minutes** are supported (`"1min"` / `"5min"` / `"1h"`). Sub-minute or non-integer periods such as `"30s"` raise `ValueError` and point you at `feed_adapter.resample` — no silent rounding.
+*   The adapter declares **per-trade** volume semantics (each `Tick.volume` is that single trade's volume, not a running total), and the aggregator sums every tick's volume in the interval directly into the synthesized bar's `volume`.
+*   A synthesized bar is stamped at the **end** of its interval (1 nanosecond before the next interval starts), not at the start. Backtests put synthesized bars and their source ticks into the same feed and then sort by timestamp; with an interval-start stamp the bar would sort **ahead of** the ticks that formed it, and the strategy would read high/low/close values from trades that had not happened yet. Stamping at interval end guarantees the bar is strictly later than all of its source ticks.
+*   Trailing ticks that do not complete a full period produce no bar (the aggregator offers no flush).
+*   Passing `freq` when `data` contains no `Tick` raises `ValueError` — the parameter would be meaningless.
+
+See [examples/68_backtest_tick_demo.py](https://github.com/akfamily/akquant/blob/main/examples/68_backtest_tick_demo.py) for a runnable comparison of both modes.
+
+---
+
 ## 3. Multi-Symbol Data
 
 If you need to backtest multiple stocks simultaneously (e.g., a market-wide selection strategy), there are two ways to pass data:
