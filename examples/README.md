@@ -42,6 +42,7 @@
 - [36_trailing_orders.py](./36_trailing_orders.py): Trailing Stop/StopLimit 助手示例。
 - [37_feed_replay_alignment_demo.py](./37_feed_replay_alignment_demo.py): replay 的 session/day/global 与 day_mode 对齐差异示例。
 - [38_live_functional_strategy_demo.py](./38_live_functional_strategy_demo.py): run_live 函数式策略入口示例。
+- [39_live_mixed_broker_demo.py](./39_live_mixed_broker_demo.py): 行情源与交易源分开指定（market_broker / trader_broker）示例。
 - [39_live_broker_submit_order_demo.py](./39_live_broker_submit_order_demo.py): broker_live 下函数式 submit_order 最小闭环示例。
 - [40_functional_multi_slot_risk_demo.py](./40_functional_multi_slot_risk_demo.py): 函数式 + 多策略 slot + 风控限制端到端示例。
 - [41_live_multi_slot_orchestration_demo.py](./41_live_multi_slot_orchestration_demo.py): run_live 多策略 slot 编排示例（paper）。

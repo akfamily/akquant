@@ -83,7 +83,7 @@ python examples/textbook/ch13_visualization.py
 
 ### 阶段 7：实盘准备（第 15 章）
 
-对照 [15.1.3 回测 → 实盘最小切换清单](15_live_trading.md)，确认从 `paper` 到 `broker_live` 的最小路径、风控前置与可观测性，但**不要求真正接柜台**。
+对照 [15.1.4 回测 → 实盘最小切换清单](15_live_trading.md)，确认从 `paper` 到 `broker_live` 的最小路径、风控前置与可观测性，但**不要求真正接柜台**。
 
 > 验收：填写一份最小上线检查表（网关、OMS、RMS、热启动、监控、灰度）。
 

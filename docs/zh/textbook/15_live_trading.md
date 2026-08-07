@@ -19,6 +19,8 @@
 
 - 主示例：[examples/textbook/ch15_live_trading.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading.py)
 - 进阶示例：[examples/textbook/ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py)
+- 离线实盘示例（`broker="replay"`，无需柜台）：[examples/38_live_functional_strategy_demo.py](https://github.com/akfamily/akquant/blob/main/examples/38_live_functional_strategy_demo.py)
+- 行情/交易源分开指定示例（无需柜台）：[examples/39_live_mixed_broker_demo.py](https://github.com/akfamily/akquant/blob/main/examples/39_live_mixed_broker_demo.py)
 - 日志/审计示例（自包含，无需网关）：[examples/66_logging_audit_demo.py](https://github.com/akfamily/akquant/blob/main/examples/66_logging_audit_demo.py)
 - 对应指南：[实盘函数式指南](../advanced/live_functional_quickstart.md)
 
@@ -27,6 +29,8 @@
 ```bash
 python examples/textbook/ch15_live_trading.py
 python examples/textbook/ch15_strategy_loader.py
+python examples/38_live_functional_strategy_demo.py
+python examples/39_live_mixed_broker_demo.py
 python examples/66_logging_audit_demo.py
 ```
 
@@ -36,6 +40,7 @@ python examples/66_logging_audit_demo.py
 2. 日志中可观察到订单状态、网关事件或风控检查信息。
 3. 调整风控参数后，策略行为变化符合预期。
 4. `66_logging_audit_demo.py` 能看到：敏感字段被脱敏、订单审计单独落 JSON 文件、`language="zh"` 只改控制台审计行而文件恒英文。
+5. `38_live_functional_strategy_demo.py` 与 `39_live_mixed_broker_demo.py` **无需任何柜台或可选依赖即可实跑**：前者用 `broker="replay"` 验证函数式回调链路，后者演示行情源与交易源分开指定。两者都应打印出 4 根 bar 后自行结束（不必等到 `duration` 超时）。
 
 ## 15.1 实盘架构与接口
 
@@ -111,7 +116,49 @@ run_live(
 *   [自定义 Broker 生产接入清单](../advanced/custom_broker_production_checklist.md)
 *   [行情源与交易源分开指定](../reference/api.md#mixed-market-trader-broker)
 
-### 15.1.3 回测 → 实盘最小切换清单
+### 15.1.3 离线验证实盘通路：内置 `replay` 行情源
+
+学到这里会遇到一个现实困难：**没有柜台账号，实盘代码就没法跑**。而实盘链路恰恰是
+最需要提前验证的部分——策略能否收到 bar/tick、多品种是否都到齐、`current_tick`
+是否正确、订单回调是否触发。
+
+`AKQuant` 内置了 `broker="replay"`：把一段确定性的 `Bar` / `Tick` 序列推入实盘
+数据通路（`DataFeed` → 引擎 → `on_bar` / `on_tick`），无需柜台、也无需
+`openctp-ctp` 等可选依赖即可实跑。
+
+```python
+from akquant import AssetType, Instrument, run_live
+from akquant.akquant import Bar
+
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=[Instrument(symbol="DEMO_A", asset_type=AssetType.Stock, ...)],
+    broker="replay",
+    trading_mode="paper",
+    gateway_options={"bars": bars},   # list[Bar] / list[Tick] / DataFrame
+    duration="60s",                   # 安全网
+)
+```
+
+事件按时间戳升序推送，多品种全局交错；数据放完后会话**自行结束**（`replay` 通过
+`metadata` 声明事件总数，引擎据此终止，无需等 `duration` 超时）。
+
+要认清它的边界，别把它当"实盘彩排"的全部：
+
+1. **只有行情，不模拟成交**（`trader_gateway=None`），因此不能用于
+   `trading_mode="broker_live"`；撮合由 paper 模式的模拟执行后端负责。
+2. **不覆盖 timer 语义**。回放数据带历史时间戳，而实盘引擎按墙钟判定 timer 到期，
+   两条时间线错位——`on_timer` / `schedule_daily` 在回放会话中的行为不作保证，
+   要验证定时任务请用回测。
+3. **非正时间戳会被引擎静默丢弃**，导致声明的事件总数永远达不到、会话挂死。常见
+   诱因是日期列存在无法解析的值（产出 `NaT` 进而变成非正时间戳）。构建期已有校验，
+   但数据源不完全受控时，仍建议显式传 `duration` 兜底。
+
+配套示例 `examples/38_live_functional_strategy_demo.py` 用它跑通了完整的函数式实盘
+回调链路；更多细节见[实盘函数式指南](../advanced/live_functional_quickstart.md)的
+「离线验证」一节。
+
+### 15.1.4 回测 → 实盘最小切换清单
 
 从回测走向实盘，最稳妥的路径不是"一步到位接柜台"，而是按下面这份清单逐层确认。它也帮你把"哪些是 AKQuant 已就绪的能力、哪些仍需自己补齐"分清楚。
 
@@ -429,7 +476,7 @@ GPU 擅长大规模并行计算，因此常用于深度学习训练 (Training) �
 
     **应用题**：`save_checkpoint` 落盘 → 模拟中断 → `run_from_checkpoint` 加载快照并注入新数据源，验证持仓与指标缓存恢复一致、无重复下单。
 
-    **综合题**：参见 15.1.3 的切换清单——paper 验证、能力查询、CTP strict 终态、RMS 前置风控、热启动、监控告警、灰度发布。
+    **综合题**：参见 15.1.4 的切换清单——paper 验证、能力查询、CTP strict 终态、RMS 前置风控、热启动、监控告警、灰度发布。
 
 ## 常见错误与排查
 
