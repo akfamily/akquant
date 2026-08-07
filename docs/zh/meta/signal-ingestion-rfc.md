@@ -181,7 +181,7 @@ BrokerOrderSubmitter._check_risk ──────┘   (拒单文案逐字一�
 
 **验收**:`tests/test_broker_live_risk_enforcement.py` 三条端到端断言(拦超限名义 / 放行限额内 / 拦超限数量),`src/risk/strategy_limits.rs` 8 条单元测试(含边界值、多空对称、文案一致性、串联顺序)。
 
-### 4.3 P2:`akquant.signal` 模块(纯 Python)
+### 4.3 P2:`akquant.signal` 模块(**已落地**,传输层实现留 P3)
 
 ```text
 python/akquant/signal/
@@ -203,6 +203,34 @@ python/akquant/signal/
 - **拒单回执**:风控拒或柜台拒时回调信号源,让平台侧知道指令未生效。缺这一环平台会以为下成功了。
 - **registry** 复用 `python/akquant/gateway/brokers/plugins.py` 的失败隔离范式(单插件失败不拖垮 import)。
 - **strategy_id 路由**:`Signal.strategy_id` 接进已有的 `strategies_by_slot` / 按 strategy_id 的 `strategy_max_*` 字典,使不同信号源走各自的风控预算。
+
+#### 4.3.1 实际落地形态
+
+实现比原计划多一层 **`OrderSink`** 抽象,这是必需的:两种模式的下单出口完全不同(paper 走引擎注入、broker_live 走柜台通道),但幂等/审计/回执逻辑必须只有一份。
+
+```text
+python/akquant/signal/
+├── models.py        Signal / SignalResult / SignalAction / SignalStatus (pydantic)
+├── protocols.py     SignalSource / OrderSink 协议 + SignalSourceBase 便利基类
+├── dedup.py         SignalDedup:有界 LRU, 达容量时告警(静默淘汰=静默重复下单)
+├── sinks.py         PaperOrderSink(SignalPort) / BrokerOrderSink(BrokerOrderSubmitter)
+├── dispatcher.py    SignalDispatcher:幂等 → 下单 → 审计 → 回执, 唯一决策点
+└── sources/queue.py QueueSignalSource:参考实现 + 测试基座
+```
+
+`run_live(signal_source=...)` 托管其生命周期:`bind` → `start`(引擎循环前)→ `stop`(收尾)。
+
+**两处与原计划的偏离**:
+
+1. **`SignalPort` 只用于 paper**。`BrokerOrderSink` 直接走 `BrokerOrderSubmitter` —— 因为引擎的 `RealtimeExecutionClient` 不向柜台报单(见 4.2.1 的调研),经引擎注入的订单在 broker_live 下永不成交。两种模式的**风控覆盖面因此不同**,这是引擎架构事实而非配置项,已在模块 docstring 与 `run_live` 文档中写明。
+2. **信号源启动失败必须中止会话**(不同于 `signal_port_ready` 交付失败只记日志)。信号源是该会话的**唯一订单来源**,静默继续会跑出一个永不下单的空会话。
+
+**幂等的两条边界**(实现中确定,均有测试锚定):
+
+- 投递**抛异常**时放开去重标记 —— 那一笔并未真正下单,平台重推应被受理;
+- 出口**同步返回未下单**(broker 侧被前置风控拦下)时**不**放开 —— 指令已判定不可执行,重推只会再被拒一次。
+
+**验收**:`tests/test_signal_module.py` 7 条 —— 信号到引擎并成交、同 id 投三次只下一单、拒单回执给来源、去重在 16 线程并发下原子、达容量淘汰并计数、投递失败后可重推、契约校验(含 `action` 字符串归一)。连跑两轮稳定。
 
 调用形态与 `run_backtest` / `run_live` 保持对称,新增一个参数:
 
@@ -288,8 +316,8 @@ def wrapped_on_bar(bar):
 |---|---|---|
 | **P1** | broker_live 报单前置风控 + 拦单回归测试(修 3.3) | ✅ **已落地** |
 | **P0** | crossbeam 统一 + `select!` 唤醒 + `SignalPort` + `signal_port_ready` | ✅ **已落地** |
-| **P2** | `Signal` / `SignalSource` / `dedup` / `dispatcher` / `QueueSignalSource` + `run_live` 接线 | 待实施 |
-| **P3** | `HttpSignalSource` + `RedisSignalSource` + 安全基线 + 可选 extra | 待实施 |
+| **P2** | `Signal` / `SignalSource` / `OrderSink` / `dedup` / `dispatcher` / `QueueSignalSource` + `run_live` 接线 | ✅ **已落地** |
+| **P3** | `HttpSignalSource` + `RedisSignalSource` + 安全基线 + entry-point 插件化 + 可选 extra | 待实施 |
 | **P4** | 示例(须实跑 `exit 0`)+ 中英文档 + 教材映射表 + entry-point 插件化 | 待实施 |
 
 P1 先行的判断已被验证正确:3.3 是正在影响实盘用户的风控失效,紧急度高于信号接入本身;且它暴露的借用约束(4.2.1)直接改写了 P0 的设计前提——`SignalPort` 必须在**引擎线程之外**注入 `Event::OrderRequest`(crossbeam sender 可跨线程,不碰 pyclass 借用),不能设计成"策略回调内调用"的形态。

@@ -76,6 +76,7 @@ def run_live(
     risk_budget_reset_daily: bool = False,
     on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     signal_port_ready: Optional[Callable[[Any], None]] = None,
+    signal_source: Optional[Any] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
 ) -> None:
@@ -137,6 +138,26 @@ def run_live(
 
         Also note an injected order only fills when a **subsequent** market
         event arrives — an order injected after the last bar stays ``New``.
+    :param signal_source: Optional :class:`~akquant.signal.SignalSource` feeding
+        external trading instructions into the session. Its lifecycle is managed
+        here: ``bind`` → ``start`` (before the engine loop) → ``stop`` (on exit).
+        Orders are created directly from signals, **not** through strategy
+        callbacks::
+
+            from akquant.signal import QueueSignalSource, Signal
+
+            source = QueueSignalSource()
+            source.put(Signal(signal_id="s-1", symbol="000001.SZ",
+                              action="buy", quantity=100, price=10.5))
+            run_live(..., trading_mode="paper", signal_source=source)
+
+        Risk coverage differs by mode and this is an engine-architecture fact,
+        not a setting: ``paper`` injects through the engine event channel and
+        gets the **full** risk pipeline; ``broker_live`` goes through the broker
+        channel where only the three strategy-level limits (order value / order
+        size / position size) are enforced up front. If the source fails to
+        start the session aborts — it is the only order origin, so continuing
+        would silently produce a session that never trades.
     :param indicator_recorder: Optional public :class:`IndicatorSink` to collect
         indicator points; defaults to a streaming sink when ``on_event`` is set.
     :param on_event: Optional stream event callback for realtime indicator flow.
@@ -197,6 +218,7 @@ def run_live(
         risk_budget_reset_daily=risk_budget_reset_daily,
         on_broker_event=on_broker_event,
         signal_port_ready=signal_port_ready,
+        signal_source=signal_source,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event
