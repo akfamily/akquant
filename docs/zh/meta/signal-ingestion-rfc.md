@@ -301,7 +301,7 @@ vn.py 的 WebTrader 把 Web 服务放在**独立进程**(FastAPI + RpcClient ↔
 - **开发/单机**:`HttpSignalSource` 同进程直收,省一个组件。
 - **测试**:`QueueSignalSource`,无网络依赖。
 
-### 4.6 顺带查出的既存缺陷:`duration` 在无行情时不生效 ⚠️
+### 4.6 顺带查出的既存缺陷:`duration` 在无行情时不生效(**已修**)
 
 `LiveRunner._apply_time_limit` 是通过 patch 策略的 `on_bar` / `on_tick` 实现的——墙钟检查只在**有行情事件时**才执行:
 
@@ -318,7 +318,16 @@ def wrapped_on_bar(bar):
 
 实测触发路径:自定义行情网关推完最后一根 bar 即退出、且未声明 `bounded_event_total` → 会话永久挂起。`replay` 之所以不挂,是因为它声明了 `bounded_event_total`,由 `_apply_bounded_event_limit` 在最后一根 bar 处终止(同样挂在 `on_bar` 上,只是恰好能触发)。
 
-**不在本 RFC 范围内修**(与信号接入正交),建议单独开 issue。修法方向:把墙钟兜底放到真正的墙钟线程上,或让 `next_action` 的等待循环自身感知总时限。
+**修法(已落地)**:把截止时刻下沉到等待循环本身,不再依赖事件到达。
+
+- Rust:`Engine.session_deadline_ns` 字段 + `set_session_deadline_ns(Option<i64>)` pymethod(非正值视为不限);`DataProcessor::process` 在 **feed 等待之前**比对墙钟,到点即 `finalize_current_timestamp` 后 `ProcessorResult::Break`。放在等待之前是必要的——等待本身可长达 1 秒,而行情停摆时 `Wait` 会无限循环。
+- Python:`_apply_time_limit` 改为设置引擎时限;**保留**原有的回调 patch 作为互补(有行情时能更早在事件边界处停下),故无行为回退。引擎不支持该方法时打警告降级。
+
+**验证**:`tests/test_live_duration_wallclock.py` —— 自定义网关推一根 bar 即退出、刻意不声明 `bounded_event_total`(否则会掩盖缺陷),断言会话在时限附近结束。测试自带 `join(timeout)`,缺陷复现时表现为断言失败而非套件卡死。
+
+**已确认该测试能抓到缺陷**:临时屏蔽 `set_session_deadline_ns` 后,会话 12 秒内不结束(挂死);启用后 3 秒时限正常退出。
+
+`bounded_event_total` 仍挂在 `on_bar` 上,**未改**——它的语义就是"数行情事件",在行情事件上计数是正确的;`duration` 现在是它的真正兜底。
 
 ## 5. 破坏性变更清单(供 CHANGELOG)
 

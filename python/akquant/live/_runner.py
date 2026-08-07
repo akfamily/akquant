@@ -1804,7 +1804,19 @@ class LiveRunner:
 
         start_time = time.time()
 
-        # Patch on_bar
+        # 墙钟兜底(主路径): 把截止时刻下沉到引擎的等待循环, 使会话在行情停摆时
+        # 也能到点结束。此前只有下面的回调 patch, 而它在无行情时永不触发 ——
+        # 行情一停就挂死(见 docs/zh/meta/signal-ingestion-rfc.md 4.6)。
+        set_deadline = getattr(self.engine, "set_session_deadline_ns", None)
+        if callable(set_deadline):
+            set_deadline(int((start_time + duration_sec) * 1_000_000_000))
+        else:
+            logger.warning(
+                "引擎不支持 set_session_deadline_ns, duration 在行情停摆时不会生效",
+                extra=self._runner_log_extra(phase="live"),
+            )
+
+        # 回调 patch(保留): 有行情时能更早地在事件边界处停下, 与上面互补。
         original_on_bar = strategy.on_bar
 
         def wrapped_on_bar(bar: Bar) -> None:

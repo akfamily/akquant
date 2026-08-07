@@ -499,6 +499,14 @@ impl Engine {
         self.risk_budget_reset_daily = enabled;
     }
 
+    /// 设置实时会话的墙钟截止时刻(纳秒 UTC epoch); None 表示不限
+    ///
+    /// 到点后主循环**自行结束**, 不依赖行情事件到达 —— 这是真正的墙钟兜底。
+    /// 只影响 live 会话; 回测由数据长度决定终点, 不受此影响。
+    fn set_session_deadline_ns(&mut self, deadline_ns: Option<i64>) {
+        self.session_deadline_ns = deadline_ns.filter(|value| *value > 0);
+    }
+
     /// 取一个外部信号注入端口(paper 模式)
     ///
     /// **必须在 `run()` 之前调用**: 取到的是 channel sender 的克隆, 之后即与引擎
@@ -567,6 +575,7 @@ impl Engine {
             portfolio_risk_budget_used: Decimal::ZERO,
             risk_budget_mode: "order_notional".to_string(),
             risk_budget_reset_daily: false,
+            session_deadline_ns: None,
             risk_budget_usage_day: None,
             strategy_max_order_value_limits: HashMap::new(),
             strategy_max_order_size_limits: HashMap::new(),
