@@ -1128,40 +1128,34 @@ bundle = create_gateway_bundle(
 
 `create_gateway_bundle` 与 `run_live` 支持把两侧分开指定：
 
-*   `broker`: 两侧的**默认源**。
-*   `market_broker`: 只覆盖**行情**源（可选）。
-*   `trader_broker`: 只覆盖**交易**源（可选）。
+两种模式，二选一：
 
-两侧都不传时行为与单 broker 完全一致。下面两种写法等价，都表示「行情来自
-`replay`、交易来自 `demo`」：
+*   **单 broker**：只传 `broker`，由它同时提供行情与交易两侧（原语义，不变）。
+*   **分开指定**：同时传 `market_broker` 与 `trader_broker`，各供一侧；此时
+    `broker` **完全不参与构建**。
 
 ```python
 run_live(
     strategy_cls=MyStrategy,
     instruments=instruments,
-    broker="demo",            # 交易源
     market_broker="replay",   # 行情源
-    trading_mode="paper",
-    gateway_options={"bars": bars},
-)
-
-run_live(
-    strategy_cls=MyStrategy,
-    instruments=instruments,
-    broker="replay",          # 行情源
     trader_broker="demo",     # 交易源
     trading_mode="paper",
     gateway_options={"bars": bars},
 )
 ```
 
+**只传其中一个会报错**，要求把另一侧也写明。这是刻意的设计：如果让 `broker` 去
+兼任缺失的那一侧，它就一词双义了——读 `broker='qmf', market_broker='replay'` 时，
+你必须先知道「qmf 只有交易通道」才能推断出 `broker` 在这里指交易源，而参数名本身
+没有表达这件事。两侧都写明则无需这层推断。
+
 要点：
 
 *   `gateway_options` 会**同时**传给两个 builder，两侧所需参数放在同一个 dict 里即可。
-*   覆盖项与 `broker` 同名时视为未覆盖，不会重复构建（builder 可能连柜台、起线程，
-    构建两次有副作用）。
+*   两侧同名时只构建一次（builder 可能连柜台、起线程，构建两次有副作用）。
 *   `metadata` 会记录 `market_broker` / `trader_broker` 便于排障；行情侧声明的
-    会话级信息（如 `replay` 的 `bounded_event_total`）不会因混搭而丢失。
+    会话级信息（如 `replay` 的 `bounded_event_total`）不会因分开指定而丢失。
 *   未注册的名字会报错并点名具体参数（`market_broker must be one of: ...`），
     而不是静默缺失某一侧通道。
 

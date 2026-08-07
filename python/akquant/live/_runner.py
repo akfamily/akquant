@@ -227,6 +227,15 @@ class LiveRunner:
         :param app_id: CTP App ID (optional).
         :param auth_code: CTP Auth Code (optional).
         :param use_aggregator: Whether to use BarAggregator (default True).
+        :param broker: Broker supplying **both** market data and trading
+            (default ``"ctp"``). Used when ``market_broker`` / ``trader_broker``
+            are both unset.
+        :param market_broker: Market-data source, overriding ``broker`` for that
+            side. Must be given together with ``trader_broker``; passing only one
+            raises ``ValueError``. When both are given, ``broker`` is unused.
+        :param trader_broker: Trading source, the counterpart of
+            ``market_broker``. Use the pair to combine two single-sided brokers
+            (``replay`` is market-data-only; some plugins are trading-only).
         :param initialize: Optional function-style initialize callback.
         :param on_start: Optional function-style on_start callback.
         :param on_stop: Optional function-style on_stop callback.
