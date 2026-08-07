@@ -92,23 +92,26 @@ bundle = create_gateway_bundle(
 行情（无法下单），而某些券商/柜台插件只有交易通道（收不到行情，`on_bar` /
 `on_tick` 不触发、`self.current_tick` 恒为 `None`）。
 
-这两类「单边 broker」可以组合使用：`broker` 是两侧的默认源，`market_broker` 与
-`trader_broker` 各自覆盖一侧。
+这两类「单边 broker」可以组合使用：同时指定 `market_broker`（行情源）与
+`trader_broker`（交易源），各供一侧。
 
 ```python
 run_live(
     strategy_cls=MyStrategy,
     instruments=instruments,
-    broker="my_trade_only_broker",   # 交易源
-    market_broker="replay",          # 行情源
+    market_broker="replay",                # 行情源
+    trader_broker="my_trade_only_broker",  # 交易源
     trading_mode="paper",
     gateway_options={"bars": bars},
 )
 ```
 
-对称写法 `broker="replay", trader_broker="my_trade_only_broker"` 与上式等价。两侧
-都不传时行为与单 broker 完全一致。这个组合的价值在于：既能用确定性回放数据驱动
-策略，又能把订单真正发往柜台仿真环境做联调。
+两侧必须**同时写明**，只给一侧会报错——若让 `broker` 兼任缺失的那侧，它就一词双义
+了（读 `broker='qmf', market_broker='replay'` 得先知道「qmf 只有交易通道」才能推出
+`broker` 在此指交易源）。`broker` 只用于「单个 broker 供两侧」的场景，此时语义不变。
+
+这个组合的价值在于：既能用确定性回放数据驱动策略，又能把订单真正发往柜台仿真
+环境做联调。
 
 建议结合以下文档落地：
 

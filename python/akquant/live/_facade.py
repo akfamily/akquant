@@ -85,6 +85,18 @@ def run_live(
     :param cash: Initial cash (default 1,000,000).
     :param show_progress: Whether to show a progress bar.
     :param duration: Optional run duration (e.g. ``"1m"``, ``"30s"``).
+    :param broker: Broker supplying **both** market data and trading (default
+        ``"ctp"``). Leave ``market_broker`` / ``trader_broker`` unset to use it.
+    :param market_broker: Market-data source, overriding ``broker`` for that side.
+        Must be given together with ``trader_broker``; passing only one raises
+        ``ValueError``. When both are given, ``broker`` is not used at all.
+    :param trader_broker: Trading source, the counterpart of ``market_broker``.
+        Use this pair to combine two single-sided brokers — ``replay`` only
+        provides market data (cannot place orders), while some broker plugins
+        only provide a trading channel (no market data, so ``on_bar`` /
+        ``on_tick`` never fire and ``current_tick`` stays ``None``)::
+
+            run_live(..., market_broker="replay", trader_broker="qmf")
     :param broker_ready_timeout: Max seconds to poll ``trader_gateway.heartbeat()``
         before giving up (default 30.0).
     :param broker_ready_required: If True (default), abort the run when the broker

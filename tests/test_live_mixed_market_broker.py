@@ -100,10 +100,12 @@ class _Recorder(Strategy):
         self.bars.append((int(bar.timestamp), str(bar.symbol)))
 
 
-def test_market_broker_delivers_bars_to_trade_only_broker() -> None:
+def test_split_brokers_deliver_bars_to_trade_only_broker() -> None:
     """纯交易 broker 配 replay 行情后, 策略应真正收到 bar.
 
-    未接线时 run_live 不认识 market_broker, 行情网关仍为 None → 收到 0 根。
+    这是本能力的核心用例: 交易侧只有交易通道(``market_gateway=None``), 行情侧
+    借用 replay。未接线时 ``run_live`` 不认识这两个参数, 行情网关仍为 None →
+    收到 0 根 bar。
     """
     strategy = _Recorder()
     stamps = [_ts("2023-01-03 09:30:00"), _ts("2023-01-03 09:31:00")]
@@ -111,31 +113,7 @@ def test_market_broker_delivers_bars_to_trade_only_broker() -> None:
     run_live(
         strategy_cls=strategy,
         instruments=[_instrument(SYMBOL)],
-        broker=TRADER_ONLY,
         market_broker="replay",
-        trading_mode="paper",
-        gateway_options={"bars": [_bar(ts, SYMBOL, 10.0) for ts in stamps]},
-        cash=100_000.0,
-        show_progress=False,
-        duration="60s",
-    )
-
-    assert [ts for ts, _ in strategy.bars] == stamps
-
-
-def test_trader_broker_spelling_delivers_bars_too() -> None:
-    """对称写法 broker='replay' + trader_broker=... 应等效地收到 bar.
-
-    与 ``broker=TRADER_ONLY, market_broker='replay'`` 描述同一件事; 只支持一个
-    方向就说明这组参数语义错位。
-    """
-    strategy = _Recorder()
-    stamps = [_ts("2023-01-03 09:30:00"), _ts("2023-01-03 09:31:00")]
-
-    run_live(
-        strategy_cls=strategy,
-        instruments=[_instrument(SYMBOL)],
-        broker="replay",
         trader_broker=TRADER_ONLY,
         trading_mode="paper",
         gateway_options={"bars": [_bar(ts, SYMBOL, 10.0) for ts in stamps]},
@@ -145,6 +123,25 @@ def test_trader_broker_spelling_delivers_bars_too() -> None:
     )
 
     assert [ts for ts, _ in strategy.bars] == stamps
+
+
+def test_run_live_rejects_one_sided_override() -> None:
+    """只给一侧应报错, 且错误要能穿透 run_live 传到用户面前.
+
+    ``run_live`` 的 ``broker`` 默认值是 ``'ctp'``, 若校验缺失或被吞掉, 用户只写
+    ``market_broker`` 时会收到一句与本次配置无关的 "md_front is required"。
+    """
+    with pytest.raises(ValueError, match="trader_broker"):
+        run_live(
+            strategy_cls=_Recorder(),
+            instruments=[_instrument(SYMBOL)],
+            market_broker="replay",
+            trading_mode="paper",
+            gateway_options={"bars": []},
+            cash=100_000.0,
+            show_progress=False,
+            duration="30s",
+        )
 
 
 def test_mixed_session_ends_on_bounded_event_total() -> None:
@@ -161,8 +158,8 @@ def test_mixed_session_ends_on_bounded_event_total() -> None:
     run_live(
         strategy_cls=strategy,
         instruments=[_instrument(SYMBOL)],
-        broker=TRADER_ONLY,
         market_broker="replay",
+        trader_broker=TRADER_ONLY,
         trading_mode="paper",
         gateway_options={"bars": [_bar(ts, SYMBOL, 10.0) for ts in stamps]},
         cash=100_000.0,

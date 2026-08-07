@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""行情源与交易源分开指定示例（market_broker / trader_broker）.
+"""行情源与交易源分开指定示例（market_broker + trader_broker）.
 
 说明:
 - 一个 broker 不必同时提供行情与交易两条通道: `GatewayBundle` 的
@@ -7,8 +7,10 @@
 - 本例注册一个**只有交易通道**的 broker（`market_gateway=None`，形如某些券商/
   柜台插件）。它单独使用时策略收不到任何行情——`on_bar` 不触发、
   `current_tick` 恒为 None。
-- 通过 `market_broker="replay"` 借用内置回放行情源补上这一侧，无需柜台即可实跑。
-- 对称写法 `broker="replay", trader_broker=...` 与本例等价。
+- 用 `market_broker="replay"` 借用内置回放行情源补上这一侧，无需柜台即可实跑。
+- 两侧必须**同时写明**: 只给一侧会报错。这样 `broker` 不必兼任另一侧，避免
+  "读 broker='qmf', market_broker='replay' 得先知道 qmf 只有交易通道" 的歧义。
+  `broker` 仅用于"单个 broker 供两侧"的场景。
 """
 
 from typing import Any, Callable, Sequence
@@ -104,7 +106,7 @@ def _trade_only_builder(
 
 
 class MixedBrokerStrategy(Strategy):
-    """记录收到的 bar，用于验证行情确实来自 market_broker."""
+    """记录收到的 bar，用于验证行情确实来自 market_broker 指定的源."""
 
     def on_start(self) -> None:
         """初始化计数器."""
@@ -157,14 +159,16 @@ def main() -> None:
         ]
 
         strategy = MixedBrokerStrategy()
-        print(f"broker={TRADE_ONLY_BROKER}（只有交易）+ market_broker=replay（行情）")
+        print(
+            f"market_broker=replay（行情）+ trader_broker={TRADE_ONLY_BROKER}（交易）"
+        )
         run_live(
             strategy_cls=strategy,
             instruments=instruments,
-            # 交易源: 只有交易通道的 broker。单独使用时收不到任何行情。
-            broker=TRADE_ONLY_BROKER,
-            # 行情源: 借用内置回放行情补上缺失的那一侧。
+            # 行情源: 借用内置回放行情补上这个 broker 缺失的那一侧。
             market_broker="replay",
+            # 交易源: 只有交易通道的 broker。单独使用时收不到任何行情。
+            trader_broker=TRADE_ONLY_BROKER,
             trading_mode="paper",
             gateway_options={"bars": _make_bars()},
             cash=1_000_000,
@@ -177,8 +181,8 @@ def main() -> None:
         print(f"\n收到 {len(strategy.received)} 根 bar")
         if not strategy.received:
             raise SystemExit("行情通路未接通: 未收到任何 bar")
-        print("行情来自 market_broker、交易来自 broker —— 混搭生效。")
-        print("对称写法: broker='replay', trader_broker='demo_trade_only'")
+        print("行情来自 market_broker、交易来自 trader_broker —— 分开指定生效。")
+        print("注意: 两侧必须同时写明, 只给一侧会报错。")
     finally:
         unregister_broker(TRADE_ONLY_BROKER)
 

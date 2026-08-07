@@ -159,28 +159,31 @@ run_live(
 
 这两类「单边 broker」可以拼起来用：
 
-- `broker`: 两侧的**默认源**。
-- `market_broker`: 只覆盖**行情**源。
-- `trader_broker`: 只覆盖**交易**源。
+两种模式，二选一：
+
+- **单 broker**：只传 `broker`，由它同时提供两侧（原语义，不变）。
+- **分开指定**：同时传 `market_broker` 与 `trader_broker`，各供一侧；此时 `broker`
+  完全不参与构建。
 
 ```python
 run_live(
     strategy_cls=MyStrategy,
     instruments=instruments,
-    broker="my_trade_only_broker",   # 交易源：只有交易通道的插件
-    market_broker="replay",          # 行情源：借用回放行情
+    market_broker="replay",               # 行情源：借用回放行情
+    trader_broker="my_trade_only_broker", # 交易源：只有交易通道的插件
     trading_mode="paper",
     gateway_options={"bars": bars},
 )
 ```
 
-等价的对称写法是 `broker="replay", trader_broker="my_trade_only_broker"`——两者描述
-的是同一件事。两侧都不传时行为与单 broker 完全一致。
+**只给一侧会报错**，要求把另一侧也写明。这是刻意的：若让 `broker` 兼任缺失的那侧，
+它就一词双义了——读 `broker='qmf', market_broker='replay'` 得先知道「qmf 只有交易
+通道」才能推出 `broker` 在此指交易源。两侧都写明就没有这层推断。
 
 几个要点：
 
 - `gateway_options` 会同时传给两个 builder，两侧参数放在同一个 dict 里即可。
-- 覆盖项与 `broker` 同名时视为未覆盖，不重复构建（builder 可能连柜台、起线程）。
+- 两侧同名时只构建一次（builder 可能连柜台、起线程）。
 - 名字未注册会报错并点名具体参数，不会静默缺失某一侧通道。
 - 这个组合让「回放行情 + 真实柜台下单」的联调成为可能：用确定性数据驱动策略，
   同时把订单真正发到柜台的仿真环境。注意此时仍受上面 timer 语义的限制。
