@@ -459,27 +459,23 @@ impl Engine {
                 .expect("last_prices 读锁被污染")
                 .get(&order.symbol)
                 .copied()
-        }?;
-        let value = price * order.quantity;
-        if value > *max_value {
-            return Some(format!(
-                "Risk: Strategy {} order value {} exceeds strategy limit {}",
-                strategy_id, value, max_value
-            ));
-        }
-        None
+        };
+        crate::risk::strategy_limits::exceeds_order_value(
+            &strategy_id,
+            order.quantity,
+            price,
+            *max_value,
+        )
     }
 
     pub(crate) fn check_strategy_order_size_limit(&self, order: &Order) -> Option<String> {
         let strategy_id = Self::normalized_order_strategy_id(order)?;
         let max_size = self.strategy_max_order_size_limits.get(&strategy_id)?;
-        if order.quantity > *max_size {
-            return Some(format!(
-                "Risk: Strategy {} order quantity {} exceeds strategy limit {}",
-                strategy_id, order.quantity, max_size
-            ));
-        }
-        None
+        crate::risk::strategy_limits::exceeds_order_size(
+            &strategy_id,
+            order.quantity,
+            *max_size,
+        )
     }
 
     pub(crate) fn check_strategy_position_size_limit(&self, order: &Order) -> Option<String> {
@@ -493,14 +489,12 @@ impl Engine {
             OrderSide::Buy => order.quantity,
             OrderSide::Sell => -order.quantity,
         };
-        let projected_qty = current_qty + delta;
-        if projected_qty.abs() > *max_size {
-            return Some(format!(
-                "Risk: Strategy {} projected position {} exceeds strategy position limit {}",
-                strategy_id, projected_qty, max_size
-            ));
-        }
-        None
+        crate::risk::strategy_limits::exceeds_position_size(
+            &strategy_id,
+            current_qty,
+            delta,
+            *max_size,
+        )
     }
 
     pub(crate) fn apply_strategy_trade_position(&mut self, trade: &Trade) {

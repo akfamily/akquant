@@ -2941,6 +2941,40 @@ def from_arrays(
     """
     ...
 
+def check_strategy_limits(
+    strategy_id: str,
+    symbol: str,
+    side: str,
+    quantity: float,
+    price: typing.Optional[float] = ...,
+    current_positions: typing.Optional[typing.Mapping[str, float]] = ...,
+    max_order_value: typing.Optional[float] = ...,
+    max_order_size: typing.Optional[float] = ...,
+    max_position_size: typing.Optional[float] = ...,
+) -> typing.Optional[str]:
+    r"""
+    校验一笔委托是否触碰策略级限额 (broker_live 报单前的前置风控).
+
+    独立于 Engine: broker_live 的报单发生在策略回调内, 那一刻
+    ``Engine::run(&mut self)`` 正独占借用引擎对象, 经 Python 侧触达 Engine 的
+    任何调用都会 ``RuntimeError: Already borrowed``。故本函数只吃纯数据。
+
+    判定逻辑与 ``Engine::check_strategy_*_limit`` 共用同一批 Rust 自由函数,
+    拒单文案逐字一致。
+
+    :param strategy_id: 归属策略 id (通常 ``_default``)
+    :param symbol: 标的代码
+    :param side: ``"Buy"`` / ``"Sell"`` (决定持仓投影方向)
+    :param quantity: 委托数量
+    :param price: 委托价; None 时跳过名义校验 (无参考价无法折算)
+    :param current_positions: 该策略当前持仓 {symbol: 带符号数量}
+    :param max_order_value: 单笔名义上限 (None 表示不限)
+    :param max_order_size: 单笔数量上限 (None 表示不限)
+    :param max_position_size: 持仓上限 (None 表示不限)
+    :return: 拒单原因; None 表示通过
+    """
+    ...
+
 # B2′ 向量化列计算原语 (numpy 零拷贝读入, 返回 float64 数组)
 def vec_sma(values: numpy.ndarray, period: int) -> numpy.ndarray: ...
 def vec_ema(values: numpy.ndarray, period: int) -> numpy.ndarray: ...

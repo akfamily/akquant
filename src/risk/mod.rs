@@ -6,6 +6,7 @@ pub mod option;
 pub mod portfolio;
 pub mod rule;
 pub mod stock;
+pub mod strategy_limits;
 
 pub use config::RiskConfig;
 pub use manager::RiskManager;

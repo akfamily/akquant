@@ -1031,6 +1031,17 @@ class LiveRunner:
         self._broker_order_submitter = self._broker_runtime.install_submitter(
             trader_gateway,
             strategy,
+            strategy_limits={
+                "max_order_value": dict(
+                    getattr(self, "strategy_max_order_value", {}) or {}
+                ),
+                "max_order_size": dict(
+                    getattr(self, "strategy_max_order_size", {}) or {}
+                ),
+                "max_position_size": dict(
+                    getattr(self, "strategy_max_position_size", {}) or {}
+                ),
+            },
         )
 
     def _baseline_broker_state(self, trader_gateway: Any) -> None:
