@@ -361,3 +361,38 @@ def test_risk_rejection_is_reported_back_to_source() -> None:
     assert rejected, f"拒单必须回执给信号源, 实际回执: {source.results}"
     assert rejected[0].signal_id == "over-1"
     assert strategy.trades == [], "被拒的信号不应成交"
+
+
+def test_signal_source_registry_builtins_and_custom() -> None:
+    """内置源应已注册, 自定义源可注册/构造/注销."""
+    from akquant.signal import (
+        create_signal_source,
+        list_signal_sources,
+        register_signal_source,
+        unregister_signal_source,
+    )
+
+    names = list_signal_sources()
+    assert {"queue", "http", "redis"} <= set(names), names
+
+    built = create_signal_source("queue")
+    assert isinstance(built, QueueSignalSource)
+
+    class _Custom(QueueSignalSource):
+        pass
+
+    register_signal_source("my-platform", _Custom)
+    try:
+        assert isinstance(create_signal_source("my-platform"), _Custom)
+    finally:
+        unregister_signal_source("my-platform")
+    with pytest.raises(ValueError, match="未知信号源"):
+        create_signal_source("my-platform")
+
+
+def test_registry_rejects_empty_name() -> None:
+    """空名称注册应报错."""
+    from akquant.signal import register_signal_source
+
+    with pytest.raises(ValueError, match="不能为空"):
+        register_signal_source("  ", QueueSignalSource)

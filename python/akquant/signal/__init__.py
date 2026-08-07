@@ -34,6 +34,14 @@ from .dedup import SignalDedup
 from .dispatcher import SignalDispatcher
 from .models import Signal, SignalAction, SignalResult, SignalStatus
 from .protocols import OrderSink, SignalSource, SignalSourceBase
+from .registry import (
+    create_signal_source,
+    list_signal_sources,
+    register_builtin_signal_sources,
+    register_plugin_signal_sources,
+    register_signal_source,
+    unregister_signal_source,
+)
 from .security import AuthError, TokenAuth, sign
 from .sinks import BrokerOrderSink, PaperOrderSink
 from .sources import HttpSignalSource, QueueSignalSource, RedisSignalSource
@@ -56,4 +64,12 @@ __all__ = [
     "TokenAuth",
     "AuthError",
     "sign",
+    "register_signal_source",
+    "unregister_signal_source",
+    "create_signal_source",
+    "list_signal_sources",
+    "register_builtin_signal_sources",
+    "register_plugin_signal_sources",
 ]
+
+register_builtin_signal_sources()
