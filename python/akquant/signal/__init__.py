@@ -34,8 +34,9 @@ from .dedup import SignalDedup
 from .dispatcher import SignalDispatcher
 from .models import Signal, SignalAction, SignalResult, SignalStatus
 from .protocols import OrderSink, SignalSource, SignalSourceBase
+from .security import AuthError, TokenAuth, sign
 from .sinks import BrokerOrderSink, PaperOrderSink
-from .sources import QueueSignalSource
+from .sources import HttpSignalSource, QueueSignalSource, RedisSignalSource
 
 __all__ = [
     "Signal",
@@ -50,4 +51,9 @@ __all__ = [
     "SignalDedup",
     "SignalDispatcher",
     "QueueSignalSource",
+    "HttpSignalSource",
+    "RedisSignalSource",
+    "TokenAuth",
+    "AuthError",
+    "sign",
 ]

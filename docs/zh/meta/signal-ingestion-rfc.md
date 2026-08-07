@@ -253,17 +253,41 @@ run_live(
 
 信号源与策略**可以共存**:策略产自有信号,平台推补充指令,两者经同一风控汇入同一账本。
 
+### 4.3.2 P3 实际落地(传输层与安全)
+
+```text
+python/akquant/signal/
+├── security.py             TokenAuth / sign / AuthError:鉴权与防重放
+└── sources/
+    ├── http.py             HttpSignalSource —— 标准库 http.server
+    └── redis_stream.py     RedisSignalSource —— Redis Stream 消费组
+```
+
+**与原计划的偏离:HTTP 源不用 FastAPI,改标准库 `http.server`。**
+
+理由是可验证性:这个端点能触发真实下单,安全逻辑最需要在 CI 里被真的测到——起服务、发请求、断言拒绝。而 FastAPI/uvicorn 是可选依赖,本机与 CI 环境未必安装(**实测本机三者全缺**),届时只能靠 mock 覆盖,等于把最关键的一环留在测试之外。标准库对"接一个 webhook"这个单一职责完全够用。高吞吐/复杂路由场景走 4.5 的部署建议(独立 Web 进程 + Redis)。
+
+**Redis 源用 Stream 而非 List**:`XREADGROUP` 提供消费组与显式 ack,崩溃重启后未 ack 的消息仍在 pending 中可被重投;`BLPOP` 取走即丢,崩在处理中途就丢单。坏消息也 ack——`dispatch` 内部已按 `signal_id` 幂等,不 ack 会让它永远堵在 pending 里反复重投。
+
+**验证边界(必须如实说明)**:
+
+- HTTP 源:**真实端到端**——起真实服务、用 httpx 发真实请求,覆盖正常受理/坏 token/缺签名/坏负载/错路径/并发重复。
+- Redis 源:注入 fake client 覆盖消费循环(XREADGROUP → dispatch → XACK)、坏消息 ack、BUSYGROUP 容错。**真实 Redis 连接路径未验证**(环境未装 `redis` 包)。
+- `redis` 经 `signal-redis` extra 提供,惰性导入,未安装时只在实际使用时报错,不影响 `import akquant`。
+
 ### 4.4 安全基线(硬约束,非建议)
 
 `HttpSignalSource` 是能触发真实下单的网络入口。以下为实现层面的硬约束:
 
-| 约束 | 行为 |
-|---|---|
-| 默认关闭 | 不传 `signal_source` 时零监听;`HttpSignalSource` 自身默认 `enabled=False` |
-| 默认本机 | `host` 默认 `"127.0.0.1"`;绑非本机地址时打 `warning` |
-| 强制鉴权 | 未提供 `token` 时**启动即失败**(`ValueError`),不降级为警告 |
-| 防重放 | HMAC 签名 + 时间戳窗口(默认 ±30s)+ `signal_id` 去重三重 |
-| 不落明文 | token 经 `log.py` 的 `SensitiveFilter` 脱敏(见 [logging-rfc.md](logging-rfc.md) G2) |
+| 约束 | 落地行为 | 状态 |
+|---|---|---|
+| 默认关闭 | 不传 `signal_source` 即零监听。**未做** `enabled=False` 开关——它与"强制鉴权"重复:没有 token 就构造不出实例,再加一个布尔开关只是多一处可被误配的地方 | ✅(以更强形式) |
+| 默认本机 | `host` 默认 `127.0.0.1`;绑非本机**直接 `ValueError`**,须显式 `allow_remote=True` 才允许,且打警告。比原设计的"仅警告"更严 | ✅(更严) |
+| 强制鉴权 | `token` 非空字符串,否则构造即 `ValueError`。**须显式挡 `None`**:走 `str(None)` 会得到字面量 `"None"`,那就成了看似有鉴权的端点——从缺失的环境变量读 token 正是这个场景(测试期间实际踩到并修) | ✅ |
+| 防重放 | HMAC-SHA256(`secret`,`{ts}.{body}`)+ 时间戳窗口(默认 ±30s)+ `signal_id` 幂等,三重。`compare_digest` 常量时间比较,避免按字节泄漏 | ✅ |
+| 不做区分预言机 | 鉴权失败统一回 `401 {"error":"unauthorized"}`,不区分"token 错"/"签名错"/"超窗",具体原因只进日志 | ✅ |
+| 幂等重复回 200 | 重复投递回 `200 + duplicate` 而非错误码——回错误码会让平台一直重试 | ✅ |
+| 传输层不承诺 | HTTPS 与公网暴露须在反向代理层解决,文档与构造警告中均写明 | ✅ |
 
 对标依据:Freqtrade 的 `force_entry_enable` 默认关闭、JWT Bearer 鉴权、默认只听 localhost,且官方文档明确警告不要暴露到公网、不原生支持 HTTPS。本 RFC 采同一姿态,并在文档中同样明确:**HTTPS / 公网暴露由用户在反向代理层解决,AKQuant 不承诺传输层安全**。
 
@@ -317,8 +341,8 @@ def wrapped_on_bar(bar):
 | **P1** | broker_live 报单前置风控 + 拦单回归测试(修 3.3) | ✅ **已落地** |
 | **P0** | crossbeam 统一 + `select!` 唤醒 + `SignalPort` + `signal_port_ready` | ✅ **已落地** |
 | **P2** | `Signal` / `SignalSource` / `OrderSink` / `dedup` / `dispatcher` / `QueueSignalSource` + `run_live` 接线 | ✅ **已落地** |
-| **P3** | `HttpSignalSource` + `RedisSignalSource` + 安全基线 + entry-point 插件化 + 可选 extra | 待实施 |
-| **P4** | 示例(须实跑 `exit 0`)+ 中英文档 + 教材映射表 + entry-point 插件化 | 待实施 |
+| **P3** | `HttpSignalSource` + `RedisSignalSource` + 安全基线 + 可选 extra + 示例 | ✅ **已落地** |
+| **P4** | 中英文档章节 + 教材映射表 + entry-point 插件化 | 待实施 |
 
 P1 先行的判断已被验证正确:3.3 是正在影响实盘用户的风控失效,紧急度高于信号接入本身;且它暴露的借用约束(4.2.1)直接改写了 P0 的设计前提——`SignalPort` 必须在**引擎线程之外**注入 `Event::OrderRequest`(crossbeam sender 可跨线程,不碰 pyclass 借用),不能设计成"策略回调内调用"的形态。
 

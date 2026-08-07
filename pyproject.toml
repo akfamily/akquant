@@ -56,6 +56,9 @@ docs = [
     "mkdocs-static-i18n>=1.2.0",
     "akshare>=1.0.0",
 ]
+signal-redis = [
+    "redis>=5.0.0",
+]
 full = [
     "plotly>=5.0.0",
     "scikit-learn>=1.0.0",
@@ -119,6 +122,10 @@ module = [
     "pytest",
     "quantstats",
     "quantstats.*",
+    # 可选依赖: redis 走 signal-redis extra 惰性导入; httpx 仅测试用
+    "redis",
+    "redis.*",
+    "httpx",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
