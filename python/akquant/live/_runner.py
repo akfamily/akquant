@@ -210,6 +210,7 @@ class LiveRunner:
         risk_budget_mode: str = "order_notional",
         risk_budget_reset_daily: bool = False,
         on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+        signal_port_ready: Optional[Callable[[Any], None]] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -266,6 +267,10 @@ class LiveRunner:
         :param on_timer: Optional function-style on_timer callback.
         :param context: Optional context dict injected into function-style strategy.
         :param on_broker_event: Optional broker event observer callback.
+        :param signal_port_ready: Optional callback receiving a ``SignalPort`` right
+            before the engine loop starts. Use it to hand the port to an external
+            signal source (HTTP webhook / MQ consumer) running on its own thread.
+            Only meaningful for ``trading_mode='paper'``.
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
@@ -346,6 +351,7 @@ class LiveRunner:
         self.risk_budget_mode = risk_budget_mode
         self.risk_budget_reset_daily = bool(risk_budget_reset_daily)
         self.on_broker_event = on_broker_event
+        self.signal_port_ready = signal_port_ready
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
         self._indicator_recorder_override: Optional[IndicatorSink] = None
         self._stream_on_event: Optional[Callable[[BacktestStreamEvent], None]] = None
@@ -521,6 +527,12 @@ class LiveRunner:
                 extra=self._runner_log_extra(phase="live"),
             )
             self._apply_bounded_event_limit(strategy_instance, bounded_total)
+
+        # 外部信号端口: 必须在 engine.run() 之前取。run() 会独占可变借用引擎对象,
+        # 之后再取会撞 "Already borrowed"(见 signal-ingestion-rfc.md 4.2.1)。
+        # 取到的是 channel sender 的克隆, 与引擎对象解耦, 可安全交给任意线程。
+        if self.signal_port_ready is not None:
+            self._deliver_signal_port(effective_strategy_id)
 
         logger.info(
             "Running live strategy loop",
@@ -1043,6 +1055,34 @@ class LiveRunner:
                 ),
             },
         )
+
+    def _deliver_signal_port(self, effective_strategy_id: str | None) -> None:
+        """把 SignalPort 交给调用方(异常隔离: 交付失败不应中断会话启动).
+
+        broker_live 下额外告警: 该模式的 `RealtimeExecutionClient` 不报柜台,
+        经端口注入的订单会过风控进 active_orders 却永不成交, 静默失效风险高。
+        """
+        callback = self.signal_port_ready
+        if callback is None:
+            return
+        if self.trading_mode == "broker_live":
+            logger.warning(
+                "signal_port_ready 在 trading_mode='broker_live' 下不能用于真实下单: "
+                "引擎实盘执行器不报柜台, 经 SignalPort 注入的订单会通过风控并进入"
+                "活动委托, 但既不撮合也不到柜台。broker_live 的外部信号请走 "
+                "broker 下单通道",
+                extra=self._runner_log_extra(phase="live"),
+            )
+        try:
+            port = cast(Any, self.engine).signal_port(effective_strategy_id)
+            callback(port)
+        except Exception as exc:  # noqa: BLE001 — 交付失败不拖垮会话
+            logger.error(
+                "交付 SignalPort 失败: %s",
+                exc,
+                exc_info=True,
+                extra=self._runner_log_extra(phase="live"),
+            )
 
     def _baseline_broker_state(self, trader_gateway: Any) -> None:
         """就绪激活: 先丢弃待派发成交, 再急切 seed 各 slot 持仓, 最后灌 dedup 基线.

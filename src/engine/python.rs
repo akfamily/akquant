@@ -499,6 +499,27 @@ impl Engine {
         self.risk_budget_reset_daily = enabled;
     }
 
+    /// 取一个外部信号注入端口(paper 模式)
+    ///
+    /// **必须在 `run()` 之前调用**: 取到的是 channel sender 的克隆, 之后即与引擎
+    /// 对象解耦, 可安全交给任意线程。会话开始后再调会撞
+    /// `RuntimeError: Already borrowed`(`run(&mut self)` 独占借用引擎)。
+    ///
+    /// 仅适用于 `trading_mode='paper'`: broker_live 下 `RealtimeExecutionClient`
+    /// 不报柜台, 经此注入的订单会过风控进 `active_orders` 但永不成交。
+    ///
+    /// :param strategy_id: 归属策略 id, 风控限额按它路由(缺省 ``_default``)
+    /// :return: SignalPort 实例
+    #[pyo3(signature = (strategy_id=None))]
+    fn signal_port(&self, strategy_id: Option<&str>) -> crate::signal_port::SignalPort {
+        let owner = strategy_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("_default")
+            .to_string();
+        crate::signal_port::SignalPort::new(self.event_manager.sender(), owner)
+    }
+
     /// 初始化回测引擎.
     ///
     /// :return: Engine 实例

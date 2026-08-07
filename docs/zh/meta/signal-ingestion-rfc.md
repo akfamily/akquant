@@ -101,17 +101,38 @@ impl ExecutionClient for RealtimeExecutionClient {
 
 ## 4. 变更提案
 
-### 4.1 P0:统一指令入口(Rust)
+### 4.1 P0:统一指令入口(**已落地**)
 
 | 改动 | 位置 | 说明 |
 |---|---|---|
-| std mpsc → crossbeam | `src/data/client.rs` 的 `RealtimeDataClient`、`src/data/feed.rs` 的 `live_sender` | 全仓仅 4 处引用 std mpsc。换完可**删掉** `Arc<Mutex<Sender>>` 包装——它存在只因 `std::sync::mpsc::Sender` 非 `Sync`,crossbeam 的 `Sender` 本身 `Sync`。少一层锁 |
-| `select!` 零延迟唤醒 | `DataProcessor::process` | 用 `crossbeam_channel::select!` 同时等 feed 与 event_manager,指令到达立即打断阻塞,延迟从 ≤1s 降至微秒级。两侧统一为 crossbeam 后才可能 |
-| `SignalPort` pyclass | 新增(`src/signal_port.rs`) | 持 `Sender<Event>` 克隆 + `owner_strategy_id`,暴露 `submit(...)` / `cancel(order_id)`。`Send + Sync`,可安全交给任意 Python 线程 |
+| std mpsc → crossbeam | `src/data/client.rs` 的 `RealtimeDataClient`、`src/data/feed.rs` 的 `live_sender` | 换完**删掉了** `Arc<Mutex<Sender>>` 包装——它存在只因 `std::sync::mpsc::Sender` 非 `Sync`,crossbeam 的 `Sender` 本身 `Sync`。少一层锁 |
+| `select!` 零延迟唤醒 | `DataClient::wait_peek_with_wakeup` + `WaitOutcome`;`DataProcessor` 传入 `EventManager::receiver()` | 用 `Select::ready_timeout` 同时探测行情通道与引擎内部事件通道。**只探测就绪、不取走**唤醒通道的事件——消费仍归 `ChannelProcessor`,否则事件会被吞。就绪即返回 `FeedAction::Wait` → 主循环 `Loop` → 回到首位的 `ChannelProcessor` |
+| `SignalPort` pyclass | 新增 `src/signal_port.rs`;`Engine::signal_port(strategy_id)` 取用 | 持 `Sender<Event>` 克隆 + `owner_strategy_id`,`submit(...)` 构造 `Order` 并发 `Event::OrderRequest`。入参校验(空 symbol / 非正数量 / 未知枚举)在端口内完成 |
+| `signal_port_ready` 回调 | `run_live` / `LiveRunner` | 会话启动前把端口交给调用方。P2 的 `SignalSource` 将建于其上 |
 
 `crossbeam-channel` 0.5 已在 `Cargo.toml`,无新增依赖。
 
-`SignalPort` 只负责构造 `Order` 并 `send(Event::OrderRequest(order))`,**不做风控**——风控由 `ChannelProcessor` 统一执行,这是原则 1 的直接体现。
+`SignalPort` 只负责构造 `Order` 并投递,**不做风控**——风控由 `ChannelProcessor` 统一执行,这是原则 1 的直接体现。已实测:注入单同样被 `strategy_max_order_value` 拦下并触发 `on_reject`。
+
+#### 4.1.1 使用约束(实测得出,已写入 `run_live` 文档)
+
+**① 回调内启动的线程必须确认其已就绪再返回。** `signal_port_ready` 由 runner 同步调用,一返回主线程即进入 Rust 主循环并长期持有 GIL;若新线程此刻尚未被调度,它可能整场会话都拿不到执行机会:
+
+```python
+def bind(port):
+    running = threading.Event()
+    def worker():
+        running.set()
+        ...  # port.submit(...)
+    threading.Thread(target=worker, daemon=True).start()
+    running.wait(timeout=5.0)   # 关键
+```
+
+**② 注入单只在"后续"市场事件到来时成交。** 落在最后一根 bar 之后的注入会停在 `New` 状态——这是撮合语义的必然(无价格无法成交),非缺陷。
+
+**③ 不存在 GIL 饥饿。** 曾怀疑 live 会话会饿死外部线程,已实测否决:探针线程以 0.05s 周期运行 2 秒,最大间隔 0.063s。
+
+**验收**:`tests/test_signal_port_injection.py` 5 条(外部线程注入被接受并成交、注入单仍过风控被拦、submit 即时返回、入参校验、市价单注入),连跑三轮稳定通过。
 
 ### 4.2 P1:broker_live 报单前置风控(**已落地**)
 
@@ -228,6 +249,25 @@ vn.py 的 WebTrader 把 Web 服务放在**独立进程**(FastAPI + RpcClient ↔
 - **开发/单机**:`HttpSignalSource` 同进程直收,省一个组件。
 - **测试**:`QueueSignalSource`,无网络依赖。
 
+### 4.6 顺带查出的既存缺陷:`duration` 在无行情时不生效 ⚠️
+
+`LiveRunner._apply_time_limit` 是通过 patch 策略的 `on_bar` / `on_tick` 实现的——墙钟检查只在**有行情事件时**才执行:
+
+```python
+def wrapped_on_bar(bar):
+    if time.time() - start_time > duration_sec:
+        raise KeyboardInterrupt(...)
+    original_on_bar(bar)
+```
+
+于是行情一停(网关线程退出、或盘后无推送),引擎永远阻塞在 `wait_peek` 上,`on_bar` 不再被调用,`duration` 便永不触发,**会话挂死**。
+
+这与 `_runner.py` 里"`duration` 仍作安全网:……墙钟兜底避免挂死"的注释所承诺的行为不符——它不是墙钟兜底。
+
+实测触发路径:自定义行情网关推完最后一根 bar 即退出、且未声明 `bounded_event_total` → 会话永久挂起。`replay` 之所以不挂,是因为它声明了 `bounded_event_total`,由 `_apply_bounded_event_limit` 在最后一根 bar 处终止(同样挂在 `on_bar` 上,只是恰好能触发)。
+
+**不在本 RFC 范围内修**(与信号接入正交),建议单独开 issue。修法方向:把墙钟兜底放到真正的墙钟线程上,或让 `next_action` 的等待循环自身感知总时限。
+
 ## 5. 破坏性变更清单(供 CHANGELOG)
 
 **P1(已落地)**:
@@ -247,7 +287,7 @@ vn.py 的 WebTrader 把 Web 服务放在**独立进程**(FastAPI + RpcClient ↔
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | **P1** | broker_live 报单前置风控 + 拦单回归测试(修 3.3) | ✅ **已落地** |
-| **P0** | crossbeam 统一 + `select!` 唤醒 + `SignalPort` pyclass + Rust 单测 | 待实施 |
+| **P0** | crossbeam 统一 + `select!` 唤醒 + `SignalPort` + `signal_port_ready` | ✅ **已落地** |
 | **P2** | `Signal` / `SignalSource` / `dedup` / `dispatcher` / `QueueSignalSource` + `run_live` 接线 | 待实施 |
 | **P3** | `HttpSignalSource` + `RedisSignalSource` + 安全基线 + 可选 extra | 待实施 |
 | **P4** | 示例(须实跑 `exit 0`)+ 中英文档 + 教材映射表 + entry-point 插件化 | 待实施 |

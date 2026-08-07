@@ -6,11 +6,12 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, mpsc};
+use crossbeam_channel::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::client::{
-    CsvDataClient, DataClient, FeedAction, RealtimeDataClient, SimulatedDataClient,
+    CsvDataClient, DataClient, FeedAction, RealtimeDataClient, SimulatedDataClient, WaitOutcome,
 };
 use super::columns::BarColumns;
 use super::parquet_stream::{DEFAULT_CHUNK_ROWS, ParquetStreamClient};
@@ -44,7 +45,9 @@ fn warn_clock_fallback(next_timer_ts: Option<i64>) {
 #[derive(Clone)]
 pub struct DataFeed {
     pub provider: Arc<Mutex<Box<dyn DataClient>>>,
-    pub live_sender: Option<Arc<Mutex<mpsc::Sender<Event>>>>,
+    /// 实时模式的推送端。crossbeam 的 `Sender` 本身 `Send + Sync + Clone`,
+    /// 故无需 `Arc<Mutex<_>>` 包裹(std mpsc 的 Sender 非 Sync 才需要那层锁)。
+    pub live_sender: Option<Sender<Event>>,
 }
 
 #[pymethods]
@@ -111,7 +114,7 @@ impl DataFeed {
         let sender = provider.get_sender();
         DataFeed {
             provider: Arc::new(Mutex::new(Box::new(provider))),
-            live_sender: Some(Arc::new(Mutex::new(sender))),
+            live_sender: Some(sender),
         }
     }
 
@@ -119,8 +122,7 @@ impl DataFeed {
     ///
     /// :param bar: K 线数据
     pub fn add_bar(&mut self, bar: Bar) -> PyResult<()> {
-        if let Some(sender_lock) = &self.live_sender {
-            let sender = sender_lock.lock().unwrap();
+        if let Some(sender) = &self.live_sender {
             sender
                 .send(Event::Bar(bar))
                 .map_err(|e| PyValueError::new_err(e.to_string()))
@@ -135,8 +137,7 @@ impl DataFeed {
     ///
     /// :param bars: K 线数据列表
     pub fn add_bars(&mut self, bars: Vec<Bar>) -> PyResult<()> {
-        if let Some(sender_lock) = &self.live_sender {
-            let sender = sender_lock.lock().unwrap();
+        if let Some(sender) = &self.live_sender {
             for bar in bars {
                 sender
                     .send(Event::Bar(bar))
@@ -201,8 +202,7 @@ impl DataFeed {
     ///
     /// :param tick: Tick 数据
     pub fn add_tick(&mut self, tick: Tick) -> PyResult<()> {
-        if let Some(sender_lock) = &self.live_sender {
-            let sender = sender_lock.lock().unwrap();
+        if let Some(sender) = &self.live_sender {
             sender
                 .send(Event::Tick(tick))
                 .map_err(|e| PyValueError::new_err(e.to_string()))
@@ -239,6 +239,15 @@ impl DataFeed {
     pub fn wait_peek(&self, timeout: Duration) -> Option<i64> {
         let mut provider = self.provider.lock().unwrap();
         provider.wait_peek(timeout)
+    }
+
+    fn wait_peek_with_wakeup(
+        &self,
+        timeout: Duration,
+        wakeup: Option<&Receiver<Event>>,
+    ) -> WaitOutcome {
+        let mut provider = self.provider.lock().unwrap();
+        provider.wait_peek_with_wakeup(timeout, wakeup)
     }
 
     pub fn is_live(&self) -> bool {
@@ -291,7 +300,16 @@ impl DataFeed {
     }
 
     /// 获取下一个动作 (事件或定时器)
-    pub fn next_action(&self, next_timer_ts: Option<i64>, py: Python) -> FeedAction {
+    ///
+    /// `wakeup` 是引擎内部事件通道的接收端(仅实时模式有意义): 外部线程注入
+    /// `Event::OrderRequest` 后, 行情等待会被立即打断并返回 [`FeedAction::Wait`],
+    /// 使主循环重回 `ChannelProcessor` 处理该指令, 而不必等满 1 秒 timeout。
+    pub fn next_action(
+        &self,
+        next_timer_ts: Option<i64>,
+        py: Python,
+        wakeup: Option<&Receiver<Event>>,
+    ) -> FeedAction {
         if !self.is_live() {
             let peek_ts = self.peek_timestamp();
 
@@ -328,8 +346,17 @@ impl DataFeed {
 
             let next_ts_opt = if timeout > Duration::ZERO {
                 let feed_clone = self.clone();
-                // Release GIL and wait
-                py.detach(move || feed_clone.wait_peek(timeout))
+                // Release GIL and wait。wakeup 让注入的指令能立刻打断本次等待;
+                // 它只被探测就绪、不被取走, 消费仍由 ChannelProcessor 完成。
+                let outcome = py.detach(move || {
+                    feed_clone.wait_peek_with_wakeup(timeout, wakeup)
+                });
+                match outcome {
+                    WaitOutcome::Event(ts) => Some(ts),
+                    // 有待处理的内部事件 → 立即让主循环转一圈回到 ChannelProcessor。
+                    WaitOutcome::Wakeup => return FeedAction::Wait,
+                    WaitOutcome::Timeout => None,
+                }
             } else {
                 self.peek_timestamp()
             };

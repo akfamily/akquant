@@ -22,6 +22,7 @@ pub mod pipeline;
 mod portfolio;
 mod risk;
 pub mod settlement;
+pub mod signal_port;
 pub mod statistics;
 
 use analysis::{BacktestResult, ClosedTrade, LiquidationAudit, PerformanceMetrics, TradePnL};
@@ -66,6 +67,7 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(vec_cumsum, m)?)?;
     m.add_class::<Tick>()?;
     m.add_class::<DataFeed>()?;
+    m.add_class::<signal_port::SignalPort>()?;
     m.add_class::<BarAggregator>()?;
     m.add_class::<Engine>()?;
     m.add_class::<StrategyContext>()?;

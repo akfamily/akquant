@@ -2941,6 +2941,47 @@ def from_arrays(
     """
     ...
 
+class SignalPort:
+    r"""
+    外部信号注入端口 (paper 模式).
+
+    由 ``Engine.signal_port(strategy_id)`` 取得, **必须在 run() 之前取**。
+    持有的是 channel sender 的克隆, 与引擎对象解耦, 可安全交给任意线程。
+
+    仅适用于 ``trading_mode='paper'``: broker_live 下引擎实盘执行器不报柜台,
+    经此注入的订单会通过风控并进入活动委托, 但既不撮合也不到柜台。
+    """
+
+    @property
+    def owner_strategy_id(self) -> str:
+        """归属策略 id (风控限额按它路由)."""
+        ...
+
+    def submit(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: typing.Optional[float] = ...,
+        order_type: typing.Optional[str] = ...,
+        tag: typing.Optional[str] = ...,
+    ) -> str:
+        r"""
+        注入一笔委托, 返回本地订单 id (UUID).
+
+        线程安全: 可从任意线程调用。订单进入引擎后仍要过完整风控, 被拒则触发
+        策略的 ``on_reject``。只做 channel send, 不等引擎确认, 立即返回。
+
+        :param symbol: 标的代码
+        :param side: ``"Buy"`` / ``"Sell"``
+        :param quantity: 委托数量 (须为正)
+        :param price: 委托价; 省略则为市价单
+        :param order_type: ``"Limit"`` / ``"Market"``; 省略则按 price 有无推断
+        :param tag: 自定义标记 (建议放信号平台的 signal_id, 便于回溯)
+        :return: 本地订单 id
+        """
+        ...
+
 def check_strategy_limits(
     strategy_id: str,
     symbol: str,

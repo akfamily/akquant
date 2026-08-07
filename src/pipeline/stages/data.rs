@@ -195,7 +195,11 @@ impl Processor for DataProcessor {
         _strategy: &Bound<'_, PyAny>,
     ) -> PyResult<ProcessorResult> {
         let next_timer_time = engine.timers.peek().map(|t| t.timestamp);
-        let action = engine.state.feed.next_action(next_timer_time, py);
+        // 把内部事件通道的接收端交给 feed 一起等: 外部线程注入的 OrderRequest
+        // 可立刻打断行情等待(否则最坏要等满 1 秒 timeout)。ChannelProcessor 是
+        // pipeline 首位, Wait→Loop 后即被它排空。
+        let wakeup = engine.event_manager.receiver();
+        let action = engine.state.feed.next_action(next_timer_time, py, wakeup);
 
         match action {
             FeedAction::Wait => Ok(ProcessorResult::Loop),
