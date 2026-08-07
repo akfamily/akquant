@@ -105,12 +105,20 @@ class BrokerRuntime:
         return self._broker_state_caches
 
     def install_submitter(
-        self, trader_gateway: Any, strategy: Any
+        self,
+        trader_gateway: Any,
+        strategy: Any,
+        strategy_limits: dict[str, dict[str, float]] | None = None,
     ) -> BrokerOrderSubmitter:
-        """Create and install the strategy-facing broker submitter."""
+        """Create and install the strategy-facing broker submitter.
+
+        ``strategy_limits`` 透传给 submitter 做报单前的策略级限额风控;
+        省略则不做该校验(仅测试桩)。
+        """
         self._submitter = BrokerOrderSubmitter(
             trader_gateway=trader_gateway,
             strategy=strategy,
+            strategy_limits=strategy_limits,
             resolve_trader_capabilities=self._resolve_trader_capabilities,
             next_client_order_id=self._next_client_order_id,
             can_submit_client_order=self._can_submit_client_order,

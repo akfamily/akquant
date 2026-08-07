@@ -274,6 +274,7 @@ nav:
       - Multi-Strategy Guide: advanced/multi_strategy_guide.md
       - Live Functional Quickstart: advanced/live_functional_quickstart.md
       - Strategy Style Decision Guide: advanced/strategy_style_decision.md
+      - Signal Ingestion: advanced/signal_ingestion.md
       - Custom Broker Registry: advanced/custom_broker_registry.md
       - Custom Broker Production Checklist: advanced/custom_broker_production_checklist.md
       - Multi-Timeframe Feed API: advanced/multi_timeframe_feed_api.md

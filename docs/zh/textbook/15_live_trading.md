@@ -22,7 +22,8 @@
 - 离线实盘示例（`broker="replay"`，无需柜台）：[examples/38_live_functional_strategy_demo.py](https://github.com/akfamily/akquant/blob/main/examples/38_live_functional_strategy_demo.py)
 - 行情/交易源分开指定示例（无需柜台）：[examples/39_live_mixed_broker_demo.py](https://github.com/akfamily/akquant/blob/main/examples/39_live_mixed_broker_demo.py)
 - 日志/审计示例（自包含，无需网关）：[examples/66_logging_audit_demo.py](https://github.com/akfamily/akquant/blob/main/examples/66_logging_audit_demo.py)
-- 对应指南：[实盘函数式指南](../advanced/live_functional_quickstart.md)
+- 外部信号接入示例（HTTP webhook，无需柜台）：[examples/61_signal_platform_webhook.py](https://github.com/akfamily/akquant/blob/main/examples/61_signal_platform_webhook.py)
+- 对应指南：[实盘函数式指南](../advanced/live_functional_quickstart.md)、[外部信号平台接入](../advanced/signal_ingestion.md)
 
 ## 快速运行与验收
 
@@ -32,6 +33,7 @@ python examples/textbook/ch15_strategy_loader.py
 python examples/38_live_functional_strategy_demo.py
 python examples/39_live_mixed_broker_demo.py
 python examples/66_logging_audit_demo.py
+python examples/61_signal_platform_webhook.py
 ```
 
 验收要点：
@@ -408,7 +410,84 @@ FPGA 允许直接在硬件电路层面编程，将网络包处理、行情解析
 
 GPU 擅长大规模并行计算，因此常用于深度学习训练 (Training) 与大规模期权定价 (Monte Carlo)。不过它也有明显限制：由于 PCIe 总线的延迟，GPU 不适合处理对延迟极度敏感的即时交易逻辑，更适合盘中实时计算复杂的因子或风险指标。
 
-## 15.11 量化团队协作 (Team Collaboration)
+## 15.11 外部信号接入 (External Signal Ingestion)
+
+前面各节假定信号在 AKQuant 内部由策略产生。但工业界另一种常见分工是：信号在**外部平台**生成（因子、择时、组合优化都在那边），执行系统只负责接收指令、风控、下单、审计。这一节讨论这种形态。
+
+### 15.11.1 信号是指令，不是事件
+
+理解这个区分是设计的关键。策略回调收到的 `Bar` 是**事件** —— 需要策略判断该不该交易；而信号平台推来的是**指令** —— 判断已经做完了。
+
+因此外部信号**不经过策略回调**，直接成为委托。让它再过一次策略决策是多余的一跳，还会把「外部指令」与「自有信号」的责任边界搅混。
+
+```python
+from akquant import run_live
+from akquant.signal import QueueSignalSource, Signal
+
+source = QueueSignalSource()
+source.put(Signal(
+    signal_id="platform-0001",   # 幂等键
+    symbol="000001.SZ",
+    action="buy",
+    quantity=100,
+    price=10.5,
+))
+
+run_live(instruments=[...], broker="ctp",
+         trading_mode="paper", signal_source=source)
+```
+
+### 15.11.2 幂等：分布式系统的必修课
+
+信号平台重连、重启、网络重试都会重推同一条指令。**没有幂等键就意味着每次重推都是一笔新委托** —— 这是这类系统最常见的事故来源。
+
+`signal_id` 就是幂等键。框架按它去重，其中两条边界值得推敲：
+
+| 情形 | 是否放开去重标记 | 理由 |
+|---|---|---|
+| 投递抛异常（网关挂了） | ✅ 放开 | 那一笔并未真正下单，平台重推应被受理 |
+| 同步返回未下单（风控拦下） | ❌ 不放开 | 指令已判定不可执行，重推只会再被拒一次 |
+
+这个区分体现了一个通用原则：**幂等的边界应画在"副作用是否已发生"上**，而不是"调用是否成功"上。
+
+### 15.11.3 回执：不告诉对端等于骗它
+
+平台推完指令后需要知道它有没有生效。缺了回执，被风控拒掉的信号在平台侧看起来是"下成功了"，持仓账本随即不一致。
+
+框架把四种结果回吐给信号源：`accepted`（已投递，**不代表已成交**）、`duplicate`、`rejected`、`error`。柜台的**异步**拒单也会经 `on_reject` 反查回原始 `signal_id` 后回执。
+
+### 15.11.4 安全：能下单的网络端点
+
+`HttpSignalSource` 是一个能触发真实下单的 HTTP 入口。它的安全约束是**硬性**的：token 必填（构造即校验）、默认只听 `127.0.0.1`（绑其他地址直接报错）、可选 HMAC 签名 + 时间戳窗口防重放、鉴权失败统一回 `401` 不做区分预言机。
+
+这些取舍对标 Freqtrade：其 `force_entry_enable` 默认关闭、只听 localhost、官方明确警告勿暴露公网。**AKQuant 同样不承诺传输层安全** —— HTTPS 与公网暴露须在反向代理层解决。
+
+### 15.11.5 ⚠️ 两种模式的风控覆盖面不同
+
+这是**引擎架构决定的事实，不是配置项**，上线前必须知道：
+
+| 限额 | `paper` | `broker_live` |
+|---|---|---|
+| `max_order_value` / `max_order_size` / `max_position_size` | ✅ | ✅ |
+| `max_daily_loss` / `max_drawdown` / `strategy_risk_budget` | ✅ | ❌ **不生效** |
+
+原因：引擎的实盘执行器不向柜台报单，故 broker_live 的订单走 Python 侧柜台通道，那条路上只有策略级三项限额做了前置校验。
+
+**实践含义**：先在 `paper` 下用真实信号流验证限额配置，再切 `broker_live`，并在平台侧或柜台侧补上账户级熔断。这与 15.1.4 的切换清单是同一套纪律。
+
+### 15.11.6 部署形态
+
+对标 vn.py 的取舍（WebTrader 是独立进程 + RPC），生产推荐**进程分离**：
+
+```
+平台 ──HTTPS──> 反向代理 ──> 收单进程 ──Redis Stream──> 交易进程
+```
+
+HTTP 服务的故障与负载被进程边界隔开，不会波及交易主循环。开发单机可用 `HttpSignalSource` 同进程直收；测试用 `QueueSignalSource`，无网络依赖。
+
+详见[外部信号平台接入指南](../advanced/signal_ingestion.md)。
+
+## 15.12 量化团队协作 (Team Collaboration)
 
 量化交易不再是单打独斗的时代，而是一个工业化的流水线。
 
@@ -469,9 +548,12 @@ GPU 擅长大规模并行计算，因此常用于深度学习训练 (Training) �
 
 1. 模拟一次异常中断并验证热启动恢复流程。
 
+1. 用 `QueueSignalSource` 接一路外部信号，投递两次相同 `signal_id`，观察回执与实际成交笔数。
+
 ### 综合题
 
 1. 设计一份包含网关、OMS、RMS 与监控项的最小上线检查表。
+2. 你的信号平台把指令推给两个 AKQuant 实例（主备）。设计一套机制，保证主备切换时不出现重复下单，也不漏单。说明你依赖了哪些前提。
 
 ??? note "参考答案要点（先独立思考再展开）"
 
@@ -479,7 +561,11 @@ GPU 擅长大规模并行计算，因此常用于深度学习训练 (Training) �
 
     **应用题**：`save_checkpoint` 落盘 → 模拟中断 → `run_from_checkpoint` 加载快照并注入新数据源，验证持仓与指标缓存恢复一致、无重复下单。
 
-    **综合题**：参见 15.1.4 的切换清单——paper 验证、能力查询、CTP strict 终态、RMS 前置风控、热启动、监控告警、灰度发布。
+    **应用题 2**：两次投递后回执应为一条 `accepted` 与一条 `duplicate`，实际成交仅一笔。若两笔都成交，检查是否漏传 `signal_id`（缺幂等键时框架无法去重，只能按"每次都是新信号"处理）。
+
+    **综合题 1**：参见 15.1.4 的切换清单——paper 验证、能力查询、CTP strict 终态、RMS 前置风控、热启动、监控告警、灰度发布。
+
+    **综合题 2**：关键是把幂等状态从进程内移到共享存储：`signal_id` 已处理集合放 Redis（而非各自的进程内 `SignalDedup`），配合 `SETNX` 式的原子占位，使同一 id 只有一个实例能领走。不漏单则依赖 Redis Stream 消费组的 pending 语义——未 ack 的消息在实例崩溃后仍可被另一实例 `XCLAIM` 接管。须说明的前提：① 共享存储自身高可用，否则它成了新的单点；② 下单与"标记已处理"无法真正原子，故仍需对账兜底（比对柜台委托与信号台账），这是分布式系统的固有限制而非实现缺陷。
 
 ## 常见错误与排查
 

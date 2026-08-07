@@ -479,6 +479,10 @@ class TargetPositionsDemoStrategy(Strategy):
     *   演示如何使用 AKShare 拉取多只 ETF 日线，并拼接成单个 `DataFrame` 作为 AKQuant 的推荐多标输入。
     *   在 `on_before_trading` 中完成横截面动量计算、选强和组合调仓，适合作为 ETF 轮动最小模板。
 
+*   **[61_signal_platform_webhook.py](https://github.com/akfamily/akquant/blob/main/examples/61_signal_platform_webhook.py)**:
+    *   演示 `akquant.signal` 接入外部量化信号平台：平台把指令 POST 到本机 webhook，AKQuant 校验 Bearer token 后经风控下单，全程不写策略逻辑（信号已经是指令）。
+    *   同一 `signal_id` 重推一次以演示幂等，输出回执统计与成交明细。paper 模式 + 回放行情即可跑通，实盘只需改 `trading_mode="broker_live"`。
+
 *   **[56_functional_warm_start_demo.py](https://github.com/akfamily/akquant/blob/main/examples/56_functional_warm_start_demo.py)**:
     *   演示函数式 `on_resume(ctx)` 与 `on_start(ctx)` 在 checkpoint 恢复场景下的触发顺序，以及策略状态如何跨阶段延续。
     *   使用两段合成 `Bar` 数据完成最小热启动闭环，并以 `done_functional_warm_start_demo` 作为结束标记。

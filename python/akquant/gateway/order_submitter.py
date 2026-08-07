@@ -1,6 +1,8 @@
-from typing import Any, Callable
+from typing import Any, Callable, Optional, cast
 
+from ..akquant import OrderStatus, check_strategy_limits
 from ..log import build_log_extra, get_logger
+from .broker_event_adapter import StrategyOrder
 from .broker_models import (
     BrokerCapability,
     UnifiedOrderRequest,
@@ -261,10 +263,23 @@ class BrokerOrderSubmitter:
         get_execution_capabilities: Callable[[], dict[str, Any]],
         record_order_request: Callable[[str, Any], None],
         sync_group_mapping: Callable[[str, str], None] = lambda _c, _g: None,
+        strategy_limits: dict[str, dict[str, float]] | None = None,
     ) -> None:
-        """Bind strategy injection hooks, id mapping and capability callbacks."""
+        """Bind strategy injection hooks, id mapping and capability callbacks.
+
+        ``strategy_limits`` 形如 ``{"max_order_value": {"_default": 500.0}, ...}``,
+        用于报单前的策略级限额前置风控(见 :meth:`_check_risk`)。省略则不做该校验
+        —— 生产 broker_live 必须传入, 否则 `strategy_max_*` 在实盘静默失效
+        (见 docs/zh/meta/signal-ingestion-rfc.md 3.3)。
+
+        这里刻意收的是**限额快照而非 engine 引用**: 报单在策略回调内发生, 那一刻
+        引擎正被 `run(&mut self)` 独占借用, 持有并调用 engine 必然
+        `RuntimeError: Already borrowed`。
+        """
         self._trader_gateway = trader_gateway
         self._strategy = strategy
+        self._strategy_limits = strategy_limits or {}
+        self._risk_reject_seq = 0
         self._resolve_trader_capabilities = resolve_trader_capabilities
         self._next_client_order_id = next_client_order_id
         self._can_submit_client_order = can_submit_client_order
@@ -326,6 +341,125 @@ class BrokerOrderSubmitter:
                 "(get_size 是否漏了 return?)"
             )
         return float(size)
+
+    def _check_risk(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float | None,
+        owner_strategy_id: str,
+    ) -> str | None:
+        """报单前校验策略级限额, 返回拒单原因(None 表示通过).
+
+        broker_live 的订单不经 `ChannelProcessor`, 故 `strategy_max_*` 这组限额
+        此前在实盘完全不生效(见 docs/zh/meta/signal-ingestion-rfc.md 3.3)。
+
+        **为何不直接调 engine**: 报单发生在策略回调内, 那一刻
+        `Engine::run(&mut self)` 正独占借用引擎对象, 任何经 Python 侧触达 `Engine`
+        的调用都会 `RuntimeError: Already borrowed`。故改用无状态的
+        `check_strategy_limits` —— 它与 `Engine::check_strategy_*_limit` 共用同一批
+        Rust 自由函数, 拒单文案逐字一致, 不产生第二套规则。
+
+        **覆盖范围**: 只含 order_value / order_size / position_size 三项(不依赖引擎
+        运行态)。daily_loss / drawdown / risk_budget 依赖引擎累计盈亏与预算用量,
+        无法在此校验, 仍是 broker_live 的缺口。
+        """
+        limits = self._strategy_limits
+        if not limits:
+            return None
+        key = owner_strategy_id or "_default"
+        max_order_value = limits.get("max_order_value", {}).get(key)
+        max_order_size = limits.get("max_order_size", {}).get(key)
+        max_position_size = limits.get("max_position_size", {}).get(key)
+        if (
+            max_order_value is None
+            and max_order_size is None
+            and max_position_size is None
+        ):
+            return None
+
+        positions: dict[str, float] = {}
+        if max_position_size is not None:
+            execution = getattr(self._strategy, "execution", None)
+            get_positions = getattr(execution, "get_positions", None)
+            if callable(get_positions):
+                try:
+                    positions = {
+                        str(k): float(v) for k, v in (get_positions() or {}).items()
+                    }
+                except Exception:  # noqa: BLE001 — 拿不到持仓不应阻断下单
+                    logger.warning(
+                        "前置风控读取持仓失败, 本笔跳过持仓上限校验",
+                        exc_info=True,
+                        extra=build_log_extra(phase="gateway"),
+                    )
+                    positions = {}
+
+        try:
+            return cast(
+                Optional[str],
+                check_strategy_limits(
+                    strategy_id=key,
+                    symbol=symbol,
+                    side=str(side),
+                    quantity=float(quantity),
+                    price=price,
+                    current_positions=positions,
+                    max_order_value=max_order_value,
+                    max_order_size=max_order_size,
+                    max_position_size=max_position_size,
+                ),
+            )
+        except Exception:  # noqa: BLE001 — 风控自身异常不应吞掉下单能力
+            logger.warning(
+                "前置风控校验异常, 本笔跳过策略级限额",
+                exc_info=True,
+                extra=build_log_extra(phase="gateway"),
+            )
+            return None
+
+    def _emit_risk_reject(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float | None,
+        owner_strategy_id: str,
+        reason: str,
+    ) -> None:
+        """把前置风控拒单以 `Rejected` 委托事件回吐给策略.
+
+        走 `on_order` + `on_reject` 而非错误回调: 与回测同口径——回测的风控拒单
+        经 `Event::ExecutionReport(Rejected)` 落到 `_emit_order_callback`, 策略靠
+        `on_reject` 感知。实盘若改用 `on_error`, 同一份策略代码就得写两套感知逻辑。
+        """
+        self._risk_reject_seq += 1
+        order = StrategyOrder(
+            id=f"RISKREJ-{self._risk_reject_seq}",
+            symbol=symbol,
+            status=OrderStatus.Rejected,
+            filled_quantity=0.0,
+            average_filled_price=None,
+            reject_reason=reason,
+            updated_at=0,
+            position_effect=None,
+            side=side,
+            quantity=float(quantity),
+            price=price,
+            owner_strategy_id=owner_strategy_id or "_default",
+        )
+        # broker_live 的事件桥直调 `on_order`(broker_event_bridge.py), 不走回测那套
+        # `_emit_order_callback` 的 Rejected→on_reject 级联, 故这里显式派发两者。
+        for callback_name in ("on_order", "on_reject"):
+            callback = getattr(self._strategy, callback_name, None)
+            if not callable(callback):
+                continue
+            try:
+                callback(order)
+            except Exception as exc:  # noqa: BLE001 — 用户回调异常不改变拒单结果
+                self._notify_strategy_error(self._strategy, exc, callback_name, order)
 
     def install(self) -> None:
         """No-op: install now happens via `strategy.execution = BrokerExecution(...)`.
@@ -421,6 +555,34 @@ class BrokerOrderSubmitter:
         owner_strategy_id = str(
             getattr(self._strategy, "_owner_strategy_id", "_default")
         )
+        # 前置风控: 在拆腿与报单之前。放这里而非拆腿之后, 是因为限额语义针对的是
+        # 用户提交的那一笔逻辑委托(名义/数量), 而非拆出的每条腿——按腿校验会让
+        # 一笔超限单因拆成两腿而各自"合规"从而整体漏过。
+        reject_reason = self._check_risk(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            owner_strategy_id=owner_strategy_id,
+        )
+        if reject_reason is not None:
+            record_reject(
+                strategy_id=owner_strategy_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                client_order_id="",
+                reason=reject_reason,
+            )
+            self._emit_risk_reject(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                owner_strategy_id=owner_strategy_id,
+                reason=reject_reason,
+            )
+            return OrderReceipt(group_id="", order_ids=(), legs=())
         order_legs = resolve_live_order_legs(
             trader_gateway=self._trader_gateway,
             capability=capability,

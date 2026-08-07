@@ -499,6 +499,35 @@ impl Engine {
         self.risk_budget_reset_daily = enabled;
     }
 
+    /// 设置实时会话的墙钟截止时刻(纳秒 UTC epoch); None 表示不限
+    ///
+    /// 到点后主循环**自行结束**, 不依赖行情事件到达 —— 这是真正的墙钟兜底。
+    /// 只影响 live 会话; 回测由数据长度决定终点, 不受此影响。
+    fn set_session_deadline_ns(&mut self, deadline_ns: Option<i64>) {
+        self.session_deadline_ns = deadline_ns.filter(|value| *value > 0);
+    }
+
+    /// 取一个外部信号注入端口(paper 模式)
+    ///
+    /// **必须在 `run()` 之前调用**: 取到的是 channel sender 的克隆, 之后即与引擎
+    /// 对象解耦, 可安全交给任意线程。会话开始后再调会撞
+    /// `RuntimeError: Already borrowed`(`run(&mut self)` 独占借用引擎)。
+    ///
+    /// 仅适用于 `trading_mode='paper'`: broker_live 下 `RealtimeExecutionClient`
+    /// 不报柜台, 经此注入的订单会过风控进 `active_orders` 但永不成交。
+    ///
+    /// :param strategy_id: 归属策略 id, 风控限额按它路由(缺省 ``_default``)
+    /// :return: SignalPort 实例
+    #[pyo3(signature = (strategy_id=None))]
+    fn signal_port(&self, strategy_id: Option<&str>) -> crate::signal_port::SignalPort {
+        let owner = strategy_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("_default")
+            .to_string();
+        crate::signal_port::SignalPort::new(self.event_manager.sender(), owner)
+    }
+
     /// 初始化回测引擎.
     ///
     /// :return: Engine 实例
@@ -546,6 +575,7 @@ impl Engine {
             portfolio_risk_budget_used: Decimal::ZERO,
             risk_budget_mode: "order_notional".to_string(),
             risk_budget_reset_daily: false,
+            session_deadline_ns: None,
             risk_budget_usage_day: None,
             strategy_max_order_value_limits: HashMap::new(),
             strategy_max_order_size_limits: HashMap::new(),

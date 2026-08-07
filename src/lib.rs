@@ -22,6 +22,7 @@ pub mod pipeline;
 mod portfolio;
 mod risk;
 pub mod settlement;
+pub mod signal_port;
 pub mod statistics;
 
 use analysis::{BacktestResult, ClosedTrade, LiquidationAudit, PerformanceMetrics, TradePnL};
@@ -47,6 +48,11 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = pyo3_log::init();
     m.add_class::<Bar>()?;
     m.add_function(wrap_pyfunction!(from_arrays, m)?)?;
+    // broker_live 报单前的策略级限额前置风控(见 docs/zh/meta/signal-ingestion-rfc.md 3.3)
+    m.add_function(wrap_pyfunction!(
+        risk::strategy_limits::check_strategy_limits,
+        m
+    )?)?;
     // B2′ 向量化列计算原语
     m.add_function(wrap_pyfunction!(vec_sma, m)?)?;
     m.add_function(wrap_pyfunction!(vec_ema, m)?)?;
@@ -61,6 +67,7 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(vec_cumsum, m)?)?;
     m.add_class::<Tick>()?;
     m.add_class::<DataFeed>()?;
+    m.add_class::<signal_port::SignalPort>()?;
     m.add_class::<BarAggregator>()?;
     m.add_class::<Engine>()?;
     m.add_class::<StrategyContext>()?;

@@ -210,6 +210,8 @@ class LiveRunner:
         risk_budget_mode: str = "order_notional",
         risk_budget_reset_daily: bool = False,
         on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+        signal_port_ready: Optional[Callable[[Any], None]] = None,
+        signal_source: Optional[Any] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -266,6 +268,10 @@ class LiveRunner:
         :param on_timer: Optional function-style on_timer callback.
         :param context: Optional context dict injected into function-style strategy.
         :param on_broker_event: Optional broker event observer callback.
+        :param signal_port_ready: Optional callback receiving a ``SignalPort`` right
+            before the engine loop starts. Use it to hand the port to an external
+            signal source (HTTP webhook / MQ consumer) running on its own thread.
+            Only meaningful for ``trading_mode='paper'``.
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
@@ -346,6 +352,9 @@ class LiveRunner:
         self.risk_budget_mode = risk_budget_mode
         self.risk_budget_reset_daily = bool(risk_budget_reset_daily)
         self.on_broker_event = on_broker_event
+        self.signal_port_ready = signal_port_ready
+        self.signal_source = signal_source
+        self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
         self._indicator_recorder_override: Optional[IndicatorSink] = None
         self._stream_on_event: Optional[Callable[[BacktestStreamEvent], None]] = None
@@ -522,6 +531,18 @@ class LiveRunner:
             )
             self._apply_bounded_event_limit(strategy_instance, bounded_total)
 
+        # 外部信号端口: 必须在 engine.run() 之前取。run() 会独占可变借用引擎对象,
+        # 之后再取会撞 "Already borrowed"(见 signal-ingestion-rfc.md 4.2.1)。
+        # 取到的是 channel sender 的克隆, 与引擎对象解耦, 可安全交给任意线程。
+        if self.signal_port_ready is not None:
+            self._deliver_signal_port(effective_strategy_id)
+
+        if self.signal_source is not None:
+            self._start_signal_source(
+                effective_strategy_id,
+                [strategy_instance, *slot_strategy_instances.values()],
+            )
+
         logger.info(
             "Running live strategy loop",
             extra=self._runner_log_extra(phase="live"),
@@ -542,6 +563,7 @@ class LiveRunner:
                 extra=self._runner_log_extra(phase="live"),
             )
         finally:
+            self._stop_signal_source()
             self._stop_broker_dispatcher()
             self._print_summary()
 
@@ -1031,7 +1053,128 @@ class LiveRunner:
         self._broker_order_submitter = self._broker_runtime.install_submitter(
             trader_gateway,
             strategy,
+            strategy_limits={
+                "max_order_value": dict(
+                    getattr(self, "strategy_max_order_value", {}) or {}
+                ),
+                "max_order_size": dict(
+                    getattr(self, "strategy_max_order_size", {}) or {}
+                ),
+                "max_position_size": dict(
+                    getattr(self, "strategy_max_position_size", {}) or {}
+                ),
+            },
         )
+
+    def _start_signal_source(
+        self, effective_strategy_id: str | None, strategies: list[Any]
+    ) -> None:
+        """按 trading_mode 选下单出口, 装好 dispatcher 并启动信号源.
+
+        两种模式的风控覆盖面不同(见 akquant/signal/__init__.py 的说明):
+        paper 经引擎注入走完整风控; broker_live 经柜台通道, 只有策略级三项限额
+        前置生效 —— 因为引擎的实盘执行器不向柜台报单。
+        """
+        from ..signal.dispatcher import SignalDispatcher
+        from ..signal.sinks import BrokerOrderSink, PaperOrderSink
+
+        source: Any = self.signal_source
+        if source is None:
+            return
+        try:
+            if self.trading_mode == "broker_live":
+                submitter = getattr(self, "_broker_order_submitter", None)
+                if submitter is None:
+                    raise RuntimeError(
+                        "broker_live 下 signal_source 需要已装配的柜台下单器; "
+                        "请检查 trader_broker 配置"
+                    )
+                sink: Any = BrokerOrderSink(submitter)
+            else:
+                port = cast(Any, self.engine).signal_port(effective_strategy_id)
+                sink = PaperOrderSink(port)
+
+            dispatcher = SignalDispatcher(
+                sink, on_result=getattr(source, "on_result", None)
+            )
+            self._signal_dispatcher = dispatcher
+            self._bind_signal_reject_hook(strategies, dispatcher)
+            source.bind(dispatcher.dispatch)
+            source.start()
+            logger.info(
+                "Signal source started (%s sink)",
+                sink.mode,
+                extra=self._runner_log_extra(phase="signal"),
+            )
+        except Exception as exc:  # noqa: BLE001 — 装配失败必须显式中止, 见下
+            logger.critical(
+                "信号源启动失败, 会话中止: %s",
+                exc,
+                exc_info=True,
+                extra=self._runner_log_extra(phase="signal"),
+            )
+            # 与 SignalPort 交付失败不同: 那只是少一个可选能力, 而信号源是本次
+            # 会话的**唯一订单来源**, 静默继续会跑出一个永不下单的空会话。
+            raise
+
+    def _bind_signal_reject_hook(self, strategies: list[Any], dispatcher: Any) -> None:
+        """把 dispatcher.handle_reject 串到各策略的 on_reject 前面.
+
+        用包装而非替换: 用户自己的 on_reject 仍要照常触发。
+        """
+        for strategy in strategies:
+            if strategy is None:
+                continue
+            original = getattr(strategy, "on_reject", None)
+
+            def wrapped(order: Any, _original: Any = original) -> None:
+                dispatcher.handle_reject(order)
+                if callable(_original):
+                    _original(order)
+
+            setattr(strategy, "on_reject", wrapped)
+
+    def _stop_signal_source(self) -> None:
+        """停掉信号源(会话结束时调用, 异常隔离)."""
+        source = self.signal_source
+        if source is None:
+            return
+        try:
+            source.stop()
+        except Exception:  # noqa: BLE001 — 收尾失败不改变会话结果
+            logger.warning(
+                "信号源停止时抛出异常",
+                exc_info=True,
+                extra=self._runner_log_extra(phase="signal"),
+            )
+
+    def _deliver_signal_port(self, effective_strategy_id: str | None) -> None:
+        """把 SignalPort 交给调用方(异常隔离: 交付失败不应中断会话启动).
+
+        broker_live 下额外告警: 该模式的 `RealtimeExecutionClient` 不报柜台,
+        经端口注入的订单会过风控进 active_orders 却永不成交, 静默失效风险高。
+        """
+        callback = self.signal_port_ready
+        if callback is None:
+            return
+        if self.trading_mode == "broker_live":
+            logger.warning(
+                "signal_port_ready 在 trading_mode='broker_live' 下不能用于真实下单: "
+                "引擎实盘执行器不报柜台, 经 SignalPort 注入的订单会通过风控并进入"
+                "活动委托, 但既不撮合也不到柜台。broker_live 的外部信号请走 "
+                "broker 下单通道",
+                extra=self._runner_log_extra(phase="live"),
+            )
+        try:
+            port = cast(Any, self.engine).signal_port(effective_strategy_id)
+            callback(port)
+        except Exception as exc:  # noqa: BLE001 — 交付失败不拖垮会话
+            logger.error(
+                "交付 SignalPort 失败: %s",
+                exc,
+                exc_info=True,
+                extra=self._runner_log_extra(phase="live"),
+            )
 
     def _baseline_broker_state(self, trader_gateway: Any) -> None:
         """就绪激活: 先丢弃待派发成交, 再急切 seed 各 slot 持仓, 最后灌 dedup 基线.
@@ -1661,7 +1804,19 @@ class LiveRunner:
 
         start_time = time.time()
 
-        # Patch on_bar
+        # 墙钟兜底(主路径): 把截止时刻下沉到引擎的等待循环, 使会话在行情停摆时
+        # 也能到点结束。此前只有下面的回调 patch, 而它在无行情时永不触发 ——
+        # 行情一停就挂死(见 docs/zh/meta/signal-ingestion-rfc.md 4.6)。
+        set_deadline = getattr(self.engine, "set_session_deadline_ns", None)
+        if callable(set_deadline):
+            set_deadline(int((start_time + duration_sec) * 1_000_000_000))
+        else:
+            logger.warning(
+                "引擎不支持 set_session_deadline_ns, duration 在行情停摆时不会生效",
+                extra=self._runner_log_extra(phase="live"),
+            )
+
+        # 回调 patch(保留): 有行情时能更早地在事件边界处停下, 与上面互补。
         original_on_bar = strategy.on_bar
 
         def wrapped_on_bar(bar: Bar) -> None:

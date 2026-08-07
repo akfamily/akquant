@@ -75,6 +75,8 @@ def run_live(
     risk_budget_mode: str = "order_notional",
     risk_budget_reset_daily: bool = False,
     on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+    signal_port_ready: Optional[Callable[[Any], None]] = None,
+    signal_source: Optional[Any] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
 ) -> None:
@@ -103,6 +105,59 @@ def run_live(
         is not ready within ``broker_ready_timeout``. Only polled in
         ``trading_mode='broker_live'``; paper runs are unaffected. Pass False to
         restore the pre-0.3.25 behaviour of warning and continuing.
+    :param signal_port_ready: Optional callback that receives a ``SignalPort`` just
+        before the engine loop starts. Hand the port to an external signal source
+        (HTTP webhook / MQ consumer) running on its own thread to inject orders
+        without going through strategy callbacks::
+
+            def bind(port):
+                threading.Thread(target=consume, args=(port,), daemon=True).start()
+
+            run_live(..., trading_mode="paper", signal_port_ready=bind)
+
+        Only meaningful for ``trading_mode='paper'``: under ``broker_live`` the
+        engine's realtime executor does not forward orders to the broker, so
+        injected orders pass risk checks and sit in active orders forever. A
+        warning is logged if used there.
+
+        **The callback runs synchronously right before the engine loop starts.**
+        Once it returns, the main thread enters the Rust loop and holds the GIL
+        for long stretches. If you spawn a thread here, wait until it has
+        actually started before returning — otherwise it may never get
+        scheduled::
+
+            def bind(port):
+                running = threading.Event()
+
+                def worker():
+                    running.set()
+                    ...  # port.submit(...)
+
+                threading.Thread(target=worker, daemon=True).start()
+                running.wait(timeout=5.0)   # 关键: 确认线程已就绪
+
+        Also note an injected order only fills when a **subsequent** market
+        event arrives — an order injected after the last bar stays ``New``.
+    :param signal_source: Optional :class:`~akquant.signal.SignalSource` feeding
+        external trading instructions into the session. Its lifecycle is managed
+        here: ``bind`` → ``start`` (before the engine loop) → ``stop`` (on exit).
+        Orders are created directly from signals, **not** through strategy
+        callbacks::
+
+            from akquant.signal import QueueSignalSource, Signal
+
+            source = QueueSignalSource()
+            source.put(Signal(signal_id="s-1", symbol="000001.SZ",
+                              action="buy", quantity=100, price=10.5))
+            run_live(..., trading_mode="paper", signal_source=source)
+
+        Risk coverage differs by mode and this is an engine-architecture fact,
+        not a setting: ``paper`` injects through the engine event channel and
+        gets the **full** risk pipeline; ``broker_live`` goes through the broker
+        channel where only the three strategy-level limits (order value / order
+        size / position size) are enforced up front. If the source fails to
+        start the session aborts — it is the only order origin, so continuing
+        would silently produce a session that never trades.
     :param indicator_recorder: Optional public :class:`IndicatorSink` to collect
         indicator points; defaults to a streaming sink when ``on_event`` is set.
     :param on_event: Optional stream event callback for realtime indicator flow.
@@ -162,6 +217,8 @@ def run_live(
         risk_budget_mode=risk_budget_mode,
         risk_budget_reset_daily=risk_budget_reset_daily,
         on_broker_event=on_broker_event,
+        signal_port_ready=signal_port_ready,
+        signal_source=signal_source,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event

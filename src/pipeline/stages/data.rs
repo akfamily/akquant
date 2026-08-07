@@ -194,8 +194,21 @@ impl Processor for DataProcessor {
         py: Python<'_>,
         _strategy: &Bound<'_, PyAny>,
     ) -> PyResult<ProcessorResult> {
+        // 墙钟兜底: 到点即结束, 不依赖行情事件到达。放在 feed 等待**之前**,
+        // 因为等待本身可能长达 1 秒, 而行情停摆时 `Wait` 会无限循环下去。
+        if let Some(deadline) = engine.session_deadline_ns
+            && chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) >= deadline
+        {
+            self.finalize_current_timestamp(engine, py);
+            return Ok(ProcessorResult::Break);
+        }
+
         let next_timer_time = engine.timers.peek().map(|t| t.timestamp);
-        let action = engine.state.feed.next_action(next_timer_time, py);
+        // 把内部事件通道的接收端交给 feed 一起等: 外部线程注入的 OrderRequest
+        // 可立刻打断行情等待(否则最坏要等满 1 秒 timeout)。ChannelProcessor 是
+        // pipeline 首位, Wait→Loop 后即被它排空。
+        let wakeup = engine.event_manager.receiver();
+        let action = engine.state.feed.next_action(next_timer_time, py, wakeup);
 
         match action {
             FeedAction::Wait => Ok(ProcessorResult::Loop),

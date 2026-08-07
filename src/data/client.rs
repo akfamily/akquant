@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use rust_decimal::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
-use std::sync::mpsc;
+use crossbeam_channel::{Receiver, Select, Sender, unbounded};
 use std::time::Duration;
 
 #[inline]
@@ -69,6 +69,38 @@ pub trait DataClient: Send {
     fn wait_peek(&mut self, _timeout: Duration) -> Option<i64> {
         self.peek_timestamp()
     }
+
+    /// 阻塞等待行情事件, 但可被 `wakeup` 通道打断 (用于实时模式)
+    ///
+    /// `wakeup` 通常是引擎内部事件通道的接收端: 外部线程注入
+    /// `Event::OrderRequest` 后, 本方法立即返回 [`WaitOutcome::Wakeup`],
+    /// 使主循环不必等满 timeout 就能回到 `ChannelProcessor` 处理该指令。
+    ///
+    /// **不消费** `wakeup` 上的事件——只探测就绪, 消费仍由 `ChannelProcessor` 负责。
+    ///
+    /// 默认实现忽略 `wakeup`, 退化为 [`DataClient::wait_peek`]; 只有实时数据源
+    /// 需要覆盖它。
+    fn wait_peek_with_wakeup(
+        &mut self,
+        timeout: Duration,
+        _wakeup: Option<&Receiver<Event>>,
+    ) -> WaitOutcome {
+        match self.wait_peek(timeout) {
+            Some(ts) => WaitOutcome::Event(ts),
+            None => WaitOutcome::Timeout,
+        }
+    }
+}
+
+/// [`DataClient::wait_peek_with_wakeup`] 的返回:等到了什么。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitOutcome {
+    /// 行情通道有事件, 携带其时间戳
+    Event(i64),
+    /// 唤醒通道就绪(有待处理的引擎内部事件, 如外部注入的订单请求)
+    Wakeup,
+    /// 超时, 两个通道都没动静
+    Timeout,
 }
 
 /// Simulated Data Client (In-Memory).
@@ -319,15 +351,20 @@ impl DataClient for CsvDataClient {
 
 /// Realtime Data Client (Channel)
 /// 适用于 CTP 等实时数据推送场景
+///
+/// 用 crossbeam 而非 `std::sync::mpsc`: ① 其 `Sender` 是 `Sync`, 故 `DataFeed`
+/// 不必再用 `Arc<Mutex<Sender>>` 包一层锁; ② 可用 `Select` 与引擎内部事件通道
+/// (`EventManager`, 同为 crossbeam)一起多路等待, 让外部注入的指令能立刻打断
+/// 行情等待(见 [`DataClient::wait_peek_with_wakeup`])。
 pub struct RealtimeDataClient {
-    rx: mpsc::Receiver<Event>,
-    sender: mpsc::Sender<Event>, // Keep sender to clone for external use
+    rx: Receiver<Event>,
+    sender: Sender<Event>, // Keep sender to clone for external use
     current: Option<Event>,
 }
 
 impl RealtimeDataClient {
     pub fn new() -> Self {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = unbounded();
         Self {
             rx,
             sender: tx,
@@ -335,7 +372,7 @@ impl RealtimeDataClient {
         }
     }
 
-    pub fn get_sender(&self) -> mpsc::Sender<Event> {
+    pub fn get_sender(&self) -> Sender<Event> {
         self.sender.clone()
     }
 }
@@ -393,6 +430,50 @@ impl DataClient for RealtimeDataClient {
                 self.peek_timestamp()
             }
             Err(_) => None,
+        }
+    }
+
+    fn wait_peek_with_wakeup(
+        &mut self,
+        timeout: Duration,
+        wakeup: Option<&Receiver<Event>>,
+    ) -> WaitOutcome {
+        if self.current.is_some() {
+            return match self.peek_timestamp() {
+                Some(ts) => WaitOutcome::Event(ts),
+                None => WaitOutcome::Timeout,
+            };
+        }
+        let Some(wakeup) = wakeup else {
+            return match self.wait_peek(timeout) {
+                Some(ts) => WaitOutcome::Event(ts),
+                None => WaitOutcome::Timeout,
+            };
+        };
+        // 先探一次唤醒通道: 指令可能在上一轮循环末尾就已入队, 此时不该再去等行情。
+        if !wakeup.is_empty() {
+            return WaitOutcome::Wakeup;
+        }
+
+        let mut sel = Select::new();
+        let market_idx = sel.recv(&self.rx);
+        let wakeup_idx = sel.recv(wakeup);
+        // `ready_timeout` 只探测就绪、不取走事件 —— 唤醒通道的事件必须留给
+        // ChannelProcessor 消费。行情侧则由下面的 try_recv 立即取走。
+        match sel.ready_timeout(timeout) {
+            Ok(idx) if idx == market_idx => match self.rx.try_recv() {
+                Ok(event) => {
+                    self.current = Some(event);
+                    match self.peek_timestamp() {
+                        Some(ts) => WaitOutcome::Event(ts),
+                        None => WaitOutcome::Timeout,
+                    }
+                }
+                Err(_) => WaitOutcome::Timeout,
+            },
+            Ok(idx) if idx == wakeup_idx => WaitOutcome::Wakeup,
+            Ok(_) => WaitOutcome::Timeout,
+            Err(_) => WaitOutcome::Timeout,
         }
     }
 }

@@ -25,6 +25,14 @@ impl EventManager {
         self.tx.clone()
     }
 
+    /// 借出接收端 (用于与行情通道一起 `Select` 多路等待)
+    ///
+    /// 只用于**探测就绪**, 不在此消费事件——消费仍由 `ChannelProcessor` 负责,
+    /// 否则事件会被吞掉。
+    pub fn receiver(&self) -> Option<&Receiver<Event>> {
+        self.rx.as_ref()
+    }
+
     /// 尝试接收事件 (非阻塞)
     pub fn try_recv(&self) -> Option<Event> {
         if let Some(rx) = &self.rx {

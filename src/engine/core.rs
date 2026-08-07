@@ -114,6 +114,13 @@ pub struct Engine {
     pub(crate) portfolio_risk_budget_used: Decimal,
     pub(crate) risk_budget_mode: String,
     pub(crate) risk_budget_reset_daily: bool,
+    /// 实时会话的墙钟截止时刻(纳秒, UTC epoch)。到点则主循环自行结束。
+    ///
+    /// 存在的原因: live 循环在行情通道空时会一直 `FeedAction::Wait`, 而
+    /// `duration` 此前是靠 patch `on_bar`/`on_tick` 抛 `KeyboardInterrupt` 实现的
+    /// —— 行情一停就再也不被调用, 于是会话挂死。把时限下沉到等待循环本身才是
+    /// 真正的墙钟兜底(见 docs/zh/meta/signal-ingestion-rfc.md 4.6)。
+    pub(crate) session_deadline_ns: Option<i64>,
     pub(crate) risk_budget_usage_day: Option<NaiveDate>,
     pub(crate) strategy_max_order_value_limits: HashMap<String, Decimal>,
     pub(crate) strategy_max_order_size_limits: HashMap<String, Decimal>,
@@ -459,27 +466,23 @@ impl Engine {
                 .expect("last_prices 读锁被污染")
                 .get(&order.symbol)
                 .copied()
-        }?;
-        let value = price * order.quantity;
-        if value > *max_value {
-            return Some(format!(
-                "Risk: Strategy {} order value {} exceeds strategy limit {}",
-                strategy_id, value, max_value
-            ));
-        }
-        None
+        };
+        crate::risk::strategy_limits::exceeds_order_value(
+            &strategy_id,
+            order.quantity,
+            price,
+            *max_value,
+        )
     }
 
     pub(crate) fn check_strategy_order_size_limit(&self, order: &Order) -> Option<String> {
         let strategy_id = Self::normalized_order_strategy_id(order)?;
         let max_size = self.strategy_max_order_size_limits.get(&strategy_id)?;
-        if order.quantity > *max_size {
-            return Some(format!(
-                "Risk: Strategy {} order quantity {} exceeds strategy limit {}",
-                strategy_id, order.quantity, max_size
-            ));
-        }
-        None
+        crate::risk::strategy_limits::exceeds_order_size(
+            &strategy_id,
+            order.quantity,
+            *max_size,
+        )
     }
 
     pub(crate) fn check_strategy_position_size_limit(&self, order: &Order) -> Option<String> {
@@ -493,14 +496,12 @@ impl Engine {
             OrderSide::Buy => order.quantity,
             OrderSide::Sell => -order.quantity,
         };
-        let projected_qty = current_qty + delta;
-        if projected_qty.abs() > *max_size {
-            return Some(format!(
-                "Risk: Strategy {} projected position {} exceeds strategy position limit {}",
-                strategy_id, projected_qty, max_size
-            ));
-        }
-        None
+        crate::risk::strategy_limits::exceeds_position_size(
+            &strategy_id,
+            current_qty,
+            delta,
+            *max_size,
+        )
     }
 
     pub(crate) fn apply_strategy_trade_position(&mut self, trade: &Trade) {
