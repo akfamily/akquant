@@ -165,7 +165,7 @@ mod tests {
             .collect();
         let f: Vec<f64> = (0..n).map(|i| 10.0 + i as f64).collect();
         let syms: Vec<String> = (0..n).map(|_| "X".to_string()).collect();
-        let mut df = DataFrame::new(vec![
+        let mut df = DataFrame::new_infer_height(vec![
             Series::new("timestamp".into(), ts).into(),
             Series::new("open".into(), f.clone()).into(),
             Series::new("high".into(), f.clone()).into(),

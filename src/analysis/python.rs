@@ -109,7 +109,7 @@ impl BacktestResult {
                 .collect::<Vec<_>>(),
         );
 
-        let mut df = DataFrame::new(vec![
+        let mut df = DataFrame::new_infer_height(vec![
             s_symbol.into(),
             s_entry_time.into(),
             s_exit_time.into(),
@@ -183,7 +183,7 @@ impl BacktestResult {
         let s_upnl = Series::new("unrealized_pnl".into(), unrealized_pnls);
         let s_entry_price = Series::new("entry_price".into(), entry_prices);
 
-        let mut df = DataFrame::new(vec![
+        let mut df = DataFrame::new_infer_height(vec![
             s_symbol.into(),
             s_date.into(),
             s_long.into(),
@@ -276,7 +276,7 @@ impl BacktestResult {
                 .collect::<Vec<_>>(),
         );
 
-        let mut df = DataFrame::new(vec![
+        let mut df = DataFrame::new_infer_height(vec![
             s_id.into(),
             s_order_id.into(),
             s_symbol.into(),
