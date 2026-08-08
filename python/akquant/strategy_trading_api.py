@@ -390,7 +390,12 @@ def _submit_buy_side_orders(
         return []
 
     if position_effect == "auto":
-        current_position = float(strategy.ctx.get_position(symbol))
+        # 用可平持仓而非结算仓：同一 on_bar 内已提交未成交的平仓单必须扣除，
+        # 否则"先平后开"的反手第二腿会被误判成平仓（#361）。这里刻意不投影在途
+        # 开仓单，偏向判为开仓即偏向多预留保证金（与 vn.py / RQAlpha 一致）。
+        current_position = _position_from_execution(
+            strategy, symbol, "get_closable_position"
+        )
         legs = _resolve_auto_position_effect_legs(
             "buy", current_position, float(quantity), reduce_only
         )
@@ -556,7 +561,10 @@ def _submit_sell_side_orders(
         return []
 
     if position_effect == "auto":
-        current_position = float(strategy.ctx.get_position(symbol))
+        # 与 buy 侧对称：可平持仓已扣除在途平仓单，避免反手第二腿误判（#361）。
+        current_position = _position_from_execution(
+            strategy, symbol, "get_closable_position"
+        )
         legs = _resolve_auto_position_effect_legs(
             "sell", current_position, float(quantity), reduce_only
         )
@@ -1046,6 +1054,21 @@ def order_target(
     return _target_to_orders(strategy, symbol, target, price, **kwargs)
 
 
+def _position_from_execution(strategy: Any, symbol: str, method: str) -> float:
+    """按名取执行后端的持仓口径，缺失则退回 ``get_position``.
+
+    ``get_closable_position`` / ``get_projected_position`` 是 #361 新增到
+    :class:`ExecutionBackend` 协议上的方法。协议是公开且 ``runtime_checkable``
+    的，第三方自定义后端不会有这两个方法，故此处降级而非抛错——代价是这类后端
+    维持旧行为（结算仓口径），需自行实现新方法才能获得修复。
+    """
+    execution = strategy.execution
+    getter = getattr(execution, method, None)
+    if callable(getter):
+        return float(getter(symbol))
+    return float(execution.get_position(symbol))
+
+
 def _target_to_orders(
     strategy: Any,
     symbol: Optional[str] = None,
@@ -1058,7 +1081,11 @@ def _target_to_orders(
     if target_qty is None:
         raise ValueError("target requires a target quantity (目标持仓数量)")
     symbol = resolve_symbol(strategy, symbol)
-    current_qty = float(strategy.execution.get_position(symbol))
+    # 目标仓位问的是"仓位最终会落在哪"，故按投影持仓（含全部在途单）算 delta。
+    # 用结算仓会让同一 on_bar 内的连续调用按同一基准重复下单——例如先
+    # close_position 再 order_target_percent，会在全平单之外再补一笔卖单造成
+    # 超卖（与 #361 同源，均是"结算仓不含在途单"）。
+    current_qty = _position_from_execution(strategy, symbol, "get_projected_position")
     delta_qty = target_qty - current_qty
 
     if round_to_lot:
@@ -1595,6 +1622,20 @@ def _sim_get_available_position(strategy: Any, symbol: Optional[str] = None) -> 
     if strategy.ctx is None:
         return 0.0
     return float(strategy.ctx.get_available_position(resolve_symbol(strategy, symbol)))
+
+
+def _sim_get_closable_position(strategy: Any, symbol: Optional[str] = None) -> float:
+    """可平持仓：结算仓 − 在途平仓/减仓单占用（auto 拆腿用，见 #361）."""
+    if strategy.ctx is None:
+        return 0.0
+    return float(strategy.ctx.get_closable_position(resolve_symbol(strategy, symbol)))
+
+
+def _sim_get_projected_position(strategy: Any, symbol: Optional[str] = None) -> float:
+    """投影持仓：结算仓 + 全部在途单效果（目标仓位算 delta 用）."""
+    if strategy.ctx is None:
+        return 0.0
+    return float(strategy.ctx.get_projected_position(resolve_symbol(strategy, symbol)))
 
 
 def _sim_get_positions(strategy: Any) -> Dict[str, float]:

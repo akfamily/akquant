@@ -53,7 +53,12 @@ impl Processor for StrategyProcessor {
             engine.ensure_strategy_slot_exists();
             engine.ensure_strategy_context_capacity();
             let slot_count = engine.strategy_slots.len();
-            let active_orders = Arc::new(engine.state.order_manager.active_orders.clone());
+            // 本周期内已知的挂单:引擎既有 active_orders,加上**前面 slot 刚提交**
+            // 的单。后者要在 slot 之间累加,否则多策略下 slot 1 看不到 slot 0 本
+            // 周期的平仓单——而 ctx.positions 是账户级全局,两边口径必须一致,
+            // 否则 auto 拆腿/目标仓位的投影会漏掉别的策略的减仓意图。
+            let mut cycle_orders = engine.state.order_manager.active_orders.clone();
+            let mut active_orders = Arc::new(cycle_orders.clone());
             let step_trades = engine.state.order_manager.current_step_trades.clone();
             let step_rejected_orders = engine
                 .state
@@ -106,6 +111,20 @@ impl Processor for StrategyProcessor {
                             .event_manager
                             .send(Event::ExecutionReport(cancelled_order, None));
                     }
+                }
+                // 只有多策略才需要在 slot 间累加(单策略下无后续 slot 会读它),
+                // 避免为单策略回测多付一次 Vec 克隆。
+                //
+                // 取本 slot Context 的 `orders` 而非上面的 `new_orders`:回测下
+                // Context 带 `event_tx`,下单直接进事件通道,`orders_arc` 恒空,
+                // `new_orders` 因此取不到东西;而 `StrategyContext::buy/sell` 无论
+                // 走哪条路都会先 push 进 `orders`(每周期由 update_state 清空)。
+                if slot_count > 1 {
+                    if let Some(Some(slot_ctx)) = engine.strategy_contexts.get(slot_index) {
+                        let ctx_ref = slot_ctx.borrow(py);
+                        cycle_orders.extend(ctx_ref.orders.iter().cloned());
+                    }
+                    active_orders = Arc::new(cycle_orders.clone());
                 }
                 for order in new_orders {
                     let _ = engine.event_manager.send(Event::OrderRequest(order));

@@ -1251,8 +1251,16 @@ class RiskConfig:
 
 *   `metrics_df`: 绩效指标表格 (Sharpe, Drawdown 等)。其中交易相关主字段包括 `closed_trade_count`、`execution_count`、`open_position_count`。
 *   `trades_df`: 所有平仓交易记录表格。
-*   `orders_df`: 所有委托记录表格。
-*   `executions_df`: 所有成交流水表格（优先使用 Rust IPC/dict 快速导出）。
+*   `orders_df`: 所有委托记录表格。含 `position_effect`（开平语义）、`reduce_only`、`created_at_iso` / `updated_at_iso`（UTC ISO 串）。
+*   `executions_df`: 所有成交流水表格（优先使用 Rust IPC/dict 快速导出）。含 `position_effect` 与 `timestamp_iso`。
+
+!!! tip "开平语义（`position_effect`）"
+    取值为 `auto` / `open` / `close` / `close_today` / `close_yesterday`，与下单
+    入参**同一套词表**，可直接用于筛选（如 `df[df.position_effect == "close_today"]`）。
+
+    `buy()` / `sell()` 在默认的 `position_effect="auto"` 下会自动拆开平腿：反手
+    时先出 `close` 腿再出 `open` 腿。这两列就是查看拆腿结果的地方——委托表在
+    下单时即可见，成交表在成交后可见。
 *   `positions_df`: 每日持仓详情。
 *   `equity_curve`: 权益曲线 (List[Tuple[timestamp, value]])。
 *   `cash_curve`: 现金曲线 (List[Tuple[timestamp, value]])。

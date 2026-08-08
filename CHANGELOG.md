@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`orders_df` / `executions_df` 现在导出开平语义**。#361 争的就是 `position_effect`，而这两张最常用的表原先都不导出它，使用者只能自行遍历 `Order` / `Trade` 对象才看得到。现在：
+
+    - `executions_df` 新增 `position_effect`、`timestamp_iso`
+    - `orders_df` 新增 `position_effect`、`reduce_only`、`created_at_iso`、`updated_at_iso`
+
+    委托表比成交表更早暴露拆腿结果——`auto` 拆腿在下单时就定了，无需等成交。`reduce_only` 与 `position_effect` 成对：为真时不产生开仓腿，只看 effect 会看不懂为什么少了一条腿。ISO 列是 UTC 归一的稳定字符串，与已本地化的 `timestamp` / `created_at` 并存，便于跨系统对账与导出。
+
+    导出词表与下单**入参同一套**（`auto` / `open` / `close` / `close_today` / `close_yesterday`），可直接用于筛选。这一点是刻意的：若沿用仓库既有的 `format!("{:?}").to_lowercase()` 惯例，`CloseToday` 会导出成 `closetoday`，而 API 接受的是 `close_today`，`df[df.position_effect == "close_today"]` 会**静默匹配不到**。`status` 那类只读列可以这么做，但 `position_effect` 是可回传值，入参与导出必须同词表，故新增 `PositionEffect::as_canonical_str()` 作为唯一词表源。
+
+- `StrategyContext` 新增 `get_closable_position(symbol)` 与 `get_projected_position(symbol)`，分别是「还能平多少」与「仓位将落在哪」两个口径，供开平推断与目标仓位使用（详见 Fixed 中 #361 条目）。同时 `ExecutionBackend` 协议新增这两个方法；协议是公开且 `runtime_checkable` 的，故调用点按名取值、缺失则退回 `get_position()`，第三方自定义后端不会因此崩溃（代价是维持旧行为，需自行实现新方法才能获得修复）。`broker_live` 下这两个方法退回结算仓：柜台挂单快照 `UnifiedOrderSnapshot` 只有 `position_effect` 与 `filled_quantity`，没有 `side` 和 `quantity`，算不出剩余量也判不了方向。
+
 - **实盘 `subscribe()` 现在真正下发到行情网关**。`MarketGateway` 协议一直定义着 `subscribe(symbols)`，各内置网关（`ctp` / `replay` / `miniqmt` / `ptrade`）也都实现了它，但 `LiveRunner` 从不调用——订阅链路只接了一半：`instruments` 进得去，`Strategy.subscribe()` 出不来。此前用户在 `on_start` 里 `subscribe()` 一个标的只会拿到一条 warning。现在 `run_live` 会给主策略与各 slot 策略装上转发器，`subscribe()` 调用即刻把订阅集下发到行情网关。
 
     下发的是 **`instruments` 与全部 slot 的 `_subscriptions` 的并集**：各网关的 `subscribe()` 是整集替换语义（`self.symbols = list(symbols)`），只下发增量会把其余标的静默退订。转发在 `subscribe()` 发生的当刻进行而非装配期——行情网关先于策略 `on_start` 启动，装配时还不知道策略要订什么。
@@ -108,6 +119,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **回测数据列表改为逐元素类型校验（破坏性）**：`run_backtest(data=[...])` 此前只检查首元素类型，`[Bar, "garbage"]` 会漏到 Rust 层抛出难以定位的错误。现在在 Python 层逐元素校验，抛 `TypeError` 并指名位置索引与实际类型；空列表抛 `ValueError`。
 
 ### Fixed
+- 修复同一根 bar 内「先平后开」反手时开平语义标错的问题（#361）。`buy()` / `sell()` 在默认 `position_effect="auto"` 下按**结算持仓**拆开平腿，而结算持仓不含同周期已提交未成交的平仓单——`close_position()` 紧跟 `buy()` 的写法里，第二笔看到的仓位仍是反向的，于是被判成平仓：反手两笔都标 `close`，本该是 `close + open`。做空方向不暴露此问题只是因为 `short()` / `cover()` 把 `position_effect` 硬编码为 `open` / `close`，从不走 auto 推断。
+
+    不止是标签错。落账层（`order_manager`）只看 `side` 无条件加减，所以最终净仓与净值曲线一直是对的（这也是它长期未被发现的原因）；但风控与保证金层按 `position_effect` 投影，那条假 `close` 腿的仓位变化算作 0，**保证金需求为 0**——一笔实质开仓的单子零保证金过闸。同时 `is_reduce_first_order` 会把它排到开仓单之前参与 reduce-first 撮合排序。
+
+    现改为按**可平仓**拆腿：结算持仓扣除在途平仓/减仓单占用（状态取 `New` / `Submitted` / `PartiallyFilled`，按 `quantity - filled_quantity` 折算，并对平仓量封顶）。刻意**不**投影在途开仓单——在途开仓单未必成交，不投影它使拆腿偏向判为开仓，即偏向多预留保证金（安全侧）。此口径与 vn.py `OffsetConverter`、RQAlpha `closable` 一致。`__engine_rule_version__` 相应升至 `1.3.7`。
+
+- 修复 `order_target*` / `close_position()` 在同一根 bar 内重复下单造成超卖的问题（与 #361 同源）。它们同样按结算持仓算差额，先 `close_position()` 再 `order_target_percent()` 会在全平单之外再补一笔同向单——卖出量超过持仓。现改为按**投影持仓**（结算持仓叠加**全部**在途单的预期效果）算差额：目标仓位问的是「仓位最终落在哪」，开仓与平仓在途单都要计入，否则目标不收敛。同一根 bar 内重复调用 `close_position()` 现在是幂等的。
+
+    与 `auto` 拆腿只扣在途平仓单的取舍不同，两者问的问题不同，故分为 `get_closable_position()` 与 `get_projected_position()` 两个口径，共用同一投影核心。
+
+- 修复多策略下同周期跨策略挂单不可见的问题。`ctx.positions` 是账户级全局，但 `active_orders` 在 slot 循环**之前**只快照一次，slot 0 本周期提交的单要到循环体末尾才发给事件管理器，slot 1 因此看不到——两边口径不一致会让开平推断漏掉别的策略的减仓意图。现在 slot 之间累加已提交单（仅多策略时累加，单策略不多付克隆开销）。
+
+- 修复 `examples/textbook/ch07_futures.py` 从不触发反手分支的问题：`warmup_period = 10` 少于 `get_history(count=ma_window + 1)` 要求的 11 根，返回数组首位为 `NaN`，示例又取 `closes[:-1][-10:]` 正好圈入该 `NaN`，均线恒为 `NaN`、比较恒为假、信号永久锁在初值。同时修正期末权益取错 metrics 键的问题：`end_portfolio_value` 从不存在，正确键是 `end_market_value`，原写法有 `if key in index else 0.0` 兜底，故静默打印 `0.00` 而不报错。
+
+- 修复 `executions_df` 的 Python 兜底路径与 Rust 快路径 `side` 列取值不一致的问题：兜底路径用 `str(t.side).lower()` 产出 `orderside.sell`，而快路径产出 `sell`——同一列的值随走哪条路而变。
+
 - 修复 `broker_live` 下 `buy()` / `sell()` 缺省参数不解析的问题：`quantity=None` 原先直接透传到拆腿逻辑并以 `TypeError` 崩掉——等价于 `set_sizer()` 在实盘静默失效；`symbol=None` 原先会把 `None` 送进柜台请求。现按回测同口径解析：`symbol` 取当前 bar/tick，买入量走 `strategy.sizer`，卖出量全平持仓。另外解析后 `quantity <= 0` 时不再向柜台发 0 手单，改为返回空回执（与回测一致）。一处有意偏离：卖出全平在实盘取**可用**持仓而非总持仓，因为 A 股 T+1 下按总量报单会被柜台整单拒绝，取可用量退化为部分卖出。
 - 修复 `broker_live` 下 `get_instrument()` / `get_instruments()` / `get_instrument_field()` 对**任何**标的都抛 `KeyError` 的问题：`run_live` 原先从不调用 `_set_instrument_snapshots`，策略侧快照字典恒为空。现由 `LiveRunner` 从传入的 `Instrument` 列表灌入。受实盘入口形态限制，`Instrument` 仅能回读 9 个字段，`option_type` / `strike_price` / `expiry_date` / `underlying_symbol` / `settlement_*` 在实盘快照中为 `None`（回测不受影响，仍由 `InstrumentConfig` 灌入完整字段）。
 - 修复 `client_order_id` 跨会话撞号的问题：原格式 `{broker}-coid-{序号}` 的序号每次 `run_live` 从 0 起，重启后第一笔单又是 `...-coid-1`，与柜台里同名历史委托冲突——把 `client_order_id` 当幂等键的柜台会直接拒单（实测中间件返回 409 Conflict）。现格式为 `{broker}-{8 位会话标记}-{会话内序号}`，会话标记每次启动重新生成，跨重启与多进程并行均不撞号。

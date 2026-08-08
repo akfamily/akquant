@@ -5297,6 +5297,9 @@ def test_strategy_buy_auto_splits_cover_then_open() -> None:
     strategy = MyStrategy()
     ctx = MagicMock(spec=StrategyContext)
     ctx.get_position.return_value = -2.0
+    # auto 拆腿改读可平持仓（已扣除同 bar 在途平仓单，见 #361）；此处无在途单，
+    # 可平量与结算仓一致。
+    ctx.get_closable_position.return_value = -2.0
     ctx.cash = 100000.0
     ctx.buy.side_effect = ["oid-close", "oid-open"]
     strategy.ctx = ctx
@@ -5396,6 +5399,11 @@ def test_strategy_rebalance_positions_supports_signed_targets() -> None:
     ctx.get_position.side_effect = lambda symbol: {"AAA": 100.0, "BBB": 0.0}.get(
         symbol, 0.0
     )
+    # 目标仓位改读投影持仓（含在途单，见 #361）；此处无在途单，与结算仓一致。
+    ctx.get_projected_position.side_effect = lambda symbol: {
+        "AAA": 100.0,
+        "BBB": 0.0,
+    }.get(symbol, 0.0)
     ctx.risk_config = SimpleNamespace(account_mode="margin", enable_short_sell=True)
     strategy.ctx = ctx
 
@@ -5536,6 +5544,11 @@ def test_strategy_rebalance_positions_missing_price_mode_fail() -> None:
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
     )
+    # 目标仓位改读投影持仓（含在途单，见 #361）；此处无在途单，与结算仓一致。
+    ctx.get_projected_position.side_effect = lambda symbol: {
+        "AAA": 10.0,
+        "BBB": 0.0,
+    }.get(symbol, 0.0)
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
     strategy.ctx = ctx
 
@@ -5604,6 +5617,11 @@ def test_strategy_rebalance_positions_missing_price_mode_skip() -> None:
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
     )
+    # 目标仓位改读投影持仓（含在途单，见 #361）；此处无在途单，与结算仓一致。
+    ctx.get_projected_position.side_effect = lambda symbol: {
+        "AAA": 10.0,
+        "BBB": 0.0,
+    }.get(symbol, 0.0)
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
     strategy.ctx = ctx
 
@@ -5673,6 +5691,11 @@ def test_strategy_rebalance_positions_missing_price_mode_ignore() -> None:
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
     )
+    # 目标仓位改读投影持仓（含在途单，见 #361）；此处无在途单，与结算仓一致。
+    ctx.get_projected_position.side_effect = lambda symbol: {
+        "AAA": 10.0,
+        "BBB": 0.0,
+    }.get(symbol, 0.0)
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
     strategy.ctx = ctx
 
@@ -5744,6 +5767,11 @@ def test_strategy_rebalance_positions_records_explainable_plan() -> None:
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
     )
+    # 目标仓位改读投影持仓（含在途单，见 #361）；此处无在途单，与结算仓一致。
+    ctx.get_projected_position.side_effect = lambda symbol: {
+        "AAA": 10.0,
+        "BBB": 0.0,
+    }.get(symbol, 0.0)
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
     strategy.ctx = ctx
 
@@ -5817,6 +5845,11 @@ def test_strategy_rebalance_positions_plan_tracks_skipped_legs() -> None:
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
     )
+    # 目标仓位改读投影持仓（含在途单，见 #361）；此处无在途单，与结算仓一致。
+    ctx.get_projected_position.side_effect = lambda symbol: {
+        "AAA": 10.0,
+        "BBB": 0.0,
+    }.get(symbol, 0.0)
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
     strategy.ctx = ctx
 

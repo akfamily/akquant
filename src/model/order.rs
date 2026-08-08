@@ -53,7 +53,7 @@ fn validate_order_inputs(
     Ok(())
 }
 
-fn format_timestamp_iso(timestamp: i64) -> String {
+pub(crate) fn format_timestamp_iso(timestamp: i64) -> String {
     let secs = timestamp.div_euclid(1_000_000_000);
     let nanos = timestamp.rem_euclid(1_000_000_000) as u32;
 
@@ -121,6 +121,21 @@ pub fn reduction_priority_rank(side: OrderSide, position_effect: PositionEffect)
 
 pub fn is_reduce_first_order(side: OrderSide, position_effect: PositionEffect) -> bool {
     reduction_priority_rank(side, position_effect) == 0
+}
+
+/// 在途订单是否会减少持仓敞口(用于可平仓投影)。
+///
+/// 与 [`is_reduce_first_order`] 的区别:后者判定撮合排序优先级,把
+/// `(Sell, Auto)` 也算作 reduce;此处只认**显式**平仓语义与 `reduce_only`,
+/// 避免把 `Auto` 单误算成减仓,从而低估可开量。
+pub fn is_position_reducing_order(order: &Order) -> bool {
+    if order.reduce_only {
+        return true;
+    }
+    matches!(
+        order.position_effect,
+        PositionEffect::Close | PositionEffect::CloseToday | PositionEffect::CloseYesterday
+    )
 }
 
 #[gen_stub_pyclass]

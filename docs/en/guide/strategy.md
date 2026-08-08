@@ -581,6 +581,13 @@ In AKQuant, order status transitions are as follows:
     ```
 *   **Target Orders**:
     Automatically calculates buy/sell quantities to adjust the position to a target value.
+
+    The delta is computed against the **projected position** — the settled position plus the
+    expected effect of *all* in-flight orders from the same bar. This is what makes repeated
+    calls within one bar converge: after `close_position()` has queued a full exit, a
+    following `order_target_*()` sees a projected position of zero rather than the stale
+    settled one (computing against the settled position would add a second same-direction
+    order on top of the exit, selling more than held).
     ```python
     # Adjust position to 50% of total assets
     self.order_target_percent(target_percent=0.5, symbol="AAPL", price=None)
@@ -603,6 +610,29 @@ In AKQuant, order status transitions are as follows:
     self.cancel_order(order_id) # Cancel specific order
     self.cancel_all_orders()    # Cancel all open orders
     ```
+
+#### Position effect (open vs close)
+
+An order carries `side + position_effect`, not just `side`:
+
+*   `buy()` / `sell()` default to `position_effect="auto"` and split into `close + open`
+    legs before execution, sized against the **closable position** — the settled position
+    minus what in-flight close/reduce orders from the same bar already claim. This is what
+    makes a flip split correctly: after `close_position()` claims the closable quantity, a
+    following `buy()` is classified as `open` rather than a second `close`.
+*   `short()` is `side="Sell", position_effect="open"`; `cover()` is
+    `side="Buy", position_effect="close"`.
+*   Explicit control: `self.submit_order(..., position_effect="open" | "close" |
+    "close_today" | "close_yesterday")`. Under `broker_live + CTP` these map to the
+    counter's offset flags.
+
+In-flight *open* orders are deliberately not projected here: they may never fill, and
+ignoring them biases the split toward `open`, i.e. toward reserving more margin. Note the
+contrast with target orders above, which project *all* in-flight orders — the two answer
+different questions ("how much can still be closed" vs "where will the position end up").
+
+The resulting legs are visible in `orders_df.position_effect` (at submission) and
+`executions_df.position_effect` (after the fill).
 
 ### 5.3 Execution Policy (Fill Mode)
 

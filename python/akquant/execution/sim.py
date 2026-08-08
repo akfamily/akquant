@@ -23,6 +23,14 @@ class SimExecution:
         """获取指定标的可用持仓数量."""
         return api._sim_get_available_position(self._s, symbol)
 
+    def get_closable_position(self, symbol: str | None = None) -> float:
+        """获取可平持仓（结算仓 − 在途平仓/减仓单占用）."""
+        return api._sim_get_closable_position(self._s, symbol)
+
+    def get_projected_position(self, symbol: str | None = None) -> float:
+        """获取投影持仓（结算仓 + 全部在途单效果）."""
+        return api._sim_get_projected_position(self._s, symbol)
+
     def get_positions(self) -> dict[str, float]:
         """获取所有持仓信息."""
         return api._sim_get_positions(self._s)

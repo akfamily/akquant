@@ -1145,8 +1145,18 @@ Backtest result object.
 
 *   `metrics_df`: Performance metrics DataFrame. Core trade-state fields include `closed_trade_count`, `execution_count`, and `open_position_count`.
 *   `trades_df`: Trade history DataFrame.
-*   `orders_df`: Order history DataFrame.
-*   `executions_df`: Execution fills DataFrame (prefers Rust IPC/dict fast export path).
+*   `orders_df`: Order history DataFrame. Includes `position_effect`, `reduce_only`, and `created_at_iso` / `updated_at_iso` (UTC ISO strings).
+*   `executions_df`: Execution fills DataFrame (prefers Rust IPC/dict fast export path). Includes `position_effect` and `timestamp_iso`.
+
+!!! tip "Position effect (`position_effect`)"
+    Values are `auto` / `open` / `close` / `close_today` / `close_yesterday` —
+    the **same vocabulary** accepted by order submission, so it can be filtered
+    directly (e.g. `df[df.position_effect == "close_today"]`).
+
+    With the default `position_effect="auto"`, `buy()` / `sell()` split into
+    close and open legs automatically: a flip emits the `close` leg first, then
+    the `open` leg. These columns are where that split is visible — in the order
+    table at submission time, in the execution table after the fill.
 *   `positions_df`: Daily position details.
 *   `equity_curve`: Equity curve.
 *   `cash_curve`: Cash curve.
