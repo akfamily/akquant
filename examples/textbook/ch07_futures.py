@@ -58,7 +58,9 @@ class FuturesTrendStrategy(Strategy):
         """初始化策略."""
         super().__init__()
         self.ma_window = 10
-        self.warmup_period = 10
+        # 下面用 get_history(count=ma_window + 1) 取 11 根，warmup 必须 >= 11，
+        # 否则首位是 NaN，均线恒为 NaN，信号会永远锁在初值上（示例跑不出反转）。
+        self.warmup_period = self.ma_window + 1
 
         # 记录上一次的信号，避免重复发单
         self.last_signal = 0
@@ -186,10 +188,12 @@ if __name__ == "__main__":
     # 假设最后一天持仓 1 手，价格 3200
     # 保证金 = 3200 * 10 * 1 * 0.1 = 3200 元
     # 杠杆倍数 = 3200 * 10 / 3200 = 10 倍
+    # metrics_df 的期末权益键是 end_market_value（等于 equity_curve 末值）。
+    # 注意不是 end_portfolio_value——那个键不存在，配上 else 兜底会静默打印 0.00。
     metrics = result.metrics_df
-    final_val = (
-        metrics.loc["end_portfolio_value", "value"]
-        if "end_portfolio_value" in metrics.index
+    end_value = (
+        metrics.loc["end_market_value", "value"]
+        if "end_market_value" in metrics.index
         else 0.0
     )
-    print(f"最终权益: {float(str(final_val)):.2f}")
+    print(f"最终权益: {float(str(end_value)):.2f}")

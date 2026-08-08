@@ -227,6 +227,10 @@ result = aq.run_backtest(
 
 一键平仓。无论当前持有多头还是空头，都会发出相反方向的市价单将其平掉。
 
+它按**投影持仓**（结算持仓 + 同一根 bar 内全部在途单的预期效果）算差额，所以在同一根
+bar 内重复调用是幂等的：第一次已排下全平单，第二次算出差额为 0、不再下单。`order_target*`
+系列同理，见 5.3.4 与第 7 章。
+
 ### 5.3.4 `rebalance_positions(target_positions, ...)`
 
 这是面向高级调仓场景的新接口。它按“目标持仓数量”工作，而不是按目标权重工作。
@@ -277,10 +281,23 @@ print(plan["skipped_legs"])
 *   `short()` -> `side=Sell, position_effect=open`
 *   `cover()` -> `side=Buy, position_effect=close`
 
-其中 `auto` 不是简单标签，而是会在执行前按当前净仓自动拆单：
+其中 `auto` 不是简单标签，而是会在执行前按**可平仓**自动拆单：
 
 *   `buy 150` 且当前持仓为 `-100` -> `close 100 + open 50`
 *   `sell 150` 且当前持仓为 `+100` -> `close 100 + open 50`
+
+这里的"可平仓"是**结算持仓减去同一根 bar 内已提交未成交的平仓/减仓单占用**，不是单纯的
+结算持仓。差别只在同一根 bar 里连续下单时才显现，但很关键：
+
+```python
+# 空头反手做多：两次调用在同一根 bar 内
+self.close_position(symbol)   # 提交 close 1 手，此刻结算仓仍是 -1
+self.buy(symbol, 1)           # 可平量已被上一笔占掉 -> 判为 open（而非又一笔 close）
+```
+
+若按结算持仓拆，第二笔会被误判成平仓——两笔都标 `close`，且平仓腿在风控投影里
+仓位变化为 0，等于零保证金过闸。这与 vn.py `OffsetConverter`、RQAlpha `closable`
+的口径一致：只扣在途**平仓**单，不投影在途开仓单（偏向判为开仓，即偏向多预留保证金）。
 
 你也可以直接显式提交：
 

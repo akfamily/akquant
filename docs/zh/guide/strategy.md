@@ -811,6 +811,11 @@ class SMACrossStrategy(Strategy):
     *   `self.order_target(target=100, symbol="AAPL")`: 调整持仓数量至 100 股。
     *   `self.order_target_percent(target_percent=0.5, symbol="AAPL")`: 调整持仓至总资产的 50%。
     *   `self.order_target_value(target_value=10000, symbol="AAPL")`: 调整持仓至 10000 元市值。
+    *   目标仓位系列（含 `close_position()`）按**投影持仓**算差额，即结算持仓叠加同一根
+        bar 内**全部**在途单的预期效果。因为它们问的是"仓位最终落在哪"，若按结算持仓算，
+        同一根 bar 内连续调用会以同一基准重复下单（例如先 `close_position()` 再
+        `order_target_percent()`，会在全平单之外再补一笔同向单，卖超持仓）。
+        与 `buy()` / `sell()` 的 `auto` 拆腿只扣在途平仓单不同——两者问的问题不同。
     *   `self.rebalance_weights(target_weights={"AAPL":0.4,"MSFT":0.3}, liquidate_unmentioned=True, rebalance_tolerance=0.01)`: 按多标的权重统一调仓。
         *   默认权重和不超过 `1.0`，如需超过请设置 `allow_leverage=True`。
         *   该接口仍然更偏向 long-only 组合管理；如需正负目标仓位，请优先使用 `rebalance_positions()`。
@@ -847,7 +852,9 @@ def on_timer(self, payload: str):
 
 AKQuant 当前的订单语义已经不再是单纯的 `side`，而是 `side + position_effect`：
 
-*   `buy()` / `sell()` 默认使用 `position_effect="auto"`，进入执行前会按当前净仓自动拆成 `close + open`。
+*   `buy()` / `sell()` 默认使用 `position_effect="auto"`，进入执行前会按**可平仓**自动拆成 `close + open`。
+    可平仓 = 结算持仓 − 同一根 bar 内已提交未成交的平仓/减仓单占用。所以「先 `close_position()`
+    再 `buy()`」这类反手写法能拆对：第一笔占掉可平量后，第二笔判为 `open`。
 *   `short()` 默认等价于 `side="Sell", position_effect="open"`。
 *   `cover()` 默认等价于 `side="Buy", position_effect="close"`。
 *   高级场景可直接使用：

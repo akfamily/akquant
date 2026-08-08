@@ -209,6 +209,25 @@ pub enum PositionEffect {
     CloseYesterday,
 }
 
+impl PositionEffect {
+    /// 导出用的规范词表,与 Python 入参词表一致(``auto`` / ``open`` / ``close``
+    /// / ``close_today`` / ``close_yesterday``)。
+    ///
+    /// 不能用 `format!("{:?}").to_lowercase()`:那会把 `CloseToday` 变成
+    /// `closetoday`,而 API 接受的是 `close_today`,导致 DataFrame 按规范词筛选
+    /// 静默匹配不到。`position_effect` 与只读的 `status` 不同,它是可回传值,
+    /// 入参与导出必须同一套词表。
+    pub fn as_canonical_str(&self) -> &'static str {
+        match self {
+            PositionEffect::Auto => "auto",
+            PositionEffect::Open => "open",
+            PositionEffect::Close => "close",
+            PositionEffect::CloseToday => "close_today",
+            PositionEffect::CloseYesterday => "close_yesterday",
+        }
+    }
+}
+
 #[pymethods]
 impl PositionEffect {
     fn __hash__(&self) -> isize {

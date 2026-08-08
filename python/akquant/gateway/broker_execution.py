@@ -59,6 +59,28 @@ class BrokerExecution:
             _resolve_symbol(self._s, symbol), 0.0
         )
 
+    def get_closable_position(self, symbol: str | None = None) -> float:
+        """获取可平持仓; broker_live 下降级为结算仓(理由同 get_projected_position)."""
+        return self.get_position(symbol)
+
+    def get_projected_position(self, symbol: str | None = None) -> float:
+        """获取投影持仓; broker_live 下降级为结算仓.
+
+        回测侧该方法把同周期在途单计入,供 auto 拆腿与目标仓位算 delta(#361)。实盘
+        无法照做: 柜台挂单快照 ``UnifiedOrderSnapshot`` 只有 ``position_effect``
+        与 ``filled_quantity``, **没有** ``side`` 和 ``quantity``——
+        ``map_order_snapshot`` 的这两个字段取自 ``request``, 而 ``get_open_orders``
+        并不传 ``request``, 故算不出 ``remaining`` 也判不了方向。
+
+        因此这里返回结算仓, 与 :meth:`get_position` 同值: 保持协议完整(不抛
+        AttributeError)且不用缺失数据伪造投影。实盘开平通常已由柜台/网关侧
+        转换(参见 vn.py ``OffsetConverter`` 的定位), 代价是实盘"先平后开"的
+        反手第二腿仍可能被标成平仓。要真正修实盘需给
+        ``UnifiedOrderSnapshot`` 补 ``side`` / ``quantity``, 会牵动各 broker 插件
+        的 mapper, 不在本次范围内。
+        """
+        return self.get_position(symbol)
+
     def get_positions(self) -> dict[str, float]:
         """获取所有持仓信息."""
         return dict(self._cache.positions())

@@ -15,6 +15,22 @@ class ExecutionBackend(Protocol):
     def get_available_position(self, symbol: str | None = None) -> float:
         """获取指定标的可用持仓数量."""
 
+    def get_closable_position(self, symbol: str | None = None) -> float:
+        """获取可平持仓：结算仓扣除在途平仓/减仓单占用后的剩余可平量.
+
+        供 ``buy()`` / ``sell()`` 在 ``position_effect="auto"`` 下拆开平腿使用。
+        结算仓不含同一 on_bar 内已提交未成交的在途单，直接用它拆腿会把"先平后开"
+        的反手第二腿误判成平仓（issue #361）。只投影减仓方向的在途单。
+        """
+
+    def get_projected_position(self, symbol: str | None = None) -> float:
+        """获取投影持仓：结算仓叠加全部在途单的预期效果.
+
+        供 ``order_target*`` / ``close_position`` 算 delta 使用——它们问的是
+        "仓位最终会落在哪"，故开仓与平仓在途单都要计入，否则同一 on_bar 内
+        连续调用会按同一个结算仓重复下单。
+        """
+
     def get_positions(self) -> dict[str, float]:
         """获取所有持仓信息."""
 

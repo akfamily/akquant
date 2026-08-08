@@ -2734,6 +2734,28 @@ class StrategyContext:
         """
         ...
 
+    def get_closable_position(self, symbol: str) -> float:
+        r"""
+        获取可平持仓:结算仓扣除在途**平仓/减仓**单占用后的剩余可平量.
+
+        用于 `buy()` / `sell()` 在 ``position_effect="auto"`` 下拆开平腿。
+
+        :param symbol: 标的代码
+        :return: 可平方向的剩余持仓 (Long为正, Short为负)
+        """
+        ...
+
+    def get_projected_position(self, symbol: str) -> float:
+        r"""
+        获取投影持仓:结算仓叠加**全部**在途单的预期效果.
+
+        用于 ``order_target*`` / ``close_position`` 等目标仓位语义算 delta。
+
+        :param symbol: 标的代码
+        :return: 投影后的持仓数量 (Long为正, Short为负)
+        """
+        ...
+
     def get_available_position(self, symbol: str) -> float:
         r"""
         获取当前可用持仓数量.

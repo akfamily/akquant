@@ -32,6 +32,16 @@ python examples/textbook/ch07_futures.py
 1. 脚本能够完成期货回测并输出收益与风险指标。
 2. 结果中可体现保证金与杠杆对权益波动的放大效应。
 3. 调整合约参数或杠杆后，策略波动率变化符合预期。
+4. 日志里能看到至少一次"趋势反转"，且 `MA=` 后是真实数值而非 `nan`。
+   若均线恒为 `nan`，说明 `warmup_period` 小于 `get_history(count=...)` 要求的根数——
+   本例用 `count=ma_window + 1`，所以 `warmup_period` 也必须是 `ma_window + 1`。
+5. 反手时的开平拆腿可在成交流水里核对：
+
+    ```python
+    result.executions_df[["bar_index", "side", "position_effect", "quantity"]]
+    ```
+
+    多头转空头应看到 `sell` + `close` 紧跟 `sell` + `open` 两笔，而不是两笔 `close`。
 
 ## 7.0 AKQuant 中国期货配置速览
 

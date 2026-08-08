@@ -444,6 +444,55 @@ impl StrategyContext {
             last_prices: init.last_prices,
         }
     }
+
+    /// 把在途订单投影进持仓,返回预期持仓。
+    ///
+    /// 合并 `active_orders`(往期挂单)与 `orders`(本回调已提交),口径对齐
+    /// `EngineCore::current_frozen_cash`:只认非终态(`New`/`Submitted`/
+    /// `PartiallyFilled`),按 `remaining = quantity - filled_quantity` 折算。
+    ///
+    /// `reducing_only=true` 只投影**减仓**方向的在途单(平仓/`reduce_only`),
+    /// 用于 auto 拆腿判定"还能平多少";`false` 投影全部在途单(按各自
+    /// `position_effect`),用于目标仓位算 delta 判定"仓位将落在哪"。
+    fn project_pending_position(&self, symbol: &str, reducing_only: bool) -> Decimal {
+        let mut projected = self
+            .positions
+            .get(symbol)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        for order in self.active_orders.iter().chain(self.orders.iter()) {
+            if order.symbol != symbol {
+                continue;
+            }
+            if !matches!(
+                order.status,
+                crate::model::OrderStatus::New
+                    | crate::model::OrderStatus::Submitted
+                    | crate::model::OrderStatus::PartiallyFilled
+            ) {
+                continue;
+            }
+            let reducing = crate::model::is_position_reducing_order(order);
+            if reducing_only && !reducing {
+                continue;
+            }
+            let remaining = order.quantity - order.filled_quantity;
+            if remaining <= Decimal::ZERO {
+                continue;
+            }
+            // 减仓单统一按 Close 语义投影:`project_position_after` 已对平仓量
+            // 做 `min(remaining, |pos|)` 封顶,等价于 vn.py 的 `min(frozen, pos)`。
+            // 净仓模型下 CloseToday / CloseYesterday 与 Close 同效。
+            let effect = if reducing {
+                crate::model::PositionEffect::Close
+            } else {
+                order.position_effect
+            };
+            projected =
+                crate::model::project_position_after(order.side, effect, projected, remaining);
+        }
+        projected
+    }
 }
 
 #[gen_stub_pymethods]
@@ -1045,6 +1094,43 @@ impl StrategyContext {
         self.positions
             .get(&symbol)
             .unwrap_or(&Decimal::ZERO)
+            .to_f64()
+            .unwrap_or_default()
+    }
+
+    /// 获取可平持仓:结算仓扣除在途**平仓/减仓**单占用后的剩余可平量.
+    ///
+    /// 用于 `buy()` / `sell()` 在 ``position_effect="auto"`` 下拆开平腿。结算仓
+    /// 不含同一 on_bar 内已提交、未成交的在途单,直接用它拆腿会把"先平后开"的
+    /// 反手第二腿误判成平仓(issue #361)。本方法是 :meth:`get_buying_power`
+    /// 的持仓镜像:同样合并 ``active_orders``(往期挂单)+ ``orders``(本回调已提交)。
+    ///
+    /// **只**投影减仓方向的在途单,不投影在途开仓单——与 vn.py
+    /// ``OffsetConverter`` / RQAlpha ``closable`` 一致。在途开仓单未必成交,不投
+    /// 影它可使 auto 拆腿偏向判为开仓,即偏向**多预留**保证金(安全侧)。
+    ///
+    /// :param symbol: 标的代码
+    /// :return: 可平方向的剩余持仓 (Long为正, Short为负)
+    fn get_closable_position(&self, symbol: String) -> f64 {
+        self.project_pending_position(&symbol, true)
+            .to_f64()
+            .unwrap_or_default()
+    }
+
+    /// 获取投影持仓:结算仓叠加**全部**在途单的预期效果.
+    ///
+    /// 用于 ``order_target*`` / ``close_position`` 等目标仓位语义算 delta:它们问
+    /// 的是"仓位最终会落在哪",故开仓与平仓在途单都要计入,否则同一 on_bar 内
+    /// 连续调用会按同一个结算仓重复下单(如先 ``close_position`` 再
+    /// ``order_target_percent`` 会在全平单之外再补一笔卖单,形成超卖)。
+    ///
+    /// 与 :meth:`get_closable_position` 的取舍不同:那里刻意不投影在途开仓单以
+    /// 偏向安全侧;这里必须投影,否则目标仓位不收敛。
+    ///
+    /// :param symbol: 标的代码
+    /// :return: 投影后的持仓数量 (Long为正, Short为负)
+    fn get_projected_position(&self, symbol: String) -> f64 {
+        self.project_pending_position(&symbol, false)
             .to_f64()
             .unwrap_or_default()
     }

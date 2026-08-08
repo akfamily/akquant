@@ -20,6 +20,27 @@ import pandas as pd
 from ..akquant import BacktestResult as RustBacktestResult
 from ..akquant import ClosedTrade, Order, Trade
 
+_POSITION_EFFECT_TEXT = {
+    "auto": "auto",
+    "open": "open",
+    "close": "close",
+    "closetoday": "close_today",
+    "closeyesterday": "close_yesterday",
+}
+
+
+def _position_effect_text(value: Any) -> Optional[str]:
+    """把 ``PositionEffect`` 枚举归一成规范词表，与 Rust 快路径口径一致.
+
+    必须与 ``PositionEffect::as_canonical_str`` 输出同一套词表（``close_today``
+    而非 ``closetoday``）：``position_effect`` 是可回传值，用户按 API 入参词表
+    筛 DataFrame，两边不一致会静默匹配不到。
+    """
+    if value is None:
+        return None
+    name = str(value).rsplit(".", 1)[-1].lower()
+    return _POSITION_EFFECT_TEXT.get(name, name)
+
 
 class BacktestResult:
     """
@@ -494,6 +515,12 @@ class BacktestResult:
             - status (str): 'filled', 'cancelled', 'rejected', etc.
             - time_in_force (str): 'gtc', 'day', 'ioc', etc.
             - created_at (datetime): Creation time.
+            - position_effect (str): 开平语义，'auto' / 'open' / 'close' /
+              'close_today' / 'close_yesterday'，与下单入参同一词表。
+              ``buy()`` / ``sell()`` 的 auto 拆腿结果在此可见。
+            - reduce_only (bool): 是否只减仓（为真时不产生开仓腿）。
+            - created_at_iso (str): 创建时间的 UTC ISO 8601 串。
+            - updated_at_iso (str): 更新时间的 UTC ISO 8601 串。
         """
         if not hasattr(self._raw, "orders_df"):
             return pd.DataFrame()
@@ -667,7 +694,20 @@ class BacktestResult:
 
     @cached_property
     def executions_df(self) -> pd.DataFrame:
-        """Get execution reports (fills) as a Pandas DataFrame."""
+        """Get execution reports (fills) as a Pandas DataFrame.
+
+        Columns:
+            - id / order_id / symbol: 成交号、来源订单号、标的。
+            - side (str): 'buy' 或 'sell'。
+            - quantity / price / commission (float): 成交量、成交价、手续费。
+            - timestamp (datetime): 成交时间（已按结果时区本地化）。
+            - timestamp_iso (str): 同一时刻的 UTC ISO 8601 串，便于跨系统对账。
+            - bar_index (int): 成交所在 Bar 序号。
+            - owner_strategy_id (str): 归属策略。
+            - position_effect (str): 开平语义，'auto' / 'open' / 'close' /
+              'close_today' / 'close_yesterday'，与下单入参同一词表。反手时
+              ``close`` 腿与 ``open`` 腿在此区分（issue #361）。
+        """
         executions = cast(List[Trade], getattr(self._raw, "executions", []))
         if not executions:
             return pd.DataFrame()
@@ -703,14 +743,22 @@ class BacktestResult:
                         "id": t.id,
                         "order_id": t.order_id,
                         "symbol": t.symbol,
-                        "side": str(t.side).lower(),
+                        # 削掉 `OrderSide.` 前缀：Rust 快路径导出的是 `sell`，
+                        # 此处不削会得到 `orderside.sell`，同一列的值随走哪条
+                        # 路而变。
+                        "side": str(t.side).rsplit(".", 1)[-1].lower(),
                         "quantity": float(t.quantity),
                         "price": float(t.price),
                         "commission": float(t.commission),
                         "timestamp": t.timestamp,
+                        "timestamp_iso": getattr(t, "timestamp_iso", None),
                         "bar_index": t.bar_index,
                         "owner_strategy_id": getattr(
                             t, "owner_strategy_id", fallback_owner_strategy_id
+                        ),
+                        # 开平语义（#361）：auto 拆腿的结果只有这一列看得见
+                        "position_effect": _position_effect_text(
+                            getattr(t, "position_effect", None)
                         ),
                     }
                 )

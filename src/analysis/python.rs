@@ -275,6 +275,22 @@ impl BacktestResult {
                 .map(|t| t.owner_strategy_id.clone())
                 .collect::<Vec<_>>(),
         );
+        // 开平语义(#361):auto 拆腿的结果只有在这一列才看得见。
+        let s_position_effect = Series::new(
+            "position_effect".into(),
+            executions
+                .iter()
+                .map(|t| t.position_effect.as_canonical_str().to_string())
+                .collect::<Vec<_>>(),
+        );
+        // UTC ISO 串:与已本地化的 `timestamp` 并存,便于跨系统对账/导出。
+        let s_timestamp_iso = Series::new(
+            "timestamp_iso".into(),
+            executions
+                .iter()
+                .map(|t| crate::model::order::format_timestamp_iso(t.timestamp))
+                .collect::<Vec<_>>(),
+        );
 
         let mut df = DataFrame::new_infer_height(vec![
             s_id.into(),
@@ -285,8 +301,10 @@ impl BacktestResult {
             s_price.into(),
             s_commission.into(),
             s_timestamp.into(),
+            s_timestamp_iso.into(),
             s_bar_index.into(),
             s_owner_strategy_id.into(),
+            s_position_effect.into(),
         ])
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
@@ -377,8 +395,10 @@ impl BacktestResult {
         let mut prices = Vec::with_capacity(n);
         let mut commissions = Vec::with_capacity(n);
         let mut timestamps = Vec::with_capacity(n);
+        let mut timestamp_isos = Vec::with_capacity(n);
         let mut bar_indexes = Vec::with_capacity(n);
         let mut owner_strategy_ids = Vec::with_capacity(n);
+        let mut position_effects = Vec::with_capacity(n);
 
         for t in &self.executions {
             ids.push(t.id.clone());
@@ -389,8 +409,10 @@ impl BacktestResult {
             prices.push(t.price.to_f64().unwrap_or(0.0));
             commissions.push(t.commission.to_f64().unwrap_or(0.0));
             timestamps.push(t.timestamp);
+            timestamp_isos.push(crate::model::order::format_timestamp_iso(t.timestamp));
             bar_indexes.push(t.bar_index);
             owner_strategy_ids.push(t.owner_strategy_id.clone());
+            position_effects.push(t.position_effect.as_canonical_str().to_string());
         }
 
         let dict = pyo3::types::PyDict::new(py);
@@ -402,8 +424,10 @@ impl BacktestResult {
         dict.set_item("price", prices)?;
         dict.set_item("commission", commissions)?;
         dict.set_item("timestamp", timestamps)?;
+        dict.set_item("timestamp_iso", timestamp_isos)?;
         dict.set_item("bar_index", bar_indexes)?;
         dict.set_item("owner_strategy_id", owner_strategy_ids)?;
+        dict.set_item("position_effect", position_effects)?;
         Ok(dict.into())
     }
 
@@ -659,6 +683,10 @@ impl BacktestResult {
         let mut tags = Vec::with_capacity(n);
         let mut reject_reasons = Vec::with_capacity(n);
         let mut owner_strategy_ids = Vec::with_capacity(n);
+        let mut position_effects = Vec::with_capacity(n);
+        let mut reduce_onlys = Vec::with_capacity(n);
+        let mut created_at_isos = Vec::with_capacity(n);
+        let mut updated_at_isos = Vec::with_capacity(n);
 
         for o in &self.orders {
             ids.push(o.id.clone());
@@ -690,6 +718,11 @@ impl BacktestResult {
             tags.push(o.tag.clone());
             reject_reasons.push(o.reject_reason.clone());
             owner_strategy_ids.push(o.owner_strategy_id.clone());
+            // 开平语义(#361):auto 拆腿在下单时就定了,订单表比成交表更早暴露。
+            position_effects.push(o.position_effect.as_canonical_str().to_string());
+            reduce_onlys.push(o.reduce_only);
+            created_at_isos.push(crate::model::order::format_timestamp_iso(o.created_at));
+            updated_at_isos.push(crate::model::order::format_timestamp_iso(o.updated_at));
         }
 
         let dict = pyo3::types::PyDict::new(py);
@@ -709,6 +742,10 @@ impl BacktestResult {
         dict.set_item("updated_at", updated_dates)?;
         dict.set_item("tag", tags)?;
         dict.set_item("reject_reason", reject_reasons)?;
+        dict.set_item("position_effect", position_effects)?;
+        dict.set_item("reduce_only", reduce_onlys)?;
+        dict.set_item("created_at_iso", created_at_isos)?;
+        dict.set_item("updated_at_iso", updated_at_isos)?;
         dict.set_item("owner_strategy_id", owner_strategy_ids)?;
 
         Ok(dict.into())

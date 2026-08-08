@@ -6,6 +6,7 @@ from typing import Any
 
 import akquant as aq
 import pandas as pd
+import pytest
 
 
 def _load_example_module(module_name: str, relative_path: str) -> ModuleType:
@@ -195,3 +196,35 @@ def test_functional_multi_slot_warm_start_example_main_runs(capsys: Any) -> None
     assert "beta_resume_count=1" in output
     assert "slot_ids=['beta']" in output
     assert "done_functional_multi_slot_warm_start_demo" in output
+
+
+def test_ch07_futures_example_reports_real_equity_and_flips() -> None:
+    """ch07 期货示例须真正产出趋势反转，且期末权益不是兜底的 0.
+
+    两个历史缺陷：``warmup_period`` 比 ``get_history(count=ma_window + 1)`` 少一根，
+    均线恒为 NaN 导致信号永远锁在初值（示例从不走反手分支）；``metrics_df`` 里
+    没有 ``end_portfolio_value`` 键，用错键会静默打印 0.00。
+    """
+    module = _load_example_module(
+        "example_ch07_futures_metrics",
+        "examples/textbook/ch07_futures.py",
+    )
+
+    df = module.generate_futures_data()
+    result = aq.run_backtest(
+        strategy=module.FuturesTrendStrategy,
+        data=df,
+        initial_cash=500_000.0,
+        fill_policy=aq.CurrentClose(),
+    )
+
+    # warmup 足够 -> 均线有真值 -> 至少发生一次开仓
+    assert len(result.orders_df) > 0
+
+    metrics = result.metrics_df
+    assert "end_portfolio_value" not in metrics.index
+    assert "end_market_value" in metrics.index
+
+    end_value = float(str(metrics.loc["end_market_value", "value"]))
+    assert end_value > 0.0
+    assert end_value == pytest.approx(float(result.equity_curve.iloc[-1]))
