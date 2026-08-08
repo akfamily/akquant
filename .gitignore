@@ -47,6 +47,15 @@ CLAUDE.md
 docs/superpowers
 
 # ── 私有 broker 已拆分为独立包（akquant-qmf / akquant-middleware，独立私有仓）──
+#    以下规则防止插件仓的实现代码被误提交回本公开仓
+/python/akquant/gateway/brokers/qmf/
+/python/akquant/gateway/brokers/middleware/
+/tests/test_gateway_qmf_*.py
+/tests/test_gateway_middleware_*.py
+/examples/*_qmf_*.py
+/examples/*_middleware_*.py
+/docs/zh/advanced/qmf_broker_gateway.md
+/docs/en/advanced/qmf_broker_gateway.md
 
 # ── 外部前置机/回测服务子项目（vendored，独立仓库，不纳入本仓版本管理）──
 /vendor/

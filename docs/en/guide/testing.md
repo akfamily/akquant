@@ -106,9 +106,6 @@ pytest -q tests/golden/test_golden.py
 # Generate baseline regression markdown report
 python scripts/golden_baseline_report.py
 
-# Generate legacy execution callsite report
-python scripts/find_legacy_execution_policy_calls.py
-
 # Docs link compliance check
 python scripts/check_docs_links.py
 

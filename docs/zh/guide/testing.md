@@ -99,9 +99,6 @@ pytest -q tests/golden/test_golden.py
 # 生成黄金基线回归对比报告（Markdown）
 python scripts/golden_baseline_report.py
 
-# 生成 legacy 执行语义调用点清单
-python scripts/find_legacy_execution_policy_calls.py
-
 # 文档链接合规检查
 python scripts/check_docs_links.py
 
