@@ -1,8 +1,11 @@
 //! 流式 Parquet 数据客户端 (C.2a, out-of-core 基座).
 //!
-//! 有界内存: 每次经 polars `scan_parquet().slice()` 读取一个块 (chunk_size 行),
-//! 转为 `Bar` 缓冲后逐个产出; 内存占用约为 chunk_size 行, 与文件总量无关。
-//! 假定 parquet 已按 `timestamp` 升序 (规范格式)。
+//! 有界内存: 每次经 polars eager `ParquetReader::with_slice` 读取一个块
+//! (chunk_size 行), 转为 `Bar` 缓冲后逐个产出; 内存占用约为 chunk_size 行,
+//! 与文件总量无关。假定 parquet 已按 `timestamp` 升序 (规范格式)。
+//!
+//! 用 eager reader 而非 `LazyFrame::scan_parquet().slice()`: 二者切片语义等价,
+//! 但 lazy 版会把 polars 的查询计划/表达式引擎链进扩展模块 (wheel +12MB)。
 //!
 //! 规范列: `timestamp` (i64 纳秒 UTC) + `open/high/low/close/volume` (f64) +
 //! 可选 `symbol` (str)。价格重构用 `Decimal::from_f64`, 与 `from_arrays` 一致。
@@ -52,9 +55,10 @@ impl ParquetStreamClient {
     }
 
     fn read_chunk(&self) -> PolarsResult<DataFrame> {
-        LazyFrame::scan_parquet(PlPath::new(&self.path), ScanArgsParquet::default())?
-            .slice(self.offset as i64, self.chunk_size as IdxSize)
-            .collect()
+        let file = std::fs::File::open(&self.path)?;
+        ParquetReader::new(file)
+            .with_slice(Some((self.offset, self.chunk_size)))
+            .finish()
     }
 
     /// 读取下一块并填充缓冲区.

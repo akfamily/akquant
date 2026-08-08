@@ -1,6 +1,6 @@
 [package]
 name = "akquant"
-version = "0.3.32"
+version = "0.3.33"
 edition = "2024"
 description = "High-performance quantitative trading framework based on Rust and Python"
 license = "MIT"
@@ -16,8 +16,11 @@ crate-type = ["cdylib", "rlib"]
 pyo3 = { version = "0.28.2", features = ["abi3-py310", "chrono"] }
 numpy = "0.28"
 pyo3-stub-gen = "0.6.0"
-serde = { version = "1.0", features = ["derive"] }
-polars = { version = "0.51.0", features = ["lazy", "parquet", "ipc", "csv"] }
+# `rc`: tracker.rs / portfolio.rs 给 `Arc<..>` 字段 derive(Serialize)。
+serde = { version = "1.0", features = ["derive", "rc"] }
+# 别加 `lazy`: 一个 lazy 调用点会把查询计划/表达式引擎链进 wheel (+12MB, 见 0.3.6)。
+# parquet 走 eager ParquetReader; CSV 用独立的 `csv` crate, 不需要 polars 的。
+polars = { version = "0.51.0", features = ["parquet", "ipc"] }
 rayon = "1.11"
 uuid = { version = "1.20.0", features = ["v4", "fast-rng", "macro-diagnostics"] }
 # Utilities
@@ -41,10 +44,8 @@ extension-module = ["pyo3/extension-module"]
 test-utils = ["pyo3/auto-initialize"]
 
 [profile.release]
-# Strip debug symbols from the compiled extension. The release build statically
-# links all Rust deps (polars, etc.); without stripping, their debug symbols
-# roughly triple the .pyd size. This is the dominant lever on wheel size.
+# 去掉残留符号表(release 本就 debug=0)。实测 linux -7.8% / macOS -9.2% /
+# Windows ~0(MSVC 调试信息在独立 .pdb 里)。体积的主要杠杆不在这, 在上面 polars 的 features。
 strip = "symbols"
-# Thin LTO trims dead code across crates for a smaller, faster artifact at a
-# modest compile-time cost.
+# 跨 crate 消除死代码。也是"声明但未调用的依赖不进产物"的机制来源。
 lto = "thin"
