@@ -145,6 +145,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 修复 framework 内部 `__framework_rebalance__` / `__framework_boundary__` timer 被误参与 same-cycle 撮合与终态统计的问题，避免出现 `+1ns` 的伪成交、partial fill 被过早补满，以及权益曲线尾部多出额外采样点。
 - 修复 `on_pre_open` 首个交易日可能因延迟注册 timer 而不触发的问题；相关 framework timer 现会在回测事件循环开始前直接注入引擎，从而保证首日也能按预期开盘语义执行。
 
+- 修复函数式策略（`strategy=on_bar` 入口）无法复用「回调未重写就跳过」快路径，导致回测慢一个数量级的问题。判定函数 `_strategy_overrides_callback` 是**按类**比较的（`type(strategy)` 上的方法 vs 框架基类 `Strategy` 的默认实现），而内部包装器 `FunctionalStrategy` 在类体里**无条件**定义了全部回调转发方法（未提供对应函数时方法体只是 `if self._on_xxx_func is not None` 的空转）——于是 `on_before_trading` / `on_after_trading` / `on_portfolio_update` / `on_pre_open` / `on_cross_section` / `on_timer` 六个钩子一律被判为「已重写」，快路径全线失效。
+
+    后果是引擎为**每根 Bar** 注册并分发整套框架钩子（pre-open / cross-section / time-hooks / portfolio-update），而下游无人消费：1000 根 Bar 的回测里空转分发 3000 次 timer 事件，占总耗时约 2/3。实测第 11 章 12 组合网格搜索：类风格约 1.0 秒，函数式约 11.8 秒（约 13 倍）。回测数值一直是对的（两版结果逐值一致），这也是它长期未被发现的原因。
+
+    现给 `FunctionalStrategy` 加类标记 `_is_functional_wrapper`，判定函数在「该方法正是包装器自身那份」时改看用户是否真的提供了对应回调（`_on_<name>_func is not None`）；子类若二次重写该方法，`method` 不再是包装器那份，仍走原有的通用比较，因此继承 `FunctionalStrategy` 自定义钩子的写法不受影响。用类标记而非 `isinstance` 是为了避开 `strategy_framework_hooks` → `backtest.engine` 的循环导入。
+
+    修复后同一网格搜索降至约 1.6 秒（1.62x），剩余差距是函数式每次回调多一跳 Python 转发的固有成本。**回测数值不变**（golden 基线通过、网格结果与类风格逐值一致），故 `__engine_rule_version__` 不变。
+
 ## [0.2.14] - 2026-04-21
 
 ### Added

@@ -12,4 +12,5 @@ This chapter is currently maintained in Chinese first.
 - Practice links:
   - Primary example: [examples/textbook/ch01_quickstart.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch01_quickstart.py)
   - Extended example: [examples/01_quickstart.py](https://github.com/akfamily/akquant/blob/main/examples/01_quickstart.py)
+  - Functional twin example: [examples/textbook/ch01_quickstart_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch01_quickstart_functional.py)
   - Guide: [Quickstart Guide](../start/quickstart.md)

@@ -151,6 +151,8 @@
 | 第 16 章 | [ch16_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators.py) | [45_talib_indicator_playbook_demo.py](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py), [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py), [62_indicator_streaming_demo.py](https://github.com/akfamily/akquant/blob/main/examples/62_indicator_streaming_demo.py) | [ch16_indicators_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators_functional.py) | [AKQuant 指标全量说明](../guide/rust_indicator_reference.md) |
 
 > **关于「函数式孪生」列**：每个孪生示例与同章主示例的交易逻辑、参数与数据源完全一致，只把策略入口从类风格换成模块级函数（`strategy=on_bar` + `initialize=...`），便于对照学习两种写法。第 2、3、14 章的示例本身不含策略入口（分别讲 Python 基础、数据获取与因子计算），因此不设孪生。
+>
+> 「一致」指的是**回测数值一致**：同一策略的函数式版通常比类风格略慢，因为每次回调多一跳 Python 转发（引擎的 `on_bar` → 用户函数），属函数式入口的固有成本（第 11 章 12 组合网格搜索实测：类风格约 1.0 秒、函数式约 1.6 秒）。详见 `ch04_comparison_functional.py` 与 `ch11_optimization_functional.py` 的说明。
 
 ---
 

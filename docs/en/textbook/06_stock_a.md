@@ -8,4 +8,5 @@ This chapter is currently maintained in Chinese first.
 - Practice links:
   - Primary example: [examples/textbook/ch06_stock_a.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch06_stock_a.py)
   - Extended example: [examples/20_risk_management_demo.py](https://github.com/akfamily/akquant/blob/main/examples/20_risk_management_demo.py)
+  - Functional twin example: [examples/textbook/ch06_stock_a_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch06_stock_a_functional.py)
   - Guide: [Quant Basics Guide](../guide/quant_basics.md)

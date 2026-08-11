@@ -1742,6 +1742,11 @@ def _build_strategy_instance(
 class FunctionalStrategy(Strategy):
     """内部策略包装器，用于支持函数式 API (Zipline 风格)."""
 
+    # 本类在类体里无条件定义了全部回调转发方法，未提供对应函数时方法体是空转。
+    # 该标记让 _strategy_overrides_callback 改按"用户是否真的提供了回调"判定，
+    # 否则"回调未重写就跳过"的快路径会整体失效（详见 strategy_framework_hooks）。
+    _is_functional_wrapper = True
+
     def __init__(
         self,
         initialize: Optional[Callable[[Any], None]],

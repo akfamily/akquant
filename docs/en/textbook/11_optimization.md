@@ -7,6 +7,7 @@ This chapter is currently maintained in Chinese first.
 - Practice links:
   - Primary example: [examples/textbook/ch11_optimization.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch11_optimization.py)
   - Extended example: [examples/02_parameter_optimization.py](https://github.com/akfamily/akquant/blob/main/examples/02_parameter_optimization.py)
+  - Functional twin example: [examples/textbook/ch11_optimization_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch11_optimization_functional.py)
   - Guide: [Optimization Guide](../guide/optimization.md)
 
 Key optimization parameters (new):

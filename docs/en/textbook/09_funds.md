@@ -7,4 +7,5 @@ This chapter is currently maintained in Chinese first.
 - Practice links:
   - Primary example: [examples/textbook/ch09_funds.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch09_funds.py)
   - Extended example: [examples/textbook/ch09_portfolio.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch09_portfolio.py)
+  - Functional twin examples: [examples/textbook/ch09_funds_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch09_funds_functional.py), [examples/textbook/ch09_portfolio_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch09_portfolio_functional.py)
   - Guide: [Strategy Guide](../guide/strategy.md)

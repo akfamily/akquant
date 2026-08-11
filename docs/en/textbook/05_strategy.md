@@ -16,6 +16,7 @@ This chapter is currently maintained in Chinese first.
   - Expiry callback example: [examples/49_on_expiry_demo.py](https://github.com/akfamily/akquant/blob/main/examples/49_on_expiry_demo.py)
   - Indicator playbook example: [examples/45_talib_indicator_playbook_demo.py](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py)
   - Real-data mode: `python examples/45_talib_indicator_playbook_demo.py --data-source akshare --symbol sh600000 --start-date 20240101 --end-date 20260301`
+  - Functional twin example: [examples/textbook/ch05_strategy_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch05_strategy_functional.py)
   - Guide: [Strategy Guide](../guide/strategy.md)
   - Guide: [Custom Indicator Guide](../guide/custom_indicator.md)
 
