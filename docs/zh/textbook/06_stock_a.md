@@ -19,12 +19,14 @@ A 股市场（中国内地股票市场）具有独特的微观结构和交易规
 
 - 主示例：[examples/textbook/ch06_stock_a.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch06_stock_a.py)
 - 进阶示例：[examples/20_risk_management_demo.py](https://github.com/akfamily/akquant/blob/main/examples/20_risk_management_demo.py)
+- 函数式孪生示例：[examples/textbook/ch06_stock_a_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch06_stock_a_functional.py)
 - 对应指南：[量化基础](../guide/quant_basics.md)
 
 ## 快速运行与验收
 
 ```bash
 python examples/textbook/ch06_stock_a.py
+python examples/textbook/ch06_stock_a_functional.py
 ```
 
 验收要点：

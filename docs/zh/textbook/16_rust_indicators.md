@@ -19,12 +19,14 @@
 
 - 主示例：[examples/textbook/ch16_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators.py)
 - 进阶示例：[examples/45_talib_indicator_playbook_demo.py](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py), [examples/60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py), [examples/62_indicator_streaming_demo.py](https://github.com/akfamily/akquant/blob/main/examples/62_indicator_streaming_demo.py), [examples/61_indicator_visualization_export_demo.py](https://github.com/akfamily/akquant/blob/main/examples/61_indicator_visualization_export_demo.py)
+- 函数式孪生示例：[examples/textbook/ch16_indicators_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators_functional.py)
 - 对应指南：[AKQuant 指标全量说明](../guide/rust_indicator_reference.md)
 
 ## 快速运行与验收
 
 ```bash
 python examples/textbook/ch16_indicators.py
+python examples/textbook/ch16_indicators_functional.py
 # 可选：接入真实 A 股数据
 python examples/textbook/ch16_indicators.py --symbol sh600000
 ```

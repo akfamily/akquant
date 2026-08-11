@@ -17,12 +17,14 @@
 
 - 主示例：[examples/textbook/ch01_quickstart.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch01_quickstart.py)
 - 进阶示例：[examples/01_quickstart.py](https://github.com/akfamily/akquant/blob/main/examples/01_quickstart.py)
+- 函数式孪生示例：[examples/textbook/ch01_quickstart_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch01_quickstart_functional.py)
 - 对应指南：[快速开始](../start/quickstart.md)
 
 ## 快速运行与验收
 
 ```bash
 python examples/textbook/ch01_quickstart.py
+python examples/textbook/ch01_quickstart_functional.py
 ```
 
 验收要点：

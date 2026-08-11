@@ -19,13 +19,16 @@
 
 - 主示例：[examples/textbook/ch09_funds.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch09_funds.py)
 - 进阶示例：[examples/textbook/ch09_portfolio.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch09_portfolio.py)
+- 函数式孪生示例：[examples/textbook/ch09_funds_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch09_funds_functional.py)（主示例孪生）、[examples/textbook/ch09_portfolio_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch09_portfolio_functional.py)（进阶示例孪生）
 - 对应指南：[策略指南](../guide/strategy.md)
 
 ## 快速运行与验收
 
 ```bash
 python examples/textbook/ch09_funds.py
+python examples/textbook/ch09_funds_functional.py
 python examples/textbook/ch09_portfolio.py
+python examples/textbook/ch09_portfolio_functional.py
 ```
 
 验收要点：

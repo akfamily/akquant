@@ -23,6 +23,7 @@
 - 类风格 Tick 示例：[examples/51_class_tick_callbacks_demo.py](https://github.com/akfamily/akquant/blob/main/examples/51_class_tick_callbacks_demo.py)
 - 盘前开盘语义示例：[examples/52_pre_open_demo.py](https://github.com/akfamily/akquant/blob/main/examples/52_pre_open_demo.py)
 - 双阶段盘前执行示例：[examples/53_timer_to_pre_open_demo.py](https://github.com/akfamily/akquant/blob/main/examples/53_timer_to_pre_open_demo.py)
+- 函数式孪生示例：[examples/textbook/ch05_strategy_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch05_strategy_functional.py)
 - 对应指南：[策略指南](../guide/strategy.md)
 
 建议学习路径：
@@ -38,6 +39,7 @@
 
 ```bash
 python examples/textbook/ch05_strategy.py
+python examples/textbook/ch05_strategy_functional.py
 ```
 
 验收要点：
