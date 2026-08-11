@@ -275,6 +275,11 @@ def _run_backtest_safe(
         result_container["error"] = str(e)
 
 
+def _is_functional_strategy(strategy: Any) -> bool:
+    """判断策略是否为函数式入口（普通 callable，而非 Strategy 子类）."""
+    return not (isinstance(strategy, type) and issubclass(strategy, Strategy))
+
+
 def _run_single_backtest(args: Dict[str, Any]) -> OptimizationResult:
     """
     运行单个回测任务 (Internal).
@@ -297,7 +302,15 @@ def _run_single_backtest(args: Dict[str, Any]) -> OptimizationResult:
 
     # 将参数合并到 kwargs 中传给 strategy
     kwargs = backtest_kwargs.copy()
-    kwargs.update(params)
+    if params and _is_functional_strategy(strategy_cls):
+        # 函数式策略没有构造器，参数必须经 context 注入 ctx。
+        # 若沿用 kwargs.update(params)，参数会被静默丢弃，
+        # 导致所有参数组合返回完全相同的结果。
+        merged_context = dict(kwargs.get("context") or {})
+        merged_context.update(params)
+        kwargs["context"] = merged_context
+    else:
+        kwargs.update(params)
 
     # 动态计算 warmup_period
     if warmup_calc:
@@ -987,7 +1000,15 @@ def run_walk_forward(
         backtest_kwargs = {
             k: v for k, v in kwargs.items() if k not in _GRID_SEARCH_ONLY_KWARGS
         }
-        backtest_kwargs.update(best_params)
+        if best_params and _is_functional_strategy(strategy):
+            # 与 _run_single_backtest 同理：函数式策略没有构造器，
+            # 最佳参数必须经 context 注入 ctx，否则样本外回测会静默使用
+            # 策略内部默认值，导致拼接出的净值曲线与日志打印的 Best Params 不符。
+            merged_context = dict(backtest_kwargs.get("context") or {})
+            merged_context.update(best_params)
+            backtest_kwargs["context"] = merged_context
+        else:
+            backtest_kwargs.update(best_params)
         backtest_kwargs["initial_cash"] = initial_cash
         backtest_kwargs["warmup_period"] = current_warmup
 
