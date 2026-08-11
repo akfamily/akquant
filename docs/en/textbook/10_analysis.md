@@ -9,4 +9,5 @@ This chapter is currently maintained in Chinese first.
 - Practice links:
   - Primary example: [examples/textbook/ch10_analysis.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch10_analysis.py)
   - Extended example: [examples/33_report_and_analysis_outputs.py](https://github.com/akfamily/akquant/blob/main/examples/33_report_and_analysis_outputs.py)
+  - Functional twin example: [examples/textbook/ch10_analysis_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch10_analysis_functional.py)
   - Guide: [Analysis Guide](../guide/analysis.md)

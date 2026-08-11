@@ -23,13 +23,16 @@
 - 行情/交易源分开指定示例（无需柜台）：[examples/39_live_mixed_broker_demo.py](https://github.com/akfamily/akquant/blob/main/examples/39_live_mixed_broker_demo.py)
 - 日志/审计示例（自包含，无需网关）：[examples/66_logging_audit_demo.py](https://github.com/akfamily/akquant/blob/main/examples/66_logging_audit_demo.py)
 - 外部信号接入示例（HTTP webhook，无需柜台）：[examples/61_signal_platform_webhook.py](https://github.com/akfamily/akquant/blob/main/examples/61_signal_platform_webhook.py)
+- 函数式孪生示例：[examples/textbook/ch15_live_trading_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading_functional.py)（主示例孪生）、[examples/textbook/ch15_strategy_loader_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader_functional.py)（进阶示例孪生）
 - 对应指南：[实盘函数式指南](../advanced/live_functional_quickstart.md)、[外部信号平台接入](../advanced/signal_ingestion.md)
 
 ## 快速运行与验收
 
 ```bash
 python examples/textbook/ch15_live_trading.py
+python examples/textbook/ch15_live_trading_functional.py
 python examples/textbook/ch15_strategy_loader.py
+python examples/textbook/ch15_strategy_loader_functional.py
 python examples/38_live_functional_strategy_demo.py
 python examples/39_live_mixed_broker_demo.py
 python examples/66_logging_audit_demo.py

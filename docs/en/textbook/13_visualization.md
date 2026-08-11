@@ -7,6 +7,7 @@ This chapter is currently maintained in Chinese first.
 - Practice links:
   - Primary example: [examples/textbook/ch13_visualization.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch13_visualization.py)
   - Extended example: [examples/11_plot_visualization.py](https://github.com/akfamily/akquant/blob/main/examples/11_plot_visualization.py)
+  - Functional twin example: [examples/textbook/ch13_visualization_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch13_visualization_functional.py)
   - Guide: [Visualization Guide](../guide/visualization.md)
 
 Key update in this chapter:

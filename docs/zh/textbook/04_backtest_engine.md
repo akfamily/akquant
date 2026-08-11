@@ -19,12 +19,14 @@
 
 - 主示例：[examples/textbook/ch04_comparison.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch04_comparison.py)
 - 进阶示例：[examples/25_streaming_backtest_demo.py](https://github.com/akfamily/akquant/blob/main/examples/25_streaming_backtest_demo.py), [examples/68_backtest_tick_demo.py](https://github.com/akfamily/akquant/blob/main/examples/68_backtest_tick_demo.py)（§4.16 Tick 输入与聚合语义）
+- 函数式孪生示例：[examples/textbook/ch04_comparison_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch04_comparison_functional.py)
 - 对应指南：[数据指南](../guide/data.md)
 
 ## 快速运行与验收
 
 ```bash
 python examples/textbook/ch04_comparison.py
+python examples/textbook/ch04_comparison_functional.py
 ```
 
 验收要点：

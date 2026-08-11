@@ -8,6 +8,7 @@ This chapter is currently maintained in Chinese first.
   - Primary example: [examples/textbook/ch07_futures.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch07_futures.py)
   - Extended example: [examples/04_mixed_assets.py](https://github.com/akfamily/akquant/blob/main/examples/04_mixed_assets.py)
   - Expiry callback example: [examples/49_on_expiry_demo.py](https://github.com/akfamily/akquant/blob/main/examples/49_on_expiry_demo.py)
+  - Functional twin example: [examples/textbook/ch07_futures_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch07_futures_functional.py)
   - Guide: [Strategy Guide](../guide/strategy.md)
 
 ## China futures config highlights

@@ -43,6 +43,11 @@ CLAUDE.md
 /examples/indicator_visualization_preview.html
 /examples/indicator_visualization_outputs.json
 
+# ── 教材示例在仓库根目录生成的报告产物（文件名硬编码，从根目录运行示例时落在这里；
+#    类风格与函数式孪生示例产出同名文件）──
+/ch10_analysis_report_daily.html
+/ch13_report_with_benchmark.html
+
 # ── AI 工作流文档（内部，不公开）──
 docs/superpowers
 

@@ -19,12 +19,14 @@
 
 - 主示例：[examples/textbook/ch11_optimization.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch11_optimization.py)
 - 进阶示例：[examples/02_parameter_optimization.py](https://github.com/akfamily/akquant/blob/main/examples/02_parameter_optimization.py)
+- 函数式孪生示例：[examples/textbook/ch11_optimization_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch11_optimization_functional.py)
 - 对应指南：[优化指南](../guide/optimization.md)
 
 ## 快速运行与验收
 
 ```bash
 python examples/textbook/ch11_optimization.py
+python examples/textbook/ch11_optimization_functional.py
 ```
 
 验收要点：

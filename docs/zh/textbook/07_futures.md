@@ -19,12 +19,14 @@
 
 - 主示例：[examples/textbook/ch07_futures.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch07_futures.py)
 - 进阶示例：[examples/04_mixed_assets.py](https://github.com/akfamily/akquant/blob/main/examples/04_mixed_assets.py)
+- 函数式孪生示例：[examples/textbook/ch07_futures_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch07_futures_functional.py)
 - 对应指南：[策略指南](../guide/strategy.md)
 
 ## 快速运行与验收
 
 ```bash
 python examples/textbook/ch07_futures.py
+python examples/textbook/ch07_futures_functional.py
 ```
 
 验收要点：

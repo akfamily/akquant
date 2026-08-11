@@ -8,4 +8,5 @@ This chapter is currently maintained in Chinese first.
   - Primary example: [examples/textbook/ch08_options.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch08_options.py)
   - Extended example: [examples/07_option_test.py](https://github.com/akfamily/akquant/blob/main/examples/07_option_test.py)
   - Expiry callback example: [examples/49_on_expiry_demo.py](https://github.com/akfamily/akquant/blob/main/examples/49_on_expiry_demo.py)
+  - Functional twin example: [examples/textbook/ch08_options_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch08_options_functional.py)
   - Guide: [Quant Basics Guide](../guide/quant_basics.md)

@@ -11,6 +11,7 @@ This chapter is currently maintained in Chinese first.
   - Primary example: [examples/textbook/ch15_live_trading.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading.py)
   - Extended example: [examples/textbook/ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py)
   - Supplementary example: [examples/44_strategy_source_loader_demo.py](https://github.com/akfamily/akquant/blob/main/examples/44_strategy_source_loader_demo.py)
+  - Functional twin examples: [examples/textbook/ch15_live_trading_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading_functional.py), [examples/textbook/ch15_strategy_loader_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader_functional.py)
   - Guide: [Live Functional Quickstart Guide](../advanced/live_functional_quickstart.md)
 
 ## Operational Logging Note

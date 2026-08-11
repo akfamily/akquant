@@ -87,6 +87,18 @@ def _is_pre_open_session(session: Any) -> bool:
     return text == "preopen" or text.endswith(".preopen")
 
 
+def _functional_wrapper_method(cls: type, callback_name: str) -> Any:
+    """取函数式包装器自身定义的该回调转发方法, 非函数式策略返回 None.
+
+    用 ``__dict__`` 而非 getattr 定位打了标记的那个类本身: 标记会被子类继承,
+    getattr 无法区分"包装器"与"包装器的子类"。
+    """
+    for base in cls.mro():
+        if base.__dict__.get("_is_functional_wrapper"):
+            return base.__dict__.get(callback_name)
+    return None
+
+
 def _strategy_overrides_callback(strategy: Any, callback_name: str) -> bool:
     """判断策略是否重写了框架钩子(相对框架基类的默认实现).
 
@@ -94,10 +106,21 @@ def _strategy_overrides_callback(strategy: Any, callback_name: str) -> bool:
     默认实现。若改为比较"MRO 中第一个定义该方法的基类", 用户把钩子写在一层
     公共基类里、具体策略只继承时会拿用户基类跟自己比, 得到 False, 钩子被
     dispatch_time_hooks / collect_pre_open_timer_entries 整段跳过而静默失效。
+
+    函数式策略是例外: ``FunctionalStrategy`` 在类体里无条件定义了全部回调转发
+    方法(未提供时空转), 按类比较恒为 True, 快路径整体失效——引擎会为每根 Bar
+    分发无人消费的 pre_open / cross_section / time-hooks / portfolio-update。
+    因此当该方法正是包装器自身那份时, 改看用户是否真的提供了对应回调函数;
+    子类若二次重写, method 不再是包装器那份, 仍走下面的通用比较。
     """
     method = getattr(type(strategy), callback_name, None)
     if method is None:
         return False
+    wrapper_method = _functional_wrapper_method(type(strategy), callback_name)
+    if wrapper_method is not None and method is wrapper_method:
+        attr = f"_{callback_name}_func"
+        if hasattr(strategy, attr):
+            return getattr(strategy, attr) is not None
     for base in reversed(type(strategy).mro()[1:]):
         base_method = base.__dict__.get(callback_name)
         if base_method is not None:
