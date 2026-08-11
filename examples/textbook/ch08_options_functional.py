@@ -89,9 +89,10 @@ def initialize(ctx: Any) -> None:
     """
     初始化备兑看涨策略状态.
 
-    类风格版把这些状态放在 on_start 里；函数式两种位置都可行
-    （on_start(ctx) 里写 ctx.xxx = ... 效果相同），
-    这里选 initialize 以贴合「构造期初始化」的语义。
+    类风格版把这些状态放在 on_start 里；函数式两处都能写，但推荐 initialize：
+    on_start 在快照恢复 (Warm Start) 后会再次触发，跨 Bar 状态写在那里会被重置，
+    覆盖掉已从快照恢复的 has_position / bar_count（于是重复开仓、平仓也被推迟）。
+    initialize 只在策略构造时执行一次，不受恢复影响。
 
     注意：类风格版没有设置 warmup_period，本示例也不设置——
     预热期会改变被跳过的 Bar 数量，凭空加上会让两版输出不再一致。

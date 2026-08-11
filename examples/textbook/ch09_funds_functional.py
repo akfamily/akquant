@@ -29,7 +29,7 @@ ETF (Exchange Traded Fund) 是场内交易基金，交易规则与股票类似�
 两份示例的回测统计输出应完全一致，这说明函数式与类风格在引擎层等价。
 """
 
-from typing import Any, Optional
+from typing import Any
 
 import akquant as aq
 import numpy as np
@@ -73,10 +73,7 @@ def initialize(ctx: Any) -> None:
     """
     ctx.grid_step = 0.01  # 网格间距 1%
     ctx.lot_size = 1000  # 每次买卖 1000 股
-    # 类风格写 `self.last_buy_price: Optional[float] = None`；函数式不能直接在
-    # ctx 属性上写类型标注（mypy 只允许标注 self 属性），故先声明局部变量再赋值。
-    last_buy_price: Optional[float] = None
-    ctx.last_buy_price = last_buy_price
+    ctx.last_buy_price = None  # 必须是 None，不能写 0.0（见上方 docstring）
 
 
 def on_bar(ctx: Any, bar: Bar) -> None:
