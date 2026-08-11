@@ -46,13 +46,14 @@ def generate_mock_data(length: int = 970) -> pd.DataFrame:
 
 def get_data() -> pd.DataFrame:
     """
-    步骤 1: 数据获取（与类风格版完全一致）.
+    步骤 1: 数据获取（逻辑、参数、数据源与类风格版一致）.
 
     优先使用 AKShare 获取浦发银行 (600000) 的历史日线数据；
     若无网络或接口异常，则回退到本地合成数据，保证示例断网也能跑通。
     """
     print("正在获取数据...")
     try:
+        # 获取前复权数据（联网）
         df = ak.stock_zh_a_daily(
             symbol="sh600000",
             start_date="20200101",
@@ -76,6 +77,10 @@ def initialize(ctx: Any) -> None:
     关键差异：函数式没有类体，warmup_period 必须在这里挂到 ctx 上。
     引擎会取 ctx.warmup_period 与 run_backtest(warmup_period=...) 的较大值，
     所以在此赋值即可生效。
+
+    注意：引擎还有一路“按指标调用自动推断 warmup”的机制，但它靠 AST 解析策略
+    类体实现；函数式下被解析的是引擎内部的 FunctionalStrategy 而非本文件的
+    on_bar，推断结果恒为 0。因此函数式必须像这样显式赋值，不能依赖自动推断。
     """
     ctx.short_window = 5
     ctx.long_window = 20
