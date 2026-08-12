@@ -509,7 +509,14 @@ class Strategy:
         )
         # 遗留写法早诊断: 带参 __init__ + 零内联字段 => 这些参数永远传不进来。
         # 只看本类自己定义的 __init__(vars(cls)), 避免子类继承时重复告警。
-        if not field_defs and "__init__" in vars(cls):
+        # 按模块豁免 akquant 包自身: VectorizedStrategy/FunctionalStrategy 等内部
+        # 包装类的构造参数是依赖注入(回调/预算数据), 不是"可调策略参数", 迁移文案
+        # 对它们不适用; 用户模块(examples/tests 等)不受此豁免影响。
+        if (
+            not field_defs
+            and "__init__" in vars(cls)
+            and not str(cls.__module__).startswith("akquant")
+        ):
             legacy_args = _legacy_init_arg_names(vars(cls)["__init__"])
             if legacy_args:
                 warnings.warn(

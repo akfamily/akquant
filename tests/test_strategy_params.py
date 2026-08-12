@@ -1,4 +1,6 @@
 import pickle
+import subprocess
+import sys
 import warnings
 
 import pytest
@@ -150,3 +152,53 @@ def test_legacy_warning_points_at_user_class_definition() -> None:
                 self.window = window
 
     assert records[0].filename == __file__
+
+
+def test_akquant_own_module_is_exempt_from_legacy_warning() -> None:
+    """AKQuant 包自身模块下的遗留写法类(依赖注入的内部包装器)不应告警.
+
+    直接把 ``__module__`` 覆盖为 ``akquant.*`` 前缀来命中豁免分支——这是对
+    "按 ``cls.__module__`` 是否以 akquant 开头判定" 这条规则本身的精确验证:
+    在类体里赋值 ``__module__`` 会在 ``type.__new__`` 构建类、进而调用
+    ``__init_subclass__`` 之前就生效, 因此 ``cls.__module__`` 在判定时已经是
+    覆盖后的值, 等价于"该类物理定义在 akquant 包内"的场景, 且不依赖模块缓存/
+    reload 这类脆弱手段。
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class FakeInternalWrapper(Strategy):
+            __module__ = "akquant.fake_internal_wrapper"
+
+            def __init__(self, injected: int = 1) -> None:
+                super().__init__()
+                self.injected = injected
+
+
+def test_import_akquant_emits_no_legacy_param_warning() -> None:
+    """全新解释器进程 import akquant 不应产生本条告警.
+
+    ``akquant`` 在当前测试进程里早已被 import 过(位于 sys.modules 缓存中),
+    再次 import 不会重新执行类体, 无法验证真实的"用户第一次 import akquant"
+    场景; 用 ``importlib.reload`` 强制重跑类体则有污染 pydantic 动态模型注册表
+    等全局状态的风险。故用子进程起一个全新解释器, 在其中以
+    ``warnings.simplefilter("always")`` 捕获 import 期间的全部告警, 断言其中
+    不包含本条告警的特征文案——这直接复现并锁定了 concern 中报告的真实场景。
+    """
+    code = (
+        "import warnings\n"
+        "with warnings.catch_warnings(record=True) as records:\n"
+        "    warnings.simplefilter('always')\n"
+        "    import akquant\n"
+        "    import akquant.backtest\n"
+        "matches = [str(r.message) for r in records "
+        "if '未声明任何内联参数字段' in str(r.message)]\n"
+        "assert not matches, matches\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
