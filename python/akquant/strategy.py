@@ -2100,8 +2100,8 @@ class Strategy:
         return (
             f"Instrument config not found for symbol: {symbol}; "
             f"{listed}; "
-            "登记入口: 回测 run_backtest(instrument_configs=...), "
-            "实盘 run_live(instruments=[...])"
+            "登记入口: 回测 run_backtest(config=BacktestConfig("
+            "instruments_config=[...])), 实盘 run_live(instruments=[...])"
         )
 
     def get_instruments(

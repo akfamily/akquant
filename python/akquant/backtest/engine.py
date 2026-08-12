@@ -3933,12 +3933,15 @@ def run_backtest(
             if session_ranges:
                 engine.set_market_sessions(session_ranges)
 
-    if china_stock_config is not None and hasattr(
-        engine, "set_stock_validation_options"
-    ):
-        cast(Any, engine).set_stock_validation_options(
-            bool(china_stock_config.enforce_tick_size),
-        )
+    if china_stock_config is not None:
+        if hasattr(engine, "set_stock_validation_options"):
+            cast(Any, engine).set_stock_validation_options(
+                bool(china_stock_config.enforce_tick_size),
+            )
+        else:
+            logger.warning(
+                "set_stock_validation_options is not available in current engine binary"
+            )
 
     if china_options_config and has_options_instruments:
         if china_options_config.fee_by_symbol_prefix:
