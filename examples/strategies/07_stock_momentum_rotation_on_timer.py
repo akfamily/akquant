@@ -4,7 +4,7 @@ from typing import Any
 
 import akquant as aq
 import pandas as pd
-from akquant import Strategy
+from akquant import IntParam, Strategy
 
 
 def _build_symbol_df(
@@ -53,16 +53,12 @@ def make_data() -> dict[str, pd.DataFrame]:
 class OnTimerMomentumRotationStrategy(Strategy):
     """使用 on_timer 在固定时点执行横截面轮动."""
 
-    def __init__(self, lookback_period: int = 5, **kwargs: Any) -> None:
-        """初始化策略参数."""
-        _ = kwargs
-        super().__init__()
-        self.lookback_period = lookback_period
-        self.symbols = ["AAA", "BBB"]
-        self.warmup_period = lookback_period + 1
+    lookback_period = IntParam(5, ge=1, le=500, title="动量回看周期")
 
     def on_start(self) -> None:
         """策略启动时注册固定时点调仓定时器."""
+        self.symbols = ["AAA", "BBB"]
+        self.warmup_period = self.params.lookback_period + 1
         for symbol in self.symbols:
             self.subscribe(symbol)
         self.schedule_daily("10:00:00", "rebalance")
@@ -70,7 +66,7 @@ class OnTimerMomentumRotationStrategy(Strategy):
             "on_start "
             f"subscribe={self.symbols} "
             "timer=10:00:00 "
-            f"lookback={self.lookback_period}"
+            f"lookback={self.params.lookback_period}"
         )
 
     def on_timer(self, payload: str) -> None:
@@ -78,13 +74,13 @@ class OnTimerMomentumRotationStrategy(Strategy):
         if payload != "rebalance":
             return
         history_map = self.get_history_map(
-            count=self.lookback_period,
+            count=self.params.lookback_period,
             symbols=self.symbols,
             field="close",
         )
         scores: dict[str, float] = {}
         for symbol, closes in history_map.items():
-            if len(closes) < self.lookback_period:
+            if len(closes) < self.params.lookback_period:
                 continue
             start = float(closes[0])
             end = float(closes[-1])

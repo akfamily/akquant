@@ -5,7 +5,7 @@ from typing import Any
 
 import akquant as aq
 import pandas as pd
-from akquant import Strategy
+from akquant import IntParam, Strategy
 
 
 def _build_symbol_df(
@@ -73,32 +73,30 @@ def rebalance_to_best_symbol(
 class DailyBoundaryMomentumRotationStrategy(Strategy):
     """使用 on_before_trading 执行前一快照语义的横截面轮动."""
 
-    def __init__(self, lookback_period: int = 5, **kwargs: Any) -> None:
-        """初始化策略参数."""
-        _ = kwargs
-        super().__init__()
-        self.lookback_period = lookback_period
-        self.symbols = ["AAA", "BBB"]
-        self.warmup_period = lookback_period + 1
+    lookback_period = IntParam(5, ge=1, le=500, title="动量回看周期")
 
     def on_start(self) -> None:
         """策略启动时订阅轮动标的."""
+        self.symbols = ["AAA", "BBB"]
+        self.warmup_period = self.params.lookback_period + 1
         for symbol in self.symbols:
             self.subscribe(symbol)
-        self.log(f"on_start subscribe={self.symbols} lookback={self.lookback_period}")
+        self.log(
+            f"on_start subscribe={self.symbols} lookback={self.params.lookback_period}"
+        )
 
     def on_before_trading(self, trading_date: Any, timestamp: int) -> None:
         """交易日盘前调仓回调（前一快照可见）."""
         _ = timestamp
         self.log(f"on_before_trading date={trading_date}")
         history_map = self.get_history_map(
-            count=self.lookback_period,
+            count=self.params.lookback_period,
             symbols=self.symbols,
             field="close",
         )
         scores: dict[str, float] = {}
         for symbol, closes in history_map.items():
-            if len(closes) < self.lookback_period:
+            if len(closes) < self.params.lookback_period:
                 continue
             start = float(closes[0])
             end = float(closes[-1])

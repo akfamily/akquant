@@ -14,12 +14,10 @@
 - 安装 akshare: `pip install akshare`
 """
 
-from typing import Any
-
 import akquant as aq
 import akshare as ak
 import pandas as pd
-from akquant import Bar, Strategy
+from akquant import Bar, IntParam, Strategy
 
 
 class MomentumRotationStrategy(Strategy):
@@ -32,18 +30,14 @@ class MomentumRotationStrategy(Strategy):
     - 如果当前持仓不是最强标的，则换仓。
     """
 
-    def __init__(self, lookback_period: int = 20, *args: Any, **kwargs: Any) -> None:
-        """
-        Initialize strategy parameters.
+    lookback_period = IntParam(20, ge=1, le=500, title="动量回看周期")
 
-        :param lookback_period: Momentum lookback period (days)
-        """
-        super().__init__(*args, **kwargs)
-        self.lookback_period = lookback_period
+    def on_start(self) -> None:
+        """设置轮动标的列表与数据预热长度."""
         # 定义需要轮动的标的列表
         self.symbols = ["sh600519", "sz000858"]  # 茅台 vs 五粮液
         # 设置数据预热长度
-        self.warmup_period = lookback_period + 1
+        self.warmup_period = self.params.lookback_period + 1
 
     def on_bar(self, bar: Bar) -> None:
         """处理每个 Bar 数据."""
@@ -60,11 +54,11 @@ class MomentumRotationStrategy(Strategy):
         for s in self.symbols:
             # 获取历史收盘价 (包含当前bar)
             closes = self.get_history(
-                count=self.lookback_period, symbol=s, field="close"
+                count=self.params.lookback_period, symbol=s, field="close"
             )
 
             # 检查数据是否足够
-            if len(closes) < self.lookback_period:
+            if len(closes) < self.params.lookback_period:
                 return
 
             # 计算动量: (当前收盘价 - N天前收盘价) / N天前收盘价
