@@ -464,6 +464,8 @@ class LiveRunner:
             self._start_gateway_thread(
                 bundle.market_gateway.start, f"{self.broker}-market"
             )
+        else:
+            self._warn_if_no_market_gateway(bundle)
 
         if self.trading_mode == "broker_live":
             if bundle.trader_gateway is None:
@@ -669,6 +671,39 @@ class LiveRunner:
                 )
                 cast(Any, self.engine).set_strategy_for_slot(slot_index, assigned)
         self._apply_strategy_risk_controls(configured_slot_ids)
+
+    def _warn_if_no_market_gateway(self, bundle: Any) -> None:
+        """trader-only broker 无行情网关时告警.
+
+        ``broker='middleware'``/``'qmf'`` 这类只有交易通道的 broker 会让
+        ``market_gateway`` 为 ``None``: ``on_bar``/``on_tick`` 永不触发,
+        ``current_tick`` 恒为 ``None``。这是**预期行为**(见 ``run_live``
+        docstring), 但启动阶段此前完全静默, 用户只看到"策略没反应", 无从判断
+        是配置错了还是本就没有行情。
+
+        已显式配 ``market_broker`` 却仍没有行情网关时不告警: 那说明所配的行情
+        broker 自己没给出网关, 属于配置错误, 该由 factory/该 broker 报, 这里
+        再劝一句"去配 market_broker"只会误导。
+        """
+        if getattr(bundle, "market_gateway", None) is not None:
+            return
+        if str(getattr(self, "market_broker", "") or "").strip():
+            logger.warning(
+                "broker '%s' 未提供行情网关: on_bar/on_tick 不会触发, "
+                "current_tick 恒为 None",
+                self.broker,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+            return
+        logger.warning(
+            "broker '%s' 只提供交易通道(无行情网关): on_bar/on_tick 不会触发, "
+            "current_tick 恒为 None。若策略依赖行情, 用 "
+            "run_live(market_broker='<行情源>', trader_broker='%s') "
+            "把行情与交易分开指定",
+            self.broker,
+            self.broker,
+            extra=self._runner_log_extra(phase="gateway"),
+        )
 
     def _install_subscription_forwarder(self, targets: list[Strategy]) -> None:
         """给各策略装上 subscribe() → 行情网关的运行期转发器.

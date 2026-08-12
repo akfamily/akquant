@@ -969,6 +969,11 @@ impl Engine {
             );
     }
 
+    fn set_stock_validation_options(&mut self, enforce_tick_size: bool) {
+        self.execution_model
+            .set_stock_validation_options(enforce_tick_size);
+    }
+
     /// 设置基金费率规则
     ///
     /// :param commission_rate: 佣金率

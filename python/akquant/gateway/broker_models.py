@@ -182,7 +182,10 @@ def validate_execution_semantics(
     ):
         raise RuntimeError(
             f"broker '{capability.broker_name}' does not support short sell "
-            "(supports_short_sell=False)"
+            "(supports_short_sell=False): 该 broker 的账户不支持融券卖空"
+            "(A 股现券账户受市场规则限制, 只能卖出已持有的仓位); "
+            "若本意是平掉已有多头, 请用 position_effect='close'(或 sell() 缺省的"
+            "自动平仓语义)而不是 'open'"
         )
     if normalized_effect != "auto" and not capability.position_effect:
         raise RuntimeError(

@@ -743,6 +743,14 @@ class Engine:
         """
         ...
 
+    def set_stock_validation_options(self, enforce_tick_size: bool) -> None:
+        r"""
+        设置股票/基金撮合前校验开关.
+
+        :param enforce_tick_size: 是否启用最小变动价位校验
+        """
+        ...
+
     def set_fund_fee_rules(
         self, commission_rate: float, transfer_fee: float, min_commission: float
     ) -> None:

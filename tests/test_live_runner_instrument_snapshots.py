@@ -96,3 +96,51 @@ def test_unknown_symbol_still_raises() -> None:
     runner._configure_strategy_slots(strategy, {}, "alpha")
     with pytest.raises(KeyError):
         strategy.get_instrument("999999.SH")
+
+
+def test_unknown_symbol_error_lists_registered_and_remedy() -> None:
+    """报错要给出已登记标的与补救办法, 不能只说"没找到".
+
+    实盘该异常最常见的成因是标的没进 ``run_live(instruments=[...])``, 而原文案
+    ("Instrument config not found for symbol: X")看不出这一点, 用户会误以为是
+    broker 侧缺配置。
+    """
+    runner = _runner(
+        [
+            Instrument("600000.SH", AssetType.Stock),
+            Instrument("000012.SZ", AssetType.Stock),
+        ]
+    )
+    strategy = _DummyStrategy()
+    runner._configure_strategy_slots(strategy, {}, "alpha")
+    with pytest.raises(KeyError) as exc:
+        strategy.get_instrument("600008.SH")
+    message = str(exc.value)
+    assert "600008.SH" in message
+    assert "600000.SH" in message and "000012.SZ" in message
+    assert "instruments" in message
+
+
+def test_unknown_symbol_error_truncates_long_registered_list() -> None:
+    """已登记标的很多时报错要截断, 不能刷屏."""
+    instruments = [Instrument(f"{600000 + i}.SH", AssetType.Stock) for i in range(40)]
+    runner = _runner(instruments)
+    strategy = _DummyStrategy()
+    runner._configure_strategy_slots(strategy, {}, "alpha")
+    with pytest.raises(KeyError) as exc:
+        strategy.get_instrument("999999.SZ")
+    message = str(exc.value)
+    assert "40" in message  # 总数仍要告知
+    assert message.count(".SH") <= 21  # 截断: 最多列 20 个 + 可能的总数提示
+
+
+def test_no_registered_instruments_error_is_explicit() -> None:
+    """一个都没登记时要直说, 这是最典型的忘传 instruments 场景."""
+    runner = _runner([])
+    strategy = _DummyStrategy()
+    runner._configure_strategy_slots(strategy, {}, "alpha")
+    with pytest.raises(KeyError) as exc:
+        strategy.get_instrument("600008.SH")
+    message = str(exc.value)
+    assert "600008.SH" in message
+    assert "instruments" in message

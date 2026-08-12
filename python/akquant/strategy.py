@@ -174,6 +174,7 @@ from .strategy_trading_api import (
 from .strategy_trading_api import (
     submit_order as _submit_order_impl,
 )
+from .utils.price import round_to_tick as _round_to_tick
 
 if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
@@ -2075,8 +2076,33 @@ class Strategy:
     def get_instrument(self, symbol: str) -> InstrumentSnapshot:
         """返回单个标的属性快照."""
         if symbol not in self._instrument_snapshots:
-            raise KeyError(f"Instrument config not found for symbol: {symbol}")
+            raise KeyError(self._unknown_instrument_message(symbol))
         return self._instrument_snapshots[symbol]
+
+    def _unknown_instrument_message(self, symbol: str, max_listed: int = 20) -> str:
+        """拼出可执行的"标的未登记"报错文案.
+
+        原文案只说 ``Instrument config not found for symbol: X``, 看不出成因。
+        实盘最常见的原因是该标的没进 ``run_live(instruments=[...])``——用户会
+        误以为是 broker 侧缺配置(实测反馈即如此)。这里补上已登记清单与登记入口。
+
+        单行拼接: ``KeyError`` 的 ``str()`` 会把换行转义成可见的字面量, 多行文案
+        在终端里反而更难读。清单按 ``max_listed`` 截断, 避免几百个标的刷屏。
+        """
+        registered = list(self._instrument_snapshots)
+        total = len(registered)
+        if total == 0:
+            listed = "当前未登记任何标的"
+        else:
+            head = ", ".join(registered[:max_listed])
+            suffix = " ..." if total > max_listed else ""
+            listed = f"已登记 {total} 个标的: {head}{suffix}"
+        return (
+            f"Instrument config not found for symbol: {symbol}; "
+            f"{listed}; "
+            "登记入口: 回测 run_backtest(config=BacktestConfig("
+            "instruments_config=[...])), 实盘 run_live(instruments=[...])"
+        )
 
     def get_instruments(
         self, symbols: Optional[List[str]] = None
@@ -2107,6 +2133,24 @@ class Strategy:
         if isinstance(fields, list):
             return {field: self.get_instrument_field(symbol, field) for field in fields}
         raise TypeError("fields must be str, List[str], or None")
+
+    def round_to_tick(
+        self, symbol: str, price: float, direction: str = "nearest"
+    ) -> float:
+        """把委托价对齐到该标的的最小变动价位.
+
+        框架在下单路径上只做**校验**不做取整(擅自改价会让用户拿到一个自己没
+        算过的成交价), 需要对齐时显式调用本方法::
+
+            self.buy(symbol, qty, price=self.round_to_tick(symbol, raw, "down"))
+
+        买单用 ``down``、卖单用 ``up``, 可保证取整不把价格推向不利方向。
+
+        :raises KeyError: 标的未登记(沿用 :meth:`get_instrument` 口径, 不用
+            缺省 tick 兜底——猜错 tick 比报错更危险)。
+        """
+        tick = float(self.get_instrument(symbol).tick_size)
+        return _round_to_tick(price, tick, direction)
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Any]:
         """

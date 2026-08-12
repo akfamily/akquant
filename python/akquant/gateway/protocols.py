@@ -79,7 +79,16 @@ class TraderGateway(Protocol):
         """Register execution report callback."""
 
     def sync_open_orders(self) -> list[UnifiedOrderSnapshot]:
-        """Sync open orders."""
+        """Sync open orders — **only** ones still working at the broker.
+
+        Implementations must filter to ``NEW`` / ``SUBMITTED`` /
+        ``PARTIALLY_FILLED``. Many venues answer "query orders" with the day's
+        *full* order book (cancelled and filled rows included); returning that
+        as-is breaks both consumers: ``BrokerExecution.cancel_all_orders``
+        cancels every entry one by one (re-cancelling a cancelled order is a
+        broker-side reject), and ``BrokerRecovery`` replays the whole history as
+        if it were still working.
+        """
 
     def sync_today_trades(self) -> list[UnifiedTrade]:
         """Sync today's trades."""

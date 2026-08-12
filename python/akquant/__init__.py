@@ -8,7 +8,7 @@ try:
 except metadata.PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
-__engine_rule_version__ = "1.3.7"  # Increment on behavior-changing updates
+__engine_rule_version__ = "1.4.0"  # Increment on behavior-changing updates
 
 from . import akquant as _akquant
 from . import log as _log
@@ -43,6 +43,7 @@ from .config import (
     ChinaOptionsConfig,
     ChinaOptionsFeeConfig,
     ChinaOptionsSessionConfig,
+    ChinaStockConfig,
     InstrumentAssetTypeEnum,
     InstrumentConfig,
     InstrumentOptionMarginModelEnum,
@@ -160,6 +161,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "ChinaOptionsConfig",
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
+        "ChinaStockConfig",
         "Indicator",
         "IndicatorRecorder",
         "IndicatorSet",
@@ -257,6 +259,7 @@ else:
         "ChinaOptionsConfig",
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
+        "ChinaStockConfig",
         "Indicator",
         "IndicatorRecorder",
         "IndicatorSet",

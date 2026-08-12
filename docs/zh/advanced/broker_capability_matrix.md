@@ -35,6 +35,7 @@
 - `BROKER_DISCONNECTED`
 - `BROKER_RATE_LIMITED`
 - `BROKER_REJECTED`
+- `PRICE_TICK_INVALID`（委托价不是最小变动价位的整数倍；见 [tick size 对齐](tick_size_alignment.md)）
 
 ## 最小闭环验收
 

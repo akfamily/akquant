@@ -9,6 +9,7 @@ pub mod realtime;
 pub mod simulated;
 pub mod slippage;
 pub mod stock;
+pub mod validation;
 
 pub use common::CommonMatcher;
 pub use matcher::ExecutionMatcher;
@@ -57,6 +58,8 @@ pub trait ExecutionClient: Send + Sync {
         _enforce_lot_size: bool,
     ) {
     }
+
+    fn set_stock_validation_options(&mut self, _enforce_tick_size: bool) {}
 
     fn set_futures_validation_options_by_prefix(
         &mut self,

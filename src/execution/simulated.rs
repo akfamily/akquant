@@ -26,6 +26,7 @@ pub struct SimulatedExecutionClient {
     order_queue: Vec<String>,
     // Matchers
     matchers: HashMap<AssetType, Box<dyn ExecutionMatcher>>,
+    stock_enforce_tick_size: bool,
     futures_enforce_tick_size: bool,
     futures_enforce_lot_size: bool,
     futures_validation_by_prefix: Vec<(String, Option<bool>, Option<bool>)>,
@@ -102,10 +103,21 @@ impl SimulatedExecutionClient {
         );
     }
 
+    fn rebuild_stock_matcher(&mut self) {
+        self.matchers.insert(
+            AssetType::Stock,
+            Box::new(stock::StockMatcher::new(self.stock_enforce_tick_size)),
+        );
+        self.matchers.insert(
+            AssetType::Fund,
+            Box::new(stock::StockMatcher::new(self.stock_enforce_tick_size)),
+        );
+    }
+
     pub fn new() -> Self {
         let mut matchers: HashMap<AssetType, Box<dyn ExecutionMatcher>> = HashMap::new();
-        matchers.insert(AssetType::Stock, Box::new(stock::StockMatcher));
-        matchers.insert(AssetType::Fund, Box::new(stock::StockMatcher)); // Fund uses StockMatcher
+        matchers.insert(AssetType::Stock, Box::new(stock::StockMatcher::default()));
+        matchers.insert(AssetType::Fund, Box::new(stock::StockMatcher::default())); // Fund uses StockMatcher
         matchers.insert(
             AssetType::Futures,
             Box::new(futures::FuturesMatcher::with_prefix_rules(
@@ -124,6 +136,7 @@ impl SimulatedExecutionClient {
             orders: HashMap::new(),
             order_queue: Vec::new(),
             matchers,
+            stock_enforce_tick_size: true,
             futures_enforce_tick_size: true,
             futures_enforce_lot_size: true,
             futures_validation_by_prefix: Vec::new(),
@@ -651,6 +664,11 @@ impl ExecutionClient for SimulatedExecutionClient {
         self.futures_enforce_tick_size = enforce_tick_size;
         self.futures_enforce_lot_size = enforce_lot_size;
         self.rebuild_futures_matcher();
+    }
+
+    fn set_stock_validation_options(&mut self, enforce_tick_size: bool) {
+        self.stock_enforce_tick_size = enforce_tick_size;
+        self.rebuild_stock_matcher();
     }
 
     fn set_futures_validation_options_by_prefix(

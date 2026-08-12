@@ -1,7 +1,9 @@
+from decimal import Decimal
 from typing import Any, Callable, Optional, cast
 
 from ..akquant import OrderStatus, check_strategy_limits
 from ..log import build_log_extra, get_logger
+from ..utils.price import round_to_tick
 from .broker_event_adapter import StrategyOrder
 from .broker_models import (
     BrokerCapability,
@@ -15,6 +17,75 @@ from .order_audit import record_reject, record_submit
 from .order_receipt import OrderLeg, OrderReceipt
 
 logger = get_logger("gateway.live")
+
+# 只有这两类资产的默认 tick 才可信、且回测撮合侧真的会校验它：
+# `Instrument` 缺省 tick 目前只按 stock/fund 分流(见
+# `src/model/instrument.rs`)，Option 仍缺省 0.01(实际 SSE/SZSE ETF 期权
+# 是 0.0001)，而 `execution/option.rs` 根本不做 tick 校验；futures/crypto/
+# forex 同样没有可信缺省。对这些资产做本地 tick 校验只会误拒回测能成交的单，
+# 且没有软开关可关——干脆跳过，交给柜台自己校验。
+#
+# 注意: `InstrumentSnapshot.asset_type`(`strategy.get_instrument()` 的返回值)
+# 是纯 Python dataclass 字段, 类型是大写字符串字面量("STOCK"/"FUND"/
+# "OPTION"/"FUTURES", 见 strategy.py::InstrumentAssetTypeName), 并不是
+# `Instrument`(Rust pyclass) 构造参数用的 `akquant.AssetType` 枚举——两者是
+# 不同的类型, 拿枚举成员去比对字符串永远不相等, 会让这里的校验对谁都不生效。
+_TICK_VALIDATED_ASSET_TYPES = frozenset({"STOCK", "FUND"})
+
+# `is_multiple` 判定容差, 必须与 Rust `execution::validation::is_multiple`
+# (src/execution/validation.rs) 逐字一致——见下方 `_is_multiple` 的说明。
+_TICK_TOLERANCE = Decimal("0.000001")
+
+
+def _is_multiple(value: Decimal, step: Decimal) -> bool:
+    """判断 ``value`` 是否为 ``step`` 的整数倍, 与 Rust `is_multiple` 同口径.
+
+    两侧校验的是同一个用户输入(Python float 价格), 若判定规则有一丝出入,
+    同一笔委托就会出现"回测过、实盘拒"或反之的分裂。这里刻意不用精确取模:
+    委托价在 Rust 侧经 `extract_decimal`(`Decimal::from_f64_retain`) 转换,
+    保留了 f64 二进制展开的全部有效位, 例如 `0.1+0.2` 的 f64 值并非精确的
+    `0.3`。改用"商与最近整数的偏差是否小于 1e-6"来判断对齐, 真正的错位
+    (如偏差 0.01 级别)远大于该容差, 不会被放过。
+    """
+    if step <= 0:
+        return True
+    quotient = value / step
+    nearest = quotient.to_integral_value()
+    return abs(quotient - nearest) <= _TICK_TOLERANCE
+
+
+def _validate_price_tick(strategy: Any, symbol: str, price: float | None) -> None:
+    """报单前校验委托价是否为最小变动价位的整数倍, 不合规则本地拒单.
+
+    与回测口径一致: `FuturesMatcher`/`StockMatcher` 对非对齐价格是 reject 而
+    非 round, 实盘若改成"悄悄取整"就会出现同一笔单回测拒、实盘成交的分裂。
+
+    只对 stock/fund 生效(见 `_TICK_VALIDATED_ASSET_TYPES`); 拿不到 tick 或
+    资产类型(标的未登记 / tick<=0 / 取不到 asset_type)时跳过——柜台自己也会
+    校验, 总比让没配 instruments 的用户完全下不了单好。
+    """
+    if price is None:
+        return
+    try:
+        instrument = strategy.get_instrument(symbol)
+    except (KeyError, AttributeError):
+        return
+    if getattr(instrument, "asset_type", None) not in _TICK_VALIDATED_ASSET_TYPES:
+        return
+    try:
+        tick = float(instrument.tick_size)
+    except AttributeError:
+        return
+    if tick <= 0:
+        return
+    if _is_multiple(Decimal(str(price)), Decimal(str(tick))):
+        return
+    raise ValueError(
+        f"委托价 {price} 不是 {symbol} 最小变动价位 {tick} 的整数倍, 已本地拒单; "
+        f"买入可用 {round_to_tick(price, tick, 'down')}, "
+        f"卖出可用 {round_to_tick(price, tick, 'up')}; "
+        f"或调用 self.round_to_tick('{symbol}', price, 'down'/'up') 自行对齐"
+    )
 
 
 def find_live_close_position(
@@ -555,6 +626,31 @@ class BrokerOrderSubmitter:
         owner_strategy_id = str(
             getattr(self._strategy, "_owner_strategy_id", "_default")
         )
+        try:
+            _validate_price_tick(self._strategy, symbol, price)
+        except ValueError as exc:
+            # 与下方前置风控拒单同口径(record_reject + _emit_risk_reject + 空
+            # 回执), 不能让 ValueError 直接从 submit_order/self.buy() 里炸出去
+            # ——否则这笔拒单既进不了审计流水, 也不触发 on_reject, 与回测里
+            # tick 拒单落地为 Rejected ExecutionReport 的软拒单语义脱节。
+            tick_reject_reason = str(exc)
+            record_reject(
+                strategy_id=owner_strategy_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                client_order_id="",
+                reason=tick_reject_reason,
+            )
+            self._emit_risk_reject(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                owner_strategy_id=owner_strategy_id,
+                reason=tick_reject_reason,
+            )
+            return OrderReceipt(group_id="", order_ids=(), legs=())
         # 前置风控: 在拆腿与报单之前。放这里而非拆腿之后, 是因为限额语义针对的是
         # 用户提交的那一笔逻辑委托(名义/数量), 而非拆出的每条腿——按腿校验会让
         # 一笔超限单因拆成两腿而各自"合规"从而整体漏过。
