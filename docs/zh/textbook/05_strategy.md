@@ -71,7 +71,7 @@ python examples/textbook/ch05_strategy_functional.py
 
 ### 5.2.1 `__init__` vs `on_start`
 
-这两个钩子的差别在于引擎所处的阶段。`__init__` 触发时，策略实例刚被创建，回测引擎尚未完全启动，因此你无法访问 `self.ctx` (Context) 或账户信息，只能做一些纯 Python 层面的变量初始化（如 `self.ma_window = 20`）。等到 `on_start` 触发时，引擎已就绪 (Ready State)，你才可以安全地调用 `self.log()`、`self.get_position()` 等依赖引擎上下文的 API。换句话说，凡是需要引擎上下文的初始化，都应推迟到 `on_start`，而不是写在 `__init__` 里。
+这两个钩子的差别在于引擎所处的阶段。`__init__` 触发时，策略实例刚被创建，回测引擎尚未完全启动，因此你无法访问 `self.ctx` (Context) 或账户信息，只能做一些不需要外部调整、也不依赖引擎上下文的纯 Python 变量初始化（如 `self._trade_count = 0`）。**可外部调整的参数**（例如下节示例里的 `short_window`/`long_window`，需要被 `run_backtest(...)` / `run_grid_search(...)` 传入，或参与参数优化）不应放进 `__init__` 签名——0.3.x 起构造函数签名不再是参数入口，必须改用类体内联字段声明（如 `short_window = IntParam(5, ge=2)`），读取处对应写成 `self.params.short_window`。等到 `on_start` 触发时，引擎已就绪 (Ready State)，你才可以安全地调用 `self.log()`、`self.get_position()` 等依赖引擎上下文的 API。换句话说，凡是需要引擎上下文的初始化，都应推迟到 `on_start`，而不是写在 `__init__` 里。
 
 ### 5.2.2 `on_bar` 的执行流 (Execution Flow)
 
