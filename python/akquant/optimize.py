@@ -33,6 +33,7 @@ from tqdm import tqdm  # type: ignore
 
 from .backtest import run_backtest
 from .log import get_logger
+from .params import unknown_param_message
 from .params_adapter import validate_strategy_params
 from .strategy import Strategy
 
@@ -479,7 +480,9 @@ def _validate_strategy_param_grid_keys(
     strategy: Type[Strategy], param_grid: Mapping[str, Sequence[Any]]
 ) -> None:
     """按 __param_model__ 校验网格键名/类型/约束（越界即报错）."""
-    # 防御性：若传入的不是 Strategy 子类（如函数式策略），无 __param_model__ 则跳过校验
+    # 防御性：函数式策略等非 Strategy 子类没有 __param_model__, 跳过校验。
+    # 注意 Strategy 子类的 __param_model__ 恒非 None, 空模型意味着「未声明任何
+    # 内联字段」而非「豁免校验」, 其网格键会全部落入 unknown 并按遗留写法报错。
     model = getattr(strategy, "__param_model__", None)
     if model is None:
         return
@@ -487,8 +490,12 @@ def _validate_strategy_param_grid_keys(
     unknown = sorted(str(k) for k in param_grid if str(k) not in field_names)
     if unknown:
         raise TypeError(
-            "Unknown strategy param(s) in param_grid: "
-            f"{', '.join(unknown)}. Strategy={strategy.__module__}.{strategy.__name__}"
+            unknown_param_message(
+                unknown_keys=unknown,
+                declared_fields=sorted(field_names),
+                strategy_label=f"{strategy.__module__}.{strategy.__name__}",
+                context="param_grid",
+            )
         )
     # 逐参数逐候选值校验（含类型/ge/le/choices），失败信息包含字段名
     for key, values in param_grid.items():
