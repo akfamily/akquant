@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **新增委托价 tick 对齐工具与股票侧校验开关**。配合下面「股票/基金委托价开始校验 tick 对齐」的行为变更，提供显式对齐手段与逃生开关：
+
+    - `Strategy.round_to_tick(symbol, price, direction)`：按标的的 `tick_size` 对齐委托价，`direction` 取 `"down"`（买入侧保守）/ `"up"`（卖出侧保守）/ `"nearest"`（默认）。底层工具函数为 `akquant.utils.price.round_to_tick(price, tick, direction)`，不依赖策略上下文，可单测直接调用。
+    - `ChinaStockConfig.enforce_tick_size`（缺省 `True`）：关掉股票/基金的 tick 校验。与 `ChinaFuturesConfig.enforce_tick_size` 对称。
+
+    ```python
+    # 策略内：买入向下取整，卖出向上取整，都不朝不利方向滑价
+    price = self.round_to_tick(symbol, raw_price, "down")
+    self.buy(symbol, 100, price=price)
+    ```
+
+    详见 [tick size 对齐指南](docs/zh/advanced/tick_size_alignment.md)。
 - **`orders_df` / `executions_df` 现在导出开平语义**。#361 争的就是 `position_effect`，而这两张最常用的表原先都不导出它，使用者只能自行遍历 `Order` / `Trade` 对象才看得到。现在：
 
     - `executions_df` 新增 `position_effect`、`timestamp_iso`
@@ -69,6 +81,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `freq` 词汇与 `akquant.feed_adapter` 的 `resample(freq=...)` 一致，但聚合走 `BarAggregator`，**只支持整数分钟**（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 之类会抛 `ValueError` 并指向 `feed_adapter.resample`，不会静默取整。**成交量口径**：回测中 `Tick.volume` 是单笔量，适配层显式声明单笔口径（`volume_is_cumulative=False`）并把每笔量原样交给聚合器，由聚合器直接求和，故合成 bar 的成交量等于区间内 tick 量之和、一笔不落。**时间戳口径**：合成 bar 打在**区间结束**（下一区间起点前 1 纳秒）而非区间起点——回测因果顺序要求：合成 bar 与源 tick 会被放进同一个 feed 再按时间戳排序，若打区间起点，bar 会排到形成它的 tick 之前，策略读到的是尚未发生的未来数据。末尾未满周期不产生 bar。`freq` 在数据不含 tick 时抛 `ValueError`（参数无意义）。
 
 ### Changed
+- **股票/基金委托价开始校验 tick 对齐（行为变更，`__engine_rule_version__` 升至 1.4.0）**：此前只有期货侧校验最小变动价位，股票/基金的非对齐委托价（如 `tick_size=0.01` 却传 `2.8314`）在回测里会照常成交，到了实盘却被柜台风控拒单（`RISK_PRICE_TICK_INVALID`）——同一笔单回测通过、实盘失败。现在两侧口径统一：
+
+    - **回测**：`StockMatcher` 对非对齐委托价 **reject**（与 `FuturesMatcher` 一致），不是静默取整。
+    - **实盘**：`broker_live` 路径在报单前本地校验，报错文案直接给出可用的对齐价与 `round_to_tick` 用法，不必等柜台回一个难解的 400。
+    - **作用范围**：仅 `stock` / `fund` 资产类型；标的未登记、拿不到 `tick_size` 或 `tick_size<=0` 时**跳过**校验（柜台自己也会校验，总比让没配 `instruments` 的用户完全下不了单好）。市价单（不传 `price`）不受影响。
+
+    **不是**「悄悄把价格取整」——那会让回测拒单、实盘成交的分裂反向出现一次。需要自动对齐请显式调用 `Strategy.round_to_tick()`；要完全关掉校验用 `ChinaStockConfig(enforce_tick_size=False)`。golden 基线**零漂移**（既有基线用的都是对齐价），但规则版本已 bump，自建基线请重新生成。
+- **标的未登记的报错文案给出成因与登记入口**：`get_instrument()` 原先只说 `Instrument config not found for symbol: X`，看不出成因，用户普遍误判为「broker 侧缺该标的配置」（实测反馈即如此），而真实原因几乎总是该标的没进 `run_live(instruments=[...])` / `BacktestConfig(instruments_config=[...])`。现在报错会附上**已登记标的清单**（超过 20 个截断）与登记入口。
+- **trader-only broker 无行情时启动阶段给出告警**：`broker='middleware'` / `'qmf'` 这类只有交易通道的 broker 会让 `bundle.market_gateway is None`，于是 `on_bar` / `on_tick` 永不触发、`current_tick` 恒为 `None`。这是预期行为（`run_live` docstring 早已写明），但此前启动阶段完全静默，用户只看到「策略没反应」，无从判断是配置问题还是当时没行情。现在会记录一条 warning，并给出补救办法（`run_live(market_broker='<行情源>', trader_broker='<交易源>')` 的分离写法）。显式配置了 `market_broker` 时不告警。
 - **策略参数声明改为内联字段（破坏性）**：策略参数的单一事实来源现在是类体内联字段——直接用 `IntParam` / `FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` 赋值（如 `fast = IntParam(10, ge=2, le=200)`），经 `self.params.fast` 只读访问；`self.params` 在实例构造期即已校验就绪且 frozen，不支持运行期赋值。
     - **移除**：构造函数签名参数风格（`__init__(self, fast=10): self.fast=fast` 不再作为参数声明入口）、`PARAM_MODEL = XxxParams` 间接层（不再需要单独定义 `ParamModel` 子类）、适配层内部的 `_validate_with_signature` / `_build_signature_schema` 签名回退路径。`get_strategy_param_schema` / `validate_strategy_params` 现在只读取内联字段，不再回退到 `__init__` 签名推断。
     - **行为变更**：`start_time` / `symbols` / `end_time` 现在仅在策略显式声明为对应字段时才会被注入，不再隐式兜底；`strict_strategy_params=True`（默认）下，`param_grid` 或运行期 payload 中的未知键、越界取值（超出 `ge`/`le`、不在 `choices` 内）会直接报错，不再静默忽略；`strict_strategy_params=False` 时未知键会回退到字段默认值构造。
