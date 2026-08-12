@@ -50,6 +50,7 @@ from ..feed_adapter import DEFAULT_INPUT_TIMEZONE, DataFeedAdapter, FeedSlice
 from ..indicator_recording import IndicatorRecorder, IndicatorSink
 from ..log import build_log_extra, get_logger, has_configured_handler, register_logger
 from ..normalize import coerce_to_pandas, dataframe_to_arrays, to_indicator_frame
+from ..params import unknown_param_message
 from ..risk import apply_risk_config
 from ..strategy import (
     InstrumentAssetTypeName,
@@ -937,9 +938,13 @@ def _resolve_effective_symbols(
 def _strategy_param_field_names(
     strategy_input: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
 ) -> set[str]:
-    """Return the declared __param_model__ field names for a Strategy subclass."""
+    """Return the declared __param_model__ field names for a Strategy subclass.
+
+    任一 Strategy 子类都由 __init_subclass__/基类保证 __param_model__ 恒存在, 故
+    返回空集只意味着**该策略没有声明任何内联参数字段**(通常是仍在用已废弃的构造
+    函数签名写法), 不是「豁免校验」的信号——调用方应据此拒绝其全部 kwargs。
+    """
     if isinstance(strategy_input, type) and issubclass(strategy_input, Strategy):
-        # 任一 Strategy 子类都由 __init_subclass__/基类保证 __param_model__ 恒存在
         return set(strategy_input.__param_model__.model_fields)
     return set()
 
@@ -1699,19 +1704,14 @@ def _build_strategy_instance(
             strategy, strategy_kwargs
         )
         if unknown_keys:
-            unknown_keys_text = ", ".join(unknown_keys)
-            if strict_strategy_params:
-                raise TypeError(
-                    "Unknown strategy param(s): "
-                    f"{unknown_keys_text}. Strategy={strategy.__module__}."
-                    f"{strategy.__name__}"
-                )
-            logger.warning(
-                "Ignoring unknown strategy param(s): %s. Strategy=%s.%s",
-                unknown_keys_text,
-                strategy.__module__,
-                strategy.__name__,
+            message = unknown_param_message(
+                unknown_keys=unknown_keys,
+                declared_fields=sorted(_strategy_param_field_names(strategy)),
+                strategy_label=f"{strategy.__module__}.{strategy.__name__}",
             )
+            if strict_strategy_params:
+                raise TypeError(message)
+            logger.warning("%s (已忽略这些参数, 策略将使用字段默认值)", message)
         try:
             return cast(Strategy, strategy(**accepted_kwargs))
         except (TypeError, ValidationError) as e:
