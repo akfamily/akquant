@@ -1484,6 +1484,20 @@ def _asset_type_to_upper_name(
     return "STOCK"
 
 
+def _default_tick_size_for_asset_type(value: Any) -> float:
+    """按资产类型给出缺省最小变动价位.
+
+    基金/ETF/可转债(FUND)是 0.001, 其余(含类型未知/无法解析时)是 0.01——
+    与 Rust 侧 ``Instrument`` 的缺省规则保持一致(深交所交易规则 3.3.13 条)。
+    这里对无法解析的输入做兜底而不抛错, 因为调用方(尤其是 prebuilt 兜底路径)
+    可能传入形态不规范的值, 那种情况下退回股票缺省 0.01 比让快照构建整体失败更安全。
+    """
+    try:
+        return 0.001 if _parse_asset_type_name(value) == "fund" else 0.01
+    except (ValueError, TypeError):
+        return 0.01
+
+
 def _option_type_to_upper_name(value: Any) -> Optional[InstrumentOptionTypeName]:
     if value is None:
         return None
@@ -2805,7 +2819,11 @@ def run_backtest(
     preliminary_default_asset_type = kwargs.get("asset_type", AssetType.Stock)
     preliminary_default_multiplier = kwargs.get("multiplier", 1.0)
     preliminary_default_margin_ratio = kwargs.get("margin_ratio", 1.0)
-    preliminary_default_tick_size = kwargs.get("tick_size", 0.01)
+    # tick_size 缺省值按 asset_type 分流(基金 0.001, 其余 0.01), 显式传入的
+    # tick_size 仍优先——见 _default_tick_size_for_asset_type。
+    preliminary_default_tick_size = kwargs.get(
+        "tick_size", _default_tick_size_for_asset_type(preliminary_default_asset_type)
+    )
     preliminary_lot_size = kwargs.get("lot_size", 1)
     preliminary_default_implied_volatility = kwargs.get("implied_volatility", None)
     preliminary_default_reference_volatility = kwargs.get("reference_volatility", None)
@@ -2827,7 +2845,12 @@ def run_backtest(
                 option_margin_model=_option_margin_model_to_upper_name(
                     getattr(prebuilt, "option_margin_model", None)
                 ),
-                tick_size=float(getattr(prebuilt, "tick_size", 0.01) or 0.01),
+                tick_size=float(
+                    getattr(prebuilt, "tick_size", None)
+                    or _default_tick_size_for_asset_type(
+                        getattr(prebuilt, "asset_type", "")
+                    )
+                ),
                 lot_size=float(getattr(prebuilt, "lot_size", 1.0) or 1.0),
                 implied_volatility=(
                     float(getattr(prebuilt, "implied_volatility"))
@@ -4031,8 +4054,12 @@ def run_backtest(
     # Default values from kwargs
     default_multiplier = kwargs.get("multiplier", 1.0)
     default_margin_ratio = kwargs.get("margin_ratio", 1.0)
-    default_tick_size = kwargs.get("tick_size", 0.01)
     default_asset_type = kwargs.get("asset_type", AssetType.Stock)
+    # tick_size 缺省值按 asset_type 分流(基金 0.001, 其余 0.01), 显式传入的
+    # tick_size 仍优先——见 _default_tick_size_for_asset_type。
+    default_tick_size = kwargs.get(
+        "tick_size", _default_tick_size_for_asset_type(default_asset_type)
+    )
 
     # Option specific fields
     default_option_type = kwargs.get("option_type", None)
@@ -4161,7 +4188,12 @@ def run_backtest(
                 option_margin_model=_option_margin_model_to_upper_name(
                     getattr(prebuilt, "option_margin_model", None)
                 ),
-                tick_size=float(getattr(prebuilt, "tick_size", 0.01) or 0.01),
+                tick_size=float(
+                    getattr(prebuilt, "tick_size", None)
+                    or _default_tick_size_for_asset_type(
+                        getattr(prebuilt, "asset_type", "")
+                    )
+                ),
                 lot_size=float(getattr(prebuilt, "lot_size", 1.0) or 1.0),
                 implied_volatility=(
                     float(getattr(prebuilt, "implied_volatility"))
@@ -5311,8 +5343,12 @@ def run_from_checkpoint(
 
     default_multiplier = kwargs.get("multiplier", 1.0)
     default_margin_ratio = kwargs.get("margin_ratio", 1.0)
-    default_tick_size = kwargs.get("tick_size", 0.01)
     default_asset_type = kwargs.get("asset_type", AssetType.Stock)
+    # tick_size 缺省值按 asset_type 分流(基金 0.001, 其余 0.01), 显式传入的
+    # tick_size 仍优先——见 _default_tick_size_for_asset_type。
+    default_tick_size = kwargs.get(
+        "tick_size", _default_tick_size_for_asset_type(default_asset_type)
+    )
     default_option_type = kwargs.get("option_type", None)
     default_option_margin_model = kwargs.get("option_margin_model", None)
     default_strike_price = kwargs.get("strike_price", None)
@@ -5428,7 +5464,12 @@ def run_from_checkpoint(
                 option_margin_model=_option_margin_model_to_upper_name(
                     getattr(prebuilt, "option_margin_model", None)
                 ),
-                tick_size=float(getattr(prebuilt, "tick_size", 0.01) or 0.01),
+                tick_size=float(
+                    getattr(prebuilt, "tick_size", None)
+                    or _default_tick_size_for_asset_type(
+                        getattr(prebuilt, "asset_type", "")
+                    )
+                ),
                 lot_size=float(getattr(prebuilt, "lot_size", 1.0) or 1.0),
                 option_type=_option_type_to_upper_name(
                     getattr(prebuilt, "option_type", None)
