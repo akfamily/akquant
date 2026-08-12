@@ -209,10 +209,17 @@ impl Instrument {
             .map(extract_decimal)
             .transpose()?
             .unwrap_or(Decimal::ONE);
+        // 缺省最小变动价位按资产类型分流: 基金/债券(含可转债)是 0.001，股票是
+        // 0.01。一律用 0.01 会让 ETF 的合法委托被 tick 校验误拒——QuantConnect
+        // Lean 正因"元数据查不到就默认 0.01"出过止损单被取整到入场价之上的事故。
+        let default_tick = match asset_type {
+            AssetType::Fund => Decimal::new(1, 3),
+            _ => Decimal::new(1, 2),
+        };
         let tick_val = tick_size
             .map(extract_decimal)
             .transpose()?
-            .unwrap_or(Decimal::new(1, 2));
+            .unwrap_or(default_tick);
         let lot_val = lot_size
             .map(extract_decimal)
             .transpose()?

@@ -4199,7 +4199,13 @@ def run_backtest(
             p_asset_type = _parse_asset_type(i_conf.asset_type)
             p_multiplier = i_conf.multiplier
             p_margin = i_conf.margin_ratio
-            p_tick = i_conf.tick_size
+            # InstrumentConfig.__post_init__ always fills tick_size in with an
+            # asset-type-dependent default, so this is defensive rather than
+            # load-bearing at runtime — it exists to keep the static type
+            # non-Optional for the Instrument() call below.
+            p_tick = (
+                i_conf.tick_size if i_conf.tick_size is not None else default_tick_size
+            )
             # If config has lot_size, use it, otherwise use global setting
             p_lot = (
                 i_conf.lot_size

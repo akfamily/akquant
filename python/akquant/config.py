@@ -134,7 +134,9 @@ class InstrumentConfig:
     :param multiplier: Contract multiplier. Default 1.0.
     :param margin_ratio: Margin ratio (e.g., 0.1 for 10% margin).
                          主要用于期货/线性资产；期权仅在 `RATIO` 模式下使用。
-    :param tick_size: Minimum price movement. Default 0.01.
+    :param tick_size: Minimum price movement. Default is asset-type-dependent:
+                      0.01 for stocks/others, 0.001 for funds/ETFs
+                      (including convertible bonds).
     :param lot_size: Minimum trading unit (round lot). Default None.
 
     **Cost & Execution Overrides:**
@@ -165,7 +167,7 @@ class InstrumentConfig:
     asset_type: InstrumentAssetTypeInput = InstrumentAssetTypeEnum.STOCK
     multiplier: float = 1.0
     margin_ratio: float = 1.0
-    tick_size: float = 0.01
+    tick_size: Optional[float] = None
     lot_size: Optional[int] = None
 
     # Costs & Execution (Asset Specific)
@@ -198,6 +200,8 @@ class InstrumentConfig:
         self.asset_type = cast(InstrumentAssetType, str(asset_raw).strip().upper())
         if self.asset_type not in {"STOCK", "FUTURES", "FUND", "OPTION"}:
             raise ValueError(f"Unsupported asset_type: {self.asset_type}")
+        if self.tick_size is None:
+            self.tick_size = 0.001 if self.asset_type == "FUND" else 0.01
         if self.option_type is not None:
             option_raw = (
                 self.option_type.value
