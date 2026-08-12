@@ -138,4 +138,39 @@ mod tests {
         assert!(!is_multiple(dec!(2.8314), dec!(0.01)));
         assert!(is_multiple(dec!(2.831), dec!(0.001)));
     }
+
+    fn make_limit_order(price: Decimal) -> Order {
+        let mut order = Order::test_new(
+            "1",
+            "AAPL",
+            crate::model::OrderSide::Buy,
+            OrderType::Limit,
+            dec!(100),
+        );
+        order.price = Some(price);
+        order
+    }
+
+    #[test]
+    fn test_validate_tick_size_accepts_aligned_limit_price() {
+        let order = make_limit_order(dec!(2.83));
+        assert_eq!(validate_tick_size(&order, dec!(0.01)), None);
+    }
+
+    #[test]
+    fn test_validate_tick_size_rejects_misaligned_limit_price() {
+        let order = make_limit_order(dec!(2.8314));
+        let reason = validate_tick_size(&order, dec!(0.01));
+        assert!(reason.is_some());
+        let reason = reason.unwrap();
+        assert!(reason.contains("price"));
+        assert!(reason.contains("0.01"));
+    }
+
+    #[test]
+    fn test_validate_tick_size_passes_when_tick_size_non_positive() {
+        let order = make_limit_order(dec!(2.8314));
+        assert_eq!(validate_tick_size(&order, dec!(0)), None);
+        assert_eq!(validate_tick_size(&order, dec!(-1)), None);
+    }
 }

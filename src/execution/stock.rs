@@ -1,12 +1,39 @@
 use crate::event::Event;
 use crate::execution::common::CommonMatcher;
 use crate::execution::matcher::{ExecutionMatcher, MatchContext};
+use crate::execution::validation::{reject_order, validate_tick_size};
 use crate::model::Order;
 
-pub struct StockMatcher;
+/// A 股/基金撮合器。
+///
+/// `enforce_tick_size` 默认开启：A 股股票 0.01、基金/债券 0.001 的规则是确定
+/// 的，且 `Instrument` 的缺省 tick 已按 asset_type 分流（见 model/instrument.rs），
+/// 不会出现 Lean 那种"元数据缺失就默认 0.01 导致误拒"的情况。确需关闭时用
+/// `set_stock_validation_options(false)`。
+pub struct StockMatcher {
+    enforce_tick_size: bool,
+}
+
+impl StockMatcher {
+    pub fn new(enforce_tick_size: bool) -> Self {
+        Self { enforce_tick_size }
+    }
+}
+
+impl Default for StockMatcher {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
 
 impl ExecutionMatcher for StockMatcher {
     fn match_order(&self, order: &mut Order, ctx: &MatchContext) -> Option<Event> {
+        if self.enforce_tick_size {
+            let tick_size = ctx.instrument.tick_size();
+            if let Some(reason) = validate_tick_size(order, tick_size) {
+                return reject_order(order, ctx, reason, "stock");
+            }
+        }
         // Stock: Check Lot Size for Buy orders (e.g. A-Share 100 shares)
         CommonMatcher::match_order(
             order, ctx, true, // check_lot_size = true for Stock
@@ -64,9 +91,59 @@ mod tests {
         ExecutionPolicyCore::default()
     }
 
+    fn tick_ctx<'a>(
+        event: &'a Event,
+        instr: &'a crate::model::Instrument,
+    ) -> MatchContext<'a> {
+        MatchContext {
+            event,
+            instrument: instr,
+            execution_policy_core: default_policy_core(),
+            slippage: &crate::execution::slippage::ZeroSlippage,
+            volume_limit_pct: Decimal::ZERO,
+            bar_index: 0,
+            last_price: None,
+        }
+    }
+
+    #[test]
+    fn test_stock_rejects_price_not_aligned_with_tick() {
+        let matcher = StockMatcher::default();
+        let mut order = create_order(OrderSide::Buy, OrderType::Limit, Some(dec!(2.8314)), None);
+        let instr = create_instrument(); // tick_size = 0.01
+        let event = Event::Tick(create_tick(dec!(2.83), 100));
+        let ctx = tick_ctx(&event, &instr);
+        let result = matcher.match_order(&mut order, &ctx);
+        assert!(result.is_some());
+        assert_eq!(order.status, OrderStatus::Rejected);
+        assert!(order.reject_reason.contains("tick size"));
+    }
+
+    #[test]
+    fn test_stock_accepts_aligned_price() {
+        let matcher = StockMatcher::default();
+        let mut order = create_order(OrderSide::Buy, OrderType::Limit, Some(dec!(2.83)), None);
+        let instr = create_instrument();
+        let event = Event::Tick(create_tick(dec!(2.83), 100));
+        let ctx = tick_ctx(&event, &instr);
+        matcher.match_order(&mut order, &ctx);
+        assert_ne!(order.status, OrderStatus::Rejected);
+    }
+
+    #[test]
+    fn test_stock_skips_tick_check_when_disabled() {
+        let matcher = StockMatcher::new(false);
+        let mut order = create_order(OrderSide::Buy, OrderType::Limit, Some(dec!(2.8314)), None);
+        let instr = create_instrument();
+        let event = Event::Tick(create_tick(dec!(2.83), 100));
+        let ctx = tick_ctx(&event, &instr);
+        matcher.match_order(&mut order, &ctx);
+        assert_ne!(order.status, OrderStatus::Rejected);
+    }
+
     #[test]
     fn test_buy_stop_in_bar() {
-        let matcher = StockMatcher;
+        let matcher = StockMatcher::default();
         let mut order = create_order(OrderSide::Buy, OrderType::StopMarket, None, Some(dec!(105)));
         let instr = create_instrument();
 
@@ -104,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_buy_limit_check_low() {
-        let matcher = StockMatcher;
+        let matcher = StockMatcher::default();
         let mut order = create_order(OrderSide::Buy, OrderType::Limit, Some(dec!(90)), None);
         let instr = create_instrument();
 
@@ -137,7 +214,7 @@ mod tests {
 
     #[test]
     fn test_sell_limit_uses_open_price_improvement_under_open_policy() {
-        let matcher = StockMatcher;
+        let matcher = StockMatcher::default();
         let mut order = create_order(OrderSide::Sell, OrderType::Limit, Some(dec!(108)), None);
         let instr = create_instrument();
 
@@ -174,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_sell_limit_does_not_use_open_price_improvement_under_close_policy() {
-        let matcher = StockMatcher;
+        let matcher = StockMatcher::default();
         let mut order = create_order(OrderSide::Sell, OrderType::Limit, Some(dec!(108)), None);
         let instr = create_instrument();
 
@@ -215,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_sell_stop_trail_updates_and_triggers_on_bar() {
-        let matcher = StockMatcher;
+        let matcher = StockMatcher::default();
         let mut order = create_order(OrderSide::Sell, OrderType::StopTrail, None, Some(dec!(95)));
         order.trail_offset = Some(dec!(5));
         let instr = create_instrument();
@@ -277,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_buy_stop_trail_limit_updates_and_triggers_on_tick() {
-        let matcher = StockMatcher;
+        let matcher = StockMatcher::default();
         let mut order = create_order(
             OrderSide::Buy,
             OrderType::StopTrailLimit,

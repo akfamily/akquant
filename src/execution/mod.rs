@@ -59,6 +59,8 @@ pub trait ExecutionClient: Send + Sync {
     ) {
     }
 
+    fn set_stock_validation_options(&mut self, _enforce_tick_size: bool) {}
+
     fn set_futures_validation_options_by_prefix(
         &mut self,
         _symbol_prefix: String,
