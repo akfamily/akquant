@@ -1,7 +1,9 @@
+from decimal import Decimal
 from typing import Any, Callable, Optional, cast
 
 from ..akquant import OrderStatus, check_strategy_limits
 from ..log import build_log_extra, get_logger
+from ..utils.price import round_to_tick
 from .broker_event_adapter import StrategyOrder
 from .broker_models import (
     BrokerCapability,
@@ -15,6 +17,33 @@ from .order_audit import record_reject, record_submit
 from .order_receipt import OrderLeg, OrderReceipt
 
 logger = get_logger("gateway.live")
+
+
+def _validate_price_tick(strategy: Any, symbol: str, price: float | None) -> None:
+    """报单前校验委托价是否为最小变动价位的整数倍, 不合规则本地拒单.
+
+    与回测口径一致: `FuturesMatcher::validate_order` 对非对齐价格是 reject 而
+    非 round, 实盘若改成"悄悄取整"就会出现同一笔单回测拒、实盘成交的分裂。
+
+    拿不到 tick(标的未登记 / tick<=0)时跳过——柜台自己也会校验, 总比让没配
+    instruments 的用户完全下不了单好。
+    """
+    if price is None:
+        return
+    try:
+        tick = float(strategy.get_instrument(symbol).tick_size)
+    except (KeyError, AttributeError):
+        return
+    if tick <= 0:
+        return
+    if Decimal(str(price)) % Decimal(str(tick)) == 0:
+        return
+    raise ValueError(
+        f"委托价 {price} 不是 {symbol} 最小变动价位 {tick} 的整数倍, 已本地拒单; "
+        f"买入可用 {round_to_tick(price, tick, 'down')}, "
+        f"卖出可用 {round_to_tick(price, tick, 'up')}; "
+        f"或调用 self.round_to_tick('{symbol}', price, 'down'/'up') 自行对齐"
+    )
 
 
 def find_live_close_position(
@@ -545,6 +574,7 @@ class BrokerOrderSubmitter:
         if quantity <= 0:
             # 回测对 quantity<=0 返回空单(不报单); 此前实盘会把 0 手单发给柜台。
             return OrderReceipt(group_id="", order_ids=(), legs=())
+        _validate_price_tick(self._strategy, symbol, price)
         normalized_asset_type = normalize_asset_type(asset_type)
         normalized_position_effect = validate_execution_semantics(
             capability,
