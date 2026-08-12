@@ -34,7 +34,7 @@ class GridTradingStrategy(Strategy):
         - 相比上次卖出价上涨 X%，减仓。
     """
 
-    grid_pct = FloatParam(0.03, ge=0.0, le=1.0, title="网格间距")
+    grid_pct = FloatParam(0.03, ge=0.001, le=0.5, title="网格间距")
     trade_lot = IntParam(100, ge=1, title="每次交易数量(股/份)")
 
     def on_start(self) -> None:

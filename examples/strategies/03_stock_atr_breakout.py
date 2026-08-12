@@ -32,7 +32,7 @@ class AtrBreakoutStrategy(Strategy):
     """
 
     period = IntParam(20, ge=2, le=500, title="ATR 周期")
-    k = FloatParam(2.0, ge=0.0, title="突破倍数")
+    k = FloatParam(2.0, ge=0.1, le=10.0, title="突破倍数")
 
     def on_start(self) -> None:
         """设置数据预热长度 (必须设置才能使用 get_history)."""
