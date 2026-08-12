@@ -14,11 +14,9 @@
 - 安装 akshare: `pip install akshare`
 """
 
-from typing import Any
-
 import akquant as aq
 import akshare as ak
-from akquant import Bar, Strategy
+from akquant import Bar, FloatParam, IntParam, Strategy
 
 
 class AtrBreakoutStrategy(Strategy):
@@ -33,19 +31,12 @@ class AtrBreakoutStrategy(Strategy):
     - 价格跌破下轨 -> 卖出 (Sell)
     """
 
-    def __init__(
-        self, period: int = 20, k: float = 2.0, *args: Any, **kwargs: Any
-    ) -> None:
-        """
-        初始化策略参数.
+    period = IntParam(20, ge=2, le=500, title="ATR 周期")
+    k = FloatParam(2.0, ge=0.0, title="突破倍数")
 
-        :param period: ATR 计算周期
-        :param k: 通道宽度系数
-        """
-        self.period = period
-        self.k = k
-        # 设置数据预热长度 (必须设置才能使用 get_history)
-        self.warmup_period = period + 1
+    def on_start(self) -> None:
+        """设置数据预热长度 (必须设置才能使用 get_history)."""
+        self.warmup_period = self.params.period + 1
 
     def on_bar(self, bar: Bar) -> None:
         """处理每个 Bar 数据."""
@@ -55,7 +46,7 @@ class AtrBreakoutStrategy(Strategy):
         # ATR 需要 High, Low, Close
         # 注意：get_history 返回的数据可能包含当前 bar，为了避免未来函数
         # 我们需要获取 N+1 个数据并剔除最后一个
-        req_count = self.period + 1
+        req_count = self.params.period + 1
         h_highs = self.get_history(count=req_count, symbol=symbol, field="high")
         h_lows = self.get_history(count=req_count, symbol=symbol, field="low")
         h_closes = self.get_history(count=req_count, symbol=symbol, field="close")
@@ -88,8 +79,8 @@ class AtrBreakoutStrategy(Strategy):
         # 3. 计算轨道
         # 使用昨天的收盘价作为基准
         prev_close = closes[-1]
-        upper_band = prev_close + self.k * atr
-        lower_band = prev_close - self.k * atr
+        upper_band = prev_close + self.params.k * atr
+        lower_band = prev_close - self.params.k * atr
 
         # 4. 交易逻辑
         current_pos = self.get_position(symbol)

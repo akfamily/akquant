@@ -14,11 +14,9 @@
 - 安装 akshare: `pip install akshare`
 """
 
-from typing import Any
-
 import akquant as aq
 import akshare as ak
-from akquant import Bar, Strategy
+from akquant import Bar, FloatParam, IntParam, Strategy
 
 
 class GridTradingStrategy(Strategy):
@@ -36,20 +34,11 @@ class GridTradingStrategy(Strategy):
         - 相比上次卖出价上涨 X%，减仓。
     """
 
-    def __init__(
-        self, grid_pct: float = 0.03, lot_size: int = 100, *args: Any, **kwargs: Any
-    ) -> None:
-        """
-        初始化策略参数.
+    grid_pct = FloatParam(0.03, ge=0.0, le=1.0, title="网格间距")
+    trade_lot = IntParam(100, ge=1, title="每次交易数量(股/份)")
 
-        :param grid_pct: 网格间距 (e.g., 0.03 = 3%)
-        :param lot_size: 每次交易数量 (股/份)
-        """
-        super().__init__(*args, **kwargs)
-        self.grid_pct = grid_pct
-        self.trade_lot = lot_size
-
-        # 记录每个标的的上次交易价格
+    def on_start(self) -> None:
+        """初始化每个标的的上次交易价格记录."""
         self.last_trade_price: dict[str, float] = {}
 
     def on_bar(self, bar: Bar) -> None:
@@ -61,11 +50,11 @@ class GridTradingStrategy(Strategy):
         if symbol not in self.last_trade_price:
             # 假设初始建仓 10 手
             initial_lots = 10
-            self.buy(symbol=symbol, quantity=initial_lots * self.trade_lot)
+            self.buy(symbol=symbol, quantity=initial_lots * self.params.trade_lot)
             self.last_trade_price[symbol] = close
             print(
                 f"[{bar.timestamp_iso}] Initial Position: "
-                f"Buy {initial_lots * self.trade_lot} at {close:.3f}"
+                f"Buy {initial_lots * self.params.trade_lot} at {close:.3f}"
             )
             return
 
@@ -77,24 +66,24 @@ class GridTradingStrategy(Strategy):
         # 3. 网格逻辑
 
         # 情况 A: 价格下跌超过 grid_pct -> 加仓 (买入)
-        if change_pct <= -self.grid_pct:
-            self.buy(symbol=symbol, quantity=self.trade_lot)
+        if change_pct <= -self.params.grid_pct:
+            self.buy(symbol=symbol, quantity=self.params.trade_lot)
             self.last_trade_price[symbol] = close
             print(
                 f"[{bar.timestamp_iso}] Grid BUY: Price dropped {change_pct:.2%}, "
-                f"Buy {self.trade_lot} at {close:.3f}"
+                f"Buy {self.params.trade_lot} at {close:.3f}"
             )
 
         # 情况 B: 价格上涨超过 grid_pct -> 减仓 (卖出)
-        elif change_pct >= self.grid_pct:
+        elif change_pct >= self.params.grid_pct:
             # 检查持仓是否足够
             current_pos = self.get_position(symbol)
-            if current_pos >= self.trade_lot:
-                self.sell(symbol=symbol, quantity=self.trade_lot)
+            if current_pos >= self.params.trade_lot:
+                self.sell(symbol=symbol, quantity=self.params.trade_lot)
                 self.last_trade_price[symbol] = close
                 print(
                     f"[{bar.timestamp_iso}] Grid SELL: Price rose {change_pct:.2%}, "
-                    f"Sell {self.trade_lot} at {close:.3f}"
+                    f"Sell {self.params.trade_lot} at {close:.3f}"
                 )
             else:
                 print(
