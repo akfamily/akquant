@@ -23,7 +23,7 @@ from typing import Any
 import akquant as aq
 import numpy as np
 import pandas as pd
-from akquant import Bar, Strategy
+from akquant import Bar, IntParam, Strategy
 
 # 尝试导入 sklearn，如果未安装则跳过
 try:
@@ -69,13 +69,12 @@ def generate_mock_data(length: int = 1000) -> pd.DataFrame:
 class MLStrategy(Strategy):
     """机器学习演示策略."""
 
-    def __init__(self, train_window: int = 200) -> None:
-        """初始化策略."""
-        super().__init__()
-        self.train_window = train_window  # 训练窗口长度 (例如使用过去 200 天训练)
-        self.warmup_period = (
-            train_window + 20
-        )  # 预热期需要比训练窗口稍长，确保特征计算无空值
+    train_window = IntParam(200, ge=10, title="训练窗口")
+
+    def on_start(self) -> None:
+        """回测开始时触发. 设置预热期并初始化模型、计数等内部状态."""
+        # 预热期需要比训练窗口稍长，确保特征计算无空值
+        self.warmup_period = self.params.train_window + 20
 
         self.model: Any = None
         self.scaler: Any = None
@@ -114,16 +113,16 @@ class MLStrategy(Strategy):
 
         # 获取历史数据
         # 我们需要 train_window + 额外一些 buffer 来计算指标
-        df = self.get_history_df(count=self.train_window + 50, symbol=symbol)
+        df = self.get_history_df(count=self.params.train_window + 50, symbol=symbol)
 
-        if len(df) < self.train_window:
+        if len(df) < self.params.train_window:
             return
 
         # 准备数据
         data = self.calculate_features(df)
 
         # 使用最近 train_window 条数据进行训练
-        train_data = data.iloc[-self.train_window :]
+        train_data = data.iloc[-self.params.train_window :]
 
         feature_cols = ["returns_1", "returns_5", "ma_dist_20"]
         X = train_data[feature_cols]

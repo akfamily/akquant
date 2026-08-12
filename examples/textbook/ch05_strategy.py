@@ -17,7 +17,7 @@
 import akquant as aq
 import numpy as np
 import pandas as pd
-from akquant import Bar, Strategy
+from akquant import Bar, FloatParam, IntParam, Strategy
 
 
 # 模拟数据生成 (与第3章相同，方便复现)
@@ -44,39 +44,29 @@ class MyFirstStrategy(Strategy):
     """第一个策略示例."""
 
     # --------------------------------------------------------------------------
-    # 1. 初始化 (Initialization)
+    # 1. 参数声明 (Parameter Declaration)
     # --------------------------------------------------------------------------
-    def __init__(
-        self, short_window: int = 5, long_window: int = 20, stop_loss_pct: float = 0.05
-    ) -> None:
-        """策略初始化函数. 在这里定义策略的参数和内部变量.
+    short_window = IntParam(5, ge=2, le=200, title="短期均线窗口")
+    long_window = IntParam(20, ge=3, le=500, title="长期均线窗口")
+    stop_loss_pct = FloatParam(0.05, ge=0.001, le=0.5, title="止损比例")
 
-        注意：此时回测引擎尚未启动，无法访问 context。
-        """
-        super().__init__()
-
-        # 策略参数
-        self.short_window = short_window
-        self.long_window = long_window
-        self.stop_loss_pct = stop_loss_pct
-
+    # --------------------------------------------------------------------------
+    # 2. 启动回调 (On Start)
+    # --------------------------------------------------------------------------
+    def on_start(self) -> None:
+        """回测开始时触发. 此时引擎已就绪，初始化内部状态、预热期并记录日志."""
         # 内部状态变量
         self.entry_price = 0.0  # 记录开仓价格
 
         # 设置预热期 (Warmup Period)
         # 本示例会请求 long_window + 1 根数据，并用 [:-1] 排除当前 Bar，
         # 因此预热期也需要同步加 1，避免首次回调拿到前导 NaN。
-        self.warmup_period = long_window + 1
+        self.warmup_period = self.params.long_window + 1
 
-    # --------------------------------------------------------------------------
-    # 2. 启动回调 (On Start)
-    # --------------------------------------------------------------------------
-    def on_start(self) -> None:
-        """回测开始时触发. 此时引擎已就绪，可以进行一些初始化操作."""
         self.log("策略启动！")
         self.log(
-            f"参数设置: MA{self.short_window} vs MA{self.long_window}, "
-            f"止损={self.stop_loss_pct:.1%}"
+            f"参数设置: MA{self.params.short_window} vs MA{self.params.long_window}, "
+            f"止损={self.params.stop_loss_pct:.1%}"
         )
 
     # --------------------------------------------------------------------------
@@ -89,19 +79,19 @@ class MyFirstStrategy(Strategy):
         # 3.1 获取历史数据
         # count=21 表示获取过去 21 根 Bar (包含当前这根)
         closes = self.get_history(
-            count=self.long_window + 1, symbol=symbol, field="close"
+            count=self.params.long_window + 1, symbol=symbol, field="close"
         )
 
         # 再次检查数据长度 (防御性编程)
-        if len(closes) < self.long_window + 1:
+        if len(closes) < self.params.long_window + 1:
             return
 
         # 3.2 计算技术指标
         # 使用切片 [:-1] 排除当前 Bar，只用截止到昨天的数据计算信号 (避免未来函数)
         # 这里的逻辑假设我们在今天收盘后计算信号，明天开盘交易
         history_closes = closes[:-1]
-        ma_short = history_closes[-self.short_window :].mean()
-        ma_long = history_closes[-self.long_window :].mean()
+        ma_short = history_closes[-self.params.short_window :].mean()
+        ma_long = history_closes[-self.params.long_window :].mean()
 
         # 3.3 获取账户信息
         current_pos = self.get_position(symbol)
@@ -114,7 +104,7 @@ class MyFirstStrategy(Strategy):
             pnl_pct = (bar.close - self.entry_price) / self.entry_price
 
             # 止损检查
-            if pnl_pct < -self.stop_loss_pct:
+            if pnl_pct < -self.params.stop_loss_pct:
                 self.log(f"触发止损! 当前亏损: {pnl_pct:.2%}")
                 self.close_position(symbol)  # 清仓
                 return
@@ -122,8 +112,8 @@ class MyFirstStrategy(Strategy):
             # 死叉卖出
             if ma_short < ma_long:
                 self.log(
-                    f"死叉卖出 (MA{self.short_window}={ma_short:.2f} < "
-                    f"MA{self.long_window}={ma_long:.2f})"
+                    f"死叉卖出 (MA{self.params.short_window}={ma_short:.2f} < "
+                    f"MA{self.params.long_window}={ma_long:.2f})"
                 )
                 self.close_position(symbol)  # 清仓
 
@@ -131,8 +121,8 @@ class MyFirstStrategy(Strategy):
         elif current_pos == 0:
             if ma_short > ma_long:
                 self.log(
-                    f"金叉买入 (MA{self.short_window}={ma_short:.2f} > "
-                    f"MA{self.long_window}={ma_long:.2f})"
+                    f"金叉买入 (MA{self.params.short_window}={ma_short:.2f} > "
+                    f"MA{self.params.long_window}={ma_long:.2f})"
                 )
 
                 # 使用 order_target_percent 买入 95% 的资金

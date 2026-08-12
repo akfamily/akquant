@@ -52,7 +52,7 @@ python examples/textbook/ch05_strategy_functional.py
 
 一个标准的 `AKQuant` 策略通常继承自 `AKQuant.Strategy` 基类，并重写以下几个核心回调方法 (Callbacks)：
 
-1.  `__init__`: **构造函数**。定义策略参数和内部变量。
+1.  `__init__`: **构造函数**。仅用于必要的纯 Python 内部变量初始化；策略参数改由类体内联字段（`IntParam`/`FloatParam` 等）声明，不再通过 `__init__` 传入。
 2.  `on_start`: **初始化钩子**。回测开始前触发，常用于订阅数据、设置风控参数。
 3.  `on_bar`: **事件处理钩子**。每根 K 线走完时触发，这是策略逻辑的核心入口。
 4.  `on_stop`: **结束钩子**。回测结束时触发，常用于清理资源或统计结果。
@@ -708,7 +708,7 @@ self.order_target_percent(symbol, leverage)
 pnl_pct = (bar.close - self.entry_price) / self.entry_price
 
 # 止损检查
-if pnl_pct < -self.stop_loss_pct:
+if pnl_pct < -self.params.stop_loss_pct:
     self.log(f"触发止损! 当前亏损: {pnl_pct:.2%}")
     self.close_position(symbol) # 清仓
 ```
