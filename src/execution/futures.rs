@@ -1,8 +1,8 @@
 use crate::event::Event;
 use crate::execution::common::CommonMatcher;
 use crate::execution::matcher::{ExecutionMatcher, MatchContext};
-use crate::log_context::{execution_order_context_from_event, render_log_message};
-use crate::model::{Order, OrderStatus, OrderType};
+use crate::execution::validation::{is_multiple, reject_order, validate_tick_size};
+use crate::model::Order;
 use rust_decimal::Decimal;
 
 pub struct FuturesMatcher {
@@ -12,13 +12,6 @@ pub struct FuturesMatcher {
 }
 
 impl FuturesMatcher {
-    fn validation_reject_warning(order: &Order, ctx: &MatchContext, reason: &str) -> String {
-        render_log_message(
-            format!("Rejected futures order because {reason}"),
-            execution_order_context_from_event(order, ctx.event),
-        )
-    }
-
     pub fn new(enforce_tick_size: bool, enforce_lot_size: bool) -> Self {
         Self {
             default_enforce_tick_size: enforce_tick_size,
@@ -37,26 +30,6 @@ impl FuturesMatcher {
             default_enforce_lot_size: enforce_lot_size,
             validation_by_prefix,
         }
-    }
-
-    fn reject(order: &mut Order, ctx: &MatchContext, reason: String) -> Option<Event> {
-        let warning = Self::validation_reject_warning(order, ctx, &reason);
-        order.status = OrderStatus::Rejected;
-        order.reject_reason = reason;
-        match ctx.event {
-            Event::Bar(b) => order.updated_at = b.timestamp,
-            Event::Tick(t) => order.updated_at = t.timestamp,
-            _ => {}
-        }
-        log::warn!("{}", warning);
-        Some(Event::ExecutionReport(order.clone(), None))
-    }
-
-    fn is_multiple(value: Decimal, step: Decimal) -> bool {
-        if step <= Decimal::ZERO {
-            return true;
-        }
-        value % step == Decimal::ZERO
     }
 
     fn validation_flags_for_symbol(&self, symbol: &str) -> (bool, bool) {
@@ -86,78 +59,24 @@ impl FuturesMatcher {
         let (enforce_tick_size, enforce_lot_size) =
             self.validation_flags_for_symbol(ctx.instrument.symbol());
         let lot_size = ctx.instrument.lot_size();
-        if enforce_lot_size
-            && lot_size > Decimal::ZERO
-            && !Self::is_multiple(order.quantity, lot_size)
-        {
-            return Self::reject(
+        if enforce_lot_size && lot_size > Decimal::ZERO && !is_multiple(order.quantity, lot_size) {
+            return reject_order(
                 order,
                 ctx,
                 format!(
                     "Quantity {} is not a multiple of lot size {}",
                     order.quantity, lot_size
                 ),
+                "futures",
             );
         }
 
         let tick_size = ctx.instrument.tick_size();
-        if !enforce_tick_size || tick_size <= Decimal::ZERO {
+        if !enforce_tick_size {
             return None;
         }
-
-        let mut prices_to_check: Vec<(&str, Decimal)> = Vec::new();
-        match order.order_type {
-            OrderType::Limit => {
-                if let Some(price) = order.price {
-                    prices_to_check.push(("price", price));
-                }
-            }
-            OrderType::StopMarket => {
-                if let Some(trigger_price) = order.trigger_price {
-                    prices_to_check.push(("trigger_price", trigger_price));
-                }
-            }
-            OrderType::StopLimit => {
-                if let Some(price) = order.price {
-                    prices_to_check.push(("price", price));
-                }
-                if let Some(trigger_price) = order.trigger_price {
-                    prices_to_check.push(("trigger_price", trigger_price));
-                }
-            }
-            OrderType::StopTrail => {
-                if let Some(trigger_price) = order.trigger_price {
-                    prices_to_check.push(("trigger_price", trigger_price));
-                }
-                if let Some(trail_offset) = order.trail_offset {
-                    prices_to_check.push(("trail_offset", trail_offset));
-                }
-            }
-            OrderType::StopTrailLimit => {
-                if let Some(price) = order.price {
-                    prices_to_check.push(("price", price));
-                }
-                if let Some(trigger_price) = order.trigger_price {
-                    prices_to_check.push(("trigger_price", trigger_price));
-                }
-                if let Some(trail_offset) = order.trail_offset {
-                    prices_to_check.push(("trail_offset", trail_offset));
-                }
-            }
-            _ => {}
-        }
-
-        for (field_name, value) in prices_to_check {
-            if !Self::is_multiple(value, tick_size) {
-                return Self::reject(
-                    order,
-                    ctx,
-                    format!(
-                        "{} {} is not aligned with tick size {}",
-                        field_name, value, tick_size
-                    ),
-                );
-            }
+        if let Some(reason) = validate_tick_size(order, tick_size) {
+            return reject_order(order, ctx, reason, "futures");
         }
         None
     }
@@ -183,7 +102,8 @@ mod tests {
     use super::*;
     use crate::model::instrument::{FuturesInstrument, InstrumentEnum};
     use crate::model::{
-        AssetType, ExecutionPolicyCore, Instrument, OrderRole, OrderSide, TimeInForce,
+        AssetType, ExecutionPolicyCore, Instrument, OrderRole, OrderSide, OrderStatus, OrderType,
+        TimeInForce,
     };
     use rust_decimal::prelude::FromStr;
     use rust_decimal_macros::dec;
@@ -290,10 +210,11 @@ mod tests {
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
 
-        let rendered = FuturesMatcher::validation_reject_warning(
+        let rendered = crate::execution::validation::render_reject_warning(
             &order,
             &ctx,
             "Quantity 1.5 is not a multiple of lot size 1",
+            "futures",
         );
 
         assert!(rendered.contains("Rejected futures order because Quantity 1.5"));
@@ -319,10 +240,11 @@ mod tests {
         let event = Event::Tick(tick);
         let ctx = create_context(&event, &instrument);
 
-        let rendered = FuturesMatcher::validation_reject_warning(
+        let rendered = crate::execution::validation::render_reject_warning(
             &order,
             &ctx,
             "price 3500.1 is not aligned with tick size 0.2",
+            "futures",
         );
 
         assert!(rendered.contains("Rejected futures order because price 3500.1"));
