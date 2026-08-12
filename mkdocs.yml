@@ -280,6 +280,7 @@ nav:
       - Multi-Timeframe Feed API: advanced/multi_timeframe_feed_api.md
       - Data Feed Adapter Spec: advanced/data_feed_adapter_spec.md
       - Broker Capability Matrix: advanced/broker_capability_matrix.md
+      - Tick Size Alignment: advanced/tick_size_alignment.md
       - Analyzer Plugin Spec: advanced/analyzer_plugin_spec.md
       - Timezone Handling: advanced/timezone.md
   - API Reference: reference/api.md
