@@ -657,6 +657,23 @@ BacktestConfig (回测场景)
 | 交易时段 | `china_futures.sessions` 显式配置 | `session_profile` 模板 | ChinaMarket 默认会话 |
 | 市场路由 | `use_china_futures_market=False` 或混合资产回落 | `use_china_futures_market=True` 且纯期货 | `use_simple_market` |
 
+中国股票扩展（`BacktestConfig.china_stock`）的委托校验开关：
+
+| 配置项 | 字段 | 默认值 | 说明 |
+|---|---|---|---|
+| 委托价 tick 对齐校验 | `ChinaStockConfig.enforce_tick_size` | `True` | 关掉后股票/基金的非对齐委托价不再被撮合拒单。与 `ChinaFuturesConfig.enforce_tick_size` 对称 |
+
+```python
+from akquant import BacktestConfig, ChinaStockConfig, StrategyConfig
+
+config = BacktestConfig(
+    strategy_config=StrategyConfig(initial_cash=100000.0),
+    china_stock=ChinaStockConfig(enforce_tick_size=False),  # 关闭 tick 校验
+)
+```
+
+`enforce_tick_size` 缺省开启，非对齐委托价（如 `tick_size=0.01` 却传 `2.8314`）在回测撮合与实盘报单前都会被**拒单**而非静默取整——目的是让回测与实盘口径一致。需要自动对齐请用 `Strategy.round_to_tick()`，详见 [tick size 对齐指南](../advanced/tick_size_alignment.md)。
+
 口径说明：
 
 *   同级规则冲突时，以显式规则覆盖模板规则。
@@ -962,6 +979,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `get_instruments(symbols=None) -> Dict[str, InstrumentSnapshot]`: 获取多个标的静态属性快照字典；`symbols=None` 时返回全部。
 *   `get_instrument_field(symbol, field) -> Any`: 获取单个标的字段值。
 *   `get_instrument_config(symbol, fields=None) -> Union[Any, Dict[str, Any], InstrumentSnapshot]`: 兼容接口；支持整对象、单字段或多字段读取。
+*   `round_to_tick(symbol, price, direction="nearest") -> float`: 按该标的的 `tick_size` 对齐委托价。`direction` 取 `"down"`（买入侧保守）/ `"up"`（卖出侧保守）/ `"nearest"`。股票/基金的非对齐委托价会被撮合与实盘报单前校验**拒单**（见 [tick size 对齐指南](../advanced/tick_size_alignment.md)），需要自动对齐时显式调用本方法。
 
 说明：
 
