@@ -451,6 +451,18 @@ class ChinaOptionsConfig:
 
 
 @dataclass
+class ChinaStockConfig:
+    """中国股票/基金撮合增强配置.
+
+    与 ChinaFuturesConfig 的 enforce_tick_size 对称。缺省开启:
+    A 股股票 0.01、基金/债券 0.001 的规则是确定的, 且 Instrument 缺省 tick
+    已按 asset_type 分流, 不会出现"元数据缺失就默认 0.01"导致的误拒。
+    """
+
+    enforce_tick_size: bool = True
+
+
+@dataclass
 class RiskConfig:
     """
     [Risk Level] Configuration for Risk Management.
@@ -674,6 +686,7 @@ class BacktestConfig:
     ] = None  # Detailed props (Overrides defaults)
     china_futures: Optional[ChinaFuturesConfig] = None
     china_options: Optional[ChinaOptionsConfig] = None
+    china_stock: Optional[ChinaStockConfig] = None
 
     benchmark: Optional[str] = None
     timezone: str = "Asia/Shanghai"

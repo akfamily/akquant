@@ -41,6 +41,7 @@ from ..config import (
     ChinaFuturesConfig,
     ChinaFuturesInstrumentTemplateConfig,
     ChinaOptionsConfig,
+    ChinaStockConfig,
     RiskConfig,
     StrategyConfig,
 )
@@ -3663,12 +3664,14 @@ def run_backtest(
     # 4.1 市场规则配置
     china_futures_config: Optional[ChinaFuturesConfig] = None
     china_options_config: Optional[ChinaOptionsConfig] = None
+    china_stock_config: Optional[ChinaStockConfig] = None
     has_futures_instruments = False
     has_options_instruments = False
     has_non_futures_instruments = False
     if config is not None:
         china_futures_config = config.china_futures
         china_options_config = config.china_options
+        china_stock_config = config.china_stock
         if config.instruments_config:
             if isinstance(config.instruments_config, list):
                 for inst in config.instruments_config:
@@ -3906,6 +3909,13 @@ def run_backtest(
                 )
             if session_ranges:
                 engine.set_market_sessions(session_ranges)
+
+    if china_stock_config is not None and hasattr(
+        engine, "set_stock_validation_options"
+    ):
+        cast(Any, engine).set_stock_validation_options(
+            bool(china_stock_config.enforce_tick_size),
+        )
 
     if china_options_config and has_options_instruments:
         if china_options_config.fee_by_symbol_prefix:

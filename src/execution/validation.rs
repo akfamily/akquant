@@ -14,7 +14,17 @@ pub fn is_multiple(value: Decimal, step: Decimal) -> bool {
     if step <= Decimal::ZERO {
         return true;
     }
-    value % step == Decimal::ZERO
+    // `value`/`step` 常年经 Python `float` -> `extract_decimal`
+    // (`Decimal::from_f64_retain`) 传入, 后者保留了 f64 二进制展开的全部有效位,
+    // 例如 `2.83_f64` 的十进制精确值并非 `2.83`。这会让本应对齐的价格(如
+    // 2.83 相对 tick 0.01)在算 `value % step` 时得到一个极小的非零余数,
+    // 被误判为"未对齐"。真正的错位(如 2.8314 相对 0.01)偏差远大于此容差,
+    // 因此用"步数"(value / step) 距最近整数的偏差是否小于 1e-6 来判断,
+    // 而不是要求余数精确为零。
+    let quotient = value / step;
+    let nearest = quotient.round();
+    let tolerance = Decimal::new(1, 6);
+    (quotient - nearest).abs() <= tolerance
 }
 
 /// 纯渲染函数：只拼装拒单日志文案，不做任何状态变更。
@@ -137,6 +147,20 @@ mod tests {
         assert!(is_multiple(dec!(2.83), dec!(0.01)));
         assert!(!is_multiple(dec!(2.8314), dec!(0.01)));
         assert!(is_multiple(dec!(2.831), dec!(0.001)));
+    }
+
+    /// `extract_decimal` (Python `float` 入参) 走 `Decimal::from_f64_retain`,
+    /// 保留 f64 二进制展开的全部有效位而非最短可读表示——`2.83_f64` 的精确
+    /// 十进制值带一长串噪声位。回归 `is_multiple` 用容差而非精确取模判断,
+    /// 否则这条路径传入的合法对齐价会被误拒。
+    #[test]
+    fn test_is_multiple_tolerates_f64_retain_noise() {
+        let value = Decimal::from_f64_retain(2.83).unwrap();
+        let step = Decimal::from_f64_retain(0.01).unwrap();
+        assert!(is_multiple(value, step));
+
+        let misaligned = Decimal::from_f64_retain(2.8314).unwrap();
+        assert!(!is_multiple(misaligned, step));
     }
 
     fn make_limit_order(price: Decimal) -> Order {
