@@ -1,4 +1,5 @@
 import pickle
+import warnings
 
 import pytest
 from akquant import Strategy
@@ -92,3 +93,60 @@ def test_params_survive_pickle() -> None:
     restored = pickle.loads(pickle.dumps(s))
     assert restored.params.fast == 15
     assert restored.params.slow == 30
+
+
+def test_legacy_init_emits_warning_at_class_definition() -> None:
+    """带参 __init__ 且无内联字段 -> 类定义期即告警."""
+    with pytest.warns(UserWarning, match="未声明任何内联参数字段"):
+
+        class LegacyStrategy(Strategy):
+            def __init__(self, fast_period: int = 5) -> None:
+                super().__init__()
+                self.fast_period = fast_period
+
+
+def test_inline_param_strategy_emits_no_warning() -> None:
+    """已用内联字段声明的策略不得告警."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class InlineStrategy(Strategy):
+            fast = IntParam(5, ge=1)
+
+
+def test_init_without_named_args_emits_no_warning() -> None:
+    """只有 self/*args/**kwargs 的 __init__ 不算遗留写法."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class NoArgInitStrategy(Strategy):
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                super().__init__(*args, **kwargs)
+
+
+def test_inherited_init_does_not_rewarn() -> None:
+    """子类没自己定义 __init__ 时不得因继承而重复告警."""
+    with pytest.warns(UserWarning):
+
+        class ParentLegacy(Strategy):
+            def __init__(self, window: int = 3) -> None:
+                super().__init__()
+                self.window = window
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class ChildLegacy(ParentLegacy):
+            pass
+
+
+def test_legacy_warning_points_at_user_class_definition() -> None:
+    """Stacklevel 须让告警指向用户的类定义行, 而非框架内部."""
+    with pytest.warns(UserWarning) as records:
+
+        class StackCheckStrategy(Strategy):
+            def __init__(self, window: int = 3) -> None:
+                super().__init__()
+                self.window = window
+
+    assert records[0].filename == __file__
