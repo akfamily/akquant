@@ -4,7 +4,39 @@ from akquant.gateway.broker_models import (
     UnifiedOrderRequest,
     normalize_asset_type,
     validate_broker_extra,
+    validate_execution_semantics,
 )
+
+
+def test_short_sell_rejection_explains_why() -> None:
+    """卖空拒单文案要让策略作者看懂, 不能只抛 supports_short_sell=False.
+
+    原文案是给框架开发者看的内部标志名; 用户拿到它无法判断是"框架限制"还是
+    "账户类型限制"。现券账户不能融券卖空是市场规则, 要说出来。
+    """
+    capability = BrokerCapability(
+        broker_name="middleware",
+        position_effect=True,
+        supports_short_sell=False,
+        supported_position_effects=("auto", "open", "close"),
+    )
+    with pytest.raises(RuntimeError) as exc:
+        validate_execution_semantics(capability, "open", side="sell")
+    message = str(exc.value)
+    assert "middleware" in message
+    assert "supports_short_sell=False" in message  # 保留可 grep 的标志名
+    assert "融券" in message or "卖空" in message  # 但要有人话解释
+
+
+def test_short_sell_allowed_when_capability_declares_it() -> None:
+    """声明支持卖空时不拦(回归保护: 改文案别改判断)."""
+    capability = BrokerCapability(
+        broker_name="ctp",
+        position_effect=True,
+        supports_short_sell=True,
+        supported_position_effects=("auto", "open", "close"),
+    )
+    assert validate_execution_semantics(capability, "open", side="sell") == "open"
 
 
 def test_order_request_defaults() -> None:
