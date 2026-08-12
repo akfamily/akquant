@@ -1,11 +1,11 @@
 import math
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Type
+from typing import Any
 
 import akquant as aq
 import pandas as pd
-from akquant import Bar, Strategy
+from akquant import Bar, IntParam, Strategy
 
 
 def build_demo_data(n: int = 320) -> pd.DataFrame:
@@ -31,35 +31,30 @@ def build_demo_data(n: int = 320) -> pd.DataFrame:
 
 
 class _MovingAverageStrategy(Strategy):
-    def __init__(self, short_window: int, long_window: int) -> None:
-        super().__init__()
-        self.short_window = short_window
-        self.long_window = long_window
-        self.warmup_period = long_window
+    short_window = IntParam(5, ge=2, le=200, title="短期均线窗口")
+    long_window = IntParam(20, ge=3, le=500, title="长期均线窗口")
+
+    def on_start(self) -> None:
+        """预热期取长窗口."""
+        self.warmup_period = self.params.long_window
 
     def on_bar(self, bar: Bar) -> None:
         closes = self.get_history(
-            count=self.long_window, symbol=bar.symbol, field="close"
+            count=self.params.long_window, symbol=bar.symbol, field="close"
         )
-        if len(closes) < self.long_window:
+        if len(closes) < self.params.long_window:
             return
-        short_ma = float(sum(closes[-self.short_window :])) / float(self.short_window)
-        long_ma = float(sum(closes[-self.long_window :])) / float(self.long_window)
+        short_ma = float(sum(closes[-self.params.short_window :])) / float(
+            self.params.short_window
+        )
+        long_ma = float(sum(closes[-self.params.long_window :])) / float(
+            self.params.long_window
+        )
         pos = self.get_position(bar.symbol)
         if short_ma > long_ma and pos == 0:
             self.order_target_percent(symbol=bar.symbol, target_percent=0.9)
         elif short_ma < long_ma and pos > 0:
             self.close_position(symbol=bar.symbol)
-
-
-def strategy_factory(short_window: int, long_window: int) -> Type[Strategy]:
-    """Create a strategy class bound to one parameter configuration."""
-
-    class StrategyImpl(_MovingAverageStrategy):
-        def __init__(self) -> None:
-            super().__init__(short_window=short_window, long_window=long_window)
-
-    return StrategyImpl
 
 
 @dataclass
@@ -118,7 +113,9 @@ def run_one_config(short_window: int, long_window: int) -> Any:
 
     result = aq.run_backtest(
         data=build_demo_data(),
-        strategy=strategy_factory(short_window, long_window),
+        strategy=_MovingAverageStrategy,
+        short_window=short_window,
+        long_window=long_window,
         symbols="STREAM_MONITOR",
         show_progress=False,
         initial_cash=500000.0,
