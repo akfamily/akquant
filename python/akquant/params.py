@@ -178,6 +178,37 @@ def DateRangeParam(
     return ParamSpec(DateRange, Field(default, title=title, description=description))
 
 
+def ListParam(
+    default: Sequence[Any] | None = None,
+    *,
+    item_type: type = str,
+    title: str | None = None,
+    description: str | None = None,
+) -> ParamSpec:
+    """
+    声明列表型参数字段.
+
+    默认值走 ``default_factory`` 并在工厂内拷贝, 避免所有实例共享同一个可变列表。
+    ``symbols`` 这类字段声明后可被 ``run_backtest(symbols=[...])`` 自动注入
+    (见 ``backtest/engine.py`` 的 ``_accepts_strategy_kwarg``)。
+
+    :param default: 默认值; ``None`` 视为空列表
+    :param item_type: 元素类型
+    :param title: 字段标题
+    :param description: 字段说明
+    :return: 参数字段规格
+    """
+    items = list(default) if default is not None else []
+    return ParamSpec(
+        cast(type, list[item_type]),  # type: ignore[valid-type]
+        Field(
+            default_factory=lambda: list(items),
+            title=title,
+            description=description,
+        ),
+    )
+
+
 def model_to_schema(model_cls: type[ParamModel]) -> dict[str, Any]:
     """
     导出参数模型 JSON Schema.
@@ -325,6 +356,7 @@ __all__ = [
     "BoolParam",
     "ChoiceParam",
     "DateRangeParam",
+    "ListParam",
     "ValidationError",
     "model_to_schema",
     "validate_payload",

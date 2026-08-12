@@ -1,6 +1,7 @@
 import datetime as dt
 
 import pytest
+from akquant import Strategy
 from akquant.params import (
     PARAM_DOC_ANCHOR,
     BoolParam,
@@ -9,6 +10,7 @@ from akquant.params import (
     DateRangeParam,
     FloatParam,
     IntParam,
+    ListParam,
     ParamModel,
     ParamSpec,
     legacy_init_warning_message,
@@ -119,3 +121,35 @@ def test_legacy_init_warning_message_names_args_and_migration() -> None:
     assert "IntParam" in msg
     assert "self.params.fast_period" in msg
     assert PARAM_DOC_ANCHOR in msg
+
+
+def test_list_param_default_and_injection() -> None:
+    """ListParam 应声明出 list 字段并接受外部传值."""
+
+    class SymbolsStrategy(Strategy):
+        symbols = ListParam(["AAA"], item_type=str, title="标的集")
+
+    assert set(SymbolsStrategy.__param_model__.model_fields) == {"symbols"}
+    assert SymbolsStrategy().params.symbols == ["AAA"]
+    assert SymbolsStrategy(symbols=["X", "Y"]).params.symbols == ["X", "Y"]
+
+
+def test_list_param_default_not_shared_between_instances() -> None:
+    """默认值必须走 default_factory, 两个实例不得共享同一列表对象."""
+
+    class SymbolsStrategy(Strategy):
+        symbols = ListParam(["AAA"], item_type=str)
+
+    a = SymbolsStrategy()
+    b = SymbolsStrategy()
+    assert a.params.symbols == b.params.symbols
+    assert a.params.symbols is not b.params.symbols
+
+
+def test_list_param_none_default_is_empty_list() -> None:
+    """default=None 视为空列表, 而非 None."""
+
+    class EmptyStrategy(Strategy):
+        tags = ListParam(item_type=str)
+
+    assert EmptyStrategy().params.tags == []

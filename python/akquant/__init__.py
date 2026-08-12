@@ -82,6 +82,7 @@ from .params import (
     DateRangeParam,
     FloatParam,
     IntParam,
+    ListParam,
     ParamModel,
 )
 from .params_adapter import (
@@ -216,6 +217,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "BoolParam",
         "ChoiceParam",
         "DateRangeParam",
+        "ListParam",
         "resolve_param_model",
         "get_strategy_param_schema",
         "validate_strategy_params",
@@ -314,6 +316,7 @@ else:
         "BoolParam",
         "ChoiceParam",
         "DateRangeParam",
+        "ListParam",
         "resolve_param_model",
         "get_strategy_param_schema",
         "validate_strategy_params",
