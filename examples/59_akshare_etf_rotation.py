@@ -15,7 +15,7 @@ from typing import Any, cast
 import akquant as aq
 import akshare as ak
 import pandas as pd
-from akquant import Strategy
+from akquant import IntParam, Strategy
 
 ETF_SYMBOLS = ["510300", "510500", "159915"]
 ETF_NAMES = {
@@ -86,19 +86,13 @@ def build_etf_universe_dataframe(
 class ETFMomentumRotationStrategy(Strategy):
     """每日选出动量最强 ETF 并满仓持有."""
 
-    def __init__(
-        self, lookback_period: int = 20, top_n: int = 1, **kwargs: Any
-    ) -> None:
-        """初始化动量窗口、选股数量和订阅标的列表."""
-        _ = kwargs
-        super().__init__()
-        self.lookback_period = lookback_period
-        self.top_n = top_n
-        self.symbols = ETF_SYMBOLS.copy()
-        self.warmup_period = lookback_period + 1
+    lookback_period = IntParam(20, ge=1, le=500, title="动量回看周期")
+    top_n = IntParam(1, ge=1, title="持有标的数")
 
     def on_start(self) -> None:
-        """订阅轮动标的."""
+        """初始化轮动标的列表与预热窗口，并订阅所有标的."""
+        self.symbols = ETF_SYMBOLS.copy()
+        self.warmup_period = self.params.lookback_period + 1
         for symbol in self.symbols:
             self.subscribe(symbol)
         self.log(
@@ -112,13 +106,13 @@ class ETFMomentumRotationStrategy(Strategy):
         """交易日级横截面轮动."""
         _ = timestamp
         history_map = self.get_history_map(
-            count=self.lookback_period,
+            count=self.params.lookback_period,
             symbols=self.symbols,
             field="close",
         )
         scores: dict[str, float] = {}
         for symbol, closes in history_map.items():
-            if len(closes) < self.lookback_period:
+            if len(closes) < self.params.lookback_period:
                 continue
             first_close = float(closes[0])
             last_close = float(closes[-1])
@@ -147,7 +141,7 @@ class ETFMomentumRotationStrategy(Strategy):
             symbol
             for symbol, _ in sorted(
                 positive_scores.items(), key=lambda item: item[1], reverse=True
-            )[: self.top_n]
+            )[: self.params.top_n]
         ]
         each_weight = 0.95 / float(len(selected_symbols))
         target_weights = {symbol: each_weight for symbol in selected_symbols}

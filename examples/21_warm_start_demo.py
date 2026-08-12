@@ -21,39 +21,43 @@ import akquant.indicator as ind
 import akshare as ak
 import numpy as np
 import pandas as pd
-from akquant import Bar, Strategy
+from akquant import Bar, IntParam, Strategy
 
 
 # 1. 定义一个简单的均线策略
 class MovingAverageStrategy(Strategy):
     """Simple moving average strategy for testing warm start."""
 
-    def __init__(self, fast_window: int = 10, slow_window: int = 30) -> None:
-        """Initialize strategy."""
-        self.fast_window = fast_window
-        self.slow_window = slow_window
-
-        # 记录一些状态变量，验证它们是否被正确保存和恢复
-        self.buy_count = 0
-        self.sell_count = 0
-        self.total_volume = 0
-        self.sma_fast: ind.SMA
-        self.sma_slow: ind.SMA
-        self._debug_count = 0
+    fast_window = IntParam(10, ge=2, le=200, title="快线窗口")
+    slow_window = IntParam(30, ge=3, le=500, title="慢线窗口")
 
     def on_start(self) -> None:
-        """Call when strategy starts."""
+        """Call when strategy starts.
+
+        Warm Start 注意：状态变量与指标的初始化必须收在
+        ``if not self.is_restored:`` 分支内——恢复路径不会重新调用
+        ``__init__``，此处若无条件执行会把 buy_count/sell_count 等
+        累积计数清零，破坏跨阶段的连续性。
+        """
         # 注册指标 (akquant 会自动处理指标状态的序列化)
         # 使用框架提供的 self.is_restored 判断是否是从快照恢复
         if not self.is_restored:
-            self.sma_fast = ind.SMA(self.fast_window)
-            self.sma_slow = ind.SMA(self.slow_window)
+            # 记录一些状态变量，验证它们是否被正确保存和恢复
+            self.buy_count = 0
+            self.sell_count = 0
+            self.total_volume = 0
+            self._debug_count = 0
+            self.sma_fast = ind.SMA(self.params.fast_window)
+            self.sma_slow = ind.SMA(self.params.slow_window)
         else:
             print("[Strategy] Resumed from snapshot. Indicators restored.")
 
         self.register_precomputed_indicator("sma_fast", self.sma_fast)
         self.register_precomputed_indicator("sma_slow", self.sma_slow)
-        print(f"[Strategy] Started. Fast={self.fast_window}, Slow={self.slow_window}")
+        print(
+            f"[Strategy] Started. Fast={self.params.fast_window}, "
+            f"Slow={self.params.slow_window}"
+        )
 
     def on_resume(self) -> None:
         """Call only when strategy state is restored from snapshot."""

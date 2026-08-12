@@ -1,24 +1,26 @@
-from typing import Any
-
 import numpy as np
 import pandas as pd
-from akquant import Bar, Order, OrderStatus, Strategy, Trade, run_backtest
+from akquant import (
+    Bar,
+    FloatParam,
+    IntParam,
+    Order,
+    OrderStatus,
+    Strategy,
+    Trade,
+    run_backtest,
+)
 
 
 class BracketStrategy(Strategy):
     """Bracket Order 示例策略."""
 
-    def __init__(
-        self,
-        period: int = 20,
-        stop_loss_pct: float = 0.02,
-        take_profit_pct: float = 0.04,
-        **kwargs: Any,
-    ) -> None:
-        """初始化策略."""
-        self.period = period
-        self.stop_loss_pct = stop_loss_pct
-        self.take_profit_pct = take_profit_pct
+    period = IntParam(20, ge=2, le=500, title="指标周期")
+    stop_loss_pct = FloatParam(0.02, ge=0.001, le=0.5, title="止损比例")
+    take_profit_pct = FloatParam(0.04, ge=0.001, le=1.0, title="止盈比例")
+
+    def on_start(self) -> None:
+        """初始化进场订单跟踪状态."""
         self.entry_order_id = ""
         self.has_position = False
 
@@ -29,8 +31,8 @@ class BracketStrategy(Strategy):
         if self.has_position or self.entry_order_id:
             return
 
-        stop_price = bar.close * (1 - self.stop_loss_pct)
-        take_profit_price = bar.close * (1 + self.take_profit_pct)
+        stop_price = bar.close * (1 - self.params.stop_loss_pct)
+        take_profit_price = bar.close * (1 + self.params.take_profit_pct)
         print(
             f"[{bar.timestamp_iso}] 提交 Bracket 进场: {bar.symbol} @ {bar.close:.2f}, "
             f"stop={stop_price:.2f}, take={take_profit_price:.2f}"
