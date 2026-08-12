@@ -240,6 +240,82 @@ def _to_iso(value: Any) -> str:
     return str(value)
 
 
+#: 参数声明文档锚点, 所有迁移提示共用.
+PARAM_DOC_ANCHOR = "docs/zh/guide/strategy.md#param-declaration"
+
+#: 报错文案里最多列出的已声明字段数, 超出截断.
+_MAX_LISTED_FIELDS = 20
+
+
+def _migration_hint(sample: str) -> str:
+    """拼出「怎么改」的那一句, 供报错与告警共用.
+
+    :param sample: 用作示范的参数名
+    :return: 迁移提示片段
+    """
+    return (
+        f"迁移: 类体声明 {sample} = IntParam(默认值), "
+        f"读取处 self.{sample} -> self.params.{sample}; 详见 {PARAM_DOC_ANCHOR}"
+    )
+
+
+def unknown_param_message(
+    *,
+    unknown_keys: Sequence[str],
+    declared_fields: Sequence[str],
+    strategy_label: str,
+    context: str = "",
+) -> str:
+    """拼出「未知策略参数」的可执行报错文案.
+
+    按成因分流: ``declared_fields`` 为空说明该策略一个内联字段都没声明, 判定为
+    遗留的构造函数签名写法, 给出完整迁移路径; 否则是键名不在已声明字段中(拼错或
+    多传), 列出可用字段名。单行拼接——``TypeError`` 的 ``str()`` 会把换行转义成
+    可见字面量, 多行在终端里反而更难读。
+
+    :param unknown_keys: 未被接受的参数名
+    :param declared_fields: 该策略已声明的内联字段名
+    :param strategy_label: 形如 ``module.ClassName`` 的策略标识
+    :param context: 来源上下文, 如 ``param_grid``; 为空表示策略构造期
+    :return: 单行报错文案
+    """
+    keys_text = ", ".join(str(k) for k in unknown_keys)
+    where = f" in {context}" if context else ""
+    head = f"Unknown strategy param(s){where}: {keys_text}. Strategy={strategy_label}"
+    if not declared_fields:
+        sample = str(unknown_keys[0]) if unknown_keys else "my_param"
+        return (
+            f"{head}; 该策略未声明任何内联参数字段, 0.3.x 起构造函数签名不再是参数"
+            f"入口, 故这些参数无法从外部传入; {_migration_hint(sample)}"
+        )
+    listed = sorted(str(f) for f in declared_fields)
+    shown = ", ".join(listed[:_MAX_LISTED_FIELDS])
+    suffix = " ..." if len(listed) > _MAX_LISTED_FIELDS else ""
+    return (
+        f"{head}; 该策略已声明 {len(listed)} 个参数字段: {shown}{suffix}; "
+        "请检查键名拼写, 或改用上述字段名"
+    )
+
+
+def legacy_init_warning_message(
+    *, strategy_name: str, init_arg_names: Sequence[str]
+) -> str:
+    """拼出类定义期「遗留写法」告警文案.
+
+    :param strategy_name: 策略类名
+    :param init_arg_names: ``__init__`` 中除 self/*args/**kwargs 外的命名参数
+    :return: 单行告警文案
+    """
+    args_text = ", ".join(str(a) for a in init_arg_names)
+    sample = str(init_arg_names[0]) if init_arg_names else "my_param"
+    return (
+        f"策略 {strategy_name} 定义了带参 __init__({args_text}), 但未声明任何内联"
+        f"参数字段; 0.3.x 起构造函数签名不再是参数入口, 这些参数无法从 "
+        f"run_backtest / run_grid_search 外部传入, 将始终取默认值; "
+        f"{_migration_hint(sample)}"
+    )
+
+
 __all__ = [
     "ParamModel",
     "ParamSpec",
@@ -253,4 +329,7 @@ __all__ = [
     "model_to_schema",
     "validate_payload",
     "to_runtime_kwargs",
+    "PARAM_DOC_ANCHOR",
+    "unknown_param_message",
+    "legacy_init_warning_message",
 ]
