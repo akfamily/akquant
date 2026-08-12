@@ -175,6 +175,35 @@ def test_akquant_own_module_is_exempt_from_legacy_warning() -> None:
                 self.injected = injected
 
 
+def test_akquant_prefixed_third_party_module_still_warns() -> None:
+    """名字仅以 akquant 为前缀的第三方/插件模块不得被误豁免.
+
+    ``akquant_middleware``/``akquant_qmf`` 是同 workspace 下两个独立的插件仓库
+    (导入名分别为 ``akquant_middleware``/``akquant_qmf``), 与 ``akquant`` 包本身
+    是不同的顶层包; 用裸 ``str.startswith("akquant")`` 判断会把它们错误地一并
+    豁免掉。这里沿用上一个测试验证豁免规则本身时的手法——覆盖 ``__module__`` 来
+    模拟"该类定义在这两个插件包内", 断言仍然告警——锁定豁免判定必须是"等于
+    akquant 或以 akquant. 为前缀", 而非任意 akquant 字符串前缀。
+    """
+    with pytest.warns(UserWarning, match="未声明任何内联参数字段"):
+
+        class FakeMiddlewareStrategy(Strategy):
+            __module__ = "akquant_middleware.strategies"
+
+            def __init__(self, threshold: int = 1) -> None:
+                super().__init__()
+                self.threshold = threshold
+
+    with pytest.warns(UserWarning, match="未声明任何内联参数字段"):
+
+        class FakeQmfStrategy(Strategy):
+            __module__ = "akquant_qmf.foo"
+
+            def __init__(self, threshold: int = 1) -> None:
+                super().__init__()
+                self.threshold = threshold
+
+
 def test_import_akquant_emits_no_legacy_param_warning() -> None:
     """全新解释器进程 import akquant 不应产生本条告警.
 

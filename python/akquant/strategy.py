@@ -512,11 +512,13 @@ class Strategy:
         # 按模块豁免 akquant 包自身: VectorizedStrategy/FunctionalStrategy 等内部
         # 包装类的构造参数是依赖注入(回调/预算数据), 不是"可调策略参数", 迁移文案
         # 对它们不适用; 用户模块(examples/tests 等)不受此豁免影响。
-        if (
-            not field_defs
-            and "__init__" in vars(cls)
-            and not str(cls.__module__).startswith("akquant")
-        ):
+        # 用等值/带点前缀判断而非裸 startswith("akquant"): 避免把 akquant_middleware、
+        # akquant_qmf 等名字前缀相似但并非 akquant 包本身的第三方/插件模块一并豁免。
+        module_name = str(cls.__module__)
+        is_akquant_internal = module_name == "akquant" or module_name.startswith(
+            "akquant."
+        )
+        if not field_defs and "__init__" in vars(cls) and not is_akquant_internal:
             legacy_args = _legacy_init_arg_names(vars(cls)["__init__"])
             if legacy_args:
                 warnings.warn(
