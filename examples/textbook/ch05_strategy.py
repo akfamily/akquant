@@ -2,10 +2,11 @@
 第 5 章：构建第一个策略 (Strategy).
 
 本示例详细展示了一个完整策略的结构，重点介绍：
-1. **策略生命周期**：`__init__`, `on_start`, `on_bar`, `on_stop`
-2. **数据获取**：使用 `get_history` 获取过去 N 天的数据
-3. **交易接口**：使用 `buy`, `sell` 和 `order_target_percent`
-4. **日志记录**：使用 `self.log` 记录关键信息
+1. **参数声明**：用类体内联字段（`IntParam`, `FloatParam`）声明可外部调整的参数
+2. **策略生命周期**：`on_start`, `on_bar`, `on_stop`
+3. **数据获取**：使用 `get_history` 获取过去 N 天的数据
+4. **交易接口**：使用 `buy`, `sell` 和 `order_target_percent`
+5. **日志记录**：使用 `self.log` 记录关键信息
 
 策略逻辑 (双均线改进版)：
 - 计算 5日均线 (MA5) 和 20日均线 (MA20)
