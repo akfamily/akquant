@@ -174,6 +174,7 @@ from .strategy_trading_api import (
 from .strategy_trading_api import (
     submit_order as _submit_order_impl,
 )
+from .utils.price import round_to_tick as _round_to_tick
 
 if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
@@ -2132,6 +2133,24 @@ class Strategy:
         if isinstance(fields, list):
             return {field: self.get_instrument_field(symbol, field) for field in fields}
         raise TypeError("fields must be str, List[str], or None")
+
+    def round_to_tick(
+        self, symbol: str, price: float, direction: str = "nearest"
+    ) -> float:
+        """把委托价对齐到该标的的最小变动价位.
+
+        框架在下单路径上只做**校验**不做取整(擅自改价会让用户拿到一个自己没
+        算过的成交价), 需要对齐时显式调用本方法::
+
+            self.buy(symbol, qty, price=self.round_to_tick(symbol, raw, "down"))
+
+        买单用 ``down``、卖单用 ``up``, 可保证取整不把价格推向不利方向。
+
+        :raises KeyError: 标的未登记(沿用 :meth:`get_instrument` 口径, 不用
+            缺省 tick 兜底——猜错 tick 比报错更危险)。
+        """
+        tick = float(self.get_instrument(symbol).tick_size)
+        return _round_to_tick(price, tick, direction)
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Any]:
         """

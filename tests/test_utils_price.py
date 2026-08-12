@@ -1,6 +1,11 @@
 """委托价按最小变动价位取整(对标 vnpy round_to, 但显式区分方向)."""
 
+from typing import Any
+
 import pytest
+from akquant import AssetType, Instrument
+from akquant.live._runner import _instruments_to_snapshots
+from akquant.strategy import Strategy
 from akquant.utils.price import round_to_tick
 
 
@@ -47,3 +52,38 @@ def test_rejects_unknown_direction() -> None:
     """非法 direction 要显式报错, 不能静默当成 nearest."""
     with pytest.raises(ValueError, match="direction"):
         round_to_tick(2.83, 0.01, direction="sideways")
+
+
+class _DummyStrategy(Strategy):
+    def on_bar(self, bar: Any) -> None:
+        _ = bar
+
+
+def _strategy_with(symbol: str, tick: float) -> _DummyStrategy:
+    strategy = _DummyStrategy()
+    strategy._set_instrument_snapshots(
+        _instruments_to_snapshots([Instrument(symbol, AssetType.Stock, tick_size=tick)])
+    )
+    return strategy
+
+
+def test_strategy_round_to_tick_uses_instrument_tick() -> None:
+    """从 instrument 快照取 tick, 策略不必自己记住每个标的的最小变动."""
+    strategy = _strategy_with("600008.SH", 0.01)
+    assert strategy.round_to_tick("600008.SH", 2.8314) == pytest.approx(2.83)
+
+
+def test_strategy_round_to_tick_respects_direction() -> None:
+    """Direction 透传到底层工具."""
+    strategy = _strategy_with("600008.SH", 0.01)
+    assert strategy.round_to_tick("600008.SH", 2.8314, "up") == pytest.approx(2.84)
+
+
+def test_strategy_round_to_tick_unknown_symbol_raises() -> None:
+    """未登记标的沿用 get_instrument 的 KeyError 口径, 不静默用 0.01 兜底.
+
+    Lean 的事故正是"查不到就默认 0.01", 导致止损单被取整到入场价之上。
+    """
+    strategy = _strategy_with("600008.SH", 0.01)
+    with pytest.raises(KeyError):
+        strategy.round_to_tick("000012.SZ", 2.8314)
