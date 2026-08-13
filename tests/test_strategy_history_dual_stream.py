@@ -179,6 +179,86 @@ def test_dual_stream_get_history_multi_tick_freq_rejects_ohlc_field() -> None:
         )
 
 
+class _MapCollector(Strategy):
+    """在第一次 on_bar 时按指定 freq 取 get_history_map 结果.
+
+    用于验证 freq 能在 get_history_map 内部 "逐 symbol 调用 get_history" 的
+    循环中被正确传递(该循环是 self 派发, 曾在自查阶段出过回归)。
+    """
+
+    warmup_period = 3
+    freq_arg: Optional[str] = None
+    captured: dict = {}
+
+    def on_start(self) -> None:
+        """重置采集状态."""
+        self.done = False
+        type(self).captured = {}
+
+    def on_bar(self, bar: Bar) -> None:
+        """首个非预热 bar 上取一次 get_history_map."""
+        if self.done:
+            return
+        self.done = True
+        type(self).captured = self.get_history_map(
+            count=3, symbols=["X"], field="close", freq=self.freq_arg
+        )
+
+
+def test_dual_stream_get_history_map_bar_freq_is_not_polluted_by_ticks() -> None:
+    """get_history_map 在双流 + freq='bar' 下必须拿到未被 tick 污染的 bar 收盘价.
+
+    多标的说明: 本用例特意验证 freq 是否穿透 get_history_map 内部按 symbol
+    逐个调用 self.get_history(...) 的循环, 理想构造是双 symbol(如 X/Y 各用
+    可区分价格段)以同时证明"循环不丢参数"与"多 symbol 下互不干扰"。
+
+    经实测, 多 symbol 双流构造在当前引擎下会触发一个与本任务(暴露 freq
+    参数)无关的既有问题: 只要回测同时挂载 2 个都在推双流数据的 symbol,
+    即使只查询其中一个 symbol、且不经过 get_history_map(直接用最底层的
+    get_history(symbol='X', freq='bar') 也一样), bar 历史里就会混入 tick
+    值(例如三根 bar 应为 [13,23,33], 实测拿到 [13,20,23] / [23,30,33] 这类
+    中间夹带 tick 值的结果)。用逐 bar 打印验证过: 单 symbol 场景下同样的
+    get_history / get_history_map 调用序列每一步都精确正确; 一旦引擎里同时
+    存在第二个 symbol 的双流数据, 哪怕不查它, 结果就会跑偏 —— 说明问题在
+    引擎多 symbol 双流存储层, 不在 get_history_map 的 freq 转发逐 symbol 循环
+    本身。这与本任务(Task 4, 仅暴露 Python 层 freq 参数)范围无关, 故这里
+    退回单 symbol, 只验证 get_history_map 的 freq 转发本身没有在循环里丢失;
+    多 symbol 下的这个存储层问题已在报告里记录, 留给后续任务处理。
+    """
+
+    class BarMapStrategy(_MapCollector):
+        freq_arg = "bar"
+
+    run_backtest(
+        strategy=BarMapStrategy,
+        data=_dual_stream_feed(),
+        symbols=["X"],
+        initial_cash=1e5,
+    )
+    assert list(BarMapStrategy.captured["X"]) == [13.0, 23.0, 33.0]
+
+
+def test_dual_stream_get_history_map_tick_freq_returns_tick_series_per_symbol() -> None:
+    """get_history_map 在双流 + freq='tick' 下必须拿到逐 tick 序列(而非 bar).
+
+    同 test_dual_stream_get_history_map_bar_freq_is_not_polluted_by_ticks 的
+    多 symbol 说明: 这里同样退回单 symbol, 原因见该用例的 docstring。
+    """
+
+    class TickMapStrategy(_MapCollector):
+        freq_arg = "tick"
+
+    run_backtest(
+        strategy=TickMapStrategy,
+        data=_dual_stream_feed(),
+        symbols=["X"],
+        initial_cash=1e5,
+    )
+    values = list(TickMapStrategy.captured["X"])
+    assert len(values) == 3
+    assert values[-1] - values[-2] == 1.0
+
+
 def test_pure_bar_path_behavior_unchanged() -> None:
     """纯 bar 路径省略 freq 行为不变(回归底线)."""
     index = pd.date_range("2024-01-02", periods=6, freq="D")
