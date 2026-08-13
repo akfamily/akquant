@@ -698,6 +698,13 @@ impl StrategyContext {
                     "high" => PyArray1::from_iter(py, history.highs.iter().skip(start).cloned()),
                     "low" => PyArray1::from_iter(py, history.lows.iter().skip(start).cloned()),
                     "close" => PyArray1::from_iter(py, history.closes.iter().skip(start).cloned()),
+                    // "price" 是 tick 的自然字段名, 语义 = tick 容器的 close(成交价)。
+                    // bar 没有 price 概念, 故仅在实际取的是 tick 容器时放行——
+                    // guard 不满足时穿透到下面的 extras/Invalid field 分支,
+                    // 与 bar 路径此前的报错行为完全一致。
+                    "price" if use_tick => {
+                        PyArray1::from_iter(py, history.closes.iter().skip(start).cloned())
+                    }
                     "volume" => {
                         PyArray1::from_iter(py, history.volumes.iter().skip(start).cloned())
                     }
@@ -789,6 +796,9 @@ impl StrategyContext {
                     "high" => &history.highs,
                     "low" => &history.lows,
                     "close" => &history.closes,
+                    // 与 history() 保持一致: "price" 仅在实际取的是 tick 容器时
+                    // 等价于 close; bar 路径穿透到下面的 Invalid field 分支。
+                    "price" if use_tick => &history.closes,
                     "volume" => &history.volumes,
                     _ => {
                         if let Some(series) = history.extras.get(&field) {

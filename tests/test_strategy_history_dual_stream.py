@@ -28,10 +28,11 @@ def _dual_stream_feed() -> DataFeed:
 
 
 class _Collector(Strategy):
-    """在第一次 on_bar 时按指定 freq 取历史."""
+    """在第一次 on_bar 时按指定 freq/field 取历史."""
 
     warmup_period = 3
     freq_arg: Optional[str] = None
+    field_arg: str = "close"
     captured: list = []
 
     def on_start(self) -> None:
@@ -46,7 +47,7 @@ class _Collector(Strategy):
         self.done = True
         type(self).captured = list(
             self.get_history(
-                count=3, symbol=bar.symbol, field="close", freq=self.freq_arg
+                count=3, symbol=bar.symbol, field=self.field_arg, freq=self.freq_arg
             )
         )
 
@@ -343,3 +344,49 @@ def test_pure_bar_path_behavior_unchanged() -> None:
 
     run_backtest(strategy=PureBar, data=data, symbols=["X"], initial_cash=1e5)
     assert PureBar.captured and not np.isnan(PureBar.captured[-1])
+
+
+def test_tick_freq_field_price_returns_tick_price_series() -> None:
+    """field='price' 是 tick 的唯一迁移出口, 语义 = tick 容器的成交价(close).
+
+    修复前 Rust 侧字段解析只认 open/high/low/close/volume, 'price' 落到
+    "Invalid field" 分支 -- 尽管 Python 侧白名单
+    (``strategy_history._TICK_ALLOWED_FIELDS``)与文档/报错文案都已把它当作
+    合法字段推荐给用户。这里必须拿到与 field='close' 完全一致的 tick 序列
+    (相邻价差为 1, 与 test_dual_stream_tick_history_returns_tick_series 同源)。
+    """
+
+    class PriceStrategy(_Collector):
+        freq_arg = "tick"
+        field_arg = "price"
+
+    run_backtest(
+        strategy=PriceStrategy,
+        data=_dual_stream_feed(),
+        symbols=["X"],
+        initial_cash=1e5,
+    )
+    values = PriceStrategy.captured
+    assert len(values) == 3
+    assert values[-1] - values[-2] == 1.0
+
+
+def test_bar_freq_field_price_still_rejected() -> None:
+    """freq='bar' 下 field='price' 必须继续报错: bar 没有 price 字段.
+
+    回归防护: 修 field='price' 的 tick 语义时, 不能顺带让 bar 路径也接受它
+    -- bar 放行 'price' 会让用户以为拿到了什么有意义的东西, 而 bar 容器
+    根本没有这个概念。
+    """
+
+    class BarPriceStrategy(_Collector):
+        freq_arg = "bar"
+        field_arg = "price"
+
+    with pytest.raises(ValueError, match="price"):
+        run_backtest(
+            strategy=BarPriceStrategy,
+            data=_dual_stream_feed(),
+            symbols=["X"],
+            initial_cash=1e5,
+        )
