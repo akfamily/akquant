@@ -26,8 +26,19 @@ class CTPMarketAdapter:
         front_url: str,
         symbols: Sequence[str],
         use_aggregator: bool = True,
+        emit_ticks: bool | None = None,
+        emit_bars: bool | None = None,
     ) -> None:
-        """Initialize CTP market adapter."""
+        """Initialize CTP market adapter.
+
+        ``emit_ticks``/``emit_bars`` are thin pass-throughs to
+        :class:`CTPMarketGateway` — this adapter does no fallback logic of its
+        own, the per-parameter ``use_aggregator`` alias resolution and the
+        both-False guard live entirely in the gateway (see
+        ``ctp/native.py::CTPMarketGateway.__init__``). Keeping the adapter a
+        dumb pass-through avoids having two places that could disagree on the
+        fallback semantics.
+        """
         self.front_url = front_url
         self.symbols = list(symbols)
         self.gateway = CTPMarketGateway(
@@ -35,6 +46,8 @@ class CTPMarketAdapter:
             front_url=front_url,
             symbols=list(symbols),
             use_aggregator=use_aggregator,
+            emit_ticks=emit_ticks,
+            emit_bars=emit_bars,
         )
         self.tick_callback: Callable[[dict[str, Any]], None] | None = None
         self.bar_callback: Callable[[dict[str, Any]], None] | None = None

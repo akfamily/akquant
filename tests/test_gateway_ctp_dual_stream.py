@@ -20,7 +20,9 @@ from typing import Any
 
 import pytest
 from akquant import DataFeed
+from akquant.gateway.brokers.builtins import _build_ctp
 from akquant.gateway.brokers.ctp import native as ctp_native
+from akquant.gateway.brokers.ctp.adapter import CTPMarketAdapter
 from akquant.gateway.brokers.ctp.native import CTPMarketGateway
 
 
@@ -138,3 +140,64 @@ def test_ctp_dual_stream_feeds_aggregator_before_pushing_tick() -> None:
     gateway.feed = _RecordingFeed()  # type: ignore[assignment]
     gateway.OnRtnDepthMarketData(_md())
     assert calls == ["aggregator", "add_tick"]
+
+
+# ---------------------------------------------------------------------------
+# Builder 层(``_build_ctp`` / ``run_live(broker="ctp", gateway_options={...})``
+# 的真实入口): 终审 finding I5 —— 上面所有测试都直接构造 ``CTPMarketGateway``,
+# 完全绕开了 ``_build_ctp`` 未转发 ``emit_ticks``/``emit_bars`` 的 bug。这里从
+# ``gateway_options`` 这一层出发, 断言参数真的能捅到底层 gateway。
+# ---------------------------------------------------------------------------
+
+
+def _build(**gateway_options: Any) -> CTPMarketGateway:
+    feed = DataFeed()
+    gateway_options.setdefault("md_front", "tcp://test")
+    bundle = _build_ctp(
+        feed=feed,
+        symbols=["rb2401"],
+        use_aggregator=gateway_options.pop("use_aggregator", True),
+        **gateway_options,
+    )
+    assert isinstance(bundle.market_gateway, CTPMarketAdapter)
+    return bundle.market_gateway.gateway
+
+
+def test_build_ctp_default_stays_bar_only() -> None:
+    """未传 emit_ticks/emit_bars 时经 builder 层仍是默认只出 bar."""
+    gateway = _build()
+    assert gateway.emit_bars is True
+    assert gateway.emit_ticks is False
+
+
+def test_build_ctp_forwards_emit_ticks_and_emit_bars() -> None:
+    """``gateway_options={"emit_ticks": True, "emit_bars": True}`` 必须捅到底层 gateway.
+
+    这是终审 finding 的核心场景: ``run_live(broker="ctp", gateway_options={...})``
+    在修复前会静默丢弃这两个键, 底层仍是默认的 emit_ticks=False。
+    """
+    gateway = _build(emit_ticks=True, emit_bars=True)
+    assert gateway.emit_ticks is True
+    assert gateway.emit_bars is True
+    assert gateway.stamp_bar_at_interval_end is True
+
+
+def test_build_ctp_emit_ticks_alone_stays_dual_stream_via_builder() -> None:
+    """经 builder 层, 只传 emit_ticks=True 时逐参数回退, 不悄悄关掉 on_bar."""
+    gateway = _build(emit_ticks=True)
+    assert gateway.emit_ticks is True
+    assert gateway.emit_bars is True
+    assert gateway.stamp_bar_at_interval_end is True
+
+
+def test_build_ctp_use_aggregator_false_forwards_to_tick_only() -> None:
+    """经 builder 层, 顶层 use_aggregator=False 仍能推导出只出 tick."""
+    gateway = _build(use_aggregator=False)
+    assert gateway.emit_ticks is True
+    assert gateway.emit_bars is False
+
+
+def test_build_ctp_emit_ticks_and_emit_bars_both_false_raises_via_builder() -> None:
+    """经 builder 层, 两者都显式为 False 时构造期报错, 不静默吞掉."""
+    with pytest.raises(ValueError, match="emit_ticks"):
+        _build(emit_ticks=False, emit_bars=False)

@@ -26,11 +26,18 @@ def _build_ctp(
     md_front = kwargs.get("md_front", "")
     if not md_front:
         raise ValueError("md_front is required when broker='ctp'")
+    # emit_ticks/emit_bars 经 gateway_options 透传给 CTPMarketAdapter ->
+    # CTPMarketGateway, 与 klinedata 的 _builder.py 同构(见其 96-97 行)。
+    # 这里只是把 gateway_options 里的键原样转发, 不做任何回退/校验——那些
+    # 逐参数回退(None 时按 use_aggregator 别名推导)与"两者都 False 报错"的
+    # 规则都在 CTPMarketGateway.__init__ 里实现一次, 避免两处语义漂移。
     market_gateway: MarketGateway = CTPMarketAdapter(
         feed=feed,
         front_url=md_front,
         symbols=list(symbols),
         use_aggregator=use_aggregator,
+        emit_ticks=kwargs.get("emit_ticks"),
+        emit_bars=kwargs.get("emit_bars"),
     )
     trader_gateway: TraderGateway | None = None
     td_front = kwargs.get("td_front")
