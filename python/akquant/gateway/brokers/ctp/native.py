@@ -7,9 +7,9 @@ This module provides CTP (China Futures) connectivity using openctp-ctp library.
 
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, List, Optional
 
-from ....akquant import Bar, BarAggregator, DataFeed, Tick
+from ....akquant import BarAggregator, DataFeed, Tick
 from ....log import build_log_extra, get_logger
 
 try:
@@ -952,7 +952,6 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         self.api: Any = None
         self.req_id = 0
         self.connected = False
-        self.last_volume: Dict[str, float] = {}
 
         # use_aggregator 是旧的二选一开关, 保留为兼容别名: True(默认) -> 只出
         # bar, False -> 只出 tick。新参数 emit_ticks / emit_bars 显式且可同时
@@ -1122,34 +1121,13 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         if self.aggregator is not None:
             self.aggregator.on_tick(symbol, price, float(volume), now_ns)
 
+        # 引入真 add_tick 之前, use_aggregator=False 下曾把每笔 tick 包装成
+        # 退化 bar(open=high=low=close=price)推入 feed, 作为 on_bar 的替代品
+        # ——那正是 fill_missing_bars 曾用成交价合成假 bar 污染 bar 序列的
+        # 同一类问题(见本计划 Task 5)。现在逐笔以真 Tick 形式推送, 该替代
+        # 路径已删除; emit_ticks/emit_bars 都不出的组合在构造期就被
+        # ValueError 拒绝, 不存在"两者都不出"需要兜底的状态。
         if self.emit_ticks:
             self.feed.add_tick(
                 Tick(timestamp=now_ns, symbol=symbol, price=price, volume=float(volume))
             )
-        elif not self.emit_bars:
-            # 兜底分支, 理论上不会被合法构造出的实例触发: 构造函数已用
-            # ValueError 挡掉 emit_ticks/emit_bars 同时为 False 的组合, 所以
-            # 走到这里的前提(self.emit_ticks 为 False 且 self.emit_bars 也为
-            # False)在正常构造路径下不成立。保留它是防御性的——万一后续代码在
-            # __init__ 校验之后又直接篡改了这两个属性(绕过校验), 网关仍有
-            # 行情产出而不是彻底断流。这也是引入 add_tick 之前唯一的行为: 把
-            # 每个 tick 包装成假 bar(open=high=low=close=price)。
-            last_vol = self.last_volume.get(symbol, volume)
-            delta_vol = volume - last_vol
-            self.last_volume[symbol] = volume
-
-            if delta_vol < 0:
-                delta_vol = volume
-
-            bar = Bar(
-                timestamp=now_ns,
-                symbol=symbol,
-                open=price,
-                high=price,
-                low=price,
-                close=price,
-                volume=float(delta_vol),
-                extra={},
-            )
-
-            self.feed.add_bar(bar)  # type: ignore

@@ -25,16 +25,11 @@ from akquant.gateway.brokers.ctp.native import CTPMarketGateway
 
 
 class FakeFeed:
-    """记录被推入的 bar/tick, 不依赖真实 DataFeed."""
+    """记录被推入的 tick, 不依赖真实 DataFeed."""
 
     def __init__(self) -> None:
         """初始化收集列表."""
-        self.bars: list[Any] = []
         self.ticks: list[Any] = []
-
-    def add_bar(self, bar: Any) -> None:
-        """记录被推入的 bar."""
-        self.bars.append(bar)
 
     def add_tick(self, tick: Any) -> None:
         """记录被推入的 tick."""
@@ -143,26 +138,3 @@ def test_ctp_dual_stream_feeds_aggregator_before_pushing_tick() -> None:
     gateway.feed = _RecordingFeed()  # type: ignore[assignment]
     gateway.OnRtnDepthMarketData(_md())
     assert calls == ["aggregator", "add_tick"]
-
-
-def test_ctp_fallback_fake_bar_branch_survives_for_defensive_case() -> None:
-    """既不出 tick 也没有聚合器时, 保留旧的"包装成假 bar"兜底分支.
-
-    正常构造路径下 ``emit_ticks``/``emit_bars`` 不会同时为 False(构造函数已用
-    ``ValueError`` 挡掉), 所以这个分支理论上不会被合法构造出的实例触发。这里
-    用 ``__new__`` 绕开 ``__init__`` 校验、直接摆出该组合, 只是为了证明分支
-    代码本身还在、没有被误删, 而不是主张这是受支持的构造方式。
-    """
-    gateway = CTPMarketGateway.__new__(CTPMarketGateway)
-    fake_feed = FakeFeed()
-    gateway.feed = fake_feed  # type: ignore[assignment]
-    gateway.emit_ticks = False
-    gateway.emit_bars = False
-    gateway.aggregator = None
-    gateway.last_volume = {}
-
-    gateway.OnRtnDepthMarketData(_md(volume=10.0))
-    gateway.OnRtnDepthMarketData(_md(volume=15.0))
-
-    assert len(fake_feed.bars) == 2
-    assert fake_feed.bars[-1].volume == 5.0
