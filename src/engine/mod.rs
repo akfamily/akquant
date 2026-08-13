@@ -136,6 +136,7 @@ mod tests {
             margin_daily_interest: Decimal::ZERO,
             history_state: Some(HistoryBufferSnapshot {
                 data: HashMap::new(),
+                tick_data: HashMap::new(),
                 default_capacity: 3,
             }),
             strategy_risk_state: Default::default(),

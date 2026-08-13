@@ -305,6 +305,12 @@ impl HistoryBuffer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryBufferSnapshot {
     pub data: HashMap<String, SymbolHistorySnapshot>,
+    // tick_data 与 data 对等(都是主序列, 不是派生缓存), 必须一起入快照,
+    // 否则热重启一次 get_state_bytes -> load_state_bytes 往返就会把 tick
+    // 历史整体清空且不报错。`#[serde(default)]` 让旧存档(无此字段)仍可
+    // 反序列化, 恢复为空 tick 序列而不是报错。
+    #[serde(default)]
+    pub tick_data: HashMap<String, SymbolHistorySnapshot>,
     pub default_capacity: usize,
 }
 
@@ -313,6 +319,11 @@ impl From<&HistoryBuffer> for HistoryBufferSnapshot {
         Self {
             data: buffer
                 .data
+                .iter()
+                .map(|(symbol, history)| (symbol.clone(), SymbolHistorySnapshot::from(history)))
+                .collect(),
+            tick_data: buffer
+                .tick_data
                 .iter()
                 .map(|(symbol, history)| (symbol.clone(), SymbolHistorySnapshot::from(history)))
                 .collect(),
@@ -330,9 +341,13 @@ impl From<HistoryBufferSnapshot> for HistoryBuffer {
                 .map(|(symbol, history)| (symbol, SymbolHistory::from(history)))
                 .collect(),
             previous_data: HashMap::new(),
-            // 快照格式本身不携带 tick 序列（`HistoryBufferSnapshot` 无对应字段），
-            // 恢复后 tick 容器留空，与 previous_data 的处理方式一致。
-            tick_data: HashMap::new(),
+            tick_data: snapshot
+                .tick_data
+                .into_iter()
+                .map(|(symbol, history)| (symbol, SymbolHistory::from(history)))
+                .collect(),
+            // previous_tick_data 与 previous_data 一样是派生缓存(下一次
+            // update_tick 时会被重新计算), 不入快照, 恢复后留空即可。
             previous_tick_data: HashMap::new(),
             default_capacity: snapshot.default_capacity,
         }
@@ -515,6 +530,49 @@ mod tests {
         assert_eq!(extras[0], 1.0);
         assert!(extras[1].is_nan());
         assert_eq!(extras[2], 3.0);
+    }
+
+    #[test]
+    fn test_history_buffer_snapshot_roundtrip_preserves_tick_history() {
+        // (a)(b): tick_data 是与 data 对等的主序列, 快照 round-trip 后必须能
+        // 还原, 而不是像 previous_data 那样静默清空。
+        let mut buffer = HistoryBuffer::new(4);
+        buffer.update_tick(&make_tick(1, 10));
+        buffer.update_tick(&make_tick(2, 11));
+        buffer.update_tick(&make_tick(3, 12));
+
+        let snapshot = HistoryBufferSnapshot::from(&buffer);
+        let encoded = rmp_serde::to_vec(&snapshot).expect("serialize history snapshot");
+        let decoded: HistoryBufferSnapshot =
+            rmp_serde::from_slice(&encoded).expect("deserialize history snapshot");
+        let restored = HistoryBuffer::from(decoded);
+
+        let history = restored
+            .get_tick_history("TEST")
+            .expect("tick history for TEST should survive snapshot round-trip");
+        assert_eq!(history.capacity, 4);
+        assert_eq!(
+            history.timestamps.iter().copied().collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            history.closes.iter().copied().collect::<Vec<_>>(),
+            vec![10.0, 11.0, 12.0]
+        );
+    }
+
+    #[test]
+    fn snapshot_without_tick_fields_restores_with_empty_tick_history() {
+        // (c): 旧存档没有 tick 序列字段, 必须能恢复(tick 序列为空), 而不是
+        // 反序列化失败。
+        let json = r#"{"data":{},"default_capacity":16}"#;
+        let snapshot: HistoryBufferSnapshot =
+            serde_json::from_str(json).expect("旧快照应可反序列化");
+        assert_eq!(snapshot.default_capacity, 16);
+        assert!(snapshot.tick_data.is_empty());
+
+        let restored = HistoryBuffer::from(snapshot);
+        assert!(restored.tick_data.is_empty());
     }
 
     #[test]
