@@ -116,6 +116,36 @@ def test_unknown_kwarg_on_legacy_strategy_gives_migration_path() -> None:
     assert "self.params.fast_period" in message
 
 
+def test_unknown_kwarg_on_partial_migration_strategy_gives_migration_path() -> None:
+    """半迁移态策略(部分字段已内联)传参命中未迁移的 __init__ 参数, 应走迁移分支.
+
+    _MixedStrategy 已声明 fast 字段, 但 __init__ 里的 slow 忘了迁——传 slow=
+    应诊断为"未迁移", 而不是被当成拼写错误去列可用字段名。
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+
+        class _MixedStrategy(Strategy):
+            fast = IntParam(5, ge=1)
+
+            def __init__(self, slow: int = 20) -> None:
+                super().__init__()
+                self.slow = slow
+
+    with pytest.raises(TypeError) as excinfo:
+        run_backtest(
+            strategy=_MixedStrategy,
+            data=_tiny_data(),
+            symbols=["600008.SH"],
+            initial_cash=100000.0,
+            slow=30,
+        )
+    message = str(excinfo.value)
+    assert "slow" in message
+    assert "__init__" in message
+    assert "请检查键名拼写" not in message
+
+
 def test_non_strict_mode_warns_with_same_diagnosis(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

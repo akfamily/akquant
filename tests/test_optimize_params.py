@@ -75,6 +75,39 @@ def test_param_grid_unknown_key_lists_available_fields() -> None:
     assert "请检查键名拼写" in message
 
 
+def test_param_grid_on_partial_migration_strategy_gives_migration_path() -> None:
+    """半迁移态策略的 param_grid 键命中未迁移的 __init__ 参数, 应走迁移分支.
+
+    _GridMixedStrategy 已声明 fast 字段, 但 __init__ 里的 slow 忘了迁——网格键
+    slow 应诊断为"未迁移", 而不是被当成拼写错误去列可用字段名。
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+
+        class _GridMixedStrategy(Strategy):
+            fast = IntParam(5, ge=1)
+
+            def __init__(self, slow: int = 20) -> None:
+                super().__init__()
+                self.slow = slow
+
+    with pytest.raises(TypeError) as excinfo:
+        run_grid_search(
+            strategy=_GridMixedStrategy,
+            param_grid={"slow": [10, 20]},
+            data=_tiny_data(),
+            symbols=["600008.SH"],
+            initial_cash=100000.0,
+            max_workers=1,
+            show_progress=False,
+        )
+    message = str(excinfo.value)
+    assert "param_grid" in message
+    assert "slow" in message
+    assert "__init__" in message
+    assert "请检查键名拼写" not in message
+
+
 def test_param_grid_on_legacy_strategy_gives_migration_path() -> None:
     """遗留写法策略做参数优化时, 报错须给出迁移路径."""
     with warnings.catch_warnings():

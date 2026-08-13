@@ -507,7 +507,10 @@ class Strategy:
         cls.__param_model__ = _finalize_param_model(
             model_cls, module_name=cls.__module__, name=model_name
         )
-        # 遗留写法早诊断: 带参 __init__ + 零内联字段 => 这些参数永远传不进来。
+        # 遗留写法早诊断: __init__ 命名参数中存在未声明为内联字段的名字 =>
+        # 这些参数永远传不进来。判据落在参数级而非"零字段"级——最常见的中间态
+        # 是半迁移(部分字段已内联, __init__ 里还剩几个没搬), 若仍按"零字段才算
+        # 遗留写法"判断会在这种最该被提醒的场景下漏报。
         # 只看本类自己定义的 __init__(vars(cls)), 避免子类继承时重复告警。
         # 按模块豁免 akquant 包自身: VectorizedStrategy/FunctionalStrategy 等内部
         # 包装类的构造参数是依赖注入(回调/预算数据), 不是"可调策略参数", 迁移文案
@@ -518,12 +521,15 @@ class Strategy:
         is_akquant_internal = module_name == "akquant" or module_name.startswith(
             "akquant."
         )
-        if not field_defs and "__init__" in vars(cls) and not is_akquant_internal:
+        if "__init__" in vars(cls) and not is_akquant_internal:
             legacy_args = _legacy_init_arg_names(vars(cls)["__init__"])
-            if legacy_args:
+            unmigrated_args = [name for name in legacy_args if name not in field_defs]
+            if unmigrated_args:
                 warnings.warn(
                     legacy_init_warning_message(
-                        strategy_name=cls.__name__, init_arg_names=legacy_args
+                        strategy_name=cls.__name__,
+                        init_arg_names=unmigrated_args,
+                        some_fields_declared=bool(field_defs),
                     ),
                     UserWarning,
                     stacklevel=2,

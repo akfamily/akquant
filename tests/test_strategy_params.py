@@ -204,6 +204,46 @@ def test_akquant_prefixed_third_party_module_still_warns() -> None:
                 self.threshold = threshold
 
 
+def test_partial_migration_warns_only_unmigrated_arg_name() -> None:
+    """半迁移态(部分字段已内联, __init__ 里还剩没迁的)也应告警.
+
+    此前的判据是"零字段才算遗留写法", Mixed 类已迁移 fast 字段, 只是 __init__
+    里的 slow 忘了迁——这恰是最常见的中间态, 旧判据会漏报。修复后判据落在
+    参数级: 告警只点名未迁移的 slow, 不得提及已迁移的 fast。
+    """
+    with pytest.warns(UserWarning) as records:
+
+        class MixedStrategy(Strategy):
+            fast = IntParam(5, ge=1)
+
+            def __init__(self, slow: int = 20) -> None:
+                super().__init__()
+                self.slow = slow
+
+    assert len(records) == 1
+    msg = str(records[0].message)
+    assert "slow" in msg
+    assert "fast" not in msg
+    assert "MixedStrategy" in msg
+
+
+def test_partial_migration_init_arg_matching_declared_field_does_not_warn() -> None:
+    """__init__ 命名参数若与已声明字段同名, 视为已迁移, 不告警.
+
+    这是"未迁移"判据的边界: 判据是"__init__ 参数名是否出现在已声明字段名集合
+    中", 而非"该策略是否声明了任何字段"——同名即视为该参数已经有对应的内联
+    字段入口(是否在 __init__ 里也做了赋值不在本判据管辖范围内)。
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class AllMigratedStrategy(Strategy):
+            fast = IntParam(5, ge=1)
+
+            def __init__(self, fast: int = 5) -> None:
+                super().__init__()
+
+
 def test_import_akquant_emits_no_legacy_param_warning() -> None:
     """全新解释器进程 import akquant 不应产生本条告警.
 

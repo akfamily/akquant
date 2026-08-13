@@ -62,6 +62,9 @@ from ..strategy import (
     StrategyConfigurationError,
     StrategyRuntimeConfig,
 )
+from ..strategy import (
+    _legacy_init_arg_names as _legacy_init_arg_names_impl,
+)
 from ..strategy_framework_hooks import (
     collect_boundary_timer_entries as _collect_boundary_timer_entries_impl,
 )
@@ -949,6 +952,25 @@ def _strategy_param_field_names(
     return set()
 
 
+def _strategy_own_init_arg_names(
+    strategy_input: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
+) -> List[str]:
+    """Return the named args of a Strategy subclass's own ``__init__``, if any.
+
+    只看该类自身命名空间里的 ``__init__``(不含继承而来的), 与
+    ``strategy.py`` 的 ``__init_subclass__`` 告警判据保持一致口径; 用于把
+    "该 key 是否出现在 __init__ 签名里但未迁移为内联字段"这一判断结果传给
+    ``unknown_param_message``——``params.py`` 不能反向导入 ``strategy.py``
+    (会成环), 故由本模块算好后传参。
+    """
+    if not (isinstance(strategy_input, type) and issubclass(strategy_input, Strategy)):
+        return []
+    own_init = vars(strategy_input).get("__init__")
+    if own_init is None:
+        return []
+    return _legacy_init_arg_names_impl(own_init)
+
+
 def _accepts_strategy_kwarg(
     strategy_input: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
     kwarg_name: str,
@@ -1708,6 +1730,7 @@ def _build_strategy_instance(
                 unknown_keys=unknown_keys,
                 declared_fields=sorted(_strategy_param_field_names(strategy)),
                 strategy_label=f"{strategy.__module__}.{strategy.__name__}",
+                init_signature_names=_strategy_own_init_arg_names(strategy),
             )
             if strict_strategy_params:
                 raise TypeError(message)

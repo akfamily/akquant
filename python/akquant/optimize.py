@@ -36,6 +36,7 @@ from .log import get_logger
 from .params import unknown_param_message
 from .params_adapter import validate_strategy_params
 from .strategy import Strategy
+from .strategy import _legacy_init_arg_names as _legacy_init_arg_names_impl
 
 _WORKER_LOG_QUEUE: Any = None
 OptimizationData = Union[pd.DataFrame, Dict[str, pd.DataFrame]]
@@ -489,12 +490,19 @@ def _validate_strategy_param_grid_keys(
     field_names = set(model.model_fields)
     unknown = sorted(str(k) for k in param_grid if str(k) not in field_names)
     if unknown:
+        # 只看该类自身命名空间里的 __init__(不含继承而来), 用于识别"半迁移"场景
+        # 下 unknown key 实际是 __init__ 里忘迁的命名参数, 而非拼写错误。
+        own_init = vars(strategy).get("__init__")
+        init_arg_names = (
+            _legacy_init_arg_names_impl(own_init) if own_init is not None else []
+        )
         raise TypeError(
             unknown_param_message(
                 unknown_keys=unknown,
                 declared_fields=sorted(field_names),
                 strategy_label=f"{strategy.__module__}.{strategy.__name__}",
                 context="param_grid",
+                init_signature_names=init_arg_names,
             )
         )
     # 逐参数逐候选值校验（含类型/ge/le/choices），失败信息包含字段名

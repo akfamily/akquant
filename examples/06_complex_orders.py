@@ -3,7 +3,6 @@ import pandas as pd
 from akquant import (
     Bar,
     FloatParam,
-    IntParam,
     Order,
     OrderStatus,
     Strategy,
@@ -15,7 +14,6 @@ from akquant import (
 class BracketStrategy(Strategy):
     """Bracket Order 示例策略."""
 
-    period = IntParam(20, ge=2, le=500, title="指标周期")
     stop_loss_pct = FloatParam(0.02, ge=0.001, le=0.5, title="止损比例")
     take_profit_pct = FloatParam(0.04, ge=0.001, le=1.0, title="止盈比例")
 

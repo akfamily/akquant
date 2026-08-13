@@ -49,7 +49,6 @@ class DualMovingAverageStrategy(Strategy):
         closes = self.get_history(
             count=self.params.long_window, symbol=symbol, field="close"
         )
-        # print(closes)
 
         # 如果历史数据不足，直接返回
         if len(closes) < self.params.long_window:

@@ -82,7 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **策略参数可迁移性改善（非破坏性）**：仍在用已废弃的构造函数签名写法（`def __init__(self, fast=10)`）声明参数的策略，现在在**类定义期**就会收到 `UserWarning` 点名参数与迁移路径，不必等到跑回测才发现参数没生效；`run_backtest` / `run_grid_search` 的 `Unknown strategy param(s)` 报错按成因分流——未声明任何内联字段时给出完整迁移写法，键名不匹配时列出该策略可用的字段清单。参数语义未变，内联字段仍是唯一入口。
 - **新增 `ListParam`**：补上列表型参数的声明入口。此前 `run_backtest` 的 `symbols` 自动注入要求策略把 `symbols` 声明为参数字段，但 DSL 没有任何能声明 list 的函数，该机制实际不可达。
 - **官方示例全部迁移**：`examples/` 下 17 个仍在演示构造函数签名写法的示例已改为内联字段声明（含教材配套 ch05/ch10/ch12）。
-- **教材双均线示例的测试断言同步生命周期迁移**：`tests/test_examples_regression.py` 中校验 `ch05_strategy.py` / `ch10_analysis.py` 预热期的用例，原先直接实例化策略后立即读取 `warmup_period`——这依赖的是旧构造函数写法「`__init__` 即设置该值」的隐含契约。示例迁移到内联字段后，`warmup_period` 的赋值随之移入 `on_start`（`__init__` 不再是参数入口），该用例已同步改为先显式调用 `on_start()` 再断言，与引擎「先 `on_start` 后读 `warmup_period`」的真实调用顺序保持一致；断言的预期值（21）未变。
+- **迁移提醒：`__init__` 搬到 `on_start` 会改变热启动（resume）下的执行次数**。「把派生初始化从 `__init__` 移到 `on_start`」是本次给出的推荐迁移写法，但两者生命周期不同——`__init__` 每个对象只跑一次，`on_start` 每次运行都会跑一次，**包括从快照恢复（resume）**（即 `self.is_restored` 为真时也会调用）。这带来两点实际影响：
+
+    - 构造后立即可读的属性（如 `warmup_period`）迁移后不再能在 `__init__` 期读到，需等 `on_start` 执行完。
+    - 更容易踩坑的是**累积状态**——计数器、缓存、已建仓记录等 per-object 状态若直接搬进 `on_start` 顶层，热启动时会被静默重新初始化，破坏跨阶段的连续性。这类初始化请收在 `if not self.is_restored:` 分支内；与运行历史无关的纯重建逻辑（如重新注册指标对象本身）才适合放在 `on_start` 顶层无条件执行。完整用法见 `examples/21_warm_start_demo.py`、`docs/zh/guide/strategy.md` §6.4。
 
 ### Changed
 - **股票/基金委托价开始校验 tick 对齐（行为变更，`__engine_rule_version__` 升至 1.4.0）**：此前只有期货侧校验最小变动价位，股票/基金的非对齐委托价（如 `tick_size=0.01` 却传 `2.8314`）在回测里会照常成交，到了实盘却被柜台风控拒单（`RISK_PRICE_TICK_INVALID`）——同一笔单回测通过、实盘失败。现在两侧口径统一：

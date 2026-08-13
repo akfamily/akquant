@@ -121,6 +121,51 @@ def test_legacy_init_warning_message_names_args_and_migration() -> None:
     assert "IntParam" in msg
     assert "self.params.fast_period" in msg
     assert PARAM_DOC_ANCHOR in msg
+    assert "未声明任何内联参数字段" in msg
+
+
+def test_legacy_init_warning_message_partial_migration_wording_differs() -> None:
+    """半迁移态(已有其他字段)不得再声称"未声明任何内联参数字段", 那与实际矛盾."""
+    msg = legacy_init_warning_message(
+        strategy_name="MixedStrategy",
+        init_arg_names=["slow"],
+        some_fields_declared=True,
+    )
+    assert "MixedStrategy" in msg
+    assert "slow" in msg
+    assert "未声明任何内联参数字段" not in msg
+    assert "self.params.slow" in msg
+    assert PARAM_DOC_ANCHOR in msg
+
+
+def test_unknown_param_message_flags_unmigrated_init_arg_over_typo_check() -> None:
+    """Key 命中该策略 __init__ 签名但未声明为字段时, 应给迁移路径而非拼写检查.
+
+    覆盖半迁移态运行期报错: declared_fields 非空(已有 fast), 但 unknown key
+    (slow) 其实是 __init__ 里忘迁的参数, 不是拼错——不应走"请检查键名拼写"分支。
+    """
+    msg = unknown_param_message(
+        unknown_keys=["slow"],
+        declared_fields=["fast"],
+        strategy_label="m.Mixed",
+        init_signature_names=["slow"],
+    )
+    assert "slow" in msg
+    assert "__init__" in msg
+    assert "请检查键名拼写" not in msg
+    assert "self.params.slow" in msg
+
+
+def test_unknown_param_message_pure_typo_still_suggests_spelling_check() -> None:
+    """Key 不在 __init__ 签名里时, 仍是拼错/多传, 维持"检查拼写"分支."""
+    msg = unknown_param_message(
+        unknown_keys=["fsat"],
+        declared_fields=["fast", "slow"],
+        strategy_label="m.Mixed",
+        init_signature_names=["slow"],
+    )
+    assert "fsat" in msg
+    assert "请检查键名拼写" in msg
 
 
 def test_list_param_default_and_injection() -> None:
