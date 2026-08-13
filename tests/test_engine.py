@@ -5262,21 +5262,30 @@ def test_pure_tick_backtest_mae_mfe_drawdown_use_tick_history() -> None:
     初值 0, 且**不报错**地写进 ``ClosedTrade``, 是本计划引入的静默回归。
 
     价格序列与预期值的独立推导(不依赖程序输出反推):
-    4 个 tick 价格 [100, 80, 140, 110], 时间戳依次递增 1 秒。策略在第 1 个
-    tick 市价买入 10 股(entry_price=100), 第 4 个 tick 市价卖出 10 股平仓
-    (exit_price=110)。tick 以退化 OHLC 写入历史(open=high=low=close=price),
+    4 个 tick 价格 [200, 150, 300, 240], 时间戳依次递增 1 秒。策略在第 1 个
+    tick 市价买入 10 股(entry_price=200), 第 4 个 tick 市价卖出 10 股平仓
+    (exit_price=240)。tick 以退化 OHLC 写入历史(open=high=low=close=price),
     故这条 tick 序列上 high/low 逐点等于对应 tick 价格本身。
+
+    entry_price 特意取 200(而非 100): entry=100 时 "百分比" 与 "绝对价差"
+    数值恰好重合(如 (80-100)/100*100 == 80-100 == -20), 若实现把 mae/mfe
+    误从百分比换成绝对差值, 用 entry=100 的构造抓不到; entry=200 下二者
+    数值不同(见下), 才能真正甄别实现是否算的是百分比。
 
     Long 交易的 MAE/MFE/最大回撤定义(见 ``src/analysis/tracker.rs`` 对应
     Sell 分支注释):
-    - 区间 [entry_tick, exit_tick] 内的 min_low=80, max_high=140。
-      MAE = (min_low - entry) / entry * 100 = (80 - 100) / 100 * 100 = -20.0
-      MFE = (max_high - entry) / entry * 100 = (140 - 100) / 100 * 100 = 40.0
-    - 最大回撤按"新高之后回落"逐点扫描: peak 从 100 起步 ->
-      tick2(80): peak 仍 100, dd = (100-80)/100 = 0.2
-      tick3(140): 创新高, peak = 140, 同点 dd = 0
-      tick4(110, 出场): peak 仍 140, dd = (140-110)/140 = 30/140 ≈ 0.214286
-      取逐点最大值 0.214286, 故 max_drawdown_pct = 30/140*100 ≈ 21.428571%
+    - 区间 [entry_tick, exit_tick] 内的 min_low=150, max_high=300。
+      MAE = (min_low - entry) / entry * 100 = (150 - 200) / 200 * 100 = -25.0
+      (若误算成绝对差值 min_low - entry, 会得到 -50, 与 -25.0 不同, 故本用例
+      能甄别出该错误)
+      MFE = (max_high - entry) / entry * 100 = (300 - 200) / 200 * 100 = 50.0
+      (若误算成绝对差值 max_high - entry, 会得到 100, 与 50.0 不同, 同样可
+      甄别)
+    - 最大回撤按"新高之后回落"逐点扫描: peak 从 200 起步 ->
+      tick2(150): peak 仍 200, dd = (200-150)/200 = 0.25
+      tick3(300): 创新高, peak = 300, 同点 dd = 0
+      tick4(240, 出场): peak 仍 300, dd = (300-240)/300 = 60/300 = 0.2
+      取逐点最大值 0.25, 故 max_drawdown_pct = 25.0%
 
     修复前(bar 容器恒为空): mae == mfe == max_drawdown_pct == 0.0。
     修复后: 三者应精确等于上面独立推导的值。
@@ -5313,7 +5322,7 @@ def test_pure_tick_backtest_mae_mfe_drawdown_use_tick_history() -> None:
 
     feed = akquant.DataFeed()
     base_ns = _ns(datetime(2024, 1, 3, 9, 30, tzinfo=timezone.utc))
-    for i, price in enumerate([100.0, 80.0, 140.0, 110.0]):
+    for i, price in enumerate([200.0, 150.0, 300.0, 240.0]):
         feed.add_tick(
             akquant.Tick(
                 timestamp=base_ns + i * 1_000_000_000,
@@ -5330,11 +5339,11 @@ def test_pure_tick_backtest_mae_mfe_drawdown_use_tick_history() -> None:
 
     assert len(result.trades) == 1
     trade = result.trades[0]
-    assert trade.entry_price == pytest.approx(100.0)
-    assert trade.exit_price == pytest.approx(110.0)
-    assert trade.mae == pytest.approx(-20.0)
-    assert trade.mfe == pytest.approx(40.0)
-    assert trade.max_drawdown_pct == pytest.approx(30.0 / 140.0 * 100.0)
+    assert trade.entry_price == pytest.approx(200.0)
+    assert trade.exit_price == pytest.approx(240.0)
+    assert trade.mae == pytest.approx(-25.0)
+    assert trade.mfe == pytest.approx(50.0)
+    assert trade.max_drawdown_pct == pytest.approx(25.0)
 
 
 def test_run_backtest_stop_limit_deferred_bridges_rust_warning(caplog: Any) -> None:
