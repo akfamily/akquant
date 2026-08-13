@@ -495,6 +495,39 @@ impl StrategyContext {
     }
 }
 
+/// 按 `freq` 决定 `history`/`history_multi` 该走 bar 还是 tick 容器.
+///
+/// `freq` 缺省(`None`)时若同一 symbol 的 bar 与 tick 历史序列同时非空,说明策略
+/// 同时挂了 `on_bar` 与 `on_tick`,取哪一条无法从调用点本身推断——这里选择显式
+/// 报错而不是悄悄挑一条(比如固定优先 tick 或优先 bar):静默选错会让
+/// `get_history` 的返回值悄悄混入另一条流的数据且完全没有报错信号,比报错危险
+/// 得多。未识别的 `freq` 取值同样显式报错,为将来的 "1min"/"5min" 等取值留出
+/// 空间,不兜底成 bar。
+fn resolve_use_tick_history(
+    buffer: &HistoryBuffer,
+    symbol: &str,
+    freq: Option<&str>,
+) -> PyResult<bool> {
+    match freq {
+        Some("tick") => Ok(true),
+        Some("bar") => Ok(false),
+        None => {
+            let has_bar = buffer.has_bar_history(symbol);
+            let has_tick = buffer.has_tick_history(symbol);
+            if has_bar && has_tick {
+                return Err(PyValueError::new_err(format!(
+                    "symbol {symbol} 同时存在 bar 与 tick 历史序列, get_history 无法判断该取哪条; \
+                     请显式指定 freq='bar' 或 freq='tick'"
+                )));
+            }
+            Ok(has_tick)
+        }
+        Some(other) => Err(PyValueError::new_err(format!(
+            "不支持的 freq={other:?}; 当前支持 'tick' / 'bar' / None"
+        ))),
+    }
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl StrategyContext {
@@ -606,6 +639,7 @@ impl StrategyContext {
     /// :param symbol: 标的代码
     /// :param field: 字段名 (open, high, low, close, volume)
     /// :param count: 获取的数据长度
+    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错)
     /// :return: numpy array or None
     fn history<'py>(
         &self,
@@ -614,17 +648,29 @@ impl StrategyContext {
         field: String,
         count: usize,
         end_before_ns: Option<i64>,
+        freq: Option<&str>,
     ) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
         if let Some(ref buffer_lock) = self.history_buffer {
             let buffer = buffer_lock.read().unwrap();
-            let history = match (buffer.get_history(&symbol), end_before_ns) {
+            let use_tick = resolve_use_tick_history(&buffer, &symbol, freq)?;
+            let current = if use_tick {
+                buffer.get_tick_history(&symbol)
+            } else {
+                buffer.get_history(&symbol)
+            };
+            let history = match (current, end_before_ns) {
                 (Some(history), Some(cutoff))
                     if history
                         .timestamps
                         .back()
                         .is_some_and(|timestamp| *timestamp >= cutoff) =>
                 {
-                    buffer.get_previous_history(&symbol).unwrap_or(history)
+                    let previous = if use_tick {
+                        buffer.get_previous_tick_history(&symbol)
+                    } else {
+                        buffer.get_previous_history(&symbol)
+                    };
+                    previous.unwrap_or(history)
                 }
                 (Some(history), _) => history,
                 (None, _) => return Ok(None),
@@ -680,6 +726,7 @@ impl StrategyContext {
     /// :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
     /// :param count: 获取的数据长度
     /// :param end_before_ns: 可选,历史可见性截断时间戳 (纳秒)
+    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错)
     /// :return: {field: numpy array} 或 None
     fn history_multi<'py>(
         &self,
@@ -688,17 +735,29 @@ impl StrategyContext {
         fields: Vec<String>,
         count: usize,
         end_before_ns: Option<i64>,
+        freq: Option<&str>,
     ) -> PyResult<Option<HashMap<String, Bound<'py, PyArray1<f64>>>>> {
         if let Some(ref buffer_lock) = self.history_buffer {
             let buffer = buffer_lock.read().unwrap();
-            let history = match (buffer.get_history(&symbol), end_before_ns) {
+            let use_tick = resolve_use_tick_history(&buffer, &symbol, freq)?;
+            let current = if use_tick {
+                buffer.get_tick_history(&symbol)
+            } else {
+                buffer.get_history(&symbol)
+            };
+            let history = match (current, end_before_ns) {
                 (Some(history), Some(cutoff))
                     if history
                         .timestamps
                         .back()
                         .is_some_and(|timestamp| *timestamp >= cutoff) =>
                 {
-                    buffer.get_previous_history(&symbol).unwrap_or(history)
+                    let previous = if use_tick {
+                        buffer.get_previous_tick_history(&symbol)
+                    } else {
+                        buffer.get_previous_history(&symbol)
+                    };
+                    previous.unwrap_or(history)
                 }
                 (Some(history), _) => history,
                 (None, _) => return Ok(None),
