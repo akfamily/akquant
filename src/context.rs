@@ -499,10 +499,13 @@ impl StrategyContext {
 ///
 /// `freq` 缺省(`None`)时若同一 symbol 的 bar 与 tick 历史序列同时非空,说明策略
 /// 同时挂了 `on_bar` 与 `on_tick`,取哪一条无法从调用点本身推断——这里选择显式
-/// 报错而不是悄悄挑一条(比如固定优先 tick 或优先 bar):静默选错会让
-/// `get_history` 的返回值悄悄混入另一条流的数据且完全没有报错信号,比报错危险
-/// 得多。未识别的 `freq` 取值同样显式报错,为将来的 "1min"/"5min" 等取值留出
-/// 空间,不兜底成 bar。
+/// 报错而不是悄悄挑一条(比如固定优先 tick 或优先 bar):静默选错会让返回值悄悄
+/// 混入另一条流的数据且完全没有报错信号,比报错危险得多。未识别的 `freq` 取值
+/// (例如将来的 "1min"/"5min")同样显式报错,不兜底成 bar。
+///
+/// 注意:此 helper 同时被 `history()` 与 `history_multi()`(以及它们背后更多的
+/// Python 侧入口,如 `get_history_df`/`get_rolling_data`)调用,报错文案里不写
+/// 具体的方法名——写死一个方法名会在从另一个入口触发时指错调用者实际调用的 API。
 fn resolve_use_tick_history(
     buffer: &HistoryBuffer,
     symbol: &str,
@@ -516,8 +519,8 @@ fn resolve_use_tick_history(
             let has_tick = buffer.has_tick_history(symbol);
             if has_bar && has_tick {
                 return Err(PyValueError::new_err(format!(
-                    "symbol {symbol} 同时存在 bar 与 tick 历史序列, get_history 无法判断该取哪条; \
-                     请显式指定 freq='bar' 或 freq='tick'"
+                    "symbol {symbol} 同时存在 bar 与 tick 两条历史序列, 无法判断该取哪条; \
+                     请在取历史数据时显式指定 freq='bar' 或 freq='tick'"
                 )));
             }
             Ok(has_tick)
@@ -639,7 +642,8 @@ impl StrategyContext {
     /// :param symbol: 标的代码
     /// :param field: 字段名 (open, high, low, close, volume)
     /// :param count: 获取的数据长度
-    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错)
+    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错;
+    ///     其他未识别取值也会报错,不会兜底成 bar)
     /// :return: numpy array or None
     fn history<'py>(
         &self,
@@ -726,7 +730,8 @@ impl StrategyContext {
     /// :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
     /// :param count: 获取的数据长度
     /// :param end_before_ns: 可选,历史可见性截断时间戳 (纳秒)
-    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错)
+    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错;
+    ///     其他未识别取值也会报错,不会兜底成 bar)
     /// :return: {field: numpy array} 或 None
     fn history_multi<'py>(
         &self,
