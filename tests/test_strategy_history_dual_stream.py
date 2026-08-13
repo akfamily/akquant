@@ -281,7 +281,7 @@ def _dual_stream_feed_multi() -> DataFeed:
 
 def test_multi_symbol_dual_stream_bar_history_is_not_synthesized_from_tick_price() -> (
     None
-):  # noqa: E501
+):
     """多 symbol 双流下, bar 序列不得混入 fill_missing_bars 用 tick 价合成的假 bar.
 
     修复前 X 会拿到 [13.0, 20.0, 23.0]（20.0 是 X 自己的 tick 价），

@@ -55,6 +55,10 @@ impl DataProcessor {
                 // "本批次缺失"。此时用 last_prices(成交价)合成退化 bar 写进 bar
                 // 序列, 等于用 tick 价冒充 bar, 且完全静默。该 symbol 的 bar 应当
                 // 只来自真实聚合, 故此处直接跳过。
+                // NOTE: 该排除条件具有永久性: 一旦 symbol 曾经产生过一个 tick 事件,
+                // has_tick_history 的记录就再也不会清零, 此后该 symbol 永远不再获得
+                // fill_missing_bars 的合成补偿——若行情源后来切换为纯 bar 模式, 其
+                // 停牌缺失 bar 将不再被填补。
                 if buffer.has_tick_history(symbol) {
                     continue;
                 }
