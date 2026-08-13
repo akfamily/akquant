@@ -200,7 +200,9 @@ def load_checkpoint(
             '"two history sequences exist" for that symbol, or (if you '
             "pass freq='tick' to dodge that) silently return a truncated "
             "tick window. Regenerate the checkpoint with the current "
-            "AKQuant version to avoid this." % filepath
+            "AKQuant version to avoid this. If the checkpoint's run never "
+            "involved tick data (bar-only backtest or live session), this "
+            "warning does not apply and can be ignored." % filepath
         )
         warnings.warn(warning_message, RuntimeWarning, stacklevel=2)
         logger.warning(warning_message)
