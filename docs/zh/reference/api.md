@@ -948,7 +948,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `freq` 参数（`get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 均支持）：取值 `'tick'` / `'bar'` / `None`。
     *   `None`（默认）：该 symbol 只有 bar 序列时取 bar，只有 tick 序列时取 tick（单流下行为不变）；**若 `on_bar` 与 `on_tick` 同时触发导致该 symbol 同时存在 bar 与 tick 两条历史序列，则报 `ValueError`**，要求显式传 `freq='bar'` 或 `freq='tick'`——不会静默选一条。未识别的取值同样报错，不会兜底成 `'bar'`。
     *   `freq='tick'` 时 `field` 只支持 `price`/`close`/`volume`：tick 没有 open/high/low，传这些字段会抛 `ValueError`（此前会静默返回退化 OHLC，`price` 冒充 `high`，破坏性变更）。`get_history_df` / `get_rolling_data` 固定取 OHLCV 五字段，因此在 `freq='tick'` 下必然报错，请改用 `get_history(freq='tick', field='price')`。
-    *   回测中让 `on_bar` 与 `on_tick` 同时触发：`run_backtest(data=[Tick, ...], freq="1min")`（**`freq` 只在 `data` 为含 `Tick` 的列表时生效，DataFrame 不支持**，传了会报错而非静默忽略）。实盘中的等价开关是 `gateway_options={"emit_ticks": True, "emit_bars": True}`（klinedata、CTP 网关均支持，`use_aggregator` 保留为兼容别名）。
+    *   回测中让 `on_bar` 与 `on_tick` 同时触发：`run_backtest(data=[Tick, ...], freq="1min")`（**`freq` 只在 `data` 为含 `Tick` 的列表时生效，DataFrame 不支持**，传了会报错而非静默忽略）。实盘中的等价开关是 `gateway_options={"emit_ticks": True, "emit_bars": True}`（klinedata、CTP 网关均支持，`use_aggregator` 保留为兼容别名）：两个网关内部语义一致——按参数逐个回退（只显式传其一不会静默关掉另一路），若最终 `emit_ticks` 与 `emit_bars` 都为 `False` 则报错而非静默不推送任何数据。`broker="ctp"` 走的是 `run_live(..., gateway_options=...)` → builder 转发这条链路，此前该链路会把这两个键静默丢弃（`on_tick` 永不触发且无任何报错），现已修复为原样转发到底层 `CTPMarketGateway`。
 *   `get_position(symbol) -> float`: 获取当前持仓量。返回值仍为数量，不返回对象。
 *   `get_available_position(symbol) -> float`: 获取可用持仓量。
 *   `positions -> Dict[str, float]`: 获取所有标的持仓（只读属性）。
@@ -1012,7 +1012,10 @@ Tick 数据对象。
 
 *   `timestamp`: Unix 时间戳 (纳秒)。
 *   `price`: 最新价。
-*   `volume`: 成交量。
+*   `volume`: 成交量。**单笔量**（与回测语义一致），不是累计量。
+    *   实盘网关（CTP、klinedata）推给 `on_tick` / `add_tick` 的 `Tick.volume` 是这一笔的成交量；柜台/上游行情原始推的是**当日累计成交量**，网关内部按 symbol 做差分换算后才对外暴露单笔量。
+    *   与之相对，网关内部用于 `freq` 聚合（tick 合成 bar）的 `BarAggregator` 吃的是**原始累计量**（构造时声明 `volume_is_cumulative=True`，由聚合器自己差分求和）——这是刻意的分工，不要把它当成 bug "修" 成单笔量，否则聚合量会被腰斩。
+    *   **已知代价**：进程盘中启动时，某 symbol 收到的第一帧行情因为没有上一次累计量可比对，换算不出真实单笔量，此时 `Tick.volume` 记为 `0`（表示"未知"，而非误用累计量冒充单笔量）。若策略里有「`volume == 0` 就跳过」之类的防御逻辑，会连带跳过每个 symbol 的第一笔行情。
 *   `symbol`: 标的代码。
 
 ### `akquant.run_live`（broker_live 执行语义） {: #live-broker-semantics }
