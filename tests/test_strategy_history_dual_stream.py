@@ -209,22 +209,21 @@ class _MapCollector(Strategy):
 def test_dual_stream_get_history_map_bar_freq_is_not_polluted_by_ticks() -> None:
     """get_history_map 在双流 + freq='bar' 下必须拿到未被 tick 污染的 bar 收盘价.
 
-    多标的说明: 本用例特意验证 freq 是否穿透 get_history_map 内部按 symbol
-    逐个调用 self.get_history(...) 的循环, 理想构造是双 symbol(如 X/Y 各用
-    可区分价格段)以同时证明"循环不丢参数"与"多 symbol 下互不干扰"。
+    本用例验证 freq 是否穿透 get_history_map 内部按 symbol 逐个调用
+    self.get_history(...) 的循环, 用单 symbol 构造即可覆盖(循环体本身对每个
+    symbol 的处理是一致的, 不需要靠多 symbol 才能暴露"漏转发"这类问题)。
 
-    经实测, 多 symbol 双流构造在当前引擎下会触发一个与本任务(暴露 freq
-    参数)无关的既有问题: 只要回测同时挂载 2 个都在推双流数据的 symbol,
-    即使只查询其中一个 symbol、且不经过 get_history_map(直接用最底层的
-    get_history(symbol='X', freq='bar') 也一样), bar 历史里就会混入 tick
-    值(例如三根 bar 应为 [13,23,33], 实测拿到 [13,20,23] / [23,30,33] 这类
-    中间夹带 tick 值的结果)。用逐 bar 打印验证过: 单 symbol 场景下同样的
-    get_history / get_history_map 调用序列每一步都精确正确; 一旦引擎里同时
-    存在第二个 symbol 的双流数据, 哪怕不查它, 结果就会跑偏 —— 说明问题在
-    引擎多 symbol 双流存储层, 不在 get_history_map 的 freq 转发逐 symbol 循环
-    本身。这与本任务(Task 4, 仅暴露 Python 层 freq 参数)范围无关, 故这里
-    退回单 symbol, 只验证 get_history_map 的 freq 转发本身没有在循环里丢失;
-    多 symbol 下的这个存储层问题已在报告里记录, 留给后续任务处理。
+    历史上多 symbol 双流构造曾触发过一个与本任务(暴露 freq 参数)无关的
+    既有引擎缺陷: fill_missing_bars 会给"本批次未见"的 symbol 用 last_prices
+    (成交价)合成退化假 bar 塞进 bar 序列, 双流下 tick 与聚合 bar 的时间戳
+    天然错开, 于是每个 bar 事件都会让其余 symbol 显得"本批次缺失", 导致假
+    bar 混入、bar 序列被 tick 价污染。该缺陷已在别的修复轮次修复(见
+    src/pipeline/stages/data.rs 里对 `buffer.has_tick_history(symbol)` 的
+    判断: 跑 tick 流的 symbol 不再走 fill_missing_bars 补合成 bar), 并由
+    test_multi_symbol_dual_stream_bar_history_is_not_synthesized_from_tick_price
+    专门覆盖多 symbol 场景下"不被 tick 价污染"这件事。本用例的职责仍然只是
+    验证 get_history_map 的 freq 转发本身没有在按 symbol 循环里丢失, 用单
+    symbol 构造更聚焦、也更省样板代码, 与那个已修复的引擎缺陷无关。
     """
 
     class BarMapStrategy(_MapCollector):
