@@ -79,6 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ```
 
     `freq` 词汇与 `akquant.feed_adapter` 的 `resample(freq=...)` 一致，但聚合走 `BarAggregator`，**只支持整数分钟**（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 之类会抛 `ValueError` 并指向 `feed_adapter.resample`，不会静默取整。**成交量口径**：回测中 `Tick.volume` 是单笔量，适配层显式声明单笔口径（`volume_is_cumulative=False`）并把每笔量原样交给聚合器，由聚合器直接求和，故合成 bar 的成交量等于区间内 tick 量之和、一笔不落。**时间戳口径**：合成 bar 打在**区间结束**（下一区间起点前 1 纳秒）而非区间起点——回测因果顺序要求：合成 bar 与源 tick 会被放进同一个 feed 再按时间戳排序，若打区间起点，bar 会排到形成它的 tick 之前，策略读到的是尚未发生的未来数据。末尾未满周期不产生 bar。`freq` 在数据不含 tick 时抛 `ValueError`（参数无意义）。
+- **策略参数可迁移性改善（非破坏性）**：仍在用已废弃的构造函数签名写法（`def __init__(self, fast=10)`）声明参数的策略，现在在**类定义期**就会收到 `UserWarning` 点名参数与迁移路径，不必等到跑回测才发现参数没生效；`run_backtest` / `run_grid_search` 的 `Unknown strategy param(s)` 报错按成因分流——未声明任何内联字段时给出完整迁移写法，键名不匹配时列出该策略可用的字段清单。参数语义未变，内联字段仍是唯一入口。
+- **新增 `ListParam`**：补上列表型参数的声明入口。此前 `run_backtest` 的 `symbols` 自动注入要求策略把 `symbols` 声明为参数字段，但 DSL 没有任何能声明 list 的函数，该机制实际不可达。
+- **官方示例全部迁移**：`examples/` 下 17 个仍在演示构造函数签名写法的示例已改为内联字段声明（含教材配套 ch05/ch10/ch12）。
+- **教材双均线示例的测试断言同步生命周期迁移**：`tests/test_examples_regression.py` 中校验 `ch05_strategy.py` / `ch10_analysis.py` 预热期的用例，原先直接实例化策略后立即读取 `warmup_period`——这依赖的是旧构造函数写法「`__init__` 即设置该值」的隐含契约。示例迁移到内联字段后，`warmup_period` 的赋值随之移入 `on_start`（`__init__` 不再是参数入口），该用例已同步改为先显式调用 `on_start()` 再断言，与引擎「先 `on_start` 后读 `warmup_period`」的真实调用顺序保持一致；断言的预期值（21）未变。
 
 ### Changed
 - **股票/基金委托价开始校验 tick 对齐（行为变更，`__engine_rule_version__` 升至 1.4.0）**：此前只有期货侧校验最小变动价位，股票/基金的非对齐委托价（如 `tick_size=0.01` 却传 `2.8314`）在回测里会照常成交，到了实盘却被柜台风控拒单（`RISK_PRICE_TICK_INVALID`）——同一笔单回测通过、实盘失败。现在两侧口径统一：
