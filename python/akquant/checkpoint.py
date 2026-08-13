@@ -1,5 +1,6 @@
 import os
 import pickle
+import warnings
 from importlib import metadata
 from typing import Any, Optional, Tuple
 
@@ -119,6 +120,12 @@ def save_checkpoint(
         },
         "snapshot_features": {
             "history_buffer_snapshot": True,
+            # 标记该存档由「已拆分 tick/bar 历史序列」的版本生成 (tick/bar dual
+            # stream plan)。旧存档 (无此标记) 恢复时, Rust 侧的
+            # `From<HistoryBufferSnapshot> for HistoryBuffer` 会把旧的共享
+            # `data` 容器整体当作 bar 序列装载, 而 `tick_data` 因
+            # `#[serde(default)]` 留空——见 load_checkpoint 里的告警。
+            "history_tick_split": True,
         },
         "backtest_config": backtest_config,
         "version": _VERSION,
@@ -166,6 +173,37 @@ def load_checkpoint(
     snapshot_features = snapshot.get("snapshot_features", {})
     if not isinstance(snapshot_features, dict):
         snapshot_features = {}
+
+    history_buffer_snapshot_available = bool(
+        snapshot_features.get("history_buffer_snapshot", False)
+    )
+    history_tick_split_available = bool(
+        snapshot_features.get("history_tick_split", False)
+    )
+    if history_buffer_snapshot_available and not history_tick_split_available:
+        # 该存档由「history buffer snapshot」功能已上线、但 tick/bar 历史序列
+        # 尚未拆分的旧版本生成。当时 bar/tick 共用同一个 `data` 容器；恢复时
+        # Rust 侧 `From<HistoryBufferSnapshot> for HistoryBuffer` 会把这个旧
+        # `data` 整体当作 bar 序列装载, 新的 `tick_data` 容器留空。若原策略
+        # 含 tick 数据, 续跑后同一 symbol 会同时拥有 bar 与 tick 两条历史序
+        # 列: 取历史时可能撞“同时存在 bar 与 tick 两条历史序列”的 ValueError；
+        # 若显式传 freq='tick' 规避, 又只能拿到续跑后新写入的 tick 数据,
+        # 历史窗口会静默变短。不做自动迁移 (旧存档里的数据本就无法区分
+        # 哪些是 tick、哪些是 bar), 仅提前告警, 建议用当前版本重新生成检查点。
+        warning_message = (
+            "Checkpoint '%s' was created before the tick/bar history-buffer "
+            "split (snapshot_features missing 'history_tick_split'). If the "
+            "original strategy consumed tick data, that data was stored in "
+            "the old shared history buffer and will be restored as bar "
+            "history; new ticks written after resume land in a separate "
+            "tick history. get_history()/get_history_map() may then raise "
+            '"two history sequences exist" for that symbol, or (if you '
+            "pass freq='tick' to dodge that) silently return a truncated "
+            "tick window. Regenerate the checkpoint with the current "
+            "AKQuant version to avoid this." % filepath
+        )
+        warnings.warn(warning_message, RuntimeWarning, stacklevel=2)
+        logger.warning(warning_message)
 
     # 2. Initialize new Engine
     engine = Engine()

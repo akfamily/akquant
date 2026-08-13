@@ -1,6 +1,7 @@
 import datetime as dt
 import logging
 import pickle
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator, Optional, cast
@@ -15,6 +16,7 @@ from akquant import (
     LogConfig,
     StrategyConfig,
     configure_logging,
+    load_checkpoint,
     register_logger,
     register_strategy_loader,
     run_backtest,
@@ -1912,6 +1914,55 @@ def test_run_warm_start_warns_for_legacy_checkpoint_without_history_feature_mark
             show_progress=False,
         )
     assert result2.strategy is not None
+
+
+def test_load_checkpoint_warns_for_pre_tick_split_snapshot(tmp_path: Path) -> None:
+    """load_checkpoint should warn when 'history_tick_split' marker is absent.
+
+    Checkpoints saved before the tick/bar history-buffer split share the old
+    'data' container for both bar and tick history. Restoring one of those
+    into the current Rust HistoryBuffer loads 'data' as bar history and
+    leaves 'tick_data' empty (serde default) -- if the original strategy had
+    tick history, a resumed run would silently end up with a truncated tick
+    window, or hit the dual-stream ambiguity error once new ticks arrive.
+    load_checkpoint must surface this loudly instead of staying silent.
+    """
+    checkpoint = tmp_path / "snapshot_pre_tick_split.pkl"
+    phase1 = _make_bars("2023-01-01", 4)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartHistoryContinuityStrategy,
+        symbols="TEST",
+        initial_cash=100000.0,
+        show_progress=False,
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    # Simulate a checkpoint written by a version that already had the
+    # history-buffer-snapshot feature but predates the tick/bar split: keep
+    # 'history_buffer_snapshot' but drop the newer 'history_tick_split' flag.
+    with checkpoint.open("rb") as fh:
+        snapshot = pickle.load(fh)
+    assert snapshot["snapshot_features"]["history_tick_split"] is True
+    snapshot["snapshot_features"].pop("history_tick_split", None)
+    with checkpoint.open("wb") as fh:
+        pickle.dump(snapshot, fh)
+
+    with pytest.warns(RuntimeWarning, match="tick/bar history-buffer split"):
+        engine, strategy = load_checkpoint(str(checkpoint))
+    assert strategy is not None
+    assert engine is not None
+
+    # A checkpoint carrying both markers must stay silent.
+    with checkpoint.open("rb") as fh:
+        current_snapshot = pickle.load(fh)
+    current_snapshot["snapshot_features"]["history_tick_split"] = True
+    with checkpoint.open("wb") as fh:
+        pickle.dump(current_snapshot, fh)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        load_checkpoint(str(checkpoint))
 
 
 def test_run_warm_start_respects_instruments_config_and_merges_snapshots(
