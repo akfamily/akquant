@@ -1266,7 +1266,11 @@ class Strategy:
         _set_rolling_window_impl(self, train_window, step)
 
     def get_history(
-        self, count: int, symbol: Optional[str] = None, field: str = "close"
+        self,
+        count: int,
+        symbol: Optional[str] = None,
+        field: str = "close",
+        freq: Optional[str] = None,
     ) -> np.ndarray:
         """
         获取历史数据 (类似 Zipline data.history).
@@ -1274,15 +1278,19 @@ class Strategy:
         :param count: 获取的数据长度 (必须 <= history_depth)
         :param symbol: 标的代码 (默认当前 Bar 的 symbol)
         :param field: 字段名 (open, high, low, close, volume)
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。同一 symbol 若
+            同时存在 bar 与 tick 两条历史序列, 省略 freq 会报错, 要求显式指定
+            (不静默选一条); freq='tick' 时 field 只支持 price/close/volume。
         :return: Numpy 数组
         """
-        return _get_history_impl(self, count, symbol, field)
+        return _get_history_impl(self, count, symbol, field, freq)
 
     def get_history_map(
         self,
         count: int,
         symbols: Union[str, List[str], Tuple[str, ...], set[str]],
         field: str = "close",
+        freq: Optional[str] = None,
     ) -> Dict[str, np.ndarray]:
         """
         批量获取多个标的的历史数据.
@@ -1290,6 +1298,9 @@ class Strategy:
         :param count: 获取的数据长度
         :param symbols: 标的代码或标的列表
         :param field: 字段名 (open, high, low, close, volume)
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。同一 symbol 若
+            同时存在 bar 与 tick 两条历史序列, 省略 freq 会报错, 要求显式指定
+            (不静默选一条); freq='tick' 时 field 只支持 price/close/volume。
         :return: {symbol: np.ndarray}
         """
         normalized = self._normalize_indicator_symbols(symbols)
@@ -1298,11 +1309,16 @@ class Strategy:
         normalized_symbols = sorted(normalized)
         history_map: Dict[str, np.ndarray] = {}
         for symbol in normalized_symbols:
-            history_map[symbol] = self.get_history(
-                count=count,
-                symbol=symbol,
-                field=field,
-            )
+            # freq 只在显式指定时才透传, 兼容子类覆写 get_history 沿用旧 3
+            # 参签名(不接受 freq)的既有用法。
+            history_kwargs: Dict[str, Any] = {
+                "count": count,
+                "symbol": symbol,
+                "field": field,
+            }
+            if freq is not None:
+                history_kwargs["freq"] = freq
+            history_map[symbol] = self.get_history(**history_kwargs)
         return history_map
 
     def rebalance_to_topn(

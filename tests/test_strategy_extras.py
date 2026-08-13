@@ -3,7 +3,7 @@ import logging
 import pickle
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterator, cast
+from typing import Any, Iterator, Optional, cast
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -298,9 +298,14 @@ class HistoryMapStrategy(Strategy):
         self.calls: list[tuple[int, str | None, str]] = []
 
     def get_history(
-        self, count: int, symbol: str | None = None, field: str = "close"
+        self,
+        count: int,
+        symbol: str | None = None,
+        field: str = "close",
+        freq: Optional[str] = None,
     ) -> np.ndarray:
         """Return deterministic history and record invocation."""
+        del freq
         self.calls.append((count, symbol, field))
         return np.array([1.0, 2.0, 3.0], dtype=float)
 
