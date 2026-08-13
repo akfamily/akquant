@@ -458,8 +458,18 @@ impl OrderManager {
 
             // Get history for MAE/MFE
             // Need to lock history buffer
+            //
+            // 优先取 bar 容器; 该 symbol 只有 tick 序列时(纯 tick 回测)才落到
+            // tick 容器。双流下(两条序列都有)固定取 bar —— 这与
+            // context.rs::resolve_use_tick_history 给策略侧 get_history 的
+            // freq=None 歧义报错无关: 那是策略主动查询, 这里是引擎内部统计,
+            // 不该因为多了一条 tick 序列就改变纯 bar 场景下的既有 MAE/MFE 数值
+            // (golden 基线锁定的正是这条路径)。修复前只读 bar 容器, 纯 tick
+            // 回测下恒为 None, MAE/MFE/max_drawdown_pct 静默变 0。
             let history_guard = history_buffer.read().unwrap();
-            let symbol_history = history_guard.get_history(&trade.symbol);
+            let symbol_history = history_guard
+                .get_history(&trade.symbol)
+                .or_else(|| history_guard.get_tick_history(&trade.symbol));
 
             // Calculate Portfolio Value for % metrics
             let portfolio_value = calculate_account_metrics(
