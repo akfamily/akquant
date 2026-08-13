@@ -459,13 +459,17 @@ impl OrderManager {
             // Get history for MAE/MFE
             // Need to lock history buffer
             //
-            // 优先取 bar 容器; 该 symbol 只有 tick 序列时(纯 tick 回测)才落到
-            // tick 容器。双流下(两条序列都有)固定取 bar —— 这与
-            // context.rs::resolve_use_tick_history 给策略侧 get_history 的
-            // freq=None 歧义报错无关: 那是策略主动查询, 这里是引擎内部统计,
-            // 不该因为多了一条 tick 序列就改变纯 bar 场景下的既有 MAE/MFE 数值
-            // (golden 基线锁定的正是这条路径)。修复前只读 bar 容器, 纯 tick
-            // 回测下恒为 None, MAE/MFE/max_drawdown_pct 静默变 0。
+            // 实际谓词: bar 容器对该 symbol 存在(Some)就取 bar, 否则落到 tick 容器。
+            // 纯 tick 回测下 bar 容器恒为 None, 因此恒取 tick 容器。双流下(两条
+            // 序列都可能存在)不是"固定取 bar": 在该 symbol 的第一根聚合 bar 落库
+            // 之前平的仓, bar 容器此时仍是 None, 这次仍会落到 tick 容器; 落库之后
+            // 再平仓才会取到 bar。也就是说同一次回测里 MAE/MFE 的计算基准可能从
+            // tick 序列静默切换到 bar 序列, 这是刻意接受的行为(不是回归), 只是
+            // 基准不保证同质。这与 context.rs::resolve_use_tick_history 给策略侧
+            // get_history 的 freq=None 歧义报错无关: 那是策略主动查询, 这里是引擎
+            // 内部统计, 不该因为多了一条 tick 序列就改变纯 bar 场景下的既有
+            // MAE/MFE 数值(golden 基线锁定的正是这条路径)。修复前只读 bar 容器,
+            // 纯 tick 回测下恒为 None, MAE/MFE/max_drawdown_pct 静默变 0。
             let history_guard = history_buffer.read().unwrap();
             let symbol_history = history_guard
                 .get_history(&trade.symbol)
