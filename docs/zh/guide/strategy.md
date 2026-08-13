@@ -21,7 +21,7 @@
 
 一个策略从开始到结束，会经历以下几个阶段：
 
-* `__init__`: Python 对象初始化，适合定义参数。
+* `__init__`: Python 对象初始化。**注意它不是参数入口**——可外部调整的参数请用类体内联字段声明（见[参数声明](#param-declaration)），依赖引擎上下文或需要在热启动时重建的初始化放 `on_start`。
 * `on_start`: 策略启动时调用，适合在此使用 `self.subscribe()` 订阅数据，也可在此注册指标。如果是热启动，需注意不要覆盖已恢复的状态。回测下 `subscribe()` 的标的会并入回测标的集合；实盘下会下发到行情网关（若该 broker 没有行情网关则记录一条 warning，见[行情源与交易源分开指定](../reference/api.md#mixed-market-trader-broker)）。
 * `on_resume`: **仅在热启动时调用**（在 `on_start` 之前）。用于处理从快照恢复后的特殊逻辑。
 * `on_bar`: 每一根 K 线闭合时触发 (核心交易逻辑)。
@@ -507,24 +507,23 @@ AKQuant 的 `on_bar` 按“单事件流”逐条触发。若你要做多标的�
 
 ```python
 class CrossSectionStrategy(Strategy):
-    def __init__(self, lookback=20):
-        self.lookback = lookback
-        self.universe = ["sh600519", "sz000858", "sh601318"]
-        self.warmup_period = lookback + 1
+    lookback = IntParam(20, ge=1, le=500, title="回看周期")
 
     def on_start(self):
+        self.universe = ["sh600519", "sz000858", "sh601318"]
+        self.warmup_period = self.params.lookback + 1
         for symbol in self.universe:
             self.subscribe(symbol)
 
     def on_before_trading(self, trading_date, timestamp):
         history_map = self.get_history_map(
-            count=self.lookback,
+            count=self.params.lookback,
             symbols=self.universe,
             field="close",
         )
         scores = {}
         for symbol, closes in history_map.items():
-            if len(closes) < self.lookback:
+            if len(closes) < self.params.lookback:
                 continue
             scores[symbol] = (closes[-1] - closes[0]) / closes[0]
         if not scores:
@@ -547,10 +546,11 @@ class CrossSectionStrategy(Strategy):
 from collections import defaultdict
 
 class CrossSectionBucketStrategy(Strategy):
-    def __init__(self, lookback=20):
-        self.lookback = lookback
+    lookback = IntParam(20, ge=1, le=500, title="回看周期")
+
+    def on_start(self):
         self.universe = ["sh600519", "sz000858", "sh601318"]
-        self.warmup_period = lookback + 1
+        self.warmup_period = self.params.lookback + 1
         self.pending = defaultdict(set)
 
     def on_bar(self, bar):
@@ -560,8 +560,8 @@ class CrossSectionBucketStrategy(Strategy):
         self.pending.pop(bar.timestamp, None)
         scores = {}
         for symbol in self.universe:
-            closes = self.get_history(count=self.lookback, symbol=symbol, field="close")
-            if len(closes) < self.lookback:
+            closes = self.get_history(count=self.params.lookback, symbol=symbol, field="close")
+            if len(closes) < self.params.lookback:
                 return
             scores[symbol] = (closes[-1] - closes[0]) / closes[0]
         best = max(scores, key=lambda s: scores[s])
@@ -683,30 +683,31 @@ AKQuant 提供了两种风格的策略开发接口：
 ### 6.3 完整示例
 
 ```python
-from akquant import Strategy, Bar
+from akquant import Strategy, Bar, IntParam
 import numpy as np
 
 class MyStrategy(Strategy):
     # 声明需要的预热数据长度 (例如 20日均线需要至少 20 根 Bar)
     warmup_period = 20
 
-    def __init__(self, ma_window=20):
-        # 注意: Strategy 类使用了 __new__ 进行初始化，子类不再需要调用 super().__init__()
-        self.ma_window = ma_window
-        # 如果参数影响预热长度，可以动态覆盖
-        self.warmup_period = ma_window + 5
+    # 可外部调整的参数用类体内联字段声明（构造函数签名不再是参数入口）
+    ma_window = IntParam(20, ge=2, le=500, title="均线窗口")
 
     def on_start(self):
+        # 如果参数影响预热长度，在 on_start 里动态覆盖（此时 self.params 已就绪，
+        # 且引擎会在读取 warmup_period 之前先调用 on_start）
+        self.warmup_period = self.params.ma_window + 5
+
         # 显式订阅数据
         self.subscribe("600000")
 
     def on_bar(self, bar: Bar):
         # 1. 获取历史数据
         # 返回 numpy array: [close_t-N, ..., close_t-1, close_t]
-        history = self.get_history(count=self.ma_window, symbol=bar.symbol, field="close")
+        history = self.get_history(count=self.params.ma_window, symbol=bar.symbol, field="close")
 
         # 检查数据是否足够 (虽然 warmup_period 会保证，但防御性编程是好习惯)
-        if len(history) < self.ma_window:
+        if len(history) < self.params.ma_window:
             return
 
         # 计算均线

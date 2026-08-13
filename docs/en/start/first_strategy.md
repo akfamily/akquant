@@ -59,25 +59,26 @@ class DualMAStrategy(Strategy):
     # Priority: Dynamic property (self.warmup_period) > Class property (warmup_period) > AST inference
     warmup_period = 40 # 30-day MA + 10 safety margin
 
-    def __init__(self, fast_window=10, slow_window=30):
-        # Define strategy parameters: fast and slow window sizes
-        self.fast_window = fast_window
-        self.slow_window = slow_window
-
-        # Advanced tip: Dynamic warmup period
-        # If window sizes are passed dynamically, it's recommended to override warmup_period here
-        self.warmup_period = slow_window + 10
+    # Define strategy parameters as inline class fields (read via self.params.*).
+    # The constructor signature is NOT a parameter entry point since 0.3.x.
+    fast_window = IntParam(10, ge=2, le=200, title="Fast MA window")
+    slow_window = IntParam(30, ge=3, le=500, title="Slow MA window")
 
     def on_start(self):
         """
         Executed once when the strategy starts.
         Tell the system which stocks we want to watch here.
         """
+        # Advanced tip: Dynamic warmup period
+        # Override it in on_start, where self.params is ready and the engine
+        # still reads warmup_period afterwards
+        self.warmup_period = self.params.slow_window + 10
+
         print("Strategy starting...")
         self.subscribe("AAPL")
 
         # Method 1 (Recommended): Use warmup_period (supports Class/Instance property / AST inference)
-        # Method 2 (Legacy): Manually call self.set_history_depth(self.slow_window + 10)
+        # Method 2 (Legacy): Manually call self.set_history_depth(self.params.slow_window + 10)
 
         # Since we have configured warmup_period, no action is needed here
         # The framework automatically takes max(warmup_period, ast_inferred_value, run_backtest_history_depth)
@@ -90,16 +91,16 @@ class DualMAStrategy(Strategy):
 
         # 1. Get historical closing prices
         # get_history returns a numpy array containing the last N days of data
-        closes = self.get_history(count=self.slow_window, symbol=bar.symbol, field="close")
+        closes = self.get_history(count=self.params.slow_window, symbol=bar.symbol, field="close")
 
         # If not enough data to calculate the long MA (e.g., first few days of backtest), return immediately
-        if len(closes) < self.slow_window:
+        if len(closes) < self.params.slow_window:
             return
 
         # 2. Calculate Moving Averages
         # Use numpy to calculate mean
-        fast_ma = np.mean(closes[-self.fast_window:]) # Average of the last fast_window data points
-        slow_ma = np.mean(closes[-self.slow_window:]) # Average of the last slow_window data points
+        fast_ma = np.mean(closes[-self.params.fast_window:]) # Average of the last fast_window data points
+        slow_ma = np.mean(closes[-self.params.slow_window:]) # Average of the last slow_window data points
 
         # 3. Get Current Position
         # Returns 0 if no position, 1000 if holding 1000 shares
@@ -144,11 +145,11 @@ if __name__ == "__main__":
 ### 3.1 Strategy Structure
 Every AKQuant strategy is a Python class inheriting from `Strategy`. You need to focus on three main methods:
 
-*   **`__init__`**: Set strategy parameters (e.g., moving average periods).
+*   **Inline param fields**: Declare tunable strategy parameters (e.g., moving average periods) as class-body fields such as `fast_window = IntParam(10)`, and read them via `self.params.fast_window`. The constructor signature is **not** a parameter entry point since 0.3.x.
 *   **`on_start`**: Initialization work.
     *   **Data Warmup (New Recommended)**: Set `warmup_period`.
         *   **Static Setting**: Class attribute `warmup_period = 40`.
-        *   **Dynamic Setting**: `self.warmup_period = slow_window + 10` in `__init__`.
+        *   **Dynamic Setting**: `self.warmup_period = self.params.slow_window + 10` in `on_start`.
         *   **Auto Inference**: If code contains `SMA(30)`, the framework will also try to infer automatically (AST).
     *   **Data Warmup (Legacy Compatible)**: Call `self.set_history_depth(40)`. If not set, `get_history` will raise an error.
 *   **`on_bar`**: This is an infinite loop where the system passes every K-line to you in chronological order. You make decisions here: buy or sell?

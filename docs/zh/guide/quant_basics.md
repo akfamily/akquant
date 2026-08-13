@@ -238,33 +238,36 @@ print(f"AKQuant version: {akquant.__version__}")
 ```python
 import numpy as np
 import pandas as pd
-from akquant import Strategy, run_backtest, Bar
+from akquant import Strategy, run_backtest, Bar, IntParam
 
 
 class DualMovingAverageStrategy(Strategy):
-    def __init__(self):
-        # 定义策略参数：短期窗口5，长期窗口20
-        self.short_window = 5
-        self.long_window = 20
-        self.warmup_period = self.long_window + 1
+    # 定义策略参数：短期窗口5，长期窗口20
+    # 参数用类体内联字段声明，经 self.params.<字段名> 只读访问
+    short_window = IntParam(5, ge=2, le=200, title="短期均线窗口")
+    long_window = IntParam(20, ge=3, le=500, title="长期均线窗口")
+
+    def on_start(self):
+        # 依赖参数的派生初始化放 on_start，此时 self.params 已就绪
+        self.warmup_period = self.params.long_window + 1
 
     def on_bar(self, bar: Bar):
         # 获取历史收盘价数据
         # history_data 返回的是一个 DataFrame
-        hist = self.get_history(count=self.long_window + 1, field="close")
+        hist = self.get_history(count=self.params.long_window + 1, field="close")
 
         # 如果数据不足，无法计算均线，直接返回
-        if len(hist) < self.long_window + 1:
+        if len(hist) < self.params.long_window + 1:
             return
 
         # 计算短期和长期均线
         closes = hist
-        ma_short = np.mean(closes[-self.short_window:])
-        ma_long = np.mean(closes[-self.long_window:])
+        ma_short = np.mean(closes[-self.params.short_window:])
+        ma_long = np.mean(closes[-self.params.long_window:])
 
         # 获取上一时刻的均线值（用于判断交叉）
-        prev_ma_short = np.mean(closes[-self.short_window - 1: -1])
-        prev_ma_long = np.mean(closes[-self.long_window - 1: -1])
+        prev_ma_short = np.mean(closes[-self.params.short_window - 1: -1])
+        prev_ma_long = np.mean(closes[-self.params.long_window - 1: -1])
 
         # 获取当前持仓
         position = self.get_position(bar.symbol)
@@ -422,13 +425,12 @@ result.viz.report(show=True)
 这就是**参数调优**要做的事。我们可以遍历不同的参数组合，找到历史表现最好的一组。
 
 ```python
-from akquant import run_grid_search
+from akquant import run_grid_search, IntParam
 
-# 1. 调整策略类以接收参数
+# 1. 用类体内联字段声明参数（构造函数签名不是参数入口，param_grid 的键须与字段名一致）
 class OptimizedDualMA(DualMovingAverageStrategy):
-    def __init__(self, short_window=5, long_window=20):
-        self.short_window = short_window
-        self.long_window = long_window
+    short_window = IntParam(5, ge=2, le=200, title="短期均线窗口")
+    long_window = IntParam(20, ge=3, le=500, title="长期均线窗口")
 
 # 2. 定义参数网格
 param_grid = {
