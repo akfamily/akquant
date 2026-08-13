@@ -725,8 +725,8 @@ class MyStrategy(Strategy):
 ### 6.4 参数声明 (Parameter Declaration) {: #param-declaration }
 
 AKQuant 推荐用**内联字段**声明策略参数：直接在类体内用 `IntParam` /
-`FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` 赋值，无需再单独
-定义 `ParamModel` 子类或手写 `__init__` 签名。
+`FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` / `ListParam`
+赋值，无需再单独定义 `ParamModel` 子类或手写 `__init__` 签名。
 
 ```python
 from akquant import IntParam, Indicator, Strategy
@@ -768,6 +768,12 @@ class SMACrossStrategy(Strategy):
 *   **派生初始化放 `on_start`**：需要基于参数派生的对象（指标、缓存结构等），
     应在 `on_start` 中读取 `self.params.<name>` 后再构造，而不是在类体或
     `__init__` 阶段——`__init__` 之前 `self.params` 尚未注入完毕。
+    **注意 resume 语义**：`on_start` 在热启动（从快照恢复）时也会被调用，而
+    `__init__` 不会——这意味着原本「每个对象只跑一次」的初始化搬进 `on_start`
+    后变成「每次运行都跑一次，含 resume」。计数器、缓存、已建仓记录等
+    per-object 累积状态必须放进 `if not self.is_restored:` 分支，否则热启动会
+    把它们静默重置；纯粹的对象重建（如重新构造指标实例本身）不受影响，可放在
+    `on_start` 顶层无条件执行。完整示例见 `examples/21_warm_start_demo.py`。
 *   **静态类型需要**：如果你希望 IDE/mypy 能推断具体字段类型，可以显式标注
     右侧表达式的类型，例如 `fast: int = IntParam(10, ge=2, le=200)`。
 *   **与优化联动**：`run_grid_search(..., param_grid={...})` 的

@@ -145,7 +145,7 @@ if __name__ == "__main__":
 每一个 AKQuant 策略都是一个 Python 类，继承自 `Strategy`。你需要关注以下几个部分：
 
 *   **参数声明 (类体内联字段)**：用 `IntParam` / `FloatParam` / `BoolParam` /
-    `ChoiceParam` / `DateRangeParam` 直接在类体内声明参数（如均线周期），无需
+    `ChoiceParam` / `DateRangeParam` / `ListParam` 直接在类体内声明参数（如均线周期），无需
     再手写 `__init__`。所有字段经 `self.params.<name>` 只读访问，`self.params`
     在实例构造期即已校验就绪。
 *   **`on_start`**: 初始化工作（订阅标的、根据 `self.params` 派生的初始化都放这里）。

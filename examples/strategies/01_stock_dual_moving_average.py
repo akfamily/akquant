@@ -14,12 +14,10 @@ A股趋势跟踪策略示例 (Stock Trend Following Strategy).
 - 安装 akshare: `pip install akshare`
 """
 
-from typing import Any
-
 import akquant as aq
 import akshare as ak
 import numpy as np
-from akquant import Bar, Strategy
+from akquant import Bar, IntParam, Strategy
 
 
 class DualMovingAverageStrategy(Strategy):
@@ -31,22 +29,13 @@ class DualMovingAverageStrategy(Strategy):
     - 当 短期均线 < 长期均线 且 有持仓 -> 卖出 (死叉)
     """
 
-    def __init__(
-        self, short_window: int = 5, long_window: int = 20, *args: Any, **kwargs: Any
-    ) -> None:
-        """
-        Initialize strategy parameters.
+    short_window = IntParam(5, ge=2, le=200, title="短期均线窗口")
+    long_window = IntParam(20, ge=3, le=500, title="长期均线窗口")
 
-        :param short_window: 短期均线窗口
-        :param long_window: 长期均线窗口
-        """
-        super().__init__(*args, **kwargs)
-        self.short_window = short_window
-        self.long_window = long_window
-
-        # 必须设置 warmup_period，否则无法使用 get_history
-        # 这里的预热期至少需要等于长期均线的窗口大小
-        self.warmup_period = long_window
+    def on_start(self) -> None:
+        """设置预热期, 使 get_history 能取到足够长度."""
+        # 预热期至少等于长期均线窗口
+        self.warmup_period = self.params.long_window
 
     def on_bar(self, bar: Bar) -> None:
         """Process each Bar data."""
@@ -57,17 +46,18 @@ class DualMovingAverageStrategy(Strategy):
         # 所以我们需要获取 long_window 个数据
 
         # 获取过去 N 个历史收盘价 (包含当前 bar)
-        closes = self.get_history(count=self.long_window, symbol=symbol, field="close")
-        # print(closes)
+        closes = self.get_history(
+            count=self.params.long_window, symbol=symbol, field="close"
+        )
 
         # 如果历史数据不足，直接返回
-        if len(closes) < self.long_window:
+        if len(closes) < self.params.long_window:
             return
 
         # 2. 计算均线
         # 使用 numpy 计算更高效
-        short_ma = np.mean(closes[-self.short_window :])
-        long_ma = np.mean(closes[-self.long_window :])
+        short_ma = np.mean(closes[-self.params.short_window :])
+        long_ma = np.mean(closes[-self.params.long_window :])
 
         # 3. 获取当前持仓
         current_pos = self.get_position(symbol)

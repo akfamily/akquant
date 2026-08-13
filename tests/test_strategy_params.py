@@ -1,4 +1,7 @@
 import pickle
+import subprocess
+import sys
+import warnings
 
 import pytest
 from akquant import Strategy
@@ -92,3 +95,179 @@ def test_params_survive_pickle() -> None:
     restored = pickle.loads(pickle.dumps(s))
     assert restored.params.fast == 15
     assert restored.params.slow == 30
+
+
+def test_legacy_init_emits_warning_at_class_definition() -> None:
+    """带参 __init__ 且无内联字段 -> 类定义期即告警."""
+    with pytest.warns(UserWarning, match="未声明任何内联参数字段"):
+
+        class LegacyStrategy(Strategy):
+            def __init__(self, fast_period: int = 5) -> None:
+                super().__init__()
+                self.fast_period = fast_period
+
+
+def test_inline_param_strategy_emits_no_warning() -> None:
+    """已用内联字段声明的策略不得告警."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class InlineStrategy(Strategy):
+            fast = IntParam(5, ge=1)
+
+
+def test_init_without_named_args_emits_no_warning() -> None:
+    """只有 self/*args/**kwargs 的 __init__ 不算遗留写法."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class NoArgInitStrategy(Strategy):
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                super().__init__(*args, **kwargs)
+
+
+def test_inherited_init_does_not_rewarn() -> None:
+    """子类没自己定义 __init__ 时不得因继承而重复告警."""
+    with pytest.warns(UserWarning):
+
+        class ParentLegacy(Strategy):
+            def __init__(self, window: int = 3) -> None:
+                super().__init__()
+                self.window = window
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class ChildLegacy(ParentLegacy):
+            pass
+
+
+def test_legacy_warning_points_at_user_class_definition() -> None:
+    """Stacklevel 须让告警指向用户的类定义行, 而非框架内部."""
+    with pytest.warns(UserWarning) as records:
+
+        class StackCheckStrategy(Strategy):
+            def __init__(self, window: int = 3) -> None:
+                super().__init__()
+                self.window = window
+
+    assert records[0].filename == __file__
+
+
+def test_akquant_own_module_is_exempt_from_legacy_warning() -> None:
+    """AKQuant 包自身模块下的遗留写法类(依赖注入的内部包装器)不应告警.
+
+    直接把 ``__module__`` 覆盖为 ``akquant.*`` 前缀来命中豁免分支——这是对
+    "按 ``cls.__module__`` 是否以 akquant 开头判定" 这条规则本身的精确验证:
+    在类体里赋值 ``__module__`` 会在 ``type.__new__`` 构建类、进而调用
+    ``__init_subclass__`` 之前就生效, 因此 ``cls.__module__`` 在判定时已经是
+    覆盖后的值, 等价于"该类物理定义在 akquant 包内"的场景, 且不依赖模块缓存/
+    reload 这类脆弱手段。
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class FakeInternalWrapper(Strategy):
+            __module__ = "akquant.fake_internal_wrapper"
+
+            def __init__(self, injected: int = 1) -> None:
+                super().__init__()
+                self.injected = injected
+
+
+def test_akquant_prefixed_third_party_module_still_warns() -> None:
+    """名字仅以 akquant 为前缀的第三方/插件模块不得被误豁免.
+
+    ``akquant_middleware``/``akquant_qmf`` 是同 workspace 下两个独立的插件仓库
+    (导入名分别为 ``akquant_middleware``/``akquant_qmf``), 与 ``akquant`` 包本身
+    是不同的顶层包; 用裸 ``str.startswith("akquant")`` 判断会把它们错误地一并
+    豁免掉。这里沿用上一个测试验证豁免规则本身时的手法——覆盖 ``__module__`` 来
+    模拟"该类定义在这两个插件包内", 断言仍然告警——锁定豁免判定必须是"等于
+    akquant 或以 akquant. 为前缀", 而非任意 akquant 字符串前缀。
+    """
+    with pytest.warns(UserWarning, match="未声明任何内联参数字段"):
+
+        class FakeMiddlewareStrategy(Strategy):
+            __module__ = "akquant_middleware.strategies"
+
+            def __init__(self, threshold: int = 1) -> None:
+                super().__init__()
+                self.threshold = threshold
+
+    with pytest.warns(UserWarning, match="未声明任何内联参数字段"):
+
+        class FakeQmfStrategy(Strategy):
+            __module__ = "akquant_qmf.foo"
+
+            def __init__(self, threshold: int = 1) -> None:
+                super().__init__()
+                self.threshold = threshold
+
+
+def test_partial_migration_warns_only_unmigrated_arg_name() -> None:
+    """半迁移态(部分字段已内联, __init__ 里还剩没迁的)也应告警.
+
+    此前的判据是"零字段才算遗留写法", Mixed 类已迁移 fast 字段, 只是 __init__
+    里的 slow 忘了迁——这恰是最常见的中间态, 旧判据会漏报。修复后判据落在
+    参数级: 告警只点名未迁移的 slow, 不得提及已迁移的 fast。
+    """
+    with pytest.warns(UserWarning) as records:
+
+        class MixedStrategy(Strategy):
+            fast = IntParam(5, ge=1)
+
+            def __init__(self, slow: int = 20) -> None:
+                super().__init__()
+                self.slow = slow
+
+    assert len(records) == 1
+    msg = str(records[0].message)
+    assert "slow" in msg
+    assert "fast" not in msg
+    assert "MixedStrategy" in msg
+
+
+def test_partial_migration_init_arg_matching_declared_field_does_not_warn() -> None:
+    """__init__ 命名参数若与已声明字段同名, 视为已迁移, 不告警.
+
+    这是"未迁移"判据的边界: 判据是"__init__ 参数名是否出现在已声明字段名集合
+    中", 而非"该策略是否声明了任何字段"——同名即视为该参数已经有对应的内联
+    字段入口(是否在 __init__ 里也做了赋值不在本判据管辖范围内)。
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+
+        class AllMigratedStrategy(Strategy):
+            fast = IntParam(5, ge=1)
+
+            def __init__(self, fast: int = 5) -> None:
+                super().__init__()
+
+
+def test_import_akquant_emits_no_legacy_param_warning() -> None:
+    """全新解释器进程 import akquant 不应产生本条告警.
+
+    ``akquant`` 在当前测试进程里早已被 import 过(位于 sys.modules 缓存中),
+    再次 import 不会重新执行类体, 无法验证真实的"用户第一次 import akquant"
+    场景; 用 ``importlib.reload`` 强制重跑类体则有污染 pydantic 动态模型注册表
+    等全局状态的风险。故用子进程起一个全新解释器, 在其中以
+    ``warnings.simplefilter("always")`` 捕获 import 期间的全部告警, 断言其中
+    不包含本条告警的特征文案——这直接复现并锁定了 concern 中报告的真实场景。
+    """
+    code = (
+        "import warnings\n"
+        "with warnings.catch_warnings(record=True) as records:\n"
+        "    warnings.simplefilter('always')\n"
+        "    import akquant\n"
+        "    import akquant.backtest\n"
+        "matches = [str(r.message) for r in records "
+        "if '未声明任何内联参数字段' in str(r.message)]\n"
+        "assert not matches, matches\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

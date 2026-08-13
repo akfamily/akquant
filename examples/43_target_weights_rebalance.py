@@ -2,7 +2,7 @@ from collections import defaultdict
 
 import akquant as aq
 import pandas as pd
-from akquant import Bar, Strategy
+from akquant import Bar, ListParam, Strategy
 
 
 def _build_symbol_df(
@@ -41,10 +41,10 @@ def make_data() -> dict[str, pd.DataFrame]:
 class TargetWeightsRebalanceStrategy(Strategy):
     """TopN 动态权重调仓示例策略."""
 
-    def __init__(self, symbols: list[str]) -> None:
+    symbols = ListParam([], item_type=str, title="调仓标的集")
+
+    def on_start(self) -> None:
         """初始化横截面计算所需状态."""
-        super().__init__()
-        self.symbols = symbols
         self.pending: dict[int, set[str]] = defaultdict(set)
         self.lookback = 3
         self.top_n = 2
@@ -56,13 +56,13 @@ class TargetWeightsRebalanceStrategy(Strategy):
         # on_bar 会按 symbol 逐个触发，这里先缓存，确保每个时间点只调仓一次
         bucket = self.pending[bar.timestamp]
         bucket.add(bar.symbol)
-        if len(bucket) < len(self.symbols):
+        if len(bucket) < len(self.params.symbols):
             return
         self.pending.pop(bar.timestamp, None)
 
         # 1) 计算每个标的的简单动量：最新收盘 / 窗口首收盘 - 1
         scores: dict[str, float] = {}
-        for symbol in self.symbols:
+        for symbol in self.params.symbols:
             closes = self.get_history(count=self.lookback, symbol=symbol, field="close")
             if len(closes) < self.lookback:
                 return

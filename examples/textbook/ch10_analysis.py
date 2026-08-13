@@ -17,7 +17,7 @@ from typing import Any
 import akquant as aq
 import numpy as np
 import pandas as pd
-from akquant import Bar, Strategy
+from akquant import Bar, IntParam, Strategy
 
 
 # 模拟数据生成
@@ -43,26 +43,28 @@ def generate_mock_data(length: int = 500) -> pd.DataFrame:
 class AnalysisStrategy(Strategy):
     """分析演示策略."""
 
-    def __init__(self, short_window: int = 5, long_window: int = 20) -> None:
-        """初始化策略."""
-        super().__init__()
-        self.short_window = short_window
-        self.long_window = long_window
-        # 本示例会请求 long_window + 1 根数据，并用 [:-1] 排除当前 Bar。
-        self.warmup_period = long_window + 1
+    short_window = IntParam(5, ge=2, le=200, title="短期均线窗口")
+    long_window = IntParam(20, ge=3, le=500, title="长期均线窗口")
+
+    def on_start(self) -> None:
+        """回测开始时触发. 设置预热期.
+
+        本示例会请求 long_window + 1 根数据，并用 [:-1] 排除当前 Bar。
+        """
+        self.warmup_period = self.params.long_window + 1
 
     def on_bar(self, bar: Bar) -> None:
         """收到 Bar 事件的回调."""
         symbol = bar.symbol
         closes = self.get_history(
-            count=self.long_window + 1, symbol=symbol, field="close"
+            count=self.params.long_window + 1, symbol=symbol, field="close"
         )
-        if len(closes) < self.long_window + 1:
+        if len(closes) < self.params.long_window + 1:
             return
 
         history_closes = closes[:-1]
-        ma_short = history_closes[-self.short_window :].mean()
-        ma_long = history_closes[-self.long_window :].mean()
+        ma_short = history_closes[-self.params.short_window :].mean()
+        ma_long = history_closes[-self.params.long_window :].mean()
 
         pos = self.get_position(symbol)
 

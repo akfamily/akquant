@@ -1,23 +1,22 @@
 """多股票轮动策略示例（收齐同 timestamp 后执行）."""
 
 from collections import defaultdict
-from typing import Any
 
 import akquant as aq
 import akshare as ak
 import pandas as pd
-from akquant import Bar, Strategy
+from akquant import Bar, IntParam, Strategy
 
 
 class BucketMomentumRotationStrategy(Strategy):
     """收齐同一时间片所有标的后执行横截面轮动."""
 
-    def __init__(self, lookback_period: int = 20, *args: Any, **kwargs: Any) -> None:
-        """初始化策略参数."""
-        super().__init__(*args, **kwargs)
-        self.lookback_period = lookback_period
+    lookback_period = IntParam(20, ge=1, le=500, title="动量回看周期")
+
+    def on_start(self) -> None:
+        """设置轮动标的列表、数据预热长度与同 timestamp 收齐缓存."""
         self.symbols = ["sh600519", "sz000858", "sh601318"]
-        self.warmup_period = lookback_period + 1
+        self.warmup_period = self.params.lookback_period + 1
         self._pending_by_ts: dict[int, set[str]] = defaultdict(set)
 
     def on_bar(self, bar: Bar) -> None:
@@ -33,9 +32,9 @@ class BucketMomentumRotationStrategy(Strategy):
         scores: dict[str, float] = {}
         for symbol in self.symbols:
             closes = self.get_history(
-                count=self.lookback_period, symbol=symbol, field="close"
+                count=self.params.lookback_period, symbol=symbol, field="close"
             )
-            if len(closes) < self.lookback_period:
+            if len(closes) < self.params.lookback_period:
                 return
             start = float(closes[0])
             end = float(closes[-1])

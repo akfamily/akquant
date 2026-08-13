@@ -1,16 +1,15 @@
-from typing import Any
-
 import numpy as np
 import pandas as pd
-from akquant import Bar, Order, OrderStatus, Strategy, Trade, run_backtest
+from akquant import Bar, FloatParam, Order, OrderStatus, Strategy, Trade, run_backtest
 
 
 class TrailingOrderStrategy(Strategy):
     """Trailing Stop / StopLimit 示例策略."""
 
-    def __init__(self, trail_offset: float = 1.5, **kwargs: Any) -> None:
-        """初始化策略."""
-        self.trail_offset = trail_offset
+    trail_offset = FloatParam(1.5, ge=0.01, title="跟踪止损偏移")
+
+    def on_start(self) -> None:
+        """初始化订单跟踪状态与最新收盘价缓存."""
         self.entry_order_id = ""
         self.trailing_order_id = ""
         self.last_close: dict[str, float] = {}
@@ -41,7 +40,7 @@ class TrailingOrderStrategy(Strategy):
             trailing_receipt = self.place_trailing_stop(
                 symbol=trade.symbol,
                 quantity=float(trade.quantity),
-                trail_offset=self.trail_offset,
+                trail_offset=self.params.trail_offset,
                 side="Sell",
                 trail_reference_price=ref_price,
                 tag="trail-stop",
@@ -51,7 +50,7 @@ class TrailingOrderStrategy(Strategy):
             )
             print(
                 f"[{trade.timestamp}] 提交 trailing stop: symbol={trade.symbol}, "
-                f"offset={self.trail_offset:.2f}, ref={ref_price:.2f}"
+                f"offset={self.params.trail_offset:.2f}, ref={ref_price:.2f}"
             )
         elif trade.order_id == self.trailing_order_id:
             self.trailing_order_id = ""

@@ -147,6 +147,14 @@ def test_textbook_dual_ma_examples_request_enough_warmup_bars() -> None:
     ch05_strategy = ch05.MyFirstStrategy(short_window=5, long_window=20)
     ch10_strategy = ch10.AnalysisStrategy(short_window=5, long_window=20)
 
+    # 内联参数迁移后 warmup_period 已从 __init__（构造即可读）移到 on_start
+    # （__init__ 不再是参数入口，只有 on_start 里才能拿到注入好的 self.params）。
+    # 引擎在真实回测中会先调 on_start 再读 warmup_period（见 engine.py 中
+    # 先执行 on_start、随后才取用 warmup_period 的调用顺序），这里直接实例化
+    # 后手动复现该时序，而非依赖构造函数副作用。
+    ch05_strategy.on_start()
+    ch10_strategy.on_start()
+
     assert ch05_strategy.warmup_period == 21
     assert ch10_strategy.warmup_period == 21
 

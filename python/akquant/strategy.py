@@ -1,7 +1,9 @@
 import datetime as dt
+import inspect
 import logging
 import sys
 import threading
+import warnings
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import (
@@ -32,7 +34,7 @@ from .akquant import (
 from .gateway.order_receipt import OrderReceipt
 from .indicator_recording import IndicatorRecorder
 from .log import get_logger as _get_logger
-from .params import ParamModel, ParamSpec
+from .params import ParamModel, ParamSpec, legacy_init_warning_message
 from .sizer import FixedSize, Sizer
 from .strategy_events import (
     flush_pending_order_events as _flush_pending_order_events_impl,
@@ -346,6 +348,29 @@ def _finalize_param_model(model_cls: type, *, module_name: str, name: str) -> ty
     return model_cls
 
 
+def _legacy_init_arg_names(func: Any) -> List[str]:
+    """取出 __init__ 中除 self/*args/**kwargs 外的命名参数名.
+
+    :param func: 待检查的 ``__init__`` 函数对象
+    :return: 命名参数名列表; 签名不可读时返回空列表
+    """
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return []
+    names: List[str] = []
+    for name, parameter in signature.parameters.items():
+        if name == "self":
+            continue
+        if parameter.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            continue
+        names.append(name)
+    return names
+
+
 class Strategy:
     """
     策略基类 (Base Strategy Class).
@@ -482,6 +507,33 @@ class Strategy:
         cls.__param_model__ = _finalize_param_model(
             model_cls, module_name=cls.__module__, name=model_name
         )
+        # 遗留写法早诊断: __init__ 命名参数中存在未声明为内联字段的名字 =>
+        # 这些参数永远传不进来。判据落在参数级而非"零字段"级——最常见的中间态
+        # 是半迁移(部分字段已内联, __init__ 里还剩几个没搬), 若仍按"零字段才算
+        # 遗留写法"判断会在这种最该被提醒的场景下漏报。
+        # 只看本类自己定义的 __init__(vars(cls)), 避免子类继承时重复告警。
+        # 按模块豁免 akquant 包自身: VectorizedStrategy/FunctionalStrategy 等内部
+        # 包装类的构造参数是依赖注入(回调/预算数据), 不是"可调策略参数", 迁移文案
+        # 对它们不适用; 用户模块(examples/tests 等)不受此豁免影响。
+        # 用等值/带点前缀判断而非裸 startswith("akquant"): 避免把 akquant_middleware、
+        # akquant_qmf 等名字前缀相似但并非 akquant 包本身的第三方/插件模块一并豁免。
+        module_name = str(cls.__module__)
+        is_akquant_internal = module_name == "akquant" or module_name.startswith(
+            "akquant."
+        )
+        if "__init__" in vars(cls) and not is_akquant_internal:
+            legacy_args = _legacy_init_arg_names(vars(cls)["__init__"])
+            unmigrated_args = [name for name in legacy_args if name not in field_defs]
+            if unmigrated_args:
+                warnings.warn(
+                    legacy_init_warning_message(
+                        strategy_name=cls.__name__,
+                        init_arg_names=unmigrated_args,
+                        some_fields_declared=bool(field_defs),
+                    ),
+                    UserWarning,
+                    stacklevel=2,
+                )
 
     # 基类默认空模型；子类由 __init_subclass__ 覆盖
     __param_model__ = _finalize_param_model(
@@ -641,11 +693,13 @@ class Strategy:
         instance._indicator_recorder = None
 
         # 参数注入：校验后 frozen 挂到 params。
-        # 若该类声明了任何字段，则所有 kwargs 均须经 pydantic 校验
-        # （未知字段/越界均拒绝）；若未声明任何字段（含尚未迁移的遗留策略），
-        # 则不做字段校验，kwargs 原样透传给 __init__。
-        # __param_model__ 恒存在：基类在类体中显式赋值，子类由
-        # __init_subclass__ 覆盖，故此处无需 None 兜底。
+        # 声明了字段则所有 kwargs 均须经 pydantic 校验（未知字段/越界均拒绝）。
+        # 未声明任何字段时这里只建空模型——注意**不是**遗留写法豁免：engine 层的
+        # _split_strategy_kwargs 会在调用本构造函数之前就把 kwargs 全部判为
+        # unknown 并拒绝/丢弃, 故直接构造(如 MyStrategy(fast=1))与经 run_backtest
+        # 传参两条路径行为并不相同。构造函数签名自 0.3.x 起已不是参数入口。
+        # __param_model__ 恒存在：基类在类体中显式赋值，子类由 __init_subclass__
+        # 覆盖，故此处无需 None 兜底。
         model_cls = cls.__param_model__
         field_names = set(model_cls.model_fields)
         if field_names:
