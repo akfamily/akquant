@@ -7,7 +7,7 @@ This module provides CTP (China Futures) connectivity using openctp-ctp library.
 
 import threading
 import time
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ....akquant import BarAggregator, DataFeed, Tick
 from ....log import build_log_extra, get_logger
@@ -982,6 +982,15 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
                 feed, stamp_bar_at_interval_end=self.stamp_bar_at_interval_end
             )
 
+        # CTP 的 pDepthMarketData.Volume 是当日累计成交量, 而回测里
+        # Tick.volume 的语义是单笔成交量——同一个策略读 tick.volume, 回测拿
+        # 单笔、实盘拿累计, 量级能差好几个数量级, 且是静默的。这里按 symbol
+        # 记录上一次推送的累计量, 在 _cumulative_volume_to_delta 里换算成
+        # 单笔量再塞进 Tick, 与回测语义对齐。注意这只影响 add_tick 推的
+        # Tick——喂给 aggregator.on_tick 的仍是原始累计量, 见该方法调用处的
+        # 说明, 两者是有意的不同分工, 不要合并。
+        self._last_cum_volume: Dict[str, float] = {}
+
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
 
@@ -1102,6 +1111,31 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             extra=self._log_extra(symbol=symbol),
         )
 
+    def _cumulative_volume_to_delta(self, symbol: str, cum_volume: float) -> float:
+        """把 CTP 逐笔行情里的当日累计量换算成单笔成交量.
+
+        ``pDepthMarketData.Volume`` 是当日累计成交量, 而 ``Tick.volume`` 在
+        回测语义里是单笔成交量。三条规则(状态按 symbol 隔离于
+        ``self._last_cum_volume``):
+
+        - 正常: ``delta = cum_volume - 上一次该 symbol 的累计量``。
+        - 首帧(该 symbol 还没有前值): ``delta = 0``, **不是** ``cum_volume``。
+          进程可能在盘中启动, 此时 ``cum_volume`` 是当日至今的累计(可能几十万
+          手), 当成单笔量会严重失真、甚至触发策略里的成交量异常检测; 用 0
+          表示"这一笔的单笔量未知"比编造一个错得离谱的大数更安全。
+        - 负差分(跨日重置或断线重连后累计量归零): ``delta = cum_volume``。
+          此时 ``cum_volume`` 本身就是新一天/新连接下第一笔的累计量, 约等于
+          单笔量, 用它比用 0 更准。
+        """
+        last = self._last_cum_volume.get(symbol)
+        self._last_cum_volume[symbol] = cum_volume
+        if last is None:
+            return 0.0
+        delta = cum_volume - last
+        if delta < 0:
+            return cum_volume
+        return delta
+
     def OnRtnDepthMarketData(self, pDepthMarketData: Any) -> None:
         """Process market data tick."""
         symbol = pDepthMarketData.InstrumentID
@@ -1127,7 +1161,13 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         # 同一类问题(见本计划 Task 5)。现在逐笔以真 Tick 形式推送, 该替代
         # 路径已删除; emit_ticks/emit_bars 都不出的组合在构造期就被
         # ValueError 拒绝, 不存在"两者都不出"需要兜底的状态。
+        #
+        # 分工: 上面喂给 aggregator.on_tick 的仍是原始累计量(它的
+        # volume_is_cumulative=True 自己会差分), 这里推给 add_tick 的
+        # Tick.volume 则换算成单笔量(见 _cumulative_volume_to_delta)——两者
+        # 故意不同, 别为了"统一"把这里也改回累计量。
         if self.emit_ticks:
+            delta_volume = self._cumulative_volume_to_delta(symbol, float(volume))
             self.feed.add_tick(
-                Tick(timestamp=now_ns, symbol=symbol, price=price, volume=float(volume))
+                Tick(timestamp=now_ns, symbol=symbol, price=price, volume=delta_volume)
             )

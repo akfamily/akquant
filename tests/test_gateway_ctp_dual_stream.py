@@ -201,3 +201,86 @@ def test_build_ctp_emit_ticks_and_emit_bars_both_false_raises_via_builder() -> N
     """经 builder 层, 两者都显式为 False 时构造期报错, 不静默吞掉."""
     with pytest.raises(ValueError, match="emit_ticks"):
         _build(emit_ticks=False, emit_bars=False)
+
+
+# ---------------------------------------------------------------------------
+# Tick.volume 累计量 -> 单笔量: CTP 的 pDepthMarketData.Volume 是当日累计成交
+# 量, 而回测里 Tick.volume 是单笔量。三条规则见
+# ``CTPMarketGateway._cumulative_volume_to_delta`` 的 docstring: 正常差分 /
+# 首帧记 0(不是 cum_volume, 理由见该方法注释) / 负差分(跨日重置或重连)时
+# delta = cum_volume。这里只用 emit_ticks=True, emit_bars=False(纯 tick, 不
+# 触发聚合器)以避免依赖真实 ``DataFeed`` 的 aggregator 合成路径, 构造后把
+# ``feed`` 换成 ``FakeFeed`` 只记录被推入的 Tick。
+# ---------------------------------------------------------------------------
+
+
+def test_ctp_tick_volume_first_frame_is_zero_not_cumulative() -> None:
+    """首帧还没有该 symbol 的前值时, 推出的 Tick.volume 必须是 0, 不是原始累计量.
+
+    进程可能盘中启动, 此时累计量可能是几十万手, 当成单笔量会严重失真。
+    """
+    gateway = _gateway(emit_ticks=True, emit_bars=False)
+    fake_feed = FakeFeed()
+    gateway.feed = fake_feed  # type: ignore[assignment]
+    gateway.OnRtnDepthMarketData(_md(volume=123456.0))
+    assert len(fake_feed.ticks) == 1
+    assert fake_feed.ticks[0].volume == 0.0
+
+
+def test_ctp_tick_volume_normal_frame_is_delta() -> None:
+    """非首帧的正常情况下, Tick.volume 是与上一帧的累计量差分."""
+    gateway = _gateway(emit_ticks=True, emit_bars=False)
+    fake_feed = FakeFeed()
+    gateway.feed = fake_feed  # type: ignore[assignment]
+    gateway.OnRtnDepthMarketData(_md(volume=100.0))
+    gateway.OnRtnDepthMarketData(_md(volume=150.0))
+    gateway.OnRtnDepthMarketData(_md(volume=170.0))
+    assert [t.volume for t in fake_feed.ticks] == [0.0, 50.0, 20.0]
+
+
+def test_ctp_tick_volume_negative_diff_uses_raw_volume_as_delta() -> None:
+    """累计量比上一帧还小(跨日重置/重连归零)时, delta 直接取当前累计量.
+
+    此时该累计量本身就约等于新一天/新连接下首笔的单笔量。
+    """
+    gateway = _gateway(emit_ticks=True, emit_bars=False)
+    fake_feed = FakeFeed()
+    gateway.feed = fake_feed  # type: ignore[assignment]
+    gateway.OnRtnDepthMarketData(_md(volume=100.0))
+    gateway.OnRtnDepthMarketData(_md(volume=150.0))
+    gateway.OnRtnDepthMarketData(_md(volume=30.0))  # 归零重来, 比上一帧的 150 小
+    assert [t.volume for t in fake_feed.ticks] == [0.0, 50.0, 30.0]
+
+
+def test_ctp_tick_volume_state_is_isolated_per_symbol() -> None:
+    """两个 symbol 的累计量状态互不影响, 各自独立算首帧/差分."""
+    gateway = _gateway(emit_ticks=True, emit_bars=False)
+    fake_feed = FakeFeed()
+    gateway.feed = fake_feed  # type: ignore[assignment]
+    gateway.OnRtnDepthMarketData(_md(symbol="rb2401", volume=100.0))
+    gateway.OnRtnDepthMarketData(_md(symbol="au2406", volume=999.0))
+    gateway.OnRtnDepthMarketData(_md(symbol="rb2401", volume=130.0))
+    gateway.OnRtnDepthMarketData(_md(symbol="au2406", volume=1010.0))
+    assert [t.volume for t in fake_feed.ticks] == [0.0, 0.0, 30.0, 11.0]
+
+
+def test_ctp_tick_volume_delta_does_not_affect_aggregator_cumulative_input() -> None:
+    """add_tick 推的是单笔量, 但喂给 aggregator.on_tick 的仍是原始累计量.
+
+    aggregator 的 volume_is_cumulative=True(BarAggregator 默认值, native.py
+    构造时未覆盖)会自己差分, 这里如果误把换算后的单笔量喂给它会造成二次差分。
+    """
+    calls: list[float] = []
+
+    class _RecordingAggregator:
+        def on_tick(self, symbol: str, price: float, volume: float, ts: int) -> None:
+            calls.append(volume)
+
+    gateway = _gateway(emit_ticks=True, emit_bars=True)
+    gateway.aggregator = _RecordingAggregator()  # type: ignore[assignment]
+    fake_feed = FakeFeed()
+    gateway.feed = fake_feed  # type: ignore[assignment]
+    gateway.OnRtnDepthMarketData(_md(volume=100.0))
+    gateway.OnRtnDepthMarketData(_md(volume=150.0))
+    assert calls == [100.0, 150.0]
+    assert [t.volume for t in fake_feed.ticks] == [0.0, 50.0]
