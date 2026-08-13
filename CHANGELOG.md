@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`on_bar` 与 `on_tick` 可同时触发（回测 + 实盘）**：引擎把 bar 与 tick 拆成两条并列的历史序列，此前二者共用一个缓冲区，tick 以退化 OHLC 写入会把历史 bar 挤出窗口——双流下 `get_history` 会静默返回混入 tick 价的错误序列。回测侧 `run_backtest(data=[Tick, ...], freq="1min")` 在照常投递 tick 的同时把它们聚合成 bar 投给 `on_bar`（`freq` 只在 `data` 为含 `Tick` 的列表时有意义，DataFrame 传 `freq` 会报错而非静默忽略）。实盘侧 klinedata 与 CTP 网关均新增 `emit_ticks` / `emit_bars`（`use_aggregator` 保留为兼容别名，按参数逐个回退——只显式传其一不会静默关掉另一路），双流下合成 bar 打区间结束戳以保证与 tick 混推时时间戳单调不倒退。
+- **`get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 新增 `freq` 参数**：取值 `'tick'` / `'bar'` / `None`。粒度做成参数而非新增 `get_tick_history` 方法，与 `run_backtest(freq=...)` 术语一致，并为将来的多周期（如 `'5min'`）留开取值域。**双流下省略 `freq` 会报错**，要求显式指定——不静默选一条序列；未识别的 `freq` 取值同样报错，不会兜底成 `'bar'`。纯 bar / 纯 tick 单流下行为不变（`None` 时照旧取该 symbol 唯一存在的那条序列）。
 - **新增委托价 tick 对齐工具与股票侧校验开关**。配合下面「股票/基金委托价开始校验 tick 对齐」的行为变更，提供显式对齐手段与逃生开关：
 
     - `Strategy.round_to_tick(symbol, price, direction)`：按标的的 `tick_size` 对齐委托价，`direction` 取 `"down"`（买入侧保守）/ `"up"`（卖出侧保守）/ `"nearest"`（默认）。底层工具函数为 `akquant.utils.price.round_to_tick(price, tick, direction)`，不依赖策略上下文，可单测直接调用。
@@ -88,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 更容易踩坑的是**累积状态**——计数器、缓存、已建仓记录等 per-object 状态若直接搬进 `on_start` 顶层，热启动时会被静默重新初始化，破坏跨阶段的连续性。这类初始化请收在 `if not self.is_restored:` 分支内；与运行历史无关的纯重建逻辑（如重新注册指标对象本身）才适合放在 `on_start` 顶层无条件执行。完整用法见 `examples/21_warm_start_demo.py`、`docs/zh/guide/strategy.md` §6.4。
 
 ### Changed
+- **（破坏性）`freq='tick'` 时 `get_history` 系列的 `field` 限 `price`/`close`/`volume`**：tick 没有 `open`/`high`/`low`，此前请求这些字段会静默返回退化 OHLC（`price` 冒充 `high`），现改为显式抛 `ValueError`。`get_history_df` / `get_rolling_data` 固定取 OHLCV 五字段，故它们在 `freq='tick'` 下必然报错，报错文案会指向 `get_history(freq='tick', field='price')` 取成交价序列。仅影响显式传 `freq='tick'` 的调用；`freq='bar'` 与省略 `freq`（单流场景）不受影响。
 - **股票/基金委托价开始校验 tick 对齐（行为变更，`__engine_rule_version__` 升至 1.4.0）**：此前只有期货侧校验最小变动价位，股票/基金的非对齐委托价（如 `tick_size=0.01` 却传 `2.8314`）在回测里会照常成交，到了实盘却被柜台风控拒单（`RISK_PRICE_TICK_INVALID`）——同一笔单回测通过、实盘失败。现在两侧口径统一：
 
     - **回测**：`StockMatcher` 对非对齐委托价 **reject**（与 `FuturesMatcher` 一致），不是静默取整。

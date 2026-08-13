@@ -940,11 +940,15 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 
 **数据与工具:**
 
-*   `get_history(count, symbol, field="close") -> np.ndarray`: 获取历史数据数组（返回滚动缓冲的安全快照拷贝，非零拷贝）。
-*   `get_history_multi(count, symbol, fields=("open","high","low","close","volume")) -> Dict[str, np.ndarray]`: 单次跨界批量取回多字段，语义等价于逐字段 `get_history`，`get_history_df` 内部即基于它。
-*   `get_history_map(count, symbols, field="close") -> Dict[str, np.ndarray]`: 批量获取多个标的历史数据。
+*   `get_history(count, symbol, field="close", freq=None) -> np.ndarray`: 获取历史数据数组（返回滚动缓冲的安全快照拷贝，非零拷贝）。
+*   `get_history_multi(count, symbol, fields=("open","high","low","close","volume"), freq=None) -> Dict[str, np.ndarray]`: 单次跨界批量取回多字段，语义等价于逐字段 `get_history`，`get_history_df` 内部即基于它。
+*   `get_history_map(count, symbols, field="close", freq=None) -> Dict[str, np.ndarray]`: 批量获取多个标的历史数据。
 *   `rebalance_to_topn(scores, top_n, weight_mode="equal", ...) -> List[str]`: 根据打分选取 TopN 并执行调仓，支持等权或按分数归一化。
-*   `get_history_df(count, symbol) -> pd.DataFrame`: 获取历史数据 DataFrame (OHLCV)。
+*   `get_history_df(count, symbol, freq=None) -> pd.DataFrame`: 获取历史数据 DataFrame (OHLCV)。
+*   `freq` 参数（`get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 均支持）：取值 `'tick'` / `'bar'` / `None`。
+    *   `None`（默认）：该 symbol 只有 bar 序列时取 bar，只有 tick 序列时取 tick（单流下行为不变）；**若 `on_bar` 与 `on_tick` 同时触发导致该 symbol 同时存在 bar 与 tick 两条历史序列，则报 `ValueError`**，要求显式传 `freq='bar'` 或 `freq='tick'`——不会静默选一条。未识别的取值同样报错，不会兜底成 `'bar'`。
+    *   `freq='tick'` 时 `field` 只支持 `price`/`close`/`volume`：tick 没有 open/high/low，传这些字段会抛 `ValueError`（此前会静默返回退化 OHLC，`price` 冒充 `high`，破坏性变更）。`get_history_df` / `get_rolling_data` 固定取 OHLCV 五字段，因此在 `freq='tick'` 下必然报错，请改用 `get_history(freq='tick', field='price')`。
+    *   回测中让 `on_bar` 与 `on_tick` 同时触发：`run_backtest(data=[Tick, ...], freq="1min")`（**`freq` 只在 `data` 为含 `Tick` 的列表时生效，DataFrame 不支持**，传了会报错而非静默忽略）。实盘中的等价开关是 `gateway_options={"emit_ticks": True, "emit_bars": True}`（klinedata、CTP 网关均支持，`use_aggregator` 保留为兼容别名）。
 *   `get_position(symbol) -> float`: 获取当前持仓量。返回值仍为数量，不返回对象。
 *   `get_available_position(symbol) -> float`: 获取可用持仓量。
 *   `positions -> Dict[str, float]`: 获取所有标的持仓（只读属性）。
@@ -989,7 +993,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 **机器学习支持:**
 
 *   `set_rolling_window(train_window, step)`: 设置滚动训练窗口。
-*   `get_rolling_data(length, symbol)`: 获取滚动训练数据 (X, y)。
+*   `get_rolling_data(length, symbol, freq=None)`: 获取滚动训练数据 (X, y)。`freq` 语义与限制同上一节的 `get_history` 系列（底层基于 `get_history_df`）。
 *   `prepare_features(df, mode)`: (需重写) 特征工程与标签生成。
 
 ### `akquant.Bar`

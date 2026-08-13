@@ -680,6 +680,27 @@ AKQuant 提供了两种风格的策略开发接口：
 *   **`self.get_history(count, ...)`**: 返回 `numpy.ndarray`，性能最高，适合计算指标。
 *   **`self.get_history_df(count, ...)`**: 返回 `pandas.DataFrame`，包含 OHLCV，适合复杂分析。
 
+**`freq` 参数（tick/bar 双流下按需选择粒度）**
+
+`get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 都接受
+`freq='tick'` / `freq='bar'` / `freq=None`（默认）：
+
+*   若某个 symbol 的 `on_bar` 与 `on_tick` **同时**触发（回测 `run_backtest(data=[Tick, ...], freq="1min")`，
+    或实盘 `gateway_options={"emit_ticks": True, "emit_bars": True}`），该 symbol 会同时存在 bar 与 tick
+    两条并列的历史序列，此时**省略 `freq` 会报 `ValueError`**，要求显式指定取哪一条——不会静默选一条给你。
+    未识别的 `freq` 取值同样报错，不会兜底成 `'bar'`。
+*   只有 bar、或只有 tick 的单流场景下行为不变：`freq=None` 照旧取该 symbol 唯一存在的那条序列。
+*   `freq='tick'` 时 `field` 只支持 `price`/`close`/`volume`——tick 没有 `open`/`high`/`low`，请求这些字段会
+    抛 `ValueError`（此前会静默返回退化 OHLC，`price` 冒充 `high`，属于本次的破坏性变更）。`get_history_df`
+    与 `get_rolling_data` 固定取 OHLCV 五字段，因此在 `freq='tick'` 下必然报错，请改用
+    `self.get_history(count, symbol, field='price', freq='tick')` 取成交价序列。
+
+```python
+# 双流下必须显式指定 freq
+closes = self.get_history(20, bar.symbol, "close", freq="bar")
+prices = self.get_history(20, tick.symbol, "price", freq="tick")
+```
+
 ### 6.3 完整示例
 
 ```python

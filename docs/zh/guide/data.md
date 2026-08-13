@@ -262,7 +262,8 @@ result = aq.run_backtest(
 **纯 tick 模式的能力边界：**
 
 *   触发 `on_tick`，**不**触发 `on_bar`。
-*   `get_history` / `get_history_multi` / `get_history_df` 可用，返回**成交价序列**：tick 以退化 bar 写入历史缓冲区（`open=high=low=close=price`），故 `get_history(count, symbol, "close")` 等价于取最近若干笔成交价。
+*   `get_history` / `get_history_multi` / `get_history_df` / `get_rolling_data` 可用，返回**成交价序列**：tick 有自己独立的一条历史序列（不再与 bar 共用缓冲区），省略 `freq`（纯 tick 场景没有歧义，不要求显式指定）等价于 `freq='tick'` 的默认取数路径，`get_history(count, symbol, "close")` 等价于取最近若干笔成交价。
+    该独立序列内部仍按 `open=high=low=close=price` 存储（历史包袱：与 bar 共用同一存储结构），但**只有显式传 `freq='tick'` 时**才会在 Python 层校验 `field`——此时请求 `open`/`high`/`low` 会抛 `ValueError`（tick 没有真正的高低开盘价，可用字段为 `price`/`close`/`volume`）；`get_history_df` / `get_rolling_data` 固定取 OHLCV 五字段，故显式传 `freq='tick'` 调用它们必然报错，纯 tick 场景请省略 `freq` 或改用 `get_history(freq='tick', field='price')`。若该 symbol 同时存在 bar 来源（见下面的 `freq` 聚合或第 3 节的双流场景），省略 `freq` 会因两条序列并存而报错，要求显式传 `freq='tick'` / `freq='bar'`。
 *   增量指标（`indicator_mode="incremental"`）的**单值模式**可用：`source` 取 `open`/`high`/`low`/`close` 均返回成交价，取 `volume` 返回单笔量；`close_volume` 模式同样可用。
 *   增量指标的 `input_mode` 为 `"hl"` / `"hlc"` / `"ohlc"` 时，tick 的最高/最低价恒等于成交价，ATR、振幅等依赖真实 H/L 的指标在这类数据上只会恒为 0。若该标的**同时**有 bar 来源（混合输入，或配合下面的 `freq` 把 tick 聚合成 bar），这类指标由 bar 驱动正常工作，tick 本身对它们静默跳过；只有当某个标的**全程只有 tick、从未有过任何 bar** 时，AKQuant 才会在会话结束时抛 `StrategyConfigurationError`（`ValueError` 的子类，异常会穿透到 `run_backtest` 的调用方，不会被日志吞掉）——此时才是真正只能拿到恒为 0 的误导结果，故显式报错而非静默给出。
 *   输入含任意 `Tick`（**纯 tick 或混合皆然**）+ 已注册的**预计算指标**（`indicator_mode="precompute"`）会抛 `ValueError`：归一后走 `DataFeed` 分支，该分支不构建预计算指标所需的 DataFrame。护栏判据是「是否有 tick」，与是否同时有 bar 无关。需要指标时改用增量指标，或用下面的 `freq` 把 tick 聚合成 bar。
