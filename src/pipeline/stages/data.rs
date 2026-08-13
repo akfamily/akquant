@@ -50,6 +50,14 @@ impl DataProcessor {
         if let Ok(mut buffer) = engine.history_buffer.write() {
             let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
             for symbol in engine.instruments.keys() {
+                // 跑 tick 流的 symbol 不补合成 bar: 双流下合成 bar 打区间结束戳,
+                // 与 tick 时间戳天然错开, 于是每个 bar 事件都会让其余 symbol 显得
+                // "本批次缺失"。此时用 last_prices(成交价)合成退化 bar 写进 bar
+                // 序列, 等于用 tick 价冒充 bar, 且完全静默。该 symbol 的 bar 应当
+                // 只来自真实聚合, 故此处直接跳过。
+                if buffer.has_tick_history(symbol) {
+                    continue;
+                }
                 if !self.seen_symbols.contains(symbol)
                     && let Some(&last_price) = prices.get(symbol)
                 {

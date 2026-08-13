@@ -259,6 +259,76 @@ def test_dual_stream_get_history_map_tick_freq_returns_tick_series_per_symbol() 
     assert values[-1] - values[-2] == 1.0
 
 
+def _dual_stream_feed_multi() -> DataFeed:
+    """两个 symbol 各自双流: X 的分钟 n 价格为 n*10+k, Y 为 n*100+k(k=0..3).
+
+    故分钟 n 的 bar close: X = n*10+3, Y = n*100+3。
+    """
+    feed = DataFeed()
+    aggregator = BarAggregator(
+        feed, 1, volume_is_cumulative=False, stamp_bar_at_interval_end=True
+    )
+    for i in range(40):
+        timestamp = T0 + 15_000_000_000 * i
+        for symbol, mult in (("X", 10), ("Y", 100)):
+            price = float((i // 4 + 1) * mult + (i % 4))
+            aggregator.on_tick(symbol, price, 10.0, timestamp)
+            feed.add_tick(
+                Tick(timestamp=timestamp, price=price, volume=10.0, symbol=symbol)
+            )
+    return feed
+
+
+def test_multi_symbol_dual_stream_bar_history_is_not_synthesized_from_tick_price() -> (
+    None
+):  # noqa: E501
+    """多 symbol 双流下, bar 序列不得混入 fill_missing_bars 用 tick 价合成的假 bar.
+
+    修复前 X 会拿到 [13.0, 20.0, 23.0]（20.0 是 X 自己的 tick 价），
+    Y 会拿到 [103.0, 203.0, 203.0]（203 重复）。
+
+    warmup_period 取 5 而非直觉上的 3: `strategy._bar_count`
+    (strategy_events.py:109) 是跨 symbol 的全局计数器, 每收到一个真实
+    Bar 事件(不分 symbol)就 +1。双 symbol 下每个真实分钟会产生 2 个 Bar
+    事件, 计数器按 symbol 数缩放, warmup_period=3 会在每个 symbol 各自
+    只攒够 2 根真 bar 时就跨过门槛, 导致 get_history(count=3) 里混入 1 个
+    nan 占位。这是纯 bar 路径也存在的既有缺陷(与本用例要验证的"tick 价
+    污染 bar 序列"正交, 已确认与本任务无关, 另行跟踪), 此前恰被本任务修的
+    污染 bug 掩盖——污染多塞一条(错误的)记录, 把长度顶到了 3, 掩盖了"实际
+    只有 2 条真数据"这个事实。此处取 5 以绕开这个既有缺陷, 让断言精确落在
+    "bar 序列是否被 tick 价污染"上。
+    """
+    captured: dict[str, list[float]] = {}
+
+    class MultiSymbolStrategy(Strategy):
+        warmup_period = 5
+
+        def on_start(self) -> None:
+            """重置采集状态."""
+            self.seen: set[str] = set()
+
+        def on_bar(self, bar: Bar) -> None:
+            """每个 symbol 首次收到 bar 时取一次 bar 历史."""
+            if bar.symbol in self.seen:
+                return
+            self.seen.add(bar.symbol)
+            captured[bar.symbol] = [
+                float(x)
+                for x in self.get_history(
+                    count=3, symbol=bar.symbol, field="close", freq="bar"
+                )
+            ]
+
+    run_backtest(
+        strategy=MultiSymbolStrategy,
+        data=_dual_stream_feed_multi(),
+        symbols=["X", "Y"],
+        initial_cash=1e5,
+    )
+    assert captured["X"] == [13.0, 23.0, 33.0]
+    assert captured["Y"] == [103.0, 203.0, 303.0]
+
+
 def test_pure_bar_path_behavior_unchanged() -> None:
     """纯 bar 路径省略 freq 行为不变(回归底线)."""
     index = pd.date_range("2024-01-02", periods=6, freq="D")
