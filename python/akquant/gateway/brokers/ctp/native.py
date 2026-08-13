@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from ....akquant import Bar, BarAggregator, DataFeed
+from ....akquant import Bar, BarAggregator, DataFeed, Tick
 from ....log import build_log_extra, get_logger
 
 try:
@@ -898,7 +898,8 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
     """
     CTP Market Data Gateway.
 
-    Subscribes to market data and pushes Ticks (as Bars) to AKQuant DataFeed.
+    Subscribes to market data and pushes Bars and/or Ticks to AKQuant DataFeed,
+    depending on ``emit_ticks``/``emit_bars`` (see :meth:`__init__`).
     """
 
     def __init__(
@@ -907,6 +908,8 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         front_url: str,
         symbols: List[str],
         use_aggregator: bool = True,
+        emit_ticks: Optional[bool] = None,
+        emit_bars: Optional[bool] = None,
     ):
         """
         Initialize the Market Gateway.
@@ -914,8 +917,26 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         :param feed: AKQuant DataFeed instance
         :param front_url: CTP Front URL (e.g., tcp://180.168.146.187:10131)
         :param symbols: List of symbols to subscribe (e.g., ["au2310", "rb2310"])
-        :param use_aggregator: If True, uses BarAggregator to generate 1-min bars.
-                               If False, pushes each tick as a Bar immediately.
+        :param use_aggregator: Legacy either-or switch, kept as a compat alias:
+            True (default) is equivalent to bar-only, False is equivalent to
+            tick-only. Superseded by ``emit_ticks``/``emit_bars`` when those are
+            given explicitly — the two can then both be True (dual stream).
+        :param emit_ticks: Whether to push raw Ticks into the feed (drives
+            ``on_tick``). ``None`` falls back to the ``use_aggregator`` alias
+            *per-parameter* (see note below), so passing only ``emit_bars``
+            does not silently flip this one to False.
+        :param emit_bars: Whether to push aggregated Bars into the feed (drives
+            ``on_bar``). ``None`` falls back to the ``use_aggregator`` alias the
+            same way as ``emit_ticks``.
+
+            The per-parameter fallback (rather than "fall back only when both
+            are None") matters: if a caller passes ``emit_ticks=True`` alone,
+            wanting to *add* tick delivery on top of the existing bar stream,
+            resolving the untouched ``emit_bars`` from ``bool(None)`` would
+            silently turn off ``on_bar`` — the opposite of what they asked for.
+        :raises ImportError: openctp-ctp is not installed.
+        :raises ValueError: ``emit_ticks`` and ``emit_bars`` both resolve to
+            False — that configuration would push no market data at all.
         """
         if not HAS_OPENCTP:
             raise ImportError(
@@ -933,11 +954,34 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         self.connected = False
         self.last_volume: Dict[str, float] = {}
 
-        self.aggregator: Optional[BarAggregator]
-        if self.use_aggregator:
-            self.aggregator = BarAggregator(feed)
-        else:
-            self.aggregator = None
+        # use_aggregator 是旧的二选一开关, 保留为兼容别名: True(默认) -> 只出
+        # bar, False -> 只出 tick。新参数 emit_ticks / emit_bars 显式且可同时
+        # 为真(双流), 优先级更高。
+        # 逐参数回退(而非"两者都 None 才回退"): 只显式表态一个参数时, 另一个
+        # 仍按 use_aggregator 别名推导, 不会被 bool(None) 静默压成 False——
+        # 否则单独传 emit_ticks=True 会悄悄关掉 on_bar, 而用户的意图是
+        # "加上 tick"而非"关掉 bar"。
+        if emit_ticks is None:
+            emit_ticks = not use_aggregator
+        if emit_bars is None:
+            emit_bars = bool(use_aggregator)
+        emit_ticks = bool(emit_ticks)
+        emit_bars = bool(emit_bars)
+        if not emit_ticks and not emit_bars:
+            raise ValueError(
+                "emit_ticks 与 emit_bars 不能同时为 False: 那样网关不会推任何行情"
+            )
+        self.emit_ticks = emit_ticks
+        self.emit_bars = emit_bars
+        # 双流下 bar 必须打区间结束戳, 否则与 tick 混推会时间戳倒退(实盘无
+        # sort 兜底, 见 OnRtnDepthMarketData 里的顺序注释)。
+        self.stamp_bar_at_interval_end = emit_ticks and emit_bars
+
+        self.aggregator: Optional[BarAggregator] = None
+        if self.emit_bars:
+            self.aggregator = BarAggregator(
+                feed, stamp_bar_at_interval_end=self.stamp_bar_at_interval_end
+            )
 
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
@@ -1070,9 +1114,26 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
 
         now_ns = time.time_ns()
 
-        if self.use_aggregator and self.aggregator:
+        # 顺序: 先喂聚合器(可能吐出上一区间已收盘的 bar), 再推当前 tick,
+        # 保证时间戳单调。实盘没有回测那层 feed.sort() 兜底
+        # (RealtimeDataClient::sort 是空实现, "Live data cannot be sorted"),
+        # 推入顺序即引擎所见顺序——反了会让 bar 排在更晚的 tick 之后造成时间戳
+        # 倒退, 且这个倒退是静默的, 不会报错, 只会破坏批次边界。
+        if self.aggregator is not None:
             self.aggregator.on_tick(symbol, price, float(volume), now_ns)
-        else:
+
+        if self.emit_ticks:
+            self.feed.add_tick(
+                Tick(timestamp=now_ns, symbol=symbol, price=price, volume=float(volume))
+            )
+        elif not self.emit_bars:
+            # 兜底分支, 理论上不会被合法构造出的实例触发: 构造函数已用
+            # ValueError 挡掉 emit_ticks/emit_bars 同时为 False 的组合, 所以
+            # 走到这里的前提(self.emit_ticks 为 False 且 self.emit_bars 也为
+            # False)在正常构造路径下不成立。保留它是防御性的——万一后续代码在
+            # __init__ 校验之后又直接篡改了这两个属性(绕过校验), 网关仍有
+            # 行情产出而不是彻底断流。这也是引入 add_tick 之前唯一的行为: 把
+            # 每个 tick 包装成假 bar(open=high=low=close=price)。
             last_vol = self.last_volume.get(symbol, volume)
             delta_vol = volume - last_vol
             self.last_volume[symbol] = volume
