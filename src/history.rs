@@ -157,6 +157,11 @@ impl From<SymbolHistorySnapshot> for SymbolHistory {
 pub struct HistoryBuffer {
     pub data: HashMap<String, SymbolHistory>,
     pub previous_data: HashMap<String, SymbolHistory>,
+    /// tick 序列。与 `data` 并列而非共用: tick 以退化 OHLC 写入, 若与 bar 混在
+    /// 同一 SymbolHistory, 高频 tick 会把历史 bar 挤出窗口, 且完全静默
+    /// (取到的值看起来就是价格)。
+    pub tick_data: HashMap<String, SymbolHistory>,
+    pub previous_tick_data: HashMap<String, SymbolHistory>,
     pub default_capacity: usize,
 }
 
@@ -165,6 +170,8 @@ impl HistoryBuffer {
         HistoryBuffer {
             data: HashMap::new(),
             previous_data: HashMap::new(),
+            tick_data: HashMap::new(),
+            previous_tick_data: HashMap::new(),
             default_capacity,
         }
     }
@@ -173,17 +180,36 @@ impl HistoryBuffer {
         self.default_capacity = capacity;
         self.data.clear();
         self.previous_data.clear();
+        self.tick_data.clear();
+        self.previous_tick_data.clear();
     }
 
     pub fn set_capacity_preserve_existing(&mut self, capacity: usize) {
         self.default_capacity = capacity;
         self.previous_data.clear();
+        self.previous_tick_data.clear();
         if capacity == 0 {
             self.data.clear();
+            self.tick_data.clear();
             return;
         }
 
         for history in self.data.values_mut() {
+            history.capacity = capacity;
+            while history.timestamps.len() > capacity {
+                history.timestamps.pop_front();
+                history.opens.pop_front();
+                history.highs.pop_front();
+                history.lows.pop_front();
+                history.closes.pop_front();
+                history.volumes.pop_front();
+                for values in history.extras.values_mut() {
+                    values.pop_front();
+                }
+            }
+        }
+
+        for history in self.tick_data.values_mut() {
             history.capacity = capacity;
             while history.timestamps.len() > capacity {
                 history.timestamps.pop_front();
@@ -218,10 +244,14 @@ impl HistoryBuffer {
         history.push(bar);
     }
 
-    /// `update` 的 tick 版本, 语义与之对称.
+    /// `update` 的 tick 版本, 语义与之对称, 但落到独立的 `tick_data` 容器.
     ///
     /// 与 `update` 保持同样的 previous_data 快照时序: 首次写入某 symbol 时
     /// 清除其 previous 快照, 否则把当前状态存为 previous。
+    ///
+    /// **不写入 `data`**: tick 以退化 OHLC (`open=high=low=close=price`) 写入,
+    /// 若与 bar 共用同一个 `SymbolHistory`, 高频 tick 会把历史 bar 挤出窗口,
+    /// 且完全静默——取到的值看起来就是合法价格, 指标照算, 结果却全错。
     pub fn update_tick(&mut self, tick: &Tick) {
         if self.default_capacity == 0 {
             return;
@@ -229,13 +259,13 @@ impl HistoryBuffer {
 
         let symbol = tick.symbol.clone();
         let history = self
-            .data
+            .tick_data
             .entry(symbol.clone())
             .or_insert_with(|| SymbolHistory::new(self.default_capacity));
         if history.timestamps.is_empty() {
-            self.previous_data.remove(&symbol);
+            self.previous_tick_data.remove(&symbol);
         } else {
-            self.previous_data.insert(symbol, history.clone());
+            self.previous_tick_data.insert(symbol, history.clone());
         }
 
         history.push_tick(tick);
@@ -247,6 +277,28 @@ impl HistoryBuffer {
 
     pub fn get_previous_history(&self, symbol: &str) -> Option<&SymbolHistory> {
         self.previous_data.get(symbol)
+    }
+
+    pub fn get_tick_history(&self, symbol: &str) -> Option<&SymbolHistory> {
+        self.tick_data.get(symbol)
+    }
+
+    pub fn get_previous_tick_history(&self, symbol: &str) -> Option<&SymbolHistory> {
+        self.previous_tick_data.get(symbol)
+    }
+
+    /// 该 symbol 是否已有 bar 序列（供上层判断双流歧义）.
+    pub fn has_bar_history(&self, symbol: &str) -> bool {
+        self.data
+            .get(symbol)
+            .is_some_and(|h| !h.timestamps.is_empty())
+    }
+
+    /// 该 symbol 是否已有 tick 序列（供上层判断双流歧义）.
+    pub fn has_tick_history(&self, symbol: &str) -> bool {
+        self.tick_data
+            .get(symbol)
+            .is_some_and(|h| !h.timestamps.is_empty())
     }
 }
 
@@ -278,6 +330,10 @@ impl From<HistoryBufferSnapshot> for HistoryBuffer {
                 .map(|(symbol, history)| (symbol, SymbolHistory::from(history)))
                 .collect(),
             previous_data: HashMap::new(),
+            // 快照格式本身不携带 tick 序列（`HistoryBufferSnapshot` 无对应字段），
+            // 恢复后 tick 容器留空，与 previous_data 的处理方式一致。
+            tick_data: HashMap::new(),
+            previous_tick_data: HashMap::new(),
             default_capacity: snapshot.default_capacity,
         }
     }
@@ -383,14 +439,52 @@ mod tests {
 
     #[test]
     fn update_tick_creates_symbol_history() {
+        // 分离之后 update_tick 落到 tick_data, 不再写入 bar 的 data 容器
+        // (此前的断言 buffer.get_history(...) 正是要修复的 bug 本身)。
         let mut buffer = HistoryBuffer::new(3);
         buffer.update_tick(&make_tick(1, 10));
 
-        let history = buffer.get_history("TEST").expect("history missing");
+        let history = buffer
+            .get_tick_history("TEST")
+            .expect("tick history missing");
         assert_eq!(history.closes[0], 10.0);
     }
 
+    #[test]
+    fn tick_and_bar_histories_do_not_evict_each_other() {
+        // 双流回归判据: 同一 symbol 交替写 bar 与 tick, 两条序列必须各自完整。
+        // 修复前 tick 以退化 OHLC 挤占同一 SymbolHistory, 把历史 bar 挤出窗口。
+        // 容量取 12(= 3*4 条 tick 总数), 确保 tick 序列不被自身容量淘汰,
+        // 否则断言 12 与 FIFO 淘汰逻辑矛盾。
+        let mut buffer = HistoryBuffer::new(12);
+        for n in 1..=3 {
+            for k in 0..4 {
+                buffer.update_tick(&make_tick(n * 1000 + k, n * 10 + k));
+            }
+            buffer.update(&make_bar(n * 1000 + 9, n * 10 + 3, None));
+        }
+        let bars = buffer.get_history("TEST").expect("bar history missing");
+        assert_eq!(
+            bars.closes.iter().copied().collect::<Vec<f64>>(),
+            vec![13.0, 23.0, 33.0]
+        );
+        let ticks = buffer
+            .get_tick_history("TEST")
+            .expect("tick history missing");
+        assert_eq!(ticks.closes.len(), 12);
+    }
 
+    #[test]
+    fn history_presence_flags_report_each_stream() {
+        let mut buffer = HistoryBuffer::new(4);
+        assert!(!buffer.has_bar_history("TEST"));
+        assert!(!buffer.has_tick_history("TEST"));
+        buffer.update(&make_bar(1, 10, None));
+        assert!(buffer.has_bar_history("TEST"));
+        assert!(!buffer.has_tick_history("TEST"));
+        buffer.update_tick(&make_tick(2, 11));
+        assert!(buffer.has_tick_history("TEST"));
+    }
 
     #[test]
     fn test_history_buffer_snapshot_roundtrip_preserves_history() {
