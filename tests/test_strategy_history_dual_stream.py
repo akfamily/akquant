@@ -117,6 +117,68 @@ def test_tick_freq_rejects_ohlc_only_field() -> None:
         )
 
 
+class _DFCollector(Strategy):
+    """在第一次 on_bar 时按指定 freq 取 get_history_df 结果."""
+
+    warmup_period = 3
+    freq_arg: Optional[str] = None
+    captured: pd.DataFrame = pd.DataFrame()
+
+    def on_start(self) -> None:
+        """重置采集状态."""
+        self.done = False
+        type(self).captured = pd.DataFrame()
+
+    def on_bar(self, bar: Bar) -> None:
+        """首个非预热 bar 上取一次 get_history_df."""
+        if self.done:
+            return
+        self.done = True
+        type(self).captured = self.get_history_df(
+            count=3, symbol=bar.symbol, freq=self.freq_arg
+        )
+
+
+def test_dual_stream_get_history_df_bar_freq_is_not_polluted_by_ticks() -> None:
+    """get_history_df 在双流 + freq='bar' 下必须返回未被 tick 污染的 bar OHLCV."""
+
+    class DFStrategy(_DFCollector):
+        freq_arg = "bar"
+
+    run_backtest(
+        strategy=DFStrategy, data=_dual_stream_feed(), symbols=["X"], initial_cash=1e5
+    )
+    df = DFStrategy.captured
+    assert df["open"].tolist() == [10.0, 20.0, 30.0]
+    assert df["high"].tolist() == [13.0, 23.0, 33.0]
+    assert df["low"].tolist() == [10.0, 20.0, 30.0]
+    assert df["close"].tolist() == [13.0, 23.0, 33.0]
+
+
+def test_dual_stream_get_history_multi_tick_freq_rejects_ohlc_field() -> None:
+    """get_history_multi 在 freq='tick' 下混入 open/high/low 字段必须报错并指路."""
+
+    class MultiFieldStrategy(_Collector):
+        freq_arg = "tick"
+
+        def on_bar(self, bar: Bar) -> None:
+            """故意在 fields 里混入 high 字段取 tick 历史."""
+            if self.done:
+                return
+            self.done = True
+            self.get_history_multi(
+                count=3, symbol=bar.symbol, fields=("close", "high"), freq="tick"
+            )
+
+    with pytest.raises(ValueError, match="get_history"):
+        run_backtest(
+            strategy=MultiFieldStrategy,
+            data=_dual_stream_feed(),
+            symbols=["X"],
+            initial_cash=1e5,
+        )
+
+
 def test_pure_bar_path_behavior_unchanged() -> None:
     """纯 bar 路径省略 freq 行为不变(回归底线)."""
     index = pd.date_range("2024-01-02", periods=6, freq="D")

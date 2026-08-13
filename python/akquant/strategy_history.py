@@ -18,7 +18,9 @@ def _validate_field_for_freq(field: str, freq: Optional[str]) -> None:
     if freq == "tick" and field not in _TICK_ALLOWED_FIELDS:
         raise ValueError(
             f"freq='tick' 时不支持 field={field!r}: tick 没有 open/high/low, "
-            f"可用字段为 {sorted(_TICK_ALLOWED_FIELDS)}"
+            f"可用字段为 {sorted(_TICK_ALLOWED_FIELDS)}; "
+            "如需成交价序列请改用 get_history(freq='tick', field='price') 或 "
+            "field='close'"
         )
 
 
@@ -129,25 +131,42 @@ def get_history_multi(
 
 
 def get_history_df(
-    strategy: Any, count: int, symbol: Optional[str] = None
+    strategy: Any,
+    count: int,
+    symbol: Optional[str] = None,
+    freq: Optional[str] = None,
 ) -> pd.DataFrame:
-    """获取历史数据 DataFrame (Open, High, Low, Close, Volume)."""
+    """获取历史数据 DataFrame (Open, High, Low, Close, Volume).
+
+    :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。``None`` 时若该 symbol
+        同时存在两条序列会报错, 要求显式指定(不静默选一条)。默认取的
+        open/high/low/close/volume 五个字段在 ``freq='tick'`` 下必然报错
+        (tick 没有 OHLC), 此时请改用 :func:`get_history` 配合
+        ``field='price'`` 或 ``'close'`` 取成交价序列。
+    """
     symbol = strategy._resolve_symbol(symbol)
     data = get_history_multi(
-        strategy, count, symbol, ("open", "high", "low", "close", "volume")
+        strategy, count, symbol, ("open", "high", "low", "close", "volume"), freq
     )
     return pd.DataFrame(data)
 
 
 def get_rolling_data(
-    strategy: Any, length: Optional[int] = None, symbol: Optional[str] = None
+    strategy: Any,
+    length: Optional[int] = None,
+    symbol: Optional[str] = None,
+    freq: Optional[str] = None,
 ) -> tuple[pd.DataFrame, Optional[pd.Series]]:
-    """获取滚动训练数据."""
+    """获取滚动训练数据.
+
+    :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``, 透传给
+        :func:`get_history_df`; 语义与限制同上。
+    """
     if length is None:
         length = strategy._rolling_train_window
 
     if length <= 0:
         raise ValueError("Invalid rolling window length")
 
-    df = get_history_df(strategy, length, symbol)
+    df = get_history_df(strategy, length, symbol, freq)
     return df, None

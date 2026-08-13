@@ -1421,6 +1421,7 @@ class Strategy:
         count: int,
         symbol: Optional[str] = None,
         fields: Tuple[str, ...] = ("open", "high", "low", "close", "volume"),
+        freq: Optional[str] = None,
     ) -> Dict[str, np.ndarray]:
         """
         批量获取多个字段的历史数据 (单次跨界).
@@ -1431,31 +1432,67 @@ class Strategy:
         :param count: 获取的数据长度 (必须 <= history_depth)
         :param symbol: 标的代码 (默认当前 Bar 的 symbol)
         :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。同一 symbol 若
+            同时存在 bar 与 tick 两条历史序列, 省略 freq 会报错, 要求显式指定
+            (不静默选一条); freq='tick' 时 fields 只支持 price/close/volume,
+            含 open/high/low 会报错。
         :return: {field: np.ndarray}, 按 fields 顺序建键
         """
-        return _get_history_multi_impl(self, count, symbol, fields)
+        # freq 只在显式指定时才透传, 兼容子类覆写本方法沿用旧签名(不接受
+        # freq)的既有用法, 与 get_history_map 的处理方式一致。
+        call_kwargs: Dict[str, Any] = {
+            "count": count,
+            "symbol": symbol,
+            "fields": fields,
+        }
+        if freq is not None:
+            call_kwargs["freq"] = freq
+        return _get_history_multi_impl(self, **call_kwargs)
 
-    def get_history_df(self, count: int, symbol: Optional[str] = None) -> pd.DataFrame:
+    def get_history_df(
+        self,
+        count: int,
+        symbol: Optional[str] = None,
+        freq: Optional[str] = None,
+    ) -> pd.DataFrame:
         """
         获取历史数据 DataFrame (Open, High, Low, Close, Volume).
 
         :param count: 数据长度
         :param symbol: 标的代码
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。同一 symbol 若
+            同时存在 bar 与 tick 两条历史序列, 省略 freq 会报错, 要求显式指定
+            (不静默选一条)。默认取的 OHLCV 五个字段在 ``freq='tick'`` 下必然
+            报错(tick 没有 open/high/low), 如需成交价序列请改用
+            ``get_history(freq='tick', field='price')`` 或 ``field='close'``。
         :return: pd.DataFrame
         """
-        return _get_history_df_impl(self, count, symbol)
+        # 同 get_history_multi: 仅在显式指定时透传 freq, 兼容旧签名覆写。
+        call_kwargs: Dict[str, Any] = {"count": count, "symbol": symbol}
+        if freq is not None:
+            call_kwargs["freq"] = freq
+        return _get_history_df_impl(self, **call_kwargs)
 
     def get_rolling_data(
-        self, length: Optional[int] = None, symbol: Optional[str] = None
+        self,
+        length: Optional[int] = None,
+        symbol: Optional[str] = None,
+        freq: Optional[str] = None,
     ) -> tuple[pd.DataFrame, Optional[pd.Series]]:
         """
         获取滚动训练数据.
 
         :param length: 数据长度 (默认使用 set_rolling_window 设置的 train_window)
         :param symbol: 标的代码
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``, 透传给
+            get_history_df; 语义与限制同上。
         :return: (X, y) 默认为 (DataFrame, None)
         """
-        return _get_rolling_data_impl(self, length, symbol)
+        # 同上: 仅在显式指定时透传 freq, 兼容旧签名覆写。
+        call_kwargs: Dict[str, Any] = {"length": length, "symbol": symbol}
+        if freq is not None:
+            call_kwargs["freq"] = freq
+        return _get_rolling_data_impl(self, **call_kwargs)
 
     def on_train_signal(self, context: Any) -> None:
         """
