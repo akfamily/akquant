@@ -287,21 +287,21 @@ def test_multi_symbol_dual_stream_bar_history_is_not_synthesized_from_tick_price
     修复前 X 会拿到 [13.0, 20.0, 23.0]（20.0 是 X 自己的 tick 价），
     Y 会拿到 [103.0, 203.0, 203.0]（203 重复）。
 
-    warmup_period 取 5 而非直觉上的 3: `strategy._bar_count`
-    (strategy_events.py:109) 是跨 symbol 的全局计数器, 每收到一个真实
-    Bar 事件(不分 symbol)就 +1。双 symbol 下每个真实分钟会产生 2 个 Bar
-    事件, 计数器按 symbol 数缩放, warmup_period=3 会在每个 symbol 各自
-    只攒够 2 根真 bar 时就跨过门槛, 导致 get_history(count=3) 里混入 1 个
-    nan 占位。这是纯 bar 路径也存在的既有缺陷(与本用例要验证的"tick 价
-    污染 bar 序列"正交, 已确认与本任务无关, 另行跟踪), 此前恰被本任务修的
-    污染 bug 掩盖——污染多塞一条(错误的)记录, 把长度顶到了 3, 掩盖了"实际
-    只有 2 条真数据"这个事实。此处取 5 以绕开这个既有缺陷, 让断言精确落在
-    "bar 序列是否被 tick 价污染"上。
+    判据仍能检出污染: 数据构造让 X 的 bar close 按分钟递增 10
+    (n*10+3), 故 [13, 23, 33] 是严格等差的。若 fill_missing_bars 又用
+    tick 价合成假 bar 混进来, 序列里必然出现破坏等差的值(如 20.0),
+    断言就会红。
+
+    warmup_period 取 3 即"每个 symbol 各自攒够 3 根真 bar", 与
+    get_history(count=3) 对齐。该用例曾一度取 5, 因为当时
+    `strategy._bar_count` 是跨 symbol 的全局计数器, 双 symbol 下
+    warmup_period=3 会在每个 symbol 只攒够 2 根时就跨过门槛(混入 1 个
+    nan 占位); 那个既有缺陷已修为 per-symbol 计数, 故此处回到直觉值。
     """
     captured: dict[str, list[float]] = {}
 
     class MultiSymbolStrategy(Strategy):
-        warmup_period = 5
+        warmup_period = 3
 
         def on_start(self) -> None:
             """重置采集状态."""
