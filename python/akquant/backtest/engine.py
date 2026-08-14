@@ -906,8 +906,11 @@ def _normalize_symbols_argument(
         seen.add(value)
         cleaned.append(value)
 
-    if not cleaned:
-        raise ValueError("symbols cannot be empty")
+    # 传空集合(cleaned 为空)时不在此处报错: 调用方 _resolve_effective_symbols
+    # 紧接着会用 api_name 拼出更具体的中文报错(说明后果与两条可选修法), 这里
+    # 若先行抛出英文短消息("symbols cannot be empty"), 会让那条更有用的报错
+    # 永远拿不到执行机会(死代码)。空字符串等"非空集合但含空值"的情形仍在上面
+    # 的循环内单独报错, 不受此影响。
     return cleaned
 
 
@@ -4597,11 +4600,24 @@ def run_backtest(
                 slot_strategy._symbol_data_warned = set(symbol_data_missing)
 
     # symbols 白名单: 只在用户显式传了 symbols 时启用。
-    # 白名单取合并后的集合(symbols + config.instruments + __init__ 里的
-    # subscribe), 因为这几项都在数据加载前就能确定。
-    # DataFeed 对象输入只能靠这一层过滤 —— 它只写不读, Python 无从枚举内容。
+    # 不得直接用局部变量 `symbols`——它在上面的数据加载分支(DataFrame/dict/
+    # adapter, :3253/:3334/:3338/:3389 附近)里会被数据里检测到的标的反向
+    # 改写/追加, 一旦发生, 这里下发的就不再是用户请求的白名单而是"用户请求 ∪
+    # 数据里出现过的标的"——对 Rust 层形同没有过滤, 复活了这个改动本要消灭的
+    # 缺陷(未列入白名单的标的照样撮合、套用默认合约参数)。改用干净的合并结果:
+    # 重新调用 _merge_symbol_whitelist_sources(与 run_from_checkpoint 的
+    # 对应下发点一致, 见 :6098 附近), 从未被污染的 effective_symbols 出发合并
+    # config.instruments 与各策略当前的 _subscriptions(此时 on_start 已跑完,
+    # 能看到 on_start 里新增的订阅)。
     if symbols_explicit:
-        engine.set_symbol_whitelist(list(symbols))
+        engine.set_symbol_whitelist(
+            _merge_symbol_whitelist_sources(
+                effective_symbols,
+                config,
+                strategy_instance,
+                *slot_strategy_instances.values(),
+            )
+        )
 
     # 6. 添加数据
     engine.add_data(feed)
