@@ -100,6 +100,14 @@ pub struct Engine {
     // Pipeline state
     pub(crate) current_event: Option<Event>,
     pub(crate) bar_count: usize,
+    /// 用户显式传入 `symbols` 时的标的白名单。
+    ///
+    /// 三态语义（不能用空集合兼表「不过滤」）:
+    /// - `None` = 未设置 ⇒ 放行全部（不传 `symbols` 时的现有行为）
+    /// - `Some(非空)` = 只放行集合内的标的
+    /// - `Some(空)` 不应出现: Python 侧在参数解析阶段即拒绝空 `symbols`,
+    ///   FFI setter 亦把空列表折叠成 `None`, 避免静默跑出零事件回测。
+    pub(crate) symbol_whitelist: Option<std::collections::HashSet<String>>,
     pub(crate) progress_total_steps: usize,
     pub(crate) progress_bar: Option<ProgressBar>,
     pub(crate) strategy_contexts: Vec<Option<Py<StrategyContext>>>,

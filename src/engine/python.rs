@@ -559,6 +559,7 @@ impl Engine {
             settlement_manager: SettlementManager::new(),
             current_event: None,
             bar_count: 0,
+            symbol_whitelist: None,
             progress_total_steps: 0,
             progress_bar: None,
             strategy_contexts: vec![None],
@@ -755,6 +756,20 @@ impl Engine {
             .write()
             .unwrap()
             .set_capacity_preserve_existing(depth);
+    }
+
+    /// 设置标的白名单: 只有集合内的标的会被分发给策略。
+    ///
+    /// 空列表折叠为「未设置」(放行全部) —— Python 侧已在参数解析阶段拒绝空
+    /// `symbols`, 此处是防御, 不能让空集合变成「什么都不放行」的静默空回测。
+    ///
+    /// :param symbols: 白名单标的列表
+    fn set_symbol_whitelist(&mut self, symbols: Vec<String>) {
+        self.symbol_whitelist = if symbols.is_empty() {
+            None
+        } else {
+            Some(symbols.into_iter().collect())
+        };
     }
 
     /// 设置时区偏移 (秒)

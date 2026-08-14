@@ -572,6 +572,17 @@ class Engine:
         """
         ...
 
+    def set_symbol_whitelist(self, symbols: list[str]) -> None:
+        r"""
+        设置标的白名单: 只有集合内的标的会被分发给策略.
+
+        空列表折叠为「未设置」(放行全部) —— Python 侧已在参数解析阶段拒绝空
+        `symbols`, 此处是防御, 不能让空集合变成「什么都不放行」的静默空回测。
+
+        :param symbols: 白名单标的列表
+        """
+        ...
+
     def set_timezone(self, offset: int) -> None:
         r"""
         设置时区偏移 (秒).

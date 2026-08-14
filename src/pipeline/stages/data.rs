@@ -255,6 +255,26 @@ impl Processor for DataProcessor {
             }
             FeedAction::Event(event) => {
                 let event = *event;
+
+                // 标的白名单: 用户显式传了 symbols 时只放行白名单内的标的。
+                // 返回 Loop = 丢弃本事件、去取下一个, 与下面
+                // `timestamp <= engine.snapshot_time` 的处理方式一致。
+                // 放在最前面是有意的: 白名单外的事件不该影响 last_timestamp、
+                // seen_symbols、bar_count 等任何时间片状态, 否则它们仍会
+                // 参与批次边界与进度计算。
+                if let Some(whitelist) = &engine.symbol_whitelist {
+                    let event_symbol = match &event {
+                        Event::Bar(b) => Some(b.symbol.as_str()),
+                        Event::Tick(t) => Some(t.symbol.as_str()),
+                        _ => None,
+                    };
+                    if let Some(symbol) = event_symbol
+                        && !whitelist.contains(symbol)
+                    {
+                        return Ok(ProcessorResult::Loop);
+                    }
+                }
+
                 let timestamp = match &event {
                     Event::Bar(b) => b.timestamp,
                     Event::Tick(t) => t.timestamp,
