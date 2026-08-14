@@ -104,7 +104,7 @@ Built-in indicators (`SMA`, `EMA`, etc.) support pickle serialization. For custo
 
 ## 4. Notes
 
-1. **Instrument re-registration**: `run_from_checkpoint` auto-registers default instrument info for symbols in new data. If your strategy depends on custom `lot_size` or `multiplier`, verify and override in `on_start`.
+1. **Instrument re-registration**: `run_from_checkpoint` auto-registers default instrument info for symbols in new data. If your strategy depends on custom `lot_size` or `multiplier`, verify and override in `on_start`. **Note**: if a `symbols` whitelist is passed, data for symbols outside it is never loaded at all, so no default instrument registration happens for them either — `symbols` means "only run these symbols", and anything not in it simply does not exist in this resumed run.
 2. **MarketModel reset**: Fee settings and trading rules (for example T+1) are not persisted in snapshots. Re-pass them via explicit args or `config.strategy_config` on resume, including `commission_policy` / `commission_rate`, taxes, and transfer-fee settings.
 3. **Initial cash display**: `result2.metrics.initial_cash` is adjusted to resumed-phase starting cash, so phase-2 return metrics remain interpretable.
 4. **Data continuity**: Keep phase-1 end and phase-2 start continuous to avoid indicator jumps.

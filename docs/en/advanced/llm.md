@@ -49,7 +49,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   **Key Parameters**:
         *   `data`: DataFrame or Dict of DataFrames.
         *   `strategy`: Strategy class or instance.
-        *   `symbol`: Benchmark symbol or list of symbols.
+        *   `symbols`: Symbol or list/tuple/set of symbols to run. Passing it means "only run these symbols" — data for symbols outside it is filtered out.
         *   `initial_cash`: Float (e.g., 100_000.0).
         *   `warmup_period`: Int (optional override).
         *   `fill_policy`: A `FillMode` object for unified execution semantics (recommended), e.g. `NextClose()`.
@@ -310,6 +310,6 @@ run_backtest(..., config=BacktestConfig(strategy_config=strategy_config))
     *   **Cause**: Insufficient funds, hitting risk limits, or outside trading hours.
     *   **Solution**: Check the `reject_reason` field in `result.orders_df`; adjust `initial_cash` or `risk_config`.
 
-4.  **Mixed `symbol` / `symbols` inputs**:
-    *   **Cause**: Both parameters are provided with conflicting values.
-    *   **Solution**: Prefer `symbols`; keep `symbol` only for compatibility code paths.
+4.  **Passing the removed `symbol` parameter**:
+    *   **Cause**: `symbol` was deprecated and removed (see the `symbols` semantics change); passing it in any form raises a `ValueError` ("no longer accepts `symbol`; please use `symbols` only"), regardless of whether `symbols` is also passed.
+    *   **Solution**: Use `symbols` instead (accepts a single string or a list/tuple/set).

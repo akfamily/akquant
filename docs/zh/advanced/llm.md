@@ -50,7 +50,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   **Key Parameters**:
         *   `data`: DataFrame or Dict of DataFrames.
         *   `strategy`: Strategy class or instance.
-        *   `symbol`: Benchmark symbol or list of symbols.
+        *   `symbols`: Symbol or list/tuple/set of symbols to run. Passing it means "only run these symbols" — data for symbols outside it is filtered out.
         *   `initial_cash`: Float (e.g., 100_000.0).
         *   `warmup_period`: Int (optional override).
         *   `fill_policy`: `FillMode` 对象（从 `akquant` 导入），五选一：`NextOpen()`（默认）、`NextClose()`、`NextAverage()`、`NextHighLowMid()`、`CurrentClose(timer_fill_timing="immediate"|"deferred")`。例如 `fill_policy=NextClose()`。
@@ -393,6 +393,6 @@ run_backtest(..., config=BacktestConfig(strategy_config=strategy_config))
     *   **原因**: 资金不足、触及风控限制、或者不在交易时段。
     *   **解决**: 检查 `result.orders_df` 中的 `reject_reason` 字段；调整 `initial_cash` 或 `risk_config`。
 
-4.  **`symbol` / `symbols` 混用**:
-    *   **原因**: 同时传入两个参数且存在冲突，导致参数校验失败。
-    *   **解决**: 优先使用 `symbols`；仅在兼容旧代码时使用 `symbol`。
+4.  **误传 `symbol` 参数**:
+    *   **原因**: `symbol` 参数已废弃移除（见 `symbols` 语义变更），任何形式传入 `symbol` 都会直接抛 `ValueError`（提示 "no longer accepts `symbol`; please use `symbols` only"），不区分是否同时传了 `symbols`。
+    *   **解决**: 统一改用 `symbols`（接受单个字符串或 list/tuple/set）。
