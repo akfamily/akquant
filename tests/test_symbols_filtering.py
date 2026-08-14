@@ -429,3 +429,28 @@ def test_checkpoint_resume_without_symbols_does_not_inherit_stale_whitelist(
     strategy = result.strategy
     assert strategy is not None
     assert strategy.hits.get("Y", 0) > 0
+
+
+def test_symbol_with_no_data_warns(caplog: Any) -> None:
+    """白名单里的标的全程没有数据时必须告警(多为标的代码写错)."""
+    with caplog.at_level("WARNING"):
+        _run(_bars(), symbols=["X", "NOSUCH"])
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("NOSUCH" in m for m in messages)
+    assert not any("'X'" in m and "没有" in m for m in messages)
+
+
+def test_symbol_with_data_is_not_reported(caplog: Any) -> None:
+    """有数据的标的不得被误报为零数据."""
+    with caplog.at_level("WARNING"):
+        _run(_bars(), symbols=["X"])
+    assert not any(
+        "X" in r.getMessage() and "没有" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_data_feed_form_also_warns(caplog: Any) -> None:
+    """DataFeed 形态无法预先枚举, 靠会话末兜底同样要报出来."""
+    with caplog.at_level("WARNING"):
+        _run(_feed(), symbols=["X", "NOSUCH"])
+    assert any("NOSUCH" in r.getMessage() for r in caplog.records)

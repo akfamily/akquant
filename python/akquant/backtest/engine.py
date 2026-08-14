@@ -4529,6 +4529,26 @@ def run_backtest(
             ", ".join(sorted(filtered_out_symbols)),
         )
 
+    # 运行前比对: symbols 里有没有标的实际数据集合里压根没有(能枚举的形态才行——
+    # data_map_for_indicators 为空时说明走的是 DataFeed 对象输入, 它只写不读,
+    # Python 无从枚举, 只能留给会话末 Strategy._check_symbol_data_coverage 兜底)。
+    # 与 filtered_out_symbols(用户主动排除)、adapter 泄漏 warning(数据里有、但
+    # 未被请求)是三个不相交的集合——这里是"白名单里有、但数据里没有"。
+    symbol_data_missing: set[str] = set()
+    if symbols_explicit and data_map_for_indicators:
+        symbol_data_missing = set(symbols) - set(data_map_for_indicators.keys())
+        for sym in sorted(symbol_data_missing):
+            logger.warning(
+                "标的 %s 在 symbols 中但数据里没有它: 该标的全程不会有任何行情"
+                "事件。常见原因是标的代码写错、数据源未覆盖、或所选时间范围内"
+                "无交易。",
+                sym,
+            )
+        if symbol_data_missing:
+            strategy_instance._symbol_data_warned = set(symbol_data_missing)
+            for slot_strategy in slot_strategy_instances.values():
+                slot_strategy._symbol_data_warned = set(symbol_data_missing)
+
     # symbols 白名单: 只在用户显式传了 symbols 时启用。
     # 白名单取合并后的集合(symbols + config.instruments + __init__ 里的
     # subscribe), 因为这几项都在数据加载前就能确定。
@@ -6030,6 +6050,25 @@ def run_from_checkpoint(
                     if s not in whitelist_symbols:
                         whitelist_symbols.append(s)
         engine.set_symbol_whitelist(whitelist_symbols)
+
+    # 运行前比对: 与 run_backtest 对称(见该函数同名注释)。symbols 里有没有标的
+    # 实际数据集合里压根没有——data_map_for_indicators 为空说明走的是 DataFeed
+    # 对象输入, 只能留给会话末 Strategy._check_symbol_data_coverage 兜底。
+    if symbols_explicit and data_map_for_indicators:
+        symbol_data_missing = set(effective_symbols) - set(
+            data_map_for_indicators.keys()
+        )
+        for sym in sorted(symbol_data_missing):
+            logger.warning(
+                "标的 %s 在 symbols 中但数据里没有它: 该标的全程不会有任何行情"
+                "事件。常见原因是标的代码写错、数据源未覆盖、或所选时间范围内"
+                "无交易。",
+                sym,
+            )
+        if symbol_data_missing:
+            strategy_instance._symbol_data_warned = set(symbol_data_missing)
+            for slot_strategy in slot_strategy_instances.values():
+                slot_strategy._symbol_data_warned = set(symbol_data_missing)
 
     if data_map_for_indicators:
         for current_strategy in all_strategy_instances:

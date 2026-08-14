@@ -406,6 +406,10 @@ class Strategy:
     # 回测且用户显式传了 symbols 时, 由 engine.py 设为 symbols 集合; subscribe()
     # 据此校验。None 表示不校验(未显式传 symbols, 或实盘)。
     _symbol_whitelist: Optional[set[str]]
+    # 运行前(engine.py)已经就"symbols 里零数据的标的"告警过的集合, 供
+    # `_check_symbol_data_coverage` 去重——同一标的不应该运行前报一次、会话末
+    # 又报一次。见该方法文档字符串。
+    _symbol_data_warned: set[str]
     _model_configured: bool
     model: Optional["QuantModel"]
     _ml_validation_lifecycle: bool
@@ -645,6 +649,7 @@ class Strategy:
         instance._bar_count = 0
         instance._last_train_bar_count = 0
         instance._symbol_whitelist = None
+        instance._symbol_data_warned = set()
         instance._model_configured = False
         instance._start_initialized = False
         instance._ml_validation_lifecycle = False
@@ -1108,11 +1113,14 @@ class Strategy:
         是框架自身的配置校验, engine 的 handler 会在记录日志前先重抛该类型, 使其
         穿透到调用方——不会退化成一条静默的 ERROR 日志。
 
-        `_check_warmup_symbol_coverage` 放在 `_check_incremental_hl_bar_coverage`
-        之前: 后者可能抛出, 若顺序颠倒会让本就只是提示性的 warmup 告警在异常场景
-        下被跳过。
+        `_check_symbol_data_coverage`/`_check_warmup_symbol_coverage` 都放在
+        `_check_incremental_hl_bar_coverage` 之前: 后者可能抛出, 若顺序颠倒会让
+        本就只是提示性的告警在异常场景下被跳过。`_check_symbol_data_coverage`
+        又放在 `_check_warmup_symbol_coverage` 最前面: 「压根没数据」比「有数据
+        但不够预热」更根本, 先报更根本的那条。
         """
         _ensure_framework_state_impl(self)
+        self._check_symbol_data_coverage()
         self._check_warmup_symbol_coverage()
         self._check_incremental_hl_bar_coverage()
         _dispatch_shutdown_hooks_impl(self)
@@ -1730,6 +1738,33 @@ class Strategy:
                 input_mode=item.input_mode,
             )
             ind.update(*args)
+
+    def _check_symbol_data_coverage(self) -> None:
+        """会话结束时核验: symbols 里有没有标的全程没收到过任何 bar.
+
+        与运行前的比对(engine.py, 用 `data_map_for_indicators` 与 `symbols` 求差集)
+        互补: DataFeed 对象输入无法预先枚举内容(它只写不读), 只能等会话结束、
+        看 `_symbol_bar_counts` 里到底出现过哪些标的。
+
+        `_symbol_data_warned` 是运行前检查已经报过的标的集合(由 engine.py 写入)
+        ——同一标的不应该运行前报一次、这里又重复报一次。
+
+        只告警不报错: 某标的在所选时间范围内确实无交易是合理场景, 报错会误杀
+        正常回测。与既有先例一致(Catalog 路径 backtest/engine.py 亦为 warning)。
+        """
+        whitelist = getattr(self, "_symbol_whitelist", None)
+        if not whitelist:
+            return
+        counts = getattr(self, "_symbol_bar_counts", None) or {}
+        seen = {symbol for symbol, count in counts.items() if int(count) > 0}
+        already_warned = getattr(self, "_symbol_data_warned", None) or set()
+        for symbol in sorted(whitelist - seen - already_warned):
+            _live_subscribe_logger.warning(
+                "标的 %s 在 symbols 中但全程未收到任何 bar: 策略对它未做任何"
+                "决策。常见原因是标的代码写错、数据源未覆盖、或所选时间范围内"
+                "无交易。",
+                symbol,
+            )
 
     def _check_warmup_symbol_coverage(self) -> None:
         """会话结束时核验: 有没有标的因为 warmup 门槛全程未触发过 on_bar.
