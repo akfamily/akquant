@@ -148,7 +148,17 @@ def should_trigger_training(strategy: Any) -> bool:
 
     validation_config = _get_validation_config(strategy)
     if validation_config is None:
-        return bool(int(strategy._bar_count) % int(strategy._rolling_step) == 0)
+        # 阈值语义, 不用取模: 取模对"任何一次被跳过的 bar 事件"都不健壮——
+        # 例如 per-symbol warmup 门槛恰好挡住了 _bar_count 等于 step 倍数的
+        # 那次事件, 取模下一次事件 _bar_count 已经往前走了一格, 模值再也凑
+        # 不回 0, 这次训练永久丢失而非延后。阈值化后同样的跳过只会让触发
+        # 顺延到下一根满足条件的 bar, 不会丢(状态推进见
+        # consume_training_trigger)。没有任何跳过时, 首次触发时机与取模
+        # 完全一致(均为 _bar_count == step 那一刻)。
+        last_train_bar = int(getattr(strategy, "_last_train_bar_count", 0))
+        return bool(
+            int(strategy._bar_count) - last_train_bar >= int(strategy._rolling_step)
+        )
 
     next_train_bar = int(
         getattr(strategy, "_rolling_next_train_bar", strategy._rolling_train_window)
@@ -161,11 +171,20 @@ def should_trigger_training(strategy: Any) -> bool:
 
 def consume_training_trigger(strategy: Any) -> None:
     """消费一次训练触发并推进下一窗口."""
-    validation_config = _get_validation_config(strategy)
-    if validation_config is None or strategy._rolling_step <= 0:
+    if strategy._rolling_step <= 0:
         return
 
     current_bar = int(strategy._bar_count)
+    validation_config = _get_validation_config(strategy)
+    if validation_config is None:
+        # 无 validation_config 分支用的是 should_trigger_training 里的阈值
+        # 语义, 状态推进必须在这里完成、且必须在 return 之前——这个分支永远
+        # 不会执行到下面 validation_config 专属的窗口 bookkeeping, 若状态
+        # 更新只放在那之后, _last_train_bar_count 会永远停在 0, 阈值判断
+        # 就退化成"每个 bar 都触发"。
+        strategy._last_train_bar_count = current_bar
+        return
+
     next_window_index = int(getattr(strategy, "_rolling_window_index", 0)) + 1
     pending_start_bar = current_bar + 1
     pending_end_bar: Optional[int]

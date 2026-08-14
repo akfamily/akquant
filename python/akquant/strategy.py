@@ -399,6 +399,10 @@ class Strategy:
     # 全局 bar 事件计数(不分 symbol), 供 ML 滚动训练节奏使用(见 strategy_ml.py)。
     # warmup 门槛请用 per-symbol 的 _symbol_bar_counts, 不要复用这个字段。
     _bar_count: int
+    # 无 validation_config 时滚动训练用的阈值状态: 上次触发训练时的
+    # _bar_count(见 strategy_ml.py::should_trigger_training/
+    # consume_training_trigger)。
+    _last_train_bar_count: int
     _model_configured: bool
     model: Optional["QuantModel"]
     _ml_validation_lifecycle: bool
@@ -630,6 +634,7 @@ class Strategy:
         instance._rolling_train_window = 0
         instance._rolling_step = 0
         instance._bar_count = 0
+        instance._last_train_bar_count = 0
         instance._model_configured = False
         instance._start_initialized = False
         instance._ml_validation_lifecycle = False
@@ -905,6 +910,8 @@ class Strategy:
             self._ml_pending_window_start_bar = None
         if not hasattr(self, "_ml_pending_window_end_bar"):
             self._ml_pending_window_end_bar = None
+        if not hasattr(self, "_last_train_bar_count"):
+            self._last_train_bar_count = 0
         for name in list(getattr(self, "_incremental_indicators", {}).keys()):
             setattr(self, name, IncrementalIndicatorBinding(self, name))
         _ensure_framework_state_impl(self)
