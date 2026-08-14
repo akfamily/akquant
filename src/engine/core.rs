@@ -108,6 +108,11 @@ pub struct Engine {
     /// - `Some(空)` 不应出现: Python 侧在参数解析阶段即拒绝空 `symbols`,
     ///   FFI setter 亦把空列表折叠成 `None`, 避免静默跑出零事件回测。
     pub(crate) symbol_whitelist: Option<std::collections::HashSet<String>>,
+    /// 因不在 `symbol_whitelist` 内而被 `pipeline/stages/data.rs` 丢弃的事件数.
+    ///
+    /// 只计数、不逐事件打日志(那会淹没输出) —— 由 `Engine::run` 在会话结束时
+    /// 汇总报一条 `log::info!`, 让白名单丢事件不再是完全静默的。
+    pub(crate) whitelist_filtered_event_count: u64,
     pub(crate) progress_total_steps: usize,
     pub(crate) progress_bar: Option<ProgressBar>,
     pub(crate) strategy_contexts: Vec<Option<Py<StrategyContext>>>,

@@ -47,7 +47,18 @@ pub trait DataClient: Send {
     fn add(&mut self, event: Event) -> Result<(), AkQuantError>;
     fn sort(&mut self);
     fn len_hint(&self) -> Option<usize>;
-    fn progress_len_hint(&self) -> Option<usize> {
+    /// 进度条 total 的估算步数(通常是不重复时间戳数)。
+    ///
+    /// `whitelist` 非 `None` 时应只统计"至少有一个白名单内标的事件"的时间戳
+    /// ——否则白名单外标的独占的时间戳会被引擎层过滤丢弃(见
+    /// `pipeline/stages/data.rs` 的 `whitelist_filtered_event_count`), 但仍被
+    /// 计入 total, 导致进度条永远跑不满(issue: symbols 过滤下进度条 total 未
+    /// 扣除被过滤标的)。默认实现忽略 `whitelist`, 退化为 `len_hint()`——只有
+    /// [`SimulatedDataClient`] 这个承载 symbols 过滤主场景的实现给出精确值,
+    /// 其余数据源(CSV/Realtime/Parquet 流式)本就很少与 `symbols` 白名单同时
+    /// 使用, 维持现状不做过度工程。
+    fn progress_len_hint(&self, whitelist: Option<&HashSet<String>>) -> Option<usize> {
+        let _ = whitelist;
         self.len_hint()
     }
 
@@ -180,15 +191,32 @@ impl DataClient for SimulatedDataClient {
         Some((self.bars.len() - self.bar_cursor) + self.events.len())
     }
 
-    fn progress_len_hint(&self) -> Option<usize> {
+    fn progress_len_hint(&self, whitelist: Option<&HashSet<String>>) -> Option<usize> {
         let mut timestamps = HashSet::new();
         for i in self.bar_cursor..self.bars.len() {
+            if let Some(wl) = whitelist
+                && !wl.contains(&self.bars.symbols[i])
+            {
+                continue;
+            }
             let ts = self.bars.timestamp_at(i);
             if ts > 0 {
                 timestamps.insert(ts);
             }
         }
         for event in &self.events {
+            if let Some(wl) = whitelist {
+                let event_symbol = match event {
+                    Event::Bar(b) => Some(b.symbol.as_str()),
+                    Event::Tick(t) => Some(t.symbol.as_str()),
+                    _ => None,
+                };
+                if let Some(symbol) = event_symbol
+                    && !wl.contains(symbol)
+                {
+                    continue;
+                }
+            }
             let ts = event_timestamp(event);
             if ts > 0 {
                 timestamps.insert(ts);

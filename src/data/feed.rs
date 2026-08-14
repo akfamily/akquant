@@ -5,7 +5,7 @@ use chrono::Utc;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crossbeam_channel::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -231,9 +231,9 @@ impl DataFeed {
         provider.len_hint()
     }
 
-    pub fn progress_len_hint(&self) -> Option<usize> {
+    pub fn progress_len_hint(&self, whitelist: Option<&HashSet<String>>) -> Option<usize> {
         let provider = self.provider.lock().unwrap();
-        provider.progress_len_hint()
+        provider.progress_len_hint(whitelist)
     }
 
     pub fn wait_peek(&self, timeout: Duration) -> Option<i64> {

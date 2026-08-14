@@ -271,6 +271,9 @@ impl Processor for DataProcessor {
                     if let Some(symbol) = event_symbol
                         && !whitelist.contains(symbol)
                     {
+                        // 只计数, 不逐事件打日志(见 `whitelist_filtered_event_count`
+                        // 字段文档) —— 会话结束时 `Engine::run` 汇总报一条 info。
+                        engine.whitelist_filtered_event_count += 1;
                         return Ok(ProcessorResult::Loop);
                     }
                 }
