@@ -330,6 +330,53 @@ def test_live_runner_configures_engine_slots_for_primary_and_secondary() -> None
     assert getattr(secondary, "shared_flag") == "ok"
 
 
+def test_live_runner_clears_pickle_residue_symbol_whitelist_for_slots() -> None:
+    """Checkpoint 恢复的策略实例带进 run_live 时, 残留的 _symbol_whitelist 必须被清空.
+
+    根因: ``save_checkpoint``/``load_checkpoint`` 整体 pickle/unpickle 策略
+    ``__dict__``, 若某策略此前在回测里传过 ``symbols`` 白名单, 恢复出的实例会
+    带着非 None 的 ``_symbol_whitelist``。``run_live(strategy_cls=<该实例>)``
+    经 ``_build_strategy_instance`` 原样传入(见该方法 ``isinstance(..., Strategy):
+    return`` 分支), 若 ``_configure_strategy_slots`` 不清空它,
+    ``Strategy.subscribe()`` 的白名单校验(不分回测/实盘, 见该方法文档)会把
+    ``on_start``/``initialize`` 里的正常 ``subscribe()`` 当成"订阅了白名单外的
+    标的"而抛 ``ValueError`` —— 与已修的三个 checkpoint 残留 Critical
+    (commit ac277ae)同一类问题, 只是载体换成了 ``_symbol_whitelist``。
+    """
+
+    class _DummyEngine:
+        def set_strategy_slots(self, slot_ids: list[str]) -> None:
+            pass
+
+        def set_default_strategy_id(self, strategy_id: str) -> None:
+            pass
+
+        def set_strategy_for_slot(self, slot_index: int, strategy: Any) -> None:
+            pass
+
+    class _DummyStrategy(Strategy):
+        def on_bar(self, bar: Any) -> None:
+            _ = bar
+
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.engine = cast(Any, _DummyEngine())
+    runner.context = {}
+
+    primary = _DummyStrategy()
+    secondary = _DummyStrategy()
+    # 模拟 load_checkpoint() 恢复出的残留状态: 上一段回测传过 symbols 白名单。
+    primary._symbol_whitelist = {"600000"}
+    secondary._symbol_whitelist = {"000001"}
+
+    runner._configure_strategy_slots(primary, {"beta": secondary}, "alpha")
+
+    assert primary._symbol_whitelist is None
+    assert secondary._symbol_whitelist is None
+    # subscribe 一个不在旧白名单内的标的不应再被残留状态误拦。
+    primary.subscribe("600519")
+    secondary.subscribe("300750")
+
+
 def test_live_runner_applies_strategy_risk_controls_for_slots() -> None:
     """Apply strategy-level risk controls using configured slot ids."""
 

@@ -249,11 +249,50 @@ def test_init_subscribe_of_benchmark_sentinel_does_not_disable_filtering_c1() ->
     assert strategy.hits == {"X": 3}
 
 
+class _CompliantAdapter:
+    """遵守契约的 `DataFeedAdapter`: 只返回 `request.symbol` 自己的数据.
+
+    与 `_LeakyAdapter`(违反契约, 混入未请求标的)相对——用于「各形态在同一
+    `symbols` 下命中集合必须一致」这条一致性护栏里, 作为 DataFeedAdapter
+    这一形态的正常实现代表。
+    """
+
+    def load(self, request: Any) -> Any:
+        """只按 `request.symbol` 返回该标的 3 根 bar, X 用 10.0 基价, Y 用 100.0."""
+        import pandas as pd
+
+        base = {"X": 10.0, "Y": 100.0}[str(request.symbol)]
+        rows = [
+            {
+                "timestamp": pd.Timestamp(f"2025-01-{2 + i:02d}"),
+                "open": base + i,
+                "high": base + i,
+                "low": base + i,
+                "close": base + i,
+                "volume": 100.0,
+            }
+            for i in range(3)
+        ]
+        return pd.DataFrame(rows).set_index("timestamp")
+
+
 def test_all_input_forms_agree_under_same_symbols() -> None:
     """同一份数据、同一个 symbols, 各输入形态的命中集合必须一致.
 
     这是本次变更的核心保证: 此前 DataFrame 形态与 DataFeed 形态在
     symbols 上的行为并不一致, 而不一致本身就是要修的缺陷。
+
+    终审 M5 补的三种情形(与上面四种形态共享同一 X/Y 数据集、同一预期结果):
+    - 含 `BENCHMARK` 哨兵的组合(`symbols=["X", "BENCHMARK"]`)——之前只在
+      DataFrame/List[Bar] 单独形态各测过一次(见上面两个 C1 用例), 没在
+      这条跨形态一致性护栏里连着其余形态一起断言过。
+    - dict 形态里混入了白名单外的多余标的("Y" 也在 dict 里, 而不是像上面
+      `{"X": ...}` 那样天生只有一个 key)——那样测不到 dict 分支真正的过滤
+      判据, 只是"恰好没有别的标的"的退化场景。
+    - `DataFeedAdapter` 形态(`_CompliantAdapter`)——四种可枚举形态
+      (List[Bar]/DataFrame/dict/DataFeedAdapter)里唯一没被这条一致性护栏
+      覆盖到的一种; `DataFeed` 对象是第五种、无法枚举内容的形态, 已通过
+      `_feed()` 覆盖。
     """
     import pandas as pd
 
@@ -275,6 +314,30 @@ def test_all_input_forms_agree_under_same_symbols() -> None:
     assert _run(_feed(), symbols=["X"]) == expected
     assert _run(frame, symbols=["X"]) == expected
     assert _run({"X": frame[frame["symbol"] == "X"]}, symbols=["X"]) == expected
+
+    # BENCHMARK 哨兵与真实标的组合: 语义应等同于只传 ["X"], 与上面四种形态
+    # 的结果一致。
+    assert _run(_bars(), symbols=["X", "BENCHMARK"]) == expected
+    assert _run(_feed(), symbols=["X", "BENCHMARK"]) == expected
+    assert _run(frame, symbols=["X", "BENCHMARK"]) == expected
+    assert (
+        _run({"X": frame[frame["symbol"] == "X"]}, symbols=["X", "BENCHMARK"])
+        == expected
+    )
+
+    # dict 形态里真的混入白名单外的标的("Y" 与 "X" 同在一个 dict 里),
+    # 才算真正走到 dict 分支自己的过滤判据, 而不是退化成"dict 天生只有一个
+    # key"的场景。
+    assert (
+        _run(
+            {"X": frame[frame["symbol"] == "X"], "Y": frame[frame["symbol"] == "Y"]},
+            symbols=["X"],
+        )
+        == expected
+    )
+
+    # DataFeedAdapter 形态: 与其余可枚举形态(List[Bar]/DataFrame/dict)结果一致。
+    assert _run(_CompliantAdapter(), symbols=["X"]) == expected
 
 
 def test_filtered_symbols_are_logged_once_in_summary(caplog: Any) -> None:
