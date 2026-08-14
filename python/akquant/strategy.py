@@ -403,6 +403,9 @@ class Strategy:
     # _bar_count(见 strategy_ml.py::should_trigger_training/
     # consume_training_trigger)。
     _last_train_bar_count: int
+    # 回测且用户显式传了 symbols 时, 由 engine.py 设为 symbols 集合; subscribe()
+    # 据此校验。None 表示不校验(未显式传 symbols, 或实盘)。
+    _symbol_whitelist: Optional[set[str]]
     _model_configured: bool
     model: Optional["QuantModel"]
     _ml_validation_lifecycle: bool
@@ -641,6 +644,7 @@ class Strategy:
         instance._rolling_step = 0
         instance._bar_count = 0
         instance._last_train_bar_count = 0
+        instance._symbol_whitelist = None
         instance._model_configured = False
         instance._start_initialized = False
         instance._ml_validation_lifecycle = False
@@ -1630,15 +1634,26 @@ class Strategy:
         """
         Subscribe to market data for an instrument.
 
-        回测: ``run_backtest`` 会把 ``_subscriptions`` 并入标的集合。
+        回测: 未传 ``symbols`` 时, ``run_backtest`` 会把 ``_subscriptions``
+        并入标的集合。**传了 ``symbols`` 时** 只能订阅 ``symbols`` 之内的标的,
+        订阅集外的标的会抛 ``ValueError`` —— 时序上无法自动并入(``on_start``
+        在数据加载之后才跑), 且「声明只跑这些, 又订阅别的」自相矛盾。
 
         实盘: 由 ``run_live`` 装上转发器后, 调用会把 ``instruments`` 与各 slot
         订阅的并集下发到行情网关(网关的 subscribe 是整集替换语义)。若该 broker
         没有行情网关(如 ``broker='qmf'`` 的 ``market_gateway=None``), 则无处可
-        下发, 退回记录一条 warning。
+        下发, 退回记录一条 warning。实盘不做白名单校验。
 
         :param instrument_id: The instrument identifier (e.g., '600000').
+        :raises ValueError: 回测且显式传了 ``symbols`` 时, 订阅了白名单外的标的。
         """
+        whitelist = getattr(self, "_symbol_whitelist", None)
+        if whitelist is not None and instrument_id not in whitelist:
+            raise ValueError(
+                f"subscribe({instrument_id!r}) 与 symbols 冲突: 该标的不在 "
+                f"symbols={sorted(whitelist)} 之内。传了 symbols 就表示"
+                "「只跑这些标的」, 请把它加进 symbols, 或去掉这次 subscribe。"
+            )
         # 先入账再转发: 转发器算的是 _subscriptions 的并集, 顺序颠倒会漏掉本次。
         if instrument_id not in self._subscriptions:
             self._subscriptions.append(instrument_id)

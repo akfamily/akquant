@@ -3037,6 +3037,15 @@ def run_backtest(
         scope="Global",
     )
 
+    # symbols 白名单下发给策略实例(供 subscribe() 校验用): 必须在 on_start 之前,
+    # 这样 on_start 里的 subscribe 才会被挡住。只在显式传了 symbols 时设置,
+    # 且只在回测路径设——实盘的 subscribe 是正常的动态订阅手段, 不校验。
+    if symbols_explicit:
+        whitelist_for_strategy = set(symbols)
+        strategy_instance._symbol_whitelist = whitelist_for_strategy
+        for slot_strategy in slot_strategy_instances.values():
+            slot_strategy._symbol_whitelist = whitelist_for_strategy
+
     # 调用 on_start 获取订阅
     # 注意：现在调用 _on_start_internal 来触发自动发现
     if hasattr(strategy_instance, "_on_start_internal"):
@@ -5962,6 +5971,15 @@ def run_from_checkpoint(
     _prime_framework_boundary_timers(all_strategy_instances, engine)
     _prime_framework_cross_section_timers(all_strategy_instances, engine)
     _prime_framework_pre_open_timers(all_strategy_instances, engine)
+
+    # symbols 白名单下发给策略实例(供 subscribe() 校验用): 必须在 on_start 之前,
+    # 这样 on_start 里的 subscribe 才会被挡住。与下面(on_start 之后)的
+    # engine.set_symbol_whitelist 是两个不同的下发点, 不要合并。
+    if symbols_explicit:
+        whitelist_for_strategy = set(symbols)
+        strategy_instance._symbol_whitelist = whitelist_for_strategy
+        for slot_strategy in slot_strategy_instances.values():
+            slot_strategy._symbol_whitelist = whitelist_for_strategy
 
     if hasattr(strategy_instance, "_on_start_internal"):
         strategy_instance._on_start_internal()

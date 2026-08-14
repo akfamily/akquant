@@ -237,3 +237,53 @@ def test_adapter_leaked_symbol_does_not_pollute_whitelist(caplog: Any) -> None:
     warning_lines = [r for r in caplog.records if r.levelname == "WARNING"]
     assert any("LEAK" in r.getMessage() for r in warning_lines)
     assert not any("过滤" in r.getMessage() for r in warning_lines)
+
+
+def test_subscribe_outside_whitelist_raises() -> None:
+    """传了 symbols 后, on_start 里 subscribe 白名单外的标的必须报错.
+
+    时序上无法自动并入: Engine::run(src/engine/python.rs:1137) 内部先调
+    on_start(:1151), 而数据加载与 add_data 发生在 run() **之前** —— 前置过滤
+    执行时 _subscriptions 还是空的。且「声明只跑 X, 又订阅 Y」本身自相矛盾,
+    报错比静默择一更清晰。
+    """
+
+    class _SubscribingStrategy(_RecordingStrategy):
+        def on_start(self) -> None:
+            """订阅一个白名单外的标的."""
+            super().on_start()
+            self.subscribe("Y")
+
+    strategy = _SubscribingStrategy()
+    with pytest.raises(ValueError, match="Y"):
+        aq.run_backtest(
+            strategy=strategy, data=_bars(), symbols=["X"], initial_cash=100000
+        )
+
+
+def test_subscribe_inside_whitelist_is_fine() -> None:
+    """Subscribe 白名单内的标的不受影响."""
+
+    class _SubscribingStrategy(_RecordingStrategy):
+        def on_start(self) -> None:
+            """Subscribe 一个白名单内的标的."""
+            super().on_start()
+            self.subscribe("X")
+
+    strategy = _SubscribingStrategy()
+    aq.run_backtest(strategy=strategy, data=_bars(), symbols=["X"], initial_cash=100000)
+    assert strategy.hits == {"X": 3}
+
+
+def test_subscribe_without_explicit_symbols_never_raises() -> None:
+    """不传 symbols 时 subscribe 不受任何约束(回归底线)."""
+
+    class _SubscribingStrategy(_RecordingStrategy):
+        def on_start(self) -> None:
+            """订阅任意标的."""
+            super().on_start()
+            self.subscribe("Z")
+
+    strategy = _SubscribingStrategy()
+    aq.run_backtest(strategy=strategy, data=_bars(), initial_cash=100000)
+    assert strategy.hits == {"X": 3, "Y": 3}
