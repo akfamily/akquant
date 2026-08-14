@@ -430,6 +430,11 @@ class Strategy:
     _hold_bars: "defaultdict[str, int]"
     _last_position_signs: "defaultdict[str, float]"
     _symbol_bar_counts: "defaultdict[str, int]"
+    # 热启动兼容标记: 当前快照是否缺 _symbol_bar_counts(早于该字段落地的旧
+    # 存档), 由 __setstate__ 置位, on_bar_event 据此在每个 symbol 首次出现
+    # 时改用实际恢复的历史深度回填, 而不是从 0 重新计数(见
+    # strategy_events.py::_next_symbol_warmup_count)。
+    _symbol_bar_counts_needs_history_backfill: bool
     _framework_last_local_date: Optional[dt.date]
     _framework_before_trading_done_date: Optional[dt.date]
     _framework_after_trading_done_date: Optional[dt.date]
@@ -587,6 +592,7 @@ class Strategy:
         instance._last_position_signs = defaultdict(float)
         # per-symbol warmup 门槛计数(与全局 _bar_count 分离, 见该字段注释)。
         instance._symbol_bar_counts = defaultdict(int)
+        instance._symbol_bar_counts_needs_history_backfill = False
         instance.timezone = getattr(instance, "timezone", "Asia/Shanghai")
         raw_runtime_config = getattr(instance, "_runtime_config", None)
 
@@ -811,6 +817,15 @@ class Strategy:
             }
             # 旧 snapshot 的 commission_rate 是派生量, 清掉避免遗留死数据
             self.__dict__.pop("commission_rate", None)
+        # 兼容旧 snapshot(早于 per-symbol warmup 计数字段落地): 判 state 而非
+        # self.__dict__, 因为 __new__ 已经预置了空 _symbol_bar_counts, naive
+        # hasattr 永远为真, 只有看"传入 snapshot 是否带这个 key"才能识别出
+        # 这是一份旧存档。置位后交给 on_bar_event 首次遇到每个 symbol 时按
+        # 实际恢复的历史深度回填(见 strategy_events.py::_next_symbol_warmup_count),
+        # 而不是无条件从 0 重新计数, 也不是无条件当作已攒满放行。
+        self._symbol_bar_counts_needs_history_backfill = (
+            "_symbol_bar_counts" not in state
+        )
         self._order_group_lock = threading.RLock()  # RLock 不入 pickle, 恢复时重建
         raw_runtime_config = self.__dict__.pop("runtime_config", None)
         if raw_runtime_config is not None:
