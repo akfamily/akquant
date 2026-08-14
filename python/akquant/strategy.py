@@ -1103,8 +1103,13 @@ class Strategy:
         里的 bug; 但这里抛出的 `StrategyConfigurationError`(`ValueError` 子类)
         是框架自身的配置校验, engine 的 handler 会在记录日志前先重抛该类型, 使其
         穿透到调用方——不会退化成一条静默的 ERROR 日志。
+
+        `_check_warmup_symbol_coverage` 放在 `_check_incremental_hl_bar_coverage`
+        之前: 后者可能抛出, 若顺序颠倒会让本就只是提示性的 warmup 告警在异常场景
+        下被跳过。
         """
         _ensure_framework_state_impl(self)
+        self._check_warmup_symbol_coverage()
         self._check_incremental_hl_bar_coverage()
         _dispatch_shutdown_hooks_impl(self)
         _call_user_callback_impl(self, "on_stop")
@@ -1710,6 +1715,46 @@ class Strategy:
                 input_mode=item.input_mode,
             )
             ind.update(*args)
+
+    def _check_warmup_symbol_coverage(self) -> None:
+        """会话结束时核验: 有没有标的因为 warmup 门槛全程未触发过 on_bar.
+
+        per-symbol warmup 门槛(见 `strategy_events.py::on_bar_event`)本身是对的
+        ——某标的累计 bar 数不足 `warmup_period` 时不该拿它做决策。但若它全程
+        都攒不满(数据源覆盖不全、标的长期停牌、`warmup_period` 设得比该标的
+        可用历史还长), `on_bar` 会一次都不触发, 且没有任何提示: 用户只会看到
+        "这个标的怎么一直没信号", 无从排查。
+
+        `_symbol_bar_counts[symbol]` 是单调递增的(每收到一根 bar +1, 见
+        `_next_symbol_warmup_count`), 门槛判定又是"< warmup_period 就 return"
+        (即放行是最终态、不可逆)。因此会话结束时若某 symbol 的计数仍
+        `< warmup_period`, 等价于它从未跨过门槛——`on_bar` 对它一次都没触发过。
+        用这个条件而非额外维护一份"是否触发过"的标记, 避免引入第二份可能与
+        `_symbol_bar_counts` 不同步的状态。
+
+        只告警、不报错: 数据不足是常见且合理的情况(如新股上市), 抛错会让正常
+        回测失败。参考先例 `_check_incremental_hl_bar_coverage`——同样在会话
+        结束时做校验, 但那里的场景(H/L 类指标拿不到真实高低价)是配置误用,
+        该报错; 这里的场景是数据覆盖不足, 该提示。
+        """
+        warmup_period = int(getattr(self, "warmup_period", 0) or 0)
+        if warmup_period <= 0:
+            return
+        counts = getattr(self, "_symbol_bar_counts", None)
+        if not counts:
+            return
+        for symbol in sorted(counts.keys()):
+            count = int(counts[symbol])
+            if count >= warmup_period:
+                continue
+            _live_subscribe_logger.warning(
+                "标的 %s 全程未触发 on_bar(累计 %d 根 bar < warmup_period=%d), "
+                "策略对它未做任何决策。可调小 warmup_period, 或为该标的补充更多"
+                "历史数据后重跑。",
+                symbol,
+                count,
+                warmup_period,
+            )
 
     def _check_incremental_hl_bar_coverage(self) -> None:
         """会话结束时核验: H/L 类指标是否有 symbol 全程只收到过 tick.

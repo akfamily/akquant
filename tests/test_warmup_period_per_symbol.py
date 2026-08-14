@@ -17,12 +17,14 @@ symbol 的全局计数器, 但历史缓冲区是 per-symbol 的。M 个 symbol �
 
 from __future__ import annotations
 
+import logging
 import math
 import pickle
 from pathlib import Path
 from typing import cast
 
 import pandas as pd
+import pytest
 from akquant import Bar, Strategy, run_backtest, run_from_checkpoint, save_checkpoint
 
 
@@ -299,3 +301,135 @@ def test_legacy_checkpoint_without_symbol_bar_counts_resumes_partial_warmup(
 
     # 第 1 根仍在预热(2 旧 + 1 新 = 3 < 4), 第 2~5 根(累计 >= 4)开始触发。
     assert strategy2.on_bar_symbols == ["X", "X", "X", "X"]
+
+
+# ---------------------------------------------------------------------------
+# 会话结束告警: 某标的全程 bar 数攒不满 warmup_period 时, on_bar 一次都不会
+# 触发, 且此前完全静默——用户只会看到"这个标的怎么一直没信号", 无从排查。
+# `Strategy._check_warmup_symbol_coverage` 在会话停止阶段(`_on_stop_internal`)
+# 补上这条告警, 只对"真正一次都没触发过 on_bar"的标的告警, 避免噪音。
+# ---------------------------------------------------------------------------
+
+
+class _WarmupCoverageObserver(Strategy):
+    """记录实际触发 on_bar 的次数, 用于确认告警条件与真实触发情况一致."""
+
+    warmup_period = 5
+
+    def on_start(self) -> None:
+        """重置计数."""
+        self.on_bar_counts: dict[str, int] = {}
+
+    def on_bar(self, bar: Bar) -> None:
+        """按 symbol 累加实际触发次数."""
+        self.on_bar_counts[bar.symbol] = self.on_bar_counts.get(bar.symbol, 0) + 1
+
+
+def test_warmup_shortfall_symbol_warns_at_session_end(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """某标的全程 bar 数不足 warmup_period: 会话结束应发出告警, 内容含标的名与两个数字.
+
+    X 有 10 根 bar(>= warmup_period=5), 全程应正常触发 on_bar。Y 只有 3 根
+    bar(< warmup_period=5), 全程一次都不应触发——修复前这里完全静默, 修复后
+    应在会话结束时收到一条 WARNING, 点名 Y、其累计根数 3 与 warmup_period=5。
+    """
+    x_closes = [10.0 + i for i in range(10)]
+    y_closes = [100.0, 101.0, 102.0]
+    data = {
+        "X": _df(x_closes, "2024-01-01", 10, "X"),
+        "Y": _df(y_closes, "2024-01-01", 3, "Y"),
+    }
+
+    with caplog.at_level(logging.WARNING, logger="akquant"):
+        result = run_backtest(
+            data=data,
+            strategy=_WarmupCoverageObserver,
+            symbols=["X", "Y"],
+            initial_cash=1e5,
+            show_progress=False,
+        )
+    strategy = cast(_WarmupCoverageObserver, result.strategy)
+
+    # 先确认真实触发情况符合预期: Y 一次都没触发, X 正常触发。
+    assert strategy.on_bar_counts.get("Y", 0) == 0
+    assert strategy.on_bar_counts["X"] == 10 - 5 + 1  # 从第 5 根起触发, 共 6 次
+
+    warmup_warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "warmup_period" in record.getMessage()
+    ]
+    assert len(warmup_warnings) == 1, f"应且只应有一条 warmup 告警: {warmup_warnings}"
+    message = warmup_warnings[0]
+    assert "Y" in message
+    assert "3" in message  # 累计 bar 数
+    assert "5" in message  # warmup_period
+    assert "标的 X " not in message  # 不误报数据充足的 X
+
+
+def test_warmup_sufficient_symbol_not_falsely_flagged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """所有标的数据都充足时, 不应有任何 warmup 告警(避免噪音)."""
+    x_closes = [10.0 + i for i in range(10)]
+    y_closes = [100.0 + i for i in range(8)]
+    data = {
+        "X": _df(x_closes, "2024-01-01", 10, "X"),
+        "Y": _df(y_closes, "2024-01-01", 8, "Y"),
+    }
+
+    with caplog.at_level(logging.WARNING, logger="akquant"):
+        result = run_backtest(
+            data=data,
+            strategy=_WarmupCoverageObserver,
+            symbols=["X", "Y"],
+            initial_cash=1e5,
+            show_progress=False,
+        )
+    strategy = cast(_WarmupCoverageObserver, result.strategy)
+
+    assert strategy.on_bar_counts["X"] > 0
+    assert strategy.on_bar_counts["Y"] > 0
+
+    warmup_warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "warmup_period" in record.getMessage()
+    ]
+    assert warmup_warnings == [], f"数据充足不应告警: {warmup_warnings}"
+
+
+def test_warmup_triggered_once_symbol_not_flagged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """已经触发过 on_bar(哪怕只有一次)的标的不应被误报.
+
+    warmup_period=5, Y 恰好有 5 根 bar: 第 5 根应触发一次 on_bar(累计计数
+    == warmup_period, 不是 "< warmup_period"), 会话结束时不该对 Y 告警。
+    """
+    x_closes = [10.0 + i for i in range(10)]
+    y_closes = [100.0, 101.0, 102.0, 103.0, 104.0]  # 恰好 5 根
+    data = {
+        "X": _df(x_closes, "2024-01-01", 10, "X"),
+        "Y": _df(y_closes, "2024-01-01", 5, "Y"),
+    }
+
+    with caplog.at_level(logging.WARNING, logger="akquant"):
+        result = run_backtest(
+            data=data,
+            strategy=_WarmupCoverageObserver,
+            symbols=["X", "Y"],
+            initial_cash=1e5,
+            show_progress=False,
+        )
+    strategy = cast(_WarmupCoverageObserver, result.strategy)
+
+    assert strategy.on_bar_counts.get("Y", 0) == 1  # 恰好触发一次
+
+    warmup_warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "warmup_period" in record.getMessage()
+    ]
+    assert warmup_warnings == [], f"已触发过一次的标的不应被误报: {warmup_warnings}"
