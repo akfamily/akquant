@@ -148,3 +148,92 @@ def test_filtered_symbols_are_logged_once_in_summary(caplog: Any) -> None:
     filtered_lines = [r for r in caplog.records if "过滤" in r.getMessage()]
     assert len(filtered_lines) == 1
     assert "1" in filtered_lines[0].getMessage()
+
+
+def test_dataframe_and_dict_forms_also_log_filtered_summary(caplog: Any) -> None:
+    """DataFrame 与 dict 形态的既有过滤同样要发汇总日志(fix round 1, finding a).
+
+    此前只有新增的 List[Bar] 段会写 filtered_out_symbols, DataFrame/dict 两段
+    的既有过滤代码从未写入这个集合 —— 导致"传全市场数据只关心几个标的"这个
+    主要动机场景下, 用 DataFrame 或 dict(DataFrame 是最常见的输入形态)传入
+    时完全没有汇总日志, 只有 List[Bar] 才有。
+    """
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(
+                [f"2025-01-{2 + i:02d}" for i in range(3) for _ in range(2)]
+            ),
+            "symbol": ["X", "Y"] * 3,
+            "open": [10.0, 100.0] * 3,
+            "high": [10.0, 100.0] * 3,
+            "low": [10.0, 100.0] * 3,
+            "close": [10.0, 100.0] * 3,
+            "volume": [100.0, 100.0] * 3,
+        }
+    )
+
+    with caplog.at_level("INFO"):
+        _run(frame, symbols=["X"])
+    df_lines = [r for r in caplog.records if "过滤" in r.getMessage()]
+    assert len(df_lines) == 1
+    assert "Y" in df_lines[0].getMessage()
+
+    caplog.clear()
+
+    data_dict = {
+        "X": frame[frame["symbol"] == "X"],
+        "Y": frame[frame["symbol"] == "Y"],
+    }
+    with caplog.at_level("INFO"):
+        _run(data_dict, symbols=["X"])
+    dict_lines = [r for r in caplog.records if "过滤" in r.getMessage()]
+    assert len(dict_lines) == 1
+    assert "Y" in dict_lines[0].getMessage()
+
+
+class _LeakyAdapter:
+    """故意在响应里混入未被请求的标的, 模拟违反 DataFeedAdapter 契约的实现.
+
+    仅需一个可调用的 `load` 属性即满足 `_is_data_feed_adapter` 的 duck-type
+    判据(hasattr(value, "load") and callable(...)), 无需继承任何基类。
+    """
+
+    def load(self, request: Any) -> Any:
+        """无视 request.symbol, 总是额外搭售一份 'LEAK' 标的的数据."""
+        import pandas as pd
+
+        rows = []
+        for symbol, base in ((str(request.symbol), 10.0), ("LEAK", 999.0)):
+            for i in range(3):
+                rows.append(
+                    {
+                        "timestamp": pd.Timestamp(f"2025-01-{2 + i:02d}"),
+                        "symbol": symbol,
+                        "open": base + i,
+                        "high": base + i,
+                        "low": base + i,
+                        "close": base + i,
+                        "volume": 100.0,
+                    }
+                )
+        return pd.DataFrame(rows).set_index("timestamp")
+
+
+def test_adapter_leaked_symbol_does_not_pollute_whitelist(caplog: Any) -> None:
+    """Adapter 违反契约返回未请求的标的时, 该标的不得进白名单(fix round 1, finding b).
+
+    调用点会把 adapter 返回的 data_map 里每个 key 无条件 append 进 symbols,
+    而 symbols 正是随后设进 Rust 引擎 set_symbol_whitelist 的同一个列表 ——
+    不做处理的话, 过滤会对这个泄漏进来的标的静默失效(白名单本身被污染)。
+    还要求发一条 warning(而不是混进 filtered_out_symbols 那条 INFO 汇总),
+    因为这是 adapter 违反契约, 不是用户主动排除。
+    """
+    with caplog.at_level("WARNING"):
+        hits = _run(_LeakyAdapter(), symbols=["X"])
+    assert "LEAK" not in hits
+    assert hits == {"X": 3}
+    warning_lines = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("LEAK" in r.getMessage() for r in warning_lines)
+    assert not any("过滤" in r.getMessage() for r in warning_lines)

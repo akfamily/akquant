@@ -1669,12 +1669,23 @@ def _load_data_map_from_adapter(
     start_time: Optional[Union[str, Any]],
     end_time: Optional[Union[str, Any]],
     timezone: Optional[str],
-) -> Dict[str, pd.DataFrame]:
+) -> Tuple[Dict[str, pd.DataFrame], set[str]]:
     """按 requested_symbols 逐标的调用 adapter.load 并汇总成 {symbol: DataFrame}.
 
-    本函数天然只加载 requested_symbols(即参数 `symbols`, 未传则回落为
-    `["BENCHMARK"]`), 故不需要额外的 symbols 白名单前置过滤 —— 这不是
-    "忘了加过滤", 是 for 循环本身就只会为白名单内的标的发请求。
+    for 循环本身只会为 requested_symbols(即参数 `symbols`, 未传则回落为
+    `["BENCHMARK"]`)里的标的发请求 —— 这一点没问题。但**返回值**不能同等
+    信任: 调用方 run_backtest 会把这里 data_map 里出现的每个 key 无条件
+    append 进它的 `symbols`, 而那正是随后设进 Rust 引擎 `set_symbol_whitelist`
+    的同一个列表。若某次 adapter.load 违反契约、在 frame 里混入了未被请求
+    的标的, 不做处理的话它会先污染 data_map、再污染 symbols、最终污染白名
+    单本身 —— 白名单对它静默失效, 这正是本函数要防的失败模式。
+
+    因此: 当调用方显式传了 symbols(判据与三段前置过滤同一个 ——
+    `bool(symbols and "BENCHMARK" not in symbols)`)时, 响应里超出
+    requested_symbols 的标的会被丢弃, 通过第二个返回值 `leaked_symbols`
+    上报, 由调用方决定怎么告警/记录, 这里不做 IO。未显式传 symbols 时
+    (默认 "BENCHMARK" 哨兵)维持原样"数据即订阅"语义, 不丢弃 —— 这与
+    DataFrame/dict/List[Bar] 三段前置过滤在同一哨兵下的行为一致。
     """
     effective_timezone = timezone or DEFAULT_TIMEZONE
     request_start = (
@@ -1688,7 +1699,10 @@ def _load_data_map_from_adapter(
         else None
     )
     requested_symbols = symbols or ["BENCHMARK"]
+    reject_unrequested = bool(symbols and "BENCHMARK" not in symbols)
+    requested_symbols_set = set(requested_symbols)
     data_map: Dict[str, pd.DataFrame] = {}
+    leaked_symbols: set[str] = set()
 
     for sym in requested_symbols:
         frame = adapter.load(
@@ -1707,13 +1721,17 @@ def _load_data_map_from_adapter(
         if "symbol" in frame.columns:
             grouped = frame.groupby(frame["symbol"].astype(str), sort=False)
             for grouped_symbol, grouped_frame in grouped:
-                data_map[str(grouped_symbol)] = grouped_frame.copy()
+                key = str(grouped_symbol)
+                if reject_unrequested and key not in requested_symbols_set:
+                    leaked_symbols.add(key)
+                    continue
+                data_map[key] = grouped_frame.copy()
         else:
             normalized = frame.copy()
             normalized["symbol"] = str(sym)
             data_map[str(sym)] = normalized
 
-    return data_map
+    return data_map, leaked_symbols
 
 
 def _build_strategy_instance(
@@ -3158,13 +3176,22 @@ def run_backtest(
             # We might need to update 'symbols' if they were not provided explicitly?
             # For now, assume user provided symbols or feed covers them.
         elif _is_data_feed_adapter(data):
-            adapter_data_map = _load_data_map_from_adapter(
+            adapter_data_map, leaked_adapter_symbols = _load_data_map_from_adapter(
                 adapter=data,
                 symbols=symbols,
                 start_time=load_start_time,
                 end_time=end_time,
                 timezone=timezone,
             )
+            if leaked_adapter_symbols:
+                # 与 filtered_out_symbols(用户主动传 symbols 排除的标的)性质不同:
+                # 这里是 adapter 违反契约返回了未请求的标的, 单独发一条 warning
+                # 提醒, 不混进下面那条 INFO 汇总日志。
+                logger.warning(
+                    "DataFeedAdapter 返回了 %d 个未请求的标的, 已丢弃: %s",
+                    len(leaked_adapter_symbols),
+                    ", ".join(sorted(leaked_adapter_symbols)),
+                )
             for sym, df in adapter_data_map.items():
                 df_prep = to_indicator_frame(df)
                 data_map_for_indicators[sym] = df_prep
@@ -3232,7 +3259,13 @@ def run_backtest(
                 df["symbol"] = df["symbol"].astype(str)
                 filter_symbols = bool(symbols and "BENCHMARK" not in symbols)
                 if filter_symbols:
+                    # 被 isin 滤掉的标的只能从过滤前的 symbol 集合里减去白名单
+                    # 求差集得到 —— isin 本身是整体布尔索引, 不是逐条判断,
+                    # 拿不到"被剔除了哪些"这个信息, 只能靠过滤前后各留一份
+                    # symbol 集合来对比。只记录, 不改这行既有的过滤判据本身。
+                    pre_filter_symbols = set(df["symbol"].unique())
                     df = df[df["symbol"].isin(symbols)]
+                    filtered_out_symbols.update(pre_filter_symbols.difference(symbols))
                 if not df.empty:
                     arrays = dataframe_to_arrays(df)
                     feed.add_arrays(*arrays)  # type: ignore
@@ -3263,6 +3296,7 @@ def run_backtest(
 
             for sym, df in data.items():
                 if filter_symbols and sym not in symbols:
+                    filtered_out_symbols.add(sym)
                     continue
 
                 # Ensure index is datetime
@@ -4811,13 +4845,19 @@ def run_from_checkpoint(
         feed = data
     elif _is_data_feed_adapter(data):
         feed = DataFeed()
-        adapter_data_map = _load_data_map_from_adapter(
+        adapter_data_map, leaked_adapter_symbols = _load_data_map_from_adapter(
             adapter=data,
             symbols=list(effective_symbols),
             start_time=kwargs.get("start_time"),
             end_time=kwargs.get("end_time"),
             timezone=timezone_name,
         )
+        if leaked_adapter_symbols:
+            logger.warning(
+                "DataFeedAdapter 返回了 %d 个未请求的标的, 已丢弃: %s",
+                len(leaked_adapter_symbols),
+                ", ".join(sorted(leaked_adapter_symbols)),
+            )
         loaded_count = 0
         for sym, df in adapter_data_map.items():
             if not df.empty:
