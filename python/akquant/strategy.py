@@ -1740,11 +1740,20 @@ class Strategy:
             ind.update(*args)
 
     def _check_symbol_data_coverage(self) -> None:
-        """会话结束时核验: symbols 里有没有标的全程没收到过任何 bar.
+        """会话结束时核验: symbols 里有没有标的全程没收到过任何行情事件.
 
         与运行前的比对(engine.py, 用 `data_map_for_indicators` 与 `symbols` 求差集)
         互补: DataFeed 对象输入无法预先枚举内容(它只写不读), 只能等会话结束、
-        看 `_symbol_bar_counts` 里到底出现过哪些标的。
+        看该标的到底有没有出现过。
+
+        用 `_last_prices` 而非 `_symbol_bar_counts` 判定"有没有出现过": 后者只在
+        `on_bar_event`(`strategy_events.py::on_bar_event`)递增, `on_tick_event`
+        从不更新它——只有 tick、靠 `on_tick` 正常交易的标的会被 `_symbol_bar_counts`
+        误判成"零数据"(这正是 tick/bar 双流场景, 不能误报)。`_last_prices` 则在
+        `on_bar_event`(:147)与 `on_tick_event`(:212)都会写入(且落在同一处
+        `_is_before_active_start` 早退检查**之后**, 与 bar 那侧的时机一致), 只要
+        该标的收到过至少一个 bar 或 tick 就会留下记录, 用它做"seen"判据能覆盖
+        纯 tick 会话。
 
         `_symbol_data_warned` 是运行前检查已经报过的标的集合(由 engine.py 写入)
         ——同一标的不应该运行前报一次、这里又重复报一次。
@@ -1755,14 +1764,14 @@ class Strategy:
         whitelist = getattr(self, "_symbol_whitelist", None)
         if not whitelist:
             return
-        counts = getattr(self, "_symbol_bar_counts", None) or {}
-        seen = {symbol for symbol, count in counts.items() if int(count) > 0}
+        last_prices = getattr(self, "_last_prices", None) or {}
+        seen = set(last_prices.keys())
         already_warned = getattr(self, "_symbol_data_warned", None) or set()
         for symbol in sorted(whitelist - seen - already_warned):
             _live_subscribe_logger.warning(
-                "标的 %s 在 symbols 中但全程未收到任何 bar: 策略对它未做任何"
-                "决策。常见原因是标的代码写错、数据源未覆盖、或所选时间范围内"
-                "无交易。",
+                "标的 %s 在 symbols 中但全程未收到任何行情事件(bar/tick): 策略对它"
+                "未做任何决策。常见原因是标的代码写错、数据源未覆盖、或所选时间"
+                "范围内无交易。",
                 symbol,
             )
 

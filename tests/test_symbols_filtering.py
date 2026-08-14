@@ -437,16 +437,16 @@ def test_symbol_with_no_data_warns(caplog: Any) -> None:
         _run(_bars(), symbols=["X", "NOSUCH"])
     messages = [r.getMessage() for r in caplog.records]
     assert any("NOSUCH" in m for m in messages)
-    assert not any("'X'" in m and "没有" in m for m in messages)
+    # 用实际告警模板("标的 X ...")而非松散的子串组合去精确排除误报——
+    # 原断言 "'X'" in m 是死断言(告警模板不带引号, 永远不匹配), 甄别力为零。
+    assert not any("标的 X " in m for m in messages)
 
 
 def test_symbol_with_data_is_not_reported(caplog: Any) -> None:
     """有数据的标的不得被误报为零数据."""
     with caplog.at_level("WARNING"):
         _run(_bars(), symbols=["X"])
-    assert not any(
-        "X" in r.getMessage() and "没有" in r.getMessage() for r in caplog.records
-    )
+    assert not any("标的 X " in r.getMessage() for r in caplog.records)
 
 
 def test_data_feed_form_also_warns(caplog: Any) -> None:
@@ -454,3 +454,141 @@ def test_data_feed_form_also_warns(caplog: Any) -> None:
     with caplog.at_level("WARNING"):
         _run(_feed(), symbols=["X", "NOSUCH"])
     assert any("NOSUCH" in r.getMessage() for r in caplog.records)
+    assert not any("标的 X " in r.getMessage() for r in caplog.records)
+
+
+def test_symbols_as_string_does_not_split_into_characters() -> None:
+    """Symbols 传字符串(受支持的写法)时, 白名单不能被按字符拆开(fix round 2, Critical).
+
+    根因: 白名单下发点(engine.py, on_start 之前)曾直接对 `_resolve_effective_symbols`
+    的第一个返回值(未归一的原始 `symbols`)取 `set(...)`——对字符串这等于按字符
+    拆分, `set("BENCHMARK")` 会变成 `{'B','E','N','C','H','M','A','R','K'}` 这种
+    坏集合。用策略在 `on_start` 里 subscribe 自己的标的本身来复现: 若白名单被拆
+    成单字符集合, "BENCHMARK" 这个多字符标的必然不在其中, `subscribe()` 会把
+    合法的自身标的错误地当成"白名单外"而抛 `ValueError`。修复后必须改用已归一
+    的 `effective_symbols` 合并而来的白名单, 不再受原始入参形态影响。
+    """
+
+    class _SelfSubscribingStrategy(_RecordingStrategy):
+        def on_start(self) -> None:
+            """订阅 symbols 里传入的那个标的本身(用字符串形态传入)."""
+            super().on_start()
+            self.subscribe("BENCHMARK")
+
+    strategy = _SelfSubscribingStrategy()
+    aq.run_backtest(
+        strategy=strategy,
+        data=_bars_with_benchmark_symbol(),
+        symbols="BENCHMARK",
+        initial_cash=100000,
+    )
+    assert strategy.hits == {"BENCHMARK": 3}
+
+
+def test_tick_only_symbol_is_not_misreported_as_zero_data(caplog: Any) -> None:
+    """纯 tick、靠 on_tick 交易的标的不得被误报为零数据(fix round 2, Important ①).
+
+    根因: 会话末兜底(`Strategy._check_symbol_data_coverage`)原先用
+    `_symbol_bar_counts` 判定"该标的有没有出现过"——但这个计数器只在
+    `on_bar_event`(strategy_events.py)里递增, `on_tick_event` 从不碰它。
+    纯 tick 输入会整体转成 `DataFeed`(`data_map_for_indicators` 因此为空),
+    使运行前比对失效、只剩会话末兜底兜底——而兜底本身对 tick-only 标的必然
+    误判成"零数据", 直接打脸刚上线的 tick/bar 双流特性(tick-only 标的明明
+    在正常靠 on_tick 交易)。修复后改用 `_last_prices`(bar/tick 两条路径都会
+    写入)做判据, 此处验证误报不再出现, 且策略确实收到了全部 tick 并据此交易。
+    """
+    ticks = [
+        aq.Tick(
+            timestamp=f"2025-01-{2 + i:02d}",  # type: ignore[arg-type]
+            price=10.0 + i,
+            volume=100.0,
+            symbol="X",
+        )
+        for i in range(3)
+    ]
+
+    class _TickTradingStrategy(aq.Strategy):
+        def on_start(self) -> None:
+            """初始化 tick 记录表."""
+            self.tick_prices: list[float] = []
+
+        def on_tick(self, tick: aq.Tick) -> None:
+            """记录收到的 tick 价格 —— 代表策略确实靠 on_tick 在做决策/交易."""
+            self.tick_prices.append(tick.price)
+
+    strategy = _TickTradingStrategy()
+    with caplog.at_level("WARNING"):
+        aq.run_backtest(
+            strategy=strategy,
+            data=ticks,
+            symbols=["X"],
+            initial_cash=100000,
+        )
+    assert strategy.tick_prices == [10.0, 11.0, 12.0]
+    assert not any("标的 X " in r.getMessage() for r in caplog.records)
+
+
+class _SubscribingOnStartStrategy(_RecordingStrategy):
+    """on_start 无条件订阅 "Y"(不受 is_restored 限制, 供 checkpoint 持久化用).
+
+    定义在模块顶层是必须的: save_checkpoint 要 pickle 策略实例, pickle 无法
+    处理定义在函数局部作用域里的类。
+    """
+
+    def on_start(self) -> None:
+        """无条件订阅 "Y", 使其进入 `_subscriptions` 并随存档持久化."""
+        super().on_start()
+        self.subscribe("Y")
+
+
+def _later_bars_x_only() -> list[aq.Bar]:
+    """只有 X 的 3 根 bar, 日期比 _bars() 晚(供热启动阶段二使用, 且刻意不含 Y)."""
+    out = []
+    for i in range(3):
+        out.append(
+            aq.Bar(
+                timestamp=f"2025-01-{5 + i:02d}",  # type: ignore[arg-type]
+                symbol="X",
+                open=10.0 + i,
+                high=10.0 + i,
+                low=10.0 + i,
+                close=10.0 + i,
+                volume=100.0,
+            )
+        )
+    return out
+
+
+def test_checkpoint_resume_zero_data_check_uses_merged_whitelist(
+    tmp_path: Any, caplog: Any
+) -> None:
+    """run_from_checkpoint 的零数据核验要用「实际下发给引擎的白名单」.
+
+    fix round 2, Important finding 2.
+
+    阶段一**不传** symbols(symbols_explicit=False), on_start 里无条件
+    subscribe("Y")——此时白名单为 None, 订阅不受限制、正常记入 `_subscriptions`,
+    并随策略实例被 `save_checkpoint` 持久化下来。阶段二显式传 symbols=["X"]
+    (不含 "Y"), 但引擎层实际下发的白名单是 `_merge_symbol_whitelist_sources`
+    的产物: effective_symbols(["X"]) 并上持久化的 `_subscriptions`(含 "Y")
+    = {"X", "Y"}——"Y" 正是靠这条路径混进白名单的。阶段二数据只含 X。
+
+    修复前, 零数据比对用的是未合并的 `effective_symbols`(只有 "X"), "Y" 压根
+    不在这个集合里、被漏检; 修复后改用同一份已合并的白名单去比对, "Y" 必须被
+    正确报出零数据告警。
+    """
+    checkpoint_path = tmp_path / "merged_whitelist_checkpoint.pkl"
+    phase1 = aq.run_backtest(
+        strategy=_SubscribingOnStartStrategy,
+        data=_bars(),
+        initial_cash=100000,
+    )
+    aq.save_checkpoint(phase1.engine, phase1.strategy, str(checkpoint_path))  # type: ignore[arg-type]
+
+    with caplog.at_level("WARNING"):
+        aq.run_from_checkpoint(
+            checkpoint_path=str(checkpoint_path),
+            data=_later_bars_x_only(),
+            symbols=["X"],
+        )
+    assert any("标的 Y " in r.getMessage() for r in caplog.records)

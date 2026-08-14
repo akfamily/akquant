@@ -951,6 +951,36 @@ def _resolve_effective_symbols(
     return symbols, effective_symbols, symbols_explicit
 
 
+def _merge_symbol_whitelist_sources(
+    effective_symbols: List[str],
+    config: Any,
+    *strategy_instances: Any,
+) -> List[str]:
+    """合并 effective_symbols、config.instruments、各策略当前的 _subscriptions.
+
+    刻意从**已归一化**的 `effective_symbols`(`List[str]`)出发, 不接受
+    `_resolve_effective_symbols` 第一个返回值(原始 `symbols`, 可能是未归一的
+    `str`/`tuple`/`set`)——`set("600519")` 会把字符串拆成单字符集合
+    `{'6','0','0','5','1','9'}`, 这类误用曾使 subscribe() 白名单校验把
+    合法的自身标的都拦下来(见调用点注释)。
+
+    调用时机决定了合并范围: 在 on_start 之前调用只能看到 __init__ 里已完成的
+    subscribe; 在 on_start 之后调用能看到 on_start 里新增的 subscribe。两处
+    调用都复用这同一份逻辑, 避免分别手写而漂移出不一致的合并顺序。
+    """
+    merged: List[str] = list(effective_symbols)
+    if config and getattr(config, "instruments", None):
+        for s in config.instruments:
+            if s not in merged:
+                merged.append(s)
+    for strategy_instance in strategy_instances:
+        if hasattr(strategy_instance, "_subscriptions"):
+            for s in strategy_instance._subscriptions:
+                if s not in merged:
+                    merged.append(s)
+    return merged
+
+
 def _strategy_param_field_names(
     strategy_input: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
 ) -> set[str]:
@@ -3045,7 +3075,25 @@ def run_backtest(
     # 默认 __dict__ 整体恢复, 会覆盖 Strategy.__new__ 设的 None)——若本次调用
     # 没显式传 symbols 却不去覆盖它, 就会沿用上一段 checkpoint 里的旧白名单,
     # 与本次「不传 symbols = 不过滤」的意图相矛盾。
-    whitelist_for_strategy = set(symbols) if symbols_explicit else None
+    # 用 effective_symbols(已归一 List[str])而非原始 symbols: 此处的 `symbols`
+    # 仍是 _resolve_effective_symbols 的第一个返回值, 未经归一——symbols="600519"
+    # 这种受支持的字符串写法下 set(symbols) 会把它拆成单字符集合, 使 subscribe()
+    # 把合法的自身标的都拦下来。用 _merge_symbol_whitelist_sources 在此时(on_start
+    # 之前)就把 config.instruments 与 __init__ 里已有的 _subscriptions 并进来,
+    # 使这里下发的白名单与下面(:3101 附近, on_start 之后)重新合并出的 `symbols`
+    # 在未发生 on_start 内 subscribe 的前提下一致。
+    whitelist_for_strategy = (
+        set(
+            _merge_symbol_whitelist_sources(
+                effective_symbols,
+                config,
+                strategy_instance,
+                *slot_strategy_instances.values(),
+            )
+        )
+        if symbols_explicit
+        else None
+    )
     strategy_instance._symbol_whitelist = whitelist_for_strategy
     for slot_strategy in slot_strategy_instances.values():
         slot_strategy._symbol_whitelist = whitelist_for_strategy
@@ -3097,25 +3145,20 @@ def run_backtest(
     # 行为保持一致 —— 语义仍由 Rust 层白名单兜底(Task 1), 这里纯属优化,
     # 覆盖不到 DataFeed 对象这种无法枚举的形态也无妨。
     filtered_out_symbols: set[str] = set()
+    # Catalog 路径逐标的读取失败时记入此集合(:3464 附近), 供运行前零数据比对
+    # (:4572 附近)去重——那条已有英文 warning, 不需要再叠一条中文的。
+    catalog_missing_symbols: set[str] = set()
 
-    symbols = list(effective_symbols)
-
-    # Merge with Config instruments
-    if config and config.instruments:
-        for s in config.instruments:
-            if s not in symbols:
-                symbols.append(s)
-
-    # Merge with Strategy subscriptions
-    if hasattr(strategy_instance, "_subscriptions"):
-        for s in strategy_instance._subscriptions:
-            if s not in symbols:
-                symbols.append(s)
-    for slot_strategy in slot_strategy_instances.values():
-        if hasattr(slot_strategy, "_subscriptions"):
-            for s in slot_strategy._subscriptions:
-                if s not in symbols:
-                    symbols.append(s)
+    # 合并 effective_symbols + config.instruments + 各策略当前的 _subscriptions
+    # (含 on_start 里新增的订阅——此时 on_start 已跑完)。与上面(:3048 附近,
+    # on_start 之前)下发给策略实例供 subscribe() 校验的白名单复用同一个合并
+    # 函数, 避免两处手写而漂移出不一致的顺序。
+    symbols = _merge_symbol_whitelist_sources(
+        effective_symbols,
+        config,
+        strategy_instance,
+        *slot_strategy_instances.values(),
+    )
 
     analyzer_manager = AnalyzerManager()
     for plugin in normalized_analyzers:
@@ -3422,6 +3465,7 @@ def run_backtest(
             )
             if df.empty:
                 logger.warning(f"Data not found in catalog for {sym}")
+                catalog_missing_symbols.add(str(sym))
                 continue
 
             if not df.empty:
@@ -4537,7 +4581,10 @@ def run_backtest(
     symbol_data_missing: set[str] = set()
     if symbols_explicit and data_map_for_indicators:
         symbol_data_missing = set(symbols) - set(data_map_for_indicators.keys())
-        for sym in sorted(symbol_data_missing):
+        # Catalog 路径逐标的读取失败已经报过一条英文 warning(:3464 附近), 不再
+        # 对这些标的重复报中文告警——但仍要记入 _symbol_data_warned(见下方
+        # 整体 update), 否则会话末 _check_symbol_data_coverage 会再报第二次。
+        for sym in sorted(symbol_data_missing - catalog_missing_symbols):
             logger.warning(
                 "标的 %s 在 symbols 中但数据里没有它: 该标的全程不会有任何行情"
                 "事件。常见原因是标的代码写错、数据源未覆盖、或所选时间范围内"
@@ -6006,7 +6053,21 @@ def run_from_checkpoint(
     # 与「这次不传 symbols = 不过滤」的意图相矛盾, 且引擎层(下面的
     # engine.set_symbol_whitelist, 同一个 guard 不执行 ⇒ 不过滤)与策略层
     # (仍按旧白名单拦截 subscribe)会出现矛盾的两副面孔。
-    whitelist_for_strategy = set(symbols) if symbols_explicit else None
+    # 用 effective_symbols 而非原始 symbols: 与 run_backtest 同一个理由(见该函数
+    # 同名注释)——`symbols` 未经归一, symbols="600519" 这种字符串写法下
+    # set(symbols) 会拆成单字符集合。
+    whitelist_for_strategy = (
+        set(
+            _merge_symbol_whitelist_sources(
+                effective_symbols,
+                config,
+                strategy_instance,
+                *slot_strategy_instances.values(),
+            )
+        )
+        if symbols_explicit
+        else None
+    )
     strategy_instance._symbol_whitelist = whitelist_for_strategy
     for slot_strategy in slot_strategy_instances.values():
         slot_strategy._symbol_whitelist = whitelist_for_strategy
@@ -6034,28 +6095,23 @@ def run_from_checkpoint(
     # 但白名单只需在 engine.run() 之前生效即可, 过滤发生在事件分发时(见
     # set_symbol_whitelist 的实现)。DataFeed 对象输入只能靠这一层过滤 —— 它
     # 只写不读, Python 无从枚举内容。
+    whitelist_symbols = _merge_symbol_whitelist_sources(
+        effective_symbols,
+        config,
+        strategy_instance,
+        *slot_strategy_instances.values(),
+    )
     if symbols_explicit:
-        whitelist_symbols = list(effective_symbols)
-        if config and config.instruments:
-            for s in config.instruments:
-                if s not in whitelist_symbols:
-                    whitelist_symbols.append(s)
-        if hasattr(strategy_instance, "_subscriptions"):
-            for s in strategy_instance._subscriptions:
-                if s not in whitelist_symbols:
-                    whitelist_symbols.append(s)
-        for slot_strategy in slot_strategy_instances.values():
-            if hasattr(slot_strategy, "_subscriptions"):
-                for s in slot_strategy._subscriptions:
-                    if s not in whitelist_symbols:
-                        whitelist_symbols.append(s)
         engine.set_symbol_whitelist(whitelist_symbols)
 
     # 运行前比对: 与 run_backtest 对称(见该函数同名注释)。symbols 里有没有标的
     # 实际数据集合里压根没有——data_map_for_indicators 为空说明走的是 DataFeed
     # 对象输入, 只能留给会话末 Strategy._check_symbol_data_coverage 兜底。
+    # 用 whitelist_symbols(合并后, 与上面下发给引擎的白名单是同一个集合)而非
+    # effective_symbols——否则仅通过 config.instruments 或各策略 _subscriptions
+    # 进白名单、且零数据的标的会被漏检(运行前与会话末双重漏报)。
     if symbols_explicit and data_map_for_indicators:
-        symbol_data_missing = set(effective_symbols) - set(
+        symbol_data_missing = set(whitelist_symbols) - set(
             data_map_for_indicators.keys()
         )
         for sym in sorted(symbol_data_missing):
