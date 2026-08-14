@@ -172,6 +172,11 @@ def check_order_events(strategy: Any) -> None:
             analyzer_manager = getattr(strategy, "_analyzer_manager", None)
             if analyzer_manager is not None:
                 try:
+                    # 已知限制: 与 on_bar_event 里 warmup 门槛挡住
+                    # analyzer_manager.on_bar 不同, 这里的 on_trade 不受该门槛约束
+                    # ——预热期内的成交回报仍会正常送达。按 bar 计数做分母/索引的
+                    # 自定义 analyzer 在多标的+预热场景下会因此偏小/错位, 详见
+                    # docs/zh/advanced/analyzer_plugin_spec.md「已知限制」。
                     analyzer_manager.on_trade(
                         {
                             "strategy": strategy,
