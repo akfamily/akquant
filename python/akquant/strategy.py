@@ -396,6 +396,8 @@ class Strategy:
     _last_prices: Dict[str, float]
     _rolling_train_window: int
     _rolling_step: int
+    # 全局 bar 事件计数(不分 symbol), 供 ML 滚动训练节奏使用(见 strategy_ml.py)。
+    # warmup 门槛请用 per-symbol 的 _symbol_bar_counts, 不要复用这个字段。
     _bar_count: int
     _model_configured: bool
     model: Optional["QuantModel"]
@@ -423,6 +425,7 @@ class Strategy:
     _last_event_type: str = ""  # "bar" or "tick"
     _hold_bars: "defaultdict[str, int]"
     _last_position_signs: "defaultdict[str, float]"
+    _symbol_bar_counts: "defaultdict[str, int]"
     _framework_last_local_date: Optional[dt.date]
     _framework_before_trading_done_date: Optional[dt.date]
     _framework_after_trading_done_date: Optional[dt.date]
@@ -578,6 +581,8 @@ class Strategy:
         instance._seen_trade_key_order = deque()
         instance._hold_bars = defaultdict(int)
         instance._last_position_signs = defaultdict(float)
+        # per-symbol warmup 门槛计数(与全局 _bar_count 分离, 见该字段注释)。
+        instance._symbol_bar_counts = defaultdict(int)
         instance.timezone = getattr(instance, "timezone", "Asia/Shanghai")
         raw_runtime_config = getattr(instance, "_runtime_config", None)
 

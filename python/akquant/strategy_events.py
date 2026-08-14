@@ -107,9 +107,10 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
         strategy._update_incremental_indicators(bar)
     strategy._last_prices[bar.symbol] = bar.close
     strategy._bar_count += 1
+    strategy._symbol_bar_counts[symbol] += 1
     dispatch_portfolio_update(strategy)
 
-    if strategy._bar_count < strategy.warmup_period:
+    if strategy._symbol_bar_counts[symbol] < strategy.warmup_period:
         return
 
     activate_pending_model(strategy)
