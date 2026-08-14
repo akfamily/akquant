@@ -7,6 +7,7 @@ from typing import Any
 
 import akquant as aq
 import pytest
+from akquant import IntParam
 
 
 class _RecordingStrategy(aq.Strategy):
@@ -108,6 +109,144 @@ def test_explicit_symbols_literal_benchmark_still_filters() -> None:
     assert _run(_bars_with_benchmark_symbol(), symbols=["BENCHMARK"]) == {
         "BENCHMARK": 3
     }
+
+
+def _frame_xy() -> Any:
+    """X 与 Y 各 3 根 bar 的 DataFrame 形态(与 `_bars()` 同一份数据)."""
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(
+                [f"2025-01-{2 + i:02d}" for i in range(3) for _ in range(2)]
+            ),
+            "symbol": ["X", "Y"] * 3,
+            "open": [10.0, 100.0] * 3,
+            "high": [10.0, 100.0] * 3,
+            "low": [10.0, 100.0] * 3,
+            "close": [10.0, 100.0] * 3,
+            "volume": [100.0, 100.0] * 3,
+        }
+    )
+
+
+def _frame_benchmark_other() -> Any:
+    """BENCHMARK 与 OTHER 各 3 根 bar 的 DataFrame 形态.
+
+    与 `_bars_with_benchmark_symbol()` 同一份数据。
+    """
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(
+                [f"2025-01-{2 + i:02d}" for i in range(3) for _ in range(2)]
+            ),
+            "symbol": ["BENCHMARK", "OTHER"] * 3,
+            "open": [10.0, 100.0] * 3,
+            "high": [10.0, 100.0] * 3,
+            "low": [10.0, 100.0] * 3,
+            "close": [10.0, 100.0] * 3,
+            "volume": [100.0, 100.0] * 3,
+        }
+    )
+
+
+def test_dataframe_symbols_with_benchmark_sentinel_still_filters_c1() -> None:
+    """C1(全分支终审 Critical): DataFrame(含 X,Y) + symbols=['X','BENCHMARK'] 只放行 X.
+
+    根因: 引擎白名单下发点(engine.py, `run_backtest` 内 `engine.set_symbol_whitelist`
+    调用处)曾直接复用局部变量 `symbols`——DataFrame 分支在数据加载时会把从数据里
+    检测到的标的(这里是 "Y")反向 append 进这个同名变量, 而 Python 前置过滤又因为
+    "BENCHMARK" 出现在 symbols 里被既有判据(`"BENCHMARK" not in symbols`)短路跳过
+    (这一层本身只是性能优化, 语义应由 Rust 层白名单兜底)。两者叠加的实测结果是
+    {'X': 3, 'Y': 3}——"Y" 带着默认合约参数混进撮合, 正是本次改动要消灭的缺陷。
+    修复后引擎白名单改用未被数据加载污染的
+    `_merge_symbol_whitelist_sources(effective_symbols, ...)`, "Y" 不再进引擎。
+    """
+    assert _run(_frame_xy(), symbols=["X", "BENCHMARK"]) == {"X": 3}
+
+
+def test_list_of_bars_symbols_with_benchmark_sentinel_is_the_reference_c1() -> None:
+    """C1 对照组: List[Bar] 形态下同样的 symbols=['X','BENCHMARK'] 一直是对的.
+
+    List[Bar] 分支从不把检测到的标的写回 `symbols` 变量, 不受 C1 根因污染,
+    终审用它作为"正确"的参照组。这里锁住它, 确保修复 DataFrame 形态时没有
+    反过来改坏这条本就正确的路径。
+    """
+    assert _run(_bars(), symbols=["X", "BENCHMARK"]) == {"X": 3}
+
+
+def test_checkpoint_symbols_with_benchmark_sentinel_is_the_reference_c1(
+    tmp_path: Any,
+) -> None:
+    """C1 对照组: run_from_checkpoint 同样的 symbols=['X','BENCHMARK'] 一直是对的.
+
+    `run_from_checkpoint` 的白名单下发点已经在用
+    `_merge_symbol_whitelist_sources` 重新计算(而非复用被数据加载污染的
+    `symbols`), 是终审里唯一给出正确结果 {'X': 3} 的路径, 本次修复让
+    `run_backtest` 与它对齐, 而不是反过来改坏它——这里锁住其结果不变。
+    """
+    checkpoint_path = tmp_path / "c1_reference_checkpoint.pkl"
+    phase1 = aq.run_backtest(
+        strategy=_RecordingStrategy,
+        data=_bars(),
+        initial_cash=100000,
+    )
+    aq.save_checkpoint(phase1.engine, phase1.strategy, str(checkpoint_path))  # type: ignore[arg-type]
+
+    result = aq.run_from_checkpoint(
+        checkpoint_path=str(checkpoint_path),
+        data=_later_bars_x_only(),
+        symbols=["X", "BENCHMARK"],
+    )
+    strategy = result.strategy
+    assert strategy is not None
+    assert strategy.hits == {"X": 3}
+
+
+def test_dataframe_explicit_symbols_literal_benchmark_still_filters_c1() -> None:
+    """C1 变体: DataFrame + symbols=['BENCHMARK'] 必须像 List[Bar] 一样真过滤.
+
+    修复前, DataFrame 分支在 symbols 恰好等于 `["BENCHMARK"]` 时(engine.py 里
+    `if not symbols or symbols == ["BENCHMARK"]:` 分支)会把 `symbols` 整体
+    替换成数据里检测到的全部标的, 当成"未指定, 不过滤"处理——实测结果是
+    "OTHER" 被放行照跑, 与 List[Bar] 形态下的既有回归护栏
+    `test_explicit_symbols_literal_benchmark_still_filters` 行为不一致。
+    修复后两种形态必须给出同样"只放行字面量为 BENCHMARK 的标的"的结果。
+    """
+    assert _run(_frame_benchmark_other(), symbols=["BENCHMARK"]) == {"BENCHMARK": 3}
+
+
+def test_init_subscribe_of_benchmark_sentinel_does_not_disable_filtering_c1() -> None:
+    """C1 变体: symbols=['X'] 时 __init__ 里 subscribe('BENCHMARK') 不得让过滤整体失效.
+
+    根因: 合并后的白名单(effective_symbols ∪ config.instruments ∪
+    `_subscriptions`)一旦含有字面量 "BENCHMARK"(哪怕只是因为策略主动订阅了
+    这个真实标的, 与"未传 symbols"的哨兵值撞了同一个字符串), 就会让 Python
+    前置过滤判据(`"BENCHMARK" not in symbols`)短路——这一层短路本身是既有
+    代码、本轮不改语义(见任务说明), 语义应由 Rust 层白名单兜底。
+
+    但修复前, DataFrame 分支在前置过滤判据短路后走的是"未过滤"分支
+    (`if not symbols or symbols == ["BENCHMARK"]:` 为假, 进入 else 分支逐个
+    append 检测到的标的), 会把数据里检测到的 "Y" 反向追加进这个已经含
+    "BENCHMARK" 的 `symbols` 变量, 而这个被两次污染的变量正是引擎白名单
+    下发点直接复用的那个——"Y" 就此混入引擎, 过滤对 DataFrame 形态整体失效。
+    必须用 DataFrame(而非 List[Bar])形态才能复现: List[Bar] 分支不做这种
+    "反向追加检测到的标的"的动作, 不受此叠加效应影响。
+    """
+
+    class _InitSubscribingStrategy(_RecordingStrategy):
+        def __init__(self) -> None:
+            """在 __init__ 阶段订阅哨兵字面量 "BENCHMARK"."""
+            super().__init__()
+            self.subscribe("BENCHMARK")
+
+    strategy = _InitSubscribingStrategy()
+    aq.run_backtest(
+        strategy=strategy, data=_frame_xy(), symbols=["X"], initial_cash=100000
+    )
+    assert strategy.hits == {"X": 3}
 
 
 def test_all_input_forms_agree_under_same_symbols() -> None:
@@ -592,3 +731,94 @@ def test_checkpoint_resume_zero_data_check_uses_merged_whitelist(
             symbols=["X"],
         )
     assert any("标的 Y " in r.getMessage() for r in caplog.records)
+
+
+class _SubscribingOutOfDataStrategy(aq.Strategy):
+    """I2(全分支终审 Important 2): on_start 里 subscribe 一个数据里不存在的标的.
+
+    定义在模块顶层是必须的: run_grid_search/run_walk_forward 用进程池并行,
+    策略类要能被 pickle。直接调用 run_backtest 且不传 symbols 时, 这类
+    subscribe() 因为 `_symbol_whitelist` 未启用(为 None)而是无害 no-op——
+    这正是本测试要在 run_grid_search / run_walk_forward 里守住的基线行为。
+    """
+
+    dummy = IntParam(0)
+
+    def on_start(self) -> None:
+        """订阅数据里不存在的标的 "OUT_OF_DATA"."""
+        self.subscribe("OUT_OF_DATA")
+
+    def on_bar(self, bar: aq.Bar) -> None:
+        """No-op: 仅用于验证 symbols 未显式传入时的转发路径, 不关心交易逻辑."""
+        return
+
+
+def _i2_optimize_data() -> Any:
+    """run_grid_search / run_walk_forward 用的最小单标的合成数据."""
+    import numpy as np
+    import pandas as pd
+
+    n = 24
+    dates = pd.date_range("2020-01-01", periods=n, freq="min", tz="UTC")
+    price = np.full(n, 10.0)
+    return pd.DataFrame(
+        {
+            "timestamp": dates,
+            "open": price,
+            "high": price,
+            "low": price,
+            "close": price,
+            "volume": np.full(n, 100.0),
+            "symbol": "I2_DATA",
+        }
+    )
+
+
+def test_run_grid_search_without_symbols_skips_subscribe_validation_i2() -> None:
+    """I2: 不传 symbols 时 run_grid_search 不应触发过滤/subscribe 白名单校验.
+
+    根因: `_resolve_optimization_backtest_kwargs` 曾在用户未传 symbol/symbols
+    时, 仍会把从数据里推断出的值回填进转发给 run_backtest 的 kwargs, 使其被
+    当成"显式传了 symbols"——策略在 on_start 里 subscribe 数据外的标的(直接
+    调用 run_backtest 不传 symbols 时是无害 no-op)因此触发白名单校验报错,
+    在 run_grid_search 的多进程执行里被吞成 error 列(sharpe/return = -999),
+    而不是像直接 run_backtest 一样正常跑完。修复后不传 symbols 时行为必须与
+    直接调用 run_backtest 完全一致(不触发校验)。
+    """
+    import pandas as pd
+
+    results = aq.run_grid_search(
+        strategy=_SubscribingOutOfDataStrategy,
+        param_grid={"dummy": [1, 2]},
+        data=_i2_optimize_data(),
+        initial_cash=100_000.0,
+        max_workers=1,
+        show_progress=False,
+    )
+    assert isinstance(results, pd.DataFrame)
+    assert not results.empty
+    assert "error" not in results.columns or results["error"].isna().all()
+    assert (results["sharpe_ratio"] != -999).all()
+
+
+def test_run_walk_forward_without_symbols_skips_subscribe_validation_i2() -> None:
+    """I2: 不传 symbols 时 run_walk_forward 同样不应触发过滤/subscribe 白名单校验.
+
+    与上一条同根同因, 覆盖 run_walk_forward 自身对样本外 run_backtest 的
+    调用路径(不止 run_grid_search 内部的并行任务)。
+    """
+    import pandas as pd
+
+    results = aq.run_walk_forward(
+        strategy=_SubscribingOutOfDataStrategy,
+        param_grid={"dummy": [1, 2]},
+        data=_i2_optimize_data(),
+        train_period=10,
+        test_period=5,
+        initial_cash=100_000.0,
+        max_workers=1,
+        show_progress=False,
+    )
+    assert isinstance(results, pd.DataFrame)
+    assert not results.empty
+    assert "equity" in results.columns
