@@ -22,7 +22,7 @@
 一个策略从开始到结束，会经历以下几个阶段：
 
 * `__init__`: Python 对象初始化。**注意它不是参数入口**——可外部调整的参数请用类体内联字段声明（见[参数声明](#param-declaration)），依赖引擎上下文或需要在热启动时重建的初始化放 `on_start`。
-* `on_start`: 策略启动时调用，适合在此使用 `self.subscribe()` 订阅数据，也可在此注册指标。如果是热启动，需注意不要覆盖已恢复的状态。回测下 `subscribe()` 的标的会并入回测标的集合；实盘下会下发到行情网关（若该 broker 没有行情网关则记录一条 warning，见[行情源与交易源分开指定](../reference/api.md#mixed-market-trader-broker)）。
+* `on_start`: 策略启动时调用，适合在此使用 `self.subscribe()` 订阅数据，也可在此注册指标。如果是热启动，需注意不要覆盖已恢复的状态。回测下**未传 `symbols`** 时，`subscribe()` 的标的会并入回测标的集合；**传了 `symbols`** 时只能订阅 `symbols` 之内的标的，订阅集外的标的会抛 `ValueError`（传了 `symbols` 即表示「只跑这些标的」，参见 [`run_backtest` 的 `symbols` 参数](../reference/api.md#akquantrun_backtest)）。实盘下会下发到行情网关（若该 broker 没有行情网关则记录一条 warning，见[行情源与交易源分开指定](../reference/api.md#mixed-market-trader-broker)）。
 * `on_resume`: **仅在热启动时调用**（在 `on_start` 之前）。用于处理从快照恢复后的特殊逻辑。
 * `on_bar`: 每一根 K 线闭合时触发 (核心交易逻辑)。
 * `on_tick`: 每一个 Tick 到达时触发 (高频/盘口策略)。

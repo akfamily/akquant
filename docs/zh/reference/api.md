@@ -19,7 +19,7 @@ def run_backtest(
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
     strategy_loader_options: Optional[Dict[str, Any]] = None,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     initial_cash: Optional[float] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     commission_rate: Optional[float] = None,
@@ -159,7 +159,7 @@ def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     strategy_runtime_config: Optional[Union[StrategyRuntimeConfig, Dict[str, Any]]] = None,
     runtime_config_override: bool = True,
@@ -196,7 +196,7 @@ def run_from_checkpoint(
 *   `strategy_source` / `strategy_loader` / `strategy_loader_options`: 动态策略加载入口。`strategy=None` 时可直接从源码、路径或自定义加载器构造策略。
 *   `initialize` / `on_start` / `on_resume` / `on_stop`: 函数式策略生命周期回调；其中 `on_resume(ctx)` 仅在 checkpoint 恢复后的热启动阶段触发，且先于 `on_start(ctx)`。
 *   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: 函数式策略事件回调；其中 `on_expiry(ctx, event)` 在引擎实际执行到期结算后触发，`on_pre_open(ctx, event)` 在每个交易日首个常规行情事件前触发，适合“盘前决策，本次 open 成交”；`on_error(ctx, error, source, payload)` 会在其他用户回调抛出异常时触发；`on_train_signal(ctx)` 仅在 ML 滚动训练窗口触发。
-*   `symbols`: 标的代码或代码列表。
+*   `symbols`: 标的代码或代码列表。默认 `None`（**未显式传入**）：数据里出现的标的即视为要跑的标的（“数据即订阅”），行为与传入前完全一致。**显式传入**（哪怕传的是当前数据里已有的标的）后语义变为「只跑这些标的」：白名单外的标的会被前置过滤掉，不进入引擎、不参与撮合与统计（多标的输入下，回测结果可能因此变化）；显式传入空集合会报错，而不是退化为不过滤。白名单实际由 `symbols` ∪ `config.instruments` ∪（`__init__` 阶段）`self.subscribe()` 已订阅的标的三者合并而成；显式传了 `symbols` 后，`on_start` 里再 `subscribe()` 白名单外的标的会抛 `ValueError`（详见[策略指南](../guide/strategy.md)「策略生命周期」一节 `on_start` 的说明）。此校验仅作用于回测：实盘 `run_live` 从不下发白名单，`subscribe()` 不受约束。
 *   `initial_cash`: 初始资金。未显式传入时会回落到 `StrategyConfig.initial_cash`，其默认值为 `100000.0`。
 *   `commission_policy`: 运行级默认佣金策略。支持三种模式：
     *   `{"type": "percent", "value": 0.0003}`: 按成交额比例收费。
