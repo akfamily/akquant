@@ -642,6 +642,19 @@ class LiveRunner:
             mark_live = getattr(target, "_set_live_market_data_owner", None)
             if callable(mark_live):
                 mark_live()
+            # 无条件置空 _symbol_whitelist(而非只在它已是 None 时跳过): 与
+            # run_from_checkpoint 对 _symbol_whitelist / _strategy_fill_policy_map
+            # 等字段的处理同一类问题(见该函数与 commit ac277ae 的同名注释)——
+            # `strategy_cls` 允许直接传一个已构造好的 Strategy 实例(见
+            # `_build_strategy_instance`), 该实例若来自 `load_checkpoint()`
+            # 恢复(pickle 整体恢复 `__dict__`), 会带着上一段回测遗留的非 None
+            # `_symbol_whitelist`。`Strategy.subscribe()` 对白名单的校验不区分
+            # 回测/实盘(见该方法文档"实盘不做白名单校验", 但代码本身没有按
+            # `_live_market_data_owner` 分支跳过这段检查), 残留的白名单会让
+            # `on_start`/`initialize` 里的正常 `subscribe()` 被上一次回测的
+            # 白名单误拦, 是与已修三个 Critical 同一类"pickle 残留污染新会话"
+            # 的问题。实盘本就不设白名单, 无条件清空是安全的。
+            setattr(target, "_symbol_whitelist", None)
 
         strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
         self._install_subscription_forwarder(strategy_targets)
