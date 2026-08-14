@@ -1670,6 +1670,12 @@ def _load_data_map_from_adapter(
     end_time: Optional[Union[str, Any]],
     timezone: Optional[str],
 ) -> Dict[str, pd.DataFrame]:
+    """按 requested_symbols 逐标的调用 adapter.load 并汇总成 {symbol: DataFrame}.
+
+    本函数天然只加载 requested_symbols(即参数 `symbols`, 未传则回落为
+    `["BENCHMARK"]`), 故不需要额外的 symbols 白名单前置过滤 —— 这不是
+    "忘了加过滤", 是 for 循环本身就只会为白名单内的标的发请求。
+    """
     effective_timezone = timezone or DEFAULT_TIMEZONE
     request_start = (
         _parse_runtime_boundary_timestamp(start_time, effective_timezone)
@@ -3054,6 +3060,12 @@ def run_backtest(
     feed = DataFeed()
     symbols = []
     data_map_for_indicators = {}
+    # 前置过滤: List[Bar] 形态在构建 feed 前跳过白名单外的标的, 省掉排序/
+    # 构建 feed 与按 symbol 分组算指标 df 的开销。与 DataFrame(:3221 附近)、
+    # dict(:3250 附近) 两段用同一判据, 三种能枚举内容的形态在 symbols 上的
+    # 行为保持一致 —— 语义仍由 Rust 层白名单兜底(Task 1), 这里纯属优化,
+    # 覆盖不到 DataFeed 对象这种无法枚举的形态也无妨。
+    filtered_out_symbols: set[str] = set()
 
     symbols = list(effective_symbols)
 
@@ -3298,6 +3310,18 @@ def run_backtest(
                 if end_time:
                     ts_end_ns = _boundary_timestamp_to_utc_ns(end_time, timezone)
                     data = [b for b in data if b.timestamp <= ts_end_ns]  # type: ignore
+
+                # 前置过滤: 判据与 DataFrame(:3221 附近)/dict(:3250 附近) 两段
+                # 完全一致, 避免三种形态在 symbols 上出现不一致的行为。
+                filter_symbols = bool(symbols and "BENCHMARK" not in symbols)
+                if filter_symbols:
+                    kept_bars = []
+                    for b in data:
+                        if b.symbol not in symbols:  # type: ignore[union-attr]
+                            filtered_out_symbols.add(b.symbol)  # type: ignore[union-attr]
+                            continue
+                        kept_bars.append(b)
+                    data = kept_bars
 
                 data.sort(key=lambda b: b.timestamp)
                 feed.add_bars(data)  # type: ignore[arg-type]
@@ -4448,6 +4472,15 @@ def run_backtest(
 
     for current_strategy in all_strategy_instances:
         current_strategy._set_instrument_snapshots(instrument_snapshots)
+
+    # 被前置过滤掉的标的只发一条汇总日志, 不逐个刷屏 —— 传全市场数据只关心
+    # 几个标的是本变更的主要动机场景, 逐标的告警会淹没输出。
+    if filtered_out_symbols:
+        logger.info(
+            "已过滤 %d 个不在 symbols 中的标的: %s",
+            len(filtered_out_symbols),
+            ", ".join(sorted(filtered_out_symbols)),
+        )
 
     # symbols 白名单: 只在用户显式传了 symbols 时启用。
     # 白名单取合并后的集合(symbols + config.instruments + __init__ 里的

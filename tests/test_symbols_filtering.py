@@ -108,3 +108,43 @@ def test_explicit_symbols_literal_benchmark_still_filters() -> None:
     assert _run(_bars_with_benchmark_symbol(), symbols=["BENCHMARK"]) == {
         "BENCHMARK": 3
     }
+
+
+def test_all_input_forms_agree_under_same_symbols() -> None:
+    """同一份数据、同一个 symbols, 各输入形态的命中集合必须一致.
+
+    这是本次变更的核心保证: 此前 DataFrame 形态与 DataFeed 形态在
+    symbols 上的行为并不一致, 而不一致本身就是要修的缺陷。
+    """
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(
+                [f"2025-01-{2 + i:02d}" for i in range(3) for _ in range(2)]
+            ),
+            "symbol": ["X", "Y"] * 3,
+            "open": [10.0, 100.0] * 3,
+            "high": [10.0, 100.0] * 3,
+            "low": [10.0, 100.0] * 3,
+            "close": [10.0, 100.0] * 3,
+            "volume": [100.0, 100.0] * 3,
+        }
+    )
+    expected = {"X": 3}
+    assert _run(_bars(), symbols=["X"]) == expected
+    assert _run(_feed(), symbols=["X"]) == expected
+    assert _run(frame, symbols=["X"]) == expected
+    assert _run({"X": frame[frame["symbol"] == "X"]}, symbols=["X"]) == expected
+
+
+def test_filtered_symbols_are_logged_once_in_summary(caplog: Any) -> None:
+    """被过滤掉的标的只发一条汇总日志, 不逐个刷屏.
+
+    传全市场数据只关心几个标的是本变更的主要动机场景, 逐标的告警会淹没输出。
+    """
+    with caplog.at_level("INFO"):
+        _run(_bars(), symbols=["X"])
+    filtered_lines = [r for r in caplog.records if "过滤" in r.getMessage()]
+    assert len(filtered_lines) == 1
+    assert "1" in filtered_lines[0].getMessage()
