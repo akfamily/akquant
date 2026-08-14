@@ -5185,27 +5185,39 @@ def run_from_checkpoint(
     )
     setattr(strategy_instance, "_slot_strategies", dict(slot_strategy_instances))
     setattr(strategy_instance, "_strategy_slot_ids", list(configured_slot_ids))
-    if normalized_strategy_fill_policy is not None:
-        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
-            setattr(
-                current_strategy,
-                "_strategy_fill_policy_map",
-                dict(normalized_strategy_fill_policy),
-            )
-    if normalized_strategy_slippage is not None:
-        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
-            setattr(
-                current_strategy,
-                "_strategy_slippage_map",
-                dict(normalized_strategy_slippage),
-            )
-    if normalized_strategy_commission is not None:
-        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
-            setattr(
-                current_strategy,
-                "_strategy_commission_map",
-                dict(normalized_strategy_commission),
-            )
+    # 无条件赋值(而非只在 normalized_strategy_* is not None 时才赋值): 恢复出来的
+    # 策略实例的 `_strategy_fill_policy_map` / `_strategy_slippage_map` /
+    # `_strategy_commission_map` 是上一段 checkpoint 存档时随对象一起被
+    # save_checkpoint 整体 pickle 下来的旧值(load_checkpoint 用默认 __dict__
+    # 整体恢复, 会原样带出旧 map)——本次若没显式传对应的 strategy_* 参数, 必须
+    # 显式置 None 覆盖它, 否则旧 map 会继续生效, 并静默压过本次显式传的运行级
+    # fill_policy/slippage/commission_rate(见 strategy_trading_api.py 里
+    # _resolve_effective_order_* 的解析顺序: 策略级 map 命中就直接返回, 根本不会
+    # 走到运行级默认值)。置 None 而非 {}: 与消费端 `if not policy_map: return
+    # None` 的判据等价(两者都是"无覆盖"), 且 None 与该属性未被设置过时的
+    # getattr 默认值一致, 不引入第三种状态。
+    for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
+        setattr(
+            current_strategy,
+            "_strategy_fill_policy_map",
+            dict(normalized_strategy_fill_policy)
+            if normalized_strategy_fill_policy is not None
+            else None,
+        )
+        setattr(
+            current_strategy,
+            "_strategy_slippage_map",
+            dict(normalized_strategy_slippage)
+            if normalized_strategy_slippage is not None
+            else None,
+        )
+        setattr(
+            current_strategy,
+            "_strategy_commission_map",
+            dict(normalized_strategy_commission)
+            if normalized_strategy_commission is not None
+            else None,
+        )
 
     if configured_slot_ids and hasattr(engine, "set_strategy_slots"):
         cast(Any, engine).set_strategy_slots(configured_slot_ids)

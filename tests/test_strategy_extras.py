@@ -6419,6 +6419,171 @@ def test_strategy_level_per_unit_commission_applies_when_order_commission_missin
     assert float(row["commission"]) == pytest.approx(0.5)
 
 
+class _CheckpointResiduePickleStrategy(Strategy):
+    """Buy exactly one lot on the first bar of each phase.
+
+    Phase 1's order must fully fill before ``save_checkpoint`` (no pending
+    order pickled). Phase 2's order (tag="phase2") is the one under test:
+    it exercises whichever fill_policy/slippage/commission resolution is in
+    effect *this* call, with no per-order override of its own.
+    """
+
+    def __init__(self) -> None:
+        self.phase1_sent = False
+        self.phase2_sent = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.is_restored:
+            if not self.phase1_sent:
+                self.phase1_sent = True
+                self.buy(symbol=bar.symbol, quantity=1.0, tag="phase1")
+        elif not self.phase2_sent:
+            self.phase2_sent = True
+            self.buy(symbol=bar.symbol, quantity=1.0, tag="phase2")
+
+
+def _checkpoint_residue_phase_data(symbol: str, phase: int) -> pd.DataFrame:
+    """Two very-distinguishable phases: open/close values never collide."""
+    if phase == 1:
+        start = "2023-01-01"
+        opens = [10.0, 20.0, 30.0]
+        closes = [100.0, 200.0, 300.0]
+    else:
+        start = "2023-02-01"
+        opens = [50.0, 60.0, 70.0]
+        closes = [500.0, 600.0, 700.0]
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range(start, periods=3, freq="D", tz="UTC"),
+            "open": opens,
+            "high": [o + 1.0 for o in opens],
+            "low": [o - 1.0 for o in opens],
+            "close": closes,
+            "volume": [10000.0, 10000.0, 10000.0],
+            "symbol": [symbol, symbol, symbol],
+        }
+    )
+
+
+def _checkpoint_residue_phase2_row(result: Any) -> pd.Series:
+    filled = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    return cast(pd.Series, filled[filled["tag"] == "phase2"].iloc[0])
+
+
+def test_checkpoint_resume_explicit_fill_policy_overrides_stale_strategy_map(
+    tmp_path: Path,
+) -> None:
+    """本次显式传的运行级 fill_policy 不能被残留的策略级 map 静默压过.
+
+    根因: save_checkpoint 把整个策略对象 pickle 落盘, `_strategy_fill_policy_map`
+    随对象整体恢复; 若 run_from_checkpoint 只在本次显式传了
+    strategy_fill_policy 时才 setattr, 本次不传就不会清空旧 map —— 而
+    strategy_trading_api.py 的 `_resolve_effective_order_fill_policy` 优先命中
+    策略级 map, 命中后直接返回, 根本不会走到本次显式传的运行级 fill_policy。
+    """
+    register_logger(console=False, level="INFO")
+    checkpoint = tmp_path / "fill_policy_residue.pkl"
+    phase1 = _checkpoint_residue_phase_data("FPRES", 1)
+    phase2 = _checkpoint_residue_phase_data("FPRES", 2)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_CheckpointResiduePickleStrategy,
+        symbols="FPRES",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        strategy_fill_policy={"_default": NextClose()},
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="FPRES",
+        show_progress=False,
+        fill_policy=NextOpen(),
+    )
+    row = _checkpoint_residue_phase2_row(result2)
+    # 本次显式传的 NextOpen() 必须生效: 成交价取 phase2 bar1 的 open=60.0。
+    # 修复前会被残留的 "_default": NextClose() 压过, 成交价变成 close=600.0。
+    assert float(row["avg_price"]) == pytest.approx(60.0)
+
+
+def test_checkpoint_resume_without_strategy_slippage_clears_stale_map(
+    tmp_path: Path,
+) -> None:
+    """本次不传 strategy_slippage 时必须清空残留的策略级滑点 map.
+
+    根因与上一条 fill_policy 用例同源: `_strategy_slippage_map` 随 checkpoint
+    整体 pickle 恢复; 若不清空, `_resolve_effective_order_slippage` 命中旧 map
+    后直接返回旧滑点, 本次"不加滑点"的意图被静默覆盖。
+    """
+    register_logger(console=False, level="INFO")
+    checkpoint = tmp_path / "slippage_residue.pkl"
+    phase1 = _checkpoint_residue_phase_data("SLRES", 1)
+    phase2 = _checkpoint_residue_phase_data("SLRES", 2)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_CheckpointResiduePickleStrategy,
+        symbols="SLRES",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        strategy_slippage={"_default": {"type": "fixed", "value": 5.0}},
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="SLRES",
+        show_progress=False,
+    )
+    row = _checkpoint_residue_phase2_row(result2)
+    # 本次未传任何滑点: 成交价必须是干净的 phase2 bar1 open=60.0, 不带旧的
+    # fixed=5.0 滑点。修复前残留 map 仍生效, 成交价变成 65.0。
+    assert float(row["avg_price"]) == pytest.approx(60.0)
+
+
+def test_checkpoint_resume_explicit_zero_commission_overrides_stale_strategy_map(
+    tmp_path: Path,
+) -> None:
+    """本次显式传 commission_rate=0.0 时, 残留的策略级佣金 map 不能静默压过它.
+
+    这是资金层面的静默错误: 用户本次明确表示"不收佣金", 但若残留的
+    `_strategy_commission_map` 未被清空, `_resolve_effective_order_commission`
+    命中旧 map 后直接返回旧佣金规则, 实收佣金仍按旧费率收取。
+    """
+    register_logger(console=False, level="INFO")
+    checkpoint = tmp_path / "commission_residue.pkl"
+    phase1 = _checkpoint_residue_phase_data("CORES", 1)
+    phase2 = _checkpoint_residue_phase_data("CORES", 2)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_CheckpointResiduePickleStrategy,
+        symbols="CORES",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        strategy_commission={"_default": {"type": "percent", "value": 0.02}},
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="CORES",
+        show_progress=False,
+        commission_rate=0.0,
+    )
+    row = _checkpoint_residue_phase2_row(result2)
+    # 本次显式传 commission_rate=0.0: 实收佣金必须为 0。
+    # 修复前残留的 "_default": percent 0.02 仍生效, 实收佣金变成 60*0.02=1.2。
+    assert float(row["commission"]) == pytest.approx(0.0)
+
+
 def test_strategy_trailing_helpers_delegate_to_submit_order() -> None:
     """Trailing helper APIs should call unified submit_order with trailing args."""
 
