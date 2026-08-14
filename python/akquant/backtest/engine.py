@@ -4582,7 +4582,14 @@ def run_backtest(
     # 与 filtered_out_symbols(用户主动排除)、adapter 泄漏 warning(数据里有、但
     # 未被请求)是三个不相交的集合——这里是"白名单里有、但数据里没有"。
     symbol_data_missing: set[str] = set()
-    if symbols_explicit and data_map_for_indicators:
+    # 用 `data_map_for_indicators or catalog_missing_symbols` 而非只看
+    # `data_map_for_indicators`: Catalog 路径下若**全部**请求标的都读取失败,
+    # `data_map_for_indicators` 会是空 dict(falsy), 导致这段整体被跳过——
+    # 下面"跳过已经报过英文 warning 的标的"与"记入 _symbol_data_warned 防止
+    # 会话末重复告警"两步都不会执行, 于是 catalog_missing_symbols 里的标的会在
+    # 会话末被 `_check_symbol_data_coverage` 再报一次中文告警, 与运行前的英文
+    # warning 重复。全空只是"部分读不到"的极限场景, 去重逻辑理应对称覆盖。
+    if symbols_explicit and (data_map_for_indicators or catalog_missing_symbols):
         symbol_data_missing = set(symbols) - set(data_map_for_indicators.keys())
         # Catalog 路径逐标的读取失败已经报过一条英文 warning(:3464 附近), 不再
         # 对这些标的重复报中文告警——但仍要记入 _symbol_data_warned(见下方
@@ -4933,6 +4940,10 @@ def run_from_checkpoint(
     # 1. 准备数据源
     feed = None
     data_map_for_indicators: Dict[str, pd.DataFrame] = {}
+    # 与 run_backtest 对称(见该函数 :3150 附近同名注释): 记录被 symbols 白名单
+    # 挡在 Python 前置过滤之外的标的, 供下面(:6132 附近)补发与 run_backtest
+    # 一致的汇总 INFO 日志——两条入口的可观测性不应该有差异。
+    filtered_out_symbols: set[str] = set()
 
     # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
     data = coerce_to_pandas(data)
@@ -5008,7 +5019,11 @@ def run_from_checkpoint(
                 df_prepared["symbol"] = df_prepared["symbol"].astype(str)
                 filter_symbols = bool(symbols and "BENCHMARK" not in symbols)
                 if filter_symbols:
+                    # 与 run_backtest 同一手法(:3320 附近): isin 是整体布尔索引,
+                    # 拿不到"被剔除了哪些", 只能靠过滤前后的 symbol 集合求差集。
+                    pre_filter_symbols = set(df_prepared["symbol"].unique())
                     df_prepared = df_prepared[df_prepared["symbol"].isin(symbols)]
+                    filtered_out_symbols.update(pre_filter_symbols.difference(symbols))
                 if not df_prepared.empty:
                     grouped = df_prepared.groupby("symbol", sort=False)
                     data_map = {
@@ -5055,7 +5070,19 @@ def run_from_checkpoint(
                     data_map_for_indicators[sym] = df
 
         elif isinstance(data, dict):
-            data_map = data
+            # 与 run_backtest 的 dict 分支对称(:3351 附近): 显式传了 symbols 时
+            # 同样只放行白名单内的标的, 被挡下的记入 filtered_out_symbols 供下面
+            # 的汇总 INFO 日志复用。
+            filter_symbols = bool(symbols and "BENCHMARK" not in symbols)
+            if filter_symbols:
+                data_map = {}
+                for sym, df in data.items():
+                    if sym not in symbols:
+                        filtered_out_symbols.add(sym)
+                        continue
+                    data_map[sym] = df
+            else:
+                data_map = data
         else:
             data_map = {}
 
@@ -6131,6 +6158,15 @@ def run_from_checkpoint(
     )
     if symbols_explicit:
         engine.set_symbol_whitelist(whitelist_symbols)
+
+    # 被前置过滤掉的标的只发一条汇总日志, 与 run_backtest 对称(见该函数同名
+    # 注释, :4572 附近)——两条入口的可观测性不应该有差异。
+    if filtered_out_symbols:
+        logger.info(
+            "已过滤 %d 个不在 symbols 中的标的: %s",
+            len(filtered_out_symbols),
+            ", ".join(sorted(filtered_out_symbols)),
+        )
 
     # 运行前比对: 与 run_backtest 对称(见该函数同名注释)。symbols 里有没有标的
     # 实际数据集合里压根没有——data_map_for_indicators 为空说明走的是 DataFeed
