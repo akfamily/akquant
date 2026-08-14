@@ -22,7 +22,7 @@ For those new to quantitative trading, here are some basic terms:
 A strategy goes through the following stages from start to finish:
 
 *   `__init__`: Python object initialization. **It is not a parameter entry point** — declare tunable parameters as inline class fields (see [Parameter Declaration](#param-declaration)), and put context-dependent setup in `on_start`.
-*   `on_start`: Called when the strategy starts. You **must** use `self.subscribe()` here to subscribe to data, and you can also register indicators here.
+*   `on_start`: Called when the strategy starts. This is where you typically call `self.subscribe()` to subscribe to data, and you can also register indicators here. On a warm start, be careful not to overwrite already-restored state. In a backtest, when `symbols` is **not** passed, symbols subscribed via `subscribe()` are folded into the backtest's symbol set; when `symbols` **is** passed, you may only subscribe to symbols already inside it — subscribing to one outside that set raises `ValueError` (passing `symbols` means "run only these symbols"; see the [`symbols` parameter of `run_backtest`](../reference/api.md#akquantrun_backtest)). In live trading, subscriptions are forwarded to the market gateway (a warning is logged instead if the broker has no market gateway).
 *   `on_bar`: Triggered when each Bar closes (core trading logic).
 *   `on_tick`: Triggered when each Tick arrives (high-frequency/order book strategies).
 *   `on_order`: Triggered when order status changes (e.g., Submitted, Filled, Cancelled).
