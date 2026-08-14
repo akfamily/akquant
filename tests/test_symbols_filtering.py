@@ -287,3 +287,76 @@ def test_subscribe_without_explicit_symbols_never_raises() -> None:
     strategy = _SubscribingStrategy()
     aq.run_backtest(strategy=strategy, data=_bars(), initial_cash=100000)
     assert strategy.hits == {"X": 3, "Y": 3}
+
+
+def test_slot_strategy_subscribe_outside_whitelist_raises() -> None:
+    """多策略 slot 拓扑下, slot 策略在 on_start 里 subscribe 白名单外的标的同样报错.
+
+    两处白名单下发(run_backtest / run_from_checkpoint)都对
+    slot_strategy_instances.values() 逐一设置 _symbol_whitelist —— 只测主策略无法
+    锁住这条 for 循环: 若未来有人误删它, 校验会对 slot 策略静默失效, 但只测主策略的
+    用例不会报警。
+    """
+
+    class _SubscribingSlotStrategy(_RecordingStrategy):
+        def on_start(self) -> None:
+            """Slot 策略订阅一个白名单外的标的."""
+            super().on_start()
+            self.subscribe("Y")
+
+    with pytest.raises(ValueError, match="Y"):
+        aq.run_backtest(
+            strategy=_RecordingStrategy,
+            data=_bars(),
+            symbols=["X"],
+            initial_cash=100000,
+            strategies_by_slot={"beta": _SubscribingSlotStrategy},
+        )
+
+
+class _SubscribingWarmStartStrategy(_RecordingStrategy):
+    """恢复后订阅一个白名单外的标的; 首次启动时不订阅.
+
+    定义在模块顶层(而非测试函数内部)是必须的: save_checkpoint 要 pickle 策略
+    实例, 而 pickle 无法处理定义在函数局部作用域里的类
+    (`Can't get local object '...<locals>....'`)。
+    """
+
+    def on_start(self) -> None:
+        """恢复后订阅一个白名单外的标的; 首次启动时不订阅."""
+        super().on_start()
+        if self.is_restored:
+            self.subscribe("Y")
+
+
+def test_checkpoint_resume_subscribe_outside_whitelist_raises(tmp_path: Any) -> None:
+    """热启动(run_from_checkpoint)下, 恢复后 on_start 里 subscribe 白名单外标的同样报错.
+
+    run_from_checkpoint 的白名单下发是与 run_backtest 结构对称但物理独立的一段代码
+    (engine.py 里两处不同的 if symbols_explicit 分支), 只测 run_backtest 无法覆盖它。
+
+    阶段一刻意**不传** symbols(symbols_explicit=False), 使 `_symbol_whitelist`
+    在存档前后都是 None —— 若阶段一也传 symbols, pickle 会把阶段一算出的白名单
+    原样带进恢复后的实例, 阶段二哪怕真的漏发白名单, 测试也会"意外"通过(靠的是
+    阶段一残留状态, 不是阶段二的下发代码), 起不到锁住 checkpoint 路径本身的作用。
+    阶段二显式传 symbols=["X"], 恢复后的白名单只能来自 run_from_checkpoint 自己
+    的下发代码。
+
+    on_start 在恢复态下会被再次调用(见 Strategy.on_start 文档: "如果策略是从快照
+    恢复的, 此方法仍会被调用"), 所以用 self.is_restored 把 subscribe("Y") 限定在
+    恢复之后触发, 避免阶段一就提前报错。
+    """
+    checkpoint_path = tmp_path / "symbols_whitelist_checkpoint.pkl"
+    phase1 = aq.run_backtest(
+        strategy=_SubscribingWarmStartStrategy,
+        data=_bars(),
+        initial_cash=100000,
+    )
+    aq.save_checkpoint(phase1.engine, phase1.strategy, str(checkpoint_path))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="Y"):
+        aq.run_from_checkpoint(
+            checkpoint_path=str(checkpoint_path),
+            data=_bars(),
+            symbols=["X"],
+        )
