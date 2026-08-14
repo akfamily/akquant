@@ -916,7 +916,13 @@ def _resolve_effective_symbols(
     symbols: Union[str, List[str], Tuple[str, ...], set[str], None],
     kwargs: Dict[str, Any],
     api_name: str,
-) -> Tuple[Union[str, List[str], Tuple[str, ...], set[str]], List[str]]:
+) -> Tuple[Union[str, List[str], Tuple[str, ...], set[str]], List[str], bool]:
+    """解析 symbols 参数.
+
+    第三个返回值 `symbols_explicit` 表示用户是否**显式**传入了 `symbols`。
+    过滤只在显式传入时启用 —— 注意本函数在未传时会填入默认值
+    `"BENCHMARK"`, 若照它字面去过滤会把所有真实数据都滤掉。
+    """
     if "symbol" in kwargs:
         raise ValueError(
             f"{api_name} no longer accepts `symbol`; please use `symbols` only"
@@ -929,13 +935,28 @@ def _resolve_effective_symbols(
         )
     elif "symbols" in kwargs:
         kwargs.pop("symbols")
+    symbols_explicit = symbols is not None
     if symbols is None:
         symbols = "BENCHMARK"
     effective_symbols = _normalize_symbols_argument(
         symbols=symbols,
         api_name=api_name,
     )
-    return symbols, effective_symbols
+    # 字面量 "BENCHMARK" 是本文件里既有的"未指定标的"哨兵值(参见下方多处
+    # `symbols == ["BENCHMARK"]` / `"BENCHMARK" not in symbols` 判断), 也有
+    # 既有调用方显式传 symbols="BENCHMARK" 来表达"不过滤、沿用数据即订阅"
+    # (如 tests/test_strategy_extras.py 的多个 warm-start 用例)。若把这种显式
+    # 传入也算作"显式指定标的", 会把这些调用方的真实数据全部滤掉, 效果与
+    # "未传参"本应得到的结果相悖, 因此在此把它折算回未显式。
+    if symbols_explicit and effective_symbols == ["BENCHMARK"]:
+        symbols_explicit = False
+    if symbols_explicit and not effective_symbols:
+        raise ValueError(
+            f"{api_name} 的 symbols 不能为空: 传空集合会得到一个不放行任何标的的"
+            "空回测。要跑全部数据请省略 symbols(沿用「数据即订阅」), "
+            "要跑指定标的请至少给一个。"
+        )
+    return symbols, effective_symbols, symbols_explicit
 
 
 def _strategy_param_field_names(
@@ -2187,7 +2208,7 @@ def run_backtest(
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
     strategy_loader_options: Optional[Dict[str, Any]] = None,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     initial_cash: Optional[float] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     commission_rate: Optional[float] = None,
@@ -2627,7 +2648,7 @@ def run_backtest(
         kwargs_runtime_config = kwargs.pop("strategy_runtime_config")
         if strategy_runtime_config is None:
             strategy_runtime_config = kwargs_runtime_config
-    symbols, effective_symbols = _resolve_effective_symbols(
+    symbols, effective_symbols, symbols_explicit = _resolve_effective_symbols(
         symbols=symbols,
         kwargs=kwargs,
         api_name="run_backtest",
@@ -4436,6 +4457,13 @@ def run_backtest(
     for current_strategy in all_strategy_instances:
         current_strategy._set_instrument_snapshots(instrument_snapshots)
 
+    # symbols 白名单: 只在用户显式传了 symbols 时启用。
+    # 白名单取合并后的集合(symbols + config.instruments + __init__ 里的
+    # subscribe), 因为这几项都在数据加载前就能确定。
+    # DataFeed 对象输入只能靠这一层过滤 —— 它只写不读, Python 无从枚举内容。
+    if symbols_explicit:
+        engine.set_symbol_whitelist(list(symbols))
+
     # 6. 添加数据
     engine.add_data(feed)
 
@@ -4589,7 +4617,7 @@ def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     strategy_runtime_config: Optional[
         Union[StrategyRuntimeConfig, Dict[str, Any]]
@@ -4738,7 +4766,7 @@ def run_from_checkpoint(
         elif isinstance(fill_policy_override, dict):
             raise TypeError(_LEGACY_FILL_POLICY_DICT_MSG)
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
-    symbols, effective_symbols = _resolve_effective_symbols(
+    symbols, effective_symbols, symbols_explicit = _resolve_effective_symbols(
         symbols=symbols,
         kwargs=kwargs,
         api_name="run_from_checkpoint",
@@ -5885,6 +5913,30 @@ def run_from_checkpoint(
                 if hasattr(slot_strategy, "on_resume"):
                     slot_strategy.on_resume()
             slot_strategy.on_start()
+
+    # symbols 白名单: 只在用户显式传了 symbols 时启用, 与 run_backtest 对称。
+    # 白名单取合并后的集合(effective_symbols + config.instruments + 各策略的
+    # _subscriptions) —— 放在 on_start 之后是有意的: __init__/on_start 里的
+    # subscribe 到这里才确定。add_data 已在上面 load_checkpoint() 内部执行过,
+    # 但白名单只需在 engine.run() 之前生效即可, 过滤发生在事件分发时(见
+    # set_symbol_whitelist 的实现)。DataFeed 对象输入只能靠这一层过滤 —— 它
+    # 只写不读, Python 无从枚举内容。
+    if symbols_explicit:
+        whitelist_symbols = list(effective_symbols)
+        if config and config.instruments:
+            for s in config.instruments:
+                if s not in whitelist_symbols:
+                    whitelist_symbols.append(s)
+        if hasattr(strategy_instance, "_subscriptions"):
+            for s in strategy_instance._subscriptions:
+                if s not in whitelist_symbols:
+                    whitelist_symbols.append(s)
+        for slot_strategy in slot_strategy_instances.values():
+            if hasattr(slot_strategy, "_subscriptions"):
+                for s in slot_strategy._subscriptions:
+                    if s not in whitelist_symbols:
+                        whitelist_symbols.append(s)
+        engine.set_symbol_whitelist(whitelist_symbols)
 
     if data_map_for_indicators:
         for current_strategy in all_strategy_instances:
