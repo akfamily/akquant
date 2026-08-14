@@ -360,3 +360,72 @@ def test_checkpoint_resume_subscribe_outside_whitelist_raises(tmp_path: Any) -> 
             data=_bars(),
             symbols=["X"],
         )
+
+
+def _later_bars() -> list[aq.Bar]:
+    """X 与 Y 各 3 根 bar, 日期比 _bars() 晚(供热启动阶段二使用, 避免与阶段一重叠)."""
+    out = []
+    for i in range(3):
+        for symbol, base in (("X", 10.0), ("Y", 100.0)):
+            out.append(
+                aq.Bar(
+                    timestamp=f"2025-01-{5 + i:02d}",  # type: ignore[arg-type]
+                    symbol=symbol,
+                    open=base + i,
+                    high=base + i,
+                    low=base + i,
+                    close=base + i,
+                    volume=100.0,
+                )
+            )
+    return out
+
+
+class _SubscribingAfterUnfilteredResumeStrategy(_RecordingStrategy):
+    """恢复时订阅一个"上一段 checkpoint 的白名单"之外的标的.
+
+    on_resume 早于 on_start(见 Strategy._on_start_internal), 在此订阅是为了让
+    校验判据(若残留生效)在 on_start 重置 hits 之前就先抛出, 与
+    _SubscribingWarmStartStrategy 用 on_start+is_restored 是等价时机, 换成
+    on_resume 只是顺带覆盖这个另外存在的钩子。
+    """
+
+    def on_resume(self) -> None:
+        """恢复时订阅一个曾经的白名单外标的."""
+        self.subscribe("Y")
+
+
+def test_checkpoint_resume_without_symbols_does_not_inherit_stale_whitelist(
+    tmp_path: Any,
+) -> None:
+    """阶段一传了 symbols, 阶段二热启动**不再**传 symbols 时, 旧白名单不能残留.
+
+    `_symbol_whitelist` 是策略实例的普通属性, 会随对象一起被 `save_checkpoint`
+    pickle 下来; `load_checkpoint` 用默认 `__dict__` 整体恢复, 会把这个旧值原样
+    带回来。若白名单下发代码只在 `symbols_explicit` 为真时才赋值, 阶段二不传
+    `symbols` 时: 引擎层(`engine.set_symbol_whitelist`)因为同一个判据不执行,
+    正确地"不过滤"; 但策略层的 `_symbol_whitelist` 却仍是阶段一的旧集合 ——
+    引擎放行、策略却按旧白名单拦截 subscribe, 出现自相矛盾的两副面孔, 且报错
+    文案里的白名单是这次调用根本没传的值。
+
+    这里刻意复用了 fix round 1 里"阶段一也传 symbols"这个构造——上一版测试要
+    刻意避开它(否则测不到 run_from_checkpoint 自己的下发代码), 这次反过来专门
+    用它验证残留不会生效: 恢复后 subscribe 旧白名单外的标的必须**不报错**, 且
+    该标的能正常参与回测(引擎层本就不过滤)。
+    """
+    checkpoint_path = tmp_path / "stale_whitelist_checkpoint.pkl"
+    phase1 = aq.run_backtest(
+        strategy=_SubscribingAfterUnfilteredResumeStrategy,
+        data=_bars(),
+        symbols=["X"],
+        initial_cash=100000,
+    )
+    aq.save_checkpoint(phase1.engine, phase1.strategy, str(checkpoint_path))  # type: ignore[arg-type]
+
+    result = aq.run_from_checkpoint(
+        checkpoint_path=str(checkpoint_path),
+        data=_later_bars(),
+    )
+    strategy = result.strategy
+    assert strategy is not None
+    assert strategy.hits.get("Y", 0) > 0

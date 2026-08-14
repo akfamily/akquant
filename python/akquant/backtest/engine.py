@@ -3038,13 +3038,17 @@ def run_backtest(
     )
 
     # symbols 白名单下发给策略实例(供 subscribe() 校验用): 必须在 on_start 之前,
-    # 这样 on_start 里的 subscribe 才会被挡住。只在显式传了 symbols 时设置,
+    # 这样 on_start 里的 subscribe 才会被挡住。只在显式传了 symbols 时校验,
     # 且只在回测路径设——实盘的 subscribe 是正常的动态订阅手段, 不校验。
-    if symbols_explicit:
-        whitelist_for_strategy = set(symbols)
-        strategy_instance._symbol_whitelist = whitelist_for_strategy
-        for slot_strategy in slot_strategy_instances.values():
-            slot_strategy._symbol_whitelist = whitelist_for_strategy
+    # 无条件赋值(而非只在 symbols_explicit 时才赋值): 策略实例可能是从 checkpoint
+    # 恢复的, `_symbol_whitelist` 会随对象一起被 pickle 持久化(load_checkpoint 用
+    # 默认 __dict__ 整体恢复, 会覆盖 Strategy.__new__ 设的 None)——若本次调用
+    # 没显式传 symbols 却不去覆盖它, 就会沿用上一段 checkpoint 里的旧白名单,
+    # 与本次「不传 symbols = 不过滤」的意图相矛盾。
+    whitelist_for_strategy = set(symbols) if symbols_explicit else None
+    strategy_instance._symbol_whitelist = whitelist_for_strategy
+    for slot_strategy in slot_strategy_instances.values():
+        slot_strategy._symbol_whitelist = whitelist_for_strategy
 
     # 调用 on_start 获取订阅
     # 注意：现在调用 _on_start_internal 来触发自动发现
@@ -5975,11 +5979,17 @@ def run_from_checkpoint(
     # symbols 白名单下发给策略实例(供 subscribe() 校验用): 必须在 on_start 之前,
     # 这样 on_start 里的 subscribe 才会被挡住。与下面(on_start 之后)的
     # engine.set_symbol_whitelist 是两个不同的下发点, 不要合并。
-    if symbols_explicit:
-        whitelist_for_strategy = set(symbols)
-        strategy_instance._symbol_whitelist = whitelist_for_strategy
-        for slot_strategy in slot_strategy_instances.values():
-            slot_strategy._symbol_whitelist = whitelist_for_strategy
+    # 无条件赋值(而非只在 symbols_explicit 时才赋值): 恢复出来的策略实例的
+    # `_symbol_whitelist` 是上一段 checkpoint 存档时随对象一起 pickle 下来的
+    # 旧值(load_checkpoint 用默认 __dict__ 整体恢复, 会原样带出旧白名单)——
+    # 本次若没显式传 symbols, 必须显式置 None 覆盖它, 否则会沿用上一段的旧白名单,
+    # 与「这次不传 symbols = 不过滤」的意图相矛盾, 且引擎层(下面的
+    # engine.set_symbol_whitelist, 同一个 guard 不执行 ⇒ 不过滤)与策略层
+    # (仍按旧白名单拦截 subscribe)会出现矛盾的两副面孔。
+    whitelist_for_strategy = set(symbols) if symbols_explicit else None
+    strategy_instance._symbol_whitelist = whitelist_for_strategy
+    for slot_strategy in slot_strategy_instances.values():
+        slot_strategy._symbol_whitelist = whitelist_for_strategy
 
     if hasattr(strategy_instance, "_on_start_internal"):
         strategy_instance._on_start_internal()
