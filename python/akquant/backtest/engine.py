@@ -942,14 +942,6 @@ def _resolve_effective_symbols(
         symbols=symbols,
         api_name=api_name,
     )
-    # 字面量 "BENCHMARK" 是本文件里既有的"未指定标的"哨兵值(参见下方多处
-    # `symbols == ["BENCHMARK"]` / `"BENCHMARK" not in symbols` 判断), 也有
-    # 既有调用方显式传 symbols="BENCHMARK" 来表达"不过滤、沿用数据即订阅"
-    # (如 tests/test_strategy_extras.py 的多个 warm-start 用例)。若把这种显式
-    # 传入也算作"显式指定标的", 会把这些调用方的真实数据全部滤掉, 效果与
-    # "未传参"本应得到的结果相悖, 因此在此把它折算回未显式。
-    if symbols_explicit and effective_symbols == ["BENCHMARK"]:
-        symbols_explicit = False
     if symbols_explicit and not effective_symbols:
         raise ValueError(
             f"{api_name} 的 symbols 不能为空: 传空集合会得到一个不放行任何标的的"

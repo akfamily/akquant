@@ -74,3 +74,37 @@ def test_empty_symbols_list_is_rejected() -> None:
     """显式传空列表是参数错误, 必须报错而非静默跑出空回测."""
     with pytest.raises(ValueError, match="symbols"):
         _run(_bars(), symbols=[])
+
+
+def _bars_with_benchmark_symbol() -> list[aq.Bar]:
+    """标的代码分别为 BENCHMARK 与 OTHER, 各 3 根 bar.
+
+    BENCHMARK 同时是本文件内部代表"未指定标的"的哨兵字面量, 也是这里用作
+    真实标的代码的测试数据 —— 二者刚好撞了同一个字符串, 这正是要验证的场景。
+    """
+    out = []
+    for i in range(3):
+        for symbol, base in (("BENCHMARK", 10.0), ("OTHER", 100.0)):
+            out.append(
+                aq.Bar(
+                    timestamp=f"2025-01-{2 + i:02d}",  # type: ignore[arg-type]
+                    symbol=symbol,
+                    open=base + i,
+                    high=base + i,
+                    low=base + i,
+                    close=base + i,
+                    volume=100.0,
+                )
+            )
+    return out
+
+
+def test_explicit_symbols_literal_benchmark_still_filters() -> None:
+    """symbols=["BENCHMARK"] 显式传入时必须真的过滤掉 "OTHER".
+
+    回归护栏: 曾经的实现把"显式传入的 BENCHMARK"错误折算成"未显式传入",
+    导致这种情况下过滤永远不生效、"OTHER" 会被静默一并跑出。
+    """
+    assert _run(_bars_with_benchmark_symbol(), symbols=["BENCHMARK"]) == {
+        "BENCHMARK": 3
+    }

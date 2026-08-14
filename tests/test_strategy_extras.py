@@ -3194,7 +3194,6 @@ def test_run_warm_start_multi_symbol_continuity(tmp_path: Path) -> None:
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartMultiSymbolStrategy,
-        symbols="BENCHMARK",
         initial_cash=100000.0,
         show_progress=False,
     )
@@ -3204,7 +3203,6 @@ def test_run_warm_start_multi_symbol_continuity(tmp_path: Path) -> None:
     result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbols="BENCHMARK",
         show_progress=False,
     )
 
@@ -3399,7 +3397,6 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartEventIdempotencyStrategy,
-        symbols="BENCHMARK",
         initial_cash=100000.0,
         fill_policy=CurrentClose(),
         show_progress=False,
@@ -3409,7 +3406,6 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
     result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbols="BENCHMARK",
         show_progress=False,
     )
 
