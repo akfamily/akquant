@@ -86,6 +86,62 @@ def _collect_python_blocks(md_text: str) -> list[tuple[int, str]]:
     return blocks
 
 
+def _base_class_name(node: ast.expr) -> str:
+    """取基类表达式的末段名（``Strategy`` / ``aq.Strategy`` 都归一为 ``Strategy``）.
+
+    :param node: 基类表达式节点
+    :return: 末段标识符；无法识别时返回空串
+    """
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return ""
+
+
+def _find_legacy_strategy_init_params(
+    file_path: Path, start_line: int, tree: ast.Module
+) -> list[tuple[Path, int, str, str]]:
+    """揪出文档里仍用构造函数签名声明策略参数的写法.
+
+    0.3.x 起策略参数的唯一入口是类体内联字段（``fast = IntParam(10)``，经
+    ``self.params.fast`` 读取），构造函数签名已不再是参数入口 —— 文档若继续
+    演示旧写法，读者照抄后从外部传参会直接 ``TypeError``。这类 doc↔code 分歧
+    此前只能靠人工逐处核对，故在此固化为 CI 检查。
+
+    基类按**末段名以 Strategy 结尾**判定，这样 ``Strategy`` / ``aq.Strategy`` /
+    ``DualMovingAverageStrategy``（文档里常见的间接继承）都能覆盖。
+
+    :param file_path: 文档路径
+    :param start_line: 代码块在文档中的起始行
+    :param tree: 已解析的代码块 AST
+    :return: 违规项列表
+    """
+    found: list[tuple[Path, int, str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if not any(_base_class_name(b).endswith("Strategy") for b in node.bases):
+            continue
+        for item in node.body:
+            if not isinstance(item, ast.FunctionDef) or item.name != "__init__":
+                continue
+            named = [a.arg for a in item.args.args if a.arg != "self"]
+            named += [a.arg for a in item.args.kwonlyargs]
+            if not named:
+                continue
+            found.append(
+                (
+                    file_path,
+                    start_line + item.lineno - 1,
+                    "legacy_strategy_init_params",
+                    f"{node.name}.__init__(self, {', '.join(named)}) "
+                    "-> 策略参数须改用类体内联字段声明(IntParam/FloatParam/...)",
+                )
+            )
+    return found
+
+
 def _analyze_python_block(
     file_path: Path,
     start_line: int,
@@ -101,6 +157,7 @@ def _analyze_python_block(
         tree = ast.parse(source)
     except SyntaxError:
         return violations
+    violations.extend(_find_legacy_strategy_init_params(file_path, start_line, tree))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -134,6 +191,10 @@ def _analyze_python_block(
 def _scan_markdown_files(docs_dir: Path) -> list[tuple[Path, int, str, str]]:
     violations: list[tuple[Path, int, str, str]] = []
     for md_file in sorted(docs_dir.rglob("*.md")):
+        # docs/superpowers/ 是本地规划文档(计划/spec/评审记录, 已 gitignore),
+        # 里面会**刻意**贴出废弃写法来说明问题, 不是给用户看的教学材料。
+        if "superpowers" in md_file.parts:
+            continue
         text = md_file.read_text(encoding="utf-8")
         blocks = _collect_python_blocks(text)
         for start_line, source in blocks:

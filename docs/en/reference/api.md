@@ -19,7 +19,7 @@ def run_backtest(
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
     strategy_loader_options: Optional[Dict[str, Any]] = None,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     initial_cash: Optional[float] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     commission_rate: Optional[float] = None,
@@ -93,7 +93,9 @@ def run_backtest(
 *   `strategy_source` / `strategy_loader` / `strategy_loader_options`: Dynamic strategy loading entry points. When `strategy=None`, the framework can build the strategy from source, a path, or a custom loader.
 *   `initialize` / `on_start` / `on_resume` / `on_stop`: Functional-strategy lifecycle callbacks for initialization, start, resume, and stop stages.
 *   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: Functional event callbacks. `on_expiry(ctx, event)` fires only after the engine actually executes expiry settlement/removal.
-*   `symbols`: Preferred parameter. Symbol or list of symbols.
+*   `symbols`: Symbol or list of symbols. Defaults to `None` (**not passed explicitly**): whatever symbols show up in the data are treated as the ones to run ("data is subscription"), and behavior is identical to before this parameter existed. **Passing it explicitly** — even a value that only lists symbols already present in the data — changes the semantics to "run only these symbols": symbols outside the whitelist are filtered out up front, never enter the engine, and never participate in matching or statistics (backtest results on multi-symbol input can therefore change). Passing an explicit empty collection raises an error rather than degrading to "no filtering". The whitelist is actually the union of `symbols` ∪ `config.instruments` ∪ the symbols already subscribed via `self.subscribe()` during `__init__`; once `symbols` is passed explicitly, calling `subscribe()` on a symbol outside the whitelist inside `on_start` raises `ValueError` (see the `on_start` notes in the "Strategy Lifecycle" section of the [Strategy Guide](../guide/strategy.md)). This validation only applies to backtests: live trading (`run_live`) never ships a whitelist, so `subscribe()` is unconstrained there.
+    *   **Special case for `run_from_checkpoint`**: the third term of the whitelist union isn't limited to the `subscribe()` calls made during this call's own `__init__` — a warm-started strategy instance carries `_subscriptions` **restored from the pickled snapshot** (i.e. every subscription accumulated during the previous run, including ones added inside `on_start`), and those are folded into the whitelist too. In other words, if stage one's strategy subscribed to a symbol, stage two's whitelist still includes that symbol as long as stage two passes `symbols` — even if stage two never calls `subscribe()` on it again. This is part of the warm start's overall "carry over previous state" semantics, and is **not** fully symmetric with the "`__init__`-stage subscriptions" rule that feeds `run_backtest`'s whitelist; don't assume `run_from_checkpoint`'s effective filtering matches what `run_backtest`'s whitelist rule would predict.
+    *   **Migration note (legacy `symbols="BENCHMARK"` usage)**: before this change, the signature default for `symbol`/`symbols` was literally the string `"BENCHMARK"` (some warm-start examples in this repo used to pass it explicitly, too). After the upgrade, any explicitly passed value is always treated as a real filter — it is no longer equivalent to "not passed" — and different data shapes now fail in **opposite** directions: with `List[Bar]` / `DataFeed` input, since no symbol in the data literally equals `"BENCHMARK"`, the whitelist admits nothing and the backtest runs empty (with just one WARNING and otherwise silent); with `DataFrame` / `Dict[str, DataFrame]` input, `"BENCHMARK"` instead short-circuits the existing pre-filter check and disables filtering entirely. The fix is simple: **remove** the explicit `symbols="BENCHMARK"` (omit the parameter) rather than migrating it to some other literal.
 *   `initial_cash`: Initial cash. If omitted, it falls back to `StrategyConfig.initial_cash`, whose default is `100000.0`.
 *   `commission_policy`: Run-level default commission policy. Supported modes:
     *   `{"type": "percent", "value": 0.0003}`: commission as a percentage of turnover.
@@ -264,7 +266,7 @@ def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     strategy_runtime_config: Optional[Union[StrategyRuntimeConfig, Dict[str, Any]]] = None,
     runtime_config_override: bool = True,
@@ -906,9 +908,13 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
 
 **Data & Utilities:**
 
-*   `get_history(count, symbol, field="close") -> np.ndarray`: Get history data array (a safe snapshot copy of the rolling buffer, not zero-copy). Supports `open/high/low/close/volume` and any numeric extra fields (e.g., `adj_close`, `adj_factor`).
-*   `get_history_multi(count, symbol, fields=("open","high","low","close","volume")) -> Dict[str, np.ndarray]`: Fetch multiple fields in a single FFI crossing; identical in behavior to per-field `get_history`, and used internally by `get_history_df`.
-*   `get_history_df(count, symbol) -> pd.DataFrame`: Get history data DataFrame (OHLCV).
+*   `get_history(count, symbol, field="close", freq=None) -> np.ndarray`: Get history data array (a safe snapshot copy of the rolling buffer, not zero-copy). Supports `open/high/low/close/volume` and any numeric extra fields (e.g., `adj_close`, `adj_factor`).
+*   `get_history_multi(count, symbol, fields=("open","high","low","close","volume"), freq=None) -> Dict[str, np.ndarray]`: Fetch multiple fields in a single FFI crossing; identical in behavior to per-field `get_history`, and used internally by `get_history_df`.
+*   `get_history_df(count, symbol, freq=None) -> pd.DataFrame`: Get history data DataFrame (OHLCV).
+*   The `freq` parameter (supported by `get_history` / `get_history_multi` / `get_history_df` / `get_rolling_data`): takes `'tick'` / `'bar'` / `None`.
+    *   `None` (default): if the symbol only has a bar series, you get bars; if it only has a tick series, you get ticks (single-stream behavior is unchanged). **If `on_bar` and `on_tick` both fire for that symbol, so it has both a bar and a tick history series at once, this raises `ValueError`** and requires you to pass `freq='bar'` or `freq='tick'` explicitly — it will not silently pick one for you. An unrecognized value also raises rather than falling back to `'bar'`.
+    *   With `freq='tick'`, `field` only supports `price`/`close`/`volume`: a tick has no open/high/low, so requesting those raises `ValueError` (previously this silently returned a degenerate OHLC with `price` standing in for `high` — this is a breaking change). `get_history_df` / `get_rolling_data` always pull the full OHLCV set, so they necessarily raise under `freq='tick'`; use `get_history(freq='tick', field='price')` instead.
+    *   To make `on_bar` and `on_tick` both fire in a backtest: `run_backtest(data=[Tick, ...], freq="1min")` (**`freq` only takes effect when `data` is a list containing `Tick`; DataFrame input doesn't support it** — passing it there raises rather than being silently ignored). The live-trading equivalent is `gateway_options={"emit_ticks": True, "emit_bars": True}` (supported by both the klinedata and CTP gateways; `use_aggregator` is kept as a compatibility alias). Both gateways handle `emit_ticks`/`emit_bars` the same way — falling back per-parameter (passing only one explicitly does not silently turn off the other), and raising rather than silently emitting nothing if both end up `False` after fallback. `broker="ctp"` goes through `run_live(..., gateway_options=...)` → builder forwarding; this path used to silently drop both keys (`on_tick` never fired, with no error at all) and has since been fixed to forward them as-is to the underlying `CTPMarketGateway`. **klinedata has a prerequisite that CTP does not**: klinedata has an extra `drive` parameter, defaulting to `drive="bar"`, under which `emit_ticks`/`emit_bars` are **force-overridden** to `emit_bars=True`, `emit_ticks=False` regardless of what you pass (this override happens before the "both `False` raises" check, so that check can never trigger under `drive="bar"`) — to actually get `on_tick` to fire you must pass `"drive": "tick"` explicitly; setting `emit_ticks=True` alone is not enough. CTP has no `drive` layer, so `emit_ticks=True` takes effect directly there.
 *   `get_position(symbol) -> float`: Get current position size. This still returns a numeric quantity, not an object.
 *   `get_available_position(symbol) -> float`: Get available position size.
 *   `positions -> Dict[str, float]`: Get all positions by symbol (read-only property).
@@ -948,7 +954,7 @@ Notes:
 **Machine Learning Support:**
 
 *   `set_rolling_window(train_window, step)`: Set rolling training window.
-*   `get_rolling_data(length, symbol)`: Get rolling training data (X, y).
+*   `get_rolling_data(length, symbol, freq=None)`: Get rolling training data (X, y). `freq` has the same semantics and limits as the `get_history` family above (it's built on `get_history_df` internally).
 *   `prepare_features(df, mode)`: (Override required) Feature engineering and label generation.
 
 ### `akquant.Bar`
@@ -957,6 +963,18 @@ Bar data object.
 
 *   `timestamp`: Unix timestamp (nanoseconds).
 *   `open`, `high`, `low`, `close`, `volume`: OHLCV data.
+*   `symbol`: Instrument symbol.
+
+### `akquant.Tick`
+
+Tick data object.
+
+*   `timestamp`: Unix timestamp (nanoseconds).
+*   `price`: Latest trade price.
+*   `volume`: Trade volume. **Per-trade volume** (matching backtest semantics), not a running total.
+    *   The `Tick.volume` that live gateways (CTP, klinedata) hand to `on_tick` / `add_tick` is the volume of that single trade. The counterparty/upstream feed originally pushes the **cumulative volume for the day**; the gateway diffs it per symbol internally before exposing per-trade volume.
+    *   In contrast, the `BarAggregator` the gateway uses internally for `freq` aggregation (synthesizing bars from ticks) consumes the **raw cumulative volume** (constructed with `volume_is_cumulative=True`, and the aggregator does its own diff-and-sum). This split is intentional — don't "fix" it into per-trade volume, or the aggregated volume will be cut in half.
+    *   **Known trade-off**: when a process starts mid-session, the first frame received for a symbol has no prior cumulative value to diff against, so the real per-trade volume can't be derived; `Tick.volume` is recorded as `0` in that case (meaning "unknown", not the cumulative value masquerading as per-trade). If a strategy has defensive logic like "skip if `volume == 0`", it will also skip each symbol's very first tick.
 *   `symbol`: Instrument symbol.
 
 ### `akquant.run_live` (broker live semantics) {: #live-broker-semantics }

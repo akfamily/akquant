@@ -495,6 +495,42 @@ impl StrategyContext {
     }
 }
 
+/// 按 `freq` 决定 `history`/`history_multi` 该走 bar 还是 tick 容器.
+///
+/// `freq` 缺省(`None`)时若同一 symbol 的 bar 与 tick 历史序列同时非空,说明策略
+/// 同时挂了 `on_bar` 与 `on_tick`,取哪一条无法从调用点本身推断——这里选择显式
+/// 报错而不是悄悄挑一条(比如固定优先 tick 或优先 bar):静默选错会让返回值悄悄
+/// 混入另一条流的数据且完全没有报错信号,比报错危险得多。未识别的 `freq` 取值
+/// (例如将来的 "1min"/"5min")同样显式报错,不兜底成 bar。
+///
+/// 注意:此 helper 同时被 `history()` 与 `history_multi()`(以及它们背后更多的
+/// Python 侧入口,如 `get_history_df`/`get_rolling_data`)调用,报错文案里不写
+/// 具体的方法名——写死一个方法名会在从另一个入口触发时指错调用者实际调用的 API。
+fn resolve_use_tick_history(
+    buffer: &HistoryBuffer,
+    symbol: &str,
+    freq: Option<&str>,
+) -> PyResult<bool> {
+    match freq {
+        Some("tick") => Ok(true),
+        Some("bar") => Ok(false),
+        None => {
+            let has_bar = buffer.has_bar_history(symbol);
+            let has_tick = buffer.has_tick_history(symbol);
+            if has_bar && has_tick {
+                return Err(PyValueError::new_err(format!(
+                    "symbol {symbol} 同时存在 bar 与 tick 两条历史序列, 无法判断该取哪条; \
+                     请在取历史数据时显式指定 freq='bar' 或 freq='tick'"
+                )));
+            }
+            Ok(has_tick)
+        }
+        Some(other) => Err(PyValueError::new_err(format!(
+            "不支持的 freq={other:?}; 当前支持 'tick' / 'bar' / None"
+        ))),
+    }
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl StrategyContext {
@@ -606,6 +642,8 @@ impl StrategyContext {
     /// :param symbol: 标的代码
     /// :param field: 字段名 (open, high, low, close, volume)
     /// :param count: 获取的数据长度
+    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错;
+    ///     其他未识别取值也会报错,不会兜底成 bar)
     /// :return: numpy array or None
     fn history<'py>(
         &self,
@@ -614,17 +652,29 @@ impl StrategyContext {
         field: String,
         count: usize,
         end_before_ns: Option<i64>,
+        freq: Option<&str>,
     ) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
         if let Some(ref buffer_lock) = self.history_buffer {
             let buffer = buffer_lock.read().unwrap();
-            let history = match (buffer.get_history(&symbol), end_before_ns) {
+            let use_tick = resolve_use_tick_history(&buffer, &symbol, freq)?;
+            let current = if use_tick {
+                buffer.get_tick_history(&symbol)
+            } else {
+                buffer.get_history(&symbol)
+            };
+            let history = match (current, end_before_ns) {
                 (Some(history), Some(cutoff))
                     if history
                         .timestamps
                         .back()
                         .is_some_and(|timestamp| *timestamp >= cutoff) =>
                 {
-                    buffer.get_previous_history(&symbol).unwrap_or(history)
+                    let previous = if use_tick {
+                        buffer.get_previous_tick_history(&symbol)
+                    } else {
+                        buffer.get_previous_history(&symbol)
+                    };
+                    previous.unwrap_or(history)
                 }
                 (Some(history), _) => history,
                 (None, _) => return Ok(None),
@@ -648,6 +698,13 @@ impl StrategyContext {
                     "high" => PyArray1::from_iter(py, history.highs.iter().skip(start).cloned()),
                     "low" => PyArray1::from_iter(py, history.lows.iter().skip(start).cloned()),
                     "close" => PyArray1::from_iter(py, history.closes.iter().skip(start).cloned()),
+                    // "price" 是 tick 的自然字段名, 语义 = tick 容器的 close(成交价)。
+                    // bar 没有 price 概念, 故仅在实际取的是 tick 容器时放行——
+                    // guard 不满足时穿透到下面的 extras/Invalid field 分支,
+                    // 与 bar 路径此前的报错行为完全一致。
+                    "price" if use_tick => {
+                        PyArray1::from_iter(py, history.closes.iter().skip(start).cloned())
+                    }
                     "volume" => {
                         PyArray1::from_iter(py, history.volumes.iter().skip(start).cloned())
                     }
@@ -680,6 +737,8 @@ impl StrategyContext {
     /// :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
     /// :param count: 获取的数据长度
     /// :param end_before_ns: 可选,历史可见性截断时间戳 (纳秒)
+    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错;
+    ///     其他未识别取值也会报错,不会兜底成 bar)
     /// :return: {field: numpy array} 或 None
     fn history_multi<'py>(
         &self,
@@ -688,17 +747,29 @@ impl StrategyContext {
         fields: Vec<String>,
         count: usize,
         end_before_ns: Option<i64>,
+        freq: Option<&str>,
     ) -> PyResult<Option<HashMap<String, Bound<'py, PyArray1<f64>>>>> {
         if let Some(ref buffer_lock) = self.history_buffer {
             let buffer = buffer_lock.read().unwrap();
-            let history = match (buffer.get_history(&symbol), end_before_ns) {
+            let use_tick = resolve_use_tick_history(&buffer, &symbol, freq)?;
+            let current = if use_tick {
+                buffer.get_tick_history(&symbol)
+            } else {
+                buffer.get_history(&symbol)
+            };
+            let history = match (current, end_before_ns) {
                 (Some(history), Some(cutoff))
                     if history
                         .timestamps
                         .back()
                         .is_some_and(|timestamp| *timestamp >= cutoff) =>
                 {
-                    buffer.get_previous_history(&symbol).unwrap_or(history)
+                    let previous = if use_tick {
+                        buffer.get_previous_tick_history(&symbol)
+                    } else {
+                        buffer.get_previous_history(&symbol)
+                    };
+                    previous.unwrap_or(history)
                 }
                 (Some(history), _) => history,
                 (None, _) => return Ok(None),
@@ -725,6 +796,9 @@ impl StrategyContext {
                     "high" => &history.highs,
                     "low" => &history.lows,
                     "close" => &history.closes,
+                    // 与 history() 保持一致: "price" 仅在实际取的是 tick 容器时
+                    // 等价于 close; bar 路径穿透到下面的 Invalid field 分支。
+                    "price" if use_tick => &history.closes,
                     "volume" => &history.volumes,
                     _ => {
                         if let Some(series) = history.extras.get(&field) {

@@ -19,7 +19,7 @@ def run_backtest(
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
     strategy_loader_options: Optional[Dict[str, Any]] = None,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     initial_cash: Optional[float] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     commission_rate: Optional[float] = None,
@@ -159,7 +159,7 @@ def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     strategy_runtime_config: Optional[Union[StrategyRuntimeConfig, Dict[str, Any]]] = None,
     runtime_config_override: bool = True,
@@ -196,7 +196,9 @@ def run_from_checkpoint(
 *   `strategy_source` / `strategy_loader` / `strategy_loader_options`: 动态策略加载入口。`strategy=None` 时可直接从源码、路径或自定义加载器构造策略。
 *   `initialize` / `on_start` / `on_resume` / `on_stop`: 函数式策略生命周期回调；其中 `on_resume(ctx)` 仅在 checkpoint 恢复后的热启动阶段触发，且先于 `on_start(ctx)`。
 *   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: 函数式策略事件回调；其中 `on_expiry(ctx, event)` 在引擎实际执行到期结算后触发，`on_pre_open(ctx, event)` 在每个交易日首个常规行情事件前触发，适合“盘前决策，本次 open 成交”；`on_error(ctx, error, source, payload)` 会在其他用户回调抛出异常时触发；`on_train_signal(ctx)` 仅在 ML 滚动训练窗口触发。
-*   `symbols`: 标的代码或代码列表。
+*   `symbols`: 标的代码或代码列表。默认 `None`（**未显式传入**）：数据里出现的标的即视为要跑的标的（“数据即订阅”），行为与传入前完全一致。**显式传入**（哪怕传的是当前数据里已有的标的）后语义变为「只跑这些标的」：白名单外的标的会被前置过滤掉，不进入引擎、不参与撮合与统计（多标的输入下，回测结果可能因此变化）；显式传入空集合会报错，而不是退化为不过滤。白名单实际由 `symbols` ∪ `config.instruments` ∪（`__init__` 阶段）`self.subscribe()` 已订阅的标的三者合并而成；显式传了 `symbols` 后，`on_start` 里再 `subscribe()` 白名单外的标的会抛 `ValueError`（详见[策略指南](../guide/strategy.md)「策略生命周期」一节 `on_start` 的说明）。此校验仅作用于回测：实盘 `run_live` 从不下发白名单，`subscribe()` 不受约束。
+    *   **`run_from_checkpoint` 的特例**：白名单合并的第三项不只是本次调用 `__init__` 阶段的 `subscribe()`——热启动恢复出来的策略实例带着**从存档 pickle 恢复的** `_subscriptions`（即上一段运行期间、含 `on_start` 里新增的全部订阅），这些也会并入白名单。也就是说，若阶段一的策略订阅过某个标的，阶段二哪怕不再显式 `subscribe()` 它，只要阶段二传了 `symbols`，该标的仍会留在合并后的白名单里——这是热启动「延续上一段状态」的整体语义的一部分，与「`__init__` 阶段订阅」并入 `run_backtest` 白名单的规则并非完全对称，请勿照搬 `run_backtest` 的白名单范围去推断 `run_from_checkpoint` 的实际过滤结果。
+    *   **迁移提示（旧版 `symbols="BENCHMARK"` 写法）**：改动前，`symbol`/`symbols` 的签名默认值就是字面量 `"BENCHMARK"`（仓库内部分热启动示例也这么显式写过）。升级后，显式传入的值一律被当作真实过滤条件，不再等价于「未传」，且不同数据形态下会向**相反方向**出错：`List[Bar]` / `DataFeed` 形态因为数据里没有任何标的字面量等于 `"BENCHMARK"`，白名单谁都不放行，回测直接空跑（只有一条 WARNING，其余悄无声息）；`DataFrame` / `Dict[str, DataFrame]` 形态则因为 `"BENCHMARK"` 触发了既有前置过滤判据的短路，反而完全不过滤。升级方式很简单：把显式的 `symbols="BENCHMARK"` **删掉（省略该参数）**，不要迁移成其他字面量。
 *   `initial_cash`: 初始资金。未显式传入时会回落到 `StrategyConfig.initial_cash`，其默认值为 `100000.0`。
 *   `commission_policy`: 运行级默认佣金策略。支持三种模式：
     *   `{"type": "percent", "value": 0.0003}`: 按成交额比例收费。
@@ -940,11 +942,15 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 
 **数据与工具:**
 
-*   `get_history(count, symbol, field="close") -> np.ndarray`: 获取历史数据数组（返回滚动缓冲的安全快照拷贝，非零拷贝）。
-*   `get_history_multi(count, symbol, fields=("open","high","low","close","volume")) -> Dict[str, np.ndarray]`: 单次跨界批量取回多字段，语义等价于逐字段 `get_history`，`get_history_df` 内部即基于它。
-*   `get_history_map(count, symbols, field="close") -> Dict[str, np.ndarray]`: 批量获取多个标的历史数据。
+*   `get_history(count, symbol, field="close", freq=None) -> np.ndarray`: 获取历史数据数组（返回滚动缓冲的安全快照拷贝，非零拷贝）。
+*   `get_history_multi(count, symbol, fields=("open","high","low","close","volume"), freq=None) -> Dict[str, np.ndarray]`: 单次跨界批量取回多字段，语义等价于逐字段 `get_history`，`get_history_df` 内部即基于它。
+*   `get_history_map(count, symbols, field="close", freq=None) -> Dict[str, np.ndarray]`: 批量获取多个标的历史数据。
 *   `rebalance_to_topn(scores, top_n, weight_mode="equal", ...) -> List[str]`: 根据打分选取 TopN 并执行调仓，支持等权或按分数归一化。
-*   `get_history_df(count, symbol) -> pd.DataFrame`: 获取历史数据 DataFrame (OHLCV)。
+*   `get_history_df(count, symbol, freq=None) -> pd.DataFrame`: 获取历史数据 DataFrame (OHLCV)。
+*   `freq` 参数（`get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 均支持）：取值 `'tick'` / `'bar'` / `None`。
+    *   `None`（默认）：该 symbol 只有 bar 序列时取 bar，只有 tick 序列时取 tick（单流下行为不变）；**若 `on_bar` 与 `on_tick` 同时触发导致该 symbol 同时存在 bar 与 tick 两条历史序列，则报 `ValueError`**，要求显式传 `freq='bar'` 或 `freq='tick'`——不会静默选一条。未识别的取值同样报错，不会兜底成 `'bar'`。
+    *   `freq='tick'` 时 `field` 只支持 `price`/`close`/`volume`：tick 没有 open/high/low，传这些字段会抛 `ValueError`（此前会静默返回退化 OHLC，`price` 冒充 `high`，破坏性变更）。`get_history_df` / `get_rolling_data` 固定取 OHLCV 五字段，因此在 `freq='tick'` 下必然报错，请改用 `get_history(freq='tick', field='price')`。
+    *   回测中让 `on_bar` 与 `on_tick` 同时触发：`run_backtest(data=[Tick, ...], freq="1min")`（**`freq` 只在 `data` 为含 `Tick` 的列表时生效，DataFrame 不支持**，传了会报错而非静默忽略）。实盘中的等价开关是 `gateway_options={"emit_ticks": True, "emit_bars": True}`（klinedata、CTP 网关均支持，`use_aggregator` 保留为兼容别名）：两个网关对 `emit_ticks`/`emit_bars` 本身的处理规则一致——按参数逐个回退（只显式传其一不会静默关掉另一路），若回退后 `emit_ticks` 与 `emit_bars` 都为 `False` 则报错而非静默不推送任何数据。`broker="ctp"` 走的是 `run_live(..., gateway_options=...)` → builder 转发这条链路，此前该链路会把这两个键静默丢弃（`on_tick` 永不触发且无任何报错），现已修复为原样转发到底层 `CTPMarketGateway`。**klinedata 有一个前置条件 CTP 没有**：klinedata 多一个 `drive` 参数，缺省为 `drive="bar"`，此时无论 `emit_ticks`/`emit_bars` 怎么传都会被**强制覆盖**为 `emit_bars=True`、`emit_ticks=False`（该覆盖排在「都为 False 则报错」的校验之前，所以这条校验在 `drive="bar"` 下永远不可能触发）——要让 `on_tick` 真正触发，必须显式传 `"drive": "tick"`，仅传 `emit_ticks=True` 不够。CTP 没有 `drive` 这一层，`emit_ticks=True` 会直接生效。
 *   `get_position(symbol) -> float`: 获取当前持仓量。返回值仍为数量，不返回对象。
 *   `get_available_position(symbol) -> float`: 获取可用持仓量。
 *   `positions -> Dict[str, float]`: 获取所有标的持仓（只读属性）。
@@ -989,7 +995,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 **机器学习支持:**
 
 *   `set_rolling_window(train_window, step)`: 设置滚动训练窗口。
-*   `get_rolling_data(length, symbol)`: 获取滚动训练数据 (X, y)。
+*   `get_rolling_data(length, symbol, freq=None)`: 获取滚动训练数据 (X, y)。`freq` 语义与限制同上一节的 `get_history` 系列（底层基于 `get_history_df`）。
 *   `prepare_features(df, mode)`: (需重写) 特征工程与标签生成。
 
 ### `akquant.Bar`
@@ -1008,7 +1014,10 @@ Tick 数据对象。
 
 *   `timestamp`: Unix 时间戳 (纳秒)。
 *   `price`: 最新价。
-*   `volume`: 成交量。
+*   `volume`: 成交量。**单笔量**（与回测语义一致），不是累计量。
+    *   实盘网关（CTP、klinedata）推给 `on_tick` / `add_tick` 的 `Tick.volume` 是这一笔的成交量；柜台/上游行情原始推的是**当日累计成交量**，网关内部按 symbol 做差分换算后才对外暴露单笔量。
+    *   与之相对，网关内部用于 `freq` 聚合（tick 合成 bar）的 `BarAggregator` 吃的是**原始累计量**（构造时声明 `volume_is_cumulative=True`，由聚合器自己差分求和）——这是刻意的分工，不要把它当成 bug "修" 成单笔量，否则聚合量会被腰斩。
+    *   **已知代价**：进程盘中启动时，某 symbol 收到的第一帧行情因为没有上一次累计量可比对，换算不出真实单笔量，此时 `Tick.volume` 记为 `0`（表示"未知"，而非误用累计量冒充单笔量）。若策略里有「`volume == 0` 就跳过」之类的防御逻辑，会连带跳过每个 symbol 的第一笔行情。
 *   `symbol`: 标的代码。
 
 ### `akquant.run_live`（broker_live 执行语义） {: #live-broker-semantics }

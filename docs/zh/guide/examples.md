@@ -66,7 +66,7 @@ results = run_grid_search(
 ```mermaid
 flowchart TD
     A[前端提交 params<br/>例如 fast_period/slow_period/date_range] --> B[validate_strategy_params]
-    B --> C[strategy_params<br/>注入 strategy.__init__]
+    B --> C[strategy_params<br/>经内联字段注入 self.params]
     A --> D[extract_runtime_kwargs]
     D --> E[runtime_kwargs<br/>例如 start_time/end_time]
     C --> F[run_backtest]
@@ -187,6 +187,10 @@ df = df[cols].sort_values("date").reset_index(drop=True)
 
 以下是一些常用量化策略的实现代码，可以直接在您的项目中使用。我们为每个策略提供了详细的逻辑说明，帮助您理解其核心思想。
 
+> 以下代码片段均需 `from akquant import Strategy, IntParam, FloatParam`。策略参数一律用
+> 类体内联字段声明、经 `self.params.<字段名>` 读取（构造函数签名自 0.3.x 起不再是参数入口，
+> 详见[参数声明](strategy.md#param-declaration)）；依赖引擎上下文的派生初始化放在 `on_start`。
+
 ### 3.1 A股双均线策略 (Dual Moving Average)
 
 [查看完整源码](https://github.com/akfamily/akquant/blob/main/examples/strategies/01_stock_dual_moving_average.py)
@@ -204,22 +208,23 @@ df = df[cols].sort_values("date").reset_index(drop=True)
 
 ```python
 class DualMovingAverageStrategy(Strategy):
-    def __init__(self, short_window=5, long_window=20):
-        self.short_window = short_window
-        self.long_window = long_window
-        # 预热期设置
-        self.warmup_period = long_window
+    short_window = IntParam(5, ge=2, le=200, title="短期均线窗口")
+    long_window = IntParam(20, ge=3, le=500, title="长期均线窗口")
+
+    def on_start(self):
+        # 预热期设置（派生初始化放 on_start，此时 self.params 已就绪）
+        self.warmup_period = self.params.long_window
 
     def on_bar(self, bar):
         # 获取包含当前 Bar 的历史数据
-        closes = self.get_history(count=self.long_window, symbol=bar.symbol, field="close")
+        closes = self.get_history(count=self.params.long_window, symbol=bar.symbol, field="close")
 
-        if len(closes) < self.long_window:
+        if len(closes) < self.params.long_window:
             return
 
         # 计算均线
-        short_ma = np.mean(closes[-self.short_window:])
-        long_ma = np.mean(closes[-self.long_window:])
+        short_ma = np.mean(closes[-self.params.short_window:])
+        long_ma = np.mean(closes[-self.params.long_window:])
 
         current_pos = self.get_position(bar.symbol)
 
@@ -250,9 +255,11 @@ class DualMovingAverageStrategy(Strategy):
 
 ```python
 class GridTradingStrategy(Strategy):
-    def __init__(self, grid_pct=0.03, lot_size=100):
-        self.grid_pct = grid_pct
-        self.trade_lot = lot_size
+    grid_pct = FloatParam(0.03, ge=0.001, le=0.5, title="网格间距")
+    # 注意字段名不叫 lot_size：那是 run_backtest 的引擎级成本参数，重名会混淆
+    trade_lot = IntParam(100, ge=1, title="每次交易数量(股/份)")
+
+    def on_start(self):
         self.last_trade_price = {}
 
     def on_bar(self, bar):
@@ -261,7 +268,7 @@ class GridTradingStrategy(Strategy):
 
         # 初始建仓
         if symbol not in self.last_trade_price:
-            self.buy(symbol=symbol, quantity=10 * self.trade_lot)
+            self.buy(symbol=symbol, quantity=10 * self.params.trade_lot)
             self.last_trade_price[symbol] = close
             return
 
@@ -269,15 +276,15 @@ class GridTradingStrategy(Strategy):
         change_pct = (close - last_price) / last_price
 
         # 下跌网格买入
-        if change_pct <= -self.grid_pct:
-            self.buy(symbol=symbol, quantity=self.trade_lot)
+        if change_pct <= -self.params.grid_pct:
+            self.buy(symbol=symbol, quantity=self.params.trade_lot)
             self.last_trade_price[symbol] = close
 
         # 上涨网格卖出
-        elif change_pct >= self.grid_pct:
+        elif change_pct >= self.params.grid_pct:
             current_pos = self.get_position(symbol)
-            if current_pos >= self.trade_lot:
-                self.sell(symbol=symbol, quantity=self.trade_lot)
+            if current_pos >= self.params.trade_lot:
+                self.sell(symbol=symbol, quantity=self.params.trade_lot)
                 self.last_trade_price[symbol] = close
 ```
 
@@ -299,14 +306,15 @@ class GridTradingStrategy(Strategy):
 
 ```python
 class AtrBreakoutStrategy(Strategy):
-    def __init__(self, period=20, k=2.0):
-        self.period = period
-        self.k = k
-        self.warmup_period = period + 1
+    period = IntParam(20, ge=2, le=500, title="ATR 周期")
+    k = FloatParam(2.0, ge=0.1, le=10.0, title="突破倍数")
+
+    def on_start(self):
+        self.warmup_period = self.params.period + 1
 
     def on_bar(self, bar):
         # 获取 N+1 个数据
-        req_count = self.period + 1
+        req_count = self.params.period + 1
         h_closes = self.get_history(count=req_count, field="close")
 
         if len(h_closes) < req_count:
@@ -320,8 +328,8 @@ class AtrBreakoutStrategy(Strategy):
 
         # 基于昨日收盘价计算轨道
         prev_close = closes[-1]
-        upper_band = prev_close + self.k * atr
-        lower_band = prev_close - self.k * atr
+        upper_band = prev_close + self.params.k * atr
+        lower_band = prev_close - self.params.k * atr
 
         # 交易逻辑
         if bar.close > upper_band:
@@ -348,10 +356,11 @@ class AtrBreakoutStrategy(Strategy):
 
 ```python
 class MomentumRotationStrategy(Strategy):
-    def __init__(self, lookback_period=20):
-        self.lookback_period = lookback_period
+    lookback_period = IntParam(20, ge=1, le=500, title="动量回看周期")
+
+    def on_start(self):
         self.symbols = ["sh600519", "sz000858"] # 茅台 vs 五粮液
-        self.warmup_period = lookback_period + 1
+        self.warmup_period = self.params.lookback_period + 1
 
     def on_bar(self, bar):
         # 仅在处理最后一个标的时执行轮动逻辑 (每日一次)
@@ -361,7 +370,7 @@ class MomentumRotationStrategy(Strategy):
         # 1. 计算动量
         momentums = {}
         for s in self.symbols:
-            closes = self.get_history(count=self.lookback_period, symbol=s, field="close")
+            closes = self.get_history(count=self.params.lookback_period, symbol=s, field="close")
             # 动量 = (当前价 - N天前价格) / N天前价格
             mom = (closes[-1] - closes[0]) / closes[0]
             momentums[s] = mom

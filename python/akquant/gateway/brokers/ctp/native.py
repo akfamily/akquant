@@ -9,7 +9,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from ....akquant import Bar, BarAggregator, DataFeed
+from ....akquant import BarAggregator, DataFeed, Tick
 from ....log import build_log_extra, get_logger
 
 try:
@@ -898,7 +898,8 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
     """
     CTP Market Data Gateway.
 
-    Subscribes to market data and pushes Ticks (as Bars) to AKQuant DataFeed.
+    Subscribes to market data and pushes Bars and/or Ticks to AKQuant DataFeed,
+    depending on ``emit_ticks``/``emit_bars`` (see :meth:`__init__`).
     """
 
     def __init__(
@@ -907,6 +908,8 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         front_url: str,
         symbols: List[str],
         use_aggregator: bool = True,
+        emit_ticks: Optional[bool] = None,
+        emit_bars: Optional[bool] = None,
     ):
         """
         Initialize the Market Gateway.
@@ -914,8 +917,26 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         :param feed: AKQuant DataFeed instance
         :param front_url: CTP Front URL (e.g., tcp://180.168.146.187:10131)
         :param symbols: List of symbols to subscribe (e.g., ["au2310", "rb2310"])
-        :param use_aggregator: If True, uses BarAggregator to generate 1-min bars.
-                               If False, pushes each tick as a Bar immediately.
+        :param use_aggregator: Legacy either-or switch, kept as a compat alias:
+            True (default) is equivalent to bar-only, False is equivalent to
+            tick-only. Superseded by ``emit_ticks``/``emit_bars`` when those are
+            given explicitly — the two can then both be True (dual stream).
+        :param emit_ticks: Whether to push raw Ticks into the feed (drives
+            ``on_tick``). ``None`` falls back to the ``use_aggregator`` alias
+            *per-parameter* (see note below), so passing only ``emit_bars``
+            does not silently flip this one to False.
+        :param emit_bars: Whether to push aggregated Bars into the feed (drives
+            ``on_bar``). ``None`` falls back to the ``use_aggregator`` alias the
+            same way as ``emit_ticks``.
+
+            The per-parameter fallback (rather than "fall back only when both
+            are None") matters: if a caller passes ``emit_ticks=True`` alone,
+            wanting to *add* tick delivery on top of the existing bar stream,
+            resolving the untouched ``emit_bars`` from ``bool(None)`` would
+            silently turn off ``on_bar`` — the opposite of what they asked for.
+        :raises ImportError: openctp-ctp is not installed.
+        :raises ValueError: ``emit_ticks`` and ``emit_bars`` both resolve to
+            False — that configuration would push no market data at all.
         """
         if not HAS_OPENCTP:
             raise ImportError(
@@ -931,13 +952,44 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         self.api: Any = None
         self.req_id = 0
         self.connected = False
-        self.last_volume: Dict[str, float] = {}
 
-        self.aggregator: Optional[BarAggregator]
-        if self.use_aggregator:
-            self.aggregator = BarAggregator(feed)
-        else:
-            self.aggregator = None
+        # use_aggregator 是旧的二选一开关, 保留为兼容别名: True(默认) -> 只出
+        # bar, False -> 只出 tick。新参数 emit_ticks / emit_bars 显式且可同时
+        # 为真(双流), 优先级更高。
+        # 逐参数回退(而非"两者都 None 才回退"): 只显式表态一个参数时, 另一个
+        # 仍按 use_aggregator 别名推导, 不会被 bool(None) 静默压成 False——
+        # 否则单独传 emit_ticks=True 会悄悄关掉 on_bar, 而用户的意图是
+        # "加上 tick"而非"关掉 bar"。
+        if emit_ticks is None:
+            emit_ticks = not use_aggregator
+        if emit_bars is None:
+            emit_bars = bool(use_aggregator)
+        emit_ticks = bool(emit_ticks)
+        emit_bars = bool(emit_bars)
+        if not emit_ticks and not emit_bars:
+            raise ValueError(
+                "emit_ticks 与 emit_bars 不能同时为 False: 那样网关不会推任何行情"
+            )
+        self.emit_ticks = emit_ticks
+        self.emit_bars = emit_bars
+        # 双流下 bar 必须打区间结束戳, 否则与 tick 混推会时间戳倒退(实盘无
+        # sort 兜底, 见 OnRtnDepthMarketData 里的顺序注释)。
+        self.stamp_bar_at_interval_end = emit_ticks and emit_bars
+
+        self.aggregator: Optional[BarAggregator] = None
+        if self.emit_bars:
+            self.aggregator = BarAggregator(
+                feed, stamp_bar_at_interval_end=self.stamp_bar_at_interval_end
+            )
+
+        # CTP 的 pDepthMarketData.Volume 是当日累计成交量, 而回测里
+        # Tick.volume 的语义是单笔成交量——同一个策略读 tick.volume, 回测拿
+        # 单笔、实盘拿累计, 量级能差好几个数量级, 且是静默的。这里按 symbol
+        # 记录上一次推送的累计量, 在 _cumulative_volume_to_delta 里换算成
+        # 单笔量再塞进 Tick, 与回测语义对齐。注意这只影响 add_tick 推的
+        # Tick——喂给 aggregator.on_tick 的仍是原始累计量, 见该方法调用处的
+        # 说明, 两者是有意的不同分工, 不要合并。
+        self._last_cum_volume: Dict[str, float] = {}
 
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
@@ -1059,6 +1111,31 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             extra=self._log_extra(symbol=symbol),
         )
 
+    def _cumulative_volume_to_delta(self, symbol: str, cum_volume: float) -> float:
+        """把 CTP 逐笔行情里的当日累计量换算成单笔成交量.
+
+        ``pDepthMarketData.Volume`` 是当日累计成交量, 而 ``Tick.volume`` 在
+        回测语义里是单笔成交量。三条规则(状态按 symbol 隔离于
+        ``self._last_cum_volume``):
+
+        - 正常: ``delta = cum_volume - 上一次该 symbol 的累计量``。
+        - 首帧(该 symbol 还没有前值): ``delta = 0``, **不是** ``cum_volume``。
+          进程可能在盘中启动, 此时 ``cum_volume`` 是当日至今的累计(可能几十万
+          手), 当成单笔量会严重失真、甚至触发策略里的成交量异常检测; 用 0
+          表示"这一笔的单笔量未知"比编造一个错得离谱的大数更安全。
+        - 负差分(跨日重置或断线重连后累计量归零): ``delta = cum_volume``。
+          此时 ``cum_volume`` 本身就是新一天/新连接下第一笔的累计量, 约等于
+          单笔量, 用它比用 0 更准。
+        """
+        last = self._last_cum_volume.get(symbol)
+        self._last_cum_volume[symbol] = cum_volume
+        if last is None:
+            return 0.0
+        delta = cum_volume - last
+        if delta < 0:
+            return cum_volume
+        return delta
+
     def OnRtnDepthMarketData(self, pDepthMarketData: Any) -> None:
         """Process market data tick."""
         symbol = pDepthMarketData.InstrumentID
@@ -1070,25 +1147,27 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
 
         now_ns = time.time_ns()
 
-        if self.use_aggregator and self.aggregator:
+        # 顺序: 先喂聚合器(可能吐出上一区间已收盘的 bar), 再推当前 tick,
+        # 保证时间戳单调。实盘没有回测那层 feed.sort() 兜底
+        # (RealtimeDataClient::sort 是空实现, "Live data cannot be sorted"),
+        # 推入顺序即引擎所见顺序——反了会让 bar 排在更晚的 tick 之后造成时间戳
+        # 倒退, 且这个倒退是静默的, 不会报错, 只会破坏批次边界。
+        if self.aggregator is not None:
             self.aggregator.on_tick(symbol, price, float(volume), now_ns)
-        else:
-            last_vol = self.last_volume.get(symbol, volume)
-            delta_vol = volume - last_vol
-            self.last_volume[symbol] = volume
 
-            if delta_vol < 0:
-                delta_vol = volume
-
-            bar = Bar(
-                timestamp=now_ns,
-                symbol=symbol,
-                open=price,
-                high=price,
-                low=price,
-                close=price,
-                volume=float(delta_vol),
-                extra={},
+        # 引入真 add_tick 之前, use_aggregator=False 下曾把每笔 tick 包装成
+        # 退化 bar(open=high=low=close=price)推入 feed, 作为 on_bar 的替代品
+        # ——那正是 fill_missing_bars 曾用成交价合成假 bar 污染 bar 序列的
+        # 同一类问题(见本计划 Task 5)。现在逐笔以真 Tick 形式推送, 该替代
+        # 路径已删除; emit_ticks/emit_bars 都不出的组合在构造期就被
+        # ValueError 拒绝, 不存在"两者都不出"需要兜底的状态。
+        #
+        # 分工: 上面喂给 aggregator.on_tick 的仍是原始累计量(它的
+        # volume_is_cumulative=True 自己会差分), 这里推给 add_tick 的
+        # Tick.volume 则换算成单笔量(见 _cumulative_volume_to_delta)——两者
+        # 故意不同, 别为了"统一"把这里也改回累计量。
+        if self.emit_ticks:
+            delta_volume = self._cumulative_volume_to_delta(symbol, float(volume))
+            self.feed.add_tick(
+                Tick(timestamp=now_ns, symbol=symbol, price=price, volume=delta_volume)
             )
-
-            self.feed.add_bar(bar)  # type: ignore

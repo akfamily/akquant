@@ -1,9 +1,10 @@
 import datetime as dt
 import logging
 import pickle
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterator, cast
+from typing import Any, Iterator, Optional, cast
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -15,6 +16,7 @@ from akquant import (
     LogConfig,
     StrategyConfig,
     configure_logging,
+    load_checkpoint,
     register_logger,
     register_strategy_loader,
     run_backtest,
@@ -298,9 +300,14 @@ class HistoryMapStrategy(Strategy):
         self.calls: list[tuple[int, str | None, str]] = []
 
     def get_history(
-        self, count: int, symbol: str | None = None, field: str = "close"
+        self,
+        count: int,
+        symbol: str | None = None,
+        field: str = "close",
+        freq: Optional[str] = None,
     ) -> np.ndarray:
         """Return deterministic history and record invocation."""
+        del freq
         self.calls.append((count, symbol, field))
         return np.array([1.0, 2.0, 3.0], dtype=float)
 
@@ -1909,6 +1916,55 @@ def test_run_warm_start_warns_for_legacy_checkpoint_without_history_feature_mark
     assert result2.strategy is not None
 
 
+def test_load_checkpoint_warns_for_pre_tick_split_snapshot(tmp_path: Path) -> None:
+    """load_checkpoint should warn when 'history_tick_split' marker is absent.
+
+    Checkpoints saved before the tick/bar history-buffer split share the old
+    'data' container for both bar and tick history. Restoring one of those
+    into the current Rust HistoryBuffer loads 'data' as bar history and
+    leaves 'tick_data' empty (serde default) -- if the original strategy had
+    tick history, a resumed run would silently end up with a truncated tick
+    window, or hit the dual-stream ambiguity error once new ticks arrive.
+    load_checkpoint must surface this loudly instead of staying silent.
+    """
+    checkpoint = tmp_path / "snapshot_pre_tick_split.pkl"
+    phase1 = _make_bars("2023-01-01", 4)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartHistoryContinuityStrategy,
+        symbols="TEST",
+        initial_cash=100000.0,
+        show_progress=False,
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    # Simulate a checkpoint written by a version that already had the
+    # history-buffer-snapshot feature but predates the tick/bar split: keep
+    # 'history_buffer_snapshot' but drop the newer 'history_tick_split' flag.
+    with checkpoint.open("rb") as fh:
+        snapshot = pickle.load(fh)
+    assert snapshot["snapshot_features"]["history_tick_split"] is True
+    snapshot["snapshot_features"].pop("history_tick_split", None)
+    with checkpoint.open("wb") as fh:
+        pickle.dump(snapshot, fh)
+
+    with pytest.warns(RuntimeWarning, match="tick/bar history-buffer split"):
+        engine, strategy = load_checkpoint(str(checkpoint))
+    assert strategy is not None
+    assert engine is not None
+
+    # A checkpoint carrying both markers must stay silent.
+    with checkpoint.open("rb") as fh:
+        current_snapshot = pickle.load(fh)
+    current_snapshot["snapshot_features"]["history_tick_split"] = True
+    with checkpoint.open("wb") as fh:
+        pickle.dump(current_snapshot, fh)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        load_checkpoint(str(checkpoint))
+
+
 def test_run_warm_start_respects_instruments_config_and_merges_snapshots(
     tmp_path: Path,
 ) -> None:
@@ -3138,7 +3194,6 @@ def test_run_warm_start_multi_symbol_continuity(tmp_path: Path) -> None:
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartMultiSymbolStrategy,
-        symbols="BENCHMARK",
         initial_cash=100000.0,
         show_progress=False,
     )
@@ -3148,7 +3203,6 @@ def test_run_warm_start_multi_symbol_continuity(tmp_path: Path) -> None:
     result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbols="BENCHMARK",
         show_progress=False,
     )
 
@@ -3343,7 +3397,6 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartEventIdempotencyStrategy,
-        symbols="BENCHMARK",
         initial_cash=100000.0,
         fill_policy=CurrentClose(),
         show_progress=False,
@@ -3353,7 +3406,6 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
     result2 = run_from_checkpoint(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbols="BENCHMARK",
         show_progress=False,
     )
 
@@ -6365,6 +6417,171 @@ def test_strategy_level_per_unit_commission_applies_when_order_commission_missin
     ]
     row = filled_orders[filled_orders["tag"] == "strategy-commission"].iloc[0]
     assert float(row["commission"]) == pytest.approx(0.5)
+
+
+class _CheckpointResiduePickleStrategy(Strategy):
+    """Buy exactly one lot on the first bar of each phase.
+
+    Phase 1's order must fully fill before ``save_checkpoint`` (no pending
+    order pickled). Phase 2's order (tag="phase2") is the one under test:
+    it exercises whichever fill_policy/slippage/commission resolution is in
+    effect *this* call, with no per-order override of its own.
+    """
+
+    def __init__(self) -> None:
+        self.phase1_sent = False
+        self.phase2_sent = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.is_restored:
+            if not self.phase1_sent:
+                self.phase1_sent = True
+                self.buy(symbol=bar.symbol, quantity=1.0, tag="phase1")
+        elif not self.phase2_sent:
+            self.phase2_sent = True
+            self.buy(symbol=bar.symbol, quantity=1.0, tag="phase2")
+
+
+def _checkpoint_residue_phase_data(symbol: str, phase: int) -> pd.DataFrame:
+    """Two very-distinguishable phases: open/close values never collide."""
+    if phase == 1:
+        start = "2023-01-01"
+        opens = [10.0, 20.0, 30.0]
+        closes = [100.0, 200.0, 300.0]
+    else:
+        start = "2023-02-01"
+        opens = [50.0, 60.0, 70.0]
+        closes = [500.0, 600.0, 700.0]
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range(start, periods=3, freq="D", tz="UTC"),
+            "open": opens,
+            "high": [o + 1.0 for o in opens],
+            "low": [o - 1.0 for o in opens],
+            "close": closes,
+            "volume": [10000.0, 10000.0, 10000.0],
+            "symbol": [symbol, symbol, symbol],
+        }
+    )
+
+
+def _checkpoint_residue_phase2_row(result: Any) -> pd.Series:
+    filled = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    return cast(pd.Series, filled[filled["tag"] == "phase2"].iloc[0])
+
+
+def test_checkpoint_resume_explicit_fill_policy_overrides_stale_strategy_map(
+    tmp_path: Path,
+) -> None:
+    """本次显式传的运行级 fill_policy 不能被残留的策略级 map 静默压过.
+
+    根因: save_checkpoint 把整个策略对象 pickle 落盘, `_strategy_fill_policy_map`
+    随对象整体恢复; 若 run_from_checkpoint 只在本次显式传了
+    strategy_fill_policy 时才 setattr, 本次不传就不会清空旧 map —— 而
+    strategy_trading_api.py 的 `_resolve_effective_order_fill_policy` 优先命中
+    策略级 map, 命中后直接返回, 根本不会走到本次显式传的运行级 fill_policy。
+    """
+    register_logger(console=False, level="INFO")
+    checkpoint = tmp_path / "fill_policy_residue.pkl"
+    phase1 = _checkpoint_residue_phase_data("FPRES", 1)
+    phase2 = _checkpoint_residue_phase_data("FPRES", 2)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_CheckpointResiduePickleStrategy,
+        symbols="FPRES",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        strategy_fill_policy={"_default": NextClose()},
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="FPRES",
+        show_progress=False,
+        fill_policy=NextOpen(),
+    )
+    row = _checkpoint_residue_phase2_row(result2)
+    # 本次显式传的 NextOpen() 必须生效: 成交价取 phase2 bar1 的 open=60.0。
+    # 修复前会被残留的 "_default": NextClose() 压过, 成交价变成 close=600.0。
+    assert float(row["avg_price"]) == pytest.approx(60.0)
+
+
+def test_checkpoint_resume_without_strategy_slippage_clears_stale_map(
+    tmp_path: Path,
+) -> None:
+    """本次不传 strategy_slippage 时必须清空残留的策略级滑点 map.
+
+    根因与上一条 fill_policy 用例同源: `_strategy_slippage_map` 随 checkpoint
+    整体 pickle 恢复; 若不清空, `_resolve_effective_order_slippage` 命中旧 map
+    后直接返回旧滑点, 本次"不加滑点"的意图被静默覆盖。
+    """
+    register_logger(console=False, level="INFO")
+    checkpoint = tmp_path / "slippage_residue.pkl"
+    phase1 = _checkpoint_residue_phase_data("SLRES", 1)
+    phase2 = _checkpoint_residue_phase_data("SLRES", 2)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_CheckpointResiduePickleStrategy,
+        symbols="SLRES",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        strategy_slippage={"_default": {"type": "fixed", "value": 5.0}},
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="SLRES",
+        show_progress=False,
+    )
+    row = _checkpoint_residue_phase2_row(result2)
+    # 本次未传任何滑点: 成交价必须是干净的 phase2 bar1 open=60.0, 不带旧的
+    # fixed=5.0 滑点。修复前残留 map 仍生效, 成交价变成 65.0。
+    assert float(row["avg_price"]) == pytest.approx(60.0)
+
+
+def test_checkpoint_resume_explicit_zero_commission_overrides_stale_strategy_map(
+    tmp_path: Path,
+) -> None:
+    """本次显式传 commission_rate=0.0 时, 残留的策略级佣金 map 不能静默压过它.
+
+    这是资金层面的静默错误: 用户本次明确表示"不收佣金", 但若残留的
+    `_strategy_commission_map` 未被清空, `_resolve_effective_order_commission`
+    命中旧 map 后直接返回旧佣金规则, 实收佣金仍按旧费率收取。
+    """
+    register_logger(console=False, level="INFO")
+    checkpoint = tmp_path / "commission_residue.pkl"
+    phase1 = _checkpoint_residue_phase_data("CORES", 1)
+    phase2 = _checkpoint_residue_phase_data("CORES", 2)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=_CheckpointResiduePickleStrategy,
+        symbols="CORES",
+        initial_cash=1_000_000.0,
+        show_progress=False,
+        strategy_commission={"_default": {"type": "percent", "value": 0.02}},
+    )
+    save_checkpoint(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    result2 = run_from_checkpoint(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="CORES",
+        show_progress=False,
+        commission_rate=0.0,
+    )
+    row = _checkpoint_residue_phase2_row(result2)
+    # 本次显式传 commission_rate=0.0: 实收佣金必须为 0。
+    # 修复前残留的 "_default": percent 0.02 仍生效, 实收佣金变成 60*0.02=1.2。
+    assert float(row["commission"]) == pytest.approx(0.0)
 
 
 def test_strategy_trailing_helpers_delegate_to_submit_order() -> None:

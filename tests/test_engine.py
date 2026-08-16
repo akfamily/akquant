@@ -5253,6 +5253,99 @@ def test_engine_tick_ioc_cancel_bridges_rust_warning(caplog: Any) -> None:
     akquant.register_logger(console=False, level="INFO")
 
 
+def test_pure_tick_backtest_mae_mfe_drawdown_use_tick_history() -> None:
+    """纯 tick 回测下 MAE/MFE/max_drawdown_pct 必须基于 tick 序列算出真实值.
+
+    回归防护(修复轮 1 fix 2): ``src/order_manager.rs`` 计算 MAE/MFE 时只读
+    bar 容器(``HistoryBuffer::get_history``)。双流拆分(tick 挪进独立的
+    ``tick_data``)之后, 纯 tick 回测下 bar 容器恒为空 -> ``None`` -> 保持
+    初值 0, 且**不报错**地写进 ``ClosedTrade``, 是本计划引入的静默回归。
+
+    价格序列与预期值的独立推导(不依赖程序输出反推):
+    4 个 tick 价格 [200, 150, 300, 240], 时间戳依次递增 1 秒。策略在第 1 个
+    tick 市价买入 10 股(entry_price=200), 第 4 个 tick 市价卖出 10 股平仓
+    (exit_price=240)。tick 以退化 OHLC 写入历史(open=high=low=close=price),
+    故这条 tick 序列上 high/low 逐点等于对应 tick 价格本身。
+
+    entry_price 特意取 200(而非 100): entry=100 时 "百分比" 与 "绝对价差"
+    数值恰好重合(如 (80-100)/100*100 == 80-100 == -20), 若实现把 mae/mfe
+    误从百分比换成绝对差值, 用 entry=100 的构造抓不到; entry=200 下二者
+    数值不同(见下), 才能真正甄别实现是否算的是百分比。
+
+    Long 交易的 MAE/MFE/最大回撤定义(见 ``src/analysis/tracker.rs`` 对应
+    Sell 分支注释):
+    - 区间 [entry_tick, exit_tick] 内的 min_low=150, max_high=300。
+      MAE = (min_low - entry) / entry * 100 = (150 - 200) / 200 * 100 = -25.0
+      (若误算成绝对差值 min_low - entry, 会得到 -50, 与 -25.0 不同, 故本用例
+      能甄别出该错误)
+      MFE = (max_high - entry) / entry * 100 = (300 - 200) / 200 * 100 = 50.0
+      (若误算成绝对差值 max_high - entry, 会得到 100, 与 50.0 不同, 同样可
+      甄别)
+    - 最大回撤按"新高之后回落"逐点扫描: peak 从 200 起步 ->
+      tick2(150): peak 仍 200, dd = (200-150)/200 = 0.25
+      tick3(300): 创新高, peak = 300, 同点 dd = 0
+      tick4(240, 出场): peak 仍 300, dd = (300-240)/300 = 60/300 = 0.2
+      取逐点最大值 0.25, 故 max_drawdown_pct = 25.0%
+
+    修复前(bar 容器恒为空): mae == mfe == max_drawdown_pct == 0.0。
+    修复后: 三者应精确等于上面独立推导的值。
+    """
+    symbol = "TICK_MAE_MFE"
+    engine = akquant.Engine()
+    engine.use_simple_market(0.0)
+    engine.set_force_session_continuous(True)
+    cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
+    engine.set_cash(100000.0)
+    engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
+    engine.add_instrument(
+        akquant.Instrument(
+            symbol=symbol,
+            asset_type=akquant.AssetType.Stock,
+            multiplier=1.0,
+            margin_ratio=1.0,
+            tick_size=0.01,
+            lot_size=1.0,
+        )
+    )
+
+    class TickMaeMfeStrategy(akquant.Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self._tick_count = 0
+
+        def on_tick(self, tick: akquant.Tick) -> None:
+            self._tick_count += 1
+            if self._tick_count == 1:
+                self.buy(symbol=tick.symbol, quantity=10)
+            elif self._tick_count == 4:
+                self.sell(symbol=tick.symbol, quantity=10)
+
+    feed = akquant.DataFeed()
+    base_ns = _ns(datetime(2024, 1, 3, 9, 30, tzinfo=timezone.utc))
+    for i, price in enumerate([200.0, 150.0, 300.0, 240.0]):
+        feed.add_tick(
+            akquant.Tick(
+                timestamp=base_ns + i * 1_000_000_000,
+                price=price,
+                volume=10.0,
+                symbol=symbol,
+            )
+        )
+    feed.sort()
+    engine.add_data(feed)
+
+    engine.run(TickMaeMfeStrategy(), False)
+    result = engine.get_results()
+
+    assert len(result.trades) == 1
+    trade = result.trades[0]
+    assert trade.entry_price == pytest.approx(200.0)
+    assert trade.exit_price == pytest.approx(240.0)
+    assert trade.mae == pytest.approx(-25.0)
+    assert trade.mfe == pytest.approx(50.0)
+    assert trade.max_drawdown_pct == pytest.approx(25.0)
+
+
 def test_run_backtest_stop_limit_deferred_bridges_rust_warning(caplog: Any) -> None:
     """Triggered stop-limit deferrals should bridge structured Rust warnings."""
 

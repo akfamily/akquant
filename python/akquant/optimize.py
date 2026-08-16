@@ -104,26 +104,37 @@ def _resolve_optimization_backtest_kwargs(
     data: Any,
     kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """解析优化入口的 symbols 参数并做数据一致性校验."""
-    normalized = _normalize_backtest_symbol_kwargs(kwargs)
-    requested_symbols = _normalize_symbol_values(normalized.get("symbols"))
-    inferred_symbols = _infer_symbols_from_data(data)
-    available_symbols = set(inferred_symbols)
+    """解析优化入口的 symbols 参数并做数据一致性校验.
 
-    if not requested_symbols:
-        if inferred_symbols:
-            normalized["symbols"] = inferred_symbols
+    用户没传 `symbol`/`symbols` 时**不能**拿从数据推断出的值回填进
+    `normalized["symbols"]` —— 那会让 run_grid_search/run_walk_forward
+    转发给 run_backtest 时变成"显式传了 symbols", 从而触发过滤与
+    subscribe() 白名单校验(策略在 on_start 里 subscribe 数据里没有的标的,
+    在直接 run_backtest 不传 symbols 时是无害 no-op, 走优化路径却会报错)。
+    这与"不传 symbols 则不受影响"的设计前提相矛盾, 故此处仅在**用户确实
+    传了** `symbol`/`symbols` 时才做推断校验与回填; 未传时原样返回, 不留
+    `symbols` 键, 使下游 run_backtest 判定为未显式传入。
+    """
+    normalized = _normalize_backtest_symbol_kwargs(kwargs)
+    user_passed_symbols = "symbols" in normalized
+    if not user_passed_symbols:
         return normalized
 
-    if available_symbols:
-        missing_symbols = [
-            symbol for symbol in requested_symbols if symbol not in available_symbols
-        ]
-        if missing_symbols:
-            raise ValueError(
-                "Requested symbols are not available in optimization data: "
-                f"{missing_symbols}"
-            )
+    requested_symbols = _normalize_symbol_values(normalized.get("symbols"))
+    if requested_symbols:
+        inferred_symbols = _infer_symbols_from_data(data)
+        available_symbols = set(inferred_symbols)
+        if available_symbols:
+            missing_symbols = [
+                symbol
+                for symbol in requested_symbols
+                if symbol not in available_symbols
+            ]
+            if missing_symbols:
+                raise ValueError(
+                    "Requested symbols are not available in optimization data: "
+                    f"{missing_symbols}"
+                )
 
     normalized["symbols"] = requested_symbols
     return normalized

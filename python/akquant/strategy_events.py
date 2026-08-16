@@ -44,6 +44,45 @@ def _flush_indicator_snapshots(strategy: Any) -> None:
         recorder.flush_stream_snapshot()
 
 
+def _next_symbol_warmup_count(strategy: Any, symbol: str) -> int:
+    """返回该 symbol 处理完当前 bar 后的 warmup 计数.
+
+    正常路径就是"在上次计数基础上 +1"。
+
+    热启动兼容: 若当前快照缺 ``_symbol_bar_counts`` 字段(早于 per-symbol
+    warmup 计数落地的旧存档, 见 ``Strategy.__setstate__`` 里
+    ``_symbol_bar_counts_needs_history_backfill`` 的置位逻辑), 该 symbol
+    在本次会话第一次出现时(用 ``in`` 判断 ``symbol`` 是否已作为 key 出现在
+    ``_symbol_bar_counts`` 里, 避免 defaultdict 的 ``__getitem__`` 副作用把
+    它误判为"已出现过") 改为查询 Rust 历史缓冲区(checkpoint 的
+    history_buffer_snapshot 已经把它完整恢复)里该 symbol **实际**有多少根
+    bar, 而不是从 0 重新计数——否则会白白重放一遍其实已经攒够的 warmup。
+    若该 symbol 在存档时历史本就不足 warmup_period 根(快照恰好存在预热期
+    内), 这里查到的实际深度同样小于 warmup_period, 预热会正确地从此处
+    继续、而不是直接放行。
+
+    新快照(带 ``_symbol_bar_counts``)不受影响: 该 symbol 只要在存档前出现
+    过, key 就已经存在, 不会走到这条回填分支。
+    """
+    if symbol not in strategy._symbol_bar_counts and getattr(
+        strategy, "_symbol_bar_counts_needs_history_backfill", False
+    ):
+        warmup_period = int(getattr(strategy, "warmup_period", 0) or 0)
+        if warmup_period > 0:
+            try:
+                history = strategy.get_history(
+                    count=warmup_period, symbol=symbol, field="close", freq="bar"
+                )
+                return int(np.count_nonzero(~np.isnan(history)))
+            except Exception as exc:
+                logger.warning(
+                    "热启动 warmup 回填失败(symbol=%s), 该标的将从 0 重新计数: %s",
+                    symbol,
+                    exc,
+                )
+    return int(strategy._symbol_bar_counts[symbol]) + 1
+
+
 def _drive_local_stops(
     strategy: Any,
     symbol: str,
@@ -107,9 +146,10 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
         strategy._update_incremental_indicators(bar)
     strategy._last_prices[bar.symbol] = bar.close
     strategy._bar_count += 1
+    strategy._symbol_bar_counts[symbol] = _next_symbol_warmup_count(strategy, symbol)
     dispatch_portfolio_update(strategy)
 
-    if strategy._bar_count < strategy.warmup_period:
+    if strategy._symbol_bar_counts[symbol] < strategy.warmup_period:
         return
 
     activate_pending_model(strategy)

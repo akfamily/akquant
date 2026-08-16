@@ -60,7 +60,7 @@ results = run_grid_search(
 ```mermaid
 flowchart TD
     A[Frontend submits params<br/>for example fast_period/slow_period/date_range] --> B[validate_strategy_params]
-    B --> C[strategy_params<br/>injected into strategy.__init__]
+    B --> C[strategy_params<br/>injected via inline fields into self.params]
     A --> D[extract_runtime_kwargs]
     D --> E[runtime_kwargs<br/>for example start_time/end_time]
     C --> F[run_backtest]
@@ -198,22 +198,23 @@ The Dual Moving Average strategy uses two moving averages (SMA) with different p
 
 ```python
 class DualMovingAverageStrategy(Strategy):
-    def __init__(self, short_window=5, long_window=20):
-        self.short_window = short_window
-        self.long_window = long_window
-        # Warmup period setting
-        self.warmup_period = long_window
+    short_window = IntParam(5, ge=2, le=200, title="Short MA window")
+    long_window = IntParam(20, ge=3, le=500, title="Long MA window")
+
+    def on_start(self):
+        # Warmup period setting (self.params is ready here)
+        self.warmup_period = self.params.long_window
 
     def on_bar(self, bar):
         # Fetch historical data including current Bar
-        closes = self.get_history(count=self.long_window, symbol=bar.symbol, field="close")
+        closes = self.get_history(count=self.params.long_window, symbol=bar.symbol, field="close")
 
-        if len(closes) < self.long_window:
+        if len(closes) < self.params.long_window:
             return
 
         # Calculate MAs
-        short_ma = np.mean(closes[-self.short_window:])
-        long_ma = np.mean(closes[-self.long_window:])
+        short_ma = np.mean(closes[-self.params.short_window:])
+        long_ma = np.mean(closes[-self.params.long_window:])
 
         current_pos = self.get_position(bar.symbol)
 
@@ -244,9 +245,11 @@ A mechanical trading strategy based on price fluctuations.
 
 ```python
 class GridTradingStrategy(Strategy):
-    def __init__(self, grid_pct=0.03, lot_size=100):
-        self.grid_pct = grid_pct
-        self.trade_lot = lot_size
+    grid_pct = FloatParam(0.03, ge=0.001, le=0.5, title="Grid spacing")
+    # Not named lot_size: that is run_backtest's engine-level cost parameter
+    trade_lot = IntParam(100, ge=1, title="Shares per trade")
+
+    def on_start(self):
         self.last_trade_price = {}
 
     def on_bar(self, bar):
@@ -255,7 +258,7 @@ class GridTradingStrategy(Strategy):
 
         # Initial Position
         if symbol not in self.last_trade_price:
-            self.buy(symbol=symbol, quantity=10 * self.trade_lot)
+            self.buy(symbol=symbol, quantity=10 * self.params.trade_lot)
             self.last_trade_price[symbol] = close
             return
 
@@ -263,15 +266,15 @@ class GridTradingStrategy(Strategy):
         change_pct = (close - last_price) / last_price
 
         # Buy Dip
-        if change_pct <= -self.grid_pct:
-            self.buy(symbol=symbol, quantity=self.trade_lot)
+        if change_pct <= -self.params.grid_pct:
+            self.buy(symbol=symbol, quantity=self.params.trade_lot)
             self.last_trade_price[symbol] = close
 
         # Sell Rally
-        elif change_pct >= self.grid_pct:
+        elif change_pct >= self.params.grid_pct:
             current_pos = self.get_position(symbol)
-            if current_pos >= self.trade_lot:
-                self.sell(symbol=symbol, quantity=self.trade_lot)
+            if current_pos >= self.params.trade_lot:
+                self.sell(symbol=symbol, quantity=self.params.trade_lot)
                 self.last_trade_price[symbol] = close
 ```
 
@@ -293,14 +296,15 @@ Uses ATR (Average True Range) to build price channels and capture trend breakout
 
 ```python
 class AtrBreakoutStrategy(Strategy):
-    def __init__(self, period=20, k=2.0):
-        self.period = period
-        self.k = k
-        self.warmup_period = period + 1
+    period = IntParam(20, ge=2, le=500, title="ATR period")
+    k = FloatParam(2.0, ge=0.1, le=10.0, title="Breakout multiplier")
+
+    def on_start(self):
+        self.warmup_period = self.params.period + 1
 
     def on_bar(self, bar):
         # Fetch N+1 data points
-        req_count = self.period + 1
+        req_count = self.params.period + 1
         h_closes = self.get_history(count=req_count, field="close")
 
         if len(h_closes) < req_count:
@@ -314,8 +318,8 @@ class AtrBreakoutStrategy(Strategy):
 
         # Calculate bands based on YESTERDAY's close
         prev_close = closes[-1]
-        upper_band = prev_close + self.k * atr
-        lower_band = prev_close - self.k * atr
+        upper_band = prev_close + self.params.k * atr
+        lower_band = prev_close - self.params.k * atr
 
         # Trading Logic
         if bar.close > upper_band:
@@ -342,10 +346,11 @@ Hold the asset with the strongest recent momentum (return) among a pool of asset
 
 ```python
 class MomentumRotationStrategy(Strategy):
-    def __init__(self, lookback_period=20):
-        self.lookback_period = lookback_period
+    lookback_period = IntParam(20, ge=1, le=500, title="Momentum lookback")
+
+    def on_start(self):
         self.symbols = ["sh600519", "sz000858"] # Maotai vs Wuliangye
-        self.warmup_period = lookback_period + 1
+        self.warmup_period = self.params.lookback_period + 1
 
     def on_bar(self, bar):
         # Run rotation logic only once per day (on the last symbol)
@@ -355,7 +360,7 @@ class MomentumRotationStrategy(Strategy):
         # 1. Calculate Momentum
         momentums = {}
         for s in self.symbols:
-            closes = self.get_history(count=self.lookback_period, symbol=s, field="close")
+            closes = self.get_history(count=self.params.lookback_period, symbol=s, field="close")
             # Momentum = (Current - Previous) / Previous
             mom = (closes[-1] - closes[0]) / closes[0]
             momentums[s] = mom

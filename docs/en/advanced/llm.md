@@ -14,7 +14,8 @@ Your task is to write trading strategies or backtest scripts based on user requi
 
 1.  **Strategy Structure**:
     *   Inherit from `akquant.Strategy`.
-    *   **Initialization**: Define parameters in `__init__`. Calling `super().__init__()` is optional but recommended.
+    *   **Parameters**: Declare tunable parameters as **inline class fields** (`fast = IntParam(10, ge=2, le=200)`, also `FloatParam` / `BoolParam` / `ChoiceParam` / `ListParam`) and read them via `self.params.fast`. **`__init__` is NOT a parameter entry point** — passing params through the constructor signature raises `TypeError`.
+    *   **Initialization**: Put derived setup (indicators, caches, warmup override) in `on_start`, where `self.params` is ready. Note `on_start` runs again on warm-start resume while `__init__` does not, so guard per-object accumulated state with `if not self.is_restored:`.
     *   **Subscription**: Call `self.subscribe(symbol)` in `on_start` to explicitly declare interest. In backtest, it's optional if data is provided.
     *   **Logic**: Implement trading logic in `on_bar(self, bar: Bar)`.
     *   **Position Helper**: You can use `self.get_position(symbol)` for numeric quantity, or the `Position` helper class (e.g., `pos = Position(self.ctx, symbol)`) when you also need `size`, `available`, or `entry_price`.
@@ -22,7 +23,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
 2.  **Data Access**:
     *   **Warmup Period**:
         *   **Static**: `warmup_period = N` (Class Attribute).
-        *   **Dynamic**: `self.warmup_period = N` in `__init__` (Instance Attribute).
+        *   **Dynamic**: `self.warmup_period = N` in `on_start` (the engine reads it after `on_start` runs).
         *   **Auto**: The framework attempts to infer N from indicator parameters if not set.
     *   **Current Bar**: Access via `bar.close`, `bar.open`, `bar.high`, `bar.low`, `bar.volume`, `bar.timestamp` (pd.Timestamp).
     *   **History (Numpy)**: `self.get_history(count=N, symbol=None, field="close")` returns a `np.ndarray`.
@@ -48,7 +49,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   **Key Parameters**:
         *   `data`: DataFrame or Dict of DataFrames.
         *   `strategy`: Strategy class or instance.
-        *   `symbol`: Benchmark symbol or list of symbols.
+        *   `symbols`: Symbol or list/tuple/set of symbols to run. Passing it means "only run these symbols" — data for symbols outside it is filtered out.
         *   `initial_cash`: Float (e.g., 100_000.0).
         *   `warmup_period`: Int (optional override).
         *   `fill_policy`: A `FillMode` object for unified execution semantics (recommended), e.g. `NextClose()`.
@@ -100,21 +101,23 @@ class MovingAverageStrategy(Strategy):
     # Declarative Warmup
     warmup_period = 30
 
-    def __init__(self, fast=10, slow=20):
-        self.fast_window = fast
-        self.slow_window = slow
-        # Dynamic warmup override
-        self.warmup_period = slow + 10
+    # Params are declared as inline class fields; __init__ is NOT a parameter entry point
+    fast_window = IntParam(10, ge=2, le=200)
+    slow_window = IntParam(20, ge=3, le=500)
+
+    def on_start(self):
+        # Dynamic warmup override (self.params is ready here)
+        self.warmup_period = self.params.slow_window + 10
 
     def on_bar(self, bar: Bar):
         # 1. Get History (Numpy)
-        closes = self.get_history(self.slow_window + 5, bar.symbol, "close")
-        if len(closes) < self.slow_window:
+        closes = self.get_history(self.params.slow_window + 5, bar.symbol, "close")
+        if len(closes) < self.params.slow_window:
             return
 
         # 2. Calculate Indicators
-        fast_ma = np.mean(closes[-self.fast_window:])
-        slow_ma = np.mean(closes[-self.slow_window:])
+        fast_ma = np.mean(closes[-self.params.fast_window:])
+        slow_ma = np.mean(closes[-self.params.slow_window:])
 
         # 3. Trading Logic
         pos = self.get_position(bar.symbol)
@@ -307,6 +310,6 @@ run_backtest(..., config=BacktestConfig(strategy_config=strategy_config))
     *   **Cause**: Insufficient funds, hitting risk limits, or outside trading hours.
     *   **Solution**: Check the `reject_reason` field in `result.orders_df`; adjust `initial_cash` or `risk_config`.
 
-4.  **Mixed `symbol` / `symbols` inputs**:
-    *   **Cause**: Both parameters are provided with conflicting values.
-    *   **Solution**: Prefer `symbols`; keep `symbol` only for compatibility code paths.
+4.  **Passing the removed `symbol` parameter**:
+    *   **Cause**: `symbol` was deprecated and removed (see the `symbols` semantics change); passing it in any form raises a `ValueError` ("no longer accepts `symbol`; please use `symbols` only"), regardless of whether `symbols` is also passed.
+    *   **Solution**: Use `symbols` instead (accepts a single string or a list/tuple/set).

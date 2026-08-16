@@ -210,4 +210,3 @@ class MySignalSource(SignalSourceBase):
 - [自定义 Broker 注册](custom_broker_registry.md) —— 接入自有柜台
 - [实盘生产检查清单](custom_broker_production_checklist.md)
 - [多策略指南](multi_strategy_guide.md) —— `strategy_id` 路由与分账风控
-

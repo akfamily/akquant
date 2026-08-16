@@ -906,8 +906,11 @@ def _normalize_symbols_argument(
         seen.add(value)
         cleaned.append(value)
 
-    if not cleaned:
-        raise ValueError("symbols cannot be empty")
+    # 传空集合(cleaned 为空)时不在此处报错: 调用方 _resolve_effective_symbols
+    # 紧接着会用 api_name 拼出更具体的中文报错(说明后果与两条可选修法), 这里
+    # 若先行抛出英文短消息("symbols cannot be empty"), 会让那条更有用的报错
+    # 永远拿不到执行机会(死代码)。空字符串等"非空集合但含空值"的情形仍在上面
+    # 的循环内单独报错, 不受此影响。
     return cleaned
 
 
@@ -916,7 +919,13 @@ def _resolve_effective_symbols(
     symbols: Union[str, List[str], Tuple[str, ...], set[str], None],
     kwargs: Dict[str, Any],
     api_name: str,
-) -> Tuple[Union[str, List[str], Tuple[str, ...], set[str]], List[str]]:
+) -> Tuple[Union[str, List[str], Tuple[str, ...], set[str]], List[str], bool]:
+    """解析 symbols 参数.
+
+    第三个返回值 `symbols_explicit` 表示用户是否**显式**传入了 `symbols`。
+    过滤只在显式传入时启用 —— 注意本函数在未传时会填入默认值
+    `"BENCHMARK"`, 若照它字面去过滤会把所有真实数据都滤掉。
+    """
     if "symbol" in kwargs:
         raise ValueError(
             f"{api_name} no longer accepts `symbol`; please use `symbols` only"
@@ -929,13 +938,50 @@ def _resolve_effective_symbols(
         )
     elif "symbols" in kwargs:
         kwargs.pop("symbols")
+    symbols_explicit = symbols is not None
     if symbols is None:
         symbols = "BENCHMARK"
     effective_symbols = _normalize_symbols_argument(
         symbols=symbols,
         api_name=api_name,
     )
-    return symbols, effective_symbols
+    if symbols_explicit and not effective_symbols:
+        raise ValueError(
+            f"{api_name} 的 symbols 不能为空: 传空集合会得到一个不放行任何标的的"
+            "空回测。要跑全部数据请省略 symbols(沿用「数据即订阅」), "
+            "要跑指定标的请至少给一个。"
+        )
+    return symbols, effective_symbols, symbols_explicit
+
+
+def _merge_symbol_whitelist_sources(
+    effective_symbols: List[str],
+    config: Any,
+    *strategy_instances: Any,
+) -> List[str]:
+    """合并 effective_symbols、config.instruments、各策略当前的 _subscriptions.
+
+    刻意从**已归一化**的 `effective_symbols`(`List[str]`)出发, 不接受
+    `_resolve_effective_symbols` 第一个返回值(原始 `symbols`, 可能是未归一的
+    `str`/`tuple`/`set`)——`set("600519")` 会把字符串拆成单字符集合
+    `{'6','0','0','5','1','9'}`, 这类误用曾使 subscribe() 白名单校验把
+    合法的自身标的都拦下来(见调用点注释)。
+
+    调用时机决定了合并范围: 在 on_start 之前调用只能看到 __init__ 里已完成的
+    subscribe; 在 on_start 之后调用能看到 on_start 里新增的 subscribe。两处
+    调用都复用这同一份逻辑, 避免分别手写而漂移出不一致的合并顺序。
+    """
+    merged: List[str] = list(effective_symbols)
+    if config and getattr(config, "instruments", None):
+        for s in config.instruments:
+            if s not in merged:
+                merged.append(s)
+    for strategy_instance in strategy_instances:
+        if hasattr(strategy_instance, "_subscriptions"):
+            for s in strategy_instance._subscriptions:
+                if s not in merged:
+                    merged.append(s)
+    return merged
 
 
 def _strategy_param_field_names(
@@ -1656,7 +1702,24 @@ def _load_data_map_from_adapter(
     start_time: Optional[Union[str, Any]],
     end_time: Optional[Union[str, Any]],
     timezone: Optional[str],
-) -> Dict[str, pd.DataFrame]:
+) -> Tuple[Dict[str, pd.DataFrame], set[str]]:
+    """按 requested_symbols 逐标的调用 adapter.load 并汇总成 {symbol: DataFrame}.
+
+    for 循环本身只会为 requested_symbols(即参数 `symbols`, 未传则回落为
+    `["BENCHMARK"]`)里的标的发请求 —— 这一点没问题。但**返回值**不能同等
+    信任: 调用方 run_backtest 会把这里 data_map 里出现的每个 key 无条件
+    append 进它的 `symbols`, 而那正是随后设进 Rust 引擎 `set_symbol_whitelist`
+    的同一个列表。若某次 adapter.load 违反契约、在 frame 里混入了未被请求
+    的标的, 不做处理的话它会先污染 data_map、再污染 symbols、最终污染白名
+    单本身 —— 白名单对它静默失效, 这正是本函数要防的失败模式。
+
+    因此: 当调用方显式传了 symbols(判据与三段前置过滤同一个 ——
+    `bool(symbols and "BENCHMARK" not in symbols)`)时, 响应里超出
+    requested_symbols 的标的会被丢弃, 通过第二个返回值 `leaked_symbols`
+    上报, 由调用方决定怎么告警/记录, 这里不做 IO。未显式传 symbols 时
+    (默认 "BENCHMARK" 哨兵)维持原样"数据即订阅"语义, 不丢弃 —— 这与
+    DataFrame/dict/List[Bar] 三段前置过滤在同一哨兵下的行为一致。
+    """
     effective_timezone = timezone or DEFAULT_TIMEZONE
     request_start = (
         _parse_runtime_boundary_timestamp(start_time, effective_timezone)
@@ -1669,7 +1732,10 @@ def _load_data_map_from_adapter(
         else None
     )
     requested_symbols = symbols or ["BENCHMARK"]
+    reject_unrequested = bool(symbols and "BENCHMARK" not in symbols)
+    requested_symbols_set = set(requested_symbols)
     data_map: Dict[str, pd.DataFrame] = {}
+    leaked_symbols: set[str] = set()
 
     for sym in requested_symbols:
         frame = adapter.load(
@@ -1688,13 +1754,17 @@ def _load_data_map_from_adapter(
         if "symbol" in frame.columns:
             grouped = frame.groupby(frame["symbol"].astype(str), sort=False)
             for grouped_symbol, grouped_frame in grouped:
-                data_map[str(grouped_symbol)] = grouped_frame.copy()
+                key = str(grouped_symbol)
+                if reject_unrequested and key not in requested_symbols_set:
+                    leaked_symbols.add(key)
+                    continue
+                data_map[key] = grouped_frame.copy()
         else:
             normalized = frame.copy()
             normalized["symbol"] = str(sym)
             data_map[str(sym)] = normalized
 
-    return data_map
+    return data_map, leaked_symbols
 
 
 def _build_strategy_instance(
@@ -2187,7 +2257,7 @@ def run_backtest(
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
     strategy_loader_options: Optional[Dict[str, Any]] = None,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     initial_cash: Optional[float] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     commission_rate: Optional[float] = None,
@@ -2627,7 +2697,7 @@ def run_backtest(
         kwargs_runtime_config = kwargs.pop("strategy_runtime_config")
         if strategy_runtime_config is None:
             strategy_runtime_config = kwargs_runtime_config
-    symbols, effective_symbols = _resolve_effective_symbols(
+    symbols, effective_symbols, symbols_explicit = _resolve_effective_symbols(
         symbols=symbols,
         kwargs=kwargs,
         api_name="run_backtest",
@@ -3000,6 +3070,37 @@ def run_backtest(
         scope="Global",
     )
 
+    # symbols 白名单下发给策略实例(供 subscribe() 校验用): 必须在 on_start 之前,
+    # 这样 on_start 里的 subscribe 才会被挡住。只在显式传了 symbols 时校验,
+    # 且只在回测路径设——实盘的 subscribe 是正常的动态订阅手段, 不校验。
+    # 无条件赋值(而非只在 symbols_explicit 时才赋值): 策略实例可能是从 checkpoint
+    # 恢复的, `_symbol_whitelist` 会随对象一起被 pickle 持久化(load_checkpoint 用
+    # 默认 __dict__ 整体恢复, 会覆盖 Strategy.__new__ 设的 None)——若本次调用
+    # 没显式传 symbols 却不去覆盖它, 就会沿用上一段 checkpoint 里的旧白名单,
+    # 与本次「不传 symbols = 不过滤」的意图相矛盾。
+    # 用 effective_symbols(已归一 List[str])而非原始 symbols: 此处的 `symbols`
+    # 仍是 _resolve_effective_symbols 的第一个返回值, 未经归一——symbols="600519"
+    # 这种受支持的字符串写法下 set(symbols) 会把它拆成单字符集合, 使 subscribe()
+    # 把合法的自身标的都拦下来。用 _merge_symbol_whitelist_sources 在此时(on_start
+    # 之前)就把 config.instruments 与 __init__ 里已有的 _subscriptions 并进来,
+    # 使这里下发的白名单与下面(:3101 附近, on_start 之后)重新合并出的 `symbols`
+    # 在未发生 on_start 内 subscribe 的前提下一致。
+    whitelist_for_strategy = (
+        set(
+            _merge_symbol_whitelist_sources(
+                effective_symbols,
+                config,
+                strategy_instance,
+                *slot_strategy_instances.values(),
+            )
+        )
+        if symbols_explicit
+        else None
+    )
+    strategy_instance._symbol_whitelist = whitelist_for_strategy
+    for slot_strategy in slot_strategy_instances.values():
+        slot_strategy._symbol_whitelist = whitelist_for_strategy
+
     # 调用 on_start 获取订阅
     # 注意：现在调用 _on_start_internal 来触发自动发现
     if hasattr(strategy_instance, "_on_start_internal"):
@@ -3041,25 +3142,26 @@ def run_backtest(
     feed = DataFeed()
     symbols = []
     data_map_for_indicators = {}
+    # 前置过滤: List[Bar] 形态在构建 feed 前跳过白名单外的标的, 省掉排序/
+    # 构建 feed 与按 symbol 分组算指标 df 的开销。与 DataFrame(:3221 附近)、
+    # dict(:3250 附近) 两段用同一判据, 三种能枚举内容的形态在 symbols 上的
+    # 行为保持一致 —— 语义仍由 Rust 层白名单兜底(Task 1), 这里纯属优化,
+    # 覆盖不到 DataFeed 对象这种无法枚举的形态也无妨。
+    filtered_out_symbols: set[str] = set()
+    # Catalog 路径逐标的读取失败时记入此集合(:3464 附近), 供运行前零数据比对
+    # (:4572 附近)去重——那条已有英文 warning, 不需要再叠一条中文的。
+    catalog_missing_symbols: set[str] = set()
 
-    symbols = list(effective_symbols)
-
-    # Merge with Config instruments
-    if config and config.instruments:
-        for s in config.instruments:
-            if s not in symbols:
-                symbols.append(s)
-
-    # Merge with Strategy subscriptions
-    if hasattr(strategy_instance, "_subscriptions"):
-        for s in strategy_instance._subscriptions:
-            if s not in symbols:
-                symbols.append(s)
-    for slot_strategy in slot_strategy_instances.values():
-        if hasattr(slot_strategy, "_subscriptions"):
-            for s in slot_strategy._subscriptions:
-                if s not in symbols:
-                    symbols.append(s)
+    # 合并 effective_symbols + config.instruments + 各策略当前的 _subscriptions
+    # (含 on_start 里新增的订阅——此时 on_start 已跑完)。与上面(:3048 附近,
+    # on_start 之前)下发给策略实例供 subscribe() 校验的白名单复用同一个合并
+    # 函数, 避免两处手写而漂移出不一致的顺序。
+    symbols = _merge_symbol_whitelist_sources(
+        effective_symbols,
+        config,
+        strategy_instance,
+        *slot_strategy_instances.values(),
+    )
 
     analyzer_manager = AnalyzerManager()
     for plugin in normalized_analyzers:
@@ -3133,13 +3235,22 @@ def run_backtest(
             # We might need to update 'symbols' if they were not provided explicitly?
             # For now, assume user provided symbols or feed covers them.
         elif _is_data_feed_adapter(data):
-            adapter_data_map = _load_data_map_from_adapter(
+            adapter_data_map, leaked_adapter_symbols = _load_data_map_from_adapter(
                 adapter=data,
                 symbols=symbols,
                 start_time=load_start_time,
                 end_time=end_time,
                 timezone=timezone,
             )
+            if leaked_adapter_symbols:
+                # 与 filtered_out_symbols(用户主动传 symbols 排除的标的)性质不同:
+                # 这里是 adapter 违反契约返回了未请求的标的, 单独发一条 warning
+                # 提醒, 不混进下面那条 INFO 汇总日志。
+                logger.warning(
+                    "DataFeedAdapter 返回了 %d 个未请求的标的, 已丢弃: %s",
+                    len(leaked_adapter_symbols),
+                    ", ".join(sorted(leaked_adapter_symbols)),
+                )
             for sym, df in adapter_data_map.items():
                 df_prep = to_indicator_frame(df)
                 data_map_for_indicators[sym] = df_prep
@@ -3207,7 +3318,13 @@ def run_backtest(
                 df["symbol"] = df["symbol"].astype(str)
                 filter_symbols = bool(symbols and "BENCHMARK" not in symbols)
                 if filter_symbols:
+                    # 被 isin 滤掉的标的只能从过滤前的 symbol 集合里减去白名单
+                    # 求差集得到 —— isin 本身是整体布尔索引, 不是逐条判断,
+                    # 拿不到"被剔除了哪些"这个信息, 只能靠过滤前后各留一份
+                    # symbol 集合来对比。只记录, 不改这行既有的过滤判据本身。
+                    pre_filter_symbols = set(df["symbol"].unique())
                     df = df[df["symbol"].isin(symbols)]
+                    filtered_out_symbols.update(pre_filter_symbols.difference(symbols))
                 if not df.empty:
                     arrays = dataframe_to_arrays(df)
                     feed.add_arrays(*arrays)  # type: ignore
@@ -3238,6 +3355,7 @@ def run_backtest(
 
             for sym, df in data.items():
                 if filter_symbols and sym not in symbols:
+                    filtered_out_symbols.add(sym)
                     continue
 
                 # Ensure index is datetime
@@ -3285,6 +3403,18 @@ def run_backtest(
                 if end_time:
                     ts_end_ns = _boundary_timestamp_to_utc_ns(end_time, timezone)
                     data = [b for b in data if b.timestamp <= ts_end_ns]  # type: ignore
+
+                # 前置过滤: 判据与 DataFrame(:3221 附近)/dict(:3250 附近) 两段
+                # 完全一致, 避免三种形态在 symbols 上出现不一致的行为。
+                filter_symbols = bool(symbols and "BENCHMARK" not in symbols)
+                if filter_symbols:
+                    kept_bars = []
+                    for b in data:
+                        if b.symbol not in symbols:  # type: ignore[union-attr]
+                            filtered_out_symbols.add(b.symbol)  # type: ignore[union-attr]
+                            continue
+                        kept_bars.append(b)
+                    data = kept_bars
 
                 data.sort(key=lambda b: b.timestamp)
                 feed.add_bars(data)  # type: ignore[arg-type]
@@ -3338,6 +3468,7 @@ def run_backtest(
             )
             if df.empty:
                 logger.warning(f"Data not found in catalog for {sym}")
+                catalog_missing_symbols.add(str(sym))
                 continue
 
             if not df.empty:
@@ -4436,6 +4567,65 @@ def run_backtest(
     for current_strategy in all_strategy_instances:
         current_strategy._set_instrument_snapshots(instrument_snapshots)
 
+    # 被前置过滤掉的标的只发一条汇总日志, 不逐个刷屏 —— 传全市场数据只关心
+    # 几个标的是本变更的主要动机场景, 逐标的告警会淹没输出。
+    if filtered_out_symbols:
+        logger.info(
+            "已过滤 %d 个不在 symbols 中的标的: %s",
+            len(filtered_out_symbols),
+            ", ".join(sorted(filtered_out_symbols)),
+        )
+
+    # 运行前比对: symbols 里有没有标的实际数据集合里压根没有(能枚举的形态才行——
+    # data_map_for_indicators 为空时说明走的是 DataFeed 对象输入, 它只写不读,
+    # Python 无从枚举, 只能留给会话末 Strategy._check_symbol_data_coverage 兜底)。
+    # 与 filtered_out_symbols(用户主动排除)、adapter 泄漏 warning(数据里有、但
+    # 未被请求)是三个不相交的集合——这里是"白名单里有、但数据里没有"。
+    symbol_data_missing: set[str] = set()
+    # 用 `data_map_for_indicators or catalog_missing_symbols` 而非只看
+    # `data_map_for_indicators`: Catalog 路径下若**全部**请求标的都读取失败,
+    # `data_map_for_indicators` 会是空 dict(falsy), 导致这段整体被跳过——
+    # 下面"跳过已经报过英文 warning 的标的"与"记入 _symbol_data_warned 防止
+    # 会话末重复告警"两步都不会执行, 于是 catalog_missing_symbols 里的标的会在
+    # 会话末被 `_check_symbol_data_coverage` 再报一次中文告警, 与运行前的英文
+    # warning 重复。全空只是"部分读不到"的极限场景, 去重逻辑理应对称覆盖。
+    if symbols_explicit and (data_map_for_indicators or catalog_missing_symbols):
+        symbol_data_missing = set(symbols) - set(data_map_for_indicators.keys())
+        # Catalog 路径逐标的读取失败已经报过一条英文 warning(:3464 附近), 不再
+        # 对这些标的重复报中文告警——但仍要记入 _symbol_data_warned(见下方
+        # 整体 update), 否则会话末 _check_symbol_data_coverage 会再报第二次。
+        for sym in sorted(symbol_data_missing - catalog_missing_symbols):
+            logger.warning(
+                "标的 %s 在 symbols 中但数据里没有它: 该标的全程不会有任何行情"
+                "事件。常见原因是标的代码写错、数据源未覆盖、或所选时间范围内"
+                "无交易。",
+                sym,
+            )
+        if symbol_data_missing:
+            strategy_instance._symbol_data_warned = set(symbol_data_missing)
+            for slot_strategy in slot_strategy_instances.values():
+                slot_strategy._symbol_data_warned = set(symbol_data_missing)
+
+    # symbols 白名单: 只在用户显式传了 symbols 时启用。
+    # 不得直接用局部变量 `symbols`——它在上面的数据加载分支(DataFrame/dict/
+    # adapter, :3253/:3334/:3338/:3389 附近)里会被数据里检测到的标的反向
+    # 改写/追加, 一旦发生, 这里下发的就不再是用户请求的白名单而是"用户请求 ∪
+    # 数据里出现过的标的"——对 Rust 层形同没有过滤, 复活了这个改动本要消灭的
+    # 缺陷(未列入白名单的标的照样撮合、套用默认合约参数)。改用干净的合并结果:
+    # 重新调用 _merge_symbol_whitelist_sources(与 run_from_checkpoint 的
+    # 对应下发点一致, 见 :6098 附近), 从未被污染的 effective_symbols 出发合并
+    # config.instruments 与各策略当前的 _subscriptions(此时 on_start 已跑完,
+    # 能看到 on_start 里新增的订阅)。
+    if symbols_explicit:
+        engine.set_symbol_whitelist(
+            _merge_symbol_whitelist_sources(
+                effective_symbols,
+                config,
+                strategy_instance,
+                *slot_strategy_instances.values(),
+            )
+        )
+
     # 6. 添加数据
     engine.add_data(feed)
 
@@ -4589,7 +4779,7 @@ def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
-    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
+    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
     commission_policy: Optional[CommissionPolicy] = None,
     strategy_runtime_config: Optional[
         Union[StrategyRuntimeConfig, Dict[str, Any]]
@@ -4738,7 +4928,7 @@ def run_from_checkpoint(
         elif isinstance(fill_policy_override, dict):
             raise TypeError(_LEGACY_FILL_POLICY_DICT_MSG)
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
-    symbols, effective_symbols = _resolve_effective_symbols(
+    symbols, effective_symbols, symbols_explicit = _resolve_effective_symbols(
         symbols=symbols,
         kwargs=kwargs,
         api_name="run_from_checkpoint",
@@ -4750,6 +4940,10 @@ def run_from_checkpoint(
     # 1. 准备数据源
     feed = None
     data_map_for_indicators: Dict[str, pd.DataFrame] = {}
+    # 与 run_backtest 对称(见该函数 :3150 附近同名注释): 记录被 symbols 白名单
+    # 挡在 Python 前置过滤之外的标的, 供下面(:6132 附近)补发与 run_backtest
+    # 一致的汇总 INFO 日志——两条入口的可观测性不应该有差异。
+    filtered_out_symbols: set[str] = set()
 
     # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
     data = coerce_to_pandas(data)
@@ -4758,13 +4952,19 @@ def run_from_checkpoint(
         feed = data
     elif _is_data_feed_adapter(data):
         feed = DataFeed()
-        adapter_data_map = _load_data_map_from_adapter(
+        adapter_data_map, leaked_adapter_symbols = _load_data_map_from_adapter(
             adapter=data,
             symbols=list(effective_symbols),
             start_time=kwargs.get("start_time"),
             end_time=kwargs.get("end_time"),
             timezone=timezone_name,
         )
+        if leaked_adapter_symbols:
+            logger.warning(
+                "DataFeedAdapter 返回了 %d 个未请求的标的, 已丢弃: %s",
+                len(leaked_adapter_symbols),
+                ", ".join(sorted(leaked_adapter_symbols)),
+            )
         loaded_count = 0
         for sym, df in adapter_data_map.items():
             if not df.empty:
@@ -4819,7 +5019,11 @@ def run_from_checkpoint(
                 df_prepared["symbol"] = df_prepared["symbol"].astype(str)
                 filter_symbols = bool(symbols and "BENCHMARK" not in symbols)
                 if filter_symbols:
+                    # 与 run_backtest 同一手法(:3320 附近): isin 是整体布尔索引,
+                    # 拿不到"被剔除了哪些", 只能靠过滤前后的 symbol 集合求差集。
+                    pre_filter_symbols = set(df_prepared["symbol"].unique())
                     df_prepared = df_prepared[df_prepared["symbol"].isin(symbols)]
+                    filtered_out_symbols.update(pre_filter_symbols.difference(symbols))
                 if not df_prepared.empty:
                     grouped = df_prepared.groupby("symbol", sort=False)
                     data_map = {
@@ -4866,7 +5070,19 @@ def run_from_checkpoint(
                     data_map_for_indicators[sym] = df
 
         elif isinstance(data, dict):
-            data_map = data
+            # 与 run_backtest 的 dict 分支对称(:3351 附近): 显式传了 symbols 时
+            # 同样只放行白名单内的标的, 被挡下的记入 filtered_out_symbols 供下面
+            # 的汇总 INFO 日志复用。
+            filter_symbols = bool(symbols and "BENCHMARK" not in symbols)
+            if filter_symbols:
+                data_map = {}
+                for sym, df in data.items():
+                    if sym not in symbols:
+                        filtered_out_symbols.add(sym)
+                        continue
+                    data_map[sym] = df
+            else:
+                data_map = data
         else:
             data_map = {}
 
@@ -4996,27 +5212,39 @@ def run_from_checkpoint(
     )
     setattr(strategy_instance, "_slot_strategies", dict(slot_strategy_instances))
     setattr(strategy_instance, "_strategy_slot_ids", list(configured_slot_ids))
-    if normalized_strategy_fill_policy is not None:
-        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
-            setattr(
-                current_strategy,
-                "_strategy_fill_policy_map",
-                dict(normalized_strategy_fill_policy),
-            )
-    if normalized_strategy_slippage is not None:
-        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
-            setattr(
-                current_strategy,
-                "_strategy_slippage_map",
-                dict(normalized_strategy_slippage),
-            )
-    if normalized_strategy_commission is not None:
-        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
-            setattr(
-                current_strategy,
-                "_strategy_commission_map",
-                dict(normalized_strategy_commission),
-            )
+    # 无条件赋值(而非只在 normalized_strategy_* is not None 时才赋值): 恢复出来的
+    # 策略实例的 `_strategy_fill_policy_map` / `_strategy_slippage_map` /
+    # `_strategy_commission_map` 是上一段 checkpoint 存档时随对象一起被
+    # save_checkpoint 整体 pickle 下来的旧值(load_checkpoint 用默认 __dict__
+    # 整体恢复, 会原样带出旧 map)——本次若没显式传对应的 strategy_* 参数, 必须
+    # 显式置 None 覆盖它, 否则旧 map 会继续生效, 并静默压过本次显式传的运行级
+    # fill_policy/slippage/commission_rate(见 strategy_trading_api.py 里
+    # _resolve_effective_order_* 的解析顺序: 策略级 map 命中就直接返回, 根本不会
+    # 走到运行级默认值)。置 None 而非 {}: 与消费端 `if not policy_map: return
+    # None` 的判据等价(两者都是"无覆盖"), 且 None 与该属性未被设置过时的
+    # getattr 默认值一致, 不引入第三种状态。
+    for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
+        setattr(
+            current_strategy,
+            "_strategy_fill_policy_map",
+            dict(normalized_strategy_fill_policy)
+            if normalized_strategy_fill_policy is not None
+            else None,
+        )
+        setattr(
+            current_strategy,
+            "_strategy_slippage_map",
+            dict(normalized_strategy_slippage)
+            if normalized_strategy_slippage is not None
+            else None,
+        )
+        setattr(
+            current_strategy,
+            "_strategy_commission_map",
+            dict(normalized_strategy_commission)
+            if normalized_strategy_commission is not None
+            else None,
+        )
 
     if configured_slot_ids and hasattr(engine, "set_strategy_slots"):
         cast(Any, engine).set_strategy_slots(configured_slot_ids)
@@ -5870,6 +6098,35 @@ def run_from_checkpoint(
     _prime_framework_cross_section_timers(all_strategy_instances, engine)
     _prime_framework_pre_open_timers(all_strategy_instances, engine)
 
+    # symbols 白名单下发给策略实例(供 subscribe() 校验用): 必须在 on_start 之前,
+    # 这样 on_start 里的 subscribe 才会被挡住。与下面(on_start 之后)的
+    # engine.set_symbol_whitelist 是两个不同的下发点, 不要合并。
+    # 无条件赋值(而非只在 symbols_explicit 时才赋值): 恢复出来的策略实例的
+    # `_symbol_whitelist` 是上一段 checkpoint 存档时随对象一起 pickle 下来的
+    # 旧值(load_checkpoint 用默认 __dict__ 整体恢复, 会原样带出旧白名单)——
+    # 本次若没显式传 symbols, 必须显式置 None 覆盖它, 否则会沿用上一段的旧白名单,
+    # 与「这次不传 symbols = 不过滤」的意图相矛盾, 且引擎层(下面的
+    # engine.set_symbol_whitelist, 同一个 guard 不执行 ⇒ 不过滤)与策略层
+    # (仍按旧白名单拦截 subscribe)会出现矛盾的两副面孔。
+    # 用 effective_symbols 而非原始 symbols: 与 run_backtest 同一个理由(见该函数
+    # 同名注释)——`symbols` 未经归一, symbols="600519" 这种字符串写法下
+    # set(symbols) 会拆成单字符集合。
+    whitelist_for_strategy = (
+        set(
+            _merge_symbol_whitelist_sources(
+                effective_symbols,
+                config,
+                strategy_instance,
+                *slot_strategy_instances.values(),
+            )
+        )
+        if symbols_explicit
+        else None
+    )
+    strategy_instance._symbol_whitelist = whitelist_for_strategy
+    for slot_strategy in slot_strategy_instances.values():
+        slot_strategy._symbol_whitelist = whitelist_for_strategy
+
     if hasattr(strategy_instance, "_on_start_internal"):
         strategy_instance._on_start_internal()
     elif hasattr(strategy_instance, "on_start"):
@@ -5885,6 +6142,53 @@ def run_from_checkpoint(
                 if hasattr(slot_strategy, "on_resume"):
                     slot_strategy.on_resume()
             slot_strategy.on_start()
+
+    # symbols 白名单: 只在用户显式传了 symbols 时启用, 与 run_backtest 对称。
+    # 白名单取合并后的集合(effective_symbols + config.instruments + 各策略的
+    # _subscriptions) —— 放在 on_start 之后是有意的: __init__/on_start 里的
+    # subscribe 到这里才确定。add_data 已在上面 load_checkpoint() 内部执行过,
+    # 但白名单只需在 engine.run() 之前生效即可, 过滤发生在事件分发时(见
+    # set_symbol_whitelist 的实现)。DataFeed 对象输入只能靠这一层过滤 —— 它
+    # 只写不读, Python 无从枚举内容。
+    whitelist_symbols = _merge_symbol_whitelist_sources(
+        effective_symbols,
+        config,
+        strategy_instance,
+        *slot_strategy_instances.values(),
+    )
+    if symbols_explicit:
+        engine.set_symbol_whitelist(whitelist_symbols)
+
+    # 被前置过滤掉的标的只发一条汇总日志, 与 run_backtest 对称(见该函数同名
+    # 注释, :4572 附近)——两条入口的可观测性不应该有差异。
+    if filtered_out_symbols:
+        logger.info(
+            "已过滤 %d 个不在 symbols 中的标的: %s",
+            len(filtered_out_symbols),
+            ", ".join(sorted(filtered_out_symbols)),
+        )
+
+    # 运行前比对: 与 run_backtest 对称(见该函数同名注释)。symbols 里有没有标的
+    # 实际数据集合里压根没有——data_map_for_indicators 为空说明走的是 DataFeed
+    # 对象输入, 只能留给会话末 Strategy._check_symbol_data_coverage 兜底。
+    # 用 whitelist_symbols(合并后, 与上面下发给引擎的白名单是同一个集合)而非
+    # effective_symbols——否则仅通过 config.instruments 或各策略 _subscriptions
+    # 进白名单、且零数据的标的会被漏检(运行前与会话末双重漏报)。
+    if symbols_explicit and data_map_for_indicators:
+        symbol_data_missing = set(whitelist_symbols) - set(
+            data_map_for_indicators.keys()
+        )
+        for sym in sorted(symbol_data_missing):
+            logger.warning(
+                "标的 %s 在 symbols 中但数据里没有它: 该标的全程不会有任何行情"
+                "事件。常见原因是标的代码写错、数据源未覆盖、或所选时间范围内"
+                "无交易。",
+                sym,
+            )
+        if symbol_data_missing:
+            strategy_instance._symbol_data_warned = set(symbol_data_missing)
+            for slot_strategy in slot_strategy_instances.values():
+                slot_strategy._symbol_data_warned = set(symbol_data_missing)
 
     if data_map_for_indicators:
         for current_strategy in all_strategy_instances:

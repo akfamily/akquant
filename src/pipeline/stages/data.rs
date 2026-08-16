@@ -50,6 +50,18 @@ impl DataProcessor {
         if let Ok(mut buffer) = engine.history_buffer.write() {
             let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
             for symbol in engine.instruments.keys() {
+                // 跑 tick 流的 symbol 不补合成 bar: 双流下合成 bar 打区间结束戳,
+                // 与 tick 时间戳天然错开, 于是每个 bar 事件都会让其余 symbol 显得
+                // "本批次缺失"。此时用 last_prices(成交价)合成退化 bar 写进 bar
+                // 序列, 等于用 tick 价冒充 bar, 且完全静默。该 symbol 的 bar 应当
+                // 只来自真实聚合, 故此处直接跳过。
+                // NOTE: 该排除条件具有永久性: 一旦 symbol 曾经产生过一个 tick 事件,
+                // has_tick_history 的记录就再也不会清零, 此后该 symbol 永远不再获得
+                // fill_missing_bars 的合成补偿——若行情源后来切换为纯 bar 模式, 其
+                // 停牌缺失 bar 将不再被填补。
+                if buffer.has_tick_history(symbol) {
+                    continue;
+                }
                 if !self.seen_symbols.contains(symbol)
                     && let Some(&last_price) = prices.get(symbol)
                 {
@@ -243,6 +255,29 @@ impl Processor for DataProcessor {
             }
             FeedAction::Event(event) => {
                 let event = *event;
+
+                // 标的白名单: 用户显式传了 symbols 时只放行白名单内的标的。
+                // 返回 Loop = 丢弃本事件、去取下一个, 与下面
+                // `timestamp <= engine.snapshot_time` 的处理方式一致。
+                // 放在最前面是有意的: 白名单外的事件不该影响 last_timestamp、
+                // seen_symbols、bar_count 等任何时间片状态, 否则它们仍会
+                // 参与批次边界与进度计算。
+                if let Some(whitelist) = &engine.symbol_whitelist {
+                    let event_symbol = match &event {
+                        Event::Bar(b) => Some(b.symbol.as_str()),
+                        Event::Tick(t) => Some(t.symbol.as_str()),
+                        _ => None,
+                    };
+                    if let Some(symbol) = event_symbol
+                        && !whitelist.contains(symbol)
+                    {
+                        // 只计数, 不逐事件打日志(见 `whitelist_filtered_event_count`
+                        // 字段文档) —— 会话结束时 `Engine::run` 汇总报一条 info。
+                        engine.whitelist_filtered_event_count += 1;
+                        return Ok(ProcessorResult::Loop);
+                    }
+                }
+
                 let timestamp = match &event {
                     Event::Bar(b) => b.timestamp,
                     Event::Tick(t) => t.timestamp,

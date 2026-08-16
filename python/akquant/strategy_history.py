@@ -3,6 +3,26 @@ from typing import Any, Optional, cast
 import numpy as np
 import pandas as pd
 
+#: tick 序列可用的字段。tick 没有 open/high/low, 请求它们会静默返回退化 OHLC
+#: (price 冒充 high), 故显式拒绝。
+_TICK_ALLOWED_FIELDS = frozenset({"price", "close", "volume"})
+
+
+def _validate_field_for_freq(field: str, freq: Optional[str]) -> None:
+    """Tick 粒度下拒绝 bar 专有字段.
+
+    :param field: 字段名(已小写)
+    :param freq: 粒度, 'tick' / 'bar' / None
+    :raises ValueError: tick 粒度下请求了 open/high/low
+    """
+    if freq == "tick" and field not in _TICK_ALLOWED_FIELDS:
+        raise ValueError(
+            f"freq='tick' 时不支持 field={field!r}: tick 没有 open/high/low, "
+            f"可用字段为 {sorted(_TICK_ALLOWED_FIELDS)}; "
+            "如需成交价序列请改用 get_history(freq='tick', field='price') 或 "
+            "field='close'"
+        )
+
 
 def _resolve_history_cutoff(strategy: Any) -> Optional[int]:
     """Return a history cutoff for day-boundary phases."""
@@ -29,9 +49,17 @@ def set_rolling_window(strategy: Any, train_window: int, step: int) -> None:
 
 
 def get_history(
-    strategy: Any, count: int, symbol: Optional[str] = None, field: str = "close"
+    strategy: Any,
+    count: int,
+    symbol: Optional[str] = None,
+    field: str = "close",
+    freq: Optional[str] = None,
 ) -> np.ndarray:
-    """获取历史数据 (类似 Zipline data.history)."""
+    """获取历史数据 (类似 Zipline data.history).
+
+    :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。``None`` 时若该 symbol
+        同时存在两条序列会报错, 要求显式指定(不静默选一条)。
+    """
     if strategy._history_depth == 0:
         raise RuntimeError(
             "History tracking is not enabled. Call set_history_depth() first."
@@ -41,8 +69,10 @@ def get_history(
         raise RuntimeError("Context not ready")
 
     symbol = strategy._resolve_symbol(symbol)
+    normalized_field = field.lower()
+    _validate_field_for_freq(normalized_field, freq)
     history_cutoff = _resolve_history_cutoff(strategy)
-    arr = strategy.ctx.history(symbol, field.lower(), count, history_cutoff)
+    arr = strategy.ctx.history(symbol, normalized_field, count, history_cutoff, freq)
 
     if arr is None:
         return cast(np.ndarray, np.full(count, np.nan))
@@ -59,12 +89,16 @@ def get_history_multi(
     count: int,
     symbol: Optional[str] = None,
     fields: tuple[str, ...] = ("open", "high", "low", "close", "volume"),
+    freq: Optional[str] = None,
 ) -> dict[str, np.ndarray]:
     """批量获取多个字段的历史数据 (单次跨界).
 
     行为与逐字段调用 :func:`get_history` 完全一致(相同的左侧 NaN 填充与
     截断语义),但只锁一次 Rust 缓冲、只跨一次 FFI 边界。返回按 ``fields``
     顺序建键的 ``{field: np.ndarray}``。
+
+    :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。``None`` 时若该 symbol
+        同时存在两条序列会报错, 要求显式指定(不静默选一条)。
     """
     if strategy._history_depth == 0:
         raise RuntimeError(
@@ -76,8 +110,12 @@ def get_history_multi(
 
     symbol = strategy._resolve_symbol(symbol)
     normalized_fields = [field.lower() for field in fields]
+    for normalized_field in normalized_fields:
+        _validate_field_for_freq(normalized_field, freq)
     history_cutoff = _resolve_history_cutoff(strategy)
-    raw = strategy.ctx.history_multi(symbol, normalized_fields, count, history_cutoff)
+    raw = strategy.ctx.history_multi(
+        symbol, normalized_fields, count, history_cutoff, freq
+    )
 
     out: dict[str, np.ndarray] = {}
     for field in normalized_fields:
@@ -93,25 +131,42 @@ def get_history_multi(
 
 
 def get_history_df(
-    strategy: Any, count: int, symbol: Optional[str] = None
+    strategy: Any,
+    count: int,
+    symbol: Optional[str] = None,
+    freq: Optional[str] = None,
 ) -> pd.DataFrame:
-    """获取历史数据 DataFrame (Open, High, Low, Close, Volume)."""
+    """获取历史数据 DataFrame (Open, High, Low, Close, Volume).
+
+    :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。``None`` 时若该 symbol
+        同时存在两条序列会报错, 要求显式指定(不静默选一条)。默认取的
+        open/high/low/close/volume 五个字段在 ``freq='tick'`` 下必然报错
+        (tick 没有 OHLC), 此时请改用 :func:`get_history` 配合
+        ``field='price'`` 或 ``'close'`` 取成交价序列。
+    """
     symbol = strategy._resolve_symbol(symbol)
     data = get_history_multi(
-        strategy, count, symbol, ("open", "high", "low", "close", "volume")
+        strategy, count, symbol, ("open", "high", "low", "close", "volume"), freq
     )
     return pd.DataFrame(data)
 
 
 def get_rolling_data(
-    strategy: Any, length: Optional[int] = None, symbol: Optional[str] = None
+    strategy: Any,
+    length: Optional[int] = None,
+    symbol: Optional[str] = None,
+    freq: Optional[str] = None,
 ) -> tuple[pd.DataFrame, Optional[pd.Series]]:
-    """获取滚动训练数据."""
+    """获取滚动训练数据.
+
+    :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``, 透传给
+        :func:`get_history_df`; 语义与限制同上。
+    """
     if length is None:
         length = strategy._rolling_train_window
 
     if length <= 0:
         raise ValueError("Invalid rolling window length")
 
-    df = get_history_df(strategy, length, symbol)
+    df = get_history_df(strategy, length, symbol, freq)
     return df, None

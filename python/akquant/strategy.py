@@ -396,7 +396,20 @@ class Strategy:
     _last_prices: Dict[str, float]
     _rolling_train_window: int
     _rolling_step: int
+    # 全局 bar 事件计数(不分 symbol), 供 ML 滚动训练节奏使用(见 strategy_ml.py)。
+    # warmup 门槛请用 per-symbol 的 _symbol_bar_counts, 不要复用这个字段。
     _bar_count: int
+    # 无 validation_config 时滚动训练用的阈值状态: 上次触发训练时的
+    # _bar_count(见 strategy_ml.py::should_trigger_training/
+    # consume_training_trigger)。
+    _last_train_bar_count: int
+    # 回测且用户显式传了 symbols 时, 由 engine.py 设为 symbols 集合; subscribe()
+    # 据此校验。None 表示不校验(未显式传 symbols, 或实盘)。
+    _symbol_whitelist: Optional[set[str]]
+    # 运行前(engine.py)已经就"symbols 里零数据的标的"告警过的集合, 供
+    # `_check_symbol_data_coverage` 去重——同一标的不应该运行前报一次、会话末
+    # 又报一次。见该方法文档字符串。
+    _symbol_data_warned: set[str]
     _model_configured: bool
     model: Optional["QuantModel"]
     _ml_validation_lifecycle: bool
@@ -423,6 +436,12 @@ class Strategy:
     _last_event_type: str = ""  # "bar" or "tick"
     _hold_bars: "defaultdict[str, int]"
     _last_position_signs: "defaultdict[str, float]"
+    _symbol_bar_counts: "defaultdict[str, int]"
+    # 热启动兼容标记: 当前快照是否缺 _symbol_bar_counts(早于该字段落地的旧
+    # 存档), 由 __setstate__ 置位, on_bar_event 据此在每个 symbol 首次出现
+    # 时改用实际恢复的历史深度回填, 而不是从 0 重新计数(见
+    # strategy_events.py::_next_symbol_warmup_count)。
+    _symbol_bar_counts_needs_history_backfill: bool
     _framework_last_local_date: Optional[dt.date]
     _framework_before_trading_done_date: Optional[dt.date]
     _framework_after_trading_done_date: Optional[dt.date]
@@ -578,6 +597,9 @@ class Strategy:
         instance._seen_trade_key_order = deque()
         instance._hold_bars = defaultdict(int)
         instance._last_position_signs = defaultdict(float)
+        # per-symbol warmup 门槛计数(与全局 _bar_count 分离, 见该字段注释)。
+        instance._symbol_bar_counts = defaultdict(int)
+        instance._symbol_bar_counts_needs_history_backfill = False
         instance.timezone = getattr(instance, "timezone", "Asia/Shanghai")
         raw_runtime_config = getattr(instance, "_runtime_config", None)
 
@@ -625,6 +647,9 @@ class Strategy:
         instance._rolling_train_window = 0
         instance._rolling_step = 0
         instance._bar_count = 0
+        instance._last_train_bar_count = 0
+        instance._symbol_whitelist = None
+        instance._symbol_data_warned = set()
         instance._model_configured = False
         instance._start_initialized = False
         instance._ml_validation_lifecycle = False
@@ -801,6 +826,15 @@ class Strategy:
             }
             # 旧 snapshot 的 commission_rate 是派生量, 清掉避免遗留死数据
             self.__dict__.pop("commission_rate", None)
+        # 兼容旧 snapshot(早于 per-symbol warmup 计数字段落地): 判 state 而非
+        # self.__dict__, 因为 __new__ 已经预置了空 _symbol_bar_counts, naive
+        # hasattr 永远为真, 只有看"传入 snapshot 是否带这个 key"才能识别出
+        # 这是一份旧存档。置位后交给 on_bar_event 首次遇到每个 symbol 时按
+        # 实际恢复的历史深度回填(见 strategy_events.py::_next_symbol_warmup_count),
+        # 而不是无条件从 0 重新计数, 也不是无条件当作已攒满放行。
+        self._symbol_bar_counts_needs_history_backfill = (
+            "_symbol_bar_counts" not in state
+        )
         self._order_group_lock = threading.RLock()  # RLock 不入 pickle, 恢复时重建
         raw_runtime_config = self.__dict__.pop("runtime_config", None)
         if raw_runtime_config is not None:
@@ -900,6 +934,8 @@ class Strategy:
             self._ml_pending_window_start_bar = None
         if not hasattr(self, "_ml_pending_window_end_bar"):
             self._ml_pending_window_end_bar = None
+        if not hasattr(self, "_last_train_bar_count"):
+            self._last_train_bar_count = 0
         for name in list(getattr(self, "_incremental_indicators", {}).keys()):
             setattr(self, name, IncrementalIndicatorBinding(self, name))
         _ensure_framework_state_impl(self)
@@ -1076,8 +1112,16 @@ class Strategy:
         里的 bug; 但这里抛出的 `StrategyConfigurationError`(`ValueError` 子类)
         是框架自身的配置校验, engine 的 handler 会在记录日志前先重抛该类型, 使其
         穿透到调用方——不会退化成一条静默的 ERROR 日志。
+
+        `_check_symbol_data_coverage`/`_check_warmup_symbol_coverage` 都放在
+        `_check_incremental_hl_bar_coverage` 之前: 后者可能抛出, 若顺序颠倒会让
+        本就只是提示性的告警在异常场景下被跳过。`_check_symbol_data_coverage`
+        又放在 `_check_warmup_symbol_coverage` 最前面: 「压根没数据」比「有数据
+        但不够预热」更根本, 先报更根本的那条。
         """
         _ensure_framework_state_impl(self)
+        self._check_symbol_data_coverage()
+        self._check_warmup_symbol_coverage()
         self._check_incremental_hl_bar_coverage()
         _dispatch_shutdown_hooks_impl(self)
         _call_user_callback_impl(self, "on_stop")
@@ -1266,7 +1310,11 @@ class Strategy:
         _set_rolling_window_impl(self, train_window, step)
 
     def get_history(
-        self, count: int, symbol: Optional[str] = None, field: str = "close"
+        self,
+        count: int,
+        symbol: Optional[str] = None,
+        field: str = "close",
+        freq: Optional[str] = None,
     ) -> np.ndarray:
         """
         获取历史数据 (类似 Zipline data.history).
@@ -1274,15 +1322,19 @@ class Strategy:
         :param count: 获取的数据长度 (必须 <= history_depth)
         :param symbol: 标的代码 (默认当前 Bar 的 symbol)
         :param field: 字段名 (open, high, low, close, volume)
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。同一 symbol 若
+            同时存在 bar 与 tick 两条历史序列, 省略 freq 会报错, 要求显式指定
+            (不静默选一条); freq='tick' 时 field 只支持 price/close/volume。
         :return: Numpy 数组
         """
-        return _get_history_impl(self, count, symbol, field)
+        return _get_history_impl(self, count, symbol, field, freq)
 
     def get_history_map(
         self,
         count: int,
         symbols: Union[str, List[str], Tuple[str, ...], set[str]],
         field: str = "close",
+        freq: Optional[str] = None,
     ) -> Dict[str, np.ndarray]:
         """
         批量获取多个标的的历史数据.
@@ -1290,6 +1342,9 @@ class Strategy:
         :param count: 获取的数据长度
         :param symbols: 标的代码或标的列表
         :param field: 字段名 (open, high, low, close, volume)
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。同一 symbol 若
+            同时存在 bar 与 tick 两条历史序列, 省略 freq 会报错, 要求显式指定
+            (不静默选一条); freq='tick' 时 field 只支持 price/close/volume。
         :return: {symbol: np.ndarray}
         """
         normalized = self._normalize_indicator_symbols(symbols)
@@ -1298,11 +1353,16 @@ class Strategy:
         normalized_symbols = sorted(normalized)
         history_map: Dict[str, np.ndarray] = {}
         for symbol in normalized_symbols:
-            history_map[symbol] = self.get_history(
-                count=count,
-                symbol=symbol,
-                field=field,
-            )
+            # freq 只在显式指定时才透传, 兼容子类覆写 get_history 沿用旧 3
+            # 参签名(不接受 freq)的既有用法。
+            history_kwargs: Dict[str, Any] = {
+                "count": count,
+                "symbol": symbol,
+                "field": field,
+            }
+            if freq is not None:
+                history_kwargs["freq"] = freq
+            history_map[symbol] = self.get_history(**history_kwargs)
         return history_map
 
     def rebalance_to_topn(
@@ -1405,6 +1465,7 @@ class Strategy:
         count: int,
         symbol: Optional[str] = None,
         fields: Tuple[str, ...] = ("open", "high", "low", "close", "volume"),
+        freq: Optional[str] = None,
     ) -> Dict[str, np.ndarray]:
         """
         批量获取多个字段的历史数据 (单次跨界).
@@ -1415,31 +1476,67 @@ class Strategy:
         :param count: 获取的数据长度 (必须 <= history_depth)
         :param symbol: 标的代码 (默认当前 Bar 的 symbol)
         :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。同一 symbol 若
+            同时存在 bar 与 tick 两条历史序列, 省略 freq 会报错, 要求显式指定
+            (不静默选一条); freq='tick' 时 fields 只支持 price/close/volume,
+            含 open/high/low 会报错。
         :return: {field: np.ndarray}, 按 fields 顺序建键
         """
-        return _get_history_multi_impl(self, count, symbol, fields)
+        # freq 只在显式指定时才透传, 兼容子类覆写本方法沿用旧签名(不接受
+        # freq)的既有用法, 与 get_history_map 的处理方式一致。
+        call_kwargs: Dict[str, Any] = {
+            "count": count,
+            "symbol": symbol,
+            "fields": fields,
+        }
+        if freq is not None:
+            call_kwargs["freq"] = freq
+        return _get_history_multi_impl(self, **call_kwargs)
 
-    def get_history_df(self, count: int, symbol: Optional[str] = None) -> pd.DataFrame:
+    def get_history_df(
+        self,
+        count: int,
+        symbol: Optional[str] = None,
+        freq: Optional[str] = None,
+    ) -> pd.DataFrame:
         """
         获取历史数据 DataFrame (Open, High, Low, Close, Volume).
 
         :param count: 数据长度
         :param symbol: 标的代码
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``。同一 symbol 若
+            同时存在 bar 与 tick 两条历史序列, 省略 freq 会报错, 要求显式指定
+            (不静默选一条)。默认取的 OHLCV 五个字段在 ``freq='tick'`` 下必然
+            报错(tick 没有 open/high/low), 如需成交价序列请改用
+            ``get_history(freq='tick', field='price')`` 或 ``field='close'``。
         :return: pd.DataFrame
         """
-        return _get_history_df_impl(self, count, symbol)
+        # 同 get_history_multi: 仅在显式指定时透传 freq, 兼容旧签名覆写。
+        call_kwargs: Dict[str, Any] = {"count": count, "symbol": symbol}
+        if freq is not None:
+            call_kwargs["freq"] = freq
+        return _get_history_df_impl(self, **call_kwargs)
 
     def get_rolling_data(
-        self, length: Optional[int] = None, symbol: Optional[str] = None
+        self,
+        length: Optional[int] = None,
+        symbol: Optional[str] = None,
+        freq: Optional[str] = None,
     ) -> tuple[pd.DataFrame, Optional[pd.Series]]:
         """
         获取滚动训练数据.
 
         :param length: 数据长度 (默认使用 set_rolling_window 设置的 train_window)
         :param symbol: 标的代码
+        :param freq: 粒度, ``'tick'`` / ``'bar'`` / ``None``, 透传给
+            get_history_df; 语义与限制同上。
         :return: (X, y) 默认为 (DataFrame, None)
         """
-        return _get_rolling_data_impl(self, length, symbol)
+        # 同上: 仅在显式指定时透传 freq, 兼容旧签名覆写。
+        call_kwargs: Dict[str, Any] = {"length": length, "symbol": symbol}
+        if freq is not None:
+            call_kwargs["freq"] = freq
+        return _get_rolling_data_impl(self, **call_kwargs)
 
     def on_train_signal(self, context: Any) -> None:
         """
@@ -1545,15 +1642,26 @@ class Strategy:
         """
         Subscribe to market data for an instrument.
 
-        回测: ``run_backtest`` 会把 ``_subscriptions`` 并入标的集合。
+        回测: 未传 ``symbols`` 时, ``run_backtest`` 会把 ``_subscriptions``
+        并入标的集合。**传了 ``symbols`` 时** 只能订阅 ``symbols`` 之内的标的,
+        订阅集外的标的会抛 ``ValueError`` —— 时序上无法自动并入(``on_start``
+        在数据加载之后才跑), 且「声明只跑这些, 又订阅别的」自相矛盾。
 
         实盘: 由 ``run_live`` 装上转发器后, 调用会把 ``instruments`` 与各 slot
         订阅的并集下发到行情网关(网关的 subscribe 是整集替换语义)。若该 broker
         没有行情网关(如 ``broker='qmf'`` 的 ``market_gateway=None``), 则无处可
-        下发, 退回记录一条 warning。
+        下发, 退回记录一条 warning。实盘不做白名单校验。
 
         :param instrument_id: The instrument identifier (e.g., '600000').
+        :raises ValueError: 回测且显式传了 ``symbols`` 时, 订阅了白名单外的标的。
         """
+        whitelist = getattr(self, "_symbol_whitelist", None)
+        if whitelist is not None and instrument_id not in whitelist:
+            raise ValueError(
+                f"subscribe({instrument_id!r}) 与 symbols 冲突: 该标的不在 "
+                f"symbols={sorted(whitelist)} 之内。传了 symbols 就表示"
+                "「只跑这些标的」, 请把它加进 symbols, 或去掉这次 subscribe。"
+            )
         # 先入账再转发: 转发器算的是 _subscriptions 的并集, 顺序颠倒会漏掉本次。
         if instrument_id not in self._subscriptions:
             self._subscriptions.append(instrument_id)
@@ -1630,6 +1738,82 @@ class Strategy:
                 input_mode=item.input_mode,
             )
             ind.update(*args)
+
+    def _check_symbol_data_coverage(self) -> None:
+        """会话结束时核验: symbols 里有没有标的全程没收到过任何行情事件.
+
+        与运行前的比对(engine.py, 用 `data_map_for_indicators` 与 `symbols` 求差集)
+        互补: DataFeed 对象输入无法预先枚举内容(它只写不读), 只能等会话结束、
+        看该标的到底有没有出现过。
+
+        用 `_last_prices` 而非 `_symbol_bar_counts` 判定"有没有出现过": 后者只在
+        `on_bar_event`(`strategy_events.py::on_bar_event`)递增, `on_tick_event`
+        从不更新它——只有 tick、靠 `on_tick` 正常交易的标的会被 `_symbol_bar_counts`
+        误判成"零数据"(这正是 tick/bar 双流场景, 不能误报)。`_last_prices` 则在
+        `on_bar_event`(:147)与 `on_tick_event`(:212)都会写入(且落在同一处
+        `_is_before_active_start` 早退检查**之后**, 与 bar 那侧的时机一致), 只要
+        该标的收到过至少一个 bar 或 tick 就会留下记录, 用它做"seen"判据能覆盖
+        纯 tick 会话。
+
+        `_symbol_data_warned` 是运行前检查已经报过的标的集合(由 engine.py 写入)
+        ——同一标的不应该运行前报一次、这里又重复报一次。
+
+        只告警不报错: 某标的在所选时间范围内确实无交易是合理场景, 报错会误杀
+        正常回测。与既有先例一致(Catalog 路径 backtest/engine.py 亦为 warning)。
+        """
+        whitelist = getattr(self, "_symbol_whitelist", None)
+        if not whitelist:
+            return
+        last_prices = getattr(self, "_last_prices", None) or {}
+        seen = set(last_prices.keys())
+        already_warned = getattr(self, "_symbol_data_warned", None) or set()
+        for symbol in sorted(whitelist - seen - already_warned):
+            _live_subscribe_logger.warning(
+                "标的 %s 在 symbols 中但全程未收到任何行情事件(bar/tick): 策略对它"
+                "未做任何决策。常见原因是标的代码写错、数据源未覆盖、或所选时间"
+                "范围内无交易。",
+                symbol,
+            )
+
+    def _check_warmup_symbol_coverage(self) -> None:
+        """会话结束时核验: 有没有标的因为 warmup 门槛全程未触发过 on_bar.
+
+        per-symbol warmup 门槛(见 `strategy_events.py::on_bar_event`)本身是对的
+        ——某标的累计 bar 数不足 `warmup_period` 时不该拿它做决策。但若它全程
+        都攒不满(数据源覆盖不全、标的长期停牌、`warmup_period` 设得比该标的
+        可用历史还长), `on_bar` 会一次都不触发, 且没有任何提示: 用户只会看到
+        "这个标的怎么一直没信号", 无从排查。
+
+        `_symbol_bar_counts[symbol]` 是单调递增的(每收到一根 bar +1, 见
+        `_next_symbol_warmup_count`), 门槛判定又是"< warmup_period 就 return"
+        (即放行是最终态、不可逆)。因此会话结束时若某 symbol 的计数仍
+        `< warmup_period`, 等价于它从未跨过门槛——`on_bar` 对它一次都没触发过。
+        用这个条件而非额外维护一份"是否触发过"的标记, 避免引入第二份可能与
+        `_symbol_bar_counts` 不同步的状态。
+
+        只告警、不报错: 数据不足是常见且合理的情况(如新股上市), 抛错会让正常
+        回测失败。参考先例 `_check_incremental_hl_bar_coverage`——同样在会话
+        结束时做校验, 但那里的场景(H/L 类指标拿不到真实高低价)是配置误用,
+        该报错; 这里的场景是数据覆盖不足, 该提示。
+        """
+        warmup_period = int(getattr(self, "warmup_period", 0) or 0)
+        if warmup_period <= 0:
+            return
+        counts = getattr(self, "_symbol_bar_counts", None)
+        if not counts:
+            return
+        for symbol in sorted(counts.keys()):
+            count = int(counts[symbol])
+            if count >= warmup_period:
+                continue
+            _live_subscribe_logger.warning(
+                "标的 %s 全程未触发 on_bar(累计 %d 根 bar < warmup_period=%d), "
+                "策略对它未做任何决策。可调小 warmup_period, 或为该标的补充更多"
+                "历史数据后重跑。",
+                symbol,
+                count,
+                warmup_period,
+            )
 
     def _check_incremental_hl_bar_coverage(self) -> None:
         """会话结束时核验: H/L 类指标是否有 symbol 全程只收到过 tick.

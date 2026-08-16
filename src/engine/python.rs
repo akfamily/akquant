@@ -559,6 +559,8 @@ impl Engine {
             settlement_manager: SettlementManager::new(),
             current_event: None,
             bar_count: 0,
+            symbol_whitelist: None,
+            whitelist_filtered_event_count: 0,
             progress_total_steps: 0,
             progress_bar: None,
             strategy_contexts: vec![None],
@@ -755,6 +757,20 @@ impl Engine {
             .write()
             .unwrap()
             .set_capacity_preserve_existing(depth);
+    }
+
+    /// 设置标的白名单: 只有集合内的标的会被分发给策略。
+    ///
+    /// 空列表折叠为「未设置」(放行全部) —— Python 侧已在参数解析阶段拒绝空
+    /// `symbols`, 此处是防御, 不能让空集合变成「什么都不放行」的静默空回测。
+    ///
+    /// :param symbols: 白名单标的列表
+    fn set_symbol_whitelist(&mut self, symbols: Vec<String>) {
+        self.symbol_whitelist = if symbols.is_empty() {
+            None
+        } else {
+            Some(symbols.into_iter().collect())
+        };
     }
 
     /// 设置时区偏移 (秒)
@@ -1155,7 +1171,16 @@ impl Engine {
         }
 
         // Progress Bar Initialization
-        let total_progress_steps = self.state.feed.progress_len_hint().unwrap_or(0);
+        // 传入 symbol_whitelist: 过滤生效后被丢弃标的独占的时间戳不该计入
+        // total, 否则进度条会永远跑不满(见 `DataClient::progress_len_hint`
+        // 文档)。此时 `set_symbol_whitelist` 已在 `engine.run()` 之前调用过
+        // (Python 侧 engine.py 的两个下发点都在 `engine.run()` 之前), 这里
+        // 读到的是最终生效的白名单。
+        let total_progress_steps = self
+            .state
+            .feed
+            .progress_len_hint(self.symbol_whitelist.as_ref())
+            .unwrap_or(0);
         let pb = if show_progress {
             let pb = if total_progress_steps > 0 {
                 let pb = ProgressBar::new(total_progress_steps as u64);
@@ -1227,6 +1252,18 @@ impl Engine {
 
         if let Some(pb) = &self.progress_bar {
             pb.finish_with_message("Backtest completed");
+        }
+
+        // 白名单在事件分发时丢弃标的外事件全程无声(见 `whitelist_filtered_
+        // event_count` 字段文档) —— 会话结束时补一条汇总 info, 不逐事件打印。
+        // `DataFeed` 对象输入下 Python 前置过滤覆盖不到, 这是用户唯一能看到
+        // "引擎丢了多少事件"的地方。
+        if self.whitelist_filtered_event_count > 0 {
+            log::info!(
+                target: "akquant::engine::symbol_whitelist",
+                "symbol_whitelist 已在引擎层丢弃 {} 个不在白名单内的行情事件",
+                self.whitelist_filtered_event_count
+            );
         }
 
         let count = self.bar_count;

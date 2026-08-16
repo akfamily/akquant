@@ -24,11 +24,20 @@ class HedgedMarginStrategy(Strategy):
 
 
 def _build_data() -> list[Bar]:
+    # Day 1: open the hedged legs at par (LONG 100 @ 100, SHORT 50 @ 100).
+    # Day 2: SHORT gets caught in a short squeeze (100 -> 400), which pushes
+    # the account's maintenance ratio (3.5) below `maintenance_margin_ratio`
+    # (4.0) and should force a liquidation. The engine evaluates a day's
+    # maintenance breach at the NEXT day's settlement (it triggers on the
+    # date-change boundary), so Day 3 is required purely to roll settlement
+    # forward and surface the Day-2 breach in `liquidation_audit_df`.
     rows = [
         ("2023-01-01 10:00:00", "LONG", 100.0),
         ("2023-01-01 10:00:00", "SHORT", 100.0),
         ("2023-01-02 10:00:00", "LONG", 100.0),
-        ("2023-01-02 10:00:00", "SHORT", 100.0),
+        ("2023-01-02 10:00:00", "SHORT", 400.0),
+        ("2023-01-03 10:00:00", "LONG", 100.0),
+        ("2023-01-03 10:00:00", "SHORT", 400.0),
     ]
     bars: list[Bar] = []
     for dt_str, symbol, close in rows:
