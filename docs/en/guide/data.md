@@ -33,7 +33,7 @@ Your DataFrame **must** contain the following columns (column names are case-ins
 **Note:**
 
 1.  **Column Standardization**: It is recommended to rename columns to lowercase English (e.g., `open`, `close`) before passing them in.
-2.  **Symbol Column**: Even if backtesting a single stock, you must include the `symbol` column so the engine can identify the asset.
+2.  **Symbol Column**: **Multi-symbol data must carry a symbol column**, otherwise every symbol's bars are collapsed into a single time series (both indicators and matching results become wrong). The column may be named `symbol`, `股票代码`, `code`, or `ticker` (AKShare's native `股票代码` works as-is, no renaming needed); `symbol` is the recommended choice. When no symbol column is recognized but multiple rows share the same timestamp, the backtest logs a `WARNING` about the degradation to single-symbol. Single-symbol data may omit the column entirely (the engine treats it as one asset and does not warn).
 
 ### 1.2 Index
 

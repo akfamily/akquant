@@ -549,6 +549,10 @@ class LiveRunner:
             "Running live strategy loop",
             extra=self._runner_log_extra(phase="live"),
         )
+        # 收尾摘要的标题要如实反映停止原因: 因错误中止的会话若仍自称
+        # "Manual Stop", 看起来就像正常手动停止, 而那条 CRITICAL 往往已被
+        # 几十行日志淹没(实测反馈里"任务看着跑完了其实没跑"即此)。
+        stop_reason = "Manual Stop"
         try:
             self.engine.run(strategy_instance, show_progress=show_progress)
         except KeyboardInterrupt:
@@ -558,6 +562,7 @@ class LiveRunner:
             )
         except Exception as exc:
             # 系统级致命: 实盘 runner 整体因未捕获异常停止, 交易中断, 需人工立即介入。
+            stop_reason = "ABORTED ON ERROR"
             logger.critical(
                 "Stopping live runner due to error: %s",
                 exc,
@@ -567,7 +572,7 @@ class LiveRunner:
         finally:
             self._stop_signal_source()
             self._stop_broker_dispatcher()
-            self._print_summary()
+            self._print_summary(stop_reason)
 
     def _build_strategy_instance(self, strategy_input: Any) -> Strategy:
         resolved_strategy_input = resolve_strategy_input(
@@ -1886,7 +1891,7 @@ class LiveRunner:
 
             setattr(strategy, "on_tick", wrapped_on_tick)
 
-    def _print_summary(self) -> None:
+    def _print_summary(self, stop_reason: str = "Manual Stop") -> None:
         try:
             results = self.engine.get_results()
             total_return_display = format_metric_value(
@@ -1901,7 +1906,7 @@ class LiveRunner:
             win_rate_display = format_metric_value("win_rate", results.metrics.win_rate)
             summary_lines = [
                 "=" * 50,
-                "TRADING SUMMARY (Manual Stop)",
+                f"TRADING SUMMARY ({stop_reason})",
                 "=" * 50,
                 f"Total Return: {total_return_display}",
                 f"Annualized Return: {annualized_return_display}",

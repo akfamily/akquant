@@ -15,6 +15,10 @@ _TERMINAL_ORDER_STATUSES = (
     OrderStatus.Expired,
 )
 
+#: on_order 去重缓存上限(与成交侧 trade_dedupe_cache_size 同量级)。
+#: 不做成对外可配参数: 订单事件量级远小于成交, 固定上限足够, 不必扩大 API 面。
+_ORDER_EVENT_DEDUPE_LIMIT = 50000
+
 
 def _is_terminal_order(order: Any) -> bool:
     """判断订单是否已处于终态."""
@@ -230,7 +234,53 @@ def check_expiry_events(strategy: Any) -> None:
         mark_portfolio_dirty(strategy)
 
 
+def order_event_key(order: Any) -> Tuple[Any, ...]:
+    """生成订单事件去重 Key(**状态指纹**).
+
+    键 = 订单标识 + 状态 + 已成交量 + 成交均价 + 拒单原因, **刻意不含时间戳**:
+
+    - 含时间戳(``updated_at`` / ``timestamp_ns``)的键在每次重推时都会变,
+      去重会完全失效 —— 这是这类缺陷最常见的写法;
+    - 只按订单号去重又会把 ``New -> PartiallyFilled -> Filled`` 这些**真实的**
+      状态推进整批吞掉, 比重复推送更糟。
+
+    :param order: 订单对象。
+    :return: 可稳定哈希的状态指纹。
+    """
+    return (
+        key_value(getattr(order, "id", None)),
+        key_value(getattr(order, "status", None)),
+        key_value(getattr(order, "filled_quantity", None)),
+        key_value(getattr(order, "average_filled_price", None)),
+        key_value(getattr(order, "reject_reason", None)),
+    )
+
+
+def remember_order_event_key(strategy: Any, key: Tuple[Any, ...]) -> bool:
+    """记录订单事件 Key, 返回是否为首次出现(有界 FIFO, 模式同成交侧).
+
+    :param strategy: 策略实例。
+    :param key: :func:`order_event_key` 产出的状态指纹。
+    :return: 首次出现返回 ``True``(应当派发回调), 重复出现返回 ``False``。
+    """
+    seen: Set[Tuple[Any, ...]] = strategy._framework_order_event_keys
+    if key in seen:
+        return False
+    seen.add(key)
+    key_order = strategy._framework_order_event_key_order
+    key_order.append(key)
+    while len(key_order) > _ORDER_EVENT_DEDUPE_LIMIT:
+        seen.discard(key_order.popleft())
+    return True
+
+
 def _emit_order_callback(strategy: Any, order: Any) -> None:
+    # check_order_events 每个 bar/tick 事件都会重扫一遍在途与终态订单, 而
+    # ctx.recent_rejected_orders / orders 里的同一张单会在多拍里持续存在 ⇒
+    # 不去重就会每拍重推一次同样的 on_order(表现为"全量推送"、"盘后还在推")。
+    # 按状态指纹去重: 状态没变的重复推送丢弃, 状态一变立刻放行。
+    if not remember_order_event_key(strategy, order_event_key(order)):
+        return
     call_user_callback(strategy, "on_order", order, payload=order)
     mark_portfolio_dirty(strategy)
 

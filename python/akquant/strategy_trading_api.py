@@ -1001,6 +1001,64 @@ def get_account(strategy: Any) -> Dict[str, Any]:
     return cast(Dict[str, Any], strategy.execution.get_account())
 
 
+def _lot_size_from_strategy(strategy: Any, symbol: str) -> int:
+    """读策略属性 ``self.lot_size``(int 或 ``Dict[str, int]``), 缺省 1."""
+    lot_size = getattr(strategy, "lot_size", 1)
+    if isinstance(lot_size, dict):
+        value = lot_size.get(symbol, lot_size.get("DEFAULT", 1))
+    else:
+        value = lot_size
+    if value is None:
+        return 1
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _lot_size_from_instrument(strategy: Any, symbol: str) -> int:
+    """读标的登记值 ``Instrument.lot_size``, 取不到返回 0(表示"无登记值")."""
+    snapshots = getattr(strategy, "_instrument_snapshots", None) or {}
+    snapshot = snapshots.get(symbol)
+    if snapshot is None:
+        return 0
+    try:
+        return int(float(getattr(snapshot, "lot_size", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _resolve_lot_size(strategy: Any, symbol: str) -> int:
+    """解析下单取整用的最小交易单位.
+
+    **口径必须与撮合层校验一致**: Rust 侧按 ``Instrument.lot_size`` 校验买单
+    (``execution/common.rs``), 下单侧若按别的粒度取整, 算出的数量会被自己的风控以
+    ``Quantity X is not a multiple of lot size Y`` 拒掉。此前这里只读策略属性
+    ``self.lot_size``(缺省 **1**), 于是登记了 ``lot_size=100`` 的 A 股标的按 1 股
+    取整 —— 实盘尤其无解, ``run_live`` 没有 ``lot_size`` 参数, 除了手写
+    ``self.lot_size = 100`` 没有任何途径让取整逻辑知道登记值。
+
+    优先级:
+
+    1. 标的**未登记** lot_size(拿不到或 <=0): 用 ``self.lot_size``, 保持既有行为;
+    2. ``self.lot_size`` 比登记值**更粗且是其整数倍**(如登记 100 而策略要按 200
+       下单): 尊重策略的显式意图 —— 200 的倍数必然也是 100 的倍数, 不会被拒;
+    3. 其余情况(含缺省的 1、以及与登记值不成倍数的值): 用登记值, 避免下出必然
+       被自己风控拒掉的单。
+
+    :param strategy: 策略实例。
+    :param symbol: 标的代码。
+    :return: 用于取整的最小交易单位(>=1 时才生效)。
+    """
+    explicit = _lot_size_from_strategy(strategy, symbol)
+    registered = _lot_size_from_instrument(strategy, symbol)
+    if registered <= 0:
+        return explicit
+    if explicit > registered and explicit % registered == 0:
+        return explicit
+    return registered
+
+
 def calculate_max_buy_qty(
     strategy: Any, symbol: str, price: float, cash: float
 ) -> float:
@@ -1026,12 +1084,7 @@ def calculate_max_buy_qty(
             float(price) * (1 + float(strategy.transfer_fee_rate))
         )
 
-    current_lot_size = 1
-    if isinstance(strategy.lot_size, int):
-        current_lot_size = int(strategy.lot_size)
-    elif isinstance(strategy.lot_size, dict):
-        val = strategy.lot_size.get(symbol, strategy.lot_size.get("DEFAULT", 1))
-        current_lot_size = int(val) if val is not None else 1
+    current_lot_size = _resolve_lot_size(strategy, symbol)
 
     if current_lot_size > 0:
         est_qty = (est_qty // current_lot_size) * current_lot_size
@@ -1089,13 +1142,7 @@ def _target_to_orders(
     delta_qty = target_qty - current_qty
 
     if round_to_lot:
-        lot_size = getattr(strategy, "lot_size", 1)
-        current_lot_size = 1
-        if isinstance(lot_size, int):
-            current_lot_size = int(lot_size)
-        elif isinstance(lot_size, dict):
-            val = lot_size.get(symbol, lot_size.get("DEFAULT", 1))
-            current_lot_size = int(val) if val is not None else 1
+        current_lot_size = _resolve_lot_size(strategy, symbol)
         if current_lot_size > 0:
             if delta_qty > 0:
                 delta_qty = (delta_qty // current_lot_size) * current_lot_size
@@ -1466,10 +1513,15 @@ def rebalance_positions(
     return order_ids
 
 
-def close_position(strategy: Any, symbol: Optional[str] = None) -> None:
-    """平掉当前持仓（全平，含 A 股零股；不按手数取整）."""
+def close_position(strategy: Any, symbol: Optional[str] = None) -> Optional[str]:
+    """平掉当前持仓（全平，含 A 股零股；不按手数取整）.
+
+    :return: 平仓单的订单号; 当前无持仓(无需交易)时返回 ``None``。返回类型与
+        同层的 ``order_target*`` 对齐(它们共用 ``_target_to_orders``) —— 此前
+        这里丢弃了返回值, 调用方拿不到 order id, 既查不了也撤不了。
+    """
     symbol = resolve_symbol(strategy, symbol)
-    _target_to_orders(strategy, symbol=symbol, target_qty=0, round_to_lot=False)
+    return _target_to_orders(strategy, symbol=symbol, target_qty=0, round_to_lot=False)
 
 
 def short(
@@ -1484,26 +1536,33 @@ def short(
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     reduce_only: bool = False,
-) -> None:
-    """卖出开空 (Short Sell)."""
+) -> Optional[OrderReceipt]:
+    """卖出开空 (Short Sell).
+
+    :return: 委托回执; 当 ``quantity`` 经 sizer 计算后不为正(没有单可下)时返回
+        ``None``。返回类型与同层的 :func:`buy` / :func:`sell` 对齐 —— 此前这里
+        丢弃了下层的返回值, 调用方拿不到 order id, 既查不了也撤不了。
+    """
     _reject_legacy_fill_mode(fill_mode)
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
-        submit_order_method(
-            symbol=symbol,
-            side="Sell",
-            quantity=quantity,
-            price=price,
-            time_in_force=time_in_force,
-            trigger_price=trigger_price,
-            tag=tag,
-            fill_mode=fill_mode,
-            slippage=slippage,
-            commission=commission,
-            position_effect="open",
-            reduce_only=reduce_only,
+        return cast(
+            OrderReceipt,
+            submit_order_method(
+                symbol=symbol,
+                side="Sell",
+                quantity=quantity,
+                price=price,
+                time_in_force=time_in_force,
+                trigger_price=trigger_price,
+                tag=tag,
+                fill_mode=fill_mode,
+                slippage=slippage,
+                commission=commission,
+                position_effect="open",
+                reduce_only=reduce_only,
+            ),
         )
-        return
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
 
@@ -1524,7 +1583,7 @@ def short(
         )
 
     if quantity > 0:
-        _submit_sell_side(
+        return _submit_sell_side(
             strategy=strategy,
             symbol=symbol,
             quantity=quantity,
@@ -1538,6 +1597,7 @@ def short(
             position_effect="open",
             reduce_only=reduce_only,
         )
+    return None
 
 
 def cover(
@@ -1552,26 +1612,33 @@ def cover(
     slippage: Optional[Union[OrderSlippage, float, int]] = None,
     commission: Optional[OrderCommission] = None,
     reduce_only: bool = False,
-) -> None:
-    """买入平空 (Buy to Cover)."""
+) -> Optional[OrderReceipt]:
+    """买入平空 (Buy to Cover).
+
+    :return: 委托回执; 当前无空头持仓、或 ``quantity`` 不为正(没有单可下)时返回
+        ``None``。返回类型与同层的 :func:`buy` / :func:`sell` 对齐 —— 此前这里
+        丢弃了下层的返回值, 调用方拿不到 order id, 既查不了也撤不了。
+    """
     _reject_legacy_fill_mode(fill_mode)
     submit_order_method = getattr(strategy, "submit_order", None)
     if callable(submit_order_method):
-        submit_order_method(
-            symbol=symbol,
-            side="Buy",
-            quantity=quantity,
-            price=price,
-            time_in_force=time_in_force,
-            trigger_price=trigger_price,
-            tag=tag,
-            fill_mode=fill_mode,
-            slippage=slippage,
-            commission=commission,
-            position_effect="close",
-            reduce_only=reduce_only,
+        return cast(
+            OrderReceipt,
+            submit_order_method(
+                symbol=symbol,
+                side="Buy",
+                quantity=quantity,
+                price=price,
+                time_in_force=time_in_force,
+                trigger_price=trigger_price,
+                tag=tag,
+                fill_mode=fill_mode,
+                slippage=slippage,
+                commission=commission,
+                position_effect="close",
+                reduce_only=reduce_only,
+            ),
         )
-        return
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
 
@@ -1582,10 +1649,10 @@ def cover(
         if pos < 0:
             quantity = abs(pos)
         else:
-            return
+            return None
 
     if quantity > 0:
-        _submit_buy_side(
+        return _submit_buy_side(
             strategy=strategy,
             symbol=symbol,
             quantity=quantity,
@@ -1599,6 +1666,7 @@ def cover(
             position_effect="close",
             reduce_only=reduce_only,
         )
+    return None
 
 
 def get_cash(strategy: Any) -> float:

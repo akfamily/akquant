@@ -49,9 +49,15 @@ from ..data import ParquetDataCatalog
 from ..feed_adapter import DEFAULT_INPUT_TIMEZONE, DataFeedAdapter, FeedSlice
 from ..indicator_recording import IndicatorRecorder, IndicatorSink
 from ..log import build_log_extra, get_logger, has_configured_handler, register_logger
-from ..normalize import coerce_to_pandas, dataframe_to_arrays, to_indicator_frame
+from ..normalize import (
+    coerce_to_pandas,
+    dataframe_to_arrays,
+    resolve_columns,
+    to_indicator_frame,
+)
 from ..params import unknown_param_message
 from ..risk import apply_risk_config
+from ..schema import COLUMN_ALIASES
 from ..strategy import (
     InstrumentAssetTypeName,
     InstrumentOptionMarginModelName,
@@ -3313,6 +3319,14 @@ def run_backtest(
                         df_input = df_input[df_input.index <= ts_end.date()]
 
             df = to_indicator_frame(df_input)
+            # 标的列判据对齐项目统一的别名表(schema.COLUMN_ALIASES)。原先只认英文
+            # "symbol", 而 AKShare 的标准输出列名是 "股票代码" —— "从 AKShare 取多
+            # 标的数据直接丢进 run_backtest" 这个最自然的用法会静默走进下方的单标的
+            # 分支。这里重命名成 "symbol" 而非逐处适配下游: 后面的 isin / groupby /
+            # dataframe_to_arrays 沿用同一个列名即可。
+            resolved_symbol_col = resolve_columns(df).get("symbol")
+            if resolved_symbol_col and resolved_symbol_col != "symbol":
+                df = df.rename(columns={resolved_symbol_col: "symbol"})
             if "symbol" in df.columns:
                 df = df.copy()
                 df["symbol"] = df["symbol"].astype(str)
@@ -3342,6 +3356,20 @@ def run_backtest(
                 feed.sort()
             else:
                 target_symbol = symbols[0] if symbols else "BENCHMARK"
+                # 同一时间戳出现多行 = 多标的被压成一条序列的可靠信号(真单标的数据
+                # 每个时间戳只有一行, 故不会误报)。此前这条退化完全静默: 指标与撮合
+                # 结果都不正确, instruments_config 按真实标的配的合约参数整体失效,
+                # 下单真实 symbol 只会拿到 "Instrument not found"。
+                if "timestamp" in df.columns and df["timestamp"].duplicated().any():
+                    logger.warning(
+                        "DataFrame 未识别到标的列, 已退化为单标的 %s 处理, 但检测到"
+                        "同一时间戳存在多行 —— 多标的数据会被压成一条序列(指标与撮合"
+                        "结果均不正确, instruments_config 按真实标的配置的合约参数也"
+                        "会失效)。多标的请把标的列命名为 %s 之一, 或改用 "
+                        "Dict[str, DataFrame] / list[Bar] 输入。",
+                        target_symbol,
+                        ", ".join(COLUMN_ALIASES["symbol"]),
+                    )
                 data_map_for_indicators[target_symbol] = df
                 arrays = dataframe_to_arrays(df, symbol=target_symbol)
                 feed.add_arrays(*arrays)  # type: ignore

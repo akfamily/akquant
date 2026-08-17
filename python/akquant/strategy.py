@@ -449,6 +449,8 @@ class Strategy:
     _framework_last_portfolio_state: Any
     _framework_portfolio_dirty: bool
     _framework_rejected_order_ids: set[str]
+    _framework_order_event_keys: set[Tuple[Any, ...]]
+    _framework_order_event_key_order: Deque[Tuple[Any, ...]]
     _framework_expiry_event_keys: set[Tuple[Any, ...]]
     _framework_stop_flushed: bool
     _framework_boundary_timers_registered: bool
@@ -686,6 +688,8 @@ class Strategy:
         instance._framework_last_portfolio_state = None
         instance._framework_portfolio_dirty = True
         instance._framework_rejected_order_ids = set()
+        instance._framework_order_event_keys = set()
+        instance._framework_order_event_key_order = deque()
         instance._framework_expiry_event_keys = set()
         instance._framework_stop_flushed = False
         instance._framework_boundary_timers_registered = False
@@ -767,6 +771,16 @@ class Strategy:
             del state["_framework_portfolio_dirty"]
         if "_framework_rejected_order_ids" in state:
             del state["_framework_rejected_order_ids"]
+        # on_order 的状态指纹去重集合同属会话内派生态: 刻意**不**随存档带走。
+        # 热启动后 ctx 里的在途/终态订单会重新出现一轮, 此时宁可多推一次
+        # on_order(让恢复后的策略看到当前订单状态), 也不要因为旧 key 残留而
+        # 把恢复后的第一次状态通报整批吞掉。
+        for _order_dedupe_key in (
+            "_framework_order_event_keys",
+            "_framework_order_event_key_order",
+        ):
+            if _order_dedupe_key in state:
+                del state[_order_dedupe_key]
         if "_framework_stop_flushed" in state:
             del state["_framework_stop_flushed"]
         if "_framework_boundary_timers_registered" in state:
@@ -3152,7 +3166,7 @@ class Strategy:
             **kwargs,
         )
 
-    def close_position(self, symbol: Optional[str] = None) -> None:
+    def close_position(self, symbol: Optional[str] = None) -> Optional[str]:
         """
         平仓 (Close Position).
 
@@ -3160,8 +3174,11 @@ class Strategy:
 
         Args:
             symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
+
+        Returns:
+            Optional[str]: 平仓单的订单号; 当前无持仓(无需交易)时为 None
         """
-        _close_position_impl(self, symbol)
+        return _close_position_impl(self, symbol)
 
     def short(
         self,
@@ -3175,7 +3192,7 @@ class Strategy:
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
         reduce_only: bool = False,
-    ) -> None:
+    ) -> Optional[Any]:
         """
         卖出开空 (Short Sell).
 
@@ -3185,8 +3202,11 @@ class Strategy:
             price: 限价 (None 为市价)
             time_in_force: 订单有效期
             trigger_price: 触发价 (止损/止盈)
+
+        Returns:
+            Optional[OrderReceipt]: 委托回执 (与 buy/sell 同形); 没有单可下时为 None
         """
-        _short_impl(
+        return _short_impl(
             self,
             symbol,
             quantity,
@@ -3212,7 +3232,7 @@ class Strategy:
         slippage: Optional[Union[float, Dict[str, Any]]] = None,
         commission: Optional[Dict[str, Any]] = None,
         reduce_only: bool = False,
-    ) -> None:
+    ) -> Optional[Any]:
         """
         买入平空 (Buy to Cover).
 
@@ -3222,8 +3242,11 @@ class Strategy:
             price: 限价 (None 为市价)
             time_in_force: 订单有效期
             trigger_price: 触发价 (止损/止盈)
+
+        Returns:
+            Optional[OrderReceipt]: 委托回执 (与 buy/sell 同形); 无空头持仓时为 None
         """
-        _cover_impl(
+        return _cover_impl(
             self,
             symbol,
             quantity,

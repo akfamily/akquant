@@ -162,6 +162,35 @@ pub enum InstrumentEnum {
     Forex(ForexInstrument),
 }
 
+/// 把 `CODE.sh` 这类小写交易所后缀归一成 `CODE.SH`。
+///
+/// **只动最后一个 `.` 之后的后缀**：期货合约代码本身含有意义的小写
+/// (`ag2612` / `rb2601`，柜台大小写敏感)，对整个 symbol 做大写会把它改坏。
+/// 无 `.` 的写法原样返回。
+///
+/// 归一化放在构造期(与既有的 `symbol.trim()` 同属输入清洗)，因为
+/// `instruments` 是所有下游的唯一源头：实盘订阅集、标的快照字典、撮合层的
+/// 合约登记都从它派生。上游用小写登记时，这三处会各自以不同面貌失败
+/// (回报被静默丢弃 / `get_instrument` KeyError / `Instrument not found` 拒单)，
+/// 在源头收敛比在三个下游各打一个补丁便宜得多。
+fn normalize_symbol_suffix(symbol: &str) -> String {
+    match symbol.rsplit_once('.') {
+        Some((code, suffix)) if suffix.chars().any(|c| c.is_ascii_lowercase()) => {
+            let normalized = format!("{}.{}", code, suffix.to_ascii_uppercase());
+            log::warn!(
+                "instrument symbol 的交易所后缀已归一化: {:?} -> {:?}。\
+                 请在上游统一用大写后缀, 否则订阅集/合约登记/回报过滤会按不同写法分裂\
+                 (实盘表现为该标的所有订单被 Instrument not found 拒单、\
+                 order/trade 回报收不到)",
+                symbol,
+                normalized
+            );
+            normalized
+        }
+        _ => symbol.to_string(),
+    }
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl Instrument {
@@ -199,7 +228,7 @@ impl Instrument {
         reference_volatility: Option<&Bound<'_, PyAny>>,
         sellable_after_days: Option<u32>,
     ) -> PyResult<Self> {
-        let clean_symbol = symbol.trim().to_string();
+        let clean_symbol = normalize_symbol_suffix(symbol.trim());
         let sellable_after_days_val = sellable_after_days.unwrap_or(1);
         let multiplier_val = multiplier
             .map(extract_decimal)
