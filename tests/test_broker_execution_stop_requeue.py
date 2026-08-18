@@ -161,3 +161,56 @@ def test_broker_reject_requeues_and_notifies_via_real_submitter() -> None:
     assert len(ex.get_open_orders("X")) == 1, "空回执应等价于提交失败, 重入 stop book"
     assert len(s.errors) == 1
     assert s.errors[0][0] == "stop_trigger"
+
+
+class _UnknownStateGateway:
+    """place_order 抛异常, 且分类为「状态未知」——报文可能已到柜台."""
+
+    def place_order(self, req: Any) -> str:
+        raise RuntimeError("ReadTimeout: 柜台无响应")
+
+    def classify_order_error(self, exc: BaseException) -> UnifiedErrorType:
+        return UnifiedErrorType.RETRYABLE
+
+
+def test_unknown_state_does_not_requeue_stop_order() -> None:
+    """状态未知时止损单**不得**重入 stop book —— 重试会造成真实重复委托.
+
+    报文可能已经到了柜台, 而每次重试都生成新的 client_order_id, 柜台无从去重。
+    宁可放弃这张止损单(有 CRITICAL + on_error 叫人), 也不制造反向敞口。
+    """
+    s = _S()
+    submitter = _real_submitter(_UnknownStateGateway())
+    ex = BrokerExecution(s, _Gw(), cast(BrokerStateCache, _Cache()), submitter)
+    ex.submit_order(
+        symbol="X",
+        side="Sell",
+        quantity=100,
+        order_type="StopMarket",
+        trigger_price=9.5,
+    )
+    ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
+
+    assert ex.get_open_orders("X") == [], "状态未知不得重入簿, 否则就是重复委托"
+    assert len(s.errors) == 1, "仍须通知策略"
+    assert s.errors[0][0] == "stop_trigger"
+
+
+def test_unknown_state_stop_order_is_not_retried_on_later_ticks() -> None:
+    """被放弃的止损单不会在后续 tick 复活."""
+    s = _S()
+    submitter = _real_submitter(_UnknownStateGateway())
+    ex = BrokerExecution(s, _Gw(), cast(BrokerStateCache, _Cache()), submitter)
+    ex.submit_order(
+        symbol="X",
+        side="Sell",
+        quantity=100,
+        order_type="StopMarket",
+        trigger_price=9.5,
+    )
+    ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
+    for _ in range(3):
+        ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
+
+    assert ex.get_open_orders("X") == []
+    assert len(s.errors) == 1, "只应通知一次: 后续 tick 簿里已无此单"

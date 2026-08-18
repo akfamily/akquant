@@ -247,13 +247,29 @@ class BrokerExecution:
                 self._handle_stop_submit_failure(order, exc)
                 continue
             if not receipt.primary:
-                # submit_order 对可分类的柜台失败(明确拒单/状态未知)已不再抛异常
-                # (见 order_submitter._handle_place_order_failure), 改回吐空回执;
-                # 这里补上与旧的"异常穿透"等价的失败处置, 保住重试与
-                # on_error(..., "stop_trigger", ...) 语义——不按分类区别对待。
+                # submit_order 对可分类的柜台失败已不再抛异常(见
+                # order_submitter._handle_place_order_failure), 改回吐空回执并在
+                # `failure` 上标明成因。两类失败的处置**必须**不同:
+                #   rejected —— 订单确定不存在, 重试安全, 照旧走重试链路;
+                #   unknown  —— 报文可能已到柜台, 重试就是重复委托, 直接放弃。
+                unknown = receipt.failure == "unknown"
+                if unknown:
+                    logger.critical(
+                        "止损单提交状态未知, 放弃该单(不重试以免重复委托) "
+                        "local_id=%s symbol=%s side=%s quantity=%s",
+                        order.local_id,
+                        order.symbol,
+                        order.side,
+                        order.quantity,
+                    )
                 self._handle_stop_submit_failure(
                     order,
-                    RuntimeError("止损单提交失败: 柜台拒单或状态未知, 回执为空"),
+                    RuntimeError(
+                        "止损单提交失败: 柜台状态未知, 已放弃"
+                        if unknown
+                        else "止损单提交失败: 柜台拒单, 回执为空"
+                    ),
+                    retry=not unknown,
                 )
                 continue
             broker_order_id = str(receipt.primary)
@@ -263,10 +279,18 @@ class BrokerExecution:
                 except Exception:  # noqa: BLE001
                     pass  # remap 记录失败不影响触发/不中断 run
 
-    def _handle_stop_submit_failure(self, order: Any, exc: Exception) -> None:
-        """止损单提交失败的统一处置: 重试(上限)+on_error, 与旧的异常穿透行为对等."""
+    def _handle_stop_submit_failure(
+        self, order: Any, exc: Exception, *, retry: bool = True
+    ) -> None:
+        """止损单提交失败的统一处置: 通知策略, 并按 ``retry`` 决定是否重入簿.
+
+        ``retry=False`` 用于「状态未知」: 报文可能已经到了柜台, 而每次重试都会
+        生成新的 client_order_id(``submit_order`` 未传该参数时的既有行为), 柜台
+        无从去重 —— 重试即真实的重复委托。此时宁可放弃这张止损单, 由 CRITICAL
+        与 ``on_error`` 叫人介入。
+        """
         order.submit_attempts += 1
-        if order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
+        if retry and order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
             self._stop_book.register(order)  # 重入簿, 下 tick 重试
         self._notify_stop_error(exc, order)
 
