@@ -14,7 +14,7 @@ from .local_stop_book import (
     is_stop_order_type,
     underlying_order_type,
 )
-from .order_audit import record_cancel
+from .order_audit import record_cancel, record_cancel_failed
 from .order_receipt import OrderReceipt
 
 logger = get_logger("gateway.live")
@@ -270,24 +270,54 @@ class BrokerExecution:
             self._stop_book.register(order)  # 重入簿, 下 tick 重试
         self._notify_stop_error(exc, order)
 
-    def _notify_stop_error(self, exc: Exception, order: Any) -> None:
-        """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""
+    def _notify_error(self, exc: Exception, source: str, payload: Any) -> None:
+        """通知策略 on_error(可选实现); 回调自身异常吞掉, 不影响主流程."""
         on_error = getattr(self._s, "on_error", None)
         if callable(on_error):
             try:
-                on_error(exc, "stop_trigger", order)
+                on_error(exc, source, payload)
             except Exception:  # noqa: BLE001
                 pass
+
+    def _notify_stop_error(self, exc: Exception, order: Any) -> None:
+        """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""
+        self._notify_error(exc, "stop_trigger", order)
+
+    def _handle_cancel_failure(self, broker_order_id: str, exc: Exception) -> None:
+        """撤单失败的统一处置: 留结果审计 + on_error, 不抛.
+
+        **不做**「柜台拒绝即该单已终态、可当幂等成功」的推断: 核心无从判断这个
+        400 是"已经撤过了"还是"这单不允许撤"。撤不掉的单会在下一轮 recovery 的
+        `sync_open_orders` 里继续出现, 本身可自愈。
+        """
+        reason = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "撤单失败 [%s]: %s",
+            broker_order_id,
+            reason,
+            exc_info=True,
+        )
+        record_cancel_failed(
+            broker_order_id=broker_order_id,
+            strategy_id=self._owner_strategy_id(),
+            reason=reason,
+        )
+        self._notify_error(exc, "order_cancel", broker_order_id)
 
     def cancel_order(self, order_id: str) -> None:
         """取消指定订单(本地止损优先, 否则走柜台)."""
         if self._stop_book.cancel(str(order_id)):
             return
+        # 意图记录留在调用前: 撤单失败时"我们尝试过"本身是审计要的信息,
+        # 挪到调用后就丢了。结果由 _handle_cancel_failure 补一条。
         record_cancel(
             broker_order_id=str(order_id),
             strategy_id=self._owner_strategy_id(),
         )
-        self._gw.cancel_order(str(order_id))
+        try:
+            self._gw.cancel_order(str(order_id))
+        except Exception as exc:  # noqa: BLE001 撤单失败不炸策略, 见 _handle_cancel_failure
+            self._handle_cancel_failure(str(order_id), exc)
 
     def cancel_group(self, group_id: str) -> None:
         """撤销一个逻辑委托的全部腿（按 group_id）."""
@@ -299,15 +329,38 @@ class BrokerExecution:
                 self.cancel_order(str(broker_order_id))
 
     def cancel_all_orders(self, symbol: str | None = None) -> None:
-        """取消所有未完成订单(含本地止损)."""
+        """取消所有未完成订单(含本地止损); 单笔失败不中断整轮."""
         for order in self._stop_book.open_orders(symbol):
             self._stop_book.cancel(order.local_id)
-        for order in self._gw.sync_open_orders():
+        try:
+            open_orders = list(self._gw.sync_open_orders())
+        except Exception as exc:  # noqa: BLE001 查挂单失败不炸策略
+            logger.warning("cancel_all_orders 查挂单失败: %s", exc, exc_info=True)
+            self._notify_error(exc, "order_cancel_all", symbol)
+            return
+        attempted = 0
+        failed = 0
+        for order in open_orders:
             bid = getattr(order, "broker_order_id", "")
             if symbol is not None and getattr(order, "symbol", None) != symbol:
                 continue
-            if bid:
+            if not bid:
+                continue
+            attempted += 1
+            record_cancel(
+                broker_order_id=str(bid),
+                symbol=getattr(order, "symbol", None),
+                strategy_id=self._owner_strategy_id(),
+            )
+            try:
                 self._gw.cancel_order(str(bid))
+            except Exception as exc:  # noqa: BLE001 逐单隔离: 一单失败不影响其余
+                failed += 1
+                self._handle_cancel_failure(str(bid), exc)
+        if failed:
+            logger.warning(
+                "cancel_all_orders: %s 单中 %s 单撤单失败", attempted, failed
+            )
 
     def capabilities(self) -> dict[str, Any]:
         """返回当前执行后端支持的能力标记."""
