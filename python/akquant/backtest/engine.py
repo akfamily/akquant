@@ -2154,6 +2154,56 @@ def _coerce_analyzer_plugins(
     return normalized
 
 
+def _warn_unmatched_instrument_config(
+    config: Any, data_map_for_indicators: Dict[str, Any], logger: logging.Logger
+) -> None:
+    """``instruments_config`` 配了、但数据里没有这个 symbol 时点名告警.
+
+    合约快照与撮合层的合约表都按**数据里实际出现的** symbol 建，配错 symbol 的
+    条目会被完全静默丢弃，该标的回退到默认合约参数。最典型的撞法是数据用去后缀
+    写法（``600487``）而配置写带后缀（``600487.SH``）：实测 ``lot_size`` 从配置的
+    100 变回默认 **1.0**（``tick_size`` 恰好与股票默认值相同，唯一露马脚的就是
+    ``lot_size``），A 股下单数量随之不再整百，而用户以为配置已生效。
+
+    与运行前那三个集合（``filtered_out_symbols`` 主动排除 / ``symbol_data_missing``
+    白名单里有但数据没有 / adapter 泄漏）都不相交：这里比的是「配置 vs 数据」，
+    与 ``symbols`` 白名单无关，故不受 ``symbols_explicit`` 约束。
+
+    :param config: 回测配置（``None`` 或无 ``instruments_config`` 时直接返回）。
+    :param data_map_for_indicators: 数据里实际出现的标的映射；为空说明走的是
+        ``DataFeed`` 对象输入（只写不读、Python 无从枚举），此时跳过检查。
+    :param logger: 调用方的 logger（与本模块其余 ``_warn_*`` helper 一致，
+        本模块没有模块级 logger）。
+    """
+    if not data_map_for_indicators or not config or not config.instruments_config:
+        return
+    configured: set[str]
+    if isinstance(config.instruments_config, list):
+        configured = {
+            text
+            for conf_item in config.instruments_config
+            if (text := str(getattr(conf_item, "symbol", "") or "").strip())
+        }
+    elif isinstance(config.instruments_config, dict):
+        configured = {
+            text for key in config.instruments_config if (text := str(key).strip())
+        }
+    else:
+        return
+    unmatched = sorted(configured - set(data_map_for_indicators.keys()))
+    if not unmatched:
+        return
+    logger.warning(
+        "instruments_config 配置了 %d 个数据里不存在的标的: %s —— 这些配置会被静默"
+        "丢弃, 对应标的按**默认**合约参数撮合(如 lot_size 回退为 1, A 股下单数量将"
+        "不再整百)。请核对配置里的 symbol 与数据里的写法是否一致(常见分歧: 带 "
+        ".SH/.SZ 后缀 vs 去后缀的纯数字)。数据里实际出现的标的: %s",
+        len(unmatched),
+        ", ".join(unmatched),
+        ", ".join(sorted(data_map_for_indicators.keys())[:20]),
+    )
+
+
 def _warn_if_suspicious_global_slippage(
     slippage: float, logger: logging.Logger
 ) -> None:
@@ -4634,6 +4684,8 @@ def run_backtest(
             for slot_strategy in slot_strategy_instances.values():
                 slot_strategy._symbol_data_warned = set(symbol_data_missing)
 
+    _warn_unmatched_instrument_config(config, data_map_for_indicators, logger)
+
     # symbols 白名单: 只在用户显式传了 symbols 时启用。
     # 不得直接用局部变量 `symbols`——它在上面的数据加载分支(DataFrame/dict/
     # adapter, :3253/:3334/:3338/:3389 附近)里会被数据里检测到的标的反向
@@ -6217,6 +6269,10 @@ def run_from_checkpoint(
             strategy_instance._symbol_data_warned = set(symbol_data_missing)
             for slot_strategy in slot_strategy_instances.values():
                 slot_strategy._symbol_data_warned = set(symbol_data_missing)
+
+    # 热启动同样会踩「配置 symbol 与数据 symbol 对不上 → 配置被静默丢弃」这一条,
+    # 与冷启动共用同一个 helper(只在这里多一个调用点, 语义完全一致)。
+    _warn_unmatched_instrument_config(config, data_map_for_indicators, logger)
 
     if data_map_for_indicators:
         for current_strategy in all_strategy_instances:
