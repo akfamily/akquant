@@ -573,12 +573,15 @@ class BrokerOrderSubmitter:
         request: UnifiedOrderRequest,
         owner_strategy_id: str,
         trace_id: str,
-    ) -> None:
+    ) -> str:
         """柜台报单失败的统一处置: 明确拒单落 Rejected, 状态未知只报错不谎报.
 
         状态未知**绝不**回吐 Rejected: 超时往往发生在报文已发出之后, 单可能真的
         在柜台里, 谎报会诱导策略重下单。真相交给 `broker_recovery` 每轮的
         `sync_open_orders` 对账浮出来。
+
+        :return: ``"rejected"``(订单确定不存在) 或 ``"unknown"``(是否已到柜台不可知)。
+            调用方据此标注回执——``"unknown"`` 的消费方**不得**假设订单不存在而重发。
         """
         reason = f"{type(exc).__name__}: {exc}"
         if is_definite_reject(classify_gateway_error(self._trader_gateway, exc)):
@@ -605,7 +608,7 @@ class BrokerOrderSubmitter:
                 owner_strategy_id=owner_strategy_id,
                 reason=reason,
             )
-            return
+            return "rejected"
         # 系统级: 这笔单是否已进柜台不可知, 需人工/对账介入。CRITICAL + traceback
         # 是唯一可见性——`on_error` 若被策略忽略, 这条日志就是最后一道。
         logger.critical(
@@ -628,6 +631,7 @@ class BrokerOrderSubmitter:
             trace_id=trace_id,
         )
         self._notify_strategy_error(self._strategy, exc, "order_submit", request)
+        return "unknown"
 
     def install(self) -> None:
         """No-op: install now happens via `strategy.execution = BrokerExecution(...)`.
@@ -747,7 +751,7 @@ class BrokerOrderSubmitter:
                 owner_strategy_id=owner_strategy_id,
                 reason=tick_reject_reason,
             )
-            return OrderReceipt(group_id="", order_ids=(), legs=())
+            return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
         # 前置风控: 在拆腿与报单之前。放这里而非拆腿之后, 是因为限额语义针对的是
         # 用户提交的那一笔逻辑委托(名义/数量), 而非拆出的每条腿——按腿校验会让
         # 一笔超限单因拆成两腿而各自"合规"从而整体漏过。
@@ -775,7 +779,7 @@ class BrokerOrderSubmitter:
                 owner_strategy_id=owner_strategy_id,
                 reason=reject_reason,
             )
-            return OrderReceipt(group_id="", order_ids=(), legs=())
+            return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
         order_legs = resolve_live_order_legs(
             trader_gateway=self._trader_gateway,
             capability=capability,
@@ -806,6 +810,12 @@ class BrokerOrderSubmitter:
         # 多腿单中途失败**不回滚已发出的腿**: 反手单的第一腿是平仓, 自动撤回反而
         # 把风险敲回来; 且撤单确认是异步的, 那一腿可能已经成交,"回滚"并不真的能
         # 回滚。改为 break 并返回带已成功腿的部分回执, 由策略自行决定撤还是留。
+        #
+        # `failure_kind` 的初值只在「循环一次都没进」这种理论上不可达的情形下被
+        # 用到(`resolve_live_order_legs` 保证 `quantity > 0` 时至少一腿); 取
+        # "rejected" 是保守选择——见 Task 2 的分流表, "rejected" 会重试, 宁可
+        # 多试也不静默丢弃。
+        failure_kind = "rejected"
         for leg_index, (leg_position_effect, leg_quantity) in enumerate(order_legs):
             request = UnifiedOrderRequest(
                 client_order_id=client_order_ids[leg_index],
@@ -823,7 +833,7 @@ class BrokerOrderSubmitter:
             try:
                 broker_order_id = str(self._trader_gateway.place_order(request))
             except Exception as exc:  # noqa: BLE001 柜台交互失败落成拒单/未知, 不炸策略
-                self._handle_place_order_failure(
+                failure_kind = self._handle_place_order_failure(
                     exc=exc,
                     request=request,
                     owner_strategy_id=owner_strategy_id,
@@ -858,7 +868,9 @@ class BrokerOrderSubmitter:
             )
         if not broker_order_ids:
             # 一条腿都没报出去: 与风控/tick 拒单同口径返回空回执。
-            return OrderReceipt(group_id="", order_ids=(), legs=())
+            return OrderReceipt(
+                group_id="", order_ids=(), legs=(), failure=failure_kind
+            )
         return OrderReceipt(
             group_id=request_client_order_id,
             order_ids=tuple(broker_order_ids),

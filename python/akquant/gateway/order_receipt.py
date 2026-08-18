@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Iterator, Optional
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,16 @@ class OrderReceipt:
     group_id: str
     order_ids: tuple[str, ...]
     legs: tuple[OrderLeg, ...]
+    #: 空回执的成因。``None``=非失败(正常回执, 或 quantity<=0 的"无需交易");
+    #: ``"rejected"``=本地校验/风控/柜台明确拒绝, **订单确定不存在**;
+    #: ``"unknown"``=超时/断连, **订单是否已到柜台不可知**。
+    #:
+    #: 刻意不区分"本地拒的"与"柜台拒的": 对调用方而言两者处置一致(这单不存在),
+    #: 要追来源的人有审计流水里的 ``origin`` 字段。
+    #:
+    #: 消费方最重要的一条: ``"unknown"`` 下**不得**假设订单不存在而重发——
+    #: 报文可能已经到了柜台, 重发就是重复委托。
+    failure: Optional[str] = None
 
     def __str__(self) -> str:
         """Return group_id as string representation."""

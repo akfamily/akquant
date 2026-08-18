@@ -225,3 +225,102 @@ def test_multi_leg_unknown_state_still_returns_partial_receipt() -> None:
     assert receipt.primary == "broker-1"
     assert strategy.rejected == [], "状态未知不得谎报拒单, 多腿也一样"
     assert [source for _exc, source in errors] == ["order_submit"]
+
+
+class _Instrument:
+    """带 tick_size 的股票标的桩, 用于触发本地 tick 校验拒单."""
+
+    asset_type = "STOCK"
+    tick_size = 0.01
+
+
+class _TickStrategy(_Strategy):
+    """能返回标的信息的策略桩(基类没有 get_instrument, tick 校验会被跳过)."""
+
+    def get_instrument(self, symbol: str) -> _Instrument:
+        return _Instrument()
+
+
+class _OkGateway:
+    """place_order 正常回单号的网关桩."""
+
+    def place_order(self, req: UnifiedOrderRequest) -> str:
+        return "broker-1"
+
+
+def test_normal_receipt_has_no_failure() -> None:
+    """正常回执 failure 为 None."""
+    errors: list[tuple[Exception, str]] = []
+    submitter = _make_submitter(_OkGateway(), _Strategy(), errors)
+    receipt = _submit(submitter)
+    assert receipt.primary == "broker-1"
+    assert receipt.failure is None
+
+
+def test_zero_quantity_is_not_a_failure() -> None:
+    """quantity<=0 返回空回执, 但那是「无需交易」而非失败."""
+    errors: list[tuple[Exception, str]] = []
+    submitter = _make_submitter(_OkGateway(), _Strategy(), errors)
+    receipt = submitter.submit_order(
+        symbol="600000.SH", side="Buy", quantity=0, price=10.5, order_type="Limit"
+    )
+    assert len(receipt) == 0
+    assert receipt.failure is None
+
+
+def test_tick_reject_is_rejected() -> None:
+    """本地 tick 校验拒单 → rejected(订单确定不存在)."""
+    errors: list[tuple[Exception, str]] = []
+    strategy = _TickStrategy()
+    submitter = _make_submitter(_OkGateway(), strategy, errors)
+    receipt = submitter.submit_order(
+        symbol="600000.SH",
+        side="Buy",
+        quantity=100,
+        price=10.503,  # 不是 0.01 的整数倍
+        order_type="Limit",
+    )
+    assert receipt.failure == "rejected"
+    assert len(strategy.rejected) == 1
+
+
+def test_risk_reject_is_rejected() -> None:
+    """前置风控拒单 → rejected."""
+    errors: list[tuple[Exception, str]] = []
+    strategy = _Strategy()
+    capability = BrokerCapability(broker_name="risk-fake")
+    submitter = BrokerOrderSubmitter(
+        trader_gateway=_OkGateway(),
+        strategy=strategy,
+        resolve_trader_capabilities=lambda _gw: capability,
+        next_client_order_id=lambda: "c1",
+        can_submit_client_order=lambda _cid: True,
+        sync_order_id_mapping=lambda _c, _b: None,
+        bind_order_owner=lambda _c, _b, _o: None,
+        notify_strategy_error=lambda _s, exc, source, _p: errors.append((exc, source)),
+        payload_field=lambda obj, name: getattr(obj, name, None),
+        get_execution_capabilities=lambda: capability.as_execution_capabilities(),
+        record_order_request=lambda *_a: None,
+        strategy_limits={"max_order_size": {"_default": 1.0}},
+    )
+    receipt = submitter.submit_order(
+        symbol="600000.SH", side="Buy", quantity=100, price=10.5, order_type="Limit"
+    )
+    assert receipt.failure == "rejected"
+    assert len(strategy.rejected) == 1
+
+
+def test_broker_definite_reject_is_rejected() -> None:
+    """柜台明确回绝 → rejected."""
+    errors: list[tuple[Exception, str]] = []
+    gateway = _FailingGateway(UnifiedErrorType.NON_RETRYABLE)
+    receipt = _submit(_make_submitter(gateway, _Strategy(), errors))
+    assert receipt.failure == "rejected"
+
+
+def test_unknown_state_is_unknown() -> None:
+    """状态未知 → unknown(订单可能已在柜台)."""
+    errors: list[tuple[Exception, str]] = []
+    gateway = _FailingGateway(UnifiedErrorType.RETRYABLE)
+    receipt = _submit(_make_submitter(gateway, _Strategy(), errors))
+    assert receipt.failure == "unknown"

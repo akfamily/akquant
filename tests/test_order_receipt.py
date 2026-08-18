@@ -64,3 +64,30 @@ def test_public_api_return_annotation() -> None:
             f"Strategy.{name} return annotation should be OrderReceipt, "
             f"got {sig.return_annotation!r}"
         )
+
+
+def test_failure_defaults_to_none() -> None:
+    """不传 failure 时默认 None: 既有构造点语义不变."""
+    r = OrderReceipt(group_id="g1", order_ids=("b1",), legs=())
+    assert r.failure is None
+
+
+def test_failure_can_mark_empty_receipt() -> None:
+    """空回执可携带失败分类, 且不改变既有的长度/真值/str 语义."""
+    r = OrderReceipt(group_id="", order_ids=(), legs=(), failure="unknown")
+    assert r.failure == "unknown"
+    assert len(r) == 0
+    assert str(r) == ""
+    assert r.primary == ""
+    assert not r
+
+
+def test_failure_keeps_receipt_frozen() -> None:
+    """新增字段不得破坏 frozen 语义."""
+    import dataclasses
+
+    import pytest
+
+    r = OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.failure = "unknown"  # type: ignore[misc]
