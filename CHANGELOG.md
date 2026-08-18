@@ -160,6 +160,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   审计（`origin="broker"`）。
 - 报单超时/连接断开时不再谎报拒单，改为 `on_error` + `order_submit_unknown` 审计——
   该情形下订单可能已在柜台，谎报拒单会诱导策略重复下单。
+- 本地止损单在柜台返回「状态未知」（超时/断连）时不再自动重试。此前每次重试都会生成新的
+  client_order_id，柜台无从去重，若报文其实已经到达柜台即造成真实的重复委托；现改为放弃该单并打
+  CRITICAL + `on_error(..., "stop_trigger", ...)`。柜台明确拒单仍照旧重试（订单确定不存在）。
+- `OrderReceipt` 新增只读字段 `failure`（`None` / `"rejected"` / `"unknown"`），使调用方能区分空回执
+  是「无需交易」、「订单确定不存在」还是「状态不可知」。
 - 多腿单（平今/平昨、反手）中途失败时保留已成功腿的回执，策略得以撤掉已发出的腿。
 - 撤单失败不再抛异常并中断整轮 `cancel_all_orders`，改为逐单隔离 + `order_cancel_failed`
   审计；单笔失败不影响其余单撤销。

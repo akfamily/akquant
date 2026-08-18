@@ -938,6 +938,12 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   不传 `quantity` 时按 `self.sizer` 计算下单量（默认 `FixedSize(100)`，可用 `set_sizer()` 替换）。
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: 卖出（平多/开空）。参数同上，但**不传 `quantity` 时不走 sizer，而是全平当前持仓**：回测取总持仓，`broker_live` 取可用持仓（A 股 T+1 下当日买入部分不可卖，按总量报单会被柜台整单拒绝）。
 *   解析后下单量 `<= 0` 时不报单，返回空回执（`len(receipt) == 0`、`receipt.primary == ""`）。
+*   `receipt.failure`（只读，`None` / `"rejected"` / `"unknown"`）：区分空回执的三种成因。
+    *   `None`：无需交易（如解析后下单量 `<= 0`），不代表任何失败。
+    *   `"rejected"`：柜台明确拒单，订单**确定不存在**，重试是安全的。
+    *   `"unknown"`：提交遇到超时/断连等异常，订单状态**不可知**（报文可能已到柜台）——
+        消费方**不得**假设订单不存在而重发，否则若报文其实已被柜台接受，重发就是一笔
+        真实的重复委托；应改为等待下一轮 `sync_open_orders` 对账浮出真实状态。
 *   `submit_order(..., order_type="StopTrail", trail_offset=..., trail_reference_price=None)`: 提交跟踪止损单。`trail_offset` 必须大于 0。
 *   `submit_order(..., order_type="StopTrailLimit", price=..., trail_offset=..., trail_reference_price=None)`: 提交跟踪止损限价单。`price` 与 `trail_offset` 必填。
 *   `submit_order(..., broker_options={...})`: 可选 broker 扩展参数透传（回测阶段仅记录在订单对象 `order.broker_options` 上，便于联调与审计）。

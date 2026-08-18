@@ -900,6 +900,10 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
     *   Omitting `quantity` sizes the order via `self.sizer` (defaults to `FixedSize(100)`, replaceable with `set_sizer()`).
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: Sell (close long / open short). Same parameters as above, except that **omitting `quantity` does not use the sizer — it closes the whole position**: total position in backtest, available position under `broker_live` (China A-share T+1 freezes same-day buys, so sizing off the total gets the whole order rejected by the broker).
 *   When the resolved quantity is `<= 0`, no order is placed and an empty receipt is returned (`len(receipt) == 0`, `receipt.primary == ""`).
+*   `receipt.failure` (read-only, `None` / `"rejected"` / `"unknown"`): distinguishes the three causes of an empty receipt.
+    *   `None`: no trade was needed (e.g. resolved quantity `<= 0`) — not a failure.
+    *   `"rejected"`: the counterparty explicitly rejected the order; the order **definitely does not exist**, so retrying is safe.
+    *   `"unknown"`: submission hit a timeout/disconnect; the order status is **unknowable** (the request may have already reached the counterparty). Callers **must not** assume the order doesn't exist and resubmit — if it was in fact accepted, resubmitting creates a real duplicate order. Wait for the next `sync_open_orders` reconciliation to surface the true state instead.
 *   `short(symbol, quantity, price=None, ...)`: Short sell.
 *   `cover(symbol, quantity, price=None, ...)`: Buy to cover.
 *   `submit_order(..., order_type="StopTrail", trail_offset=..., trail_reference_price=None)`: Submit a trailing stop order. `trail_offset` must be greater than 0.

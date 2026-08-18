@@ -296,16 +296,24 @@ akquant.configure_logging(
 此时触发的是 `on_error(exc, "order_submit", request)`，并在审计流水里记一条
 `order_submit_unknown`。这笔单的真实状态由下一轮 `sync_open_orders` 对账浮出。
 
-**例外：本地止损单没有这条"交给对账"的退路。** 止损/跟踪止损单不下发柜台，由框架
-本地盯价触发后再调用 `submit_order` 报出；若触发时提交遇到状态不可知（超时/断连），
-框架会把该止损单重新放回本地簿等下一次触发再试，最多重试 `MAX_STOP_SUBMIT_ATTEMPTS
-= 3` 次（`python/akquant/gateway/broker_execution.py` 的 `check_stop_triggers` /
-`_handle_stop_submit_failure`）。而每次重试都经 `submit_order` 且不带
-`client_order_id`，框架会为其生成一个**新的** `client_order_id`——柜台与中间件都无法
-用它去重。也就是说，超时后的重试本身就是一笔真实的重复委托，是框架自己立刻重下的
-单，而不是像普通订单那样"状态留给下一轮对账浮出"。这一行为与本次改动前对等（旧代码
-对止损单提交超时同样会重试 3 次），是否按分类区别对待（例如仅对确定的网络错误重试、
-对状态不可知则停止自动重试）目前仍是未做的产品决策，此处仅作为已知行为提示。
+**例外：本地止损单的重试口径按失败原因区分，而非"一律交给对账"。** 止损/跟踪止损单
+不下发柜台，由框架本地盯价触发后再调用 `submit_order` 报出（见
+`python/akquant/gateway/broker_execution.py` 的 `check_stop_triggers` /
+`_handle_stop_submit_failure`），触发提交失败时按 `OrderReceipt.failure` 分流：
+
+- **柜台明确拒单**（`failure == "rejected"`，订单确定不存在）：仍会重试，最多
+  `MAX_STOP_SUBMIT_ATTEMPTS = 3` 次；每次重试都经 `submit_order` 生成一个**新的**
+  `client_order_id`，但因为订单确定未被柜台接受，这不构成重复委托。
+- **状态未知**（`failure == "unknown"`，超时/断连，报文可能已到柜台）：框架**不再自动
+  重试**——重试会生成新的 `client_order_id`，柜台无从去重，一旦报文其实已经到达柜台，
+  重试就是一笔真实的重复委托。因此该止损单会被直接放弃，打一条 CRITICAL 日志并触发
+  `on_error(exc, "stop_trigger", order)`，需要人工介入核实。
+
+**已知局限**：被放弃的这张止损单，如果报文其实已经到达柜台，其回报**无法**被自动关联
+回本地止损 id——`_record_stop_remap`（`python/akquant/live/_runner.py`）只在提交
+**成功**、拿到 `broker_order_id` 时才建立 `broker_order_id → local_id` 的映射；状态未知
+时根本没有 `broker_order_id` 可供记录。这笔回报之后会以一笔"来源不明"的普通订单面貌
+到达策略，而不会被识别成某张本地止损单的回报，需要人工在对账时核实。
 
 **敏感脱敏（默认开启）。** 日志默认对密钥类字段（`password`/`token`/`api_key` 等）全掩码、对账户类字段（`user_id`/`account` 等）保留尾 4 位。这是 handler 层兜底——即便某处新增日志忘了脱敏，账号密钥也不会明文落盘；如需关闭设 `mask_sensitive=False`。
 
