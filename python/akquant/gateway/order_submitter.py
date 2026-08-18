@@ -13,7 +13,8 @@ from .broker_models import (
     validate_execution_semantics,
 )
 from .broker_strategy_api import _resolve_symbol
-from .order_audit import record_reject, record_submit
+from .order_audit import record_reject, record_submit, record_submit_unknown
+from .order_errors import classify_gateway_error, is_definite_reject
 from .order_receipt import OrderLeg, OrderReceipt
 
 logger = get_logger("gateway.live")
@@ -351,6 +352,7 @@ class BrokerOrderSubmitter:
         self._strategy = strategy
         self._strategy_limits = strategy_limits or {}
         self._risk_reject_seq = 0
+        self._broker_reject_seq = 0
         self._resolve_trader_capabilities = resolve_trader_capabilities
         self._next_client_order_id = next_client_order_id
         self._can_submit_client_order = can_submit_client_order
@@ -521,16 +523,111 @@ class BrokerOrderSubmitter:
             price=price,
             owner_strategy_id=owner_strategy_id or "_default",
         )
-        # broker_live 的事件桥直调 `on_order`(broker_event_bridge.py), 不走回测那套
-        # `_emit_order_callback` 的 Rejected→on_reject 级联, 故这里显式派发两者。
+        self._dispatch_reject_order(order)
+
+    def _dispatch_reject_order(self, order: StrategyOrder) -> None:
+        """把一笔 Rejected 委托派发给 on_order + on_reject.
+
+        broker_live 的事件桥直调 `on_order`(broker_event_bridge.py), 不走回测那套
+        `_emit_order_callback` 的 Rejected→on_reject 级联, 故这里显式派发两者。
+        """
         for callback_name in ("on_order", "on_reject"):
             callback = getattr(self._strategy, callback_name, None)
             if not callable(callback):
                 continue
             try:
                 callback(order)
-            except Exception as exc:  # noqa: BLE001 — 用户回调异常不改变拒单结果
+            except Exception as exc:  # noqa: BLE001 用户回调异常不改变拒单结果
                 self._notify_strategy_error(self._strategy, exc, callback_name, order)
+
+    def _emit_broker_reject(
+        self,
+        *,
+        request: UnifiedOrderRequest,
+        owner_strategy_id: str,
+        reason: str,
+    ) -> None:
+        """把柜台明确回绝的报单以 `Rejected` 委托事件回吐给策略."""
+        self._broker_reject_seq += 1
+        order = StrategyOrder(
+            id=f"BRKREJ-{self._broker_reject_seq}",
+            symbol=request.symbol,
+            status=OrderStatus.Rejected,
+            filled_quantity=0.0,
+            average_filled_price=None,
+            reject_reason=reason,
+            updated_at=0,
+            position_effect=request.position_effect,
+            side=request.side,
+            quantity=float(request.quantity),
+            price=request.price,
+            owner_strategy_id=owner_strategy_id or "_default",
+            client_order_id=request.client_order_id,
+        )
+        self._dispatch_reject_order(order)
+
+    def _handle_place_order_failure(
+        self,
+        *,
+        exc: Exception,
+        request: UnifiedOrderRequest,
+        owner_strategy_id: str,
+        trace_id: str,
+    ) -> None:
+        """柜台报单失败的统一处置: 明确拒单落 Rejected, 状态未知只报错不谎报.
+
+        状态未知**绝不**回吐 Rejected: 超时往往发生在报文已发出之后, 单可能真的
+        在柜台里, 谎报会诱导策略重下单。真相交给 `broker_recovery` 每轮的
+        `sync_open_orders` 对账浮出来。
+        """
+        reason = f"{type(exc).__name__}: {exc}"
+        if is_definite_reject(classify_gateway_error(self._trader_gateway, exc)):
+            logger.warning(
+                "柜台拒单 %s %s %s: %s",
+                request.side,
+                request.quantity,
+                request.symbol,
+                reason,
+                extra=build_log_extra(phase="gateway"),
+            )
+            record_reject(
+                strategy_id=owner_strategy_id,
+                symbol=request.symbol,
+                side=request.side,
+                quantity=request.quantity,
+                client_order_id=request.client_order_id,
+                reason=reason,
+                trace_id=trace_id,
+                origin="broker",
+            )
+            self._emit_broker_reject(
+                request=request,
+                owner_strategy_id=owner_strategy_id,
+                reason=reason,
+            )
+            return
+        # 系统级: 这笔单是否已进柜台不可知, 需人工/对账介入。CRITICAL + traceback
+        # 是唯一可见性——`on_error` 若被策略忽略, 这条日志就是最后一道。
+        logger.critical(
+            "报单状态未知(报文可能已到柜台) %s %s %s: %s",
+            request.side,
+            request.quantity,
+            request.symbol,
+            reason,
+            exc_info=True,
+            extra=build_log_extra(phase="gateway"),
+        )
+        record_submit_unknown(
+            strategy_id=owner_strategy_id,
+            symbol=request.symbol,
+            side=request.side,
+            quantity=request.quantity,
+            price=request.price,
+            client_order_id=request.client_order_id,
+            reason=reason,
+            trace_id=trace_id,
+        )
+        self._notify_strategy_error(self._strategy, exc, "order_submit", request)
 
     def install(self) -> None:
         """No-op: install now happens via `strategy.execution = BrokerExecution(...)`.
@@ -720,7 +817,16 @@ class BrokerOrderSubmitter:
                 asset_type=normalized_asset_type,
                 extra=dict(extra or {}),
             )
-            broker_order_id = str(self._trader_gateway.place_order(request))
+            try:
+                broker_order_id = str(self._trader_gateway.place_order(request))
+            except Exception as exc:  # noqa: BLE001 柜台交互失败落成拒单/未知, 不炸策略
+                self._handle_place_order_failure(
+                    exc=exc,
+                    request=request,
+                    owner_strategy_id=owner_strategy_id,
+                    trace_id=request_client_order_id,
+                )
+                break
             broker_order_ids.append(broker_order_id)
             record_submit(
                 strategy_id=owner_strategy_id,
@@ -747,6 +853,9 @@ class BrokerOrderSubmitter:
                     broker_order_id=broker_order_id,
                 )
             )
+        if not broker_order_ids:
+            # 一条腿都没报出去: 与风控/tick 拒单同口径返回空回执。
+            return OrderReceipt(group_id="", order_ids=(), legs=())
         return OrderReceipt(
             group_id=request_client_order_id,
             order_ids=tuple(broker_order_ids),
