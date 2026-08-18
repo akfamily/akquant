@@ -154,6 +154,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **回测数据列表改为逐元素类型校验（破坏性）**：`run_backtest(data=[...])` 此前只检查首元素类型，`[Bar, "garbage"]` 会漏到 Rust 层抛出难以定位的错误。现在在 Python 层逐元素校验，抛 `TypeError` 并指名位置索引与实际类型；空列表抛 `ValueError`。
 
 ### Fixed
+- **`on_order` 不再重复推送同一订单的同一状态**：`check_order_events` 每个 bar/tick 事件都会重扫在途与终态订单，而 `_emit_order_callback` 对 `on_order` 是**无条件调用**（`on_reject` 早有 `_framework_rejected_order_ids` 去重，`on_order` 没有等价物）。于是一张单只要还留在 `ctx.recent_rejected_orders` / `ctx.orders` 里，它每一拍都会再触发一次 `on_order`——表现为「回调全量推送」「同一张单跨交易日反复出现，看起来盘后还在推新回报」，写在 `on_order` 里的逻辑会被反复误触发。现在按**状态指纹**去重：键为「订单号 + 状态 + 已成交量 + 成交均价 + 拒单原因」，**刻意不含时间戳**——含 `updated_at` / `timestamp_ns` 的键每次重推都会变、去重完全失效；而只按订单号去重又会把 `New → PartiallyFilled → Filled` 这些真实状态推进整批吞掉。去重缓存有界（FIFO，上限 5 万条，模式与成交侧 `remember_trade_key` 一致），且**不随 checkpoint 落盘**：热启动后宁可把当前订单状态重推一轮，也不要因旧 key 残留而吞掉恢复后的第一次状态通报。
+- **实盘会话因错误中止时，收尾摘要不再自称 "Manual Stop"**：策略回调抛异常时 `run_live` 会打 `CRITICAL` + traceback 并停止事件处理（设计如此，实盘不把异常继续上抛），但紧随其后的摘要标题此前硬编码为 `TRADING SUMMARY (Manual Stop)`——一次因故障中止的会话看起来像正常手动停止，而那条 `CRITICAL` 往往已被几十行日志淹没。现在该情形下标题为 `TRADING SUMMARY (ABORTED ON ERROR)`；正常结束与手动中断（含 `duration` 到期）的输出保持不变。
+- **回测 DataFrame 的标的列识别改用项目统一的别名表，多标的不再被静默压成单标的**：`run_backtest(data=DataFrame)` 判断"是不是多标的数据"的判据此前是 `if "symbol" in df.columns`，**只认英文列名**。而 **AKShare 的标准输出列名是 `股票代码`**，项目自己的别名表 `schema.COLUMN_ALIASES` 也早已包含 `股票代码` / `symbol` / `code` / `ticker`（`normalize.resolve_columns` 与 `dataframe_to_arrays` 都在用），实盘侧的 `dataframe_to_bars` 更是**只认 `股票代码`**——两侧要求的列名正好相反。于是"从 AKShare 取多标的数据直接丢进 `run_backtest`"这个最自然的用法会被**静默**压成单标的：所有标的的 bar 混进一条时间序列（指标与撮合结果均不正确），`instruments_config` 里按真实标的配置的 `tick_size` / `lot_size` 整体失效，下单真实 symbol 只拿到 `Instrument not found`。
+
+    现在判据改用 `resolve_columns(df)`，识别到的标的列统一重命名为 `symbol` 后走既有多标的路径；`symbol` 列的既有行为完全不变。另外，**未识别到标的列却检测到同一时间戳存在多行**时会打 `WARNING` 点出退化、给出可用的列名清单与替代输入（`Dict[str, DataFrame]` / `list[Bar]`）——同一时间戳多行是多标的被压平的可靠信号，真单标的数据每个时间戳只有一行，因此不会给单标的用法刷屏。三套标的列口径的彻底合并仍在 `docs/zh/meta/columnar-rfc.md` 挂账，此处只收敛回测入口这一条。golden 基线零漂移。
+- **`order_target` / `order_target_value` / `order_target_percent` 的取整口径改为与撮合层一致**：下单侧取整此前只读**策略属性** `self.lot_size`（缺省 **1**），而撮合层校验读的是**标的登记值** `Instrument.lot_size`（`execution/common.rs` 对买单校验）。于是登记了 `lot_size=100` 的 A 股标的，`order_target_percent(0.2)` 仍按 1 股取整，算出的非整百数量必然被自己的风控拒掉——`Quantity 19743 is not a multiple of lot size 100`。**实盘尤其无解**：`run_live` 没有 `lot_size` 参数（实盘只接 `Instrument` 对象），除了在策略里手写 `self.lot_size = 100`，没有任何途径让取整逻辑知道登记值。
+
+    现在两处取整（`_target_to_orders` 与 `calculate_max_buy_qty`）共用一个 `_resolve_lot_size()`，优先级为：
+
+    1. 标的**未登记** `lot_size`（拿不到或 `<=0`）→ 用 `self.lot_size`，既有行为不变；
+    2. `self.lot_size` 比登记值**更粗且是其整数倍**（如登记 100 而策略想按 200 下单）→ 尊重策略的显式意图（200 的倍数必然也是 100 的倍数，不会被拒）；
+    3. 其余情况（含缺省的 1、以及与登记值不成倍数的值）→ 用登记值。
+
+    `lot_size=1` 的标的（美股/加密）不会被凭空取整到整百。golden 基线零漂移（回测路径的 `self.lot_size` 由券商模板灌入，本就是 100）。
+- **`Instrument` 构造期把交易所后缀归一化为大写，修复小写后缀导致的三处静默失败**：`Instrument("600028.sh", ...)` 这类写法此前被原样保留，而 `instruments` 是所有下游的**唯一源头**（实盘订阅集来自 `[inst.symbol for inst in instruments]`、标的属性快照字典、Rust 撮合层的合约登记都从它派生）。于是同一个小写会在三个下游各自以毫不相干的面貌炸开，使用者几乎不可能反推到同一个成因：
+
+    - `get_instrument("600028.SH")` 抛 `KeyError`（快照字典的 key 是小写），报错文案会误导使用者以为标的没登记；
+    - 实盘订阅集变成小写，而 broker 推送帧反解出的 symbol 恒为大写（如 middleware 的 `instrument_to_symbol`），按标的过滤时精确比较不命中 ⇒ **本任务自己的 order/trade 回报被静默丢弃**（只留一行 debug），表现为「下单成功却收不到回调」；
+    - Rust 撮合层按小写登记合约，大写行情下单时查不到 ⇒ 该标的的**所有**订单被拒，`reject_reason` 为 `Instrument not found for 600028.SH`，且因拿不到 `tick_size` / `lot_size`，本地的价格对齐与整手校验一并失效。
+
+    现在在构造期一次性归一化（与既有的 `symbol.trim()` 同属输入清洗），并在改写时打 `WARNING` 点出原值与新值，提示上游统一写法。**只规整最后一个 `.` 之后的后缀，证券代码段原样保留**——上期所/大商所的期货合约代码本身含有意义的小写（`ag2612`、`rb2601`）且柜台大小写敏感，对整个 symbol 取大写会把它改坏；无 `.` 的写法原样返回。已经使用大写后缀的用户零影响（不改写、不告警），golden 基线零漂移。
 - **修复热启动省略 `symbols` 时会沿用上一段 checkpoint 里 pickle 残留的白名单的问题**：`Strategy._symbol_whitelist` 是普通实例属性，随策略对象整体 pickle 落盘。若阶段一 `run_backtest(..., symbols=[...])` 传了白名单，阶段二 `run_from_checkpoint(...)` 不再传 `symbols`，引擎层因未显式传入而正确「不过滤」，但策略层的 `_symbol_whitelist` 会通过 pickle 沿用阶段一的旧值——造成「引擎放行、策略层 `subscribe()` 仍按旧白名单拦截」的自相矛盾，且报错文案里的白名单是本次调用根本没传的值。现在改为无条件赋值：显式传了 `symbols` 就写入本次的白名单，没传就显式置 `None` 覆盖掉恢复出来的旧值。
 - **修复 `symbols` 传字符串时白名单被按字符拆分的问题**：如 `symbols="600519"` 这种受支持的写法，下发给策略层用于 `subscribe()` 校验的白名单曾直接对未归一的原始参数取 `set(...)`，导致 `set("600519")` 按字符拆成 `{'6','0','0','5','1','9'}`，策略在 `on_start` 里 `subscribe("600519")` 自身标的反而被误判为「白名单外」并抛 `ValueError`。现在改用 `_resolve_effective_symbols` 已归一的标的列表构造白名单，字符串、元组、集合等写法均不受影响。
 - **修复 `warmup_period` 在多标的下每个标的只预热约 `N / 标的数` 根的问题（行为变更，会改变多标的回测数值，`__engine_rule_version__` 升至 1.4.1）**：预热门槛此前用的是一个**跨标的的全局** bar 计数器，而历史缓冲区是按标的各自维护的。于是 `warmup_period = 60` 配 3 个标的时，每个标的只攒到 20 根就跨过门槛开始交易，`get_history(60, ...)` 里混入 `nan` 占位，指标用不足的数据计算——且**完全静默**，不报错也不告警。官方示例一律写 `self.warmup_period = self.params.long_window + 1`（指标窗口），而指标是按标的各自计算的，因此这些用法在多标的下全部失效。现在门槛按标的**独立**计数：标的 A 自己攒够 `warmup_period` 根就开始交易，不必等标的 B，`warmup_period` 无需乘以标的数量。**影响**：多标的策略（轮动、横截面、配对）的 `on_bar` 首次触发时间点后移，其后指标数值随之变化，既有回测结果与修复前不再可比——变化本身即修复生效的证据（此前是用不足的数据算出来的）。纯 tick 路径（`on_tick` 从来不受预热门槛约束）不受影响，golden 基线未变化；单标的策略的冷启动回测行为同样不受影响，但按标的计数需要新增 `_symbol_bar_counts` 字段随策略一起落盘——早于该字段存在的旧检查点（单标的与多标的都可能受影响）热启动恢复后，若不做兼容处理会把已经攒够的预热期重新走一遍，即使 Rust 历史缓冲区其实已经完整恢复。现在恢复旧检查点时改为查询实际恢复的历史深度而非从 0 重新计数：预热已攒满的直接放行，存档时真正处于预热期中途的会按剩余量继续预热，新格式检查点不受影响。ML 滚动训练仍按全局 bar 计数触发（`_rolling_step` 针对的是全局模型，语义未变）；但未配置 `validation_config` 时的取模触发在 per-symbol warmup 门槛导致部分 bar 事件被跳过后可能**永久错过**某次训练（而非仅仅延后），已在下方独立条目中修复为阈值语义。

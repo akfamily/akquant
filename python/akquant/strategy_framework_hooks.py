@@ -1,3 +1,4 @@
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 import pandas as pd
@@ -834,6 +835,10 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._framework_portfolio_dirty = True
     if not hasattr(strategy, "_framework_rejected_order_ids"):
         strategy._framework_rejected_order_ids = set()
+    if not hasattr(strategy, "_framework_order_event_keys"):
+        strategy._framework_order_event_keys = set()
+    if not hasattr(strategy, "_framework_order_event_key_order"):
+        strategy._framework_order_event_key_order = deque()
     if not hasattr(strategy, "_framework_expiry_event_keys"):
         strategy._framework_expiry_event_keys = set()
     if not hasattr(strategy, "_framework_stop_flushed"):
