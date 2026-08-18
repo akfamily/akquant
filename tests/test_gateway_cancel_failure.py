@@ -102,6 +102,44 @@ def test_cancel_all_continues_after_a_failure() -> None:
     assert [source for _exc, source in strategy.errors] == ["order_cancel"]
 
 
+def test_cancel_all_pairs_symbol_between_intent_and_failure_audit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """cancel_all_orders 路径下, 失败结果审计的 symbol 必须与意图审计一致.
+
+    单笔 cancel_order(order_id) 路径拿不到 symbol, 两边恒为 None 证明不了什么;
+    这里必须用 cancel_all_orders(能拿到挂单快照的 symbol)构造。
+    """
+    strategy = _Strategy()
+    gateway = _Gateway(
+        failing={"B2"},
+        open_orders=[
+            _OpenOrder("B1", symbol="000001.SZ"),
+            _OpenOrder("B2", symbol="600000.SH"),
+        ],
+    )
+    with caplog.at_level(logging.DEBUG, logger="akquant.audit.order"):
+        _make_execution(strategy, gateway).cancel_all_orders()
+
+    intent = next(
+        rec
+        for rec in caplog.records
+        if getattr(rec, "event", None) == "order_cancel"
+        and getattr(rec, "order_id", None) == "B2"
+    )
+    failure = next(
+        rec
+        for rec in caplog.records
+        if getattr(rec, "event", None) == "order_cancel_failed"
+        and getattr(rec, "order_id", None) == "B2"
+    )
+    assert (
+        getattr(failure, "symbol", None)
+        == getattr(intent, "symbol", None)
+        == "600000.SH"
+    )
+
+
 def test_cancel_all_survives_sync_open_orders_failure() -> None:
     """查挂单本身失败也不得抛穿策略."""
 

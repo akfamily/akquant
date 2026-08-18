@@ -283,12 +283,19 @@ class BrokerExecution:
         """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""
         self._notify_error(exc, "stop_trigger", order)
 
-    def _handle_cancel_failure(self, broker_order_id: str, exc: Exception) -> None:
+    def _handle_cancel_failure(
+        self, broker_order_id: str, exc: Exception, symbol: str | None = None
+    ) -> None:
         """撤单失败的统一处置: 留结果审计 + on_error, 不抛.
 
         **不做**「柜台拒绝即该单已终态、可当幂等成功」的推断: 核心无从判断这个
         400 是"已经撤过了"还是"这单不允许撤"。撤不掉的单会在下一轮 recovery 的
         `sync_open_orders` 里继续出现, 本身可自愈。
+
+        ``symbol`` 可选: `cancel_order(order_id)` 单笔路径只有 order_id, 拿不到
+        symbol, 不传即可(不为凑字段去反查); `cancel_all_orders` 有挂单快照,
+        必须传, 与配对的 `record_cancel` 意图记录口径一致, 否则同一笔撤单两条
+        审计记录里 symbol 一个有值一个恒为 None, 复盘时按 symbol 统计会漏数据。
         """
         reason = f"{type(exc).__name__}: {exc}"
         logger.warning(
@@ -299,6 +306,7 @@ class BrokerExecution:
         )
         record_cancel_failed(
             broker_order_id=broker_order_id,
+            symbol=symbol,
             strategy_id=self._owner_strategy_id(),
             reason=reason,
         )
@@ -342,24 +350,25 @@ class BrokerExecution:
         failed = 0
         for order in open_orders:
             bid = getattr(order, "broker_order_id", "")
-            if symbol is not None and getattr(order, "symbol", None) != symbol:
+            order_symbol = getattr(order, "symbol", None)
+            if symbol is not None and order_symbol != symbol:
                 continue
             if not bid:
                 continue
             attempted += 1
             record_cancel(
                 broker_order_id=str(bid),
-                symbol=getattr(order, "symbol", None),
+                symbol=order_symbol,
                 strategy_id=self._owner_strategy_id(),
             )
             try:
                 self._gw.cancel_order(str(bid))
             except Exception as exc:  # noqa: BLE001 逐单隔离: 一单失败不影响其余
                 failed += 1
-                self._handle_cancel_failure(str(bid), exc)
+                self._handle_cancel_failure(str(bid), exc, symbol=order_symbol)
         if failed:
             logger.warning(
-                "cancel_all_orders: %s 单中 %s 单撤单失败", attempted, failed
+                "cancel_all_orders: 尝试撤销 %s 单, %s 单失败", attempted, failed
             )
 
     def capabilities(self) -> dict[str, Any]:
