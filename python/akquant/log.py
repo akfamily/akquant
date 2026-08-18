@@ -36,6 +36,10 @@ CONTEXT_FIELDS = (
     "order_type",
     "trade_id",
     "reason",
+    # 拒单来源(RFC G1): "local"=本地校验/风控拒的, "broker"=柜台回绝的。
+    # 两者的处置完全不同(本地拒单意味着单没发出去, 柜台拒单意味着发出去被回绝),
+    # 对账时必须能分开筛。
+    "origin",
 )
 # The dedicated order-audit logger namespace (child of the root logger).
 ORDER_AUDIT_LOGGER_NAME = "audit.order"
@@ -420,6 +424,7 @@ def build_order_audit_extra(
     order_type: Optional[str] = None,
     trade_id: Optional[str] = None,
     reason: Optional[str] = None,
+    origin: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build a structured order-lifecycle audit payload (RFC G1).
 
@@ -445,6 +450,7 @@ def build_order_audit_extra(
         "order_type": _normalize_context_value(order_type),
         "trade_id": _normalize_context_value(trade_id),
         "reason": _normalize_context_value(reason),
+        "origin": _normalize_context_value(origin),
     }
 
 
@@ -466,6 +472,9 @@ _AUDIT_MESSAGE_TEMPLATES: dict[str, dict[str, str]] = {
         "order_cancel": "cancel {symbol} [{order_id}]",
         "order_update": "update {symbol} status={order_status} "
         "filled={quantity} [{client_order_id}->{order_id}]",
+        "order_submit_unknown": "submit-unknown {side} {quantity} {symbol} "
+        "{price} [{client_order_id}] reason: {reason}",
+        "order_cancel_failed": "cancel-failed {symbol} [{order_id}] reason: {reason}",
     },
     "zh": {
         "order_submit": "下单 {side} {quantity} {symbol} {price} "
@@ -476,6 +485,9 @@ _AUDIT_MESSAGE_TEMPLATES: dict[str, dict[str, str]] = {
         "order_cancel": "撤单请求 {symbol} [{order_id}]",
         "order_update": "订单更新 {symbol} 状态={order_status} "
         "已成={quantity} [{client_order_id}→{order_id}]",
+        "order_submit_unknown": "报单状态未知 {side} {quantity} {symbol} "
+        "{price} [{client_order_id}] 原因: {reason}",
+        "order_cancel_failed": "撤单失败 {symbol} [{order_id}] 原因: {reason}",
     },
 }
 _MARKET_PRICE_TEXT = {"en": "market", "zh": "市价"}
