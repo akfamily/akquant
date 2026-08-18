@@ -242,18 +242,33 @@ class BrokerExecution:
             if order.time_in_force is not None:
                 kwargs["time_in_force"] = order.time_in_force
             try:
-                broker_order_id = str(self._submitter.submit_order(**kwargs).primary)
-            except Exception as exc:  # noqa: BLE001
-                order.submit_attempts += 1
-                if order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
-                    self._stop_book.register(order)  # 重入簿, 下 tick 重试
-                self._notify_stop_error(exc, order)
+                receipt = self._submitter.submit_order(**kwargs)
+            except Exception as exc:  # noqa: BLE001 — 参数/能力校验等仍会在此抛出
+                self._handle_stop_submit_failure(order, exc)
                 continue
+            if not receipt.primary:
+                # submit_order 对可分类的柜台失败(明确拒单/状态未知)已不再抛异常
+                # (见 order_submitter._handle_place_order_failure), 改回吐空回执;
+                # 这里补上与旧的"异常穿透"等价的失败处置, 保住重试与
+                # on_error(..., "stop_trigger", ...) 语义——不按分类区别对待。
+                self._handle_stop_submit_failure(
+                    order,
+                    RuntimeError("止损单提交失败: 柜台拒单或状态未知, 回执为空"),
+                )
+                continue
+            broker_order_id = str(receipt.primary)
             if self._record_stop_remap is not None:
                 try:
                     self._record_stop_remap(order.local_id, broker_order_id)
                 except Exception:  # noqa: BLE001
                     pass  # remap 记录失败不影响触发/不中断 run
+
+    def _handle_stop_submit_failure(self, order: Any, exc: Exception) -> None:
+        """止损单提交失败的统一处置: 重试(上限)+on_error, 与旧的异常穿透行为对等."""
+        order.submit_attempts += 1
+        if order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
+            self._stop_book.register(order)  # 重入簿, 下 tick 重试
+        self._notify_stop_error(exc, order)
 
     def _notify_stop_error(self, exc: Exception, order: Any) -> None:
         """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""

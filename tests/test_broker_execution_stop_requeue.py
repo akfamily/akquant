@@ -3,8 +3,10 @@
 from typing import Any, cast
 
 from akquant.gateway.broker_execution import MAX_STOP_SUBMIT_ATTEMPTS, BrokerExecution
+from akquant.gateway.broker_models import BrokerCapability, UnifiedErrorType
 from akquant.gateway.broker_state_cache import BrokerStateCache
 from akquant.gateway.order_receipt import OrderReceipt
+from akquant.gateway.order_submitter import BrokerOrderSubmitter
 
 
 class _Cache:
@@ -101,3 +103,61 @@ def test_failure_requeues_and_notifies_then_gives_up() -> None:
         ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
     assert ex.get_open_orders("X") == []  # given up
     assert len(s.errors) == MAX_STOP_SUBMIT_ATTEMPTS
+
+
+class _SubmitterStrategy:
+    """喂给真实 BrokerOrderSubmitter 的最小策略桩(与 BrokerExecution 的 _S 无关)."""
+
+    _owner_strategy_id = "_default"
+
+
+class _BrokerRejectingGateway:
+    """place_order 必抛柜台异常, classify_order_error 归类为明确拒单."""
+
+    def place_order(self, req: Any) -> str:
+        raise RuntimeError("HTTP 400 [251005] broker rejected")
+
+    def classify_order_error(self, exc: BaseException) -> UnifiedErrorType:
+        return UnifiedErrorType.NON_RETRYABLE
+
+
+def _real_submitter(gateway: Any) -> BrokerOrderSubmitter:
+    """构造一个真实 BrokerOrderSubmitter(非桩), 复现 Task 3 改动后的空回执路径."""
+    capability = BrokerCapability(broker_name="reject-fake")
+    return BrokerOrderSubmitter(
+        trader_gateway=gateway,
+        strategy=_SubmitterStrategy(),
+        resolve_trader_capabilities=lambda _gw: capability,
+        next_client_order_id=lambda: "c1",
+        can_submit_client_order=lambda _cid: True,
+        sync_order_id_mapping=lambda _c, _b: None,
+        bind_order_owner=lambda _c, _b, _o: None,
+        notify_strategy_error=lambda *_a, **_k: None,
+        payload_field=lambda obj, name: getattr(obj, name, None),
+        get_execution_capabilities=lambda: capability.as_execution_capabilities(),
+        record_order_request=lambda *_a: None,
+    )
+
+
+def test_broker_reject_requeues_and_notifies_via_real_submitter() -> None:
+    """柜台明确拒单(空回执, 非异常穿透)仍须走止损重试+on_error(Task 3 回归).
+
+    Task 3 把 `BrokerOrderSubmitter.submit_order` 对可分类柜台失败的处置从
+    "异常穿透" 改成 "返回空 OrderReceipt"; `BrokerExecution.check_stop_triggers`
+    此前只在 `except Exception` 里做重试记账+on_error, 对空回执视而不见——本
+    用例用真实 submitter(而非上面 `_FailSub` 的桩异常)复现该链路, 锁住修复。
+    """
+    s = _S()
+    submitter = _real_submitter(_BrokerRejectingGateway())
+    ex = BrokerExecution(s, _Gw(), cast(BrokerStateCache, _Cache()), submitter)
+    ex.submit_order(
+        symbol="X",
+        side="Sell",
+        quantity=100,
+        order_type="StopMarket",
+        trigger_price=9.5,
+    )
+    ex.check_stop_triggers("X", last=9.4, high=9.6, low=9.3)
+    assert len(ex.get_open_orders("X")) == 1, "空回执应等价于提交失败, 重入 stop book"
+    assert len(s.errors) == 1
+    assert s.errors[0][0] == "stop_trigger"
