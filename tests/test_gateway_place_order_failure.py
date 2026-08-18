@@ -124,3 +124,104 @@ def test_exploding_classifier_is_treated_as_unknown() -> None:
     assert len(receipt) == 0
     assert strategy.rejected == []
     assert [source for _exc, source in errors] == ["order_submit"]
+
+
+class _Position:
+    """今仓/昨仓各 5 手的多头持仓, 用于把一笔平仓拆成两腿."""
+
+    symbol = "600000.SH"
+    direction = "long"
+    quantity = 10.0
+    available_quantity = 10.0
+    available_today_quantity = 5.0
+    available_yesterday_quantity = 5.0
+
+
+class _SecondLegFailsGateway:
+    """第一腿正常回单号, 第二腿抛柜台业务错误."""
+
+    def __init__(self, classify: Any) -> None:
+        self.placed: list[UnifiedOrderRequest] = []
+        self._classify = classify
+
+    def classify_order_error(self, exc: BaseException) -> Any:
+        return self._classify
+
+    def query_positions(self) -> list[Any]:
+        return [_Position()]
+
+    def place_order(self, req: UnifiedOrderRequest) -> str:
+        self.placed.append(req)
+        if len(self.placed) == 1:
+            return "broker-1"
+        raise RuntimeError("HTTP 400 [251020] 昨仓不可平")
+
+
+def _make_split_submitter(
+    gateway: Any, strategy: _Strategy, errors: list[tuple[Exception, str]]
+) -> BrokerOrderSubmitter:
+    """能力声明支持今昨拆腿的 submitter."""
+    capability = BrokerCapability(
+        broker_name="split-fake",
+        position_effect=True,
+        position_details=True,
+        supported_position_effects=(
+            "auto",
+            "open",
+            "close",
+            "close_today",
+            "close_yesterday",
+        ),
+    )
+    return BrokerOrderSubmitter(
+        trader_gateway=gateway,
+        strategy=strategy,
+        resolve_trader_capabilities=lambda _gw: capability,
+        next_client_order_id=lambda: "c1",
+        can_submit_client_order=lambda _cid: True,
+        sync_order_id_mapping=lambda _c, _b: None,
+        bind_order_owner=lambda _c, _b, _o: None,
+        notify_strategy_error=lambda _s, exc, source, _p: errors.append((exc, source)),
+        payload_field=lambda obj, name: getattr(obj, name, None),
+        get_execution_capabilities=lambda: capability.as_execution_capabilities(),
+        record_order_request=lambda *_a: None,
+    )
+
+
+def _submit_close(submitter: BrokerOrderSubmitter) -> Any:
+    """报一笔会被拆成 close_today + close_yesterday 两腿的平仓单."""
+    return submitter.submit_order(
+        symbol="600000.SH",
+        side="Sell",
+        quantity=10,
+        price=10.5,
+        order_type="Limit",
+        position_effect="close",
+    )
+
+
+def test_multi_leg_keeps_successful_leg_on_definite_reject() -> None:
+    """第二腿被柜台拒 → 回执仍带第一腿 id, 且失败腿有 Rejected 事件."""
+    strategy = _Strategy()
+    errors: list[tuple[Exception, str]] = []
+    gateway = _SecondLegFailsGateway(UnifiedErrorType.NON_RETRYABLE)
+    receipt = _submit_close(_make_split_submitter(gateway, strategy, errors))
+
+    assert len(gateway.placed) == 2, "应确实拆成了两腿并都尝试报出"
+    assert len(receipt) == 1, "已成功的第一腿必须保留在回执里, 否则策略无从撤它"
+    assert receipt.primary == "broker-1"
+    assert len(receipt.legs) == 1
+    assert len(strategy.rejected) == 1, "失败腿应有 Rejected 事件"
+
+
+def test_multi_leg_unknown_state_still_returns_partial_receipt() -> None:
+    """第二腿状态未知 → 回执同样保留第一腿, 但不谎报 Rejected."""
+    strategy = _Strategy()
+    errors: list[tuple[Exception, str]] = []
+    gateway = _SecondLegFailsGateway(UnifiedErrorType.RETRYABLE)
+    receipt = _submit_close(_make_split_submitter(gateway, strategy, errors))
+
+    assert len(receipt) == 1
+    assert receipt.primary == "broker-1"
+    assert strategy.rejected == [], "状态未知不得谎报拒单, 多腿也一样"
+    assert [source for _exc, source in errors] == ["order_submit"]

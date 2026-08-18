@@ -803,6 +803,9 @@ class BrokerOrderSubmitter:
         )
         broker_order_ids: list[str] = []
         legs: list[OrderLeg] = []
+        # 多腿单中途失败**不回滚已发出的腿**: 反手单的第一腿是平仓, 自动撤回反而
+        # 把风险敲回来; 且撤单确认是异步的, 那一腿可能已经成交,"回滚"并不真的能
+        # 回滚。改为 break 并返回带已成功腿的部分回执, 由策略自行决定撤还是留。
         for leg_index, (leg_position_effect, leg_quantity) in enumerate(order_legs):
             request = UnifiedOrderRequest(
                 client_order_id=client_order_ids[leg_index],
