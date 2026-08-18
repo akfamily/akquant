@@ -888,7 +888,15 @@ def set_log_level(level: Union[str, int]) -> None
 *   `on_cross_section(trading_date, timestamp)`: 横截面同周期调仓钩子。在框架看到当日首个“跨标的完整 bar 切片”后触发，每个交易日最多一次；与 `on_before_trading` 不同，它可以看到当日历史和当前账户快照，适合收盘价同周期调仓。调仓频率（日/周/月）在回调内用日历判断。
 *   `on_after_trading(trading_date, timestamp)`: 离开常规交易会话时触发；若先跨日则在下一事件补发。
 *   `on_portfolio_update(snapshot)`: 账户快照变化时触发。
-*   `on_error(error, source, payload=None)`: 用户回调抛异常时触发，默认触发后继续抛出。
+*   `on_error(error, source, payload=None)`: 用户回调抛异常时触发。是否在触发 `on_error`
+    后继续向上抛出，取决于 `error_mode`/`re_raise_on_error`（默认继续抛出）——这条规则适用于
+    `on_bar`/`on_tick`/`on_order`/`on_trade` 等经框架调度路径产生的普通回调异常，回测与实盘
+    （`broker_live`）下行为一致。但 `broker_live` 下由**柜台通信失败**触发的 `on_error`——包括
+    下单状态未知（`source="order_submit"`）、本地止损单重试失败（`"stop_trigger"`）、撤单失败
+    （`"order_cancel"`/`"order_cancel_all"`），以及经柜台推送分发的 `on_order`/`on_trade` 中用户
+    回调自身抛出的异常——一律只调用 `on_error` 后吞掉，**不受 `re_raise_on_error` 控制，也不会
+    继续向上抛出**（`python/akquant/live/_runner.py::_notify_strategy_error` /
+    `_safe_strategy_callback`）。
 *   `on_timer(payload: str)`: 定时器触发。
 *   `on_stop()`: 策略停止时触发。
 *   `on_train_signal(context)`: 滚动训练信号触发 (ML 模式)。
@@ -914,7 +922,10 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` 中 `get_history()`、`get_account()`、`equity` 等接口的可见数据窗口。
 *   `self.portfolio_update_eps`: 账户快照更新阈值，低于该变化量不触发 `on_portfolio_update`（默认 `0.0`）。
 *   `self.error_mode`: 错误处理模式，`"raise"` 或 `"continue"`（默认 `"raise"`）。
-*   `self.re_raise_on_error`: 用户回调异常后是否继续抛出（默认 `True`）。
+*   `self.re_raise_on_error`: 用户回调异常后是否继续抛出（默认 `True`）；仅对经框架调度的普通
+    回调异常生效（见上文 `on_error` 的范围说明）。`broker_live` 下由柜台通信失败触发的
+    `on_error`（`order_submit`/`stop_trigger`/`order_cancel`/`order_cancel_all` 等）不受此项
+    控制，恒不重抛。
 *   `self.ctx`: 策略上下文 (`StrategyContext`)，提供底层 API 访问。
 
 **交易方法:**

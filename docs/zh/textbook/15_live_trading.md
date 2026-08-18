@@ -296,6 +296,17 @@ akquant.configure_logging(
 此时触发的是 `on_error(exc, "order_submit", request)`，并在审计流水里记一条
 `order_submit_unknown`。这笔单的真实状态由下一轮 `sync_open_orders` 对账浮出。
 
+**例外：本地止损单没有这条"交给对账"的退路。** 止损/跟踪止损单不下发柜台，由框架
+本地盯价触发后再调用 `submit_order` 报出；若触发时提交遇到状态不可知（超时/断连），
+框架会把该止损单重新放回本地簿等下一次触发再试，最多重试 `MAX_STOP_SUBMIT_ATTEMPTS
+= 3` 次（`python/akquant/gateway/broker_execution.py` 的 `check_stop_triggers` /
+`_handle_stop_submit_failure`）。而每次重试都经 `submit_order` 且不带
+`client_order_id`，框架会为其生成一个**新的** `client_order_id`——柜台与中间件都无法
+用它去重。也就是说，超时后的重试本身就是一笔真实的重复委托，是框架自己立刻重下的
+单，而不是像普通订单那样"状态留给下一轮对账浮出"。这一行为与本次改动前对等（旧代码
+对止损单提交超时同样会重试 3 次），是否按分类区别对待（例如仅对确定的网络错误重试、
+对状态不可知则停止自动重试）目前仍是未做的产品决策，此处仅作为已知行为提示。
+
 **敏感脱敏（默认开启）。** 日志默认对密钥类字段（`password`/`token`/`api_key` 等）全掩码、对账户类字段（`user_id`/`account` 等）保留尾 4 位。这是 handler 层兜底——即便某处新增日志忘了脱敏，账号密钥也不会明文落盘；如需关闭设 `mask_sensitive=False`。
 
 **日志语言。** 日志消息默认英文（可搜索、可协作、可被告警/日志系统消费的通用契约），结构化字段（`event`/`side`/`price`）也恒为英文。如偏好中文控制台，设 `language="zh"`——它只把**控制台的订单审计行**渲染成中文，**文件与 JSON 审计流仍是英文**，因此 grep/对账/告警不会因语言分裂。`CRITICAL` 用于交易前置断连、runner 崩溃等系统级致命事件，建议单独接告警通道。
