@@ -841,7 +841,7 @@ Strategy base class. Users should inherit from this class and override callback 
 *   `on_tick(tick: Tick)`: Triggered when a Tick arrives.
 *   `on_order(order)`: Triggered when order state changes.
 *   `on_trade(trade)`: Triggered when trade report arrives.
-*   `on_reject(order)`: Triggered once when an order becomes `Rejected`.
+*   `on_reject(order)`: Triggered once when an order becomes `Rejected`. In live trading (`broker_live`), orders explicitly rejected by the broker are also reported through this callback — `buy()`/`sell()`/`order_target_*` **do not raise**. If the order's outcome is unknown because of a timeout or disconnect, the framework instead calls `on_error(error, "order_submit", request)` rather than faking a rejection.
 *   `on_expiry(event: Dict[str, Any])`: Triggered after an `expiry_date` driven settlement/removal is actually executed. Portfolio state is already updated when the callback runs. See `examples/49_on_expiry_demo.py` for a runnable example.
 *   `on_before_trading(trading_date, timestamp)`: Triggered once when the regular trading session starts each local day; on the default backtest path this session is usually exposed as `Continuous`. This callback follows a "previous trading day / previous snapshot only" visibility model.
 *   `on_pre_open(event: Dict[str, Any])`: Triggered once before the first regular event of each trading day. Use it for "pre-open decision, current open fill" workflows; default order semantics resolve to `NextOpen()`. See `examples/52_pre_open_demo.py`.

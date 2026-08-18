@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 破坏性变更
+
+- 实盘柜台拒单不再从 `buy()`/`sell()`/`order_target_*` 抛异常，改为返回空回执并触发
+  `on_reject`（与回测口径一致）。原先靠 `try/except` 捕获柜台错误的策略需改用 `on_reject`。
+
+### 修复
+
+- 实盘报单被柜台回绝时不再抛穿策略回调，改为落成 `Rejected` 委托事件 + `order_reject`
+  审计（`origin="broker"`）。
+- 报单超时/连接断开时不再谎报拒单，改为 `on_error` + `order_submit_unknown` 审计——
+  该情形下订单可能已在柜台，谎报拒单会诱导策略重复下单。
+- 多腿单（平今/平昨、反手）中途失败时保留已成功腿的回执，策略得以撤掉已发出的腿。
+- 撤单失败不再抛异常并中断整轮 `cancel_all_orders`，改为逐单隔离 + `order_cancel_failed`
+  审计；单笔失败不影响其余单撤销。
+
 ### Added
 - **`symbols` 里零数据的标的会发出告警**：白名单内的标的若全程没有任何行情事件（标的代码写错、数据源未覆盖、或所选时间范围内无交易），此前完全静默——回测照常跑完，结果里也看不出区别（`BacktestResult` 没有 `symbols`/`instruments` 属性，`trades_df` 为空时「没成交」与「没数据」无法区分）。现在能枚举输入集合的形态（`DataFrame`、`Dict[str, DataFrame]`、`List[Bar]`/`List[Tick]`）在运行前就逐标的告警；`DataFeed` 对象这种运行前无法枚举的形态由会话结束时的检查兜底；同一标的只报一次（运行前报过的不会在会话末重复报）。用 warning 不用 error：某标的在所选时间范围内确实无交易是合理场景。
 - **`on_bar` 与 `on_tick` 可同时触发（回测 + 实盘）**：引擎把 bar 与 tick 拆成两条并列的历史序列，此前二者共用一个缓冲区，tick 以退化 OHLC 写入会把历史 bar 挤出窗口——双流下 `get_history` 会静默返回混入 tick 价的错误序列。回测侧 `run_backtest(data=[Tick, ...], freq="1min")` 在照常投递 tick 的同时把它们聚合成 bar 投给 `on_bar`（`freq` 只在 `data` 为含 `Tick` 的列表时有意义，DataFrame 传 `freq` 会报错而非静默忽略）。实盘侧 klinedata 与 CTP 网关均新增 `emit_ticks` / `emit_bars`（`use_aggregator` 保留为兼容别名，按参数逐个回退——只显式传其一不会静默关掉另一路），双流下合成 bar 打区间结束戳以保证与 tick 混推时时间戳单调不倒退。

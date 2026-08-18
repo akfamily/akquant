@@ -879,7 +879,9 @@ def set_log_level(level: Union[str, int]) -> None
 *   `on_tick(tick: Tick)`: Tick 到达时触发。
 *   `on_order(order: Order)`: 订单状态更新时触发（如成交、取消、拒绝）。
 *   `on_trade(trade: Trade)`: 订单成交时触发。
-*   `on_reject(order: Order)`: 订单首次进入 `Rejected` 时触发一次。
+*   `on_reject(order: Order)`: 订单首次进入 `Rejected` 时触发一次。实盘（`broker_live`）下，柜台明确回绝的报单也经此回调回吐，`buy()`/`sell()`/
+    `order_target_*` **不抛异常**；若因超时/断连导致订单状态不可知，则改走
+    `on_error(error, "order_submit", request)`，不会伪造拒单。
 *   `on_expiry(event: Dict[str, Any])`: 到期结算回调。仅当引擎实际执行 `expiry_date` 驱动的到期结算/移除后触发；回调时账户状态已更新。示例见：`examples/49_on_expiry_demo.py`。
 *   `on_before_trading(trading_date, timestamp)`: 每个本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。该回调按“前一交易日/前一时点信息可见”的语义工作。
 *   `on_pre_open(event: Dict[str, Any])`: 每个交易日首个常规行情事件前触发一次。适合“盘前决策，本次 open 成交”；默认下单语义等价于 `NextOpen()`（下一根 open 成交）。示例见：`examples/52_pre_open_demo.py`。
