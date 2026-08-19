@@ -264,6 +264,33 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         if ret != 0:
             raise RuntimeError(f"ReqOrderAction failed with code={ret}")
 
+    def classify_order_error(self, exc: BaseException) -> str:
+        """将 CTP 异常分类为统一的失败类型.
+
+        CTP 的所有 ``insert_order``/``cancel_order`` 异常都是**本地错误**,
+        报文从未离开进程: CTP 真正的柜台拒单走 ``OnRspOrderInsert`` 异步回报,
+        不经异常通道。因此这里的所有异常都归类为 ``NON_RETRYABLE``(明确拒单),
+        而非 ``RETRYABLE``(状态未知)——报文确定没出去, 不会造成重复委托。
+
+        常见错误码(``ReqOrderInsert``/``ReqOrderAction`` 返回值):
+          - ``-2``: 未处理请求超过许可数(流控, 高频场景的常态)
+          - ``-3``: 每秒发送请求数超过许可数(流控)
+          - ``-1``: 网络连接失败(本地判定, 报文未出)
+          - 其他: API 未就绪/参数错误等
+
+        这是 ``gateway.order_errors.classify_gateway_error`` 探测的可选方法,
+        用 ``getattr`` 调用, CTP 不实现它时会保守归入状态未知并打 CRITICAL,
+        流控场景下会造成告警风暴——本方法消除该风暴。
+
+        :param exc: ``insert_order``/``cancel_order`` 抛出的异常
+        :return: ``"NON_RETRYABLE"``(确定拒单) 或 ``"RETRYABLE"``(状态未知,
+            本实现不返回该值, 保留以兼容协议)
+        """
+        from ...broker_models import UnifiedErrorType
+
+        # CTP 的异常都是本地错误, 全部归为明确拒单
+        return UnifiedErrorType.NON_RETRYABLE.value
+
     def query_account(self) -> dict[str, Any] | None:
         """Query the CTP trading account snapshot synchronously."""
         if not self.can_trade():
