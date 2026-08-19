@@ -156,6 +156,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **回测数据列表改为逐元素类型校验（破坏性）**：`run_backtest(data=[...])` 此前只检查首元素类型，`[Bar, "garbage"]` 会漏到 Rust 层抛出难以定位的错误。现在在 Python 层逐元素校验，抛 `TypeError` 并指名位置索引与实际类型；空列表抛 `ValueError`。
 
 ### Fixed
+- **并行参数优化在 worker 进程死亡时不再挂死，失败组合也不再静默丢失**。`run_grid_search(max_workers>1)`
+  原先用 `multiprocessing.Pool.imap`，遇到 worker 进程级死亡（OOM、被 OOM-killer 杀、
+  `os._exit`）会**永久挂起**——这是 CPython 的已知缺陷（[bpo-22393](https://bugs.python.org/issue22393)，
+  十余年未修），跑几百个组合的网格时表现为「优化跑了几小时没有任何输出也不退出」。
+  即便侥幸抛出异常，原代码 `except` 之后迭代器不再产出，**已提交但未取回的任务全部丢失**，
+  用户既拿不到结果也不知道丢了多少。
+
+    现改用 `concurrent.futures.ProcessPoolExecutor` + `as_completed` 逐 future 收结果：
+    进程死亡会抛 `BrokenExecutor`（标准库刻意的快速失败设计，见
+    [bpo-14148](https://bugs.python.org/issue14148)：worker 崩溃后队列与同步对象状态不可信，
+    故整池置 broken 而不尝试恢复），该异常被捕获后落成带 `error` 字段的 `OptimizationResult`
+    进入结果列表，**每个参数组合都有交代**。
+
+    **注意池语义**：一个 worker 异常终止后整池进入 broken 状态，同批**尚未执行**的任务会一并
+    失败（都落 error 列，不丢）。这不是「单任务失败其余照常跑完」——要做到那个需要池重建与
+    任务重投。**刻意不做**：调研 QuantConnect LEAN / vnpy / backtrader / backtesting.py /
+    PyAlgoTrade 后确认，量化框架**无一**做任务级重试，唯一商业级实现（LEAN）明确选择
+    「记录失败、继续、不重试」；且优化场景下 worker 死亡的主因是内存不足，同参数重试大概率
+    再次 OOM，只是把一次失败变成 N 次失败加 N 倍耗时。正确应对是调小 `max_workers` 或分批跑，
+    而这需要的正是下面那条汇总信息。
+
+    策略级异常（参数越界、数据不足、策略内部报错）的处理**未变**：一直由
+    `_run_single_backtest` 内部兜住并落 `error` 列，从来不经过这条路径。
+- **参数优化结束时汇总成功/失败数**。此前崩溃信息只逐条打 `logger.error`，几百个组合的网格里
+  会被淹没，用户无从判断「崩了 3 个」还是「崩了 200 个」——而这两种情况的应对完全不同。
+  现在收尾打一行 `优化完成: 成功 197, 失败 3 (worker 崩溃 3), 共 200 组, 耗时 412.5s`
+  （`worker 崩溃 N` 仅在确有崩溃时出现；`db_path` 跳过的历史结果不计入，只反映本轮实跑）。
+  失败占比 ≥50% 时追加一条 warning 指向排查方向——个别组合失败是正常的，过半失败几乎总意味着
+  策略或数据本身有问题，而不是参数不好。口径对齐 LEAN 的 `_completedBacktest` /
+  `_failedBacktest` 分列。单线程（`max_workers=1`）路径同样输出。
 - 实盘报单被柜台回绝时不再抛穿策略回调，改为落成 `Rejected` 委托事件 + `order_reject`
   审计（`origin="broker"`）。
 - 报单超时/连接断开时不再谎报拒单，改为 `on_error` + `order_submit_unknown` 审计——

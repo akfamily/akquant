@@ -11,12 +11,14 @@ import multiprocessing
 import pickle
 import threading
 import time
+from concurrent.futures import BrokenExecutor, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
 from logging.handlers import QueueHandler, QueueListener
 from typing import (
     Any,
+    Callable,
     Dict,
     List,
     Mapping,
@@ -554,6 +556,50 @@ def _save_result_to_db(
         logger.warning("Failed to save result to DB at %s: %s", db_path, e)
 
 
+# 失败占比超过这个比例时额外给一条 warning: 个别组合失败是正常的(参数越界、
+# 数据不足), 但过半失败几乎总意味着策略本身或数据有问题, 而不是参数不好。
+_HIGH_FAILURE_RATIO = 0.5
+
+
+def _log_optimization_summary(
+    results: List[OptimizationResult],
+    worker_crashed: int,
+    elapsed: float,
+) -> None:
+    """汇总本轮优化的成功/失败数, 收尾时打一行.
+
+    逐条 ``logger.error`` 在几百个组合的网格里会被淹没, 用户无从判断"崩了 3 个"
+    还是"崩了 200 个" —— 而这两种情况的应对完全不同(前者忽略, 后者要查策略或
+    调小 ``max_workers``)。这里对齐 LEAN 的 ``_completedBacktest`` /
+    ``_failedBacktest`` 分列口径。
+
+    :param results: 本轮新产生的结果(不含 ``db_path`` 跳过的历史结果)
+    :param worker_crashed: 其中因 worker 进程级死亡而失败的个数
+    :param elapsed: 本轮耗时(秒)
+    """
+    total = len(results)
+    if total == 0:
+        return
+    failed = sum(1 for r in results if r.error is not None)
+    detail = f" (worker 崩溃 {worker_crashed})" if worker_crashed else ""
+    logger.info(
+        "优化完成: 成功 %s, 失败 %s%s, 共 %s 组, 耗时 %.1fs",
+        total - failed,
+        failed,
+        detail,
+        total,
+        elapsed,
+    )
+    if failed and failed / total >= _HIGH_FAILURE_RATIO:
+        logger.warning(
+            "失败占比 %.0f%% (%s/%s) 偏高, 建议检查策略与数据; "
+            "若失败集中在 worker 崩溃, 多为内存不足, 可调小 max_workers 或分批优化。",
+            failed / total * 100,
+            failed,
+            total,
+        )
+
+
 def run_grid_search(
     strategy: Type[Strategy],
     param_grid: Mapping[str, Sequence[Any]],
@@ -721,6 +767,7 @@ def run_grid_search(
             "Running optimization for %s parameter combinations...",
             total_combinations,
         )
+        optimization_started_at = time.time()
 
         # 2. 准备任务
         tasks = []
@@ -741,6 +788,7 @@ def run_grid_search(
 
         # 如果只有一个任务或 worker=1，直接运行
         # (除非设置了 timeout，需要线程支持，仍走单线程逻辑)
+        worker_crashed = 0
         if max_workers == 1 or total_combinations == 1:
             for task in tqdm(tasks, desc="Optimizing"):
                 result = _run_single_backtest(task)
@@ -756,8 +804,7 @@ def run_grid_search(
             _assert_parallel_pickleable(strategy, backtest_kwargs, warmup_calc)
             listener: Optional[QueueListener] = None
             log_queue: Any = None
-            pool_initializer: Optional[Any] = None
-            pool_init_args: tuple[Any, ...] = ()
+            pool_initializer: Optional[Callable[[Any], object]] = None
             worker_log_forwarding_active = False
             if forward_worker_logs:
                 root_logger = get_logger()
@@ -773,7 +820,6 @@ def run_grid_search(
                     )
                     listener.start()
                     pool_initializer = _init_worker_logging
-                    pool_init_args = (log_queue,)
                     worker_log_forwarding_active = True
                 else:
                     logger.warning(
@@ -785,33 +831,95 @@ def run_grid_search(
                     "max_workers>1 uses subprocess workers. Strategy self.log() "
                     "output may not be visible in the main process console."
                 )
+            # 构造参数按需组装 + cast: `max_tasks_per_child` 是 Python 3.11 新增的
+            # keyword-only 参数, 而本项目 mypy 目标为 python_version="3.10", 该版本的
+            # typeshed 存根三个 overload 都不含它 —— 直接传会报 call-overload, 且无论
+            # 怎么改调用形式都匹配不上(不是调用写法问题, 是目标版本约束)。运行时按
+            # requires-python 只会跑在 3.11+ 上, 参数本身有效。
+            executor_kwargs: Dict[str, Any] = {
+                "max_workers": max_workers,
+                "max_tasks_per_child": max_tasks_per_child,
+            }
+            if pool_initializer is not None:
+                executor_kwargs["initializer"] = pool_initializer
+                executor_kwargs["initargs"] = (log_queue,)
+            executor_factory = cast(Any, ProcessPoolExecutor)
             try:
-                with multiprocessing.Pool(
-                    processes=max_workers,
-                    maxtasksperchild=max_tasks_per_child,
-                    initializer=pool_initializer,
-                    initargs=pool_init_args,
-                ) as pool:
-                    iterator = pool.imap(_run_single_backtest, tasks)
-                    try:
-                        for result in tqdm(
-                            iterator, total=total_combinations, desc="Optimizing"
-                        ):
-                            new_results.append(result)
-                            if db_path:
-                                _save_result_to_db(db_path, strategy.__name__, result)
-                    except Exception as e:
-                        logger.error(
-                            "Error during optimization (Worker Crash/OOM?): %s",
-                            e,
-                        )
-                        pass
+                with executor_factory(**executor_kwargs) as executor:
+                    # Submit 所有任务，保留 task 索引用于错误时重建 OptimizationResult
+                    futures = {
+                        executor.submit(_run_single_backtest, task): idx
+                        for idx, task in enumerate(tasks)
+                    }
+
+                    # 按完成顺序收集结果（非提交顺序）
+                    completed = 0
+                    with tqdm(total=total_combinations, desc="Optimizing") as pbar:
+                        for future in as_completed(futures):
+                            task_idx = futures[future]
+                            task = tasks[task_idx]
+                            task_params = cast(Dict[str, Any], task.get("params", {}))
+                            try:
+                                result = future.result()
+                                new_results.append(result)
+                                if db_path:
+                                    _save_result_to_db(
+                                        db_path, strategy.__name__, result
+                                    )
+                            except BrokenExecutor as e:
+                                # Worker 进程级死亡（OOM/os._exit/被杀）
+                                worker_crashed += 1
+                                logger.error(
+                                    "Worker crashed on task %d (params=%s): %s",
+                                    task_idx,
+                                    task_params,
+                                    e,
+                                )
+                                # 将 worker 死亡落成失败结果，不再静默丢弃
+                                error_result = OptimizationResult(
+                                    params=task_params,
+                                    metrics={
+                                        "error": f"Worker crashed: {e}",
+                                        "sharpe_ratio": -999.0,
+                                        "total_return": -999.0,
+                                    },
+                                    duration=0.0,
+                                    error=f"BrokenExecutor: {e}",
+                                )
+                                new_results.append(error_result)
+                            except Exception as e:
+                                # 其他异常(理论上不应到达, _run_single_backtest 已兜住)
+                                logger.error(
+                                    "Unexpected error on task %d (params=%s): %s",
+                                    task_idx,
+                                    task_params,
+                                    e,
+                                    exc_info=True,
+                                )
+                                error_result = OptimizationResult(
+                                    params=task_params,
+                                    metrics={
+                                        "error": str(e),
+                                        "sharpe_ratio": -999.0,
+                                        "total_return": -999.0,
+                                    },
+                                    duration=0.0,
+                                    error=str(e),
+                                )
+                                new_results.append(error_result)
+                            finally:
+                                completed += 1
+                                pbar.update(1)
             finally:
                 if listener is not None:
                     listener.stop()
                 if log_queue is not None:
                     log_queue.close()
                     log_queue.join_thread()
+
+        _log_optimization_summary(
+            new_results, worker_crashed, time.time() - optimization_started_at
+        )
     else:
         logger.info("All tasks completed. Returning existing results.")
 
