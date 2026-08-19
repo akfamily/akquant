@@ -38,7 +38,15 @@ class MarketGateway(Protocol):
 
 
 class TraderGateway(Protocol):
-    """Trader gateway protocol."""
+    """Trader gateway protocol.
+
+    可选方法 ``classify_order_error(exc) -> UnifiedErrorType``:
+        下单/撤单调用抛异常时, 核心用它区分「柜台明确回绝」(``RISK_REJECTED`` /
+        ``NON_RETRYABLE`` → 回吐 Rejected 事件)与「订单状态不可知」(``RETRYABLE``
+        → 只发 on_error, 不谎报拒单)。**不实现则一律按状态未知处理**, 这是安全
+        缺省: 超时往往发生在报文已发出之后, 谎报拒单会诱导策略重下单。
+        见 ``gateway/order_errors.py``。
+    """
 
     def connect(self) -> None:
         """Connect trader channel."""

@@ -96,8 +96,13 @@ def record_reject(
     side: Optional[str] = None,
     quantity: float | None = None,
     trace_id: Optional[str] = None,
+    origin: str = "local",
 ) -> None:
-    """Audit a locally-rejected order (never reached the broker)."""
+    """Audit a rejected order.
+
+    ``origin="local"``: 本地校验/风控拒的, 单从未到达柜台。
+    ``origin="broker"``: 报文已发出、被柜台明确回绝。
+    """
     _safe_emit(
         logging.WARNING,
         build_order_audit_extra(
@@ -109,6 +114,7 @@ def record_reject(
             side=side,
             quantity=quantity,
             trace_id=trace_id,
+            origin=origin,
         ),
     )
 
@@ -128,6 +134,64 @@ def record_cancel(
             strategy_id=strategy_id,
             symbol=symbol,
             order_id=broker_order_id,
+            trace_id=trace_id,
+        ),
+    )
+
+
+def record_submit_unknown(
+    *,
+    strategy_id: Optional[str],
+    symbol: str,
+    side: str,
+    quantity: float,
+    price: float | None,
+    client_order_id: str,
+    reason: str,
+    trace_id: Optional[str] = None,
+) -> None:
+    """Audit an order whose broker-side fate is unknown (timeout/transport).
+
+    与 ``record_reject`` 刻意分开: 这笔单**可能已经在柜台里**, 对账时必须能和
+    「确定没报出去」的拒单区分开, 否则会按拒单口径重下单。
+    """
+    _safe_emit(
+        logging.WARNING,
+        build_order_audit_extra(
+            event="order_submit_unknown",
+            strategy_id=strategy_id,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            client_order_id=client_order_id,
+            reason=reason,
+            trace_id=trace_id,
+        ),
+    )
+
+
+def record_cancel_failed(
+    *,
+    broker_order_id: str,
+    reason: str,
+    symbol: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
+) -> None:
+    """Audit a cancel request the broker refused or that failed in transport.
+
+    ``record_cancel``(意图)照常在调用前发出, 本函数补的是**结果**。两条成对,
+    审计流水里才能看出「撤过、但没撤成」。
+    """
+    _safe_emit(
+        logging.WARNING,
+        build_order_audit_extra(
+            event="order_cancel_failed",
+            strategy_id=strategy_id,
+            symbol=symbol,
+            order_id=broker_order_id,
+            reason=reason,
             trace_id=trace_id,
         ),
     )

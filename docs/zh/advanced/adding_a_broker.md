@@ -97,6 +97,47 @@ broker 共享的管件：回调注册、id 反查表、以及默认的
   `sync_today_trades()`（空列表）—— 如果 broker 支持断线补齐，覆盖这两个
   方法即可。
 
+可选实现：
+
+- `classify_order_error(exc: BaseException) -> UnifiedErrorType` —— 把
+  `place_order`/`cancel_order` 抛出的异常分类成「柜台明确回绝」还是「订单状态
+  不可知」，供核心决定该回吐拒单事件（`on_reject` + `record_reject`）还是只报
+  「状态未知」（`on_error(exc, "order_submit", request)` + CRITICAL 日志，绝不
+  伪造拒单）。这是唯一懂本 broker 错误码语义的地方——核心仓不 import 插件，
+  分类知识只能留在这里。
+
+  **保守缺省：不实现 = 一律按状态未知处理。** `classify_order_error` 是可选
+  方法，核心用 `getattr` 探测；未实现、返回值无法识别为
+  `UnifiedErrorType`、或该方法自身抛错，都会被
+  `python/akquant/gateway/order_errors.py::classify_gateway_error` 归入
+  `RETRYABLE`（状态未知），不会二次崩溃。这个缺省是刻意保守的：宁可让策略多
+  等一轮 `sync_open_orders` 对账，也不谎报「这单没报出去」。
+
+  **不实现的实际代价不是「行为不变」。** 未实现该方法时，本 broker 的**每一笔
+  普通拒单**（如「资金不足」「委托价不符合最小变动单位」这类柜台明确回绝、
+  订单确定不存在的场景）都会被当成状态未知处理——永远不会触发 `on_reject`，
+  而是每次都触发 `on_error` + CRITICAL 日志。这正是本次改动要修的症状，插件
+  作者不实现它就会在自己的 broker 上原样复现。
+
+  以 `akquant-middleware` 的实现为例（`src/akquant_middleware/adapter.py`）：
+
+  ```python
+  def classify_order_error(self, exc: BaseException) -> UnifiedErrorType:
+      """400 业务拒绝 / 409 幂等冲突 / 422 参数校验失败：中间件在柜台侧已把
+      这笔单判掉了，订单确定不存在 → NON_RETRYABLE。
+
+      5xx 与 httpx 传输异常（超时、连接断开）：报文可能已经转给柜台，是否
+      成单不可知 → RETRYABLE，核心据此不会谎报拒单。
+      """
+      if isinstance(exc, MiddlewareApiError) and exc.status_code in (400, 409, 422):
+          return UnifiedErrorType.NON_RETRYABLE
+      return UnifiedErrorType.RETRYABLE
+  ```
+
+  `UnifiedErrorType` 的取值与「哪些分类会被视为明确拒单」定义在
+  `python/akquant/gateway/order_errors.py`（`_DEFINITE_REJECT_TYPES` 目前只收
+  `RISK_REJECTED` 与 `NON_RETRYABLE`；其余含未知一律按状态未知处理）。
+
 ## 4. `place_order` 里的路由与 id 映射
 
 `UnifiedOrderRequest` 里的 `asset_type` 用来在 `place_order` 内部路由到不同

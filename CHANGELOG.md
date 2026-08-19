@@ -91,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 更容易踩坑的是**累积状态**——计数器、缓存、已建仓记录等 per-object 状态若直接搬进 `on_start` 顶层，热启动时会被静默重新初始化，破坏跨阶段的连续性。这类初始化请收在 `if not self.is_restored:` 分支内；与运行历史无关的纯重建逻辑（如重新注册指标对象本身）才适合放在 `on_start` 顶层无条件执行。完整用法见 `examples/21_warm_start_demo.py`、`docs/zh/guide/strategy.md` §6.4。
 
 ### Changed
+- **（破坏性）实盘柜台拒单不再从 `buy()`/`sell()`/`order_target_*` 抛异常**：改为返回空回执并触发
+  `on_reject`（与回测口径一致）。原先靠 `try/except` 捕获柜台错误的策略需改用 `on_reject`。
 - **（破坏性）`run_backtest(symbols=...)` / `run_from_checkpoint(symbols=...)` 从「注册哪些合约」改为「只跑哪些标的」（`__engine_rule_version__` 升至 1.5.0）**：此前不同数据输入形态对 `symbols` 的处理并不一致——`DataFrame`（含 `symbol` 列）、`Dict[str, DataFrame]`、`DataFeedAdapter` 三种形态本就按 `symbols` 过滤数据；但 `List[Bar]` / `List[Tick]` 与直接传入的 `DataFeed` 对象两种形态完全不过滤，数据里出现的任何标的都会正常触发 `on_bar` / `on_tick`，与传的 `symbols` 无关。这不只是「多算了几笔」——合约注册循环只遍历 `symbols`，于是这两种形态下数据里多出来的标的会带着**默认合约参数**参与撮合：期货乘数按 1 算（真实常为 10~300，持仓市值与权益错出几个数量级）、期货风控被整个跳过。极端情形是把全市场 `List[Bar]` 数据喂给策略而 `symbols` 只列了几个标的，其余标的照样建仓、照样计入统计。现在传了 `symbols` 就只有白名单内的标的进入引擎，五种输入形态行为统一；**不传 `symbols` 时行为完全不变**（沿用「数据即订阅」）。白名单为 `symbols` ∪ `config.instruments` ∪ `__init__` 阶段 `subscribe()` 已订阅的标的。**影响**：传了 `symbols` 的多标的回测结果会变（原先混进来的标的不再参与撮合与统计）。显式传空集合改为报错（那样会得到一个不放行任何标的的空回测，而不是静默退化为不过滤）。实盘不受影响——网关只推送已订阅的标的，「数据即订阅」在实盘天然成立。**迁移提示**：改动前 `symbol`/`symbols` 的签名默认值就是字面量 `"BENCHMARK"`（本仓库个别热启动示例也这么显式写过）。升级后显式传入的值一律按真实过滤条件处理，不再等价于「未传」，且不同数据形态下会向**相反方向**出错——`List[Bar]` / `DataFeed` 形态因数据里没有标的字面量等于 `"BENCHMARK"`，白名单谁都不放行，回测直接空跑（只有一条 WARNING）；`DataFrame` / `Dict[str, DataFrame]` 形态则反而完全不过滤。升级方式：把显式的 `symbols="BENCHMARK"` 直接**删掉（省略该参数）**。
 - **（破坏性）传了 `symbols` 后，`on_start` 里 `subscribe()` 白名单外的标的会抛 `ValueError`**：时序上无法自动并入——`Engine::run` 内部先调 `on_start`，而数据加载与 `add_data` 发生在 `run()` 之前，前置过滤执行时 `_subscriptions` 尚为空。且「声明只跑 X，又订阅 Y」本身自相矛盾，报错比静默择一更清晰。迁移：把该标的加进 `symbols`，或去掉这次 `subscribe`。不传 `symbols` 时 `subscribe()` 不受任何约束；实盘的 `subscribe()` 是正常的动态订阅手段，同样不校验。
 - **（破坏性）实盘网关 `Tick.volume` 语义改为单笔量，与回测口径对齐**：CTP、klinedata 两个行情网关此前把柜台/上游推的**当日累计成交量**原样塞进 `Tick.volume`，而回测侧 `Tick.volume` 一直是单笔量——同一策略读 `tick.volume`，回测和实盘拿到的量级能差出几个数量级，且是**静默**的，不报错也不告警。现在两个网关都按 symbol 记录上一次累计量并换算成单笔量（差分规则：`delta = 本次累计量 - 上一次累计量`；跨日重置/断线重连导致的负差分退回 `delta = 本次累计量`，因为此时它本身就约等于当日第一笔的单笔量）。**若你此前为了对齐语义已经自行加了「累计量转单笔量」的临时补丁，升级后必须移除，否则会被双重换算。** 分工未变：喂给内部 `BarAggregator`（`freq` 聚合 tick 为 bar 时用到）的仍是原始累计量（其 `volume_is_cumulative=True` 自己会处理），只有网关推给 `on_tick` / `add_tick` 的 `Tick.volume` 改成单笔量。**已知代价**：进程盘中启动时，某 symbol 收到的第一帧无法得知上一次累计量，换算规则记 `delta = 0`（而非误用累计量冒充单笔量），若策略里有「`volume == 0` 即跳过」式的防御逻辑，会连带跳过每个 symbol 的第一笔行情。
@@ -154,6 +156,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **回测数据列表改为逐元素类型校验（破坏性）**：`run_backtest(data=[...])` 此前只检查首元素类型，`[Bar, "garbage"]` 会漏到 Rust 层抛出难以定位的错误。现在在 Python 层逐元素校验，抛 `TypeError` 并指名位置索引与实际类型；空列表抛 `ValueError`。
 
 ### Fixed
+- 实盘报单被柜台回绝时不再抛穿策略回调，改为落成 `Rejected` 委托事件 + `order_reject`
+  审计（`origin="broker"`）。
+- 报单超时/连接断开时不再谎报拒单，改为 `on_error` + `order_submit_unknown` 审计——
+  该情形下订单可能已在柜台，谎报拒单会诱导策略重复下单。
+- 本地止损单在柜台返回「状态未知」（超时/断连）时不再自动重试。此前每次重试都会生成新的
+  client_order_id，柜台无从去重，若报文其实已经到达柜台即造成真实的重复委托；现改为放弃该单并打
+  CRITICAL + `on_error(..., "stop_trigger", ...)`。柜台明确拒单仍照旧重试（订单确定不存在）。
+- `OrderReceipt` 新增只读字段 `failure`（`None` / `"rejected"` / `"unknown"`），使调用方能区分空回执
+  是「无需交易」、「订单确定不存在」还是「状态不可知」。
+- 多腿单（平今/平昨、反手）中途失败时保留已成功腿的回执，策略得以撤掉已发出的腿。
+- 撤单失败不再抛异常并中断整轮 `cancel_all_orders`，改为逐单隔离 + `order_cancel_failed`
+  审计；单笔失败不影响其余单撤销。
 - **`instruments_config` 配了却在数据里找不到的标的会告警，不再静默丢弃**：合约快照与撮合层的合约表都按**数据里实际出现的** symbol 建，配置里 symbol 与数据对不上的条目会被完全静默丢弃，该标的回退到默认合约参数。最典型的撞法是数据用去后缀写法（`600487`）而配置写带后缀（`600487.SH`）：实测 `lot_size` 从配置的 100 变回默认 **1.0**（`tick_size` 恰好与股票默认值 0.01 相同，唯一露马脚的就是 `lot_size`），A 股下单数量随之不再整百，而用户以为配置已生效。现在运行前会点名这些标的、说明后果并列出数据里实际出现的标的供比对；冷启动（`run_backtest`）与热启动（`run_from_checkpoint`）共用同一检查。它与既有的三个集合（`filtered_out_symbols` 主动排除 / `symbols` 里有但数据没有 / adapter 泄漏）互不相交——这一条比的是「配置 vs 数据」，与 `symbols` 白名单无关，因此不受是否显式传 `symbols` 影响；`DataFeed` 对象输入无从枚举标的，跳过检查。
 - **`on_order` 不再重复推送同一订单的同一状态**：`check_order_events` 每个 bar/tick 事件都会重扫在途与终态订单，而 `_emit_order_callback` 对 `on_order` 是**无条件调用**（`on_reject` 早有 `_framework_rejected_order_ids` 去重，`on_order` 没有等价物）。于是一张单只要还留在 `ctx.recent_rejected_orders` / `ctx.orders` 里，它每一拍都会再触发一次 `on_order`——表现为「回调全量推送」「同一张单跨交易日反复出现，看起来盘后还在推新回报」，写在 `on_order` 里的逻辑会被反复误触发。现在按**状态指纹**去重：键为「订单号 + 状态 + 已成交量 + 成交均价 + 拒单原因」，**刻意不含时间戳**——含 `updated_at` / `timestamp_ns` 的键每次重推都会变、去重完全失效；而只按订单号去重又会把 `New → PartiallyFilled → Filled` 这些真实状态推进整批吞掉。去重缓存有界（FIFO，上限 5 万条，模式与成交侧 `remember_trade_key` 一致），且**不随 checkpoint 落盘**：热启动后宁可把当前订单状态重推一轮，也不要因旧 key 残留而吞掉恢复后的第一次状态通报。
 - **实盘会话因错误中止时，收尾摘要不再自称 "Manual Stop"**：策略回调抛异常时 `run_live` 会打 `CRITICAL` + traceback 并停止事件处理（设计如此，实盘不把异常继续上抛），但紧随其后的摘要标题此前硬编码为 `TRADING SUMMARY (Manual Stop)`——一次因故障中止的会话看起来像正常手动停止，而那条 `CRITICAL` 往往已被几十行日志淹没。现在该情形下标题为 `TRADING SUMMARY (ABORTED ON ERROR)`；正常结束与手动中断（含 `duration` 到期）的输出保持不变。

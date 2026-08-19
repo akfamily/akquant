@@ -841,14 +841,24 @@ Strategy base class. Users should inherit from this class and override callback 
 *   `on_tick(tick: Tick)`: Triggered when a Tick arrives.
 *   `on_order(order)`: Triggered when order state changes.
 *   `on_trade(trade)`: Triggered when trade report arrives.
-*   `on_reject(order)`: Triggered once when an order becomes `Rejected`.
+*   `on_reject(order)`: Triggered once when an order becomes `Rejected`. In live trading (`broker_live`), orders explicitly rejected by the broker are also reported through this callback — `buy()`/`sell()`/`order_target_*` **do not raise**. If the order's outcome is unknown because of a timeout or disconnect, the framework instead calls `on_error(error, "order_submit", request)` rather than faking a rejection.
 *   `on_expiry(event: Dict[str, Any])`: Triggered after an `expiry_date` driven settlement/removal is actually executed. Portfolio state is already updated when the callback runs. See `examples/49_on_expiry_demo.py` for a runnable example.
 *   `on_before_trading(trading_date, timestamp)`: Triggered once when the regular trading session starts each local day; on the default backtest path this session is usually exposed as `Continuous`. This callback follows a "previous trading day / previous snapshot only" visibility model.
 *   `on_pre_open(event: Dict[str, Any])`: Triggered once before the first regular event of each trading day. Use it for "pre-open decision, current open fill" workflows; default order semantics resolve to `NextOpen()`. See `examples/52_pre_open_demo.py`.
 *   `on_cross_section(trading_date, timestamp)`: Cross-sectional same-cycle rebalance hook that runs after the first complete cross-symbol bar slice of the trading day, at most once per trading day. Unlike `on_before_trading`, it can see the current day's bar history and current account snapshot, and is intended for same-cycle close-style rebalances. Rebalance cadence (daily/weekly/monthly) is decided with a calendar check inside the hook.
 *   `on_after_trading(trading_date, timestamp)`: Triggered when leaving the regular trading session, or replayed on next event after day rollover.
 *   `on_portfolio_update(snapshot)`: Triggered when cash/equity/position snapshot changes.
-*   `on_error(error, source, payload=None)`: Triggered when user callback raises, then exception is re-raised by default.
+*   `on_error(error, source, payload=None)`: Triggered when a user callback raises. Whether the
+    original exception is re-raised after `on_error` depends on `error_mode`/`re_raise_on_error`
+    (re-raise by default) — this rule covers ordinary callback exceptions dispatched through the
+    framework (`on_bar`/`on_tick`/`on_order`/`on_trade`, etc.), and behaves the same in backtest
+    and live (`broker_live`). However, `on_error` calls triggered by a **broker communication
+    failure** under `broker_live` — unknown order-submit outcome (`source="order_submit"`), local
+    stop-order retry failure (`"stop_trigger"`), cancel failure (`"order_cancel"`/
+    `"order_cancel_all"`), and a user callback exception raised while handling a broker-pushed
+    `on_order`/`on_trade` — are always swallowed after calling `on_error`, **regardless of
+    `re_raise_on_error`, and never propagate further**
+    (`python/akquant/live/_runner.py::_notify_strategy_error` / `_safe_strategy_callback`).
 *   `on_timer(payload: str)`: Triggered by timer.
 *   `on_stop()`: Triggered when the strategy stops.
 *   `on_train_signal(context)`: Triggered by rolling training signal (ML mode).
@@ -874,7 +884,11 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
 *   `self.enable_precise_day_boundary_hooks`: Enable boundary timer based precise day hooks (default `False`). This switch changes trigger precision only; it does not change the visibility window of `get_history()`, `get_account()`, or `equity` inside `on_before_trading`.
 *   `self.portfolio_update_eps`: Snapshot threshold; changes below it skip `on_portfolio_update` (default `0.0`).
 *   `self.error_mode`: Error handling mode, `"raise"` or `"continue"` (default `"raise"`).
-*   `self.re_raise_on_error`: Whether to re-raise user callback exception after `on_error` (default `True`).
+*   `self.re_raise_on_error`: Whether to re-raise a user callback exception after `on_error`
+    (default `True`); only applies to ordinary callback exceptions dispatched through the
+    framework (see the scoping note under `on_error` above). `on_error` calls triggered by a
+    broker communication failure under `broker_live` (`order_submit`/`stop_trigger`/
+    `order_cancel`/`order_cancel_all`, etc.) ignore this setting and are never re-raised.
 
 **Trading Methods:**
 
@@ -886,6 +900,10 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
     *   Omitting `quantity` sizes the order via `self.sizer` (defaults to `FixedSize(100)`, replaceable with `set_sizer()`).
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: Sell (close long / open short). Same parameters as above, except that **omitting `quantity` does not use the sizer — it closes the whole position**: total position in backtest, available position under `broker_live` (China A-share T+1 freezes same-day buys, so sizing off the total gets the whole order rejected by the broker).
 *   When the resolved quantity is `<= 0`, no order is placed and an empty receipt is returned (`len(receipt) == 0`, `receipt.primary == ""`).
+*   `receipt.failure` (read-only, `None` / `"rejected"` / `"unknown"`): distinguishes the three causes of an empty receipt.
+    *   `None`: no trade was needed (e.g. resolved quantity `<= 0`) — not a failure.
+    *   `"rejected"`: the counterparty explicitly rejected the order; the order **definitely does not exist**, so retrying is safe.
+    *   `"unknown"`: submission hit a timeout/disconnect; the order status is **unknowable** (the request may have already reached the counterparty). Callers **must not** assume the order doesn't exist and resubmit — if it was in fact accepted, resubmitting creates a real duplicate order. Wait for the next `sync_open_orders` reconciliation to surface the true state instead.
 *   `short(symbol, quantity, price=None, ...)`: Short sell.
 *   `cover(symbol, quantity, price=None, ...)`: Buy to cover.
 *   `submit_order(..., order_type="StopTrail", trail_offset=..., trail_reference_price=None)`: Submit a trailing stop order. `trail_offset` must be greater than 0.

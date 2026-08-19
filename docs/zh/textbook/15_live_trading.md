@@ -286,6 +286,35 @@ akquant.configure_logging(
 
 高频策略实盘时强烈建议这样分流：控制台 `WARNING` 保持清爽，逐笔 INFO 审计单独落盘，避免刷屏又不丢凭证。
 
+**实盘柜台拒单不抛异常**
+
+柜台明确回绝一笔报单时（如「证券可用数量不足」「委托价不符合最小变动单位」），
+`buy()` / `sell()` / `order_target_*` **不会抛异常**，而是返回空回执并触发
+`on_reject`，与回测口径一致。请用 `on_reject` 感知拒单，不要依赖 `try/except`。
+
+若因超时或连接断开导致**订单状态不可知**（报文可能已到柜台），框架不会谎报拒单：
+此时触发的是 `on_error(exc, "order_submit", request)`，并在审计流水里记一条
+`order_submit_unknown`。这笔单的真实状态由下一轮 `sync_open_orders` 对账浮出。
+
+**例外：本地止损单的重试口径按失败原因区分，而非"一律交给对账"。** 止损/跟踪止损单
+不下发柜台，由框架本地盯价触发后再调用 `submit_order` 报出（见
+`python/akquant/gateway/broker_execution.py` 的 `check_stop_triggers` /
+`_handle_stop_submit_failure`），触发提交失败时按 `OrderReceipt.failure` 分流：
+
+- **柜台明确拒单**（`failure == "rejected"`，订单确定不存在）：仍会重试，最多
+  `MAX_STOP_SUBMIT_ATTEMPTS = 3` 次；每次重试都经 `submit_order` 生成一个**新的**
+  `client_order_id`，但因为订单确定未被柜台接受，这不构成重复委托。
+- **状态未知**（`failure == "unknown"`，超时/断连，报文可能已到柜台）：框架**不再自动
+  重试**——重试会生成新的 `client_order_id`，柜台无从去重，一旦报文其实已经到达柜台，
+  重试就是一笔真实的重复委托。因此该止损单会被直接放弃，打一条 CRITICAL 日志并触发
+  `on_error(exc, "stop_trigger", order)`，需要人工介入核实。
+
+**已知局限**：被放弃的这张止损单，如果报文其实已经到达柜台，其回报**无法**被自动关联
+回本地止损 id——`_record_stop_remap`（`python/akquant/live/_runner.py`）只在提交
+**成功**、拿到 `broker_order_id` 时才建立 `broker_order_id → local_id` 的映射；状态未知
+时根本没有 `broker_order_id` 可供记录。这笔回报之后会以一笔"来源不明"的普通订单面貌
+到达策略，而不会被识别成某张本地止损单的回报，需要人工在对账时核实。
+
 **敏感脱敏（默认开启）。** 日志默认对密钥类字段（`password`/`token`/`api_key` 等）全掩码、对账户类字段（`user_id`/`account` 等）保留尾 4 位。这是 handler 层兜底——即便某处新增日志忘了脱敏，账号密钥也不会明文落盘；如需关闭设 `mask_sensitive=False`。
 
 **日志语言。** 日志消息默认英文（可搜索、可协作、可被告警/日志系统消费的通用契约），结构化字段（`event`/`side`/`price`）也恒为英文。如偏好中文控制台，设 `language="zh"`——它只把**控制台的订单审计行**渲染成中文，**文件与 JSON 审计流仍是英文**，因此 grep/对账/告警不会因语言分裂。`CRITICAL` 用于交易前置断连、runner 崩溃等系统级致命事件，建议单独接告警通道。

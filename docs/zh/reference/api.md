@@ -879,14 +879,24 @@ def set_log_level(level: Union[str, int]) -> None
 *   `on_tick(tick: Tick)`: Tick 到达时触发。
 *   `on_order(order: Order)`: 订单状态更新时触发（如成交、取消、拒绝）。
 *   `on_trade(trade: Trade)`: 订单成交时触发。
-*   `on_reject(order: Order)`: 订单首次进入 `Rejected` 时触发一次。
+*   `on_reject(order: Order)`: 订单首次进入 `Rejected` 时触发一次。实盘（`broker_live`）下，柜台明确回绝的报单也经此回调回吐，`buy()`/`sell()`/
+    `order_target_*` **不抛异常**；若因超时/断连导致订单状态不可知，则改走
+    `on_error(error, "order_submit", request)`，不会伪造拒单。
 *   `on_expiry(event: Dict[str, Any])`: 到期结算回调。仅当引擎实际执行 `expiry_date` 驱动的到期结算/移除后触发；回调时账户状态已更新。示例见：`examples/49_on_expiry_demo.py`。
 *   `on_before_trading(trading_date, timestamp)`: 每个本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。该回调按“前一交易日/前一时点信息可见”的语义工作。
 *   `on_pre_open(event: Dict[str, Any])`: 每个交易日首个常规行情事件前触发一次。适合“盘前决策，本次 open 成交”；默认下单语义等价于 `NextOpen()`（下一根 open 成交）。示例见：`examples/52_pre_open_demo.py`。
 *   `on_cross_section(trading_date, timestamp)`: 横截面同周期调仓钩子。在框架看到当日首个“跨标的完整 bar 切片”后触发，每个交易日最多一次；与 `on_before_trading` 不同，它可以看到当日历史和当前账户快照，适合收盘价同周期调仓。调仓频率（日/周/月）在回调内用日历判断。
 *   `on_after_trading(trading_date, timestamp)`: 离开常规交易会话时触发；若先跨日则在下一事件补发。
 *   `on_portfolio_update(snapshot)`: 账户快照变化时触发。
-*   `on_error(error, source, payload=None)`: 用户回调抛异常时触发，默认触发后继续抛出。
+*   `on_error(error, source, payload=None)`: 用户回调抛异常时触发。是否在触发 `on_error`
+    后继续向上抛出，取决于 `error_mode`/`re_raise_on_error`（默认继续抛出）——这条规则适用于
+    `on_bar`/`on_tick`/`on_order`/`on_trade` 等经框架调度路径产生的普通回调异常，回测与实盘
+    （`broker_live`）下行为一致。但 `broker_live` 下由**柜台通信失败**触发的 `on_error`——包括
+    下单状态未知（`source="order_submit"`）、本地止损单重试失败（`"stop_trigger"`）、撤单失败
+    （`"order_cancel"`/`"order_cancel_all"`），以及经柜台推送分发的 `on_order`/`on_trade` 中用户
+    回调自身抛出的异常——一律只调用 `on_error` 后吞掉，**不受 `re_raise_on_error` 控制，也不会
+    继续向上抛出**（`python/akquant/live/_runner.py::_notify_strategy_error` /
+    `_safe_strategy_callback`）。
 *   `on_timer(payload: str)`: 定时器触发。
 *   `on_stop()`: 策略停止时触发。
 *   `on_train_signal(context)`: 滚动训练信号触发 (ML 模式)。
@@ -912,7 +922,10 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` 中 `get_history()`、`get_account()`、`equity` 等接口的可见数据窗口。
 *   `self.portfolio_update_eps`: 账户快照更新阈值，低于该变化量不触发 `on_portfolio_update`（默认 `0.0`）。
 *   `self.error_mode`: 错误处理模式，`"raise"` 或 `"continue"`（默认 `"raise"`）。
-*   `self.re_raise_on_error`: 用户回调异常后是否继续抛出（默认 `True`）。
+*   `self.re_raise_on_error`: 用户回调异常后是否继续抛出（默认 `True`）；仅对经框架调度的普通
+    回调异常生效（见上文 `on_error` 的范围说明）。`broker_live` 下由柜台通信失败触发的
+    `on_error`（`order_submit`/`stop_trigger`/`order_cancel`/`order_cancel_all` 等）不受此项
+    控制，恒不重抛。
 *   `self.ctx`: 策略上下文 (`StrategyContext`)，提供底层 API 访问。
 
 **交易方法:**
@@ -925,6 +938,12 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   不传 `quantity` 时按 `self.sizer` 计算下单量（默认 `FixedSize(100)`，可用 `set_sizer()` 替换）。
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: 卖出（平多/开空）。参数同上，但**不传 `quantity` 时不走 sizer，而是全平当前持仓**：回测取总持仓，`broker_live` 取可用持仓（A 股 T+1 下当日买入部分不可卖，按总量报单会被柜台整单拒绝）。
 *   解析后下单量 `<= 0` 时不报单，返回空回执（`len(receipt) == 0`、`receipt.primary == ""`）。
+*   `receipt.failure`（只读，`None` / `"rejected"` / `"unknown"`）：区分空回执的三种成因。
+    *   `None`：无需交易（如解析后下单量 `<= 0`），不代表任何失败。
+    *   `"rejected"`：柜台明确拒单，订单**确定不存在**，重试是安全的。
+    *   `"unknown"`：提交遇到超时/断连等异常，订单状态**不可知**（报文可能已到柜台）——
+        消费方**不得**假设订单不存在而重发，否则若报文其实已被柜台接受，重发就是一笔
+        真实的重复委托；应改为等待下一轮 `sync_open_orders` 对账浮出真实状态。
 *   `submit_order(..., order_type="StopTrail", trail_offset=..., trail_reference_price=None)`: 提交跟踪止损单。`trail_offset` 必须大于 0。
 *   `submit_order(..., order_type="StopTrailLimit", price=..., trail_offset=..., trail_reference_price=None)`: 提交跟踪止损限价单。`price` 与 `trail_offset` 必填。
 *   `submit_order(..., broker_options={...})`: 可选 broker 扩展参数透传（回测阶段仅记录在订单对象 `order.broker_options` 上，便于联调与审计）。

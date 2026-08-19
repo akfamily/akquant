@@ -14,7 +14,7 @@ from .local_stop_book import (
     is_stop_order_type,
     underlying_order_type,
 )
-from .order_audit import record_cancel
+from .order_audit import record_cancel, record_cancel_failed
 from .order_receipt import OrderReceipt
 
 logger = get_logger("gateway.live")
@@ -242,37 +242,114 @@ class BrokerExecution:
             if order.time_in_force is not None:
                 kwargs["time_in_force"] = order.time_in_force
             try:
-                broker_order_id = str(self._submitter.submit_order(**kwargs).primary)
-            except Exception as exc:  # noqa: BLE001
-                order.submit_attempts += 1
-                if order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
-                    self._stop_book.register(order)  # 重入簿, 下 tick 重试
-                self._notify_stop_error(exc, order)
+                receipt = self._submitter.submit_order(**kwargs)
+            except Exception as exc:  # noqa: BLE001 — 参数/能力校验等仍会在此抛出
+                self._handle_stop_submit_failure(order, exc)
                 continue
+            if not receipt.primary:
+                # submit_order 对可分类的柜台失败已不再抛异常(见
+                # order_submitter._handle_place_order_failure), 改回吐空回执并在
+                # `failure` 上标明成因。两类失败的处置**必须**不同:
+                #   rejected —— 订单确定不存在, 重试安全, 照旧走重试链路;
+                #   unknown  —— 报文可能已到柜台, 重试就是重复委托, 直接放弃。
+                unknown = receipt.failure == "unknown"
+                if unknown:
+                    logger.critical(
+                        "止损单提交状态未知, 放弃该单(不重试以免重复委托) "
+                        "local_id=%s symbol=%s side=%s quantity=%s",
+                        order.local_id,
+                        order.symbol,
+                        order.side,
+                        order.quantity,
+                    )
+                self._handle_stop_submit_failure(
+                    order,
+                    RuntimeError(
+                        "止损单提交失败: 柜台状态未知, 已放弃"
+                        if unknown
+                        else "止损单提交失败: 柜台拒单, 回执为空"
+                    ),
+                    retry=not unknown,
+                )
+                continue
+            broker_order_id = str(receipt.primary)
             if self._record_stop_remap is not None:
                 try:
                     self._record_stop_remap(order.local_id, broker_order_id)
                 except Exception:  # noqa: BLE001
                     pass  # remap 记录失败不影响触发/不中断 run
 
-    def _notify_stop_error(self, exc: Exception, order: Any) -> None:
-        """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""
+    def _handle_stop_submit_failure(
+        self, order: Any, exc: Exception, *, retry: bool = True
+    ) -> None:
+        """止损单提交失败的统一处置: 通知策略, 并按 ``retry`` 决定是否重入簿.
+
+        ``retry=False`` 用于「状态未知」: 报文可能已经到了柜台, 而每次重试都会
+        生成新的 client_order_id(``submit_order`` 未传该参数时的既有行为), 柜台
+        无从去重 —— 重试即真实的重复委托。此时宁可放弃这张止损单, 由 CRITICAL
+        与 ``on_error`` 叫人介入。
+        """
+        order.submit_attempts += 1
+        if retry and order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
+            self._stop_book.register(order)  # 重入簿, 下 tick 重试
+        self._notify_stop_error(exc, order)
+
+    def _notify_error(self, exc: Exception, source: str, payload: Any) -> None:
+        """通知策略 on_error(可选实现); 回调自身异常吞掉, 不影响主流程."""
         on_error = getattr(self._s, "on_error", None)
         if callable(on_error):
             try:
-                on_error(exc, "stop_trigger", order)
+                on_error(exc, source, payload)
             except Exception:  # noqa: BLE001
                 pass
+
+    def _notify_stop_error(self, exc: Exception, order: Any) -> None:
+        """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""
+        self._notify_error(exc, "stop_trigger", order)
+
+    def _handle_cancel_failure(
+        self, broker_order_id: str, exc: Exception, symbol: str | None = None
+    ) -> None:
+        """撤单失败的统一处置: 留结果审计 + on_error, 不抛.
+
+        **不做**「柜台拒绝即该单已终态、可当幂等成功」的推断: 核心无从判断这个
+        400 是"已经撤过了"还是"这单不允许撤"。撤不掉的单会在下一轮 recovery 的
+        `sync_open_orders` 里继续出现, 本身可自愈。
+
+        ``symbol`` 可选: `cancel_order(order_id)` 单笔路径只有 order_id, 拿不到
+        symbol, 不传即可(不为凑字段去反查); `cancel_all_orders` 有挂单快照,
+        必须传, 与配对的 `record_cancel` 意图记录口径一致, 否则同一笔撤单两条
+        审计记录里 symbol 一个有值一个恒为 None, 复盘时按 symbol 统计会漏数据。
+        """
+        reason = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "撤单失败 [%s]: %s",
+            broker_order_id,
+            reason,
+            exc_info=True,
+        )
+        record_cancel_failed(
+            broker_order_id=broker_order_id,
+            symbol=symbol,
+            strategy_id=self._owner_strategy_id(),
+            reason=reason,
+        )
+        self._notify_error(exc, "order_cancel", broker_order_id)
 
     def cancel_order(self, order_id: str) -> None:
         """取消指定订单(本地止损优先, 否则走柜台)."""
         if self._stop_book.cancel(str(order_id)):
             return
+        # 意图记录留在调用前: 撤单失败时"我们尝试过"本身是审计要的信息,
+        # 挪到调用后就丢了。结果由 _handle_cancel_failure 补一条。
         record_cancel(
             broker_order_id=str(order_id),
             strategy_id=self._owner_strategy_id(),
         )
-        self._gw.cancel_order(str(order_id))
+        try:
+            self._gw.cancel_order(str(order_id))
+        except Exception as exc:  # noqa: BLE001 撤单失败不炸策略, 见 _handle_cancel_failure
+            self._handle_cancel_failure(str(order_id), exc)
 
     def cancel_group(self, group_id: str) -> None:
         """撤销一个逻辑委托的全部腿（按 group_id）."""
@@ -284,15 +361,39 @@ class BrokerExecution:
                 self.cancel_order(str(broker_order_id))
 
     def cancel_all_orders(self, symbol: str | None = None) -> None:
-        """取消所有未完成订单(含本地止损)."""
+        """取消所有未完成订单(含本地止损); 单笔失败不中断整轮."""
         for order in self._stop_book.open_orders(symbol):
             self._stop_book.cancel(order.local_id)
-        for order in self._gw.sync_open_orders():
+        try:
+            open_orders = list(self._gw.sync_open_orders())
+        except Exception as exc:  # noqa: BLE001 查挂单失败不炸策略
+            logger.warning("cancel_all_orders 查挂单失败: %s", exc, exc_info=True)
+            self._notify_error(exc, "order_cancel_all", symbol)
+            return
+        attempted = 0
+        failed = 0
+        for order in open_orders:
             bid = getattr(order, "broker_order_id", "")
-            if symbol is not None and getattr(order, "symbol", None) != symbol:
+            order_symbol = getattr(order, "symbol", None)
+            if symbol is not None and order_symbol != symbol:
                 continue
-            if bid:
+            if not bid:
+                continue
+            attempted += 1
+            record_cancel(
+                broker_order_id=str(bid),
+                symbol=order_symbol,
+                strategy_id=self._owner_strategy_id(),
+            )
+            try:
                 self._gw.cancel_order(str(bid))
+            except Exception as exc:  # noqa: BLE001 逐单隔离: 一单失败不影响其余
+                failed += 1
+                self._handle_cancel_failure(str(bid), exc, symbol=order_symbol)
+        if failed:
+            logger.warning(
+                "cancel_all_orders: 尝试撤销 %s 单, %s 单失败", attempted, failed
+            )
 
     def capabilities(self) -> dict[str, Any]:
         """返回当前执行后端支持的能力标记."""

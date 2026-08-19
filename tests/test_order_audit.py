@@ -14,8 +14,10 @@ from akquant.gateway.broker_models import (
 from akquant.gateway.order_audit import (
     record_broker_event,
     record_cancel,
+    record_cancel_failed,
     record_reject,
     record_submit,
+    record_submit_unknown,
 )
 from akquant.log import (
     AKQuantFormatter,
@@ -408,3 +410,89 @@ class TestOrderAuditFile:
         assert trace_ids == {trace}  # one shared trace across submit + fill
         # grep-by-trace reconstructs the whole logical order
         assert [entry["event"] for entry in lines] == ["order_submit", "order_fill"]
+
+
+class TestBrokerFailureAudit:
+    """柜台交互失败的审计: 拒单可按 origin 区分, 状态未知与撤单失败各有事件码."""
+
+    def test_reject_defaults_to_local_origin(
+        self, capture_audit: _CaptureHandler
+    ) -> None:
+        """既有调用点不传 origin 时仍是本地拒单, 语义不变."""
+        record_reject(
+            strategy_id="alpha",
+            symbol="600000.SH",
+            client_order_id="C1",
+            reason="tick not aligned",
+        )
+        assert getattr(capture_audit.records[0], "origin") == "local"
+
+    def test_reject_can_be_marked_as_broker_origin(
+        self, capture_audit: _CaptureHandler
+    ) -> None:
+        """柜台拒单标 origin=broker, 审计消费方可与本地拒单区分开."""
+        record_reject(
+            strategy_id="alpha",
+            symbol="600000.SH",
+            client_order_id="C1",
+            reason="[251005] 证券可用数量不足",
+            origin="broker",
+        )
+        rec = capture_audit.records[0]
+        assert getattr(rec, "event") == "order_reject"
+        assert getattr(rec, "origin") == "broker"
+        assert rec.levelno == logging.WARNING
+
+    def test_record_submit_unknown(self, capture_audit: _CaptureHandler) -> None:
+        """状态未知是独立事件码, 不能混进 order_reject."""
+        record_submit_unknown(
+            strategy_id="alpha",
+            symbol="600000.SH",
+            side="Buy",
+            quantity=100,
+            price=10.5,
+            client_order_id="C1",
+            reason="ReadTimeout: 柜台无响应",
+        )
+        rec = capture_audit.records[0]
+        assert getattr(rec, "event") == "order_submit_unknown"
+        assert rec.levelno == logging.WARNING
+        assert "ReadTimeout" in str(getattr(rec, "reason"))
+
+    def test_record_cancel_failed(self, capture_audit: _CaptureHandler) -> None:
+        """撤单失败要留结果记录, 而不是只有调用前那条意图记录."""
+        record_cancel_failed(
+            broker_order_id="B1",
+            strategy_id="alpha",
+            reason="[251020] 委托状态错误不能撤单",
+        )
+        rec = capture_audit.records[0]
+        assert getattr(rec, "event") == "order_cancel_failed"
+        assert getattr(rec, "order_id") == "B1"
+        assert rec.levelno == logging.WARNING
+
+    def test_new_events_render_in_both_languages(self) -> None:
+        """新事件必须有中英模板, 否则审计行退化成裸事件码."""
+        unknown = build_order_audit_extra(
+            event="order_submit_unknown",
+            side="Buy",
+            quantity=100,
+            symbol="600000.SH",
+            client_order_id="C1",
+            reason="ReadTimeout",
+        )
+        assert render_audit_message("order_submit_unknown", unknown) != (
+            "order_submit_unknown"
+        )
+        assert render_audit_message("order_submit_unknown", unknown, "zh") != (
+            "order_submit_unknown"
+        )
+        failed = build_order_audit_extra(
+            event="order_cancel_failed", symbol="600000.SH", order_id="B1", reason="x"
+        )
+        assert render_audit_message("order_cancel_failed", failed) != (
+            "order_cancel_failed"
+        )
+        assert render_audit_message("order_cancel_failed", failed, "zh") != (
+            "order_cancel_failed"
+        )
