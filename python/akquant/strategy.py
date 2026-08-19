@@ -458,6 +458,7 @@ class Strategy:
     _framework_in_pre_open_phase: bool
     _framework_phase: Optional[str]
     _framework_history_cutoff_ns: Optional[int]
+    _framework_freq: Optional[str]
     _framework_use_previous_account_snapshot: bool
     _framework_previous_account_details: Optional[Dict[str, float]]
     _framework_emit_previous_portfolio_snapshot: bool
@@ -697,6 +698,7 @@ class Strategy:
         instance._framework_in_pre_open_phase = False
         instance._framework_phase = None
         instance._framework_history_cutoff_ns = None
+        instance._framework_freq = None  # 数据周期 ("1min"/"1d" 等), 拿不到时 None
         instance._framework_use_previous_account_snapshot = False
         instance._framework_previous_account_details = None
         instance._framework_emit_previous_portfolio_snapshot = False
@@ -3034,6 +3036,31 @@ class Strategy:
     @lot_size.setter
     def lot_size(self, value: Any) -> None:
         self._cost_config["lot_size"] = value
+
+    @property
+    def freq(self) -> Optional[str]:
+        """数据周期(只读; 如 ``"1min"`` / ``"5min"`` / ``"1d"``).
+
+        回测侧由 ``run_backtest(freq=)`` 设置, 实盘侧由行情网关回填
+        (klinedata 把自己的 ``period="M1"`` 转成 ``"1min"`` 注入, 表示统一用
+        回测侧口径, 策略代码无需按 broker 分支)。
+
+        **拿不到周期时为 ``None``**, 常见于: 纯 bar 回测未传 ``freq``、CTP 等
+        只有逐笔源的网关、trader-only broker(无行情通道)。此时**不从数据推断**
+        —— 相邻 bar 的时间戳差会被停牌、跨日、午休误导, 而一个错误的周期比
+        没有周期更危险(按周期折年化会静默错一个数量级)。请显式处理 ``None``。
+
+        :return: 周期字符串, 未知时 ``None``
+        """
+        return cast(Optional[str], getattr(self, "_framework_freq", None))
+
+    @freq.setter
+    def freq(self, value: Any) -> None:
+        raise AttributeError(
+            "freq 是只读属性(数据粒度由数据源决定, 策略改它不会真的改变粒度): "
+            "回测请用 run_backtest(freq='1min'), "
+            "实盘请用 run_live(gateway_options={'period': 'M1'})。"
+        )
 
     def order_target(
         self,

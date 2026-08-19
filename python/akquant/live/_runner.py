@@ -488,6 +488,9 @@ class LiveRunner:
         self._configure_strategy_slots(
             strategy_instance, slot_strategy_instances, effective_strategy_id
         )
+        self._inject_data_freq(
+            [strategy_instance, *slot_strategy_instances.values()], bundle
+        )
         self._attach_indicator_stream(
             [strategy_instance, *slot_strategy_instances.values()]
         )
@@ -516,9 +519,10 @@ class LiveRunner:
             self._apply_time_limit(strategy_instance, duration)
 
         # 有界会话: broker 在 metadata 声明预期事件总数时, 事件放完即结束。
-        # 这是 runner 唯一读取 bundle.metadata 的地方; 键名不含具体 broker 名,
-        # 任何有界 live 数据源均可复用。duration 仍作安全网: 若该总数因故永远
-        # 达不到(例如数据含引擎会丢弃的事件), 墙钟兜底避免挂死。
+        # 键名不含具体 broker 名, 任何有界 live 数据源均可复用(另一个读
+        # bundle.metadata 的地方是 _inject_data_freq 的 "freq" 键)。duration 仍作
+        # 安全网: 若该总数因故永远达不到(例如数据含引擎会丢弃的事件), 墙钟兜底
+        # 避免挂死。
         bounded_total = 0
         if bundle.metadata:
             try:
@@ -722,6 +726,41 @@ class LiveRunner:
             self.broker,
             extra=self._runner_log_extra(phase="gateway"),
         )
+
+    def _inject_data_freq(self, targets: list[Strategy], bundle: Any) -> None:
+        """把行情网关声明的数据周期注入 ``self.freq``(只读属性).
+
+        周期从 ``GatewayBundle.metadata['freq']`` 取, 由各 broker 的 builder 回填
+        (klinedata 把自己的 ``period="M1"`` 转成回测侧口径 ``"1min"``)。表示统一用
+        回测侧写法, 策略代码因此无需按 broker 写兼容分支 —— 这是把转换放在网关侧
+        而非策略侧的理由。
+
+        **没有声明就保持 ``None``**: CTP 等只有逐笔源的网关、trader-only broker
+        (无行情通道)都属于这种情形。此处刻意不做任何推断或兜底默认值——错误的
+        周期比未知的周期更危险(按周期折年化会静默错一个数量级)。
+
+        :param targets: 主策略与各槽位策略实例
+        :param bundle: 已构建的 ``GatewayBundle``
+        """
+        metadata = getattr(bundle, "metadata", None)
+        freq = None
+        if metadata:
+            raw = metadata.get("freq")
+            if raw is not None:
+                freq = str(raw).strip() or None
+        for target in targets:
+            setattr(target, "_framework_freq", freq)
+        if freq is None:
+            logger.debug(
+                "行情网关未声明数据周期: self.freq 为 None",
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+        else:
+            logger.info(
+                "数据周期: self.freq = %r",
+                freq,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
 
     def _install_subscription_forwarder(self, targets: list[Strategy]) -> None:
         """给各策略装上 subscribe() → 行情网关的运行期转发器.

@@ -24,6 +24,42 @@ def _validate_field_for_freq(field: str, freq: Optional[str]) -> None:
         )
 
 
+#: 从当前回调名推断历史粒度。只有 on_bar / on_tick 这两个行情回调能确定意图:
+#: 在 on_bar 里取历史显然是要 bar, 在 on_tick 里显然是要 tick。
+_CALLBACK_FREQ = {"on_bar": "bar", "on_tick": "tick"}
+
+
+def _infer_freq(strategy: Any, freq: Optional[str]) -> Optional[str]:
+    """`freq` 省略时按当前所处的回调推断粒度.
+
+    双流(同一 symbol 同时存在 bar 与 tick 两条历史序列)下省略 ``freq`` 会让
+    Rust 侧 ``resolve_use_tick_history`` 抛歧义错误, 要求显式指定。该规则对
+    「策略同时挂 on_bar 与 on_tick」是必要的, 但**对只挂 on_bar 的策略是误伤**:
+    tick 序列由 ``HistoryBuffer::update_tick`` **无条件**写入(与策略是否覆写
+    ``on_tick`` 无关, 见 src/pipeline/stages/data.rs), 于是用户只要订阅了 tick
+    流(实盘 ``emit_ticks=True``, 回测 ``run_backtest(data=[Tick,...], freq=...)``)
+    就会中招 —— 他从不读 tick, 却被要求在一个"他不知道存在"的维度上做选择,
+    且报错直接中止会话。
+
+    在 ``on_bar`` / ``on_tick`` 回调内, 调用点的意图毫无歧义, 故这里按当前回调
+    定档。**回调之外(on_timer / on_before_trading / 用户自建线程等)仍返回原值**,
+    让既有的歧义报错生效 —— 那些位置确实推断不出该取哪条。
+
+    与 ``freq`` 已显式传入时不做任何干预(显式优先), 单流场景也完全不受影响
+    (单流下 ``freq=None`` 本就直接命中唯一存在的那条序列, 推断出的值与它一致)。
+
+    :param strategy: 策略实例
+    :param freq: 用户传入的粒度, ``None`` 表示未指定
+    :return: 推断后的粒度; 无法推断时原样返回 ``freq``
+    """
+    if freq is not None:
+        return freq
+    callback = getattr(strategy, "_framework_current_callback", None)
+    if not isinstance(callback, str):
+        return freq
+    return _CALLBACK_FREQ.get(callback, freq)
+
+
 def _resolve_history_cutoff(strategy: Any) -> Optional[int]:
     """Return a history cutoff for day-boundary phases."""
     phase = getattr(strategy, "_framework_phase", None)
@@ -70,9 +106,16 @@ def get_history(
 
     symbol = strategy._resolve_symbol(symbol)
     normalized_field = field.lower()
+    # 字段校验用**用户显式传入的** freq, 不用推断值: 推断只为在双流下选对容器,
+    # 不应改变字段合法性。纯 tick 单流下 `get_history(field='open')` 一直是
+    # "静默返回退化 OHLC", 若这里拿推断出的 'tick' 去校验, 那些既有调用会突然
+    # 开始报错(该退化行为的取舍见 _TICK_ALLOWED_FIELDS 注释, 属独立议题)。
     _validate_field_for_freq(normalized_field, freq)
+    resolved_freq = _infer_freq(strategy, freq)
     history_cutoff = _resolve_history_cutoff(strategy)
-    arr = strategy.ctx.history(symbol, normalized_field, count, history_cutoff, freq)
+    arr = strategy.ctx.history(
+        symbol, normalized_field, count, history_cutoff, resolved_freq
+    )
 
     if arr is None:
         return cast(np.ndarray, np.full(count, np.nan))
@@ -110,11 +153,13 @@ def get_history_multi(
 
     symbol = strategy._resolve_symbol(symbol)
     normalized_fields = [field.lower() for field in fields]
+    # 同 get_history: 字段校验用显式 freq, 容器选择用推断后的 freq。
     for normalized_field in normalized_fields:
         _validate_field_for_freq(normalized_field, freq)
+    resolved_freq = _infer_freq(strategy, freq)
     history_cutoff = _resolve_history_cutoff(strategy)
     raw = strategy.ctx.history_multi(
-        symbol, normalized_fields, count, history_cutoff, freq
+        symbol, normalized_fields, count, history_cutoff, resolved_freq
     )
 
     out: dict[str, np.ndarray] = {}

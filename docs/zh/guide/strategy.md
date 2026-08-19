@@ -471,6 +471,29 @@ def on_bar(self, bar):
         self.buy(self.symbol, 100)
 ```
 
+**`self.freq`：数据周期（只读）**
+
+除了上面这些逐事件属性，`self.freq` 给出**整个会话的数据周期**，取值为回测侧口径
+（`"1min"` / `"5min"` / `"1d"` 等）：
+
+```python
+def on_bar(self, bar):
+    if self.freq == "1d":
+        ...                  # 日线逻辑
+    elif self.freq is None:
+        ...                  # 周期未知：显式处理，不要假设
+```
+
+回测侧由 `run_backtest(freq=)` 注入，实盘侧由行情网关声明（klinedata 把自己的
+`period="M1"` 转换后注入）。两侧统一到回测口径，因此同一套策略代码在回测与实盘读到
+**同一个值**，不必按 broker 写兼容分支。
+
+**拿不到周期时是 `None`**：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only
+broker（无行情通道）都属于这种情形。框架**不从数据推断**周期——相邻 bar 的时间戳差会被
+停牌、跨日、午休误导，而一个错误的周期比未知的周期更危险（按周期折年化会静默错一个
+数量级）。该属性只读，写入会抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会
+真的改变粒度。
+
 ### 3.3 定时器 (Timer)
 
 除了底层的 `schedule` 方法，AKQuant 提供了更便捷的定时任务注册方式：
@@ -685,21 +708,36 @@ AKQuant 提供了两种风格的策略开发接口：
 `get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 都接受
 `freq='tick'` / `freq='bar'` / `freq=None`（默认）：
 
-*   若某个 symbol 的 `on_bar` 与 `on_tick` **同时**触发（回测 `run_backtest(data=[Tick, ...], freq="1min")`，
-    或实盘 `gateway_options={"emit_ticks": True, "emit_bars": True}`），该 symbol 会同时存在 bar 与 tick
-    两条并列的历史序列，此时**省略 `freq` 会报 `ValueError`**，要求显式指定取哪一条——不会静默选一条给你。
-    未识别的 `freq` 取值同样报错，不会兜底成 `'bar'`。
-*   只有 bar、或只有 tick 的单流场景下行为不变：`freq=None` 照旧取该 symbol 唯一存在的那条序列。
+*   只有 bar、或只有 tick 的单流场景下 `freq=None` 取该 symbol 唯一存在的那条序列。
+*   **双流**（该 symbol 同时存在 bar 与 tick 两条并列序列）下，`freq=None` 按**当前所处的回调**自动定档：
+    在 `on_bar` 里等价于 `freq='bar'`，在 `on_tick` 里等价于 `freq='tick'`。所以按单流写法写的策略代码
+    在双流下照常工作，不必为了「可能有 tick」而到处补 `freq`。
+*   **行情回调之外**（`on_timer`、`on_before_trading`、自建线程等）无从推断你想要哪一条，双流下省略 `freq`
+    仍报 `ValueError`，要求显式指定——不会静默选一条给你。未识别的 `freq` 取值同样报错，不兜底成 `'bar'`。
 *   `freq='tick'` 时 `field` 只支持 `price`/`close`/`volume`——tick 没有 `open`/`high`/`low`，请求这些字段会
     抛 `ValueError`（此前会静默返回退化 OHLC，`price` 冒充 `high`，属于本次的破坏性变更）。`get_history_df`
     与 `get_rolling_data` 固定取 OHLCV 五字段，因此在 `freq='tick'` 下必然报错，请改用
     `self.get_history(count, symbol, field='price', freq='tick')` 取成交价序列。
 
 ```python
-# 双流下必须显式指定 freq
-closes = self.get_history(20, bar.symbol, "close", freq="bar")
-prices = self.get_history(20, tick.symbol, "price", freq="tick")
+def on_bar(self, bar):
+    # 双流下也不必传 freq: 在 on_bar 里省略即 freq='bar'
+    closes = self.get_history(20, bar.symbol, "close")
+
+def on_tick(self, tick):
+    # 在 on_tick 里省略即 freq='tick'
+    prices = self.get_history(20, tick.symbol, "price")
+
+def on_timer(self, name):
+    # 行情回调之外必须显式指定, 否则双流下报错
+    closes = self.get_history(20, "600000.SH", "close", freq="bar")
 ```
+
+> **为什么「只写 `on_bar`」也算双流**：tick 序列由引擎无条件写入历史缓冲区，与策略是否覆写 `on_tick`
+> **无关**。所以只要订阅了 tick 流（回测 `run_backtest(data=[Tick, ...], freq="1min")`，或实盘
+> `gateway_options={"emit_ticks": True}`），哪怕策略里根本没有 `on_tick`、从不读 tick，该 symbol 也同时
+> 存在两条序列。上面这条按回调定档的规则正是为这种情形而设——否则你会在一个「不知道存在」的维度上
+> 被要求做选择。
 
 ### 6.3 完整示例
 

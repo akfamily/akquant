@@ -143,13 +143,20 @@ run_live(
     instruments=[Instrument(symbol="DEMO_A", asset_type=AssetType.Stock, ...)],
     broker="replay",
     trading_mode="paper",
-    gateway_options={"bars": bars},   # list[Bar] / list[Tick] / DataFrame
+    gateway_options={"bars": bars, "freq": "1min"},   # list[Bar] / list[Tick] / DataFrame
     duration="60s",                   # 安全网
 )
 ```
 
 事件按时间戳升序推送，多品种全局交错；数据放完后会话**自行结束**（`replay` 通过
 `metadata` 声明事件总数，引擎据此终止，无需等 `duration` 超时）。
+
+上面顺带传了 `"freq": "1min"`：行情网关可以声明数据周期，框架把它注入策略的只读属性
+`self.freq`，策略因此不必把周期写死在代码里或从外部参数重复传一遍。取值用**回测侧口径**
+（`"1min"` / `"1d"`），与 `run_backtest(freq=)` 一致——klinedata 这类网关会把自己的表示法
+（`period="M1"`）转换后再注入，所以同一套策略代码在回测与实盘读到的是同一个值。不声明时
+`self.freq` 为 `None`（CTP 等只有逐笔源的网关、trader-only broker 都是这种情形），框架**不做
+推断**，请在策略里显式处理 `None`。
 
 要认清它的边界，别把它当"实盘彩排"的全部：
 
@@ -172,7 +179,7 @@ run_live(
 
 1. **先跑 paper（模拟盘）**：同一套 `Strategy` 代码先以 `paper` 模式运行，确认信号、下单与日志链路无误，再切 `broker_live`。切勿跳过这一步直接实盘。
 2. **查询执行能力再下单**：实盘前用 `self.get_execution_capabilities()` 读取 `account_mode`、`supports_short_sell`、`position_effect` 等字段，据此决定是否启用做空、`close_today` 等语义，避免回测能跑、实盘被拒。
-3. **数据源切换**：把历史重放的 `DataFeed` 换成实时行情源，由对应 broker gateway 驱动。
+3. **数据源切换**：把历史重放的 `DataFeed` 换成实时行情源，由对应 broker gateway 驱动。若策略逻辑依赖数据周期，用只读属性 `self.freq` 读取（回测由 `run_backtest(freq=)` 注入，实盘由行情网关声明，两侧口径统一），不要把周期写死或另传一份参数；网关未声明时它是 `None`，需显式处理。
 4. **网关选型要清醒**：内置 `MiniQMT/PTrade` 当前更偏占位骨架与联调层，**不应视为已完成生产级 A 股适配**；集合竞价专用委托、打新等场景通常需自定义 broker 或增强 adapter（见 15.1.2 与《自定义 Broker 注册/生产接入清单》）。
 5. **成交语义从严**：CTP 链路使用 `execution_semantics_mode="strict"`（默认、推荐生产）——撤单/拒单/成交等**终态一律以柜台 `OnRtnOrder` 回报为准**，不要凭本地请求成功就推进状态（详见 15.2.2）。
 6. **风控前置必须开**：实盘务必显式配置 RMS 前置风控（单笔最大委托量、资金使用率、日内撤单次数、策略级止损），它是防"乌龙指"的最后一道防线（见 15.3）。

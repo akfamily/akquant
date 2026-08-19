@@ -968,9 +968,9 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `rebalance_to_topn(scores, top_n, weight_mode="equal", ...) -> List[str]`: 根据打分选取 TopN 并执行调仓，支持等权或按分数归一化。
 *   `get_history_df(count, symbol, freq=None) -> pd.DataFrame`: 获取历史数据 DataFrame (OHLCV)。
 *   `freq` 参数（`get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 均支持）：取值 `'tick'` / `'bar'` / `None`。
-    *   `None`（默认）：该 symbol 只有 bar 序列时取 bar，只有 tick 序列时取 tick（单流下行为不变）；**若 `on_bar` 与 `on_tick` 同时触发导致该 symbol 同时存在 bar 与 tick 两条历史序列，则报 `ValueError`**，要求显式传 `freq='bar'` 或 `freq='tick'`——不会静默选一条。未识别的取值同样报错，不会兜底成 `'bar'`。
+    *   `None`（默认）：该 symbol 只有 bar 序列时取 bar，只有 tick 序列时取 tick（单流下行为不变）。**双流下（该 symbol 同时存在 bar 与 tick 两条序列）按当前所处的回调自动定档**：`on_bar` 里等价于 `freq='bar'`，`on_tick` 里等价于 `freq='tick'`。注意 tick 序列由引擎无条件写入，**与策略是否覆写 `on_tick` 无关**——只要订阅了 tick 流，只写 `on_bar` 的策略也处于双流之中，靠的就是这条推断。**行情回调之外**（`on_timer`、`on_before_trading`、用户自建线程等）无从推断意图，双流下仍报 `ValueError`，要求显式传 `freq='bar'` 或 `freq='tick'`——不会静默选一条。未识别的取值同样报错，不会兜底成 `'bar'`。
     *   `freq='tick'` 时 `field` 只支持 `price`/`close`/`volume`：tick 没有 open/high/low，传这些字段会抛 `ValueError`（此前会静默返回退化 OHLC，`price` 冒充 `high`，破坏性变更）。`get_history_df` / `get_rolling_data` 固定取 OHLCV 五字段，因此在 `freq='tick'` 下必然报错，请改用 `get_history(freq='tick', field='price')`。
-    *   回测中让 `on_bar` 与 `on_tick` 同时触发：`run_backtest(data=[Tick, ...], freq="1min")`（**`freq` 只在 `data` 为含 `Tick` 的列表时生效，DataFrame 不支持**，传了会报错而非静默忽略）。实盘中的等价开关是 `gateway_options={"emit_ticks": True, "emit_bars": True}`（klinedata、CTP 网关均支持，`use_aggregator` 保留为兼容别名）：两个网关对 `emit_ticks`/`emit_bars` 本身的处理规则一致——按参数逐个回退（只显式传其一不会静默关掉另一路），若回退后 `emit_ticks` 与 `emit_bars` 都为 `False` 则报错而非静默不推送任何数据。`broker="ctp"` 走的是 `run_live(..., gateway_options=...)` → builder 转发这条链路，此前该链路会把这两个键静默丢弃（`on_tick` 永不触发且无任何报错），现已修复为原样转发到底层 `CTPMarketGateway`。**klinedata 有一个前置条件 CTP 没有**：klinedata 多一个 `drive` 参数，缺省为 `drive="bar"`，此时无论 `emit_ticks`/`emit_bars` 怎么传都会被**强制覆盖**为 `emit_bars=True`、`emit_ticks=False`（该覆盖排在「都为 False 则报错」的校验之前，所以这条校验在 `drive="bar"` 下永远不可能触发）——要让 `on_tick` 真正触发，必须显式传 `"drive": "tick"`，仅传 `emit_ticks=True` 不够。CTP 没有 `drive` 这一层，`emit_ticks=True` 会直接生效。
+    *   回测中让 `on_bar` 与 `on_tick` 同时触发：`run_backtest(data=[Tick, ...], freq="1min")`（**`freq` 只在 `data` 为含 `Tick` 的列表时生效，DataFrame 不支持**，传了会报错而非静默忽略）。实盘中的等价开关是 `gateway_options={"emit_ticks": True, "emit_bars": True}`（klinedata、CTP 网关均支持，`use_aggregator` 保留为兼容别名）：两个网关对 `emit_ticks`/`emit_bars` 本身的处理规则一致——按参数逐个回退（只显式传其一不会静默关掉另一路），若回退后 `emit_ticks` 与 `emit_bars` 都为 `False` 则报错而非静默不推送任何数据。`broker="ctp"` 走的是 `run_live(..., gateway_options=...)` → builder 转发这条链路，此前该链路会把这两个键静默丢弃（`on_tick` 永不触发且无任何报错），现已修复为原样转发到底层 `CTPMarketGateway`。**klinedata 有一个前置条件 CTP 没有**：klinedata 多一个 `drive` 参数，缺省为 `drive="bar"`，而 `drive="bar"` 只订阅 K 线频道、逐笔帧根本不会到达。因此 `drive="bar"` 配**显式** `emit_ticks=True` 会直接**报错**并给出可照抄的双流配方（此前是静默压成 `emit_ticks=False`，表现为「`on_tick` 永不触发且不知道为什么」）——要让 `on_tick` 真正触发，必须显式传 `"drive": "tick"`，仅传 `emit_ticks=True` 不够。经 `use_aggregator` 别名回退推导出的值仍按 `drive` 处理以保持兼容。CTP 没有 `drive` 这一层，`emit_ticks=True` 会直接生效。
 *   `get_position(symbol) -> float`: 获取当前持仓量。返回值仍为数量，不返回对象。
 *   `get_available_position(symbol) -> float`: 获取可用持仓量。
 *   `positions -> Dict[str, float]`: 获取所有标的持仓（只读属性）。
@@ -980,6 +980,10 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `ctx.get_position_entry_prices() -> Dict[str, float]`: 获取所有标的当前持仓均价。
 *   `get_holding_bars(symbol) -> int`: 获取当前持仓持有的 Bar 数量。
 *   `cash -> float`: 获取当前可用资金（只读属性）。
+*   `freq -> Optional[str]`: 数据周期（只读属性），取值为回测侧口径 `"1min"` / `"5min"` / `"1d"` 等。
+    *   回测侧由 `run_backtest(freq=)` 注入；实盘侧由行情网关声明（klinedata 把自己的 `period="M1"` 转换成 `"1min"`，`broker="replay"` 支持 `gateway_options={"freq": "1min"}`）。两侧统一到回测口径，故同一个策略在回测与实盘读到同一个值，无需按 broker 写兼容分支。
+    *   **拿不到周期时为 `None`**：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only broker（无行情通道）、klinedata 周线（回测侧 `freq` 只认整数分钟，周线无对应写法）。框架**不从数据推断**周期——相邻 bar 的时间戳差会被停牌、跨日、午休误导，错误的周期比未知的周期更危险。请显式处理 `None`。
+    *   只读，写入抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会真的改变粒度。
 *   `get_account() -> Dict[str, float]`: 获取账户详情快照。常见字段包括 `cash`、`equity`、`market_value`、`notional_value`、`frozen_cash`、`margin`、`used_margin`、`free_margin`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
     *   期货保证金账户下，`equity` 表示账户权益，`used_margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。

@@ -823,6 +823,10 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._framework_phase = None
     if not hasattr(strategy, "_framework_history_cutoff_ns"):
         strategy._framework_history_cutoff_ns = None
+    if not hasattr(strategy, "_framework_freq"):
+        # 早于该字段的检查点恢复后没有它; 周期由本次运行的入口重新注入,
+        # 不从存档取(续跑时数据源/周期可能已换)。
+        strategy._framework_freq = None
     if not hasattr(strategy, "_framework_use_previous_account_snapshot"):
         strategy._framework_use_previous_account_snapshot = False
     if not hasattr(strategy, "_framework_previous_account_details"):

@@ -10,7 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`symbols` 里零数据的标的会发出告警**：白名单内的标的若全程没有任何行情事件（标的代码写错、数据源未覆盖、或所选时间范围内无交易），此前完全静默——回测照常跑完，结果里也看不出区别（`BacktestResult` 没有 `symbols`/`instruments` 属性，`trades_df` 为空时「没成交」与「没数据」无法区分）。现在能枚举输入集合的形态（`DataFrame`、`Dict[str, DataFrame]`、`List[Bar]`/`List[Tick]`）在运行前就逐标的告警；`DataFeed` 对象这种运行前无法枚举的形态由会话结束时的检查兜底；同一标的只报一次（运行前报过的不会在会话末重复报）。用 warning 不用 error：某标的在所选时间范围内确实无交易是合理场景。
 - **`on_bar` 与 `on_tick` 可同时触发（回测 + 实盘）**：引擎把 bar 与 tick 拆成两条并列的历史序列，此前二者共用一个缓冲区，tick 以退化 OHLC 写入会把历史 bar 挤出窗口——双流下 `get_history` 会静默返回混入 tick 价的错误序列。回测侧 `run_backtest(data=[Tick, ...], freq="1min")` 在照常投递 tick 的同时把它们聚合成 bar 投给 `on_bar`（`freq` 只在 `data` 为含 `Tick` 的列表时有意义，DataFrame 传 `freq` 会报错而非静默忽略）。实盘侧 klinedata 与 CTP 网关均新增 `emit_ticks` / `emit_bars`（`use_aggregator` 保留为兼容别名，按参数逐个回退——只显式传其一不会静默关掉另一路），双流下合成 bar 打区间结束戳以保证与 tick 混推时时间戳单调不倒退。
-- **`get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 新增 `freq` 参数**：取值 `'tick'` / `'bar'` / `None`。粒度做成参数而非新增 `get_tick_history` 方法，与 `run_backtest(freq=...)` 术语一致，并为将来的多周期（如 `'5min'`）留开取值域。**双流下省略 `freq` 会报错**，要求显式指定——不静默选一条序列；未识别的 `freq` 取值同样报错，不会兜底成 `'bar'`。纯 bar / 纯 tick 单流下行为不变（`None` 时照旧取该 symbol 唯一存在的那条序列）。
+- **`get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 新增 `freq` 参数**：取值 `'tick'` / `'bar'` / `None`。粒度做成参数而非新增 `get_tick_history` 方法，与 `run_backtest(freq=...)` 术语一致，并为将来的多周期（如 `'5min'`）留开取值域。省略 `freq` 时按**当前所处的回调**自动定档（`on_bar` 里取 bar、`on_tick` 里取 tick，见下方「双流下 `on_bar` / `on_tick` 内省略 `freq` 不再报歧义错误」）；行情回调之外的双流场景仍要求显式指定——不静默选一条序列。未识别的 `freq` 取值同样报错，不会兜底成 `'bar'`。纯 bar / 纯 tick 单流下行为不变（`None` 时照旧取该 symbol 唯一存在的那条序列）。
+- **新增策略只读属性 `self.freq`：策略终于能知道自己跑在什么周期上**。`run_backtest(freq=)` 此前只用于 tick→bar 聚合、用完即弃，klinedata 网关的 `period` 是纯网关内部参数，从未传给 `run_live` / `StrategyContext` / `Strategy`——策略**没有任何途径**读到数据周期，只能把周期写死在策略代码里或从外部参数重复传一遍。
+
+    ```python
+    def on_bar(self, bar):
+        if self.freq == "1d":
+            ...                      # 日线逻辑
+        elif self.freq is None:
+            ...                      # 周期未知：显式处理，不要假设
+    ```
+
+    取值**统一用回测侧口径**（`"1min"` / `"5min"` / `"1d"`）：klinedata 的 `"M1"` 由网关侧转换后注入，同一个策略在回测与实盘读到的是同一个值，策略代码因此不必按 broker 写兼容分支。回测侧由 `run_backtest(freq=)` 注入，实盘侧由行情网关经 `GatewayBundle.metadata["freq"]` 声明（`broker='replay'` 也支持 `gateway_options={"freq": "1min"}`）。
+
+    **拿不到周期时为 `None`**，常见于：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only broker（无行情通道）、klinedata 的周线（回测侧 `freq` 只认整数分钟，周线没有对应写法，故声明 `None` 而不是编一个 `"10080min"`）。此时**刻意不从数据推断**——相邻 bar 的时间戳差会被停牌、跨日、午休误导，而一个错误的周期比未知的周期更危险（按周期折年化会静默错一个数量级）。属性只读，写入抛 `AttributeError` 并指向 `run_backtest(freq=)` / `gateway_options={"period": ...}`：数据粒度由数据源决定，允许策略写只会制造「我设了但没生效」的幻觉。
 - **新增委托价 tick 对齐工具与股票侧校验开关**。配合下面「股票/基金委托价开始校验 tick 对齐」的行为变更，提供显式对齐手段与逃生开关：
 
     - `Strategy.round_to_tick(symbol, price, direction)`：按标的的 `tick_size` 对齐委托价，`direction` 取 `"down"`（买入侧保守）/ `"up"`（卖出侧保守）/ `"nearest"`（默认）。底层工具函数为 `akquant.utils.price.round_to_tick(price, tick, direction)`，不依赖策略上下文，可单测直接调用。
@@ -156,6 +169,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **回测数据列表改为逐元素类型校验（破坏性）**：`run_backtest(data=[...])` 此前只检查首元素类型，`[Bar, "garbage"]` 会漏到 Rust 层抛出难以定位的错误。现在在 Python 层逐元素校验，抛 `TypeError` 并指名位置索引与实际类型；空列表抛 `ValueError`。
 
 ### Fixed
+- **双流下 `on_bar` / `on_tick` 内省略 `freq` 不再报歧义错误**。tick 序列由引擎**无条件**写入历史缓冲区（`HistoryBuffer::update_tick`，与策略是否覆写 `on_tick` **无关**），因此只要订阅了 tick 流（实盘 `gateway_options={"emit_ticks": True}`、回测 `run_backtest(data=[Tick, ...], freq="1min")`），哪怕策略**只写了 `on_bar`**、从不读 tick，该标的也同时存在 bar 与 tick 两条序列。此前这种情形下 `get_history(...)` 不传 `freq` 会抛 `ValueError: symbol X 同时存在 bar 与 tick 两条历史序列`，实盘直接中止会话——用户被要求在一个「他不知道存在」的维度上做选择，而按单流写法写的策略代码本身毫无问题：
+
+    ```python
+    def on_bar(self, bar):                                  # 只有 on_bar
+        close = self.get_history(20, bar.symbol, "close")    # 此前在双流下崩掉
+    ```
+
+    「双流下必须显式指定」这条规则对**同时挂 `on_bar` 与 `on_tick`** 的策略仍然必要（取哪条确实无从推断），但在 `on_bar` / `on_tick` 回调内部，调用点的意图并无歧义。现按**当前所处的回调**自动定档：`on_bar` 里省略 `freq` 等价于 `freq='bar'`，`on_tick` 里等价于 `freq='tick'`。**行情回调之外**（`on_timer`、`on_before_trading`、用户自建线程等）维持既有的歧义报错——那些位置推断不出该取哪条，不放宽成「全局默认取 bar」。五个历史入口（`get_history` / `get_history_multi` / `get_history_df` / `get_rolling_data` / `get_history_map`）全部覆盖。显式传入的 `freq` 优先，单流场景行为完全不变。字段合法性校验仍按**用户显式传入的** `freq` 判定，不按推断值——否则纯 tick 单流下既有的 `get_history(field='open')` 调用（一直是返回退化 OHLC）会突然开始报错。
 - **并行参数优化在 worker 进程死亡时不再挂死，失败组合也不再静默丢失**。`run_grid_search(max_workers>1)`
   原先用 `multiprocessing.Pool.imap`，遇到 worker 进程级死亡（OOM、被 OOM-killer 杀、
   `os._exit`）会**永久挂起**——这是 CPython 的已知缺陷（[bpo-22393](https://bugs.python.org/issue22393)，
