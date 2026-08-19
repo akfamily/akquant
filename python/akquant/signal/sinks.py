@@ -61,10 +61,10 @@ class BrokerOrderSink:
         return "broker_live"
 
     def submit(self, signal: Signal) -> str:
-        """报单并返回主腿 id; 被前置风控拒绝时返回空串.
+        """报单并返回主腿 id; 被前置风控拒绝或柜台回绝/状态未知时返回空串.
 
-        ``BrokerOrderSubmitter`` 在被风控拦下时返回空回执
-        (``order_ids=()``), 这是同步可知的拒单信号。
+        ``BrokerOrderSubmitter`` 在被风控拦下、柜台明确拒单、或报单状态未知
+        (超时/断连)时返回空回执 (``order_ids=()``), 区分方式见 ``receipt.failure``。
         """
         receipt = self._submitter.submit_order(
             symbol=signal.symbol,
@@ -77,7 +77,7 @@ class BrokerOrderSink:
         order_ids = tuple(getattr(receipt, "order_ids", ()) or ())
         if not order_ids:
             logger.warning(
-                "信号 %s 报单返回空回执(通常是被前置风控拦下)",
+                "信号 %s 报单返回空回执(前置风控/柜台拒单/状态未知)",
                 signal.signal_id,
                 extra=build_log_extra(phase="signal"),
             )

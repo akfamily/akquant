@@ -1151,6 +1151,7 @@ def _target_to_orders(
 
     # buy()/sell() 现返回 OrderReceipt；order_target 系列对外仍以 str 订单号
     # 为契约（不属于 Task 7 变更范围），故在此边界取 .primary 落地为字符串。
+    # 空回执(前置风控/柜台拒单/状态未知)返回 None。
     if delta_qty > 0:
         receipt = buy(strategy, symbol, delta_qty, price, **kwargs)
         return str(getattr(receipt, "primary", receipt)) or None

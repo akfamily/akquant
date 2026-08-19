@@ -525,7 +525,7 @@ def render_audit_message(
         return getattr(fields, name, None)
 
     price = _get("price")
-    if str(event) == "order_submit" and price in (None, ""):
+    if str(event) in ("order_submit", "order_submit_unknown") and price in (None, ""):
         price_display = _MARKET_PRICE_TEXT[lang]
     elif price in (None, ""):
         price_display = ""

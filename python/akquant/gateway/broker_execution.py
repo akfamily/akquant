@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from ..log import get_logger
+from ..log import build_log_extra, get_logger
 from .broker_event_adapter import map_local_stop, map_order_snapshot
 from .broker_state_cache import BrokerStateCache
 from .broker_strategy_api import _account_to_dict, _resolve_symbol
@@ -244,16 +244,19 @@ class BrokerExecution:
             try:
                 receipt = self._submitter.submit_order(**kwargs)
             except Exception as exc:  # noqa: BLE001 — 参数/能力校验等仍会在此抛出
-                self._handle_stop_submit_failure(order, exc)
+                # 异常穿透路径: 前置校验失败(broker_ready/参数错误等), 订单确定未
+                # 到柜台, 重试安全。柜台通信失败已在 submit_order 内被捕获并返回
+                # 空回执(failure="unknown"), 不会走到这里。
+                self._handle_stop_submit_failure(order, exc, failure_type="rejected")
                 continue
             if not receipt.primary:
                 # submit_order 对可分类的柜台失败已不再抛异常(见
                 # order_submitter._handle_place_order_failure), 改回吐空回执并在
-                # `failure` 上标明成因。两类失败的处置**必须**不同:
-                #   rejected —— 订单确定不存在, 重试安全, 照旧走重试链路;
-                #   unknown  —— 报文可能已到柜台, 重试就是重复委托, 直接放弃。
-                unknown = receipt.failure == "unknown"
-                if unknown:
+                # `failure` 上标明成因。失败分类直接透传给 _handle_stop_submit_failure:
+                #   "rejected" —— 订单确定不存在, 重试安全;
+                #   "unknown"  —— 报文可能已到柜台, 重试就是重复委托, 必须放弃;
+                #   None       —— 无需交易(quantity<=0), 保守不重试。
+                if receipt.failure == "unknown":
                     logger.critical(
                         "止损单提交状态未知, 放弃该单(不重试以免重复委托) "
                         "local_id=%s symbol=%s side=%s quantity=%s",
@@ -264,12 +267,8 @@ class BrokerExecution:
                     )
                 self._handle_stop_submit_failure(
                     order,
-                    RuntimeError(
-                        "止损单提交失败: 柜台状态未知, 已放弃"
-                        if unknown
-                        else "止损单提交失败: 柜台拒单, 回执为空"
-                    ),
-                    retry=not unknown,
+                    RuntimeError(f"止损单提交失败: {receipt.failure or '回执为空'}"),
+                    failure_type=receipt.failure,
                 )
                 continue
             broker_order_id = str(receipt.primary)
@@ -280,17 +279,25 @@ class BrokerExecution:
                     pass  # remap 记录失败不影响触发/不中断 run
 
     def _handle_stop_submit_failure(
-        self, order: Any, exc: Exception, *, retry: bool = True
+        self, order: Any, exc: Exception, *, failure_type: str | None = None
     ) -> None:
-        """止损单提交失败的统一处置: 通知策略, 并按 ``retry`` 决定是否重入簿.
+        """止损单提交失败的统一处置: 通知策略, 并按失败分类决定是否重入簿.
 
-        ``retry=False`` 用于「状态未知」: 报文可能已经到了柜台, 而每次重试都会
-        生成新的 client_order_id(``submit_order`` 未传该参数时的既有行为), 柜台
-        无从去重 —— 重试即真实的重复委托。此时宁可放弃这张止损单, 由 CRITICAL
-        与 ``on_error`` 叫人介入。
+        :param order: 本地止损单对象
+        :param exc: 异常对象(用于 on_error payload)
+        :param failure_type: 失败分类(``receipt.failure``): ``"rejected"`` /
+            ``"unknown"`` / ``None``。``"rejected"`` 表示订单确定不存在, 重试安全;
+            ``"unknown"`` 表示状态不可知(报文可能已到柜台), 重试即重复委托, 必须放弃;
+            ``None`` 用于异常穿透路径(前置校验等), 保守不重试。
+
+        旧参数 ``retry: bool`` 已废弃, 由 ``failure_type`` 取代——按失败分类决策
+        比按调用点手工传 bool 更清晰且不易错。每次重试调用 ``_next_client_order_id()``
+        生成新 ID, 柜台无从去重, 状态未知时重试即真实的重复委托。
         """
         order.submit_attempts += 1
-        if retry and order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
+        # 只有明确拒单("rejected")时才重试; 状态未知/None 一律放弃
+        allow_retry = failure_type == "rejected"
+        if allow_retry and order.submit_attempts < MAX_STOP_SUBMIT_ATTEMPTS:
             self._stop_book.register(order)  # 重入簿, 下 tick 重试
         self._notify_stop_error(exc, order)
 
@@ -301,7 +308,12 @@ class BrokerExecution:
             try:
                 on_error(exc, source, payload)
             except Exception:  # noqa: BLE001
-                pass
+                logger.error(
+                    "on_error 回调自身抛出异常 (source=%s)",
+                    source,
+                    exc_info=True,
+                    extra=build_log_extra(phase="strategy"),
+                )
 
     def _notify_stop_error(self, exc: Exception, order: Any) -> None:
         """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""
