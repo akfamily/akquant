@@ -890,13 +890,14 @@ def set_log_level(level: Union[str, int]) -> None
 *   `on_portfolio_update(snapshot)`: 账户快照变化时触发。
 *   `on_error(error, source, payload=None)`: 用户回调抛异常时触发。是否在触发 `on_error`
     后继续向上抛出，取决于 `error_mode`/`re_raise_on_error`（默认继续抛出）——这条规则适用于
-    `on_bar`/`on_tick`/`on_order`/`on_trade` 等经框架调度路径产生的普通回调异常，回测与实盘
-    （`broker_live`）下行为一致。但 `broker_live` 下由**柜台通信失败**触发的 `on_error`——包括
-    下单状态未知（`source="order_submit"`）、本地止损单重试失败（`"stop_trigger"`）、撤单失败
-    （`"order_cancel"`/`"order_cancel_all"`），以及经柜台推送分发的 `on_order`/`on_trade` 中用户
-    回调自身抛出的异常——一律只调用 `on_error` 后吞掉，**不受 `re_raise_on_error` 控制，也不会
-    继续向上抛出**（`python/akquant/live/_runner.py::_notify_strategy_error` /
-    `_safe_strategy_callback`）。
+    `on_bar`/`on_tick` 等经框架调度路径产生的普通回调异常，回测与实盘（`broker_live`）下行为一致。
+    但 `broker_live` 下由**柜台通信失败**触发的 `on_error`——包括下单状态未知（`source="order_submit"`）、
+    本地止损单重试失败（`"stop_trigger"`）、撤单失败（`"order_cancel"`/`"order_cancel_all"`），
+    以及**同步派发的 `on_order`/`on_reject`/`on_trade` 回调自身抛出的异常**（source 为 `"on_order"`/
+    `"on_reject"`/`"on_trade"`）——一律只调用 `on_error` 后吞掉，**不受 `re_raise_on_error` 控制，
+    也不会继续向上抛出**（实现分别位于 `python/akquant/gateway/order_submitter.py::_dispatch_reject_order`、
+    `python/akquant/gateway/broker_execution.py::_notify_error`/`_notify_stop_error`/`_handle_cancel_failure`、
+    `python/akquant/live/_runner.py::_safe_strategy_callback`）。
 *   `on_timer(payload: str)`: 定时器触发。
 *   `on_stop()`: 策略停止时触发。
 *   `on_train_signal(context)`: 滚动训练信号触发 (ML 模式)。

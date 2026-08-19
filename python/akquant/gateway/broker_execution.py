@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from ..log import get_logger
+from ..log import build_log_extra, get_logger
 from .broker_event_adapter import map_local_stop, map_order_snapshot
 from .broker_state_cache import BrokerStateCache
 from .broker_strategy_api import _account_to_dict, _resolve_symbol
@@ -301,7 +301,12 @@ class BrokerExecution:
             try:
                 on_error(exc, source, payload)
             except Exception:  # noqa: BLE001
-                pass
+                logger.error(
+                    "on_error 回调自身抛出异常 (source=%s)",
+                    source,
+                    exc_info=True,
+                    extra=build_log_extra(phase="strategy"),
+                )
 
     def _notify_stop_error(self, exc: Exception, order: Any) -> None:
         """止损提交失败通知策略 on_error(可选实现), 异常吞掉不影响主流程."""

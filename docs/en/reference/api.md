@@ -851,14 +851,16 @@ Strategy base class. Users should inherit from this class and override callback 
 *   `on_error(error, source, payload=None)`: Triggered when a user callback raises. Whether the
     original exception is re-raised after `on_error` depends on `error_mode`/`re_raise_on_error`
     (re-raise by default) — this rule covers ordinary callback exceptions dispatched through the
-    framework (`on_bar`/`on_tick`/`on_order`/`on_trade`, etc.), and behaves the same in backtest
-    and live (`broker_live`). However, `on_error` calls triggered by a **broker communication
-    failure** under `broker_live` — unknown order-submit outcome (`source="order_submit"`), local
-    stop-order retry failure (`"stop_trigger"`), cancel failure (`"order_cancel"`/
-    `"order_cancel_all"`), and a user callback exception raised while handling a broker-pushed
-    `on_order`/`on_trade` — are always swallowed after calling `on_error`, **regardless of
-    `re_raise_on_error`, and never propagate further**
-    (`python/akquant/live/_runner.py::_notify_strategy_error` / `_safe_strategy_callback`).
+    framework (`on_bar`/`on_tick`, etc.), and behaves the same in backtest and live (`broker_live`).
+    However, `on_error` calls triggered by a **broker communication failure** under `broker_live` —
+    unknown order-submit outcome (`source="order_submit"`), local stop-order retry failure
+    (`"stop_trigger"`), cancel failure (`"order_cancel"`/`"order_cancel_all"`), and **exceptions
+    raised by synchronously dispatched `on_order`/`on_reject`/`on_trade` callbacks** (source
+    `"on_order"`/`"on_reject"`/`"on_trade"`) — are always swallowed after calling `on_error`,
+    **regardless of `re_raise_on_error`, and never propagate further** (implementations located in
+    `python/akquant/gateway/order_submitter.py::_dispatch_reject_order`,
+    `python/akquant/gateway/broker_execution.py::_notify_error`/`_notify_stop_error`/`_handle_cancel_failure`,
+    `python/akquant/live/_runner.py::_safe_strategy_callback`).
 *   `on_timer(payload: str)`: Triggered by timer.
 *   `on_stop()`: Triggered when the strategy stops.
 *   `on_train_signal(context)`: Triggered by rolling training signal (ML mode).
