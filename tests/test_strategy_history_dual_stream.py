@@ -78,15 +78,48 @@ def test_dual_stream_tick_history_returns_tick_series() -> None:
     assert values[-1] - values[-2] == 1.0
 
 
-def test_dual_stream_without_freq_raises_with_actionable_message() -> None:
-    """双流下省略 freq 必须报错并指出怎么办, 而不是静默选一条."""
+def test_dual_stream_without_freq_in_on_bar_resolves_to_bar() -> None:
+    """双流下 on_bar 里省略 freq 自动定档 bar, 不再报歧义错误.
+
+    tick 序列由引擎无条件写入(与策略是否覆写 on_tick 无关), 故只挂 on_bar 的
+    策略也会构成双流。此前这里会抛歧义错误、直接中止会话, 而 on_bar 内的调用
+    意图并无歧义 —— 现按当前回调定档, 结果与显式传 freq='bar' 一致。
+    歧义报错仍保留在推断不出意图的位置, 见下一个测试。
+    """
 
     class AmbiguousStrategy(_Collector):
         freq_arg = None
 
+    run_backtest(
+        strategy=AmbiguousStrategy,
+        data=_dual_stream_feed(),
+        symbols=["X"],
+        initial_cash=1e5,
+    )
+    assert AmbiguousStrategy.captured == [13.0, 23.0, 33.0]
+
+
+def test_dual_stream_without_freq_outside_market_callback_still_raises() -> None:
+    """行情回调之外省略 freq 仍报错并指出怎么办, 而不是静默选一条.
+
+    on_bar / on_tick 之外无从推断该取哪条序列, 维持既有的显式报错。
+    """
+
+    class OutsideCallbackStrategy(_Collector):
+        freq_arg = None
+
+        def on_bar(self, bar: Bar) -> None:
+            """绕开回调推断: 直接调底层实现, 模拟回调之外的取历史."""
+            if self.done:
+                return
+            self.done = True
+            # _framework_current_callback 置空 => 与 on_timer / 用户线程同境
+            self._framework_current_callback = None
+            self.get_history(count=3, symbol=bar.symbol, field="close")
+
     with pytest.raises(Exception) as excinfo:
         run_backtest(
-            strategy=AmbiguousStrategy,
+            strategy=OutsideCallbackStrategy,
             data=_dual_stream_feed(),
             symbols=["X"],
             initial_cash=1e5,

@@ -2863,6 +2863,12 @@ def run_backtest(
     setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
     for slot_key, slot_strategy in slot_strategy_instances.items():
         setattr(slot_strategy, "_owner_strategy_id", slot_key)
+    # 数据周期注入 self.freq(只读)。freq 此前只用于 tick→bar 聚合、用完即弃,
+    # 策略没有任何途径知道自己跑在什么周期上。纯 bar 数据不传 freq 时保持 None
+    # (不从相邻 bar 时间戳差推断: 停牌/跨日/午休会让它给出错误答案)。
+    # 多策略槽位共用同一份数据, 故所有实例注入同一个值。
+    for current_strategy in all_strategy_instances:
+        setattr(current_strategy, "_framework_freq", freq)
     indicator_recorder = _attach_indicator_recorder(
         stream_emitter=indicator_stream_emitter,
         strategy_instance=strategy_instance,

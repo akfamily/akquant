@@ -736,6 +736,19 @@ $$ \text{Total Equity} = \text{Cash} + \sum (\text{Market Value of Positions}) $
 
 用区间起点在回测里会造成**前视偏差**：策略在 09:30:00 就收到一根 `high` 来自 09:30:15 的 bar，等于读到了尚未发生的数据。示例 68 的输出可以直接核对这一点——合成 bar 落在 `09:30:59`，晚于形成它的全部 tick。
 
+聚合模式还有一个容易被忽略的副作用：**它让每个标的同时拥有 bar 与 tick 两条历史序列**（"双流"）。tick 写入历史缓冲区是无条件的，与策略有没有写 `on_tick` **无关**——所以哪怕你只写了 `on_bar`、从不读 tick，取历史时框架也面临"取哪条"的问题。
+
+框架的答案是**按当前所处的回调定档**：`on_bar` 里省略 `freq` 即取 bar，`on_tick` 里即取 tick。因此这一节的代码可以照单流的写法写：
+
+```python
+def on_bar(self, bar):
+    closes = self.get_history(20, bar.symbol, "close")   # 双流下也拿到 bar 序列
+```
+
+只有在**行情回调之外**（`on_timer`、`on_before_trading`、自建线程）才推断不出意图，双流下省略 `freq` 会抛 `ValueError`，要求显式传 `freq='bar'` / `freq='tick'`。这里不兜底成"默认取 bar"，仍是 4.16.1 那条设计原则的应用：能推断的地方替你推断，推断不出的地方宁可报错，也不静默选一条让你拿着混错粒度的数据算指标。
+
+顺带一提，`freq` 参数除了驱动聚合，也会注入策略的只读属性 `self.freq`（值即 `"1min"`），策略因此能知道自己跑在什么周期上；不传 `freq` 的纯 bar 回测下它是 `None`——框架不从相邻 bar 的时间戳差反推周期，因为停牌与跨日会让这种推断给出错误答案。
+
 ### 4.16.3 成交量口径：单笔量与累计量
 
 聚合器的 `on_tick(symbol, price, volume, timestamp_ns)` 有两种 volume 口径，由构造参数选择：

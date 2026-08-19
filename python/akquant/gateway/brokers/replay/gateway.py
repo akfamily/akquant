@@ -158,6 +158,10 @@ def build_replay_bundle(
 
     ``metadata["bounded_event_total"]`` 声明预期事件总数, ``LiveRunner`` 据此在
     事件放完后终止会话——live 循环本身在 channel 空时会无限等待。
+
+    ``gateway_options={"freq": "1min"}`` 可声明回放数据的周期, 经
+    ``metadata["freq"]`` 注入策略的只读属性 ``self.freq``(不传则为 ``None``,
+    回放数据的周期无从推断)。取值用回测侧口径, 与 ``run_backtest(freq=)`` 一致。
     """
     _ = use_aggregator
     gateway = ReplayMarketGateway(
@@ -185,9 +189,15 @@ def build_replay_bundle(
             "会把它转成 NaT 进而产生非正时间戳——请检查 gateway_options 中传入的 "
             "'bars'/'ticks' 数据, 修正或剔除对应行"
         )
+    raw_freq = kwargs.get("freq")
+    freq = str(raw_freq).strip() or None if raw_freq is not None else None
     return GatewayBundle(
         market_gateway=gateway,
         trader_gateway=None,
         trader_capabilities=None,
-        metadata={"broker": "replay", "bounded_event_total": total},
+        metadata={
+            "broker": "replay",
+            "bounded_event_total": total,
+            "freq": freq,
+        },
     )
