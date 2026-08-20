@@ -181,3 +181,191 @@ def test_live_stop_flag_not_carried_by_checkpoint() -> None:
 
     state = strategy.__getstate__()
     assert "_framework_live_stop_dispatched" not in state
+
+
+def _make_recording_strategy(events: list[str], stop_exc: bool = False) -> type:
+    class Strat(Strategy):
+        def on_bar(self, bar: Any) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            events.append("on_stop")
+            if stop_exc:
+                raise RuntimeError("user on_stop boom")
+
+    return Strat
+
+
+def test_live_run_normal_return_triggers_on_stop(patched_live: None) -> None:
+    """run() 正常返回时(含 duration 经 Rust deadline 结束)触发 on_stop 一次."""
+    events: list[str] = []
+    runner = LiveRunner(
+        strategy_cls=_make_recording_strategy(events), instruments=[], broker="ctp"
+    )
+    runner.engine = cast(Any, _FakeEngine())
+    runner.run(cash=1000.0)
+
+    assert events.count("on_stop") == 1
+
+
+def test_live_run_keyboard_interrupt_triggers_on_stop(patched_live: None) -> None:
+    """Duration 的回调 patch 路径(抛 KeyboardInterrupt)也要触发 on_stop.
+
+    见 ``_runner.py`` 的 ``_apply_time_limit``: wrapped_on_bar 到点抛
+    ``KeyboardInterrupt``。
+    """
+    events: list[str] = []
+    runner = LiveRunner(
+        strategy_cls=_make_recording_strategy(events), instruments=[], broker="ctp"
+    )
+    runner.engine = cast(Any, _FakeEngine(exc=KeyboardInterrupt("duration reached")))
+    runner.run(cash=1000.0)
+
+    assert events.count("on_stop") == 1
+
+
+def test_live_run_error_abort_triggers_on_stop_and_keeps_summary(
+    patched_live: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """异常中止路径下 on_stop 仍触发, 且 ABORTED ON ERROR 摘要不被顶掉."""
+    events: list[str] = []
+    reasons: list[str] = []
+    runner = LiveRunner(
+        strategy_cls=_make_recording_strategy(events), instruments=[], broker="ctp"
+    )
+    runner.engine = cast(Any, _FakeEngine(exc=RuntimeError("engine exploded")))
+    monkeypatch.setattr(
+        runner, "_print_summary", lambda reason="Manual Stop": reasons.append(reason)
+    )
+    runner.run(cash=1000.0)
+
+    assert events.count("on_stop") == 1
+    assert reasons == ["ABORTED ON ERROR"]
+
+
+def test_live_run_user_on_stop_error_is_isolated(
+    patched_live: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """用户 on_stop 抛异常只记 ERROR, 不外泄, 后续收尾步骤照常执行.
+
+    实盘的 finally 抛出会盖掉 try 里真正的停止原因(包括标记
+    ABORTED ON ERROR 的 CRITICAL), 使"任务看着跑完了其实没跑"重现。
+    """
+    events: list[str] = []
+    summaries: list[str] = []
+    runner = LiveRunner(
+        strategy_cls=_make_recording_strategy(events, stop_exc=True),
+        instruments=[],
+        broker="ctp",
+    )
+    runner.engine = cast(Any, _FakeEngine())
+    runner._print_summary = lambda reason="Manual Stop": summaries.append(reason)  # type: ignore[assignment]
+
+    with caplog.at_level("ERROR"):
+        runner.run(cash=1000.0)
+
+    assert events.count("on_stop") == 1
+    assert summaries == ["Manual Stop"]
+    assert any("on_stop" in r.getMessage() for r in caplog.records)
+
+
+def test_live_run_slot_on_stop_error_does_not_block_others(
+    patched_live: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """一个 slot 的 on_stop 抛错不能阻止主策略与其余 slot 收尾."""
+    events: list[str] = []
+
+    class Main(Strategy):
+        def on_bar(self, bar: Any) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            events.append("main")
+
+    class BadSlot(Strategy):
+        def on_bar(self, bar: Any) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            events.append("bad")
+            raise RuntimeError("slot boom")
+
+    class GoodSlot(Strategy):
+        def on_bar(self, bar: Any) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            events.append("good")
+
+    runner = LiveRunner(
+        strategy_cls=Main,
+        instruments=[],
+        broker="ctp",
+        strategies_by_slot={"bad": BadSlot, "good": GoodSlot},
+    )
+    runner.engine = cast(Any, _FakeEngine())
+    with caplog.at_level("ERROR"):
+        runner.run(cash=1000.0)
+
+    assert sorted(events) == ["bad", "good", "main"]
+
+
+def test_live_run_on_stop_precedes_gateway_shutdown_and_summary(
+    patched_live: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """收尾顺序: on_stop -> 停信号源/broker 分发 -> 摘要.
+
+    on_stop 排在停网关之前, 才能让用户在 on_stop 里撤单/平仓时通道仍可用;
+    摘要排最后, 才能反映 on_stop 落盘后的最终状态。
+    """
+    order: list[str] = []
+
+    class Strat(Strategy):
+        def on_bar(self, bar: Any) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            order.append("on_stop")
+
+    runner = LiveRunner(strategy_cls=Strat, instruments=[], broker="ctp")
+    runner.engine = cast(Any, _FakeEngine())
+    monkeypatch.setattr(
+        runner, "_stop_signal_source", lambda: order.append("stop_signal")
+    )
+    monkeypatch.setattr(
+        runner, "_stop_broker_dispatcher", lambda: order.append("stop_dispatcher")
+    )
+    monkeypatch.setattr(
+        runner, "_print_summary", lambda reason="Manual Stop": order.append("summary")
+    )
+    runner.run(cash=1000.0)
+
+    assert order == ["on_stop", "stop_signal", "stop_dispatcher", "summary"]
+
+
+def test_live_run_stop_dispatch_survives_failure_before_strategy_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """策略尚未创建就失败时, 收尾派发不能自己炸掉.
+
+    ``run()`` 里策略实例在网关装配之后才创建, 之前的
+    ``create_gateway_bundle`` / broker_live 校验都可能先抛。
+    """
+    monkeypatch.setattr(
+        live_module,
+        "create_gateway_bundle",
+        lambda **kw: (_ for _ in ()).throw(ValueError("gateway boom")),
+    )
+    monkeypatch.setattr(live_module.time, "sleep", lambda s: None)
+
+    class Strat(Strategy):
+        def on_bar(self, bar: Any) -> None:
+            pass
+
+    runner = LiveRunner(strategy_cls=Strat, instruments=[], broker="ctp")
+    runner.engine = cast(Any, _FakeEngine())
+
+    with pytest.raises(ValueError, match="gateway boom"):
+        runner.run(cash=1000.0)
+
+    runner._dispatch_strategy_stop()

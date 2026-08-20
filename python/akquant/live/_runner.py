@@ -363,6 +363,12 @@ class LiveRunner:
         self.feed = DataFeed.create_live()  # type: ignore
         self.engine = Engine()
 
+        # 收尾派发的目标: run() 里策略创建成功后写入。预置 None/空是因为
+        # run() 在创建策略之前就可能抛(网关工厂、broker_live 校验), 那时
+        # 收尾派发也会被调用。
+        self._stop_target_strategy: Optional[Strategy] = None
+        self._stop_target_slot_strategies: Dict[str, Strategy] = {}
+
     def set_indicator_stream(
         self,
         *,
@@ -485,6 +491,10 @@ class LiveRunner:
         strategy_instance, slot_strategy_instances, effective_strategy_id = (
             self._build_strategy_topology()
         )
+        # 记录收尾目标: finally 里不能用局部变量 —— 策略创建之前就可能抛,
+        # 那时局部名尚未绑定。
+        self._stop_target_strategy = strategy_instance
+        self._stop_target_slot_strategies = slot_strategy_instances
         self._configure_strategy_slots(
             strategy_instance, slot_strategy_instances, effective_strategy_id
         )
@@ -581,6 +591,9 @@ class LiveRunner:
                 extra=self._runner_log_extra(phase="live"),
             )
         finally:
+            # 策略收尾排最前: on_stop 里的撤单/平仓需要 broker 通道仍然活着,
+            # 而摘要排最后才能反映 on_stop 落盘后的最终状态。
+            self._dispatch_strategy_stop()
             self._stop_signal_source()
             self._stop_broker_dispatcher()
             self._print_summary(stop_reason)
@@ -655,6 +668,44 @@ class LiveRunner:
                 slot_strategy._on_start_internal()
             elif hasattr(slot_strategy, "on_start"):
                 slot_strategy.on_start()
+
+    def _dispatch_strategy_stop(self) -> None:
+        """会话收尾: 触发主策略与 slot 子策略的 on_stop(异常隔离).
+
+        与回测(`backtest/engine.py:4757`)的差异有两处, 都是刻意的:
+
+        1. 走 `_on_stop_live_internal` 而非 `_on_stop_internal` —— 后者串了
+           三个回测语义的数据覆盖校验, 实盘会误报, 且其中
+           `_check_incremental_hl_bar_coverage` 会抛异常打断收尾。
+        2. **不重抛** `StrategyConfigurationError` —— 会抛它的那三个校验根本
+           不在实盘收尾路径里; 而实盘的 `finally` 抛出会盖掉 `try` 里真正的
+           停止原因, 包括标记 `ABORTED ON ERROR` 的 CRITICAL, 使"任务看着
+           跑完了其实没跑"重现。一律吞成 ERROR。
+
+        主策略与每个 slot 各自独立 try/except: 一个 slot 的 on_stop 抛错不能
+        阻止其余 slot 收尾。
+        """
+        targets: List[tuple[str, Strategy]] = []
+        main_strategy = getattr(self, "_stop_target_strategy", None)
+        if main_strategy is not None:
+            targets.append(("on_stop", main_strategy))
+        for slot_strategy in getattr(self, "_stop_target_slot_strategies", {}).values():
+            targets.append(("slot on_stop", slot_strategy))
+
+        for label, target in targets:
+            try:
+                if hasattr(target, "_on_stop_live_internal"):
+                    target._on_stop_live_internal()
+                elif hasattr(target, "on_stop"):
+                    target.on_stop()
+            except Exception as exc:  # noqa: BLE001 — 收尾失败不改变会话结果
+                logger.error(
+                    "Error in %s: %s",
+                    label,
+                    exc,
+                    exc_info=True,
+                    extra=self._runner_log_extra(phase="strategy"),
+                )
 
     def _configure_strategy_slots(
         self,
