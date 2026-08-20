@@ -453,6 +453,7 @@ class Strategy:
     _framework_order_event_key_order: Deque[Tuple[Any, ...]]
     _framework_expiry_event_keys: set[Tuple[Any, ...]]
     _framework_stop_flushed: bool
+    _framework_live_stop_dispatched: bool
     _framework_boundary_timers_registered: bool
     _framework_pre_open_timers_registered: bool
     _framework_in_pre_open_phase: bool
@@ -693,6 +694,7 @@ class Strategy:
         instance._framework_order_event_key_order = deque()
         instance._framework_expiry_event_keys = set()
         instance._framework_stop_flushed = False
+        instance._framework_live_stop_dispatched = False
         instance._framework_boundary_timers_registered = False
         instance._framework_pre_open_timers_registered = False
         instance._framework_in_pre_open_phase = False
@@ -785,6 +787,9 @@ class Strategy:
                 del state[_order_dedupe_key]
         if "_framework_stop_flushed" in state:
             del state["_framework_stop_flushed"]
+        # 实盘收尾标志同属会话内派生态: 续跑是一段新会话, 理应能再收尾一次。
+        if "_framework_live_stop_dispatched" in state:
+            del state["_framework_live_stop_dispatched"]
         if "_framework_boundary_timers_registered" in state:
             del state["_framework_boundary_timers_registered"]
         # 派生态(性能短路标志 + 本地交易日缓存): 恢复时删除, 以强制
@@ -1139,6 +1144,28 @@ class Strategy:
         self._check_symbol_data_coverage()
         self._check_warmup_symbol_coverage()
         self._check_incremental_hl_bar_coverage()
+        _dispatch_shutdown_hooks_impl(self)
+        _call_user_callback_impl(self, "on_stop")
+
+    def _on_stop_live_internal(self) -> None:
+        """实盘会话收尾: 只补发框架级结束钩子 + 用户 `on_stop`.
+
+        与 `_on_stop_internal` 的区别是**不跑**三个数据覆盖校验
+        (`_check_symbol_data_coverage` / `_check_warmup_symbol_coverage` /
+        `_check_incremental_hl_bar_coverage`) —— 那三个是回测语义: 实盘
+        盘中确有标的整场无成交、warmup 到收盘仍未攒满、纯 tick 会话都是
+        常态, 跑它们会分别产生误报、误报、以及**抛**
+        `StrategyConfigurationError` 打断整个收尾流程。
+
+        `_framework_live_stop_dispatched` 是本方法专属的幂等标志:
+        `_framework_stop_flushed` 只保护 `dispatch_shutdown_hooks` 内部的
+        `on_after_trading` 补发, 覆盖不到 `on_stop` 本身, 重复派发会让用户
+        的 `on_stop` 跑两次(实盘收尾里落盘/发通知重复执行是真实危害)。
+        """
+        _ensure_framework_state_impl(self)
+        if getattr(self, "_framework_live_stop_dispatched", False):
+            return
+        self._framework_live_stop_dispatched = True
         _dispatch_shutdown_hooks_impl(self)
         _call_user_callback_impl(self, "on_stop")
 
