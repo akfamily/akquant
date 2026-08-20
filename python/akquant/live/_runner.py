@@ -509,6 +509,13 @@ class LiveRunner:
                 self._install_broker_order_submitter(bundle.trader_gateway, target)
             self._await_broker_ready(bundle.trader_gateway, strategy_targets)
 
+        # slot 子策略的 on_start: Rust 只对主策略调 _on_start_internal, 回测
+        # 在 Python 侧显式补(backtest/engine.py:3172-3176), 实盘此前没有 ——
+        # slot 的 on_start/subscribe/指标注册全部不触发。放在 duration 处理
+        # 之前: on_start 里可能注册 timer, 早于 deadline 设置更符合"启动完成
+        # 再计时"。
+        self._dispatch_slot_strategy_start(slot_strategy_instances)
+
         # Apply duration limit if specified
         if duration:
             logger.info(
@@ -627,6 +634,27 @@ class LiveRunner:
                 slot_input
             )
         return strategy_instance, slot_strategy_instances, self.strategy_id
+
+    def _dispatch_slot_strategy_start(
+        self, slot_strategies: Dict[str, Strategy]
+    ) -> None:
+        """触发 slot 子策略的 on_start.
+
+        主策略**刻意不在这里调**: 它的 `on_start` 由 Rust 在 `engine.run()`
+        内触发(`src/engine/python.rs:1167`)。若在 Python 侧提前调, `on_start`
+        里的 `subscribe()` / timer 注册会挪到 `_apply_time_limit` 之前发生,
+        改变现有实盘时序(Rust 那次因 `_start_initialized` 幂等不会重复执行,
+        但顺序变了)。slot 没有这个约束 —— 它此前一次都不触发。
+
+        异常**不吞**: 启动期失败应当让会话起不来, 与收尾期(见
+        `_dispatch_strategy_stop`)吞异常的取舍相反。对齐回测
+        `backtest/engine.py:3172-3176` 同样不包 try/except 的写法。
+        """
+        for slot_strategy in slot_strategies.values():
+            if hasattr(slot_strategy, "_on_start_internal"):
+                slot_strategy._on_start_internal()
+            elif hasattr(slot_strategy, "on_start"):
+                slot_strategy.on_start()
 
     def _configure_strategy_slots(
         self,
