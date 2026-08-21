@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 import warnings
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -81,6 +81,7 @@ from ..strategy_framework_hooks import (
     collect_pre_open_timer_entries as _collect_pre_open_timer_entries_impl,
 )
 from ..strategy_loader import resolve_strategy_input
+from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..utils.inspector import infer_warmup_period
 from .fill_mode import FillMode
 from .result import BacktestResult
@@ -90,7 +91,6 @@ from .tick_input import (
     parse_freq_to_interval_min,
 )
 
-_RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
 _collect_cross_section_entries_impl = collect_cross_section_timer_entries
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 _LEGACY_FILL_POLICY_DICT_MSG = (
@@ -2000,47 +2000,6 @@ class FunctionalStrategy(Strategy):
             self._on_timer_func(self, payload)
 
 
-def _coerce_strategy_runtime_config(
-    value: Union[StrategyRuntimeConfig, Dict[str, Any]],
-) -> StrategyRuntimeConfig:
-    if isinstance(value, StrategyRuntimeConfig):
-        return StrategyRuntimeConfig(
-            enable_precise_day_boundary_hooks=value.enable_precise_day_boundary_hooks,
-            portfolio_update_eps=value.portfolio_update_eps,
-            error_mode=value.error_mode,
-            re_raise_on_error=value.re_raise_on_error,
-            indicator_mode=value.indicator_mode,
-        )
-    if isinstance(value, dict):
-        unknown_fields = sorted(set(value.keys()) - _RUNTIME_CONFIG_FIELDS)
-        if unknown_fields:
-            allowed = ", ".join(sorted(_RUNTIME_CONFIG_FIELDS))
-            unknown = ", ".join(unknown_fields)
-            raise ValueError(
-                "strategy_runtime_config contains unknown fields: "
-                f"{unknown}. Allowed fields: {allowed}"
-            )
-        try:
-            return StrategyRuntimeConfig(**value)
-        except ValueError as exc:
-            raise ValueError(f"invalid strategy_runtime_config: {exc}") from None
-    raise TypeError(
-        "strategy_runtime_config must be StrategyRuntimeConfig or Dict[str, Any]"
-    )
-
-
-def _runtime_config_conflicts(
-    current: StrategyRuntimeConfig, incoming: StrategyRuntimeConfig
-) -> List[str]:
-    conflicts: List[str] = []
-    for key in sorted(_RUNTIME_CONFIG_FIELDS):
-        before = getattr(current, key)
-        after = getattr(incoming, key)
-        if before != after:
-            conflicts.append(f"{key}: {before} -> {after}")
-    return conflicts
-
-
 def _should_prepare_precomputed_indicators(strategy_instance: Strategy) -> bool:
     return str(strategy_instance.indicator_mode).strip().lower() == "precompute"
 
@@ -2093,40 +2052,6 @@ def _to_active_start_time_ns(
     if start_time is None:
         return None
     return _boundary_timestamp_to_utc_ns(start_time, timezone)
-
-
-def _apply_strategy_runtime_config(
-    strategy_instance: Strategy,
-    incoming: Union[StrategyRuntimeConfig, Dict[str, Any]],
-    runtime_config_override: bool,
-    logger: Any,
-) -> None:
-    cfg = _coerce_strategy_runtime_config(incoming)
-    current = strategy_instance.runtime_config
-    conflicts = _runtime_config_conflicts(current, cfg)
-    if conflicts:
-        conflict_text = "; ".join(conflicts)
-        warning_key = f"{runtime_config_override}|{conflict_text}"
-        warned_keys = getattr(strategy_instance, "_runtime_config_warning_keys", None)
-        if not isinstance(warned_keys, set):
-            warned_keys = set()
-            setattr(strategy_instance, "_runtime_config_warning_keys", warned_keys)
-        should_log = warning_key not in warned_keys
-        warned_keys.add(warning_key)
-        if runtime_config_override:
-            if should_log:
-                logger.warning(
-                    "strategy_runtime_config overrides strategy runtime_config: "
-                    f"{conflict_text}"
-                )
-        else:
-            if should_log:
-                logger.warning(
-                    "strategy_runtime_config is ignored because "
-                    f"runtime_config_override=False: {conflict_text}"
-                )
-            return
-    strategy_instance.runtime_config = cfg
 
 
 def _coerce_analyzer_plugins(
@@ -2900,14 +2825,14 @@ def run_backtest(
             )
 
     if strategy_runtime_config is not None and isinstance(strategy_instance, Strategy):
-        _apply_strategy_runtime_config(
+        apply_strategy_runtime_config(
             strategy_instance,
             strategy_runtime_config,
             runtime_config_override,
             logger,
         )
         for slot_strategy in slot_strategy_instances.values():
-            _apply_strategy_runtime_config(
+            apply_strategy_runtime_config(
                 slot_strategy,
                 strategy_runtime_config,
                 runtime_config_override,
@@ -5352,14 +5277,14 @@ def run_from_checkpoint(
         if strategy_runtime_config is None:
             strategy_runtime_config = kwargs_runtime_config
     if strategy_runtime_config is not None and isinstance(strategy_instance, Strategy):
-        _apply_strategy_runtime_config(
+        apply_strategy_runtime_config(
             strategy_instance,
             strategy_runtime_config,
             runtime_config_override,
             logger,
         )
         for slot_strategy in slot_strategy_instances.values():
-            _apply_strategy_runtime_config(
+            apply_strategy_runtime_config(
                 slot_strategy,
                 strategy_runtime_config,
                 runtime_config_override,

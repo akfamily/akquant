@@ -19,8 +19,9 @@ from ..gateway.order_submitter import (
 from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink
 from ..log import build_log_extra, get_logger
-from ..strategy import InstrumentSnapshot, Strategy
+from ..strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
 from ..strategy_loader import resolve_strategy_input
+from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..utils import format_metric_value
 from ._gateway_setup import (
     LEGACY_GATEWAY_OPTION_KEYS,
@@ -212,6 +213,10 @@ class LiveRunner:
         on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         signal_port_ready: Optional[Callable[[Any], None]] = None,
         signal_source: Optional[Any] = None,
+        strategy_runtime_config: Optional[
+            Union[StrategyRuntimeConfig, Dict[str, Any]]
+        ] = None,
+        runtime_config_override: bool = True,
     ):
         """
         Initialize the LiveRunner.
@@ -354,6 +359,8 @@ class LiveRunner:
         self.on_broker_event = on_broker_event
         self.signal_port_ready = signal_port_ready
         self.signal_source = signal_source
+        self.strategy_runtime_config = strategy_runtime_config
+        self.runtime_config_override = bool(runtime_config_override)
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
         self._indicator_recorder_override: Optional[IndicatorSink] = None
@@ -495,6 +502,12 @@ class LiveRunner:
         # 那时局部名尚未绑定。
         self._stop_target_strategy = strategy_instance
         self._stop_target_slot_strategies = slot_strategy_instances
+        # 运行时配置下发放在最前: indicator_mode 决定指标注册走哪条路, 而指标在
+        # on_start 里注册(主策略由 Rust 在 engine.run() 内触发, 槽位由
+        # _dispatch_slot_strategy_start 触发) —— 两者都在下面。
+        self._apply_runtime_config(
+            [strategy_instance, *slot_strategy_instances.values()]
+        )
         self._configure_strategy_slots(
             strategy_instance, slot_strategy_instances, effective_strategy_id
         )
@@ -805,6 +818,32 @@ class LiveRunner:
             self.broker,
             extra=self._runner_log_extra(phase="gateway"),
         )
+
+    def _apply_runtime_config(self, targets: list[Strategy]) -> None:
+        """把入口传入的 ``strategy_runtime_config`` 下发到主策略与各槽位策略.
+
+        与回测的 ``run_backtest`` 对称(``backtest/engine.py`` 里同一个
+        ``apply_strategy_runtime_config``), 冲突检测与告警去重因此两侧一致。
+        入口没传就整个跳过 —— 策略自设的 ``self.runtime_config`` 保持不动。
+
+        **必须早于任何 ``on_start``**: ``runtime_config`` 含 ``indicator_mode``,
+        它决定指标走增量还是预计算, 而指标在 ``on_start`` 里注册。主策略的
+        ``on_start`` 由 Rust 在 ``engine.run()`` 内触发, 槽位策略的由
+        ``_dispatch_slot_strategy_start`` 触发, 本方法在两者之前调用。
+
+        :param targets: 主策略与各槽位策略实例
+        """
+        if self.strategy_runtime_config is None:
+            return
+        for target in targets:
+            if not isinstance(target, Strategy):
+                continue
+            apply_strategy_runtime_config(
+                target,
+                self.strategy_runtime_config,
+                self.runtime_config_override,
+                logger,
+            )
 
     def _inject_data_freq(self, targets: list[Strategy], bundle: Any) -> None:
         """把行情网关声明的数据周期注入 ``self.freq``(只读属性).

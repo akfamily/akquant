@@ -1,6 +1,6 @@
 # Runtime Config 指南
 
-本文介绍如何在回测入口侧控制策略运行时行为，而无需修改策略类代码。
+本文介绍如何在回测与实盘的入口侧控制策略运行时行为，而无需修改策略类代码。
 
 ## 1. 解决什么问题
 
@@ -10,11 +10,13 @@
 - 账户更新阈值（`portfolio_update_eps`）
 - 精确交易日边界钩子（`enable_precise_day_boundary_hooks`）
 - 兼容模式开关（`re_raise_on_error`）
+- 指标计算模式（`indicator_mode`）
 
 该能力同时支持：
 
 - `run_backtest(...)`
 - `run_from_checkpoint(...)`
+- `run_live(...)`
 
 ## 2. 基础用法
 
@@ -49,6 +51,7 @@ result = run_backtest(
 | `portfolio_update_eps` | `float`（`>= 0`） | `0.0` | 过滤微小资产波动噪声 | 抛出 `ValueError` |
 | `enable_precise_day_boundary_hooks` | `bool` | `False` | 启用基于边界定时器的精确日内钩子 | 按 `bool` 规则转换 |
 | `re_raise_on_error` | `bool` | `True` | 在 `error_mode="legacy"` 下作为兼容兜底 | 按 `bool` 规则转换 |
+| `indicator_mode` | `"incremental" \| "precompute"` | `"precompute"` | 选择指标走增量计算还是全量预计算 | 抛出 `ValueError` |
 
 ## 4. 冲突优先级
 
@@ -81,22 +84,62 @@ result = run_from_checkpoint(
 
 冲突处理规则与 `run_backtest` 完全一致。
 
-## 7. 端到端示例
+## 7. 实盘下发（run_live）
+
+`run_live(...)` 接受与 `run_backtest(...)` 同名的两个参数，配置会下发到主策略**与每个槽位子策略**：
+
+```python
+from akquant import StrategyRuntimeConfig
+from akquant.live import run_live
+
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="ctp",
+    strategy_runtime_config=StrategyRuntimeConfig(error_mode="continue"),
+)
+```
+
+典型用途是同一份策略代码在两侧用不同容错口径——回测用 `error_mode="raise"` 让问题尽早暴露，实盘用 `"continue"` 避免单个回调异常中断交易：
+
+```python
+run_backtest(data=data, strategy=MyStrategy,
+             strategy_runtime_config={"error_mode": "raise"})
+run_live(strategy_cls=MyStrategy, instruments=instruments,
+         strategy_runtime_config={"error_mode": "continue"})
+```
+
+两点与回测的差异需要注意：
+
+- **不传就完全不动**。策略内部自己写的 `self.runtime_config` 在实盘本来就生效（消费点直读该属性，与运行模式无关），不传该参数时它保持原样。
+- **没有 `strategy_config` 兜底注入**。回测会从 `strategy_config.indicator_mode` 推一份默认值，实盘入口没有 config 对象参数，所以实盘想改 `indicator_mode` 必须显式传 `strategy_runtime_config`。
+
+冲突检测、告警去重与 `runtime_config_override` 的语义与回测共用同一套实现，行为逐字一致。
+
+## 8. 端到端示例
 
 可直接运行：
 
 - [22_strategy_runtime_config_demo.py](https://github.com/akfamily/akquant/blob/main/examples/22_strategy_runtime_config_demo.py)
 - [44_strategy_source_loader_demo.py](https://github.com/akfamily/akquant/blob/main/examples/44_strategy_source_loader_demo.py)
+- [69_live_runtime_config_dispatch_demo.py](https://github.com/akfamily/akquant/blob/main/examples/69_live_runtime_config_dispatch_demo.py)：实盘下发，含槽位子策略与 `runtime_config_override=False`（走 `broker="replay"`，无需连接柜台）
 
 另见：[热启动指南](warm_start.md)。
 
-预期输出标记：
+预期输出标记（22 号）：
 
 - `scenario1_done`
 - `scenario2_exception=...`
 - `scenario3_done`
 
-## 8. 故障速查清单
+预期输出标记（69 号）：
+
+- `scenario1_done bars_seen=3` —— 实盘 `error_mode="continue"` 吞掉每根 bar 的异常，会话跑完
+- `scenario2_exception=RuntimeError: ...` —— 同一策略在回测 `error_mode="raise"` 下第一根 bar 就抛出
+- `slot on_start error_mode=continue` —— 配置确实下发到了槽位子策略
+- `scenario4_kept=continue` —— `runtime_config_override=False` 保留了策略自设值
+
+## 9. 故障速查清单
 
 | 现象 / 错误信息 | 常见原因 | 快速修复 |
 |---|---|---|
@@ -106,7 +149,7 @@ result = run_from_checkpoint(
 | 冲突告警只出现一次 | 告警按“同一策略实例 + 同一冲突内容”去重 | 这是预期行为；如需重复观察可新建策略实例 |
 | 热启动后仍抛出回调异常 | 恢复后的策略配置生效，外部覆盖未应用 | 传入 `strategy_runtime_config={"error_mode": "continue"}` 且确保 `runtime_config_override=True` |
 
-## 9. 动态策略加载（strategy_source / strategy_loader）
+## 10. 动态策略加载（strategy_source / strategy_loader）
 
 `run_backtest(...)` 支持在调用时通过策略源码动态加载策略：
 
@@ -119,7 +162,7 @@ result = run_from_checkpoint(
 - `python_plain`：从本地 Python 文件加载策略
 - `encrypted_external`：通过外部回调解密并返回策略对象
 
-### 9.1 python_plain 示例
+### 10.1 python_plain 示例
 
 ```python
 result = run_backtest(
@@ -131,7 +174,7 @@ result = run_backtest(
 )
 ```
 
-### 9.2 encrypted_external 示例
+### 10.2 encrypted_external 示例
 
 ```python
 def decrypt_and_load(source, options):
@@ -147,12 +190,12 @@ result = run_backtest(
 )
 ```
 
-### 9.3 与 run_from_checkpoint 的关系
+### 10.3 与 run_from_checkpoint 的关系
 
 `run_from_checkpoint(...)` 当前从 checkpoint 恢复策略实例，不会通过
 `strategy_source` / `strategy_loader` 重新加载策略实现。
 
-## 10. broker_profile 选择建议
+## 11. broker_profile 选择建议
 
 `run_backtest(..., broker_profile=...)` 可快速注入一组费率/滑点/手数默认值，适合在“参数还未完全定稿”阶段快速对齐不同执行风格。
 
