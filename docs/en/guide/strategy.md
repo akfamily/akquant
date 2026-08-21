@@ -88,6 +88,8 @@ Notes:
 * `on_portfolio_update` is incremental: emitted once at initialization, then only on order/trade or position-relevant price changes.
 * Use `self.portfolio_update_eps` to filter tiny equity/cash changes (default `0.0`).
 * During stop phase, a pending `on_after_trading` is flushed before `on_stop`.
+* Live (`run_live`) vs. backtest teardown: live sessions **skip** the backtest-only data coverage checks (symbols with no fills all session, warmup never reached, tick-only sessions are all normal in live trading and would produce false warnings).
+* In live sessions `on_stop` fires **before** the signal source and broker dispatcher are torn down, so it can cancel or close positions; on the error-abort path the broker channel may already be unusable, and delivery of such teardown orders is not guaranteed.
 * `on_error` receives `(error, source, payload)`. Prefer `self.error_mode = "raise" | "continue"` (default `raise`). `self.re_raise_on_error` remains as fallback for compatibility.
 * Prefer `self.runtime_config = StrategyRuntimeConfig(...)` as a unified runtime switch entry.
 * Legacy alias fields and `runtime_config` stay synchronized automatically.
@@ -127,7 +129,11 @@ sequenceDiagram
     participant FW as Framework Dispatcher
     participant Strategy as User Strategy
 
-    Engine->>FW: _on_stop_internal()
+    alt backtest
+        Engine->>FW: _on_stop_internal()
+    else live
+        Engine->>FW: _on_stop_live_internal()
+    end
     alt pending session-end event exists
     end
     alt pending trading-day end event exists

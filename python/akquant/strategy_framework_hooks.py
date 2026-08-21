@@ -847,6 +847,8 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._framework_expiry_event_keys = set()
     if not hasattr(strategy, "_framework_stop_flushed"):
         strategy._framework_stop_flushed = False
+    if not hasattr(strategy, "_framework_live_stop_dispatched"):
+        strategy._framework_live_stop_dispatched = False
     if not hasattr(strategy, "_framework_boundary_timers_registered"):
         strategy._framework_boundary_timers_registered = False
     if not hasattr(strategy, "_trading_day_bounds"):

@@ -169,6 +169,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **回测数据列表改为逐元素类型校验（破坏性）**：`run_backtest(data=[...])` 此前只检查首元素类型，`[Bar, "garbage"]` 会漏到 Rust 层抛出难以定位的错误。现在在 Python 层逐元素校验，抛 `TypeError` 并指名位置索引与实际类型；空列表抛 `ValueError`。
 
 ### Fixed
+- 修复实盘会话（`run_live` / `LiveRunner.run`）结束时不触发策略 `on_stop` 的问题：三条停止路径（duration 到期、手动中断、异常中止）现在都会补发 `on_stop`，并在断开 broker 通道之前触发；同时补上实盘 slot 子策略此前从未触发的 `on_start`。
 - **双流下 `on_bar` / `on_tick` 内省略 `freq` 不再报歧义错误**。tick 序列由引擎**无条件**写入历史缓冲区（`HistoryBuffer::update_tick`，与策略是否覆写 `on_tick` **无关**），因此只要订阅了 tick 流（实盘 `gateway_options={"emit_ticks": True}`、回测 `run_backtest(data=[Tick, ...], freq="1min")`），哪怕策略**只写了 `on_bar`**、从不读 tick，该标的也同时存在 bar 与 tick 两条序列。此前这种情形下 `get_history(...)` 不传 `freq` 会抛 `ValueError: symbol X 同时存在 bar 与 tick 两条历史序列`，实盘直接中止会话——用户被要求在一个「他不知道存在」的维度上做选择，而按单流写法写的策略代码本身毫无问题：
 
     ```python

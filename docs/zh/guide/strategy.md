@@ -91,6 +91,8 @@
 * `on_portfolio_update` 采用增量触发：初始化时触发一次，后续仅在订单/成交或持仓相关价格变化时触发。
 * 可通过 `self.portfolio_update_eps` 过滤微小资产波动（默认 `0.0`，即不过滤）。
 * 停止阶段会在 `on_stop` 之前补发待触发的 `on_after_trading`。
+* 实盘（`run_live`）与回测的收尾差异：实盘**不做**回测特有的数据覆盖校验（整场无成交标的、warmup 未攒满、纯 tick 会话在实盘都是常态，校验会误报）。
+* 实盘的 `on_stop` 在断开信号源与 broker 分发**之前**触发，因此可以在其中撤单或平仓；但异常中止路径下柜台通道可能已不可用，框架不保证这类收尾委托送达。
 * `on_error` 参数为 `(error, source, payload)`，推荐通过 `self.error_mode = "raise" | "continue"` 控制行为（默认 `raise`）。`self.re_raise_on_error` 仍兼容，作为兜底开关。
 * 推荐使用 `self.runtime_config = StrategyRuntimeConfig(...)` 统一配置上述行为开关。
 * 旧别名字段与 `runtime_config` 会自动保持同步。
@@ -129,7 +131,11 @@ sequenceDiagram
     participant FW as Framework Dispatcher
     participant Strategy as 用户策略
 
-    Engine->>FW: _on_stop_internal()
+    alt 回测
+        Engine->>FW: _on_stop_internal()
+    else 实盘
+        Engine->>FW: _on_stop_live_internal()
+    end
     alt 仍有未补发的交易日结束事件
         FW->>Strategy: on_after_trading(...)
     end
