@@ -5,19 +5,13 @@ import pandas as pd
 
 from .akquant import TradingSession
 from .log import get_logger
+from .strategy_runtime_config import RUNTIME_CONFIG_DEFAULTS
 
 logger = get_logger("strategy")
 
-_RUNTIME_DEFAULTS = {
-    "enable_precise_day_boundary_hooks": False,
-    "portfolio_update_eps": 0.0,
-    "error_mode": "raise",
-    "re_raise_on_error": True,
-}
-
 
 def _runtime_option(strategy: Any, name: str) -> Any:
-    default = _RUNTIME_DEFAULTS[name]
+    default = RUNTIME_CONFIG_DEFAULTS[name]
     cfg = getattr(strategy, "runtime_config", None)
     if isinstance(cfg, dict):
         value = cfg.get(name, default)

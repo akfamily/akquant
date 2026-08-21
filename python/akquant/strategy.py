@@ -87,6 +87,7 @@ from .strategy_order_events import (
     trade_event_key as _trade_event_key_impl,
 )
 from .strategy_position import Position
+from .strategy_runtime_config import StrategyRuntimeConfig
 from .strategy_scheduler import _nth_per_group as _nth_per_group_impl
 from .strategy_scheduler import schedule as _schedule_impl
 from .strategy_scheduler import schedule_daily as _schedule_daily_impl
@@ -211,35 +212,6 @@ class StrategyConfigurationError(ValueError):
     要保留, 但框架自己的配置校验必须穿透, 否则静默失效: 用户拿到全 0 的指标却毫不知情。
     engine 的 handler 因此只重抛本类型。
     """
-
-
-@dataclass
-class StrategyRuntimeConfig:
-    """策略运行时行为配置."""
-
-    enable_precise_day_boundary_hooks: bool = False
-    portfolio_update_eps: float = 0.0
-    error_mode: Literal["raise", "continue", "legacy"] = "raise"
-    re_raise_on_error: bool = True
-    indicator_mode: Literal["incremental", "precompute"] = "precompute"
-
-    def __post_init__(self) -> None:
-        """校验并标准化配置."""
-        self.portfolio_update_eps = float(self.portfolio_update_eps)
-        if self.portfolio_update_eps < 0.0:
-            raise ValueError("portfolio_update_eps must be >= 0")
-        mode = str(self.error_mode).strip().lower()
-        if mode not in {"raise", "continue", "legacy"}:
-            raise ValueError("error_mode must be one of: raise, continue, legacy")
-        self.error_mode = cast(Literal["raise", "continue", "legacy"], mode)
-        indicator_mode = str(self.indicator_mode).strip().lower()
-        if indicator_mode not in {"incremental", "precompute"}:
-            raise ValueError("indicator_mode must be one of: incremental, precompute")
-        self.indicator_mode = cast(Literal["incremental", "precompute"], indicator_mode)
-        self.enable_precise_day_boundary_hooks = bool(
-            self.enable_precise_day_boundary_hooks
-        )
-        self.re_raise_on_error = bool(self.re_raise_on_error)
 
 
 InstrumentStaticValue = Union[str, int, float, bool]

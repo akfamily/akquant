@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Type, Union
 from ..akquant import Bar, Instrument
 from ..backtest import BacktestStreamEvent
 from ..indicator_recording import IndicatorSink
-from ..strategy import Strategy
+from ..strategy import Strategy, StrategyRuntimeConfig
 from ._runner import LiveRunner
 
 
@@ -79,6 +79,10 @@ def run_live(
     signal_source: Optional[Any] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    strategy_runtime_config: Optional[
+        Union[StrategyRuntimeConfig, Dict[str, Any]]
+    ] = None,
+    runtime_config_override: bool = True,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -161,6 +165,17 @@ def run_live(
     :param indicator_recorder: Optional public :class:`IndicatorSink` to collect
         indicator points; defaults to a streaming sink when ``on_event`` is set.
     :param on_event: Optional stream event callback for realtime indicator flow.
+    :param strategy_runtime_config: Runtime behaviour config (object or dict),
+        dispatched to the primary strategy **and** every slot strategy, exactly as
+        ``run_backtest`` does. Lets you flip behaviour from the entry point without
+        editing strategy code — e.g. run the same strategy with
+        ``error_mode="raise"`` in backtests to surface bugs, and
+        ``error_mode="continue"`` live so a callback error does not halt trading.
+        Left unset, whatever the strategy assigned to ``self.runtime_config``
+        stands untouched.
+    :param runtime_config_override: Whether to override a ``runtime_config`` the
+        strategy already set itself (default True). Either way a conflict is
+        logged; False keeps the strategy's own value and only warns.
     :return: ``None``.
     """
     if instruments is None:
@@ -219,6 +234,8 @@ def run_live(
         on_broker_event=on_broker_event,
         signal_port_ready=signal_port_ready,
         signal_source=signal_source,
+        strategy_runtime_config=strategy_runtime_config,
+        runtime_config_override=runtime_config_override,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event

@@ -1,6 +1,6 @@
 # Runtime Config Guide
 
-This page explains how to control strategy runtime behavior from backtest entry points, without editing strategy class code.
+This page explains how to control strategy runtime behavior from backtest and live entry points, without editing strategy class code.
 
 ## 1. What It Solves
 
@@ -10,11 +10,13 @@ This page explains how to control strategy runtime behavior from backtest entry 
 - Portfolio update threshold (`portfolio_update_eps`)
 - Precise day-boundary hooks (`enable_precise_day_boundary_hooks`)
 - Legacy fallback flag (`re_raise_on_error`)
+- Indicator computation mode (`indicator_mode`)
 
-It works for both:
+It works for all of:
 
 - `run_backtest(...)`
 - `run_from_checkpoint(...)`
+- `run_live(...)`
 
 ## 2. Basic Usage
 
@@ -49,6 +51,7 @@ result = run_backtest(
 | `portfolio_update_eps` | `float` (`>= 0`) | `0.0` | Skip tiny equity/cash update noise | Raises `ValueError` |
 | `enable_precise_day_boundary_hooks` | `bool` | `False` | Enable strict before/after trading by boundary timers | Coerced by bool conversion |
 | `re_raise_on_error` | `bool` | `True` | Legacy fallback when `error_mode="legacy"` | Coerced by bool conversion |
+| `indicator_mode` | `"incremental" \| "precompute"` | `"precompute"` | Choose incremental vs. fully precomputed indicators | Raises `ValueError` |
 
 ## 4. Conflict Priority
 
@@ -83,20 +86,60 @@ Conflict rules are exactly the same as `run_backtest`.
 
 See also: [Warm Start Guide](warm_start.md).
 
-## 7. End-to-End Demo
+## 7. Live Dispatch (`run_live`)
+
+`run_live(...)` accepts the same two parameter names as `run_backtest(...)`. The config is dispatched to the primary strategy **and every slot strategy**:
+
+```python
+from akquant import StrategyRuntimeConfig
+from akquant.live import run_live
+
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="ctp",
+    strategy_runtime_config=StrategyRuntimeConfig(error_mode="continue"),
+)
+```
+
+The typical use is running one strategy under different error policies on each side — `error_mode="raise"` in backtests to surface bugs early, `"continue"` live so a single callback error does not halt trading:
+
+```python
+run_backtest(data=data, strategy=MyStrategy,
+             strategy_runtime_config={"error_mode": "raise"})
+run_live(strategy_cls=MyStrategy, instruments=instruments,
+         strategy_runtime_config={"error_mode": "continue"})
+```
+
+Two differences from backtests are worth noting:
+
+- **Omitting it changes nothing.** A `self.runtime_config` the strategy assigns itself already takes effect live (the consumer reads that attribute directly, independent of run mode); leaving the parameter unset keeps it untouched.
+- **There is no `strategy_config` fallback.** Backtests derive a default from `strategy_config.indicator_mode`; live entry points take no config object, so changing `indicator_mode` live requires passing `strategy_runtime_config` explicitly.
+
+Conflict detection, warning deduplication, and `runtime_config_override` semantics share one implementation with the backtest path, so behavior is identical.
+
+## 8. End-to-End Demo
 
 See runnable demo:
 
 - [22_strategy_runtime_config_demo.py](https://github.com/akfamily/akquant/blob/main/examples/22_strategy_runtime_config_demo.py)
 - [44_strategy_source_loader_demo.py](https://github.com/akfamily/akquant/blob/main/examples/44_strategy_source_loader_demo.py)
+- [69_live_runtime_config_dispatch_demo.py](https://github.com/akfamily/akquant/blob/main/examples/69_live_runtime_config_dispatch_demo.py) — live dispatch, including slot strategies and `runtime_config_override=False` (uses `broker="replay"`, no venue connection needed)
 
-Expected output markers:
+Expected output markers (demo 22):
 
 - `scenario1_done`
 - `scenario2_exception=...`
 - `scenario3_done`
 
-## 8. Troubleshooting Cheat Sheet
+Expected output markers (demo 69):
+
+- `scenario1_done bars_seen=3` — live `error_mode="continue"` swallows the per-bar exception and the session completes
+- `scenario2_exception=RuntimeError: ...` — the same strategy under backtest `error_mode="raise"` throws on the first bar
+- `slot on_start error_mode=continue` — the config really reached the slot strategy
+- `scenario4_kept=continue` — `runtime_config_override=False` preserved the strategy's own value
+
+## 9. Troubleshooting Cheat Sheet
 
 | Symptom / Error | Likely Cause | Fast Fix |
 |---|---|---|
@@ -106,7 +149,7 @@ Expected output markers:
 | Conflict warning appears only once | Warning dedup is per strategy instance and conflict payload | This is expected; create a new strategy instance if you need repeated warning output |
 | Warm-start resume still raises callback exceptions | Restored strategy config remains active and override not applied | Pass `strategy_runtime_config={"error_mode": "continue"}` with `runtime_config_override=True` |
 
-## 9. Dynamic Strategy Loading (`strategy_source` / `strategy_loader`)
+## 10. Dynamic Strategy Loading (`strategy_source` / `strategy_loader`)
 
 `run_backtest(...)` supports loading strategy implementation dynamically at call time:
 
@@ -119,7 +162,7 @@ Built-in loaders:
 - `python_plain`: load strategy from a local Python source file
 - `encrypted_external`: delegate decryption and loading to external callback
 
-### 9.1 `python_plain` example
+### 10.1 `python_plain` example
 
 ```python
 result = run_backtest(
@@ -131,7 +174,7 @@ result = run_backtest(
 )
 ```
 
-### 9.2 `encrypted_external` example
+### 10.2 `encrypted_external` example
 
 ```python
 def decrypt_and_load(source, options):
@@ -147,12 +190,12 @@ result = run_backtest(
 )
 ```
 
-### 9.3 Relation to `run_from_checkpoint`
+### 10.3 Relation to `run_from_checkpoint`
 
 `run_from_checkpoint(...)` currently restores strategy instance from checkpoint and does not
 reload strategy implementation via `strategy_source` / `strategy_loader`.
 
-## 10. broker_profile Selection Guide
+## 11. broker_profile Selection Guide
 
 `run_backtest(..., broker_profile=...)` injects a preset of fee/slippage/lot defaults, useful when you want to align execution assumptions quickly before finalizing broker-specific params.
 
