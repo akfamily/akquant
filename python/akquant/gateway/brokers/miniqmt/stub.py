@@ -301,4 +301,5 @@ class MiniQMTTraderGateway:
             UnifiedOrderStatus.FILLED,
             UnifiedOrderStatus.CANCELLED,
             UnifiedOrderStatus.REJECTED,
+            UnifiedOrderStatus.EXPIRED,
         )

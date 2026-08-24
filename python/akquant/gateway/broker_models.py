@@ -12,6 +12,10 @@ class UnifiedOrderStatus(str, Enum):
     FILLED = "Filled"
     CANCELLED = "Cancelled"
     REJECTED = "Rejected"
+    #: 委托过期/失效(日内单收盘未成、柜台把单作废)。与回测侧 Rust
+    #: ``OrderStatus.Expired`` 同名同义: 缺了它, 柜台报来的 ``expired`` 只能落
+    #: 非终态兜底, 该单会永远留在挂单表里被反复撤单。
+    EXPIRED = "Expired"
 
 
 class UnifiedErrorType(str, Enum):

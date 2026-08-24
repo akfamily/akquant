@@ -301,4 +301,5 @@ class PTradeTraderGateway:
             UnifiedOrderStatus.FILLED,
             UnifiedOrderStatus.CANCELLED,
             UnifiedOrderStatus.REJECTED,
+            UnifiedOrderStatus.EXPIRED,
         )

@@ -73,6 +73,7 @@ _STATUS_MAP = {
     UnifiedOrderStatus.FILLED: OrderStatus.Filled,
     UnifiedOrderStatus.CANCELLED: OrderStatus.Cancelled,
     UnifiedOrderStatus.REJECTED: OrderStatus.Rejected,
+    UnifiedOrderStatus.EXPIRED: OrderStatus.Expired,
 }
 
 
