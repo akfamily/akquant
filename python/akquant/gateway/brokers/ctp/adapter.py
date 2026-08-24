@@ -400,6 +400,7 @@ class CTPTraderAdapter:
             UnifiedOrderStatus.FILLED,
             UnifiedOrderStatus.CANCELLED,
             UnifiedOrderStatus.REJECTED,
+            UnifiedOrderStatus.EXPIRED,
         )
 
     def _map_native_position_payload(self, payload: Any) -> UnifiedPosition:

@@ -94,12 +94,18 @@ DEFAULT_STATUS_MAP = {
     "cancelled": UnifiedOrderStatus.CANCELLED,
     "canceled": UnifiedOrderStatus.CANCELLED,
     "rejected": UnifiedOrderStatus.REJECTED,
+    "expired": UnifiedOrderStatus.EXPIRED,
     "alltraded": UnifiedOrderStatus.FILLED,
     "parttradedqueueing": UnifiedOrderStatus.PARTIALLY_FILLED,
     "parttradednotqueueing": UnifiedOrderStatus.PARTIALLY_FILLED,
     "notradequeueing": UnifiedOrderStatus.SUBMITTED,
     "notradenotqueueing": UnifiedOrderStatus.SUBMITTED,
     "unknown": UnifiedOrderStatus.SUBMITTED,
+    # 以下单字符码值是 **CTP 口径**(THOST_FTDC_OST_*): 0=全部成交、1/2=部分成交、
+    # 3/4=未成交、5=已撤单、a=未知、b/c=未触发/已触发。
+    # 注意与恒生「委托状态」(数据词典 1203)的数字码**完全冲突**——那边 0=未报、
+    # 5=部撤、8=已成。接恒生柜台的 broker 必须自带映射表(中间件插件即如此),
+    # 不要复用这张表, 否则「未报」会被读成「已成交」。
     "0": UnifiedOrderStatus.FILLED,
     "1": UnifiedOrderStatus.PARTIALLY_FILLED,
     "2": UnifiedOrderStatus.PARTIALLY_FILLED,

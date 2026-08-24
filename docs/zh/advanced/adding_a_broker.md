@@ -166,6 +166,34 @@ return GatewayBundle(
 )
 ```
 
+## 委托状态映射：终态与非终态
+
+`UnifiedOrderStatus` 分两类，映射错一条的代价不对称，所以单列一节：
+
+| 类别 | 取值 | 含义 |
+| --- | --- | --- |
+| 非终态 | `New` / `Submitted` / `PartiallyFilled` | 还可能继续成交，`sync_open_orders()` **只应返回这三种** |
+| 终态 | `Filled` / `Cancelled` / `Rejected` / `Expired` | 不会再变，核心据此关闭 id 映射、停止跟踪 |
+
+终态集在核心侧的落点是 `python/akquant/live/_payload_utils.py`
+的 `_TERMINAL_STATUSES`，三个内置 broker 的 `_is_terminal_status()` 与之同口径；
+回测侧对应 `strategy_order_events._TERMINAL_ORDER_STATUSES`。`Expired` 是
+日内单收盘作废、柜台把单判废这类场景，**别漏**：漏掉它等于把终态单当活单。
+
+三条容易踩的坑：
+
+1. **未识别的柜台状态请兜底成非终态，但必须记 `warning`。** 兜底成非终态是保守
+   的（宁可多查一次挂单，也不要把活单当终态丢掉），可一旦静默，柜台新增的终态
+   码值就会永远留在挂单表里，`cancel_all_orders` 每轮对它撤一次，柜台回
+   「委托状态错误不能撤单」。有日志才有人发现。
+2. **不要用 `status == Filled` 判断成交。** IOC / 最优五档即时成交剩余撤销这类
+   委托，**正常收尾就是 `Cancelled`**（部分成交时柜台状态是「部撤」），成交量由
+   `filled_quantity` 承载。策略与 broker 内部都应以 `filled_quantity` 为准。
+3. **不要复用 `create_default_mapper()` 里的单字符码值。** 那张表是 CTP 口径
+   （`0`=全部成交、`5`=已撤单），与恒生《数据词典》1203「委托状态」的数字码
+   （`0`=未报、`5`=部撤、`8`=已成）**完全冲突**。接非 CTP 柜台请自带映射表——
+   `akquant-middleware` 就是把整张表收在自己的 `mapper.py` 里的。
+
 ## 最小骨架
 
 ```python

@@ -6,7 +6,9 @@ Extracted from the live runner for direct unit testing and reuse by the
 
 from typing import Any, Dict
 
-_TERMINAL_STATUSES = {"filled", "cancelled", "canceled", "rejected"}
+#: 终态状态文本(小写)。与回测侧 ``strategy_order_events._TERMINAL_ORDER_STATUSES``
+#: 保持同一口径——两边都必须含 ``expired``, 否则日内单收盘作废后仍被当活单。
+_TERMINAL_STATUSES = {"filled", "cancelled", "canceled", "rejected", "expired"}
 
 
 def payload_field(payload: Any, field: str) -> Any:
