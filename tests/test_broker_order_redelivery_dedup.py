@@ -9,12 +9,16 @@ from akquant.live._payload_utils import payload_field
 class _Strat:
     def __init__(self) -> None:
         self.orders: list = []
+        self.reports: list = []
 
     def on_order(self, o: object) -> None:
         self.orders.append(o)
 
     def on_trade(self, t: object) -> None:
         pass
+
+    def on_execution_report(self, r: object) -> None:
+        self.reports.append(r)
 
 
 def _bridge(store: list) -> BrokerEventBridge:
@@ -24,10 +28,11 @@ def _bridge(store: list) -> BrokerEventBridge:
             fn(payload)
 
     def make_key(name: str, payload: object) -> str:
-        # 镜像 _runner._make_event_key 改后的口径(order 键不含 timestamp_ns)
-        if name == "order":
+        # 镜像 _runner._make_event_key 改后的口径(order/execution_report 键
+        # 都含 filled_quantity、不含 timestamp_ns)。
+        if name in ("order", "execution_report"):
             return (
-                f"order:{payload_field(payload, 'broker_order_id')}"
+                f"{name}:{payload_field(payload, 'broker_order_id')}"
                 f":{payload_field(payload, 'status')}"
                 f":{payload_field(payload, 'filled_quantity')}"
             )
@@ -125,6 +130,27 @@ def test_distinct_orders_are_independent() -> None:
     b.drain_events(s)
 
     assert len(s.orders) == 2
+
+
+def test_order_and_execution_report_dedupe_independently() -> None:
+    """内置 broker 对同一状态成对派发 order+execution_report, 两者互不吞对方.
+
+    ctp/miniqmt/ptrade 的 ingest 路径用**同一个** payload 先触发
+    order_callback、紧接着触发 execution_callback, 四个指纹字段(status/
+    filled_quantity/avg_fill_price/reject_reason)逐字相同。去重键必须带
+    事件类型前缀, 否则先入队的 order 会让随后同指纹的 execution_report
+    被误判"已派发过"而永久丢弃, on_execution_report 收不到任何回报.
+    """
+    store: list = []
+    b, s = _bridge(store), _Strat()
+
+    payload = _order("submitted")
+    b.queue_event("order", payload)
+    b.queue_event("execution_report", payload)
+    b.drain_events(s)
+
+    assert len(s.orders) == 1
+    assert len(s.reports) == 1
 
 
 def test_dropped_counter_records_duplicates() -> None:

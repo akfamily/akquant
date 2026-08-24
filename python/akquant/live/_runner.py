@@ -1659,7 +1659,11 @@ class LiveRunner:
         if event_name == "execution_report":
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             status = str(self._payload_field(payload, "status"))
-            return f"execution_report:{broker_order_id}:{status}"
+            filled_quantity = str(self._payload_field(payload, "filled_quantity"))
+            # 与 order 键对称补回 filled_quantity: UnifiedExecutionReport 没有
+            # 单独的本次成交量字段, 缺它同批内两条 status 相同但成交量不同的
+            # 执行回报(连续部分成交)会被误判批内重复丢弃第二条。
+            return f"execution_report:{broker_order_id}:{status}:{filled_quantity}"
         if event_name == "account":
             account_id = str(self._payload_field(payload, "account_id"))
             timestamp_ns = str(self._payload_field(payload, "timestamp_ns"))

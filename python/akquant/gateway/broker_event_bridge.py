@@ -119,27 +119,32 @@ class BrokerEventBridge:
             if raw is None and isinstance(payload, dict):
                 raw = payload.get("trade_id")
             trade_id = str(raw) if raw else ""
-        order_id = ""
+        state_key = ""
         state_fingerprint = ""
         if event_name in ("order", "execution_report"):
             order_id = str(self._payload_field(payload, "broker_order_id") or "")
             if order_id:
+                # 键带事件类型: order 与 execution_report 是两类独立回调, 内置
+                # broker(ctp/miniqmt/ptrade)对同一次状态变化会用同一 payload 成对
+                # 派发 order + execution_report, 四个指纹字段逐字相同; 共用命名
+                # 空间会让第二个事件被误判"已派发过"而永久吞掉。
+                state_key = f"{event_name}:{order_id}"
                 state_fingerprint = self._order_state_fingerprint(payload)
         with self._event_lock:
             if trade_id:
                 if trade_id in self._seen_trade_ids:
                     return  # 会话级: 该成交已入队(实盘推送/恢复重放), 丢弃
                 self._seen_trade_ids.add(trade_id)
-            if order_id:
-                if self._seen_order_states.get(order_id) == state_fingerprint:
+            if state_key:
+                if self._seen_order_states.get(state_key) == state_fingerprint:
                     self._dropped_duplicate_orders += 1
                     return  # 会话级: 该委托的这个状态已派发过
-                if order_id not in self._seen_order_states:
-                    self._order_state_fifo.append(order_id)
+                if state_key not in self._seen_order_states:
+                    self._order_state_fifo.append(state_key)
                     while len(self._order_state_fifo) > _ORDER_STATE_DEDUPE_LIMIT:
                         stale = self._order_state_fifo.popleft()
                         self._seen_order_states.pop(stale, None)
-                self._seen_order_states[order_id] = state_fingerprint
+                self._seen_order_states[state_key] = state_fingerprint
             if event_key in self._event_keys:
                 return
             self._event_keys.add(event_key)
