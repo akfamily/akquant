@@ -17,6 +17,7 @@ from akquant.gateway.broker_models import (
     UnifiedOrderStatus,
     UnifiedTrade,
 )
+from akquant.live._payload_utils import payload_field
 from akquant.live._runner import LiveRunner
 
 
@@ -49,6 +50,7 @@ def _bridge(adapt: Any) -> BrokerEventBridge:
         payload_to_dict=lambda p: {},
         safe_strategy_callback=lambda s, name, p: getattr(s, name)(p),
         adapt_strategy_payload=adapt,
+        payload_field=payload_field,
     )
 
 

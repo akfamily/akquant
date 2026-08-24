@@ -59,6 +59,7 @@ class BrokerRuntime:
             safe_strategy_callback=safe_strategy_callback,
             adapt_strategy_payload=adapt_strategy_payload,
             resolve_trace_id=resolve_trace_id,
+            payload_field=payload_field,
         )
         self._recovery = BrokerRecovery(
             get_trader_gateway=get_trader_gateway,

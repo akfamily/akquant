@@ -1,9 +1,14 @@
+from collections import deque
 from typing import Any, Callable, Iterable
 
 from ..log import build_log_extra, get_logger
 from .order_audit import record_broker_event
 
 logger = get_logger("gateway.live")
+
+#: 会话级委托状态指纹表上限(有界 FIFO)。与回测侧
+#: ``strategy_order_events._ORDER_EVENT_DEDUPE_LIMIT`` 取同一量级。
+_ORDER_STATE_DEDUPE_LIMIT = 50000
 
 
 class BrokerEventBridge:
@@ -22,6 +27,7 @@ class BrokerEventBridge:
         payload_to_dict: Callable[[Any], dict[str, Any]],
         safe_strategy_callback: Callable[[Any, str, Any], None],
         adapt_strategy_payload: Callable[[str, Any], Any],
+        payload_field: Callable[[Any, str], Any],
         resolve_trace_id: Callable[[Any], str] | None = None,
     ) -> None:
         """Bind the queue, state callbacks and observer fanout dependencies."""
@@ -39,6 +45,15 @@ class BrokerEventBridge:
         # 会话级已入队 trade_id(不随 drain 清空): 防恢复循环重放同一成交
         # 导致 on_trade/_process_order_groups 重复触发。
         self._seen_trade_ids: set[str] = set()
+        self._payload_field = payload_field
+        # 会话级委托状态指纹(**不随 drain 清空**): 防 recovery 每轮重放同一状态的
+        # 挂单导致 on_order 每轮重推。trade 侧早有 _seen_trade_ids, order 侧此前
+        # 没有等价物——这就是"挂单频繁触发 order"那条反馈的活跃根因。
+        self._seen_order_states: dict[str, str] = {}
+        self._order_state_fifo: deque[str] = deque()
+        self._dropped_duplicate_orders = 0
+        # 由 Task 3(标的过滤)递增, 本任务先初始化以让 dropped_event_counts() 可读。
+        self._dropped_foreign_symbols = 0
 
     def mark_trades_seen(self, trade_ids: Iterable[str]) -> None:
         """把 trade_id 灌入会话级 dedup 基线.
@@ -69,6 +84,30 @@ class BrokerEventBridge:
                 kept.append((event_name, payload))
             self._event_store[:] = kept
 
+    def _order_state_fingerprint(self, payload: Any) -> str:
+        """委托状态指纹: 状态+已成交量+均价+拒单原因, **刻意不含时间戳**.
+
+        口径对齐回测侧 ``strategy_order_events.order_event_key``: 含时间戳的键
+        每次重推都会变、去重完全失效(这类缺陷最常见的写法); 只按订单号去重又会
+        把 ``New -> PartiallyFilled -> Filled`` 这些真实的状态推进整批吞掉。
+
+        :param payload: 委托快照(``UnifiedOrderSnapshot`` 或等价 dict)。
+        :return: 可比较的指纹字符串。
+        """
+        fields = ("status", "filled_quantity", "avg_fill_price", "reject_reason")
+        return "|".join(str(self._payload_field(payload, field)) for field in fields)
+
+    def dropped_event_counts(self) -> dict[str, int]:
+        """会话级丢弃计数(去重/过滤分开计), 供收尾摘要与诊断读取.
+
+        :return: ``{"duplicate_order": N, "foreign_symbol": M}``。
+        """
+        with self._event_lock:
+            return {
+                "duplicate_order": self._dropped_duplicate_orders,
+                "foreign_symbol": self._dropped_foreign_symbols,
+            }
+
     def queue_event(self, event_name: str, payload: Any) -> None:
         """Add a broker event to the dispatch queue with semantic deduplication."""
         event_key = self._make_event_key(event_name, payload)
@@ -80,11 +119,27 @@ class BrokerEventBridge:
             if raw is None and isinstance(payload, dict):
                 raw = payload.get("trade_id")
             trade_id = str(raw) if raw else ""
+        order_id = ""
+        state_fingerprint = ""
+        if event_name in ("order", "execution_report"):
+            order_id = str(self._payload_field(payload, "broker_order_id") or "")
+            if order_id:
+                state_fingerprint = self._order_state_fingerprint(payload)
         with self._event_lock:
             if trade_id:
                 if trade_id in self._seen_trade_ids:
                     return  # 会话级: 该成交已入队(实盘推送/恢复重放), 丢弃
                 self._seen_trade_ids.add(trade_id)
+            if order_id:
+                if self._seen_order_states.get(order_id) == state_fingerprint:
+                    self._dropped_duplicate_orders += 1
+                    return  # 会话级: 该委托的这个状态已派发过
+                if order_id not in self._seen_order_states:
+                    self._order_state_fifo.append(order_id)
+                    while len(self._order_state_fifo) > _ORDER_STATE_DEDUPE_LIMIT:
+                        stale = self._order_state_fifo.popleft()
+                        self._seen_order_states.pop(stale, None)
+                self._seen_order_states[order_id] = state_fingerprint
             if event_key in self._event_keys:
                 return
             self._event_keys.add(event_key)

@@ -1653,13 +1653,13 @@ class LiveRunner:
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             status = str(self._payload_field(payload, "status"))
             filled_quantity = str(self._payload_field(payload, "filled_quantity"))
-            timestamp_ns = str(self._payload_field(payload, "timestamp_ns"))
-            return f"order:{broker_order_id}:{status}:{filled_quantity}:{timestamp_ns}"
+            # 刻意不含 timestamp_ns: 含它则每次重推键都变、批内去重也失效。
+            # 跨轮去重由 BrokerEventBridge._seen_order_states 承担。
+            return f"order:{broker_order_id}:{status}:{filled_quantity}"
         if event_name == "execution_report":
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             status = str(self._payload_field(payload, "status"))
-            timestamp_ns = str(self._payload_field(payload, "timestamp_ns"))
-            return f"execution_report:{broker_order_id}:{status}:{timestamp_ns}"
+            return f"execution_report:{broker_order_id}:{status}"
         if event_name == "account":
             account_id = str(self._payload_field(payload, "account_id"))
             timestamp_ns = str(self._payload_field(payload, "timestamp_ns"))

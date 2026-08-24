@@ -2,6 +2,7 @@ import threading
 from typing import Any
 
 from akquant.gateway.broker_event_bridge import BrokerEventBridge
+from akquant.live._payload_utils import payload_field
 
 
 class _DummyStrategy:
@@ -54,6 +55,7 @@ def _build_event_bridge() -> tuple[
             callback_name,
         )(payload),
         adapt_strategy_payload=lambda event_name, payload: payload,
+        payload_field=payload_field,
     )
     return bridge, strategy, update_calls, observed_events
 
