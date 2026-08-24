@@ -2138,25 +2138,31 @@ class LiveRunner:
             ]
             bridge = getattr(self, "_broker_event_bridge", None)
             if bridge is not None and hasattr(bridge, "dropped_event_counts"):
-                # 局部 try/except: 计数是可观测性附加项, 不能让它的失败拖垮
-                # 已经算好的收益率/回撤/成交数这些远更重要的摘要主体。
+                # 局部 try/except: 计数是可观测性附加项, 不能让它的失败(或返回值
+                # 格式不对, 例如非 dict-like)拖垮已经算好的收益率/回撤/成交数这些
+                # 远更重要的摘要主体。格式化也必须在 try 内 —— else 只做不会失败
+                # 的纯粹 append, 否则 counts.get(...) 抛出的 AttributeError 会跟
+                # dropped_event_counts() 本身抛异常一样冒泡到最外层大 try。
                 try:
                     counts = bridge.dropped_event_counts()
+                    # 这两行是过滤/去重的可见性兜底: 日志会被降级淹没, 摘要不会。
+                    # foreign_symbol 异常大 ⇒ 标的归一化可能把自己的回报也挡掉了。
+                    foreign_line = (
+                        f"Dropped (foreign symbol): {counts.get('foreign_symbol', 0)}"
+                    )
+                    duplicate_line = (
+                        f"Dropped (duplicate order): {counts.get('duplicate_order', 0)}"
+                    )
                 except Exception:
                     logger.debug(
-                        "dropped_event_counts() raised, skipping drop-count lines",
+                        "dropped_event_counts() failed or returned an unexpected"
+                        " shape, skipping drop-count lines",
                         exc_info=True,
                         extra=self._runner_log_extra(phase="live"),
                     )
                 else:
-                    # 这两行是过滤/去重的可见性兜底: 日志会被降级淹没, 摘要不会。
-                    # foreign_symbol 异常大 ⇒ 标的归一化可能把自己的回报也挡掉了。
-                    summary_lines.append(
-                        f"Dropped (foreign symbol): {counts.get('foreign_symbol', 0)}"
-                    )
-                    summary_lines.append(
-                        f"Dropped (duplicate order): {counts.get('duplicate_order', 0)}"
-                    )
+                    summary_lines.append(foreign_line)
+                    summary_lines.append(duplicate_line)
             summary_lines.append("=" * 50)
 
             # Print Current Positions if available

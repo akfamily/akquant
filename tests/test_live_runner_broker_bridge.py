@@ -1838,3 +1838,27 @@ def test_live_runner_summary_survives_dropped_event_counts_exception(
     assert "Sharpe Ratio: 1.2300" in message
     assert "Dropped (foreign symbol)" not in message
     assert "Dropped (duplicate order)" not in message
+
+
+def test_live_runner_summary_survives_dropped_event_counts_bad_shape(
+    caplog: Any,
+) -> None:
+    """``dropped_event_counts()`` 不抛异常但返回非 dict-like 时摘要主体仍完整.
+
+    格式化 ``counts.get(...)`` 必须与「读」共用同一个 try: 否则返回值格式不对
+    (如 list)会在 ``else`` 分支里抛 ``AttributeError``, 冒泡到最外层大 try,
+    造成与「读抛异常」完全相同的后果——整段 TRADING SUMMARY 一起丢失。
+    """
+    runner = _summary_runner_with_bridge(lambda: ["not", "a", "dict"])
+
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._print_summary()
+
+    record = next(
+        record for record in caplog.records if "TRADING SUMMARY" in record.getMessage()
+    )
+    message = record.getMessage()
+    assert "Total Trades: 2" in message
+    assert "Sharpe Ratio: 1.2300" in message
+    assert "Dropped (foreign symbol)" not in message
+    assert "Dropped (duplicate order)" not in message
