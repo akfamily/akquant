@@ -31,6 +31,7 @@ class BrokerEventBridge:
         payload_field: Callable[[Any, str], Any],
         resolve_trace_id: Callable[[Any], str] | None = None,
         get_subscribed_symbols: Callable[[], set[str]] | None = None,
+        is_known_order: Callable[[str, str], bool] | None = None,
     ) -> None:
         """Bind the queue, state callbacks and observer fanout dependencies."""
         self._event_lock = event_lock
@@ -57,8 +58,11 @@ class BrokerEventBridge:
         # 由 Task 3(标的过滤)递增, 本任务先初始化以让 dropped_event_counts() 可读。
         self._dropped_foreign_symbols = 0
         self._get_subscribed_symbols = get_subscribed_symbols
+        self._is_known_order = is_known_order
         # 已告警过的外来标的(防刷屏): 首次 WARNING 点名, 之后降 DEBUG。
         self._warned_foreign_symbols: set[str] = set()
+        # 已告警过的访问器异常类型(防刷屏, 同上)。
+        self._warned_accessor_errors: set[str] = set()
 
     def mark_trades_seen(self, trade_ids: Iterable[str]) -> None:
         """把 trade_id 灌入会话级 dedup 基线.
@@ -114,14 +118,29 @@ class BrokerEventBridge:
             }
 
     def _accepts_symbol(self, event_name: str, payload: Any) -> bool:
-        """判断事件的标的是否属于本会话挂载标的.
+        """判断事件是否属于本会话: 先认订单归属, 未知单再按标的判.
 
-        柜台的 ``sync_open_orders`` / ``sync_today_trades`` 返回的是**全账户**
-        委托与成交, 不限于本会话订阅的标的, 不过滤会让策略收到不属于自己的
-        委托回报。
+        判据分两级:
 
-        所有边界情况一律放行(无访问器 / 订阅集为空 / payload 无 symbol):
-        吞掉真实回报的代价远大于多派发一条。``account`` 事件无标的概念, 直接放行。
+        1. **订单归属优先**: ``order``/``trade``/``execution_report`` 若其
+           ``broker_order_id``/``client_order_id`` 命中本会话已知映射(见
+           ``is_known_order``), 一律放行, 即便标的不在挂载集合内。这条覆盖
+           ``BrokerOrderSink`` 经外部信号源直调 ``submitter.submit_order``、
+           不经引擎合约登记表就能合法报出挂载集合之外标的的场景; 否则会把
+           自己报出的单错判成"外来"并吞掉, 与本任务要防的事故是同一类。
+        2. **标的兜底**: 订单未知(例如跨会话恢复的老挂单)时按标的比对。柜台的
+           ``sync_open_orders`` / ``sync_today_trades`` 返回全账户委托与成交,
+           不限于本会话订阅的标的, 不过滤会让策略收到不属于自己的委托回报。
+
+        两级判据用到的访问器均为外部注入的 callable, 一旦抛异常整段用
+        try/except 兜底放行——不兜底会让异常顺着 ``queue_event`` 一路炸到
+        ``broker_recovery`` 的 ``sync_open_orders``/``sync_today_trades``
+        循环, 被外层宽 ``except Exception`` 吞掉整批剩余委托, 且默认
+        ``recovery_mode="compatible"`` 下连日志都没有。
+
+        所有边界情况一律放行(无访问器 / 订阅集为空 / payload 无 symbol /
+        访问器抛异常): 吞掉真实回报的代价远大于多派发一条。``account`` 事件
+        无标的概念, 直接放行。
 
         :param event_name: 事件名。
         :param payload: 事件载荷。
@@ -129,18 +148,42 @@ class BrokerEventBridge:
         """
         if event_name == "account":
             return True
-        if self._get_subscribed_symbols is None:
-            return True
-        allowed = self._get_subscribed_symbols()
-        if not allowed:
-            return True
-        normalized = normalize_symbol_for_match(self._payload_field(payload, "symbol"))
-        if not normalized:
-            return True
-        if normalized in allowed:
+        normalized = ""
+        try:
+            if self._is_own_order(payload):
+                return True
+            if self._get_subscribed_symbols is None:
+                return True
+            allowed = self._get_subscribed_symbols()
+            if not allowed:
+                return True
+            normalized = normalize_symbol_for_match(
+                self._payload_field(payload, "symbol")
+            )
+            if not normalized:
+                return True
+            if normalized in allowed:
+                return True
+        except Exception as exc:
+            self._log_accessor_error(exc)
             return True
         self._log_foreign_symbol(event_name, normalized)
         return False
+
+    def _is_own_order(self, payload: Any) -> bool:
+        """查询 payload 对应的委托是否为本会话已知(已建立 id 映射)的订单.
+
+        :param payload: 事件载荷。
+        :return: 命中已知映射时 True; 无访问器、无订单号或未命中时 False
+            (未命中不代表"不是我的", 由标的判据兜底决定)。
+        """
+        if self._is_known_order is None:
+            return False
+        broker_order_id = str(self._payload_field(payload, "broker_order_id") or "")
+        client_order_id = str(self._payload_field(payload, "client_order_id") or "")
+        if not broker_order_id and not client_order_id:
+            return False
+        return self._is_known_order(broker_order_id, client_order_id)
 
     def _log_foreign_symbol(self, event_name: str, symbol: str) -> None:
         """外来标的事件的丢弃留痕: 首次 WARNING 点名, 之后同标的降 DEBUG."""
@@ -152,6 +195,19 @@ class BrokerEventBridge:
             event_name,
             symbol,
             extra=build_log_extra(phase="gateway", symbol=symbol),
+        )
+
+    def _log_accessor_error(self, exc: Exception) -> None:
+        """标的过滤访问器抛异常时的降噪留痕: 按异常类型只警告一次, 之后降 DEBUG."""
+        kind = type(exc).__name__
+        first_time = kind not in self._warned_accessor_errors
+        self._warned_accessor_errors.add(kind)
+        log = logger.warning if first_time else logger.debug
+        log(
+            "Symbol filter accessor raised %s; allowing event through",
+            kind,
+            exc_info=exc if first_time else None,
+            extra=build_log_extra(phase="gateway"),
         )
 
     def queue_event(self, event_name: str, payload: Any) -> None:

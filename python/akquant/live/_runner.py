@@ -1239,6 +1239,7 @@ class LiveRunner:
             group_broker_ids=self._broker_order_ids_for_group,
             resolve_trace_id=self._lookup_group_id,
             get_subscribed_symbols=self._subscribed_symbol_set,
+            is_known_order=self._is_known_broker_order,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -1651,15 +1652,17 @@ class LiveRunner:
         """本会话挂载标的的归一化集合(惰性构建并缓存).
 
         数据源是 ``self.instruments``, 与网关订阅集同源(``symbols`` 就是从它
-        派生的), 保证过滤口径与订阅口径一致。``run_live`` 要求 ``instruments``
-        必填, 故空集是异常路径而非常态; 空集时 ``_accepts_symbol`` 会全放行。
-
-        :return: 归一化后的标的集合。
+        派生的), 保证过滤口径与订阅口径一致。``run_live`` 只要求
+        ``instruments`` 非 ``None``(见 ``_facade.py:181-182``), ``[]`` 能合法
+        通过校验, 因此空集合是可能出现的边界而非纯异常路径; 首次构建出空
+        集合时打一条 WARNING, 否则标的过滤会悄悄退化成"全放行"却无人知晓。
 
         用 ``getattr`` 兜底缺失属性: 部分测试用
         ``LiveRunner.__new__(LiveRunner)`` + ``_init_broker_bridge_state()``
         绕开 ``__init__`` 直接构造替身, ``instruments`` / 缓存字段不存在;
         按裁决三"无访问器场景一律放行", 缺失时当空集处理。
+
+        :return: 归一化后的标的集合。
         """
         cached = getattr(self, "_subscribed_symbols_cache", None)
         if cached is None:
@@ -1668,8 +1671,38 @@ class LiveRunner:
                 for inst in (getattr(self, "instruments", None) or [])
             }
             cached.discard("")
+            if not cached:
+                logger.warning(
+                    "Subscribed symbol set is empty; broker event symbol "
+                    "filter has no effect (everything will pass through)",
+                    extra=build_log_extra(phase="gateway"),
+                )
             self._subscribed_symbols_cache = cached
         return cached
+
+    def _is_known_broker_order(
+        self, broker_order_id: str, client_order_id: str
+    ) -> bool:
+        """判断委托是否为本会话已知(已建立 id 映射)的订单.
+
+        ``order_submitter.py`` 报单成功即调用 ``_sync_order_id_mapping`` 建立
+        broker_order_id/client_order_id 互查映射; 命中即视为"这是我自己报出
+        的单", 不论其标的是否落在 ``instruments`` 挂载集合内——外部信号源经
+        ``BrokerOrderSink`` 直调 ``submitter.submit_order`` 天然会报出挂载
+        集合之外的标的(不经引擎合约登记表), 见 ``signal/sinks.py:69``。
+        跨会话恢复的老挂单不在映射表里, 交给标的判据兜底, 行为不变。
+
+        :param broker_order_id: 柜台委托号(可能为空)。
+        :param client_order_id: 客户端委托号(可能为空)。
+        :return: 是否命中本会话已知订单映射。
+        """
+        broker_to_client = getattr(self, "_broker_to_client_order_ids", None) or {}
+        client_to_broker = getattr(self, "_client_to_broker_order_ids", None) or {}
+        if broker_order_id and broker_order_id in broker_to_client:
+            return True
+        if client_order_id and client_order_id in client_to_broker:
+            return True
+        return False
 
     def _make_event_key(self, event_name: str, payload: Any) -> str:
         if event_name == "trade":

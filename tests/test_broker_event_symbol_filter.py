@@ -1,15 +1,19 @@
 """broker_live 标的过滤: 只派发本会话挂载标的的委托/成交."""
 
 import threading
+from types import SimpleNamespace
+from typing import Any, Callable, cast
 
 from akquant.gateway.broker_event_bridge import BrokerEventBridge
 from akquant.live._payload_utils import payload_field
+from akquant.live._runner import LiveRunner
 
 
 class _Strat:
     def __init__(self) -> None:
         self.orders: list = []
         self.trades: list = []
+        self.reports: list = []
 
     def on_order(self, o: object) -> None:
         self.orders.append(o)
@@ -17,12 +21,31 @@ class _Strat:
     def on_trade(self, t: object) -> None:
         self.trades.append(t)
 
+    def on_execution_report(self, r: object) -> None:
+        self.reports.append(r)
 
-def _bridge(store: list, allowed: set[str] | None) -> BrokerEventBridge:
-    def safe(strategy: object, name: str, payload: object) -> None:
-        fn = getattr(strategy, name, None)
-        if fn is not None:
-            fn(payload)
+
+def _safe(strategy: object, name: str, payload: object) -> None:
+    fn = getattr(strategy, name, None)
+    if fn is not None:
+        fn(payload)
+
+
+def _const(value: set[str]) -> Callable[[], set[str]]:
+    """Return a zero-arg accessor that always yields ``value``."""
+    return lambda: value
+
+
+def _bridge(
+    store: list,
+    allowed: set[str] | None,
+    *,
+    is_known_order: Callable[[str, str], bool] | None = None,
+    get_subscribed_symbols: Callable[[], set[str]] | None = None,
+) -> BrokerEventBridge:
+    resolved_get_subscribed_symbols = get_subscribed_symbols
+    if resolved_get_subscribed_symbols is None and allowed is not None:
+        resolved_get_subscribed_symbols = _const(allowed)
 
     return BrokerEventBridge(
         event_lock=threading.Lock(),
@@ -33,10 +56,11 @@ def _bridge(store: list, allowed: set[str] | None) -> BrokerEventBridge:
         update_broker_state=lambda n, p: None,
         resolve_owner_strategy_id=lambda p: "",
         payload_to_dict=lambda p: dict(p) if isinstance(p, dict) else {},
-        safe_strategy_callback=safe,
+        safe_strategy_callback=_safe,
         adapt_strategy_payload=lambda n, p: p,
         payload_field=payload_field,
-        get_subscribed_symbols=None if allowed is None else (lambda: allowed),
+        get_subscribed_symbols=resolved_get_subscribed_symbols,
+        is_known_order=is_known_order,
     )
 
 
@@ -92,6 +116,25 @@ def test_foreign_symbol_trade_dropped() -> None:
     assert [t["trade_id"] for t in s.trades] == ["T1"]
 
 
+def test_execution_report_foreign_symbol_dropped() -> None:
+    """execution_report 与 order/trade 同样按标的过滤."""
+    store: list = []
+    b, s = _bridge(store, {"600008.SH"}), _Strat()
+
+    b.queue_event(
+        "execution_report",
+        {"broker_order_id": "R1", "symbol": "600008.SH", "status": "submitted"},
+    )
+    b.queue_event(
+        "execution_report",
+        {"broker_order_id": "R2", "symbol": "000651.SZ", "status": "submitted"},
+    )
+    b.drain_events(s)
+
+    assert [r["broker_order_id"] for r in s.reports] == ["R1"]
+    assert b.dropped_event_counts()["foreign_symbol"] == 1
+
+
 def test_empty_subscription_set_passes_everything() -> None:
     """订阅集为空: 全放行(宁可多派发, 不吞真实回报)."""
     store: list = []
@@ -126,11 +169,127 @@ def test_payload_without_symbol_passes() -> None:
 
 
 def test_account_event_never_filtered() -> None:
-    """Account 事件没有 symbol 概念, 永不过滤."""
+    """Account 事件没有 symbol 概念, 永不过滤.
+
+    payload 刻意带一个外来 symbol: 否则该用例是恒真的
+    (``{"account_id": ...}`` 本身没有 symbol 字段, 落到"无 symbol 放行"分支,
+    删掉 ``event_name == "account"`` 短路依然会通过)。
+    """
     store: list = []
     b, s = _bridge(store, {"600008.SH"}), _Strat()
 
-    b.queue_event("account", {"account_id": "A1"})
+    b.queue_event("account", {"account_id": "A1", "symbol": "000651.SZ"})
     b.drain_events(s)
 
     assert b.dropped_event_counts()["foreign_symbol"] == 0
+
+
+def test_known_order_passes_even_with_foreign_symbol() -> None:
+    """已知本会话订单(broker_order_id 命中映射)一律放行, 不论标的是否挂载.
+
+    覆盖 ``BrokerOrderSink`` 经外部信号源直调 ``submitter.submit_order``、
+    不经引擎合约登记表就能合法报出挂载集合之外标的的场景。
+    """
+    store: list = []
+    b = _bridge(store, {"600008.SH"}, is_known_order=lambda bid, cid: bid == "KNOWN")
+    s = _Strat()
+
+    b.queue_event("order", _order("000651.SZ", "KNOWN"))
+    b.drain_events(s)
+
+    assert [o["broker_order_id"] for o in s.orders] == ["KNOWN"]
+    assert b.dropped_event_counts()["foreign_symbol"] == 0
+
+
+def test_unknown_order_with_foreign_symbol_still_dropped() -> None:
+    """未命中已知订单映射的外来标的委托仍被过滤(标的判据兜底)."""
+    store: list = []
+    b = _bridge(store, {"600008.SH"}, is_known_order=lambda bid, cid: False)
+    s = _Strat()
+
+    b.queue_event("order", _order("000651.SZ", "UNKNOWN"))
+    b.drain_events(s)
+
+    assert s.orders == []
+    assert b.dropped_event_counts()["foreign_symbol"] == 1
+
+
+def test_get_subscribed_symbols_exception_allows_through(caplog: Any) -> None:
+    """``get_subscribed_symbols`` 抛异常时放行并降噪留痕, 不吞真实回报.
+
+    不兜底的话异常会顺着 ``queue_event`` 一路炸到 ``broker_recovery`` 的
+    ``sync_open_orders``/``sync_today_trades`` 循环, 被外层宽
+    ``except Exception`` 吞掉整批剩余委托; 默认 ``recovery_mode="compatible"``
+    下连日志都没有——后果比放行一条外来事件严重得多。
+    """
+
+    def boom() -> set[str]:
+        raise RuntimeError("accessor exploded")
+
+    store: list = []
+    b = _bridge(store, None, get_subscribed_symbols=boom)
+    s = _Strat()
+
+    with caplog.at_level("WARNING", logger="akquant.gateway.live"):
+        b.queue_event("order", _order("000651.SZ"))
+        b.drain_events(s)
+
+    assert len(s.orders) == 1
+    assert b.dropped_event_counts()["foreign_symbol"] == 0
+    assert any(
+        "Symbol filter accessor raised" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_is_known_order_exception_allows_through() -> None:
+    """``is_known_order`` 抛异常时同样放行, 不因归属判据出错吞事件."""
+
+    def boom(_bid: str, _cid: str) -> bool:
+        raise RuntimeError("ownership lookup exploded")
+
+    store: list = []
+    b = _bridge(store, {"600008.SH"}, is_known_order=boom)
+    s = _Strat()
+
+    b.queue_event("order", _order("000651.SZ"))
+    b.drain_events(s)
+
+    assert len(s.orders) == 1
+    assert b.dropped_event_counts()["foreign_symbol"] == 0
+
+
+def test_runner_subscribed_symbol_set_normalizes_and_caches() -> None:
+    """``_subscribed_symbol_set``: 从 instruments 派生归一化集合并只建一次."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner.instruments = cast(
+        Any,
+        [
+            SimpleNamespace(symbol="000012.sz"),
+            SimpleNamespace(symbol=""),
+        ],
+    )
+    runner._init_broker_bridge_state()
+
+    first = runner._subscribed_symbol_set()
+    assert first == {"000012.SZ"}
+
+    # 缓存语义: 事后追加 instruments 不影响已缓存结果(惰性构建只发生一次)。
+    runner.instruments.append(cast(Any, SimpleNamespace(symbol="600000.SH")))
+    assert runner._subscribed_symbol_set() is first
+    assert runner._subscribed_symbol_set() == {"000012.SZ"}
+
+
+def test_runner_dispatches_own_subscribed_symbol_order() -> None:
+    """8/17 事故防回归: 小写登记 -> 归一化大写集合, 柜台推大写回报仍派发到策略."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner.instruments = cast(Any, [SimpleNamespace(symbol="000012.sz")])
+    runner._init_broker_bridge_state()
+    strategy = _Strat()
+
+    runner._queue_broker_event("order", _order("000012.SZ"))
+    runner._drain_broker_events(cast(Any, strategy))
+
+    assert len(strategy.orders) == 1

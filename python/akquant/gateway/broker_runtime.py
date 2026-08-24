@@ -42,6 +42,7 @@ class BrokerRuntime:
         group_broker_ids: Callable[[str], list[str]] | None = None,
         resolve_trace_id: Callable[[Any], str] | None = None,
         get_subscribed_symbols: Callable[[], set[str]] | None = None,
+        is_known_order: Callable[[str, str], bool] | None = None,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -62,6 +63,7 @@ class BrokerRuntime:
             resolve_trace_id=resolve_trace_id,
             payload_field=payload_field,
             get_subscribed_symbols=get_subscribed_symbols,
+            is_known_order=is_known_order,
         )
         self._recovery = BrokerRecovery(
             get_trader_gateway=get_trader_gateway,
