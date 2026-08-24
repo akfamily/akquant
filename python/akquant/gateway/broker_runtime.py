@@ -168,9 +168,19 @@ class BrokerRuntime:
         strategy: Any | None = None,
         handle_error: Callable[[Any | None, str, Exception, dict[str, Any]], None]
         | None = None,
-    ) -> None:
+        *,
+        sync_orders: bool = True,
+        sync_trades: bool = True,
+        refresh_account: bool = True,
+    ) -> bool:
         """Run one recovery cycle through the runtime-owned recovery helper."""
-        self._recovery.run_cycle(strategy, handle_error=handle_error)
+        return self._recovery.run_cycle(
+            strategy,
+            handle_error=handle_error,
+            sync_orders=sync_orders,
+            sync_trades=sync_trades,
+            refresh_account=refresh_account,
+        )
 
     def handle_recovery_error(
         self,

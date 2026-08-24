@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import random
 import threading
 import time
 import uuid
@@ -47,6 +48,88 @@ logger = get_logger("gateway.live")
 
 # Backward-compatible alias; canonical definition lives in _gateway_setup.
 _LEGACY_GATEWAY_OPTION_KEYS = LEGACY_GATEWAY_OPTION_KEYS
+
+#: recovery 三档节奏的默认间隔(秒): 心跳每拍 / 资金中频 / 全量 sync 低频兜底。
+_DEFAULT_RECOVERY_TICK_SEC = 1.0
+_DEFAULT_RECOVERY_ACCOUNT_SEC = 5.0
+_DEFAULT_RECOVERY_SYNC_SEC = 30.0
+
+
+def _positive_interval(value: Any, default: float, name: str) -> float:
+    """把配置值读成正浮点数; 非法值回退默认并告警(不抛异常).
+
+    :param value: 原始配置值,可能是 ``None``/字符串/负数等非法输入。
+    :param default: 校验失败时回退的默认值。
+    :param name: 配置项名(用于告警信息)。
+    :return: 校验通过的正浮点数,或回退的 ``default``。
+    """
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        if value is not None:
+            logger.warning(
+                "gateway_options.%s is not a number (%r), falling back to %s",
+                name,
+                value,
+                default,
+            )
+        return default
+    if parsed <= 0:
+        logger.warning(
+            "gateway_options.%s must be positive (got %s), falling back to %s",
+            name,
+            parsed,
+            default,
+        )
+        return default
+    return parsed
+
+
+def _resolve_recovery_intervals(options: dict[str, Any]) -> tuple[float, float, float]:
+    """解析 recovery 三档间隔并钳制成 tick <= account <= sync.
+
+    柜台限流阈值是部署期才知道的外部约束(不同券商不同), 故三档都可由
+    ``gateway_options`` 覆盖 —— 与 ``recovery_mode`` 走同一入口。
+
+    越界**只钳制 + WARNING, 不抛异常**: 参数间有隐含约束(资金刷新不该比心跳还
+    密、全量 sync 不该比资金刷新还密), 但让运维在启动时吃 ``ValueError`` 是最差
+    的处理方式。风格与 ``normalize_broker_recovery_mode`` 的归一化一致。
+
+    :param options: ``gateway_options`` 字典。
+    :return: ``(tick, account, sync)`` 三个间隔(秒)。
+    """
+    tick = _positive_interval(
+        options.get("recovery_interval_sec"),
+        _DEFAULT_RECOVERY_TICK_SEC,
+        "recovery_interval_sec",
+    )
+    account = _positive_interval(
+        options.get("recovery_account_interval_sec"),
+        _DEFAULT_RECOVERY_ACCOUNT_SEC,
+        "recovery_account_interval_sec",
+    )
+    sync = _positive_interval(
+        options.get("recovery_sync_interval_sec"),
+        _DEFAULT_RECOVERY_SYNC_SEC,
+        "recovery_sync_interval_sec",
+    )
+    if account < tick:
+        logger.warning(
+            "recovery_account_interval_sec (%s) < recovery_interval_sec (%s); "
+            "clamped to the tick interval",
+            account,
+            tick,
+        )
+        account = tick
+    if sync < account:
+        logger.warning(
+            "recovery_sync_interval_sec (%s) < recovery_account_interval_sec (%s); "
+            "clamped to the account interval",
+            sync,
+            account,
+        )
+        sync = account
+    return tick, account, sync
 
 
 def _instruments_to_snapshots(
@@ -1194,7 +1277,11 @@ class LiveRunner:
         self._broker_dispatch_thread: threading.Thread | None = None
         self._broker_recovery_stop: threading.Event | None = None
         self._broker_recovery_thread: threading.Thread | None = None
-        self._broker_recovery_interval_sec = 1.0
+        (
+            self._broker_recovery_interval_sec,
+            self._broker_account_interval_sec,
+            self._broker_sync_interval_sec,
+        ) = _resolve_recovery_intervals(getattr(self, "gateway_options", {}) or {})
         self._broker_trader_gateway: Any = None
         self._broker_runtime: Any = None
         self._broker_order_submitter: Any = None
@@ -1605,19 +1692,60 @@ class LiveRunner:
     def _drain_broker_events(self, strategy: Strategy) -> None:
         self._broker_runtime.drain_events(strategy)
 
+    def _jittered_sync_interval(self) -> float:
+        """全量 sync 间隔加 ±10% 抖动.
+
+        平台会并发起多个任务; 整齐的固定间隔会让各任务的全量 sync 对齐到同一秒
+        打柜台(thundering herd)。抖动把它们摊开, 省掉一类偶发限流。
+
+        :return: 抖动后的间隔(秒)。
+        """
+        return self._broker_sync_interval_sec * random.uniform(0.9, 1.1)
+
     def _broker_recovery_loop(self, strategy: Strategy) -> None:
+        """Recovery 后台循环: 心跳每拍, 资金与全量 sync 各按自己的节奏.
+
+        用 ``time.monotonic()`` 判触发而非取模计数: 取模是脆弱模式(循环 sleep
+        有漂移, 取模会累积误差), 且不受系统时间回拨影响。
+        """
+        next_account = 0.0
+        next_sync = 0.0
         while (
             self._broker_recovery_stop is not None
             and not self._broker_recovery_stop.is_set()
         ):
-            self._run_broker_recovery_cycle(strategy)
-            self._drain_broker_events(strategy)
+            now = time.monotonic()
+            do_account = now >= next_account
+            do_sync = now >= next_sync
+            reconnected = self._run_broker_recovery_cycle(
+                strategy,
+                sync_orders=do_sync,
+                sync_trades=do_sync,
+                refresh_account=do_account,
+            )
+            if do_account:
+                next_account = now + self._broker_account_interval_sec
+            if do_sync or reconnected:
+                next_sync = now + self._jittered_sync_interval()
             time.sleep(self._broker_recovery_interval_sec)
 
-    def _run_broker_recovery_cycle(self, strategy: Strategy | None = None) -> None:
-        self._broker_runtime.run_recovery_cycle(
-            strategy,
-            handle_error=self._handle_broker_recovery_error,
+    def _run_broker_recovery_cycle(
+        self,
+        strategy: Strategy | None = None,
+        *,
+        sync_orders: bool = True,
+        sync_trades: bool = True,
+        refresh_account: bool = True,
+    ) -> bool:
+        return cast(
+            bool,
+            self._broker_runtime.run_recovery_cycle(
+                strategy,
+                handle_error=self._handle_broker_recovery_error,
+                sync_orders=sync_orders,
+                sync_trades=sync_trades,
+                refresh_account=refresh_account,
+            ),
         )
 
     def _update_broker_state(self, event_name: str, payload: Any) -> None:
