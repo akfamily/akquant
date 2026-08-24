@@ -3,6 +3,7 @@ from typing import Any, Callable, Iterable
 
 from ..log import build_log_extra, get_logger
 from .order_audit import record_broker_event
+from .symbol_match import normalize_symbol_for_match
 
 logger = get_logger("gateway.live")
 
@@ -29,6 +30,7 @@ class BrokerEventBridge:
         adapt_strategy_payload: Callable[[str, Any], Any],
         payload_field: Callable[[Any, str], Any],
         resolve_trace_id: Callable[[Any], str] | None = None,
+        get_subscribed_symbols: Callable[[], set[str]] | None = None,
     ) -> None:
         """Bind the queue, state callbacks and observer fanout dependencies."""
         self._event_lock = event_lock
@@ -54,6 +56,9 @@ class BrokerEventBridge:
         self._dropped_duplicate_orders = 0
         # 由 Task 3(标的过滤)递增, 本任务先初始化以让 dropped_event_counts() 可读。
         self._dropped_foreign_symbols = 0
+        self._get_subscribed_symbols = get_subscribed_symbols
+        # 已告警过的外来标的(防刷屏): 首次 WARNING 点名, 之后降 DEBUG。
+        self._warned_foreign_symbols: set[str] = set()
 
     def mark_trades_seen(self, trade_ids: Iterable[str]) -> None:
         """把 trade_id 灌入会话级 dedup 基线.
@@ -108,8 +113,53 @@ class BrokerEventBridge:
                 "foreign_symbol": self._dropped_foreign_symbols,
             }
 
+    def _accepts_symbol(self, event_name: str, payload: Any) -> bool:
+        """判断事件的标的是否属于本会话挂载标的.
+
+        柜台的 ``sync_open_orders`` / ``sync_today_trades`` 返回的是**全账户**
+        委托与成交, 不限于本会话订阅的标的, 不过滤会让策略收到不属于自己的
+        委托回报。
+
+        所有边界情况一律放行(无访问器 / 订阅集为空 / payload 无 symbol):
+        吞掉真实回报的代价远大于多派发一条。``account`` 事件无标的概念, 直接放行。
+
+        :param event_name: 事件名。
+        :param payload: 事件载荷。
+        :return: 是否应当入队派发。
+        """
+        if event_name == "account":
+            return True
+        if self._get_subscribed_symbols is None:
+            return True
+        allowed = self._get_subscribed_symbols()
+        if not allowed:
+            return True
+        normalized = normalize_symbol_for_match(self._payload_field(payload, "symbol"))
+        if not normalized:
+            return True
+        if normalized in allowed:
+            return True
+        self._log_foreign_symbol(event_name, normalized)
+        return False
+
+    def _log_foreign_symbol(self, event_name: str, symbol: str) -> None:
+        """外来标的事件的丢弃留痕: 首次 WARNING 点名, 之后同标的降 DEBUG."""
+        first_time = symbol not in self._warned_foreign_symbols
+        self._warned_foreign_symbols.add(symbol)
+        log = logger.warning if first_time else logger.debug
+        log(
+            "Dropped %s event for unsubscribed symbol %s",
+            event_name,
+            symbol,
+            extra=build_log_extra(phase="gateway", symbol=symbol),
+        )
+
     def queue_event(self, event_name: str, payload: Any) -> None:
         """Add a broker event to the dispatch queue with semantic deduplication."""
+        if not self._accepts_symbol(event_name, payload):
+            with self._event_lock:
+                self._dropped_foreign_symbols += 1
+            return
         event_key = self._make_event_key(event_name, payload)
         trade_id = ""
         if event_name == "trade":

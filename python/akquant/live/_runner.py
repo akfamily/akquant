@@ -16,6 +16,7 @@ from ..gateway.order_submitter import (
     resolve_live_order_legs,
     validate_live_order_client_ids,
 )
+from ..gateway.symbol_match import normalize_symbol_for_match
 from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink
 from ..log import build_log_extra, get_logger
@@ -285,6 +286,7 @@ class LiveRunner:
         self.strategy_id = (strategy_id or "_default").strip() or "_default"
         self.strategies_by_slot = strategies_by_slot or {}
         self.instruments = instruments
+        self._subscribed_symbols_cache: set[str] | None = None
         self.gateway_options = self._normalize_gateway_options(
             gateway_options=gateway_options,
             md_front=md_front,
@@ -1236,6 +1238,7 @@ class LiveRunner:
             sync_group_mapping=self._sync_group_mapping,
             group_broker_ids=self._broker_order_ids_for_group,
             resolve_trace_id=self._lookup_group_id,
+            get_subscribed_symbols=self._subscribed_symbol_set,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -1643,6 +1646,30 @@ class LiveRunner:
                 self._close_order_mapping(client_order_id, broker_order_id)
         elif event_name == "account":
             self._broker_account_state = payload
+
+    def _subscribed_symbol_set(self) -> set[str]:
+        """本会话挂载标的的归一化集合(惰性构建并缓存).
+
+        数据源是 ``self.instruments``, 与网关订阅集同源(``symbols`` 就是从它
+        派生的), 保证过滤口径与订阅口径一致。``run_live`` 要求 ``instruments``
+        必填, 故空集是异常路径而非常态; 空集时 ``_accepts_symbol`` 会全放行。
+
+        :return: 归一化后的标的集合。
+
+        用 ``getattr`` 兜底缺失属性: 部分测试用
+        ``LiveRunner.__new__(LiveRunner)`` + ``_init_broker_bridge_state()``
+        绕开 ``__init__`` 直接构造替身, ``instruments`` / 缓存字段不存在;
+        按裁决三"无访问器场景一律放行", 缺失时当空集处理。
+        """
+        cached = getattr(self, "_subscribed_symbols_cache", None)
+        if cached is None:
+            cached = {
+                normalize_symbol_for_match(getattr(inst, "symbol", ""))
+                for inst in (getattr(self, "instruments", None) or [])
+            }
+            cached.discard("")
+            self._subscribed_symbols_cache = cached
+        return cached
 
     def _make_event_key(self, event_name: str, payload: Any) -> str:
         if event_name == "trade":

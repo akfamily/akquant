@@ -41,6 +41,7 @@ class BrokerRuntime:
         sync_group_mapping: Callable[[str, str], None] = lambda _c, _g: None,
         group_broker_ids: Callable[[str], list[str]] | None = None,
         resolve_trace_id: Callable[[Any], str] | None = None,
+        get_subscribed_symbols: Callable[[], set[str]] | None = None,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -60,6 +61,7 @@ class BrokerRuntime:
             adapt_strategy_payload=adapt_strategy_payload,
             resolve_trace_id=resolve_trace_id,
             payload_field=payload_field,
+            get_subscribed_symbols=get_subscribed_symbols,
         )
         self._recovery = BrokerRecovery(
             get_trader_gateway=get_trader_gateway,
