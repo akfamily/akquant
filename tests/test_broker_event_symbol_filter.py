@@ -281,6 +281,21 @@ def test_runner_subscribed_symbol_set_normalizes_and_caches() -> None:
     assert runner._subscribed_symbol_set() == {"000012.SZ"}
 
 
+def test_dropped_counts_are_reported_together() -> None:
+    """两类丢弃分开计数, 供收尾摘要一次读出."""
+    store: list = []
+    b, s = _bridge(store, {"600008.SH"}), _Strat()
+
+    b.queue_event("order", _order("000651.SZ", "FOREIGN"))
+    b.queue_event("order", _order("600008.SH", "MINE"))
+    b.drain_events(s)
+    b.queue_event("order", _order("600008.SH", "MINE"))  # 同状态重放
+
+    counts = b.dropped_event_counts()
+    assert counts["foreign_symbol"] == 1
+    assert counts["duplicate_order"] == 1
+
+
 def test_runner_dispatches_own_subscribed_symbol_order() -> None:
     """8/17 事故防回归: 小写登记 -> 归一化大写集合, 柜台推大写回报仍派发到策略."""
     runner = LiveRunner.__new__(LiveRunner)
