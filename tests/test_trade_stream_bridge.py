@@ -213,3 +213,62 @@ def test_trade_message_carries_schema_version() -> None:
 
     assert message is not None
     assert message["schema_version"] == STREAM_SCHEMA_VERSION
+
+
+def test_trade_fill_carries_position_effect() -> None:
+    """回测成交消息带开平标志, 前端才能区分开仓/平仓画不同箭头."""
+    events = _run_events()
+    trade_event = next(e for e in events if e["event_type"] == "trade")
+
+    message = to_trade_message(trade_event)
+
+    assert message is not None
+    assert "position_effect" in message["fill"]
+    assert message["fill"]["position_effect"] != ""
+
+
+def test_position_effect_is_lowercase_on_both_paths() -> None:
+    """回测(Rust Debug 格式)与实盘(middleware 小写)必须归一到同一词表."""
+    events = _run_events()
+    trade_event = next(e for e in events if e["event_type"] == "trade")
+    backtest_message = to_trade_message(trade_event)
+    assert backtest_message is not None
+    effect = backtest_message["fill"]["position_effect"]
+    assert effect == effect.lower()
+
+    live_event = {
+        "event_type": "trade",
+        "run_id": "live",
+        "seq": 1,
+        "ts": 1_700_000_000_000_000_000,
+        "symbol": "600008.SH",
+        "level": "info",
+        "payload": {
+            "trade_id": "T1",
+            "order_id": "O1",
+            "symbol": "600008.SH",
+            "side": "Buy",
+            "price": "10.0",
+            "quantity": "100",
+            "position_effect": "OPEN",
+        },
+    }
+    live_message = to_trade_message(live_event)
+    assert live_message is not None
+    assert live_message["fill"]["position_effect"] == "open"
+
+
+def test_missing_position_effect_defaults_to_auto() -> None:
+    """老 broker 不填该字段时落 auto, 不报错也不留空串."""
+    event = {
+        "event_type": "trade",
+        "run_id": "r",
+        "seq": 1,
+        "ts": 0,
+        "symbol": "X",
+        "level": "info",
+        "payload": {"trade_id": "T", "order_id": "O", "side": "Buy"},
+    }
+    message = to_trade_message(event)
+    assert message is not None
+    assert message["fill"]["position_effect"] == "auto"
