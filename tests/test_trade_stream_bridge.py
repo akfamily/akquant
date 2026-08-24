@@ -9,8 +9,12 @@ draw entry/exit markers alongside indicators.
 import akquant
 import pandas as pd
 from akquant import (
+    BacktestConfig,
     Bar,
+    ChinaFuturesConfig,
+    InstrumentConfig,
     Strategy,
+    StrategyConfig,
     is_trade_stream_event,
     run_backtest,
     to_trade_message,
@@ -272,3 +276,90 @@ def test_missing_position_effect_defaults_to_auto() -> None:
     message = to_trade_message(event)
     assert message is not None
     assert message["fill"]["position_effect"] == "auto"
+
+
+_FUTURES_SYMBOL = "RB2310"
+_FUTURES_PRICES = [3500.0, 3510.0, 3520.0, 3530.0, 3540.0, 3550.0]
+
+
+def _futures_data() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.date_range("2023-01-01", periods=len(_FUTURES_PRICES), freq="D"),
+            "open": _FUTURES_PRICES,
+            "high": [p + 5.0 for p in _FUTURES_PRICES],
+            "low": [p - 5.0 for p in _FUTURES_PRICES],
+            "close": _FUTURES_PRICES,
+            "volume": 1_000.0,
+            "symbol": _FUTURES_SYMBOL,
+        }
+    )
+
+
+def _run_close_variant_events(
+    position_effect: str,
+) -> list[akquant.BacktestStreamEvent]:
+    """空 1 手后按 ``position_effect`` 显式平今/平昨, 用于锁住 stream 出口词表."""
+
+    class _ExplicitCloseStrategy(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.bar_index = 0
+
+        def on_bar(self, bar: Bar) -> None:
+            if self.bar_index == 0:
+                self.short(bar.symbol, 1)
+            elif self.bar_index == 2:
+                self.submit_order(
+                    symbol=bar.symbol,
+                    side="Buy",
+                    quantity=1,
+                    position_effect=position_effect,
+                )
+            self.bar_index += 1
+
+    events: list[akquant.BacktestStreamEvent] = []
+    config = BacktestConfig(
+        strategy_config=StrategyConfig(initial_cash=500_000.0, commission_rate=0.0),
+        instruments_config=[
+            InstrumentConfig(
+                symbol=_FUTURES_SYMBOL,
+                asset_type="FUTURES",
+                multiplier=10.0,
+                margin_ratio=0.1,
+            )
+        ],
+        china_futures=ChinaFuturesConfig(enforce_sessions=False),
+    )
+    run_backtest(
+        strategy=_ExplicitCloseStrategy,
+        data=_futures_data(),
+        config=config,
+        fill_policy=akquant.CurrentClose(),
+        on_event=events.append,
+        stream_batch_size=1,
+        stream_max_buffer=256,
+    )
+    return events
+
+
+def test_position_effect_multi_word_variants_stay_snake_case() -> None:
+    """``close_today``/``close_yesterday`` 出口须带下划线, 不是 Debug 格式的驼峰粘连.
+
+    Rust 侧若照抄 ``side`` 的 ``format!("{:?}").to_lowercase()`` 写法, 会把
+    ``CloseToday`` 变成 ``closetoday``——而 ``submit_order(position_effect=...)``
+    接受、且 ``executions_df`` 早已导出的规范词是 ``close_today``。这条测试专门
+    覆盖 ``auto``/``open``/``close`` 之外的多词变体, 回归时改回 Debug 写法重编译
+    应能让它失败。
+    """
+    for position_effect, expected in (
+        ("close_today", "close_today"),
+        ("close_yesterday", "close_yesterday"),
+    ):
+        events = _run_close_variant_events(position_effect)
+        trade_events = [e for e in events if e["event_type"] == "trade"]
+        assert len(trade_events) == 2, position_effect
+        closing_fill = to_trade_message(trade_events[1])["fill"]  # type: ignore[index]
+        assert closing_fill["position_effect"] == expected
+        assert "closetoday" not in closing_fill["position_effect"]
+        assert "closeyesterday" not in closing_fill["position_effect"]
