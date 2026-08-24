@@ -1,5 +1,7 @@
 """broker recovery 三层节奏: heartbeat 每拍, account 中频, 全量 sync 低频兜底."""
 
+from typing import Any
+
 from akquant.gateway.broker_recovery import BrokerRecovery
 
 
@@ -84,12 +86,28 @@ def test_reconnect_forces_sync_even_when_disabled() -> None:
     assert g.connects == 1
     assert g.sync_orders_calls == 1
     assert g.sync_trades_calls == 1
+    assert g.account_calls == 0
 
 
 def test_no_reconnect_returns_false() -> None:
     """连接正常时不报重连, runner 据此不重置兜底计时."""
     g = _Gateway()
     assert _recovery(g).run_cycle() is False
+
+
+def test_sync_orders_and_sync_trades_are_independent_switches() -> None:
+    """两个开关是 run_cycle 公开签名的独立契约, 不能互相串线."""
+    g = _Gateway()
+    _recovery(g).run_cycle(sync_orders=True, sync_trades=False, refresh_account=False)
+
+    assert g.sync_orders_calls == 1
+    assert g.sync_trades_calls == 0
+
+    g2 = _Gateway()
+    _recovery(g2).run_cycle(sync_orders=False, sync_trades=True, refresh_account=False)
+
+    assert g2.sync_orders_calls == 0
+    assert g2.sync_trades_calls == 1
 
 
 def test_intervals_default_to_three_tier() -> None:
@@ -138,3 +156,24 @@ def test_invalid_interval_falls_back_to_default() -> None:
     assert tick == 1.0
     tick2, _, _ = _resolve_recovery_intervals({"recovery_interval_sec": "abc"})
     assert tick2 == 1.0
+
+
+def test_nan_and_inf_interval_fall_back_to_default() -> None:
+    """`nan`/`inf` 不抛异常也不满足 `<= 0`, 需显式挡掉, 否则该档节奏会静默永久失效."""
+    from akquant.live._runner import _resolve_recovery_intervals
+
+    tick_nan, _, _ = _resolve_recovery_intervals({"recovery_interval_sec": "nan"})
+    assert tick_nan == 1.0
+    tick_inf, _, _ = _resolve_recovery_intervals({"recovery_interval_sec": "inf"})
+    assert tick_inf == 1.0
+
+
+def test_jittered_sync_interval_stays_within_ten_percent(monkeypatch: Any) -> None:
+    """抖动落在 [base*0.9, base*1.1] 闭区间内, 断言不依赖真实随机数取值."""
+    from akquant.live._runner import LiveRunner
+
+    monkeypatch.setattr("akquant.live._runner.random.uniform", lambda a, b: a)
+    runner = LiveRunner.__new__(LiveRunner)
+    runner._broker_sync_interval_sec = 30.0
+
+    assert runner._jittered_sync_interval() == 27.0

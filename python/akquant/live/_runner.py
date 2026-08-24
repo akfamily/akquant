@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import math
 import random
 import threading
 import time
@@ -73,6 +74,14 @@ def _positive_interval(value: Any, default: float, name: str) -> float:
                 value,
                 default,
             )
+        return default
+    if not math.isfinite(parsed):
+        logger.warning(
+            "gateway_options.%s must be finite (got %s), falling back to %s",
+            name,
+            parsed,
+            default,
+        )
         return default
     if parsed <= 0:
         logger.warning(
