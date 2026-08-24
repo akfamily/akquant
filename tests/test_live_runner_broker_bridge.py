@@ -1768,3 +1768,73 @@ def test_live_runner_logs_summary_with_structured_context(caplog: Any) -> None:
     assert record.slot == "beta"
     assert "Current Positions:" in record.getMessage()
     assert "IF2406: 2.0" in record.getMessage()
+
+
+def _summary_runner_with_bridge(dropped_event_counts: Callable[[], Any]) -> LiveRunner:
+    """Build a ``_print_summary``-ready runner stub with a fake broker event bridge."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.strategy_id = "beta"
+    runner._broker_event_bridge = SimpleNamespace(
+        dropped_event_counts=dropped_event_counts
+    )
+    runner.engine = cast(
+        Any,
+        SimpleNamespace(
+            get_results=lambda: SimpleNamespace(
+                metrics=SimpleNamespace(
+                    total_return_pct=0.12,
+                    annualized_return=0.08,
+                    max_drawdown_pct=-0.04,
+                    sharpe_ratio=1.23,
+                    win_rate=0.67,
+                ),
+                trades=[object(), object()],
+                snapshots=[],
+            )
+        ),
+    )
+    return runner
+
+
+def test_live_runner_summary_reports_dropped_event_counts(caplog: Any) -> None:
+    """摘要在 Total Trades 之后、结尾分隔线之前插入两行丢弃计数."""
+    runner = _summary_runner_with_bridge(
+        lambda: {"foreign_symbol": 3, "duplicate_order": 5}
+    )
+
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._print_summary()
+
+    record = next(
+        record for record in caplog.records if "TRADING SUMMARY" in record.getMessage()
+    )
+    message = record.getMessage()
+    total_trades_pos = message.index("Total Trades")
+    foreign_pos = message.index("Dropped (foreign symbol): 3")
+    duplicate_pos = message.index("Dropped (duplicate order): 5")
+    trailing_rule_pos = message.rindex("=" * 50)
+
+    assert total_trades_pos < foreign_pos < duplicate_pos < trailing_rule_pos
+
+
+def test_live_runner_summary_survives_dropped_event_counts_exception(
+    caplog: Any,
+) -> None:
+    """``dropped_event_counts()`` 抛异常时摘要主体仍完整输出, 只丢计数两行."""
+
+    def boom() -> dict[str, int]:
+        raise RuntimeError("dropped_event_counts exploded")
+
+    runner = _summary_runner_with_bridge(boom)
+
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._print_summary()
+
+    record = next(
+        record for record in caplog.records if "TRADING SUMMARY" in record.getMessage()
+    )
+    message = record.getMessage()
+    assert "Total Trades: 2" in message
+    assert "Sharpe Ratio: 1.2300" in message
+    assert "Dropped (foreign symbol)" not in message
+    assert "Dropped (duplicate order)" not in message

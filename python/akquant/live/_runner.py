@@ -2138,15 +2138,25 @@ class LiveRunner:
             ]
             bridge = getattr(self, "_broker_event_bridge", None)
             if bridge is not None and hasattr(bridge, "dropped_event_counts"):
-                counts = bridge.dropped_event_counts()
-                # 这两行是过滤/去重的可见性兜底: 日志会被降级淹没, 摘要不会。
-                # foreign_symbol 异常大 ⇒ 标的归一化可能把自己的回报也挡掉了。
-                summary_lines.append(
-                    f"Dropped (foreign symbol): {counts.get('foreign_symbol', 0)}"
-                )
-                summary_lines.append(
-                    f"Dropped (duplicate order): {counts.get('duplicate_order', 0)}"
-                )
+                # 局部 try/except: 计数是可观测性附加项, 不能让它的失败拖垮
+                # 已经算好的收益率/回撤/成交数这些远更重要的摘要主体。
+                try:
+                    counts = bridge.dropped_event_counts()
+                except Exception:
+                    logger.debug(
+                        "dropped_event_counts() raised, skipping drop-count lines",
+                        exc_info=True,
+                        extra=self._runner_log_extra(phase="live"),
+                    )
+                else:
+                    # 这两行是过滤/去重的可见性兜底: 日志会被降级淹没, 摘要不会。
+                    # foreign_symbol 异常大 ⇒ 标的归一化可能把自己的回报也挡掉了。
+                    summary_lines.append(
+                        f"Dropped (foreign symbol): {counts.get('foreign_symbol', 0)}"
+                    )
+                    summary_lines.append(
+                        f"Dropped (duplicate order): {counts.get('duplicate_order', 0)}"
+                    )
             summary_lines.append("=" * 50)
 
             # Print Current Positions if available
