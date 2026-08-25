@@ -77,7 +77,7 @@ df = df.sort_values('date').reset_index(drop=True)
 
 多品种文件导入（如对接平台导出的固定 7 列格式：`date`/`symbol`/`open`/`high`/
 `low`/`close`/`volume`，`symbol` 去后缀纯数字、`date` 为 naive 东八区时间）的完整
-可运行示例见 [`examples/70_csv_multi_symbol_import_demo.py`](../../../examples/70_csv_multi_symbol_import_demo.py)：脚本会自带一份临时 CSV，演示「文件长什么样」与「怎么读」，并点出
+可运行示例见 [`examples/70_csv_multi_symbol_import_demo.py`](https://github.com/akfamily/akquant/blob/main/examples/70_csv_multi_symbol_import_demo.py)：脚本会自带一份临时 CSV，演示「文件长什么样」与「怎么读」，并点出
 `symbol` 去后缀口径、naive 时区、多标 `concat`、以及 `pd.read_csv` 对纯数字
 symbol 丢前导 0 这几个常见坑。
 
