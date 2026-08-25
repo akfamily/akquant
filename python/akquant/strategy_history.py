@@ -99,8 +99,10 @@ def _log_missing_history_symbol(strategy: Any, symbol: str, field: str) -> None:
     warned.add(key)
     log = logger.warning if first_time else logger.debug
     log(
-        "get_history(symbol=%s, field=%s) 无历史记录, 返回全 NaN: 该 symbol 在历史"
-        "缓冲中无任何记录, 通常意味着它没有被登记/订阅(检查 instruments_config/"
+        # 文案刻意不写具体函数名: 本函数同时服务 get_history 与 get_history_multi,
+        # 写死其中一个会让另一路的用户按错误的调用点去排查。
+        "历史查询(symbol=%s, field=%s) 无记录, 返回全 NaN: 该 symbol 在历史缓冲中"
+        "无任何记录, 通常意味着它没有被登记/订阅(检查 instruments_config/"
         "symbols 配置或标的代码是否写错), 而不是数据源当天没数据",
         symbol,
         field,
