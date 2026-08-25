@@ -1,9 +1,14 @@
-"""盘中周期性丢弃计数汇总: 挂在全量 sync 那一档, 只在有增量时才打 INFO.
+"""盘中周期性丢弃计数汇总: 挂在全量 sync 那一档, 只在 foreign_symbol 有增量时打 INFO.
 
 覆盖 M4 补的可观测性缺口 ——
 ``BrokerEventBridge.dropped_event_counts()`` 此前唯一的消费点是会话收尾摘要,
 盘中完全不可见。见
 ``docs/superpowers/specs/2026-08-25-broker-order-push-design.md`` 成分 C。
+
+**触发条件只看 ``foreign_symbol``**(M4 复审订正): 账户有挂单且状态未变是
+实盘最常见的稳态, 每轮全量 sync 都会让 ``duplicate_order`` 必然 +N(N = 挂单
+数) —— 把它也纳入触发条件, 等于把"每 tick 刷屏"稀释成"每 30s 刷屏", 不是
+消除。``duplicate_order`` 只作为日志上下文与收尾总计, 不参与触发判断。
 """
 
 from types import SimpleNamespace
@@ -24,8 +29,8 @@ def _runner_with_bridge(dropped_event_counts: Callable[[], Any]) -> LiveRunner:
     return runner
 
 
-def test_reports_when_counts_increase(caplog: Any) -> None:
-    """计数有增长 -> 汇总日志被打出, 且文本含两类计数与增量."""
+def test_reports_when_foreign_symbol_increases(caplog: Any) -> None:
+    """foreign_symbol 有增长 -> 汇总日志被打出, 文本同时含两类计数的累计值."""
     runner = _runner_with_bridge(lambda: {"foreign_symbol": 3, "duplicate_order": 5})
 
     with caplog.at_level("INFO", logger="akquant.gateway.live"):
@@ -37,15 +42,13 @@ def test_reports_when_counts_increase(caplog: Any) -> None:
     assert "foreign_symbol total=3" in message
     assert "(+3;" in message
     assert "duplicate_order total=5" in message
-    assert "(+5;" in message
 
 
 def test_silent_when_counts_unchanged(caplog: Any) -> None:
     """计数无变化 -> 完全不打日志(防噪声回归的关键).
 
     先跑一轮建立基线(3/5), 再原样跑第二轮; 第二轮不应产生任何
-    "Broker event drops" 日志 —— 这是防止把 duplicate_order 每轮重放的
-    预期增量误当成故障刷屏的关键回归点。
+    "Broker event drops" 日志。
     """
     counts = {"foreign_symbol": 3, "duplicate_order": 5}
     runner = _runner_with_bridge(lambda: dict(counts))
@@ -56,6 +59,27 @@ def test_silent_when_counts_unchanged(caplog: Any) -> None:
 
     with caplog.at_level("INFO", logger="akquant.gateway.live"):
         runner._report_dropped_event_counts_if_changed()
+
+    assert [r for r in caplog.records if "Broker event drops" in r.getMessage()] == []
+
+
+def test_silent_when_only_duplicate_order_grows(caplog: Any) -> None:
+    """稳态防线: foreign_symbol 不变、duplicate_order 持续增长 -> 完全不打日志.
+
+    这是本次修复的核心防线: 账户挂单且状态未变时, 每轮全量 sync 都会让
+    ``duplicate_order`` +N(N = 挂单数), 若把它也当触发条件, 会在整个挂单
+    周期里每 30s 准时打一条日志——把"每 tick 刷屏"稀释成"每 30s 刷屏",
+    不是真正的静默。
+    """
+    counts = {"foreign_symbol": 0, "duplicate_order": 5}
+    runner = _runner_with_bridge(lambda: dict(counts))
+    runner._report_dropped_event_counts_if_changed()
+
+    caplog.clear()
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        for _ in range(5):
+            counts["duplicate_order"] += 5  # 模拟连续几轮全量 sync 重放同样的挂单
+            runner._report_dropped_event_counts_if_changed()
 
     assert [r for r in caplog.records if "Broker event drops" in r.getMessage()] == []
 

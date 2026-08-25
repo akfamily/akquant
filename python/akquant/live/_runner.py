@@ -1753,20 +1753,20 @@ class LiveRunner:
     def _report_dropped_event_counts_if_changed(self) -> None:
         """全量 sync 节奏下汇总一次丢弃计数增量, 只在有增量时才打 INFO.
 
-        **绝不逐次上报**: ``duplicate_order`` 是 recovery 每轮重放挂单的预期
-        行为, 本来就会每秒涨——逐次打日志/发 observer 事件等于把"挂单每秒被
-        重复推送"这个刚修的缺陷换个出口放回来。这里只在全量 sync 那一拍(30s
-        默认)汇总一次, 且两类计数都没变时完全静默, 保证正常运行不产生任何
-        噪声。
+        **触发条件只看 ``foreign_symbol``**: 账户有挂单且状态未变是实盘最
+        常见的稳态(挂着限价单等成交), 而每次全量 sync 都会把全部挂单重新推
+        进 ``queue_event``、逐个被状态指纹拦下——``duplicate_order`` 在这种
+        稳态下**每轮必然 +N**(N = 挂单数)。把它也纳入触发条件, 等于把
+        "每 tick 刷屏"稀释成"每 30s 刷屏", 不是消除, 与刚修掉的"挂单每秒被
+        重复推送"是同一类失败模式。``duplicate_order`` 只作为日志里的上下文
+        累计值(排查时不用再翻别处)与会话收尾摘要的总计, 不参与是否打日志
+        的判断。``foreign_symbol`` 配置正确时应恒为 0, 任何增长都值得盘中
+        立刻看到, 因此单独作为触发条件。
 
         计数读取要做异常隔离, 与 ``_print_summary`` 对同一方法的隔离方式一致:
         ``dropped_event_counts()`` 抛异常或返回非 dict-like 值只记一条 debug
         并跳过本次汇总, 绝不能让它拖垮 recovery 循环本身——循环挂掉意味着
         断线不再重连、挂单不再补齐, 比看不到计数严重得多。
-
-        两类计数含义不同, 分开描述该怀疑什么: ``foreign_symbol`` 持续增长
-        意味着有回报因标的不匹配被丢弃, 配置正确时应稳定在 0 或很小;
-        ``duplicate_order`` 增长是 recovery 重放挂单的预期行为, 不代表故障。
         """
         bridge = getattr(self, "_broker_event_bridge", None)
         if bridge is None or not hasattr(bridge, "dropped_event_counts"):
@@ -1786,20 +1786,18 @@ class LiveRunner:
 
         last = self._broker_last_reported_drop_counts
         foreign_delta = foreign_total - last.get("foreign_symbol", 0)
-        duplicate_delta = duplicate_total - last.get("duplicate_order", 0)
-        if foreign_delta == 0 and duplicate_delta == 0:
-            return
         last["foreign_symbol"] = foreign_total
         last["duplicate_order"] = duplicate_total
+        if foreign_delta <= 0:
+            return
         logger.info(
             "Broker event drops (periodic): foreign_symbol total=%s (+%s; "
-            "若配置正确应稳定在 0/很小, 持续增长请怀疑标的归一化把自己的回报"
-            "也挡掉了); duplicate_order total=%s (+%s; recovery 重放挂单的"
-            "预期行为, 不代表故障)",
+            "若配置正确应恒为 0, 出现增长请怀疑标的归一化把自己的回报也挡掉"
+            "了); duplicate_order total=%s (仅供参考, recovery 重放挂单的"
+            "预期行为, 不代表故障, 不作为触发条件, 会话收尾摘要有完整总计)",
             foreign_total,
             foreign_delta,
             duplicate_total,
-            duplicate_delta,
             extra=self._runner_log_extra(phase="gateway"),
         )
 
