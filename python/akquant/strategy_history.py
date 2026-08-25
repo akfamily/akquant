@@ -3,6 +3,10 @@ from typing import Any, Optional, cast
 import numpy as np
 import pandas as pd
 
+from .log import build_log_extra, get_logger
+
+logger = get_logger("strategy")
+
 #: tick 序列可用的字段。tick 没有 open/high/low, 请求它们会静默返回退化 OHLC
 #: (price 冒充 high), 故显式拒绝。
 _TICK_ALLOWED_FIELDS = frozenset({"price", "close", "volume"})
@@ -71,6 +75,39 @@ def _resolve_history_cutoff(strategy: Any) -> Optional[int]:
     return int(cutoff)
 
 
+def _log_missing_history_symbol(strategy: Any, symbol: str, field: str) -> None:
+    """未登记 symbol 的全 NaN 历史留痕: 首次 WARNING 点名, 之后同 key 降 DEBUG.
+
+    只应在 ``arr is None``(Rust 侧 history 缓冲对该 symbol 完全没有记录)时调用
+    —— 这通常是配置错误(标的没进 ``instruments_config``/``symbols``, 或代码写
+    错了标的), 值得告警并点名。**绝不能**用在"有数据但不够长"(预热不足)的
+    分支: 那是每根 bar 都会触发的正常语义, 告警会刷屏。
+
+    去重集合挂在 strategy 实例上惰性建, 与 ``gateway/broker_event_bridge.py``
+    的 ``_log_foreign_symbol`` 同一套防刷屏模式。
+
+    :param strategy: 策略实例, 用于挂载去重集合
+    :param symbol: 未登记的标的代码
+    :param field: 请求的字段名(已小写)
+    """
+    warned = getattr(strategy, "_warned_missing_history_symbols", None)
+    if warned is None:
+        warned = set()
+        strategy._warned_missing_history_symbols = warned
+    key = (symbol, field)
+    first_time = key not in warned
+    warned.add(key)
+    log = logger.warning if first_time else logger.debug
+    log(
+        "get_history(symbol=%s, field=%s) 无历史记录, 返回全 NaN: 该 symbol 在历史"
+        "缓冲中无任何记录, 通常意味着它没有被登记/订阅(检查 instruments_config/"
+        "symbols 配置或标的代码是否写错), 而不是数据源当天没数据",
+        symbol,
+        field,
+        extra=build_log_extra(phase="strategy", symbol=symbol),
+    )
+
+
 def set_history_depth(strategy: Any, depth: int) -> None:
     """设置历史数据回溯长度."""
     strategy._history_depth = depth
@@ -118,6 +155,7 @@ def get_history(
     )
 
     if arr is None:
+        _log_missing_history_symbol(strategy, symbol, normalized_field)
         return cast(np.ndarray, np.full(count, np.nan))
 
     if len(arr) < count:
@@ -166,6 +204,7 @@ def get_history_multi(
     for field in normalized_fields:
         arr = None if raw is None else raw.get(field)
         if arr is None:
+            _log_missing_history_symbol(strategy, symbol, field)
             out[field] = np.full(count, np.nan)
         elif len(arr) < count:
             padding = np.full(count - len(arr), np.nan)
