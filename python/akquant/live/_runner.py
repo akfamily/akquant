@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import math
 import random
+import re
 import threading
 import time
 import uuid
@@ -61,6 +62,51 @@ _DEFAULT_RECOVERY_SYNC_SEC = 30.0
 #: 派发 order 与 execution_report, 成交回报最多晚到几秒), 不是"永久记住",
 #: 故取一个数量级余量即可, 无需像 recovery 层的去重表那样撑到 5 万/10 万单。
 _CLOSED_ORDER_ID_LIMIT = 10000
+
+#: ``session_tag`` 允许的字符集: 不含 ``-``(它是 ``client_order_id`` 的字段
+#: 分隔符, tag 里出现会让前缀匹配产生歧义), 只允许字母/数字/下划线。
+_SESSION_TAG_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9_]+$")
+#: ``client_order_id`` 要发给柜台, 柜台字段有长度上限, 过长会被截断(截断
+#: 直接破坏前缀匹配, 见设计文档"风险"一节)。
+_SESSION_TAG_MAX_LEN = 32
+
+
+def _validate_session_tag(session_tag: str) -> None:
+    """校验 ``run_live(session_tag=...)``: fail-fast, 不做归一化兜底.
+
+    刻意不静默改写调用方传入的标识: 平台如果以为传参就等于隔离生效, 但实际
+    因为归一化悄悄改了值而没生效, 比直接报错更难排查。三条规则均在设计文档
+    "一、``run_live`` 新增 ``session_tag`` 参数"一节说明。
+
+    :param session_tag: 调用方传入的会话标记, 推荐传平台任务 ID。
+    :raises ValueError: 含 ``-``、含 ``[A-Za-z0-9_]`` 之外的字符、或长度超过
+        ``_SESSION_TAG_MAX_LEN``, 消息里给出可照抄的正确写法。
+    """
+    if not session_tag:
+        raise ValueError(
+            "session_tag 不能是空字符串; 不传该参数即可保持默认行为"
+            "(随机会话标记, 不启用严格的多任务隔离)"
+        )
+    if "-" in session_tag:
+        suggestion = session_tag.replace("-", "_")
+        raise ValueError(
+            f"session_tag={session_tag!r} 不能包含 '-': 它是 client_order_id "
+            f"的字段分隔符({{broker}}-{{tag}}-{{seq}}), tag 里出现会让前缀匹配"
+            f"产生歧义。请改用下划线分隔, 例如 session_tag={suggestion!r}"
+        )
+    if not _SESSION_TAG_ALLOWED_CHARS.match(session_tag):
+        suggestion = re.sub(r"[^A-Za-z0-9_]", "_", session_tag)
+        raise ValueError(
+            f"session_tag={session_tag!r} 只能包含字母、数字、下划线"
+            f"([A-Za-z0-9_]), 例如 session_tag={suggestion!r}"
+        )
+    if len(session_tag) > _SESSION_TAG_MAX_LEN:
+        raise ValueError(
+            f"session_tag={session_tag!r} 长度 {len(session_tag)} 超过上限 "
+            f"{_SESSION_TAG_MAX_LEN}: client_order_id 要发给柜台, 柜台字段有"
+            f"长度限制, 过长会被截断并破坏前缀匹配。例如截断为 "
+            f"session_tag={session_tag[:_SESSION_TAG_MAX_LEN]!r}"
+        )
 
 
 def _positive_interval(value: Any, default: float, name: str) -> float:
@@ -317,6 +363,7 @@ class LiveRunner:
             Union[StrategyRuntimeConfig, Dict[str, Any]]
         ] = None,
         runtime_config_override: bool = True,
+        session_tag: Optional[str] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -462,6 +509,11 @@ class LiveRunner:
         self.signal_source = signal_source
         self.strategy_runtime_config = strategy_runtime_config
         self.runtime_config_override = bool(runtime_config_override)
+        # fail-fast 校验, 不做归一化兜底: 静默改写调用方传入的标识会让平台
+        # 以为多任务隔离生效了而实际没生效, 见 _validate_session_tag。
+        if session_tag is not None:
+            _validate_session_tag(session_tag)
+        self.session_tag = session_tag
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
         self._indicator_recorder_override: Optional[IndicatorSink] = None

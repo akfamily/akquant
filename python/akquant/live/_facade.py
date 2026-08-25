@@ -83,6 +83,7 @@ def run_live(
         Union[StrategyRuntimeConfig, Dict[str, Any]]
     ] = None,
     runtime_config_override: bool = True,
+    session_tag: Optional[str] = None,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -176,6 +177,37 @@ def run_live(
     :param runtime_config_override: Whether to override a ``runtime_config`` the
         strategy already set itself (default True). Either way a conflict is
         logged; False keeps the strategy's own value and only warns.
+    :param session_tag: Optional session marker embedded in every
+        ``client_order_id`` this session generates (``{broker}-{session_tag}-{seq}``),
+        replacing the default random uuid. **Recommended: pass your platform's
+        task ID.** Enables per-task order-push isolation when multiple tasks
+        trade the **same** symbol under the same account — pushes whose
+        ``client_order_id`` carries a different session tag are actively
+        rejected (counted as ``foreign_task``, separate from the pre-existing
+        ``foreign_symbol`` filter), instead of only being filtered by
+        subscribed symbol.
+
+        **Strict rejection only activates when this parameter is explicitly
+        passed.** Leaving it unset keeps behaviour identical to prior
+        releases: the session still gets a random tag for
+        ``client_order_id`` uniqueness across restarts, but a mismatched
+        prefix is never treated as "not mine" — filtering still falls back
+        to the existing order-ownership / subscribed-symbol checks. This is
+        deliberate: if the broker truncates or rewrites ``client_order_id``
+        (length limits, character filtering), this session's own prefix
+        would also stop matching, and unconditional rejection would drop
+        every one of its own callbacks — orders would appear to submit
+        successfully yet no callback would ever arrive. Only enable this
+        once you've confirmed your broker echoes ``client_order_id`` back
+        unmodified in push frames (check by comparing a live
+        ``client_order_id`` against this session's prefix in the logs).
+
+        Validation is fail-fast, not normalized: ``session_tag`` must match
+        ``[A-Za-z0-9_]+`` (no ``-``, which is the ``client_order_id`` field
+        separator) and be at most 32 characters, or ``ValueError`` is raised
+        with a ready-to-use suggestion. Values are not silently rewritten —
+        that would let the platform believe isolation is active when it
+        silently is not.
     :return: ``None``.
     """
     if instruments is None:
@@ -236,6 +268,7 @@ def run_live(
         signal_source=signal_source,
         strategy_runtime_config=strategy_runtime_config,
         runtime_config_override=runtime_config_override,
+        session_tag=session_tag,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event
