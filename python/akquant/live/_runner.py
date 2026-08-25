@@ -1901,9 +1901,12 @@ class LiveRunner:
         跨会话恢复的老挂单不在映射表里, 交给标的判据兜底, 行为不变。
 
         委托进终态后 ``_close_order_mapping`` 会把这两张活跃映射表 pop 掉,
-        因此这里再兜底查 ``_closed_broker_order_ids``(会话级、永不清理的
-        "曾经是我的单"记录) —— 否则终态委托之后到达的同一 ``broker_order_id``
-        的成交/执行回报会因为查不到活跃映射而被误判成外来标的丢弃。
+        因此这里再兜底查 ``_closed_broker_order_ids``("最近的终态单"记录,
+        由 ``_CLOSED_ORDER_ID_LIMIT`` 按插入序有界淘汰, **不是永久保留**)
+        —— 否则终态委托之后到达的同一 ``broker_order_id`` 的成交/执行回报会
+        因为查不到活跃映射而被误判成外来标的丢弃。上限只需覆盖"终态之后还会
+        收到多久后续回报"的时间窗(内置 broker 成对派发 order 与
+        execution_report, 成交回报最多晚几秒), 故淘汰不会影响本兜底的有效性。
 
         :param broker_order_id: 柜台委托号(可能为空)。
         :param client_order_id: 客户端委托号(可能为空)。
