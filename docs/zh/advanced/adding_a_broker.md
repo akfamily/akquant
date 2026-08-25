@@ -229,15 +229,19 @@ sync 对齐到同一秒集中打柜台。
 过滤一遍标的**。这件事放在核心做，是因为「柜台返回全账户数据」是协议层的普遍现象，不是
 某一家的特例。
 
-你需要知道的是过滤的判据顺序，它会影响你实现推送时该填哪些字段：
+你需要知道的是过滤的判据顺序，它会影响你实现推送时该填哪些字段。以下 1/2 两层
+**只作用于 `order`/`trade`/`execution_report` 三类事件**，`account`（账户快照）没有
+`client_order_id` 概念，不经过这两层，直接进入原有逻辑（恒放行）：
 
 1. **会话标记前缀**：`run_live` 生成的 `client_order_id` 格式是
-   `{broker}-{session_tag}-{seq}`（`session_tag` 默认随机、可由
-   `run_live(session_tag=...)` 改成平台任务 ID）。推送帧里的 `client_order_id`
-   若以本会话的前缀开头，一律放行——**即使标的不在 `instruments` 挂载列表内**。
-   这条优先于以下所有判据，覆盖外部信号源经 `BrokerOrderSink` 直调
-   `submitter.submit_order`、不经引擎合约登记表就能合法报出挂载集合之外标的的
-   场景。
+   `{broker}-{session_tag}-{run_salt}{seq}`（`session_tag` 默认随机、可由
+   `run_live(session_tag=...)` 改成平台任务 ID；`run_salt` 是每次 `run_live` 独立
+   生成的 4 位随机段，拼在序号前而不影响前缀——固定 `session_tag` 场景下用来防止
+   重启后序号从 0 重来与柜台里的历史委托撞号）。推送帧里的 `client_order_id`
+   若以本会话的前缀 `{broker}-{session_tag}-` 开头，一律放行——**即使标的不在
+   `instruments` 挂载列表内**。这条优先于以下所有判据，覆盖外部信号源经
+   `BrokerOrderSink` 直调 `submitter.submit_order`、不经引擎合约登记表就能合法报出
+   挂载集合之外标的的场景。
 2. **会话标记不匹配 + 严格模式已启用**（即调用方显式传了 `session_tag`）→
    主动拒绝，计入会话收尾摘要的 `Dropped (foreign task)` 计数。这是**多任务
    交易同一标的**时的隔离手段：同账户同标的下别的任务报的单，凭标的过滤和
@@ -264,6 +268,13 @@ sync 对齐到同一秒集中打柜台。
 决定是否传 `session_tag` 前先摸清这个前提；`run_live(session_tag=...)` 默认不启用严格
 拒绝，正是为了在这个前提不成立时也不会误伤本会话自己的回报（现象是「下单成功却收不到
 回调」）。
+
+**内置的 `ctp` broker 不满足这个前提**：`brokers/ctp/adapter.py` 的 `client_order_id`
+是本地按 `order_ref` 反查出来的，从不发给柜台；柜台推送帧里没有这个字段，外来单落到
+第 3 层时 `client_order_id` 恒为空，直接判 `None` 走标的兜底。也就是说对 `ctp`，第 1/2
+两层会话判据实际是空操作——传了 `session_tag` 既不会报错，也不会拒绝任何外来单，**不会
+产生隔离效果**。目前已知只有原样回传 `client_order_id` 的柜台（如 middleware）能从这项
+能力受益，接入前请先确认自己的 broker 是否回传该字段。
 
 ## 最小骨架
 

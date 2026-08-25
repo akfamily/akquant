@@ -1357,11 +1357,12 @@ class LiveRunner:
         self._broker_event_bridge: Any = None
         self._broker_recovery: Any = None
         self._broker_submit_seq = 0
-        # 会话标记: 让 client_order_id 跨进程/跨重启唯一(见 _next_client_order_id)。
-        # 显式传了 session_tag 才用它替代随机 uuid、且启用严格的多任务隔离
-        # (第 2 层主动拒绝); 不传时行为与 v0.3.51 完全一致——`getattr` 兜底
-        # 缺失属性, 因为部分测试用 `LiveRunner.__new__` + `_init_broker_bridge_
-        # state()` 绕开 `__init__` 直接构造替身, `session_tag` 属性不存在。
+        # 会话标记: 让 client_order_id 的前缀跨进程/跨重启可识别(见
+        # _next_client_order_id)。显式传了 session_tag 才用它替代随机 uuid、
+        # 且启用严格的多任务隔离(第 2 层主动拒绝); 不传时行为与 v0.3.51 完全
+        # 一致——`getattr` 兜底缺失属性, 因为部分测试用 `LiveRunner.__new__`
+        # + `_init_broker_bridge_state()` 绕开 `__init__` 直接构造替身,
+        # `session_tag` 属性不存在。
         session_tag = getattr(self, "session_tag", None)
         if session_tag:
             self._broker_session_tag = session_tag
@@ -1369,6 +1370,13 @@ class LiveRunner:
         else:
             self._broker_session_tag = uuid.uuid4().hex[:8]
             self._broker_strict_task_isolation = False
+        # 每次 run_live 独立的随机盐, 拼进序号段(不进前缀段)。固定
+        # session_tag 场景下, 序号仍从 0 起, 若无此盐重启后第一笔单会与柜台
+        # 里同名的历史委托撞号——把 client_order_id 当幂等键的柜台会直接拒单
+        # (实测中间件返回 409 Conflict)。加盐后前缀匹配(用于第 1/2 层判据)、
+        # 重启后仍能通过旧 client_order_id 认出历史挂单、以及跨重启唯一性
+        # 三者并存, 见 _next_client_order_id。
+        self._broker_run_salt = uuid.uuid4().hex[:4]
         self._broker_submit_lock = threading.Lock()
         self._broker_recovery_mode = self._normalize_broker_recovery_mode(
             getattr(self, "gateway_options", {}).get("recovery_mode", "compatible")
@@ -1412,9 +1420,7 @@ class LiveRunner:
             resolve_trace_id=self._lookup_group_id,
             get_subscribed_symbols=self._subscribed_symbol_set,
             is_known_order=self._is_known_broker_order,
-            own_session_prefix=(
-                f"{getattr(self, 'broker', '') or ''}-{self._broker_session_tag}-"
-            ),
+            own_session_prefix=f"{self._broker_name_for_cid()}-{self._broker_session_tag}-",
             strict_task_isolation=self._broker_strict_task_isolation,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
@@ -2020,19 +2026,43 @@ class LiveRunner:
     def _payload_field(self, payload: Any, field: str) -> Any:
         return payload_field(payload, field)
 
-    def _next_client_order_id(self) -> str:
-        """生成 client_order_id: ``{broker}-{会话标记}-{会话内序号}``.
+    def _broker_name_for_cid(self) -> str:
+        """``client_order_id``/``own_session_prefix`` 共用的 broker 名读法.
 
-        序号是实例字段, 每次 run_live 从 0 起。若只用序号(旧格式
-        ``{broker}-coid-{seq}``), 重启后第一笔单又是 ``...-coid-1``, 会与柜台
-        里同名的历史委托撞号——把 client_order_id 当幂等键的柜台会直接拒单
-        (实测中间件返回 409 Conflict)。加 8 位会话标记后, 同一进程内递增序号
-        保证顺序可读, 跨重启与多进程并行则由标记区分。
+        两处必须完全一致: 若各自读法不同(比如一处用 ``self.broker``、另一处
+        用 ``getattr(self, "broker", "") or ""``), 当 ``broker`` 恰好是
+        ``None`` 时会生成互不匹配的前缀与 id——本会话自己下的单会被自己的
+        第 2 层严格判据当成"别的任务"拒收, 是最坏情况(参见 review C 系列
+        Minor #1)。
+        """
+        return getattr(self, "broker", "") or ""
+
+    def _next_client_order_id(self) -> str:
+        """生成 client_order_id: ``{broker}-{会话标记}-{运行盐}{会话内序号}``.
+
+        序号是实例字段, 每次 run_live 从 0 起。若只用"标记+序号"而不带运行盐
+        (即 ``{broker}-{tag}-{seq}``), 在 ``session_tag`` 被固定传入(而非随机
+        uuid)的场景下, 重启后第一笔单又会生成与上一轮完全相同的
+        ``{broker}-{tag}-1``: 一是会与柜台里同名的历史委托撞号——把
+        client_order_id 当幂等键的柜台直接拒单(实测中间件返回 409
+        Conflict); 二是若上一轮该 id 仍在 `_client_to_broker_order_ids`
+        里指向一笔非终态挂单, `can_submit_client_order` 会判定为重复而在本
+        地就拒绝提交, 根本到不了柜台。
+
+        修法是序号段(而非前缀段)拼入每次 run_live 独立生成的 4 位随机盐
+        (``_broker_run_salt``): 前缀 ``{broker}-{tag}-`` 保持稳定, 供第 1/2
+        层会话判据识别; 序号段整体因为带了盐而每次运行必然不同, 恢复跨
+        重启唯一性; 同时前缀不变意味着重启后仍能通过旧 client_order_id 的
+        前缀认出历史挂单属于本任务——三者(前缀识别、去重、跨重启唯一)
+        并存, 不再互斥。
         """
         with self._broker_submit_lock:
             self._broker_submit_seq += 1
             tag = getattr(self, "_broker_session_tag", "") or "nosess"
-            return f"{self.broker}-{tag}-{self._broker_submit_seq}"
+            salt = getattr(self, "_broker_run_salt", "") or ""
+            return (
+                f"{self._broker_name_for_cid()}-{tag}-{salt}{self._broker_submit_seq}"
+            )
 
     def _sync_order_id_mapping(
         self,

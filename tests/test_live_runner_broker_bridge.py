@@ -1961,6 +1961,29 @@ def test_live_runner_summary_reports_dropped_event_counts(caplog: Any) -> None:
     assert total_trades_pos < foreign_pos < duplicate_pos < trailing_rule_pos
 
 
+def test_live_runner_summary_reports_dropped_foreign_task_count(caplog: Any) -> None:
+    """Minor #5: 摘要新增的 ``Dropped (foreign task)`` 行此前完全没有测试锁住.
+
+    三行的相对顺序也要固定, 不能靠巧合排在别的行前面。
+    """
+    runner = _summary_runner_with_bridge(
+        lambda: {"foreign_symbol": 3, "duplicate_order": 5, "foreign_task": 7}
+    )
+
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._print_summary()
+
+    record = next(
+        record for record in caplog.records if "TRADING SUMMARY" in record.getMessage()
+    )
+    message = record.getMessage()
+    duplicate_pos = message.index("Dropped (duplicate order): 5")
+    foreign_task_pos = message.index("Dropped (foreign task): 7")
+    trailing_rule_pos = message.rindex("=" * 50)
+
+    assert duplicate_pos < foreign_task_pos < trailing_rule_pos
+
+
 def test_live_runner_summary_survives_dropped_event_counts_exception(
     caplog: Any,
 ) -> None:
@@ -1982,6 +2005,7 @@ def test_live_runner_summary_survives_dropped_event_counts_exception(
     assert "Sharpe Ratio: 1.2300" in message
     assert "Dropped (foreign symbol)" not in message
     assert "Dropped (duplicate order)" not in message
+    assert "Dropped (foreign task)" not in message
 
 
 def test_live_runner_summary_survives_dropped_event_counts_bad_shape(
@@ -2006,3 +2030,4 @@ def test_live_runner_summary_survives_dropped_event_counts_bad_shape(
     assert "Sharpe Ratio: 1.2300" in message
     assert "Dropped (foreign symbol)" not in message
     assert "Dropped (duplicate order)" not in message
+    assert "Dropped (foreign task)" not in message
