@@ -13,6 +13,8 @@ contract evolves. The version follows ``MAJOR.MINOR``:
 History:
 - ``1.0`` — initial versioned envelope. Shared keys: ``channel``, ``type``,
   ``run_id``, ``seq``, ``ts``, ``symbol``, ``level``, ``schema_version``.
+- ``1.1`` — added ``fill.position_effect`` to the trade channel (backward
+  compatible; older consumers can ignore the new field).
 """
 
-STREAM_SCHEMA_VERSION = "1.0"
+STREAM_SCHEMA_VERSION = "1.1"

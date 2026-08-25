@@ -232,7 +232,7 @@ def test_trade_fill_carries_position_effect() -> None:
 
 
 def test_position_effect_is_lowercase_on_both_paths() -> None:
-    """回测(Rust Debug 格式)与实盘(middleware 小写)必须归一到同一词表."""
+    """回测(Rust 规范小写词)与实盘(middleware 字符串兜底)必须归一到同一词表."""
     events = _run_events()
     trade_event = next(e for e in events if e["event_type"] == "trade")
     backtest_message = to_trade_message(trade_event)

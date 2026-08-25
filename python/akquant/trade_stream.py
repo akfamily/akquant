@@ -89,8 +89,10 @@ def to_trade_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]:
             "side": str(payload.get("side", "")),
             "price": _to_float(payload.get("price")),
             "quantity": _to_float(payload.get("quantity")),
-            # 开平标志: 前端据此区分开仓/平仓箭头。统一小写——Rust 侧 Debug 格式
-            # 是 "Open"/"Close", middleware 侧是小写, 不归一化前端要写两套判断。
+            # 开平标志: 前端据此区分开仓/平仓箭头。Rust 侧现已走
+            # PositionEffect::as_canonical_str() 直接产出规范小写词; 这里的
+            # lower() 是给实盘 middleware 字符串路径兜底, 双路径不归一前端
+            # 要写两套判断。
             "position_effect": str(payload.get("position_effect", "") or "auto")
             .strip()
             .lower(),

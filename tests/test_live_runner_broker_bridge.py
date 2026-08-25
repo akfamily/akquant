@@ -591,6 +591,90 @@ def test_live_runner_cleans_mapping_on_terminal_status() -> None:
     assert runner._resolve_broker_order_id("c-term-1") == ""
 
 
+def test_live_runner_attributes_trade_after_terminal_mapping_cleared() -> None:
+    """终态委托清映射后, 同一 broker_order_id 的成交/回报仍要能派发给策略.
+
+    ``_close_order_mapping`` 在委托进终态时会把 ``_broker_to_client_order_ids``
+    / ``_client_to_broker_order_ids`` 都 pop 掉, 使得"先认自己报的单"这条
+    归属判据只在委托活着时有效。标的刻意放在挂载集合(``instruments``)之外,
+    这样只有 ``_is_known_broker_order`` 命中 ``_closed_broker_order_ids``
+    才能救下随后到达的 trade/execution_report, 标的判据帮不上忙。
+    """
+
+    class _DummyStrategy:
+        def __init__(self) -> None:
+            self.orders: list[Any] = []
+            self.trades: list[Any] = []
+            self.reports: list[Any] = []
+
+        def on_order(self, order: Any) -> None:
+            self.orders.append(order)
+
+        def on_trade(self, trade: Any) -> None:
+            self.trades.append(trade)
+
+        def on_execution_report(self, report: Any) -> None:
+            self.reports.append(report)
+
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    # 挂载集合只含 600008.SH, 与本委托的标的(000651.SZ)不同——标的判据必须
+    # 判"外来", 归属判据才是唯一能救下事件的一层。
+    runner.instruments = cast(Any, [SimpleNamespace(symbol="600008.SH")])
+    strategy = _DummyStrategy()
+
+    # 模拟自己报出的单: submit_order 会在报单成功后立即同步 id 映射
+    # (先于任何 broker 推送到达)。
+    runner._sync_order_id_mapping("c-foreign-1", "b-foreign-1")
+
+    # 委托进终态: 映射被 _close_order_mapping 清掉, broker_order_id 转入
+    # _closed_broker_order_ids。
+    runner._queue_broker_event(
+        "order",
+        {
+            "client_order_id": "c-foreign-1",
+            "broker_order_id": "b-foreign-1",
+            "symbol": "000651.SZ",
+            "status": "Filled",
+            "filled_quantity": 100.0,
+        },
+    )
+    runner._drain_broker_events(cast(Any, strategy))
+
+    assert "b-foreign-1" not in runner._broker_to_client_order_ids
+    assert "b-foreign-1" in runner._closed_broker_order_ids
+
+    # 终态之后到达的 trade 与 execution_report, 映射已清, 只剩归属判据。
+    runner._queue_broker_event(
+        "trade",
+        {
+            "trade_id": "t-foreign-1",
+            "broker_order_id": "b-foreign-1",
+            "client_order_id": "c-foreign-1",
+            "symbol": "000651.SZ",
+            "side": "Buy",
+            "quantity": 100.0,
+            "price": 10.0,
+            "timestamp_ns": 1,
+        },
+    )
+    runner._queue_broker_event(
+        "execution_report",
+        {
+            "broker_order_id": "b-foreign-1",
+            "client_order_id": "c-foreign-1",
+            "symbol": "000651.SZ",
+            "status": "Filled",
+            "filled_quantity": 100.0,
+        },
+    )
+    runner._drain_broker_events(cast(Any, strategy))
+
+    assert len(strategy.trades) == 1
+    assert len(strategy.reports) == 1
+
+
 def test_live_runner_submitter_checks_idempotency_and_maps() -> None:
     """Install submitter and map ids after broker placement."""
 

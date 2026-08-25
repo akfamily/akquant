@@ -7,9 +7,10 @@ from .symbol_match import normalize_symbol_for_match
 
 logger = get_logger("gateway.live")
 
-#: 会话级委托状态指纹表上限(有界 FIFO)。与回测侧
-#: ``strategy_order_events._ORDER_EVENT_DEDUPE_LIMIT`` 取同一量级。
-_ORDER_STATE_DEDUPE_LIMIT = 50000
+#: 会话级委托状态指纹表上限(有界 FIFO)。去重键拆成 ``order:``/
+#: ``execution_report:`` 两个命名空间后, 同一批委托约占两倍条目, 等效容量
+#: 减半; 上调到 10 万以恢复设计文档写的"5 万单"口径。
+_ORDER_STATE_DEDUPE_LIMIT = 100000
 
 
 class BrokerEventBridge:
@@ -245,14 +246,19 @@ class BrokerEventBridge:
                 if self._seen_order_states.get(state_key) == state_fingerprint:
                     self._dropped_duplicate_orders += 1
                     return  # 会话级: 该委托的这个状态已派发过
+            if event_key in self._event_keys:
+                return
+            # 指纹提交刻意放在 event_key 批内键否决之后: 两层去重字段集不一致
+            # (指纹多含 avg_fill_price/reject_reason), 若在此之前提交, 会出现
+            # "指纹已写成新值但事件被批内键丢弃"的洞——柜台下一次再推同一状态
+            # 时指纹命中, 永久吞掉这条修正。只为真正入队的事件记指纹。
+            if state_key:
                 if state_key not in self._seen_order_states:
                     self._order_state_fifo.append(state_key)
                     while len(self._order_state_fifo) > _ORDER_STATE_DEDUPE_LIMIT:
                         stale = self._order_state_fifo.popleft()
                         self._seen_order_states.pop(stale, None)
                 self._seen_order_states[state_key] = state_fingerprint
-            if event_key in self._event_keys:
-                return
             self._event_keys.add(event_key)
             self._event_store.append((event_name, payload))
 

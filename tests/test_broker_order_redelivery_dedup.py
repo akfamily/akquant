@@ -53,13 +53,15 @@ def _bridge(store: list) -> BrokerEventBridge:
     )
 
 
-def _order(status: str, filled: float = 0.0, oid: str = "O1") -> dict:
+def _order(
+    status: str, filled: float = 0.0, oid: str = "O1", avg_fill_price: float = 0.0
+) -> dict:
     return {
         "broker_order_id": oid,
         "symbol": "600008.SH",
         "status": status,
         "filled_quantity": filled,
-        "avg_fill_price": 0.0,
+        "avg_fill_price": avg_fill_price,
         "reject_reason": "",
         "timestamp_ns": 0,
     }
@@ -151,6 +153,31 @@ def test_order_and_execution_report_dedupe_independently() -> None:
 
     assert len(s.orders) == 1
     assert len(s.reports) == 1
+
+
+def test_avg_fill_price_correction_survives_batch_key_and_replay() -> None:
+    """同批内均价修正不应永久锁死指纹, 重放要能追上修正值.
+
+    批内键(``order:{id}:{status}:{filled_quantity}``)不含 ``avg_fill_price``,
+    而会话指纹多含它 —— 若指纹提交发生在批内键否决之前, 同批内第二条
+    (均价 0.0 -> 10.2)会把指纹写成 10.2 却被批内键丢弃, 之后柜台重放同一
+    修正值时指纹命中, 永久吞掉。指纹提交必须与真正入队的事件绑定。
+    """
+    store: list = []
+    b, s = _bridge(store), _Strat()
+
+    # 同一批内先后到达: 均价 0.0 -> 10.2, status/filled_quantity 不变。
+    b.queue_event("order", _order("filled", 200.0, avg_fill_price=0.0))
+    b.queue_event("order", _order("filled", 200.0, avg_fill_price=10.2))
+    b.drain_events(s)
+
+    # 批内键否决第二条是预期行为(同批只留一条); 关键在于指纹不能被第二条
+    # 抢先提交——下一轮重放同一条修正值必须还能追上。
+    b.queue_event("order", _order("filled", 200.0, avg_fill_price=10.2))
+    b.drain_events(s)
+
+    assert len(s.orders) == 2
+    assert float(s.orders[-1]["avg_fill_price"]) == 10.2
 
 
 def test_dropped_counter_records_duplicates() -> None:

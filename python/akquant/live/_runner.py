@@ -1829,15 +1829,25 @@ class LiveRunner:
         集合之外的标的(不经引擎合约登记表), 见 ``signal/sinks.py:69``。
         跨会话恢复的老挂单不在映射表里, 交给标的判据兜底, 行为不变。
 
+        委托进终态后 ``_close_order_mapping`` 会把这两张活跃映射表 pop 掉,
+        因此这里再兜底查 ``_closed_broker_order_ids``(会话级、永不清理的
+        "曾经是我的单"记录) —— 否则终态委托之后到达的同一 ``broker_order_id``
+        的成交/执行回报会因为查不到活跃映射而被误判成外来标的丢弃。
+
         :param broker_order_id: 柜台委托号(可能为空)。
         :param client_order_id: 客户端委托号(可能为空)。
         :return: 是否命中本会话已知订单映射。
         """
         broker_to_client = getattr(self, "_broker_to_client_order_ids", None) or {}
         client_to_broker = getattr(self, "_client_to_broker_order_ids", None) or {}
+        closed_broker_order_ids = (
+            getattr(self, "_closed_broker_order_ids", None) or set()
+        )
         if broker_order_id and broker_order_id in broker_to_client:
             return True
         if client_order_id and client_order_id in client_to_broker:
+            return True
+        if broker_order_id and broker_order_id in closed_broker_order_ids:
             return True
         return False
 
