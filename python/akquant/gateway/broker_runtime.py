@@ -43,6 +43,8 @@ class BrokerRuntime:
         resolve_trace_id: Callable[[Any], str] | None = None,
         get_subscribed_symbols: Callable[[], set[str]] | None = None,
         is_known_order: Callable[[str, str], bool] | None = None,
+        own_session_prefix: str = "",
+        strict_task_isolation: bool = False,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
@@ -64,6 +66,8 @@ class BrokerRuntime:
             payload_field=payload_field,
             get_subscribed_symbols=get_subscribed_symbols,
             is_known_order=is_known_order,
+            own_session_prefix=own_session_prefix,
+            strict_task_isolation=strict_task_isolation,
         )
         self._recovery = BrokerRecovery(
             get_trader_gateway=get_trader_gateway,

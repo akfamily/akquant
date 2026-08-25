@@ -1358,7 +1358,17 @@ class LiveRunner:
         self._broker_recovery: Any = None
         self._broker_submit_seq = 0
         # 会话标记: 让 client_order_id 跨进程/跨重启唯一(见 _next_client_order_id)。
-        self._broker_session_tag = uuid.uuid4().hex[:8]
+        # 显式传了 session_tag 才用它替代随机 uuid、且启用严格的多任务隔离
+        # (第 2 层主动拒绝); 不传时行为与 v0.3.51 完全一致——`getattr` 兜底
+        # 缺失属性, 因为部分测试用 `LiveRunner.__new__` + `_init_broker_bridge_
+        # state()` 绕开 `__init__` 直接构造替身, `session_tag` 属性不存在。
+        session_tag = getattr(self, "session_tag", None)
+        if session_tag:
+            self._broker_session_tag = session_tag
+            self._broker_strict_task_isolation = True
+        else:
+            self._broker_session_tag = uuid.uuid4().hex[:8]
+            self._broker_strict_task_isolation = False
         self._broker_submit_lock = threading.Lock()
         self._broker_recovery_mode = self._normalize_broker_recovery_mode(
             getattr(self, "gateway_options", {}).get("recovery_mode", "compatible")
@@ -1402,6 +1412,10 @@ class LiveRunner:
             resolve_trace_id=self._lookup_group_id,
             get_subscribed_symbols=self._subscribed_symbol_set,
             is_known_order=self._is_known_broker_order,
+            own_session_prefix=(
+                f"{getattr(self, 'broker', '') or ''}-{self._broker_session_tag}-"
+            ),
+            strict_task_isolation=self._broker_strict_task_isolation,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -2431,6 +2445,12 @@ class LiveRunner:
                     duplicate_line = (
                         f"Dropped (duplicate order): {counts.get('duplicate_order', 0)}"
                     )
+                    # foreign_task: 被会话标记严格拒绝的"别的任务的单", 多任务
+                    # 稳态下必然持续增长, 是正常工作量而非故障信号(与
+                    # foreign_symbol 的含义相反), 见 dropped_event_counts()。
+                    foreign_task_line = (
+                        f"Dropped (foreign task): {counts.get('foreign_task', 0)}"
+                    )
                 except Exception:
                     logger.debug(
                         "dropped_event_counts() failed or returned an unexpected"
@@ -2441,6 +2461,7 @@ class LiveRunner:
                 else:
                     summary_lines.append(foreign_line)
                     summary_lines.append(duplicate_line)
+                    summary_lines.append(foreign_task_line)
             summary_lines.append("=" * 50)
 
             # Print Current Positions if available
