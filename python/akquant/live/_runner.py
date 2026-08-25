@@ -1305,6 +1305,12 @@ class LiveRunner:
         )
         self._broker_recovery_last_error_key = ""
         self._broker_baseline_done = False
+        # 盘中周期性丢弃计数汇总(挂在全量 sync 那一档): 记住上次上报的累计值,
+        # 只在有增量时才打 INFO, 见 _report_dropped_event_counts_if_changed。
+        self._broker_last_reported_drop_counts: dict[str, int] = {
+            "foreign_symbol": 0,
+            "duplicate_order": 0,
+        }
         self._broker_runtime = BrokerRuntime(
             event_lock=self._broker_event_lock,
             event_store=self._broker_events,
@@ -1716,6 +1722,10 @@ class LiveRunner:
 
         用 ``time.monotonic()`` 判触发而非取模计数: 取模是脆弱模式(循环 sleep
         有漂移, 取模会累积误差), 且不受系统时间回拨影响。
+
+        全量 sync 那一拍(``do_sync``)顺带汇报一次盘中丢弃计数增量(见
+        ``_report_dropped_event_counts_if_changed``) —— 复用既有节奏, 不新增
+        配置项, 30s 粒度对"盘中发现配置错误"已经足够。
         """
         next_account = 0.0
         next_sync = 0.0
@@ -1732,11 +1742,66 @@ class LiveRunner:
                 sync_trades=do_sync,
                 refresh_account=do_account,
             )
+            if do_sync:
+                self._report_dropped_event_counts_if_changed()
             if do_account:
                 next_account = now + self._broker_account_interval_sec
             if do_sync or reconnected:
                 next_sync = now + self._jittered_sync_interval()
             time.sleep(self._broker_recovery_interval_sec)
+
+    def _report_dropped_event_counts_if_changed(self) -> None:
+        """全量 sync 节奏下汇总一次丢弃计数增量, 只在有增量时才打 INFO.
+
+        **绝不逐次上报**: ``duplicate_order`` 是 recovery 每轮重放挂单的预期
+        行为, 本来就会每秒涨——逐次打日志/发 observer 事件等于把"挂单每秒被
+        重复推送"这个刚修的缺陷换个出口放回来。这里只在全量 sync 那一拍(30s
+        默认)汇总一次, 且两类计数都没变时完全静默, 保证正常运行不产生任何
+        噪声。
+
+        计数读取要做异常隔离, 与 ``_print_summary`` 对同一方法的隔离方式一致:
+        ``dropped_event_counts()`` 抛异常或返回非 dict-like 值只记一条 debug
+        并跳过本次汇总, 绝不能让它拖垮 recovery 循环本身——循环挂掉意味着
+        断线不再重连、挂单不再补齐, 比看不到计数严重得多。
+
+        两类计数含义不同, 分开描述该怀疑什么: ``foreign_symbol`` 持续增长
+        意味着有回报因标的不匹配被丢弃, 配置正确时应稳定在 0 或很小;
+        ``duplicate_order`` 增长是 recovery 重放挂单的预期行为, 不代表故障。
+        """
+        bridge = getattr(self, "_broker_event_bridge", None)
+        if bridge is None or not hasattr(bridge, "dropped_event_counts"):
+            return
+        try:
+            counts = bridge.dropped_event_counts()
+            foreign_total = int(counts.get("foreign_symbol", 0))
+            duplicate_total = int(counts.get("duplicate_order", 0))
+        except Exception:
+            logger.debug(
+                "dropped_event_counts() failed or returned an unexpected shape,"
+                " skipping periodic drop-count summary",
+                exc_info=True,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+            return
+
+        last = self._broker_last_reported_drop_counts
+        foreign_delta = foreign_total - last.get("foreign_symbol", 0)
+        duplicate_delta = duplicate_total - last.get("duplicate_order", 0)
+        if foreign_delta == 0 and duplicate_delta == 0:
+            return
+        last["foreign_symbol"] = foreign_total
+        last["duplicate_order"] = duplicate_total
+        logger.info(
+            "Broker event drops (periodic): foreign_symbol total=%s (+%s; "
+            "若配置正确应稳定在 0/很小, 持续增长请怀疑标的归一化把自己的回报"
+            "也挡掉了); duplicate_order total=%s (+%s; recovery 重放挂单的"
+            "预期行为, 不代表故障)",
+            foreign_total,
+            foreign_delta,
+            duplicate_total,
+            duplicate_delta,
+            extra=self._runner_log_extra(phase="gateway"),
+        )
 
     def _run_broker_recovery_cycle(
         self,
