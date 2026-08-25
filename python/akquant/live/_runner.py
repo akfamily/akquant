@@ -4,6 +4,7 @@ import random
 import threading
 import time
 import uuid
+from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from ..akquant import Bar, DataFeed, Engine, Instrument
@@ -54,6 +55,12 @@ _LEGACY_GATEWAY_OPTION_KEYS = LEGACY_GATEWAY_OPTION_KEYS
 _DEFAULT_RECOVERY_TICK_SEC = 1.0
 _DEFAULT_RECOVERY_ACCOUNT_SEC = 5.0
 _DEFAULT_RECOVERY_SYNC_SEC = 30.0
+
+#: `_closed_broker_order_ids` 会话级有界 FIFO 上限。它只需要覆盖"委托进终态
+#: 之后还会收到多久的后续回报"这个时间窗(内置 broker 是同一 payload 成对
+#: 派发 order 与 execution_report, 成交回报最多晚到几秒), 不是"永久记住",
+#: 故取一个数量级余量即可, 无需像 recovery 层的去重表那样撑到 5 万/10 万单。
+_CLOSED_ORDER_ID_LIMIT = 10000
 
 
 def _positive_interval(value: Any, default: float, name: str) -> float:
@@ -1282,6 +1289,7 @@ class LiveRunner:
         self._client_to_strategy_ids: dict[str, str] = {}
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
+        self._closed_order_id_fifo: deque[str] = deque()
         self._broker_dispatch_stop: threading.Event | None = None
         self._broker_dispatch_thread: threading.Thread | None = None
         self._broker_recovery_stop: threading.Event | None = None
@@ -2049,7 +2057,12 @@ class LiveRunner:
         if broker_order_id:
             self._broker_to_client_order_ids.pop(broker_order_id, None)
             self._broker_to_strategy_ids.pop(broker_order_id, None)
-            self._closed_broker_order_ids.add(broker_order_id)
+            if broker_order_id not in self._closed_broker_order_ids:
+                self._closed_broker_order_ids.add(broker_order_id)
+                self._closed_order_id_fifo.append(broker_order_id)
+                while len(self._closed_order_id_fifo) > _CLOSED_ORDER_ID_LIMIT:
+                    stale = self._closed_order_id_fifo.popleft()
+                    self._closed_broker_order_ids.discard(stale)
             self._broker_to_local_stop_id.pop(str(broker_order_id), None)
 
     # 线程安全说明: _order_requests / _broker_to_local_stop_id 由行情线程写

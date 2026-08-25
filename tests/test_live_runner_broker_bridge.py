@@ -591,6 +591,66 @@ def test_live_runner_cleans_mapping_on_terminal_status() -> None:
     assert runner._resolve_broker_order_id("c-term-1") == ""
 
 
+def test_closed_broker_order_ids_bounded_by_fifo_limit() -> None:
+    """`_closed_broker_order_ids` 有界: 超过上限后不再无界增长."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    limit = live_module._CLOSED_ORDER_ID_LIMIT
+
+    for i in range(limit + 100):
+        runner._close_order_mapping(f"c-{i}", f"b-{i}")
+
+    assert len(runner._closed_broker_order_ids) == limit
+    assert len(runner._closed_order_id_fifo) == limit
+
+
+def test_closed_broker_order_ids_evicts_oldest_keeps_newest() -> None:
+    """淘汰按插入序: 最老的 id 被挤出, 最新的一批仍留在集合里."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    limit = live_module._CLOSED_ORDER_ID_LIMIT
+
+    for i in range(limit + 100):
+        runner._close_order_mapping(f"c-{i}", f"b-{i}")
+
+    # 最老的 100 个 (0..99) 应已被淘汰。
+    for i in range(100):
+        assert f"b-{i}" not in runner._closed_broker_order_ids
+    # 最新的一批 (limit..limit+99) 应仍在集合里。
+    for i in range(limit, limit + 100):
+        assert f"b-{i}" in runner._closed_broker_order_ids
+
+
+def test_is_known_broker_order_true_for_recent_ids_after_eviction() -> None:
+    """有界化不破坏 I-1 修复: 淘汰发生后, 最新一批终态单仍被认作本会话已知."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    limit = live_module._CLOSED_ORDER_ID_LIMIT
+
+    for i in range(limit + 100):
+        runner._close_order_mapping(f"c-{i}", f"b-{i}")
+
+    latest_broker_order_id = f"b-{limit + 99}"
+    assert runner._is_known_broker_order(latest_broker_order_id, "") is True
+
+
+def test_close_order_mapping_repeated_terminal_does_not_duplicate_fifo_entry() -> None:
+    """同一 broker_order_id 重复进终态不应在 FIFO 里堆积多份, 否则会提前挤掉旁的 id."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+
+    runner._close_order_mapping("c-dup", "b-dup")
+    runner._close_order_mapping("c-dup", "b-dup")
+    runner._close_order_mapping("c-dup", "b-dup")
+
+    assert list(runner._closed_order_id_fifo).count("b-dup") == 1
+    assert runner._closed_broker_order_ids == {"b-dup"}
+
+
 def test_live_runner_attributes_trade_after_terminal_mapping_cleared() -> None:
     """终态委托清映射后, 同一 broker_order_id 的成交/回报仍要能派发给策略.
 
