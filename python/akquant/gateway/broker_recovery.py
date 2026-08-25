@@ -1,5 +1,9 @@
 from typing import Any, Callable
 
+from ..log import build_log_extra, get_logger
+
+logger = get_logger("gateway.live")
+
 
 class BrokerRecovery:
     """Run broker recovery cycles and surface strict-mode recovery errors."""
@@ -135,13 +139,25 @@ class BrokerRecovery:
         error: Exception,
         payload: dict[str, Any],
     ) -> None:
-        """Surface broker recovery errors only in strict mode with deduplication."""
-        if self._get_recovery_mode() != "strict":
-            return
+        """Surface broker recovery errors with deduplication; strict mode escalates.
+
+        两种 recovery_mode 都先打一条去重后的 WARNING 日志(只补可见性), 只有
+        ``strict`` 模式才继续通知策略 ``on_error`` 并发 ``recovery_error``
+        observer 事件——默认 ``compatible`` 模式的容错语义(不中断交易)不变。
+        """
         error_key = f"{source}:{type(error).__name__}:{error}"
         if error_key == self._get_last_error_key():
             return
         self._set_last_error_key(error_key)
+        logger.warning(
+            "Broker recovery error at %s: %s: %s",
+            source,
+            type(error).__name__,
+            error,
+            extra=build_log_extra(phase="gateway"),
+        )
+        if self._get_recovery_mode() != "strict":
+            return
         if strategy is not None:
             self._notify_strategy_error(strategy, error, source, payload)
         on_broker_event = self._get_on_broker_event()

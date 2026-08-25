@@ -64,6 +64,7 @@
 - [58_incremental_bootstrap_demo.py](./58_incremental_bootstrap_demo.py): 增量指标“历史预热 + 实时更新”最小示例，演示 `indicator_factory` 与 `warmup_bars`。
 - [59_akshare_etf_rotation.py](./59_akshare_etf_rotation.py): AKShare + ETF 轮动最小示例，演示单个拼接后 `DataFrame` 的推荐多标输入方式。
 - [60_custom_indicator_demo.py](./60_custom_indicator_demo.py): 自定义指标最小示例，同时演示 `Indicator(name, fn)` 的预计算写法和 `indicator_factory` 的增量写法。
+- [70_csv_multi_symbol_import_demo.py](./70_csv_multi_symbol_import_demo.py): 从 CSV 文件导入多品种数据的回测示例，覆盖平台对接的固定 7 列格式（`date`/`symbol`/`open`/`high`/`low`/`close`/`volume`，symbol 去后缀纯数字、date naive 东八区、多标 `concat` 后显式传 `symbols=[...]`）；含 `pd.read_csv` 对纯数字 symbol 丢前导 0 的实测坑。
 
 ## 流式回测与实时报告
 
