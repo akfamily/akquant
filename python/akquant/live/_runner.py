@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
+import math
+import random
 import threading
 import time
 import uuid
+from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
 
 from ..akquant import Bar, DataFeed, Engine, Instrument
@@ -16,6 +19,7 @@ from ..gateway.order_submitter import (
     resolve_live_order_legs,
     validate_live_order_client_ids,
 )
+from ..gateway.symbol_match import normalize_symbol_for_match
 from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink
 from ..log import build_log_extra, get_logger
@@ -46,6 +50,102 @@ logger = get_logger("gateway.live")
 
 # Backward-compatible alias; canonical definition lives in _gateway_setup.
 _LEGACY_GATEWAY_OPTION_KEYS = LEGACY_GATEWAY_OPTION_KEYS
+
+#: recovery 三档节奏的默认间隔(秒): 心跳每拍 / 资金中频 / 全量 sync 低频兜底。
+_DEFAULT_RECOVERY_TICK_SEC = 1.0
+_DEFAULT_RECOVERY_ACCOUNT_SEC = 5.0
+_DEFAULT_RECOVERY_SYNC_SEC = 30.0
+
+#: `_closed_broker_order_ids` 会话级有界 FIFO 上限。它只需要覆盖"委托进终态
+#: 之后还会收到多久的后续回报"这个时间窗(内置 broker 是同一 payload 成对
+#: 派发 order 与 execution_report, 成交回报最多晚到几秒), 不是"永久记住",
+#: 故取一个数量级余量即可, 无需像 recovery 层的去重表那样撑到 5 万/10 万单。
+_CLOSED_ORDER_ID_LIMIT = 10000
+
+
+def _positive_interval(value: Any, default: float, name: str) -> float:
+    """把配置值读成正浮点数; 非法值回退默认并告警(不抛异常).
+
+    :param value: 原始配置值,可能是 ``None``/字符串/负数等非法输入。
+    :param default: 校验失败时回退的默认值。
+    :param name: 配置项名(用于告警信息)。
+    :return: 校验通过的正浮点数,或回退的 ``default``。
+    """
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        if value is not None:
+            logger.warning(
+                "gateway_options.%s is not a number (%r), falling back to %s",
+                name,
+                value,
+                default,
+            )
+        return default
+    if not math.isfinite(parsed):
+        logger.warning(
+            "gateway_options.%s must be finite (got %s), falling back to %s",
+            name,
+            parsed,
+            default,
+        )
+        return default
+    if parsed <= 0:
+        logger.warning(
+            "gateway_options.%s must be positive (got %s), falling back to %s",
+            name,
+            parsed,
+            default,
+        )
+        return default
+    return parsed
+
+
+def _resolve_recovery_intervals(options: dict[str, Any]) -> tuple[float, float, float]:
+    """解析 recovery 三档间隔并钳制成 tick <= account <= sync.
+
+    柜台限流阈值是部署期才知道的外部约束(不同券商不同), 故三档都可由
+    ``gateway_options`` 覆盖 —— 与 ``recovery_mode`` 走同一入口。
+
+    越界**只钳制 + WARNING, 不抛异常**: 参数间有隐含约束(资金刷新不该比心跳还
+    密、全量 sync 不该比资金刷新还密), 但让运维在启动时吃 ``ValueError`` 是最差
+    的处理方式。风格与 ``normalize_broker_recovery_mode`` 的归一化一致。
+
+    :param options: ``gateway_options`` 字典。
+    :return: ``(tick, account, sync)`` 三个间隔(秒)。
+    """
+    tick = _positive_interval(
+        options.get("recovery_interval_sec"),
+        _DEFAULT_RECOVERY_TICK_SEC,
+        "recovery_interval_sec",
+    )
+    account = _positive_interval(
+        options.get("recovery_account_interval_sec"),
+        _DEFAULT_RECOVERY_ACCOUNT_SEC,
+        "recovery_account_interval_sec",
+    )
+    sync = _positive_interval(
+        options.get("recovery_sync_interval_sec"),
+        _DEFAULT_RECOVERY_SYNC_SEC,
+        "recovery_sync_interval_sec",
+    )
+    if account < tick:
+        logger.warning(
+            "recovery_account_interval_sec (%s) < recovery_interval_sec (%s); "
+            "clamped to the tick interval",
+            account,
+            tick,
+        )
+        account = tick
+    if sync < account:
+        logger.warning(
+            "recovery_sync_interval_sec (%s) < recovery_account_interval_sec (%s); "
+            "clamped to the account interval",
+            sync,
+            account,
+        )
+        sync = account
+    return tick, account, sync
 
 
 def _instruments_to_snapshots(
@@ -285,6 +385,7 @@ class LiveRunner:
         self.strategy_id = (strategy_id or "_default").strip() or "_default"
         self.strategies_by_slot = strategies_by_slot or {}
         self.instruments = instruments
+        self._subscribed_symbols_cache: set[str] | None = None
         self.gateway_options = self._normalize_gateway_options(
             gateway_options=gateway_options,
             md_front=md_front,
@@ -1188,11 +1289,16 @@ class LiveRunner:
         self._client_to_strategy_ids: dict[str, str] = {}
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
+        self._closed_order_id_fifo: deque[str] = deque()
         self._broker_dispatch_stop: threading.Event | None = None
         self._broker_dispatch_thread: threading.Thread | None = None
         self._broker_recovery_stop: threading.Event | None = None
         self._broker_recovery_thread: threading.Thread | None = None
-        self._broker_recovery_interval_sec = 1.0
+        (
+            self._broker_recovery_interval_sec,
+            self._broker_account_interval_sec,
+            self._broker_sync_interval_sec,
+        ) = _resolve_recovery_intervals(getattr(self, "gateway_options", {}) or {})
         self._broker_trader_gateway: Any = None
         self._broker_runtime: Any = None
         self._broker_order_submitter: Any = None
@@ -1207,6 +1313,12 @@ class LiveRunner:
         )
         self._broker_recovery_last_error_key = ""
         self._broker_baseline_done = False
+        # 盘中周期性丢弃计数汇总(挂在全量 sync 那一档): 记住上次上报的累计值,
+        # 只在有增量时才打 INFO, 见 _report_dropped_event_counts_if_changed。
+        self._broker_last_reported_drop_counts: dict[str, int] = {
+            "foreign_symbol": 0,
+            "duplicate_order": 0,
+        }
         self._broker_runtime = BrokerRuntime(
             event_lock=self._broker_event_lock,
             event_store=self._broker_events,
@@ -1236,6 +1348,8 @@ class LiveRunner:
             sync_group_mapping=self._sync_group_mapping,
             group_broker_ids=self._broker_order_ids_for_group,
             resolve_trace_id=self._lookup_group_id,
+            get_subscribed_symbols=self._subscribed_symbol_set,
+            is_known_order=self._is_known_broker_order,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -1601,19 +1715,117 @@ class LiveRunner:
     def _drain_broker_events(self, strategy: Strategy) -> None:
         self._broker_runtime.drain_events(strategy)
 
+    def _jittered_sync_interval(self) -> float:
+        """全量 sync 间隔加 ±10% 抖动.
+
+        平台会并发起多个任务; 整齐的固定间隔会让各任务的全量 sync 对齐到同一秒
+        打柜台(thundering herd)。抖动把它们摊开, 省掉一类偶发限流。
+
+        :return: 抖动后的间隔(秒)。
+        """
+        return self._broker_sync_interval_sec * random.uniform(0.9, 1.1)
+
     def _broker_recovery_loop(self, strategy: Strategy) -> None:
+        """Recovery 后台循环: 心跳每拍, 资金与全量 sync 各按自己的节奏.
+
+        用 ``time.monotonic()`` 判触发而非取模计数: 取模是脆弱模式(循环 sleep
+        有漂移, 取模会累积误差), 且不受系统时间回拨影响。
+
+        全量 sync 那一拍(``do_sync``)顺带汇报一次盘中丢弃计数增量(见
+        ``_report_dropped_event_counts_if_changed``) —— 复用既有节奏, 不新增
+        配置项, 30s 粒度对"盘中发现配置错误"已经足够。
+        """
+        next_account = 0.0
+        next_sync = 0.0
         while (
             self._broker_recovery_stop is not None
             and not self._broker_recovery_stop.is_set()
         ):
-            self._run_broker_recovery_cycle(strategy)
-            self._drain_broker_events(strategy)
+            now = time.monotonic()
+            do_account = now >= next_account
+            do_sync = now >= next_sync
+            reconnected = self._run_broker_recovery_cycle(
+                strategy,
+                sync_orders=do_sync,
+                sync_trades=do_sync,
+                refresh_account=do_account,
+            )
+            if do_sync:
+                self._report_dropped_event_counts_if_changed()
+            if do_account:
+                next_account = now + self._broker_account_interval_sec
+            if do_sync or reconnected:
+                next_sync = now + self._jittered_sync_interval()
             time.sleep(self._broker_recovery_interval_sec)
 
-    def _run_broker_recovery_cycle(self, strategy: Strategy | None = None) -> None:
-        self._broker_runtime.run_recovery_cycle(
-            strategy,
-            handle_error=self._handle_broker_recovery_error,
+    def _report_dropped_event_counts_if_changed(self) -> None:
+        """全量 sync 节奏下汇总一次丢弃计数增量, 只在有增量时才打 INFO.
+
+        **触发条件只看 ``foreign_symbol``**: 账户有挂单且状态未变是实盘最
+        常见的稳态(挂着限价单等成交), 而每次全量 sync 都会把全部挂单重新推
+        进 ``queue_event``、逐个被状态指纹拦下——``duplicate_order`` 在这种
+        稳态下**每轮必然 +N**(N = 挂单数)。把它也纳入触发条件, 等于把
+        "每 tick 刷屏"稀释成"每 30s 刷屏", 不是消除, 与刚修掉的"挂单每秒被
+        重复推送"是同一类失败模式。``duplicate_order`` 只作为日志里的上下文
+        累计值(排查时不用再翻别处)与会话收尾摘要的总计, 不参与是否打日志
+        的判断。``foreign_symbol`` 配置正确时应恒为 0, 任何增长都值得盘中
+        立刻看到, 因此单独作为触发条件。
+
+        计数读取要做异常隔离, 与 ``_print_summary`` 对同一方法的隔离方式一致:
+        ``dropped_event_counts()`` 抛异常或返回非 dict-like 值只记一条 debug
+        并跳过本次汇总, 绝不能让它拖垮 recovery 循环本身——循环挂掉意味着
+        断线不再重连、挂单不再补齐, 比看不到计数严重得多。
+        """
+        bridge = getattr(self, "_broker_event_bridge", None)
+        if bridge is None or not hasattr(bridge, "dropped_event_counts"):
+            return
+        try:
+            counts = bridge.dropped_event_counts()
+            foreign_total = int(counts.get("foreign_symbol", 0))
+            duplicate_total = int(counts.get("duplicate_order", 0))
+        except Exception:
+            logger.debug(
+                "dropped_event_counts() failed or returned an unexpected shape,"
+                " skipping periodic drop-count summary",
+                exc_info=True,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+            return
+
+        last = self._broker_last_reported_drop_counts
+        foreign_delta = foreign_total - last.get("foreign_symbol", 0)
+        last["foreign_symbol"] = foreign_total
+        last["duplicate_order"] = duplicate_total
+        if foreign_delta <= 0:
+            return
+        logger.info(
+            "Broker event drops (periodic): foreign_symbol total=%s (+%s; "
+            "若配置正确应恒为 0, 出现增长请怀疑标的归一化把自己的回报也挡掉"
+            "了); duplicate_order total=%s (仅供参考, recovery 重放挂单的"
+            "预期行为, 不代表故障, 不作为触发条件, 会话收尾摘要有完整总计)",
+            foreign_total,
+            foreign_delta,
+            duplicate_total,
+            extra=self._runner_log_extra(phase="gateway"),
+        )
+
+    def _run_broker_recovery_cycle(
+        self,
+        strategy: Strategy | None = None,
+        *,
+        sync_orders: bool = True,
+        sync_trades: bool = True,
+        refresh_account: bool = True,
+    ) -> bool:
+        return cast(
+            bool,
+            self._broker_runtime.run_recovery_cycle(
+                strategy,
+                handle_error=self._handle_broker_recovery_error,
+                sync_orders=sync_orders,
+                sync_trades=sync_trades,
+                refresh_account=refresh_account,
+            ),
         )
 
     def _update_broker_state(self, event_name: str, payload: Any) -> None:
@@ -1644,6 +1856,75 @@ class LiveRunner:
         elif event_name == "account":
             self._broker_account_state = payload
 
+    def _subscribed_symbol_set(self) -> set[str]:
+        """本会话挂载标的的归一化集合(惰性构建并缓存).
+
+        数据源是 ``self.instruments``, 与网关订阅集同源(``symbols`` 就是从它
+        派生的), 保证过滤口径与订阅口径一致。``run_live`` 只要求
+        ``instruments`` 非 ``None``(见 ``_facade.py:181-182``), ``[]`` 能合法
+        通过校验, 因此空集合是可能出现的边界而非纯异常路径; 首次构建出空
+        集合时打一条 WARNING, 否则标的过滤会悄悄退化成"全放行"却无人知晓。
+
+        用 ``getattr`` 兜底缺失属性: 部分测试用
+        ``LiveRunner.__new__(LiveRunner)`` + ``_init_broker_bridge_state()``
+        绕开 ``__init__`` 直接构造替身, ``instruments`` / 缓存字段不存在;
+        按裁决三"无访问器场景一律放行", 缺失时当空集处理。
+
+        :return: 归一化后的标的集合。
+        """
+        cached = getattr(self, "_subscribed_symbols_cache", None)
+        if cached is None:
+            cached = {
+                normalize_symbol_for_match(getattr(inst, "symbol", ""))
+                for inst in (getattr(self, "instruments", None) or [])
+            }
+            cached.discard("")
+            if not cached:
+                logger.warning(
+                    "Subscribed symbol set is empty; broker event symbol "
+                    "filter has no effect (everything will pass through)",
+                    extra=build_log_extra(phase="gateway"),
+                )
+            self._subscribed_symbols_cache = cached
+        return cached
+
+    def _is_known_broker_order(
+        self, broker_order_id: str, client_order_id: str
+    ) -> bool:
+        """判断委托是否为本会话已知(已建立 id 映射)的订单.
+
+        ``order_submitter.py`` 报单成功即调用 ``_sync_order_id_mapping`` 建立
+        broker_order_id/client_order_id 互查映射; 命中即视为"这是我自己报出
+        的单", 不论其标的是否落在 ``instruments`` 挂载集合内——外部信号源经
+        ``BrokerOrderSink`` 直调 ``submitter.submit_order`` 天然会报出挂载
+        集合之外的标的(不经引擎合约登记表), 见 ``signal/sinks.py:69``。
+        跨会话恢复的老挂单不在映射表里, 交给标的判据兜底, 行为不变。
+
+        委托进终态后 ``_close_order_mapping`` 会把这两张活跃映射表 pop 掉,
+        因此这里再兜底查 ``_closed_broker_order_ids``("最近的终态单"记录,
+        由 ``_CLOSED_ORDER_ID_LIMIT`` 按插入序有界淘汰, **不是永久保留**)
+        —— 否则终态委托之后到达的同一 ``broker_order_id`` 的成交/执行回报会
+        因为查不到活跃映射而被误判成外来标的丢弃。上限只需覆盖"终态之后还会
+        收到多久后续回报"的时间窗(内置 broker 成对派发 order 与
+        execution_report, 成交回报最多晚几秒), 故淘汰不会影响本兜底的有效性。
+
+        :param broker_order_id: 柜台委托号(可能为空)。
+        :param client_order_id: 客户端委托号(可能为空)。
+        :return: 是否命中本会话已知订单映射。
+        """
+        broker_to_client = getattr(self, "_broker_to_client_order_ids", None) or {}
+        client_to_broker = getattr(self, "_client_to_broker_order_ids", None) or {}
+        closed_broker_order_ids = (
+            getattr(self, "_closed_broker_order_ids", None) or set()
+        )
+        if broker_order_id and broker_order_id in broker_to_client:
+            return True
+        if client_order_id and client_order_id in client_to_broker:
+            return True
+        if broker_order_id and broker_order_id in closed_broker_order_ids:
+            return True
+        return False
+
     def _make_event_key(self, event_name: str, payload: Any) -> str:
         if event_name == "trade":
             trade_id = str(self._payload_field(payload, "trade_id"))
@@ -1653,13 +1934,17 @@ class LiveRunner:
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             status = str(self._payload_field(payload, "status"))
             filled_quantity = str(self._payload_field(payload, "filled_quantity"))
-            timestamp_ns = str(self._payload_field(payload, "timestamp_ns"))
-            return f"order:{broker_order_id}:{status}:{filled_quantity}:{timestamp_ns}"
+            # 刻意不含 timestamp_ns: 含它则每次重推键都变、批内去重也失效。
+            # 跨轮去重由 BrokerEventBridge._seen_order_states 承担。
+            return f"order:{broker_order_id}:{status}:{filled_quantity}"
         if event_name == "execution_report":
             broker_order_id = str(self._payload_field(payload, "broker_order_id"))
             status = str(self._payload_field(payload, "status"))
-            timestamp_ns = str(self._payload_field(payload, "timestamp_ns"))
-            return f"execution_report:{broker_order_id}:{status}:{timestamp_ns}"
+            filled_quantity = str(self._payload_field(payload, "filled_quantity"))
+            # 与 order 键对称补回 filled_quantity: UnifiedExecutionReport 没有
+            # 单独的本次成交量字段, 缺它同批内两条 status 相同但成交量不同的
+            # 执行回报(连续部分成交)会被误判批内重复丢弃第二条。
+            return f"execution_report:{broker_order_id}:{status}:{filled_quantity}"
         if event_name == "account":
             account_id = str(self._payload_field(payload, "account_id"))
             timestamp_ns = str(self._payload_field(payload, "timestamp_ns"))
@@ -1775,7 +2060,12 @@ class LiveRunner:
         if broker_order_id:
             self._broker_to_client_order_ids.pop(broker_order_id, None)
             self._broker_to_strategy_ids.pop(broker_order_id, None)
-            self._closed_broker_order_ids.add(broker_order_id)
+            if broker_order_id not in self._closed_broker_order_ids:
+                self._closed_broker_order_ids.add(broker_order_id)
+                self._closed_order_id_fifo.append(broker_order_id)
+                while len(self._closed_order_id_fifo) > _CLOSED_ORDER_ID_LIMIT:
+                    stale = self._closed_order_id_fifo.popleft()
+                    self._closed_broker_order_ids.discard(stale)
             self._broker_to_local_stop_id.pop(str(broker_order_id), None)
 
     # 线程安全说明: _order_requests / _broker_to_local_stop_id 由行情线程写
@@ -2071,8 +2361,35 @@ class LiveRunner:
                 f"Sharpe Ratio: {results.metrics.sharpe_ratio:.4f}",
                 f"Win Rate: {win_rate_display}",
                 f"Total Trades: {len(results.trades)}",
-                "=" * 50,
             ]
+            bridge = getattr(self, "_broker_event_bridge", None)
+            if bridge is not None and hasattr(bridge, "dropped_event_counts"):
+                # 局部 try/except: 计数是可观测性附加项, 不能让它的失败(或返回值
+                # 格式不对, 例如非 dict-like)拖垮已经算好的收益率/回撤/成交数这些
+                # 远更重要的摘要主体。格式化也必须在 try 内 —— else 只做不会失败
+                # 的纯粹 append, 否则 counts.get(...) 抛出的 AttributeError 会跟
+                # dropped_event_counts() 本身抛异常一样冒泡到最外层大 try。
+                try:
+                    counts = bridge.dropped_event_counts()
+                    # 这两行是过滤/去重的可见性兜底: 日志会被降级淹没, 摘要不会。
+                    # foreign_symbol 异常大 ⇒ 标的归一化可能把自己的回报也挡掉了。
+                    foreign_line = (
+                        f"Dropped (foreign symbol): {counts.get('foreign_symbol', 0)}"
+                    )
+                    duplicate_line = (
+                        f"Dropped (duplicate order): {counts.get('duplicate_order', 0)}"
+                    )
+                except Exception:
+                    logger.debug(
+                        "dropped_event_counts() failed or returned an unexpected"
+                        " shape, skipping drop-count lines",
+                        exc_info=True,
+                        extra=self._runner_log_extra(phase="live"),
+                    )
+                else:
+                    summary_lines.append(foreign_line)
+                    summary_lines.append(duplicate_line)
+            summary_lines.append("=" * 50)
 
             # Print Current Positions if available
             if results.snapshots:

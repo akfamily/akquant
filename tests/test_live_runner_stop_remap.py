@@ -1,5 +1,7 @@
 """LiveRunner 止损 remap: 记录/查找/终态清理 + 适配用 local id."""
 
+from collections import deque
+
 from akquant.gateway.broker_models import UnifiedTrade
 from akquant.live._runner import LiveRunner
 
@@ -13,6 +15,7 @@ def _runner() -> LiveRunner:
     r._broker_to_strategy_ids = {}
     r._client_to_group_ids = {}
     r._closed_broker_order_ids = set()
+    r._closed_order_id_fifo = deque()
     r._order_requests = {}
     return r
 

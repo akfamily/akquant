@@ -31,11 +31,25 @@ class BrokerRecovery:
         strategy: Any | None = None,
         handle_error: Callable[[Any | None, str, Exception, dict[str, Any]], None]
         | None = None,
-    ) -> None:
-        """Run one broker recovery cycle for heartbeat, sync and account refresh."""
+        *,
+        sync_orders: bool = True,
+        sync_trades: bool = True,
+        refresh_account: bool = True,
+    ) -> bool:
+        """Run one broker recovery cycle with per-stage cadence control.
+
+        心跳每拍都跑(便宜, 要快速发现断线); 全量 ``sync_*`` 与 ``query_account``
+        由调用方按各自节奏决定是否本轮执行——每秒全量轮询柜台会把接口打爆。
+
+        **重连成功后强制补齐**: 无论开关如何, 刚重连的那一轮一定跑全量 sync,
+        这才是"断线补齐"真正该触发的时机。
+
+        :return: 本轮是否发生过重连(调用方据此重置兜底计时)。
+        """
+        reconnected = False
         gateway = self._get_trader_gateway()
         if gateway is None:
-            return
+            return reconnected
         heartbeat = getattr(gateway, "heartbeat", None)
         if callable(heartbeat):
             try:
@@ -48,7 +62,7 @@ class BrokerRecovery:
                     {"stage": "heartbeat"},
                     handle_error,
                 )
-                return
+                return reconnected
             if not alive:
                 connect = getattr(gateway, "connect", None)
                 if callable(connect):
@@ -62,9 +76,10 @@ class BrokerRecovery:
                             {"stage": "connect"},
                             handle_error,
                         )
-                        return
+                        return reconnected
+                    reconnected = True
         sync_open_orders = getattr(gateway, "sync_open_orders", None)
-        if callable(sync_open_orders):
+        if callable(sync_open_orders) and (sync_orders or reconnected):
             try:
                 for order in sync_open_orders():
                     self._queue_broker_event("order", order)
@@ -77,10 +92,10 @@ class BrokerRecovery:
                     handle_error,
                 )
                 if self._get_recovery_mode() == "strict":
-                    return
+                    return reconnected
         sync_today_trades = getattr(gateway, "sync_today_trades", None)
         replay_ok = self._should_replay_trades is None or self._should_replay_trades()
-        if callable(sync_today_trades) and replay_ok:
+        if callable(sync_today_trades) and replay_ok and (sync_trades or reconnected):
             try:
                 for trade in sync_today_trades():
                     self._queue_broker_event("trade", trade)
@@ -93,9 +108,9 @@ class BrokerRecovery:
                     handle_error,
                 )
                 if self._get_recovery_mode() == "strict":
-                    return
+                    return reconnected
         query_account = getattr(gateway, "query_account", None)
-        if callable(query_account):
+        if callable(query_account) and refresh_account:
             try:
                 account = query_account()
                 if account is not None:
@@ -109,8 +124,9 @@ class BrokerRecovery:
                     handle_error,
                 )
                 if self._get_recovery_mode() == "strict":
-                    return
+                    return reconnected
         self._set_last_error_key("")
+        return reconnected
 
     def handle_error(
         self,

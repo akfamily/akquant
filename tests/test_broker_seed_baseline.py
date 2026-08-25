@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from akquant.gateway.broker_event_bridge import BrokerEventBridge
 from akquant.gateway.broker_recovery import BrokerRecovery
+from akquant.live._payload_utils import payload_field
 
 
 def _bridge(store: list[tuple[str, dict[str, Any]]]) -> BrokerEventBridge:
@@ -23,6 +24,7 @@ def _bridge(store: list[tuple[str, dict[str, Any]]]) -> BrokerEventBridge:
         payload_to_dict=lambda p: dict(p) if isinstance(p, dict) else {},
         safe_strategy_callback=lambda s, n, p: None,
         adapt_strategy_payload=lambda n, p: p,
+        payload_field=payload_field,
     )
 
 
@@ -130,6 +132,7 @@ def test_cold_start_pending_trade_discarded_no_double_count() -> None:
         payload_to_dict=lambda p: dict(p) if isinstance(p, dict) else {},
         safe_strategy_callback=lambda s, n, p: None,
         adapt_strategy_payload=lambda n, p: p,
+        payload_field=payload_field,
     )
     b.queue_event(
         "trade", {"trade_id": "T", "symbol": "X", "side": "Buy", "quantity": 100.0}

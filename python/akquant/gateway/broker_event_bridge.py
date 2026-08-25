@@ -1,9 +1,16 @@
+from collections import deque
 from typing import Any, Callable, Iterable
 
 from ..log import build_log_extra, get_logger
 from .order_audit import record_broker_event
+from .symbol_match import normalize_symbol_for_match
 
 logger = get_logger("gateway.live")
+
+#: 会话级委托状态指纹表上限(有界 FIFO)。去重键拆成 ``order:``/
+#: ``execution_report:`` 两个命名空间后, 同一批委托约占两倍条目, 等效容量
+#: 减半; 上调到 10 万以恢复设计文档写的"5 万单"口径。
+_ORDER_STATE_DEDUPE_LIMIT = 100000
 
 
 class BrokerEventBridge:
@@ -22,7 +29,10 @@ class BrokerEventBridge:
         payload_to_dict: Callable[[Any], dict[str, Any]],
         safe_strategy_callback: Callable[[Any, str, Any], None],
         adapt_strategy_payload: Callable[[str, Any], Any],
+        payload_field: Callable[[Any, str], Any],
         resolve_trace_id: Callable[[Any], str] | None = None,
+        get_subscribed_symbols: Callable[[], set[str]] | None = None,
+        is_known_order: Callable[[str, str], bool] | None = None,
     ) -> None:
         """Bind the queue, state callbacks and observer fanout dependencies."""
         self._event_lock = event_lock
@@ -39,6 +49,21 @@ class BrokerEventBridge:
         # 会话级已入队 trade_id(不随 drain 清空): 防恢复循环重放同一成交
         # 导致 on_trade/_process_order_groups 重复触发。
         self._seen_trade_ids: set[str] = set()
+        self._payload_field = payload_field
+        # 会话级委托状态指纹(**不随 drain 清空**): 防 recovery 每轮重放同一状态的
+        # 挂单导致 on_order 每轮重推。trade 侧早有 _seen_trade_ids, order 侧此前
+        # 没有等价物——这就是"挂单频繁触发 order"那条反馈的活跃根因。
+        self._seen_order_states: dict[str, str] = {}
+        self._order_state_fifo: deque[str] = deque()
+        self._dropped_duplicate_orders = 0
+        # 由 Task 3(标的过滤)递增, 本任务先初始化以让 dropped_event_counts() 可读。
+        self._dropped_foreign_symbols = 0
+        self._get_subscribed_symbols = get_subscribed_symbols
+        self._is_known_order = is_known_order
+        # 已告警过的外来标的(防刷屏): 首次 WARNING 点名, 之后降 DEBUG。
+        self._warned_foreign_symbols: set[str] = set()
+        # 已告警过的访问器异常类型(防刷屏, 同上)。
+        self._warned_accessor_errors: set[str] = set()
 
     def mark_trades_seen(self, trade_ids: Iterable[str]) -> None:
         """把 trade_id 灌入会话级 dedup 基线.
@@ -69,8 +94,129 @@ class BrokerEventBridge:
                 kept.append((event_name, payload))
             self._event_store[:] = kept
 
+    def _order_state_fingerprint(self, payload: Any) -> str:
+        """委托状态指纹: 状态+已成交量+均价+拒单原因, **刻意不含时间戳**.
+
+        口径对齐回测侧 ``strategy_order_events.order_event_key``: 含时间戳的键
+        每次重推都会变、去重完全失效(这类缺陷最常见的写法); 只按订单号去重又会
+        把 ``New -> PartiallyFilled -> Filled`` 这些真实的状态推进整批吞掉。
+
+        :param payload: 委托快照(``UnifiedOrderSnapshot`` 或等价 dict)。
+        :return: 可比较的指纹字符串。
+        """
+        fields = ("status", "filled_quantity", "avg_fill_price", "reject_reason")
+        return "|".join(str(self._payload_field(payload, field)) for field in fields)
+
+    def dropped_event_counts(self) -> dict[str, int]:
+        """会话级丢弃计数(去重/过滤分开计), 供收尾摘要与诊断读取.
+
+        :return: ``{"duplicate_order": N, "foreign_symbol": M}``。
+        """
+        with self._event_lock:
+            return {
+                "duplicate_order": self._dropped_duplicate_orders,
+                "foreign_symbol": self._dropped_foreign_symbols,
+            }
+
+    def _accepts_symbol(self, event_name: str, payload: Any) -> bool:
+        """判断事件是否属于本会话: 先认订单归属, 未知单再按标的判.
+
+        判据分两级:
+
+        1. **订单归属优先**: ``order``/``trade``/``execution_report`` 若其
+           ``broker_order_id``/``client_order_id`` 命中本会话已知映射(见
+           ``is_known_order``), 一律放行, 即便标的不在挂载集合内。这条覆盖
+           ``BrokerOrderSink`` 经外部信号源直调 ``submitter.submit_order``、
+           不经引擎合约登记表就能合法报出挂载集合之外标的的场景; 否则会把
+           自己报出的单错判成"外来"并吞掉, 与本任务要防的事故是同一类。
+        2. **标的兜底**: 订单未知(例如跨会话恢复的老挂单)时按标的比对。柜台的
+           ``sync_open_orders`` / ``sync_today_trades`` 返回全账户委托与成交,
+           不限于本会话订阅的标的, 不过滤会让策略收到不属于自己的委托回报。
+
+        两级判据用到的访问器均为外部注入的 callable, 一旦抛异常整段用
+        try/except 兜底放行——不兜底会让异常顺着 ``queue_event`` 一路炸到
+        ``broker_recovery`` 的 ``sync_open_orders``/``sync_today_trades``
+        循环, 被外层宽 ``except Exception`` 吞掉整批剩余委托, 且默认
+        ``recovery_mode="compatible"`` 下连日志都没有。
+
+        所有边界情况一律放行(无访问器 / 订阅集为空 / payload 无 symbol /
+        访问器抛异常): 吞掉真实回报的代价远大于多派发一条。``account`` 事件
+        无标的概念, 直接放行。
+
+        :param event_name: 事件名。
+        :param payload: 事件载荷。
+        :return: 是否应当入队派发。
+        """
+        if event_name == "account":
+            return True
+        normalized = ""
+        try:
+            if self._is_own_order(payload):
+                return True
+            if self._get_subscribed_symbols is None:
+                return True
+            allowed = self._get_subscribed_symbols()
+            if not allowed:
+                return True
+            normalized = normalize_symbol_for_match(
+                self._payload_field(payload, "symbol")
+            )
+            if not normalized:
+                return True
+            if normalized in allowed:
+                return True
+        except Exception as exc:
+            self._log_accessor_error(exc)
+            return True
+        self._log_foreign_symbol(event_name, normalized)
+        return False
+
+    def _is_own_order(self, payload: Any) -> bool:
+        """查询 payload 对应的委托是否为本会话已知(已建立 id 映射)的订单.
+
+        :param payload: 事件载荷。
+        :return: 命中已知映射时 True; 无访问器、无订单号或未命中时 False
+            (未命中不代表"不是我的", 由标的判据兜底决定)。
+        """
+        if self._is_known_order is None:
+            return False
+        broker_order_id = str(self._payload_field(payload, "broker_order_id") or "")
+        client_order_id = str(self._payload_field(payload, "client_order_id") or "")
+        if not broker_order_id and not client_order_id:
+            return False
+        return self._is_known_order(broker_order_id, client_order_id)
+
+    def _log_foreign_symbol(self, event_name: str, symbol: str) -> None:
+        """外来标的事件的丢弃留痕: 首次 WARNING 点名, 之后同标的降 DEBUG."""
+        first_time = symbol not in self._warned_foreign_symbols
+        self._warned_foreign_symbols.add(symbol)
+        log = logger.warning if first_time else logger.debug
+        log(
+            "Dropped %s event for unsubscribed symbol %s",
+            event_name,
+            symbol,
+            extra=build_log_extra(phase="gateway", symbol=symbol),
+        )
+
+    def _log_accessor_error(self, exc: Exception) -> None:
+        """标的过滤访问器抛异常时的降噪留痕: 按异常类型只警告一次, 之后降 DEBUG."""
+        kind = type(exc).__name__
+        first_time = kind not in self._warned_accessor_errors
+        self._warned_accessor_errors.add(kind)
+        log = logger.warning if first_time else logger.debug
+        log(
+            "Symbol filter accessor raised %s; allowing event through",
+            kind,
+            exc_info=exc if first_time else None,
+            extra=build_log_extra(phase="gateway"),
+        )
+
     def queue_event(self, event_name: str, payload: Any) -> None:
         """Add a broker event to the dispatch queue with semantic deduplication."""
+        if not self._accepts_symbol(event_name, payload):
+            with self._event_lock:
+                self._dropped_foreign_symbols += 1
+            return
         event_key = self._make_event_key(event_name, payload)
         trade_id = ""
         if event_name == "trade":
@@ -80,13 +226,39 @@ class BrokerEventBridge:
             if raw is None and isinstance(payload, dict):
                 raw = payload.get("trade_id")
             trade_id = str(raw) if raw else ""
+        state_key = ""
+        state_fingerprint = ""
+        if event_name in ("order", "execution_report"):
+            order_id = str(self._payload_field(payload, "broker_order_id") or "")
+            if order_id:
+                # 键带事件类型: order 与 execution_report 是两类独立回调, 内置
+                # broker(ctp/miniqmt/ptrade)对同一次状态变化会用同一 payload 成对
+                # 派发 order + execution_report, 四个指纹字段逐字相同; 共用命名
+                # 空间会让第二个事件被误判"已派发过"而永久吞掉。
+                state_key = f"{event_name}:{order_id}"
+                state_fingerprint = self._order_state_fingerprint(payload)
         with self._event_lock:
             if trade_id:
                 if trade_id in self._seen_trade_ids:
                     return  # 会话级: 该成交已入队(实盘推送/恢复重放), 丢弃
                 self._seen_trade_ids.add(trade_id)
+            if state_key:
+                if self._seen_order_states.get(state_key) == state_fingerprint:
+                    self._dropped_duplicate_orders += 1
+                    return  # 会话级: 该委托的这个状态已派发过
             if event_key in self._event_keys:
                 return
+            # 指纹提交刻意放在 event_key 批内键否决之后: 两层去重字段集不一致
+            # (指纹多含 avg_fill_price/reject_reason), 若在此之前提交, 会出现
+            # "指纹已写成新值但事件被批内键丢弃"的洞——柜台下一次再推同一状态
+            # 时指纹命中, 永久吞掉这条修正。只为真正入队的事件记指纹。
+            if state_key:
+                if state_key not in self._seen_order_states:
+                    self._order_state_fifo.append(state_key)
+                    while len(self._order_state_fifo) > _ORDER_STATE_DEDUPE_LIMIT:
+                        stale = self._order_state_fifo.popleft()
+                        self._seen_order_states.pop(stale, None)
+                self._seen_order_states[state_key] = state_fingerprint
             self._event_keys.add(event_key)
             self._event_store.append((event_name, payload))
 

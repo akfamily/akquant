@@ -3,6 +3,7 @@
 import threading
 
 from akquant.gateway.broker_event_bridge import BrokerEventBridge
+from akquant.live._payload_utils import payload_field
 
 
 class _Strat:
@@ -44,6 +45,7 @@ def _bridge() -> BrokerEventBridge:
         payload_to_dict=lambda p: {},
         safe_strategy_callback=safe,
         adapt_strategy_payload=lambda n, p: p,
+        payload_field=payload_field,
     )
 
 

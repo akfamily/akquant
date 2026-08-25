@@ -194,6 +194,10 @@ pub(crate) fn apply_execution_report(
         trade_payload.insert("quantity", t.quantity.to_string());
         trade_payload.insert("side", format!("{:?}", t.side));
         trade_payload.insert(
+            "position_effect",
+            t.position_effect.as_canonical_str().to_string(),
+        );
+        trade_payload.insert(
             "owner_strategy_id",
             t.owner_strategy_id.clone().unwrap_or_default(),
         );

@@ -591,6 +591,150 @@ def test_live_runner_cleans_mapping_on_terminal_status() -> None:
     assert runner._resolve_broker_order_id("c-term-1") == ""
 
 
+def test_closed_broker_order_ids_bounded_by_fifo_limit() -> None:
+    """`_closed_broker_order_ids` 有界: 超过上限后不再无界增长."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    limit = live_module._CLOSED_ORDER_ID_LIMIT
+
+    for i in range(limit + 100):
+        runner._close_order_mapping(f"c-{i}", f"b-{i}")
+
+    assert len(runner._closed_broker_order_ids) == limit
+    assert len(runner._closed_order_id_fifo) == limit
+
+
+def test_closed_broker_order_ids_evicts_oldest_keeps_newest() -> None:
+    """淘汰按插入序: 最老的 id 被挤出, 最新的一批仍留在集合里."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    limit = live_module._CLOSED_ORDER_ID_LIMIT
+
+    for i in range(limit + 100):
+        runner._close_order_mapping(f"c-{i}", f"b-{i}")
+
+    # 最老的 100 个 (0..99) 应已被淘汰。
+    for i in range(100):
+        assert f"b-{i}" not in runner._closed_broker_order_ids
+    # 最新的一批 (limit..limit+99) 应仍在集合里。
+    for i in range(limit, limit + 100):
+        assert f"b-{i}" in runner._closed_broker_order_ids
+
+
+def test_is_known_broker_order_true_for_recent_ids_after_eviction() -> None:
+    """有界化不破坏 I-1 修复: 淘汰发生后, 最新一批终态单仍被认作本会话已知."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    limit = live_module._CLOSED_ORDER_ID_LIMIT
+
+    for i in range(limit + 100):
+        runner._close_order_mapping(f"c-{i}", f"b-{i}")
+
+    latest_broker_order_id = f"b-{limit + 99}"
+    assert runner._is_known_broker_order(latest_broker_order_id, "") is True
+
+
+def test_close_order_mapping_repeated_terminal_does_not_duplicate_fifo_entry() -> None:
+    """同一 broker_order_id 重复进终态不应在 FIFO 里堆积多份, 否则会提前挤掉旁的 id."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+
+    runner._close_order_mapping("c-dup", "b-dup")
+    runner._close_order_mapping("c-dup", "b-dup")
+    runner._close_order_mapping("c-dup", "b-dup")
+
+    assert list(runner._closed_order_id_fifo).count("b-dup") == 1
+    assert runner._closed_broker_order_ids == {"b-dup"}
+
+
+def test_live_runner_attributes_trade_after_terminal_mapping_cleared() -> None:
+    """终态委托清映射后, 同一 broker_order_id 的成交/回报仍要能派发给策略.
+
+    ``_close_order_mapping`` 在委托进终态时会把 ``_broker_to_client_order_ids``
+    / ``_client_to_broker_order_ids`` 都 pop 掉, 使得"先认自己报的单"这条
+    归属判据只在委托活着时有效。标的刻意放在挂载集合(``instruments``)之外,
+    这样只有 ``_is_known_broker_order`` 命中 ``_closed_broker_order_ids``
+    才能救下随后到达的 trade/execution_report, 标的判据帮不上忙。
+    """
+
+    class _DummyStrategy:
+        def __init__(self) -> None:
+            self.orders: list[Any] = []
+            self.trades: list[Any] = []
+            self.reports: list[Any] = []
+
+        def on_order(self, order: Any) -> None:
+            self.orders.append(order)
+
+        def on_trade(self, trade: Any) -> None:
+            self.trades.append(trade)
+
+        def on_execution_report(self, report: Any) -> None:
+            self.reports.append(report)
+
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.broker = "miniqmt"
+    runner._init_broker_bridge_state()
+    # 挂载集合只含 600008.SH, 与本委托的标的(000651.SZ)不同——标的判据必须
+    # 判"外来", 归属判据才是唯一能救下事件的一层。
+    runner.instruments = cast(Any, [SimpleNamespace(symbol="600008.SH")])
+    strategy = _DummyStrategy()
+
+    # 模拟自己报出的单: submit_order 会在报单成功后立即同步 id 映射
+    # (先于任何 broker 推送到达)。
+    runner._sync_order_id_mapping("c-foreign-1", "b-foreign-1")
+
+    # 委托进终态: 映射被 _close_order_mapping 清掉, broker_order_id 转入
+    # _closed_broker_order_ids。
+    runner._queue_broker_event(
+        "order",
+        {
+            "client_order_id": "c-foreign-1",
+            "broker_order_id": "b-foreign-1",
+            "symbol": "000651.SZ",
+            "status": "Filled",
+            "filled_quantity": 100.0,
+        },
+    )
+    runner._drain_broker_events(cast(Any, strategy))
+
+    assert "b-foreign-1" not in runner._broker_to_client_order_ids
+    assert "b-foreign-1" in runner._closed_broker_order_ids
+
+    # 终态之后到达的 trade 与 execution_report, 映射已清, 只剩归属判据。
+    runner._queue_broker_event(
+        "trade",
+        {
+            "trade_id": "t-foreign-1",
+            "broker_order_id": "b-foreign-1",
+            "client_order_id": "c-foreign-1",
+            "symbol": "000651.SZ",
+            "side": "Buy",
+            "quantity": 100.0,
+            "price": 10.0,
+            "timestamp_ns": 1,
+        },
+    )
+    runner._queue_broker_event(
+        "execution_report",
+        {
+            "broker_order_id": "b-foreign-1",
+            "client_order_id": "c-foreign-1",
+            "symbol": "000651.SZ",
+            "status": "Filled",
+            "filled_quantity": 100.0,
+        },
+    )
+    runner._drain_broker_events(cast(Any, strategy))
+
+    assert len(strategy.trades) == 1
+    assert len(strategy.reports) == 1
+
+
 def test_live_runner_submitter_checks_idempotency_and_maps() -> None:
     """Install submitter and map ids after broker placement."""
 
@@ -1768,3 +1912,97 @@ def test_live_runner_logs_summary_with_structured_context(caplog: Any) -> None:
     assert record.slot == "beta"
     assert "Current Positions:" in record.getMessage()
     assert "IF2406: 2.0" in record.getMessage()
+
+
+def _summary_runner_with_bridge(dropped_event_counts: Callable[[], Any]) -> LiveRunner:
+    """Build a ``_print_summary``-ready runner stub with a fake broker event bridge."""
+    runner = LiveRunner.__new__(LiveRunner)
+    runner.strategy_id = "beta"
+    runner._broker_event_bridge = SimpleNamespace(
+        dropped_event_counts=dropped_event_counts
+    )
+    runner.engine = cast(
+        Any,
+        SimpleNamespace(
+            get_results=lambda: SimpleNamespace(
+                metrics=SimpleNamespace(
+                    total_return_pct=0.12,
+                    annualized_return=0.08,
+                    max_drawdown_pct=-0.04,
+                    sharpe_ratio=1.23,
+                    win_rate=0.67,
+                ),
+                trades=[object(), object()],
+                snapshots=[],
+            )
+        ),
+    )
+    return runner
+
+
+def test_live_runner_summary_reports_dropped_event_counts(caplog: Any) -> None:
+    """摘要在 Total Trades 之后、结尾分隔线之前插入两行丢弃计数."""
+    runner = _summary_runner_with_bridge(
+        lambda: {"foreign_symbol": 3, "duplicate_order": 5}
+    )
+
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._print_summary()
+
+    record = next(
+        record for record in caplog.records if "TRADING SUMMARY" in record.getMessage()
+    )
+    message = record.getMessage()
+    total_trades_pos = message.index("Total Trades")
+    foreign_pos = message.index("Dropped (foreign symbol): 3")
+    duplicate_pos = message.index("Dropped (duplicate order): 5")
+    trailing_rule_pos = message.rindex("=" * 50)
+
+    assert total_trades_pos < foreign_pos < duplicate_pos < trailing_rule_pos
+
+
+def test_live_runner_summary_survives_dropped_event_counts_exception(
+    caplog: Any,
+) -> None:
+    """``dropped_event_counts()`` 抛异常时摘要主体仍完整输出, 只丢计数两行."""
+
+    def boom() -> dict[str, int]:
+        raise RuntimeError("dropped_event_counts exploded")
+
+    runner = _summary_runner_with_bridge(boom)
+
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._print_summary()
+
+    record = next(
+        record for record in caplog.records if "TRADING SUMMARY" in record.getMessage()
+    )
+    message = record.getMessage()
+    assert "Total Trades: 2" in message
+    assert "Sharpe Ratio: 1.2300" in message
+    assert "Dropped (foreign symbol)" not in message
+    assert "Dropped (duplicate order)" not in message
+
+
+def test_live_runner_summary_survives_dropped_event_counts_bad_shape(
+    caplog: Any,
+) -> None:
+    """``dropped_event_counts()`` 不抛异常但返回非 dict-like 时摘要主体仍完整.
+
+    格式化 ``counts.get(...)`` 必须与「读」共用同一个 try: 否则返回值格式不对
+    (如 list)会在 ``else`` 分支里抛 ``AttributeError``, 冒泡到最外层大 try,
+    造成与「读抛异常」完全相同的后果——整段 TRADING SUMMARY 一起丢失。
+    """
+    runner = _summary_runner_with_bridge(lambda: ["not", "a", "dict"])
+
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._print_summary()
+
+    record = next(
+        record for record in caplog.records if "TRADING SUMMARY" in record.getMessage()
+    )
+    message = record.getMessage()
+    assert "Total Trades: 2" in message
+    assert "Sharpe Ratio: 1.2300" in message
+    assert "Dropped (foreign symbol)" not in message
+    assert "Dropped (duplicate order)" not in message

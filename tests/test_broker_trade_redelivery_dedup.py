@@ -3,6 +3,7 @@
 import threading
 
 from akquant.gateway.broker_event_bridge import BrokerEventBridge
+from akquant.live._payload_utils import payload_field as _payload_field
 
 
 def _tid(payload: object) -> object:
@@ -47,6 +48,7 @@ def _bridge(store: list) -> BrokerEventBridge:
         payload_to_dict=lambda p: dict(p) if isinstance(p, dict) else {},
         safe_strategy_callback=safe,
         adapt_strategy_payload=lambda n, p: p,
+        payload_field=_payload_field,
     )
 
 
