@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import math
 import random
+import re
 import threading
 import time
 import uuid
@@ -61,6 +62,51 @@ _DEFAULT_RECOVERY_SYNC_SEC = 30.0
 #: 派发 order 与 execution_report, 成交回报最多晚到几秒), 不是"永久记住",
 #: 故取一个数量级余量即可, 无需像 recovery 层的去重表那样撑到 5 万/10 万单。
 _CLOSED_ORDER_ID_LIMIT = 10000
+
+#: ``session_tag`` 允许的字符集: 不含 ``-``(它是 ``client_order_id`` 的字段
+#: 分隔符, tag 里出现会让前缀匹配产生歧义), 只允许字母/数字/下划线。
+_SESSION_TAG_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9_]+$")
+#: ``client_order_id`` 要发给柜台, 柜台字段有长度上限, 过长会被截断(截断
+#: 直接破坏前缀匹配, 见设计文档"风险"一节)。
+_SESSION_TAG_MAX_LEN = 32
+
+
+def _validate_session_tag(session_tag: str) -> None:
+    """校验 ``run_live(session_tag=...)``: fail-fast, 不做归一化兜底.
+
+    刻意不静默改写调用方传入的标识: 平台如果以为传参就等于隔离生效, 但实际
+    因为归一化悄悄改了值而没生效, 比直接报错更难排查。三条规则均在设计文档
+    "一、``run_live`` 新增 ``session_tag`` 参数"一节说明。
+
+    :param session_tag: 调用方传入的会话标记, 推荐传平台任务 ID。
+    :raises ValueError: 含 ``-``、含 ``[A-Za-z0-9_]`` 之外的字符、或长度超过
+        ``_SESSION_TAG_MAX_LEN``, 消息里给出可照抄的正确写法。
+    """
+    if not session_tag:
+        raise ValueError(
+            "session_tag 不能是空字符串; 不传该参数即可保持默认行为"
+            "(随机会话标记, 不启用严格的多任务隔离)"
+        )
+    if "-" in session_tag:
+        suggestion = session_tag.replace("-", "_")
+        raise ValueError(
+            f"session_tag={session_tag!r} 不能包含 '-': 它是 client_order_id "
+            f"的字段分隔符({{broker}}-{{tag}}-{{seq}}), tag 里出现会让前缀匹配"
+            f"产生歧义。请改用下划线分隔, 例如 session_tag={suggestion!r}"
+        )
+    if not _SESSION_TAG_ALLOWED_CHARS.match(session_tag):
+        suggestion = re.sub(r"[^A-Za-z0-9_]", "_", session_tag)
+        raise ValueError(
+            f"session_tag={session_tag!r} 只能包含字母、数字、下划线"
+            f"([A-Za-z0-9_]), 例如 session_tag={suggestion!r}"
+        )
+    if len(session_tag) > _SESSION_TAG_MAX_LEN:
+        raise ValueError(
+            f"session_tag={session_tag!r} 长度 {len(session_tag)} 超过上限 "
+            f"{_SESSION_TAG_MAX_LEN}: client_order_id 要发给柜台, 柜台字段有"
+            f"长度限制, 过长会被截断并破坏前缀匹配。例如截断为 "
+            f"session_tag={session_tag[:_SESSION_TAG_MAX_LEN]!r}"
+        )
 
 
 def _positive_interval(value: Any, default: float, name: str) -> float:
@@ -317,6 +363,7 @@ class LiveRunner:
             Union[StrategyRuntimeConfig, Dict[str, Any]]
         ] = None,
         runtime_config_override: bool = True,
+        session_tag: Optional[str] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -462,6 +509,11 @@ class LiveRunner:
         self.signal_source = signal_source
         self.strategy_runtime_config = strategy_runtime_config
         self.runtime_config_override = bool(runtime_config_override)
+        # fail-fast 校验, 不做归一化兜底: 静默改写调用方传入的标识会让平台
+        # 以为多任务隔离生效了而实际没生效, 见 _validate_session_tag。
+        if session_tag is not None:
+            _validate_session_tag(session_tag)
+        self.session_tag = session_tag
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
         self._indicator_recorder_override: Optional[IndicatorSink] = None
@@ -1305,8 +1357,26 @@ class LiveRunner:
         self._broker_event_bridge: Any = None
         self._broker_recovery: Any = None
         self._broker_submit_seq = 0
-        # 会话标记: 让 client_order_id 跨进程/跨重启唯一(见 _next_client_order_id)。
-        self._broker_session_tag = uuid.uuid4().hex[:8]
+        # 会话标记: 让 client_order_id 的前缀跨进程/跨重启可识别(见
+        # _next_client_order_id)。显式传了 session_tag 才用它替代随机 uuid、
+        # 且启用严格的多任务隔离(第 2 层主动拒绝); 不传时行为与 v0.3.51 完全
+        # 一致——`getattr` 兜底缺失属性, 因为部分测试用 `LiveRunner.__new__`
+        # + `_init_broker_bridge_state()` 绕开 `__init__` 直接构造替身,
+        # `session_tag` 属性不存在。
+        session_tag = getattr(self, "session_tag", None)
+        if session_tag:
+            self._broker_session_tag = session_tag
+            self._broker_strict_task_isolation = True
+        else:
+            self._broker_session_tag = uuid.uuid4().hex[:8]
+            self._broker_strict_task_isolation = False
+        # 每次 run_live 独立的随机盐, 拼进序号段(不进前缀段)。固定
+        # session_tag 场景下, 序号仍从 0 起, 若无此盐重启后第一笔单会与柜台
+        # 里同名的历史委托撞号——把 client_order_id 当幂等键的柜台会直接拒单
+        # (实测中间件返回 409 Conflict)。加盐后前缀匹配(用于第 1/2 层判据)、
+        # 重启后仍能通过旧 client_order_id 认出历史挂单、以及跨重启唯一性
+        # 三者并存, 见 _next_client_order_id。
+        self._broker_run_salt = uuid.uuid4().hex[:4]
         self._broker_submit_lock = threading.Lock()
         self._broker_recovery_mode = self._normalize_broker_recovery_mode(
             getattr(self, "gateway_options", {}).get("recovery_mode", "compatible")
@@ -1350,6 +1420,8 @@ class LiveRunner:
             resolve_trace_id=self._lookup_group_id,
             get_subscribed_symbols=self._subscribed_symbol_set,
             is_known_order=self._is_known_broker_order,
+            own_session_prefix=f"{self._broker_name_for_cid()}-{self._broker_session_tag}-",
+            strict_task_isolation=self._broker_strict_task_isolation,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -1954,19 +2026,43 @@ class LiveRunner:
     def _payload_field(self, payload: Any, field: str) -> Any:
         return payload_field(payload, field)
 
-    def _next_client_order_id(self) -> str:
-        """生成 client_order_id: ``{broker}-{会话标记}-{会话内序号}``.
+    def _broker_name_for_cid(self) -> str:
+        """``client_order_id``/``own_session_prefix`` 共用的 broker 名读法.
 
-        序号是实例字段, 每次 run_live 从 0 起。若只用序号(旧格式
-        ``{broker}-coid-{seq}``), 重启后第一笔单又是 ``...-coid-1``, 会与柜台
-        里同名的历史委托撞号——把 client_order_id 当幂等键的柜台会直接拒单
-        (实测中间件返回 409 Conflict)。加 8 位会话标记后, 同一进程内递增序号
-        保证顺序可读, 跨重启与多进程并行则由标记区分。
+        两处必须完全一致: 若各自读法不同(比如一处用 ``self.broker``、另一处
+        用 ``getattr(self, "broker", "") or ""``), 当 ``broker`` 恰好是
+        ``None`` 时会生成互不匹配的前缀与 id——本会话自己下的单会被自己的
+        第 2 层严格判据当成"别的任务"拒收, 是最坏情况(参见 review C 系列
+        Minor #1)。
+        """
+        return getattr(self, "broker", "") or ""
+
+    def _next_client_order_id(self) -> str:
+        """生成 client_order_id: ``{broker}-{会话标记}-{运行盐}{会话内序号}``.
+
+        序号是实例字段, 每次 run_live 从 0 起。若只用"标记+序号"而不带运行盐
+        (即 ``{broker}-{tag}-{seq}``), 在 ``session_tag`` 被固定传入(而非随机
+        uuid)的场景下, 重启后第一笔单又会生成与上一轮完全相同的
+        ``{broker}-{tag}-1``: 一是会与柜台里同名的历史委托撞号——把
+        client_order_id 当幂等键的柜台直接拒单(实测中间件返回 409
+        Conflict); 二是若上一轮该 id 仍在 `_client_to_broker_order_ids`
+        里指向一笔非终态挂单, `can_submit_client_order` 会判定为重复而在本
+        地就拒绝提交, 根本到不了柜台。
+
+        修法是序号段(而非前缀段)拼入每次 run_live 独立生成的 4 位随机盐
+        (``_broker_run_salt``): 前缀 ``{broker}-{tag}-`` 保持稳定, 供第 1/2
+        层会话判据识别; 序号段整体因为带了盐而每次运行必然不同, 恢复跨
+        重启唯一性; 同时前缀不变意味着重启后仍能通过旧 client_order_id 的
+        前缀认出历史挂单属于本任务——三者(前缀识别、去重、跨重启唯一)
+        并存, 不再互斥。
         """
         with self._broker_submit_lock:
             self._broker_submit_seq += 1
             tag = getattr(self, "_broker_session_tag", "") or "nosess"
-            return f"{self.broker}-{tag}-{self._broker_submit_seq}"
+            salt = getattr(self, "_broker_run_salt", "") or ""
+            return (
+                f"{self._broker_name_for_cid()}-{tag}-{salt}{self._broker_submit_seq}"
+            )
 
     def _sync_order_id_mapping(
         self,
@@ -2379,6 +2475,12 @@ class LiveRunner:
                     duplicate_line = (
                         f"Dropped (duplicate order): {counts.get('duplicate_order', 0)}"
                     )
+                    # foreign_task: 被会话标记严格拒绝的"别的任务的单", 多任务
+                    # 稳态下必然持续增长, 是正常工作量而非故障信号(与
+                    # foreign_symbol 的含义相反), 见 dropped_event_counts()。
+                    foreign_task_line = (
+                        f"Dropped (foreign task): {counts.get('foreign_task', 0)}"
+                    )
                 except Exception:
                     logger.debug(
                         "dropped_event_counts() failed or returned an unexpected"
@@ -2389,6 +2491,7 @@ class LiveRunner:
                 else:
                     summary_lines.append(foreign_line)
                     summary_lines.append(duplicate_line)
+                    summary_lines.append(foreign_task_line)
             summary_lines.append("=" * 50)
 
             # Print Current Positions if available
