@@ -45,7 +45,9 @@ def test_missing_required_column_raises() -> None:
     frame = _frame().drop(columns=["close"])
     with pytest.raises(ValueError) as excinfo:
         normalize_preload_history(frame, {"600000.SH"}, _FUTURE_NS)
-    assert "close" in str(excinfo.value)
+    message = str(excinfo.value)
+    # 断言缺失字段列表本身, 确保 _require_columns 真正在工作
+    assert "缺少必需列" in message and "close(" in message
 
 
 def test_no_symbol_matches_raises_and_mentions_the_leading_zero_trap() -> None:
@@ -116,3 +118,139 @@ def test_bars_are_sorted_by_symbol_then_timestamp() -> None:
     assert result is not None
     timestamps = [int(b.timestamp) for b in result.bars]
     assert timestamps == sorted(timestamps)
+
+
+def test_dict_form_without_symbol_column_uses_dict_key() -> None:
+    """Dict 形态 + 帧内无 symbol 列 -> 用 dict 的 key 补齐(Critical 1)."""
+    frame_no_symbol = _frame().drop(columns=["symbol"])
+    result = normalize_preload_history(
+        {"600000.SH": frame_no_symbol}, {"600000.SH"}, _FUTURE_NS
+    )
+
+    assert result is not None
+    assert len(result.bars) == 3
+    assert all(b.symbol == "600000.SH" for b in result.bars)
+    assert len(result.frames) == 1
+    assert "600000.SH" in result.frames
+
+
+def test_chinese_column_names_are_supported() -> None:
+    """中文列名被支持(open -> 开盘, close -> 收盘等)."""
+    frame = pd.DataFrame(
+        {
+            "日期": pd.date_range("2026-08-20", periods=2, freq="D"),
+            "股票代码": ["600000.SH"] * 2,
+            "开盘": [10.0, 10.0],
+            "最高": [11.0, 11.0],
+            "最低": [9.0, 9.0],
+            "收盘": [10.5, 11.5],
+            "成交量": [100.0, 100.0],
+        }
+    )
+    result = normalize_preload_history(frame, {"600000.SH"}, _FUTURE_NS)
+
+    assert result is not None
+    assert len(result.bars) == 2
+    assert result.bars[0].close == 10.5
+
+
+def test_frames_index_is_utc_nanoseconds() -> None:
+    """Frames 的索引是 UTC 纳秒(Important 4)."""
+    frame = _frame(rows=2)
+    result = normalize_preload_history(frame, {"600000.SH"}, _FUTURE_NS)
+
+    assert result is not None
+    assert len(result.frames) == 1
+    df = result.frames["600000.SH"]
+    assert isinstance(df.index, pd.DatetimeIndex)
+    assert df.index.tz is None or str(df.index.tz) == "UTC"
+    # 验证行数
+    assert len(df) == 2
+    # 验证列
+    assert set(df.columns) == {"open", "high", "low", "close", "volume"}
+
+
+def test_last_timestamp_ns_contains_symbol_end_times() -> None:
+    """Last_timestamp_ns 记录每个 symbol 的末行时刻(Important 4)."""
+    frame = pd.concat(
+        [_frame("600000.SH", 2), _frame("000001.SZ", 3)], ignore_index=True
+    )
+    result = normalize_preload_history(frame, {"600000.SH", "000001.SZ"}, _FUTURE_NS)
+
+    assert result is not None
+    assert len(result.last_timestamp_ns) == 2
+    assert "600000.SH" in result.last_timestamp_ns
+    assert "000001.SZ" in result.last_timestamp_ns
+    # 600000.SH 的末行时间应该是第 2 行
+    # 000001.SZ 的末行时间应该是第 3 行
+    sh_end = result.last_timestamp_ns["600000.SH"]
+    sz_end = result.last_timestamp_ns["000001.SZ"]
+    assert sz_end > sh_end  # SZ 的末戳应该更晚
+
+
+def test_multi_symbol_sorting_by_symbol_then_timestamp() -> None:
+    """多标的交错乱序 -> 按 (symbol, timestamp) 排序(Important 5)."""
+    # 创建交错的乱序数据: SZ 旧, SH 新, SZ 新, SH 旧
+    sz_dates = pd.date_range("2026-08-20", periods=2, freq="D")
+    sh_dates = pd.date_range("2026-08-21", periods=2, freq="D")
+    frame = pd.DataFrame(
+        {
+            "date": [sz_dates[0], sh_dates[1], sz_dates[1], sh_dates[0]],
+            "symbol": ["000001.SZ", "600000.SH", "000001.SZ", "600000.SH"],
+            "open": [10.0] * 4,
+            "high": [11.0] * 4,
+            "low": [9.0] * 4,
+            "close": [10.5, 11.5, 12.5, 13.5],
+            "volume": [100.0] * 4,
+        }
+    )
+    result = normalize_preload_history(frame, {"600000.SH", "000001.SZ"}, _FUTURE_NS)
+
+    assert result is not None
+    # 验证排序: 先按 symbol(000001.SZ < 600000.SH), 再按 timestamp
+    symbols = [str(b.symbol) for b in result.bars]
+    assert symbols == ["000001.SZ", "000001.SZ", "600000.SH", "600000.SH"]
+    # 每个 symbol 内部的时间戳应该升序
+    sz_bars = [b for b in result.bars if b.symbol == "000001.SZ"]
+    sh_bars = [b for b in result.bars if b.symbol == "600000.SH"]
+    sz_ts = [int(b.timestamp) for b in sz_bars]
+    sh_ts = [int(b.timestamp) for b in sh_bars]
+    assert sz_ts == sorted(sz_ts)
+    assert sh_ts == sorted(sh_ts)
+
+
+def test_second_precision_timestamps_are_fixed() -> None:
+    """秒级时间戳被修正为纳秒(Important 6)."""
+    from akquant import Bar
+
+    # 创建秒级戳 (Rust from_arrays 可能返回的)
+    bars_with_second_precision = [
+        Bar(
+            symbol="600000.SH",
+            timestamp=1692547200,  # 秒级, < 1e10
+            open=10.0,
+            high=11.0,
+            low=9.0,
+            close=10.5,
+            volume=100.0,
+        ),
+        Bar(
+            symbol="600000.SH",
+            timestamp=1692633600,
+            open=10.0,
+            high=11.0,
+            low=9.0,
+            close=11.5,
+            volume=100.0,
+        ),
+    ]
+    result = normalize_preload_history(
+        bars_with_second_precision, {"600000.SH"}, _FUTURE_NS
+    )
+
+    assert result is not None
+    assert len(result.bars) == 2
+    # 验证时间戳已被修正为纳秒 (秒×1e9)
+    for bar in result.bars:
+        assert bar.timestamp >= 1.6e18  # 有效纳秒范围
+        assert bar.timestamp < 2e18

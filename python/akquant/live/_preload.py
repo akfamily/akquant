@@ -16,13 +16,26 @@ import pandas as pd
 from ..akquant import Bar, from_arrays
 from ..gateway.symbol_match import normalize_symbol_for_match
 from ..log import build_log_extra, get_logger
-from ..normalize import dataframe_to_arrays
+from ..normalize import dataframe_to_arrays, resolve_columns
+from ..schema import COLUMN_ALIASES
 
 logger = get_logger("live.preload")
 
 PreloadInput = Union[pd.DataFrame, dict[str, pd.DataFrame], list[Bar]]
 
 _REQUIRED_COLUMNS = ("open", "high", "low", "close", "volume")
+
+
+def _fix_second_precision_timestamps(bars: list[Bar]) -> list[Bar]:
+    """修正秒级时间戳为纳秒(< 1e10 时 ×1e9).
+
+    秒级: 2286 年之前的有效纳秒戳约为 1.6e18, 10_000_000_000 秒已是 2286 年,
+    故 < 1e10 视为秒级.
+    """
+    if bars and bars[0].timestamp < 10_000_000_000:
+        for bar in bars:
+            bar.timestamp = bar.timestamp * 1_000_000_000
+    return bars
 
 
 @dataclass
@@ -39,13 +52,19 @@ class PreloadResult:
 
 
 def _require_columns(frame: pd.DataFrame) -> None:
-    """检查必需列是否存在."""
-    missing = [c for c in _REQUIRED_COLUMNS if c not in frame.columns]
-    if missing:
+    """检查必需列是否存在(支持别名: 英文/中文/大小写变体)."""
+    resolved = resolve_columns(frame)
+    missing_fields = [f for f in _REQUIRED_COLUMNS if f not in resolved]
+    if missing_fields:
+        # 点名缺失字段及其候选列名
+        candidates = {f: COLUMN_ALIASES.get(f, [f]) for f in missing_fields}
+        candidates_str = ", ".join(
+            f"{f}({'/'.join(cands)})" for f, cands in candidates.items()
+        )
         raise ValueError(
-            f"preload_history 缺少必需列: {missing}; "
-            f"需要 date/symbol/{'/'.join(_REQUIRED_COLUMNS)} 七列"
-            "(与 examples/70_csv_multi_symbol_import_demo.py 的格式一致)"
+            f"preload_history 缺少必需列: {candidates_str}。"
+            "需要含有时间、开盘/收盘/最高/最低/成交量、标的代码，"
+            "与 examples/70_csv_multi_symbol_import_demo.py 的格式一致"
         )
 
 
@@ -53,8 +72,11 @@ def _to_bars(preload: PreloadInput) -> list[Bar]:
     """三种输入形态统一成 list[Bar](复用唯一的归一化实现)."""
     if isinstance(preload, pd.DataFrame):
         _require_columns(preload)
-        arrays = dataframe_to_arrays(preload)
-        return from_arrays(*arrays)
+        ts, o, h, lo, c, v, symbol_val, symbols_list, extra = dataframe_to_arrays(
+            preload
+        )
+        bars = from_arrays(ts, o, h, lo, c, v, symbol_val, symbols_list, extra)
+        return _fix_second_precision_timestamps(bars)
     if isinstance(preload, dict):
         collected: list[Bar] = []
         for symbol, frame in preload.items():
@@ -66,13 +88,17 @@ def _to_bars(preload: PreloadInput) -> list[Bar]:
                 )
                 continue
             _require_columns(frame)
-            arrays = dataframe_to_arrays(frame)
-            # 如果没有从 DataFrame 中解析到 symbol，使用传入的 symbol 参数
-            if arrays[6] is None and arrays[7] is None:
-                arrays = (*arrays[:6], str(symbol), None, arrays[8])
-            collected.extend(from_arrays(*arrays))
+            ts, o, h, lo, c, v, symbol_val, symbols_list, extra = dataframe_to_arrays(
+                frame
+            )
+            # 帧内没有 per-row symbol 列时，用 dict 的 key
+            if symbols_list is None:
+                symbol_val = str(symbol)
+            bars = from_arrays(ts, o, h, lo, c, v, symbol_val, symbols_list, extra)
+            collected.extend(_fix_second_precision_timestamps(bars))
         return collected
-    return list(preload)
+    # list[Bar] 形态：也需要检查并修正秒级戳
+    return _fix_second_precision_timestamps(list(preload))
 
 
 def _filter_symbols(bars: list[Bar], allowed_symbols: set[str]) -> list[Bar]:
