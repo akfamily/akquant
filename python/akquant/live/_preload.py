@@ -25,34 +25,55 @@ PreloadInput = Union[pd.DataFrame, dict[str, pd.DataFrame], list[Bar]]
 
 _REQUIRED_COLUMNS = ("open", "high", "low", "close", "volume")
 
-# 记录已告警过的 symbol, 避免重复告警秒级戳问题
-_WARNED_SECOND_PRECISION_SYMBOLS: set[str] = set()
+# 合理纳秒时间戳的下限. 1e15 ns ≈ 1970-01-12, 任何真实市场数据都不可能落在
+# 它以下(含负数)。不套用仓库里已有的 "< 1e10 视为秒级" 阈值(normalize.py
+# 两处 + Rust Bar 构造器用的 1e12): 那个阈值只为了区分"秒还是纳秒"服务于
+# ×1e9 修正, 再抄一份只会让下次改阈值必漏一处; 而且它对负数/1970 年附近的
+# 问题值表达力不够(负值本就远小于 1e10, 但真正想拦的正是它)。这里只做
+# "落在合理区间之外"的存在性判断, 不猜测原始单位, 也不做任何修正。
+_MIN_SANE_TIMESTAMP_NS = 1_000_000_000_000_000
 
 
-def _warn_second_precision_timestamps(bars: list[Bar]) -> None:
-    """检查秒级时间戳并告警(不改数据, 保留调用方的 Bar 对象不被污染).
+def _warn_invalid_timestamps(bars: list[Bar]) -> None:
+    """点名时间戳落在合理纳秒区间之外的 bar(只告警, 不改数据).
 
-    秒级戳会被当 ns 解释成 1970 年附近, 应转换为 ns 后再传入.
+    在 ``_to_bars()`` 之后统一调用, 覆盖 DataFrame / dict / list[Bar] 三条
+    输入路径 —— DataFrame/dict 路径可能因把秒级整数误当纳秒解析而产出极小
+    甚至负的时间戳(实测过 ``pd.to_datetime`` 对秒级 int 列的默认解释会产出
+    负数纳秒戳); list[Bar] 路径的调用方也可能直接传入秒级戳。这里不做任何
+    ×1e9 之类的修正(那是 ``normalize.py`` 的职责, 与回测同源), 只负责让
+    问题在日志里可见, 避免静默产出 1970 年附近的数据。
+
+    去重用调用内局部集合(不是模块级全局): 同一个 symbol 在本次调用里第一次
+    命中打 WARNING, 之后降级 DEBUG; 下一次调用(如下一次 ``run_live``)会
+    重新从 WARNING 开始, 不会被上一次调用的状态压制。
     """
-    if bars and bars[0].timestamp < 10_000_000_000:
-        for bar in bars:
-            if int(bar.timestamp) < 10_000_000_000:
-                symbol = str(bar.symbol)
-                if symbol not in _WARNED_SECOND_PRECISION_SYMBOLS:
-                    logger.warning(
-                        "preload_history 检测到疑似秒级时间戳 "
-                        "(< 1e10, 会被解释成 1970 年数据), "
-                        "建议传入纳秒精度而非秒级整数(标的: %s)",
-                        symbol,
-                        extra=build_log_extra(phase="live", symbol=symbol),
-                    )
-                    _WARNED_SECOND_PRECISION_SYMBOLS.add(symbol)
-                else:
-                    logger.debug(
-                        "preload_history 秒级时间戳告警已发送(标的: %s)",
-                        symbol,
-                        extra=build_log_extra(phase="live", symbol=symbol),
-                    )
+    warned: set[str] = set()
+    for bar in bars:
+        if int(bar.timestamp) >= _MIN_SANE_TIMESTAMP_NS:
+            continue
+        symbol = str(bar.symbol)
+        extra = build_log_extra(phase="live", symbol=symbol)
+        if symbol in warned:
+            logger.debug(
+                "preload_history[%s] 时间戳 %s 落在合理纳秒区间之外"
+                "(< %s), 本次预热中已告警过, 不再重复",
+                symbol,
+                bar.timestamp,
+                _MIN_SANE_TIMESTAMP_NS,
+                extra=extra,
+            )
+            continue
+        warned.add(symbol)
+        logger.warning(
+            "preload_history[%s] 时间戳 %s 落在合理纳秒区间之外"
+            "(< %s, 疑似秒/毫秒级整数被误当纳秒解析), 未做任何修正"
+            "(与回测同源), 请检查取数/转换逻辑",
+            symbol,
+            bar.timestamp,
+            _MIN_SANE_TIMESTAMP_NS,
+            extra=extra,
+        )
 
 
 @dataclass
@@ -114,10 +135,9 @@ def _to_bars(preload: PreloadInput) -> list[Bar]:
             bars = from_arrays(ts, o, h, lo, c, v, symbol_val, symbols_list, extra)
             collected.extend(bars)
         return collected
-    # list[Bar] 形态：检查秒级戳(只告警, 不改数据)
-    bars = list(preload)
-    _warn_second_precision_timestamps(bars)
-    return bars
+    # list[Bar] 形态：直接透传, 时间戳合理性检查统一在
+    # normalize_preload_history() 里的 _warn_invalid_timestamps() 做
+    return list(preload)
 
 
 def _filter_symbols(bars: list[Bar], allowed_symbols: set[str]) -> list[Bar]:
@@ -214,6 +234,7 @@ def normalize_preload_history(
         )
         return PreloadResult()
 
+    _warn_invalid_timestamps(bars)
     bars = _filter_symbols(bars, allowed_symbols)
     bars = _clip_future(bars, session_start_ns)
     bars.sort(key=lambda b: (b.symbol, b.timestamp))

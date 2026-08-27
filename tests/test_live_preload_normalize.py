@@ -231,43 +231,108 @@ def test_multi_symbol_sorting_by_symbol_then_timestamp() -> None:
     assert zzzz_ts == sorted(zzzz_ts)
 
 
-def test_second_precision_list_bars_not_mutated() -> None:
-    """list[Bar] 形态传入秒级戳, 数据不被改写(只告警, 不修改)."""
+def test_dataframe_second_level_timestamps_are_flagged_not_fixed(caplog: Any) -> None:
+    """DataFrame 路径喂入秒级整数时间戳 -> 点名 WARNING, 且不做任何修正.
+
+    ``date`` 列是裸的秒级 int(如 unix 秒), 会被 ``pd.to_datetime`` 默认当纳秒
+    解析, 产出落在合理区间之外的时间戳(实测会是负数)。这里只要求它被点名
+    告警, 不要求(也不允许)被"修好" —— 与 normalize.py 里 dataframe_to_bars
+    仍保留的 ×1e9 修正刻意不同源, 回测那条路径是它自己的事。
+    """
+    from akquant.normalize import dataframe_to_arrays
+
+    frame = pd.DataFrame(
+        {
+            "date": [1692547200, 1692633600, 1692720000],  # 秒级 int
+            "symbol": ["BADTS.SH"] * 3,
+            "open": [10.0] * 3,
+            "high": [11.0] * 3,
+            "low": [9.0] * 3,
+            "close": [10.5, 11.5, 12.5],
+            "volume": [100.0] * 3,
+        }
+    )
+    raw_ts = [int(t) for t in dataframe_to_arrays(frame)[0]]
+    assert raw_ts[0] < 1_000_000_000_000_000  # 前置条件: 确实落在阈值外
+
+    with caplog.at_level("WARNING", logger="akquant.live.preload"):
+        result = normalize_preload_history(frame, {"BADTS.SH"}, _FUTURE_NS)
+
+    assert result is not None
+    assert len(result.bars) == 3
+    assert [r for r in caplog.records if "BADTS.SH" in r.getMessage()] != []
+    assert [r for r in caplog.records if "落在合理纳秒区间之外" in r.getMessage()] != []
+    # 关键: bars 的时间戳保持解析后的原值, 没有被任何 ×1e9 之类的逻辑改写
+    assert [int(b.timestamp) for b in result.bars] == raw_ts
+
+
+def test_invalid_timestamp_list_bars_not_mutated() -> None:
+    """list[Bar] 形态遇到落在合理区间外的时间戳 -> 只告警, 不改写调用方的 Bar.
+
+    用负数时间戳: 经 ``Bar`` 构造器自身的 ×1e9 归一化后仍是负数, 落在合理
+    纳秒区间之外, 用来验证"只告警不修正"这条硬约束。
+    """
     from akquant import Bar
 
-    # 创建秒级戳 list，用独特的 symbol
     src_bars = [
         Bar(
-            symbol="TEST_NOMUT.SH",
-            timestamp=1692547200,  # 秒级, < 1e10
+            symbol="NOMUT.SH",
+            timestamp=-500,
             open=10.0,
             high=11.0,
             low=9.0,
             close=10.5,
             volume=100.0,
         ),
-        Bar(
-            symbol="TEST_NOMUT.SH",
-            timestamp=1692633600,
-            open=10.0,
-            high=11.0,
-            low=9.0,
-            close=11.5,
-            volume=100.0,
-        ),
     ]
-    original_ts = [b.timestamp for b in src_bars]
+    original_ts = src_bars[0].timestamp
+    assert original_ts < 1_000_000_000_000_000  # 前置条件: 确实落在阈值外
 
-    result = normalize_preload_history(src_bars, {"TEST_NOMUT.SH"}, _FUTURE_NS)
+    result = normalize_preload_history(src_bars, {"NOMUT.SH"}, _FUTURE_NS)
 
     assert result is not None
-    assert len(result.bars) == 2
-    # 最重要：验证调用方传入的 src 没被改写(只告警, 不改数据)
-    # 这验证了新问题 2 的修复：不就地改调用方的数据
-    assert src_bars[0].timestamp == original_ts[0]
-    assert src_bars[1].timestamp == original_ts[1]
-    # 结果中的 bars 应该指向同一对象(list 的浅拷贝)
+    assert len(result.bars) == 1
+    # 调用前后, 调用方持有的那个 Bar 对象的时间戳必须没变(不能被就地改写)
+    assert src_bars[0].timestamp == original_ts
     assert result.bars[0] is src_bars[0]
-    assert result.bars[1] is src_bars[1]
-    # 验证其他字段也没被改
     assert src_bars[0].open == 10.0
+
+
+def test_mixed_list_only_names_the_abnormal_symbol(caplog: Any) -> None:
+    """混合列表: 首根正常、另一标的异常 -> 只点名异常的那个标的.
+
+    上一轮外层曾只看 ``bars[0]`` 就决定整批是否检查, 导致"首根正常、后面
+    某标的异常"的混合列表整体不告警。这里首根(GOOD.SH)时间戳正常, 第二个
+    标的(BAD.SH)异常, 必须只有 BAD.SH 被点名。
+    """
+    from akquant import Bar
+
+    good_bar = Bar(
+        symbol="GOOD.SH",
+        timestamp=int(pd.Timestamp("2026-08-20").value),
+        open=10.0,
+        high=11.0,
+        low=9.0,
+        close=10.5,
+        volume=100.0,
+    )
+    bad_bar = Bar(
+        symbol="BAD.SH",
+        timestamp=-1,
+        open=10.0,
+        high=11.0,
+        low=9.0,
+        close=10.5,
+        volume=100.0,
+    )
+    with caplog.at_level("WARNING", logger="akquant.live.preload"):
+        result = normalize_preload_history(
+            [good_bar, bad_bar], {"GOOD.SH", "BAD.SH"}, _FUTURE_NS
+        )
+
+    assert result is not None
+    ts_warnings = [
+        r for r in caplog.records if "落在合理纳秒区间之外" in r.getMessage()
+    ]
+    assert any("BAD.SH" in r.getMessage() for r in ts_warnings)
+    assert not any("GOOD.SH" in r.getMessage() for r in ts_warnings)
