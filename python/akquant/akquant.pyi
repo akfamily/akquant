@@ -575,6 +575,22 @@ class Engine:
         """
         ...
 
+    def get_state_bytes(self) -> bytes:
+        r"""
+        导出当前状态为二进制数据.
+
+        :return: 序列化后的引擎状态（包含历史缓冲）
+        """
+        ...
+
+    def load_state_bytes(self, data: bytes) -> None:
+        r"""
+        从二进制数据加载状态.
+
+        :param data: 序列化的引擎状态数据
+        """
+        ...
+
     def set_history_depth(self, depth: int) -> None:
         r"""
         设置历史数据长度.
