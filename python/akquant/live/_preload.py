@@ -25,17 +25,34 @@ PreloadInput = Union[pd.DataFrame, dict[str, pd.DataFrame], list[Bar]]
 
 _REQUIRED_COLUMNS = ("open", "high", "low", "close", "volume")
 
+# 记录已告警过的 symbol, 避免重复告警秒级戳问题
+_WARNED_SECOND_PRECISION_SYMBOLS: set[str] = set()
 
-def _fix_second_precision_timestamps(bars: list[Bar]) -> list[Bar]:
-    """修正秒级时间戳为纳秒(< 1e10 时 ×1e9).
 
-    秒级: 2286 年之前的有效纳秒戳约为 1.6e18, 10_000_000_000 秒已是 2286 年,
-    故 < 1e10 视为秒级.
+def _warn_second_precision_timestamps(bars: list[Bar]) -> None:
+    """检查秒级时间戳并告警(不改数据, 保留调用方的 Bar 对象不被污染).
+
+    秒级戳会被当 ns 解释成 1970 年附近, 应转换为 ns 后再传入.
     """
     if bars and bars[0].timestamp < 10_000_000_000:
         for bar in bars:
-            bar.timestamp = bar.timestamp * 1_000_000_000
-    return bars
+            if int(bar.timestamp) < 10_000_000_000:
+                symbol = str(bar.symbol)
+                if symbol not in _WARNED_SECOND_PRECISION_SYMBOLS:
+                    logger.warning(
+                        "preload_history 检测到疑似秒级时间戳 "
+                        "(< 1e10, 会被解释成 1970 年数据), "
+                        "建议传入纳秒精度而非秒级整数(标的: %s)",
+                        symbol,
+                        extra=build_log_extra(phase="live", symbol=symbol),
+                    )
+                    _WARNED_SECOND_PRECISION_SYMBOLS.add(symbol)
+                else:
+                    logger.debug(
+                        "preload_history 秒级时间戳告警已发送(标的: %s)",
+                        symbol,
+                        extra=build_log_extra(phase="live", symbol=symbol),
+                    )
 
 
 @dataclass
@@ -76,7 +93,7 @@ def _to_bars(preload: PreloadInput) -> list[Bar]:
             preload
         )
         bars = from_arrays(ts, o, h, lo, c, v, symbol_val, symbols_list, extra)
-        return _fix_second_precision_timestamps(bars)
+        return bars
     if isinstance(preload, dict):
         collected: list[Bar] = []
         for symbol, frame in preload.items():
@@ -95,10 +112,12 @@ def _to_bars(preload: PreloadInput) -> list[Bar]:
             if symbols_list is None:
                 symbol_val = str(symbol)
             bars = from_arrays(ts, o, h, lo, c, v, symbol_val, symbols_list, extra)
-            collected.extend(_fix_second_precision_timestamps(bars))
+            collected.extend(bars)
         return collected
-    # list[Bar] 形态：也需要检查并修正秒级戳
-    return _fix_second_precision_timestamps(list(preload))
+    # list[Bar] 形态：检查秒级戳(只告警, 不改数据)
+    bars = list(preload)
+    _warn_second_precision_timestamps(bars)
+    return bars
 
 
 def _filter_symbols(bars: list[Bar], allowed_symbols: set[str]) -> list[Bar]:

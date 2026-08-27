@@ -189,14 +189,25 @@ def test_last_timestamp_ns_contains_symbol_end_times() -> None:
 
 
 def test_multi_symbol_sorting_by_symbol_then_timestamp() -> None:
-    """多标的交错乱序 -> 按 (symbol, timestamp) 排序(Important 5)."""
-    # 创建交错的乱序数据: SZ 旧, SH 新, SZ 新, SH 旧
-    sz_dates = pd.date_range("2026-08-20", periods=2, freq="D")
-    sh_dates = pd.date_range("2026-08-21", periods=2, freq="D")
+    """多标的交错乱序 -> 按 (symbol, timestamp) 排序(Important 5).
+
+    必须让「按纯 timestamp 排」与「按 (symbol, timestamp) 排」产生不同结果,
+    否则无法验证 symbol 分组确实在起作用.
+    设计: 时间戳充分交错, 使得只按 timestamp 会严重打乱 symbol 分组.
+    """
+    # 喂入: ZZZZ(23), ZZZZ(21), AAAA(22), AAAA(20)
+    # 按纯 timestamp 排: 20, 21, 22, 23 → AAAA, ZZZZ, AAAA, ZZZZ
+    # 按 (symbol, ts) 排: AAAA(20), AAAA(22), ZZZZ(21), ZZZZ(23)
+    # 两者完全不同！
     frame = pd.DataFrame(
         {
-            "date": [sz_dates[0], sh_dates[1], sz_dates[1], sh_dates[0]],
-            "symbol": ["000001.SZ", "600000.SH", "000001.SZ", "600000.SH"],
+            "date": [
+                pd.Timestamp("2026-08-23"),  # ZZZZ 第一行
+                pd.Timestamp("2026-08-21"),  # ZZZZ 第二行
+                pd.Timestamp("2026-08-22"),  # AAAA 第一行
+                pd.Timestamp("2026-08-20"),  # AAAA 第二行
+            ],
+            "symbol": ["ZZZZ.SH", "ZZZZ.SH", "AAAA.SZ", "AAAA.SZ"],
             "open": [10.0] * 4,
             "high": [11.0] * 4,
             "low": [9.0] * 4,
@@ -204,29 +215,30 @@ def test_multi_symbol_sorting_by_symbol_then_timestamp() -> None:
             "volume": [100.0] * 4,
         }
     )
-    result = normalize_preload_history(frame, {"600000.SH", "000001.SZ"}, _FUTURE_NS)
+    result = normalize_preload_history(frame, {"AAAA.SZ", "ZZZZ.SH"}, _FUTURE_NS)
 
     assert result is not None
-    # 验证排序: 先按 symbol(000001.SZ < 600000.SH), 再按 timestamp
+    # 验证排序: 必须先按 symbol, 再按 timestamp
+    # 按纯 timestamp 排会得到混合的 AAAA/ZZZZ/AAAA/ZZZZ, 会失败
     symbols = [str(b.symbol) for b in result.bars]
-    assert symbols == ["000001.SZ", "000001.SZ", "600000.SH", "600000.SH"]
+    assert symbols == ["AAAA.SZ", "AAAA.SZ", "ZZZZ.SH", "ZZZZ.SH"]
     # 每个 symbol 内部的时间戳应该升序
-    sz_bars = [b for b in result.bars if b.symbol == "000001.SZ"]
-    sh_bars = [b for b in result.bars if b.symbol == "600000.SH"]
-    sz_ts = [int(b.timestamp) for b in sz_bars]
-    sh_ts = [int(b.timestamp) for b in sh_bars]
-    assert sz_ts == sorted(sz_ts)
-    assert sh_ts == sorted(sh_ts)
+    aaaa_bars = [b for b in result.bars if b.symbol == "AAAA.SZ"]
+    zzzz_bars = [b for b in result.bars if b.symbol == "ZZZZ.SH"]
+    aaaa_ts = [int(b.timestamp) for b in aaaa_bars]
+    zzzz_ts = [int(b.timestamp) for b in zzzz_bars]
+    assert aaaa_ts == sorted(aaaa_ts)
+    assert zzzz_ts == sorted(zzzz_ts)
 
 
-def test_second_precision_timestamps_are_fixed() -> None:
-    """秒级时间戳被修正为纳秒(Important 6)."""
+def test_second_precision_list_bars_not_mutated() -> None:
+    """list[Bar] 形态传入秒级戳, 数据不被改写(只告警, 不修改)."""
     from akquant import Bar
 
-    # 创建秒级戳 (Rust from_arrays 可能返回的)
-    bars_with_second_precision = [
+    # 创建秒级戳 list，用独特的 symbol
+    src_bars = [
         Bar(
-            symbol="600000.SH",
+            symbol="TEST_NOMUT.SH",
             timestamp=1692547200,  # 秒级, < 1e10
             open=10.0,
             high=11.0,
@@ -235,7 +247,7 @@ def test_second_precision_timestamps_are_fixed() -> None:
             volume=100.0,
         ),
         Bar(
-            symbol="600000.SH",
+            symbol="TEST_NOMUT.SH",
             timestamp=1692633600,
             open=10.0,
             high=11.0,
@@ -244,13 +256,18 @@ def test_second_precision_timestamps_are_fixed() -> None:
             volume=100.0,
         ),
     ]
-    result = normalize_preload_history(
-        bars_with_second_precision, {"600000.SH"}, _FUTURE_NS
-    )
+    original_ts = [b.timestamp for b in src_bars]
+
+    result = normalize_preload_history(src_bars, {"TEST_NOMUT.SH"}, _FUTURE_NS)
 
     assert result is not None
     assert len(result.bars) == 2
-    # 验证时间戳已被修正为纳秒 (秒×1e9)
-    for bar in result.bars:
-        assert bar.timestamp >= 1.6e18  # 有效纳秒范围
-        assert bar.timestamp < 2e18
+    # 最重要：验证调用方传入的 src 没被改写(只告警, 不改数据)
+    # 这验证了新问题 2 的修复：不就地改调用方的数据
+    assert src_bars[0].timestamp == original_ts[0]
+    assert src_bars[1].timestamp == original_ts[1]
+    # 结果中的 bars 应该指向同一对象(list 的浅拷贝)
+    assert result.bars[0] is src_bars[0]
+    assert result.bars[1] is src_bars[1]
+    # 验证其他字段也没被改
+    assert src_bars[0].open == 10.0
