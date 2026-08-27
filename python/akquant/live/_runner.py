@@ -2,11 +2,23 @@
 import math
 import random
 import re
+import signal
 import threading
 import time
 import uuid
 from collections import deque
-from typing import Any, Callable, Dict, List, Optional, Type, Union, cast
+from contextlib import contextmanager
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Type,
+    Union,
+    cast,
+)
 
 from ..akquant import Bar, DataFeed, Engine, Instrument
 from ..backtest import BacktestStreamEvent
@@ -741,10 +753,14 @@ class LiveRunner:
         # 几十行日志淹没(实测反馈里"任务看着跑完了其实没跑"即此)。
         stop_reason = "Manual Stop"
         try:
-            self.engine.run(strategy_instance, show_progress=show_progress)
+            # SIGTERM(平台的"停止"按钮通常就是它)转成 KeyboardInterrupt, 复用
+            # 下面这条收尾路径; guard 只包主循环, 收尾期间恢复原 handler。
+            with self._termination_signal_guard():
+                self.engine.run(strategy_instance, show_progress=show_progress)
         except KeyboardInterrupt:
             logger.info(
-                "Stopping live runner by user interrupt or duration limit",
+                "Stopping live runner by user interrupt, termination signal"
+                " or duration limit",
                 extra=self._runner_log_extra(phase="live"),
             )
         except Exception as exc:
@@ -763,6 +779,67 @@ class LiveRunner:
             self._stop_signal_source()
             self._stop_broker_dispatcher()
             self._print_summary(stop_reason)
+
+    @contextmanager
+    def _termination_signal_guard(self) -> Iterator[None]:
+        """会话主循环期间接住 SIGTERM, 转成 ``KeyboardInterrupt`` 走正常收尾.
+
+        补的是"任务手动停止不触发 ``on_stop``"这条反馈的最后一段: ``run()``
+        的 ``finally`` 覆盖正常结束 / ``KeyboardInterrupt`` / 异常中止三条路径,
+        但平台若用 ``terminate()`` 停任务, 进程直接死在默认 SIGTERM 处理里,
+        ``finally`` 根本不执行 —— ``on_stop`` 里的撤单/平仓全部落空。
+
+        handler 只抛 ``KeyboardInterrupt``, 不在信号处理器里跑收尾逻辑: 撤单、
+        平仓、打摘要都要在正常栈上跑, 而 ``run()`` 已经有一条被 ``duration``
+        与 Ctrl+C 验证过的 ``KeyboardInterrupt`` 收尾路径(见
+        ``_apply_time_limit``), 复用它比新开一条停止机制可靠。
+
+        **只包主循环那一句**, 收尾阶段刻意恢复原 handler: 收尾期间再来一个
+        SIGTERM 就按原行为(通常是直接终止)处理, 对齐"再按一次强制退出"的惯例,
+        否则第二个信号会把 ``on_stop`` 的撤单打断在半路。
+
+        **退出必须原样恢复**: ``run_live`` 可能被嵌进宿主进程(平台的任务进程里
+        不止我们一个组件), 留着不还就是污染全局状态。
+
+        两处已知覆盖不到的情况, 都不是本函数能解决的:
+
+        - ``kill -9``(SIGKILL)与 Windows ``TerminateProcess``: 进程不经用户态
+          代码即被回收, 任何框架都无解, 需要平台改成优雅停止。Windows 上
+          ``signal.signal(SIGTERM, ...)`` 允许注册但实际不会被 ``TerminateProcess``
+          递送, 因此那边这层是"装上了但用不上"。
+        - 非主线程: ``signal.signal`` 只能在主线程调用, 平台把 ``run_live`` 跑在
+          线程池里时装不上。此时**只告警并放行** —— 收不到 SIGTERM 收尾远好过
+          让任务根本起不来。
+        """
+
+        def _on_terminate(signum: int, frame: Any) -> None:
+            raise KeyboardInterrupt(f"received signal {signum} (SIGTERM)")
+
+        installed = False
+        previous: Any = None
+        try:
+            previous = signal.signal(signal.SIGTERM, _on_terminate)
+            installed = True
+        except (ValueError, OSError, AttributeError) as exc:
+            # ValueError: 非主线程; OSError/AttributeError: 平台不支持该信号。
+            logger.warning(
+                "无法注册 SIGTERM handler (%s): 平台若用 terminate() 停任务,"
+                " on_stop 不会触发。run_live 跑在非主线程时属预期",
+                exc,
+                extra=self._runner_log_extra(phase="live"),
+            )
+        try:
+            yield
+        finally:
+            if installed:
+                try:
+                    signal.signal(signal.SIGTERM, previous)
+                except (ValueError, OSError):
+                    logger.debug(
+                        "恢复原 SIGTERM handler 失败",
+                        exc_info=True,
+                        extra=self._runner_log_extra(phase="live"),
+                    )
 
     def _build_strategy_instance(self, strategy_input: Any) -> Strategy:
         resolved_strategy_input = resolve_strategy_input(
@@ -1383,12 +1460,16 @@ class LiveRunner:
         )
         self._broker_recovery_last_error_key = ""
         self._broker_baseline_done = False
-        # 盘中周期性丢弃计数汇总(挂在全量 sync 那一档): 记住上次上报的累计值,
-        # 只在有增量时才打 INFO, 见 _report_dropped_event_counts_if_changed。
+        # 盘中周期性丢弃汇总(挂在全量 sync 那一档): 累计值只作日志上下文,
+        # 是否打 INFO 由"外来标的集合是否出现新成员"决定, 见
+        # _report_dropped_event_counts_if_changed(两个累计值在稳态下都必然
+        # 线性增长, 当触发条件就是每 30s 刷屏)。
         self._broker_last_reported_drop_counts: dict[str, int] = {
             "foreign_symbol": 0,
             "duplicate_order": 0,
         }
+        # 已在盘中汇总里点名过的外来标的, 同一标的只报一次。
+        self._broker_reported_foreign_symbols: set[str] = set()
         self._broker_runtime = BrokerRuntime(
             event_lock=self._broker_event_lock,
             event_store=self._broker_events,
@@ -1831,52 +1912,87 @@ class LiveRunner:
             time.sleep(self._broker_recovery_interval_sec)
 
     def _report_dropped_event_counts_if_changed(self) -> None:
-        """全量 sync 节奏下汇总一次丢弃计数增量, 只在有增量时才打 INFO.
+        """全量 sync 节奏下汇总外来标的丢弃, 只在出现**新标的**时才打 INFO.
 
-        **触发条件只看 ``foreign_symbol``**: 账户有挂单且状态未变是实盘最
-        常见的稳态(挂着限价单等成交), 而每次全量 sync 都会把全部挂单重新推
-        进 ``queue_event``、逐个被状态指纹拦下——``duplicate_order`` 在这种
-        稳态下**每轮必然 +N**(N = 挂单数)。把它也纳入触发条件, 等于把
-        "每 tick 刷屏"稀释成"每 30s 刷屏", 不是消除, 与刚修掉的"挂单每秒被
-        重复推送"是同一类失败模式。``duplicate_order`` 只作为日志里的上下文
-        累计值(排查时不用再翻别处)与会话收尾摘要的总计, 不参与是否打日志
-        的判断。``foreign_symbol`` 配置正确时应恒为 0, 任何增长都值得盘中
-        立刻看到, 因此单独作为触发条件。
+        **触发条件是"外来标的集合出现新成员", 不是任何计数的增量。**
+        两个累计值都在稳态下必然线性增长, 都不能当触发条件:
 
-        计数读取要做异常隔离, 与 ``_print_summary`` 对同一方法的隔离方式一致:
-        ``dropped_event_counts()`` 抛异常或返回非 dict-like 值只记一条 debug
-        并跳过本次汇总, 绝不能让它拖垮 recovery 循环本身——循环挂掉意味着
-        断线不再重连、挂单不再补齐, 比看不到计数严重得多。
+        - ``duplicate_order``: 账户有挂单且状态未变是实盘最常见的稳态(挂着
+          限价单等成交), 每轮全量 sync 把全部挂单重推进 ``queue_event``、
+          逐个被状态指纹拦下 ⇒ **每轮必然 +N**(N = 挂单数)。
+        - ``foreign_symbol``: 同形。计数点在 ``queue_event`` 最前面、**早于
+          一切去重**, 而柜台的 ``sync_open_orders``/``sync_today_trades``
+          返回的是**全账户**数据 ⇒ 同账户下只要存在非挂载标的的挂单(别的
+          任务、人工下单终端、隔夜挂单), 同一笔每轮 +1。
+
+        把任何一个当触发条件, 都只是把"每 tick 刷屏"稀释成"每 30s 刷屏",
+        不是消除 —— 与当初要修的"挂单每秒被重复推送"是同一类失败模式。
+        2026-08-26 的反馈("日志中有大量输出")正是 ``foreign_symbol`` 踩了
+        这个坑, 且旧文案断言"配置正确应恒为 0"把对接方引向一个不存在的
+        归一化 bug: 未传 ``session_tag`` 时**不启用**严格任务隔离(见
+        ``BrokerEventBridge._session_layer_verdict``), 别的任务的委托不走
+        ``foreign_task`` 而是落进 ``foreign_symbol``, 它在默认配置下就是
+        正常的过滤工作量。
+
+        真正有诊断价值的是**被挡掉的标的是谁**: 若点名的标的是本任务挂载
+        的, 才是配置或匹配问题。故按标的集合的新成员触发, 与逐条丢弃日志
+        ``BrokerEventBridge._log_foreign_symbol``(首次 WARNING 点名, 之后
+        降 DEBUG)同一套防刷屏口径; 两个累计值退化为日志里的上下文, 排查时
+        不用再翻别处。
+
+        bridge 没有 ``dropped_foreign_symbol_names`` 访问器时**静默**(只记
+        一条 debug), 不退回按计数触发 —— 那等于保留上面刚修掉的稳态刷屏,
+        而会话收尾摘要仍有完整总计, 因此静默是安全的一侧。
+
+        两个访问器都要做异常隔离, 与 ``_print_summary`` 对同一方法的隔离
+        方式一致: 抛异常或返回非预期形状只记一条 debug 并跳过本次汇总,
+        绝不能让它拖垮 recovery 循环本身——循环挂掉意味着断线不再重连、
+        挂单不再补齐, 比看不到计数严重得多。
         """
         bridge = getattr(self, "_broker_event_bridge", None)
         if bridge is None or not hasattr(bridge, "dropped_event_counts"):
+            return
+        if not hasattr(bridge, "dropped_foreign_symbol_names"):
+            logger.debug(
+                "broker event bridge has no dropped_foreign_symbol_names(),"
+                " skipping periodic drop-count summary",
+                extra=self._runner_log_extra(phase="gateway"),
+            )
             return
         try:
             counts = bridge.dropped_event_counts()
             foreign_total = int(counts.get("foreign_symbol", 0))
             duplicate_total = int(counts.get("duplicate_order", 0))
+            seen_symbols = {
+                str(symbol) for symbol in bridge.dropped_foreign_symbol_names()
+            }
         except Exception:
             logger.debug(
-                "dropped_event_counts() failed or returned an unexpected shape,"
-                " skipping periodic drop-count summary",
+                "dropped_event_counts()/dropped_foreign_symbol_names() failed or"
+                " returned an unexpected shape, skipping periodic drop-count summary",
                 exc_info=True,
                 extra=self._runner_log_extra(phase="gateway"),
             )
             return
 
         last = self._broker_last_reported_drop_counts
-        foreign_delta = foreign_total - last.get("foreign_symbol", 0)
         last["foreign_symbol"] = foreign_total
         last["duplicate_order"] = duplicate_total
-        if foreign_delta <= 0:
+        reported = self._broker_reported_foreign_symbols
+        fresh = seen_symbols - reported
+        if not fresh:
             return
+        reported |= fresh
         logger.info(
-            "Broker event drops (periodic): foreign_symbol total=%s (+%s; "
-            "若配置正确应恒为 0, 出现增长请怀疑标的归一化把自己的回报也挡掉"
-            "了); duplicate_order total=%s (仅供参考, recovery 重放挂单的"
-            "预期行为, 不代表故障, 不作为触发条件, 会话收尾摘要有完整总计)",
+            "Broker event drops (periodic): 新增被过滤的非挂载标的 %s (本会话累计"
+            " %s 个); foreign_symbol total=%s, duplicate_order total=%s "
+            "(两个累计值都会随每轮全量 sync 对同一笔委托重复累加, 只作上下文, "
+            "不代表故障 —— 同账户下别的任务/人工终端的委托按标的被过滤掉是预期"
+            "行为。仅当上面点名的标的**是本任务挂载的标的**时, 才说明标的匹配"
+            "或配置有问题)",
+            sorted(fresh),
+            len(reported),
             foreign_total,
-            foreign_delta,
             duplicate_total,
             extra=self._runner_log_extra(phase="gateway"),
         )
@@ -2467,17 +2583,31 @@ class LiveRunner:
                 # dropped_event_counts() 本身抛异常一样冒泡到最外层大 try。
                 try:
                     counts = bridge.dropped_event_counts()
-                    # 这两行是过滤/去重的可见性兜底: 日志会被降级淹没, 摘要不会。
-                    # foreign_symbol 异常大 ⇒ 标的归一化可能把自己的回报也挡掉了。
+                    # 这几行是过滤/去重的可见性兜底: 日志会被降级淹没, 摘要不会。
+                    # 三个计数在稳态下都会持续增长(计数点在 queue_event 入口、
+                    # 早于去重, 而全量 sync 返回全账户数据 ⇒ 同一笔委托每轮
+                    # 重复 +1), 都不是故障信号 —— 判断是否真有标的匹配问题看
+                    # 下面点名的标的是不是本任务挂载的, 别看数值大小。
                     foreign_line = (
                         f"Dropped (foreign symbol): {counts.get('foreign_symbol', 0)}"
                     )
+                    # 点名被挡的标的: 计数每轮 sync 重复累加, 单看数值分不清
+                    # "账户里有别人的挂单"(预期)与"匹配把自己的回报挡掉了"
+                    # (故障), 名单能让对接方一眼看出有没有自己挂载的标的。
+                    blocked_symbols = (
+                        bridge.dropped_foreign_symbol_names()
+                        if hasattr(bridge, "dropped_foreign_symbol_names")
+                        else set()
+                    )
+                    if blocked_symbols:
+                        names = ", ".join(sorted(str(s) for s in blocked_symbols))
+                        foreign_line += (
+                            f" [{names}]"
+                            " (若其中有本任务挂载的标的, 才说明标的匹配有问题)"
+                        )
                     duplicate_line = (
                         f"Dropped (duplicate order): {counts.get('duplicate_order', 0)}"
                     )
-                    # foreign_task: 被会话标记严格拒绝的"别的任务的单", 多任务
-                    # 稳态下必然持续增长, 是正常工作量而非故障信号(与
-                    # foreign_symbol 的含义相反), 见 dropped_event_counts()。
                     foreign_task_line = (
                         f"Dropped (foreign task): {counts.get('foreign_task', 0)}"
                     )

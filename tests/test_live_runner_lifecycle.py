@@ -5,6 +5,7 @@
 验证收尾期回调真的被触发。
 """
 
+import signal
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -222,6 +223,61 @@ def test_live_run_keyboard_interrupt_triggers_on_stop(patched_live: None) -> Non
     runner.run(cash=1000.0)
 
     assert events.count("on_stop") == 1
+
+
+def test_live_run_sigterm_triggers_on_stop(patched_live: None) -> None:
+    """收到 SIGTERM(平台"停止"按钮的常见实现)也要触发 on_stop.
+
+    这是「任务手动停止, 没有触发 on_stop 回调」那条反馈的最后一段: 此前全仓
+    零个 ``signal.signal`` ⇒ 平台 ``terminate()`` 时进程死在默认 SIGTERM
+    处理里, ``run()`` 的 ``finally`` 根本不执行。现在
+    ``_termination_signal_guard`` 把它转成 ``KeyboardInterrupt``, 走与
+    ``duration`` / Ctrl+C 同一条收尾路径。
+
+    ``raise_signal`` 是同进程 ``raise()``, 会执行已注册的 handler, 不走
+    Windows ``TerminateProcess`` 那条杀不住的路径 —— 因此这个测试在两个平台
+    都成立。
+
+    测试自己先装一个**哨兵 handler**: 若框架没装自己的(即回归), 信号会被哨兵
+    接住, 于是主循环继续往下跑、``resumed_after_signal`` 进 ``events``, 断言
+    以普通的测试失败收场。不装哨兵的话回归表现为"SIGTERM 直达默认处理、
+    pytest 进程被静默杀掉"(实测确认过), 检出力一样但会炸掉整个测试会话。
+    哨兵同时验证了 guard 退出时把 handler **原样还了回来**。
+    """
+    events: list[str] = []
+
+    class _SigtermEngine(_FakeEngine):
+        """在主循环里模拟平台发来的 SIGTERM."""
+
+        def run(self, strategy: Any, show_progress: bool = False) -> None:
+            if hasattr(strategy, "_on_start_internal"):
+                strategy._on_start_internal()
+            self.events.append("engine.run")
+            signal.raise_signal(signal.SIGTERM)
+            events.append("resumed_after_signal")  # 不应到达
+
+    sentinel_hits: list[int] = []
+
+    def _sentinel(signum: int, frame: Any) -> None:
+        sentinel_hits.append(signum)
+
+    runner = LiveRunner(
+        strategy_cls=_make_recording_strategy(events), instruments=[], broker="ctp"
+    )
+    runner.engine = cast(Any, _SigtermEngine())
+
+    previous = signal.signal(signal.SIGTERM, _sentinel)
+    try:
+        runner.run(cash=1000.0)  # 不应向外抛
+        # guard 必须把哨兵原样装回去(否则就是污染了宿主进程的 handler)。
+        assert signal.getsignal(signal.SIGTERM) is _sentinel
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    assert events.count("on_stop") == 1
+    assert "resumed_after_signal" not in events
+    # 框架的 handler 抢在哨兵之前: 哨兵一次都不该被调到。
+    assert sentinel_hits == []
 
 
 def test_live_run_error_abort_triggers_on_stop_and_keeps_summary(
