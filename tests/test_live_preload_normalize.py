@@ -4,7 +4,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from akquant.live._preload import normalize_preload_history
+from akquant.live._preload import _MIN_SANE_TIMESTAMP_NS, normalize_preload_history
 
 
 def _frame(symbol: str = "600000.SH", rows: int = 3) -> pd.DataFrame:
@@ -253,7 +253,7 @@ def test_dataframe_second_level_timestamps_are_flagged_not_fixed(caplog: Any) ->
         }
     )
     raw_ts = [int(t) for t in dataframe_to_arrays(frame)[0]]
-    assert raw_ts[0] < 1_000_000_000_000_000  # 前置条件: 确实落在阈值外
+    assert raw_ts[0] < _MIN_SANE_TIMESTAMP_NS  # 前置条件: 确实落在阈值外
 
     with caplog.at_level("WARNING", logger="akquant.live.preload"):
         result = normalize_preload_history(frame, {"BADTS.SH"}, _FUTURE_NS)
@@ -263,6 +263,44 @@ def test_dataframe_second_level_timestamps_are_flagged_not_fixed(caplog: Any) ->
     assert [r for r in caplog.records if "BADTS.SH" in r.getMessage()] != []
     assert [r for r in caplog.records if "落在合理纳秒区间之外" in r.getMessage()] != []
     # 关键: bars 的时间戳保持解析后的原值, 没有被任何 ×1e9 之类的逻辑改写
+    assert [int(b.timestamp) for b in result.bars] == raw_ts
+
+
+def test_dataframe_microsecond_timestamps_are_flagged(caplog: Any) -> None:
+    """DataFrame 路径喂入微秒级整数时间戳 -> 也要被点名 WARNING.
+
+    微秒级当前时间戳量级约 1.756e15, 落在旧阈值 1e15 之上会被静默放过(对应
+    的真实解析结果是 1970-01-21 附近), 但落在新阈值 1e17 之下, 必须被拦住。
+    微秒精度并不罕见(交易所 us 行情、``df['date'].astype('int64') // 1000``
+    这类写法), 告警文案也已从"疑似秒/毫秒级"改成"疑似秒/毫秒/微秒级"。
+    """
+    from akquant.normalize import dataframe_to_arrays
+
+    us_timestamp = 1_756_000_000_000_000  # 微秒级, 真实量级
+    frame = pd.DataFrame(
+        {
+            "date": [us_timestamp, us_timestamp + 1_000_000, us_timestamp + 2_000_000],
+            "symbol": ["USTS.SH"] * 3,
+            "open": [10.0] * 3,
+            "high": [11.0] * 3,
+            "low": [9.0] * 3,
+            "close": [10.5, 11.5, 12.5],
+            "volume": [100.0] * 3,
+        }
+    )
+    raw_ts = [int(t) for t in dataframe_to_arrays(frame)[0]]
+    # 前置条件: 落在旧阈值 1e15 之上(不会被 1e15 拦住), 但落在新阈值 1e17 之下
+    assert raw_ts[0] > 1_000_000_000_000_000
+    assert raw_ts[0] < _MIN_SANE_TIMESTAMP_NS
+
+    with caplog.at_level("WARNING", logger="akquant.live.preload"):
+        result = normalize_preload_history(frame, {"USTS.SH"}, _FUTURE_NS)
+
+    assert result is not None
+    assert len(result.bars) == 3
+    assert [r for r in caplog.records if "USTS.SH" in r.getMessage()] != []
+    assert [r for r in caplog.records if "落在合理纳秒区间之外" in r.getMessage()] != []
+    # 只告警不修正: bars 的时间戳仍是解析后的原值
     assert [int(b.timestamp) for b in result.bars] == raw_ts
 
 
@@ -286,7 +324,7 @@ def test_invalid_timestamp_list_bars_not_mutated() -> None:
         ),
     ]
     original_ts = src_bars[0].timestamp
-    assert original_ts < 1_000_000_000_000_000  # 前置条件: 确实落在阈值外
+    assert original_ts < _MIN_SANE_TIMESTAMP_NS  # 前置条件: 确实落在阈值外
 
     result = normalize_preload_history(src_bars, {"NOMUT.SH"}, _FUTURE_NS)
 
