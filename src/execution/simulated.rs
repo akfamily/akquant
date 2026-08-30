@@ -317,6 +317,7 @@ impl SimulatedExecutionClient {
     {
         let mut reports = Vec::new();
         let mut projected_portfolio = ctx.portfolio.clone();
+        let mut projected_available_positions = ctx.portfolio.available_positions.as_ref().clone();
         let stock_margin_ratio_override = stock_margin_ratio_override(ctx.risk_config);
         let mut current_free_margin = calculate_free_margin(
             &projected_portfolio,
@@ -552,6 +553,47 @@ impl SimulatedExecutionClient {
                                 }
                             }
 
+                            if replacement_report.is_none()
+                                && let Event::ExecutionReport(_report_order, Some(trade)) = &report
+                                && trade.side == crate::model::OrderSide::Sell
+                                && matches!(
+                                    instrument.asset_type,
+                                    AssetType::Stock | AssetType::Fund
+                                )
+                                && ctx.risk_config.active
+                                && !(ctx.risk_config.is_margin_account()
+                                    && ctx.risk_config.enable_short_sell)
+                            {
+                                let available = projected_available_positions
+                                    .get(&trade.symbol)
+                                    .copied()
+                                    .unwrap_or(Decimal::ZERO);
+                                if available < trade.quantity {
+                                    let mut rejected_order = order_snapshot.clone();
+                                    rejected_order.status = crate::model::OrderStatus::Rejected;
+                                    rejected_order.updated_at = ctx.current_time;
+                                    rejected_order.reject_reason = format!(
+                                        "Risk: Insufficient available position for {}. Available: {}, Pending Sell: 0, Required: {}",
+                                        trade.symbol, available, trade.quantity
+                                    );
+                                    log::warn!(
+                                        "{}",
+                                        render_log_message(
+                                            format!(
+                                                "Rejected order: {}",
+                                                rejected_order.reject_reason
+                                            ),
+                                            Self::order_log_context(
+                                                &rejected_order,
+                                                ctx.current_time,
+                                            ),
+                                        )
+                                    );
+                                    replacement_report =
+                                        Some(Event::ExecutionReport(rejected_order, None));
+                                }
+                            }
+
                             if let Some(new_report) = replacement_report {
                                 report = new_report;
                             }
@@ -559,6 +601,17 @@ impl SimulatedExecutionClient {
                             if let Event::ExecutionReport(_, Some(ref trade)) = report
                                 && trade.quantity > Decimal::ZERO
                             {
+                                if matches!(
+                                    instrument.asset_type,
+                                    AssetType::Stock | AssetType::Fund
+                                ) {
+                                    ctx.market_model.update_available_position(
+                                        &mut projected_available_positions,
+                                        instrument,
+                                        trade.quantity,
+                                        trade.side,
+                                    );
+                                }
                                 let mut prices_for_margin = ctx.last_prices.clone();
                                 prices_for_margin.insert(trade.symbol.clone(), trade.price);
                                 let commission = ctx.market_model.calculate_commission(

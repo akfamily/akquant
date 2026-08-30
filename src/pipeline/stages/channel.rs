@@ -63,7 +63,13 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
             timezone_name: engine.timezone_name.as_deref(),
             timezone_offset: engine.timezone_offset,
         };
-        engine.risk_manager.check_and_adjust(&mut order, &ctx)
+        engine
+            .risk_manager
+            .check_and_adjust_with_delayed_position_check(
+                &mut order,
+                &ctx,
+                !engine.execution_model.is_live(),
+            )
     };
     if let Err(err) = check_result {
         order.status = OrderStatus::Rejected;

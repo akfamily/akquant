@@ -50,6 +50,16 @@ pub trait RiskRule: Send + Sync + Debug {
     /// Check if the order passes the risk rule
     fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError>;
 
+    /// Whether this rule can be deferred until a delayed order is executed.
+    ///
+    /// Delayed orders (for example, ``NextOpen``) are checked once when they
+    /// are submitted and again against the state at their actual fill. Rules
+    /// that depend on fill-time state may opt out of the submission check so
+    /// that they do not reject an order using a stale snapshot.
+    fn defer_for_delayed_execution(&self) -> bool {
+        false
+    }
+
     /// Get the name of the rule
     fn name(&self) -> &'static str;
 

@@ -191,13 +191,55 @@ impl RiskManager {
             .push(Box::new(OptionGreekRiskRule));
     }
 
+    fn should_defer_available_position_check(
+        order: &Order,
+        ctx: &crate::context::EngineContext,
+    ) -> bool {
+        if order.side != crate::model::OrderSide::Sell {
+            return false;
+        }
+
+        let Some(instrument) = ctx.instruments.get(&order.symbol) else {
+            return false;
+        };
+        if !matches!(instrument.asset_type, AssetType::Stock | AssetType::Fund) {
+            return false;
+        }
+
+        // The order will not be matched on its submission timestamp when the
+        // policy uses a delayed bar offset. Its available-position check must
+        // therefore use the portfolio state at the eventual execution event,
+        // after any T+1 settlement has run.
+        order
+            .fill_policy_override
+            .unwrap_or(ctx.execution_policy_core)
+            .bar_offset
+            >= 1
+    }
+
     pub fn check_and_adjust(
         &self,
         order: &mut Order,
         ctx: &crate::context::EngineContext,
     ) -> Result<(), AkQuantError> {
+        self.check_and_adjust_with_delayed_position_check(order, ctx, false)
+    }
+
+    pub(crate) fn check_and_adjust_with_delayed_position_check(
+        &self,
+        order: &mut Order,
+        ctx: &crate::context::EngineContext,
+        allow_deferred_position_check: bool,
+    ) -> Result<(), AkQuantError> {
+        let defer_available_position_check = allow_deferred_position_check
+            && Self::should_defer_available_position_check(order, ctx);
+
         // 1. Initial Check
-        if let Err(err) = self.check_internal(order, ctx) {
+        if let Err(err) = self.check_internal_with_deferred_position_check(
+            order,
+            ctx,
+            defer_available_position_check,
+        ) {
             let err_msg = err.to_string();
             // Check for insufficient cash/margin to attempt auto-reduction
             // This logic was moved from OrderManager.
@@ -252,7 +294,11 @@ impl RiskManager {
                     if new_qty > Decimal::ZERO && new_qty < order.quantity {
                         order.quantity = new_qty;
                         // Re-check with new quantity
-                        return self.check_internal(order, ctx);
+                        return self.check_internal_with_deferred_position_check(
+                            order,
+                            ctx,
+                            defer_available_position_check,
+                        );
                     }
                 }
             }
@@ -265,6 +311,15 @@ impl RiskManager {
         &self,
         order: &Order,
         ctx: &crate::context::EngineContext,
+    ) -> Result<(), AkQuantError> {
+        self.check_internal_with_deferred_position_check(order, ctx, false)
+    }
+
+    fn check_internal_with_deferred_position_check(
+        &self,
+        order: &Order,
+        ctx: &crate::context::EngineContext,
+        defer_available_position_check: bool,
     ) -> Result<(), AkQuantError> {
         if !self.config.active {
             return Ok(());
@@ -296,6 +351,9 @@ impl RiskManager {
         // Check asset-specific rules
         if let Some(rules) = self.asset_rules.get(&instrument.asset_type) {
             for rule in rules {
+                if defer_available_position_check && rule.defer_for_delayed_execution() {
+                    continue;
+                }
                 rule.check(order, &risk_ctx)?;
             }
         }
@@ -312,6 +370,10 @@ impl RiskManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::market::{SimpleMarket, SimpleMarketConfig};
+    use crate::model::instrument::{InstrumentEnum, StockInstrument};
+    use crate::model::{ExecutionPolicyCore, OrderSide, OrderType, TradingSession};
+    use std::sync::Arc;
 
     #[test]
     fn risk_rules_cover_futures_margin_account() {
@@ -330,5 +392,59 @@ mod tests {
                 .any(|rule| rule.name() == "FuturesMarginRule"),
             "FuturesMarginRule must be registered for AssetType::Futures"
         );
+    }
+
+    #[test]
+    fn public_check_and_adjust_rejects_unavailable_delayed_stock() {
+        let symbol = "AAPL".to_string();
+        let instrument = Instrument {
+            asset_type: AssetType::Stock,
+            inner: InstrumentEnum::Stock(StockInstrument {
+                symbol: symbol.clone(),
+                lot_size: Decimal::from(100),
+                tick_size: Decimal::new(1, 2),
+                expiry_date: None,
+                sellable_after_days: 1,
+            }),
+        };
+        let instruments = HashMap::from([(symbol.clone(), instrument)]);
+        let portfolio = Portfolio {
+            cash: Decimal::from(100_000),
+            positions: Arc::new(HashMap::from([(symbol.clone(), Decimal::from(100))])),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let market_model = SimpleMarket::from_config(SimpleMarketConfig::default());
+        let trade_tracker = crate::analysis::TradeTracker::new();
+        let manager = RiskManager::new();
+        let mut order = Order::test_new(
+            "sell-unavailable",
+            &symbol,
+            OrderSide::Sell,
+            OrderType::Limit,
+            Decimal::from(100),
+        );
+        order.price = Some(Decimal::from(10));
+        order.fill_policy_override = Some(ExecutionPolicyCore::default());
+        let prices = HashMap::from([(symbol.clone(), Decimal::from(10))]);
+        let ctx = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &prices,
+            trade_tracker: &trade_tracker,
+            market_model: &market_model,
+            execution_policy_core: ExecutionPolicyCore::default(),
+            bar_index: 0,
+            current_time: 0,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+            risk_config: &manager.config,
+            timezone_name: None,
+            timezone_offset: 0,
+        };
+
+        let err = manager
+            .check_and_adjust(&mut order, &ctx)
+            .expect_err("public check must retain submission-time availability checks");
+        assert!(err.to_string().contains("Insufficient available position"));
     }
 }

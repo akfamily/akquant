@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import akquant
 import pandas as pd
-from akquant import AssetType, Bar, Engine, Instrument, Strategy
+from akquant import AssetType, Bar, Engine, Instrument, Strategy, run_backtest
 
 
 class TPlusOneStrategy(Strategy):
@@ -155,3 +155,68 @@ def test_t_plus_one_mechanics() -> None:
         "Day 2 Available position should be 100"
     )
     assert strategy.day_2_sell_filled, "Day 2 Sell should be filled"
+
+
+def test_next_open_t_plus_one_rebalance_checks_position_at_fill_time() -> None:
+    """A next-open rebalance may sell a position unlocked before its fill."""
+    days = [
+        pd.Timestamp(f"2023-01-{day:02d} 10:00:00", tz="Asia/Shanghai")
+        for day in (3, 4, 5, 6, 9)
+    ]
+
+    def flat(symbol: str) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "date": days,
+                "open": 1.0,
+                "high": 1.0,
+                "low": 1.0,
+                "close": 1.0,
+                "volume": 1e6,
+                "symbol": symbol,
+            }
+        )
+
+    class Rotate(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.step = 0
+
+        def on_cross_section(self, trading_date: object, timestamp: int) -> None:
+            if self.step == 0:
+                self.rebalance_weights({"AAA": 0.99}, liquidate_unmentioned=True)
+            elif self.step == 1:
+                self.rebalance_weights({"BBB": 0.99}, liquidate_unmentioned=True)
+            self.step += 1
+
+    result = run_backtest(
+        data={"AAA": flat("AAA"), "BBB": flat("BBB")},
+        strategy=Rotate,
+        symbols=["AAA", "BBB"],
+        initial_cash=1_000_000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=100,
+        history_depth=2,
+        t_plus_one=True,
+        show_progress=False,
+    )
+
+    orders = result.orders_df.copy()
+    orders["symbol"] = orders["symbol"].astype(str).str.upper()
+    orders["side"] = orders["side"].astype(str).str.lower()
+    orders["status"] = orders["status"].astype(str).str.lower()
+    observed_orders = sorted(
+        zip(orders["symbol"], orders["side"], orders["status"], strict=True)
+    )
+    assert observed_orders == [
+        ("AAA", "buy", "filled"),
+        ("AAA", "sell", "filled"),
+        ("BBB", "buy", "filled"),
+    ]
+
+    final_positions = result.positions.iloc[-1]
+    assert float(final_positions.get("AAA", 0.0)) == 0.0
+    assert float(final_positions.get("BBB", 0.0)) > 0.0
