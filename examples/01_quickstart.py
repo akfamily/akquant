@@ -144,8 +144,10 @@ if not equity_curve.empty:
         print(f"Annualized Return (Rust):   {result.metrics.annualized_return:.6f}")
 
     # 3. Volatility
-    # Resample to daily (end of day)
-    daily_equity = equity_curve.resample("D").last().ffill()
+    # Resample to daily (end of day), keeping only real trading days so the
+    # manual figure matches the Rust metric (ffill would inject 0.0 returns
+    # on weekends/holidays and understate volatility by ~15%).
+    daily_equity = equity_curve.resample("D").last().dropna()
     daily_returns = daily_equity.pct_change().dropna()
     volatility = daily_returns.std() * (252**0.5)
     print(f"Volatility (Manual): {volatility:.6f}")

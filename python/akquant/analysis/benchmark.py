@@ -26,11 +26,16 @@ def resolve_equity_curve(result: Any, curve_freq: str) -> pd.Series:
 
 
 def build_daily_returns_from_equity(equity_curve: pd.Series) -> pd.Series:
-    """Build daily returns from an equity curve."""
+    """Build daily returns from an equity curve.
+
+    口径对齐 Rust ``src/analysis/result.rs::calculate``: 只保留真实存在行情的
+    交易日 (``dropna`` 而非 ``ffill``, 后者会给非交易日补出 0.0 伪收益), 且首日
+    不产生收益点。
+    """
     if equity_curve.empty:
         return pd.Series(dtype=float)
-    daily_equity = equity_curve.resample("D").last().ffill()
-    returns = daily_equity.pct_change().fillna(0.0)
+    daily_equity = equity_curve.resample("D").last().dropna()
+    returns = daily_equity.pct_change().dropna()
     return cast(pd.Series, returns)
 
 

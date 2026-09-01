@@ -258,12 +258,16 @@ class MergedResult:
 
     @property
     def daily_returns(self) -> pd.Series:
-        """Daily returns derived from the merged equity curve."""
+        """Daily returns derived from the merged equity curve.
+
+        口径对齐 Rust ``src/analysis/result.rs::calculate`` 与同文件
+        ``_recompute_metrics``: 只保留真实存在行情的交易日, 首日不产生收益点。
+        """
         equity = self._equity_curve
         if equity.empty:
             return pd.Series(dtype=float)
-        daily_equity = equity.resample("D").last().ffill()
-        return cast(pd.Series, daily_equity.pct_change().fillna(0.0))
+        daily_equity = equity.resample("D").last().dropna()
+        return cast(pd.Series, daily_equity.pct_change().dropna())
 
     @property
     def orders_df(self) -> pd.DataFrame:

@@ -48,9 +48,9 @@ def plot_dashboard(
     if len(equity_df) < 2:
         daily_returns = pd.Series(dtype=float)
     else:
-        # Resample to daily, forward fill equity (mark-to-market),
-        # then calculate returns
-        daily_returns = equity_df["equity"].resample("D").last().ffill().pct_change()
+        # Resample to daily end-of-day equity, keeping only real trading days
+        # (dropna, not ffill —— ffill 会给非交易日补出 0.0 伪收益), then returns
+        daily_returns = equity_df["equity"].resample("D").last().dropna().pct_change()
 
     # Create Layout
     # Row 1: Equity

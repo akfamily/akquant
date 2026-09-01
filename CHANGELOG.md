@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`daily_returns` 不再给非交易日补出 0.0 伪收益，Python 侧口径与 Rust `metrics` 对齐（`__engine_rule_version__` 升至 1.5.3）**：日频收益此前用 `resample("D").last().ffill()`，把周末与节假日也补成一个权益点，`pct_change()` 后产生大量 0.0 的**伪收益**。实测一年期日线回测：262 个交易日被拉成 366 个点，其中 **28.7% 是人造零**，年化波动率从 0.194 稀释到 0.164、Sharpe 从 0.662 掉到 0.560（**偏差 15.5%**）。
+  这不是"少数场景的精度问题"，而是**同一份回测里存在两个互相矛盾的 Sharpe**：Rust 侧 `src/analysis/result.rs::calculate` 用 `BTreeMap<NaiveDate, _>` 按实际出现的本地自然日聚合权益，非交易日根本不进 map、从来没有伪零，所以 `metrics.sharpe_ratio` 一直是对的；而 HTML 报告里的滚动 Sharpe、收益率分布图、QuantStats 报告全部走 Python 的 `daily_returns`，读到的是被稀释的那一套。报告顶部摘要卡（读 `metrics`）与报告体内的图（读 `daily_returns`）因此**此前就对不上**，本次修改是消除这个既存分歧，不是引入新口径。
+  同时修正另外三处相同写法：`build_daily_returns_from_equity()`（喂 HTML 报告全部收益图与结构化基准分析）、`MergedResult.daily_returns`（该文件 `_recompute_metrics` 早已按 `dropna` 对齐 Rust，同文件内自相矛盾）、`plot_dashboard` 的月度热力图（仅影响外观，月度值因连乘 `(1+x).prod()` 不受影响），以及 `examples/01_quickstart.py` 里演示"Manual vs Rust"对比的手算波动率——该示例此前恰好在教一个比 Rust 低 15% 的错误数字。
+  **两项行为变更需注意**：一是首日不再产生收益点（对齐 Rust 侧从第二日开始的循环），因此序列长度为「交易日数 − 1」，`benchmark_analysis()` 的 `meta.aligned_points`、`meta.start_date` 与 `series[0].date` 都会相应后移一格；二是只含单个交易日的回测，`daily_returns` 从「1 个值为 0.0 的点」变为**空序列**（下游 `plot_*` / `to_quantstats` / `build_benchmark_analysis` 均有 empty 守卫，不会报错，退化为"暂无数据"）。`plot_rolling_metrics` 的 126 窗口从此覆盖真实的约 6 个月交易日，与其文档声明一致。
+  Golden 基线零影响（其中 `sharpe_ratio` 取自 Rust `metrics`，不经由本序列）。新增两个回归测试锁定口径：一个用跨周末的 bar 序列断言周末不进索引且点数为交易日数 − 1，另一个直接断言由 `daily_returns` 手算的 Sharpe 与 `metrics.sharpe_ratio` 数值一致（回退实现可复现失败：旧口径 2.050 vs Rust 2.620）。
+
 ### Added
 - **`run_live()` 新增 `session_tag=` 参数，支持多任务交易同一标的时的委托回报隔离**：0824 反馈第 1 点——平台多个任务交易**同一标的**时，各任务此前会收到彼此的 `on_order`/`on_trade`/`on_execution_report` 推送（v0.3.50 已解决「交易不同标的」的隔离，同标的这条此前判定为「需柜台在推送帧补任务标识才能解决」，该判定是错的）。条件其实已经具备：本框架生成的 `client_order_id` 格式是 `{broker}-{session_tag}-{run_salt}{seq}`，`session_tag` 默认随机 8 位 hex；中间件推送帧本就带 `client_order_id` 回传——比对前缀即可判定归属，**不需要改中间件**。传入 `session_tag`（推荐传平台任务 ID）后替代随机值作为前缀段，且**同时启用严格拒绝**：前缀不匹配的推送会被主动丢弃，计入新的 `foreign_task` 计数（与既有的 `foreign_symbol` 分开计，见下方 Changed）。校验 fail-fast：只允许 `[A-Za-z0-9_]`、长度 ≤ 32、不能含 `-`（它是 `client_order_id` 的字段分隔符），违反直接 `raise ValueError` 并给出可照抄的正确写法，不做静默归一化改写。
   序号段（`{run_salt}{seq}`）仍每次 `run_live` 独立生成 4 位随机盐：固定 `session_tag` 会让前缀跨重启保持稳定（这正是隔离要的），但序号本身每次运行都从 0 起——若序号段不带盐，重启后第一笔单会生成与上一轮完全相同的 `client_order_id`，一是与柜台里同名的历史委托撞号（把 `client_order_id` 当幂等键的柜台直接拒单，实测中间件返回 409 Conflict），二是若上一轮该 id 仍在本地映射里指向一笔非终态挂单，本地去重判定会直接拒绝提交、单据根本到不了柜台。加盐后前缀识别、跨重启认旧单、序号唯一性三者不再互斥。

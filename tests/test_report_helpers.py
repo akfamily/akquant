@@ -274,4 +274,5 @@ def test_benchmark_analysis_from_result_uses_equity_curve() -> None:
 
     assert payload["available"] is True
     assert payload["benchmark"]["label"] == "CSI300"
-    assert payload["meta"]["aligned_points"] == 2
+    # 权益曲线共 2 日, 首日不产生收益点 (口径对齐 Rust), 故仅 01-02 一点可与基准对齐
+    assert payload["meta"]["aligned_points"] == 1
