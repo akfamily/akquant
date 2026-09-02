@@ -70,7 +70,6 @@ pub trait ExecutionClient: Send + Sync {
     }
 
     /// 是否为实盘模式
-    #[allow(dead_code)]
     fn is_live(&self) -> bool {
         false
     }

@@ -50,6 +50,18 @@ pub trait RiskRule: Send + Sync + Debug {
     /// Check if the order passes the risk rule
     fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError>;
 
+    /// Whether this rule may be deferred from submission time to fill time.
+    ///
+    /// A delayed order (`NextOpen`, i.e. `bar_offset >= 1`) is submitted on one
+    /// bar and matched on a later one, with daily settlement running in
+    /// between. Rules whose verdict depends on post-settlement state would
+    /// otherwise reject such an order against a stale snapshot. Opting in here
+    /// skips the submission-time check; the simulated matcher re-checks the
+    /// same condition against fill-time state (issue #391).
+    fn defer_for_delayed_execution(&self) -> bool {
+        false
+    }
+
     /// Get the name of the rule
     fn name(&self) -> &'static str;
 

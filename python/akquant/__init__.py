@@ -8,7 +8,7 @@ try:
 except metadata.PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
-__engine_rule_version__ = "1.5.3"  # Increment on behavior-changing updates
+__engine_rule_version__ = "1.5.4"  # Increment on behavior-changing updates
 
 from . import akquant as _akquant
 from . import log as _log

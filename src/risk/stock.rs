@@ -13,6 +13,10 @@ impl RiskRule for StockAvailablePositionRule {
         "StockAvailablePositionRule"
     }
 
+    fn defer_for_delayed_execution(&self) -> bool {
+        true
+    }
+
     fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
         if order.side == OrderSide::Sell {
             if ctx.config.is_margin_account() && ctx.config.enable_short_sell {

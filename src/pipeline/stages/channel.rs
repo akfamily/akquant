@@ -63,7 +63,15 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
             timezone_name: engine.timezone_name.as_deref(),
             timezone_offset: engine.timezone_offset,
         };
-        engine.risk_manager.check_and_adjust(&mut order, &ctx)
+        // 回测撮合器会在成交时点重跑可用持仓校验(execution/simulated.rs),
+        // 因此这里允许把该规则延后;实盘由柜台在报单时校验,不能延后。
+        engine
+            .risk_manager
+            .check_and_adjust_with_delayed_position_check(
+                &mut order,
+                &ctx,
+                !engine.execution_model.is_live(),
+            )
     };
     if let Err(err) = check_result {
         order.status = OrderStatus::Rejected;
