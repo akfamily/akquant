@@ -1,10 +1,10 @@
 {
-  "total_return_pct": -0.05811444,
-  "sharpe_ratio": -3.416410456188606,
-  "max_drawdown_pct": 0.11702244,
-  "total_commission": 16.11444,
-  "net_pnl": -88.11444,
-  "end_market_value": 99941.88556,
-  "engine_rule_version": "1.3.1",
-  "akquant_version": "0.3.6"
+  "total_return_pct": -0.12415484,
+  "sharpe_ratio": -8.464898854974024,
+  "max_drawdown_pct": 0.12415484,
+  "total_commission": 22.15484,
+  "net_pnl": -124.15484,
+  "end_market_value": 99875.84516,
+  "engine_rule_version": "1.5.4",
+  "akquant_version": "0.3.53"
 }
