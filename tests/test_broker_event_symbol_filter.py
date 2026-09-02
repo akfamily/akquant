@@ -88,6 +88,36 @@ def test_foreign_symbol_order_dropped() -> None:
     assert b.dropped_event_counts()["foreign_symbol"] == 1
 
 
+def test_dropped_foreign_symbol_names_lists_the_blocked_symbols() -> None:
+    """被挡掉的标的名可读出来: 盘中汇总据此判断"是否出现了新的外来标的".
+
+    计数本身在稳态下必然线性增长(每轮全量 sync 对同一笔外来挂单重复 +1),
+    唯一有诊断价值的是**被挡的标的是谁** —— 若点名的标的是本任务挂载的,
+    才是配置或匹配问题。见 ``LiveRunner._report_dropped_event_counts_if_changed``。
+    """
+    store: list = []
+    b, s = _bridge(store, {"600008.SH"}), _Strat()
+
+    b.queue_event("order", _order("600008.SH", "MINE"))
+    b.queue_event("order", _order("000651.SZ", "FOREIGN"))
+    b.queue_event("order", _order("600519.SH", "FOREIGN2"))
+    b.drain_events(s)
+
+    assert b.dropped_foreign_symbol_names() == {"000651.SZ", "600519.SH"}
+
+
+def test_dropped_foreign_symbol_names_returns_a_snapshot() -> None:
+    """返回的是快照: 调用方改它不会污染 bridge 的内部集合."""
+    store: list = []
+    b = _bridge(store, {"600008.SH"})
+
+    b.queue_event("order", _order("000651.SZ", "FOREIGN"))
+    snapshot = b.dropped_foreign_symbol_names()
+    snapshot.add("999999.SH")
+
+    assert b.dropped_foreign_symbol_names() == {"000651.SZ"}
+
+
 def test_suffix_case_mismatch_still_matches() -> None:
     """登记小写后缀、柜台推大写后缀, 本会话自己的回报**必须**放行.
 

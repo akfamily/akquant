@@ -17,21 +17,121 @@ from typing import Any, Callable, cast
 from akquant.live._runner import LiveRunner
 
 
-def _runner_with_bridge(dropped_event_counts: Callable[[], Any]) -> LiveRunner:
-    """构造一个只装了 broker event bridge 替身的 ``LiveRunner``."""
+def _runner_with_bridge(
+    dropped_event_counts: Callable[[], Any],
+    dropped_foreign_symbol_names: Callable[[], Any] | None = None,
+) -> LiveRunner:
+    """构造一个只装了 broker event bridge 替身的 ``LiveRunner``.
+
+    ``dropped_foreign_symbol_names`` 省略时替身**不带**该访问器, 用于覆盖
+    "bridge 没有这个方法"的兼容分支。
+    """
     runner = LiveRunner.__new__(LiveRunner)
     runner.broker = "ctp"
     runner.strategy_id = "_default"
     runner._init_broker_bridge_state()
-    runner._broker_event_bridge = SimpleNamespace(
-        dropped_event_counts=dropped_event_counts
-    )
+    attrs: dict[str, Any] = {"dropped_event_counts": dropped_event_counts}
+    if dropped_foreign_symbol_names is not None:
+        attrs["dropped_foreign_symbol_names"] = dropped_foreign_symbol_names
+    runner._broker_event_bridge = SimpleNamespace(**attrs)
     return runner
 
 
-def test_reports_when_foreign_symbol_increases(caplog: Any) -> None:
-    """foreign_symbol 有增长 -> 汇总日志被打出, 文本同时含两类计数的累计值."""
-    runner = _runner_with_bridge(lambda: {"foreign_symbol": 3, "duplicate_order": 5})
+def test_silent_when_the_same_foreign_symbols_keep_being_dropped(caplog: Any) -> None:
+    """稳态防线: 外来标的集合不变、``foreign_symbol`` 计数持续增长 -> 完全静默.
+
+    ``foreign_symbol`` 的计数点在 ``queue_event`` 最前面, **早于一切去重**,
+    而 recovery 每档全量 sync 都会把柜台返回的**全账户**未完成委托重推一遍
+    ⇒ 同一笔外来挂单每轮 +1。同账户下只要存在非挂载标的的挂单(别的任务、
+    人工下单终端、隔夜挂单), 该计数就必然线性增长 —— 与 ``duplicate_order``
+    是**同形**的稳态, 拿它当触发条件就是每 30s 准时刷一条, 正是
+    ``test_silent_when_only_duplicate_order_grows`` 要防的那个失败模式。
+    触发条件必须看"是否出现了**新的**外来标的"。
+    """
+    counts = {"foreign_symbol": 6, "duplicate_order": 5}
+    names = {"600519.SH", "000001.SZ"}
+    runner = _runner_with_bridge(lambda: dict(counts), lambda: set(names))
+    runner._report_dropped_event_counts_if_changed()
+
+    caplog.clear()
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        for _ in range(5):
+            counts["foreign_symbol"] += 2  # 同两个标的, 每轮 sync 重复计数
+            runner._report_dropped_event_counts_if_changed()
+
+    assert [r for r in caplog.records if "Broker event drops" in r.getMessage()] == []
+
+
+def test_reports_only_the_newly_seen_foreign_symbols(caplog: Any) -> None:
+    """出现此前没见过的外来标的 -> 打一条 INFO 并只点名新出现的那个."""
+    counts = {"foreign_symbol": 2, "duplicate_order": 5}
+    names = {"600519.SH"}
+    runner = _runner_with_bridge(lambda: dict(counts), lambda: set(names))
+    runner._report_dropped_event_counts_if_changed()  # 首轮把 600519.SH 报掉
+
+    caplog.clear()
+    counts["foreign_symbol"] = 4
+    names.add("000001.SZ")
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._report_dropped_event_counts_if_changed()
+
+    records = [r for r in caplog.records if "Broker event drops" in r.getMessage()]
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert "000001.SZ" in message
+    # 老标的在首轮已点名过, 再报一次等于把稳态噪声按标的数放大。
+    assert "600519.SH" not in message
+
+
+def test_message_does_not_claim_the_count_should_stay_zero(caplog: Any) -> None:
+    """文案不得断言"配置正确应恒为 0", 也不得把用户引向归一化 bug.
+
+    ``session_tag`` 未传时**不启用**严格任务隔离(见
+    ``BrokerEventBridge._session_layer_verdict``), 同账户下别的任务/人工
+    终端的委托不走 ``foreign_task`` 而是落进 ``foreign_symbol`` ⇒ 它在默认
+    配置下是正常的过滤工作量, 不是故障信号。旧文案("若配置正确应恒为 0,
+    出现增长请怀疑标的归一化把自己的回报也挡掉了")把对接方引向一个不存在
+    的 bug —— 2026-08-26 的反馈原文就是照抄这句在排查。
+    """
+    runner = _runner_with_bridge(
+        lambda: {"foreign_symbol": 2, "duplicate_order": 0},
+        lambda: {"600519.SH"},
+    )
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._report_dropped_event_counts_if_changed()
+
+    message = next(
+        r.getMessage() for r in caplog.records if "Broker event drops" in r.getMessage()
+    )
+    assert "恒为 0" not in message
+    assert "归一化" not in message
+
+
+def test_bridge_without_symbol_names_accessor_stays_silent(caplog: Any) -> None:
+    """Bridge 没有标的名访问器 -> 静默且留一条 debug(不退回按计数触发).
+
+    退回按计数触发就等于保留刚修掉的稳态刷屏; 会话收尾摘要仍有完整总计,
+    因此静默是安全的一侧。
+    """
+    runner = _runner_with_bridge(lambda: {"foreign_symbol": 7, "duplicate_order": 0})
+
+    with caplog.at_level("DEBUG", logger="akquant.gateway.live"):
+        runner._report_dropped_event_counts_if_changed()
+
+    assert [r for r in caplog.records if "Broker event drops" in r.getMessage()] == []
+    assert [r for r in caplog.records if r.levelname == "DEBUG"] != []
+
+
+def test_reported_message_carries_both_running_totals_as_context(caplog: Any) -> None:
+    """报出时两类计数都作为上下文出现在文本里(排查不用再翻别处).
+
+    它们只是上下文: 触发与否由标的集合决定, 见
+    ``test_silent_when_the_same_foreign_symbols_keep_being_dropped``。
+    """
+    runner = _runner_with_bridge(
+        lambda: {"foreign_symbol": 3, "duplicate_order": 5},
+        lambda: {"600519.SH"},
+    )
 
     with caplog.at_level("INFO", logger="akquant.gateway.live"):
         runner._report_dropped_event_counts_if_changed()
@@ -40,18 +140,19 @@ def test_reports_when_foreign_symbol_increases(caplog: Any) -> None:
     assert len(records) == 1
     message = records[0].getMessage()
     assert "foreign_symbol total=3" in message
-    assert "(+3;" in message
     assert "duplicate_order total=5" in message
+    assert "600519.SH" in message
 
 
-def test_silent_when_counts_unchanged(caplog: Any) -> None:
-    """计数无变化 -> 完全不打日志(防噪声回归的关键).
+def test_silent_when_nothing_changed(caplog: Any) -> None:
+    """计数与标的集合都无变化 -> 完全不打日志(防噪声回归的关键).
 
-    先跑一轮建立基线(3/5), 再原样跑第二轮; 第二轮不应产生任何
+    先跑一轮建立基线, 再原样跑第二轮; 第二轮不应产生任何
     "Broker event drops" 日志。
     """
     counts = {"foreign_symbol": 3, "duplicate_order": 5}
-    runner = _runner_with_bridge(lambda: dict(counts))
+    names = {"600519.SH"}
+    runner = _runner_with_bridge(lambda: dict(counts), lambda: set(names))
 
     with caplog.at_level("INFO", logger="akquant.gateway.live"):
         runner._report_dropped_event_counts_if_changed()
@@ -64,15 +165,14 @@ def test_silent_when_counts_unchanged(caplog: Any) -> None:
 
 
 def test_silent_when_only_duplicate_order_grows(caplog: Any) -> None:
-    """稳态防线: foreign_symbol 不变、duplicate_order 持续增长 -> 完全不打日志.
+    """稳态防线: 无外来标的、duplicate_order 持续增长 -> 完全不打日志.
 
-    这是本次修复的核心防线: 账户挂单且状态未变时, 每轮全量 sync 都会让
-    ``duplicate_order`` +N(N = 挂单数), 若把它也当触发条件, 会在整个挂单
-    周期里每 30s 准时打一条日志——把"每 tick 刷屏"稀释成"每 30s 刷屏",
-    不是真正的静默。
+    账户挂单且状态未变时, 每轮全量 sync 都会让 ``duplicate_order`` +N
+    (N = 挂单数), 若把它当触发条件, 会在整个挂单周期里每 30s 准时打一条
+    日志——把"每 tick 刷屏"稀释成"每 30s 刷屏", 不是真正的静默。
     """
     counts = {"foreign_symbol": 0, "duplicate_order": 5}
-    runner = _runner_with_bridge(lambda: dict(counts))
+    runner = _runner_with_bridge(lambda: dict(counts), set)
     runner._report_dropped_event_counts_if_changed()
 
     caplog.clear()
@@ -84,10 +184,10 @@ def test_silent_when_only_duplicate_order_grows(caplog: Any) -> None:
     assert [r for r in caplog.records if "Broker event drops" in r.getMessage()] == []
 
 
-def test_reports_only_the_increment_not_the_running_total_again() -> None:
-    """第二轮只在真的有新增量时才报, 且上次上报值被记住(增量口径正确)."""
+def test_running_totals_are_recorded_even_when_nothing_is_reported() -> None:
+    """累计值每轮都刷新(供收尾摘要与下次日志读), 与是否打日志无关."""
     counts = {"foreign_symbol": 0, "duplicate_order": 5}
-    runner = _runner_with_bridge(lambda: dict(counts))
+    runner = _runner_with_bridge(lambda: dict(counts), set)
 
     runner._report_dropped_event_counts_if_changed()
     assert runner._broker_last_reported_drop_counts == {
@@ -140,7 +240,7 @@ def test_dropped_event_counts_exception_does_not_break_recovery_cycle(
     def boom() -> dict[str, int]:
         raise RuntimeError("dropped_event_counts exploded")
 
-    runner = _runner_with_bridge(boom)
+    runner = _runner_with_bridge(boom, set)
     gateway = _Gateway()
     runner._broker_trader_gateway = gateway
     runner._broker_baseline_done = True
@@ -159,7 +259,10 @@ def test_dropped_event_counts_exception_does_not_break_recovery_cycle(
     assert gateway.account_calls == 1
 
     debug_records = [
-        r for r in caplog.records if "dropped_event_counts() failed" in r.getMessage()
+        r
+        for r in caplog.records
+        if "dropped_event_counts()/dropped_foreign_symbol_names() failed"
+        in r.getMessage()
     ]
     assert len(debug_records) == 1
     assert debug_records[0].levelname == "DEBUG"

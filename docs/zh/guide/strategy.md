@@ -93,6 +93,7 @@
 * 停止阶段会在 `on_stop` 之前补发待触发的 `on_after_trading`。
 * 实盘（`run_live`）与回测的收尾差异：实盘**不做**回测特有的数据覆盖校验（整场无成交标的、warmup 未攒满、纯 tick 会话在实盘都是常态，校验会误报）。
 * 实盘的 `on_stop` 在断开信号源与 broker 分发**之前**触发，因此可以在其中撤单或平仓；但异常中止路径下柜台通道可能已不可用，框架不保证这类收尾委托送达。
+* 实盘 `on_stop` 覆盖四条停止路径：正常结束、`Ctrl+C` / `duration` 到点、异常中止、以及**收到 `SIGTERM`**（平台「停止任务」按钮的常见实现，框架会把它转成与 `Ctrl+C` 相同的收尾路径）。两种情况覆盖不到，需要调用方配合：`kill -9`（`SIGKILL`）与 Windows 的 `TerminateProcess` 不经用户态代码即回收进程，任何框架都无法收尾，请让调度方改用优雅停止；`run_live` 跑在**非主线程**时（如线程池承载多个任务）装不上信号处理器，会打一条 WARNING 并照常运行，此时 `SIGTERM` 同样不触发 `on_stop`。
 * `on_error` 参数为 `(error, source, payload)`，推荐通过 `self.error_mode = "raise" | "continue"` 控制行为（默认 `raise`）。`self.re_raise_on_error` 仍兼容，作为兜底开关。
 * 推荐使用 `self.runtime_config = StrategyRuntimeConfig(...)` 统一配置上述行为开关。
 * 旧别名字段与 `runtime_config` 会自动保持同步。

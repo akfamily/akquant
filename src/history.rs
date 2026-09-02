@@ -598,4 +598,19 @@ mod tests {
         let extras = history.extras.get("factor").expect("factor extra history");
         assert_eq!(extras.iter().copied().collect::<Vec<_>>(), vec![12.0, 13.0]);
     }
+
+    #[test]
+    fn batch_update_preserves_order_and_evicts_oldest() {
+        let mut buffer = HistoryBuffer::new(3);
+        for n in 1..=5 {
+            buffer.update(&make_bar(n, n * 10, None));
+        }
+        let history = buffer.data.get("TEST").expect("symbol history missing");
+        // 容量 3: 只保留最近三根, 且顺序是推入顺序(最老在前)。
+        assert_eq!(history.timestamps.len(), 3);
+        assert_eq!(
+            history.timestamps.iter().copied().collect::<Vec<_>>(),
+            vec![3, 4, 5]
+        );
+    }
 }

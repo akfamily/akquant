@@ -150,13 +150,13 @@ class BacktestResult:
         if equity.empty:
             return pd.Series(dtype=float)
 
-        # Resample to daily and calculate percentage change
-        # Assuming equity curve might have intraday data,
-        # take the last value of each day
-        # For intraday data, we need to be careful. 'D' means Calendar Day.
-        # If we have multiple days, this works.
-        daily_equity = equity.resample("D").last().ffill()
-        returns = daily_equity.pct_change().fillna(0.0)
+        # 口径对齐 Rust src/analysis/result.rs::calculate:
+        # 按本地自然日取每日最后一个权益点, 只保留真实存在行情的交易日
+        # (dropna 而非 ffill —— ffill 会给周末/节假日补出 0.0 伪收益,
+        #  稀释波动率并使 Sharpe 与 metrics.sharpe_ratio 对不上),
+        # 且首日不产生收益点 (Rust 侧循环从第二日开始)。
+        daily_equity = equity.resample("D").last().dropna()
+        returns = daily_equity.pct_change().dropna()
         return cast(pd.Series, returns)
 
     @property

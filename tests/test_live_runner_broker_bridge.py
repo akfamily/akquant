@@ -1914,13 +1914,21 @@ def test_live_runner_logs_summary_with_structured_context(caplog: Any) -> None:
     assert "IF2406: 2.0" in record.getMessage()
 
 
-def _summary_runner_with_bridge(dropped_event_counts: Callable[[], Any]) -> LiveRunner:
-    """Build a ``_print_summary``-ready runner stub with a fake broker event bridge."""
+def _summary_runner_with_bridge(
+    dropped_event_counts: Callable[[], Any],
+    dropped_foreign_symbol_names: Callable[[], Any] | None = None,
+) -> LiveRunner:
+    """Build a ``_print_summary``-ready runner stub with a fake broker event bridge.
+
+    ``dropped_foreign_symbol_names`` 省略时替身**不带**该访问器, 覆盖
+    "bridge 没有这个方法"的兼容分支。
+    """
     runner = LiveRunner.__new__(LiveRunner)
     runner.strategy_id = "beta"
-    runner._broker_event_bridge = SimpleNamespace(
-        dropped_event_counts=dropped_event_counts
-    )
+    bridge_attrs: dict[str, Any] = {"dropped_event_counts": dropped_event_counts}
+    if dropped_foreign_symbol_names is not None:
+        bridge_attrs["dropped_foreign_symbol_names"] = dropped_foreign_symbol_names
+    runner._broker_event_bridge = SimpleNamespace(**bridge_attrs)
     runner.engine = cast(
         Any,
         SimpleNamespace(
@@ -1982,6 +1990,52 @@ def test_live_runner_summary_reports_dropped_foreign_task_count(caplog: Any) -> 
     trailing_rule_pos = message.rindex("=" * 50)
 
     assert duplicate_pos < foreign_task_pos < trailing_rule_pos
+
+
+def test_live_runner_summary_names_the_blocked_foreign_symbols(caplog: Any) -> None:
+    """摘要点名被挡掉的外来标的: 计数大小不说明问题, 标的是谁才说明问题.
+
+    ``foreign_symbol`` 每轮全量 sync 对同一笔外来委托重复 +1, 单看数值无法
+    判断是"账户里有别人的挂单"(预期)还是"标的匹配把自己的回报挡掉了"(故障)。
+    列出标的名, 对接方一眼就能看出里面有没有自己挂载的标的。
+    """
+    runner = _summary_runner_with_bridge(
+        lambda: {"foreign_symbol": 11, "duplicate_order": 0, "foreign_task": 0},
+        lambda: {"600519.SH", "000651.SZ"},
+    )
+
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._print_summary()
+
+    record = next(
+        record for record in caplog.records if "TRADING SUMMARY" in record.getMessage()
+    )
+    message = record.getMessage()
+    assert "Dropped (foreign symbol): 11" in message
+    assert "000651.SZ" in message
+    assert "600519.SH" in message
+
+
+def test_live_runner_summary_omits_symbol_list_when_nothing_was_blocked(
+    caplog: Any,
+) -> None:
+    """没有任何标的被挡 -> 不追加空名单(摘要不留无意义的尾巴)."""
+    runner = _summary_runner_with_bridge(
+        lambda: {"foreign_symbol": 0, "duplicate_order": 4, "foreign_task": 0},
+        set,
+    )
+
+    with caplog.at_level("INFO", logger="akquant.gateway.live"):
+        runner._print_summary()
+
+    record = next(
+        record for record in caplog.records if "TRADING SUMMARY" in record.getMessage()
+    )
+    lines = record.getMessage().splitlines()
+    foreign_line = next(
+        line for line in lines if line.startswith("Dropped (foreign symbol)")
+    )
+    assert foreign_line == "Dropped (foreign symbol): 0"
 
 
 def test_live_runner_summary_survives_dropped_event_counts_exception(

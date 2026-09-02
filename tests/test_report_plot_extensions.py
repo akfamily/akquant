@@ -433,7 +433,8 @@ def test_backtest_result_exposes_structured_benchmark_analysis() -> None:
     assert payload["benchmark"]["label"] == "CSI300"
     assert payload["summary"]["information_ratio"] is not None
     assert payload["meta"]["aligned_points"] > 0
-    assert payload["series"][0]["date"] == "2023-01-01"
+    # 首日不产生收益点 (口径对齐 Rust), 故对齐序列从第二个交易日 01-02 开始
+    assert payload["series"][0]["date"] == "2023-01-02"
 
 
 def test_export_benchmark_analysis_keeps_cjk_label_readable(tmp_path: Path) -> None:
@@ -764,13 +765,93 @@ def test_daily_curve_properties_follow_local_timezone_day() -> None:
 
     assert len(result.equity_curve) == 2
     assert len(result.equity_curve_daily) == 1
-    assert len(result.daily_returns) == 1
     assert result.equity_curve_daily.index[0] == pd.Timestamp(
         "2024-01-02 00:00:00", tz="Asia/Shanghai"
     )
-    assert result.daily_returns.index[0] == pd.Timestamp(
-        "2024-01-02 00:00:00", tz="Asia/Shanghai"
+    # 两个 bar 落在同一个本地自然日, 日频权益只有 1 点, 因此不存在「相邻两日」
+    # 之间的收益。口径对齐 Rust src/analysis/result.rs (循环从第二日开始),
+    # 首日不产生收益点, 故日收益序列为空。
+    assert result.daily_returns.empty
+
+
+def _build_data_with_weekend_gap(symbol: str = "TEST") -> list[Bar]:
+    """Build daily bars spanning a weekend, so calendar days exceed trading days.
+
+    2023-01-05/06 是周四/周五, 01-09/10 是下周一/周二 —— 中间跳过 01-07/08 周末。
+    """
+    data: list[Bar] = []
+    for day, close in ((5, 10.0), (6, 10.5), (9, 10.2), (10, 11.0)):
+        data.append(
+            Bar(
+                timestamp=pd.Timestamp(f"2023-01-{day:02d} 10:00:00").value,
+                open=close,
+                high=close + 0.2,
+                low=close - 0.2,
+                close=close,
+                volume=10000.0,
+                symbol=symbol,
+            )
+        )
+    return data
+
+
+def test_daily_returns_skip_non_trading_days() -> None:
+    """日收益率只覆盖真实交易日, 不得给周末/节假日补出 0.0 伪收益.
+
+    回归测试: 曾用 ``resample("D").last().ffill()`` 把非交易日也补成一个点,
+    注入的 0.0 收益稀释了波动率, 并使本序列算出的 Sharpe 与 Rust 侧
+    ``metrics.sharpe_ratio`` 对不上。
+    """
+    result = run_backtest(
+        data=_build_data_with_weekend_gap(),
+        strategy=RoundTripStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        fill_policy=CurrentClose(),
+        lot_size=1,
+        show_progress=False,
     )
+
+    returns = result.daily_returns
+    # 4 个交易日 → 3 个日收益点 (首日不产生收益), 而非按日历日的 6 个
+    assert len(returns) == 3
+    # 周末不得出现在索引里
+    weekend = {pd.Timestamp("2023-01-07").date(), pd.Timestamp("2023-01-08").date()}
+    assert not any(ts.date() in weekend for ts in returns.index)
+    # 与旧的 ffill 口径对比: 旧写法会多出周末两点, 且都是 0.0 伪收益
+    legacy = result.equity_curve.resample("D").last().ffill().pct_change().fillna(0.0)
+    assert len(legacy) > len(returns)
+    assert sum(ts.date() in weekend for ts in legacy.index) == 2
+    # 新口径在周末位置一个点都不留
+    assert sum(ts.date() in weekend for ts in returns.index) == 0
+
+
+def test_daily_returns_sharpe_matches_rust_metrics() -> None:
+    """由 daily_returns 手算的 Sharpe 必须与 Rust metrics.sharpe_ratio 一致.
+
+    锁定 Python 结果层与 Rust ``src/analysis/result.rs::calculate`` 的日频口径,
+    避免同一份回测出现两个互相矛盾的 Sharpe。
+    """
+    result = run_backtest(
+        data=_build_data_with_weekend_gap(),
+        strategy=RoundTripStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        fill_policy=CurrentClose(),
+        lot_size=1,
+        show_progress=False,
+    )
+
+    returns = result.daily_returns
+    std = float(returns.std())
+    if std == 0.0:
+        pytest.skip("退化数据: 日收益无波动, 无法比对 Sharpe")
+
+    dpy = 252.0
+    # 与 Rust 同口径: 分子用日收益算术均值 × dpy, 分母用 std × sqrt(dpy)
+    expected = (float(returns.mean()) * dpy) / (std * dpy**0.5)
+
+    assert result.metrics.sharpe_ratio == pytest.approx(expected, rel=1e-6)
 
 
 def test_report_accepts_curve_freq_daily(tmp_path: Path) -> None:

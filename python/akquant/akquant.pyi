@@ -564,6 +564,33 @@ class Engine:
         """
         ...
 
+    def preload_history(self, bars: list[Bar]) -> None:
+        r"""
+        批量灌入历史 K 线, 只写历史缓冲, 不进 pipeline.
+
+        不触发策略回调、不撮合、不动账户与结算。调用方须保证 bars 已按
+        (symbol, timestamp) 升序。
+
+        :param bars: 历史 K 线列表
+        """
+        ...
+
+    def get_state_bytes(self) -> bytes:
+        r"""
+        导出当前状态为二进制数据.
+
+        :return: 序列化后的引擎状态（包含历史缓冲）
+        """
+        ...
+
+    def load_state_bytes(self, data: bytes) -> None:
+        r"""
+        从二进制数据加载状态.
+
+        :param data: 序列化的引擎状态数据
+        """
+        ...
+
     def set_history_depth(self, depth: int) -> None:
         r"""
         设置历史数据长度.

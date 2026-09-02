@@ -136,9 +136,17 @@ class BrokerEventBridge:
     def dropped_event_counts(self) -> dict[str, int]:
         """会话级丢弃计数(去重/过滤/外来任务分开计), 供收尾摘要与诊断读取.
 
-        ``foreign_task`` 与 ``foreign_symbol`` 刻意分开: 前者是多任务稳态下
-        必然持续增长的正常工作量(同账户同标的下必有别的任务的单), 后者异常
-        增长才指向标的配置错误; 混在一起会让排查失去方向。
+        ``foreign_task`` 与 ``foreign_symbol`` 刻意分开: 前者只在显式传了
+        ``session_tag``(严格任务隔离)时才计, 后者是标的判据的兜底计数。
+
+        **三个数在稳态下都会持续增长, 都不是故障信号**: 计数点都在
+        ``queue_event`` 入口、早于一切去重, 而柜台的
+        ``sync_open_orders``/``sync_today_trades`` 返回的是**全账户**数据 ⇒
+        每轮全量 sync 都会对同一笔委托重复 +1。尤其 ``foreign_symbol``:
+        未启用严格隔离时, 别的任务/人工下单终端的委托不走 ``foreign_task``
+        而是落进这里, 是预期的过滤工作量。判断"是否真有标的匹配问题"要看
+        :meth:`dropped_foreign_symbol_names` 点名的标的是不是本任务挂载的,
+        不能看这里的数值大小(2026-08-26 反馈就是被旧文案的"应恒为 0"误导)。
 
         :return: ``{"duplicate_order": N, "foreign_symbol": M, "foreign_task": K}``。
         """
@@ -148,6 +156,22 @@ class BrokerEventBridge:
                 "foreign_symbol": self._dropped_foreign_symbols,
                 "foreign_task": self._dropped_foreign_tasks,
             }
+
+    def dropped_foreign_symbol_names(self) -> set[str]:
+        """被标的判据挡掉的外来标的名(去重, 会话级累计)的**快照**.
+
+        盘中汇总的触发判据(见
+        ``LiveRunner._report_dropped_event_counts_if_changed``): 计数值在稳态
+        下必然线性增长, 唯一有诊断价值的是**被挡的标的是谁** —— 若点名的标的
+        是本任务挂载的, 才说明标的匹配或配置有问题。
+
+        返回副本而非内部集合: 调用方会对它做集合运算, 交出内部对象会让外部
+        改动污染防刷屏的去重状态。
+
+        :return: 去重后的外来标的代码集合。
+        """
+        with self._event_lock:
+            return set(self._warned_foreign_symbols)
 
     def _session_layer_verdict(self, event_name: str, payload: Any) -> bool | None:
         """会话标记判据(设计文档的第 1/2 层): 按 ``client_order_id`` 前缀强判.
@@ -316,9 +340,17 @@ class BrokerEventBridge:
         return self._is_known_order(broker_order_id, client_order_id)
 
     def _log_foreign_symbol(self, event_name: str, symbol: str) -> None:
-        """外来标的事件的丢弃留痕: 首次 WARNING 点名, 之后同标的降 DEBUG."""
-        first_time = symbol not in self._warned_foreign_symbols
-        self._warned_foreign_symbols.add(symbol)
+        """外来标的事件的丢弃留痕: 首次 WARNING 点名, 之后同标的降 DEBUG.
+
+        去重集合的读写持 ``_event_lock``(日志调用本身放在锁外, 不把 IO 拖进
+        临界区): 该集合同时是 :meth:`dropped_foreign_symbol_names` 的数据源,
+        而写入方是行情/推送线程、读取方是 recovery 线程 —— 无锁复制会在
+        "复制期间另一线程 add"时抛 ``Set changed size during iteration``。
+        顺带让并发下同一标的只打一条 WARNING(此前两个线程可能各打一条)。
+        """
+        with self._event_lock:
+            first_time = symbol not in self._warned_foreign_symbols
+            self._warned_foreign_symbols.add(symbol)
         log = logger.warning if first_time else logger.debug
         log(
             "Dropped %s event for unsubscribed symbol %s",

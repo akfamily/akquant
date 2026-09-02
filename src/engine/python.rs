@@ -759,6 +759,31 @@ impl Engine {
             .set_capacity_preserve_existing(depth);
     }
 
+    /// 批量灌入历史 K 线, 只写历史缓冲, 不进 pipeline.
+    ///
+    /// 与行情事件路径的唯一共同点是最终都落到 `HistoryBuffer::update`:
+    /// **不触发策略回调、不撮合、不动账户与结算**。用于实盘会话启动时补历史
+    /// 窗口(见 docs/superpowers/specs/2026-08-27-live-history-preload-design.md)。
+    ///
+    /// 调用方须保证 bars 已按 (symbol, timestamp) 升序: 缓冲不排序,
+    /// 推入顺序即历史顺序。
+    ///
+    /// **前置条件**:
+    /// 1. 必须在 `set_history_depth()` 之后调用。后者会调 `HistoryBuffer::set_capacity`
+    ///    (src/history.rs:179), 执行 `data.clear()` 将已灌入的所有历史数据清空, 且无任何日志。
+    ///    安全的做法是调 `configure_history_depth()`, 它调 `set_capacity_preserve_existing`,
+    ///    不会清空现有数据。
+    /// 2. 容量不能为 0。缓冲容量为 0 时 `HistoryBuffer::update` (src/history.rs:229)
+    ///    直接返回, 预热数据会被整批丢弃且同样无声。
+    ///
+    /// :param bars: 历史 K 线列表
+    fn preload_history(&mut self, bars: Vec<Bar>) {
+        let mut buffer = self.history_buffer.write().unwrap();
+        for bar in &bars {
+            buffer.update(bar);
+        }
+    }
+
     /// 设置标的白名单: 只有集合内的标的会被分发给策略。
     ///
     /// 空列表折叠为「未设置」(放行全部) —— Python 侧已在参数解析阶段拒绝空
