@@ -635,6 +635,88 @@ def test_plot_functions_return_figures_for_non_empty_result() -> None:
     assert fig_returns is not None
 
 
+@pytest.mark.parametrize(
+    ("durations", "expected_unit", "expected_x"),
+    [
+        # Timedelta column (the engine's own dtype) picks a unit from the mean.
+        (pd.to_timedelta(["22 days", "3 days"]), "天", [22.0, 3.0]),
+        (pd.to_timedelta(["2 hours", "4 hours"]), "小时", [2.0, 4.0]),
+        (pd.to_timedelta(["5 min", "15 min"]), "分钟", [5.0, 15.0]),
+        # A CSV round-trip turns Timedelta into these strings; they must still
+        # read as days rather than collapsing to zero.
+        (pd.Series(["22 days", "3 days"]), "天", [22.0, 3.0]),
+        (pd.Series(["0 days 02:00:00", "0 days 04:00:00"]), "小时", [2.0, 4.0]),
+        # Raw integer nanoseconds (e.g. straight from the Rust payload).
+        (pd.Series([22 * 86400 * 10**9, 3 * 86400 * 10**9]), "天", [22.0, 3.0]),
+    ],
+)
+def test_pnl_vs_duration_reports_consistent_unit_and_values(
+    durations: pd.Series,
+    expected_unit: str,
+    expected_x: list[float],
+) -> None:
+    """Axis label and x values must agree however ``duration`` is typed.
+
+    The fallback branch used to hardcode the label to "天" while dividing the
+    raw numbers by 864e11, so a CSV round-trip rendered a 22-day trade as 0.0
+    days -- an axis reading "天" whose every value sat below 1.
+    """
+    _skip_if_no_plotly()
+    trades = pd.DataFrame(
+        {
+            "duration": durations,
+            "pnl": [100.0, -50.0],
+            "symbol": ["TEST", "TEST"],
+        }
+    )
+
+    fig = plot_pnl_vs_duration(trades)
+
+    assert fig is not None
+    assert fig.layout.xaxis.title.text == f"持仓时间 ({expected_unit})"
+    assert list(fig.data[0].x) == pytest.approx(expected_x)
+
+
+def test_pnl_vs_duration_falls_back_to_bars_when_duration_unusable() -> None:
+    """Unparseable ``duration`` should fall back to bars, not silent zeros."""
+    _skip_if_no_plotly()
+    trades = pd.DataFrame(
+        {
+            "duration": ["not-a-duration", "also-bogus"],
+            "duration_bars": [22, 3],
+            "pnl": [100.0, -50.0],
+            "symbol": ["TEST", "TEST"],
+        }
+    )
+
+    fig = plot_pnl_vs_duration(trades)
+
+    assert fig is not None
+    assert fig.layout.xaxis.title.text == "持仓时间 (根K线)"
+    assert list(fig.data[0].x) == pytest.approx([22.0, 3.0])
+
+
+def test_pnl_vs_duration_hovertemplate_has_no_literal_braces() -> None:
+    """Hover text must not leak ``%{{y:.2f}}`` from f-string mis-escaping."""
+    _skip_if_no_plotly()
+    trades = pd.DataFrame(
+        {
+            "duration": pd.to_timedelta(["22 days"]),
+            "pnl": [100.0],
+            "symbol": ["TEST"],
+        }
+    )
+
+    fig = plot_pnl_vs_duration(trades)
+
+    assert fig is not None
+    hovertemplate = fig.data[0].hovertemplate
+    assert "%{{" not in hovertemplate
+    assert "}}" not in hovertemplate
+    assert "%{y:.2f}" in hovertemplate
+    assert "%{x:.1f}" in hovertemplate
+
+
 def test_indicator_plot_functions_return_multi_pane_figures() -> None:
     """Indicator plot helpers should return a lightweight multi-pane figure."""
     _skip_if_no_plotly()

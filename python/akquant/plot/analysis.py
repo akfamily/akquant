@@ -46,70 +46,91 @@ def plot_trades_distribution(
     return fig
 
 
+def _coerce_duration_to_timedelta(column: pd.Series) -> Optional[pd.Series]:
+    """Best-effort conversion of a ``duration`` column to Timedelta.
+
+    ``BacktestResult.trades_df`` hands out a real ``timedelta64`` column, but
+    the same frame reaches this function after round-trips that erase the
+    dtype -- ``to_csv`` writes Timedelta as ``"22 days"`` and reads it back as
+    ``object``, and raw engine payloads arrive as integer nanoseconds. All of
+    those still describe a duration, so coerce instead of giving up.
+
+    :param column: Raw ``duration`` column of any dtype.
+    :return: Timedelta Series, or ``None`` when nothing could be parsed.
+    """
+    if pd.api.types.is_timedelta64_dtype(column):
+        converted = column
+    else:
+        try:
+            if pd.api.types.is_numeric_dtype(column):
+                # Bare numbers are nanoseconds -- the engine's own unit for
+                # this field (``ClosedTrade.duration``).
+                converted = pd.to_timedelta(column, unit="ns", errors="coerce")
+            else:
+                # Strings like "22 days" / "0 days 02:00:00" (what ``to_csv``
+                # leaves behind) carry their own unit; passing one would raise.
+                converted = pd.to_timedelta(column, errors="coerce")
+        except (ValueError, TypeError):
+            return None
+
+    if converted.isna().all():
+        return None
+    return converted
+
+
+def _select_duration_unit(durations: pd.Series) -> tuple[pd.Series, str]:
+    """Pick a human-readable unit for a Timedelta column.
+
+    :param durations: Timedelta Series with at least one non-null entry.
+    :return: ``(values_in_unit, unit_label)``.
+    """
+    seconds = durations.dt.total_seconds()
+    # ``mean`` skips NaT, so a partially-filled column still picks a sensible
+    # unit instead of falling through on a single missing value.
+    average = seconds.mean()
+
+    if average < 3600:
+        return seconds / 60, "分钟"
+    if average < 24 * 3600:
+        return seconds / 3600, "小时"
+    return seconds / (24 * 3600), "天"
+
+
 def plot_pnl_vs_duration(
     trades_df: pd.DataFrame, theme: str = "light"
 ) -> Optional["go.Figure"]:
-    """Plot PnL vs Duration scatter plot."""
+    """Plot PnL vs Duration scatter plot.
+
+    :param trades_df: Closed-trade frame; needs ``pnl``/``symbol`` plus either
+                      ``duration`` or ``duration_bars``.
+    :param theme: ``"light"`` or ``"dark"``.
+    :return: Scatter figure, or ``None`` when plotly is missing / no trades.
+    """
     if not check_plotly():
         return None
 
     if trades_df.empty:
         return None
 
-    # Ensure duration is in days for plotting (more intuitive for daily data)
-    # Assuming duration is a Timedelta
-    # Handle NaT or numeric types if necessary
-    unit_label = "天"
+    durations = (
+        _coerce_duration_to_timedelta(trades_df["duration"])
+        if "duration" in trades_df.columns
+        else None
+    )
 
-    if pd.api.types.is_timedelta64_dtype(trades_df["duration"]):
-        # Check average duration to decide unit
-        avg_duration = trades_df["duration"].mean()
-        # Ensure we are comparing Timedelta with Timedelta
-        # avg_duration should be Timedelta if column is Timedelta
-        if isinstance(avg_duration, pd.Timedelta):
-            if avg_duration < pd.Timedelta(days=1):
-                # Intraday / High Frequency: Use Minutes or Hours
-                if avg_duration < pd.Timedelta(hours=1):
-                    duration_values = (
-                        (trades_df["duration"].dt.total_seconds() / 60)
-                        .fillna(0.0)
-                        .tolist()
-                    )
-                    unit_label = "分钟"
-                else:
-                    duration_values = (
-                        (trades_df["duration"].dt.total_seconds() / 3600)
-                        .fillna(0.0)
-                        .tolist()
-                    )
-                    unit_label = "小时"
-            else:
-                # Daily / Swing: Use Days
-                duration_values = (
-                    (trades_df["duration"].dt.total_seconds() / (24 * 3600))
-                    .fillna(0.0)
-                    .tolist()
-                )
-        else:
-            # Fallback if mean is NaN or not Timedelta
-            duration_values = (
-                (trades_df["duration"].dt.total_seconds() / (24 * 3600))
-                .fillna(0.0)
-                .tolist()
-            )
+    if durations is not None:
+        duration_values, unit_label = _select_duration_unit(durations)
+    elif "duration_bars" in trades_df.columns:
+        # Bar counts are integers and never lose fidelity, so they beat
+        # guessing at the unit of an unparseable ``duration``. Labelled as
+        # bars rather than days because the conversion depends on the data
+        # frequency, which is not available here.
+        duration_values = pd.to_numeric(trades_df["duration_bars"], errors="coerce")
+        unit_label = "根K线"
     else:
-        # Fallback if duration is not Timedelta (e.g. float seconds)
-        # Assuming raw numeric is nanoseconds (standard in pandas/numpy) or seconds?
-        # If from Rust it might be nanoseconds.
-        # Let's assume seconds for safety if converted earlier.
-        # But wait, Rust `duration` is usually TimeDelta.
-        # Let's check if it's float.
-        # Default to days for simplicity if type is unknown but likely days-ish
-        duration_values = (
-            pd.to_numeric(trades_df["duration"], errors="coerce").fillna(0.0)
-            / (24 * 3600 * 1e9)
-        ).tolist()  # Assuming ns
+        return None
 
+    duration_list = duration_values.fillna(0.0).tolist()
     pnl_values = trades_df["pnl"].fillna(0.0).tolist()
     symbols = trades_df["symbol"].astype(str).tolist()
 
@@ -117,7 +138,7 @@ def plot_pnl_vs_duration(
 
     fig.add_trace(
         go.Scatter(
-            x=duration_values,
+            x=duration_list,
             y=pnl_values,
             mode="markers",
             marker=dict(
