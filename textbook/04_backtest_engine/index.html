@@ -1,0 +1,4837 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/textbook/04_backtest_engine/">
+      
+      
+        <link rel="prev" href="../03_data/">
+      
+      
+        <link rel="next" href="../05_strategy/">
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/textbook/04_backtest_engine/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>第4章：事件驱动回测原理 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#4" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              第4章：事件驱动回测原理
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/textbook/04_backtest_engine/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    量化教材
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程简介
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../00_glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    术语表与符号约定
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第一部分：基础篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第一部分：基础篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../01_foundations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第1章：量化投资概述与环境搭建
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02_programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第2章：量化编程基础
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../03_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第3章：金融数据获取与处理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第二部分：引擎篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第二部分：引擎篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第4章：事件驱动回测原理
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第4章：事件驱动回测原理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章地图：先抓主线，再读扩展
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#41" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 [主线必学] 回测系统的两种范式
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.1 [主线必学] 回测系统的两种范式">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#410" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1.0 完整主示例（建议先通读）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#411-pandas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1.1 向量化回测 (Pandas)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#412-backtrader-akquant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1.2 事件驱动回测 (Backtrader &amp; AKQuant)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#42-akquant-architecture-deep-dive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 [主线必学] AKQuant 架构深度解析 (Architecture Deep Dive)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.2 [主线必学] AKQuant 架构深度解析 (Architecture Deep Dive)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#421-rust-core-python-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2.1 核心设计理念：Rust Core + Python API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#422" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2.2 系统组件图
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#423" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2.3 关键组件详解
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.2.3 关键组件详解">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Engine (引擎)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-datafeed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. DataFeed (数据源)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-strategycontext" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. StrategyContext (策略上下文)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#43-the-configuration-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 [主线必学] 配置系统详解 (The Configuration System)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.3 [主线必学] 配置系统详解 (The Configuration System)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#431" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3.1 四大配置支柱
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#432" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3.2 配置示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#44-state-snapshot-warm-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 [进阶选读] 状态快照与热启动 (State Snapshot &amp; Warm Start)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.4 [进阶选读] 状态快照与热启动 (State Snapshot &amp; Warm Start)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#441" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4.1 原理
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#442" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4.2 应用场景
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#443" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4.3 佣金策略分层
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#45-matching-engine-internals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 [主线必学] 撮合引擎揭秘 (Matching Engine Internals)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.5 [主线必学] 撮合引擎揭秘 (Matching Engine Internals)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#451-bar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5.1 基于 Bar 的撮合逻辑
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#452" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5.2 涨跌停处理
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#46-slippage-impact-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.6 [进阶选读] 滑点与冲击成本模型 (Slippage &amp; Impact Models)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.6 [进阶选读] 滑点与冲击成本模型 (Slippage &amp; Impact Models)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#461" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.6.1 线性滑点模型
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#462-square-root-law" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.6.2 平方根法则 (Square Root Law)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#47-event-loop-pseudo-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.7 [主线必学] 事件循环伪代码 (Event Loop Pseudo-code)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.7 [主线必学] 事件循环伪代码 (Event Loop Pseudo-code)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#471-run_backtest-on_event" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.7.1 run_backtest(..., on_event=...) 统一事件流
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#48-risk-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.8 [主线必学] 风控引擎 (Risk Engine)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.8 [主线必学] 风控引擎 (Risk Engine)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#481" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.8.1 为什么要预交易风控？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#482" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.8.2 内置风控规则
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#483" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.8.3 配置示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#49-order-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.9 [主线必学] 订单生命周期与状态机 (Order Lifecycle)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.9 [主线必学] 订单生命周期与状态机 (Order Lifecycle)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#491" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.9.1 关键状态解析
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#410-matching-engine-mechanics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10 [进阶选读] 撮合引擎机制 (Matching Engine Mechanics)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.10 [进阶选读] 撮合引擎机制 (Matching Engine Mechanics)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4101-matching-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.1 撮合逻辑 (Matching Logic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4102-fill-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.2 成交模式 (Fill Mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4103-timer-fill-timing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.3 成交时序策略 (Timer Fill Timing)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4104-slippage-impact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.4 滑点与冲击成本 (Slippage &amp; Impact)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4105" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.5 配置分层与覆盖优先级
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#411-portfolio-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.11 [进阶选读] 资金与风控管理 (Portfolio &amp; Risk)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.11 [进阶选读] 资金与风控管理 (Portfolio &amp; Risk)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4111-pre-trade-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.11.1 资金校验 (Pre-trade Check)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4112-t1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.11.2 T+1 制度模拟
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#412-time-flow-multi-asset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.12 [进阶选读] 多标的与时间流 (Time Flow &amp; Multi-Asset)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.12 [进阶选读] 多标的与时间流 (Time Flow &amp; Multi-Asset)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4121-akquant-utc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.12.1 为什么 AKQuant 要统一用 UTC
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#413-pnl-mathematics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.13 [进阶选读] 盈亏计算原理 (PnL Mathematics)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.13 [进阶选读] 盈亏计算原理 (PnL Mathematics)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4131-unrealized-pnl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.13.1 浮动盈亏 (Unrealized PnL)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4132-realized-pnl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.13.2 平仓盈亏 (Realized PnL)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4133-total-equity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.13.3 总权益 (Total Equity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#414-troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.14 [主线必学] 常见问题排查 (Troubleshooting)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#415" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.15 [进阶选读] 性能优化与内存管理
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#416-tick-tick-input-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16 [进阶选读] Tick 输入与聚合语义 (Tick Input &amp; Aggregation)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.16 [进阶选读] Tick 输入与聚合语义 (Tick Input &amp; Aggregation)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4161-tick-bar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16.1 纯 tick 模式：退化 bar 表示法
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4162-freq" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16.2 freq 聚合模式：因果顺序为什么决定时间戳约定
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4163" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16.3 成交量口径：单笔量与累计量
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4164" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16.4 其余边界
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../05_strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第5章：策略开发实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第三部分：策略篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第三部分：策略篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06_stock_a/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第6章：A 股市场微观结构与策略实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../07_futures/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第7章：期货市场与衍生品策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第8章：期权定价与波动率策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../09_funds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第9章：基金投资与资产配置理论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第四部分：高阶篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第四部分：高阶篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../10_analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第10章：策略评价体系与风险指标
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../11_optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第11章：参数优化与稳健性检验
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../12_ml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第12章：机器学习在量化中的应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../13_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第13章：策略可视化与报表分析
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../14_factor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第14章：高性能因子挖掘与表达式引擎
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_7" id="__nav_2_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第五部分：实盘篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第五部分：实盘篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../15_live_trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第15章：实盘交易系统与运维
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_8" id="__nav_2_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第六部分：指标工程篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第六部分：指标工程篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../16_rust_indicators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第16章：AKQuant 技术指标体系与应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程项目：端到端实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_10" id="__nav_2_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    附录
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 A：环境与复现
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_cite/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 B：引用、许可与勘误
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_pitfalls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 C：常见误区对照表
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/python_basics/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章地图：先抓主线，再读扩展
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#41" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 [主线必学] 回测系统的两种范式
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.1 [主线必学] 回测系统的两种范式">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#410" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1.0 完整主示例（建议先通读）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#411-pandas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1.1 向量化回测 (Pandas)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#412-backtrader-akquant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1.2 事件驱动回测 (Backtrader &amp; AKQuant)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#42-akquant-architecture-deep-dive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 [主线必学] AKQuant 架构深度解析 (Architecture Deep Dive)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.2 [主线必学] AKQuant 架构深度解析 (Architecture Deep Dive)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#421-rust-core-python-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2.1 核心设计理念：Rust Core + Python API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#422" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2.2 系统组件图
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#423" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2.3 关键组件详解
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.2.3 关键组件详解">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Engine (引擎)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-datafeed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. DataFeed (数据源)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-strategycontext" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. StrategyContext (策略上下文)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#43-the-configuration-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 [主线必学] 配置系统详解 (The Configuration System)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.3 [主线必学] 配置系统详解 (The Configuration System)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#431" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3.1 四大配置支柱
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#432" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3.2 配置示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#44-state-snapshot-warm-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 [进阶选读] 状态快照与热启动 (State Snapshot &amp; Warm Start)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.4 [进阶选读] 状态快照与热启动 (State Snapshot &amp; Warm Start)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#441" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4.1 原理
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#442" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4.2 应用场景
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#443" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4.3 佣金策略分层
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#45-matching-engine-internals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 [主线必学] 撮合引擎揭秘 (Matching Engine Internals)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.5 [主线必学] 撮合引擎揭秘 (Matching Engine Internals)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#451-bar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5.1 基于 Bar 的撮合逻辑
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#452" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5.2 涨跌停处理
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#46-slippage-impact-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.6 [进阶选读] 滑点与冲击成本模型 (Slippage &amp; Impact Models)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.6 [进阶选读] 滑点与冲击成本模型 (Slippage &amp; Impact Models)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#461" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.6.1 线性滑点模型
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#462-square-root-law" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.6.2 平方根法则 (Square Root Law)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#47-event-loop-pseudo-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.7 [主线必学] 事件循环伪代码 (Event Loop Pseudo-code)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.7 [主线必学] 事件循环伪代码 (Event Loop Pseudo-code)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#471-run_backtest-on_event" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.7.1 run_backtest(..., on_event=...) 统一事件流
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#48-risk-engine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.8 [主线必学] 风控引擎 (Risk Engine)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.8 [主线必学] 风控引擎 (Risk Engine)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#481" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.8.1 为什么要预交易风控？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#482" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.8.2 内置风控规则
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#483" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.8.3 配置示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#49-order-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.9 [主线必学] 订单生命周期与状态机 (Order Lifecycle)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.9 [主线必学] 订单生命周期与状态机 (Order Lifecycle)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#491" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.9.1 关键状态解析
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#410-matching-engine-mechanics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10 [进阶选读] 撮合引擎机制 (Matching Engine Mechanics)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.10 [进阶选读] 撮合引擎机制 (Matching Engine Mechanics)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4101-matching-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.1 撮合逻辑 (Matching Logic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4102-fill-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.2 成交模式 (Fill Mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4103-timer-fill-timing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.3 成交时序策略 (Timer Fill Timing)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4104-slippage-impact" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.4 滑点与冲击成本 (Slippage &amp; Impact)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4105" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.10.5 配置分层与覆盖优先级
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#411-portfolio-risk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.11 [进阶选读] 资金与风控管理 (Portfolio &amp; Risk)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.11 [进阶选读] 资金与风控管理 (Portfolio &amp; Risk)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4111-pre-trade-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.11.1 资金校验 (Pre-trade Check)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4112-t1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.11.2 T+1 制度模拟
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#412-time-flow-multi-asset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.12 [进阶选读] 多标的与时间流 (Time Flow &amp; Multi-Asset)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.12 [进阶选读] 多标的与时间流 (Time Flow &amp; Multi-Asset)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4121-akquant-utc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.12.1 为什么 AKQuant 要统一用 UTC
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#413-pnl-mathematics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.13 [进阶选读] 盈亏计算原理 (PnL Mathematics)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.13 [进阶选读] 盈亏计算原理 (PnL Mathematics)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4131-unrealized-pnl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.13.1 浮动盈亏 (Unrealized PnL)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4132-realized-pnl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.13.2 平仓盈亏 (Realized PnL)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4133-total-equity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.13.3 总权益 (Total Equity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#414-troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.14 [主线必学] 常见问题排查 (Troubleshooting)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#415" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.15 [进阶选读] 性能优化与内存管理
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#416-tick-tick-input-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16 [进阶选读] Tick 输入与聚合语义 (Tick Input &amp; Aggregation)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.16 [进阶选读] Tick 输入与聚合语义 (Tick Input &amp; Aggregation)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4161-tick-bar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16.1 纯 tick 模式：退化 bar 表示法
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4162-freq" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16.2 freq 聚合模式：因果顺序为什么决定时间戳约定
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4163" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16.3 成交量口径：单笔量与累计量
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4164" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.16.4 其余边界
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="导航栏" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    首页
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    量化教材
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="./" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    第二部分：引擎篇
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="4">第 4 章：事件驱动回测原理<a class="headerlink" href="#4" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>⏱️ 预计阅读 ~40 分钟 ｜ 🎯 难度 ★★★★☆（核心）</p>
+</blockquote>
+<p>在第 1 章中，我们运行了一个简单的策略；在第 3 章中，我们准备好了数据。现在，让我们揭开 <code>AKQuant</code> 引擎盖下的秘密，从软件工程的角度深入理解<strong>事件驱动 (Event-Driven)</strong> 架构的设计原理。</p>
+<h2 id="_1">学习目标<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li>理解向量化回测与事件驱动回测的建模差异与适用边界。</li>
+<li>掌握 AKQuant 引擎的核心组件、事件循环、撮合与风控框架。</li>
+<li>建立时间推进、订单状态与回测可信度检查的系统视角。</li>
+</ul>
+<h2 id="_2">前置知识<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li>已完成前 1 到 3 章，对数据与首个策略有基本感知。</li>
+<li>能读懂简单的类、配置对象与伪代码。</li>
+</ul>
+<h2 id="_3">本章实践入口<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<ul>
+<li>主示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch04_comparison.py">examples/textbook/ch04_comparison.py</a></li>
+<li>进阶示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/25_streaming_backtest_demo.py">examples/25_streaming_backtest_demo.py</a>, <a href="https://github.com/akfamily/akquant/blob/main/examples/68_backtest_tick_demo.py">examples/68_backtest_tick_demo.py</a>（§4.16 Tick 输入与聚合语义）</li>
+<li>函数式孪生示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch04_comparison_functional.py">examples/textbook/ch04_comparison_functional.py</a></li>
+<li>对应指南：<a href="../../guide/data/">数据指南</a></li>
+</ul>
+<h2 id="_4">快速运行与验收<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>examples/textbook/ch04_comparison.py
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>examples/textbook/ch04_comparison_functional.py
+</span></code></pre></div>
+<p>验收要点：</p>
+<ol>
+<li>脚本能够输出向量化、Python 事件驱动、AKQuant 事件驱动三组结果。</li>
+<li>可以对比三种范式的执行速度与回测指标差异。</li>
+<li>能解释为何事件驱动更贴近真实交易状态机。</li>
+</ol>
+<h2 id="_5">本章地图：先抓主线，再读扩展<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<p>如果你是第一次系统学习回测引擎，建议按下面顺序阅读，而不是从头到尾平均用力：</p>
+<ol>
+<li><strong>第一遍只读主线必学</strong>：4.1 -&gt; 4.2 -&gt; 4.3 -&gt; 4.5 -&gt; 4.7 -&gt; 4.8 -&gt; 4.9 -&gt; 4.14
+   这一遍的目标只有一个：建立“事件如何流动、订单如何成交、风控如何拦截”的完整心智模型。</li>
+<li><strong>第二遍补读进阶选读</strong>：4.4 -&gt; 4.6 -&gt; 4.10 -&gt; 4.11 -&gt; 4.12 -&gt; 4.13 -&gt; 4.15
+   这一遍再去理解热启动、冲击成本、多标的时间流、盈亏口径和性能优化。</li>
+</ol>
+<p>如果你在阅读时感觉信息量过大，优先记住一句话：</p>
+<blockquote>
+<p><strong>事件驱动回测 = 时间推进 + 状态更新 + 订单撮合 + 风控拦截。</strong></p>
+</blockquote>
+<h2 id="41">4.1 [主线必学] 回测系统的两种范式<a class="headerlink" href="#41" title="Permanent link">&para;</a></h2>
+<p>量化回测系统主要分为两大类：<strong>向量化回测 (Vectorized Backtesting)</strong> 和 <strong>事件驱动回测 (Event-Driven Backtesting)</strong>。</p>
+<p>为了直观理解这两种模式的区别，我们编写了一个对比脚本 <code>examples/textbook/ch04_comparison.py</code>，分别使用 <strong>Pandas</strong> (向量化)、<strong>Backtrader</strong> (Python 事件驱动) 和 <strong>AKQuant</strong> (Rust 事件驱动) 实现同一个双均线策略，用来观察不同范式在建模方式、接口体验和运行开销上的差异。</p>
+<h3 id="410">4.1.0 完整主示例（建议先通读）<a class="headerlink" href="#410" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="sd">"""</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="sd">第 4 章：回测框架对比 (Pandas vs Backtrader vs AKQuant).</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="sd">本脚本通过实现同一个简单的“双均线策略” (Golden Cross)，展示三种不同风格的回测实现方式：</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="sd">1. **Pandas (向量化)**：利用 DataFrame 进行全量矩阵运算，</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="sd">   适合快速验证思路，但细节模拟能力有限。</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="sd">2. **Backtrader (事件驱动 - Python)**：经典的 Python</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="sd">   事件驱动框架，适合观察逐 Bar 状态推进。</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="sd">3. **AKQuant (事件驱动 - Rust)**：在保持事件驱动建模方式的同时，</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="sd">   将部分核心执行逻辑下沉到 Rust。</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="sd">说明：</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="sd">- 本脚本主要用于展示三种回测范式的实现差异，不作为通用性能结论。</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="sd">- 实际耗时会受到策略写法、数据规模、指标计算位置、依赖版本与运行环境影响。</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="sd">策略逻辑：</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="sd">- 当 5 日均线 &gt; 20 日均线 (金叉) -&gt; 全仓买入</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="sd">- 当 5 日均线 &lt; 20 日均线 (死叉) -&gt; 清仓卖出</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="sd">"""</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>
+</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="c1"># 模拟数据生成 (为了方便演示，不依赖外部文件)</span>
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="k">def</span><span class="w"> </span><span class="nf">generate_mock_data</span><span class="p">(</span><span class="n">length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="w">    </span><span class="sd">"""生成模拟数据."""</span>
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>    <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>    <span class="n">dates</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">date_range</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="s2">"2020-01-01"</span><span class="p">,</span> <span class="n">periods</span><span class="o">=</span><span class="n">length</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="s2">"D"</span><span class="p">)</span>
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>    <span class="n">prices</span> <span class="o">=</span> <span class="mi">100</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">length</span><span class="p">))</span>
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>        <span class="p">{</span>
+</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>            <span class="s2">"date"</span><span class="p">:</span> <span class="n">dates</span><span class="p">,</span>
+</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>            <span class="s2">"open"</span><span class="p">:</span> <span class="n">prices</span><span class="p">,</span>
+</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a>            <span class="s2">"high"</span><span class="p">:</span> <span class="n">prices</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-1-38"><a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a>            <span class="s2">"low"</span><span class="p">:</span> <span class="n">prices</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-1-39"><a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a>            <span class="s2">"close"</span><span class="p">:</span> <span class="n">prices</span><span class="p">,</span>
+</span><span id="__span-1-40"><a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a>            <span class="s2">"volume"</span><span class="p">:</span> <span class="mi">100000</span><span class="p">,</span>
+</span><span id="__span-1-41"><a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a>        <span class="p">}</span>
+</span><span id="__span-1-42"><a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a>    <span class="p">)</span>
+</span><span id="__span-1-43"><a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a>    <span class="n">df</span><span class="p">[</span><span class="s2">"symbol"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"MOCK"</span>
+</span><span id="__span-1-44"><a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a>    <span class="k">return</span> <span class="n">df</span>
+</span><span id="__span-1-45"><a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a>
+</span><span id="__span-1-46"><a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a>
+</span><span id="__span-1-47"><a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a><span class="c1"># ==============================================================================</span>
+</span><span id="__span-1-48"><a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a><span class="c1"># 1. Pandas 向量化回测</span>
+</span><span id="__span-1-49"><a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a><span class="c1"># ==============================================================================</span>
+</span><span id="__span-1-50"><a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a><span class="k">def</span><span class="w"> </span><span class="nf">run_pandas_backtest</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-51"><a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a><span class="w">    </span><span class="sd">"""运行 Pandas 向量化回测."""</span>
+</span><span id="__span-1-52"><a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">[Pandas] 开始向量化回测..."</span><span class="p">)</span>
+</span><span id="__span-1-53"><a id="__codelineno-1-53" name="__codelineno-1-53" href="#__codelineno-1-53"></a>    <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+</span><span id="__span-1-54"><a id="__codelineno-1-54" name="__codelineno-1-54" href="#__codelineno-1-54"></a>    <span class="n">initial_cash</span> <span class="o">=</span> <span class="mf">100000.0</span>
+</span><span id="__span-1-55"><a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a>    <span class="n">target_weight</span> <span class="o">=</span> <span class="mf">0.95</span>
+</span><span id="__span-1-56"><a id="__codelineno-1-56" name="__codelineno-1-56" href="#__codelineno-1-56"></a>
+</span><span id="__span-1-57"><a id="__codelineno-1-57" name="__codelineno-1-57" href="#__codelineno-1-57"></a>    <span class="c1"># 1. 计算指标 (全量计算)</span>
+</span><span id="__span-1-58"><a id="__codelineno-1-58" name="__codelineno-1-58" href="#__codelineno-1-58"></a>    <span class="n">df</span><span class="p">[</span><span class="s2">"ma5"</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s2">"close"</span><span class="p">]</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-1-59"><a id="__codelineno-1-59" name="__codelineno-1-59" href="#__codelineno-1-59"></a>    <span class="n">df</span><span class="p">[</span><span class="s2">"ma20"</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s2">"close"</span><span class="p">]</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-1-60"><a id="__codelineno-1-60" name="__codelineno-1-60" href="#__codelineno-1-60"></a>
+</span><span id="__span-1-61"><a id="__codelineno-1-61" name="__codelineno-1-61" href="#__codelineno-1-61"></a>    <span class="c1"># 2. 生成信号 (1: 持仓, 0: 空仓)</span>
+</span><span id="__span-1-62"><a id="__codelineno-1-62" name="__codelineno-1-62" href="#__codelineno-1-62"></a>    <span class="c1"># shift(1) 是为了避免未来函数：今天的信号只能基于昨天的收盘价计算，用于今天的交易</span>
+</span><span id="__span-1-63"><a id="__codelineno-1-63" name="__codelineno-1-63" href="#__codelineno-1-63"></a>    <span class="n">df</span><span class="p">[</span><span class="s2">"signal"</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"ma5"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">df</span><span class="p">[</span><span class="s2">"ma20"</span><span class="p">],</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+</span><span id="__span-1-64"><a id="__codelineno-1-64" name="__codelineno-1-64" href="#__codelineno-1-64"></a>    <span class="n">df</span><span class="p">[</span><span class="s2">"position"</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s2">"signal"</span><span class="p">]</span><span class="o">.</span><span class="n">shift</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+</span><span id="__span-1-65"><a id="__codelineno-1-65" name="__codelineno-1-65" href="#__codelineno-1-65"></a>
+</span><span id="__span-1-66"><a id="__codelineno-1-66" name="__codelineno-1-66" href="#__codelineno-1-66"></a>    <span class="c1"># 3. 逐笔订单复利（使用 open 成交，最后未平仓按 close 估值）</span>
+</span><span id="__span-1-67"><a id="__codelineno-1-67" name="__codelineno-1-67" href="#__codelineno-1-67"></a>    <span class="n">pos_diff</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s2">"position"</span><span class="p">]</span><span class="o">.</span><span class="n">diff</span><span class="p">()</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"position"</span><span class="p">])</span>
+</span><span id="__span-1-68"><a id="__codelineno-1-68" name="__codelineno-1-68" href="#__codelineno-1-68"></a>    <span class="n">entry_prices</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">pos_diff</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"open"</span><span class="p">]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-69"><a id="__codelineno-1-69" name="__codelineno-1-69" href="#__codelineno-1-69"></a>    <span class="n">exit_prices</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">pos_diff</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"open"</span><span class="p">]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-70"><a id="__codelineno-1-70" name="__codelineno-1-70" href="#__codelineno-1-70"></a>    <span class="k">if</span> <span class="n">entry_prices</span><span class="o">.</span><span class="n">size</span> <span class="o">&gt;</span> <span class="n">exit_prices</span><span class="o">.</span><span class="n">size</span><span class="p">:</span>
+</span><span id="__span-1-71"><a id="__codelineno-1-71" name="__codelineno-1-71" href="#__codelineno-1-71"></a>        <span class="n">exit_prices</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">exit_prices</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"close"</span><span class="p">]</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]))</span>
+</span><span id="__span-1-72"><a id="__codelineno-1-72" name="__codelineno-1-72" href="#__codelineno-1-72"></a>
+</span><span id="__span-1-73"><a id="__codelineno-1-73" name="__codelineno-1-73" href="#__codelineno-1-73"></a>    <span class="n">final_equity</span> <span class="o">=</span> <span class="n">initial_cash</span>
+</span><span id="__span-1-74"><a id="__codelineno-1-74" name="__codelineno-1-74" href="#__codelineno-1-74"></a>    <span class="k">if</span> <span class="n">entry_prices</span><span class="o">.</span><span class="n">size</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">exit_prices</span><span class="o">.</span><span class="n">size</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-1-75"><a id="__codelineno-1-75" name="__codelineno-1-75" href="#__codelineno-1-75"></a>        <span class="n">trades_count</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">entry_prices</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">exit_prices</span><span class="o">.</span><span class="n">size</span><span class="p">)</span>
+</span><span id="__span-1-76"><a id="__codelineno-1-76" name="__codelineno-1-76" href="#__codelineno-1-76"></a>        <span class="n">entry_used</span> <span class="o">=</span> <span class="n">entry_prices</span><span class="p">[:</span><span class="n">trades_count</span><span class="p">]</span>
+</span><span id="__span-1-77"><a id="__codelineno-1-77" name="__codelineno-1-77" href="#__codelineno-1-77"></a>        <span class="n">exit_used</span> <span class="o">=</span> <span class="n">exit_prices</span><span class="p">[:</span><span class="n">trades_count</span><span class="p">]</span>
+</span><span id="__span-1-78"><a id="__codelineno-1-78" name="__codelineno-1-78" href="#__codelineno-1-78"></a>        <span class="n">factors</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">target_weight</span><span class="p">)</span> <span class="o">+</span> <span class="n">target_weight</span> <span class="o">*</span> <span class="p">(</span><span class="n">exit_used</span> <span class="o">/</span> <span class="n">entry_used</span><span class="p">)</span>
+</span><span id="__span-1-79"><a id="__codelineno-1-79" name="__codelineno-1-79" href="#__codelineno-1-79"></a>        <span class="n">final_equity</span> <span class="o">=</span> <span class="n">initial_cash</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">prod</span><span class="p">(</span><span class="n">factors</span><span class="p">))</span>
+</span><span id="__span-1-80"><a id="__codelineno-1-80" name="__codelineno-1-80" href="#__codelineno-1-80"></a>    <span class="n">cumulative_return</span> <span class="o">=</span> <span class="n">final_equity</span> <span class="o">/</span> <span class="n">initial_cash</span> <span class="o">-</span> <span class="mf">1.0</span>
+</span><span id="__span-1-81"><a id="__codelineno-1-81" name="__codelineno-1-81" href="#__codelineno-1-81"></a>
+</span><span id="__span-1-82"><a id="__codelineno-1-82" name="__codelineno-1-82" href="#__codelineno-1-82"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[Pandas] 耗时: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start_time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+</span><span id="__span-1-83"><a id="__codelineno-1-83" name="__codelineno-1-83" href="#__codelineno-1-83"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[Pandas] 累计收益: </span><span class="si">{</span><span class="n">cumulative_return</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-1-84"><a id="__codelineno-1-84" name="__codelineno-1-84" href="#__codelineno-1-84"></a>
+</span><span id="__span-1-85"><a id="__codelineno-1-85" name="__codelineno-1-85" href="#__codelineno-1-85"></a>
+</span><span id="__span-1-86"><a id="__codelineno-1-86" name="__codelineno-1-86" href="#__codelineno-1-86"></a><span class="c1"># ==============================================================================</span>
+</span><span id="__span-1-87"><a id="__codelineno-1-87" name="__codelineno-1-87" href="#__codelineno-1-87"></a><span class="c1"># 2. Backtrader 事件驱动回测</span>
+</span><span id="__span-1-88"><a id="__codelineno-1-88" name="__codelineno-1-88" href="#__codelineno-1-88"></a><span class="c1"># ==============================================================================</span>
+</span><span id="__span-1-89"><a id="__codelineno-1-89" name="__codelineno-1-89" href="#__codelineno-1-89"></a><span class="k">def</span><span class="w"> </span><span class="nf">run_backtrader_backtest</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-90"><a id="__codelineno-1-90" name="__codelineno-1-90" href="#__codelineno-1-90"></a><span class="w">    </span><span class="sd">"""运行 Backtrader 回测."""</span>
+</span><span id="__span-1-91"><a id="__codelineno-1-91" name="__codelineno-1-91" href="#__codelineno-1-91"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-1-92"><a id="__codelineno-1-92" name="__codelineno-1-92" href="#__codelineno-1-92"></a>        <span class="kn">import</span><span class="w"> </span><span class="nn">backtrader</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">bt</span>  <span class="c1"># type: ignore</span>
+</span><span id="__span-1-93"><a id="__codelineno-1-93" name="__codelineno-1-93" href="#__codelineno-1-93"></a>    <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+</span><span id="__span-1-94"><a id="__codelineno-1-94" name="__codelineno-1-94" href="#__codelineno-1-94"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">[Backtrader] 未安装 backtrader，跳过演示 (pip install backtrader)"</span><span class="p">)</span>
+</span><span id="__span-1-95"><a id="__codelineno-1-95" name="__codelineno-1-95" href="#__codelineno-1-95"></a>        <span class="k">return</span>
+</span><span id="__span-1-96"><a id="__codelineno-1-96" name="__codelineno-1-96" href="#__codelineno-1-96"></a>
+</span><span id="__span-1-97"><a id="__codelineno-1-97" name="__codelineno-1-97" href="#__codelineno-1-97"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">[Backtrader] 开始事件驱动回测..."</span><span class="p">)</span>
+</span><span id="__span-1-98"><a id="__codelineno-1-98" name="__codelineno-1-98" href="#__codelineno-1-98"></a>
+</span><span id="__span-1-99"><a id="__codelineno-1-99" name="__codelineno-1-99" href="#__codelineno-1-99"></a>    <span class="k">class</span><span class="w"> </span><span class="nc">SmaCross</span><span class="p">(</span><span class="n">bt</span><span class="o">.</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-1-100"><a id="__codelineno-1-100" name="__codelineno-1-100" href="#__codelineno-1-100"></a>        <span class="n">params</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="__span-1-101"><a id="__codelineno-1-101" name="__codelineno-1-101" href="#__codelineno-1-101"></a>            <span class="p">(</span><span class="s2">"pfast"</span><span class="p">,</span> <span class="mi">5</span><span class="p">),</span>
+</span><span id="__span-1-102"><a id="__codelineno-1-102" name="__codelineno-1-102" href="#__codelineno-1-102"></a>            <span class="p">(</span><span class="s2">"pslow"</span><span class="p">,</span> <span class="mi">20</span><span class="p">),</span>
+</span><span id="__span-1-103"><a id="__codelineno-1-103" name="__codelineno-1-103" href="#__codelineno-1-103"></a>        <span class="p">)</span>
+</span><span id="__span-1-104"><a id="__codelineno-1-104" name="__codelineno-1-104" href="#__codelineno-1-104"></a>
+</span><span id="__span-1-105"><a id="__codelineno-1-105" name="__codelineno-1-105" href="#__codelineno-1-105"></a>        <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-106"><a id="__codelineno-1-106" name="__codelineno-1-106" href="#__codelineno-1-106"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">sma1</span> <span class="o">=</span> <span class="n">bt</span><span class="o">.</span><span class="n">ind</span><span class="o">.</span><span class="n">SMA</span><span class="p">(</span><span class="n">period</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">pfast</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+</span><span id="__span-1-107"><a id="__codelineno-1-107" name="__codelineno-1-107" href="#__codelineno-1-107"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">sma2</span> <span class="o">=</span> <span class="n">bt</span><span class="o">.</span><span class="n">ind</span><span class="o">.</span><span class="n">SMA</span><span class="p">(</span><span class="n">period</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">pslow</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+</span><span id="__span-1-108"><a id="__codelineno-1-108" name="__codelineno-1-108" href="#__codelineno-1-108"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">crossover</span> <span class="o">=</span> <span class="n">bt</span><span class="o">.</span><span class="n">ind</span><span class="o">.</span><span class="n">CrossOver</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">sma1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">sma2</span><span class="p">)</span>
+</span><span id="__span-1-109"><a id="__codelineno-1-109" name="__codelineno-1-109" href="#__codelineno-1-109"></a>
+</span><span id="__span-1-110"><a id="__codelineno-1-110" name="__codelineno-1-110" href="#__codelineno-1-110"></a>        <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-111"><a id="__codelineno-1-111" name="__codelineno-1-111" href="#__codelineno-1-111"></a>            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">position</span><span class="p">:</span>
+</span><span id="__span-1-112"><a id="__codelineno-1-112" name="__codelineno-1-112" href="#__codelineno-1-112"></a>                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">crossover</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-1-113"><a id="__codelineno-1-113" name="__codelineno-1-113" href="#__codelineno-1-113"></a>                    <span class="bp">self</span><span class="o">.</span><span class="n">buy</span><span class="p">()</span>
+</span><span id="__span-1-114"><a id="__codelineno-1-114" name="__codelineno-1-114" href="#__codelineno-1-114"></a>            <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">crossover</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-1-115"><a id="__codelineno-1-115" name="__codelineno-1-115" href="#__codelineno-1-115"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span id="__span-1-116"><a id="__codelineno-1-116" name="__codelineno-1-116" href="#__codelineno-1-116"></a>
+</span><span id="__span-1-117"><a id="__codelineno-1-117" name="__codelineno-1-117" href="#__codelineno-1-117"></a>    <span class="n">cerebro</span> <span class="o">=</span> <span class="n">bt</span><span class="o">.</span><span class="n">Cerebro</span><span class="p">()</span>
+</span><span id="__span-1-118"><a id="__codelineno-1-118" name="__codelineno-1-118" href="#__codelineno-1-118"></a>
+</span><span id="__span-1-119"><a id="__codelineno-1-119" name="__codelineno-1-119" href="#__codelineno-1-119"></a>    <span class="c1"># 转换数据格式</span>
+</span><span id="__span-1-120"><a id="__codelineno-1-120" name="__codelineno-1-120" href="#__codelineno-1-120"></a>    <span class="n">data</span> <span class="o">=</span> <span class="n">bt</span><span class="o">.</span><span class="n">feeds</span><span class="o">.</span><span class="n">PandasData</span><span class="p">(</span>
+</span><span id="__span-1-121"><a id="__codelineno-1-121" name="__codelineno-1-121" href="#__codelineno-1-121"></a>        <span class="n">dataname</span><span class="o">=</span><span class="n">df</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"date"</span><span class="p">),</span>
+</span><span id="__span-1-122"><a id="__codelineno-1-122" name="__codelineno-1-122" href="#__codelineno-1-122"></a>        <span class="c1"># Backtrader 默认不包含 symbol，这里仅演示单标的</span>
+</span><span id="__span-1-123"><a id="__codelineno-1-123" name="__codelineno-1-123" href="#__codelineno-1-123"></a>    <span class="p">)</span>
+</span><span id="__span-1-124"><a id="__codelineno-1-124" name="__codelineno-1-124" href="#__codelineno-1-124"></a>    <span class="n">cerebro</span><span class="o">.</span><span class="n">adddata</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+</span><span id="__span-1-125"><a id="__codelineno-1-125" name="__codelineno-1-125" href="#__codelineno-1-125"></a>    <span class="n">cerebro</span><span class="o">.</span><span class="n">addstrategy</span><span class="p">(</span><span class="n">SmaCross</span><span class="p">)</span>
+</span><span id="__span-1-126"><a id="__codelineno-1-126" name="__codelineno-1-126" href="#__codelineno-1-126"></a>    <span class="n">cerebro</span><span class="o">.</span><span class="n">broker</span><span class="o">.</span><span class="n">setcash</span><span class="p">(</span><span class="mf">100000.0</span><span class="p">)</span>
+</span><span id="__span-1-127"><a id="__codelineno-1-127" name="__codelineno-1-127" href="#__codelineno-1-127"></a>    <span class="n">cerebro</span><span class="o">.</span><span class="n">addsizer</span><span class="p">(</span><span class="n">bt</span><span class="o">.</span><span class="n">sizers</span><span class="o">.</span><span class="n">PercentSizer</span><span class="p">,</span> <span class="n">percents</span><span class="o">=</span><span class="mi">95</span><span class="p">)</span>
+</span><span id="__span-1-128"><a id="__codelineno-1-128" name="__codelineno-1-128" href="#__codelineno-1-128"></a>
+</span><span id="__span-1-129"><a id="__codelineno-1-129" name="__codelineno-1-129" href="#__codelineno-1-129"></a>    <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+</span><span id="__span-1-130"><a id="__codelineno-1-130" name="__codelineno-1-130" href="#__codelineno-1-130"></a>    <span class="n">cerebro</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+</span><span id="__span-1-131"><a id="__codelineno-1-131" name="__codelineno-1-131" href="#__codelineno-1-131"></a>    <span class="n">end_val</span> <span class="o">=</span> <span class="n">cerebro</span><span class="o">.</span><span class="n">broker</span><span class="o">.</span><span class="n">getvalue</span><span class="p">()</span>
+</span><span id="__span-1-132"><a id="__codelineno-1-132" name="__codelineno-1-132" href="#__codelineno-1-132"></a>    <span class="n">cumulative_return</span> <span class="o">=</span> <span class="n">end_val</span> <span class="o">/</span> <span class="mf">100000.0</span> <span class="o">-</span> <span class="mf">1.0</span>
+</span><span id="__span-1-133"><a id="__codelineno-1-133" name="__codelineno-1-133" href="#__codelineno-1-133"></a>
+</span><span id="__span-1-134"><a id="__codelineno-1-134" name="__codelineno-1-134" href="#__codelineno-1-134"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[Backtrader] 耗时: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start_time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+</span><span id="__span-1-135"><a id="__codelineno-1-135" name="__codelineno-1-135" href="#__codelineno-1-135"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[Backtrader] 最终资金: </span><span class="si">{</span><span class="n">end_val</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-1-136"><a id="__codelineno-1-136" name="__codelineno-1-136" href="#__codelineno-1-136"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[Backtrader] 累计收益: </span><span class="si">{</span><span class="n">cumulative_return</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-1-137"><a id="__codelineno-1-137" name="__codelineno-1-137" href="#__codelineno-1-137"></a>
+</span><span id="__span-1-138"><a id="__codelineno-1-138" name="__codelineno-1-138" href="#__codelineno-1-138"></a>
+</span><span id="__span-1-139"><a id="__codelineno-1-139" name="__codelineno-1-139" href="#__codelineno-1-139"></a><span class="c1"># ==============================================================================</span>
+</span><span id="__span-1-140"><a id="__codelineno-1-140" name="__codelineno-1-140" href="#__codelineno-1-140"></a><span class="c1"># 3. AKQuant 事件驱动回测</span>
+</span><span id="__span-1-141"><a id="__codelineno-1-141" name="__codelineno-1-141" href="#__codelineno-1-141"></a><span class="c1"># ==============================================================================</span>
+</span><span id="__span-1-142"><a id="__codelineno-1-142" name="__codelineno-1-142" href="#__codelineno-1-142"></a><span class="k">def</span><span class="w"> </span><span class="nf">run_akquant_backtest</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-143"><a id="__codelineno-1-143" name="__codelineno-1-143" href="#__codelineno-1-143"></a><span class="w">    </span><span class="sd">"""运行 AKQuant 回测."""</span>
+</span><span id="__span-1-144"><a id="__codelineno-1-144" name="__codelineno-1-144" href="#__codelineno-1-144"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-1-145"><a id="__codelineno-1-145" name="__codelineno-1-145" href="#__codelineno-1-145"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Bar</span><span class="p">,</span> <span class="n">Strategy</span>
+</span><span id="__span-1-146"><a id="__codelineno-1-146" name="__codelineno-1-146" href="#__codelineno-1-146"></a>
+</span><span id="__span-1-147"><a id="__codelineno-1-147" name="__codelineno-1-147" href="#__codelineno-1-147"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">[AKQuant] 开始事件驱动回测 (Rust Engine)..."</span><span class="p">)</span>
+</span><span id="__span-1-148"><a id="__codelineno-1-148" name="__codelineno-1-148" href="#__codelineno-1-148"></a>
+</span><span id="__span-1-149"><a id="__codelineno-1-149" name="__codelineno-1-149" href="#__codelineno-1-149"></a>    <span class="k">class</span><span class="w"> </span><span class="nc">AKStrategy</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-1-150"><a id="__codelineno-1-150" name="__codelineno-1-150" href="#__codelineno-1-150"></a>        <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-151"><a id="__codelineno-1-151" name="__codelineno-1-151" href="#__codelineno-1-151"></a>            <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span><span id="__span-1-152"><a id="__codelineno-1-152" name="__codelineno-1-152" href="#__codelineno-1-152"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">ma_short</span> <span class="o">=</span> <span class="mi">5</span>
+</span><span id="__span-1-153"><a id="__codelineno-1-153" name="__codelineno-1-153" href="#__codelineno-1-153"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">ma_long</span> <span class="o">=</span> <span class="mi">20</span>
+</span><span id="__span-1-154"><a id="__codelineno-1-154" name="__codelineno-1-154" href="#__codelineno-1-154"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">warmup_period</span> <span class="o">=</span> <span class="mi">20</span>
+</span><span id="__span-1-155"><a id="__codelineno-1-155" name="__codelineno-1-155" href="#__codelineno-1-155"></a>
+</span><span id="__span-1-156"><a id="__codelineno-1-156" name="__codelineno-1-156" href="#__codelineno-1-156"></a>        <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">:</span> <span class="n">Bar</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-157"><a id="__codelineno-1-157" name="__codelineno-1-157" href="#__codelineno-1-157"></a>            <span class="n">symbol</span> <span class="o">=</span> <span class="n">bar</span><span class="o">.</span><span class="n">symbol</span>
+</span><span id="__span-1-158"><a id="__codelineno-1-158" name="__codelineno-1-158" href="#__codelineno-1-158"></a>            <span class="n">closes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_history</span><span class="p">(</span>
+</span><span id="__span-1-159"><a id="__codelineno-1-159" name="__codelineno-1-159" href="#__codelineno-1-159"></a>                <span class="n">count</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">ma_long</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="n">symbol</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s2">"close"</span>
+</span><span id="__span-1-160"><a id="__codelineno-1-160" name="__codelineno-1-160" href="#__codelineno-1-160"></a>            <span class="p">)</span>
+</span><span id="__span-1-161"><a id="__codelineno-1-161" name="__codelineno-1-161" href="#__codelineno-1-161"></a>            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">closes</span><span class="p">)</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">ma_long</span> <span class="o">+</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-1-162"><a id="__codelineno-1-162" name="__codelineno-1-162" href="#__codelineno-1-162"></a>                <span class="k">return</span>
+</span><span id="__span-1-163"><a id="__codelineno-1-163" name="__codelineno-1-163" href="#__codelineno-1-163"></a>
+</span><span id="__span-1-164"><a id="__codelineno-1-164" name="__codelineno-1-164" href="#__codelineno-1-164"></a>            <span class="c1"># 为了避免未来函数，我们使用 [:-1] 切片，仅使用截止到昨天的数据</span>
+</span><span id="__span-1-165"><a id="__codelineno-1-165" name="__codelineno-1-165" href="#__codelineno-1-165"></a>            <span class="c1"># 或者，如果我们在收盘后交易（日线级别通常假设次日开盘成交），可以使用当前值</span>
+</span><span id="__span-1-166"><a id="__codelineno-1-166" name="__codelineno-1-166" href="#__codelineno-1-166"></a>            <span class="c1"># 这里为了演示方便，直接使用当前值计算信号，但在真实交易中要注意信号产生的</span>
+</span><span id="__span-1-167"><a id="__codelineno-1-167" name="__codelineno-1-167" href="#__codelineno-1-167"></a>            <span class="c1"># 时机</span>
+</span><span id="__span-1-168"><a id="__codelineno-1-168" name="__codelineno-1-168" href="#__codelineno-1-168"></a>
+</span><span id="__span-1-169"><a id="__codelineno-1-169" name="__codelineno-1-169" href="#__codelineno-1-169"></a>            <span class="c1"># 计算均线</span>
+</span><span id="__span-1-170"><a id="__codelineno-1-170" name="__codelineno-1-170" href="#__codelineno-1-170"></a>            <span class="n">ma5</span> <span class="o">=</span> <span class="n">closes</span><span class="p">[</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">ma_short</span> <span class="p">:]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-1-171"><a id="__codelineno-1-171" name="__codelineno-1-171" href="#__codelineno-1-171"></a>            <span class="n">ma20</span> <span class="o">=</span> <span class="n">closes</span><span class="p">[</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">ma_long</span> <span class="p">:]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-1-172"><a id="__codelineno-1-172" name="__codelineno-1-172" href="#__codelineno-1-172"></a>
+</span><span id="__span-1-173"><a id="__codelineno-1-173" name="__codelineno-1-173" href="#__codelineno-1-173"></a>            <span class="n">pos</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_position</span><span class="p">(</span><span class="n">symbol</span><span class="p">)</span>
+</span><span id="__span-1-174"><a id="__codelineno-1-174" name="__codelineno-1-174" href="#__codelineno-1-174"></a>
+</span><span id="__span-1-175"><a id="__codelineno-1-175" name="__codelineno-1-175" href="#__codelineno-1-175"></a>            <span class="k">if</span> <span class="n">ma5</span> <span class="o">&gt;</span> <span class="n">ma20</span> <span class="ow">and</span> <span class="n">pos</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-1-176"><a id="__codelineno-1-176" name="__codelineno-1-176" href="#__codelineno-1-176"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">order_target_percent</span><span class="p">(</span><span class="n">symbol</span><span class="o">=</span><span class="n">symbol</span><span class="p">,</span> <span class="n">target_percent</span><span class="o">=</span><span class="mf">0.95</span><span class="p">)</span>
+</span><span id="__span-1-177"><a id="__codelineno-1-177" name="__codelineno-1-177" href="#__codelineno-1-177"></a>            <span class="k">elif</span> <span class="n">ma5</span> <span class="o">&lt;</span> <span class="n">ma20</span> <span class="ow">and</span> <span class="n">pos</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-1-178"><a id="__codelineno-1-178" name="__codelineno-1-178" href="#__codelineno-1-178"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">close_position</span><span class="p">(</span><span class="n">symbol</span><span class="p">)</span>
+</span><span id="__span-1-179"><a id="__codelineno-1-179" name="__codelineno-1-179" href="#__codelineno-1-179"></a>
+</span><span id="__span-1-180"><a id="__codelineno-1-180" name="__codelineno-1-180" href="#__codelineno-1-180"></a>    <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+</span><span id="__span-1-181"><a id="__codelineno-1-181" name="__codelineno-1-181" href="#__codelineno-1-181"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-1-182"><a id="__codelineno-1-182" name="__codelineno-1-182" href="#__codelineno-1-182"></a>        <span class="n">strategy</span><span class="o">=</span><span class="n">AKStrategy</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">df</span><span class="p">,</span> <span class="n">initial_cash</span><span class="o">=</span><span class="mf">100000.0</span><span class="p">,</span> <span class="n">commission_rate</span><span class="o">=</span><span class="mf">0.0</span>
+</span><span id="__span-1-183"><a id="__codelineno-1-183" name="__codelineno-1-183" href="#__codelineno-1-183"></a>    <span class="p">)</span>
+</span><span id="__span-1-184"><a id="__codelineno-1-184" name="__codelineno-1-184" href="#__codelineno-1-184"></a>
+</span><span id="__span-1-185"><a id="__codelineno-1-185" name="__codelineno-1-185" href="#__codelineno-1-185"></a>    <span class="n">metrics</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">metrics_df</span>
+</span><span id="__span-1-186"><a id="__codelineno-1-186" name="__codelineno-1-186" href="#__codelineno-1-186"></a>    <span class="n">end_value</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="__span-1-187"><a id="__codelineno-1-187" name="__codelineno-1-187" href="#__codelineno-1-187"></a>    <span class="k">if</span> <span class="s2">"end_market_value"</span> <span class="ow">in</span> <span class="n">metrics</span><span class="o">.</span><span class="n">index</span><span class="p">:</span>
+</span><span id="__span-1-188"><a id="__codelineno-1-188" name="__codelineno-1-188" href="#__codelineno-1-188"></a>        <span class="n">val</span> <span class="o">=</span> <span class="n">metrics</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="s2">"end_market_value"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">]</span>
+</span><span id="__span-1-189"><a id="__codelineno-1-189" name="__codelineno-1-189" href="#__codelineno-1-189"></a>        <span class="n">end_value</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">val</span><span class="p">))</span>
+</span><span id="__span-1-190"><a id="__codelineno-1-190" name="__codelineno-1-190" href="#__codelineno-1-190"></a>    <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-1-191"><a id="__codelineno-1-191" name="__codelineno-1-191" href="#__codelineno-1-191"></a>        <span class="c1"># 尝试从 result.equity_curve 获取</span>
+</span><span id="__span-1-192"><a id="__codelineno-1-192" name="__codelineno-1-192" href="#__codelineno-1-192"></a>        <span class="n">equity</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">equity_curve</span>
+</span><span id="__span-1-193"><a id="__codelineno-1-193" name="__codelineno-1-193" href="#__codelineno-1-193"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">equity</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+</span><span id="__span-1-194"><a id="__codelineno-1-194" name="__codelineno-1-194" href="#__codelineno-1-194"></a>            <span class="n">val</span> <span class="o">=</span> <span class="n">equity</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="__span-1-195"><a id="__codelineno-1-195" name="__codelineno-1-195" href="#__codelineno-1-195"></a>            <span class="n">end_value</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">val</span><span class="p">))</span>
+</span><span id="__span-1-196"><a id="__codelineno-1-196" name="__codelineno-1-196" href="#__codelineno-1-196"></a>
+</span><span id="__span-1-197"><a id="__codelineno-1-197" name="__codelineno-1-197" href="#__codelineno-1-197"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[AKQuant] 耗时: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start_time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+</span><span id="__span-1-198"><a id="__codelineno-1-198" name="__codelineno-1-198" href="#__codelineno-1-198"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[AKQuant] 最终资金: </span><span class="si">{</span><span class="n">end_value</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-1-199"><a id="__codelineno-1-199" name="__codelineno-1-199" href="#__codelineno-1-199"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[AKQuant] 累计收益: </span><span class="si">{</span><span class="n">end_value</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">100000.0</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mf">1.0</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-1-200"><a id="__codelineno-1-200" name="__codelineno-1-200" href="#__codelineno-1-200"></a>
+</span><span id="__span-1-201"><a id="__codelineno-1-201" name="__codelineno-1-201" href="#__codelineno-1-201"></a>
+</span><span id="__span-1-202"><a id="__codelineno-1-202" name="__codelineno-1-202" href="#__codelineno-1-202"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+</span><span id="__span-1-203"><a id="__codelineno-1-203" name="__codelineno-1-203" href="#__codelineno-1-203"></a>    <span class="c1"># 1. 准备一份共用的数据</span>
+</span><span id="__span-1-204"><a id="__codelineno-1-204" name="__codelineno-1-204" href="#__codelineno-1-204"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">generate_mock_data</span><span class="p">(</span><span class="n">length</span><span class="o">=</span><span class="mi">3000</span><span class="p">)</span>  <span class="c1"># 约 12 年的数据</span>
+</span><span id="__span-1-205"><a id="__codelineno-1-205" name="__codelineno-1-205" href="#__codelineno-1-205"></a>
+</span><span id="__span-1-206"><a id="__codelineno-1-206" name="__codelineno-1-206" href="#__codelineno-1-206"></a>    <span class="c1"># 2. 运行对比</span>
+</span><span id="__span-1-207"><a id="__codelineno-1-207" name="__codelineno-1-207" href="#__codelineno-1-207"></a>    <span class="n">run_pandas_backtest</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+</span><span id="__span-1-208"><a id="__codelineno-1-208" name="__codelineno-1-208" href="#__codelineno-1-208"></a>    <span class="n">run_backtrader_backtest</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+</span><span id="__span-1-209"><a id="__codelineno-1-209" name="__codelineno-1-209" href="#__codelineno-1-209"></a>    <span class="n">run_akquant_backtest</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+</span></code></pre></div>
+<h3 id="411-pandas">4.1.1 向量化回测 (Pandas)<a class="headerlink" href="#411-pandas" title="Permanent link">&para;</a></h3>
+<p>向量化回测利用 Pandas/NumPy 的矩阵运算能力，一次性计算出所有时间点的信号。这在数学上等同于对整个时间序列矩阵进行线性代数变换。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Pandas 向量化回测核心逻辑 (节选自 examples/textbook/ch04_comparison.py)</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">run_pandas_backtest</span><span class="p">(</span><span class="n">df</span><span class="p">):</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="c1"># 1. 计算指标 (一次性计算整列)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">df</span><span class="p">[</span><span class="s1">'ma5'</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">'close'</span><span class="p">]</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">df</span><span class="p">[</span><span class="s1">'ma20'</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">'close'</span><span class="p">]</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="c1"># 2. 生成信号 (使用 np.where 全量生成)</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="c1"># 核心：必须使用 shift(1) 将信号后移一天，避免前视偏差 (Look-ahead Bias)</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">df</span><span class="p">[</span><span class="s1">'signal'</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s1">'ma5'</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">df</span><span class="p">[</span><span class="s1">'ma20'</span><span class="p">],</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">df</span><span class="p">[</span><span class="s1">'position'</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">'signal'</span><span class="p">]</span><span class="o">.</span><span class="n">shift</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="c1"># 3. 计算收益</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    <span class="n">df</span><span class="p">[</span><span class="s1">'strategy_return'</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">'position'</span><span class="p">]</span> <span class="o">*</span> <span class="n">df</span><span class="p">[</span><span class="s1">'close'</span><span class="p">]</span><span class="o">.</span><span class="n">pct_change</span><span class="p">()</span>
+</span></code></pre></div>
+<p>向量化回测的优点在于代码极简、计算效率极高（通常是毫秒级），因而很适合早期的 Idea 验证。它的代价则集中在两处：一是<strong>前视偏差风险</strong>，由于信号是全量一次性算出的，极易引入未来函数（如忘记 <code>shift(1)</code>）；二是<strong>路径依赖缺失</strong>，因为它跳过了逐笔成交过程，难以模拟撮合机制、滑点、资金占用等与“交易路径”强相关的状态。</p>
+<h3 id="412-backtrader-akquant">4.1.2 事件驱动回测 (Backtrader &amp; AKQuant)<a class="headerlink" href="#412-backtrader-akquant" title="Permanent link">&para;</a></h3>
+<p>事件驱动回测模拟了真实世界的时间流逝。它本质上是一个<strong>无限循环 (Event Loop)</strong>，不断地从队列中取出事件并处理。</p>
+<p><strong>状态机 (State Machine)</strong> 模型：</p>
+<div class="arithmatex">\[ State_{t+1} = f(State_t, Event_t) \]</div>
+<p>其中 <span class="arithmatex">\(State\)</span> 包含账户资金、持仓、挂单等，<span class="arithmatex">\(Event\)</span> 包含行情更新、订单成交等。</p>
+<p><strong>Backtrader (Python 经典框架)</strong>：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Backtrader 策略逻辑 (节选)</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">SmaCross</span><span class="p">(</span><span class="n">bt</span><span class="o">.</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        <span class="c1"># 每个时间步都会调用一次 next()</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">position</span><span class="p">:</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">crossover</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">buy</span><span class="p">()</span> <span class="c1"># 发出买单，将在下一根 Bar 成交</span>
+</span></code></pre></div>
+<p><strong>AKQuant (Rust 高性能框架)</strong>：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># AKQuant 策略逻辑 (节选)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">AKQuantSmaStrategy</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">:</span> <span class="n">Bar</span><span class="p">):</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>        <span class="c1"># 也是逐个 Bar 处理</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        <span class="c1"># 区别在于 AKQuant 底层循环由 Rust 实现，可减少部分 Python 解释器开销</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="n">ma5</span> <span class="o">=</span> <span class="o">...</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>        <span class="k">if</span> <span class="n">ma5</span> <span class="o">&gt;</span> <span class="n">ma20</span> <span class="ow">and</span> <span class="n">pos</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">order_target_percent</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+</span></code></pre></div>
+<p>事件驱动回测的优势恰好补上了向量化的短板。其一是<strong>零未来函数</strong>：在处理当前 Bar 时，策略在物理上就无法访问下一个 Bar 的数据，未来函数无从谈起；其二是<strong>高度仿真</strong>：它支持限价单、止损单、复杂资金管理等微观结构模拟，更贴近真实交易。</p>
+<p>至于<strong>性能</strong>，则需要更谨慎地看待。Backtrader 与 AKQuant 都属于事件驱动范式，其具体运行耗时会受到策略写法、数据规模、指标计算位置、回调频率和运行环境影响。AKQuant 将事件循环、撮合与状态管理放在 Rust 层实现，目标是在保持事件驱动精确性的同时减少 Python 层开销；但它是否快于其他框架，仍需结合具体场景实测，而非一概而论。</p>
+<p>你可以运行以下命令亲自体验三者的差异：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python<span class="w"> </span>examples/textbook/ch04_comparison.py
+</span></code></pre></div>
+<h2 id="42-akquant-architecture-deep-dive">4.2 [主线必学] AKQuant 架构深度解析 (Architecture Deep Dive)<a class="headerlink" href="#42-akquant-architecture-deep-dive" title="Permanent link">&para;</a></h2>
+<p><code>AKQuant</code> 采用了一种独特的<strong>混合架构 (Hybrid Architecture)</strong>，旨在结合 Python 的易用性和 Rust 的高性能。</p>
+<h3 id="421-rust-core-python-api">4.2.1 核心设计理念：Rust Core + Python API<a class="headerlink" href="#421-rust-core-python-api" title="Permanent link">&para;</a></h3>
+<p>整个系统分为两个清晰的层级：</p>
+<ol>
+<li><strong>Rust Core (核心层)</strong>：负责所有计算密集型任务。<ul>
+<li><strong>Engine</strong>：维护全局状态、资金、持仓、订单簿。</li>
+<li><strong>DataFeed</strong>：高效的数据流管理。</li>
+<li><strong>Matching Engine</strong>：订单撮合逻辑。</li>
+<li><strong>Risk Manager</strong>：实时风控检查。</li>
+</ul>
+</li>
+<li><strong>Python API (应用层)</strong>：负责用户交互和策略逻辑。<ul>
+<li><strong>Strategy</strong>：用户编写策略的基类。</li>
+<li><strong>Indicator</strong>：技术指标计算。</li>
+<li><strong>Plotting</strong>：结果可视化。</li>
+</ul>
+</li>
+</ol>
+<p>这两层通过 <strong>PyO3</strong> 进行零开销绑定。当你在 Python 中调用 <code>self.buy()</code> 时，实际上直接触发了 Rust 层的函数调用，没有任何中间序列化成本。</p>
+<h3 id="422">4.2.2 系统组件图<a class="headerlink" href="#422" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>graph TD
+    subgraph "Python Layer (Strategy &amp; Data)"
+        UserStrategy["用户策略 Strategy"]
+        PyData["Pandas DataFrame"]
+    end
+
+    subgraph "Rust Layer (High Performance Core)"
+        Engine["Engine (引擎核心)"]
+        DataFeed["DataFeed (数据源)"]
+        Portfolio["Portfolio (账户状态)"]
+        OrderBook["OrderBook (订单簿)"]
+        RiskManager["RiskManager (风控)"]
+    end
+
+    PyData --&gt;|转换 &amp; 加载| DataFeed
+    DataFeed --&gt;|Bar/Tick Event| Engine
+    Engine --&gt;|Context Update| UserStrategy
+    UserStrategy --&gt;|Order Request| Engine
+    Engine --&gt;|Order Check| RiskManager
+    RiskManager --&gt;|Approved| OrderBook
+    OrderBook --&gt;|Fill Event| Portfolio
+    Portfolio --&gt;|Update| UserStrategy</code></pre>
+<h3 id="423">4.2.3 关键组件详解<a class="headerlink" href="#423" title="Permanent link">&para;</a></h3>
+<h4 id="1-engine">1. Engine (引擎)<a class="headerlink" href="#1-engine" title="Permanent link">&para;</a></h4>
+<p>引擎是系统的调度中心 (Dispatcher)。它维护着全局时钟 (Global Clock) 和事件优先队列 (Priority Queue)。在 <code>AKQuant</code> 中，<code>Engine</code> 是一个 Rust 结构体，它完全接管了 Python 的控制流。它的职责是推进时间、分发事件、触发回调；而正因为整个循环以单线程极速运行，它得以避免 Python GIL 的锁竞争。</p>
+<h4 id="2-datafeed">2. DataFeed (数据源)<a class="headerlink" href="#2-datafeed" title="Permanent link">&para;</a></h4>
+<p>DataFeed 负责按时间顺序向引擎“滴灌”行情数据。在实现上，它在 Rust 中维护了一个时间排序的 B-Tree 或 Vec，确保数据严格按时间戳推送。也正是凭借这套有序结构，当回测多个标的时，DataFeed 能自动对齐时间，确保 <code>on_bar</code> 接收到的数据在时间轴上是同步的。</p>
+<h4 id="3-strategycontext">3. StrategyContext (策略上下文)<a class="headerlink" href="#3-strategycontext" title="Permanent link">&para;</a></h4>
+<p>StrategyContext 是 Python 策略与 Rust 引擎通信的桥梁。<code>StrategyContext</code> 在 Rust 中持有 Portfolio、Orders 等状态，并通过 PyO3 暴露给 Python。为保证内存安全（引擎状态会随事件持续变动，视图交给 Python 后可能失效），<code>self.ctx.positions</code>、<code>get_history</code> 等策略侧读取返回的是<strong>当次调用的安全快照拷贝</strong>，而非直接映射 Rust 内存的零拷贝视图；由于持仓/历史窗口通常很小，拷贝开销可忽略。真正的零拷贝发生在数据导入侧（<code>add_arrays</code> 借用 NumPy 缓冲入引擎）。</p>
+<h2 id="43-the-configuration-system">4.3 [主线必学] 配置系统详解 (The Configuration System)<a class="headerlink" href="#43-the-configuration-system" title="Permanent link">&para;</a></h2>
+<p><code>AKQuant</code> 拥有一个结构化的配置系统，旨在清晰地定义回测的“何时 (When)”、“何地 (Where)”、“何物 (What)”以及“如何 (How)”。</p>
+<h3 id="431">4.3.1 四大配置支柱<a class="headerlink" href="#431" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>BacktestConfig (回测配置)</strong>：定义<strong>宏观场景</strong>。</p>
+<ul>
+<li><strong>When</strong>：<code>start_time</code>, <code>end_time</code></li>
+<li><strong>What</strong>：<code>instruments</code> (交易标的列表)</li>
+<li><strong>How</strong>：<code>strategy_config</code> (策略配置)</li>
+</ul>
+</li>
+<li>
+<p><strong>InstrumentConfig (标的配置)</strong>：定义<strong>资产属性</strong>。</p>
+<ul>
+<li><strong>What</strong>：<code>symbol</code>, <code>multiplier</code> (合约乘数), <code>margin_ratio</code> (保证金率)</li>
+<li><strong>Cost</strong>：<code>commission_rate</code>, <code>slippage</code> (标的特有滑点)</li>
+</ul>
+</li>
+<li>
+<p><strong>StrategyConfig (策略配置)</strong>：定义<strong>账户与执行</strong>。</p>
+<ul>
+<li><strong>Capital</strong>：<code>initial_cash</code></li>
+<li><strong>Cost</strong>：<code>commission_policy</code> / <code>commission_rate</code></li>
+<li><strong>Execution</strong>：<code>slippage</code> (全局滑点), <code>volume_limit_pct</code> (成交量限制)</li>
+<li><strong>Risk</strong>：<code>risk</code> (风控配置)</li>
+</ul>
+</li>
+<li>
+<p><strong>RiskConfig (风控配置)</strong>：定义<strong>安全边界</strong>。</p>
+<ul>
+<li><strong>Constraints</strong>：<code>max_position_pct</code>, <code>max_drawdown</code></li>
+</ul>
+</li>
+</ol>
+<h3 id="432">4.3.2 配置示例<a class="headerlink" href="#432" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">BacktestConfig</span><span class="p">,</span> <span class="n">StrategyConfig</span><span class="p">,</span> <span class="n">RiskConfig</span><span class="p">,</span> <span class="n">InstrumentConfig</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="c1"># 1. 定义风控</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">risk</span> <span class="o">=</span> <span class="n">RiskConfig</span><span class="p">(</span><span class="n">max_position_pct</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">stop_loss_threshold</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="c1"># 2. 定义策略账户</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">strategy_conf</span> <span class="o">=</span> <span class="n">StrategyConfig</span><span class="p">(</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="n">initial_cash</span><span class="o">=</span><span class="mi">1_000_000</span><span class="p">,</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="n">commission_policy</span><span class="o">=</span><span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"per_unit"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="mf">0.01</span><span class="p">},</span>  <span class="c1"># 每股 0.01 元</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="n">slippage</span><span class="o">=</span><span class="mf">0.0002</span><span class="p">,</span>  <span class="c1"># 万2滑点</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="n">risk</span><span class="o">=</span><span class="n">risk</span>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="p">)</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="c1"># 3. 定义特殊标的 (如期货)</span>
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="n">rb_conf</span> <span class="o">=</span> <span class="n">InstrumentConfig</span><span class="p">(</span><span class="n">symbol</span><span class="o">=</span><span class="s2">"RB2305"</span><span class="p">,</span> <span class="n">multiplier</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">margin_ratio</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="c1"># 4. 组装回测配置</span>
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="n">config</span> <span class="o">=</span> <span class="n">BacktestConfig</span><span class="p">(</span>
+</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>    <span class="n">start_time</span><span class="o">=</span><span class="s2">"2023-01-01"</span><span class="p">,</span>
+</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>    <span class="n">end_time</span><span class="o">=</span><span class="s2">"2023-12-31"</span><span class="p">,</span>
+</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>    <span class="n">strategy_config</span><span class="o">=</span><span class="n">strategy_conf</span><span class="p">,</span>
+</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>    <span class="n">instruments</span><span class="o">=</span><span class="p">[</span><span class="s2">"AAPL"</span><span class="p">],</span>
+</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>    <span class="n">instruments_config</span><span class="o">=</span><span class="p">{</span><span class="s2">"RB2305"</span><span class="p">:</span> <span class="n">rb_conf</span><span class="p">}</span>
+</span><span id="__span-6-24"><a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="44-state-snapshot-warm-start">4.4 [进阶选读] 状态快照与热启动 (State Snapshot &amp; Warm Start)<a class="headerlink" href="#44-state-snapshot-warm-start" title="Permanent link">&para;</a></h2>
+<p>这一节更偏向长周期回测、滚动训练和准实盘恢复。第一次阅读本章时，如果你还在建立“事件驱动回测到底怎么工作”的基础认知，可以先跳过，等理解 4.7 到 4.9 后再回来读。</p>
+<p>作为事件驱动架构的一大优势，AKQuant 能够随时暂停并保存整个引擎的状态（Memory Dump），并在之后完全恢复。这种能力被称为<strong>热启动 (Warm Start)</strong>。</p>
+<h3 id="441">4.4.1 原理<a class="headerlink" href="#441" title="Permanent link">&para;</a></h3>
+<p>由于 AKQuant 的核心状态（持仓、订单、资金）都由 Rust 的 <code>Engine</code> 结构体集中管理，我们可以利用 Python 的 <code>pickle</code> 协议将这个结构体序列化到磁盘。</p>
+<p>当恢复时，我们反序列化 <code>Engine</code>，并重新连接数据源（DataFeed），使其无缝继续运行。</p>
+<h3 id="442">4.4.2 应用场景<a class="headerlink" href="#442" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>超长周期回测</strong>：可以将 10 年的回测拆分为 10 个 1 年的片段，并行运行或顺序运行。</li>
+<li><strong>滚动训练 (Rolling Walk-Forward)</strong>：训练模型 -&gt; 运行回测 -&gt; 保存状态 -&gt; 使用新数据微调模型 -&gt; 恢复回测。</li>
+<li><strong>模拟实盘</strong>：每天收盘后保存状态，第二天开盘前加载状态并接入实时行情。</li>
+</ol>
+<p>详细使用方法请参考 <a href="../../advanced/warm_start/">高级指南：热启动</a>。</p>
+<h3 id="443">4.4.3 佣金策略分层<a class="headerlink" href="#443" title="Permanent link">&para;</a></h3>
+<p>AKQuant 当前支持三种公开佣金模式：</p>
+<ul>
+<li><code>percent</code>: 按成交额比例收费，适合传统“万三佣金”。</li>
+<li><code>fixed</code>: 每次成交固定金额，适合“每笔固定收 3 元”。</li>
+<li><code>per_unit</code>: 按成交数量线性收费，适合“每股/每手/每份收固定费用”。</li>
+</ul>
+<p>推荐优先级如下：</p>
+<ol>
+<li>订单级 <code>commission={"type": ..., "value": ...}</code>。</li>
+<li>策略级 <code>strategy_commission[strategy_id]</code>。</li>
+<li>运行级 <code>commission_policy</code>。</li>
+<li>兼容入口 <code>commission_rate</code> 与市场默认值。</li>
+</ol>
+<p>其中 <code>commission_rate</code> 仍保留，但它只表示 <code>percent</code> 模式的简写。如果你要表达按笔固定收费或按数量收费，推荐显式使用 <code>commission_policy</code>。</p>
+<h2 id="45-matching-engine-internals">4.5 [主线必学] 撮合引擎揭秘 (Matching Engine Internals)<a class="headerlink" href="#45-matching-engine-internals" title="Permanent link">&para;</a></h2>
+<p>回测引擎的核心在于<strong>撮合 (Matching)</strong>：如何根据历史行情判断你的订单是否成交，以及以什么价格成交。</p>
+<h3 id="451-bar">4.5.1 基于 Bar 的撮合逻辑<a class="headerlink" href="#451-bar" title="Permanent link">&para;</a></h3>
+<p>在没有 Tick 数据的情况下，我们通常使用 OHLCV 数据进行近似撮合。假设当前 Bar 的数据为 <span class="arithmatex">\((O, H, L, C, V)\)</span>。</p>
+<ol>
+<li>
+<p><strong>市价单 (Market Order)</strong>：</p>
+<ul>
+<li><strong>买入</strong>：以 <span class="arithmatex">\(Open\)</span> 价（或 <span class="arithmatex">\(Close\)</span> 价，取决于策略是在开盘还是收盘下单）成交。</li>
+<li><strong>滑点</strong>：通常在成交价基础上增加 <span class="arithmatex">\(N\)</span> 个跳 (Tick Size)。</li>
+</ul>
+</li>
+<li>
+<p><strong>限价单 (Limit Order)</strong>：假设买入限价为 <span class="arithmatex">\(P_{limit}\)</span>。</p>
+<ul>
+<li><strong>完全成交</strong>：如果 <span class="arithmatex">\(Low &lt; P_{limit}\)</span>，说明盘中价格跌破了限价，订单必然成交。</li>
+<li><strong>无法成交</strong>：如果 <span class="arithmatex">\(Low &gt; P_{limit}\)</span>，说明盘中最低价都高于限价，订单无法成交。</li>
+<li><strong>部分成交</strong>：如果 <span class="arithmatex">\(Low = P_{limit}\)</span>，情况比较复杂。通常保守起见，假设只有部分成交或不成交。</li>
+</ul>
+</li>
+<li>
+<p><strong>止损单 (Stop Order)</strong>：假设卖出止损价为 <span class="arithmatex">\(P_{stop}\)</span>。</p>
+<ul>
+<li><strong>触发</strong>：如果 <span class="arithmatex">\(Low &lt; P_{stop}\)</span>，止损被触发，转为市价单卖出。</li>
+<li><strong>成交价</strong>：通常取 <span class="arithmatex">\(P_{stop}\)</span> 或 <span class="arithmatex">\(Low\)</span> 中的较差者（模拟跳空低开的情况）。</li>
+</ul>
+</li>
+</ol>
+<h3 id="452">4.5.2 涨跌停处理<a class="headerlink" href="#452" title="Permanent link">&para;</a></h3>
+<p>在 A 股市场，涨跌停板会锁死流动性。</p>
+<ul>
+<li><strong>涨停 (Limit Up)</strong>：<span class="arithmatex">\(High = LimitUp\)</span>。此时<strong>买入</strong>市价单无法成交，买入限价单也无法成交（除非排队在前）。</li>
+<li><strong>跌停 (Limit Down)</strong>：<span class="arithmatex">\(Low = LimitDown\)</span>。此时<strong>卖出</strong>订单无法成交。</li>
+</ul>
+<p>当前版本的 <code>AKQuant</code> 默认撮合逻辑<strong>不会维护一套随市场制度动态变化的涨跌停规则表</strong>。如果你的数据源已经提供了涨停/跌停或可买/可卖标记，建议通过 <code>Bar.extra</code> 等扩展字段把这些信息一并带入数据，再在策略或后续扩展撮合逻辑中消费这些字段。</p>
+<h2 id="46-slippage-impact-models">4.6 [进阶选读] 滑点与冲击成本模型 (Slippage &amp; Impact Models)<a class="headerlink" href="#46-slippage-impact-models" title="Permanent link">&para;</a></h2>
+<p>这一节适合已经完成基础回测后，再进一步提高结果可信度时阅读。对第一次上手的读者来说，先理解“能不能成交”，再理解“以多差的价格成交”，学习顺序会更自然。</p>
+<p>真实交易中，你的买入行为会推高价格，卖出行为会压低价格。这种<strong>冲击成本 (Market Impact)</strong> 是大资金回测必须考虑的。</p>
+<h3 id="461">4.6.1 线性滑点模型<a class="headerlink" href="#461" title="Permanent link">&para;</a></h3>
+<p>最简单的模型，假设滑点与交易量无关。</p>
+<div class="arithmatex">\[ P_{fill} = P_{market} \pm \text{Slippage} \]</div>
+<p>其中 <span class="arithmatex">\(\text{Slippage}\)</span> 可以是固定值（如 0.01 元）或百分比（如 0.1%）。</p>
+<h3 id="462-square-root-law">4.6.2 平方根法则 (Square Root Law)<a class="headerlink" href="#462-square-root-law" title="Permanent link">&para;</a></h3>
+<p>这是学术界和业界公认的冲击成本模型，由 Barra 提出。</p>
+<div class="arithmatex">\[ \text{Cost} \propto \sigma \times \sqrt{\frac{Q}{V}} \]</div>
+<p>其中：</p>
+<ul>
+<li><span class="arithmatex">\(\sigma\)</span>：资产的波动率。</li>
+<li><span class="arithmatex">\(Q\)</span>：你的交易量。</li>
+<li><span class="arithmatex">\(V\)</span>：市场的总成交量。</li>
+</ul>
+<p>这表明：<strong>冲击成本与交易量的平方根成正比</strong>。如果你想把交易量翻倍，冲击成本只会增加 <span class="arithmatex">\(\sqrt{2} \approx 1.414\)</span> 倍，而不是 2 倍。这为大资金拆单提供了理论依据。</p>
+<h2 id="47-event-loop-pseudo-code">4.7 [主线必学] 事件循环伪代码 (Event Loop Pseudo-code)<a class="headerlink" href="#47-event-loop-pseudo-code" title="Permanent link">&para;</a></h2>
+<p>为了更清晰地理解 <code>AKQuant</code> 的运行机制，我们可以用伪代码描述其主循环：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">run_backtest</span><span class="p">():</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">engine</span> <span class="o">=</span> <span class="n">Engine</span><span class="p">()</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">strategy</span> <span class="o">=</span> <span class="n">UserStrategy</span><span class="p">()</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">data_feed</span> <span class="o">=</span> <span class="n">DataFeed</span><span class="p">(</span><span class="n">start_date</span><span class="p">,</span> <span class="n">end_date</span><span class="p">)</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="k">while</span> <span class="ow">not</span> <span class="n">data_feed</span><span class="o">.</span><span class="n">is_finished</span><span class="p">():</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>        <span class="n">event</span> <span class="o">=</span> <span class="n">data_feed</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>        <span class="n">engine</span><span class="o">.</span><span class="n">current_time</span> <span class="o">=</span> <span class="n">event</span><span class="o">.</span><span class="n">datetime</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>        <span class="n">engine</span><span class="o">.</span><span class="n">match_orders</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>        <span class="n">strategy</span><span class="o">.</span><span class="n">on_bar</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>        <span class="n">engine</span><span class="o">.</span><span class="n">emit_stream_event</span><span class="p">(</span><span class="n">event_type</span><span class="o">=</span><span class="s2">"bar"</span><span class="p">,</span> <span class="n">payload</span><span class="o">=</span><span class="p">{</span><span class="s2">"symbol"</span><span class="p">:</span> <span class="n">event</span><span class="o">.</span><span class="n">symbol</span><span class="p">})</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>    <span class="n">engine</span><span class="o">.</span><span class="n">generate_report</span><span class="p">()</span>
+</span></code></pre></div>
+<p>这个循环确保了<strong>时间流逝的单向性</strong>，杜绝了未来函数。</p>
+<h3 id="471-run_backtest-on_event">4.7.1 <code>run_backtest(..., on_event=...)</code> 统一事件流<a class="headerlink" href="#471-run_backtest-on_event" title="Permanent link">&para;</a></h3>
+<p>除策略回调外，<code>run_backtest</code> 还支持 <code>on_event</code> 参数，用于接收统一事件流（如 <code>bar</code>、<code>order</code>、<code>trade</code>、<code>risk</code>、<code>progress</code>、<code>equity</code>），常用于监控台、告警与审计落盘。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">events</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">data</span><span class="o">=</span><span class="n">data_feed</span><span class="p">,</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">symbols</span><span class="o">=</span><span class="s2">"AAPL"</span><span class="p">,</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="n">on_event</span><span class="o">=</span><span class="n">events</span><span class="o">.</span><span class="n">append</span><span class="p">,</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="n">stream_progress_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="n">stream_equity_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>这个入口与策略类风格、函数式风格兼容，可以把策略逻辑与可观测性解耦。</p>
+<h2 id="48-risk-engine">4.8 [主线必学] 风控引擎 (Risk Engine)<a class="headerlink" href="#48-risk-engine" title="Permanent link">&para;</a></h2>
+<p>在真实的交易系统中，<strong>风控 (Risk Management)</strong> 是最后一道防线。<code>AKQuant</code> 引擎内置了一个强大的预交易风控模块 (<code>RiskManager</code>)，它独立于策略逻辑之外，直接在引擎层面拦截不合规的订单。</p>
+<h3 id="481">4.8.1 为什么要预交易风控？<a class="headerlink" href="#481" title="Permanent link">&para;</a></h3>
+<p>预交易风控之所以必要，是因为它要拦下几类典型的事故。最直接的是<strong>胖手指 (Fat Finger)</strong>——手抖多敲了一个零，导致下单数量巨大；其次是<strong>逻辑 Bug</strong>，策略代码写错了，可能导致无限循环下单或满仓梭哈；此外还有<strong>合规要求</strong>，某些基金有严格的行业集中度或杠杆限制，需要在下单前就被强制约束。</p>
+<h3 id="482">4.8.2 内置风控规则<a class="headerlink" href="#482" title="Permanent link">&para;</a></h3>
+<p><code>AKQuant</code> 的风控能力通常通过 <code>RiskConfig</code> 与策略级参数映射启用，常见约束包括：</p>
+<ol>
+<li><strong>单笔限制</strong>：<code>max_order_size</code> / <code>max_order_value</code>。</li>
+<li><strong>持仓限制</strong>：<code>max_position_size</code> / <code>max_position_pct</code>。</li>
+<li><strong>标的限制</strong>：<code>restricted_list</code> / <code>sector_concentration</code>。</li>
+<li><strong>账户级限制</strong>：<code>max_account_drawdown</code> / <code>max_daily_loss</code> / <code>stop_loss_threshold</code>。</li>
+</ol>
+<h3 id="483">4.8.3 配置示例<a class="headerlink" href="#483" title="Permanent link">&para;</a></h3>
+<p>推荐在回测配置阶段声明风控参数：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">risk</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">RiskConfig</span><span class="p">(</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">max_order_size</span><span class="o">=</span><span class="mi">5_000</span><span class="p">,</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">max_order_value</span><span class="o">=</span><span class="mi">200_000</span><span class="p">,</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">max_position_pct</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">restricted_list</span><span class="o">=</span><span class="p">[</span><span class="s2">"ST0001"</span><span class="p">],</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">max_daily_loss</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="p">)</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="n">config</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">BacktestConfig</span><span class="p">(</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="n">strategy_config</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">StrategyConfig</span><span class="p">(</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>        <span class="n">initial_cash</span><span class="o">=</span><span class="mi">1_000_000</span><span class="p">,</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>        <span class="n">risk</span><span class="o">=</span><span class="n">risk</span><span class="p">,</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>    <span class="p">)</span>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="p">)</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>    <span class="n">data</span><span class="o">=</span><span class="n">data_feed</span><span class="p">,</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>    <span class="n">symbols</span><span class="o">=</span><span class="s2">"AAPL"</span><span class="p">,</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>    <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>当策略发出的订单违反上述规则时，<code>Engine</code> 会拒绝该订单，并返回 <code>Rejected</code> 状态和具体的错误信息（如 <code>Risk: Position value ratio 15.00% exceeds limit 10.00%</code>）。</p>
+<hr />
+<h2 id="49-order-lifecycle">4.9 [主线必学] 订单生命周期与状态机 (Order Lifecycle)<a class="headerlink" href="#49-order-lifecycle" title="Permanent link">&para;</a></h2>
+<p>在事件驱动系统中，理解订单的状态流转至关重要。一个订单从产生到最终成交，会经历严格的状态机变换。</p>
+<pre class="mermaid"><code>stateDiagram-v2
+    [*] --&gt; New: 策略创建订单
+    New --&gt; Submitted: 发送到交易所
+    Submitted --&gt; Accepted: 交易所确认收到
+    Accepted --&gt; PartiallyFilled: 部分成交
+    Accepted --&gt; Filled: 全部成交
+    PartiallyFilled --&gt; Filled: 剩余部分成交
+
+    New --&gt; Rejected: 风控拒单
+    Submitted --&gt; Cancelled: 策略撤单
+    Accepted --&gt; Cancelled: 策略撤单
+
+    Filled --&gt; [*]
+    Cancelled --&gt; [*]
+    Rejected --&gt; [*]</code></pre>
+<h3 id="491">4.9.1 关键状态解析<a class="headerlink" href="#491" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>New (新建)</strong>：</p>
+<ul>
+<li>策略调用 <code>self.buy()</code> 后，订单对象被创建，但在风控检查通过前，状态为 <code>New</code>。</li>
+<li>此时订单尚未进入撮合队列。</li>
+</ul>
+</li>
+<li>
+<p><strong>Submitted (已提交)</strong>：</p>
+<ul>
+<li>订单通过了客户端风控（如资金检查），已发送到交易所（或模拟撮合引擎）。</li>
+<li>在实盘中，这代表网络请求已发出。</li>
+</ul>
+</li>
+<li>
+<p><strong>Accepted (已受理)</strong>：</p>
+<ul>
+<li>交易所确认收到订单。在 <code>AKQuant</code> 的回测模式中，通常 <code>Submitted</code> 后立即转为 <code>Accepted</code>（除非模拟了网络延迟）。</li>
+</ul>
+</li>
+<li>
+<p><strong>Filled (全部成交)</strong>：</p>
+<ul>
+<li>订单的所有数量都已成交。此时会触发 <code>on_trade</code> 回调，并且持仓和资金会相应更新。</li>
+</ul>
+</li>
+<li>
+<p><strong>Rejected (已拒绝)</strong>：</p>
+<ul>
+<li>订单因某些原因被拒绝。常见原因：<ul>
+<li><strong>资金不足 (Insufficient Margin)</strong>：可用资金不足以支付保证金或全额。</li>
+<li><strong>非法数量 (Invalid Quantity)</strong>：例如 A 股买入必须是 100 的整数倍。</li>
+<li><strong>废单</strong>：价格超过涨跌停板。</li>
+</ul>
+</li>
+</ul>
+</li>
+</ol>
+<h2 id="410-matching-engine-mechanics">4.10 [进阶选读] 撮合引擎机制 (Matching Engine Mechanics)<a class="headerlink" href="#410-matching-engine-mechanics" title="Permanent link">&para;</a></h2>
+<p>如果 4.5 已经帮助你理解了“撮合是什么”，这一节就是把它进一步展开成更接近真实系统的实现细节。它适合作为回测精细化阶段的补充，而不是第一次阅读时的入口。</p>
+<p><code>AKQuant</code> 的模拟撮合引擎 (<code>SimulatedExecutionClient</code>) 旨在尽可能逼真地模拟真实交易所的撮合逻辑。</p>
+<h3 id="4101-matching-logic">4.10.1 撮合逻辑 (Matching Logic)<a class="headerlink" href="#4101-matching-logic" title="Permanent link">&para;</a></h3>
+<p>对于每一根新的 Bar (或 Tick)，引擎会遍历所有活跃订单进行撮合：</p>
+<ol>
+<li>
+<p><strong>市价单 (Market Order)</strong>：</p>
+<ul>
+<li><strong>成交价</strong>：取决于 <code>fill_policy</code> 指定的 <code>FillMode</code>（见下文）。</li>
+<li><strong>成交量</strong>：尽可能全部成交，除非受限于当根 Bar 的成交量（Volume Limit）。</li>
+</ul>
+</li>
+<li>
+<p><strong>限价单 (Limit Order)</strong>：</p>
+<ul>
+<li><strong>买入单</strong>：当 <code>Low Price &lt;= Limit Price</code> 时成交。<ul>
+<li><em>价格优化</em>: 如果 <code>Open Price &lt; Limit Price</code>，则以 <code>Open Price</code> 成交（模拟开盘撮合）。</li>
+</ul>
+</li>
+<li><strong>卖出单</strong>：当 <code>High Price &gt;= Limit Price</code> 时成交。</li>
+<li><strong>成交价</strong>：也就是常说的“价格优先”。</li>
+</ul>
+</li>
+<li>
+<p><strong>止损单 (Stop Order)</strong>：</p>
+<ul>
+<li>当市场价格突破触发价 (<code>Trigger Price</code>) 时，止损单会转化为市价单或限价单。</li>
+<li><code>AKQuant</code> 支持<strong>穿透检查 (Gap Detection)</strong>：例如，昨日收盘 100，今日跳空低开 90，如果你有 95 的止损卖单，引擎会正确地在 90 成交（而不是 95），真实模拟跳空风险。</li>
+</ul>
+</li>
+</ol>
+<h3 id="4102-fill-mode">4.10.2 成交模式 (Fill Mode)<a class="headerlink" href="#4102-fill-mode" title="Permanent link">&para;</a></h3>
+<p>为了平衡回测的严谨性和灵活性，<code>AKQuant</code> 提供五个命名成交模式（<code>FillMode</code>），从 <code>akquant</code> 顶层导入：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;"><code>FillMode</code></th>
+<th style="text-align: left;">成交价</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>NextOpen()</code></td>
+<td style="text-align: left;">下一根 Bar 开盘价</td>
+<td style="text-align: left;">默认，无未来函数</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>NextClose()</code></td>
+<td style="text-align: left;">下一根 Bar 收盘价</td>
+<td style="text-align: left;"></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>NextAverage()</code></td>
+<td style="text-align: left;">下一根 Bar OHLC4 均价</td>
+<td style="text-align: left;"></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>NextHighLowMid()</code></td>
+<td style="text-align: left;">下一根 Bar HL2（高低中价）</td>
+<td style="text-align: left;"></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>CurrentClose()</code></td>
+<td style="text-align: left;">当根 Bar 收盘价</td>
+<td style="text-align: left;">支持 <code>timer_fill_timing</code> 参数</td>
+</tr>
+</tbody>
+</table>
+<p>早期版本使用扁平的 <code>fill_policy</code> dict（<code>price_basis</code> × <code>bar_offset</code> × <code>temporal</code>），其笛卡尔积会产生非法/无效组合。新版收敛为上述命名模式，每个模式只携带对其有意义的参数。旧的 dict 形式与 <code>make_fill_policy(...)</code> 已移除，传入会抛出 <code>TypeError</code>。</p>
+<h3 id="4103-timer-fill-timing">4.10.3 成交时序策略 (Timer Fill Timing)<a class="headerlink" href="#4103-timer-fill-timing" title="Permanent link">&para;</a></h3>
+<p>只有 <code>CurrentClose</code> 支持 <code>timer_fill_timing</code> 参数，用于控制 <code>on_timer</code> 下单的撮合时点（akquant 的 timer 是一等成交事件）：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;"><code>timer_fill_timing</code></th>
+<th style="text-align: left;">描述</th>
+<th style="text-align: left;">典型场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>"immediate"</code> (默认)</td>
+<td style="text-align: left;">timer 触发即在当根收盘价成交</td>
+<td style="text-align: left;">定时调仓后立即成交的仿真</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>"deferred"</code></td>
+<td style="text-align: left;">timer 不构成成交点，顺延到下一根 Bar</td>
+<td style="text-align: left;">更保守的“信号与成交分离”建模</td>
+</tr>
+</tbody>
+</table>
+<p>它只影响 <code>on_timer</code> 订单，对普通 <code>on_bar</code> 订单无影响。其余四个模式的 <code>on_timer</code> 订单都在下一根 Bar 成交。</p>
+<p>推荐统一使用：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">CurrentClose</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">result</span> <span class="o">=</span> <span class="n">akquant</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">,</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="n">fill_policy</span><span class="o">=</span><span class="n">CurrentClose</span><span class="p">(</span><span class="n">timer_fill_timing</span><span class="o">=</span><span class="s2">"deferred"</span><span class="p">),</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="4104-slippage-impact">4.10.4 滑点与冲击成本 (Slippage &amp; Impact)<a class="headerlink" href="#4104-slippage-impact" title="Permanent link">&para;</a></h3>
+<p>回测中最容易高估收益的因素是忽略了交易成本。<code>AKQuant</code> 支持配置滑点模型：</p>
+<div class="arithmatex">\[ \text{Final Price} = \text{Execution Price} \times (1 \pm \text{Slippage Rate}) \]</div>
+<ul>
+<li><strong>买入</strong>：价格向上滑动（买得更贵）。</li>
+<li><strong>卖出</strong>：价格向下滑动（卖得更便宜）。</li>
+</ul>
+<p>此外，你还可以设置 <strong>Volume Limit</strong>（例如 10%），限制策略在单根 Bar 上的成交量不超过市场总成交量的 10%，以模拟流动性限制。</p>
+<h3 id="4105">4.10.5 配置分层与覆盖优先级<a class="headerlink" href="#4105" title="Permanent link">&para;</a></h3>
+<p><code>AKQuant</code> 在成交相关参数上采用统一的四层覆盖模型（从高到低）：</p>
+<ol>
+<li><strong>订单级</strong>：<code>buy/sell/submit_order</code> 传入 <code>fill_mode/slippage/commission</code>（<code>fill_mode</code> 为 <code>FillMode</code> 对象）。</li>
+<li><strong>策略映射级</strong>：<code>strategy_fill_policy/strategy_slippage/strategy_commission</code>（按 <code>strategy_id/slot</code>，<code>strategy_fill_policy</code> 值为 <code>FillMode</code>）。</li>
+<li><strong>运行级</strong>：<code>run_backtest(...)</code> 全局参数（例如 <code>fill_policy=NextOpen()</code>、<code>slippage</code>）。</li>
+<li><strong>市场默认</strong>：market model 的内建默认规则（费率、制度等）。</li>
+</ol>
+<p>实务建议：
+*   单策略场景可先用运行级，局部例外再用订单级覆盖。
+*   多策略槽位场景优先使用 <code>strategy_*</code>，避免不同策略互相覆盖全局参数。</p>
+<h2 id="411-portfolio-risk">4.11 [进阶选读] 资金与风控管理 (Portfolio &amp; Risk)<a class="headerlink" href="#411-portfolio-risk" title="Permanent link">&para;</a></h2>
+<h3 id="4111-pre-trade-check">4.11.1 资金校验 (Pre-trade Check)<a class="headerlink" href="#4111-pre-trade-check" title="Permanent link">&para;</a></h3>
+<p>在订单提交前，Rust 层的 <code>RiskManager</code> 会进行严格的资金校验：</p>
+<ol>
+<li><strong>计算成本</strong>：<ul>
+<li>股票: <code>Price * Quantity</code></li>
+<li>期货: <code>Price * Quantity * Multiplier * MarginRatio</code></li>
+</ul>
+</li>
+<li><strong>计算费用</strong>：预估佣金、印花税等。</li>
+<li><strong>比较</strong>：<code>Total Cost &gt; Free Cash</code> ?<ul>
+<li>如果资金不足，订单会被<strong>自动拒绝 (Rejected)</strong>，或者根据配置<strong>自动缩减数量 (Auto-resize)</strong> 以适应剩余资金。</li>
+</ul>
+</li>
+</ol>
+<h3 id="4112-t1">4.11.2 T+1 制度模拟<a class="headerlink" href="#4112-t1" title="Permanent link">&para;</a></h3>
+<p>对于 A 股市场，<code>AKQuant</code> 内置了 T+1 规则支持：</p>
+<ul>
+<li><strong>可用持仓 (Available Position)</strong>：当日买入的股票，在当日的 <code>available_positions</code> 中为 0，只有到下一个交易日才会释放。</li>
+<li><strong>卖出检查</strong>：卖出时检查 <code>available_positions</code> 而非总持仓。</li>
+</ul>
+<p>这意味着如果你在 T 日买入，尝试在 T 日卖出，订单会被拒绝，错误信息提示 "Insufficient available position"。</p>
+<p>当前范围说明：
+*   <code>t_plus_one</code> 是<strong>运行级/市场级</strong>开关，不是按 <code>strategy_id</code> 的分层参数。
+*   即使启用了多策略槽位，不同策略仍共享同一市场制度与可用持仓结算口径。</p>
+<h2 id="412-time-flow-multi-asset">4.12 [进阶选读] 多标的与时间流 (Time Flow &amp; Multi-Asset)<a class="headerlink" href="#412-time-flow-multi-asset" title="Permanent link">&para;</a></h2>
+<p>这部分是从“单标的事件驱动”迈向“多标的统一时间流”的关键一步。若你当前只在做单标的策略，可以先知道结论，后续做全市场选股时再回来细读。</p>
+<p>在回测多个标的（例如全市场选股）时，时间的同步至关重要。</p>
+<p><code>AKQuant</code> 的 <code>DataFeed</code> 实现了一个<strong>全局优先队列 (Global Priority Queue)</strong>。无论你加载了多少个 CSV 文件或 DataFrame，引擎都会将它们的数据打散并重新排序。</p>
+<p><strong>工作流程</strong>：</p>
+<ol>
+<li>加载 AAPL 的数据，放入队列。</li>
+<li>加载 MSFT 的数据，放入队列。</li>
+<li><code>DataFeed.sort()</code>：对所有事件按时间戳进行全局排序。</li>
+<li><strong>Event Loop</strong>：引擎调用 <code>feed.next()</code>，总是返回时间戳最小的那个事件。</li>
+</ol>
+<p>这意味着，即使 AAPL 和 MSFT 在同一分钟都有数据，引擎也会按顺序处理它们（虽然逻辑上是同一时刻），确保了多标的策略在任何时刻看到的都是“当时”的全局状态。</p>
+<h3 id="4121-akquant-utc">4.12.1 为什么 AKQuant 要统一用 UTC<a class="headerlink" href="#4121-akquant-utc" title="Permanent link">&para;</a></h3>
+<p>理解 <code>AKQuant</code> 的事件驱动架构时，有一个非常关键但很容易被忽略的点：</p>
+<blockquote>
+<p><strong>引擎排序和状态推进依赖 UTC，时区只是显示层语义。</strong></p>
+</blockquote>
+<p>原因很简单。事件驱动系统必须回答一个严肃问题：当多个市场、多个频率、多个语言运行时同时出现事件，谁先处理？</p>
+<p>如果每条数据都带着各自市场的本地时间字符串，系统很难稳定地比较和排序；而一旦统一成 UTC 纳秒时间戳，这个问题就变成了纯数值排序，语义最清晰，也最不容易出错。</p>
+<p>因此，AKQuant 采用三层分工：</p>
+<ol>
+<li><strong>引擎层</strong></li>
+<li>使用 UTC 纳秒时间戳推进全局时钟</li>
+<li>
+<p>决定事件队列的先后顺序</p>
+</li>
+<li>
+<p><strong>结构化接口层</strong></p>
+</li>
+<li><code>event_time</code> 保存 UTC 纳秒时间戳</li>
+<li><code>event_time_iso</code>、<code>bar.timestamp_iso</code>、<code>trade.timestamp_iso</code> 等保存 UTC ISO 8601 字符串</li>
+<li>
+<p>这些字段适合日志、审计、JSON 导出和跨 Python/Rust 协作</p>
+</li>
+<li>
+<p><strong>显示层</strong></p>
+</li>
+<li><code>self.now</code></li>
+<li><code>self.to_local_time(...)</code></li>
+<li><code>self.format_time(...)</code></li>
+<li>这些接口把 UTC 转成策略配置的本地时区，便于人类阅读</li>
+</ol>
+<p>举个例子，北京时间 <code>2023-01-03 15:00:00+08:00</code> 的日线收盘 Bar，在结构化层可能会显示为：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>2023-01-03T07:00:00Z
+</span></code></pre></div>
+<p>这不是时区错乱，而是同一个事实的两种表达：</p>
+<ul>
+<li>对引擎来说，它需要一个全球唯一、可排序的 UTC 时刻</li>
+<li>对用户来说，他通常更关心“这是本地市场的几点”</li>
+</ul>
+<p>你可以把 AKQuant 的时间设计总结成一句话：</p>
+<blockquote>
+<p><strong>UTC 负责让系统正确，本地时区负责让结果好读。</strong></p>
+</blockquote>
+<h2 id="413-pnl-mathematics">4.13 [进阶选读] 盈亏计算原理 (PnL Mathematics)<a class="headerlink" href="#413-pnl-mathematics" title="Permanent link">&para;</a></h2>
+<p>理解 <code>AKQuant</code> 的盈亏计算逻辑，对于分析策略表现至关重要。</p>
+<h3 id="4131-unrealized-pnl">4.13.1 浮动盈亏 (Unrealized PnL)<a class="headerlink" href="#4131-unrealized-pnl" title="Permanent link">&para;</a></h3>
+<p>浮动盈亏反映了当前持仓的未结收益。</p>
+<div class="arithmatex">\[ \text{Unrealized PnL} = (\text{Current Price} - \text{Entry Price}) \times \text{Quantity} \times \text{Multiplier} \]</div>
+<ul>
+<li><strong>Entry Price (入场均价)</strong>：采用加权平均法计算。</li>
+</ul>
+<h3 id="4132-realized-pnl">4.13.2 平仓盈亏 (Realized PnL)<a class="headerlink" href="#4132-realized-pnl" title="Permanent link">&para;</a></h3>
+<p>当平仓发生时，浮动盈亏转化为平仓盈亏。<code>AKQuant</code> 采用 <strong>FIFO (先进先出)</strong> 原则进行结算。</p>
+<p><strong>示例</strong>：</p>
+<ol>
+<li>买入 100 股 @ 10 元。</li>
+<li>买入 100 股 @ 12 元。</li>
+<li>卖出 100 股 @ 15 元。</li>
+</ol>
+<p><strong>结算</strong>：
+卖出的 100 股会优先匹配第一笔 10 元的买单。</p>
+<div class="arithmatex">\[ \text{Realized PnL} = (15 - 10) \times 100 = 500 \]</div>
+<p>剩余持仓：100 股 @ 12 元。</p>
+<h3 id="4133-total-equity">4.13.3 总权益 (Total Equity)<a class="headerlink" href="#4133-total-equity" title="Permanent link">&para;</a></h3>
+<div class="arithmatex">\[ \text{Total Equity} = \text{Cash} + \sum (\text{Market Value of Positions}) \]</div>
+<p>其中市值计算包含保证金占用（对于期货/期权）。</p>
+<h2 id="414-troubleshooting">4.14 [主线必学] 常见问题排查 (Troubleshooting)<a class="headerlink" href="#414-troubleshooting" title="Permanent link">&para;</a></h2>
+<p>如果你的订单没有成交，请检查以下清单：</p>
+<ol>
+<li><strong>价格未触发</strong>：<ul>
+<li>限价买单价格必须 <code>&gt;=</code> Bar Low。</li>
+<li>限价卖单价格必须 <code>&lt;=</code> Bar High。</li>
+</ul>
+</li>
+<li><strong>资金/持仓不足</strong>：<ul>
+<li>检查日志中是否有 <code>Order Rejected: Insufficient cash</code> 或 <code>Insufficient available position</code>。</li>
+<li>A 股回测请注意 T+1 限制。</li>
+</ul>
+</li>
+<li><strong>成交量限制</strong>：<ul>
+<li>如果你设置了 <code>volume_limit</code>，而当根 Bar 成交量很小，订单可能只成交一部分或完全不成交。</li>
+</ul>
+</li>
+<li><strong>最小交易单位 (Lot Size)</strong>：<ul>
+<li>A 股买入数量必须是 100 的整数倍。</li>
+</ul>
+</li>
+<li><strong>时间窗口</strong>：<ul>
+<li>确保数据覆盖了订单产生的时间段。</li>
+</ul>
+</li>
+</ol>
+<h2 id="415">4.15 [进阶选读] 性能优化与内存管理<a class="headerlink" href="#415" title="Permanent link">&para;</a></h2>
+<p><code>AKQuant</code> 之所以快，除了 Rust 本身的高性能外，还做了大量内存优化：</p>
+<ol>
+<li><strong>避免 DataFrame 碎片化</strong>：历史数据在 Rust 中以连续内存块（Vector）存储，而不是 Python 的分散对象。</li>
+<li><strong>按需计算</strong>：指标（Indicator）通常是增量计算的（Streaming），而不是每次重算整个序列。</li>
+<li><strong>对象池 (Object Pooling)</strong>：虽然目前主要通过栈分配优化，但设计上避免了频繁的大对象创建和销毁。</li>
+</ol>
+<hr />
+<h2 id="416-tick-tick-input-aggregation">4.16 [进阶选读] Tick 输入与聚合语义 (Tick Input &amp; Aggregation)<a class="headerlink" href="#416-tick-tick-input-aggregation" title="Permanent link">&para;</a></h2>
+<p>前面各节的事件流都以 <code>Bar</code> 为单位。但引擎的事件层本就是 <code>Event::{Bar, Tick, ...}</code> 的枚举，撮合层同样认 tick——所以 <code>run_backtest(data=...)</code> 除 <code>Bar</code> 列表外，还接受 <code>Tick</code> 列表与两者的混合列表。</p>
+<p>这一节讲两种模式的取舍，以及三个<strong>反直觉但必须理解</strong>的语义。可运行的对照演示见 <a href="https://github.com/akfamily/akquant/blob/main/examples/68_backtest_tick_demo.py">examples/68_backtest_tick_demo.py</a>。</p>
+<h3 id="4161-tick-bar">4.16.1 纯 tick 模式：退化 bar 表示法<a class="headerlink" href="#4161-tick-bar" title="Permanent link">&para;</a></h3>
+<p>不传 <code>freq</code> 时，tick 直接进入事件流：只触发 <code>on_tick</code>，<strong>不</strong>触发 <code>on_bar</code>。</p>
+<p>关键设计是<strong>退化 bar 表示法</strong>：tick 写入历史缓冲区时，<code>open = high = low = close = price</code>。这样列式 OHLC 的存储结构与字段查询都无需改动，<code>get_history(count, symbol, "close")</code> 在 tick 历史上就是「最近若干笔成交价」。</p>
+<p>代价也从这个表示法直接推出：<strong>tick 的最高价恒等于最低价</strong>。于是 ATR、振幅这类依赖真实 H/L 的指标在纯 tick 数据上只会恒为 0。AKQuant 不让它静默返回 0——若某标的全程只有 tick、从未有过任何 bar，会话结束时会抛 <code>StrategyConfigurationError</code>。</p>
+<blockquote>
+<p><strong>设计原则：静默失效比报错危险。</strong> 一个恒为 0 的 ATR 不会让回测崩溃，它会让你基于无意义的数字做出决策。这类"不报错也不工作"的路径是本章 4.14 节排查清单的重点，也是 AKQuant 在 tick 支持上反复权衡的主轴。</p>
+</blockquote>
+<h3 id="4162-freq">4.16.2 <code>freq</code> 聚合模式：因果顺序为什么决定时间戳约定<a class="headerlink" href="#4162-freq" title="Permanent link">&para;</a></h3>
+<p>传入 <code>freq="1min"</code> 后，原始 tick 仍照常投递给 <code>on_tick</code>，同时把区间内的 tick 聚合成 bar 投递给 <code>on_bar</code>——于是拿到完整 OHLC 语义与全部指标（含 ATR 等 H/L 类）。</p>
+<p>这里有一个值得单独理解的工程决策：<strong>合成 bar 的时间戳打在区间结束（下一区间起点前 1 纳秒），而不是区间起点。</strong></p>
+<p>原因是回测与实盘的时间语义不同：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>实盘</th>
+<th>回测</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>bar 何时被消费</td>
+<td>下一区间首个 tick 到达时才发出，<strong>墙钟顺序即因果顺序</strong></td>
+<td>tick 与合成 bar 进同一 feed，再按时间戳<strong>排序</strong></td>
+</tr>
+<tr>
+<td>用区间起点的后果</td>
+<td>无害</td>
+<td>bar 排到形成它的 tick <strong>之前</strong></td>
+</tr>
+</tbody>
+</table>
+<p>用区间起点在回测里会造成<strong>前视偏差</strong>：策略在 09:30:00 就收到一根 <code>high</code> 来自 09:30:15 的 bar，等于读到了尚未发生的数据。示例 68 的输出可以直接核对这一点——合成 bar 落在 <code>09:30:59</code>，晚于形成它的全部 tick。</p>
+<p>聚合模式还有一个容易被忽略的副作用：<strong>它让每个标的同时拥有 bar 与 tick 两条历史序列</strong>（"双流"）。tick 写入历史缓冲区是无条件的，与策略有没有写 <code>on_tick</code> <strong>无关</strong>——所以哪怕你只写了 <code>on_bar</code>、从不读 tick，取历史时框架也面临"取哪条"的问题。</p>
+<p>框架的答案是<strong>按当前所处的回调定档</strong>：<code>on_bar</code> 里省略 <code>freq</code> 即取 bar，<code>on_tick</code> 里即取 tick。因此这一节的代码可以照单流的写法写：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">):</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="n">closes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_history</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="n">bar</span><span class="o">.</span><span class="n">symbol</span><span class="p">,</span> <span class="s2">"close"</span><span class="p">)</span>   <span class="c1"># 双流下也拿到 bar 序列</span>
+</span></code></pre></div>
+<p>只有在<strong>行情回调之外</strong>（<code>on_timer</code>、<code>on_before_trading</code>、自建线程）才推断不出意图，双流下省略 <code>freq</code> 会抛 <code>ValueError</code>，要求显式传 <code>freq='bar'</code> / <code>freq='tick'</code>。这里不兜底成"默认取 bar"，仍是 4.16.1 那条设计原则的应用：能推断的地方替你推断，推断不出的地方宁可报错，也不静默选一条让你拿着混错粒度的数据算指标。</p>
+<p>顺带一提，<code>freq</code> 参数除了驱动聚合，也会注入策略的只读属性 <code>self.freq</code>（值即 <code>"1min"</code>），策略因此能知道自己跑在什么周期上；不传 <code>freq</code> 的纯 bar 回测下它是 <code>None</code>——框架不从相邻 bar 的时间戳差反推周期，因为停牌与跨日会让这种推断给出错误答案。</p>
+<h3 id="4163">4.16.3 成交量口径：单笔量与累计量<a class="headerlink" href="#4163" title="Permanent link">&para;</a></h3>
+<p>聚合器的 <code>on_tick(symbol, price, volume, timestamp_ns)</code> 有两种 volume 口径，由构造参数选择：</p>
+<ul>
+<li><strong>累计口径</strong>（实盘默认）：CTP 推来的 <code>Volume</code> 是当日累计量，聚合器算相邻两笔的差分。首笔会被播种为自身值（差分为 0），否则第一根 bar 会吞掉一整天的成交量。</li>
+<li><strong>单笔口径</strong>（回测）：<code>Tick.volume</code> 就是这一笔的量，聚合器直接求和。</li>
+</ul>
+<p>两者不可混用：用累计口径处理单笔量，会让每个标的的<strong>首笔成交量被丢弃</strong>。示例 68 验证了 <code>100+200+150+50 = 500</code> 一笔不落。</p>
+<h3 id="4164">4.16.4 其余边界<a class="headerlink" href="#4164" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>freq</code> 只支持整数分钟（<code>"1min"</code> / <code>"5min"</code> / <code>"1h"</code>）；<code>"30s"</code> 会报错并指向 <code>feed_adapter.resample</code>，不静默取整。词汇与 pandas <code>to_offset</code> 对齐。</li>
+<li>末尾未满一个周期的 tick 不产生 bar（聚合器不提供 flush）。</li>
+<li>预计算指标（<code>indicator_mode="precompute"</code>）不支持含 tick 的输入，请改用增量指标或 <code>freq</code> 聚合。</li>
+<li>构造 <code>Bar</code> / <code>Tick</code> 时<strong>时间戳必须是真实纳秒</strong>：构造器会把小于 <code>1e10</code> 的值乘 <code>1e9</code>，传 <code>100</code> 之类的小整数会被静默改写。</li>
+</ul>
+<p>完整清单见<a href="../../guide/data/">数据指南的「Tick 输入」一节</a>。</p>
+<hr />
+<h2 id="_6">本章小结<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<h3 id="_7">必须掌握<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>事件驱动回测在真实交易仿真能力上显著优于纯向量化回测。</li>
+<li>理解订单状态、撮合规则与风控约束，是保证回测可信度的前提。</li>
+</ul>
+<h3 id="_8">理解即可<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>AKQuant 的 Python/Rust 分层既是性能设计，也是职责分层设计。</li>
+</ul>
+<h3 id="_9">实践提醒<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>阅读本章时先抓住事件流主线，再回头查撮合、UTC 和风控细节。</li>
+</ul>
+<h2 id="_10">主线推进<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<p>第 1 章里，那条贯穿全书的最小双均线（MA5/MA20）策略只是被“跑通”了一遍——我们看到了收益与回撤，却没有追问引擎是如何把一根根 Bar 变成一笔笔成交的。本章把同一条策略放回引擎盖下重新审视：它不再是一段会输出数字的脚本，而是一个在事件循环里被反复调用的状态机。我们用 <code>examples/textbook/ch04_comparison.py</code> 让这条双均线策略分别以 Pandas（向量化）、Backtrader 与 AKQuant（事件驱动）三种方式各跑一遍，从而亲眼看清：同样的金叉死叉逻辑，在“一次性矩阵运算”和“逐 Bar 撮合 + 风控拦截”两种范式下，建模方式、可信度与运行开销有何不同。至此，主线策略已经从“能运行”推进到“能解释它为什么这样成交”——下一章我们将基于这套事件驱动的认知，正式动手编写和打磨自己的策略逻辑。</p>
+<h2 id="_11">延伸阅读<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
+<p><strong>经典著作</strong></p>
+<ul>
+<li>Chan, E. P. <em>Algorithmic Trading: Winning Strategies and Their Rationale</em>，Wiley, 2013 —— 系统讨论回测流程、前视偏差与数据陷阱，可对照本章 4.1 的两种范式与 4.14 的排查清单。</li>
+<li>Narang, R. K. <em>Inside the Black Box: A Simple Guide to Quantitative and High-Frequency Trading</em>（第 2 版），Wiley, 2013 —— 从系统视角拆解 Alpha、风控与执行模块，呼应本章 4.2 架构与 4.8 风控引擎。</li>
+<li>Harris, L. <em>Trading and Exchanges: Market Microstructure for Practitioners</em>，Oxford University Press, 2003 —— 讲透限价单、止损单与撮合机制的市场微观结构，对应本章 4.5 与 4.10 的撮合逻辑。</li>
+<li>de Prado, M. L. <em>Advances in Financial Machine Learning</em>，Wiley, 2018 —— 关于回测可信度、滑点与成本建模的进阶参考，延伸本章 4.6 冲击成本与 4.13 盈亏口径。</li>
+</ul>
+<p><strong>官方文档与工具</strong></p>
+<ul>
+<li><a href="https://www.backtrader.com/docu/">Backtrader 官方文档</a> —— 本章 4.1.2 对比所用的 Python 事件驱动框架。</li>
+<li><a href="https://pyo3.rs/">PyO3 用户指南</a> —— 理解本章 4.2.1 中 Python 与 Rust 零开销绑定的底层机制。</li>
+<li><a href="https://pandas.pydata.org/docs/">pandas 官方文档</a> —— 本章 4.1.1 向量化回测所依赖的数据处理库。</li>
+</ul>
+<p><strong>本书相关</strong></p>
+<ul>
+<li><a href="../../guide/quant_basics/">AKQuant 的时间与时区</a>、<a href="../../advanced/timezone/">时区处理指南</a> —— 配合本章 4.12.1 理解引擎为何统一使用 UTC。</li>
+<li><a href="../../advanced/warm_start/">高级指南：热启动</a> —— 展开本章 4.4 的状态快照与热启动机制。</li>
+<li><a href="../../guide/data/">数据指南</a> —— 配合本章实践入口，准备多标的回测所需的统一时间流数据。</li>
+</ul>
+<h2 id="_12">课后练习<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h2>
+<h3 id="_13">基础题<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h3>
+<ol>
+<li>在主示例中修改滑点或手续费参数，比较收益与回撤变化。</li>
+</ol>
+<h3 id="_14">应用题<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
+<ol>
+<li>记录三种回测范式的运行时长，并解释差异来源。</li>
+</ol>
+<h3 id="_15">综合题<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h3>
+<ol>
+<li>人工构造一笔“部分成交”场景，验证订单状态流转是否符合预期。</li>
+</ol>
+<details class="note">
+<summary>参考答案要点（先独立思考再展开）</summary>
+<p><strong>基础题</strong>：滑点/手续费上调会拉低收益、抬高对换手的惩罚，高频策略受影响尤甚——说明成本假设直接决定回测可信度。</p>
+<p><strong>应用题</strong>：向量化最快（一次性矩阵运算），事件驱动较慢（逐 Bar + 撮合 + 风控）；差异来自路径依赖建模与 Python/Rust 层开销，需结合数据规模实测。</p>
+<p><strong>综合题</strong>：用 <code>volume_limit</code> 或限价单制造部分成交，观察 New→Submitted→PartiallyFilled→Filled 的流转，并核对 <code>on_order</code> / <code>on_trade</code> 是否按预期多次触发。</p>
+</details>
+<h2 id="_16">常见错误与排查<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h2>
+<ol>
+<li>订单没有成交：优先检查价格是否触发、资金是否足够，以及是否受成交量限制。</li>
+<li>结果好得异常：检查是否误用了未来数据，或忽略了滑点、手续费与市场制度。</li>
+<li>多标的时间错位：确认数据是否统一为可排序时间戳，并检查时区显示与引擎排序的分层。</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
