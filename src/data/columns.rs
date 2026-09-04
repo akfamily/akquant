@@ -192,11 +192,15 @@ impl BarColumns {
         }
     }
 
-    /// 按时间戳稳定排序 (相等时间戳保持插入顺序, 与旧 `VecDeque` 排序一致).
+    /// 按时间戳稳定排序，时间戳相等时按 symbol 字典序排序（保证确定性，issue #211）。
     pub fn sort_by_timestamp(&mut self) {
         let n = self.len();
         let mut idx: Vec<usize> = (0..n).collect();
-        idx.sort_by_key(|&i| self.ts[i]); // slice::sort_by_key 为稳定排序
+        // 时间戳相等时按 symbol 排序，确保不同 symbol 插入顺序不影响回测结果
+        idx.sort_by(|&i, &j| {
+            self.ts[i].cmp(&self.ts[j])
+                .then_with(|| self.symbols[i].cmp(&self.symbols[j]))
+        });
 
         self.ts = idx.iter().map(|&i| self.ts[i]).collect();
         self.open = idx.iter().map(|&i| self.open[i]).collect();
