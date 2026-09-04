@@ -222,6 +222,25 @@ print(series[:2])
 - `meta`: 样本数与日期范围
 - `reason`: 输入无效或无重叠区间时的说明
 
+#### summary 字段单位
+
+`summary` 中的收益类指标全部返回 **Ratio (小数)**，与 `annualized_return`、`max_drawdown` 的口径一致；前端展示为百分比时需自行乘 100。比率类指标本身无量纲，**不要**乘 100。
+
+| 字段 (Field) | 含义 (Description) | 单位/类型 | 前端展示 |
+| :--- | :--- | :--- | :--- |
+| `total_excess` | 累计超额收益 | Ratio (小数) | `× 100` 并加 `%` |
+| `annual_excess` | 年化超额收益 | Ratio (小数) | `× 100` 并加 `%` |
+| `tracking_error` | 跟踪误差 | Ratio (小数) | `× 100` 并加 `%` |
+| `alpha` | 阿尔法系数 (已年化) | Ratio (小数) | `× 100` 并加 `%` |
+| `information_ratio` | 信息比率 | Ratio (无量纲) | 直接展示，不乘 100 |
+| `beta` | 贝塔系数 | Ratio (无量纲) | 直接展示，不乘 100 |
+
+任一字段在基准无法对齐或方差为 0 时取值为 `None`，展示前需判空。
+
+`series` 中的 `strategy_return`、`benchmark_return`、`excess_return` 及三条 `*_cum_return` 同样是小数。
+
+内置 HTML 报告即按此口径渲染：`total_excess` / `annual_excess` / `tracking_error` / `alpha` 走百分比格式化，`information_ratio` / `beta` 保留 4 位小数原样输出。可用信息比率做自校验——它恒等于 `annual_excess / tracking_error`，若前端算出的比值与 `information_ratio` 不符，说明某一项乘错了倍数。
+
 如果你需要把这份结果落盘：
 
 ```python
@@ -258,6 +277,79 @@ risk_trend_by_strategy = result.risk_rejections_trend_by_strategy(freq="D")
 # 5) 信用账户强平审计（融资融券回测时）
 liquidation_audit = result.liquidation_audit_df
 ```
+
+#### 组合归因与容量分析字段单位
+
+这些结构化输出的比率/百分比字段与 `annualized_return`、`max_drawdown` 口径一致，均返回 **Ratio (小数)**，前端展示为百分比时需 × 100。
+
+**`exposure_df` 字段**
+
+| 字段 (Field) | 含义 (Description) | 单位/类型 |
+| :--- | :--- | :--- |
+| `date` | 日期 | Datetime |
+| `equity` | 账户权益 | Float |
+| `long_exposure` | 多头市值 | Float |
+| `short_exposure` | 空头市值 | Float |
+| `net_exposure` | 净暴露 | Float |
+| `gross_exposure` | 总暴露 | Float |
+| `net_exposure_pct` | 净暴露比例 | Ratio (小数) |
+| `gross_exposure_pct` | 总暴露比例 | Ratio (小数) |
+| `leverage` | 杠杆倍数 | Ratio (小数) |
+
+**`attribution_df` 字段**
+
+| 字段 (Field) | 含义 (Description) | 单位/类型 |
+| :--- | :--- | :--- |
+| `group` | 分组标识 (symbol / tag) | String |
+| `trade_count` | 交易笔数 | Int |
+| `total_pnl` | 总盈亏 | Float |
+| `avg_return_pct` | 平均收益率 | Ratio (小数) |
+| `total_commission` | 总手续费 | Float |
+| `contribution_pct` | 贡献占比 | Ratio (小数) |
+| `abs_contribution_pct` | 绝对贡献占比 | Ratio (小数) |
+
+注意：`attribution_df` 的三个 `*_pct` 字段虽然命名带 `pct`，但返回的是**小数**而非百分数，展示时需 × 100。
+
+**`capacity_df` 字段**
+
+| 字段 (Field) | 含义 (Description) | 单位/类型 |
+| :--- | :--- | :--- |
+| `date` | 日期 | Datetime |
+| `order_count` | 订单数 | Int |
+| `filled_order_count` | 成交订单数 | Int |
+| `ordered_quantity` | 委托总量 | Float |
+| `filled_quantity` | 成交总量 | Float |
+| `ordered_value` | 委托总额 | Float |
+| `filled_value` | 成交总额 | Float |
+| `fill_rate_qty` | 成交率 (数量) | Ratio (小数) |
+| `fill_rate_value` | 成交率 (金额) | Ratio (小数) |
+| `equity` | 账户权益 | Float |
+| `turnover` | 换手率 | Ratio (小数) |
+
+**`orders_by_strategy` 字段**
+
+| 字段 (Field) | 含义 (Description) | 单位/类型 |
+| :--- | :--- | :--- |
+| `owner_strategy_id` | 策略标识 | String |
+| `order_count` | 订单数 | Int |
+| `filled_order_count` | 成交订单数 | Int |
+| `ordered_quantity` | 委托总量 | Float |
+| `filled_quantity` | 成交总量 | Float |
+| `ordered_value` | 委托总额 | Float |
+| `filled_value` | 成交总额 | Float |
+| `fill_rate_qty` | 成交率 (数量) | Ratio (小数) |
+| `fill_rate_value` | 成交率 (金额) | Ratio (小数) |
+
+**`executions_by_strategy` 字段**
+
+| 字段 (Field) | 含义 (Description) | 单位/类型 |
+| :--- | :--- | :--- |
+| `owner_strategy_id` | 策略标识 | String |
+| `execution_count` | 成交笔数 | Int |
+| `total_quantity` | 成交总量 | Float |
+| `total_notional` | 成交总额 | Float |
+| `total_commission` | 总手续费 | Float |
+| `avg_fill_price` | 平均成交价 | Float |
 
 当启用信用账户并触发强平后，`result.viz.report(...)` 的 HTML 报告会自动包含：
 
