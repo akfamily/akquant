@@ -1231,10 +1231,11 @@ benchmark_analysis = result.benchmark_analysis(
 # Common benchmark_analysis fields:
 # - schema_version, available, reason
 # - benchmark.label
-# - summary.total_excess / annual_excess / tracking_error
-# - summary.information_ratio / beta / alpha
-# - series[*].date / strategy_return / benchmark_return / excess_return
-# - series[*].strategy_cum_return / benchmark_cum_return / excess_cum_return
+# - summary.total_excess / annual_excess / tracking_error (decimals, ×100 for %)
+# - summary.information_ratio / beta (dimensionless, no scaling)
+# - summary.alpha (decimal, ×100 for %)
+# - series[*].date / strategy_return / benchmark_return / excess_return (decimals)
+# - series[*].strategy_cum_return / benchmark_cum_return / excess_cum_return (decimals)
 
 # Common columns
 # orders_by_strategy:

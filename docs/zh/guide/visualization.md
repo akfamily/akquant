@@ -46,7 +46,7 @@ print(payload["series"][0])
 - `available`: 当前 benchmark analysis 是否可用
 - `reason`: 当 benchmark 无法对齐或输入非法时的原因
 - `benchmark.label`: 基准显示名称
-- `summary`: 汇总指标，如 `total_excess`、`annual_excess`、`tracking_error`、`information_ratio`、`beta`、`alpha`
+- `summary`: 汇总指标，如 `total_excess`、`annual_excess`、`tracking_error`、`information_ratio`、`beta`、`alpha`（收益/误差类字段为小数，前端展示百分比需 ×100；比率类字段无量纲不乘，详见 [回测结果与指标详解](./analysis.md#summary-字段单位)）
 - `series`: 对齐后的逐日序列，包含策略收益、基准收益、超额收益及三条累计收益曲线
 - `meta`: 对齐样本数、起止日期、年化因子等元信息
 

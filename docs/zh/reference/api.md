@@ -1347,10 +1347,11 @@ benchmark_analysis = result.benchmark_analysis(
 # benchmark_analysis 常用字段:
 # - schema_version, available, reason
 # - benchmark.label
-# - summary.total_excess / annual_excess / tracking_error
-# - summary.information_ratio / beta / alpha
-# - series[*].date / strategy_return / benchmark_return / excess_return
-# - series[*].strategy_cum_return / benchmark_cum_return / excess_cum_return
+# - summary.total_excess / annual_excess / tracking_error (小数，需 ×100 展示为 %)
+# - summary.information_ratio / beta (无量纲，不乘)
+# - summary.alpha (小数，需 ×100 展示为 %)
+# - series[*].date / strategy_return / benchmark_return / excess_return (小数)
+# - series[*].strategy_cum_return / benchmark_cum_return / excess_cum_return (小数)
 
 # 常用字段示例
 # orders_by_strategy:

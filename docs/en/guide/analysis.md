@@ -60,6 +60,25 @@ The structured benchmark analysis shares the same alignment and calculation logi
 - `meta`: sample count and date range
 - `reason`: explanation when the benchmark input is invalid or cannot be aligned
 
+#### Summary Field Units
+
+All return-based metrics in `summary` are returned as **Ratio (decimal)**, matching the convention of `annualized_return` and `max_drawdown`. Frontend clients must multiply by 100 when displaying as percentages. Dimensionless ratio metrics should **not** be multiplied.
+
+| Field | Description | Unit/Type | Display Format |
+| :--- | :--- | :--- | :--- |
+| `total_excess` | Total excess return | Ratio (decimal) | `× 100` with `%` |
+| `annual_excess` | Annualized excess return | Ratio (decimal) | `× 100` with `%` |
+| `tracking_error` | Tracking error | Ratio (decimal) | `× 100` with `%` |
+| `alpha` | Alpha (annualized) | Ratio (decimal) | `× 100` with `%` |
+| `information_ratio` | Information ratio | Ratio (dimensionless) | Show as-is, no scaling |
+| `beta` | Beta | Ratio (dimensionless) | Show as-is, no scaling |
+
+Any field may be `None` when the benchmark cannot be aligned or variance is zero; check before rendering.
+
+Returns in `series` (`strategy_return`, `benchmark_return`, `excess_return`, and all `*_cum_return` fields) are also decimals.
+
+The built-in HTML report follows this convention: `total_excess` / `annual_excess` / `tracking_error` / `alpha` are formatted as percentages, while `information_ratio` / `beta` are displayed as 4-decimal floats. Use the information ratio as a sanity check — it always equals `annual_excess / tracking_error`. If your frontend's calculated ratio doesn't match the `information_ratio` field, one of the operands was scaled incorrectly.
+
 To persist the analysis:
 
 ```python
@@ -288,6 +307,79 @@ risk_trend_by_strategy = result.risk_rejections_trend_by_strategy(freq="D")
 # margin-account forced liquidation audit (when enabled)
 liquidation_audit = result.liquidation_audit_df
 ```
+
+### Attribution & Capacity Field Units
+
+All ratio and percentage fields in these structured outputs follow the same convention as `annualized_return` and `max_drawdown`, returning **Ratio (decimal)**. Frontend clients must multiply by 100 when displaying as percentages.
+
+**`exposure_df` Fields**
+
+| Field | Description | Unit/Type |
+| :--- | :--- | :--- |
+| `date` | Date | Datetime |
+| `equity` | Account equity | Float |
+| `long_exposure` | Long market value | Float |
+| `short_exposure` | Short market value | Float |
+| `net_exposure` | Net exposure | Float |
+| `gross_exposure` | Gross exposure | Float |
+| `net_exposure_pct` | Net exposure ratio | Ratio (decimal) |
+| `gross_exposure_pct` | Gross exposure ratio | Ratio (decimal) |
+| `leverage` | Leverage multiple | Ratio (decimal) |
+
+**`attribution_df` Fields**
+
+| Field | Description | Unit/Type |
+| :--- | :--- | :--- |
+| `group` | Group identifier (symbol / tag) | String |
+| `trade_count` | Number of trades | Int |
+| `total_pnl` | Total P&L | Float |
+| `avg_return_pct` | Average return | Ratio (decimal) |
+| `total_commission` | Total commission | Float |
+| `contribution_pct` | Contribution ratio | Ratio (decimal) |
+| `abs_contribution_pct` | Absolute contribution ratio | Ratio (decimal) |
+
+Note: Despite the `_pct` suffix, all three percentage fields in `attribution_df` return **decimals**, not percentages. Multiply by 100 for display.
+
+**`capacity_df` Fields**
+
+| Field | Description | Unit/Type |
+| :--- | :--- | :--- |
+| `date` | Date | Datetime |
+| `order_count` | Order count | Int |
+| `filled_order_count` | Filled order count | Int |
+| `ordered_quantity` | Total ordered quantity | Float |
+| `filled_quantity` | Total filled quantity | Float |
+| `ordered_value` | Total ordered value | Float |
+| `filled_value` | Total filled value | Float |
+| `fill_rate_qty` | Fill rate (quantity) | Ratio (decimal) |
+| `fill_rate_value` | Fill rate (value) | Ratio (decimal) |
+| `equity` | Account equity | Float |
+| `turnover` | Turnover rate | Ratio (decimal) |
+
+**`orders_by_strategy` Fields**
+
+| Field | Description | Unit/Type |
+| :--- | :--- | :--- |
+| `owner_strategy_id` | Strategy identifier | String |
+| `order_count` | Order count | Int |
+| `filled_order_count` | Filled order count | Int |
+| `ordered_quantity` | Total ordered quantity | Float |
+| `filled_quantity` | Total filled quantity | Float |
+| `ordered_value` | Total ordered value | Float |
+| `filled_value` | Total filled value | Float |
+| `fill_rate_qty` | Fill rate (quantity) | Ratio (decimal) |
+| `fill_rate_value` | Fill rate (value) | Ratio (decimal) |
+
+**`executions_by_strategy` Fields**
+
+| Field | Description | Unit/Type |
+| :--- | :--- | :--- |
+| `owner_strategy_id` | Strategy identifier | String |
+| `execution_count` | Execution count | Int |
+| `total_quantity` | Total executed quantity | Float |
+| `total_notional` | Total executed value | Float |
+| `total_commission` | Total commission | Float |
+| `avg_fill_price` | Average fill price | Float |
 
 When margin mode is enabled and forced liquidation occurs, `result.viz.report(...)` automatically includes:
 

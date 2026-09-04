@@ -46,7 +46,7 @@ The payload includes:
 - `available`: whether benchmark analysis is available
 - `reason`: validation or alignment message when analysis is unavailable
 - `benchmark.label`: display label of the selected benchmark
-- `summary`: aggregate metrics such as `total_excess`, `annual_excess`, `tracking_error`, `information_ratio`, `beta`, and `alpha`
+- `summary`: aggregate metrics such as `total_excess`, `annual_excess`, `tracking_error`, `information_ratio`, `beta`, and `alpha` (return/error fields are decimals and must be multiplied by 100 for percentage display; ratio fields are dimensionless and should not be scaled — see [Backtest Results & Metrics](./analysis.md#summary-field-units))
 - `series`: aligned daily points with strategy, benchmark, excess, and cumulative series
 - `meta`: sample count, start/end date, and annualization settings
 
