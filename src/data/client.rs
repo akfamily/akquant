@@ -40,6 +40,16 @@ fn event_timestamp(event: &Event) -> i64 {
     }
 }
 
+/// 提取事件标的 (用于排序时的二级键, issue #211).
+#[inline]
+fn event_symbol(event: &Event) -> &str {
+    match event {
+        Event::Bar(b) => &b.symbol,
+        Event::Tick(t) => &t.symbol,
+        _ => "",
+    }
+}
+
 /// Data Client Trait for streaming or in-memory data
 pub trait DataClient: Send {
     fn peek_timestamp(&mut self) -> Option<i64>;
@@ -184,7 +194,12 @@ impl DataClient for SimulatedDataClient {
 
     fn sort(&mut self) {
         self.bars.sort_by_timestamp();
-        self.events.make_contiguous().sort_by_key(event_timestamp);
+        // 时间戳相等时按 symbol 排序，确保确定性（issue #211）
+        self.events.make_contiguous().sort_by(|a, b| {
+            event_timestamp(a)
+                .cmp(&event_timestamp(b))
+                .then_with(|| event_symbol(a).cmp(event_symbol(b)))
+        });
     }
 
     fn len_hint(&self) -> Option<usize> {

@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "akquant"
-version = "0.3.56"
+version = "0.3.57"
 dependencies = [
  "anyhow",
  "chrono",
