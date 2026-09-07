@@ -88,6 +88,7 @@ plugins:
             Multi-Strategy Guide: 多策略指南
             Live Functional Quickstart: Live 函数式策略上手
             Strategy Style Decision Guide: 策略风格决策指南
+            Custom Strategy Loader: 自定义策略加载器
             Custom Broker Registry: 自定义 Broker 注册
             Custom Broker Production Checklist: 自定义 Broker 生产接入清单
             Cross-Section Checklist: 横截面策略清单
@@ -164,6 +165,7 @@ plugins:
             Multi-Strategy Guide: Multi-Strategy Guide
             Live Functional Quickstart: Live Functional Quickstart
             Strategy Style Decision Guide: Strategy Style Decision Guide
+            Custom Strategy Loader: Custom Strategy Loader
             Custom Broker Registry: Custom Broker Registry
             Custom Broker Production Checklist: Custom Broker Production Checklist
             Cross-Section Checklist: Cross-Section Checklist
@@ -275,6 +277,7 @@ nav:
       - Live Functional Quickstart: advanced/live_functional_quickstart.md
       - Strategy Style Decision Guide: advanced/strategy_style_decision.md
       - Signal Ingestion: advanced/signal_ingestion.md
+      - Custom Strategy Loader: advanced/custom_strategy_loader.md
       - Custom Broker Registry: advanced/custom_broker_registry.md
       - Custom Broker Production Checklist: advanced/custom_broker_production_checklist.md
       - Multi-Timeframe Feed API: advanced/multi_timeframe_feed_api.md

@@ -95,7 +95,12 @@ from .params_adapter import (
 from .plot import plot_indicators, plot_result
 from .sizer import AllInSizer, FixedSize, PercentSizer, Sizer
 from .strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
-from .strategy_loader import register_strategy_loader, resolve_strategy_input
+from .strategy_loader import (
+    get_strategy_loader,
+    register_plugin_strategy_loaders,
+    register_strategy_loader,
+    resolve_strategy_input,
+)
 from .stream_schema import STREAM_SCHEMA_VERSION
 from .trade_stream import (
     is_trade_stream_event,
@@ -141,6 +146,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "BarGenerator",
         "register_strategy_loader",
         "resolve_strategy_input",
+        "get_strategy_loader",
+        "register_plugin_strategy_loaders",
         "DataLoader",
         "DataFeedAdapter",
         "FeedSlice",
@@ -245,6 +252,8 @@ else:
         "BarGenerator",
         "register_strategy_loader",
         "resolve_strategy_input",
+        "get_strategy_loader",
+        "register_plugin_strategy_loaders",
         "DataLoader",
         "DataFeedAdapter",
         "FeedSlice",
