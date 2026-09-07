@@ -1,0 +1,3541 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/textbook/11_optimization/">
+      
+      
+        <link rel="prev" href="../10_analysis/">
+      
+      
+        <link rel="next" href="../12_ml/">
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/textbook/11_optimization/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>第11章：参数优化与稳健性检验 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#11" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              第11章：参数优化与稳健性检验
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/textbook/11_optimization/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    量化教材
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程简介
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../00_glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    术语表与符号约定
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第一部分：基础篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第一部分：基础篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../01_foundations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第1章：量化投资概述与环境搭建
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02_programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第2章：量化编程基础
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../03_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第3章：金融数据获取与处理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第二部分：引擎篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第二部分：引擎篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../04_backtest_engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第4章：事件驱动回测原理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../05_strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第5章：策略开发实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第三部分：策略篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第三部分：策略篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06_stock_a/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第6章：A 股市场微观结构与策略实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../07_futures/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第7章：期货市场与衍生品策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第8章：期权定价与波动率策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../09_funds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第9章：基金投资与资产配置理论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第四部分：高阶篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第四部分：高阶篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../10_analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第10章：策略评价体系与风险指标
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第11章：参数优化与稳健性检验
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第11章：参数优化与稳健性检验
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#111" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.1 参数优化理论
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.1 参数优化理论">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1111-objective-function" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.1.1 目标函数 (Objective Function)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.1.2 搜索算法
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.2 过拟合：量化交易的隐形杀手
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.2 过拟合：量化交易的隐形杀手">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1121" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.2.1 统计学原理
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1122-bias-variance-tradeoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.2.2 偏差-方差权衡 (Bias-Variance Tradeoff)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#113-robustness-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3 稳健性检验 (Robustness Testing)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.3 稳健性检验 (Robustness Testing)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1131-out-of-sample-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3.1 样本外测试 (Out-of-Sample Testing)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1132-parameter-sensitivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3.2 参数敏感性分析 (Parameter Sensitivity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1133-walk-forward-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3.3 滚动回测 (Walk-Forward Analysis)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#114-akquant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4 AKQuant 优化实战
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.4 AKQuant 优化实战">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1140-windows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.0 Windows 并行运行前置条件
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1141" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.1 参数模型驱动（适合页面化）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1142" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.2 代码示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1142a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.2A 新参数（并行日志与严格参数校验）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1143" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.3 结果分析
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#115-combinatorial-purged-cross-validation-cpcv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.5 组合净化交叉验证 (Combinatorial Purged Cross-Validation, CPCV)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.5 组合净化交叉验证 (Combinatorial Purged Cross-Validation, CPCV)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1151-cpcv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.5.1 为什么需要 CPCV？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1152-cpcv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.5.2 CPCV 原理
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#116-deflated-sharpe-ratio-dsr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.6 调整后的夏普比率 (Deflated Sharpe Ratio, DSR)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#117" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.7 高级优化算法
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.7 高级优化算法">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1171-genetic-algorithm-ga" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.7.1 遗传算法 (Genetic Algorithm, GA)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1172-bayesian-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.7.2 贝叶斯优化 (Bayesian Optimization)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#118" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.8 目标函数的选择
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#119-cluster-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.9 聚类分析 (Cluster Analysis)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1110-minimum-backtest-length" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.10 回测长度与显著性 (Minimum Backtest Length)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1111-the-file-drawer-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.11 “抽屉问题” (The File Drawer Problem)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../12_ml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第12章：机器学习在量化中的应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../13_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第13章：策略可视化与报表分析
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../14_factor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第14章：高性能因子挖掘与表达式引擎
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_7" id="__nav_2_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第五部分：实盘篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第五部分：实盘篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../15_live_trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第15章：实盘交易系统与运维
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_8" id="__nav_2_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第六部分：指标工程篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第六部分：指标工程篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../16_rust_indicators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第16章：AKQuant 技术指标体系与应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程项目：端到端实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_10" id="__nav_2_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    附录
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 A：环境与复现
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_cite/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 B：引用、许可与勘误
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_pitfalls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 C：常见误区对照表
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/python_basics/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#111" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.1 参数优化理论
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.1 参数优化理论">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1111-objective-function" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.1.1 目标函数 (Objective Function)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.1.2 搜索算法
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.2 过拟合：量化交易的隐形杀手
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.2 过拟合：量化交易的隐形杀手">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1121" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.2.1 统计学原理
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1122-bias-variance-tradeoff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.2.2 偏差-方差权衡 (Bias-Variance Tradeoff)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#113-robustness-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3 稳健性检验 (Robustness Testing)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.3 稳健性检验 (Robustness Testing)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1131-out-of-sample-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3.1 样本外测试 (Out-of-Sample Testing)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1132-parameter-sensitivity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3.2 参数敏感性分析 (Parameter Sensitivity)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1133-walk-forward-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3.3 滚动回测 (Walk-Forward Analysis)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#114-akquant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4 AKQuant 优化实战
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.4 AKQuant 优化实战">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1140-windows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.0 Windows 并行运行前置条件
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1141" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.1 参数模型驱动（适合页面化）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1142" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.2 代码示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1142a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.2A 新参数（并行日志与严格参数校验）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1143" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.4.3 结果分析
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#115-combinatorial-purged-cross-validation-cpcv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.5 组合净化交叉验证 (Combinatorial Purged Cross-Validation, CPCV)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.5 组合净化交叉验证 (Combinatorial Purged Cross-Validation, CPCV)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1151-cpcv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.5.1 为什么需要 CPCV？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1152-cpcv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.5.2 CPCV 原理
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#116-deflated-sharpe-ratio-dsr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.6 调整后的夏普比率 (Deflated Sharpe Ratio, DSR)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#117" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.7 高级优化算法
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11.7 高级优化算法">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1171-genetic-algorithm-ga" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.7.1 遗传算法 (Genetic Algorithm, GA)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1172-bayesian-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.7.2 贝叶斯优化 (Bayesian Optimization)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#118" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.8 目标函数的选择
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#119-cluster-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.9 聚类分析 (Cluster Analysis)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1110-minimum-backtest-length" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.10 回测长度与显著性 (Minimum Backtest Length)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1111-the-file-drawer-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.11 “抽屉问题” (The File Drawer Problem)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="导航栏" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    首页
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    量化教材
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../10_analysis/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    第四部分：高阶篇
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="11">第 11 章：参数优化与稳健性检验<a class="headerlink" href="#11" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>⏱️ 预计阅读 ~25 分钟 ｜ 🎯 难度 ★★★★☆（偏难）</p>
+</blockquote>
+<p>量化策略通常包含若干参数（如均线周期、止损阈值）。参数的选择对策略表现有着决定性影响。本章将探讨如何通过科学的<strong>参数优化 (Parameter Optimization)</strong> 寻找最优解，并深入分析<strong>过拟合 (Overfitting)</strong> 的成因与防范措施。</p>
+<h2 id="_1">学习目标<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li>掌握参数优化、样本内外切分与稳健性检验的基本流程。</li>
+<li>理解过拟合、偏差-方差权衡与多重检验问题。</li>
+<li>能够解释为什么“最优参数”并不等于“可上线参数”。</li>
+</ul>
+<h2 id="_2">前置知识<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li>已完成第 10 章的回测评价与指标解读。</li>
+<li>了解参数搜索和交叉验证的基础概念。</li>
+</ul>
+<h2 id="_3">本章实践入口<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<ul>
+<li>主示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch11_optimization.py">examples/textbook/ch11_optimization.py</a></li>
+<li>进阶示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/02_parameter_optimization.py">examples/02_parameter_optimization.py</a></li>
+<li>函数式孪生示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch11_optimization_functional.py">examples/textbook/ch11_optimization_functional.py</a></li>
+<li>对应指南：<a href="../../guide/optimization/">优化指南</a></li>
+</ul>
+<h2 id="_4">快速运行与验收<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>examples/textbook/ch11_optimization.py
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>examples/textbook/ch11_optimization_functional.py
+</span></code></pre></div>
+<p>验收要点：</p>
+<ol>
+<li>脚本可完成参数搜索并输出最优参数组合。</li>
+<li>输出中可比较样本内与样本外表现差异。</li>
+<li>改变搜索范围后，最优参数与结果变化具有一致性。</li>
+</ol>
+<h2 id="111">11.1 参数优化理论<a class="headerlink" href="#111" title="Permanent link">&para;</a></h2>
+<h3 id="1111-objective-function">11.1.1 目标函数 (Objective Function)<a class="headerlink" href="#1111-objective-function" title="Permanent link">&para;</a></h3>
+<p>参数优化的本质是一个数学规划问题：</p>
+<div class="arithmatex">\[ \max_{\theta \in \Theta} f(\theta | D_{train}) \]</div>
+<p>其中：</p>
+<ul>
+<li><span class="arithmatex">\(\theta\)</span>：策略参数向量。</li>
+<li><span class="arithmatex">\(\Theta\)</span>：参数搜索空间。</li>
+<li><span class="arithmatex">\(D_{train}\)</span>：训练集数据（样本内数据）。</li>
+<li><span class="arithmatex">\(f\)</span>：目标函数，通常为夏普比率、卡玛比率或净利润。</li>
+</ul>
+<h3 id="1112">11.1.2 搜索算法<a class="headerlink" href="#1112" title="Permanent link">&para;</a></h3>
+<p>在确定目标函数之后，剩下的问题是如何在参数空间里寻找最优解，常见的搜索算法可以按“计算代价”与“搜索效率”的权衡来理解。最朴素的是<strong>网格搜索 (Grid Search)</strong>，它穷举所有可能的参数组合，优点是能在离散网格上找到全局最优解，缺点则是计算量随参数数量指数级增长，也就是所谓的维数灾难。为缓解这一问题，<strong>随机搜索 (Random Search)</strong> 转而在参数空间内随机采样，由于不必逐格扫描，它在高维空间中的效率通常高于网格搜索。当参数空间更巨大且呈现非凸结构时，则可借助<strong>遗传算法 (Genetic Algorithm)</strong>，它模拟生物进化过程，通过变异和交叉寻找最优解，因而适合非凸优化问题。</p>
+<h2 id="112">11.2 过拟合：量化交易的隐形杀手<a class="headerlink" href="#112" title="Permanent link">&para;</a></h2>
+<p><strong>过拟合 (Overfitting)</strong> 指策略在样本内 (In-Sample) 表现极佳，但在样本外 (Out-of-Sample) 迅速失效的现象。</p>
+<h3 id="1121">11.2.1 统计学原理<a class="headerlink" href="#1121" title="Permanent link">&para;</a></h3>
+<p>过拟合的本质是<strong>多重假设检验 (Multiple Hypothesis Testing)</strong> 的谬误。
+假设我们在随机生成的噪声数据上测试 100 组参数，即使没有任何真实规律，我们也大概率能找到一组在 95% 置信水平下“显著有效”的参数。</p>
+<div class="arithmatex">\[ P(\text{至少一次伪显著}) = 1 - (1 - 0.05)^{100} \approx 99.4\% \]</div>
+<p>这意味着，尝试的参数越多，找到“伪规律”的概率就越大。这被称为<strong>数据窥探偏差 (Data Snooping Bias)</strong>。</p>
+<h3 id="1122-bias-variance-tradeoff">11.2.2 偏差-方差权衡 (Bias-Variance Tradeoff)<a class="headerlink" href="#1122-bias-variance-tradeoff" title="Permanent link">&para;</a></h3>
+<p>过拟合并非孤立现象，它处在偏差-方差权衡的一端。当模型太简单、无法捕捉市场规律时（如买入持有），就会出现<strong>欠拟合 (High Bias)</strong>；反过来，当模型太复杂、以至于记住了历史数据的噪音时（如用 10 个参数拟合 100 天的数据），则会陷入<strong>过拟合 (High Variance)</strong>。优化的目标因此不是一味追求拟合得更好，而是在这两个极端之间找到恰当的平衡点。</p>
+<h2 id="113-robustness-testing">11.3 稳健性检验 (Robustness Testing)<a class="headerlink" href="#113-robustness-testing" title="Permanent link">&para;</a></h2>
+<p>为了检验策略是否过拟合，我们需要进行严格的稳健性测试。</p>
+<h3 id="1131-out-of-sample-testing">11.3.1 样本外测试 (Out-of-Sample Testing)<a class="headerlink" href="#1131-out-of-sample-testing" title="Permanent link">&para;</a></h3>
+<p>样本外测试的做法是将历史数据分为<strong>训练集 (Train Set)</strong> 和<strong>测试集 (Test Set)</strong>，并对两者赋予截然不同的职责。其基本原则是：训练集用于优化参数，测试集仅用于验证，因此测试集数据在优化过程中必须严格不可见。据此可以给出一条判断标准——如果测试集夏普比率显著低于训练集（如衰减超过 50%），则存在过拟合。</p>
+<h3 id="1132-parameter-sensitivity">11.3.2 参数敏感性分析 (Parameter Sensitivity)<a class="headerlink" href="#1132-parameter-sensitivity" title="Permanent link">&para;</a></h3>
+<p>优秀的策略应该落在<strong>参数平原 (Parameter Plateau)</strong> 上，而不是<strong>参数尖峰 (Parameter Peak)</strong> 上，二者的区别正在于对参数扰动的反应。所谓参数平原，是指参数发生微小变化（如均线从 20 变 21）时，绩效指标仍保持稳定；而参数尖峰则相反，参数微小变化就会引起绩效断崖式下跌，这通常意味着过拟合。在实践中，可以通过绘制<strong>参数热力图 (Heatmap)</strong> 来可视化参数敏感性，从而直观地判断策略究竟身处平原还是尖峰。</p>
+<h3 id="1133-walk-forward-analysis">11.3.3 滚动回测 (Walk-Forward Analysis)<a class="headerlink" href="#1133-walk-forward-analysis" title="Permanent link">&para;</a></h3>
+<p>模拟真实交易中“定期重新优化”的过程。</p>
+<ol>
+<li>在 <span class="arithmatex">\(T_0 \sim T_1\)</span> 优化参数，在 <span class="arithmatex">\(T_1 \sim T_2\)</span> 使用该参数交易。</li>
+<li>在 <span class="arithmatex">\(T_1 \sim T_2\)</span> 重新优化参数，在 <span class="arithmatex">\(T_2 \sim T_3\)</span> 使用新参数交易。</li>
+<li>拼接所有测试段的资金曲线。</li>
+</ol>
+<p>这是检验策略真实生命力的“金标准”。</p>
+<h2 id="114-akquant">11.4 AKQuant 优化实战<a class="headerlink" href="#114-akquant" title="Permanent link">&para;</a></h2>
+<p><code>AKQuant</code> 提供了 <code>run_grid_search</code> 函数，支持并行计算。</p>
+<h3 id="1140-windows">11.4.0 Windows 并行运行前置条件<a class="headerlink" href="#1140-windows" title="Permanent link">&para;</a></h3>
+<p>当 <code>max_workers &gt; 1</code> 时，Windows 使用多进程 <code>spawn</code> 模式，需满足以下条件：</p>
+<ul>
+<li>策略类必须位于可导入模块中，不能直接定义在 <code>__main__</code>。</li>
+<li>脚本入口必须加 <code>if __name__ == "__main__":</code>。</li>
+<li>这类报错属于多进程序列化限制，不是成交策略语义错误。</li>
+</ul>
+<p>示例：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_grid_search</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">my_strategy_module</span><span class="w"> </span><span class="kn">import</span> <span class="n">TailTradingStrategy</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">results</span> <span class="o">=</span> <span class="n">run_grid_search</span><span class="p">(</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">strategy</span><span class="o">=</span><span class="n">TailTradingStrategy</span><span class="p">,</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="n">param_grid</span><span class="o">=</span><span class="n">param_grid</span><span class="p">,</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="n">data</span><span class="o">=</span><span class="n">all_data</span><span class="p">,</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="n">max_workers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="p">)</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>    <span class="n">main</span><span class="p">()</span>
+</span></code></pre></div>
+<h3 id="1141">11.4.1 参数模型驱动（适合页面化）<a class="headerlink" href="#1141" title="Permanent link">&para;</a></h3>
+<p>在面向页面配置、策略市场、研究平台等场景中，推荐直接用<strong>内联参数字段</strong>声明
+参数：</p>
+<ul>
+<li><strong>参数声明层</strong>：在策略类体内用 <code>IntParam</code> / <code>FloatParam</code> / ... 内联声明字段。<ul>
+<li>用于参数类型约束、默认值管理、前端 JSON Schema 导出；经
+    <code>self.params.&lt;name&gt;</code> 只读访问，<code>self.params</code> 在实例构造期即已就绪。</li>
+</ul>
+</li>
+<li><strong>优化搜索层</strong>：继续使用 <code>run_grid_search(param_grid=...)</code>。<ul>
+<li><code>param_grid</code> 只负责离散候选值，键名须与内联字段名一致，不承担复杂对象校验。</li>
+</ul>
+</li>
+</ul>
+<p>推荐这样做的核心原因是：<strong>运行参数校验</strong>与<strong>参数组合搜索</strong>在职责上是不同问题，
+但共享同一套字段声明，拆开后更清晰、更稳健，也不需要再单独维护一个
+<code>ParamModel</code> 子类。</p>
+<p>策略示意（节选）：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">IntParam</span><span class="p">,</span> <span class="n">Strategy</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">SmaStrategy</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">fast_period</span> <span class="o">=</span> <span class="n">IntParam</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">slow_period</span> <span class="o">=</span> <span class="n">IntParam</span><span class="p">(</span><span class="mi">30</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">500</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="1142">11.4.2 代码示例<a class="headerlink" href="#1142" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="sd">"""</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="sd">第 11 章：参数优化与过拟合 (Optimization &amp; Overfitting).</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="sd">本示例展示了如何使用 AKQuant 的网格搜索 (Grid Search) 功能来寻找最优的策略参数。</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="sd">同时，我们也会探讨过度优化带来的风险。</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="sd">策略逻辑：</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="sd">- 依然使用双均线策略 (MA_Short vs MA_Long)</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="sd">- 优化目标：寻找夏普比率 (Sharpe Ratio) 最高的参数组合</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="sd">    - short_window: [3, 5, 10]</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="sd">    - long_window: [15, 20, 30, 60]</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="sd">AKQuant 特性：</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="sd">- `run_grid_search`: 自动多进程并行回测，极大提高优化效率。</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="sd">"""</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Bar</span><span class="p">,</span> <span class="n">IntParam</span><span class="p">,</span> <span class="n">Strategy</span>
+</span><span id="__span-3-23"><a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>
+</span><span id="__span-3-24"><a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>
+</span><span id="__span-3-25"><a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="c1"># 模拟数据生成</span>
+</span><span id="__span-3-26"><a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="k">def</span><span class="w"> </span><span class="nf">generate_mock_data</span><span class="p">(</span><span class="n">length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+</span><span id="__span-3-27"><a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="w">    </span><span class="sd">"""生成模拟数据."""</span>
+</span><span id="__span-3-28"><a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>    <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+</span><span id="__span-3-29"><a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>    <span class="n">dates</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">date_range</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="s2">"2020-01-01"</span><span class="p">,</span> <span class="n">periods</span><span class="o">=</span><span class="n">length</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="s2">"D"</span><span class="p">)</span>
+</span><span id="__span-3-30"><a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>    <span class="n">prices</span> <span class="o">=</span> <span class="mi">100</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">length</span><span class="p">))</span>
+</span><span id="__span-3-31"><a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+</span><span id="__span-3-32"><a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>        <span class="p">{</span>
+</span><span id="__span-3-33"><a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a>            <span class="s2">"date"</span><span class="p">:</span> <span class="n">dates</span><span class="p">,</span>
+</span><span id="__span-3-34"><a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a>            <span class="s2">"open"</span><span class="p">:</span> <span class="n">prices</span><span class="p">,</span>
+</span><span id="__span-3-35"><a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a>            <span class="s2">"high"</span><span class="p">:</span> <span class="n">prices</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-3-36"><a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a>            <span class="s2">"low"</span><span class="p">:</span> <span class="n">prices</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-3-37"><a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a>            <span class="s2">"close"</span><span class="p">:</span> <span class="n">prices</span><span class="p">,</span>
+</span><span id="__span-3-38"><a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a>            <span class="s2">"volume"</span><span class="p">:</span> <span class="mi">100000</span><span class="p">,</span>
+</span><span id="__span-3-39"><a id="__codelineno-3-39" name="__codelineno-3-39" href="#__codelineno-3-39"></a>            <span class="s2">"symbol"</span><span class="p">:</span> <span class="s2">"MOCK"</span><span class="p">,</span>
+</span><span id="__span-3-40"><a id="__codelineno-3-40" name="__codelineno-3-40" href="#__codelineno-3-40"></a>        <span class="p">}</span>
+</span><span id="__span-3-41"><a id="__codelineno-3-41" name="__codelineno-3-41" href="#__codelineno-3-41"></a>    <span class="p">)</span>
+</span><span id="__span-3-42"><a id="__codelineno-3-42" name="__codelineno-3-42" href="#__codelineno-3-42"></a>    <span class="k">return</span> <span class="n">df</span>
+</span><span id="__span-3-43"><a id="__codelineno-3-43" name="__codelineno-3-43" href="#__codelineno-3-43"></a>
+</span><span id="__span-3-44"><a id="__codelineno-3-44" name="__codelineno-3-44" href="#__codelineno-3-44"></a>
+</span><span id="__span-3-45"><a id="__codelineno-3-45" name="__codelineno-3-45" href="#__codelineno-3-45"></a><span class="k">class</span><span class="w"> </span><span class="nc">OptStrategy</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-3-46"><a id="__codelineno-3-46" name="__codelineno-3-46" href="#__codelineno-3-46"></a><span class="w">    </span><span class="sd">"""参数优化演示策略."""</span>
+</span><span id="__span-3-47"><a id="__codelineno-3-47" name="__codelineno-3-47" href="#__codelineno-3-47"></a>
+</span><span id="__span-3-48"><a id="__codelineno-3-48" name="__codelineno-3-48" href="#__codelineno-3-48"></a>    <span class="c1"># 内联参数声明：短期窗口默认5，长期窗口默认20</span>
+</span><span id="__span-3-49"><a id="__codelineno-3-49" name="__codelineno-3-49" href="#__codelineno-3-49"></a>    <span class="n">short_window</span> <span class="o">=</span> <span class="n">IntParam</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="s2">"短期窗口"</span><span class="p">)</span>
+</span><span id="__span-3-50"><a id="__codelineno-3-50" name="__codelineno-3-50" href="#__codelineno-3-50"></a>    <span class="n">long_window</span> <span class="o">=</span> <span class="n">IntParam</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="s2">"长期窗口"</span><span class="p">)</span>
+</span><span id="__span-3-51"><a id="__codelineno-3-51" name="__codelineno-3-51" href="#__codelineno-3-51"></a>
+</span><span id="__span-3-52"><a id="__codelineno-3-52" name="__codelineno-3-52" href="#__codelineno-3-52"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_start</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-3-53"><a id="__codelineno-3-53" name="__codelineno-3-53" href="#__codelineno-3-53"></a><span class="w">        </span><span class="sd">"""策略启动：基于 self.params 动态设置 warmup_period，确保足够计算最长的均线."""</span>
+</span><span id="__span-3-54"><a id="__codelineno-3-54" name="__codelineno-3-54" href="#__codelineno-3-54"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">warmup_period</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">long_window</span> <span class="o">+</span> <span class="mi">1</span>
+</span><span id="__span-3-55"><a id="__codelineno-3-55" name="__codelineno-3-55" href="#__codelineno-3-55"></a>
+</span><span id="__span-3-56"><a id="__codelineno-3-56" name="__codelineno-3-56" href="#__codelineno-3-56"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">:</span> <span class="n">Bar</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-3-57"><a id="__codelineno-3-57" name="__codelineno-3-57" href="#__codelineno-3-57"></a><span class="w">        </span><span class="sd">"""收到 Bar 事件的回调."""</span>
+</span><span id="__span-3-58"><a id="__codelineno-3-58" name="__codelineno-3-58" href="#__codelineno-3-58"></a>        <span class="n">symbol</span> <span class="o">=</span> <span class="n">bar</span><span class="o">.</span><span class="n">symbol</span>
+</span><span id="__span-3-59"><a id="__codelineno-3-59" name="__codelineno-3-59" href="#__codelineno-3-59"></a>        <span class="n">closes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_history</span><span class="p">(</span>
+</span><span id="__span-3-60"><a id="__codelineno-3-60" name="__codelineno-3-60" href="#__codelineno-3-60"></a>            <span class="n">count</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">long_window</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="n">symbol</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s2">"close"</span>
+</span><span id="__span-3-61"><a id="__codelineno-3-61" name="__codelineno-3-61" href="#__codelineno-3-61"></a>        <span class="p">)</span>
+</span><span id="__span-3-62"><a id="__codelineno-3-62" name="__codelineno-3-62" href="#__codelineno-3-62"></a>        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">closes</span><span class="p">)</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">long_window</span> <span class="o">+</span> <span class="mi">1</span><span class="p">:</span>
+</span><span id="__span-3-63"><a id="__codelineno-3-63" name="__codelineno-3-63" href="#__codelineno-3-63"></a>            <span class="k">return</span>
+</span><span id="__span-3-64"><a id="__codelineno-3-64" name="__codelineno-3-64" href="#__codelineno-3-64"></a>
+</span><span id="__span-3-65"><a id="__codelineno-3-65" name="__codelineno-3-65" href="#__codelineno-3-65"></a>        <span class="n">history_closes</span> <span class="o">=</span> <span class="n">closes</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="__span-3-66"><a id="__codelineno-3-66" name="__codelineno-3-66" href="#__codelineno-3-66"></a>        <span class="n">ma_short</span> <span class="o">=</span> <span class="n">history_closes</span><span class="p">[</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">short_window</span> <span class="p">:]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-3-67"><a id="__codelineno-3-67" name="__codelineno-3-67" href="#__codelineno-3-67"></a>        <span class="n">ma_long</span> <span class="o">=</span> <span class="n">history_closes</span><span class="p">[</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">long_window</span> <span class="p">:]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-3-68"><a id="__codelineno-3-68" name="__codelineno-3-68" href="#__codelineno-3-68"></a>
+</span><span id="__span-3-69"><a id="__codelineno-3-69" name="__codelineno-3-69" href="#__codelineno-3-69"></a>        <span class="n">pos</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_position</span><span class="p">(</span><span class="n">symbol</span><span class="p">)</span>
+</span><span id="__span-3-70"><a id="__codelineno-3-70" name="__codelineno-3-70" href="#__codelineno-3-70"></a>
+</span><span id="__span-3-71"><a id="__codelineno-3-71" name="__codelineno-3-71" href="#__codelineno-3-71"></a>        <span class="k">if</span> <span class="n">ma_short</span> <span class="o">&gt;</span> <span class="n">ma_long</span> <span class="ow">and</span> <span class="n">pos</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-3-72"><a id="__codelineno-3-72" name="__codelineno-3-72" href="#__codelineno-3-72"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">order_target_percent</span><span class="p">(</span><span class="n">symbol</span><span class="o">=</span><span class="n">symbol</span><span class="p">,</span> <span class="n">target_percent</span><span class="o">=</span><span class="mf">0.95</span><span class="p">)</span>
+</span><span id="__span-3-73"><a id="__codelineno-3-73" name="__codelineno-3-73" href="#__codelineno-3-73"></a>        <span class="k">elif</span> <span class="n">ma_short</span> <span class="o">&lt;</span> <span class="n">ma_long</span> <span class="ow">and</span> <span class="n">pos</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-3-74"><a id="__codelineno-3-74" name="__codelineno-3-74" href="#__codelineno-3-74"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">close_position</span><span class="p">(</span><span class="n">symbol</span><span class="p">)</span>
+</span><span id="__span-3-75"><a id="__codelineno-3-75" name="__codelineno-3-75" href="#__codelineno-3-75"></a>
+</span><span id="__span-3-76"><a id="__codelineno-3-76" name="__codelineno-3-76" href="#__codelineno-3-76"></a>
+</span><span id="__span-3-77"><a id="__codelineno-3-77" name="__codelineno-3-77" href="#__codelineno-3-77"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+</span><span id="__span-3-78"><a id="__codelineno-3-78" name="__codelineno-3-78" href="#__codelineno-3-78"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">generate_mock_data</span><span class="p">()</span>
+</span><span id="__span-3-79"><a id="__codelineno-3-79" name="__codelineno-3-79" href="#__codelineno-3-79"></a>
+</span><span id="__span-3-80"><a id="__codelineno-3-80" name="__codelineno-3-80" href="#__codelineno-3-80"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"开始运行第 11 章参数优化示例..."</span><span class="p">)</span>
+</span><span id="__span-3-81"><a id="__codelineno-3-81" name="__codelineno-3-81" href="#__codelineno-3-81"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"正在进行网格搜索 (Grid Search)..."</span><span class="p">)</span>
+</span><span id="__span-3-82"><a id="__codelineno-3-82" name="__codelineno-3-82" href="#__codelineno-3-82"></a>
+</span><span id="__span-3-83"><a id="__codelineno-3-83" name="__codelineno-3-83" href="#__codelineno-3-83"></a>    <span class="c1"># 定义参数网格</span>
+</span><span id="__span-3-84"><a id="__codelineno-3-84" name="__codelineno-3-84" href="#__codelineno-3-84"></a>    <span class="c1"># 键名必须与策略内联参数字段名一致（short_window/long_window）</span>
+</span><span id="__span-3-85"><a id="__codelineno-3-85" name="__codelineno-3-85" href="#__codelineno-3-85"></a>    <span class="n">param_grid</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"short_window"</span><span class="p">:</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">],</span> <span class="s2">"long_window"</span><span class="p">:</span> <span class="p">[</span><span class="mi">15</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">60</span><span class="p">]}</span>
+</span><span id="__span-3-86"><a id="__codelineno-3-86" name="__codelineno-3-86" href="#__codelineno-3-86"></a>
+</span><span id="__span-3-87"><a id="__codelineno-3-87" name="__codelineno-3-87" href="#__codelineno-3-87"></a>    <span class="c1"># 运行网格搜索</span>
+</span><span id="__span-3-88"><a id="__codelineno-3-88" name="__codelineno-3-88" href="#__codelineno-3-88"></a>    <span class="c1"># max_workers: 并行进程数。注意：Windows 下以 spawn 方式多进程时，策略类必须</span>
+</span><span id="__span-3-89"><a id="__codelineno-3-89" name="__codelineno-3-89" href="#__codelineno-3-89"></a>    <span class="c1"># 可被子进程导入（不能定义在 __main__，详见第 11.4.0 节）。直接运行本脚本时，</span>
+</span><span id="__span-3-90"><a id="__codelineno-3-90" name="__codelineno-3-90" href="#__codelineno-3-90"></a>    <span class="c1"># 若并行不可用则自动回退为单进程，保证示例随处可跑。</span>
+</span><span id="__span-3-91"><a id="__codelineno-3-91" name="__codelineno-3-91" href="#__codelineno-3-91"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-3-92"><a id="__codelineno-3-92" name="__codelineno-3-92" href="#__codelineno-3-92"></a>        <span class="n">results</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_grid_search</span><span class="p">(</span>
+</span><span id="__span-3-93"><a id="__codelineno-3-93" name="__codelineno-3-93" href="#__codelineno-3-93"></a>            <span class="n">strategy</span><span class="o">=</span><span class="n">OptStrategy</span><span class="p">,</span>
+</span><span id="__span-3-94"><a id="__codelineno-3-94" name="__codelineno-3-94" href="#__codelineno-3-94"></a>            <span class="n">data</span><span class="o">=</span><span class="n">df</span><span class="p">,</span>
+</span><span id="__span-3-95"><a id="__codelineno-3-95" name="__codelineno-3-95" href="#__codelineno-3-95"></a>            <span class="n">param_grid</span><span class="o">=</span><span class="n">param_grid</span><span class="p">,</span>
+</span><span id="__span-3-96"><a id="__codelineno-3-96" name="__codelineno-3-96" href="#__codelineno-3-96"></a>            <span class="n">initial_cash</span><span class="o">=</span><span class="mi">100_000</span><span class="p">,</span>
+</span><span id="__span-3-97"><a id="__codelineno-3-97" name="__codelineno-3-97" href="#__codelineno-3-97"></a>            <span class="n">commission_rate</span><span class="o">=</span><span class="mf">0.0003</span><span class="p">,</span>
+</span><span id="__span-3-98"><a id="__codelineno-3-98" name="__codelineno-3-98" href="#__codelineno-3-98"></a>            <span class="n">max_workers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>  <span class="c1"># 限制为 4 个进程</span>
+</span><span id="__span-3-99"><a id="__codelineno-3-99" name="__codelineno-3-99" href="#__codelineno-3-99"></a>        <span class="p">)</span>
+</span><span id="__span-3-100"><a id="__codelineno-3-100" name="__codelineno-3-100" href="#__codelineno-3-100"></a>    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>  <span class="c1"># noqa: BLE001 - 直接运行的脚本可能无法多进程，回退单进程</span>
+</span><span id="__span-3-101"><a id="__codelineno-3-101" name="__codelineno-3-101" href="#__codelineno-3-101"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"并行优化不可用（</span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">），回退为单进程 (max_workers=1)。"</span><span class="p">)</span>
+</span><span id="__span-3-102"><a id="__codelineno-3-102" name="__codelineno-3-102" href="#__codelineno-3-102"></a>        <span class="n">results</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_grid_search</span><span class="p">(</span>
+</span><span id="__span-3-103"><a id="__codelineno-3-103" name="__codelineno-3-103" href="#__codelineno-3-103"></a>            <span class="n">strategy</span><span class="o">=</span><span class="n">OptStrategy</span><span class="p">,</span>
+</span><span id="__span-3-104"><a id="__codelineno-3-104" name="__codelineno-3-104" href="#__codelineno-3-104"></a>            <span class="n">data</span><span class="o">=</span><span class="n">df</span><span class="p">,</span>
+</span><span id="__span-3-105"><a id="__codelineno-3-105" name="__codelineno-3-105" href="#__codelineno-3-105"></a>            <span class="n">param_grid</span><span class="o">=</span><span class="n">param_grid</span><span class="p">,</span>
+</span><span id="__span-3-106"><a id="__codelineno-3-106" name="__codelineno-3-106" href="#__codelineno-3-106"></a>            <span class="n">initial_cash</span><span class="o">=</span><span class="mi">100_000</span><span class="p">,</span>
+</span><span id="__span-3-107"><a id="__codelineno-3-107" name="__codelineno-3-107" href="#__codelineno-3-107"></a>            <span class="n">commission_rate</span><span class="o">=</span><span class="mf">0.0003</span><span class="p">,</span>
+</span><span id="__span-3-108"><a id="__codelineno-3-108" name="__codelineno-3-108" href="#__codelineno-3-108"></a>            <span class="n">max_workers</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-3-109"><a id="__codelineno-3-109" name="__codelineno-3-109" href="#__codelineno-3-109"></a>        <span class="p">)</span>
+</span><span id="__span-3-110"><a id="__codelineno-3-110" name="__codelineno-3-110" href="#__codelineno-3-110"></a>
+</span><span id="__span-3-111"><a id="__codelineno-3-111" name="__codelineno-3-111" href="#__codelineno-3-111"></a>    <span class="c1"># run_grid_search 默认 return_df=True，返回一个已按 sharpe_ratio 降序排好的</span>
+</span><span id="__span-3-112"><a id="__codelineno-3-112" name="__codelineno-3-112" href="#__codelineno-3-112"></a>    <span class="c1"># DataFrame，列中同时包含参数列（short_window/long_window）与指标列</span>
+</span><span id="__span-3-113"><a id="__codelineno-3-113" name="__codelineno-3-113" href="#__codelineno-3-113"></a>    <span class="c1"># （sharpe_ratio/total_return_pct/max_drawdown_pct 等）。</span>
+</span><span id="__span-3-114"><a id="__codelineno-3-114" name="__codelineno-3-114" href="#__codelineno-3-114"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span> <span class="o">+</span> <span class="s2">"="</span> <span class="o">*</span> <span class="mi">40</span><span class="p">)</span>
+</span><span id="__span-3-115"><a id="__codelineno-3-115" name="__codelineno-3-115" href="#__codelineno-3-115"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"优化结果 (按夏普比率排序，前 5 名)"</span><span class="p">)</span>
+</span><span id="__span-3-116"><a id="__codelineno-3-116" name="__codelineno-3-116" href="#__codelineno-3-116"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"="</span> <span class="o">*</span> <span class="mi">40</span><span class="p">)</span>
+</span><span id="__span-3-117"><a id="__codelineno-3-117" name="__codelineno-3-117" href="#__codelineno-3-117"></a>
+</span><span id="__span-3-118"><a id="__codelineno-3-118" name="__codelineno-3-118" href="#__codelineno-3-118"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">results</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+</span><span id="__span-3-119"><a id="__codelineno-3-119" name="__codelineno-3-119" href="#__codelineno-3-119"></a>        <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-3-120"><a id="__codelineno-3-120" name="__codelineno-3-120" href="#__codelineno-3-120"></a>            <span class="s2">"short_window"</span><span class="p">,</span>
+</span><span id="__span-3-121"><a id="__codelineno-3-121" name="__codelineno-3-121" href="#__codelineno-3-121"></a>            <span class="s2">"long_window"</span><span class="p">,</span>
+</span><span id="__span-3-122"><a id="__codelineno-3-122" name="__codelineno-3-122" href="#__codelineno-3-122"></a>            <span class="s2">"sharpe_ratio"</span><span class="p">,</span>
+</span><span id="__span-3-123"><a id="__codelineno-3-123" name="__codelineno-3-123" href="#__codelineno-3-123"></a>            <span class="s2">"total_return_pct"</span><span class="p">,</span>
+</span><span id="__span-3-124"><a id="__codelineno-3-124" name="__codelineno-3-124" href="#__codelineno-3-124"></a>            <span class="s2">"max_drawdown_pct"</span><span class="p">,</span>
+</span><span id="__span-3-125"><a id="__codelineno-3-125" name="__codelineno-3-125" href="#__codelineno-3-125"></a>        <span class="p">]</span>
+</span><span id="__span-3-126"><a id="__codelineno-3-126" name="__codelineno-3-126" href="#__codelineno-3-126"></a>        <span class="n">available</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">cols</span> <span class="k">if</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">results</span><span class="o">.</span><span class="n">columns</span><span class="p">]</span>
+</span><span id="__span-3-127"><a id="__codelineno-3-127" name="__codelineno-3-127" href="#__codelineno-3-127"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="p">[</span><span class="n">available</span><span class="p">]</span><span class="o">.</span><span class="n">head</span><span class="p">()</span><span class="o">.</span><span class="n">to_string</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</span><span id="__span-3-128"><a id="__codelineno-3-128" name="__codelineno-3-128" href="#__codelineno-3-128"></a>
+</span><span id="__span-3-129"><a id="__codelineno-3-129" name="__codelineno-3-129" href="#__codelineno-3-129"></a>        <span class="n">best</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-3-130"><a id="__codelineno-3-130" name="__codelineno-3-130" href="#__codelineno-3-130"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">最佳参数组合:"</span><span class="p">)</span>
+</span><span id="__span-3-131"><a id="__codelineno-3-131" name="__codelineno-3-131" href="#__codelineno-3-131"></a>        <span class="nb">print</span><span class="p">(</span>
+</span><span id="__span-3-132"><a id="__codelineno-3-132" name="__codelineno-3-132" href="#__codelineno-3-132"></a>            <span class="sa">f</span><span class="s2">"  short_window=</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">best</span><span class="p">[</span><span class="s1">'short_window'</span><span class="p">])</span><span class="si">}</span><span class="s2">, "</span>
+</span><span id="__span-3-133"><a id="__codelineno-3-133" name="__codelineno-3-133" href="#__codelineno-3-133"></a>            <span class="sa">f</span><span class="s2">"long_window=</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">best</span><span class="p">[</span><span class="s1">'long_window'</span><span class="p">])</span><span class="si">}</span><span class="s2">, "</span>
+</span><span id="__span-3-134"><a id="__codelineno-3-134" name="__codelineno-3-134" href="#__codelineno-3-134"></a>            <span class="sa">f</span><span class="s2">"sharpe_ratio=</span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><span class="n">best</span><span class="p">[</span><span class="s1">'sharpe_ratio'</span><span class="p">])</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span>
+</span><span id="__span-3-135"><a id="__codelineno-3-135" name="__codelineno-3-135" href="#__codelineno-3-135"></a>        <span class="p">)</span>
+</span><span id="__span-3-136"><a id="__codelineno-3-136" name="__codelineno-3-136" href="#__codelineno-3-136"></a>    <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-3-137"><a id="__codelineno-3-137" name="__codelineno-3-137" href="#__codelineno-3-137"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="1142a">11.4.2A 新参数（并行日志与严格参数校验）<a class="headerlink" href="#1142a" title="Permanent link">&para;</a></h3>
+<p>为提升优化可观测性与结果可靠性，推荐关注以下参数：</p>
+<ul>
+<li><code>forward_worker_logs</code>（<code>run_grid_search</code>）：<ul>
+<li><code>False</code>（默认）：性能优先，子进程日志可能在主进程不可见；</li>
+<li><code>True</code>：将子进程 <code>self.log()</code> 聚合回主进程，适合排障与教学演示。</li>
+</ul>
+</li>
+<li><code>strict_strategy_params</code>（<code>run_backtest</code>，默认 <code>True</code>）：<ul>
+<li>严格校验策略内联参数字段（<code>IntParam</code>/<code>FloatParam</code>/... 声明）；</li>
+<li>当 <code>param_grid</code> 中存在策略未声明的参数、或取值越界时，立即抛错，避免静默回退导致“看似跑完但结果无效”。</li>
+</ul>
+</li>
+<li><code>run_walk_forward</code> 也支持通过 <code>**kwargs</code> 透传这两个参数：<ul>
+<li><code>forward_worker_logs</code> 作用于样本内优化阶段（内部 <code>run_grid_search</code>）；</li>
+<li><code>strict_strategy_params</code> 在样本内优化与样本外验证阶段都生效。</li>
+</ul>
+</li>
+</ul>
+<p>示例：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">run_grid_search</span><span class="p">(</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">TailTradingStrategy</span><span class="p">,</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">param_grid</span><span class="o">=</span><span class="n">param_grid</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">data</span><span class="o">=</span><span class="n">all_data</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">max_workers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">forward_worker_logs</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>WFO 传导示例：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">wfo_results</span> <span class="o">=</span> <span class="n">run_walk_forward</span><span class="p">(</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">TailTradingStrategy</span><span class="p">,</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">param_grid</span><span class="o">=</span><span class="n">param_grid</span><span class="p">,</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">data</span><span class="o">=</span><span class="n">all_data</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">train_period</span><span class="o">=</span><span class="mi">250</span><span class="p">,</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">test_period</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">max_workers</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">forward_worker_logs</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">strict_strategy_params</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="1143">11.4.3 结果分析<a class="headerlink" href="#1143" title="Permanent link">&para;</a></h3>
+<p>运行上述代码后，我们会得到一个按夏普比率排序的参数表。</p>
+<ul>
+<li><strong>观察前 10 名</strong>：如果前 10 名参数比较集中（如均线都在 20-25 之间），说明策略比较稳健。</li>
+<li><strong>观察分布</strong>：如果最优参数东一榔头西一棒子，说明策略可能在拟合噪音。</li>
+</ul>
+<h2 id="115-combinatorial-purged-cross-validation-cpcv">11.5 组合净化交叉验证 (Combinatorial Purged Cross-Validation, CPCV)<a class="headerlink" href="#115-combinatorial-purged-cross-validation-cpcv" title="Permanent link">&para;</a></h2>
+<p>这是由 De Prado 提出的目前最先进的回测框架。</p>
+<h3 id="1151-cpcv">11.5.1 为什么需要 CPCV？<a class="headerlink" href="#1151-cpcv" title="Permanent link">&para;</a></h3>
+<p>要理解 CPCV 的价值，不妨先看既有方法各自的局限。传统的 <strong>K-Fold</strong> 交叉验证用在金融场景时，会因为时间序列的相关性而导致信息泄露。<strong>Walk-Forward</strong> 虽然避免了信息泄露，却只测试了一条历史路径——一旦历史重演的方式略有不同，策略可能就失效了。CPCV 正是为了同时克服这两点不足而提出的。</p>
+<h3 id="1152-cpcv">11.5.2 CPCV 原理<a class="headerlink" href="#1152-cpcv" title="Permanent link">&para;</a></h3>
+<p>CPCV 将数据切分为 <span class="arithmatex">\(N\)</span> 组，每次选取 <span class="arithmatex">\(k\)</span> 组作为测试集（共有 <span class="arithmatex">\(C_N^k\)</span> 种组合）。在训练集和测试集之间进行<strong>净化 (Purging)</strong> 和 <strong>隔离 (Embargo)</strong>。</p>
+<p>通过这种方式，我们可以生成大量可能的“历史路径”。</p>
+<ul>
+<li><strong>路径生成</strong>：将所有测试集的预测结果按时间拼接，可以重组出 <span class="arithmatex">\(C_N^k\)</span> 条完整的资金曲线。</li>
+<li><strong>概率分布</strong>：我们可以得到策略夏普比率的分布，而不是单一的数值。这让我们能回答：“在 95% 的概率下，该策略的夏普比率大于 1.0 吗？”</li>
+</ul>
+<h2 id="116-deflated-sharpe-ratio-dsr">11.6 调整后的夏普比率 (Deflated Sharpe Ratio, DSR)<a class="headerlink" href="#116-deflated-sharpe-ratio-dsr" title="Permanent link">&para;</a></h2>
+<p>如果你尝试了 1000 组参数，终于找到了一组夏普比率为 2.0 的参数。这个 2.0 是真实的吗？</p>
+<p><strong>Deflated Sharpe Ratio (DSR)</strong> 用于修正<strong>多重测试偏差 (Multiple Testing Bias)</strong>。它在概率夏普比率 (PSR) 的基础上，进一步考虑了<strong>尝试次数 (Number of Trials)</strong> 的影响。</p>
+<div class="arithmatex">\[ DSR = PSR(\widehat{SR}, SR_{benchmark}) \]</div>
+<p>其中基准夏普 <span class="arithmatex">\(SR_{benchmark}\)</span> 不再是 0，而是根据尝试次数 <span class="arithmatex">\(K\)</span> 和由于尝试次数增多而导致的预期最大夏普比率 <span class="arithmatex">\(E[\max(SR)_K]\)</span> 计算得出的。</p>
+<div class="arithmatex">\[ E[\max(SR)_K] \approx E[SR] + \sigma_{SR} \sqrt{2 \ln K} \]</div>
+<p>这意味着：<strong>尝试的次数越多，你就应该要求越高的夏普比率，才能确信这不是运气。</strong></p>
+<h2 id="117">11.7 高级优化算法<a class="headerlink" href="#117" title="Permanent link">&para;</a></h2>
+<p>除了简单的网格搜索，量化领域还常用以下高级算法：</p>
+<h3 id="1171-genetic-algorithm-ga">11.7.1 遗传算法 (Genetic Algorithm, GA)<a class="headerlink" href="#1171-genetic-algorithm-ga" title="Permanent link">&para;</a></h3>
+<p>模拟生物进化过程，适用于参数空间巨大且非凸的优化问题。</p>
+<ol>
+<li><strong>种群初始化</strong>：随机生成 <span class="arithmatex">\(N\)</span> 个策略个体（参数组合）。</li>
+<li><strong>适应度评估</strong>：回测每个个体，计算夏普比率作为适应度。</li>
+<li><strong>选择 (Selection)</strong>：优胜劣汰，保留高夏普的个体。</li>
+<li><strong>交叉 (Crossover)</strong>：交换两个父代个体的参数片段，生成子代。</li>
+<li><strong>变异 (Mutation)</strong>：随机微调某些参数，引入多样性，防止陷入局部最优。</li>
+<li><strong>迭代</strong>：重复步骤 2-5，直到满足停止条件。</li>
+</ol>
+<h3 id="1172-bayesian-optimization">11.7.2 贝叶斯优化 (Bayesian Optimization)<a class="headerlink" href="#1172-bayesian-optimization" title="Permanent link">&para;</a></h3>
+<p>适用于计算昂贵的优化问题（例如每次回测需要 1 小时）。</p>
+<p>它通过构建一个<strong>代理模型 (Surrogate Model)</strong>（通常是高斯过程 Gaussian Process）来拟合目标函数 <span class="arithmatex">\(f(\theta)\)</span>。</p>
+<p>在这一框架中，真正驱动搜索的是<strong>采集函数 (Acquisition Function)</strong>：它根据代理模型的预测值和不确定性，决定下一步去哪里采样、尝试哪组参数。其精妙之处在于通过算法在<strong>开发 (Exploitation)</strong>（去已知表现好的地方）和 <strong>探索 (Exploration)</strong>（去未知的地方）之间进行平衡。正因如此，贝叶斯优化通常能比网格搜索快 10-100 倍找到全局最优解。</p>
+<h2 id="118">11.8 目标函数的选择<a class="headerlink" href="#118" title="Permanent link">&para;</a></h2>
+<p>优化什么指标，决定了你会得到什么样的策略。</p>
+<ol>
+<li><strong>最大化夏普比率</strong>：追求风险调整后收益。最常用。</li>
+<li><strong>最大化净利润</strong>：追求绝对收益。容易导致高波动、大回撤的策略。</li>
+<li><strong>最大化卡玛比率</strong>：追求低回撤。适合风险厌恶型资金。</li>
+<li><strong>多目标优化 (Multi-Objective Optimization)</strong>：寻找<strong>帕累托前沿 (Pareto Frontier)</strong>。例如，同时追求高收益和低回撤。这种方法不会给出一个“最优解”，而是一组“非劣解”，供基金经理根据当前的市场观点和风险偏好进行选择。</li>
+</ol>
+<h2 id="119-cluster-analysis">11.9 聚类分析 (Cluster Analysis)<a class="headerlink" href="#119-cluster-analysis" title="Permanent link">&para;</a></h2>
+<p>De Prado 提出了一种名为 <strong>ONC (Optimal Number of Clusters)</strong> 的算法，用于从一堆策略中筛选出真正互补的策略。</p>
+<ol>
+<li><strong>相关性矩阵</strong>：计算 <span class="arithmatex">\(N\)</span> 个策略回测收益率的相关性矩阵。</li>
+<li><strong>聚类</strong>：将高相关性的策略聚为一类（例如所有的趋势策略聚在一起，所有的反转策略聚在一起）。</li>
+<li><strong>筛选</strong>：在每一类中只保留表现最好的一个策略。</li>
+</ol>
+<p>这样构建出来的投资组合，其夏普比率通常远高于简单的等权组合，因为我们真正实现了<strong>风险分散</strong>。</p>
+<h2 id="1110-minimum-backtest-length">11.10 回测长度与显著性 (Minimum Backtest Length)<a class="headerlink" href="#1110-minimum-backtest-length" title="Permanent link">&para;</a></h2>
+<p>你需要多少年的数据才能证明策略有效？</p>
+<div class="arithmatex">\[ MinTRL \approx \frac{1.25}{\widehat{SR}^2} \left( \frac{\Phi^{-1}(1-\alpha) - \Phi^{-1}(\beta) \sqrt{1-\rho}}{1-\rho} \right)^2 \]</div>
+<p>简单来说，策略的夏普比率越低，所需的验证时间就越长。</p>
+<ul>
+<li>夏普 0.5 的策略，可能需要 50 年的数据才能通过统计检验。</li>
+<li>夏普 2.0 的策略，可能只需要 2-3 年的数据。</li>
+</ul>
+<p>这意味着，对于低频策略（通常夏普较低），你需要极长的历史数据；而对于高频策略（通常夏普较高），短期的验证可能就足够了。</p>
+<h2 id="1111-the-file-drawer-problem">11.11 “抽屉问题” (The File Drawer Problem)<a class="headerlink" href="#1111-the-file-drawer-problem" title="Permanent link">&para;</a></h2>
+<p>学术界和业界都存在一种严重的<strong>发表偏差 (Publication Bias)</strong>。</p>
+<ul>
+<li>研究员尝试了 100 个策略，其中 95 个失败了，被扔进了“抽屉”。</li>
+<li>只有 5 个成功的策略被写进了论文或展示给客户。</li>
+<li>由于读者看不到那 95 个失败的案例，他们会误以为这 5 个策略非常完美。</li>
+</ul>
+<p><strong>Deflated Sharpe Ratio</strong> 正是为了解决这个问题，它要求你在评估那 5 个成功策略时，必须考虑到背后还有 95 个失败的尝试。</p>
+<h2 id="_5">本章小结<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h3 id="_6">必须掌握<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>优化的目标不是找到最好看的回测，而是找到更稳健的参数区域。</li>
+<li>样本外验证、参数敏感性与 DSR/CPCV 是防过拟合的重要工具。</li>
+</ul>
+<h3 id="_7">理解即可<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>遗传算法、贝叶斯优化等高级方法只有在验证框架可靠时才有意义。</li>
+</ul>
+<h3 id="_8">实践提醒<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>先定义好验证流程与保存规范，再启动大规模参数扫描。</li>
+</ul>
+<h2 id="_9">主线推进<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
+<p>贯穿全书的那条最小多均线 / 趋势策略，到本章经历了一次从“能用”到“可信”的检验。第 1 章让它跑通回测闭环，第 4、5 章把它重写成标准策略类并补齐止损与风控，第 9 章又把它放进多资产配置框架，第 10 章则为它建立了一整套评价与可视化口径。本章承接这条线索，正面回应一个此前被悬置的问题：那条策略里反复出现的均线周期、阈值等参数，究竟该如何选、选出来的“最优”又是否可信。我们因此先用 <code>run_grid_search</code> 在参数空间里搜索它的候选组合，再用样本外测试、参数敏感性热力图与滚动回测 (Walk-Forward) 审视它是落在参数平原还是参数尖峰；更进一步，CPCV 把单一历史路径扩展为夏普比率的概率分布，DSR 与最小回测长度则提醒我们在多次尝试之后必须抬高对夏普的要求。至此，主线从“在一组参数上得到一条漂亮的资金曲线”推进到了“为这条策略找到稳健的参数区域并量化其可信度”，为下一步把它接入因子化、机器学习增强与实盘部署打下了方法论基础。</p>
+<h2 id="_10">延伸阅读<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<p><strong>经典著作</strong></p>
+<ul>
+<li>Bailey, D. H., &amp; López de Prado, M. "The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality," <em>The Journal of Portfolio Management</em>, 40(5), 2014, 94–107 —— DSR 的原始文献，在 PSR 基础上引入尝试次数修正多重测试偏差，直接对应本章 11.6（DSR）与 11.11（抽屉问题）。</li>
+<li>Bailey, D. H., Borwein, J. M., López de Prado, M., &amp; Zhu, Q. J. "Pseudo-Mathematics and Financial Charlatanism: The Effects of Backtest Overfitting on Out-of-Sample Performance," <em>Notices of the American Mathematical Society</em>, 61(5), 2014, 458–471 —— 证明尝试足够多的参数即可轻易“制造”出高夏普回测，并给出最小回测长度 (MinBTL)，对应本章 11.2（过拟合）与 11.10（回测长度与显著性）。</li>
+<li>López de Prado, M. <em>Advances in Financial Machine Learning</em>，John Wiley &amp; Sons, 2018 —— 第 7、12 章系统给出净化 K-Fold 与组合净化交叉验证 (CPCV)，第 8 章讨论特征重要性与多重检验，覆盖本章 11.3.3（滚动回测）、11.5（CPCV）与 11.9（ONC 聚类）。</li>
+<li>Bishop, C. M. <em>Pattern Recognition and Machine Learning</em>，Springer, 2006 —— 第 1、3 章对偏差-方差权衡、模型复杂度与过拟合给出经典统计学习视角，对应本章 11.2.2（偏差-方差权衡）。</li>
+</ul>
+<p><strong>官方文档与工具</strong></p>
+<ul>
+<li><a href="../../guide/optimization/">AKQuant 优化指南</a> —— <code>run_grid_search</code>、<code>run_walk_forward</code> 等优化接口与并行参数的权威说明，对应本章 11.4。</li>
+<li><a href="https://scikit-learn.org/stable/modules/grid_search.html">scikit-learn: Tuning the hyper-parameters of an estimator</a> —— 网格搜索、随机搜索与交叉验证的标准实现参考，对应本章 11.1.2 与 11.3。</li>
+<li><a href="https://scikit-optimize.github.io/">scikit-optimize 文档</a> —— 基于高斯过程的贝叶斯优化与采集函数实现，对应本章 11.7.2。</li>
+</ul>
+<p><strong>本书相关</strong></p>
+<ul>
+<li><a href="../10_analysis/">第 10 章：策略评价体系与风险指标</a> —— 本章 11.1.1 目标函数所用的夏普、卡玛等指标，其定义与解读承接第 10 章。</li>
+<li><a href="../05_strategy/">第 5 章：策略开发实战</a> —— 本章 11.4 的参数搜索复用第 5 章建立的标准策略类结构与生命周期回调。</li>
+</ul>
+<h2 id="_11">课后练习<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
+<h3 id="_12">基础题<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
+<ol>
+<li>修改参数网格范围，观察最优参数是否稳定。</li>
+</ol>
+<h3 id="_13">应用题<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h3>
+<ol>
+<li>对一个策略增加一次滚动回测并记录样本外表现。</li>
+</ol>
+<h3 id="_14">综合题<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
+<ol>
+<li>写出一份简化优化报告，说明哪些结果可信、哪些结果需要保留意见。</li>
+</ol>
+<details class="note">
+<summary>参考答案要点（先独立思考再展开）</summary>
+<p><strong>基础题</strong>：稳健策略的最优参数应落在"参数平原"（邻域绩效相近）；若最优参数东一榔头西一棒，多半是在拟合噪声。</p>
+<p><strong>应用题</strong>：用 <code>run_walk_forward</code> 分段优化 + 样本外验证，重点看样本外夏普相对样本内的衰减幅度（衰减超 50% 要警惕）。</p>
+<p><strong>综合题</strong>：可信 = 样本外稳定 + 处于参数平原 + 通过 DSR；需保留意见 = 尝试次数多却未做多重检验校正、或样本长度不足（参见最小回测长度）。</p>
+</details>
+<h2 id="_15">常见错误与排查<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h2>
+<ol>
+<li>样本内过高收益：优先检查是否发生参数数据泄漏。</li>
+<li>样本外断崖下滑：确认是否存在过窄参数空间或过拟合。</li>
+<li>结果不可复现：固定随机种子并记录数据与代码版本。</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

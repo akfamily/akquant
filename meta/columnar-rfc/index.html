@@ -1,0 +1,1951 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/meta/columnar-rfc/">
+      
+      
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/meta/columnar-rfc/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>RFC:列式原生数据层与引擎重构 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC:列式原生数据层与引擎重构
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/meta/columnar-rfc/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../textbook/" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../textbook/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/python_basics/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. 背景与动机
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 目标与非目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 设计原则
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 规范数据模型(类型系统)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. 存储层 · Catalog(唯一真相源)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 摄入漏斗(Python 薄适配,唯一归一化点)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-rust-b" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Rust 核心 · 列式引擎(B 期主战场)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Rust 核心 · 列式引擎(B 期主战场)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-soaarrow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 数据持有(SoA,Arrow 原生)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-feedsort-vec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 合并时钟(替换 feed.sort() + Vec 迭代)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-bar-copy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 零分配 Bar 视图(Copy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 回测/实盘同构
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-e-golden" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. 时点正确性 · 双时态(E 期,golden 会变更)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. 确定性与复现
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-out-of-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Out-of-core 与并行
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-python-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Python API 终态
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. 影响面矩阵与「5 缝冻结」
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. 删除 / 合并清单
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. 分期路线图
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. A 期可实施细化(下一步落地起点)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15. A 期可实施细化(下一步落地起点)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#151" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1 新增文件
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#152-rust-9-pyi-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.2 过渡桥(对齐真实 Rust 9 参签名,非 pyi 的 7 参)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#153" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.3 删除 / 改调清单
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#154-a-quirk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.4 行为并集清单(A 期最大风险:合并勿丢 quirk)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#155-bar-accessor-1b" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5 Bar accessor 冻结清单(缝 1,B 期须逐项保留)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#156-golden" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.6 golden 回归点
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16. 风险与对策
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        17. 待决策项
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#18-a-2026-07-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        18. A 期实施记录(2026-07-18)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#19-a2-2026-07-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        19. A.2 实施记录(2026-07-18)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#20-b1-2026-07-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        20. B.1 实施记录(2026-07-18)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#21-b2-b2-2026-07-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        21. B.2 架构结论 + B2′ 实施记录(2026-07-18)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="21. B.2 架构结论 + B2′ 实施记录(2026-07-18)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#b2barref" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        B.2(BarRef 零物化)判定为不可行 —— 已放弃
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#b2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        B2′(向量化列计算)—— 已落地
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#22-c2-2026-07-18-out-of-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        22. C.2 实施记录(2026-07-18)—— out-of-core 核心机制
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="22. C.2 实施记录(2026-07-18)—— out-of-core 核心机制">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#c2ab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        C.2a/b 已落地
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c2c-2026-07-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        C.2c 已落地(2026-07-18)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c2d-2026-07-18-out-of-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        C.2d 已验收(2026-07-18)—— out-of-core 内存实测通过
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        C.2 仍未做(留待后续,优先级低)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="rfc">RFC:列式原生数据层与引擎重构<a class="headerlink" href="#rfc" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>状态</strong>:草案(Draft) · <strong>日期</strong>:2026-07-18 · <strong>范围</strong>:AKQuant 核心(Rust 引擎 + Python 数据层),不涉及向后兼容承诺</p>
+<p>本文是一次「不考虑兼容、以量化基础设施最佳实践为准」的整体重构设计,作为分期实施与评审的跟踪基线。对标实现:<strong>nautilus_trader</strong>(Rust+Python 事件驱动、回测/实盘同构、ParquetDataCatalog)、<strong>ArcticDB</strong>(版本化双时态存储)、<strong>vectorbt</strong>(列式向量化)、<strong>Apache Arrow / DataFusion</strong>(内存格式 + 流式计算)。</p>
+</blockquote>
+<hr />
+<h2 id="0">0. 背景与动机<a class="headerlink" href="#0" title="Permanent link">&para;</a></h2>
+<p>当前数据链路为:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>用户输入(pd.DataFrame / Dict / List[Bar] / DataFeed / DataFeedAdapter)
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  → run_backtest 分派(isinstance)
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  → prepare_dataframe()(pandas 时区归一)
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  → df_to_arrays()(pandas → numpy)
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  → feed.add_arrays(*arrays)   ← Rust 边界(收 numpy)
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  → 引擎物化 Vec&lt;Bar&gt;(AoS,一行一个结构体)
+</span></code></pre></div>
+<p>三个根因问题:</p>
+<ol>
+<li><strong>归一化逻辑重复</strong>:<code>utils.load_bar_from_df</code>、<code>utils.df_to_arrays</code>、<code>utils.prepare_dataframe</code>、<code>feed_adapter.BasePandasFeedAdapter.normalize</code> 四处各写列名解析/时区/dtype,已出现细节漂移。</li>
+<li><strong>介质割裂</strong>:catalog 写用 pandas、factor 读用 polars、backtest 读用 pandas;同一份 parquet 三条路径三种引擎。</li>
+<li><strong>AoS 内存布局</strong>:引擎物化 <code>Vec&lt;Bar&gt;</code>,指标/因子跨 struct 跳读 → cache miss、无法 SIMD、数据集不能大于内存。</li>
+</ol>
+<h2 id="1">1. 目标与非目标<a class="headerlink" href="#1" title="Permanent link">&para;</a></h2>
+<p><strong>目标</strong></p>
+<ul>
+<li>全链路列式原生(SoA),ingest→撮合→指标→输出零拷贝,<strong>永不物化 <code>Vec&lt;Bar&gt;</code></strong>。</li>
+<li>Catalog 成为唯一真相源:Arrow/Parquet、Hive 分区、mmap、流式、版本化。</li>
+<li><strong>Out-of-core</strong>:验收目标 = 全 A 股分钟线数据集(&gt; 内存)可跑通。</li>
+<li>回测/实盘同构:策略代码零改切换 backtest ↔ live。</li>
+<li>时点正确(point-in-time / 双时态):结构性杜绝复权与成分股的未来函数。</li>
+<li>确定性重放:逐位可复现。</li>
+</ul>
+<p><strong>非目标</strong></p>
+<ul>
+<li>不承诺 API 向后兼容(可重命名/删除旧入口)。</li>
+<li>不移除 pandas:pandas 退居<strong>报表/研究/呈现边缘层</strong>(plot、history_df、ml、analysis),核心路径不再依赖它。</li>
+<li>引擎内部「行式 → 列式」是本 RFC 范围;更激进的「全 DataFusion 化查询引擎」不在本期。</li>
+</ul>
+<h2 id="2">2. 设计原则<a class="headerlink" href="#2" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>原则</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>列式原生</td>
+<td>存储与批量计算 SoA;事件循环游标串行迭代</td>
+</tr>
+<tr>
+<td>唯一真相源</td>
+<td>Catalog 是唯一入口,回测/实盘/研究都从它流式读</td>
+</tr>
+<tr>
+<td>回测实盘同构</td>
+<td>差异仅在注入的 DataEngine/ExecutionClient/Clock</td>
+</tr>
+<tr>
+<td>时点正确</td>
+<td>复权因子、成分股、基本面按 sim 时点应用</td>
+</tr>
+<tr>
+<td>确定性</td>
+<td>稳定时序 tie-break + seeded RNG + catalog 版本绑定</td>
+</tr>
+<tr>
+<td>Out-of-core</td>
+<td>mmap + 流式 RecordBatch,数据可大于内存</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3">3. 规范数据模型(类型系统)<a class="headerlink" href="#3" title="Permanent link">&para;</a></h2>
+<p>不再只有 OHLCV。每种数据是一个 Arrow schema,公共字段:<code>ts_event</code>(ns UTC)、<code>ts_init</code>(接收/生成时间)、<code>sequence</code>(同刻 tie-break)、<code>instrument_id</code>(dictionary 编码)。</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Bar          : ts_event, ts_init, seq, iid, open, high, low, close, volume, open_interest?
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>QuoteTick    : ts_event, ts_init, seq, iid, bid, ask, bid_size, ask_size
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>TradeTick    : ts_event, ts_init, seq, iid, price, size, aggressor_side, trade_id
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>OrderBookΔ   : ts_event, ts_init, seq, iid, action, side, price, size, level
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>Instrument   : iid, asset_type, tick_size, lot_size, multiplier, margin_rate, expiry, ...
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>Adjustment   : iid, ex_date, knowledge_time, factor, cash_dividend, split_ratio      ← 双时态
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>Membership   : universe_id, iid, start, end, knowledge_time                          ← 防幸存者偏差
+</span></code></pre></div>
+<p>要点:</p>
+<ul>
+<li><strong>合约元数据 <code>Instrument</code> 独立成一等数据类型</strong>——期货/期权的 tick_size/multiplier/margin/expiry 现散落在 <code>config.py</code>,应沉淀入 Catalog,供撮合、保证金、Greeks 共用。</li>
+<li><strong><code>Adjustment</code> / <code>Membership</code> 为双时态表</strong>,带 <code>knowledge_time</code>,是 §8 时点正确性的数据基础。</li>
+</ul>
+<h2 id="4-catalog">4. 存储层 · Catalog(唯一真相源)<a class="headerlink" href="#4-catalog" title="Permanent link">&para;</a></h2>
+<p>对标 nautilus <code>ParquetDataCatalog</code> + ArcticDB 版本化:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>{root}/
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  data/{data_type}/{iid}/{year=YYYY}/{month=MM}/part-*.parquet   # Hive 分区, zstd
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  instruments/instruments.parquet
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  adjustments/{iid}.parquet
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  _manifest/manifest.parquet     # iid × type × [t_start, t_end] → file, version
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  _versions/{vN}/...             # append-only 不可变, 支持 "as-of catalog vN" 复现
+</span></code></pre></div>
+<ul>
+<li><strong>读</strong>:<code>memmap2</code> 映射 → 流式 <code>RecordBatchReader</code>;时间/标的过滤靠 parquet row-group 统计 + 谓词下推,不全量载入。</li>
+<li><strong>写</strong>:canonical Arrow → 按 <code>(iid, ts)</code> 排序 → 分区落盘;文件 append-only 不可变。</li>
+<li><strong>版本/manifest</strong>:回测绑定 catalog version → 数据可复现。</li>
+<li>替换现状:<code>ParquetDataCatalog.write</code> 的 pandas 路径、<code>{root}/{symbol}.parquet</code> 扁平结构、factor/backtest 各读各的割裂。</li>
+</ul>
+<h2 id="5-python">5. 摄入漏斗(Python 薄适配,唯一归一化点)<a class="headerlink" href="#5-python" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">normalize</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">Bar</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pa</span><span class="o">.</span><span class="n">RecordBatchReader</span><span class="p">:</span>   <span class="c1"># 流式, 非全量 Table</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="k">match</span> <span class="n">source</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>        <span class="k">case</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">()</span> <span class="o">|</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">():</span> <span class="n">reader</span> <span class="o">=</span> <span class="n">source</span> <span class="o">...</span> <span class="o">.</span><span class="n">to_arrow</span><span class="p">()</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        <span class="k">case</span> <span class="n">pa</span><span class="o">.</span><span class="n">Table</span><span class="p">()</span> <span class="o">|</span> <span class="n">pa</span><span class="o">.</span><span class="n">RecordBatchReader</span><span class="p">():</span> <span class="n">reader</span> <span class="o">=</span> <span class="n">source</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        <span class="k">case</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">():</span> <span class="n">reader</span> <span class="o">=</span> <span class="n">pa</span><span class="o">.</span><span class="n">Table</span><span class="o">.</span><span class="n">from_pandas</span><span class="p">(</span><span class="n">source</span><span class="p">)</span>   <span class="c1"># pandas 唯一入口</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>        <span class="k">case</span> <span class="nb">str</span><span class="p">()</span> <span class="o">|</span> <span class="n">Path</span><span class="p">():</span> <span class="n">reader</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">scan_parquet</span><span class="p">(</span><span class="n">source</span><span class="p">)</span> <span class="o">...</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>        <span class="k">case</span> <span class="nb">list</span><span class="p">()</span> <span class="k">if</span> <span class="n">bars</span><span class="p">:</span> <span class="n">reader</span> <span class="o">=</span> <span class="n">_bars_to_arrow</span><span class="p">(</span><span class="n">source</span><span class="p">)</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="k">return</span> <span class="n">_canonicalize</span><span class="p">(</span><span class="n">reader</span><span class="p">,</span> <span class="n">schema</span><span class="p">)</span>   <span class="c1"># 列名/中文列/tz→UTC/dtype/symbol dict,一处实现</span>
+</span></code></pre></div>
+<p><strong>删除清单(4 合 1)</strong>:<code>utils.load_bar_from_df</code>、<code>utils.df_to_arrays</code>、<code>utils.prepare_dataframe</code>、<code>feed_adapter.BasePandasFeedAdapter.normalize</code> → 全部并入 <code>normalize</code>。中文列名(<code>日期/开盘/股票代码</code>)、naive→<code>Asia/Shanghai</code>→UTC 规则<strong>只在此定义一次</strong>。</p>
+<h2 id="6-rust-b">6. Rust 核心 · 列式引擎(B 期主战场)<a class="headerlink" href="#6-rust-b" title="Permanent link">&para;</a></h2>
+<h3 id="61-soaarrow">6.1 数据持有(SoA,Arrow 原生)<a class="headerlink" href="#61-soaarrow" title="Permanent link">&para;</a></h3>
+<div class="language-rust highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">struct</span><span class="w"> </span><span class="nc">BarColumns</span><span class="w"> </span><span class="p">{</span><span class="w">                 </span><span class="c1">// 一个 instrument 的一段 chunk, 可 mmap</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span><span class="n">ts_event</span><span class="p">:</span><span class="w"> </span><span class="nc">Int64Array</span><span class="p">,</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="n">open</span><span class="p">:</span><span class="w"> </span><span class="nc">Float64Array</span><span class="p">,</span><span class="w"> </span><span class="n">high</span><span class="p">:</span><span class="w"> </span><span class="nc">Float64Array</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="n">low</span><span class="p">:</span><span class="w"> </span><span class="nc">Float64Array</span><span class="p">,</span><span class="w">  </span><span class="n">close</span><span class="p">:</span><span class="w"> </span><span class="nc">Float64Array</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="n">volume</span><span class="p">:</span><span class="w"> </span><span class="nc">Float64Array</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>引擎直接持有从 Catalog 流入的 <code>RecordBatch</code>,<strong>不拆成 Bar 结构体</strong>。Python↔Rust 走 <strong>Arrow C Data Interface(PyCapsule)</strong>,不锁 arrow-rs 与 pyarrow 版本。</p>
+<h3 id="62-feedsort-vec">6.2 合并时钟(替换 <code>feed.sort()</code> + Vec 迭代)<a class="headerlink" href="#62-feedsort-vec" title="Permanent link">&para;</a></h3>
+<div class="language-rust highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">struct</span><span class="w"> </span><span class="nc">MergedClock</span><span class="w"> </span><span class="p">{</span><span class="w">                </span><span class="c1">// k 路归并</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="n">cursors</span><span class="p">:</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="n">Cursor</span><span class="o">&gt;</span><span class="p">,</span><span class="w">           </span><span class="c1">// 每 instrument 一个游标</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="n">heap</span><span class="p">:</span><span class="w"> </span><span class="nc">BinaryHeap</span><span class="o">&lt;</span><span class="p">(</span><span class="n">ts_event</span><span class="p">,</span><span class="w"> </span><span class="n">sequence</span><span class="p">,</span><span class="w"> </span><span class="n">iid</span><span class="p">,</span><span class="w"> </span><span class="n">cursor_id</span><span class="p">)</span><span class="o">&gt;</span><span class="p">,</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">}</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1">// pop → 产出下一事件, 零分配</span>
+</span></code></pre></div>
+<h3 id="63-bar-copy">6.3 零分配 Bar 视图(<code>Copy</code>)<a class="headerlink" href="#63-bar-copy" title="Permanent link">&para;</a></h3>
+<div class="language-rust highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="cp">#[derive(Clone, Copy)]</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">struct</span><span class="w"> </span><span class="nc">BarRef</span><span class="o">&lt;'</span><span class="na">a</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">cols</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="o">'</span><span class="na">a</span><span class="w"> </span><span class="nc">BarColumns</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="w"> </span><span class="p">}</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">impl</span><span class="o">&lt;'</span><span class="na">a</span><span class="o">&gt;</span><span class="w"> </span><span class="n">BarRef</span><span class="o">&lt;'</span><span class="na">a</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">f64</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">cols</span><span class="p">.</span><span class="n">close</span><span class="p">.</span><span class="n">value</span><span class="p">(</span><span class="bp">self</span><span class="p">.</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// 直接读列 buffer</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="c1">// open / high / low / volume / ts_event 同理</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">}</span>
+</span></code></pre></div>
+<ul>
+<li><strong>撮合/策略循环</strong>:串行游标推进 → 收益是 cache 局部性(顺序读同列)。</li>
+<li><strong>指标/因子/组合估值</strong>:对列切片向量化 → SIMD + rayon 多核。</li>
+<li><strong>Python 边界</strong>:<code>on_bar</code> 仍收一个 <code>Bar</code> pyclass,但它是「持索引懒读列」的薄视图,per-event 仅一次轻量构造;引擎内部始终列式。</li>
+</ul>
+<p><strong>受影响的 Rust 模块</strong>(现读 <code>Bar</code>,需改读 <code>BarRef</code>/列,实测 24 文件):
+<code>execution/{stock,futures,simulated}.rs</code>、<code>data/{feed,aggregator,client}.rs</code>、<code>pipeline/stages/*.rs</code>、<code>history.rs</code>、<code>engine/core.rs</code>、<code>model/{types,market_data}.rs</code>、<code>event.rs</code> 等。</p>
+<h2 id="7">7. 回测/实盘同构<a class="headerlink" href="#7" title="Permanent link">&para;</a></h2>
+<div class="language-rust highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">trait</span><span class="w"> </span><span class="n">DataEngine</span><span class="w">     </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">Event</span><span class="o">&gt;</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// Backtest: Arrow重放 / Live: gateway推送</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">trait</span><span class="w"> </span><span class="n">ExecutionClient</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">submit</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">order</span><span class="p">);</span><span class="w"> </span><span class="o">..</span><span class="p">.</span><span class="w"> </span><span class="p">}</span><span class="w">      </span><span class="c1">// Sim: 撮合器 / Live: 券商网关</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">trait</span><span class="w"> </span><span class="n">Clock</span><span class="w">          </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">now</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">ts</span><span class="p">;</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="nf">timers</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w">      </span><span class="c1">// TestClock(随事件) / LiveClock(墙钟)</span>
+</span></code></pre></div>
+<ul>
+<li>策略只依赖 <code>Portfolio</code>/<code>OrderManager</code> facade,<strong>backtest↔live 唯一差异是注入哪套三件套</strong>。</li>
+<li>现有 <code>gateway/</code>(ctp/miniqmt/ptrade + middleware/qmf 插件)接到 <code>ExecutionClient</code>/<code>LiveDataEngine</code>;<code>SimulatedExchange</code> 包住现有 <code>custom_matchers</code>。</li>
+<li>收益:策略回测验证后<strong>零改上实盘</strong>——对含两个实盘插件的仓库价值最大。</li>
+</ul>
+<h2 id="8-e-golden">8. 时点正确性 · 双时态(E 期,golden 会变更)<a class="headerlink" href="#8-e-golden" title="Permanent link">&para;</a></h2>
+<p><strong>当前问题</strong>:全局 <code>qfq</code>(前复权)把未来拆分/分红烘焙进历史价 → 结构性未来函数;成分股用当前列表 → 幸存者偏差。</p>
+<p><strong>改法</strong>:</p>
+<ul>
+<li>存<strong>原始价 + <code>Adjustment</code> 因子序列</strong>,读取时按 sim 当前时间应用(只用 <code>knowledge_time ≤ now</code> 的因子),回测走到哪复权到哪。</li>
+<li><code>Membership</code> 双时态 → sim 时刻 T 只见 T 时点成分股。</li>
+<li>基本面/信号带 <code>knowledge_time</code> → T 时刻只见 T 前已知数据。</li>
+</ul>
+<p><strong>代价即收益</strong>:回测数值相对现状<strong>会变化</strong>,但变化后才是正确的。E 期一次性修正并重锁 golden。</p>
+<h2 id="9">9. 确定性与复现<a class="headerlink" href="#9" title="Permanent link">&para;</a></h2>
+<p>稳定排序 tie-break <code>(ts_event, sequence, iid)</code> + seeded RNG + catalog version 绑定 → 逐位可复现。<code>__engine_rule_version__</code> 随行为变更大版本跳变;golden 在 E 期一次性重生成后锁定。</p>
+<h2 id="10-out-of-core">10. Out-of-core 与并行<a class="headerlink" href="#10-out-of-core" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>因子/指标</strong>:rayon 跨标的、跨列并行 + SIMD。</li>
+<li><strong>参数寻优</strong>(<code>optimize.py</code> 现为多进程):worker 共享 <strong>mmap 的 catalog</strong>,进程间零拷贝 → 内存占用大降。</li>
+<li><strong>组合估值</strong>:持仓列向量化。</li>
+</ul>
+<p>Out-of-core 对下游的反向约束:</p>
+<table>
+<thead>
+<tr>
+<th>下游</th>
+<th>现状</th>
+<th>改动</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>strategy_history</code></td>
+<td>全历史在内存</td>
+<td>有界窗口/流式切片(签名不变,语义收敛)</td>
+</tr>
+<tr>
+<td><code>plot/report</code></td>
+<td>载入整条序列</td>
+<td>大数据集降采样/分块渲染</td>
+</tr>
+<tr>
+<td><code>optimize.py</code></td>
+<td>每 worker 各载数据</td>
+<td>共享 mmap catalog(收益)</td>
+</tr>
+<tr>
+<td><code>factor</code></td>
+<td>已 polars lazy</td>
+<td>天然契合,基本不改</td>
+</tr>
+</tbody>
+</table>
+<h2 id="11-python-api">11. Python API 终态<a class="headerlink" href="#11-python-api" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">cat</span> <span class="o">=</span> <span class="n">Catalog</span><span class="p">(</span><span class="n">root</span><span class="p">)</span>                                  <span class="c1"># 唯一入口</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">cat</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">normalize</span><span class="p">(</span><span class="n">df_or_pl_or_parquet</span><span class="p">))</span>            <span class="c1"># 任意源 → 规范 Arrow</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">res</span> <span class="o">=</span> <span class="n">run_backtest</span><span class="p">(</span><span class="n">catalog</span><span class="o">=</span><span class="n">cat</span><span class="p">,</span> <span class="n">instruments</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">],</span>   <span class="c1"># 从 catalog 流式读, out-of-core</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>                   <span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">res</span> <span class="o">=</span> <span class="n">run_backtest</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">pl_df</span><span class="p">,</span> <span class="n">strategy</span><span class="o">=...</span><span class="p">)</span>         <span class="c1"># 快速测试仍收内存 DF(漏斗→临时 Arrow)</span>
+</span></code></pre></div>
+<ul>
+<li><code>data=</code> 保留内存 DF 便利路径(pl/pd/pa 平权);pandas 降为 <code>akquant[pandas]</code> 可选 extra。</li>
+<li>策略 <code>on_bar/on_tick</code> 人体工学不变,<code>bar</code> 变为列式视图。</li>
+</ul>
+<h2 id="12-5">12. 影响面矩阵与「5 缝冻结」<a class="headerlink" href="#12-5" title="Permanent link">&para;</a></h2>
+<p>实测爆炸半径:Rust 24 文件引用 <code>Bar</code>;Python 16 文件读 Bar 字段;25 模块 import pandas。破坏面通过冻结 5 条接口缝收敛:</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>缝(契约)</th>
+<th>依赖方</th>
+<th>冻结策略</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>Bar 属性接口</strong> <code>.open/.high/.low/.close/.volume/.timestamp/.symbol/.extra</code></td>
+<td>16 个 Python 文件 + 用户策略</td>
+<td>新 <code>BarRef</code> 保留同名 accessor,懒读列 → 下游零改</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong><code>DataFeed</code> 符号</strong></td>
+<td>两个插件 <code>from akquant import DataFeed</code></td>
+<td>保留符号(内部换实现)或适配</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong><code>gateway.*</code></strong>(broker_models/trader_base/registry/protocols)</td>
+<td>两个插件<strong>全部</strong>依赖</td>
+<td>A–C 期不碰;D 期只做加法收敛</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong><code>strategy_history</code> 返回 <code>np.ndarray</code>/<code>pd.DataFrame</code></strong></td>
+<td>ml、rolling、用户</td>
+<td>Arrow→numpy 零拷贝,签名不变</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong><code>BacktestResult</code> 的 pandas 输出</strong></td>
+<td>plot/analysis 全家</td>
+<td>保持 pandas 表面,内部可 Arrow 计算</td>
+</tr>
+</tbody>
+</table>
+<p><strong>插件仓库结论:基本免疫。</strong> <code>akquant-middleware</code>/<code>akquant-qmf</code> 仅依赖 <code>gateway.*</code> + <code>DataFeed</code>,不碰 Bar 字段、归一化器、<code>run_backtest</code> 数据路径。A–C 期几乎无感;D 期被触及但为收益(接入统一 <code>ExecutionClient</code>);E 期若推 tick/quote 需扩 <code>broker_models</code>,是加法。</p>
+<p><strong>pandas 定位澄清</strong>:深嵌于报表/研究边缘(strategy_history.get_history_df、plot/<em>、ml/model、analysis/benchmark、talib/</em>、backtest/result),<strong>不移除、退到边缘层</strong>;列式化只接管 ingest→引擎→批量计算核心链路。</p>
+<h2 id="13">13. 删除 / 合并清单<a class="headerlink" href="#13" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>动作</th>
+<th>目标</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>合并</td>
+<td><code>utils.load_bar_from_df</code> + <code>utils.df_to_arrays</code> + <code>utils.prepare_dataframe</code> + <code>feed_adapter.BasePandasFeedAdapter.normalize</code> → <code>normalize()</code></td>
+</tr>
+<tr>
+<td>替换</td>
+<td><code>feed.add_arrays(numpy…)</code> → <code>feed.add_arrow(RecordBatch)</code>(C Data Interface)</td>
+</tr>
+<tr>
+<td>重写</td>
+<td><code>ParquetDataCatalog</code>(pandas/扁平)→ Arrow/Hive/mmap/版本化</td>
+</tr>
+<tr>
+<td>重写</td>
+<td><code>feed_adapter</code> 的 resample/replay(pandas)→ polars <code>group_by_dynamic</code> 或 Rust</td>
+</tr>
+<tr>
+<td>重构</td>
+<td>引擎 AoS <code>Vec&lt;Bar&gt;</code> → SoA <code>BarColumns</code> + <code>MergedClock</code> + <code>BarRef</code></td>
+</tr>
+<tr>
+<td>降级</td>
+<td>pandas → <code>akquant[pandas]</code> 可选 extra</td>
+</tr>
+</tbody>
+</table>
+<h2 id="14">14. 分期路线图<a class="headerlink" href="#14" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>期</th>
+<th>交付</th>
+<th>动 Rust</th>
+<th>golden 策略</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A</strong></td>
+<td>规范 Arrow schema + 单一 <code>normalize</code> 漏斗;删 4 归一化器;漏斗暂输出旧数组喂现引擎</td>
+<td>否</td>
+<td><strong>不变</strong></td>
+</tr>
+<tr>
+<td><strong>B</strong></td>
+<td>引擎 AoS→SoA + <code>MergedClock</code> + <code>BarRef</code>;execution/settlement/margin/statistics/history 改读列</td>
+<td><strong>重</strong></td>
+<td><strong>不变</strong>(纯重构,主战场)</td>
+</tr>
+<tr>
+<td><strong>C</strong></td>
+<td>Catalog 重写:Arrow/parquet + Hive + mmap + 流式 + manifest/version;<strong>跑通 out-of-core 验收</strong></td>
+<td>中</td>
+<td>不变</td>
+</tr>
+<tr>
+<td><strong>D</strong></td>
+<td>DataEngine/ExecutionClient/Clock trait,backtest/live 同构;resample/replay 迁 polars/Rust</td>
+<td>重</td>
+<td>不变</td>
+</tr>
+<tr>
+<td><strong>E</strong></td>
+<td>Tick/Quote/Book 多类型;<code>Instrument</code> 独立;<strong>双时态复权/universe</strong></td>
+<td>重</td>
+<td><strong>重生成</strong>(§8 行为修正)</td>
+</tr>
+<tr>
+<td><strong>F</strong></td>
+<td>pandas 降 optional;API 收敛;文档/教材更新</td>
+<td>否</td>
+<td>不变</td>
+</tr>
+</tbody>
+</table>
+<p>顺序关键:<strong>B 保数值不变</strong>(证明列式化只是重构),<strong>E 才一次性改数值并重锁 golden</strong>——两者分离,故障定位清晰。</p>
+<h2 id="15-a">15. A 期可实施细化(下一步落地起点)<a class="headerlink" href="#15-a" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>A 期原则:<strong>不动 Rust、不改数值、golden 全绿</strong>。只做「四合一归一化漏斗 + 过渡桥」,把重复逻辑收敛到一处,为 B 期列式化铺路。A 期漏斗<strong>输出 <code>pa.Table</code>(全量物化即可)</strong>,流式 <code>RecordBatchReader</code> 留到 C 期。</p>
+</blockquote>
+<h3 id="151">15.1 新增文件<a class="headerlink" href="#151" title="Permanent link">&para;</a></h3>
+<p><strong><code>python/akquant/schema.py</code></strong> —— 单一定义源(消除散落常量):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">DEFAULT_INPUT_TIMEZONE</span> <span class="o">=</span> <span class="s2">"Asia/Shanghai"</span>          <span class="c1"># 现散落在 feed_adapter.py / data.py</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">COLUMN_ALIASES</span> <span class="o">=</span> <span class="p">{</span>                                <span class="c1"># 合并 df_to_arrays.targets + load_bar_from_df.required_map</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="s2">"timestamp"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"日期"</span><span class="p">,</span> <span class="s2">"date"</span><span class="p">,</span> <span class="s2">"datetime"</span><span class="p">,</span> <span class="s2">"time"</span><span class="p">,</span> <span class="s2">"timestamp"</span><span class="p">],</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="s2">"open"</span><span class="p">:</span>      <span class="p">[</span><span class="s2">"开盘"</span><span class="p">,</span> <span class="s2">"open"</span><span class="p">],</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="s2">"high"</span><span class="p">:</span>      <span class="p">[</span><span class="s2">"最高"</span><span class="p">,</span> <span class="s2">"high"</span><span class="p">],</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="s2">"low"</span><span class="p">:</span>       <span class="p">[</span><span class="s2">"最低"</span><span class="p">,</span> <span class="s2">"low"</span><span class="p">],</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="s2">"close"</span><span class="p">:</span>     <span class="p">[</span><span class="s2">"收盘"</span><span class="p">,</span> <span class="s2">"close"</span><span class="p">],</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="s2">"volume"</span><span class="p">:</span>    <span class="p">[</span><span class="s2">"成交量"</span><span class="p">,</span> <span class="s2">"volume"</span><span class="p">,</span> <span class="s2">"vol"</span><span class="p">],</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="s2">"symbol"</span><span class="p">:</span>    <span class="p">[</span><span class="s2">"股票代码"</span><span class="p">,</span> <span class="s2">"symbol"</span><span class="p">,</span> <span class="s2">"code"</span><span class="p">,</span> <span class="s2">"ticker"</span><span class="p">],</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="p">}</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="n">REQUIRED_FIELDS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"timestamp"</span><span class="p">,</span> <span class="s2">"open"</span><span class="p">,</span> <span class="s2">"high"</span><span class="p">,</span> <span class="s2">"low"</span><span class="p">,</span> <span class="s2">"close"</span><span class="p">,</span> <span class="s2">"volume"</span><span class="p">)</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="c1"># 规范 Arrow schema(§3);A 期仅用 OHLCV 子集,Tick/Quote 留待 E 期</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="n">BAR_SCHEMA</span> <span class="o">=</span> <span class="n">pa</span><span class="o">.</span><span class="n">schema</span><span class="p">([</span>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>    <span class="p">(</span><span class="s2">"ts_event"</span><span class="p">,</span> <span class="n">pa</span><span class="o">.</span><span class="n">timestamp</span><span class="p">(</span><span class="s2">"ns"</span><span class="p">,</span> <span class="n">tz</span><span class="o">=</span><span class="s2">"UTC"</span><span class="p">)),</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>    <span class="p">(</span><span class="s2">"instrument_id"</span><span class="p">,</span> <span class="n">pa</span><span class="o">.</span><span class="n">dictionary</span><span class="p">(</span><span class="n">pa</span><span class="o">.</span><span class="n">int32</span><span class="p">(),</span> <span class="n">pa</span><span class="o">.</span><span class="n">string</span><span class="p">())),</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>    <span class="p">(</span><span class="s2">"open"</span><span class="p">,</span> <span class="n">pa</span><span class="o">.</span><span class="n">float64</span><span class="p">()),</span> <span class="p">(</span><span class="s2">"high"</span><span class="p">,</span> <span class="n">pa</span><span class="o">.</span><span class="n">float64</span><span class="p">()),</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>    <span class="p">(</span><span class="s2">"low"</span><span class="p">,</span> <span class="n">pa</span><span class="o">.</span><span class="n">float64</span><span class="p">()),</span> <span class="p">(</span><span class="s2">"close"</span><span class="p">,</span> <span class="n">pa</span><span class="o">.</span><span class="n">float64</span><span class="p">()),</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>    <span class="p">(</span><span class="s2">"volume"</span><span class="p">,</span> <span class="n">pa</span><span class="o">.</span><span class="n">float64</span><span class="p">()),</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>    <span class="c1"># extra 数值列在 canonicalize 后作为 float64 追加列透传</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a><span class="p">])</span>
+</span></code></pre></div>
+<p><strong><code>python/akquant/normalize.py</code></strong>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">normalize</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">column_map</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pa</span><span class="o">.</span><span class="n">Table</span><span class="p">:</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="k">return</span> <span class="n">_canonicalize</span><span class="p">(</span><span class="n">_to_arrow</span><span class="p">(</span><span class="n">source</span><span class="p">),</span> <span class="n">symbol</span><span class="o">=</span><span class="n">symbol</span><span class="p">,</span> <span class="n">column_map</span><span class="o">=</span><span class="n">column_map</span><span class="p">)</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="k">def</span><span class="w"> </span><span class="nf">_to_arrow</span><span class="p">(</span><span class="n">source</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pa</span><span class="o">.</span><span class="n">Table</span><span class="p">:</span>                <span class="c1"># 仅负责"变成 Arrow",零业务逻辑</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="c1"># pl.DataFrame/LazyFrame → to_arrow; pa.Table → 原样;</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="c1"># pd.DataFrame → pa.Table.from_pandas(保留 index→列);</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="c1"># str|Path → pl.scan_parquet/csv; list[Bar] → _bars_to_arrow</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="o">...</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="k">def</span><span class="w"> </span><span class="nf">_canonicalize</span><span class="p">(</span><span class="n">tbl</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">symbol</span><span class="p">,</span> <span class="n">column_map</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pa</span><span class="o">.</span><span class="n">Table</span><span class="p">:</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>    <span class="c1"># 列名解析(COLUMN_ALIASES + column_map 覆盖)、DatetimeIndex→ts、</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>    <span class="c1"># naive→Asia/Shanghai→UTC、OHLCV→float64、symbol dict、extra 数值透传</span>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>    <span class="o">...</span>
+</span></code></pre></div>
+<h3 id="152-rust-9-pyi-7">15.2 过渡桥(对齐<strong>真实</strong> Rust 9 参签名,非 pyi 的 7 参)<a class="headerlink" href="#152-rust-9-pyi-7" title="Permanent link">&para;</a></h3>
+<p>Rust <code>DataFeed::add_arrays</code> 与 <code>from_arrays</code> 实际入参:
+<code>(timestamps, opens, highs, lows, closes, volumes, symbol: Option&lt;str&gt;, symbols: Option&lt;list[str]&gt;, extra: Option&lt;dict[str, ndarray]&gt;)</code>。桥函数产出此 9 元组:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">arrow_to_legacy_arrays</span><span class="p">(</span><span class="n">tbl</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>         <span class="c1"># 替代 df_to_arrays 的返回</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="n">ts</span>   <span class="o">=</span> <span class="n">tbl</span><span class="p">[</span><span class="s2">"ts_event"</span><span class="p">]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">"int64"</span><span class="p">)</span>     <span class="c1"># 已 ns UTC,单一来源</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">o</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">l</span><span class="p">,</span><span class="n">c</span><span class="p">,</span><span class="n">v</span> <span class="o">=</span> <span class="p">(</span><span class="n">tbl</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">"float64"</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"open"</span><span class="p">,</span><span class="s2">"high"</span><span class="p">,</span><span class="s2">"low"</span><span class="p">,</span><span class="s2">"close"</span><span class="p">,</span><span class="s2">"volume"</span><span class="p">))</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">symbol</span><span class="p">,</span> <span class="n">symbols</span> <span class="o">=</span> <span class="n">_resolve_symbol</span><span class="p">(</span><span class="n">tbl</span><span class="p">,</span> <span class="n">single</span><span class="o">=...</span><span class="p">)</span>    <span class="c1"># 单标的→symbol_val;多标的→symbols</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">extra</span> <span class="o">=</span> <span class="p">{</span><span class="n">name</span><span class="p">:</span> <span class="n">tbl</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">"float64"</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">_extra_cols</span><span class="p">(</span><span class="n">tbl</span><span class="p">)}</span> <span class="ow">or</span> <span class="kc">None</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="k">return</span> <span class="p">(</span><span class="n">ts</span><span class="p">,</span> <span class="n">o</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">l</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">symbol</span><span class="p">,</span> <span class="n">symbols</span><span class="p">,</span> <span class="n">extra</span><span class="p">)</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="k">def</span><span class="w"> </span><span class="nf">arrow_to_bars</span><span class="p">(</span><span class="n">tbl</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Bar</span><span class="p">]:</span> <span class="c1"># 替代 load_bar_from_df</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>    <span class="k">return</span> <span class="n">from_arrays</span><span class="p">(</span><span class="o">*</span><span class="n">arrow_to_legacy_arrays</span><span class="p">(</span><span class="n">tbl</span><span class="p">))</span>
+</span></code></pre></div>
+<p>调用侧保持 <code>feed.add_arrays(*arrays)</code> / <code>from_arrays(...)</code> 不变。</p>
+<h3 id="153">15.3 删除 / 改调清单<a class="headerlink" href="#153" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>目标</th>
+<th>动作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>utils.load_bar_from_df</code></td>
+<td>删,调用点(<code>__init__</code>、<code>feed_adapter.to_bars</code>、<code>gateway/ctp/native.py</code>)改 <code>arrow_to_bars</code></td>
+</tr>
+<tr>
+<td><code>utils.df_to_arrays</code></td>
+<td>删,<code>backtest/engine.py</code> 6 处调用改 <code>arrow_to_legacy_arrays(normalize(...))</code></td>
+</tr>
+<tr>
+<td><code>utils.prepare_dataframe</code></td>
+<td>删,tz 归一并入 <code>_canonicalize</code>;engine 中 <code>prepare_dataframe(df)</code> 调用移除</td>
+</tr>
+<tr>
+<td><code>feed_adapter.BasePandasFeedAdapter.normalize</code></td>
+<td>改为 <code>return normalize(frame, symbol=symbol).to_pandas()</code>——<strong>保留 pandas 输出</strong>喂给 resample/replay(其 pandas 重采样留到 C/D 期),但列名/tz 逻辑不再自写</td>
+</tr>
+<tr>
+<td><code>akquant.pyi</code> <code>add_arrays</code></td>
+<td>修正为 9 参(现 7 参 stale,靠 <code># type: ignore</code> 掩盖)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="154-a-quirk">15.4 行为并集清单(A 期最大风险:合并勿丢 quirk)<a class="headerlink" href="#154-a-quirk" title="Permanent link">&para;</a></h3>
+<p>两个归一化器行为<strong>不完全一致</strong>,合并必须取并集,否则 golden 漂移:</p>
+<ol>
+<li>naive → <code>Asia/Shanghai</code> → UTC(两者都有)</li>
+<li>NaT → <code>Timestamp(0)</code> 填充(两者)</li>
+<li>OHLCV <code>fillna(0.0).astype(float)</code>(两者)</li>
+<li><strong>秒级时间戳自动修正</strong>(<code>&lt; 1e10</code> 则 ×1e9)—— <strong>仅 <code>load_bar_from_df</code> 有</strong>,合并后需决定是否对所有路径生效(建议保留并统一)</li>
+<li><strong><code>股票代码</code> 多标的检测</strong>(<code>load_bar_from_df</code>)vs <code>symbol</code> 候选解析(<code>df_to_arrays</code>)—— 取并集</li>
+<li><strong>extra 数值列透传</strong> —— 仅 <code>df_to_arrays</code> 有,须保留</li>
+<li><strong><code>__index__</code> 时间戳</strong>(DatetimeIndex 作时间源)—— 仅 <code>df_to_arrays</code> 有,须保留</li>
+</ol>
+<h3 id="155-bar-accessor-1b">15.5 <code>Bar</code> accessor 冻结清单(缝 1,B 期须逐项保留)<a class="headerlink" href="#155-bar-accessor-1b" title="Permanent link">&para;</a></h3>
+<p>摘自 <code>akquant.pyi</code>,B 期把 <code>Bar</code> 变列式视图时须保持:
+- 属性:<code>timestamp:int</code>、<code>symbol:str</code>、<code>extra:dict[str,float]</code>、<code>open/high/low/close/volume:float</code>、<code>timestamp_iso:str</code>
+- 方法:<code>set_open/set_high/set_low/set_close/set_volume</code>、<code>__new__(timestamp,open,high,low,close,volume,symbol,extra?)</code>、<code>__repr__</code>
+- ⚠️ <strong>可变 setter 与零拷贝视图冲突</strong>:<code>set_close</code> 等要写共享 Arrow buffer。B 期须定策略(Python 侧 <code>Bar</code> 保持 owned 副本,或 copy-on-write),此点在 B 期设计中单列。</p>
+<h3 id="156-golden">15.6 golden 回归点<a class="headerlink" href="#156-golden" title="Permanent link">&para;</a></h3>
+<ul>
+<li>基线用例(<code>tests/golden/current/</code>):<strong><code>futures_margin</code>、<code>option_basic</code>、<code>stock_t1</code></strong> —— A 期后三者 <code>metrics.json</code> + <code>orders.parquet</code> 与 <code>baselines/</code> 逐位一致,<code>__engine_rule_version__</code> <strong>不变</strong>。</li>
+<li>输入路径专项(新增单测,覆盖并集清单):中文列名、naive tz、<code>DatetimeIndex</code> 作时间源、多标的(symbol 列)、extra 列透传、秒级时间戳、<code>list[Bar]</code> 输入。</li>
+<li>运行:<code>uv run pytest tests/golden/test_golden.py</code>;基线重生成(A 期<strong>不应</strong>触发):<code>uv run python tests/golden/runner.py --generate-baseline</code>。</li>
+</ul>
+<h2 id="16">16. 风险与对策<a class="headerlink" href="#16" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>风险</th>
+<th>对策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>B 期引擎重构面大(24 Rust 文件读 Bar)</td>
+<td>先冻结 <code>BarRef</code> 接口,模块逐个迁;每步 golden 回归</td>
+</tr>
+<tr>
+<td>Arrow/arrow-rs 版本耦合</td>
+<td>一律走 <strong>C Data Interface(PyCapsule)</strong>,不共享 crate 版本</td>
+</tr>
+<tr>
+<td>Python per-event 对象开销</td>
+<td>Bar 视图懒读;高频路径提供批量回调 <code>on_bars(batch)</code></td>
+</tr>
+<tr>
+<td>双时态需用户没有的数据(复权因子/knowledge_time)</td>
+<td>优雅降级:缺 <code>Adjustment</code> 回退「原始价 + 警告」,不硬失败</td>
+</tr>
+<tr>
+<td>out-of-core 与增量指标状态</td>
+<td>指标状态随游标流转,不依赖全量在内存</td>
+</tr>
+</tbody>
+</table>
+<h2 id="17">17. 待决策项<a class="headerlink" href="#17" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>B/E 拆分</strong>:已确认——B 保数值、E 改数值,分离实施。</li>
+<li><strong>out-of-core 验收</strong>:已确认——C 期须跑通「全 A 股分钟线 &gt; 内存」stress 场景。</li>
+<li>待定:Rust 引擎内部是否在更远期进一步「全 DataFusion 查询化」(本 RFC 非目标)。</li>
+<li>待定:<code>on_bars(batch)</code> 批量回调是否作为 B 期一等 API,还是 D 期再引入。</li>
+</ol>
+<hr />
+<h2 id="18-a-2026-07-18">18. A 期实施记录(2026-07-18)<a class="headerlink" href="#18-a-2026-07-18" title="Permanent link">&para;</a></h2>
+<p><strong>已落地</strong></p>
+<ul>
+<li>新增 <code>python/akquant/schema.py</code>:<code>DEFAULT_INPUT_TIMEZONE</code>、<code>COLUMN_ALIASES</code>、<code>REQUIRED_FIELDS</code>、<code>OHLCV_FIELDS</code>、<code>BAR_SCHEMA</code> 单一定义源。</li>
+<li>新增 <code>python/akquant/normalize.py</code>:<code>_timestamps_to_utc_ns</code>(共享 tz 助手)、<code>dataframe_to_arrays</code>/<code>dataframe_to_bars</code>(单一实现)、<code>to_frame</code>/<code>normalize</code>(多源漏斗)、<code>arrow_to_legacy_arrays</code>/<code>arrow_to_bars</code>(Arrow 过渡桥)、<code>coerce_to_pandas</code>。</li>
+<li><code>utils.df_to_arrays</code> / <code>utils.load_bar_from_df</code> 改为对 <code>normalize</code> 的薄委托(去重, 签名不变)。</li>
+<li><code>run_backtest</code> / <code>run_from_checkpoint</code> 两处分派入口加 <code>coerce_to_pandas</code>,<code>BacktestDataInput</code> 纳入 <code>pl.DataFrame</code>/<code>pl.LazyFrame</code>/<code>pa.Table</code>(issue #298)。</li>
+<li>修正 <code>akquant.pyi</code> 的 <code>DataFeed.add_arrays</code> 为 9 参(补 <code>symbols</code>/<code>extra</code>)。</li>
+<li>新增 <code>tests/test_normalize.py</code>(14 用例, 覆盖并集清单 + 多源输入)。</li>
+</ul>
+<p><strong>验证</strong>:golden 三用例逐位一致、<code>__engine_rule_version__</code> 仍为 <code>1.3.0</code>、golden 基线文件未改;<code>test_normalize</code>+<code>golden</code>+<code>test_engine</code> 共 232 passed;ruff check/format 全绿;docs 链接检查通过;polars/pandas/arrow 三路 <code>run_backtest</code> 末值一致(100200.0)。mypy 因 numpy 存根用 3.12 <code>type</code> 语句而在本地环境预先失败(与本次改动无关, 既有问题)。</p>
+<p><strong>与原计划的差异(降风险)</strong>:未删除 <code>prepare_dataframe</code> 及 engine 内 <code>df_to_arrays</code>/<code>prepare_dataframe</code> 调用点——它们与 <code>data_map_for_indicators</code>(指标预热)耦合, 贸然拆除有 golden 漂移风险。故 A 期保留三函数为薄委托(去重目标已达成), 调用点拆除 + <code>data_map_for_indicators</code> 解耦 + <code>feed_adapter.normalize</code>/resample 迁移下沉到 <strong>A.2</strong>。</p>
+<p><strong>A 期发现的既有缺陷(留待 A.2 修)</strong>:engine 的 <code>pd.DataFrame</code> 分支对"字符串日期列 + 无 symbol 列"形状会 <code>set_index</code> 后丢失时间戳, 报 <code>Missing columns: ['timestamp']</code>(pandas 输入亦复现, 非本次回归)。A.2 将 engine 直接改走 <code>normalize</code> 漏斗, 顺带修复此形状。</p>
+<h2 id="19-a2-2026-07-18">19. A.2 实施记录(2026-07-18)<a class="headerlink" href="#19-a2-2026-07-18" title="Permanent link">&para;</a></h2>
+<p><strong>已落地(全量走漏斗)</strong></p>
+<ul>
+<li><code>prepare_dataframe</code> 实现下沉为 <code>normalize.to_indicator_frame</code>(逐字移植, 行为不变);<code>utils.prepare_dataframe</code> 改薄委托。至此四处归一化逻辑全部收敛入 <code>normalize.py</code>。</li>
+<li>engine 两处数据分派改为<strong>直接使用</strong> <code>normalize</code> 的 <code>dataframe_to_arrays</code> / <code>to_indicator_frame</code>, 移除对 <code>utils.df_to_arrays</code> / <code>prepare_dataframe</code> 的间接依赖。</li>
+<li><strong>修复既有缺陷</strong>:根因是 pandas 2.x 下 <code>set_index("date")</code> 得到 <code>str</code> dtype 索引, engine 旧判断 <code>index.dtype == "object"</code> 漏掉 → 索引未转 <code>DatetimeIndex</code> → 无 <code>timestamp</code>。改为稳健的 <code>not isinstance(index, pd.DatetimeIndex)</code> 判断(两处分支)。</li>
+<li>新增回归测试:<code>run_backtest</code> 接受"字符串日期列"的 pandas/polars 输入且结果一致。</li>
+</ul>
+<p><strong>验证</strong>:golden 三用例逐位一致、<code>__engine_rule_version__</code> 仍 <code>1.3.0</code>;normalize+golden+engine 共 232 passed;字符串日期列 pandas/polars/arrow 三路 <code>run_backtest</code> 末值一致(100200.0);ruff + mypy(pre-commit 隔离环境)通过。</p>
+<p><strong>A.2 后仍未做(留待后续)</strong>:<code>feed_adapter</code> 的 resample/replay 仍是 pandas 实现(C/D 期迁 polars);Catalog 仍是旧结构(C 期重写);Rust 边界仍收 numpy(B 期列式化)。</p>
+<h2 id="20-b1-2026-07-18">20. B.1 实施记录(2026-07-18)<a class="headerlink" href="#20-b1-2026-07-18" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><strong>混合路线确认</strong>:价格/OHLCV 用 <strong>f64 列存</strong>(输入本就是 f64,零精度损失);"钱"(结算/PnL/保证金)<strong>保留 Decimal</strong>。重构 Bar 时价格用 <code>Decimal::from_f64</code>,与旧 <code>from_arrays</code> <strong>完全一致</strong> → golden 逐位不变。全 f64 计算(SIMD)属改数值的大动作,归 E 期后。</p>
+</blockquote>
+<p><strong>已落地</strong></p>
+<ul>
+<li>新增 <code>src/data/columns.rs</code> 的 <code>BarColumns</code>(SoA:<code>ts:Vec&lt;i64&gt;</code> + <code>open/high/low/close/volume:Vec&lt;f64&gt;</code> + <code>symbols:Vec&lt;String&gt;</code> + <code>extra:HashMap&lt;String,Vec&lt;f64&gt;&gt;</code>):</li>
+<li><code>from_py_arrays</code>:与 <code>from_arrays</code> 相同的取数/校验/symbol 解析;</li>
+<li><code>reconstruct_bar(i)</code>:价格→<code>Decimal::from_f64</code>(含 NaN→0.0 告警),逐位一致;</li>
+<li><code>append</code>(多次 add_arrays 拼接)、<code>sort_by_timestamp</code>(稳定排序,等时间戳保插入序)。</li>
+<li><code>batch::from_arrays</code> 重构为 <code>BarColumns::from_py_arrays(...).to_bars()</code>,输出不变。</li>
+<li><code>SimulatedDataClient</code> 改为 <strong>列式存 Bar(来自 <code>add_arrays</code>)+ <code>VecDeque&lt;Event&gt;</code> 存其余事件</strong>(Tick / <code>List[Bar]</code> via add_bars);<code>peek/next</code> 按时间戳<strong>流式归并</strong>两者(等时列式 Bar 优先),<code>sort</code> 分别排序。</li>
+<li><code>DataFeed.add_arrays</code> 直接构建 <code>BarColumns</code> 零拷贝存入(实时 <code>live_sender</code> 模式回退为重构 Bar 事件发送)。</li>
+<li>无效数值告警源模块 <code>akquant.data.batch</code> → <code>akquant.data.columns</code>(消息/结构化上下文不变),同步更新 3 处测试断言。</li>
+</ul>
+<p><strong>验证</strong>:golden 三用例逐位一致、<code>engine_rule_version</code> 仍 <code>1.3.0</code>;<strong>113 Rust 测试 + 233 Python 测试全过</strong>;<code>cargo build</code>/<code>clippy</code> 在改动文件零警告。</p>
+<p><strong>设计要点</strong>:<code>Event</code> 枚举仍携 owned <code>Bar</code>,<code>next()</code> 仍按需重构 <code>Bar</code>(一次分配)——故 B.1 是<strong>存储列式化 + 内存/地基</strong>,尚未消灭消费端 AoS 物化。真正零物化的 <code>BarRef</code> 游标 + 撮合/结算读列 = <strong>B.2</strong>(需改 Event 枚举 + 全部消费者,巨大)。</p>
+<p><strong>Rust 测试环境注</strong>:<code>scripts/cargo-test.sh</code> 用 macOS 的 <code>DYLD_*</code>;Windows 下需把 base Python 目录(<code>sys.base_prefix</code>)加入 PATH 才能加载 pyo3 链接的 <code>pythonXX.dll</code>,否则测试二进制报 <code>STATUS_DLL_NOT_FOUND</code>。</p>
+<h2 id="21-b2-b2-2026-07-18">21. B.2 架构结论 + B2′ 实施记录(2026-07-18)<a class="headerlink" href="#21-b2-b2-2026-07-18" title="Permanent link">&para;</a></h2>
+<h3 id="b2barref">B.2(BarRef 零物化)判定为不可行 —— 已放弃<a class="headerlink" href="#b2barref" title="Permanent link">&para;</a></h3>
+<p>深入 Rust 后确认原 §6 的"<code>Event::Bar(BarRef)</code> 零物化"在当前架构下<strong>不可行且低价值</strong>:</p>
+<ul>
+<li><strong>自引用障碍</strong>:<code>Engine</code> 同时持有 <code>state.feed</code>(列存)与 <code>current_event: Option&lt;Event&gt;</code>。让 <code>Event::Bar</code> 借用列存 = 同一结构体内自引用借用,安全 Rust 不允许。</li>
+<li><strong>owned 事件流</strong>:<code>DataProcessor</code> 为多标的对齐会 <code>clone</code> 事件进 <code>current_symbol_events</code>(owned);feed 在 <code>Arc&lt;Mutex&lt;Box&lt;dyn DataClient&gt;&gt;&gt;</code> 后,索引方案则每次读字段要加锁。</li>
+<li><strong>低回报</strong>:事件驱动撮合是逐 bar 串行,每事件物化一个 Bar 成本极小;cache/SIMD 红利在"扫整列"处,不在"一次一根"的撮合循环。</li>
+</ul>
+<p>要硬做需 unsafe 自引用或重写整个 事件+pipeline+对齐 系统,风险极高、收益极低。故<strong>放弃 B.2-as-BarRef</strong>,把"列式性能"重定向到真正有价值处 → <strong>B2′</strong>。</p>
+<h3 id="b2">B2′(向量化列计算)—— 已落地<a class="headerlink" href="#b2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>新增 <code>src/data/compute.rs</code>:<code>&amp;[f64]</code> 切片上的向量化批量原语(零拷贝、编译器可自动向量化、可直接作用于 B.1 的 <code>BarColumns</code> 列,与增量指标互补):<code>sma/ema/wma/rolling_sum/rolling_min/rolling_max/rolling_std(ddof=1)/zscore/returns/log_returns/cumsum</code>。</li>
+<li>11 个 numpy 零拷贝 Python 绑定 <code>vec_*</code>(<code>PyReadonlyArray1&lt;f64&gt;</code> 读入),注册进 <code>akquant</code> 模块 + <code>akquant.pyi</code> 手写存根(注:参数 <code>PyReadonlyArray1</code> 不满足 <code>PyStubType</code>,故这些函数不用 <code>#[gen_stub_pyfunction]</code>,存根手工维护)。</li>
+<li>语义对齐 pandas:<code>vec_sma</code>/<code>vec_rolling_std</code>/<code>vec_returns</code> 等与 pandas 逐位一致(NaN 位置一致、std 为样本 ddof=1)。</li>
+</ul>
+<p><strong>验证</strong>:golden 不回归;<strong>119 Rust(+6 compute)+ 28 Python(+11 vectorized)测试全过</strong>;compute.rs clippy/ruff/mypy 干净。</p>
+<p><strong>定位</strong>:B2′ 与 polars 因子引擎<strong>互补</strong>——polars 用于研究期向量化;<code>vec_*</code> 是 Rust 原生、可零拷贝作用于引擎内列存(BarColumns),无 pandas/polars 往返,适合生产/嵌入路径与 Rust 侧因子。</p>
+<h2 id="22-c2-2026-07-18-out-of-core">22. C.2 实施记录(2026-07-18)—— out-of-core 核心机制<a class="headerlink" href="#22-c2-2026-07-18-out-of-core" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><strong>关键洞察</strong>:out-of-core <strong>契合现架构</strong>(与 B.2 相反)——<code>DataClient</code> trait 本就是 pull-based(<code>peek_timestamp</code>/<code>next</code>),<code>CsvDataClient</code> 是现成流式模板,可复用 B.1 的时间戳归并。</p>
+</blockquote>
+<h3 id="c2ab">C.2a/b 已落地<a class="headerlink" href="#c2ab" title="Permanent link">&para;</a></h3>
+<ul>
+<li>新增 <code>src/data/parquet_stream.rs</code> 的 <code>ParquetStreamClient</code>(实现 <code>DataClient</code>):</li>
+<li>经 polars <code>scan_parquet(PlPath).slice(offset, chunk).collect()</code> <strong>分块读取</strong>,内存占用约 <code>chunk_size</code> 行,<strong>与文件总量无关</strong>(有界内存 → out-of-core)。</li>
+<li>逐块转 <code>Bar</code>(价格 <code>Decimal::from_f64</code>,与 <code>from_arrays</code> 一致);<code>next/peek</code> 从缓冲弹出,空则填充。</li>
+<li>只读流式源(<code>add()</code> 返回错误);假定 parquet 按 <code>timestamp</code> 升序,<code>sort()</code> 空实现。</li>
+<li>规范列:<code>timestamp</code>(i64 ns UTC)+ <code>open/high/low/close/volume</code>(f64)+ 可选 <code>symbol</code>(str)。</li>
+<li><code>DataFeed.from_parquet(path, symbol=None, chunk_size=None)</code> 静态构造器(默认 chunk 65536)+ pyi 存根。</li>
+</ul>
+<p><strong>验证</strong>:2 个 Rust 单测(全量读取、时间戳升序、缓冲区 ≤ chunk)+ 2 个 Python 端到端(流式回测与等价内存回测<strong>数值一致</strong>、跨 chunk 边界不丢 bar);121 Rust 测试全过;golden 不回归;clippy/ruff/mypy 干净。</p>
+<p><strong>用法</strong>:<code>feed = DataFeed.from_parquet(path, "600000"); run_backtest(data=feed, ...)</code> → 有界内存回测。</p>
+<h3 id="c2c-2026-07-18">C.2c 已落地(2026-07-18)<a class="headerlink" href="#c2c-2026-07-18" title="Permanent link">&para;</a></h3>
+<ul>
+<li>新增 <code>normalize.write_canonical_parquet(source, path, symbol=None)</code>:任意源(pandas/polars/pyarrow/路径/<code>list[Bar]</code>)经漏斗规范化 → 写出 <code>timestamp</code>(i64 ns UTC)+ OHLCV(f64)+ <code>symbol</code>(str)、<strong>按 timestamp 升序</strong>、zstd 压缩的 parquet;导出为 <code>akquant.write_canonical_parquet</code> / <code>akquant.normalize</code>。</li>
+<li><strong>多标的 out-of-core 无需额外机制</strong>:单个"按 ts 全局排序 + 带 symbol 列"的规范 parquet,经 <code>ParquetStreamClient</code>(读 symbol 列)流式产出即为跨标的按时序的 bar 流。已端到端验证(2 标的、小 chunk、<code>run_backtest(symbols=[A,B])</code>,各标的 bar 数正确)。</li>
+<li>完整闭环:<code>write_canonical_parquet(源) → DataFeed.from_parquet(path) → 多标的有界内存回测</code>。249 Python 测试通过,golden 不回归。</li>
+</ul>
+<h3 id="c2d-2026-07-18-out-of-core">C.2d 已验收(2026-07-18)—— out-of-core 内存实测通过<a class="headerlink" href="#c2d-2026-07-18-out-of-core" title="Permanent link">&para;</a></h3>
+<p>新增 <code>scripts/stress_out_of_core.py</code>(分批生成大规模规范 parquet + 流式回测 + 峰值内存实测,Windows psapi 私有提交 / Unix getrusage,可选 <code>--compare</code> 对比内存路径)。<strong>实测结果</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>行数</th>
+<th>流式峰值内存</th>
+<th>内存路径峰值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>20,000</td>
+<td>740 MiB</td>
+<td>—</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>768 MiB</td>
+<td>—</td>
+</tr>
+<tr>
+<td>300,000</td>
+<td>779 MiB</td>
+<td>983 MiB(+204 MiB)</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>流式峰值近乎持平</strong>:15× 行数(2万→30万)峰值仅 +5%(740→779 MiB)→ <strong>内存有界、与数据总量无关</strong>(峰值主要是 ~740 MiB 固定库开销,数据路径几乎不增)。</li>
+<li>内存路径 30万行需 <strong>+204 MiB</strong>(全量载入数据的代价),且随数据持续增长直至 OOM。</li>
+<li><strong>流式耗时 ≈ 内存路径</strong>(64s vs 66s),流式读几乎零额外开销。</li>
+</ul>
+<p><strong>结论:数据路径 out-of-core 成立</strong>。真正跑 &gt;内存(数千万 bar)时内存路径 OOM、流式仍 ~持平。</p>
+<h3 id="c2">C.2 仍未做(留待后续,优先级低)<a class="headerlink" href="#c2" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>可选</strong>:让 <code>run_backtest(catalog_path=...)</code> 自动走流式。<strong>注意</strong>:流式与 <code>data_map_for_indicators</code>(指标预计算 + 全量交易日元数据)本质冲突,仅适用<strong>增量指标策略</strong>;当前显式 <code>DataFeed.from_parquet</code> 路径已可用,自动接线价值有限。</li>
+<li><strong>引擎侧结果累积</strong>:回测墙钟随 bar 数<strong>超线性</strong>(10万→30万:10s→64s,两路径皆然,非流式引入)——属引擎逐 bar 处理的既有性能问题,与 out-of-core 内存无关;真跑数千万 bar 需另行优化引擎吞吐(D 期后)。</li>
+<li>catalog 磁盘格式仍是 pandas 专有(<code>__index_level_0__</code>/us/naive);<code>write_canonical_parquet</code> 已提供规范格式独立写路径,是否迁移旧 catalog 待定。</li>
+<li>Windows 跑 Rust 测试需 <code>sys.base_prefix</code> 加 PATH(见 §20 注)。</li>
+</ul>
+<hr />
+<p><em>本 RFC 为设计基线,随分期实施更新;每期完成后回填「实际差异」与 golden 变更记录。</em></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
