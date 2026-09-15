@@ -15,6 +15,10 @@ History:
   ``run_id``, ``seq``, ``ts``, ``symbol``, ``level``, ``schema_version``.
 - ``1.1`` — added ``fill.position_effect`` to the trade channel (backward
   compatible; older consumers can ignore the new field).
+- ``1.2`` — added ``timestamp_ms`` to the indicator channel's ``indicator``
+  (point) and ``snapshot`` objects, so the stream exit agrees with
+  ``indicator_df()`` / ``export_indicators()`` on the field (backward
+  compatible; older consumers can keep reading the nanosecond ``timestamp``).
 """
 
-STREAM_SCHEMA_VERSION = "1.1"
+STREAM_SCHEMA_VERSION = "1.2"

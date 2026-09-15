@@ -227,6 +227,39 @@ class IndicatorExportStrategy(Strategy):
         )
 ```
 
+!!! note "About `symbol` ownership"
+    Every indicator point **always belongs to exactly one symbol**, and `symbol`
+    decides which instrument's chart the indicator is drawn on.
+
+    When `symbol` is omitted (recommended), it defaults to the symbol of the bar
+    or tick currently being processed. In a multi-symbol backtest, a single
+    `record_indicator` call therefore records an independent series per symbol —
+    which is what you want: every instrument gets its own MA5.
+
+    ```python
+    def on_bar(self, bar: Bar) -> None:
+        # symbol omitted: defaults to bar.symbol
+        # In a multi-symbol backtest each symbol gets its own ma5 series
+        self.record_indicator(name="ma5", value=self.ma5.value, pane=0)
+    ```
+
+    Pass `symbol` explicitly only when you deliberately want to record under a
+    different instrument (for example a reference line on a benchmark or index).
+    Note that **every symbol's bar still triggers the call**, so without a guard
+    the same timestamp is written multiple times:
+
+    ```python
+    def on_bar(self, bar: Bar) -> None:
+        # Record once, on the primary symbol's bar only
+        if bar.symbol == "000300.SH":
+            self.record_indicator(name="bench_ma", value=v, symbol="000300.SH")
+    ```
+
+    If neither a current bar/tick nor an explicit `symbol` is available, a
+    `ValueError` is raised — the point is never silently attached to a
+    placeholder symbol. Consumers can rely on `symbol` being non-empty when
+    grouping.
+
 !!! note "About the `pane` value"
     `pane` is an **integer row index**: `0` is the main (price) pane and `1`..`N`
     are sub panes stacked below it. Omitting `pane` defaults to the main pane
@@ -386,6 +419,7 @@ These helpers are meant to:
 - coerce numeric fields into frontend-friendly values
 - unpack `meta_json` and `items_json`
 - preserve the outer stream semantics such as `run_id`, `seq`, and `ts`
+- expose both `timestamp` (nanoseconds) and `timestamp_ms` (milliseconds)
 
 The bridged `snapshot` payload now also includes a few shortcut fields so frontend
 code does not have to rescan `items` on every update:
@@ -401,6 +435,20 @@ code does not have to rescan `items` on every update:
 The bridge helper also normalizes `_unknown` or empty `symbol` values into `None`,
 and accepts already-decoded `dict/list` values for `meta_json` and `items_json`,
 which makes gateway-side wrapping easier.
+
+`timestamp_ms` is present on both `point` and `snapshot` messages, and matches the
+value the same `record_indicator` call produces through `indicator_df()` and
+`export_indicators()` — all three exits agree, so the frontend never has to convert
+nanoseconds itself. When an event comes from an older version or a third-party
+`IndicatorSink` and its payload only carries the nanosecond `timestamp`, the bridge
+derives the millisecond value.
+
+!!! tip "Negotiate optional fields via `schema_version`"
+    Every message envelope carries `schema_version` (`MAJOR.MINOR`, exposed as
+    `akquant.STREAM_SCHEMA_VERSION`). Backward-compatible additions bump MINOR, so a
+    frontend can decide whether a field exists instead of probing for it.
+    `timestamp_ms` ships on the indicator stream from `1.2` onward; when reading
+    older messages, fall back to converting the nanosecond `timestamp` yourself.
 
 This is not a new transport layer. It is just a normalization layer that turns AKQuant stream events into steadier frontend message objects.
 
@@ -516,6 +564,8 @@ The first implementation exposes three structured layers:
 - indicator points as the actual time series values
 
 Each indicator point carries both `timestamp` (nanoseconds) and `timestamp_ms` (milliseconds): the former is for nanosecond parsing on the Python side, while the latter can be consumed directly by frontend charting libraries without any unit conversion. Indicator `meta` is serialized with `ensure_ascii=False`, so non-ASCII characters (e.g. CJK) stay readable.
+
+A point's `symbol` is guaranteed to be non-empty (see "About `symbol` ownership" above), so consumers can group directly by `symbol` + `indicator_key` without handling an "unowned" case. In a multi-symbol backtest the same indicator name is split into one independent series per symbol — always filter by `symbol` before plotting, otherwise same-named indicators from different instruments are drawn as a single line.
 
 This keeps AKQuant focused on producing stable indicator data instead of coupling the framework to a specific charting library.
 
