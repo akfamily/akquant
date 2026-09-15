@@ -50,6 +50,20 @@ def _normalize_symbol(value: Any) -> Optional[str]:
     return str(value)
 
 
+def _timestamp_ms(payload: Any, timestamp_ns: int) -> int:
+    """Resolve the millisecond timestamp, deriving it when the payload omits it.
+
+    The collection layers always emit ``timestamp_ms``, but events captured
+    before the field existed — and third-party :class:`IndicatorSink`
+    implementations — only carry the nanosecond ``timestamp``. Deriving keeps the
+    bridge aligned with ``BacktestResult._indicator_points_df``, which fills the
+    same gap for legacy payloads.
+    """
+    if isinstance(payload, dict) and payload.get("timestamp_ms") not in (None, ""):
+        return _to_int(payload.get("timestamp_ms"), timestamp_ns // 1_000_000)
+    return timestamp_ns // 1_000_000
+
+
 def is_indicator_stream_event(event: BacktestStreamEvent) -> bool:
     """Return whether the event belongs to indicator streaming."""
     return str(event.get("event_type", "")) in {"indicator_point", "indicator_snapshot"}
@@ -76,6 +90,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
     }
 
     if event_type == "indicator_point":
+        timestamp_ns = _to_int(payload.get("timestamp", 0))
         base_message["indicator"] = {
             "owner_strategy_id": str(payload.get("owner_strategy_id", "")),
             "indicator_key": str(payload.get("indicator_key", "")),
@@ -83,7 +98,11 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
             "pane": _to_int(payload.get("pane", 0)),
             "render_type": str(payload.get("render_type", "")),
             "symbol": _normalize_symbol(payload.get("symbol")),
-            "timestamp": _to_int(payload.get("timestamp", 0)),
+            "timestamp": timestamp_ns,
+            # ``timestamp_ms`` mirrors ``timestamp`` for frontend charting
+            # libraries that expect epoch milliseconds, matching the DataFrame
+            # and export exits of the same ``record_indicator`` call.
+            "timestamp_ms": _timestamp_ms(payload, timestamp_ns),
             "value": _to_float_or_text(payload.get("value")),
             "scale_group": str(payload.get("scale_group", "")),
             "warmup": _to_bool(payload.get("warmup", False)),
@@ -122,10 +141,14 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
     }
     warmup_count = sum(1 for item in items if bool(item.get("warmup", False)))
 
+    timestamp_ns = _to_int(payload.get("timestamp", 0))
     base_message["snapshot"] = {
         "owner_strategy_id": str(payload.get("owner_strategy_id", "")),
         "symbol": _normalize_symbol(payload.get("symbol")),
-        "timestamp": _to_int(payload.get("timestamp", 0)),
+        "timestamp": timestamp_ns,
+        # Milliseconds alongside the nanosecond value, so a snapshot can be fed
+        # straight to a chart library. Items share the snapshot timestamp.
+        "timestamp_ms": _timestamp_ms(payload, timestamp_ns),
         "indicator_count": _to_int(payload.get("indicator_count", len(items))),
         "items": items,
         "indicator_keys": indicator_keys,

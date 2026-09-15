@@ -845,3 +845,161 @@ def test_plot_indicators_renders_reference_lines_without_error() -> None:
     # 参考线以 shapes/hlines 形式存在;断言图对象构建成功且含至少一个横线形状
     shape_ys = [s.y0 for s in fig.layout.shapes] if fig.layout.shapes else []
     assert 70.0 in shape_ys
+
+
+class MillisecondStreamStrategy(Strategy):
+    """Record two indicators per bar so snapshots carry multiple items."""
+
+    def on_bar(self, bar: Bar) -> None:
+        """Record a main-pane line and a sub-pane bar on every bar."""
+        self.record_indicator(name="ms_line", value=bar.close, pane=0)
+        self.record_indicator(
+            name="ms_bar", value=bar.high - bar.low, pane=1, render_type="bar"
+        )
+
+
+def test_stream_bridge_exposes_millisecond_timestamp() -> None:
+    """Bridged point/snapshot messages must expose timestamp_ms like the other exits.
+
+    ``record_indicator`` has three consumption exits — the stream events, the
+    ``indicator_df()`` DataFrame, and ``export_indicators()``. They are required
+    to agree on fields, so ``timestamp_ms`` has to survive the bridge and not
+    only exist on the DataFrame/export side.
+    """
+    events: list[akquant.BacktestStreamEvent] = []
+    run_backtest(
+        data=_build_data(),
+        strategy=MillisecondStreamStrategy,
+        symbols="IND",
+        initial_cash=100000.0,
+        show_progress=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+        on_event=events.append,
+        stream_batch_size=1,
+    )
+
+    messages = to_indicator_messages(events)
+    points = [message for message in messages if message["type"] == "point"]
+    snapshots = [message for message in messages if message["type"] == "snapshot"]
+    assert points, "expected bridged point messages"
+    assert snapshots, "expected bridged snapshot messages"
+
+    for message in points:
+        indicator = message["indicator"]
+        assert "timestamp_ms" in indicator
+        assert indicator["timestamp_ms"] == indicator["timestamp"] // 1_000_000
+
+    for message in snapshots:
+        snapshot = message["snapshot"]
+        assert "timestamp_ms" in snapshot
+        assert snapshot["timestamp_ms"] == snapshot["timestamp"] // 1_000_000
+
+
+def test_stream_bridge_derives_millisecond_timestamp_for_legacy_payloads() -> None:
+    """Payloads without timestamp_ms must derive it instead of reporting zero.
+
+    Third-party ``IndicatorSink`` implementations and events captured before the
+    field existed only carry the nanosecond ``timestamp``.
+    """
+    timestamp_ns = 1_704_189_600_123_456_789
+    point_event = akquant.BacktestStreamEvent(
+        run_id="legacy",
+        seq=1,
+        ts=1,
+        event_type="indicator_point",
+        symbol="IND",
+        level="info",
+        payload={
+            "owner_strategy_id": "_default",
+            "indicator_key": "legacy_point",
+            "display_name": "Legacy Point",
+            "pane": "0",
+            "render_type": "line",
+            "symbol": "IND",
+            "timestamp": str(timestamp_ns),
+            "value": "10.0",
+            "warmup": "false",
+            "meta_json": "{}",
+        },
+    )
+    snapshot_event = akquant.BacktestStreamEvent(
+        run_id="legacy",
+        seq=2,
+        ts=1,
+        event_type="indicator_snapshot",
+        symbol="IND",
+        level="info",
+        payload={
+            "owner_strategy_id": "_default",
+            "symbol": "IND",
+            "timestamp": str(timestamp_ns),
+            "indicator_count": "1",
+            "items_json": json.dumps(
+                [
+                    {
+                        "indicator_key": "legacy_point",
+                        "display_name": "Legacy Point",
+                        "pane": "0",
+                        "render_type": "line",
+                        "value": 10.0,
+                        "warmup": False,
+                        "meta_json": "{}",
+                    }
+                ]
+            ),
+        },
+    )
+
+    point_message = to_indicator_message(point_event)
+    snapshot_message = to_indicator_message(snapshot_event)
+
+    assert point_message is not None
+    assert snapshot_message is not None
+    expected_ms = timestamp_ns // 1_000_000
+    assert point_message["indicator"]["timestamp_ms"] == expected_ms
+    assert snapshot_message["snapshot"]["timestamp_ms"] == expected_ms
+
+
+def test_stream_bridge_prefers_payload_millisecond_timestamp() -> None:
+    """An explicit timestamp_ms in the payload wins over deriving it."""
+    event = akquant.BacktestStreamEvent(
+        run_id="explicit",
+        seq=3,
+        ts=1,
+        event_type="indicator_point",
+        symbol="IND",
+        level="info",
+        payload={
+            "owner_strategy_id": "_default",
+            "indicator_key": "explicit_point",
+            "display_name": "Explicit Point",
+            "pane": "0",
+            "render_type": "line",
+            "symbol": "IND",
+            "timestamp": "1704189600123456789",
+            "timestamp_ms": "1704189600123",
+            "value": "10.0",
+            "warmup": "false",
+            "meta_json": "{}",
+        },
+    )
+
+    message = to_indicator_message(event)
+
+    assert message is not None
+    assert message["indicator"]["timestamp_ms"] == 1_704_189_600_123
+
+
+def test_stream_schema_version_covers_millisecond_timestamp() -> None:
+    """The schema version must be at least 1.2 now that timestamp_ms is emitted.
+
+    ``STREAM_SCHEMA_VERSION`` is how a frontend negotiates optional fields, so a
+    backward-compatible addition to the indicator channel has to bump MINOR —
+    otherwise a consumer cannot tell whether ``timestamp_ms`` is present.
+    """
+    major, _, minor = akquant.STREAM_SCHEMA_VERSION.partition(".")
+    assert (int(major), int(minor)) >= (1, 2), akquant.STREAM_SCHEMA_VERSION

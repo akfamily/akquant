@@ -229,6 +229,34 @@ class IndicatorExportStrategy(Strategy):
         )
 ```
 
+!!! note "关于 `symbol` 归属"
+    每个指标点位都**必然归属于某一个标的**，`symbol` 决定这条指标画在哪只标的的图上。
+
+    省略 `symbol` 时（推荐），自动取当前正在处理的 bar / tick 的标的。多标的回测下，
+    同一句 `record_indicator` 会在每个标的下各自独立记录一条序列——这正是你想要的：
+    每只标的都有自己的 MA5。
+
+    ```python
+    def on_bar(self, bar: Bar) -> None:
+        # 省略 symbol：自动归属 bar.symbol
+        # 多标的回测下，每个标的各得一条独立的 ma5 序列
+        self.record_indicator(name="ma5", value=self.ma5.value, pane=0)
+    ```
+
+    显式传 `symbol` 只在"把指标记到另一个标的名下"时才需要（例如给基准或指数标的
+    记录一条参考线）。注意此时**每个标的的 bar 都会触发一次记录**，若不加条件判断，
+    同一时间戳会被重复写入多条：
+
+    ```python
+    def on_bar(self, bar: Bar) -> None:
+        # 只在主标的的 bar 上记录一次，避免其它标的的 bar 重复触发
+        if bar.symbol == "000300.SH":
+            self.record_indicator(name="bench_ma", value=v, symbol="000300.SH")
+    ```
+
+    既拿不到当前 bar / tick、也没有显式传入时会抛 `ValueError`，不会静默落到某个
+    占位标的上。消费端可依赖"`symbol` 一定非空"这个前提做分组。
+
 !!! note "关于 `pane` 取值"
     `pane` 是**整数行索引**：`0` 表示主图（价格图），`1`..`N` 表示主图下方堆叠的副图。
     省略 `pane` 默认落在主图（`0`）。默认上限 `N` 为 `8`——这是一个基于屏幕可读性的
@@ -378,6 +406,7 @@ def on_event(event):
 - 把数值字段转成更适合前端消费的类型
 - 自动解开 `meta_json` / `items_json`
 - 保留 `run_id`、`seq`、`ts` 等外层流式语义
+- 同时给出 `timestamp`（纳秒）与 `timestamp_ms`（毫秒）两个时间字段
 
 当前 `snapshot` 桥接结果除了 `items` 之外，还会补充几组快捷字段，方便前端减少二次遍历：
 
@@ -391,6 +420,17 @@ def on_event(event):
 
 另外，bridge helper 也会把 `_unknown` / 空 `symbol` 规整为 `None`，并兼容已经预先解码成
 `dict/list` 的 `meta_json` / `items_json` 值，便于网关层做二次封装。
+
+`timestamp_ms` 在 `point` 与 `snapshot` 两种消息上都有，取值与同一次
+`record_indicator` 在 `indicator_df()`、`export_indicators()` 两个出口上的值一致——
+三个出口的字段口径统一，前端不必自己做纳秒到毫秒的换算。若事件来自早期版本或
+第三方 `IndicatorSink`、payload 里只有纳秒 `timestamp`，桥接会自动换算补齐。
+
+!!! tip "用 `schema_version` 协商可选字段"
+    每条消息的信封里都有 `schema_version`（`MAJOR.MINOR`，见 `akquant.STREAM_SCHEMA_VERSION`）。
+    向后兼容的新增字段会升 MINOR，前端据此判断某字段是否存在即可，不必做
+    `try/except` 式的探测。`timestamp_ms` 自 `1.2` 起在指标流上提供；读不到
+    该版本的旧消息时，回落到纳秒 `timestamp` 自行换算。
 
 它不是新的传输层，只是把 AKQuant 的事件结构整理成更稳定的“前端消息对象”。
 
@@ -500,6 +540,11 @@ UV_INDEX_URL=https://pypi.org/simple uv run python examples/64_indicator_live_we
 每个指标点位同时带有 `timestamp`（纳秒）与 `timestamp_ms`（毫秒）两个时间字段：前者供
 Python 侧按纳秒解析，后者可被前端图表库直接使用，无需再做单位换算。指标 `meta` 采用
 `ensure_ascii=False` 序列化，中文等非 ASCII 字符保持可读。
+
+点位的 `symbol` 保证非空（见上文「关于 `symbol` 归属」），因此消费端可直接按
+`symbol` + `indicator_key` 分组，不必处理"无归属"的情形。多标的回测下同名指标会
+按标的拆成多条独立序列，切记按 `symbol` 过滤后再绘制，否则不同标的的同名指标会
+串成一条线。
 
 这三层结构的目的，是让 AKQuant 负责“生产标准化指标数据”，而不是直接耦合某个具体前端图表库。
 
