@@ -489,6 +489,15 @@ class RiskConfig:
                        of a margin account, which is governed independently by
                        ``allow_force_liquidation``. To let a margin account run
                        fully underwater, also set ``allow_force_liquidation=False``.
+
+                       What gets checked is ``max(margin_delta + fees, 0)``, where
+                       ``margin_delta`` is SIGNED. A reducing/closing order releases
+                       margin, so its delta is negative and nets off its own fees —
+                       sells need no cash up front, matching A-share rules where
+                       sell-side fees come out of the net proceeds. A sell whose
+                       fees exceed its proceeds still needs funding and is gated
+                       normally; funding it would overdraft cash, which only
+                       ``check_cash=False`` may do.
     :param safety_margin: Cash buffer to reserve (e.g., 0.0001 to avoid precision
                           issues).
     :param max_order_size: Max quantity per order.

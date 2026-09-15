@@ -443,9 +443,15 @@ impl SimulatedExecutionClient {
                                         ctx.instruments,
                                         stock_margin_ratio_override,
                                     );
-                                let margin_required =
-                                    (next_used_margin - base_used_margin).max(Decimal::ZERO);
-                                let total_required = margin_required + commission;
+                                // Signed: negative when this fill releases margin.
+                                // Clamping it here instead of the sum would drop
+                                // the released funds and leave a reduce-only sell
+                                // demanding its commission in cash up front —
+                                // rejecting sells in a fully-invested account
+                                // (#400). Mirrors risk::common::check_affordability.
+                                let margin_required = next_used_margin - base_used_margin;
+                                let total_required =
+                                    (margin_required + commission).max(Decimal::ZERO);
 
                                 // Execution-time affordability intentionally does
                                 // NOT reuse risk::common::check_affordability: it
@@ -465,7 +471,17 @@ impl SimulatedExecutionClient {
                                 // too. Both auto-resize and rejection are bypassed:
                                 // there is no affordability budget to size against,
                                 // so the order fills in full (#280).
+                                //
+                                // `total_required > 0` is load-bearing, not
+                                // decoration: free margin can legitimately be
+                                // negative (an underwater margin account), and
+                                // without this guard EVERY zero-cost order —
+                                // including the reduce-only sells that are the
+                                // account's only way out — is rejected with the
+                                // nonsensical `Required: 0, Available: -20007`
+                                // and the account stays frozen forever (#400).
                                 if ctx.risk_config.check_cash
+                                    && total_required > Decimal::ZERO
                                     && total_required > current_free_margin
                                 {
                                     if report_order.allow_quantity_auto_resize {
