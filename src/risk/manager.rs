@@ -267,10 +267,15 @@ impl RiskManager {
             // hardcodes `allow_quantity_auto_resize = false` for sells — only
             // directly-constructed orders (e.g. tests) can trigger the execution
             // path. Aligning the two would also require deciding whether resizing
-            // a *reducing/closing* sell is ever correct (it is not — a close
-            // should always be allowed even below the commission budget), which is
-            // a separate concern from cash/margin gating. Left buy-only pending
-            // that design decision; do not "fix" by simply dropping this guard.
+            // a *reducing/closing* sell is ever correct, which is a separate
+            // concern from cash/margin gating. Left buy-only pending that design
+            // decision; do not "fix" by simply dropping this guard.
+            //
+            // A reducing sell no longer reaches here in the first place: its
+            // released margin nets off its own fees, so `required` is zero and the
+            // gate never rejects it (#400). What still reaches here is a sell whose
+            // fees exceed its proceeds — deliberately gated, since funding it would
+            // overdraft cash, and only `check_cash=False` may do that (#280).
             if order.allow_quantity_auto_resize
                 && (err_msg.contains("Insufficient cash")
                     || err_msg.contains("Insufficient margin"))

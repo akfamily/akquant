@@ -205,8 +205,11 @@ impl RiskRule for CashMarginRule {
                 safety_margin,
             )?;
 
-            // Nothing to fund (e.g. a reduce that consumes no margin and carries
-            // no commission): let it through as before.
+            // Nothing to fund: the margin this order releases already covers its
+            // own fees, so they come out of the net proceeds and no cash needs to
+            // be held up front. This is the reduce-only sell path (#400) — a sell
+            // whose fees exceed its proceeds still lands below with a positive
+            // `required` and is gated normally.
             if result.required.is_zero() {
                 return Ok(());
             }
@@ -227,6 +230,13 @@ impl RiskRule for CashMarginRule {
     }
 }
 
+/// Signed margin delta for a stock/fund order in a margin account.
+///
+/// **Negative for a reducing order** — closing a position releases margin. The
+/// sign must survive: clamping it to zero here would drop the released funds and
+/// leave a pure reduce-only sell looking like it needs its commission in cash up
+/// front, which rejects sells in a fully-invested account (#400). Callers clamp
+/// the final `margin_delta + commission` sum instead.
 fn stock_margin_delta(
     order: &Order,
     current_pos: Decimal,
@@ -279,9 +289,11 @@ fn stock_margin_delta(
         "next_gross * initial_margin_ratio",
     )?;
 
-    Ok(checked_sub_or_zero(next_margin, current_margin).max(Decimal::ZERO))
+    Ok(checked_sub_or_zero(next_margin, current_margin))
 }
 
+/// Signed margin delta for any order. See [`stock_margin_delta`] on why the sign
+/// is preserved rather than clamped to zero (#400).
 fn calc_required_margin_delta(
     order: &Order,
     instruments: &HashMap<String, crate::model::Instrument>,
@@ -344,8 +356,7 @@ fn calc_required_margin_delta(
     if next_used == Decimal::MAX {
         return Err(risk_overflow_error(&order.symbol, "next_used_margin"));
     }
-    let delta = checked_sub_or_err(next_used, base_used, &order.symbol, "next_used - base_used")?;
-    Ok(delta.max(Decimal::ZERO))
+    checked_sub_or_err(next_used, base_used, &order.symbol, "next_used - base_used")
 }
 
 /// Outcome of a unified affordability check. Single source of truth for
@@ -353,7 +364,9 @@ fn calc_required_margin_delta(
 /// execution-time margin checks (issue #292).
 #[derive(Debug, Clone)]
 pub(crate) struct AffordabilityResult {
-    /// Margin delta this order consumes plus commission.
+    /// Cash/margin this order must be able to fund: its signed margin delta plus
+    /// commission, floored at zero. Zero for a reducing order whose released
+    /// margin already covers its own fees (#400).
     pub required: Decimal,
     /// Free margin available after projecting pending orders, net of the
     /// caller-supplied safety haircut.
@@ -423,7 +436,10 @@ pub(crate) fn project_active_orders_into(
 /// - `market_model`: used to compute the order's commission, which is folded
 ///   into `required` (both submission and execution include it). Commission is
 ///   computed after the checked margin delta so absurd inputs surface as a
-///   graceful margin-overflow error rather than a panic.
+///   graceful margin-overflow error rather than a panic. The margin delta is
+///   SIGNED, so a reducing order's released margin nets the commission off
+///   before the sum is clamped — fees on a reduce come out of the proceeds
+///   rather than being demanded in cash up front (#400).
 /// - `safety_margin`: applied as `(1 - safety_margin)` to available margin —
 ///   submission passes `config.safety_margin`, execution passes `0` (the fill
 ///   price and commission are already real, so no buffer is warranted).
@@ -717,5 +733,138 @@ mod tests {
             ..ctx
         };
         assert!(rule.check(&buy, &ctx_no_sell).is_err());
+    }
+
+    /// A-share sell fees (commission + stamp tax + transfer fee) so a sell's
+    /// fees can exceed the cash left after a full-position buy.
+    fn fee_market_model() -> &'static dyn crate::market::MarketModel {
+        use crate::market::{SimpleMarket, SimpleMarketConfig};
+        Box::leak(Box::new(SimpleMarket::from_config(SimpleMarketConfig {
+            commission_rate: dec!(0.0003),
+            stamp_tax: dec!(0.001),
+            transfer_fee: dec!(0.00002),
+            min_commission: dec!(5),
+            ..SimpleMarketConfig::default()
+        })))
+    }
+
+    #[test]
+    fn reduce_only_sell_passes_when_proceeds_cover_fees_cash_account() {
+        // Issue #400: fully invested cash account, 68 yuan left. Selling the
+        // whole 100k position costs 132 in fees but releases 100k of cash, so
+        // the fees come out of the net proceeds — the sell must not be gated on
+        // pre-fill cash.
+        let mut instruments = HashMap::new();
+        instruments.insert("600000".to_string(), create_stock_instrument("600000"));
+        let mut prices = HashMap::new();
+        prices.insert("600000".to_string(), dec!(10));
+
+        let mut positions = HashMap::new();
+        positions.insert("600000".to_string(), dec!(10000));
+        let portfolio = Portfolio {
+            cash: dec!(68),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let config = RiskConfig::new();
+        let tracker = crate::analysis::TradeTracker::new();
+        let instrument_ref = instruments.get("600000").unwrap();
+        let ctx = RiskCheckContext {
+            portfolio: &portfolio,
+            instrument: instrument_ref,
+            instruments: &instruments,
+            active_orders: &[],
+            current_prices: &prices,
+            trade_tracker: &tracker,
+            market_model: fee_market_model(),
+            current_time: 0,
+            config: &config,
+            timezone_name: None,
+            timezone_offset: 0,
+        };
+
+        let sell = create_order("600000", OrderSide::Sell, dec!(10000), dec!(10));
+        assert!(CashMarginRule.check(&sell, &ctx).is_ok());
+    }
+
+    #[test]
+    fn reduce_only_sell_passes_in_margin_account_when_free_margin_is_negative() {
+        // Same defect on the margin-account code path (`stock_margin_delta`),
+        // which a cash account never reaches. The position is underwater so free
+        // margin is tiny, yet closing it releases margin rather than consuming
+        // any — the sell must be allowed (#400).
+        let mut instruments = HashMap::new();
+        instruments.insert("600000".to_string(), create_stock_instrument("600000"));
+        let mut prices = HashMap::new();
+        prices.insert("600000".to_string(), dec!(10));
+
+        let mut positions = HashMap::new();
+        positions.insert("600000".to_string(), dec!(20000));
+        let portfolio = Portfolio {
+            cash: dec!(-99900),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut config = RiskConfig::new();
+        config.account_mode = "margin".to_string();
+        config.initial_margin_ratio = 0.5;
+        let tracker = crate::analysis::TradeTracker::new();
+        let instrument_ref = instruments.get("600000").unwrap();
+        let ctx = RiskCheckContext {
+            portfolio: &portfolio,
+            instrument: instrument_ref,
+            instruments: &instruments,
+            active_orders: &[],
+            current_prices: &prices,
+            trade_tracker: &tracker,
+            market_model: fee_market_model(),
+            current_time: 0,
+            config: &config,
+            timezone_name: None,
+            timezone_offset: 0,
+        };
+
+        let sell = create_order("600000", OrderSide::Sell, dec!(20000), dec!(10));
+        assert!(CashMarginRule.check(&sell, &ctx).is_ok());
+    }
+
+    #[test]
+    fn reduce_only_sell_still_rejected_when_fees_exceed_proceeds() {
+        // The relief is "fees come out of the net proceeds", NOT "a close is
+        // always allowed": when the proceeds cannot cover the fees the order
+        // still needs funding, and letting it through would overdraft cash —
+        // which only `check_cash=False` may do (#280).
+        let mut instruments = HashMap::new();
+        instruments.insert("600000".to_string(), create_stock_instrument("600000"));
+        let mut prices = HashMap::new();
+        prices.insert("600000".to_string(), dec!(0.01));
+
+        let mut positions = HashMap::new();
+        positions.insert("600000".to_string(), dec!(100));
+        let portfolio = Portfolio {
+            cash: Decimal::ZERO,
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let config = RiskConfig::new();
+        let tracker = crate::analysis::TradeTracker::new();
+        let instrument_ref = instruments.get("600000").unwrap();
+        let ctx = RiskCheckContext {
+            portfolio: &portfolio,
+            instrument: instrument_ref,
+            instruments: &instruments,
+            active_orders: &[],
+            current_prices: &prices,
+            trade_tracker: &tracker,
+            market_model: fee_market_model(),
+            current_time: 0,
+            config: &config,
+            timezone_name: None,
+            timezone_offset: 0,
+        };
+
+        // Proceeds 1 yuan vs >5 yuan of fees (min_commission dominates).
+        let sell = create_order("600000", OrderSide::Sell, dec!(100), dec!(0.01));
+        assert!(CashMarginRule.check(&sell, &ctx).is_err());
     }
 }
