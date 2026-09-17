@@ -1,0 +1,18 @@
+<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Center the group. Original content width ~65, height ~80 (including top circle) -->
+  <g transform="translate(17, 25)">
+    <!-- Bar 1: Low (Foundation/Data - Rust Color) -->
+    <rect x="0" y="40" width="15" height="30" rx="4" fill="#CE412B" />
+
+    <!-- Bar 2: Mid (Processing/Strategy - Blend) -->
+    <rect x="25" y="20" width="15" height="50" rx="4" fill="#BE5C60" />
+
+    <!-- Bar 3: High (Alpha/Profit - Python Color) -->
+    <rect x="50" y="0" width="15" height="70" rx="4" fill="#3776AB" />
+
+    <!-- Abstract Data Dots -->
+    <circle cx="7" cy="30" r="2" fill="#CE412B" />
+    <circle cx="32" cy="10" r="2" fill="#BE5C60" />
+    <circle cx="57" cy="-10" r="2" fill="#3776AB" />
+  </g>
+</svg>

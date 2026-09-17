@@ -1,0 +1,3255 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/textbook/16_rust_indicators/">
+      
+      
+        <link rel="prev" href="../15_live_trading/">
+      
+      
+        <link rel="next" href="../capstone/">
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/textbook/16_rust_indicators/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>第16章：AKQuant 技术指标体系与应用 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#16-akquant" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              第16章：AKQuant 技术指标体系与应用
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/textbook/16_rust_indicators/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    量化教材
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程简介
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../00_glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    术语表与符号约定
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第一部分：基础篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第一部分：基础篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../01_foundations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第1章：量化投资概述与环境搭建
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02_programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第2章：量化编程基础
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../03_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第3章：金融数据获取与处理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第二部分：引擎篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第二部分：引擎篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../04_backtest_engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第4章：事件驱动回测原理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../05_strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第5章：策略开发实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第三部分：策略篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第三部分：策略篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06_stock_a/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第6章：A 股市场微观结构与策略实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../07_futures/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第7章：期货市场与衍生品策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第8章：期权定价与波动率策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../09_funds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第9章：基金投资与资产配置理论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第四部分：高阶篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第四部分：高阶篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../10_analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第10章：策略评价体系与风险指标
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../11_optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第11章：参数优化与稳健性检验
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../12_ml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第12章：机器学习在量化中的应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../13_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第13章：策略可视化与报表分析
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../14_factor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第14章：高性能因子挖掘与表达式引擎
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_7" id="__nav_2_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第五部分：实盘篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第五部分：实盘篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../15_live_trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第15章：实盘交易系统与运维
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_8" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_8" id="__nav_2_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第六部分：指标工程篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第六部分：指标工程篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第16章：AKQuant 技术指标体系与应用
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第16章：AKQuant 技术指标体系与应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#161-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.1 为什么单独学习 Rust 指标体系
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#162-103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.2 全量覆盖范围（当前 103 个）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#163" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.3 学会“读指标”的统一方法
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="16.3 学会“读指标”的统一方法">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1631" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.3.1 输入结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1632" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.3.2 输出结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1633-warmup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.3.3 warmup 不是小细节
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#164" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4 五大类指标怎么教、怎么用
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="16.4 五大类指标怎么教、怎么用">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1641" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.1 趋势类：先判断方向，再过滤强度
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1642" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.2 动量类：捕捉变化速度与过热过冷
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1643" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.3 波动率类：先定风险尺度，再谈仓位
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1644" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.4 量价类：确认而不是替代主信号
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1645" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.5 数学变换类：为特征工程做准备
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#165" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.5 三个最常见的工程坑位
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="16.5 三个最常见的工程坑位">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1651-warmup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.5.1 warmup 区段误用
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1652" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.5.2 多输出解包顺序错误
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1653-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.5.3 迁移时直接切 Rust
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#166" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.6 标准教学脚手架
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#167" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.7 三类推荐实验
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="16.7 三类推荐实验">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1671-ema-adx-natr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.7.1 趋势实验：EMA + ADX + NATR
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1672-bbands-rsi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.7.2 震荡实验：BBANDS + RSI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1673-python-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.7.3 迁移实验：python -&gt; rust
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#168" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.8 推荐教学路径
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程项目：端到端实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_10" id="__nav_2_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    附录
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 A：环境与复现
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_cite/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 B：引用、许可与勘误
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_pitfalls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 C：常见误区对照表
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/python_basics/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#161-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.1 为什么单独学习 Rust 指标体系
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#162-103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.2 全量覆盖范围（当前 103 个）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#163" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.3 学会“读指标”的统一方法
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="16.3 学会“读指标”的统一方法">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1631" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.3.1 输入结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1632" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.3.2 输出结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1633-warmup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.3.3 warmup 不是小细节
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#164" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4 五大类指标怎么教、怎么用
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="16.4 五大类指标怎么教、怎么用">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1641" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.1 趋势类：先判断方向，再过滤强度
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1642" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.2 动量类：捕捉变化速度与过热过冷
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1643" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.3 波动率类：先定风险尺度，再谈仓位
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1644" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.4 量价类：确认而不是替代主信号
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1645" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.4.5 数学变换类：为特征工程做准备
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#165" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.5 三个最常见的工程坑位
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="16.5 三个最常见的工程坑位">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1651-warmup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.5.1 warmup 区段误用
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1652" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.5.2 多输出解包顺序错误
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1653-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.5.3 迁移时直接切 Rust
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#166" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.6 标准教学脚手架
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#167" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.7 三类推荐实验
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="16.7 三类推荐实验">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1671-ema-adx-natr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.7.1 趋势实验：EMA + ADX + NATR
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1672-bbands-rsi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.7.2 震荡实验：BBANDS + RSI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1673-python-rust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.7.3 迁移实验：python -&gt; rust
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#168" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16.8 推荐教学路径
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="导航栏" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    首页
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    量化教材
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="./" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    第六部分：指标工程篇
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="16-akquant">第 16 章：AKQuant 技术指标体系与应用<a class="headerlink" href="#16-akquant" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>⏱️ 预计阅读 ~20 分钟 ｜ 🎯 难度 ★★★☆☆（进阶）</p>
+</blockquote>
+<p>在前面的章节中，我们已经学习了数据、回测、策略、分析与实盘主线。本章把视角重新拉回策略内部最常用的一类工具：<strong>技术指标 (Indicators)</strong>。与“知道某个指标名字”相比，更重要的是学会把指标当作<strong>可迁移、可验证、可工程化复用</strong>的组件来使用。</p>
+<h2 id="_1">学习目标<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li>理解 AKQuant Rust 指标体系的使用边界，以及 <code>python -&gt; rust</code> 迁移的推荐路径。</li>
+<li>掌握指标输入、输出、warmup 与多输出解包的统一阅读方法。</li>
+<li>能将趋势、动量、波动率、量价指标组合成最小可复现实验。</li>
+</ul>
+<h2 id="_2">前置知识<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li>已掌握第 5 章中的策略开发基础，知道指标会被放进什么样的交易逻辑中。</li>
+<li>已掌握第 10 章中的结果分析方法，能够解释指标变化如何影响策略表现。</li>
+</ul>
+<h2 id="_3">本章实践入口<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<ul>
+<li>主示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators.py">examples/textbook/ch16_indicators.py</a></li>
+<li>进阶示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py">examples/45_talib_indicator_playbook_demo.py</a>, <a href="https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py">examples/60_custom_indicator_demo.py</a>, <a href="https://github.com/akfamily/akquant/blob/main/examples/62_indicator_streaming_demo.py">examples/62_indicator_streaming_demo.py</a>, <a href="https://github.com/akfamily/akquant/blob/main/examples/61_indicator_visualization_export_demo.py">examples/61_indicator_visualization_export_demo.py</a></li>
+<li>函数式孪生示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators_functional.py">examples/textbook/ch16_indicators_functional.py</a></li>
+<li>对应指南：<a href="../../guide/rust_indicator_reference/">AKQuant 指标全量说明</a></li>
+</ul>
+<h2 id="_4">快速运行与验收<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>examples/textbook/ch16_indicators.py
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>examples/textbook/ch16_indicators_functional.py
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># 可选：接入真实 A 股数据</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>python<span class="w"> </span>examples/textbook/ch16_indicators.py<span class="w"> </span>--symbol<span class="w"> </span>sh600000
+</span></code></pre></div>
+<p>验收要点：</p>
+<ol>
+<li>脚本依次输出三课演示：读指标（输入/输出/warmup）、用指标（EMA+ADX+NATR 角色分工回测）、迁移指标（python/rust 后端对齐）。</li>
+<li>切换 <code>backend="python"</code> 与 <code>backend="rust"</code> 后，收敛尾段数值基本一致且可解释。</li>
+<li>能识别 warmup 导致的空值区段，并在计算指标前剔除前部 NaN 填充，避免把无效值喂给策略信号。</li>
+</ol>
+<h2 id="161-rust">16.1 为什么单独学习 Rust 指标体系<a class="headerlink" href="#161-rust" title="Permanent link">&para;</a></h2>
+<p>AKQuant 的指标接口并不只是“换一个更快的 TA-Lib 后端”。它更像一个统一层：</p>
+<ol>
+<li><strong>接口统一</strong>：同一套函数签名可切换 <code>backend="python"</code> 与 <code>backend="rust"</code>。</li>
+<li><strong>迁移友好</strong>：你可以先让旧策略在 Python 后端上对齐，再切换到 Rust 后端提速。</li>
+<li><strong>工程化复用</strong>：指标可以作为主信号、过滤器、风控尺度，甚至可视化与特征工程输入。</li>
+</ol>
+<p>因此，本章关注的不是“把 103 个指标背下来”，而是学会三件真正重要的事：</p>
+<ul>
+<li>指标<strong>吃什么输入</strong>；</li>
+<li>指标<strong>吐什么输出</strong>；</li>
+<li>指标在前若干根 K 线上的 <strong>warmup 行为</strong>是什么。</li>
+</ul>
+<h2 id="162-103">16.2 全量覆盖范围（当前 103 个）<a class="headerlink" href="#162-103" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Momentum：8 个</li>
+<li>Moving Average &amp; Transforms：59 个</li>
+<li>Trend：20 个</li>
+<li>Volatility：11 个</li>
+<li>Volume：5 个</li>
+</ul>
+<p>完整逐项解释、参数口径与返回说明请始终以参考页为准：</p>
+<ul>
+<li><a href="../../guide/rust_indicator_reference/">Rust 指标全量说明（103 个）</a></li>
+</ul>
+<p>这意味着本章的定位不是“把字典搬进正文”，而是帮你建立<strong>读指标、选指标、迁移指标</strong>的方法。</p>
+<h2 id="163">16.3 学会“读指标”的统一方法<a class="headerlink" href="#163" title="Permanent link">&para;</a></h2>
+<p>无论你看到的是 <code>EMA</code>、<code>MACD</code> 还是 <code>ATR</code>，都建议按同一模板理解：</p>
+<ol>
+<li><strong>输入是什么</strong>：是 <code>close</code>，还是 <code>high, low, close</code>，还是需要 <code>volume</code>。</li>
+<li><strong>输出是什么</strong>：返回单序列、双序列还是三序列。</li>
+<li><strong>warmup 多长</strong>：前多少根 K 线不能直接用于交易判断。</li>
+<li><strong>策略角色是什么</strong>：主信号、过滤器、风控尺度，还是确认信号。</li>
+</ol>
+<h3 id="1631">16.3.1 输入结构<a class="headerlink" href="#1631" title="Permanent link">&para;</a></h3>
+<p>最常见的输入结构有三类：</p>
+<ul>
+<li><strong>单输入</strong>：例如 <code>EMA(close)</code>、<code>RSI(close)</code>。</li>
+<li><strong>三输入</strong>：例如 <code>ATR(high, low, close)</code>、<code>ADX(high, low, close)</code>。</li>
+<li><strong>四输入</strong>：少数量价指标还会显式使用 <code>volume</code>。</li>
+</ul>
+<p>如果输入结构看错，后面的结果解释几乎一定会偏掉。</p>
+<h3 id="1632">16.3.2 输出结构<a class="headerlink" href="#1632" title="Permanent link">&para;</a></h3>
+<p>指标的输出并不总是“一列数字”。</p>
+<ul>
+<li><strong>单输出</strong>：<code>EMA</code>、<code>RSI</code>、<code>ATR</code></li>
+<li><strong>双输出</strong>：<code>AROON</code></li>
+<li><strong>三输出</strong>：<code>MACD</code>、<code>BollingerBands</code>、<code>STOCH</code></li>
+</ul>
+<p>因此，多输出指标不能只记名字，还要记<strong>解包顺序</strong>。</p>
+<h3 id="1633-warmup">16.3.3 warmup 不是小细节<a class="headerlink" href="#1633-warmup" title="Permanent link">&para;</a></h3>
+<p>指标在窗口未满时，结果往往是空值或不稳定值。对策略开发而言，这不是边缘问题，而是最常见的误用来源之一。</p>
+<p>如果你在 warmup 阶段就直接发出交易信号，往往会出现两类假象：</p>
+<ol>
+<li>回测“看起来能跑”，但信号并不可靠；</li>
+<li>Python 与 Rust 后端的对齐误差被误判成实现错误。</li>
+</ol>
+<h2 id="164">16.4 五大类指标怎么教、怎么用<a class="headerlink" href="#164" title="Permanent link">&para;</a></h2>
+<h3 id="1641">16.4.1 趋势类：先判断方向，再过滤强度<a class="headerlink" href="#1641" title="Permanent link">&para;</a></h3>
+<ul>
+<li>方向判别：<code>EMA</code> / <code>SMA</code> / <code>TEMA</code> / <code>KAMA</code> / <code>SAR</code></li>
+<li>强度过滤：<code>ADX</code> / <code>ADXR</code> / <code>DX</code></li>
+<li>典型组合：<code>EMA + ADX + NATR</code></li>
+</ul>
+<p>教学上可以先让学生完成一件最小任务：<strong>均线给方向，ADX 过滤弱趋势，NATR 控制仓位尺度</strong>。这样一来，趋势、强度、风险三个角色都被引入了。</p>
+<h3 id="1642">16.4.2 动量类：捕捉变化速度与过热过冷<a class="headerlink" href="#1642" title="Permanent link">&para;</a></h3>
+<ul>
+<li>速度/斜率：<code>ROC</code> / <code>ROCP</code> / <code>ROCR</code> / <code>ROCR100</code> / <code>MOM</code></li>
+<li>过热过冷：<code>RSI</code> / <code>CMO</code> / <code>WILLR</code></li>
+<li>典型组合：<code>BBANDS + RSI + MOM</code></li>
+</ul>
+<p>动量类指标最容易出现的问题是“只看信号方向，不看市场状态”。把它与波动率或趋势过滤器联用，通常比单独使用更稳。</p>
+<h3 id="1643">16.4.3 波动率类：先定风险尺度，再谈仓位<a class="headerlink" href="#1643" title="Permanent link">&para;</a></h3>
+<ul>
+<li>范围与波动：<code>ATR</code> / <code>NATR</code> / <code>TRANGE</code> / <code>STDDEV</code> / <code>VAR</code></li>
+<li>通道类：<code>BollingerBands</code></li>
+<li>价格派生：<code>MEDPRICE</code> / <code>TYPPRICE</code> / <code>WCLPRICE</code> / <code>AVGPRICE</code> / <code>MIDPRICE</code></li>
+</ul>
+<p>波动率类指标特别适合做两类任务：</p>
+<ol>
+<li>给止损、止盈、移动保护定义动态阈值；</li>
+<li>把“行情变快了”这件事转化为可量化的仓位调整规则。</li>
+</ol>
+<h3 id="1644">16.4.4 量价类：确认而不是替代主信号<a class="headerlink" href="#1644" title="Permanent link">&para;</a></h3>
+<ul>
+<li>趋势确认：<code>OBV</code> / <code>AD</code></li>
+<li>动量确认：<code>MFI</code> / <code>ADOSC</code></li>
+<li>K 线力量：<code>BOP</code></li>
+</ul>
+<p>量价类指标常见的正确用法是“做确认层”，而不是直接替代价格主信号。这样更容易解释，也更适合教学。</p>
+<h3 id="1645">16.4.5 数学变换类：为特征工程做准备<a class="headerlink" href="#1645" title="Permanent link">&para;</a></h3>
+<ul>
+<li>对数/指数：<code>LN</code> / <code>LOG10</code> / <code>LOG1P</code> / <code>EXP</code> / <code>EXPM1</code></li>
+<li>三角与双曲：<code>SIN</code> / <code>COS</code> / <code>TAN</code> / <code>ASIN</code> / <code>ACOS</code> / <code>ATAN</code> / <code>SINH</code> / <code>COSH</code> / <code>TANH</code></li>
+<li>代数运算：<code>ADD</code> / <code>SUB</code> / <code>MULT</code> / <code>DIV</code> / <code>MOD</code> / <code>POW</code> / <code>MAX2</code> / <code>MIN2</code></li>
+<li>规整变换：<code>ABS</code> / <code>SIGN</code> / <code>ROUND</code> / <code>CLIP</code> / <code>CLAMP01</code> / <code>SQ</code> / <code>CUBE</code> / <code>RECIP</code> / <code>INV_SQRT</code> / <code>DEG2RAD</code></li>
+</ul>
+<p>这一类指标在传统技术分析里不一定显眼，但在第 12 章和第 14 章那种“把信号送入模型或表达式引擎”的任务里很有价值。</p>
+<h2 id="165">16.5 三个最常见的工程坑位<a class="headerlink" href="#165" title="Permanent link">&para;</a></h2>
+<h3 id="1651-warmup">16.5.1 warmup 区段误用<a class="headerlink" href="#1651-warmup" title="Permanent link">&para;</a></h3>
+<ul>
+<li>窗口不足时的结果不能直接拿来发单。</li>
+<li>教学示例和作业里应明确要求先做空值过滤。</li>
+</ul>
+<h3 id="1652">16.5.2 多输出解包顺序错误<a class="headerlink" href="#1652" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>MACD -&gt; (macd, signal, hist)</code></li>
+<li><code>BollingerBands -&gt; (upper, middle, lower)</code></li>
+<li><code>STOCH -&gt; (slowk, slowd)</code></li>
+<li><code>AROON -&gt; (aroondown, aroonup)</code></li>
+</ul>
+<p>如果顺序拿错，结果通常不会报错，但策略语义会悄悄失真，这比直接报错更危险。</p>
+<h3 id="1653-rust">16.5.3 迁移时直接切 Rust<a class="headerlink" href="#1653-rust" title="Permanent link">&para;</a></h3>
+<p>推荐流程不是“一上来就换 Rust”，而是：</p>
+<ol>
+<li>先用 <code>backend="python"</code> 与旧策略结果对齐；</li>
+<li>再切到 <code>backend="rust"</code> 观察数值与绩效差异；</li>
+<li>最后再做性能与大规模批量实验。</li>
+</ol>
+<h2 id="166">16.6 标准教学脚手架<a class="headerlink" href="#166" title="Permanent link">&para;</a></h2>
+<p>下面这段脚手架适合直接放进实验课，用于演示“同一套输入上并行计算多类指标”的最小流程：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">talib</span> <span class="k">as</span> <span class="n">ta</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">close</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"close"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">high</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"high"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">low</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"low"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">volume</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"volume"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">ema_fast</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ta</span><span class="o">.</span><span class="n">EMA</span><span class="p">(</span><span class="n">close</span><span class="p">,</span> <span class="n">timeperiod</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"rust"</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="n">ema_slow</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ta</span><span class="o">.</span><span class="n">EMA</span><span class="p">(</span><span class="n">close</span><span class="p">,</span> <span class="n">timeperiod</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"rust"</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">adx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ta</span><span class="o">.</span><span class="n">ADX</span><span class="p">(</span><span class="n">high</span><span class="p">,</span> <span class="n">low</span><span class="p">,</span> <span class="n">close</span><span class="p">,</span> <span class="n">timeperiod</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"rust"</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">natr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ta</span><span class="o">.</span><span class="n">NATR</span><span class="p">(</span><span class="n">high</span><span class="p">,</span> <span class="n">low</span><span class="p">,</span> <span class="n">close</span><span class="p">,</span> <span class="n">timeperiod</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"rust"</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">rsi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">ta</span><span class="o">.</span><span class="n">RSI</span><span class="p">(</span><span class="n">close</span><span class="p">,</span> <span class="n">timeperiod</span><span class="o">=</span><span class="mi">14</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"rust"</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="c1"># warmup 区段不可直接参与信号判断</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">isnan</span><span class="p">([</span><span class="n">ema_fast</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">ema_slow</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">adx</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">natr</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">rsi</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]])</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="k">return</span>
+</span></code></pre></div>
+<p>你可以把这段模板理解为一个最小实验台：</p>
+<ul>
+<li><code>EMA</code> 负责方向；</li>
+<li><code>ADX</code> 负责强度；</li>
+<li><code>NATR</code> 负责风险尺度；</li>
+<li><code>RSI</code> 负责状态确认。</li>
+</ul>
+<h2 id="167">16.7 三类推荐实验<a class="headerlink" href="#167" title="Permanent link">&para;</a></h2>
+<h3 id="1671-ema-adx-natr">16.7.1 趋势实验：<code>EMA + ADX + NATR</code><a class="headerlink" href="#1671-ema-adx-natr" title="Permanent link">&para;</a></h3>
+<p>目标：构建一套最小趋势框架。</p>
+<ul>
+<li><code>EMA(20)</code> 与 <code>EMA(60)</code> 判断方向；</li>
+<li><code>ADX(14)</code> 过滤掉趋势强度过弱的区间；</li>
+<li><code>NATR(14)</code> 用于决定仓位大小或止损距离。</li>
+</ul>
+<p>这一实验最适合作为“指标不是堆砌，而是角色分工”的第一课。</p>
+<h3 id="1672-bbands-rsi">16.7.2 震荡实验：<code>BBANDS + RSI</code><a class="headerlink" href="#1672-bbands-rsi" title="Permanent link">&para;</a></h3>
+<p>目标：理解区间震荡与过热过冷。</p>
+<ul>
+<li><code>BollingerBands</code> 给出上下轨；</li>
+<li><code>RSI</code> 确认是否进入超买/超卖区域；</li>
+<li>观察单独使用与联合使用时的信号差异。</li>
+</ul>
+<h3 id="1673-python-rust">16.7.3 迁移实验：<code>python -&gt; rust</code><a class="headerlink" href="#1673-python-rust" title="Permanent link">&para;</a></h3>
+<p>目标：验证迁移流程，而不是直接追求更快。</p>
+<p>建议步骤：</p>
+<ol>
+<li>先固定参数与数据集；</li>
+<li>用 <code>backend="python"</code> 记录一份基线结果；</li>
+<li>切到 <code>backend="rust"</code> 对比数值、信号点位与最终绩效；</li>
+<li>仅在结果口径一致后再讨论性能收益。</li>
+</ol>
+<h2 id="168">16.8 推荐教学路径<a class="headerlink" href="#168" title="Permanent link">&para;</a></h2>
+<ol>
+<li>第 1 周：先教 <code>EMA</code> / <code>RSI</code> / <code>ATR</code> 的输入、输出与 warmup。</li>
+<li>第 2 周：加入 <code>MACD</code> / <code>BBANDS</code> / <code>STOCH</code> 的多输出处理。</li>
+<li>第 3 周：引入 <code>ADX</code> / <code>NATR</code> / <code>SAR</code> 做风险过滤。</li>
+<li>第 4 周：做一次 <code>python -&gt; rust</code> 迁移实验与回归验证。</li>
+<li>第 5 周：把数学变换类指标接入简单特征工程实验。</li>
+</ol>
+<h2 id="_5">本章小结<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h3 id="_6">必须掌握<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Rust 指标体系已经覆盖策略开发中最常用的核心技术面能力。</li>
+<li>真正决定教学效果的不是指标数量，而是输入、输出、warmup 与角色分工的结构化理解。</li>
+</ul>
+<h3 id="_7">理解即可<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>数学变换类指标、流式指标处理与自定义指标开发，是从技术分析过渡到特征工程的重要桥梁。</li>
+</ul>
+<h3 id="_8">实践提醒<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>做指标迁移时先对齐结果，再切后端提速。</li>
+<li>完整指标字典、参数说明与返回结构请始终以参考页为准：<a href="../../guide/rust_indicator_reference/">Rust 指标全量说明（103 个）</a>。</li>
+</ul>
+<h2 id="_9">主线推进<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
+<p>贯穿全书的那条最小多均线 / 趋势策略，在本章被反过来拆解成它最底层的零件——技术指标，并被纳入一套可迁移、可验证、可工程化复用的使用规范。前面各章里，均线只是“一根线穿过价格”的直觉；本章则要求把它当作有明确输入、输出与 warmup 行为的组件来对待：<code>EMA</code> 负责给方向，<code>ADX</code> 负责过滤弱趋势，<code>NATR</code> 负责把仓位与止损放回波动率尺度上，三者各司其职，正是“指标不是堆砌，而是角色分工”的最小示范。更关键的是，本章为这条主线补上了从 Python 后端到 Rust 后端的迁移纪律：先用 <code>backend="python"</code> 与既有结果对齐，再切到 <code>backend="rust"</code> 比对数值、信号点位与绩效，最后才谈性能与批量提速。至此，主线策略不再依赖某一处临时写就的指标计算，而是站在一个统一、可复现、可加速的指标工程层之上——这也为全书从研究走向准实盘、再走向规模化实验，留下了可靠的复用基座。</p>
+<h2 id="_10">延伸阅读<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<p><strong>经典著作</strong></p>
+<ul>
+<li>Kaufman, P. J. <em>Trading Systems and Methods</em>（第 6 版），John Wiley &amp; Sons, 2019（ISBN 9781119605355）—— 交易系统与技术指标的权威工具书，系统覆盖移动平均、ATR、布林带、MACD、动量振荡器与趋势系统的数学口径与风险用法，可作为本章 16.4「五大类指标」逐项含义与组合方式的纸面参照。</li>
+<li>Murphy, J. J. <em>Technical Analysis of the Financial Markets</em>，New York Institute of Finance, 1999 —— 技术分析的标准教科书，对趋势、动量、波动率与量价四类指标的市场含义有完整阐述，呼应本章 16.4.1–16.4.4 关于「指标承担什么角色」的讨论。</li>
+<li>Pardo, R. <em>The Evaluation and Optimization of Trading Strategies</em>（第 2 版），John Wiley &amp; Sons, 2008 —— 强调先固定数据与参数、再做基线对齐与回归验证的严谨流程，与本章 16.5.3、16.7.3 提出的「先对齐结果、再切后端提速」迁移纪律一脉相承。</li>
+</ul>
+<p><strong>官方文档与工具</strong></p>
+<ul>
+<li><a href="../../guide/rust_indicator_reference/">AKQuant 指标全量说明（103 个）</a> —— 本章正文反复强调的权威参考页，给出全部指标的输入、输出、参数口径与返回结构，对应本章 16.2 的覆盖范围与 16.3 的「读指标」方法。</li>
+<li><a href="https://ta-lib.org/functions/">TA-Lib Functions List</a> —— TA-Lib 官方函数清单，逐一列出 ADX、MACD、BBANDS、ATR、OBV 等全部指标及其英文全称，可对照本章 16.4 的五大类划分与 16.4.5 的数学变换类。</li>
+<li><a href="https://ta-lib.github.io/ta-lib-python/">TA-Lib Python 文档</a> —— TA-Lib 的 Python 封装文档，说明函数返回数组、lookback（warmup）区段会以 NaN 填充等行为，呼应本章 16.3.3 与 16.5.1 对 warmup 空值的处理要求。</li>
+</ul>
+<p><strong>本书相关</strong></p>
+<ul>
+<li><a href="../05_strategy/">第 5 章：策略开发实战</a> —— 本章 16.4 各指标最终要放进第 5 章那样的事件驱动策略类里承担主信号、过滤器或风控尺度的角色。</li>
+<li><a href="../10_analysis/">第 10 章：策略评价体系与风险指标</a> —— 本章 16.7.3 的 <code>python -&gt; rust</code> 迁移实验，最终要靠第 10 章的数值、信号点位与绩效对比来判定口径是否一致。</li>
+<li><a href="../14_factor/">第 14 章：高性能因子挖掘与表达式引擎</a> —— 本章 16.4.5 的数学变换类指标，正是把信号送入第 14 章那种因子表达式与模型流程时的常用预处理算子。</li>
+</ul>
+<h2 id="_11">课后练习<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
+<h3 id="_12">基础题<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
+<ol>
+<li>任选 <code>EMA</code>、<code>RSI</code>、<code>ATR</code> 三个指标，写出它们各自的输入、输出和 warmup 口径。</li>
+</ol>
+<h3 id="_13">应用题<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h3>
+<ol>
+<li>用 <code>EMA + ADX + NATR</code> 设计一个最小趋势策略过滤框架，并解释每个指标承担的角色。</li>
+</ol>
+<h3 id="_14">综合题<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
+<ol>
+<li>对同一数据集分别运行 <code>backend="python"</code> 与 <code>backend="rust"</code>，比较数值、信号点位与回测结果差异，并写出迁移结论。</li>
+</ol>
+<details class="note">
+<summary>参考答案要点（先独立思考再展开）</summary>
+<p><strong>基础题</strong>：<code>EMA(close)</code> 单输入单输出，warmup ≈ <code>timeperiod-1</code>；<code>RSI(close)</code> 单输入单输出，warmup ≈ <code>timeperiod</code>；<code>ATR(high, low, close)</code> 三输入单输出，warmup ≈ <code>timeperiod</code>。</p>
+<p><strong>应用题</strong>：EMA 给方向、ADX 过滤弱趋势、NATR 定风险尺度（决定仓位大小或止损宽度）——三者角色分工，而非指标堆砌。</p>
+<p><strong>综合题</strong>：EMA 这类简单递推指标全程基本一致；RSI/ADX/NATR 这类 Wilder 平滑指标在 warmup 区段有初值差异、收敛尾段趋于一致。结论：先用 python 后端对齐基线，再切 rust 提速。</p>
+</details>
+<h2 id="_15">常见错误与排查<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h2>
+<ol>
+<li>指标结果全是空值：优先检查窗口长度、输入数组长度和 warmup 区段是否被误当成有效值。</li>
+<li>多输出指标结果看起来“能跑但不对”：检查解包顺序是否与文档一致。</li>
+<li>切换到 Rust 后结果变化很大：先回到 Python 后端做基线对齐，再排查数据口径、空值处理和参数设置。</li>
+</ol>
+<hr />
+<p><strong>全书结语</strong>：
+恭喜你完成了《量化投资：从理论到实战》的全部课程！
+我们从 Python/Rust 基础出发，构建了高性能回测引擎，探讨了股票、期货、期权等全资产类别的策略，落地到实盘交易系统，并在本章把视角收束回策略内部最常用的指标工程。
+量化投资是一场没有终点的马拉松。市场在变，对手在变，唯一不变的是我们要保持<strong>对数据的敬畏</strong>和<strong>对逻辑的执着</strong>。</p>
+<p><strong>愿 Alpha 与你同在！</strong></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

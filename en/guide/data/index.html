@@ -1,0 +1,2187 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/en/guide/data/">
+      
+      
+        <link rel="prev" href="../quant_basics/">
+      
+      
+        <link rel="next" href="../factor/">
+      
+      
+        
+          <link rel="alternate" href="../../../guide/data/" hreflang="zh">
+        
+          <link rel="alternate" href="./" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Data Guide - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#data-preparation-and-loading-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../" title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Data Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="../../../guide/data/" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../textbook/" class="md-tabs__link">
+          
+  
+  
+  Textbook
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../python_basics/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  Advanced Topics
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  Architecture & Internals
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../" title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../textbook/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Textbook
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quant_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quant Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Guide
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-data-format-standard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Data Format Standard
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Data Format Standard">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-required-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 Required Columns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 Index
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-data-loading-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Data Loading Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Data Loading Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-loading-from-csv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Loading from CSV
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-using-akshare-china-a-shares" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Using AKShare (China A-Shares)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-using-yfinance-us-stocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Using yfinance (US Stocks)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-using-datafeedadapter-with-multi-timeframe-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Using DataFeedAdapter with Multi-Timeframe Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-using-datafeed-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 Using DataFeed Directly
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#26-very-large-datasets-out-of-core-streaming-backtests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.6 Very Large Datasets: Out-of-Core Streaming Backtests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#27-tick-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.7 Tick Input
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-multi-symbol-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Multi-Symbol Data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Multi-Symbol Data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#method-a-single-dataframe-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method A: Single DataFrame (Recommended)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-b-dictionary-dict-of-dataframes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method B: Dictionary (Dict of DataFrames)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-advanced-topics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Advanced Topics
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Advanced Topics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-warmup-period" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Warmup Period
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-fetching-history-get_history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Fetching History (get_history)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-timezone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Timezone
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../factor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Factor Engine Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Strategy Manual
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../custom_indicator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Indicator Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cross_section_checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cross-Section Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../talib_indicator_playbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Indicator Playbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_indicator_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AKQuant Indicator Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../indicator_scenario_quickref/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Indicator Scenario Quickref
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Result Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optimization Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Topics
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture & Internals
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-data-format-standard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Data Format Standard
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Data Format Standard">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-required-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 Required Columns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 Index
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-data-loading-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Data Loading Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Data Loading Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-loading-from-csv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Loading from CSV
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-using-akshare-china-a-shares" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Using AKShare (China A-Shares)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-using-yfinance-us-stocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Using yfinance (US Stocks)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-using-datafeedadapter-with-multi-timeframe-aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Using DataFeedAdapter with Multi-Timeframe Aggregation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-using-datafeed-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 Using DataFeed Directly
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#26-very-large-datasets-out-of-core-streaming-backtests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.6 Very Large Datasets: Out-of-Core Streaming Backtests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#27-tick-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.7 Tick Input
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-multi-symbol-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Multi-Symbol Data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Multi-Symbol Data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#method-a-single-dataframe-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method A: Single DataFrame (Recommended)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-b-dictionary-dict-of-dataframes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method B: Dictionary (Dict of DataFrames)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-advanced-topics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Advanced Topics
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Advanced Topics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-warmup-period" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Warmup Period
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-fetching-history-get_history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Fetching History (get_history)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-timezone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Timezone
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../../" class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../python_basics/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    User Guide
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="data-preparation-and-loading-guide">Data Preparation and Loading Guide<a class="headerlink" href="#data-preparation-and-loading-guide" title="Permanent link">&para;</a></h1>
+<p>Data is the cornerstone of quantitative backtesting. As a high-performance backtesting framework, AKQuant has specific requirements for data format and quality. This document details how to prepare, clean, and load data to ensure smooth backtesting.</p>
+<h2 id="1-data-format-standard">1. Data Format Standard<a class="headerlink" href="#1-data-format-standard" title="Permanent link">&para;</a></h2>
+<p>AKQuant's core engine (Rust) and Python interface layer primarily interact via <code>pandas.DataFrame</code> or <code>List[Bar]</code>. The most recommended way is to use <strong>Pandas DataFrame</strong>.</p>
+<p>Besides pandas, <code>run_backtest(data=...)</code> also accepts <strong><code>polars.DataFrame</code> / <code>polars.LazyFrame</code> / <code>pyarrow.Table</code></strong> as first-class inputs (internally coerced onto the pandas data path at no cost), so you do not need to call <code>.to_pandas()</code> yourself:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_backtest</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">pldf</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="s2">"000001.parquet"</span><span class="p">)</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">result</span> <span class="o">=</span> <span class="n">run_backtest</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">pldf</span><span class="p">,</span> <span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span> <span class="n">symbols</span><span class="o">=</span><span class="s2">"000001.SZ"</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="11-required-columns">1.1 Required Columns<a class="headerlink" href="#11-required-columns" title="Permanent link">&para;</a></h3>
+<p>Your DataFrame <strong>must</strong> contain the following columns (column names are case-insensitive but are converted to lowercase internally):</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Column Name</th>
+<th style="text-align: left;">Type</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>date</code> / <code>time</code> / <code>datetime</code></td>
+<td style="text-align: left;"><code>datetime64[ns]</code></td>
+<td style="text-align: left;">Timestamp index. Must be Pandas datetime type.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>open</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">Open price</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>high</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">High price</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>low</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">Low price</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">Close price</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>volume</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">Trading volume</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>symbol</code></td>
+<td style="text-align: left;"><code>str</code></td>
+<td style="text-align: left;">Ticker symbol (e.g., "000001", "AAPL")</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Note:</strong></p>
+<ol>
+<li><strong>Column Standardization</strong>: It is recommended to rename columns to lowercase English (e.g., <code>open</code>, <code>close</code>) before passing them in.</li>
+<li><strong>Symbol Column</strong>: <strong>Multi-symbol data must carry a symbol column</strong>, otherwise every symbol's bars are collapsed into a single time series (both indicators and matching results become wrong). The column may be named <code>symbol</code>, <code>股票代码</code>, <code>code</code>, or <code>ticker</code> (AKShare's native <code>股票代码</code> works as-is, no renaming needed); <code>symbol</code> is the recommended choice. When no symbol column is recognized but multiple rows share the same timestamp, the backtest logs a <code>WARNING</code> about the degradation to single-symbol. Single-symbol data may omit the column entirely (the engine treats it as one asset and does not warn).</li>
+</ol>
+<h3 id="12-index">1.2 Index<a class="headerlink" href="#12-index" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The DataFrame index can be a default integer index or a <code>DatetimeIndex</code>.</li>
+<li>If using <code>DatetimeIndex</code>, AKQuant automatically treats it as the time column.</li>
+<li><strong>Sorting</strong>: Data must be sorted by time in <strong>ascending</strong> order (Old -&gt; New).</li>
+</ul>
+<hr />
+<h2 id="2-data-loading-examples">2. Data Loading Examples<a class="headerlink" href="#2-data-loading-examples" title="Permanent link">&para;</a></h2>
+<h3 id="21-loading-from-csv">2.1 Loading from CSV<a class="headerlink" href="#21-loading-from-csv" title="Permanent link">&para;</a></h3>
+<p>This is the most common method. Assume you have a <code>data.csv</code> file.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_backtest</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># 1. Read CSV</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="s2">"data.csv"</span><span class="p">)</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># 2. Convert Time Column</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1"># Ensure the time column is datetime type, not string</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">df</span><span class="p">[</span><span class="s1">'date'</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_datetime</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s1">'date'</span><span class="p">])</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="c1"># 3. Ensure Correct Column Names</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="c1"># Assume CSV columns are "Date", "Open", ...</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">df</span><span class="o">.</span><span class="n">columns</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">]</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="c1"># 4. Add Symbol Column (if not in CSV)</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="k">if</span> <span class="s1">'symbol'</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="n">df</span><span class="p">[</span><span class="s1">'symbol'</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"DEMO_TICKER"</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="c1"># 5. Sort</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">sort_values</span><span class="p">(</span><span class="s1">'date'</span><span class="p">)</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="c1"># 6. Pass to Backtest</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="c1"># result = run_backtest(data=df, ...)</span>
+</span></code></pre></div>
+<h3 id="22-using-akshare-china-a-shares">2.2 Using AKShare (China A-Shares)<a class="headerlink" href="#22-using-akshare-china-a-shares" title="Permanent link">&para;</a></h3>
+<p><a href="https://github.com/akfamily/akshare">AKShare</a> is a powerful open-source financial data interface library.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akshare</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ak</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># 1. Download Data (Example: Forward Adjusted)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># period="daily"; adjust="qfq" (forward adjusted)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">df</span> <span class="o">=</span> <span class="n">ak</span><span class="o">.</span><span class="n">stock_zh_a_hist</span><span class="p">(</span><span class="n">symbol</span><span class="o">=</span><span class="s2">"000001"</span><span class="p">,</span> <span class="n">period</span><span class="o">=</span><span class="s2">"daily"</span><span class="p">,</span> <span class="n">start_date</span><span class="o">=</span><span class="s2">"20200101"</span><span class="p">,</span> <span class="n">end_date</span><span class="o">=</span><span class="s2">"20231231"</span><span class="p">,</span> <span class="n">adjust</span><span class="o">=</span><span class="s2">"qfq"</span><span class="p">)</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># 2. Rename Columns (AKShare returns Chinese columns)</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="s2">"日期"</span><span class="p">:</span> <span class="s2">"date"</span><span class="p">,</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="s2">"开盘"</span><span class="p">:</span> <span class="s2">"open"</span><span class="p">,</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="s2">"最高"</span><span class="p">:</span> <span class="s2">"high"</span><span class="p">,</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    <span class="s2">"最低"</span><span class="p">:</span> <span class="s2">"low"</span><span class="p">,</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>    <span class="s2">"收盘"</span><span class="p">:</span> <span class="s2">"close"</span><span class="p">,</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    <span class="s2">"成交量"</span><span class="p">:</span> <span class="s2">"volume"</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="p">})</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="c1"># 3. Type Conversion</span>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="n">df</span><span class="p">[</span><span class="s1">'date'</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_datetime</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s1">'date'</span><span class="p">])</span>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="n">df</span><span class="p">[</span><span class="s1">'symbol'</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"000001"</span>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>
+</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="c1"># 4. Filter Columns</span>
+</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[[</span><span class="s2">"date"</span><span class="p">,</span> <span class="s2">"open"</span><span class="p">,</span> <span class="s2">"high"</span><span class="p">,</span> <span class="s2">"low"</span><span class="p">,</span> <span class="s2">"close"</span><span class="p">,</span> <span class="s2">"volume"</span><span class="p">,</span> <span class="s2">"symbol"</span><span class="p">]]</span>
+</span></code></pre></div>
+<h3 id="23-using-yfinance-us-stocks">2.3 Using yfinance (US Stocks)<a class="headerlink" href="#23-using-yfinance-us-stocks" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">yfinance</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">yf</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># 1. Download Data</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">df</span> <span class="o">=</span> <span class="n">yf</span><span class="o">.</span><span class="n">download</span><span class="p">(</span><span class="s2">"AAPL"</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="s2">"2020-01-01"</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">"2023-12-31"</span><span class="p">)</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># yfinance returns MultiIndex columns (if multiple tickers) or Capitalized columns</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="c1"># Simplified here for single stock</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">df</span><span class="o">.</span><span class="n">columns</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">]</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">df</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="c1"># Turn Date index into column</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="p">{</span><span class="s2">"date"</span><span class="p">:</span> <span class="s2">"date"</span><span class="p">})</span> <span class="c1"># Ensure it is date</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">df</span><span class="p">[</span><span class="s1">'symbol'</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"AAPL"</span>
+</span></code></pre></div>
+<h3 id="24-using-datafeedadapter-with-multi-timeframe-aggregation">2.4 Using DataFeedAdapter with Multi-Timeframe Aggregation<a class="headerlink" href="#24-using-datafeedadapter-with-multi-timeframe-aggregation" title="Permanent link">&para;</a></h3>
+<p>If you want a single entry that combines data loading and timeframe transformation, use <code>DataFeedAdapter</code> directly:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">base</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">CSVFeedAdapter</span><span class="p">(</span><span class="n">path_template</span><span class="o">=</span><span class="s2">"/data/</span><span class="si">{symbol}</span><span class="s2">.csv"</span><span class="p">)</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">feed_15m</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">resample</span><span class="p">(</span><span class="n">freq</span><span class="o">=</span><span class="s2">"15min"</span><span class="p">,</span> <span class="n">emit_partial</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">feed_1h</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">replay</span><span class="p">(</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">freq</span><span class="o">=</span><span class="s2">"1h"</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">align</span><span class="o">=</span><span class="s2">"session"</span><span class="p">,</span>            <span class="c1"># session | day | global</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">day_mode</span><span class="o">=</span><span class="s2">"trading"</span><span class="p">,</span>         <span class="c1"># effective only when align='day': trading | calendar</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">emit_partial</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">session_windows</span><span class="o">=</span><span class="p">[(</span><span class="s2">"09:30"</span><span class="p">,</span> <span class="s2">"11:30"</span><span class="p">),</span> <span class="p">(</span><span class="s2">"13:00"</span><span class="p">,</span> <span class="s2">"15:00"</span><span class="p">)],</span>  <span class="c1"># session only</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="p">)</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="n">data</span><span class="o">=</span><span class="n">feed_1h</span><span class="p">,</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span>
+</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="n">symbols</span><span class="o">=</span><span class="s2">"000001"</span><span class="p">,</span>
+</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="n">show_progress</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Parameter semantics:</p>
+<ul>
+<li><code>align="session"</code>: Partition by trading day, optionally with <code>session_windows</code>.</li>
+<li><code>align="day"</code>: Partition by day without <code>session_windows</code>; <code>day_mode</code> supports <code>trading/calendar</code>.</li>
+<li><code>align="global"</code>: Aggregate on the full timeline without day partitioning.</li>
+</ul>
+<h3 id="25-using-datafeed-directly">2.5 Using <code>DataFeed</code> Directly<a class="headerlink" href="#25-using-datafeed-directly" title="Permanent link">&para;</a></h3>
+<p>If you want explicit control over how data enters the engine, you can work with <code>DataFeed</code> directly instead of normalizing everything into a <code>DataFrame</code> first:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">feed</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">DataFeed</span><span class="o">.</span><span class="n">from_csv</span><span class="p">(</span><span class="s2">"/data/000001.csv"</span><span class="p">,</span> <span class="s2">"000001.SZ"</span><span class="p">)</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">data</span><span class="o">=</span><span class="n">feed</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">symbols</span><span class="o">=</span><span class="s2">"000001.SZ"</span><span class="p">,</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">show_progress</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>For live scenarios, create a writable live feed:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">feed</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">DataFeed</span><span class="o">.</span><span class="n">create_live</span><span class="p">()</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">feed</span><span class="o">.</span><span class="n">add_tick</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">Tick</span><span class="p">(</span><span class="o">...</span><span class="p">))</span>
+</span></code></pre></div>
+<p>Notes:</p>
+<ul>
+<li><code>DataFeed.from_csv(...)</code> is a good fit when you want AKQuant to read a CSV-backed event stream directly.</li>
+<li><code>DataFeed.from_parquet(...)</code> fits <strong>bounded-memory (out-of-core) streaming backtests over very large datasets</strong> (see 2.6).</li>
+<li><code>add_bar(...)</code>, <code>add_bars(...)</code>, and <code>add_arrays(...)</code> fit cases where you already have normalized market objects or arrays on the Python side.</li>
+<li>If CSV or array inputs contain invalid floating-point values, Rust emits warnings that are forwarded into AKQuant's Python <code>logging</code> pipeline instead of failing silently.</li>
+</ul>
+<h3 id="26-very-large-datasets-out-of-core-streaming-backtests">2.6 Very Large Datasets: Out-of-Core Streaming Backtests<a class="headerlink" href="#26-very-large-datasets-out-of-core-streaming-backtests" title="Permanent link">&para;</a></h3>
+<p>When the data is too large to fit in memory at once (e.g. years of whole-market minute bars), use a <strong>streaming Parquet feed</strong>: data is read from disk in chunks, and the backtest's <strong>peak memory is independent of total data size</strong> (bounded memory).</p>
+<p>First, use <code>write_canonical_parquet</code> to normalize any source (pandas / polars / pyarrow / <code>List[Bar]</code>) into a streamable Parquet (a <code>timestamp</code> column of int64 nanoseconds UTC, sorted ascending, zstd-compressed; a <code>symbol</code> column enables multi-symbol naturally):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="c1"># any source -&gt; canonical parquet (multi-symbol, single file globally sorted by time)</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">aq</span><span class="o">.</span><span class="n">write_canonical_parquet</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="s2">"market.parquet"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Then feed it to the backtest via <code>DataFeed.from_parquet</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">feed</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">DataFeed</span><span class="o">.</span><span class="n">from_parquet</span><span class="p">(</span><span class="s2">"market.parquet"</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">65536</span><span class="p">)</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">data</span><span class="o">=</span><span class="n">feed</span><span class="p">,</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">symbols</span><span class="o">=</span><span class="p">[</span><span class="s2">"000001.SZ"</span><span class="p">,</span> <span class="s2">"600000.SH"</span><span class="p">],</span>  <span class="c1"># multi-symbol</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="n">show_progress</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Notes:</p>
+<ul>
+<li>The canonical Parquet must be <strong>sorted ascending by <code>timestamp</code></strong>; <code>write_canonical_parquet</code> sorts it for you.</li>
+<li><code>chunk_size</code> controls how many rows are read at a time (default 65536) — roughly the memory ceiling.</li>
+<li>Multi-symbol just means one file sorted by time with a <code>symbol</code> column; the streaming source emits bars across symbols in time order.</li>
+<li>In streaming mode <strong>results still accumulate in memory</strong> (equity curve, trades, etc.); the data side is bounded, while engine throughput is a separate optimization dimension.</li>
+<li><code>scripts/stress_out_of_core.py</code> in the repo measures peak memory empirically.</li>
+</ul>
+<hr />
+<h3 id="27-tick-input">2.7 Tick Input<a class="headerlink" href="#27-tick-input" title="Permanent link">&para;</a></h3>
+<p>Besides a list of <code>Bar</code>, <code>run_backtest(data=...)</code> accepts three more shapes:</p>
+<ul>
+<li><strong>Bars only</strong>: <code>data=[Bar, Bar, ...]</code> (the existing usage).</li>
+<li><strong>Ticks only</strong>: <code>data=[Tick, Tick, ...]</code>.</li>
+<li><strong>Mixed list</strong>: <code>data=[Bar, Tick, ...]</code> in any order — AKQuant splits them and sorts each group by timestamp before feeding the engine.</li>
+</ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="c1"># Timestamps must be real nanoseconds. The Bar/Tick constructors multiply any</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># timestamp below 1e10 by 1e9, so a small integer like 100 is silently rewritten.</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">ticks</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">aq</span><span class="o">.</span><span class="n">Tick</span><span class="p">(</span><span class="n">timestamp</span><span class="o">=</span><span class="mi">1704164400_000000000</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="mf">10.00</span><span class="p">,</span> <span class="n">volume</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="s2">"600000"</span><span class="p">),</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">aq</span><span class="o">.</span><span class="n">Tick</span><span class="p">(</span><span class="n">timestamp</span><span class="o">=</span><span class="mi">1704164403_000000000</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="mf">10.02</span><span class="p">,</span> <span class="n">volume</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="s2">"600000"</span><span class="p">),</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">aq</span><span class="o">.</span><span class="n">Tick</span><span class="p">(</span><span class="n">timestamp</span><span class="o">=</span><span class="mi">1704164407_000000000</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="mf">10.01</span><span class="p">,</span> <span class="n">volume</span><span class="o">=</span><span class="mi">150</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="s2">"600000"</span><span class="p">),</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="p">]</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="k">class</span><span class="w"> </span><span class="nc">TickStrategy</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">set_history_depth</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_tick</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tick</span><span class="p">):</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>        <span class="n">prices</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_history</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">tick</span><span class="o">.</span><span class="n">symbol</span><span class="p">,</span> <span class="s2">"close"</span><span class="p">)</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">tick</span><span class="o">.</span><span class="n">symbol</span><span class="p">,</span> <span class="n">tick</span><span class="o">.</span><span class="n">price</span><span class="p">,</span> <span class="n">prices</span><span class="p">)</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a><span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>    <span class="n">data</span><span class="o">=</span><span class="n">ticks</span><span class="p">,</span>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">TickStrategy</span><span class="p">(),</span>
+</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>    <span class="n">symbols</span><span class="o">=</span><span class="p">[</span><span class="s2">"600000"</span><span class="p">],</span>
+</span><span id="__span-9-25"><a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>    <span class="n">show_progress</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-9-26"><a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a><span class="p">)</span>
+</span></code></pre></div>
+<p><strong>What ticks-only mode can and cannot do:</strong></p>
+<ul>
+<li><code>on_tick</code> fires; <code>on_bar</code> does <strong>not</strong>.</li>
+<li><code>get_history</code> / <code>get_history_multi</code> / <code>get_history_df</code> / <code>get_rolling_data</code> all work and return a <strong>series of trade prices</strong>: ticks now live in their own history series (no longer sharing a buffer with bars), so omitting <code>freq</code> — unambiguous in a ticks-only session, so it is not required — is equivalent to the <code>freq='tick'</code> read path; <code>get_history(count, symbol, "close")</code> gives you the most recent trade prices.
+    That series is still stored internally as a degenerate bar (<code>open=high=low=close=price</code> — a storage-layer holdover from once sharing the bar layout), but <code>field</code> is only validated in Python when you pass <code>freq='tick'</code> explicitly: requesting <code>open</code>/<code>high</code>/<code>low</code> then raises <code>ValueError</code> (a tick has no real high/low/open — the usable fields are <code>price</code>/<code>close</code>/<code>volume</code>). <code>get_history_df</code> / <code>get_rolling_data</code> always pull the full OHLCV set, so calling them with an explicit <code>freq='tick'</code> always raises; in a ticks-only session, omit <code>freq</code> instead, or use <code>get_history(freq='tick', field='price')</code>. If the symbol also has a bar source (see the <code>freq</code> aggregation below, or the dual-stream notes for <code>get_history</code> under <code>akquant.Strategy</code> in the <a href="../../reference/api/">API reference</a>), omitting <code>freq</code> resolves by the callback you are currently in (bars inside <code>on_bar</code>, ticks inside <code>on_tick</code>); outside the market-data callbacks (e.g. <code>on_timer</code>) it raises because both series coexist — pass <code>freq='tick'</code> / <code>freq='bar'</code> explicitly.</li>
+<li>Incremental indicators (<code>indicator_mode="incremental"</code>) work in <strong>single-value</strong> mode: <code>source</code> of <code>open</code>/<code>high</code>/<code>low</code>/<code>close</code> all return the trade price, <code>volume</code> returns the per-trade volume; <code>close_volume</code> mode works too.</li>
+<li>When an incremental indicator's <code>input_mode</code> is <code>"hl"</code> / <code>"hlc"</code> / <code>"ohlc"</code>, a tick's high and low are both the trade price, so ATR, range, and similar H/L-dependent indicators would be permanently 0 on such data. If that symbol <strong>also</strong> has a bar source (mixed input, or <code>freq</code> aggregation below), those indicators are driven by the bars and work normally while ticks are silently skipped for them. Only when a symbol has <strong>nothing but ticks for the entire session</strong> does AKQuant raise <code>StrategyConfigurationError</code> (a <code>ValueError</code> subclass) at session end — that is the case where the result really would be a misleading constant 0, so it fails loudly instead. The exception propagates to the <code>run_backtest</code> caller; it is not swallowed into a log.</li>
+<li>Any input containing a <code>Tick</code> (<strong>ticks-only or mixed alike</strong>) combined with a registered <strong>precomputed indicator</strong> (<code>indicator_mode="precompute"</code>) raises <code>ValueError</code>: normalized tick input flows through the <code>DataFeed</code> branch, which does not build the DataFrame precomputed indicators need. The guard keys on "is there a tick", independent of whether bars are present too. Use incremental indicators instead, or aggregate with <code>freq</code>.</li>
+</ul>
+<p><strong>Aggregating ticks into bars with <code>freq</code>:</strong></p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">data</span><span class="o">=</span><span class="n">ticks</span><span class="p">,</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">freq</span><span class="o">=</span><span class="s2">"1min"</span><span class="p">,</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">(),</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">symbols</span><span class="o">=</span><span class="p">[</span><span class="s2">"600000"</span><span class="p">],</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">show_progress</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>With <code>freq</code>, the raw ticks still reach <code>on_tick</code> as usual, and the aggregated bars additionally reach <code>on_bar</code> — giving you full OHLC semantics and every indicator, including H/L-dependent ones like ATR. Key points:</p>
+<ul>
+<li>The vocabulary matches <code>feed_adapter.resample(freq=...)</code>, but only <strong>whole minutes</strong> are supported (<code>"1min"</code> / <code>"5min"</code> / <code>"1h"</code>). Sub-minute or non-integer periods such as <code>"30s"</code> raise <code>ValueError</code> and point you at <code>feed_adapter.resample</code> — no silent rounding.</li>
+<li>The adapter declares <strong>per-trade</strong> volume semantics (each <code>Tick.volume</code> is that single trade's volume, not a running total), and the aggregator sums every tick's volume in the interval directly into the synthesized bar's <code>volume</code>.</li>
+<li>A synthesized bar is stamped at the <strong>end</strong> of its interval (1 nanosecond before the next interval starts), not at the start. Backtests put synthesized bars and their source ticks into the same feed and then sort by timestamp; with an interval-start stamp the bar would sort <strong>ahead of</strong> the ticks that formed it, and the strategy would read high/low/close values from trades that had not happened yet. Stamping at interval end guarantees the bar is strictly later than all of its source ticks.</li>
+<li>Trailing ticks that do not complete a full period produce no bar (the aggregator offers no flush).</li>
+<li>Passing <code>freq</code> when <code>data</code> contains no <code>Tick</code> raises <code>ValueError</code> — the parameter would be meaningless.</li>
+</ul>
+<p>See <a href="https://github.com/akfamily/akquant/blob/main/examples/68_backtest_tick_demo.py">examples/68_backtest_tick_demo.py</a> for a runnable comparison of both modes.</p>
+<hr />
+<h2 id="3-multi-symbol-data">3. Multi-Symbol Data<a class="headerlink" href="#3-multi-symbol-data" title="Permanent link">&para;</a></h2>
+<p>If you need to backtest multiple stocks simultaneously (e.g., a market-wide selection strategy), there are two ways to pass data:</p>
+<h3 id="method-a-single-dataframe-recommended">Method A: Single DataFrame (Recommended)<a class="headerlink" href="#method-a-single-dataframe-recommended" title="Permanent link">&para;</a></h3>
+<p>Concatenate data for all stocks into one large DataFrame.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Assume df_a, df_b are data for two stocks</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">df_all</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">concat</span><span class="p">([</span><span class="n">df_a</span><span class="p">,</span> <span class="n">df_b</span><span class="p">])</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># Must sort by time! AKQuant is an event-driven engine that pushes data by time flow</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">df_all</span> <span class="o">=</span> <span class="n">df_all</span><span class="o">.</span><span class="n">sort_values</span><span class="p">([</span><span class="s1">'date'</span><span class="p">,</span> <span class="s1">'symbol'</span><span class="p">])</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># run_backtest(data=df_all, ...)</span>
+</span></code></pre></div>
+<h3 id="method-b-dictionary-dict-of-dataframes">Method B: Dictionary (Dict of DataFrames)<a class="headerlink" href="#method-b-dictionary-dict-of-dataframes" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">data_map</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="s2">"AAPL"</span><span class="p">:</span> <span class="n">df_aapl</span><span class="p">,</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    <span class="s2">"MSFT"</span><span class="p">:</span> <span class="n">df_msft</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="p">}</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="c1"># run_backtest(data=data_map, ...)</span>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="c1"># The engine internally merges and sorts them automatically</span>
+</span></code></pre></div>
+<hr />
+<h2 id="4-advanced-topics">4. Advanced Topics<a class="headerlink" href="#4-advanced-topics" title="Permanent link">&para;</a></h2>
+<h3 id="41-warmup-period">4.1 Warmup Period<a class="headerlink" href="#41-warmup-period" title="Permanent link">&para;</a></h3>
+<p>When calculating technical indicators (e.g., MA60, MACD), the <code>warmup_period</code> mechanism allows the strategy to "digest" a portion of historical data before official trading begins.</p>
+<ul>
+<li><strong>Issue</strong>: If a strategy needs to calculate MA60 on the first day but receives data starting exactly from the backtest start date, the first 59 days cannot produce indicator values.</li>
+<li><strong>Solution</strong>: Ensure the provided data starts earlier than <code>start_time</code>.</li>
+<li><strong>Configuration</strong>: Set <code>warmup_period = 60</code> in the strategy. The engine lets <strong>each symbol accumulate its own</strong> 60 bars solely for updating indicators, without triggering <code>on_bar</code> trading logic during that window.</li>
+<li><strong>Multi-symbol</strong>: the threshold is counted <strong>independently per symbol</strong> — symbol A starts trading as soon as it has accumulated 60 bars on its own, without waiting for symbol B. Because of this, set <code>warmup_period</code> directly from the indicator window (e.g. <code>self.warmup_period = self.params.long_window + 1</code>); it does <strong>not</strong> need to be multiplied by the number of symbols.</li>
+</ul>
+<h3 id="42-fetching-history-get_history">4.2 Fetching History (<code>get_history</code>)<a class="headerlink" href="#42-fetching-history-get_history" title="Permanent link">&para;</a></h3>
+<p>In a strategy, you can fetch historical market data for the past N days at any time.</p>
+<ul>
+<li><code>self.get_history(n, symbol, field)</code>: Returns a <code>numpy.ndarray</code> — a <strong>safe snapshot copy</strong> of the Rust rolling buffer (not zero-copy: the underlying store is a mutable ring buffer, so a view would dangle after the next Bar; it is returned as a copy). The window is usually small, so the copy cost is negligible.</li>
+<li><code>self.get_history_multi(n, symbol, fields)</code> / <code>self.get_history_df(n, symbol)</code>: Fetch multiple fields in a single FFI crossing, avoiding the per-field call overhead; behavior is identical to calling <code>get_history</code> per field.</li>
+<li><code>self.get_history_df(n, symbol)</code>: Returns a <code>pd.DataFrame</code>, convenient for Pandas calculations.</li>
+</ul>
+<p><strong>Note</strong>: <code>get_history</code> fetches data <strong>prior to the current moment</strong>, excluding the current Bar (to avoid look-ahead bias). If you need the current Bar's data for calculation, append it manually.</p>
+<h3 id="43-timezone">4.3 Timezone<a class="headerlink" href="#43-timezone" title="Permanent link">&para;</a></h3>
+<p>AKQuant internally uses UTC timestamps uniformly.
+If your data is in local time (e.g., Beijing Time), please specify <code>timezone="Asia/Shanghai"</code> in <code>run_backtest</code>.
+If you call <code>ParquetDataCatalog.read(start_time=..., end_time=...)</code> directly, naive boundary values follow the same <code>timezone</code> rule and default to <code>Asia/Shanghai</code> when not provided explicitly.
+For more details, refer to the <a href="../../advanced/timezone/">Timezone Handling Guide</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/mathjax.js"></script>
+      
+        <script src="../../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
