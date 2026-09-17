@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`akquant.chart` 新增 `to_d3kline_options()` / `to_raw_panes()`：指标定义与点位到 d3Kline `IndicatorOption` 的转换，作为回测服务与实盘服务共用的单一实现**。此前 backtest_server3.0 与 live_server 各自维护了一份语义必须一致的转换代码（前端用同一套渲染逻辑消费两边数据），任何一边漂移都会让前端收到结构不一致的指标。现在两个服务都改为 `from akquant.chart import to_d3kline_options`，契约只有一个出处。
+  这是 AKQuant 面向一个**具体前端**的适配层，与 `indicator_stream` 产出"前端友好消息"同一性质，不改变"指标数据生产者不耦合前端"的定位——`to_raw_panes()` 同时保留 akquant 原生语义供其它消费方使用。输入刻意用 `Mapping[str, Any]` 而非 pydantic 模型：两个消费方一个传 sqlite Row 转的裸 dict、一个传 `model_dump()`，最低公分母是 Mapping；缺失字段按契约默认值处理（`pane=0`、`render_type="line"`），`pane` 可为字符串（sqlite/JSON 常见）。
+  五条刻意为之的转换规则均有测试钉住：同一 pane 的多个指标打包成**一个** option（缓解前端 `MAX_SUB_INDICATORS=3` 的静默丢弃）；主图不带 `style.height`（避免挤压价格图）；无颜色时**省略整个 `style` 字段**而非传 `null`（前端 `_mergeIndicator` 用 `...s.style` 合并，`null` 会覆盖默认色导致无色）；`render_type` 七值降级到 d3Kline 的 `line|bar` 且降级时保留原值；series `name` 用 `indicator_key` 而非展示名（前端以 name 做 merge 身份）。新增 `tests/test_chart_d3kline.py` 16 条。
+
 ### Fixed
 - **纯减仓卖单的手续费不再要求现金预付，费用从成交款净额中抵扣（`__engine_rule_version__` 升至 1.5.5，issue #400）**：满仓策略在现金趋零后，所有卖单被 `Risk: Insufficient margin` 拒绝——实测 100,100 元账户以 10 元买入 10,000 股后余现金 68 元，全量卖出费用合计 132 元，卖单提交即被拒（`Required: 132.00000, Available: 67.9932`）。后果是**账户彻底冻结**：卖不出去 ⇒ 没有资金回款 ⇒ 后续调仓全部失效。这与真实 A 股规则相悖：卖出的佣金、印花税、过户费都从成交款净额中扣除，卖出永远不需要预先持有现金。
   报告归因为"手续费被计入成交前现金需求"，但根因在一层之下：`required = margin_delta + commission` 中的 `margin_delta` 在算出后被 **`.max(0)` 夹断**，把减仓**释放**的保证金/现金整个丢掉，于是纯减仓单的资金需求退化成"裸手续费"，再去和**成交前**的可用资金比较。三处夹断分别位于 `risk/common.rs::stock_margin_delta`（两融股票/基金路径）、`risk/common.rs::calc_required_margin_delta`（现金账户路径）与 `execution/simulated.rs` 的 `margin_required`（成交时闸门）。因此修法不是"给减仓豁免手续费"，而是**不夹断增量、只夹断最终和**：内层返回带符号的增量（减仓为负），外层取 `(margin_delta + commission).max(0)`。现金账户股票的占用保证金恰等于名义额，该增量天然就是现金流，**买入侧的验资数值一分不变**。
