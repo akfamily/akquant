@@ -16,8 +16,15 @@ from ._normalize import (
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
+from .d3kline import (
+    D3KLINE_SERIES_TYPE,
+    SUB_PANE_HEIGHT,
+    to_d3kline_options,
+    to_raw_panes,
+)
 
 __all__ = [
+    "D3KLINE_SERIES_TYPE",
     "MAX_SUB_PANES",
     "RENDER_TYPE_CANONICAL",
     "normalize_meta_json",
@@ -26,5 +33,8 @@ __all__ = [
     "normalize_render_type",
     "normalize_scale_group",
     "timestamp_ms_from_ns",
+    "SUB_PANE_HEIGHT",
     "timestamp_to_ms_and_ns",
+    "to_d3kline_options",
+    "to_raw_panes",
 ]

@@ -548,6 +548,44 @@ Python 侧按纳秒解析，后者可被前端图表库直接使用，无需再�
 
 这三层结构的目的，是让 AKQuant 负责“生产标准化指标数据”，而不是直接耦合某个具体前端图表库。
 
+### 可选适配器：转成 d3Kline 的 `IndicatorOption`
+
+如果你的前端是 d3Kline（金融界期魔方前端的 K 线渲染器），可以直接用
+`akquant.chart.to_d3kline_options()` 把指标定义与点位转成 `IndicatorManager.create()`
+能直接消费的结构，不必自己写映射：
+
+```python
+from akquant.chart import to_d3kline_options, to_raw_panes
+
+defs = result.indicator_definitions.to_dict(orient="records")
+points_by_key = {
+    key: group[["timestamp_ms", "value"]].to_dict(orient="records")
+    for key, group in result.indicator_df().groupby("indicator_key")
+}
+options = to_d3kline_options(defs, points_by_key)  # 喂给前端 IndicatorManager.create()
+panes = to_raw_panes(defs, points_by_key)  # 保留 akquant 原生语义，供其它前端
+```
+
+它是**可选的消费端适配器**，与上文的流式桥接同一性质，不改变“生产者不耦合前端”的定位。
+把它放进核心包的唯一理由是：回测服务与实盘服务两条链路都要产出这套结构，而前端用同一套
+渲染逻辑消费——两边各写一份必然漂移，这里是单一事实来源。
+
+几条刻意为之的转换规则（改动前请先理解原因）：
+
+- **同一 pane 的多个指标打包成一个 option**，各指标是 `dataList` 里的一条 series。
+  d3Kline 的 `IndicatorManager` 有 `MAX_SUB_INDICATORS = 3` 的上限且超限**静默丢弃**，
+  按 pane 打包能让“5 个副图指标只占 2 个 pane”时只消耗 2 个名额。
+- **主图（pane 0）不带 `style.height`**，避免挤压 K 线区；副图给默认 100。
+- **无颜色时省略整个 `style` 字段**，而不是传 `{"color": null}`——前端的合并写法是
+  `{color: 默认色, ...old, ...s.style}`，`null` 会覆盖掉默认色导致指标无色。
+- `render_type` 的七个值降级到 d3Kline 仅有的 `line | bar`；发生降级时附带原值
+  `render_type`，前端将来支持 area/scatter 时可无损升级。
+- series 的 `name` 用 `indicator_key`（前端以 name 做合并身份，pane 内必须唯一），
+  中文展示名放在 `label`。
+
+输入用普通 `Mapping`（dict）而非特定模型，缺失字段按契约默认值处理（`pane=0`、
+`render_type="line"`），`pane` 允许是字符串。
+
 ### 推荐边界
 
 建议把职责切开：

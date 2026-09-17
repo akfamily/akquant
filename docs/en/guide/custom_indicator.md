@@ -569,6 +569,50 @@ A point's `symbol` is guaranteed to be non-empty (see "About `symbol` ownership"
 
 This keeps AKQuant focused on producing stable indicator data instead of coupling the framework to a specific charting library.
 
+### Optional adapter: d3Kline `IndicatorOption`
+
+If your frontend renders with d3Kline, `akquant.chart.to_d3kline_options()` turns
+indicator definitions and points into the structure `IndicatorManager.create()`
+consumes directly, so you do not hand-write the mapping:
+
+```python
+from akquant.chart import to_d3kline_options, to_raw_panes
+
+defs = result.indicator_definitions.to_dict(orient="records")
+points_by_key = {
+    key: group[["timestamp_ms", "value"]].to_dict(orient="records")
+    for key, group in result.indicator_df().groupby("indicator_key")
+}
+options = to_d3kline_options(defs, points_by_key)  # feed IndicatorManager.create()
+panes = to_raw_panes(defs, points_by_key)  # akquant-native shape for other frontends
+```
+
+It is an **optional consumer-side adapter**, the same kind of thing as the stream bridge
+above; it does not change AKQuant's role as a producer decoupled from any frontend. The
+only reason it lives in the core package: both the backtest service and the live service
+must emit this exact structure, and the frontend renders both with one code path. Two
+copies would drift. This is the single source of truth.
+
+Deliberate rules baked in (understand them before changing):
+
+- **All indicators sharing a pane are packed into one option**, each as a series in
+  `dataList`. d3Kline's `IndicatorManager` caps sub-indicators at `MAX_SUB_INDICATORS = 3`
+  and **silently drops** the excess; packing by pane means "5 sub indicators across 2 panes"
+  costs 2 slots, not 5.
+- **The main pane (0) carries no `style.height`** so it never squeezes the candlestick
+  area; sub panes default to 100.
+- **When an indicator has no color the whole `style` key is omitted**, never
+  `{"color": null}`. The frontend merges as `{color: default, ...old, ...s.style}`, so
+  `null` would override the default and render the series invisible.
+- The seven `render_type` values are downgraded to d3Kline's `line | bar`; a downgraded
+  series also carries the original `render_type`, so the frontend can upgrade losslessly
+  once it supports area/scatter.
+- Series `name` is the `indicator_key` (the frontend merges by name; it must be unique
+  within a pane); the human-readable name goes in `label`.
+
+Input is plain `Mapping` (dict), not a specific model. Missing fields take contract
+defaults (`pane=0`, `render_type="line"`), and `pane` may arrive as a string.
+
 ### Recommended boundary
 
 Suggested split of responsibilities:
