@@ -265,9 +265,13 @@ def current_validation_window(strategy: Any) -> Optional[dict[str, Any]]:
 
 #: `get_history`/`get_history_multi` 在双流(同一 symbol 同时存在 bar 与 tick
 #: 两条历史序列)下省略 freq 时的歧义报错文案片段(见 src/context.rs 的
-#: resolve_use_tick_history)。用它而不是异常类型来识别"是不是这个特定错误",
+#: resolve_history_source)。用它而不是异常类型来识别"是不是这个特定错误",
 #: 因为 ValueError 本身太泛, 不能直接当成"双流歧义"的信号。
-_DUAL_STREAM_AMBIGUITY_MARKER = "两条历史序列"
+#: 两个取值并存: "两条历史序列" 是历史文案(引擎多周期改造前), "多条历史序列"
+#: 是改造后的新文案(见 native-multi-timeframe task-3, resolve_history_source
+#: 的歧义分支同时列出 bar/tick/窗口周期序列, 不再固定两条)——两者都要匹配,
+#: 才能在新旧引擎二进制下都正确识别"是不是双流歧义"这个特定错误。
+_DUAL_STREAM_AMBIGUITY_MARKERS = ("两条历史序列", "多条历史序列")
 
 
 def _fetch_rolling_data_for_training(strategy: Any) -> tuple[Any, Any]:
@@ -299,7 +303,8 @@ def _fetch_rolling_data_for_training(strategy: Any) -> tuple[Any, Any]:
     try:
         return cast("tuple[Any, Any]", strategy.get_rolling_data())
     except ValueError as e:
-        if _DUAL_STREAM_AMBIGUITY_MARKER not in str(e):
+        message = str(e)
+        if not any(marker in message for marker in _DUAL_STREAM_AMBIGUITY_MARKERS):
             raise
         logger.info(
             "ML 自动训练: symbol 同时存在 bar 与 tick 两条历史序列(双流), "

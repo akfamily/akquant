@@ -137,6 +137,7 @@ mod tests {
             history_state: Some(HistoryBufferSnapshot {
                 data: HashMap::new(),
                 tick_data: HashMap::new(),
+                window_data: Vec::new(),
                 default_capacity: 3,
             }),
             strategy_risk_state: Default::default(),

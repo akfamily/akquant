@@ -125,8 +125,12 @@ def test_dual_stream_without_freq_outside_market_callback_still_raises() -> None
             initial_cash=1e5,
         )
     message = str(excinfo.value)
-    assert "freq='bar'" in message
-    assert "freq='tick'" in message
+    # 文案变更(native-multi-timeframe task-3): 双流歧义报错不再固定列举
+    # "freq='bar' 或 freq='tick'", 而是把该 symbol 现有的全部序列(含窗口
+    # 周期)都列出来, 并给出泛化的写法提示。
+    assert "同时存在多条历史序列" in message
+    assert "'bar'" in message
+    assert "'tick'" in message
 
 
 def test_tick_freq_rejects_ohlc_only_field() -> None:
