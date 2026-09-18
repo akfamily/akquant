@@ -123,20 +123,15 @@ impl WindowSubscription {
     }
 }
 
+/// 探测夏令时"跳变缺口"时, 向前步进的分钟数上限(6 小时足够覆盖现实世界的
+/// 任何春季跳变缺口, 通常缺口只有 1 小时, 极少数地区 30 分钟)。
+const MAX_DST_GAP_PROBE_MINUTES: i64 = 360;
+
 /// 引擎时区: 有 IANA 名称用名称(随 DST), 否则用固定偏移秒数。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct LocalClock {
     tz: Option<Tz>,
     offset_secs: i32,
-}
-
-impl Default for LocalClock {
-    fn default() -> Self {
-        Self {
-            tz: None,
-            offset_secs: 0,
-        }
-    }
 }
 
 impl LocalClock {
@@ -150,7 +145,14 @@ impl LocalClock {
     fn to_local(&self, ts_ns: i64) -> NaiveDateTime {
         let secs = ts_ns.div_euclid(1_000_000_000);
         let nanos = ts_ns.rem_euclid(1_000_000_000) as u32;
-        let utc: DateTime<Utc> = Utc.timestamp_opt(secs, nanos).single().expect("invalid ts");
+        // `ts_ns` 总是来自一个已经存在的合法 `Bar.timestamp`(UTC 纳秒); UTC 本身
+        // 没有本地时间缺口/重叠这类问题, `single()` 只有在 `secs` 超出 chrono
+        // 可表示的范围(约公元前 26 万年~公元后 26 万年)时才会是 `None` —— 真实
+        // 行情时间戳不可能触发, 故此处 `expect` 视为不可达分支。
+        let utc: DateTime<Utc> = Utc
+            .timestamp_opt(secs, nanos)
+            .single()
+            .expect("invalid ts: secs out of chrono's representable range");
         match &self.tz {
             Some(tz) => utc.with_timezone(tz).naive_local(),
             None => (utc + chrono::Duration::seconds(i64::from(self.offset_secs))).naive_utc(),
@@ -159,17 +161,49 @@ impl LocalClock {
 
     fn from_local(&self, local: NaiveDateTime) -> i64 {
         match &self.tz {
-            Some(tz) => tz
-                .from_local_datetime(&local)
-                .earliest()
-                .expect("nonexistent local time")
-                .timestamp_nanos_opt()
-                .expect("ts overflow"),
-            None => (local - chrono::Duration::seconds(i64::from(self.offset_secs)))
-                .and_utc()
-                .timestamp_nanos_opt()
-                .expect("ts overflow"),
+            Some(tz) => Self::nanos_or_clamp(&Self::resolve_local(tz, local)),
+            None => Self::nanos_or_clamp(
+                &(local - chrono::Duration::seconds(i64::from(self.offset_secs))).and_utc(),
+            ),
         }
+    }
+
+    /// 把可能落入夏令时"春季跳变缺口"的本地时间解析成合法瞬间。
+    ///
+    /// 缺口内的本地时间不对应任何真实瞬间(例如美东 2024-03-10 当天 02:00-02:59
+    /// 因夏令时整体跳过而不存在); `from_local_datetime(..).earliest()` 对此返回
+    /// `None`。为了不让引擎因为一次窗口标签落在缺口里就 panic, 向前逐分钟探测,
+    /// 取缺口结束后第一个合法瞬间(与 pandas/pytz `nonexistent="shift_forward"`
+    /// 语义一致)。`Ambiguous`(秋季回拨的重叠时段)则已经由 `earliest()` 正确
+    /// 处理为取较早的那个瞬间, 无需特殊分支。
+    fn resolve_local(tz: &Tz, local: NaiveDateTime) -> DateTime<Tz> {
+        if let Some(dt) = tz.from_local_datetime(&local).earliest() {
+            return dt;
+        }
+        let mut probe = local;
+        for _ in 0..MAX_DST_GAP_PROBE_MINUTES {
+            probe += chrono::Duration::minutes(1);
+            if let Some(dt) = tz.from_local_datetime(&probe).earliest() {
+                return dt;
+            }
+        }
+        // 现实世界的夏令时缺口不会超过几个小时; 走到这里说明探测窗口给的不够
+        // (可能是异常时区配置), 而不是真的存在这么长的缺口——保留 panic 以便
+        // 第一时间暴露问题, 而不是悄悄返回一个误导性的时间。
+        panic!(
+            "no valid local time found after {local} within {MAX_DST_GAP_PROBE_MINUTES} minutes (tz={tz:?})"
+        );
+    }
+
+    /// `timestamp_nanos_opt()` 只有在瞬间超出 chrono 纳秒可表示范围(约
+    /// 1677~2262 年)时才会是 `None`, 真实行情时间戳不会触达; 但这里不用
+    /// `expect` panic, 而是 clamp 到边界值, 避免引擎因为一次离群配置崩溃。
+    fn nanos_or_clamp<T: TimeZone>(dt: &DateTime<T>) -> i64 {
+        dt.timestamp_nanos_opt().unwrap_or(if dt.timestamp() < 0 {
+            i64::MIN
+        } else {
+            i64::MAX
+        })
     }
 
     /// 本地时间 ceil 到周期(以本地零点为锚), 返回 UTC 纳秒标签。
@@ -203,6 +237,11 @@ pub struct WindowAggregatorSnapshot {
 
 #[derive(Debug, Clone)]
 struct WindowState {
+    /// 缓存周期(避免 `flush` 每次都重新 `WindowFreq::parse(&freq_label)`);
+    /// 从 `restore()` 恢复时若 snapshot 里的 `freq_label` 无法解析(数据损坏/
+    /// 来自未来版本), 退化为 `Minutes(0)` —— 只影响 `flush()` 的排序, 不影响
+    /// 已缓存的 OHLCV 数据本身。
+    freq: WindowFreq,
     label_ns: i64,
     session_key: Option<(NaiveDate, i32)>,
     local_date: NaiveDate,
@@ -216,11 +255,13 @@ struct WindowState {
 impl WindowState {
     fn open_from(
         bar: &Bar,
+        freq: WindowFreq,
         label_ns: i64,
         session_key: Option<(NaiveDate, i32)>,
         local_date: NaiveDate,
     ) -> Self {
         Self {
+            freq,
             label_ns,
             session_key,
             local_date,
@@ -281,8 +322,20 @@ impl WindowAggregator {
 
     /// 替换订阅表。**不清空**仍被订阅的在形成窗口(checkpoint 恢复后再配置时要保留),
     /// 只丢掉不再订阅的周期。
-    pub fn configure(&mut self, subs: Vec<WindowSubscription>, base_interval_min: Option<u32>) {
-        self.subscriptions = subs;
+    ///
+    /// 同一 `freq_label` 下, 两条订阅的 symbol 范围若有重叠(`None` 与任何范围
+    /// 重叠; 两个 `Some` 仅在相等时重叠), 会共享同一个 `(symbol, freq_label)`
+    /// state key: `update()` 会对匹配到的每条订阅各跑一次 merge/session 判断,
+    /// 重叠但配置不同(sessions 或 symbol 范围不完全一致)时会重复 merge 或用
+    /// 不同的 `session_key` 互相打架, 产生错误数据 —— 因此完全相同(scope +
+    /// sessions 都一致)的订阅静默去重, 其余重叠一律拒绝。
+    pub fn configure(
+        &mut self,
+        subs: Vec<WindowSubscription>,
+        base_interval_min: Option<u32>,
+    ) -> Result<(), String> {
+        let deduped = Self::dedup_and_validate(subs)?;
+        self.subscriptions = deduped;
         self.base_interval_min = base_interval_min;
         let keep: Vec<String> = self
             .subscriptions
@@ -290,6 +343,46 @@ impl WindowAggregator {
             .map(|s| s.freq_label.clone())
             .collect();
         self.states.retain(|(_, f), _| keep.contains(f));
+        Ok(())
+    }
+
+    /// 见 [`Self::configure`] 的重叠规则说明。
+    fn dedup_and_validate(
+        subs: Vec<WindowSubscription>,
+    ) -> Result<Vec<WindowSubscription>, String> {
+        let mut kept: Vec<WindowSubscription> = Vec::with_capacity(subs.len());
+        for sub in subs {
+            let mut is_duplicate = false;
+            for existing in &kept {
+                if existing.freq_label != sub.freq_label {
+                    continue;
+                }
+                if existing.symbol == sub.symbol && existing.sessions == sub.sessions {
+                    is_duplicate = true;
+                    break;
+                }
+                if Self::scopes_overlap(&existing.symbol, &sub.symbol) {
+                    return Err(format!(
+                        "订阅冲突: freq={:?} 的 symbol 范围重叠(已有 symbol={:?}, 新增 \
+                         symbol={:?})但配置不一致(sessions 或 symbol 范围不完全相同); \
+                         请让重叠的订阅保持完全一致, 或改成互斥的 symbol 范围",
+                        sub.freq_label, existing.symbol, sub.symbol
+                    ));
+                }
+            }
+            if !is_duplicate {
+                kept.push(sub);
+            }
+        }
+        Ok(kept)
+    }
+
+    /// `None` 覆盖全部标的, 与任何范围都重叠; 两个 `Some` 仅在标的相等时重叠。
+    fn scopes_overlap(a: &Option<String>, b: &Option<String>) -> bool {
+        match (a, b) {
+            (None, _) | (_, None) => true,
+            (Some(x), Some(y)) => x == y,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -314,7 +407,10 @@ impl WindowAggregator {
         }
         let local = self.clock.to_local(bar.timestamp);
         let base_known = self.base_interval_min.is_some();
-        let mut closed: Vec<(u32, Bar)> = Vec::new();
+        // (总分钟数, freq_label, bar); label 作 tie-break, 保证 "1h" 与 "60min"
+        // 这类分钟数相同但标签不同的周期有确定顺序(否则顺序依赖 HashMap 迭代,
+        // 对 golden baseline 是隐患)。
+        let mut closed: Vec<(u32, String, Bar)> = Vec::new();
 
         for sub in self.subscriptions.iter().filter(|s| s.matches(&bar.symbol)) {
             let key = (bar.symbol.clone(), sub.freq_label.clone());
@@ -327,6 +423,7 @@ impl WindowAggregator {
                     {
                         closed.push((
                             sub.freq.total_minutes(),
+                            sub.freq_label.clone(),
                             st.to_bar(&bar.symbol, &sub.freq_label),
                         ));
                         self.states.remove(&key);
@@ -335,10 +432,13 @@ impl WindowAggregator {
                         .states
                         .entry(key.clone())
                         .and_modify(|s| s.merge(bar))
-                        .or_insert_with(|| WindowState::open_from(bar, label, skey, local.date()));
+                        .or_insert_with(|| {
+                            WindowState::open_from(bar, sub.freq, label, skey, local.date())
+                        });
                     if base_known && bar.timestamp == label {
                         closed.push((
                             sub.freq.total_minutes(),
+                            sub.freq_label.clone(),
                             st.to_bar(&bar.symbol, &sub.freq_label),
                         ));
                         self.states.remove(&key);
@@ -351,6 +451,7 @@ impl WindowAggregator {
                     {
                         closed.push((
                             sub.freq.total_minutes(),
+                            sub.freq_label.clone(),
                             st.to_bar(&bar.symbol, &sub.freq_label),
                         ));
                         self.states.remove(&key);
@@ -362,10 +463,13 @@ impl WindowAggregator {
                             s.merge(bar);
                             s.label_ns = bar.timestamp;
                         })
-                        .or_insert_with(|| WindowState::open_from(bar, bar.timestamp, None, date));
+                        .or_insert_with(|| {
+                            WindowState::open_from(bar, sub.freq, bar.timestamp, None, date)
+                        });
                     if base_known && sub.is_last_session_end(local) {
                         closed.push((
                             sub.freq.total_minutes(),
+                            sub.freq_label.clone(),
                             st.to_bar(&bar.symbol, &sub.freq_label),
                         ));
                         self.states.remove(&key);
@@ -373,21 +477,24 @@ impl WindowAggregator {
                 }
             }
         }
-        closed.sort_by_key(|(minutes, _)| *minutes);
-        closed.into_iter().map(|(_, b)| b).collect()
+        closed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        closed.into_iter().map(|(_, _, b)| b).collect()
     }
 
-    /// 闭合全部在形成窗口(会话结束)。按 (symbol, 周期) 排序。
+    /// 闭合全部在形成窗口(会话结束)。按 (symbol, 周期, freq_label) 排序;
+    /// freq_label 作 tie-break 原因同 [`Self::update`]。
     pub fn flush(&mut self) -> Vec<Bar> {
-        let mut out: Vec<(String, u32, Bar)> = Vec::new();
+        let mut out: Vec<(String, u32, String, Bar)> = Vec::new();
         for ((symbol, label), st) in self.states.drain() {
-            let minutes = WindowFreq::parse(&label)
-                .map(WindowFreq::total_minutes)
-                .unwrap_or(0);
-            out.push((symbol.clone(), minutes, st.to_bar(&symbol, &label)));
+            out.push((
+                symbol.clone(),
+                st.freq.total_minutes(),
+                label.clone(),
+                st.to_bar(&symbol, &label),
+            ));
         }
-        out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-        out.into_iter().map(|(_, _, b)| b).collect()
+        out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        out.into_iter().map(|(_, _, _, b)| b).collect()
     }
 
     pub fn current(&self, symbol: &str, freq: &str) -> Option<Bar> {
@@ -425,9 +532,14 @@ impl WindowAggregator {
     pub fn restore(&mut self, snapshot: WindowAggregatorSnapshot) {
         self.states.clear();
         for s in snapshot.states {
+            // 正常情况下 freq_label 一定是我们自己 `snapshot()` 时写入的合法值,
+            // 解析失败(数据损坏/来自未来版本)时退化为 Minutes(0), 只影响
+            // `flush()` 的排序, 不影响已恢复的 OHLCV 数据。
+            let freq = WindowFreq::parse(&s.freq_label).unwrap_or(WindowFreq::Minutes(0));
             self.states.insert(
                 (s.symbol, s.freq_label),
                 WindowState {
+                    freq,
                     label_ns: s.label_ns,
                     session_key: s.session_key,
                     local_date: s.local_date,
@@ -479,7 +591,7 @@ mod tests {
             .iter()
             .map(|(f, s)| WindowSubscription::parse(None, f, s.clone()).unwrap())
             .collect();
-        a.configure(parsed, base);
+        a.configure(parsed, base).unwrap();
         a
     }
 
@@ -618,7 +730,8 @@ mod tests {
         a.configure(
             vec![WindowSubscription::parse(Some("X".to_string()), "5min", None).unwrap()],
             Some(1),
-        );
+        )
+        .unwrap();
         for m in 31..=35 {
             a.update(&bar(ns(2024, 1, 2, 9, m), 10, "Y")); // 未订阅, 应忽略
             let closed = a.update(&bar(ns(2024, 1, 2, 9, m), 20, "X"));
@@ -667,7 +780,8 @@ mod tests {
         a.configure(
             vec![WindowSubscription::parse(None, "1h", None).unwrap()],
             Some(1),
-        );
+        )
+        .unwrap();
         assert!(a.current("X", "5min").is_none());
         assert!(a.current("X", "1h").is_some());
     }
@@ -679,9 +793,91 @@ mod tests {
         a.configure(
             vec![WindowSubscription::parse(None, "1d", None).unwrap()],
             Some(60),
-        );
+        )
+        .unwrap();
         assert!(a.update(&bar(ns(2024, 1, 2, 7, 0), 10, "X")).is_empty());
         let closed = a.update(&bar(ns(2024, 1, 2, 8, 0), 11, "X"));
         assert_eq!(closed.len(), 1, "UTC 日界在北京 08:00");
+    }
+
+    #[test]
+    fn dst_gap_label_does_not_panic_and_lands_after_gap() {
+        // 美东 2024-03-10 因夏令时"春季跳变", 当地 02:00-02:59:59 整体不存在
+        // (01:59:59 EST 直接跳到 03:00:00 EDT)。1h 窗口在本地 01:59 输入后,
+        // ceil 到的标签正是不存在的 02:00 —— 曾经会在这里 panic。
+        let mut a = WindowAggregator::with_clock(Some("America/New_York"), 0);
+        a.configure(
+            vec![WindowSubscription::parse(None, "1h", None).unwrap()],
+            Some(1),
+        )
+        .unwrap();
+        let ts = chrono_tz::America::New_York
+            .with_ymd_and_hms(2024, 3, 10, 1, 59, 0)
+            .unwrap()
+            .timestamp_nanos_opt()
+            .unwrap();
+        let closed = a.update(&bar(ts, 10, "X"));
+        assert!(closed.is_empty(), "不应 panic, 且尚未闭合");
+        let expected_label = chrono_tz::America::New_York
+            .with_ymd_and_hms(2024, 3, 10, 3, 0, 0)
+            .unwrap()
+            .timestamp_nanos_opt()
+            .unwrap();
+        assert_eq!(
+            a.current("X", "1h").unwrap().timestamp,
+            expected_label,
+            "缺口后应落在缺口结束的第一个合法瞬间(本地 03:00)"
+        );
+    }
+
+    #[test]
+    fn configure_rejects_overlapping_same_label_with_different_sessions() {
+        let sessions = Some(vec![("09:30".to_string(), "11:30".to_string())]);
+        let mut a = WindowAggregator::with_clock(Some("Asia/Shanghai"), 28800);
+        let err = a
+            .configure(
+                vec![
+                    WindowSubscription::parse(None, "5min", None).unwrap(),
+                    WindowSubscription::parse(Some("X".to_string()), "5min", sessions).unwrap(),
+                ],
+                Some(1),
+            )
+            .unwrap_err();
+        assert!(err.contains("5min"), "错误信息应指出冲突的 freq: {err}");
+    }
+
+    #[test]
+    fn configure_collapses_identical_duplicates() {
+        let mut a = agg(&[("5min", None), ("5min", None)], Some(1));
+        assert_eq!(a.subscribed_freqs(), vec!["5min".to_string()]);
+        let mut out = Vec::new();
+        for m in 31..=35 {
+            out = a.update(&bar(ns(2024, 1, 2, 9, m), 10, "X"));
+        }
+        assert_eq!(out.len(), 1, "重复订阅去重后只应闭合一根窗口 bar");
+    }
+
+    #[test]
+    fn flush_order_is_deterministic_for_equal_periods() {
+        let mut a = agg(&[("1h", None), ("60min", None)], Some(1));
+        a.update(&bar(ns(2024, 1, 2, 9, 31), 10, "X"));
+        let out_a = a.flush();
+        let mut b = agg(&[("1h", None), ("60min", None)], Some(1));
+        b.update(&bar(ns(2024, 1, 2, 9, 31), 10, "X"));
+        let out_b = b.flush();
+        let labels_a: Vec<&str> = out_a
+            .iter()
+            .map(|bar| bar.freq.as_deref().unwrap())
+            .collect();
+        let labels_b: Vec<&str> = out_b
+            .iter()
+            .map(|bar| bar.freq.as_deref().unwrap())
+            .collect();
+        assert_eq!(labels_a, labels_b, "相同周期数量下顺序必须确定");
+        assert_eq!(
+            labels_a,
+            vec!["1h", "60min"],
+            "按 freq_label 字典序 tie-break"
+        );
     }
 }
