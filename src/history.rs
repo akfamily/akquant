@@ -375,6 +375,7 @@ mod tests {
             volume: Decimal::from(1000),
             symbol: "TEST".to_string(),
             extra: extra_map,
+            freq: None,
         }
     }
 

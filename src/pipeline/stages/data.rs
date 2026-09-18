@@ -75,6 +75,7 @@ impl DataProcessor {
                         close: last_price,
                         volume: Decimal::ZERO,
                         extra: HashMap::default(),
+                        freq: None,
                     };
                     buffer.update(&bar);
                 }

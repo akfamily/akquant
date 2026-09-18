@@ -162,6 +162,7 @@ mod tests {
             close: dec!(3505.0),
             volume: dec!(1000),
             extra: Default::default(),
+            freq: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
@@ -206,6 +207,7 @@ mod tests {
             close: dec!(3505.0),
             volume: dec!(1000),
             extra: Default::default(),
+            freq: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
@@ -271,6 +273,7 @@ mod tests {
             close: dec!(3505.0),
             volume: dec!(1000),
             extra: Default::default(),
+            freq: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
@@ -311,6 +314,7 @@ mod tests {
             close: dec!(3505.0),
             volume: dec!(1000),
             extra: Default::default(),
+            freq: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
@@ -338,6 +342,7 @@ mod tests {
             close: dec!(3505.0),
             volume: dec!(1000),
             extra: Default::default(),
+            freq: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
