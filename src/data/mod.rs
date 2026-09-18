@@ -5,6 +5,7 @@ pub mod columns;
 pub mod compute;
 pub mod feed;
 pub mod parquet_stream;
+pub mod window;
 
 pub use aggregator::BarAggregator;
 pub use batch::from_arrays;
@@ -14,3 +15,4 @@ pub use compute::{
     vec_rolling_std, vec_rolling_sum, vec_sma, vec_wma, vec_zscore,
 };
 pub use feed::DataFeed;
+pub use window::{WindowAggregator, WindowAggregatorSnapshot, WindowSubscription};
