@@ -49,6 +49,8 @@ pub struct EngineSnapshot {
     #[serde(default)]
     pub history_state: Option<HistoryBufferSnapshot>,
     #[serde(default)]
+    pub window_aggregator_state: Option<crate::data::WindowAggregatorSnapshot>,
+    #[serde(default)]
     pub strategy_risk_state: StrategyRiskStateSnapshot,
 }
 

@@ -578,6 +578,16 @@ class Engine:
         """
         ...
 
+    def configure_window_subscriptions(
+        self,
+        specs: list[
+            tuple[typing.Optional[str], str, typing.Optional[list[tuple[str, str]]]]
+        ],
+        base_interval_min: typing.Optional[int] = ...,
+    ) -> None:
+        r"""配置多周期窗口订阅 (由 Strategy.subscribe_bars 收集后下发). 须在 run() 之前调用."""
+        ...
+
     def get_state_bytes(self) -> bytes:
         r"""
         导出当前状态为二进制数据.
@@ -2661,6 +2671,10 @@ class StrategyContext:
         margin_accrued_interest: typing.Optional[float],
         margin_daily_interest: typing.Optional[float],
     ) -> "StrategyContext": ...
+    def current_window(self, symbol: str, freq: str) -> typing.Optional[Bar]:
+        r"""某标的某周期正在形成、尚未闭合的窗口快照; 无则 None. 不触发回调."""
+        ...
+
     def history(
         self, symbol: str, field: str, count: int
     ) -> typing.Optional[numpy.typing.NDArray[numpy.float64]]:

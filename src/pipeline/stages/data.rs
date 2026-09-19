@@ -530,9 +530,19 @@ impl Processor for DataProcessor {
                     }
                     self.current_symbol_events
                         .insert(b.symbol.clone(), Event::Bar(b.clone()));
-                    // Update History Buffer
+                    // Update History Buffer, 并把基础 bar 喂给窗口聚合器。闭合的窗口 bar
+                    // 只写历史 + 暂存待派发: 不进 feed、不成为 Event、不动 last_prices。
                     if let Ok(mut buffer) = engine.history_buffer.write() {
                         buffer.update(b);
+                        let closed = engine
+                            .window_aggregator
+                            .write()
+                            .expect("window_aggregator 写锁被污染")
+                            .update(b);
+                        for window_bar in &closed {
+                            buffer.update_window(window_bar);
+                        }
+                        engine.pending_window_bars.extend(closed);
                     }
                     // println!("DataProcessor: Bar Symbol={}, TS={}", b.symbol, b.timestamp);
                 } else if let Event::Tick(ref t) = event {

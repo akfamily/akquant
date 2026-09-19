@@ -552,6 +552,11 @@ impl Engine {
             days_per_year: 252.0,
             risk_free_rate: 0.0,
             history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(10000))), // Default large capacity for MAE/MFE
+            window_aggregator: Arc::new(RwLock::new(crate::data::WindowAggregator::with_clock(
+                Some("Asia/Shanghai"),
+                28800,
+            ))),
+            pending_window_bars: Vec::new(),
             initial_cash,
             active_start_time_ns: None,
             event_manager: EventManager::new(),
@@ -637,6 +642,12 @@ impl Engine {
             margin_accrued_interest: self.margin_accrued_interest,
             margin_daily_interest: self.margin_daily_interest,
             history_state,
+            window_aggregator_state: Some(
+                self.window_aggregator
+                    .read()
+                    .expect("window_aggregator 读锁被污染")
+                    .snapshot(),
+            ),
             strategy_risk_state: crate::engine::state::StrategyRiskStateSnapshot {
                 default_strategy_id: self.default_strategy_id.clone(),
                 strategy_slots: self
@@ -683,10 +694,7 @@ impl Engine {
 
         self.state.portfolio = snapshot.portfolio;
         self.state.order_manager = snapshot.order_manager;
-        *self
-            .last_prices
-            .write()
-            .expect("last_prices 写锁被污染") = snapshot.last_prices;
+        *self.last_prices.write().expect("last_prices 写锁被污染") = snapshot.last_prices;
         self.instruments = snapshot.instruments;
         self.initial_cash = snapshot.initial_cash.unwrap_or(self.state.portfolio.cash);
         self.margin_accrued_interest = snapshot.margin_accrued_interest;
@@ -696,6 +704,12 @@ impl Engine {
             .map(crate::history::HistoryBuffer::from);
         if let Some(buffer) = history_buffer {
             self.history_buffer = Arc::new(RwLock::new(buffer));
+        }
+        if let Some(window_state) = snapshot.window_aggregator_state {
+            self.window_aggregator
+                .write()
+                .expect("window_aggregator 写锁被污染")
+                .restore(window_state);
         }
         self.snapshot_time = snapshot.current_time;
         self.default_strategy_id = snapshot.strategy_risk_state.default_strategy_id;
@@ -752,7 +766,7 @@ impl Engine {
         self.history_buffer.write().unwrap().set_capacity(depth);
     }
 
-    fn configure_history_depth(&mut self, depth: usize) {
+    pub fn configure_history_depth(&mut self, depth: usize) {
         self.history_buffer
             .write()
             .unwrap()
@@ -776,12 +790,54 @@ impl Engine {
     /// 2. 容量不能为 0。缓冲容量为 0 时 `HistoryBuffer::update` (src/history.rs:229)
     ///    直接返回, 预热数据会被整批丢弃且同样无声。
     ///
+    /// 3. 同时喂窗口聚合器: 须在 `configure_window_subscriptions()` **之后**调用,
+    ///    否则预加载期间不会产生任何窗口历史(订阅表为空时聚合器直接返回)。
+    ///
     /// :param bars: 历史 K 线列表
-    fn preload_history(&mut self, bars: Vec<Bar>) {
+    pub fn preload_history(&mut self, bars: Vec<Bar>) {
         let mut buffer = self.history_buffer.write().unwrap();
+        let mut aggregator = self
+            .window_aggregator
+            .write()
+            .expect("window_aggregator 写锁被污染");
         for bar in &bars {
             buffer.update(bar);
+            // 预加载也要喂窗口聚合器, 否则启动时窗口历史为空、按周期注册的指标要
+            // 重新预热(规格 7.2)。闭合出的窗口 bar 只写历史, 不派发回调。
+            for window_bar in aggregator.update(bar) {
+                buffer.update_window(&window_bar);
+            }
         }
+    }
+
+    /// 配置多周期窗口订阅(由 Python 侧 `Strategy.subscribe_bars` 收集后下发)。
+    ///
+    /// :param specs: `(symbol 或 None=全部, freq, session_windows 或 None)` 列表
+    /// :param base_interval_min: 基础数据周期(分钟); 已知时窗口在标签时刻即时闭合,
+    ///     未知时退到「下一根落入新窗口的 bar 到达才闭合」。
+    /// 不清空仍被订阅周期的在形成窗口(checkpoint 恢复后再配置时要保留)。
+    ///
+    /// **必须在 `run()` 之前调用**: `run()` 期间 Rust 持有 Engine 的可变借用,
+    /// 从策略回调里再入本方法会 `Already borrowed`。
+    #[pyo3(signature = (specs, base_interval_min=None))]
+    pub fn configure_window_subscriptions(
+        &mut self,
+        specs: Vec<(Option<String>, String, Option<Vec<(String, String)>>)>,
+        base_interval_min: Option<u32>,
+    ) -> PyResult<()> {
+        let mut subs = Vec::with_capacity(specs.len());
+        for (symbol, freq, sessions) in specs {
+            subs.push(
+                crate::data::WindowSubscription::parse(symbol, &freq, sessions)
+                    .map_err(PyValueError::new_err)?,
+            );
+        }
+        self.window_aggregator
+            .write()
+            .expect("window_aggregator 写锁被污染")
+            .configure(subs, base_interval_min)
+            .map_err(PyValueError::new_err)?;
+        Ok(())
     }
 
     /// 设置标的白名单: 只有集合内的标的会被分发给策略。
@@ -804,6 +860,10 @@ impl Engine {
     pub fn set_timezone(&mut self, offset: i32) {
         self.timezone_offset = offset;
         self.timezone_name = None;
+        self.window_aggregator
+            .write()
+            .expect("window_aggregator 写锁被污染")
+            .set_clock(self.timezone_name.as_deref(), self.timezone_offset);
     }
 
     /// 设置时区名称.
@@ -820,6 +880,10 @@ impl Engine {
             .fix()
             .local_minus_utc();
         self.timezone_name = Some(tz_name.to_string());
+        self.window_aggregator
+            .write()
+            .expect("window_aggregator 写锁被污染")
+            .set_clock(self.timezone_name.as_deref(), self.timezone_offset);
         Ok(())
     }
 
@@ -1238,7 +1302,10 @@ impl Engine {
         // Record initial equity
         if self.state.feed.peek_timestamp().is_some() {
             let prices = self.last_prices.read().expect("last_prices 读锁被污染");
-            let _equity = self.state.portfolio.calculate_equity(&prices, &self.instruments);
+            let _equity = self
+                .state
+                .portfolio
+                .calculate_equity(&prices, &self.instruments);
         }
 
         // Initialize Pipeline
@@ -1253,6 +1320,23 @@ impl Engine {
             // Clean up pb if error
             self.progress_bar = None;
             return Err(e);
+        }
+
+        // 会话结束: 闭合全部尾部未满窗口并派发(规格 5.3)。写历史与派发顺序同数据阶段。
+        // 注意: flush 之后在形成窗口为空, 随后 save_checkpoint 存下的聚合器状态也为空;
+        // 续跑时尾部区间会重新形成一根同标签窗口(文档写明, 见 Task 8)。
+        let tail = self
+            .window_aggregator
+            .write()
+            .expect("window_aggregator 写锁被污染")
+            .flush();
+        if !tail.is_empty() {
+            if let Ok(mut buffer) = self.history_buffer.write() {
+                for bar in &tail {
+                    buffer.update_window(bar);
+                }
+            }
+            self.dispatch_window_bars(py, strategy, tail)?;
         }
 
         self.flush_terminal_pending_order_events(py, strategy)?;

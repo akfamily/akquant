@@ -4,7 +4,7 @@ use crate::history::HistoryBuffer;
 use crate::market::MarketModel;
 use crate::model::market_data::extract_decimal;
 use crate::model::{
-    AssetType, ExecutionMode, ExecutionPolicyCore, Instrument, Order, OrderSide, OrderType,
+    AssetType, Bar, ExecutionMode, ExecutionPolicyCore, Instrument, Order, OrderSide, OrderType,
     PositionEffect, TimeInForce, Timer, Trade, TradingSession,
 };
 use crate::portfolio::Portfolio;
@@ -52,6 +52,7 @@ pub struct ContextInit {
     pub recent_rejected_orders: Vec<Order>,
     pub recent_expiry_events: Vec<ExpiryEvent>,
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
+    pub window_aggregator: Option<Arc<RwLock<crate::data::WindowAggregator>>>,
     pub event_tx: Option<Sender<Event>>,
     pub risk_config: RiskConfig,
     pub strategy_id: Option<String>,
@@ -358,6 +359,8 @@ pub struct StrategyContext {
     pub recent_expiry_events: Vec<ExpiryEvent>,
     // History Buffer (Shared with Engine)
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
+    /// 多周期窗口聚合器(与 Engine 共享), 只读: 供 `current_window` 看在形成窗口。
+    pub(crate) window_aggregator: Option<Arc<RwLock<crate::data::WindowAggregator>>>,
     // Event Channel (Optional, for async order submission)
     pub event_tx: Option<Sender<Event>>,
     #[pyo3(get)]
@@ -421,6 +424,7 @@ impl StrategyContext {
             recent_rejected_orders: init.recent_rejected_orders,
             recent_expiry_events: init.recent_expiry_events,
             history_buffer: init.history_buffer,
+            window_aggregator: init.window_aggregator,
             event_tx: init.event_tx,
             risk_config: init.risk_config,
             strategy_id: init.strategy_id,
@@ -455,11 +459,7 @@ impl StrategyContext {
     /// 用于 auto 拆腿判定"还能平多少";`false` 投影全部在途单(按各自
     /// `position_effect`),用于目标仓位算 delta 判定"仓位将落在哪"。
     fn project_pending_position(&self, symbol: &str, reducing_only: bool) -> Decimal {
-        let mut projected = self
-            .positions
-            .get(symbol)
-            .copied()
-            .unwrap_or(Decimal::ZERO);
+        let mut projected = self.positions.get(symbol).copied().unwrap_or(Decimal::ZERO);
         for order in self.active_orders.iter().chain(self.orders.iter()) {
             if order.symbol != symbol {
                 continue;
@@ -640,6 +640,7 @@ impl StrategyContext {
             recent_rejected_orders: Vec::new(),
             recent_expiry_events: recent_expiry_events.unwrap_or_default(),
             history_buffer: None,
+            window_aggregator: None,
             event_tx: None,
             risk_config: risk_config.unwrap_or_default(),
             strategy_id,
@@ -864,6 +865,20 @@ impl StrategyContext {
         self.closed_trades.last().cloned()
     }
 
+    /// 某标的某周期正在形成、尚未闭合的窗口快照; 无则 None。不触发回调。
+    ///
+    /// 放在 ctx 上而非 Engine 上: 引擎 run() 期间独占可变借用, 回调里再入 Engine
+    /// pymethod 会 "Already borrowed"; ctx 走共享的 Arc<RwLock> 读锁即可。
+    ///
+    /// :param symbol: 标的代码
+    /// :param freq: 已订阅的窗口周期(如 "5min" / "1h" / "1d")
+    /// :return: 在形成窗口的 Bar 快照, 无则 None
+    pub fn current_window(&self, symbol: &str, freq: &str) -> Option<Bar> {
+        let lock = self.window_aggregator.as_ref()?;
+        let aggregator = lock.read().ok()?;
+        aggregator.current(symbol, freq)
+    }
+
     #[getter]
     fn get_closed_trades(&self) -> Vec<ClosedTrade> {
         self.closed_trades.to_vec()
@@ -1042,8 +1057,7 @@ impl StrategyContext {
                 (true, false) => OrderType::Limit,
                 (false, false) => OrderType::Market,
             });
-        let fill_policy_override =
-            parse_order_fill_policy_override(fill_mode, fill_timer_timing)?;
+        let fill_policy_override = parse_order_fill_policy_override(fill_mode, fill_timer_timing)?;
         let (slippage_type_override, slippage_value_override) =
             parse_order_slippage_override(fill_slippage_type, fill_slippage_value)?;
         let (commission_type_override, commission_value_override) =
@@ -1150,8 +1164,7 @@ impl StrategyContext {
                 (true, false) => OrderType::Limit,
                 (false, false) => OrderType::Market,
             });
-        let fill_policy_override =
-            parse_order_fill_policy_override(fill_mode, fill_timer_timing)?;
+        let fill_policy_override = parse_order_fill_policy_override(fill_mode, fill_timer_timing)?;
         let (slippage_type_override, slippage_value_override) =
             parse_order_slippage_override(fill_slippage_type, fill_slippage_value)?;
         let (commission_type_override, commission_value_override) =

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 pub struct StrategyProcessor;
 
-fn apply_pending_engine_plans(
+pub(crate) fn apply_pending_engine_plans(
     engine: &mut Engine,
     plans: Option<crate::engine::core::PendingEnginePlans>,
 ) {
@@ -132,6 +132,11 @@ impl Processor for StrategyProcessor {
                 for t in new_timers {
                     engine.timers.push(t);
                 }
+            }
+            // 基础事件回调之后、同一时间步内派发本步闭合的窗口 bar(规格 5.4)。
+            if !engine.pending_window_bars.is_empty() {
+                let bars = std::mem::take(&mut engine.pending_window_bars);
+                engine.dispatch_window_bars(py, strategy, bars)?;
             }
             engine.state.order_manager.current_step_trades.clear();
             engine

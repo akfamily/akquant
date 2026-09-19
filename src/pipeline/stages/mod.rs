@@ -4,7 +4,7 @@ mod data;
 mod execution;
 mod shared;
 mod statistics;
-mod strategy;
+pub(crate) mod strategy;
 
 pub use channel::ChannelProcessor;
 pub use cleanup::CleanupProcessor;

@@ -22,7 +22,7 @@ use crate::execution::ExecutionClient;
 use crate::history::HistoryBuffer;
 use crate::market::corporate_action::CorporateActionManager;
 use crate::market::manager::MarketManager;
-use crate::model::{ExecutionPolicyCore, Instrument, Order, OrderSide, Timer, Trade};
+use crate::model::{Bar, ExecutionPolicyCore, Instrument, Order, OrderSide, Timer, Trade};
 use crate::pipeline::PipelineRunner;
 use crate::pipeline::stages::{
     ChannelProcessor, CleanupProcessor, DataProcessor, ExecutionPhase, ExecutionProcessor,
@@ -90,6 +90,13 @@ pub struct Engine {
     /// 年化无风险利率，默认 0.0。
     pub(crate) risk_free_rate: f64,
     pub(crate) history_buffer: Arc<RwLock<HistoryBuffer>>,
+    /// 多周期窗口聚合器(策略 subscribe_bars 声明的订阅), 见 src/data/window.rs。
+    /// 与 history_buffer 同样以 Arc<RwLock> 共享给 StrategyContext(供 current_window
+    /// 在回调里读), 引擎自身只在数据阶段/预加载/收尾/时区 setter 拿写锁。
+    pub(crate) window_aggregator: Arc<RwLock<crate::data::WindowAggregator>>,
+    /// 本时间步闭合、尚未派发给策略的窗口 bar。DataProcessor 写入, StrategyProcessor
+    /// 在基础事件回调之后取走派发。
+    pub(crate) pending_window_bars: Vec<Bar>,
     pub(crate) initial_cash: Decimal,
     #[pyo3(get, set)]
     pub active_start_time_ns: Option<i64>,
@@ -491,11 +498,7 @@ impl Engine {
     pub(crate) fn check_strategy_order_size_limit(&self, order: &Order) -> Option<String> {
         let strategy_id = Self::normalized_order_strategy_id(order)?;
         let max_size = self.strategy_max_order_size_limits.get(&strategy_id)?;
-        crate::risk::strategy_limits::exceeds_order_size(
-            &strategy_id,
-            order.quantity,
-            *max_size,
-        )
+        crate::risk::strategy_limits::exceeds_order_size(&strategy_id, order.quantity, *max_size)
     }
 
     pub(crate) fn check_strategy_position_size_limit(&self, order: &Order) -> Option<String> {
@@ -1154,6 +1157,7 @@ impl Engine {
             recent_rejected_orders: step_rejected_orders,
             recent_expiry_events: self.recent_expiry_events.clone(),
             history_buffer: Some(self.history_buffer.clone()),
+            window_aggregator: Some(self.window_aggregator.clone()),
             event_tx: Some(self.event_manager.sender()),
             risk_config: self.risk_manager.config.clone(),
             strategy_id,
@@ -1422,6 +1426,109 @@ impl Engine {
                 Ok((Vec::new(), Vec::new(), Vec::new(), None))
             }
         }
+    }
+
+    /// 把闭合的窗口 bar 逐个派发给各策略槽的 `_on_window_bar_event_and_flush`。
+    ///
+    /// 与 `StrategyProcessor` 对基础事件的处理同构(取 ctx → 调 Python → 收订单/
+    /// timer/撤单/OCO 计划 → 投递), 但**不更新 last_prices**: 窗口 bar 不是行情事件。
+    /// 每个槽是否真的订阅了该 (symbol, freq) 由 Python 侧过滤。
+    pub(crate) fn dispatch_window_bars(
+        &mut self,
+        py: Python<'_>,
+        strategy: &Bound<'_, PyAny>,
+        bars: Vec<Bar>,
+    ) -> PyResult<()> {
+        if bars.is_empty() {
+            return Ok(());
+        }
+        self.ensure_strategy_slot_exists();
+        self.ensure_strategy_context_capacity();
+        let slot_count = self.strategy_slots.len();
+        for bar in bars {
+            let active_orders = Arc::new(self.state.order_manager.active_orders.clone());
+            let step_trades = self.state.order_manager.current_step_trades.clone();
+            let step_rejected_orders = self
+                .state
+                .order_manager
+                .current_step_rejected_orders
+                .clone();
+            for slot_index in 0..slot_count {
+                self.active_strategy_slot = slot_index;
+                let previous_cash = self.state.portfolio.cash;
+                let previous_account_metrics = self.current_account_metrics();
+                let py_ctx = self.get_or_create_strategy_context(
+                    py,
+                    slot_index,
+                    active_orders.clone(),
+                    step_trades.clone(),
+                    step_rejected_orders.clone(),
+                    previous_cash,
+                    previous_account_metrics,
+                )?;
+                let slot_strategy = self
+                    .strategy_slot_strategies
+                    .get(slot_index)
+                    .and_then(|slot| slot.as_ref())
+                    .map(|slot| slot.clone_ref(py));
+                let target = match slot_strategy {
+                    Some(ref slot_py) => slot_py.bind(py).clone(),
+                    None => strategy.clone(),
+                };
+                if !target.hasattr("_on_window_bar_event_and_flush")? {
+                    continue;
+                }
+                let ret = target.call_method1(
+                    "_on_window_bar_event_and_flush",
+                    (bar.clone(), py_ctx.clone_ref(py)),
+                )?;
+                let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
+                    None
+                } else {
+                    let (oco, bracket) = ret.extract()?;
+                    Some(PendingEnginePlans {
+                        oco_groups: oco,
+                        bracket_plans: bracket,
+                    })
+                };
+                let (new_orders, new_timers, canceled_ids) = {
+                    let ctx_ref = py_ctx.borrow(py);
+                    let mut orders = Vec::new();
+                    let mut timers = Vec::new();
+                    let mut canceled = Vec::new();
+                    if let Ok(o) = ctx_ref.orders_arc.read() {
+                        orders.extend(o.clone());
+                    }
+                    if let Ok(t) = ctx_ref.timers_arc.read() {
+                        timers.extend(t.clone());
+                    }
+                    if let Ok(c) = ctx_ref.canceled_order_ids_arc.read() {
+                        canceled.extend(c.clone());
+                    }
+                    (orders, timers, canceled)
+                };
+                crate::pipeline::stages::strategy::apply_pending_engine_plans(self, pending_plans);
+                for id in canceled_ids {
+                    self.execution_model.on_cancel(&id);
+                    if let Some(cancelled) = self
+                        .state
+                        .order_manager
+                        .cancel_active_order(&id, self.clock.timestamp().unwrap_or(0))
+                    {
+                        let _ = self
+                            .event_manager
+                            .send(Event::ExecutionReport(cancelled, None));
+                    }
+                }
+                for order in new_orders {
+                    let _ = self.event_manager.send(Event::OrderRequest(order));
+                }
+                for t in new_timers {
+                    self.timers.push(t);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn flush_terminal_pending_order_events(
