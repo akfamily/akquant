@@ -1110,7 +1110,18 @@ class LiveRunner:
                 freq,
                 extra=self._runner_log_extra(phase="gateway"),
             )
-        configure_engine_window_subscriptions(self.engine, targets, freq, logger)
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            # 装配顺序保护: 窗口订阅必须在 engine.run() 之前下发到引擎; 若 runner 尚未
+            # 建引擎(如仅注入 freq 的单元测试路径), 无订阅时静默跳过, 有订阅则报错
+            # 而非静默丢掉用户的 subscribe_bars。
+            if any(getattr(t, "_window_subscriptions", None) for t in targets):
+                raise RuntimeError(
+                    "LiveRunner 尚未创建 engine, 无法下发 subscribe_bars 订阅: "
+                    "_inject_data_freq 必须在引擎构建之后调用"
+                )
+            return
+        configure_engine_window_subscriptions(engine, targets, freq, logger)
 
     def _install_subscription_forwarder(self, targets: list[Strategy]) -> None:
         """给各策略装上 subscribe() → 行情网关的运行期转发器.
