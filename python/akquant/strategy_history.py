@@ -52,16 +52,35 @@ def _infer_freq(strategy: Any, freq: Optional[str]) -> Optional[str]:
     与 ``freq`` 已显式传入时不做任何干预(显式优先), 单流场景也完全不受影响
     (单流下 ``freq=None`` 本就直接命中唯一存在的那条序列, 推断出的值与它一致)。
 
+    窗口回调(``on_window_bar`` 或 ``subscribe_bars(callback=)``)内省略 ``freq``
+    时取该窗口的周期(``_framework_current_callback`` 形如 ``"window:5min"``)。
+
+    显式或推断出的窗口周期必须已 ``subscribe_bars``, 否则报 ``ValueError`` 并指向
+    ``subscribe_bars`` —— 否则 Rust 侧只会返回空序列, 用户看到一列 NaN 却不知为何。
+
     :param strategy: 策略实例
     :param freq: 用户传入的粒度, ``None`` 表示未指定
     :return: 推断后的粒度; 无法推断时原样返回 ``freq``
     """
-    if freq is not None:
-        return freq
-    callback = getattr(strategy, "_framework_current_callback", None)
-    if not isinstance(callback, str):
-        return freq
-    return _CALLBACK_FREQ.get(callback, freq)
+    resolved = freq
+    if resolved is None:
+        callback = getattr(strategy, "_framework_current_callback", None)
+        if isinstance(callback, str):
+            if callback.startswith("window:"):
+                resolved = callback[len("window:") :]
+            else:
+                resolved = _CALLBACK_FREQ.get(callback, None)
+    if resolved is not None and resolved not in ("bar", "tick"):
+        from .strategy_window import window_freqs
+
+        label = str(resolved).strip().lower()
+        if label not in window_freqs(strategy):
+            raise ValueError(
+                f"get_history(freq={resolved!r}) 未订阅该周期, 请先在策略 __init__ 里 "
+                f"subscribe_bars({label!r})"
+            )
+        return label
+    return resolved
 
 
 def _resolve_history_cutoff(strategy: Any) -> Optional[int]:

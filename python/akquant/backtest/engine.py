@@ -82,6 +82,10 @@ from ..strategy_framework_hooks import (
 )
 from ..strategy_loader import resolve_strategy_input
 from ..strategy_runtime_config import apply_strategy_runtime_config
+from ..strategy_window import (
+    configure_engine_window_subscriptions,
+    freeze_window_subscriptions,
+)
 from ..utils.inspector import infer_warmup_period
 from .fill_mode import FillMode
 from .result import BacktestResult
@@ -3088,6 +3092,11 @@ def run_backtest(
     for slot_strategy in slot_strategy_instances.values():
         slot_strategy._symbol_whitelist = whitelist_for_strategy
 
+    # subscribe_bars 只认 __init__: 必须在 on_start 之前冻结, 否则 on_start 里的
+    # subscribe_bars 因为还没冻结而悄悄成功(第二次真正的 on_start 被
+    # _start_initialized 挡住, 不会再触发), 直到引擎启动都不会报错。
+    freeze_window_subscriptions(all_strategy_instances)
+
     # 调用 on_start 获取订阅
     # 注意：现在调用 _on_start_internal 来触发自动发现
     if hasattr(strategy_instance, "_on_start_internal"):
@@ -4637,6 +4646,10 @@ def run_backtest(
             )
         )
 
+    # 多周期窗口订阅下发(无订阅时零开销)。必须在 engine.run() 之前; 放在白名单之后
+    # 是为了与 run_from_checkpoint 的下发点对称。
+    configure_engine_window_subscriptions(engine, all_strategy_instances, freq, logger)
+
     # 6. 添加数据
     engine.add_data(feed)
 
@@ -6138,6 +6151,9 @@ def run_from_checkpoint(
     for slot_strategy in slot_strategy_instances.values():
         slot_strategy._symbol_whitelist = whitelist_for_strategy
 
+    # subscribe_bars 只认 __init__: 与 run_backtest 对称, 必须在 on_start 之前冻结。
+    freeze_window_subscriptions(all_strategy_instances)
+
     if hasattr(strategy_instance, "_on_start_internal"):
         strategy_instance._on_start_internal()
     elif hasattr(strategy_instance, "on_start"):
@@ -6169,6 +6185,16 @@ def run_from_checkpoint(
     )
     if symbols_explicit:
         engine.set_symbol_whitelist(whitelist_symbols)
+
+    # 多周期窗口订阅下发(无订阅时零开销), 与 run_backtest 对称。本函数没有
+    # `freq` 形参(基础周期是 checkpoint 存档时随策略实例一起 pickle 下来的),
+    # 从恢复出的策略实例上取 `_framework_freq`。
+    configure_engine_window_subscriptions(
+        engine,
+        all_strategy_instances,
+        getattr(strategy_instance, "_framework_freq", None),
+        logger,
+    )
 
     # 被前置过滤掉的标的只发一条汇总日志, 与 run_backtest 对称(见该函数同名
     # 注释, :4572 附近)——两条入口的可观测性不应该有差异。

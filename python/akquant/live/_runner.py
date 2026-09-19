@@ -39,6 +39,7 @@ from ..log import build_log_extra, get_logger
 from ..strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
 from ..strategy_loader import resolve_strategy_input
 from ..strategy_runtime_config import apply_strategy_runtime_config
+from ..strategy_window import configure_engine_window_subscriptions
 from ..utils import format_metric_value
 from ._gateway_setup import (
     LEGACY_GATEWAY_OPTION_KEYS,
@@ -1109,6 +1110,7 @@ class LiveRunner:
                 freq,
                 extra=self._runner_log_extra(phase="gateway"),
             )
+        configure_engine_window_subscriptions(self.engine, targets, freq, logger)
 
     def _install_subscription_forwarder(self, targets: list[Strategy]) -> None:
         """给各策略装上 subscribe() → 行情网关的运行期转发器.

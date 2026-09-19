@@ -380,6 +380,30 @@ def call_user_callback(
         strategy._framework_current_trade = previous_trade
 
 
+def call_window_bar_callback(strategy: Any, callback: Any, bar: Any) -> Any:
+    """调用窗口 bar 回调; 期间 `_framework_current_callback` 记为 "window:<freq>".
+
+    与 :func:`call_user_callback` 同样把异常转发到 ``on_error``(callback_name 报
+    ``"on_window_bar"``)。不复用它是因为它按属性名取回调, 而 subscribe_bars 的
+    callback 可以是任意可调用对象。
+    """
+    previous_callback = getattr(strategy, "_framework_current_callback", None)
+    freq = getattr(bar, "freq", None)
+    strategy._framework_current_callback = f"window:{freq}"
+    try:
+        return callback(bar)
+    except Exception as exc:
+        try:
+            strategy.on_error(exc, "on_window_bar", bar)
+        except Exception:
+            pass
+        if not _should_reraise_on_error(strategy):
+            return None
+        raise
+    finally:
+        strategy._framework_current_callback = previous_callback
+
+
 def dispatch_time_hooks(strategy: Any) -> None:
     """分发会话与交易日相关钩子."""
     if strategy.ctx is None:

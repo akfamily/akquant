@@ -12,6 +12,7 @@ from typing import (
     Callable,
     Deque,
     Dict,
+    Iterable,
     List,
     Literal,
     Optional,
@@ -177,6 +178,10 @@ from .strategy_trading_api import (
 from .strategy_trading_api import (
     submit_order as _submit_order_impl,
 )
+from .strategy_window import WindowSubscription
+from .strategy_window import current_window_impl as _current_window_impl
+from .strategy_window import on_window_bar_event as _on_window_bar_event_impl
+from .strategy_window import subscribe_bars_impl as _subscribe_bars_impl
 from .utils.price import round_to_tick as _round_to_tick
 
 if TYPE_CHECKING:
@@ -245,6 +250,9 @@ class IncrementalIndicatorRegistration:
     # 说明该 symbol 全程只有 tick、从未有 bar, 需要报错而非静默不推进。
     bar_seen_symbols: set[str] = field(default_factory=set)
     tick_only_symbols: set[str] = field(default_factory=set)
+    # 该指标由哪个周期驱动: None=基础行情(bar/tick), 否则是 subscribe_bars 的周期
+    # 标签(如 "5min")。见 `Strategy._update_incremental_indicators` 的过滤判断。
+    freq: Optional[str] = None
 
 
 class IncrementalIndicatorBinding:
@@ -463,6 +471,8 @@ class Strategy:
     _pending_daily_timers: List[Tuple[str, str]]
     _instrument_snapshots: Dict[str, InstrumentSnapshot]
     _indicator_recorder: Optional[IndicatorRecorder]
+    _window_subscriptions: List["WindowSubscription"]
+    _window_subscriptions_frozen: bool
 
     _trading_days: List[pd.Timestamp]
 
@@ -553,6 +563,8 @@ class Strategy:
         instance.current_tick = None
         instance._precomputed_indicators = []
         instance._incremental_indicators = {}
+        instance._window_subscriptions = []
+        instance._window_subscriptions_frozen = False
         instance._subscriptions = []
         # 实盘标记: LiveRunner 在 _configure_strategy_slots 里置位。subscribe()
         # 据此告警——实盘订阅集来自 run_live(instruments=[...]), _subscriptions
@@ -868,6 +880,9 @@ class Strategy:
             self._seen_trade_keys = set()
         if not hasattr(self, "_incremental_indicators"):
             self._incremental_indicators = {}
+        if not hasattr(self, "_window_subscriptions"):
+            self._window_subscriptions = []
+        self._window_subscriptions_frozen = False
         if not hasattr(self, "_seen_trade_key_order"):
             self._seen_trade_key_order = deque()
         if not hasattr(self, "_finalized_orders"):
@@ -1617,12 +1632,23 @@ class Strategy:
         warmup_bars: int = 0,
         indicator_factory: Optional[Callable[[], Any]] = None,
         input_mode: str = "source",
+        freq: Optional[str] = None,
     ) -> None:
         """注册增量指标."""
         if self.indicator_mode != "incremental":
             raise ValueError(
                 "register_incremental_indicator requires indicator_mode='incremental'"
             )
+        freq_label: Optional[str] = None
+        if freq is not None:
+            from .strategy_window import parse_window_freq, window_freqs
+
+            freq_label, _ = parse_window_freq(freq)
+            if freq_label not in window_freqs(self):
+                raise ValueError(
+                    f"register_incremental_indicator(freq={freq!r}) 未订阅该周期, "
+                    f"请先在 __init__ 里 subscribe_bars({freq_label!r})"
+                )
         if self.is_restored and name in self._incremental_indicators:
             setattr(self, name, IncrementalIndicatorBinding(self, name))
             return
@@ -1643,6 +1669,7 @@ class Strategy:
             warmup_bars=warmup_bars_value,
             factory=indicator_factory,
             base_indicator=indicator,
+            freq=freq_label,
         )
         setattr(self, name, IncrementalIndicatorBinding(self, name))
 
@@ -1733,6 +1760,9 @@ class Strategy:
             item = self._get_incremental_registration(name)
             symbol_filter = item.symbols
             if symbol_filter is not None and bar_symbol not in symbol_filter:
+                continue
+            payload_freq = getattr(bar, "freq", None)  # Tick 无该属性 → None
+            if item.freq != payload_freq:
                 continue
             if is_tick_payload and item.input_mode in _TICK_UNSUPPORTED_INPUT_MODES:
                 # H/L 类指标要真实的最高/最低价, tick 的 OHLC 恒等无法提供。
@@ -1876,6 +1906,10 @@ class Strategy:
         for name in list(self._incremental_indicators.keys()):
             item = self._get_incremental_registration(name)
             if item.warmup_bars <= 0:
+                continue
+            if item.freq is not None:
+                # 窗口周期指标没有可用的离线预热数据(基础数据不是它的周期),
+                # 由运行期窗口 bar 驱动。
                 continue
             target_symbols = (
                 sorted(item.symbols)
@@ -2165,6 +2199,14 @@ class Strategy:
         self._check_order_events()
         return self._take_pending_engine_plans()
 
+    def _on_window_bar_event_and_flush(
+        self, bar: Bar, ctx: StrategyContext
+    ) -> Optional[Tuple[Any, Any]]:
+        """引擎单次调用入口: 窗口 bar 回调 + 订单事件收尾 + 取待注册计划 (Internal)."""
+        _on_window_bar_event_impl(self, bar, ctx)
+        self._check_order_events()
+        return self._take_pending_engine_plans()
+
     def _on_timer_event_and_flush(
         self, payload: str, ctx: StrategyContext
     ) -> Optional[Tuple[Any, Any]]:
@@ -2180,6 +2222,43 @@ class Strategy:
         用户应重写此方法.
         """
         pass
+
+    def on_window_bar(self, bar: Bar) -> None:
+        """多周期窗口 bar 回调 (subscribe_bars 未指定 callback 时走这里).
+
+        ``bar.freq`` 为周期标签(如 ``"5min"``), 多周期共用本回调时据此分流。
+        触发时机: 闭合该窗口的那根基础 bar 的 ``on_bar`` 之后、同一引擎步内。
+        """
+
+    def subscribe_bars(
+        self,
+        freq: str,
+        callback: Optional[Callable[[Bar], None]] = None,
+        symbols: Optional[Union[str, Iterable[str]]] = None,
+        *,
+        session_windows: Optional[List[Tuple[str, str]]] = None,
+    ) -> None:
+        """声明一条更高周期的窗口序列, 由引擎从基础 bar 聚合.
+
+        必须在 ``__init__`` 里调用。回测与实盘同一份代码。
+
+        :param freq: ``"5min"`` / ``"15min"`` / ``"1h"`` / ``"1d"``
+            (整数分钟、整数小时或 1d)
+        :param callback: 窗口闭合时的回调; 省略则调用 :meth:`on_window_bar`
+        :param symbols: 只对这些标的聚合; 省略覆盖本次运行的全部标的
+        :param session_windows: 本地交易时段
+            ``[("09:30", "11:30"), ("13:00", "15:00")]``,
+            给定则窗口不跨时段拼接(避免跨午休的脏 bar)
+        :raises ValueError: 周期不可解析 / 不高于基础周期(引擎配置时检查) / 时段非法
+        :raises RuntimeError: 引擎已启动后调用
+        """
+        _subscribe_bars_impl(self, freq, callback, symbols, session_windows)
+
+    def current_window(
+        self, symbol: Optional[str] = None, freq: str = ""
+    ) -> Optional[Bar]:
+        """某标的某周期正在形成、尚未闭合的窗口快照; 不触发回调, 无则 None."""
+        return _current_window_impl(self, symbol, freq)
 
     @property
     def position(self) -> Position:
