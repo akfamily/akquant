@@ -1446,7 +1446,11 @@ impl Engine {
         self.ensure_strategy_context_capacity();
         let slot_count = self.strategy_slots.len();
         for bar in bars {
-            let active_orders = Arc::new(self.state.order_manager.active_orders.clone());
+            // 与 StrategyProcessor 对基础事件的处理同构(见 strategy.rs 顶部注释):
+            // 本步内已知的挂单要在 slot 间累加, 否则多策略下 slot 1 看不到 slot 0
+            // 在同一根窗口 bar 上刚提交的单。
+            let mut cycle_orders = self.state.order_manager.active_orders.clone();
+            let mut active_orders = Arc::new(cycle_orders.clone());
             let step_trades = self.state.order_manager.current_step_trades.clone();
             let step_rejected_orders = self
                 .state
@@ -1519,6 +1523,17 @@ impl Engine {
                             .event_manager
                             .send(Event::ExecutionReport(cancelled, None));
                     }
+                }
+                // 只有多策略才需要在 slot 间累加(单策略下无后续 slot 会读它)。
+                // 取本 slot Context 的 `orders` 而非上面的 `new_orders`: 原因同
+                // strategy.rs 的同名累加块——`orders_arc` 在带 `event_tx` 的场景下
+                // 恒空, 而 `StrategyContext::buy/sell` 总会先 push 进 `orders`。
+                if slot_count > 1 {
+                    if let Some(Some(slot_ctx)) = self.strategy_contexts.get(slot_index) {
+                        let ctx_ref = slot_ctx.borrow(py);
+                        cycle_orders.extend(ctx_ref.orders.iter().cloned());
+                    }
+                    active_orders = Arc::new(cycle_orders.clone());
                 }
                 for order in new_orders {
                     let _ = self.event_manager.send(Event::OrderRequest(order));
