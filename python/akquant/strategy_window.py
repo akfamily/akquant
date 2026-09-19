@@ -227,22 +227,6 @@ def _merge_scoped_specs(
     return specs
 
 
-def collect_window_specs(
-    strategy: Any,
-) -> list[tuple[Optional[str], str, Optional[list[tuple[str, str]]]]]:
-    """收集并冻结订阅表, 返回下发 Rust 的 (symbol|None, freq, sessions|None) 元组.
-
-    同一策略内 (freq, sessions) 相同的多条订阅(比如一条通用 + 一条按标的)会被
-    合并成一条或几条 spec, 规则见 :func:`_merge_scoped_specs`。
-    """
-    strategy._window_subscriptions_frozen = True
-    entries = [
-        (sub.symbols, sub.freq, sub.session_windows)
-        for sub in strategy._window_subscriptions
-    ]
-    return _merge_scoped_specs(entries)
-
-
 def freeze_window_subscriptions(strategies: Iterable[Any]) -> None:
     """在 on_start 之前冻结各策略的窗口订阅表: ``subscribe_bars`` 只认 ``__init__``.
 
@@ -267,7 +251,7 @@ def configure_engine_window_subscriptions(
 ) -> None:
     """把各策略的订阅表合并下发给引擎; 无订阅则什么都不做(零开销路径).
 
-    跨策略(多 slot)一并合并——不能先各自 collect_window_specs 再简单去重: 若
+    跨策略(多 slot)一并合并——不能先各自按策略收集 spec 再简单去重: 若
     策略 A 订阅了 ``symbols=None``、策略 B 订阅了同周期的 ``symbols=["X"]``,
     两者展开后的 spec 会互相重叠但不完全相同, 直接下发会被 Rust 拒绝, 必须走
     同一套合并规则一次性处理。

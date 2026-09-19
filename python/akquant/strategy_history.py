@@ -37,7 +37,7 @@ def _infer_freq(strategy: Any, freq: Optional[str]) -> Optional[str]:
     """`freq` 省略时按当前所处的回调推断粒度.
 
     双流(同一 symbol 同时存在 bar 与 tick 两条历史序列)下省略 ``freq`` 会让
-    Rust 侧 ``resolve_use_tick_history`` 抛歧义错误, 要求显式指定。该规则对
+    Rust 侧 ``resolve_history_source`` 抛歧义错误, 要求显式指定。该规则对
     「策略同时挂 on_bar 与 on_tick」是必要的, 但**对只挂 on_bar 的策略是误伤**:
     tick 序列由 ``HistoryBuffer::update_tick`` **无条件**写入(与策略是否覆写
     ``on_tick`` 无关, 见 src/pipeline/stages/data.rs), 于是用户只要订阅了 tick

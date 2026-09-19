@@ -2676,7 +2676,12 @@ class StrategyContext:
         ...
 
     def history(
-        self, symbol: str, field: str, count: int
+        self,
+        symbol: str,
+        field: str,
+        count: int,
+        end_before_ns: typing.Optional[int] = ...,
+        freq: typing.Optional[str] = ...,
     ) -> typing.Optional[numpy.typing.NDArray[numpy.float64]]:
         r"""
         获取历史数据.
@@ -2684,6 +2689,8 @@ class StrategyContext:
         :param symbol: 标的代码
         :param field: 字段名 (open, high, low, close, volume)
         :param count: 获取的数据长度
+        :param end_before_ns: 可选, 历史可见性截断时间戳 (纳秒)
+        :param freq: 'tick' / 'bar' / 已订阅的窗口周期(如 '5min') / None
         :return: numpy array or None
         """
         ...
@@ -2694,6 +2701,7 @@ class StrategyContext:
         fields: list[str],
         count: int,
         end_before_ns: typing.Optional[int] = ...,
+        freq: typing.Optional[str] = ...,
     ) -> typing.Optional[dict[str, numpy.typing.NDArray[numpy.float64]]]:
         r"""
         批量获取多个字段的历史数据 (一次跨界返回).
@@ -2704,6 +2712,7 @@ class StrategyContext:
         :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
         :param count: 获取的数据长度
         :param end_before_ns: 可选, 历史可见性截断时间戳 (纳秒)
+        :param freq: 'tick' / 'bar' / 已订阅的窗口周期(如 '5min') / None
         :return: {field: numpy array} or None
         """
         ...
