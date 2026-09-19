@@ -1556,20 +1556,34 @@ impl Engine {
         py: Python<'_>,
         strategy: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
+        // `pending_window_bars` 只在"同一基础事件里某窗口已即时闭合、写入
+        // pending_window_bars, 但 StrategyProcessor 派发那一段还没来得及跑"时
+        // 非空——典型场景是 KeyboardInterrupt 在同一步的 on_bar 回调之后、
+        // dispatch_window_bars 之前把 Rust 调用栈中断展开(见
+        // pipeline/stages/strategy.rs)。正常的 FeedAction::End 收尾路径里,
+        // 每个事件的 dispatch_window_bars 都已经在原地跑完, 这里恒为空, 该路径
+        // 行为不变。这些 bar 已经被 DataProcessor 写入过 history(见
+        // pipeline/stages/data.rs), 不能再 update_window 一次, 否则会重复写入。
+        let mut bars = std::mem::take(&mut self.pending_window_bars);
+
         let tail = self
             .window_aggregator
             .write()
             .expect("window_aggregator 写锁被污染")
             .flush();
-        if tail.is_empty() {
-            return Ok(());
-        }
-        if let Ok(mut buffer) = self.history_buffer.write() {
-            for bar in &tail {
-                buffer.update_window(bar);
+        if !tail.is_empty() {
+            if let Ok(mut buffer) = self.history_buffer.write() {
+                for bar in &tail {
+                    buffer.update_window(bar);
+                }
             }
         }
-        self.dispatch_window_bars(py, strategy, tail)
+        // 派发顺序 = pending 在前(它们更早闭合), tail 在后, 且只派发一次。
+        bars.extend(tail);
+        if bars.is_empty() {
+            return Ok(());
+        }
+        self.dispatch_window_bars(py, strategy, bars)
     }
 
     pub(crate) fn flush_terminal_pending_order_events(

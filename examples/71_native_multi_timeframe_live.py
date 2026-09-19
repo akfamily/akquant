@@ -14,22 +14,21 @@ SYMBOL = "000001.SZ"
 
 
 def build_bars(days: int = 1) -> List[Bar]:
-    """生成 A 股交易时段的 1 分钟 bar.
+    """生成 A 股交易时段的 1 分钟 bar(每日 240 根, 09:31-11:30 + 13:01-15:00).
 
-    午盘故意在 14:59 收尾(而非 15:00 整): ``broker='replay'`` 靠
-    ``bounded_event_total`` 数满事件数后用 ``KeyboardInterrupt`` 结束会话;
-    若数据的最后一根 bar 恰好同时是某个窗口的闭合边界, 该窗口会在同一步内
-    ``on_bar`` 之后才闭合, 但会话已经中断, 来不及派发(也不会被尾部 flush
-    补上, 因为闭合时状态已从"在形成"移除)——这是有界会话终止时机与窗口立即
-    闭合重合的已知边界效应, 持续运行的实盘不会精确停在闭合边界上, 不会触发。
-    错开一分钟让最后一根 5 分钟窗口改走"会话结束 flush 尾部未满窗口"这条
-    已有行为(见 docs 的「限制」一节), 得到确定的 48 根窗口。
+    每日最后一根 bar(14:59→15:00 收盘)恰好同时是最后一个 5 分钟窗口的即时
+    闭合边界: ``broker='replay'`` 靠 ``bounded_event_total`` 数满事件数后用
+    ``KeyboardInterrupt`` 结束会话, 该窗口 bar 在 ``DataProcessor`` 阶段已经
+    闭合并进入待派发队列, 但派发发生在同一步的策略处理阶段之后——
+    ``Engine::flush_window_tail`` 会把这批"已闭合但还没来得及派发"的窗口 bar
+    与尾部未满窗口一起排空派发, 因此这里不需要刻意错开收尾时间, 每日固定得到
+    48 根窗口(240 / 5)。
     """
     bars: List[Bar] = []
     day = pd.Timestamp("2024-01-02", tz="Asia/Shanghai")
     price = 10.0
     for _ in range(days):
-        for start, end in (("09:31", "11:30"), ("13:01", "14:59")):
+        for start, end in (("09:31", "11:30"), ("13:01", "15:00")):
             rng = pd.date_range(
                 f"{day.date()} {start}",
                 f"{day.date()} {end}",

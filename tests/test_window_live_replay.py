@@ -89,3 +89,27 @@ def test_live_replay_window_defers_without_declared_freq() -> None:
     assert strategy.freq_seen is None
     # 延迟闭合: 09:35 窗口在第 6 根(09:36)之后才派发
     assert strategy.window_events[0] == (strategy.base_ts[4], 6)
+
+
+def test_live_replay_dispatches_window_closed_on_terminal_event() -> None:
+    """有界 replay 会话的最后一根基础 bar 恰好即时闭合一个窗口时不能丢派发.
+
+    `broker='replay'` 靠 `bounded_event_total`(等于喂入的事件总数)驱动会话结束:
+    处理完最后一个事件后从 Python 侧抛 `KeyboardInterrupt`, 由
+    `Engine::run()` 的收尾分支调用 `flush_window_tail()`。若第 5 根 bar
+    (09:35)本身就是即时闭合边界, 该窗口 bar 会在 `DataProcessor` 阶段写进
+    `pending_window_bars`, 但 `StrategyProcessor` 派发那一步还没跑到就被
+    `KeyboardInterrupt` 中断——`flush_window_tail` 必须把 `pending_window_bars`
+    一并排空派发, 否则这根窗口 bar 会静默丢失(不回调、不出现在尾部 flush 里)。
+    """
+    strategy = _LiveWindows()
+    run_live(
+        strategy_cls=strategy,
+        instruments=[_instrument(SYMBOL)],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": _bars(5), "freq": "1min"},
+        duration="60s",
+    )
+    assert strategy.freq_seen == "1min"
+    assert strategy.window_events == [(strategy.base_ts[4], 5)]
