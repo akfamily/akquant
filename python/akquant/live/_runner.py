@@ -2459,6 +2459,13 @@ class LiveRunner:
         因此复用 ``duration`` 已验证的模式: 抛 ``KeyboardInterrupt``, 由 ``run()``
         的 ``except`` 接住并走正常收尾。
 
+        此前 ``KeyboardInterrupt`` 沿 ``PipelineRunner::run()`` 冒泡到
+        ``src/engine/python.rs`` 的 ``pipeline.run()`` ``Err`` 分支时会提前
+        ``return``, 跳过紧随其后的会话收尾尾部窗口 flush(规格 5.3)。现已在
+        ``Engine::run()`` 里识别 ``KeyboardInterrupt`` 并在继续传播前调用
+        ``Engine::flush_window_tail`` 补上该 flush, 因此这条路径也会正确闭合
+        尾部未满窗口(见 ``tests/test_window_live_replay.py``)。
+
         计数点选在框架入口 ``_on_bar_event_and_flush`` /
         ``_on_tick_event_and_flush``(Rust 调用点 ``src/engine/core.rs:1280`` 与
         ``:1334``): 这两个是每个事件必经之路, warmup 与

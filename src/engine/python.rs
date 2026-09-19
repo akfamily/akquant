@@ -1313,6 +1313,20 @@ impl Engine {
 
         // Run Pipeline
         if let Err(e) = pipeline.run(self, py, strategy) {
+            // `KeyboardInterrupt` 是 live 会话的正常优雅停止路径(见
+            // `_runner.py::_apply_bounded_event_limit` 文档): Ctrl+C、SIGTERM
+            // (`_termination_signal_guard`)、`duration` 到期、以及
+            // `bounded_event_total`(replay 等有限行情源结束 live 会话的唯一机制)
+            // 都是从策略回调内部抛出 `PyErr`, 沿 `PipelineRunner::run()` 早退
+            // 冒泡到这里。这类"错误"其实是收尾信号, 因此在把它继续向上传播
+            // (让 `_runner.py` 的 `except KeyboardInterrupt` 走既有 live 清理)
+            // 之前, 要先补上正常路径本该做的尾部窗口 flush, 否则尾部未满窗口
+            // 会静默丢失。其它异常类型维持原样, 不做 flush、立即返回。
+            if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
+                && let Err(flush_err) = self.flush_window_tail(py, strategy)
+            {
+                return Err(flush_err);
+            }
             let mut payload: HashMap<String, String> = HashMap::new();
             payload.insert("message".to_string(), e.to_string());
             super::core::Engine::emit_stream_event_owned(self, py, "error", None, "error", payload);
@@ -1325,19 +1339,7 @@ impl Engine {
         // 会话结束: 闭合全部尾部未满窗口并派发(规格 5.3)。写历史与派发顺序同数据阶段。
         // 注意: flush 之后在形成窗口为空, 随后 save_checkpoint 存下的聚合器状态也为空;
         // 续跑时尾部区间会重新形成一根同标签窗口(文档写明, 见 Task 8)。
-        let tail = self
-            .window_aggregator
-            .write()
-            .expect("window_aggregator 写锁被污染")
-            .flush();
-        if !tail.is_empty() {
-            if let Ok(mut buffer) = self.history_buffer.write() {
-                for bar in &tail {
-                    buffer.update_window(bar);
-                }
-            }
-            self.dispatch_window_bars(py, strategy, tail)?;
-        }
+        self.flush_window_tail(py, strategy)?;
 
         self.flush_terminal_pending_order_events(py, strategy)?;
 

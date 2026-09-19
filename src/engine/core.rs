@@ -1546,6 +1546,32 @@ impl Engine {
         Ok(())
     }
 
+    /// 会话结束时闭合全部尾部未满窗口并派发(规格 5.3)。
+    ///
+    /// 供 `python.rs::run()` 的正常收尾路径与 `KeyboardInterrupt` 收尾路径共用,
+    /// 避免两处各写一份同样的 flush 逻辑。写历史与派发顺序同数据阶段
+    /// (`update_window` 先于 `dispatch_window_bars`)。
+    pub(crate) fn flush_window_tail(
+        &mut self,
+        py: Python<'_>,
+        strategy: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let tail = self
+            .window_aggregator
+            .write()
+            .expect("window_aggregator 写锁被污染")
+            .flush();
+        if tail.is_empty() {
+            return Ok(());
+        }
+        if let Ok(mut buffer) = self.history_buffer.write() {
+            for bar in &tail {
+                buffer.update_window(bar);
+            }
+        }
+        self.dispatch_window_bars(py, strategy, tail)
+    }
+
     pub(crate) fn flush_terminal_pending_order_events(
         &mut self,
         py: Python<'_>,
