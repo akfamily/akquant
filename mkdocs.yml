@@ -96,7 +96,7 @@ plugins:
             AKQuant Indicator Reference: AKQuant 指标全量说明
             Indicator Scenario Quickref: 指标场景速查（四象限）
             Stream Observability: 流式可观测性
-            Multi-Timeframe Feed API: 多时间框架 Feed API
+            Multi-Timeframe Feed API: 多周期策略
             Data Feed Adapter Spec: 数据适配层规范
             Broker Capability Matrix: Broker 能力矩阵
             Analyzer Plugin Spec: Analyzer 插件规范
@@ -173,7 +173,7 @@ plugins:
             AKQuant Indicator Reference: AKQuant Indicator Reference
             Indicator Scenario Quickref: Indicator Scenario Quickref
             Stream Observability: Stream Observability
-            Multi-Timeframe Feed API: Multi-Timeframe Feed API
+            Multi-Timeframe Feed API: Multi-Timeframe Strategies
             Data Feed Adapter Spec: Data Feed Adapter Spec
             Broker Capability Matrix: Broker Capability Matrix
             Analyzer Plugin Spec: Analyzer Plugin Spec

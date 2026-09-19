@@ -456,8 +456,12 @@ class TargetPositionsDemoStrategy(Strategy):
     *   演示如何生成专业的 HTML 交互式报告。
 
 *   **[14_multi_frequency.py](https://github.com/akfamily/akquant/blob/main/examples/14_multi_frequency.py)**:
-    *   **混合频率 (Mixed Frequency)**: 结合日线数据（用于趋势判断）和分钟线数据（用于执行）。
-    *   注：为了演示方便，该示例基于 AKShare 的日线数据合成了分钟线数据。
+    *   **引擎原生多周期**: `subscribe_bars("1d")` 由引擎从分钟 bar 直接聚合出日线窗口（用于 SMA 趋势判断），分钟线负责执行；不再需要伪标的或手工 resample。
+    *   三条多周期路径怎么选、闭合时机（即时 vs 延迟）等细节见 [多周期策略：三条路径](../advanced/multi_timeframe_feed_api.md)。
+
+*   **[71_native_multi_timeframe_live.py](https://github.com/akfamily/akquant/blob/main/examples/71_native_multi_timeframe_live.py)**:
+    *   **实盘多周期（同一份策略代码）**: `broker="replay"` 离线回放行情，网关声明 `metadata["freq"]` 后 `subscribe_bars("5min")` 在基础周期已知时零延迟闭合，通过 `on_window_bar` 派发。
+    *   与 14 号示例共用同一套 `subscribe_bars` API，回测/实盘切换不改策略逻辑。
 
 *   **[15_plot_intraday.py](https://github.com/akfamily/akquant/blob/main/examples/15_plot_intraday.py)**:
     *   **日内模拟 (Intraday Simulation)**: 基于 AKShare 日线数据生成合成的分钟级数据。

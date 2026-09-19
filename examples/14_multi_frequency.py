@@ -1,29 +1,30 @@
+"""多周期回测示例: 日线定趋势, 分钟线执行.
+
+引擎原生多周期上线前, 这个示例靠「伪标的」拼日线: 把同一份分钟数据 resample
+成日线, 起个 ``000001.SZ_1D`` 的假代码喂给引擎, 策略里再按 ``bar.symbol`` 分流
+处理两条序列。现在 ``Strategy.subscribe_bars("1d", ...)`` 由 Rust 引擎直接从
+基础 bar 聚合出日线窗口, 通过 ``on_daily`` 回调派发, 不再需要伪标的、不再需要
+手工 resample/打戳。
+
+三条多周期路径怎么选, 见 docs/zh/advanced/multi_timeframe_feed_api.md 的
+「怎么选」表格; 本示例演示推荐路径 ``subscribe_bars``。
+
+**关于闭合时机的取舍**: 本示例把 1 分钟 DataFrame 整表传给 ``run_backtest``
+(纯 bar 输入), 引擎无法从这种输入直接得知基础周期(``self.freq`` 为 ``None``),
+因此日线窗口要等**次日第一根 09:31 分钟 bar** 到达后才闭合并派发(晚一根,
+见 ``on_daily`` 里打印的提示)。示例里传了 ``session_windows`` 只是用来正确
+切分早盘/午盘的会话边界, 不代表窗口会即时闭合——即时闭合还需要基础周期已知
+(比如把数据转成 ``list[Bar]`` 且逐根打上 ``freq="1min"``, 或走实盘/replay 网关
+声明 ``metadata["freq"]``, 见 examples/71_native_multi_timeframe_live.py)。
+"""
+
 from datetime import timedelta
-from typing import List
+from typing import Any, List
 
 import akquant as aq
 import numpy as np
 import pandas as pd
-from akquant import InstrumentConfig
-from akquant.feed_adapter import BasePandasFeedAdapter, FeedSlice
-
-"""
-Multi-Frequency Backtest Demo
-=============================
-
-This example demonstrates how to run a strategy with mixed frequencies via
-DataFeedAdapter resample/replay views:
-1.  **STOCK_1D**: Daily bars, used for trend filtering (e.g., Moving Average).
-2.  **STOCK_1M**: 1-minute bars, used for signal execution.
-
-The strategy logic:
--   **Daily Trend**: Calculate a Simple Moving Average (SMA) on the Daily data.
-    -   If Close > SMA, Trend = UP.
-    -   If Close < SMA, Trend = DOWN.
--   **Intraday Signal**:
-    -   If Trend is UP and Price < Intraday Lower Band -> Buy.
-    -   If Trend is DOWN and Price > Intraday Upper Band -> Sell.
-"""
+from akquant import BacktestConfig, InstrumentConfig, StrategyConfig
 
 
 def create_dummy_data_1m(symbol: str, start_date: str, days: int) -> pd.DataFrame:
@@ -35,40 +36,28 @@ def create_dummy_data_1m(symbol: str, start_date: str, days: int) -> pd.DataFram
     prices: List[float] = []
 
     print(f"DEBUG: Generating data starting from {start_date}")
-    # Ensure start_date is parsed correctly
     current_date = pd.Timestamp(start_date)
-    # Make sure it is naive
     if current_date.tz is not None:
         current_date = current_date.tz_localize(None)
 
     for _ in range(days):
-        # Skip weekends if needed, but for simplicity we assume start_date is Monday
-        # or just generate consecutive days for demo logic
-
-        # Morning session: 09:31 to 11:30
-        # date_range end is inclusive, so we go from 09:31 to 11:30
         rng_am = pd.date_range(
             start=current_date + timedelta(hours=9, minutes=31),
             end=current_date + timedelta(hours=11, minutes=30),
             freq="1min",
         )
-
-        # Afternoon session: 13:01 to 15:00
         rng_pm = pd.date_range(
             start=current_date + timedelta(hours=13, minutes=1),
             end=current_date + timedelta(hours=15, minutes=0),
             freq="1min",
         )
-
         timestamps.extend(rng_am)
         timestamps.extend(rng_pm)
-
         current_date += timedelta(days=1)
 
-    # Generate random walk
     n = len(timestamps)
     np.random.seed(42)
-    changes = np.random.randn(n) * 0.1  # Small changes for 1min
+    changes = np.random.randn(n) * 0.1
     p = base_price
     for c in changes:
         p += c
@@ -92,220 +81,61 @@ def create_dummy_data_1m(symbol: str, start_date: str, days: int) -> pd.DataFram
     return df
 
 
-class InMemorySymbolAdapter(BasePandasFeedAdapter):
-    """In-memory adapter for a fixed symbol frame."""
-
-    def __init__(self, frame: pd.DataFrame) -> None:
-        """Initialize with normalized source frame."""
-        self.frame = frame.copy()
-
-    def load(self, request: FeedSlice) -> pd.DataFrame:
-        """Load one symbol slice from memory."""
-        data = self.frame[
-            self.frame["symbol"].astype(str) == str(request.symbol)
-        ].copy()
-        data = self.normalize(data, request.symbol)
-        return self._clip_time_range(data, request.start_time, request.end_time)
-
-
-class MultiFrequencyAdapter:
-    """Expose minute and daily views under two logical symbols."""
-
-    name = "multi_frequency"
-
-    def __init__(self, minute_frame: pd.DataFrame) -> None:
-        """Build minute and daily adapters from one minute source."""
-        minute_symbol = str(minute_frame["symbol"].iloc[0])
-        self.minute_symbol = minute_symbol
-        self.daily_symbol = f"{minute_symbol}_1D"
-        base = InMemorySymbolAdapter(minute_frame)
-        self.minute_adapter = base
-        self.daily_adapter = base.replay(
-            freq="1D",
-            align="session",
-            emit_partial=True,
-            session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
-        )
-
-    def load(self, request: FeedSlice) -> pd.DataFrame:
-        """Route load request by logical symbol."""
-        if request.symbol == self.minute_symbol:
-            return self.minute_adapter.load(request)
-        if request.symbol == self.daily_symbol:
-            daily = self.daily_adapter.load(
-                FeedSlice(
-                    symbol=self.minute_symbol,
-                    start_time=request.start_time,
-                    end_time=request.end_time,
-                    timezone=request.timezone or "Asia/Shanghai",
-                )
-            )
-            if not daily.empty:
-                daily = daily.copy()
-                tz_name = request.timezone or "Asia/Shanghai"
-                local_index = pd.DatetimeIndex(daily.index)
-                if local_index.tz is None:
-                    local_index = local_index.tz_localize("UTC")
-                local_index = local_index.tz_convert(tz_name)
-                daily["_session_day"] = local_index.normalize()
-                daily = (
-                    daily.groupby("_session_day", sort=True)
-                    .agg(
-                        {
-                            "open": "first",
-                            "high": "max",
-                            "low": "min",
-                            "close": "last",
-                            "volume": "sum",
-                        }
-                    )
-                    .sort_index()
-                )
-                daily.index = daily.index + pd.Timedelta(hours=15)
-                daily["symbol"] = self.daily_symbol
-            return daily
-        return pd.DataFrame()
-
-
 class MultiFreqStrategy(aq.Strategy):
-    """Strategy using both 1-minute and Daily data."""
+    """日线定趋势(SMA), 分钟线执行. 日线由引擎从 1 分钟 bar 聚合, 不再需要伪标的."""
+
+    daily_sma: Any
 
     def __init__(self) -> None:
-        """Initialize the strategy."""
+        """订阅日线窗口并注册按日线周期驱动的 SMA 增量指标."""
         super().__init__()
         self.indicator_mode = "incremental"
-        self.daily_trend = 0  # 1 for Up, -1 for Down, 0 for Neutral
-        self.ma_window = 3  # Short MA for demo
-        self.daily_symbol = "000001.SZ_1D"
-        self.daily_sma = aq.SMA(self.ma_window)
+        self.ma_window = 3
+        self.daily_trend = 0
+        self.subscribe_bars(
+            "1d",
+            callback=self.on_daily,
+            session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
+        )
         self.register_incremental_indicator(
-            "daily_sma",
-            self.daily_sma,
-            source="close",
-            symbols=[self.daily_symbol],
+            "daily_sma", aq.SMA(self.ma_window), source="close", freq="1d"
         )
 
-        # Track position manually for simple demo (optional, akquant handles it)
-        self.has_position = False
-
-    def on_start(self) -> None:
-        """Call when strategy starts."""
-        print("Strategy Started")
+    def on_daily(self, bar: aq.Bar) -> None:
+        """日线窗口闭合回调: 按收盘价与 SMA 的相对位置更新趋势方向."""
+        ma = self.daily_sma.value
+        if ma is None:
+            print(
+                f"[1D] {self.format_time(bar.timestamp)} 收盘 {bar.close:.2f}, 攒历史中"
+            )
+            return
+        self.daily_trend = 1 if bar.close > ma else -1
+        print(
+            f"[1D] {self.format_time(bar.timestamp)} 收盘 {bar.close:.2f} "
+            f"SMA {ma:.2f} 趋势 {self.daily_trend}"
+        )
 
     def on_bar(self, bar: aq.Bar) -> None:
-        """
-        Handle incoming bars.
-
-        Distinguish behavior based on bar.symbol.
-        """
-        # Convert UTC nanoseconds to configured timezone (default Asia/Shanghai)
-        ts_bj = self.to_local_time(bar.timestamp)
-
-        # Use helper for formatted string (Default: %Y-%m-%d %H:%M:%S)
-        ts_str = self.format_time(bar.timestamp)
-
-        if bar.symbol == self.daily_symbol:
-            print(f"\n{'=' * 60}")
-            print(
-                f"EVENT: Daily Bar Arrived | {ts_str} (BJ) | "
-                f"{bar.symbol} | Close: {bar.close:.2f}"
-            )
-            self._handle_daily_bar(bar)
-            print(f"{'=' * 60}\n")
-        elif bar.symbol == "000001.SZ":
-            # For demonstration: Print first bar of the day to show alignment
-            if ts_bj.hour == 9 and ts_bj.minute == 31:
-                print(f"--- Market Open {ts_bj.strftime('%Y-%m-%d')} ---")
-
-            self._handle_minute_bar(bar, ts_bj)
-
-    def _handle_daily_bar(self, bar: aq.Bar) -> None:
-        """Process Daily Bar: Update Trend."""
-        ma = self.daily_sma.value
-        if ma is not None:
-            prev_trend = self.daily_trend
-
-            # Determine Trend
-            if bar.close > ma:
-                self.daily_trend = 1
-                trend_str = "UP"
-            else:
-                self.daily_trend = -1
-                trend_str = "DOWN"
-
-            print(
-                f"[Logic 1D] MA({self.ma_window}): {ma:.2f} vs Close: {bar.close:.2f}"
-            )
-            print(
-                f"[Logic 1D] Trend Update: {prev_trend} -> "
-                f"{self.daily_trend} ({trend_str})"
-            )
-        else:
-            print(
-                f"[Logic 1D] Collecting history... (need {self.ma_window} daily bars)"
-            )
-
-    def _handle_minute_bar(self, bar: aq.Bar, ts_bj: pd.Timestamp) -> None:
-        """Process Minute Bar: Execute Signals based on Trend."""
-        # ctx.get_position returns the float quantity directly
-        pos_qty = 0.0
-        if self.ctx:
-            pos_qty = self.ctx.get_position("000001.SZ")
-
-        # Format time for logging
-        ts_str = ts_bj.strftime("%H:%M")
-
-        # Debug: Print first bar of the day to verify timestamp alignment
-        # if ts_bj.hour == 9 and ts_bj.minute == 31:
-        #    print(f"DEBUG: Bar Time: {ts_bj} (UTC: {ts_utc})")
-
-        if self.daily_trend == 1:  # Uptrend
-            # Buy logic
-            if pos_qty == 0:
-                print(
-                    f"  >>> SIGNAL [BUY] at {ts_str} (BJ) | Price: {bar.close:.2f} | "
-                    "Reason: Trend UP & No Position"
-                )
-                self.buy("000001.SZ", 100)
-
-        elif self.daily_trend == -1:  # Downtrend
-            # Sell logic
-            if pos_qty > 0:
-                print(
-                    f"  >>> SIGNAL [SELL] at {ts_str} (BJ) | Price: {bar.close:.2f} | "
-                    "Reason: Trend DOWN & Have Position"
-                )
-                self.sell("000001.SZ", pos_qty)
-
-        # If trend is 0, do nothing
+        """分钟线执行: 顺日线趋势开仓/平仓."""
+        pos = self.ctx.get_position(bar.symbol) if self.ctx else 0.0
+        if self.daily_trend == 1 and pos == 0:
+            self.buy(bar.symbol, 100)
+        elif self.daily_trend == -1 and pos > 0:
+            self.sell(bar.symbol, pos)
 
 
 if __name__ == "__main__":
-    # 1. Prepare Data
     print("Generating dummy data (5 Days) for A-shares...")
-    # Generate 5 days of data
     df_1m = create_dummy_data_1m("000001.SZ", "2024-01-01", 5)
-    data = MultiFrequencyAdapter(df_1m)
-    daily_preview = data.load(FeedSlice(symbol="000001.SZ_1D"))
-    print(f"Generated {len(df_1m)} minute bars and {len(daily_preview)} daily bars.")
+    print(f"Generated {len(df_1m)} minute bars.")
 
-    # 2. Configure Instruments
-    # We treat them as separate instruments in configuration,
-    # but logically they refer to the same asset.
-    # We only trade 000001.SZ, so we configure it.
     stock_1m_config = InstrumentConfig(
         symbol="000001.SZ",
         asset_type="STOCK",
         multiplier=1.0,
     )
-    # STOCK_1D config is optional if we don't trade it,
-    # but good practice to define it if we wanted to be strict.
-    # akquant creates default configs if missing.
 
-    # 3. Run Backtest
     print("\nStarting Multi-Frequency Backtest (A-share Simulated)...")
-
-    from akquant import BacktestConfig, StrategyConfig
 
     config = BacktestConfig(
         strategy_config=StrategyConfig(
@@ -317,9 +147,9 @@ if __name__ == "__main__":
     )
 
     result = aq.run_backtest(
-        data=data,
+        data=df_1m,
         strategy=MultiFreqStrategy,
-        symbols=["000001.SZ", "000001.SZ_1D"],
+        symbols=["000001.SZ"],
         config=config,
     )
 

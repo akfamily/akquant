@@ -131,6 +131,7 @@ df['symbol'] = "AAPL"
 ### 2.4 使用 DataFeedAdapter + 多时间框聚合
 
 如果你希望把“数据加载 + 重采样/重放”封装在同一入口，可以直接使用 `DataFeedAdapter`：
+若要在**策略内**消费多周期（含实盘），请用 `subscribe_bars`，见 [多周期策略](../advanced/multi_timeframe_feed_api.md)；本节的 resample/replay 是离线数据编排。
 
 ```python
 import akquant as aq

@@ -26,7 +26,7 @@
 - [11_plot_visualization.py](./11_plot_visualization.py): 可视化报告生成示例。
 - [12_wfo_integrated.py](./12_wfo_integrated.py): WFO 一体化示例。
 - [13_quantstats_report.py](./13_quantstats_report.py): QuantStats 报告示例。
-- [14_multi_frequency.py](./14_multi_frequency.py): 基于 DataFeedAdapter replay(session_windows) 的多频率回测示例。
+- [14_multi_frequency.py](./14_multi_frequency.py): 引擎原生多周期示例，`subscribe_bars("1d")` 由日线窗口驱动 SMA 定趋势、分钟线执行，不再需要伪标的。
 - [15_plot_intraday.py](./15_plot_intraday.py): 日内绘图与回测示例。
 - [16_adj_returns_signal.py](./16_adj_returns_signal.py): 复权收益信号示例。
 - [17_readme_demo.py](./17_readme_demo.py): README 演示脚本。
@@ -65,6 +65,7 @@
 - [59_akshare_etf_rotation.py](./59_akshare_etf_rotation.py): AKShare + ETF 轮动最小示例，演示单个拼接后 `DataFrame` 的推荐多标输入方式。
 - [60_custom_indicator_demo.py](./60_custom_indicator_demo.py): 自定义指标最小示例，同时演示 `Indicator(name, fn)` 的预计算写法和 `indicator_factory` 的增量写法。
 - [70_csv_multi_symbol_import_demo.py](./70_csv_multi_symbol_import_demo.py): 从 CSV 文件导入多品种数据的回测示例，覆盖平台对接的固定 7 列格式（`date`/`symbol`/`open`/`high`/`low`/`close`/`volume`，symbol 去后缀纯数字、date naive 东八区、多标 `concat` 后显式传 `symbols=[...]`）；含 `pd.read_csv` 对纯数字 symbol 丢前导 0 的实测坑。
+- [71_native_multi_timeframe_live.py](./71_native_multi_timeframe_live.py): 实盘（`broker="replay"`）多周期示例，行情网关声明 `metadata["freq"]` 后 `subscribe_bars("5min")` 零延迟闭合，`on_window_bar` 与 `run_backtest` 同一份策略代码不改一行。
 
 ## 流式回测与实时报告
 
