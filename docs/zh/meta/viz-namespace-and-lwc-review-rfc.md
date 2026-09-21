@@ -229,6 +229,7 @@ def plot_kline_review(
 
 ## 9. 后续与非本 RFC 决策
 
+- **指标渲染(L4,2026-09-21 已落地)**:`result.viz.review(include_indicators=True)` 把 `self.I()` / `record_indicator` 上报的指标按 pane 画到 LWC 图上(pane 0 叠主图,pane k≥1 落到成交量之下的第 k+1 个 LWC pane);适配层 `lwc/_indicators.py` 是 `chart/d3kline.py` 的镜像,7 值 `render_type` 全部有映射(`signal` 走 K 线 marker)。实时路径给 `akquant.lwc.to_lwc_update()`(桥接消息 → `series.update()` 增量)与 `load_lwc_js()`,**HTTP 传输仍留在示例层**(`examples/73`),没有推翻本条。设计见 `docs/superpowers/specs/2026-09-21-lwc-indicators-design.md`,上游是 [indicator-tradingview-rfc.md](indicator-tradingview-rfc.md)。
 - **服务端按需加载(v3,可选)**:若多标的多到不宜全内嵌,再引入 HTTP 服务;届时**倾向做成插件路径**(与 broker 插件同模式,走 entry-point),避免核心背 HTTP 服务/生命周期。
 - **指标叠加(未来)**:复盘图可吃同一条 `IndicatorSink` 指标流,把回测指标叠加到 K 线上,与实盘/回测指标出口三处一致。**不进 v1**。
 

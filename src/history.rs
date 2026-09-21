@@ -162,7 +162,27 @@ pub struct HistoryBuffer {
     /// (取到的值看起来就是价格)。
     pub tick_data: HashMap<String, SymbolHistory>,
     pub previous_tick_data: HashMap<String, SymbolHistory>,
+    /// 窗口(多周期)序列, 键 (symbol, freq_label)。只存闭合的窗口 bar。
+    pub window_data: HashMap<(String, String), SymbolHistory>,
+    pub previous_window_data: HashMap<(String, String), SymbolHistory>,
     pub default_capacity: usize,
+}
+
+/// 把 `history` 裁剪到 `capacity`(FIFO 淘汰最旧), 三个 map(`data` /
+/// `tick_data` / `window_data`)的裁剪循环共用此函数。
+fn trim_to_capacity(history: &mut SymbolHistory, capacity: usize) {
+    history.capacity = capacity;
+    while history.timestamps.len() > capacity {
+        history.timestamps.pop_front();
+        history.opens.pop_front();
+        history.highs.pop_front();
+        history.lows.pop_front();
+        history.closes.pop_front();
+        history.volumes.pop_front();
+        for values in history.extras.values_mut() {
+            values.pop_front();
+        }
+    }
 }
 
 impl HistoryBuffer {
@@ -172,6 +192,8 @@ impl HistoryBuffer {
             previous_data: HashMap::new(),
             tick_data: HashMap::new(),
             previous_tick_data: HashMap::new(),
+            window_data: HashMap::new(),
+            previous_window_data: HashMap::new(),
             default_capacity,
         }
     }
@@ -182,46 +204,32 @@ impl HistoryBuffer {
         self.previous_data.clear();
         self.tick_data.clear();
         self.previous_tick_data.clear();
+        self.window_data.clear();
+        self.previous_window_data.clear();
     }
 
     pub fn set_capacity_preserve_existing(&mut self, capacity: usize) {
         self.default_capacity = capacity;
         self.previous_data.clear();
         self.previous_tick_data.clear();
+        self.previous_window_data.clear();
         if capacity == 0 {
             self.data.clear();
             self.tick_data.clear();
+            self.window_data.clear();
             return;
         }
 
         for history in self.data.values_mut() {
-            history.capacity = capacity;
-            while history.timestamps.len() > capacity {
-                history.timestamps.pop_front();
-                history.opens.pop_front();
-                history.highs.pop_front();
-                history.lows.pop_front();
-                history.closes.pop_front();
-                history.volumes.pop_front();
-                for values in history.extras.values_mut() {
-                    values.pop_front();
-                }
-            }
+            trim_to_capacity(history, capacity);
         }
 
         for history in self.tick_data.values_mut() {
-            history.capacity = capacity;
-            while history.timestamps.len() > capacity {
-                history.timestamps.pop_front();
-                history.opens.pop_front();
-                history.highs.pop_front();
-                history.lows.pop_front();
-                history.closes.pop_front();
-                history.volumes.pop_front();
-                for values in history.extras.values_mut() {
-                    values.pop_front();
-                }
-            }
+            trim_to_capacity(history, capacity);
+        }
+
+        for history in self.window_data.values_mut() {
+            trim_to_capacity(history, capacity);
         }
     }
 
@@ -271,6 +279,62 @@ impl HistoryBuffer {
         history.push_tick(tick);
     }
 
+    /// `update` 的窗口版本: 落到 `window_data[(symbol, freq)]`。`bar.freq` 为 None 时忽略
+    /// (窗口 bar 一定带标签; 没标签说明调用方传错了对象)。
+    ///
+    /// 注: 任务书原文建议这里用 `debug_assert!(false, ...)`, 但本 crate 没有
+    /// `[profile.test]` 覆盖, `cargo test` 默认开启 debug assertions, 会让这条
+    /// assert 在 `update_window_ignores_bar_without_freq` 测试里直接 panic,
+    /// 与该测试名字/断言(静默忽略、不 panic)矛盾。这里改为 `log::debug!`
+    /// 发出信号但不中断执行, 以满足测试对"忽略"的定义。
+    pub fn update_window(&mut self, bar: &Bar) {
+        if self.default_capacity == 0 {
+            return;
+        }
+        let Some(freq) = bar.freq.clone() else {
+            log::debug!("update_window 收到不带 freq 的 bar: symbol={}", bar.symbol);
+            return;
+        };
+        let key = (bar.symbol.clone(), freq);
+        let history = self
+            .window_data
+            .entry(key.clone())
+            .or_insert_with(|| SymbolHistory::new(self.default_capacity));
+        if history.timestamps.is_empty() {
+            self.previous_window_data.remove(&key);
+        } else {
+            self.previous_window_data.insert(key, history.clone());
+        }
+        history.push(bar);
+    }
+
+    pub fn get_window_history(&self, symbol: &str, freq: &str) -> Option<&SymbolHistory> {
+        self.window_data
+            .get(&(symbol.to_string(), freq.to_string()))
+    }
+
+    pub fn get_previous_window_history(&self, symbol: &str, freq: &str) -> Option<&SymbolHistory> {
+        self.previous_window_data
+            .get(&(symbol.to_string(), freq.to_string()))
+    }
+
+    pub fn has_window_history(&self, symbol: &str, freq: &str) -> bool {
+        self.get_window_history(symbol, freq)
+            .is_some_and(|h| !h.timestamps.is_empty())
+    }
+
+    /// 该 symbol 已有数据的窗口周期(排序), 供歧义报错文案使用。
+    pub fn window_freqs(&self, symbol: &str) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .window_data
+            .iter()
+            .filter(|((s, _), h)| s == symbol && !h.timestamps.is_empty())
+            .map(|((_, f), _)| f.clone())
+            .collect();
+        v.sort();
+        v
+    }
+
     pub fn get_history(&self, symbol: &str) -> Option<&SymbolHistory> {
         self.data.get(symbol)
     }
@@ -303,6 +367,13 @@ impl HistoryBuffer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowSeriesSnapshot {
+    pub symbol: String,
+    pub freq: String,
+    pub history: SymbolHistorySnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryBufferSnapshot {
     pub data: HashMap<String, SymbolHistorySnapshot>,
     // tick_data 与 data 对等(都是主序列, 不是派生缓存), 必须一起入快照,
@@ -311,11 +382,28 @@ pub struct HistoryBufferSnapshot {
     // 反序列化, 恢复为空 tick 序列而不是报错。
     #[serde(default)]
     pub tick_data: HashMap<String, SymbolHistorySnapshot>,
+    // window_data 用 Vec<WindowSeriesSnapshot> 而非以 (symbol, freq) 元组为键的
+    // map: serde_json 不支持非字符串 map 键, 而既有测试用 serde_json 读旧快照。
+    // `#[serde(default)]` 让旧存档(无此字段)仍可反序列化, 恢复为空窗口序列。
+    #[serde(default)]
+    pub window_data: Vec<WindowSeriesSnapshot>,
     pub default_capacity: usize,
 }
 
 impl From<&HistoryBuffer> for HistoryBufferSnapshot {
     fn from(buffer: &HistoryBuffer) -> Self {
+        let mut window_data: Vec<WindowSeriesSnapshot> = buffer
+            .window_data
+            .iter()
+            .map(|((symbol, freq), history)| WindowSeriesSnapshot {
+                symbol: symbol.clone(),
+                freq: freq.clone(),
+                history: SymbolHistorySnapshot::from(history),
+            })
+            .collect();
+        window_data.sort_by(|a, b| {
+            (a.symbol.as_str(), a.freq.as_str()).cmp(&(b.symbol.as_str(), b.freq.as_str()))
+        });
         Self {
             data: buffer
                 .data
@@ -327,6 +415,7 @@ impl From<&HistoryBuffer> for HistoryBufferSnapshot {
                 .iter()
                 .map(|(symbol, history)| (symbol.clone(), SymbolHistorySnapshot::from(history)))
                 .collect(),
+            window_data,
             default_capacity: buffer.default_capacity,
         }
     }
@@ -349,6 +438,18 @@ impl From<HistoryBufferSnapshot> for HistoryBuffer {
             // previous_tick_data 与 previous_data 一样是派生缓存(下一次
             // update_tick 时会被重新计算), 不入快照, 恢复后留空即可。
             previous_tick_data: HashMap::new(),
+            window_data: snapshot
+                .window_data
+                .into_iter()
+                .map(|entry| {
+                    (
+                        (entry.symbol, entry.freq),
+                        SymbolHistory::from(entry.history),
+                    )
+                })
+                .collect(),
+            // previous_window_data 同样是派生缓存, 不入快照, 恢复后留空即可。
+            previous_window_data: HashMap::new(),
             default_capacity: snapshot.default_capacity,
         }
     }
@@ -375,6 +476,7 @@ mod tests {
             volume: Decimal::from(1000),
             symbol: "TEST".to_string(),
             extra: extra_map,
+            freq: None,
         }
     }
 
@@ -612,5 +714,91 @@ mod tests {
             history.timestamps.iter().copied().collect::<Vec<_>>(),
             vec![3, 4, 5]
         );
+    }
+
+    fn make_window_bar(timestamp: i64, close: i64, freq: &str) -> Bar {
+        let mut b = make_bar(timestamp, close, None);
+        b.freq = Some(freq.to_string());
+        b
+    }
+
+    #[test]
+    fn update_window_lands_in_third_bucket_keyed_by_freq() {
+        let mut buffer = HistoryBuffer::new(4);
+        buffer.update(&make_bar(1, 10, None));
+        buffer.update_window(&make_window_bar(5, 50, "5min"));
+        buffer.update_window(&make_window_bar(60, 600, "1h"));
+        assert_eq!(buffer.get_history("TEST").unwrap().closes.len(), 1);
+        assert_eq!(
+            buffer.get_window_history("TEST", "5min").unwrap().closes[0],
+            50.0
+        );
+        assert_eq!(
+            buffer.get_window_history("TEST", "1h").unwrap().closes[0],
+            600.0
+        );
+        assert!(buffer.get_window_history("TEST", "15min").is_none());
+        assert!(buffer.has_window_history("TEST", "5min"));
+        assert!(!buffer.has_window_history("TEST", "15min"));
+        assert_eq!(
+            buffer.window_freqs("TEST"),
+            vec!["1h".to_string(), "5min".to_string()]
+        );
+    }
+
+    #[test]
+    fn update_window_ignores_bar_without_freq() {
+        let mut buffer = HistoryBuffer::new(4);
+        buffer.update_window(&make_bar(1, 10, None));
+        assert!(buffer.window_data.is_empty());
+    }
+
+    #[test]
+    fn window_previous_snapshot_tracks_like_bar() {
+        let mut buffer = HistoryBuffer::new(4);
+        buffer.update_window(&make_window_bar(5, 50, "5min"));
+        assert!(buffer.get_previous_window_history("TEST", "5min").is_none());
+        buffer.update_window(&make_window_bar(10, 60, "5min"));
+        let prev = buffer.get_previous_window_history("TEST", "5min").unwrap();
+        assert_eq!(prev.closes.iter().copied().collect::<Vec<_>>(), vec![50.0]);
+    }
+
+    #[test]
+    fn set_capacity_preserve_existing_trims_window_series_too() {
+        let mut buffer = HistoryBuffer::new(4);
+        for ts in 1..=4 {
+            buffer.update_window(&make_window_bar(ts, ts * 10, "5min"));
+        }
+        buffer.set_capacity_preserve_existing(2);
+        let h = buffer.get_window_history("TEST", "5min").unwrap();
+        assert_eq!(h.capacity, 2);
+        assert_eq!(h.timestamps.iter().copied().collect::<Vec<_>>(), vec![3, 4]);
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_window_series() {
+        let mut buffer = HistoryBuffer::new(4);
+        buffer.update_window(&make_window_bar(5, 50, "5min"));
+        buffer.update_window(&make_window_bar(10, 60, "5min"));
+        let snapshot = HistoryBufferSnapshot::from(&buffer);
+        let encoded = rmp_serde::to_vec(&snapshot).unwrap();
+        let decoded: HistoryBufferSnapshot = rmp_serde::from_slice(&encoded).unwrap();
+        let restored = HistoryBuffer::from(decoded);
+        let h = restored
+            .get_window_history("TEST", "5min")
+            .expect("window series survives");
+        assert_eq!(
+            h.closes.iter().copied().collect::<Vec<_>>(),
+            vec![50.0, 60.0]
+        );
+    }
+
+    #[test]
+    fn snapshot_without_window_field_restores_empty_window_series() {
+        let json = r#"{"data":{},"tick_data":{},"default_capacity":16}"#;
+        let snapshot: HistoryBufferSnapshot = serde_json::from_str(json).unwrap();
+        assert!(snapshot.window_data.is_empty());
+        let restored = HistoryBuffer::from(snapshot);
+        assert!(restored.window_data.is_empty());
     }
 }

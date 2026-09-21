@@ -200,6 +200,7 @@ class VizNamespace:
         theme: str = "light",
         initial_symbol: Optional[str] = None,
         show: bool = False,
+        include_indicators: bool = True,
     ) -> str:
         """LWC 交互式 K 线交易复盘(离线自包含 HTML).
 
@@ -214,6 +215,8 @@ class VizNamespace:
         :param theme: ``"light"`` 或 ``"dark"``.
         :param initial_symbol: 初始展示标的;缺省为首个.
         :param show: 是否在浏览器中打开.
+        :param include_indicators: 是否把 ``self.I`` / ``record_indicator`` 上报的
+            指标按 pane 画到图上(主图叠加 / 成交量之下的副图);默认开。
         :return: 写出的 HTML 文件绝对路径.
         :raises ValueError: ``market_data`` 为空或无有效行情可复盘.
         """
@@ -228,4 +231,5 @@ class VizNamespace:
             theme=theme,
             initial_symbol=initial_symbol,
             show=show,
+            include_indicators=include_indicators,
         )

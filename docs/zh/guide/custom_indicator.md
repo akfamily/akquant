@@ -15,57 +15,77 @@
 
 | 需求 | 推荐路径 | 典型用法 |
 | :--- | :--- | :--- |
-| 给策略增加一个私有信号 | 自定义 `Indicator` / 自定义增量对象 | 在 `Strategy` 中注册 |
-| 用 pandas 一次性计算整段历史 | `indicator_mode="precompute"` | `register_precomputed_indicator(...)` |
-| 逐 Bar / 逐 Tick 维护状态 | `indicator_mode="incremental"` | `register_incremental_indicator(...)` |
+| 逐 Bar / 逐 Tick 维护状态 | 增量指标对象（有 `update()`） | `self.I(aq.EMA(20), ...)` |
+| 用 pandas 一次性计算整段历史 | `Indicator(name, fn)` | `self.I(Indicator(...), ...)` |
 | 给 `akquant.talib` 增加一个新函数名 | 修改 Python/Rust 兼容层源码 | 不属于运行时动态注册 |
 
 如果你的目标只是“在策略里用一个自己的指标”，通常不需要修改 `akquant.talib`。
 
-## 路径一：预计算指标
+## 统一入口：`self.I()`
 
-当你的指标更适合一次性对完整 `DataFrame` 计算时，优先使用 `precompute` 模式。
-
-### 最小示例
+指标只有一个声明入口 `Strategy.I()`。声明一次，框架负责三件事：**每根 bar 自动推进**、
+**支持 `ind[0]` / `ind[1]` 序列回溯**、**按需自动上报绘图点**。这对标 TradingView
+Pine Script 的 `ta.*` + `plot()`。
 
 ```python
-from akquant import Indicator, Strategy
+import akquant as aq
+from akquant import Bar, Strategy
 
 
-class PrecomputeMomentumStrategy(Strategy):
-    def __init__(self):
-        super().__init__()
-        self.indicator_mode = "precompute"
-        self.mom10 = Indicator(
-            "mom10",
-            lambda df: df["close"] - df["close"].shift(10),
-        )
-        self.register_precomputed_indicator("mom10", self.mom10)
+class MaCross(Strategy):
+    def on_start(self) -> None:
+        # 声明一次 = 自动更新 + 自动绘图 + 可回溯
+        self.ema_fast = self.I(aq.EMA(10), pane=0, color="#e91e63", label="EMA10")
+        self.ema_slow = self.I(aq.EMA(30), pane=0, color="#3f51b5")
+        self.rsi = self.I(aq.RSI(14), pane=1)
 
-    def on_bar(self, bar):
-        value = self.mom10.get_value(bar.symbol, bar.timestamp)
-        if value == value and value > 0:
+    def on_bar(self, bar: Bar) -> None:
+        # [0] 是当前 bar，[1] 是上一根 —— 与 Pine 的 sma[0] / sma[1] 一致
+        if self.ema_fast[1] is None or self.ema_slow[1] is None:
+            return
+        if self.ema_fast[1] <= self.ema_slow[1] and self.ema_fast[0] > self.ema_slow[0]:
             self.buy(bar.symbol, 100)
+        # 无需再写 record_indicator —— 传了绘图参数就会自动上报
 ```
 
-### 何时适合
+!!! warning "0.3 起的破坏性变更"
+    旧的 `indicator_mode` 开关与 `register_incremental_indicator(...)` /
+    `register_precomputed_indicator(...)` 已**移除**，统一由 `self.I()` 按传入对象
+    自动分派。副产品是两类指标现在可以**共存于同一个策略**——旧的模式开关是互斥的。
 
-- 指标天然可向量化；
-- 主要依赖 pandas `rolling` / `shift` / `ewm`；
-- 更关心回测开发效率，而不是在线增量更新；
-- 同一个 `symbol` 的整段历史可以提前准备好。
+    | 旧写法 | 新写法 |
+    | :--- | :--- |
+    | `self.indicator_mode = "incremental"` + `register_incremental_indicator("x", obj, source="close")` | `self.x = self.I(obj, name="x", source="close")` |
+    | `self.indicator_mode = "precompute"` + `register_precomputed_indicator("x", ind)` | `self.x = self.I(ind, name="x")` |
+    | `register_incremental_indicator(..., indicator_factory=f)` | `self.I(factory=f, ...)` |
 
-### 注意事项
+### 在哪里声明
 
-- `Indicator(name, fn, **kwargs)` 的核心输入是一个返回 `pd.Series` 的函数；
-- `get_value(symbol, timestamp)` 会从缓存序列中按时间取值；
-- 指标会按 `symbol` 缓存结果，适合同一回测里重复访问。
+`__init__` 与 `on_start` 都可以，但**推荐 `on_start`**：`self.params` 在 `__init__`
+之后才注入，参数化指标（`run_grid_search` 要扫的那些）只有在 `on_start` 里才拿得到
+参数值。`__init__` 只适合字面量参数。
 
-## 路径二：增量指标
+`subscribe_bars` 是例外，它**只能**在 `__init__` 调用（引擎启动前要冻结订阅表）；
+`self.I(freq="5min")` 会校验该周期已被订阅。
 
-如果你希望指标在事件流中逐步更新，推荐使用 `incremental` 模式。
+### 序列回溯
 
-### 最小示例
+- `ind[0]`：当前 bar 的值（`.value` 是它的别名）
+- `ind[1]`：上一根；`ind[n]`：前 n 根
+- **越界返回 `None`，不抛异常**——预热期天然越界，抛错会逼每个策略都写 `try`
+- 回溯深度由 `lookback` 界定（默认 128），底层是有界环形缓冲：实盘是无限流，
+  无界缓冲必然泄漏
+
+未就绪时取值为 `None`（原生指标未满窗、预计算指标 asof 落空都归一成 `None`），
+因此判空统一写 `if value is None`，不必再区分 `NaN`。
+
+## 路径一：增量指标
+
+传入任何有 `update()` 的对象即走增量路径。AKQuant 内置了 100+ 个 Rust 实现的
+有状态指标类（`aq.SMA` / `aq.EMA` / `aq.RSI` / `aq.MACD` / `aq.ATR` / `aq.BollingerBands` 等），
+它们就是 Pine `ta.*` 的等价物，开箱即用。
+
+### 自定义增量指标
 
 ```python
 from collections import deque
@@ -97,48 +117,51 @@ class MyMomentum(Indicator):
 
 
 class IncrementalMomentumStrategy(Strategy):
-    def __init__(self):
-        super().__init__()
-        self.indicator_mode = "incremental"
-
     def on_start(self):
-        self.register_incremental_indicator(
-            "mom10",
-            indicator_factory=lambda: MyMomentum(period=10),
+        self.mom10 = self.I(
+            factory=lambda: MyMomentum(period=10),
+            name="mom10",
             source="close",
             symbols=["AAPL", "MSFT"],
             warmup_bars=10,
         )
 
     def on_bar(self, bar):
-        value = self.mom10.value
-        if value == value and value > 0:
+        value = self.mom10[0]
+        if value is not None and value > 0:
             self.buy(bar.symbol, 100)
 ```
 
-### 为什么推荐 `indicator_factory`
+### 为什么推荐 `factory`
 
-多标的策略里，增量指标通常都有内部状态。如果多个 `symbol` 共用同一个实例，状态很容易串线。
+多标的策略里，增量指标通常都有内部状态。多个 `symbol` 共用同一个实例会串线，
+因此传实例（而非 `factory`）时跨多标的使用会直接报错，不会静默共享状态。
 
-因此，推荐写法是：
+推荐写法：
 
 ```python
-self.register_incremental_indicator(
-    "mom10",
-    indicator_factory=lambda: MyMomentum(period=10),
-    source="close",
-    symbols=["AAPL", "MSFT"],
-)
+self.mom10 = self.I(factory=lambda: MyMomentum(period=10), source="close")
 ```
 
 而不是：
 
 ```python
-self.mom10 = MyMomentum(period=10)
-self.register_incremental_indicator("mom10", self.mom10, source="close")
+self.mom10 = self.I(MyMomentum(period=10), source="close")  # 仅适合单标的
 ```
 
-后者更适合单标的或临时实验。
+!!! warning "热启动下 `factory` 必须可 pickle"
+    快照会序列化策略实例，`on_start` 里的 lambda 是局部对象，pickle 不了。
+    要配合 `run_from_checkpoint` 时，请改用模块级函数 + `functools.partial`：
+
+    ```python
+    from functools import partial
+
+    def _make_sma(window: int):
+        return aq.SMA(window)
+
+    # on_start 里：
+    self.sma = self.I(factory=partial(_make_sma, 20), name="sma")
+    ```
 
 ### `source` 代表什么
 
@@ -150,7 +173,178 @@ self.register_incremental_indicator("mom10", self.mom10, source="close")
 - `source="low"`
 - `source="volume"`
 
-如果你的指标需要多输入，建议优先参考策略手册中的增量接口约定，并确保你的 `update(...)` 参数顺序与框架喂入顺序一致。
+需要多输入的指标（ATR 之类）用 `input_mode` 指定喂入形态：`"source"`（单值，默认）/
+`"hl"` / `"hlc"` / `"ohlc"` / `"close_volume"`，框架会按该顺序把字段传给你的 `update(...)`。
+
+### 多值指标：`outputs`
+
+MACD 这类一次产出多个分量的指标，用 `outputs` 声明分量名，它们会被拆成多条
+独立的线（`indicator_key` 形如 `macd.dif`），而不是把元组丢给前端去拆：
+
+```python
+self.macd = self.I(aq.MACD(12, 26, 9), name="macd", pane=2,
+                   outputs=("dif", "dea", "hist"))
+
+# 读取：
+self.macd[0]        # 整个元组 (dif, dea, hist)
+self.macd.dif[0]    # 单个分量，同样支持 [1] 回溯
+```
+
+`outputs` 个数与指标实际分量数不符时会直接报错，不会静默错位。
+
+## 路径二：预计算指标
+
+当你的指标更适合一次性对完整 `DataFrame` 计算时，传一个 `Indicator(name, fn)`
+实例即可，`self.I()` 会自动走向量化预计算路径。
+
+### 最小示例
+
+```python
+from akquant import Indicator, Strategy
+
+
+class PrecomputeMomentumStrategy(Strategy):
+    def on_start(self):
+        self.mom10 = self.I(
+            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            name="mom10",
+        )
+
+    def on_bar(self, bar):
+        value = self.mom10[0]
+        if value is not None and value > 0:
+            self.buy(bar.symbol, 100)
+```
+
+### 何时适合
+
+- 指标天然可向量化；
+- 主要依赖 pandas `rolling` / `shift` / `ewm`；
+- 更关心回测开发效率，而不是在线增量更新；
+- 同一个 `symbol` 的整段历史可以提前准备好。
+
+### 限制
+
+- **实盘用不了**：实盘没有完整的历史 `DataFrame`；
+- **含 Tick 的输入会报错**：预计算需要完整 OHLC，tick 只有成交价；
+- **不支持 `freq=`**：窗口周期请改用增量指标。
+- **不支持 `warmup_bars=`**：它没有增量状态可预热，整段本来就算好了；
+- **多标的天然可用**：`Indicator` 自己按 symbol 缓存整段结果，不需要 `factory=`。
+
+## 自动绘图
+
+传了任一绘图参数（`pane` / `color` / `label` / `render_type` / `reference_lines` /
+`scale_group`）或显式 `plot=True`，框架就会在每次更新后自动上报一个绘图点，
+**无需在 `on_bar` 里手写 `record_indicator`**。
+
+**默认不上报**——与 Pine 一致（`ta.sma()` 只计算，`plot()` 才画）。这不只是风格：
+实盘的指标 sink 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路。
+
+未就绪的点（值为 `None`）不上报，对应 Pine 预热期的 `na`。
+
+```python
+# 只算不画
+self.atr = self.I(aq.ATR(14), input_mode="hlc")
+
+# 算且画
+self.rsi = self.I(aq.RSI(14), pane=1, reference_lines=[
+    {"value": 70, "label": "超买"},
+    {"value": 30, "label": "超卖"},
+])
+
+# 没有其它绘图参数时，用 plot=True 显式开启
+self.sma = self.I(aq.SMA(20), plot=True)
+```
+
+绘图参数的含义与 `record_indicator` 完全一致，详见下文「导出指标给前端」。
+`record_indicator` 保留为底层逃生口，用于记录**非指标类**的自定义值（仓位、
+信号强度、风控中间量等），那些是 `self.I()` 覆盖不了的。
+
+## 实时值：未闭合窗口上的 intrabar
+
+TradingView 的 realtime bar 会随每笔成交刷新指标，收盘后才确认（`barstate.isrealtime` /
+`isconfirmed`）。AKQuant 对窗口周期指标提供同样的语义：声明 `intrabar=True` 后，每根基础
+bar 闭合时，框架用 `ctx.current_window()` 的**未闭合窗口快照**在指标**副本**上试算一个临时值，
+真实状态不受污染；窗口闭合时才真正 `update()`。
+
+```python
+class S(Strategy):
+    def __init__(self):
+        super().__init__()
+        self.subscribe_bars("5min")
+
+    def on_start(self):
+        self.sma5 = self.I(aq.SMA(20), freq="5min", intrabar=True, pane=0)
+
+    def on_bar(self, bar):                 # 每根 1min bar
+        v0 = self.sma5[0]                  # 有临时值时: 未闭合 5min 窗口上的试算值
+        v1 = self.sma5[1]                  # 上一根已确认的 5min 值
+        if not self.sma5.confirmed: ...    # 当前 [0] 是临时值
+```
+
+下标语义与 Pine 完全一致：有临时值时它占据 `[0]`，已确认序列整体后移一位。流事件里临时点带
+`confirmed=false`，且**时间戳就是该窗口将来闭合的标签**，确认点随后以同一 `time` 到达——前端按
+`(indicator_key, symbol, timestamp)` 覆盖即可（`akquant.lwc.to_lwc_update()` 已按此处理）。
+临时点**不进** `indicator_df()` / `export_indicators()`，那两个出口只含确认值。
+
+三条限制：
+
+- **基础周期指标（不给 `freq=`）在每笔 tick 上试算**：框架从 tick 自己累出形成中的 bar
+  （真实的 open/high/low/close，ATR 之类 H/L 指标也能试算），tick **不再 `update()`** 该指标，
+  只有 bar 闭合才推进状态。临时点的时间戳按聚合器的区间末打戳公式预测
+  （`(ts // 间隔 + 1) * 间隔 − 1ns`），bar 真闭合时若与实际不符（行情源按起点打戳），该标的
+  停发临时点并告警一次，`[0]` 仍可读。**默认 `intrabar=False` 时 tick 照旧 `update()` 基础
+  指标**——纯 tick 策略依赖这个行为，未改动。
+- **临时点只在基础周期已知时上报**（回测 `run_backtest(data=[Tick,...], freq=)`，实盘网关声明
+  `metadata["freq"]`）。基础周期未知时窗口标签会随每根基础 bar 漂移，前端无法覆盖，此时只算
+  `[0]` 不发流事件，告警一次。
+- 试算靠复制指标状态：内建 Rust 指标走 `akquant.clone_indicator()`（pyo3 不为
+  `#[derive(Clone)]` 暴露 `__copy__`，`copy` / `deepcopy` / `pickle` 对它们一律 TypeError），
+  用户自写的 Python 指标走 `copy.deepcopy`。
+
+可运行示例：[75_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/75_intrabar_indicators.py)（窗口周期）、
+[76_tick_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/76_tick_intrabar_indicators.py)（基础周期，tick 驱动）。
+
+## 可插拔 study：只画图不交易
+
+TradingView 里 indicator 脚本与 strategy 脚本是两类东西，一张图上可以叠 N 个只画图的
+indicator。AKQuant 的对应物是 `Study`：继承它、在 `on_start` 里用 `self.I()` 声明指标，
+然后用 `studies=[...]` 挂到任意一次回测或实盘上。
+
+```python
+import akquant as aq
+from akquant import Study, run_backtest
+
+
+class RsiStudy(Study):
+    def on_start(self):
+        self.rsi = self.I(aq.RSI(14), pane=1)
+
+
+class MacdStudy(Study):
+    study_id = "macd_view"          # 省略时取类名 snake_case: "macd_study"
+
+    def on_start(self):
+        self.macd = self.I(aq.MACD(12, 26, 9), pane=2, outputs=("dif", "dea", "hist"))
+
+
+result = run_backtest(strategy=MyStrategy, data=data, symbols=["600000"],
+                      strategy_id="main", studies=[RsiStudy, MacdStudy])
+result.indicator_df(owner="rsi_study")    # 只看这个 study 的点
+result.viz.review(data)                   # study 的指标一样画到 LWC 图上
+```
+
+三条要点：
+
+- **不新建管线**：每个 study 就是多策略拓扑里的一个 slot（`strategies_by_slot`），指标点带
+  自己的 `owner_strategy_id`，窗口订阅跨 slot 合并，`run_live(studies=...)` 同一套语义。
+- **不交易是硬保证**：`Study` 上所有交易 API（`buy` / `sell` / `place_*` / `order_target*` /
+  `rebalance_*` / `cancel_*` …）一律抛 `StudyCannotTradeError`，在引擎回调里误写也会当场
+  报错，不会静默成交。要下单请继承 `Strategy`。
+- **id 不许撞**：`study_id` 与 `strategy_id` 或已有 slot key 重复时直接 `ValueError`；
+  `studies=` 里塞进非 `Study` 的类会 `TypeError`——否则"不交易"的保证就没了。
+
+可运行示例：[74_pluggable_studies.py](https://github.com/akfamily/akquant/blob/main/examples/74_pluggable_studies.py)。
 
 ## `warmup_bars` 怎么用
 
@@ -166,6 +360,7 @@ self.register_incremental_indicator("mom10", self.mom10, source="close")
 
 - [58_incremental_bootstrap_demo.py](https://github.com/akfamily/akquant/blob/main/examples/58_incremental_bootstrap_demo.py)
 - [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py)
+- [72_declarative_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/72_declarative_indicators.py)
 
 ## 热启动与序列化
 
@@ -359,6 +554,22 @@ fig = result.viz.indicators(
 
 如果你需要的是企业级多图联动、权限、持久化和实时订阅，这些仍建议放在外部平台实现；AKQuant 内部只提供最小预览和标准化数据输出。
 
+#### 在 LWC 复盘图上看指标
+
+`result.viz.review()` 会把 `self.I()` / `record_indicator` 上报的指标**默认一并画出**
+（`include_indicators=True`）：`pane=0` 叠在主图 K 线上，`pane=k≥1` 落到成交量之下的
+第 `k+1` 个副图；`reference_lines` 成为虚线参考线；未指定 `color` 时按主题色板轮转。
+`render_type` 的 7 个值全部有对应：`line`/`area`/`bar`/`column`/`histogram`/`scatter`
+各画各的，`signal` 走 K 线上的标记而不建独立序列。
+
+```python
+result.viz.review(market_data, filename="review.html")            # 带指标
+result.viz.review(market_data, filename="review.html", include_indicators=False)
+```
+
+底层适配器是 `akquant.lwc.to_lwc_indicator_series()`，与 `akquant.chart.to_d3kline_options()`
+是同一份指标契约面向两个前端的镜像实现；自建 LWC 页面可以直接复用。
+
 ### 报告中的可选指标区块
 
 如果你希望把指标预览放进内置 HTML 报告，而不是单独输出一个图，也可以显式开启：
@@ -488,6 +699,29 @@ run_live(
 不在内存里堆积历史点位，避免长时间运行导致内存无界增长。若只传 `on_event`（不传
 `indicator_recorder`），`run_live` 会自动启用这个流式 sink。
 
+### 实时增量到 LWC 图表
+
+前端如果用 lightweight-charts，不必自己解析 `to_indicator_message()` 的字段：
+`akquant.lwc.to_lwc_update()` 把 point 消息转成 `series.update()` 可直接消费的增量
+（`{indicator_key, pane, series_type, color, confirmed, point:{time, value}}`）。
+`confirmed` 原样带出——将来未闭合 bar 的临时点与确认点同 `time`，LWC 的 `update()`
+按 `time` 覆盖，前端零改动。
+
+```python
+from akquant.lwc import load_lwc_js, to_lwc_update
+
+def on_event(event):
+    message = aq.to_indicator_message(event)
+    update = to_lwc_update(message) if message else None
+    if update is not None:
+        push_to_page(update)           # 传输层由你决定：轮询 / WebSocket / SSE
+```
+
+`load_lwc_js()` 返回 vendored 的 LWC 源码文本，供自建页面内联（无 CDN）。完整闭环见
+`examples/73_lwc_live_indicators.py`：`run_live(broker="replay")` + 标准库 `http.server`
+轮询 + 首次出现时惰性建 series。HTTP/WS 传输刻意留在示例层，不进核心。
+
+
 ### 零依赖浏览器实时预览
 
 如果你想先给业务方或前端同事一个“打开浏览器就能看到”的最小接入样板，而暂时不引入
@@ -614,26 +848,30 @@ panes = to_raw_panes(defs, points_by_key)  # 保留 akquant 原生语义，供�
 ## 常见误区
 
 - 误区 1：所有自定义指标都必须继承 `Indicator`
-  - 不是。预计算场景可以直接用 `Indicator(name, fn)`；增量场景也可以注册自定义对象，只要接口契合。
+  - 不是。预计算场景可以直接用 `Indicator(name, fn)`；增量场景传任何有 `update()` 的对象都行。
 - 误区 2：多标的一定可以共用一个增量实例
-  - 不建议。正式策略优先 `indicator_factory`。
+  - 不行。传实例跨多标的会直接报错，正式策略请用 `factory=`。
 - 误区 3：`warmup_bars=20` 会重复消费第一根正式 Bar
   - 不会。预热只使用正式开始前的历史数据。
 - 误区 4：自定义指标自然支持热启动
-  - 不一定。需要确认对象可 `pickle`。
+  - 不一定。需要确认对象可 `pickle`，`factory` 也不能是 lambda。
 - 误区 5：策略自定义指标和 `akquant.talib` 扩展是一回事
   - 不是，二者面向的层级不同。
+- 误区 6：声明了指标就会自动画出来
+  - 不会。要传绘图参数或 `plot=True`，与 Pine 的 `ta.*` 不画、`plot()` 才画一致。
 
 ## 选择建议
 
 | 你的目标 | 建议方案 |
 | :--- | :--- |
-| 先快速验证一个想法 | `Indicator(name, fn)` + `precompute` |
-| 单标的逐 Bar 更新 | `incremental` + 单实例 |
-| 多标的正式策略 | `incremental` + `indicator_factory` |
-| 首根有效 Bar 就要有值 | 增量模式 + `warmup_bars` |
-| 需要断点续跑 | 确保指标状态可序列化 |
-| 需要极致性能 | 再考虑 Rust 指标实现 |
+| 先快速验证一个想法 | `self.I(Indicator(name, fn))` |
+| 单标的逐 Bar 更新 | `self.I(aq.EMA(20))` |
+| 多标的正式策略 | `self.I(factory=...)` |
+| 首根有效 Bar 就要有值 | `self.I(..., warmup_bars=N)` |
+| 要在图上画出来 | 加 `pane=` / `color=`，或 `plot=True` |
+| 判断金叉死叉 | `ind[0]` / `ind[1]` 序列回溯 |
+| 需要断点续跑 | 指标状态可序列化，`factory` 用 `partial` 而非 lambda |
+| 需要极致性能 | 先用内置的 100+ 个 Rust 指标类，再考虑自己写 Rust |
 
 ## 推荐阅读
 
@@ -642,3 +880,4 @@ panes = to_raw_panes(defs, points_by_key)  # 保留 akquant 原生语义，供�
 - [AKQuant 指标全量说明](./rust_indicator_reference.md)
 - [指标组合实战手册](./talib_indicator_playbook.md)
 - [可运行示例：60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py)
+- [可运行示例：72_declarative_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/72_declarative_indicators.py)

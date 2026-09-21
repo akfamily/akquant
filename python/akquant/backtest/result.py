@@ -1663,8 +1663,13 @@ class BacktestResult:
         self,
         name: Optional[str] = None,
         symbol: Optional[str] = None,
+        owner: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Get recorded indicator points as a DataFrame."""
+        """Get recorded indicator points as a DataFrame.
+
+        :param owner: 只留该 ``owner_strategy_id`` 的点(主策略的 ``strategy_id``
+            或某个 slot / study 的 key)。
+        """
         frame = cast(pd.DataFrame, self._indicator_points_df.copy())
         if frame.empty:
             return cast(pd.DataFrame, frame)
@@ -1672,6 +1677,8 @@ class BacktestResult:
             frame = frame.loc[frame["indicator_key"] == str(name)]
         if symbol is not None:
             frame = frame.loc[frame["symbol"] == str(symbol)]
+        if owner is not None:
+            frame = frame.loc[frame["owner_strategy_id"] == str(owner)]
         return cast(pd.DataFrame, frame.reset_index(drop=True))
 
     def export_indicators(self, path: str, format: str = "json") -> None:

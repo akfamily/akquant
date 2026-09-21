@@ -186,7 +186,7 @@ def test_non_market_callback_still_raises_ambiguity_in_dual_stream() -> None:
     不要把这个放宽成"全局默认取 bar"。
     """
     ticks = _make_two_day_ticks()
-    with pytest.raises(ValueError, match="同时存在 bar 与 tick 两条历史序列"):
+    with pytest.raises(ValueError, match="同时存在多条历史序列"):
         run_backtest(
             data=ticks,
             freq="1min",

@@ -164,6 +164,7 @@ impl BarColumns {
             volume: dec_or_zero(self.volume[i], "volume", sym, ts),
             symbol: sym.clone(),
             extra: bar_extra,
+            freq: None,
         }
     }
 

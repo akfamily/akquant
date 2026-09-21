@@ -346,11 +346,13 @@ class Bar:
     :ivar close: 收盘价
     :ivar volume: 成交量
     :ivar symbol: 标的代码
+    :ivar freq: 周期标签 (基础 bar 为 None, 引擎聚合出的窗口 bar 带 "5min" 等)
     """
 
     timestamp: int
     symbol: str
     extra: dict[str, float]
+    freq: typing.Optional[str]
     open: float
     high: float
     low: float
@@ -367,6 +369,7 @@ class Bar:
         volume: float,
         symbol: str,
         extra: typing.Optional[dict[str, float]] = ...,
+        freq: typing.Optional[str] = ...,
     ) -> "Bar": ...
     def set_open(self, value: float) -> None: ...
     def set_high(self, value: float) -> None: ...
@@ -573,6 +576,16 @@ class Engine:
 
         :param bars: 历史 K 线列表
         """
+        ...
+
+    def configure_window_subscriptions(
+        self,
+        specs: list[
+            tuple[typing.Optional[str], str, typing.Optional[list[tuple[str, str]]]]
+        ],
+        base_interval_min: typing.Optional[int] = ...,
+    ) -> None:
+        r"""配置多周期窗口订阅 (由 Strategy.subscribe_bars 收集后下发). 须在 run() 之前调用."""
         ...
 
     def get_state_bytes(self) -> bytes:
@@ -2658,8 +2671,17 @@ class StrategyContext:
         margin_accrued_interest: typing.Optional[float],
         margin_daily_interest: typing.Optional[float],
     ) -> "StrategyContext": ...
+    def current_window(self, symbol: str, freq: str) -> typing.Optional[Bar]:
+        r"""某标的某周期正在形成、尚未闭合的窗口快照; 无则 None. 不触发回调."""
+        ...
+
     def history(
-        self, symbol: str, field: str, count: int
+        self,
+        symbol: str,
+        field: str,
+        count: int,
+        end_before_ns: typing.Optional[int] = ...,
+        freq: typing.Optional[str] = ...,
     ) -> typing.Optional[numpy.typing.NDArray[numpy.float64]]:
         r"""
         获取历史数据.
@@ -2667,6 +2689,8 @@ class StrategyContext:
         :param symbol: 标的代码
         :param field: 字段名 (open, high, low, close, volume)
         :param count: 获取的数据长度
+        :param end_before_ns: 可选, 历史可见性截断时间戳 (纳秒)
+        :param freq: 'tick' / 'bar' / 已订阅的窗口周期(如 '5min') / None
         :return: numpy array or None
         """
         ...
@@ -2677,6 +2701,7 @@ class StrategyContext:
         fields: list[str],
         count: int,
         end_before_ns: typing.Optional[int] = ...,
+        freq: typing.Optional[str] = ...,
     ) -> typing.Optional[dict[str, numpy.typing.NDArray[numpy.float64]]]:
         r"""
         批量获取多个字段的历史数据 (一次跨界返回).
@@ -2687,6 +2712,7 @@ class StrategyContext:
         :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
         :param count: 获取的数据长度
         :param end_before_ns: 可选, 历史可见性截断时间戳 (纳秒)
+        :param freq: 'tick' / 'bar' / 已订阅的窗口周期(如 '5min') / None
         :return: {field: numpy array} or None
         """
         ...
@@ -3085,6 +3111,18 @@ def check_strategy_limits(
     ...
 
 # B2′ 向量化列计算原语 (numpy 零拷贝读入, 返回 float64 数组)
+def clone_indicator(indicator: typing.Any) -> typing.Any:
+    r"""
+    复制一个内建增量指标的完整状态, 返回同类型的新对象.
+
+    服务于"试算不提交"(intrabar peek): 用未闭合窗口的快照喂副本算出临时值, 原对象
+    状态不受污染。非内建指标(用户自写的 Python 类)请走 `copy.deepcopy`。
+
+    :param indicator: 任一内建增量指标实例(``SMA`` / ``EMA`` / ``MACD`` …)
+    :return: 状态完全相同的新实例
+    :raises TypeError: 传入对象不是内建增量指标
+    """
+
 def vec_sma(values: numpy.ndarray, period: int) -> numpy.ndarray: ...
 def vec_ema(values: numpy.ndarray, period: int) -> numpy.ndarray: ...
 def vec_wma(values: numpy.ndarray, period: int) -> numpy.ndarray: ...

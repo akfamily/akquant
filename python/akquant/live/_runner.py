@@ -39,6 +39,7 @@ from ..log import build_log_extra, get_logger
 from ..strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
 from ..strategy_loader import resolve_strategy_input
 from ..strategy_runtime_config import apply_strategy_runtime_config
+from ..strategy_window import configure_engine_window_subscriptions
 from ..utils import format_metric_value
 from ._gateway_setup import (
     LEGACY_GATEWAY_OPTION_KEYS,
@@ -667,9 +668,10 @@ class LiveRunner:
         # 那时局部名尚未绑定。
         self._stop_target_strategy = strategy_instance
         self._stop_target_slot_strategies = slot_strategy_instances
-        # 运行时配置下发放在最前: indicator_mode 决定指标注册走哪条路, 而指标在
-        # on_start 里注册(主策略由 Rust 在 engine.run() 内触发, 槽位由
-        # _dispatch_slot_strategy_start 触发) —— 两者都在下面。
+        # 运行时配置下发放在最前: error_mode 等字段影响 on_start 自身的异常
+        # 处理与指标声明(self.I 在 on_start 里调用) —— 主策略的 on_start 由
+        # Rust 在 engine.run() 内触发, 槽位由 _dispatch_slot_strategy_start
+        # 触发, 两者都在下面。
         self._apply_runtime_config(
             [strategy_instance, *slot_strategy_instances.values()]
         )
@@ -1056,10 +1058,11 @@ class LiveRunner:
         ``apply_strategy_runtime_config``), 冲突检测与告警去重因此两侧一致。
         入口没传就整个跳过 —— 策略自设的 ``self.runtime_config`` 保持不动。
 
-        **必须早于任何 ``on_start``**: ``runtime_config`` 含 ``indicator_mode``,
-        它决定指标走增量还是预计算, 而指标在 ``on_start`` 里注册。主策略的
-        ``on_start`` 由 Rust 在 ``engine.run()`` 内触发, 槽位策略的由
-        ``_dispatch_slot_strategy_start`` 触发, 本方法在两者之前调用。
+        **必须早于任何 ``on_start``**: ``runtime_config`` 的 ``error_mode`` /
+        ``re_raise_on_error`` 决定 ``on_start`` 自身出错时的行为, 而策略的指标
+        声明(``self.I``)正在 ``on_start`` 里。主策略的 ``on_start`` 由 Rust 在
+        ``engine.run()`` 内触发, 槽位策略的由 ``_dispatch_slot_strategy_start``
+        触发, 本方法在两者之前调用。
 
         :param targets: 主策略与各槽位策略实例
         """
@@ -1109,6 +1112,18 @@ class LiveRunner:
                 freq,
                 extra=self._runner_log_extra(phase="gateway"),
             )
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            # 装配顺序保护: 窗口订阅必须在 engine.run() 之前下发到引擎; 若 runner 尚未
+            # 建引擎(如仅注入 freq 的单元测试路径), 无订阅时静默跳过, 有订阅则报错
+            # 而非静默丢掉用户的 subscribe_bars。
+            if any(getattr(t, "_window_subscriptions", None) for t in targets):
+                raise RuntimeError(
+                    "LiveRunner 尚未创建 engine, 无法下发 subscribe_bars 订阅: "
+                    "_inject_data_freq 必须在引擎构建之后调用"
+                )
+            return
+        configure_engine_window_subscriptions(engine, targets, freq, logger)
 
     def _install_subscription_forwarder(self, targets: list[Strategy]) -> None:
         """给各策略装上 subscribe() → 行情网关的运行期转发器.
@@ -2456,6 +2471,13 @@ class LiveRunner:
         (``src/data/feed.rs:358-366``), 而 ``Engine`` 未向 Python 暴露 ``stop()``。
         因此复用 ``duration`` 已验证的模式: 抛 ``KeyboardInterrupt``, 由 ``run()``
         的 ``except`` 接住并走正常收尾。
+
+        此前 ``KeyboardInterrupt`` 沿 ``PipelineRunner::run()`` 冒泡到
+        ``src/engine/python.rs`` 的 ``pipeline.run()`` ``Err`` 分支时会提前
+        ``return``, 跳过紧随其后的会话收尾尾部窗口 flush(规格 5.3)。现已在
+        ``Engine::run()`` 里识别 ``KeyboardInterrupt`` 并在继续传播前调用
+        ``Engine::flush_window_tail`` 补上该 flush, 因此这条路径也会正确闭合
+        尾部未满窗口(见 ``tests/test_window_live_replay.py``)。
 
         计数点选在框架入口 ``_on_bar_event_and_flush`` /
         ``_on_tick_event_and_flush``(Rust 调用点 ``src/engine/core.rs:1280`` 与

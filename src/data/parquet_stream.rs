@@ -113,6 +113,7 @@ impl ParquetStreamClient {
                 volume: Self::dec(volume.get(i).unwrap_or(0.0)),
                 symbol: sym,
                 extra: std::collections::HashMap::new(),
+                freq: None,
             });
         }
         Ok(())

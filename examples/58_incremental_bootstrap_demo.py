@@ -50,14 +50,13 @@ class IncrementalBootstrapStrategy(Strategy):
     def __init__(self) -> None:
         """Initialize demo strategy state."""
         super().__init__()
-        self.runtime_config = {"indicator_mode": "incremental"}
         self.seen_active_bars: dict[str, int] = {}
 
     def on_start(self) -> None:
         """Register one SMA per symbol and request bootstrap history."""
-        self.register_incremental_indicator(
-            "sma3",
-            indicator_factory=lambda: aq.SMA(3),
+        self.sma3 = self.I(
+            factory=lambda: aq.SMA(3),
+            name="sma3",
             source="close",
             symbols=["AAPL", "MSFT"],
             warmup_bars=3,

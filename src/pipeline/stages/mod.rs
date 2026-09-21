@@ -4,7 +4,7 @@ mod data;
 mod execution;
 mod shared;
 mod statistics;
-mod strategy;
+pub(crate) mod strategy;
 
 pub use channel::ChannelProcessor;
 pub use cleanup::CleanupProcessor;
@@ -75,6 +75,7 @@ mod tests {
             close: dec!(100),
             volume: dec!(100),
             extra: HashMap::new(),
+            freq: None,
         };
 
         let bar_t2_b = Bar {
@@ -86,6 +87,7 @@ mod tests {
             close: dec!(205),
             volume: dec!(200),
             extra: HashMap::new(),
+            freq: None,
         };
 
         let bar_t3_a = Bar {
@@ -97,6 +99,7 @@ mod tests {
             close: dec!(102),
             volume: dec!(100),
             extra: HashMap::new(),
+            freq: None,
         };
 
         engine.state.feed.add_bar(bar_t1_a).unwrap();
@@ -189,6 +192,7 @@ mod tests {
             close: dec!(100),
             volume: dec!(100),
             extra: HashMap::new(),
+            freq: None,
         };
         let bar_t2_a = Bar {
             timestamp: 2000,
@@ -199,6 +203,7 @@ mod tests {
             close: dec!(101),
             volume: dec!(100),
             extra: HashMap::new(),
+            freq: None,
         };
 
         engine.state.feed.add_bar(bar_t1_a).unwrap();
@@ -302,6 +307,7 @@ mod tests {
             close: dec!(100),
             volume: dec!(100),
             extra: HashMap::new(),
+            freq: None,
         };
         engine.state.feed.add_bar(bar_t1).unwrap();
 
@@ -315,6 +321,7 @@ mod tests {
             close: dec!(50),
             volume: dec!(100),
             extra: HashMap::new(),
+            freq: None,
         };
         engine.state.feed.add_bar(bar_t2).unwrap();
 
@@ -328,6 +335,7 @@ mod tests {
             close: dec!(50),
             volume: dec!(100),
             extra: HashMap::new(),
+            freq: None,
         };
         engine.state.feed.add_bar(bar_t3).unwrap();
 

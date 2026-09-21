@@ -465,7 +465,7 @@ impl OrderManager {
             // 之前平的仓, bar 容器此时仍是 None, 这次仍会落到 tick 容器; 落库之后
             // 再平仓才会取到 bar。也就是说同一次回测里 MAE/MFE 的计算基准可能从
             // tick 序列静默切换到 bar 序列, 这是刻意接受的行为(不是回归), 只是
-            // 基准不保证同质。这与 context.rs::resolve_use_tick_history 给策略侧
+            // 基准不保证同质。这与 context.rs::resolve_history_source 给策略侧
             // get_history 的 freq=None 歧义报错无关: 那是策略主动查询, 这里是引擎
             // 内部统计, 不该因为多了一条 tick 序列就改变纯 bar 场景下的既有
             // MAE/MFE 数值(golden 基线锁定的正是这条路径)。修复前只读 bar 容器,

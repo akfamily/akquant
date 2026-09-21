@@ -82,6 +82,11 @@ from ..strategy_framework_hooks import (
 )
 from ..strategy_loader import resolve_strategy_input
 from ..strategy_runtime_config import apply_strategy_runtime_config
+from ..strategy_window import (
+    configure_engine_window_subscriptions,
+    freeze_window_subscriptions,
+)
+from ..study import Study, merge_studies_into_slots
 from ..utils.inspector import infer_warmup_period
 from .fill_mode import FillMode
 from .result import BacktestResult
@@ -1287,10 +1292,6 @@ def _apply_strategy_config_overrides(
             Optional[float],
             getattr(strategy_config, "portfolio_risk_budget", None),
         )
-    if strategy_runtime_config is None:
-        config_indicator_mode = getattr(strategy_config, "indicator_mode", None)
-        if config_indicator_mode is not None:
-            strategy_runtime_config = {"indicator_mode": config_indicator_mode}
     if strategy_source is None:
         strategy_source = cast(
             Optional[Union[str, bytes, os.PathLike[str]]],
@@ -2001,13 +2002,12 @@ class FunctionalStrategy(Strategy):
 
 
 def _should_prepare_precomputed_indicators(strategy_instance: Strategy) -> bool:
-    return str(strategy_instance.indicator_mode).strip().lower() == "precompute"
+    """是否真的声明过向量化预计算指标 —— 没有就跳过整段数据准备."""
+    return bool(getattr(strategy_instance, "_precomputed_indicators", None))
 
 
 def _resolve_incremental_indicator_warmup_depth(strategy_instance: Strategy) -> int:
     """提取增量指标注册中声明的最大历史预热深度."""
-    if str(strategy_instance.indicator_mode).strip().lower() != "incremental":
-        return 0
     registrations = getattr(strategy_instance, "_incremental_indicators", {}) or {}
     max_warmup = 0
     for item in registrations.values():
@@ -2285,6 +2285,7 @@ def run_backtest(
     strategies_by_slot: Optional[
         Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]
     ] = None,
+    studies: Optional[Sequence[Union[Type[Study], Study]]] = None,
     strategy_max_order_value: Optional[Dict[str, float]] = None,
     strategy_max_order_size: Optional[Dict[str, float]] = None,
     strategy_max_position_size: Optional[Dict[str, float]] = None,
@@ -2530,6 +2531,11 @@ def run_backtest(
             min_commission = cast(
                 Optional[float], broker_profile_values.get("min_commission")
             )
+    # study 是"只画图不交易"的 slot: 复用多策略拓扑, 在风控校验之前并入 slot 表,
+    # 让后续所有按 slot key 的校验/归属/窗口订阅合并对它一视同仁。
+    strategies_by_slot = merge_studies_into_slots(
+        strategy_id, strategies_by_slot, studies
+    )
     portfolio_risk_budget, risk_budget_mode = _validate_strategy_risk_inputs(
         strategies_by_slot=strategies_by_slot,
         strategy_max_order_value=strategy_max_order_value,
@@ -3088,6 +3094,11 @@ def run_backtest(
     for slot_strategy in slot_strategy_instances.values():
         slot_strategy._symbol_whitelist = whitelist_for_strategy
 
+    # subscribe_bars 只认 __init__: 必须在 on_start 之前冻结, 否则 on_start 里的
+    # subscribe_bars 因为还没冻结而悄悄成功(第二次真正的 on_start 被
+    # _start_initialized 挡住, 不会再触发), 直到引擎启动都不会报错。
+    freeze_window_subscriptions(all_strategy_instances)
+
     # 调用 on_start 获取订阅
     # 注意：现在调用 _on_start_internal 来触发自动发现
     if hasattr(strategy_instance, "_on_start_internal"):
@@ -3189,18 +3200,17 @@ def run_backtest(
             # 预计算指标依赖 data_map_for_indicators, 而归一后走的 DataFeed 分支不
             # 构建它。静默丢失指标比报错危险得多, 故显式拒绝并指向可用的替代方案。
             #
-            # 判据是"是否真的注册了预计算指标"而非 indicator_mode: 后者默认就是
-            # "precompute"(strategy.py), 用它做判据会误伤所有未显式改模式的 tick 用户。
+            # 判据是"是否真的声明过预计算指标": 只有 self.I(Indicator(...)) 这条路
+            # 才需要完整 DataFrame, 增量指标的 tick 路径不受影响。
             if ticks_part and any(
                 getattr(one_strategy, "_precomputed_indicators", None)
                 for one_strategy in all_strategy_instances
             ):
                 raise ValueError(
-                    "已注册的预计算指标(precompute 模式)不支持含 Tick 的输入: "
+                    "已声明的向量化预计算指标不支持含 Tick 的输入: "
                     "预计算指标需要完整的 OHLC DataFrame, 而 tick 只有成交价。请改用 "
-                    "register_incremental_indicator(indicator_mode='incremental', "
-                    "tick 路径已支持单值指标), 或给 run_backtest 传 freq"
-                    "(如 freq='1min')把 tick 聚合成 bar。"
+                    "增量指标 self.I(aq.SMA(20), ...)(tick 路径已支持单值指标), "
+                    "或给 run_backtest 传 freq(如 freq='1min')把 tick 聚合成 bar。"
                 )
             tick_feed = DataFeed()
             if bars_part:
@@ -4636,6 +4646,10 @@ def run_backtest(
                 *slot_strategy_instances.values(),
             )
         )
+
+    # 多周期窗口订阅下发(无订阅时零开销)。必须在 engine.run() 之前; 放在白名单之后
+    # 是为了与 run_from_checkpoint 的下发点对称。
+    configure_engine_window_subscriptions(engine, all_strategy_instances, freq, logger)
 
     # 6. 添加数据
     engine.add_data(feed)
@@ -6138,6 +6152,9 @@ def run_from_checkpoint(
     for slot_strategy in slot_strategy_instances.values():
         slot_strategy._symbol_whitelist = whitelist_for_strategy
 
+    # subscribe_bars 只认 __init__: 与 run_backtest 对称, 必须在 on_start 之前冻结。
+    freeze_window_subscriptions(all_strategy_instances)
+
     if hasattr(strategy_instance, "_on_start_internal"):
         strategy_instance._on_start_internal()
     elif hasattr(strategy_instance, "on_start"):
@@ -6169,6 +6186,16 @@ def run_from_checkpoint(
     )
     if symbols_explicit:
         engine.set_symbol_whitelist(whitelist_symbols)
+
+    # 多周期窗口订阅下发(无订阅时零开销), 与 run_backtest 对称。本函数没有
+    # `freq` 形参(基础周期是 checkpoint 存档时随策略实例一起 pickle 下来的),
+    # 从恢复出的策略实例上取 `_framework_freq`。
+    configure_engine_window_subscriptions(
+        engine,
+        all_strategy_instances,
+        getattr(strategy_instance, "_framework_freq", None),
+        logger,
+    )
 
     # 被前置过滤掉的标的只发一条汇总日志, 与 run_backtest 对称(见该函数同名
     # 注释, :4572 附近)——两条入口的可观测性不应该有差异。

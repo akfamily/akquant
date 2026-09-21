@@ -10,7 +10,6 @@
 - 账户更新阈值（`portfolio_update_eps`）
 - 精确交易日边界钩子（`enable_precise_day_boundary_hooks`）
 - 兼容模式开关（`re_raise_on_error`）
-- 指标计算模式（`indicator_mode`）
 
 该能力同时支持：
 
@@ -51,7 +50,6 @@ result = run_backtest(
 | `portfolio_update_eps` | `float`（`>= 0`） | `0.0` | 过滤微小资产波动噪声 | 抛出 `ValueError` |
 | `enable_precise_day_boundary_hooks` | `bool` | `False` | 启用基于边界定时器的精确日内钩子 | 按 `bool` 规则转换 |
 | `re_raise_on_error` | `bool` | `True` | 在 `error_mode="legacy"` 下作为兼容兜底 | 按 `bool` 规则转换 |
-| `indicator_mode` | `"incremental" \| "precompute"` | `"precompute"` | 选择指标走增量计算还是全量预计算 | 抛出 `ValueError` |
 
 ## 4. 冲突优先级
 
@@ -109,10 +107,9 @@ run_live(strategy_cls=MyStrategy, instruments=instruments,
          strategy_runtime_config={"error_mode": "continue"})
 ```
 
-两点与回测的差异需要注意：
+一点与回测的差异需要注意：
 
 - **不传就完全不动**。策略内部自己写的 `self.runtime_config` 在实盘本来就生效（消费点直读该属性，与运行模式无关），不传该参数时它保持原样。
-- **没有 `strategy_config` 兜底注入**。回测会从 `strategy_config.indicator_mode` 推一份默认值，实盘入口没有 config 对象参数，所以实盘想改 `indicator_mode` 必须显式传 `strategy_runtime_config`。
 
 冲突检测、告警去重与 `runtime_config_override` 的语义与回测共用同一套实现，行为逐字一致。
 

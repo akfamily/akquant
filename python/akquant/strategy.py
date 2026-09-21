@@ -12,6 +12,7 @@ from typing import (
     Callable,
     Deque,
     Dict,
+    Iterable,
     List,
     Literal,
     Optional,
@@ -32,6 +33,17 @@ from .akquant import (
     TimeInForce,
 )
 from .gateway.order_receipt import OrderReceipt
+from .indicator_declaration import (
+    DEFAULT_LOOKBACK,
+    UNKNOWN_LABEL,
+    IndicatorBinding,
+    IndicatorComponentBinding,
+    IndicatorDeclaration,
+    PartialBar,
+    end_stamp_label,
+    is_reportable_value,
+    peek_indicator,
+)
 from .indicator_recording import IndicatorRecorder
 from .log import get_logger as _get_logger
 from .params import ParamModel, ParamSpec, legacy_init_warning_message
@@ -177,6 +189,10 @@ from .strategy_trading_api import (
 from .strategy_trading_api import (
     submit_order as _submit_order_impl,
 )
+from .strategy_window import WindowSubscription
+from .strategy_window import current_window_impl as _current_window_impl
+from .strategy_window import on_window_bar_event as _on_window_bar_event_impl
+from .strategy_window import subscribe_bars_impl as _subscribe_bars_impl
 from .utils.price import round_to_tick as _round_to_tick
 
 if TYPE_CHECKING:
@@ -224,58 +240,6 @@ InstrumentOptionMarginModelName = Literal[
     "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
 ]
 InstrumentSettlementMode = Literal["CASH", "SETTLEMENT_PRICE", "FORCE_CLOSE"]
-
-
-@dataclass
-class IncrementalIndicatorRegistration:
-    """增量指标注册定义."""
-
-    source: str
-    symbols: Optional[set[str]]
-    input_mode: str = "source"
-    warmup_bars: int = 0
-    factory: Optional[Callable[[], Any]] = None
-    base_indicator: Any = None
-    primary_symbol: Optional[str] = None
-    instances: Dict[str, Any] = field(default_factory=dict)
-    # 下面两个集合只用于 H/L 类 input_mode 的会话级覆盖率核验(见
-    # `Strategy._check_incremental_hl_bar_coverage`): bar_seen_symbols 记录
-    # 曾经收到过至少一个 bar 的 symbol; tick_only_symbols 记录曾经在
-    # H/L 模式下被 tick 跳过更新的 symbol。会话结束时两者做差集, 差集非空
-    # 说明该 symbol 全程只有 tick、从未有 bar, 需要报错而非静默不推进。
-    bar_seen_symbols: set[str] = field(default_factory=set)
-    tick_only_symbols: set[str] = field(default_factory=set)
-
-
-class IncrementalIndicatorBinding:
-    """按当前 symbol 访问底层增量指标实例的轻量代理."""
-
-    def __init__(self, strategy: "Strategy", name: str) -> None:
-        """绑定策略实例与指标名，延迟解析当前 symbol 对应的真实指标."""
-        self._strategy = strategy
-        self._name = name
-
-    def get_instance(self, symbol: Optional[str] = None) -> Any:
-        """返回指定 symbol 对应的底层指标实例."""
-        return self._strategy._get_incremental_indicator_instance(self._name, symbol)
-
-    @property
-    def value(self) -> Any:
-        """获取当前 symbol 的最新指标值."""
-        return getattr(self.get_instance(), "value", None)
-
-    @property
-    def is_ready(self) -> bool:
-        """获取当前 symbol 的 ready 状态."""
-        return bool(getattr(self.get_instance(), "is_ready", False))
-
-    def update(self, *args: Any, **kwargs: Any) -> Any:
-        """兼容手动调用 update 的现有写法."""
-        return self.get_instance().update(*args, **kwargs)
-
-    def __getattr__(self, attr: str) -> Any:
-        """将未知属性代理到底层当前 symbol 的增量指标实例."""
-        return getattr(self.get_instance(), attr)
 
 
 @dataclass(frozen=True)
@@ -361,7 +325,7 @@ class Strategy:
     # Python side accesses it via self.ctx.history() (efficient copy).
     # No duplicate storage in Python.
     _precomputed_indicators: List["Indicator"]
-    _incremental_indicators: Dict[str, IncrementalIndicatorRegistration]
+    _incremental_indicators: Dict[str, IndicatorDeclaration]
     _subscriptions: List[str]
     _live_market_data_owner: bool
     _warned_live_subscriptions: set[str]
@@ -463,6 +427,8 @@ class Strategy:
     _pending_daily_timers: List[Tuple[str, str]]
     _instrument_snapshots: Dict[str, InstrumentSnapshot]
     _indicator_recorder: Optional[IndicatorRecorder]
+    _window_subscriptions: List["WindowSubscription"]
+    _window_subscriptions_frozen: bool
 
     _trading_days: List[pd.Timestamp]
 
@@ -553,6 +519,8 @@ class Strategy:
         instance.current_tick = None
         instance._precomputed_indicators = []
         instance._incremental_indicators = {}
+        instance._window_subscriptions = []
+        instance._window_subscriptions_frozen = False
         instance._subscriptions = []
         # 实盘标记: LiveRunner 在 _configure_strategy_slots 里置位。subscribe()
         # 据此告警——实盘订阅集来自 run_live(instruments=[...]), _subscriptions
@@ -589,7 +557,6 @@ class Strategy:
         class_portfolio_eps = _class_attr("portfolio_update_eps", 0.0)
         class_error_mode = _class_attr("error_mode", "raise")
         class_re_raise = _class_attr("re_raise_on_error", True)
-        class_indicator_mode = _class_attr("indicator_mode", "precompute")
         if isinstance(raw_runtime_config, dict):
             instance.runtime_config = StrategyRuntimeConfig(**raw_runtime_config)
         elif isinstance(raw_runtime_config, StrategyRuntimeConfig):
@@ -598,7 +565,6 @@ class Strategy:
                 portfolio_update_eps=raw_runtime_config.portfolio_update_eps,
                 error_mode=raw_runtime_config.error_mode,
                 re_raise_on_error=raw_runtime_config.re_raise_on_error,
-                indicator_mode=raw_runtime_config.indicator_mode,
             )
         else:
             instance.runtime_config = StrategyRuntimeConfig(
@@ -608,9 +574,6 @@ class Strategy:
                     Literal["raise", "continue", "legacy"], str(class_error_mode)
                 ),
                 re_raise_on_error=bool(class_re_raise),
-                indicator_mode=cast(
-                    Literal["incremental", "precompute"], str(class_indicator_mode)
-                ),
             )
         instance._last_event_type = ""
         instance._trading_days = []
@@ -794,11 +757,18 @@ class Strategy:
             del state["_indicator_recorder"]
         if "_order_group_lock" in state:
             del state["_order_group_lock"]  # RLock 不可 pickle, __setstate__ 重建
-        incremental_indicators = state.get("_incremental_indicators")
-        if isinstance(incremental_indicators, dict):
-            for name in incremental_indicators.keys():
-                if state.get(name).__class__ is IncrementalIndicatorBinding:
-                    del state[name]
+        # binding 代理不入库: 记下"哪个属性持有哪条声明的 binding", 恢复时按
+        # 属性名重建。不能按声明名 setattr —— self.I() 返回的 binding 由用户
+        # 自己赋给任意属性, 声明名与属性名无关, 按声明名会覆盖用户的同名属性。
+        binding_attrs: Dict[str, Tuple[str, Optional[str]]] = {}
+        for attr, value in list(state.items()):
+            if isinstance(value, IndicatorBinding):
+                binding_attrs[attr] = (value._name, None)
+                del state[attr]
+            elif isinstance(value, IndicatorComponentBinding):
+                binding_attrs[attr] = (value._parent._name, value._name)
+                del state[attr]
+        state["_indicator_binding_attrs"] = binding_attrs
         return state
 
     def __setstate__(self, state: Dict[str, Any]) -> None:
@@ -847,10 +817,6 @@ class Strategy:
                     str(self.__dict__.pop("error_mode", "raise")),
                 ),
                 re_raise_on_error=bool(self.__dict__.pop("re_raise_on_error", True)),
-                indicator_mode=cast(
-                    Literal["incremental", "precompute"],
-                    str(self.__dict__.pop("indicator_mode", "precompute")),
-                ),
             )
         self.ctx = None
         if getattr(self, "execution", None) is None:
@@ -868,6 +834,9 @@ class Strategy:
             self._seen_trade_keys = set()
         if not hasattr(self, "_incremental_indicators"):
             self._incremental_indicators = {}
+        if not hasattr(self, "_window_subscriptions"):
+            self._window_subscriptions = []
+        self._window_subscriptions_frozen = False
         if not hasattr(self, "_seen_trade_key_order"):
             self._seen_trade_key_order = deque()
         if not hasattr(self, "_finalized_orders"):
@@ -929,8 +898,20 @@ class Strategy:
             self._ml_pending_window_end_bar = None
         if not hasattr(self, "_last_train_bar_count"):
             self._last_train_bar_count = 0
-        for name in list(getattr(self, "_incremental_indicators", {}).keys()):
-            setattr(self, name, IncrementalIndicatorBinding(self, name))
+        binding_attrs = self.__dict__.pop("_indicator_binding_attrs", None)
+        if isinstance(binding_attrs, dict):
+            for attr, (decl_name, component) in binding_attrs.items():
+                binding = IndicatorBinding(self, decl_name)
+                setattr(
+                    self,
+                    attr,
+                    binding if component is None else getattr(binding, component),
+                )
+        # 早于本字段的旧存档: 退回按声明名重建(那时 register_* 就是按名 setattr 的)
+        elif binding_attrs is None:
+            for name in list(getattr(self, "_incremental_indicators", {}).keys()):
+                if not hasattr(self, name):
+                    setattr(self, name, IndicatorBinding(self, name))
         _ensure_framework_state_impl(self)
 
     @property
@@ -956,7 +937,6 @@ class Strategy:
                 portfolio_update_eps=value.portfolio_update_eps,
                 error_mode=value.error_mode,
                 re_raise_on_error=value.re_raise_on_error,
-                indicator_mode=value.indicator_mode,
             )
             return
         if isinstance(value, dict):
@@ -980,7 +960,6 @@ class Strategy:
             portfolio_update_eps=cfg.portfolio_update_eps,
             error_mode=cfg.error_mode,
             re_raise_on_error=cfg.re_raise_on_error,
-            indicator_mode=cfg.indicator_mode,
         )
 
     @property
@@ -997,7 +976,6 @@ class Strategy:
             portfolio_update_eps=float(value),
             error_mode=cfg.error_mode,
             re_raise_on_error=cfg.re_raise_on_error,
-            indicator_mode=cfg.indicator_mode,
         )
 
     @property
@@ -1014,7 +992,6 @@ class Strategy:
             portfolio_update_eps=cfg.portfolio_update_eps,
             error_mode=cast(Literal["raise", "continue", "legacy"], value),
             re_raise_on_error=cfg.re_raise_on_error,
-            indicator_mode=cfg.indicator_mode,
         )
 
     @property
@@ -1031,23 +1008,6 @@ class Strategy:
             portfolio_update_eps=cfg.portfolio_update_eps,
             error_mode=cfg.error_mode,
             re_raise_on_error=bool(value),
-            indicator_mode=cfg.indicator_mode,
-        )
-
-    @property
-    def indicator_mode(self) -> Literal["incremental", "precompute"]:
-        """返回指标执行模式."""
-        return self.runtime_config.indicator_mode
-
-    @indicator_mode.setter
-    def indicator_mode(self, value: Literal["incremental", "precompute"]) -> None:
-        cfg = self.runtime_config
-        self.runtime_config = StrategyRuntimeConfig(
-            enable_precise_day_boundary_hooks=cfg.enable_precise_day_boundary_hooks,
-            portfolio_update_eps=cfg.portfolio_update_eps,
-            error_mode=cfg.error_mode,
-            re_raise_on_error=cfg.re_raise_on_error,
-            indicator_mode=value,
         )
 
     @property
@@ -1078,6 +1038,18 @@ class Strategy:
         """内部启动回调."""
         if self._start_initialized:
             return
+
+        # 自动命名(省略 name 的 self.I)按声明顺序计数。首跑时记下 on_start
+        # 开始那一刻的计数; 恢复时 on_start 会重跑同一串声明, 把计数拨回那一
+        # 刻, 生成的名字才能与存档里的逐一对上、命中 is_restored 分支。
+        counts: Dict[str, int] = self.__dict__.setdefault(
+            "_indicator_auto_name_counts", {}
+        )
+        if self.is_restored:
+            counts.clear()
+            counts.update(getattr(self, "_indicator_auto_name_counts_at_start", {}))
+        else:
+            self._indicator_auto_name_counts_at_start = dict(counts)
 
         # 如果是恢复模式，先调用 on_resume
         if self.is_restored:
@@ -1597,54 +1569,184 @@ class Strategy:
         """设置仓位管理器."""
         self.sizer = sizer
 
-    def register_precomputed_indicator(self, name: str, indicator: "Indicator") -> None:
-        """注册预计算指标."""
-        if self.indicator_mode != "precompute":
-            raise ValueError(
-                "register_precomputed_indicator requires indicator_mode='precompute'"
-            )
-        if indicator not in self._precomputed_indicators:
-            self._precomputed_indicators.append(indicator)
-        setattr(self, name, indicator)
-
-    def register_incremental_indicator(
+    def I(  # noqa: E743 单字母方法名是刻意的: 对标 backtesting.py 的 self.I()
         self,
-        name: str,
         indicator: Any = None,
-        source: str = "close",
-        symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
         *,
-        warmup_bars: int = 0,
-        indicator_factory: Optional[Callable[[], Any]] = None,
+        source: str = "close",
         input_mode: str = "source",
-    ) -> None:
-        """注册增量指标."""
-        if self.indicator_mode != "incremental":
-            raise ValueError(
-                "register_incremental_indicator requires indicator_mode='incremental'"
-            )
-        if self.is_restored and name in self._incremental_indicators:
-            setattr(self, name, IncrementalIndicatorBinding(self, name))
-            return
-        symbol_filter = self._normalize_indicator_symbols(symbols)
-        source_key = str(source).strip().lower()
-        input_mode_key = self._normalize_incremental_input_mode(source_key, input_mode)
-        if indicator is not None and indicator_factory is not None:
-            raise ValueError("indicator and indicator_factory cannot both be provided")
-        if indicator is None and indicator_factory is None:
-            raise ValueError("indicator or indicator_factory is required")
-        warmup_bars_value = int(warmup_bars)
-        if warmup_bars_value < 0:
+        symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
+        freq: Optional[str] = None,
+        warmup_bars: int = 0,
+        lookback: int = DEFAULT_LOOKBACK,
+        name: Optional[str] = None,
+        factory: Optional[Callable[[], Any]] = None,
+        outputs: Optional[Tuple[str, ...]] = None,
+        plot: Optional[bool] = None,
+        pane: Optional[int] = None,
+        render_type: Optional[str] = None,
+        color: Optional[str] = None,
+        label: Optional[str] = None,
+        unit: Optional[str] = None,
+        precision: Optional[int] = None,
+        reference_lines: Optional[list[Dict[str, Any]]] = None,
+        scale_group: Optional[str] = None,
+        intrabar: bool = False,
+    ) -> IndicatorBinding:
+        """声明一个指标: 自动增量更新 + 序列回溯.
+
+        对标 TradingView Pine Script 的 ``ta.*``。返回的绑定对象支持
+        ``ind[0]``(当前 bar)/``ind[1]``(上一根) 回溯, 越界返回 ``None``。
+
+        ``self.params`` 在 ``__init__`` **之后**才注入, 所以参数化指标
+        (``optimize.py`` 要扫的那些)必须在 ``on_start`` 里声明;
+        ``__init__`` 只适合字面量参数。``subscribe_bars`` 仍只能在
+        ``__init__``, 本方法的 ``freq=`` 校验该周期已订阅。
+
+        传了任一绘图参数(``pane``/``color``/``label``/``render_type``/
+        ``reference_lines``/``scale_group``)或显式 ``plot=True`` 时, 框架在每次
+        更新后自动上报一个绘图点, 无需在 ``on_bar`` 里手写
+        ``record_indicator``。**默认不上报**: 与 Pine 一致(``ta.sma()`` 只算、
+        ``plot()`` 才画), 且实盘 sink 是每点一个事件, 默认全开会淹没前端。
+        未就绪(值为 ``None``/``NaN``)的点不上报——Pine 预热期是 ``na``。
+
+        :param indicator: 指标实例, 需有 ``update()``; 与 ``factory`` 二选一
+        :param factory: 多标的场景下的指标工厂, 每个 symbol 造一个独立实例
+        :param lookback: 回溯缓冲深度, 有界(实盘是无限流)
+        :param name: 指标标识, 省略时按指标类名自动生成
+        :param plot: 是否自动上报绘图点; ``None`` 表示"给了绘图参数就上报"
+        :param intrabar: bar 未闭合期间是否试算临时值(对齐 Pine 的 realtime bar):
+            有临时值时 ``[0]`` 是它、``[1]`` 是上一根已确认, ``binding.confirmed``
+            告知当前 ``[0]`` 是否已确认; 流事件带 ``confirmed=false``。窗口周期
+            指标(``freq=``)在每根基础 bar 上用未闭合窗口快照试算; 基础周期指标在
+            每笔 tick 上用形成中的 bar 试算——此时 **tick 不再 update() 它**,
+            只有 bar 闭合才推进状态(默认 False 时 tick 照旧 update, 纯 tick 策略
+            依赖此行为)。
+        :return: 可下标回溯的绑定代理
+        """
+        freq_label: Optional[str] = None
+        if freq is not None:
+            from .strategy_window import parse_window_freq, window_freqs
+
+            freq_label, _ = parse_window_freq(freq)
+            if freq_label not in window_freqs(self):
+                raise ValueError(
+                    f"I(freq={freq!r}) 未订阅该周期, "
+                    f"请先在 __init__ 里 subscribe_bars({freq_label!r})"
+                )
+        indicator_name = self._resolve_indicator_name(name, indicator, factory)
+        # warm start 恢复: 声明照旧执行(on_start 会重跑), 但不能覆盖已恢复的
+        # 指标状态, 否则预热白做。
+        if self.is_restored and indicator_name in self._incremental_indicators:
+            return IndicatorBinding(self, indicator_name)
+        if indicator is not None and factory is not None:
+            raise ValueError("indicator and factory cannot both be provided")
+        if indicator is None and factory is None:
+            raise ValueError("indicator or factory is required")
+        if int(warmup_bars) < 0:
             raise ValueError("warmup_bars must be >= 0")
-        self._incremental_indicators[name] = IncrementalIndicatorRegistration(
-            source=source_key,
-            symbols=symbol_filter,
-            input_mode=input_mode_key,
-            warmup_bars=warmup_bars_value,
-            factory=indicator_factory,
-            base_indicator=indicator,
+        if int(lookback) < 1:
+            raise ValueError("lookback must be >= 1")
+        source_key = str(source).strip().lower()
+        # 分派: 有 update() 走增量, 是 Indicator 走向量化预计算。删掉
+        # 原先的互斥模式开关后, 两者可在同一个策略里共存。
+        # 局部导入避免与 indicator.py 的循环依赖(该模块顶层只在 TYPE_CHECKING
+        # 下导入 Indicator, 运行期拿不到)。
+        from .indicator import Indicator as _Indicator
+
+        is_precomputed = isinstance(indicator, _Indicator)
+        if is_precomputed and getattr(self, "_live_market_data_owner", False):
+            # 实盘没有完整的历史 DataFrame, _prepare_indicators 永远不会跑,
+            # get_value 恒 NaN —— 静默返回是最坏的失败方式(用户以为策略在正常
+            # 运行)。run_live 装配时已打上 _live_market_data_owner 标记。
+            raise ValueError(
+                "实盘不支持向量化预计算指标 self.I(Indicator(...)): 实盘没有完整的"
+                "历史 DataFrame。请改用增量指标, 如 self.I(aq.SMA(20), ...)"
+            )
+        if intrabar and is_precomputed:
+            raise ValueError(
+                "I(intrabar=True) 不支持向量化预计算指标: 它没有可试算的增量状态"
+            )
+        if is_precomputed and int(warmup_bars) > 0:
+            raise ValueError(
+                "I(warmup_bars=) 对向量化预计算指标无意义: 它在数据加载后整段算完, "
+                "没有需要预热的增量状态"
+            )
+        if intrabar and freq_label is None:
+            self._has_base_intrabar = True
+        if is_precomputed:
+            if freq_label is not None:
+                raise ValueError(
+                    "I(freq=) 不支持向量化预计算指标: 预计算按基础数据整段计算, "
+                    "窗口周期请改用增量指标(有 update() 的对象)"
+                )
+            self._precomputed_indicators.append(indicator)
+        chart_args = (
+            pane,
+            render_type,
+            color,
+            label,
+            unit,
+            precision,
+            reference_lines,
+            scale_group,
         )
-        setattr(self, name, IncrementalIndicatorBinding(self, name))
+        should_plot = (
+            bool(plot) if plot is not None else any(a is not None for a in chart_args)
+        )
+        self._incremental_indicators[indicator_name] = IndicatorDeclaration(
+            source=source_key,
+            symbols=self._normalize_indicator_symbols(symbols),
+            input_mode=self._normalize_incremental_input_mode(source_key, input_mode),
+            warmup_bars=int(warmup_bars),
+            factory=factory,
+            base_indicator=indicator,
+            freq=freq_label,
+            lookback=int(lookback),
+            precomputed=is_precomputed,
+            intrabar=bool(intrabar),
+            outputs=None if outputs is None else tuple(str(o) for o in outputs),
+            plot=should_plot,
+            pane=0 if pane is None else int(pane),
+            render_type="line" if render_type is None else str(render_type),
+            color=color,
+            label=label,
+            unit=unit,
+            precision=precision,
+            reference_lines=reference_lines,
+            scale_group=scale_group,
+        )
+        return IndicatorBinding(self, indicator_name)
+
+    def _resolve_indicator_name(
+        self, name: Optional[str], indicator: Any, factory: Optional[Callable[[], Any]]
+    ) -> str:
+        """省略 ``name`` 时按指标类名生成一个稳定且不重名的标识.
+
+        稳定很重要: warm start 恢复时 ``on_start`` 会重跑一遍声明, 生成的名字
+        必须与存档里的一致才能命中 ``is_restored`` 分支。同一个策略里声明顺序
+        不变, 生成的序号就不变。
+        """
+        explicit = str(name or "").strip()
+        if explicit:
+            return explicit
+        if indicator is not None:
+            base = type(indicator).__name__.lower()
+        else:
+            factory_name = str(getattr(factory, "__name__", "")).strip("_").lower()
+            base = (
+                factory_name
+                if factory_name and factory_name != "<lambda>"
+                else "indicator"
+            )
+        # 按声明顺序计数而非查字典是否已占用: 后者在 warm start 恢复时(字典已
+        # 含首跑的声明)会永远追加后缀, 让恢复的状态被孤立。
+        counts: Dict[str, int] = self.__dict__.setdefault(
+            "_indicator_auto_name_counts", {}
+        )
+        ordinal = counts.get(base, 0) + 1
+        counts[base] = ordinal
+        return base if ordinal == 1 else f"{base}_{ordinal}"
 
     def _set_live_market_data_owner(self) -> None:
         """标记本策略运行于实盘(行情订阅集由 run_live 的 instruments 决定).
@@ -1703,9 +1805,7 @@ class Strategy:
             )
 
     def _prepare_indicators(self, data: Dict[str, pd.DataFrame]) -> None:
-        """Pre-calculate indicators for precompute mode."""
-        if self.indicator_mode != "precompute":
-            return
+        """把声明过的向量化预计算指标在数据加载后整段算完并缓存."""
         if not self._precomputed_indicators:
             return
 
@@ -1715,8 +1815,6 @@ class Strategy:
                 ind(df, sym)
 
     def _update_incremental_indicators(self, bar: Union[Bar, Tick]) -> None:
-        if self.indicator_mode != "incremental":
-            return
         if not self._incremental_indicators:
             return
         bar_symbol = getattr(bar, "symbol", None)
@@ -1729,10 +1827,25 @@ class Strategy:
         ):
             return
         is_tick_payload = isinstance(bar, Tick)
+        partial = self._track_intrabar_partial(bar)
         for name in list(self._incremental_indicators.keys()):
             item = self._get_incremental_registration(name)
             symbol_filter = item.symbols
             if symbol_filter is not None and bar_symbol not in symbol_filter:
+                continue
+            payload_freq = getattr(bar, "freq", None)  # Tick 无该属性 → None
+            if item.freq != payload_freq:
+                continue
+            if (
+                is_tick_payload
+                and item.intrabar
+                and item.freq is None
+                and not item.precomputed
+                and partial is not None
+            ):
+                # intrabar 的基础周期指标: tick 只试算不提交, bar 闭合才 update。
+                # 放在 H/L 跳过之前——形成中 bar 有真实 H/L, ATR 之类也能试算。
+                self._peek_base_intrabar(name, item, cast(Tick, bar), partial)
                 continue
             if is_tick_payload and item.input_mode in _TICK_UNSUPPORTED_INPUT_MODES:
                 # H/L 类指标要真实的最高/最低价, tick 的 OHLC 恒等无法提供。
@@ -1746,13 +1859,233 @@ class Strategy:
                 continue
             if not is_tick_payload and bar_symbol is not None:
                 item.bar_seen_symbols.add(str(bar_symbol))
-            ind = self._get_incremental_indicator_instance(name, bar_symbol)
-            args = self._build_incremental_indicator_args(
-                payload=bar,
-                source=item.source,
-                input_mode=item.input_mode,
+            resolved_symbol = self._resolve_incremental_indicator_symbol(
+                item, bar_symbol
             )
-            ind.update(*args)
+            if item.precomputed:
+                # 预计算指标在数据加载阶段已整段算完, 运行期只按当前时间戳
+                # asof 查询, 不调 update()。
+                value = item.base_indicator.get_value(
+                    resolved_symbol, getattr(bar, "timestamp", None)
+                )
+            else:
+                ind = self._get_incremental_indicator_instance(name, bar_symbol)
+                args = self._build_incremental_indicator_args(
+                    payload=bar,
+                    source=item.source,
+                    input_mode=item.input_mode,
+                )
+                ind.update(*args)
+                # 取 `value` 而非 `update()` 的返回值: 用户自写指标常让 update
+                # 返回 None 而把结果放在 `value` 属性上(见 examples/60)。
+                value = getattr(ind, "value", None)
+            item.push_value(resolved_symbol, value)
+            item.clear_provisional(resolved_symbol)
+            if item.plot:
+                # 时间戳取事件自身的: 窗口 bar 回调里 current_bar 此刻仍是基础
+                # bar, 正常闭合时两者恰好相等, 尾部 flush 时窗口标签(ceil)与
+                # 最后一根基础 bar 不同, 不显式传会把窗口点打到错误的时间上。
+                self._report_declared_indicator(
+                    name,
+                    item,
+                    resolved_symbol,
+                    value,
+                    timestamp=int(getattr(bar, "timestamp")),
+                )
+        if isinstance(bar, Bar) and bar.freq is None:
+            self._peek_intrabar_indicators(bar)
+
+    def _track_intrabar_partial(
+        self, payload: Union[Bar, Tick]
+    ) -> Optional[PartialBar]:
+        """维护每个 symbol 形成中的基础 bar; 返回本笔 tick 所属的 PartialBar.
+
+        tick → 开新 bar 或并入; 基础 bar 闭合 → 弹出该 symbol 的 partial, 并用它
+        的最后一笔 tick 反算 :func:`end_stamp_label` 与真实 ``bar.timestamp`` 比对:
+        不符说明行情源不是区间末打戳, 之后该 symbol 的临时点只算不发(前端拿不到
+        可覆盖的同 time 确认点), 告警一次。窗口 bar 与之无关, 不动 partial。
+        """
+        if not getattr(self, "_has_base_intrabar", False):
+            return None
+        partials: Dict[str, PartialBar] = self.__dict__.setdefault(
+            "_intrabar_partials", {}
+        )
+        if isinstance(payload, Tick):
+            symbol = str(payload.symbol)
+            current = partials.get(symbol)
+            if current is None:
+                current = PartialBar.from_tick(payload)
+                partials[symbol] = current
+            else:
+                current.merge(payload)
+            return current
+        if isinstance(payload, Bar) and payload.freq is None:
+            closed = partials.pop(str(payload.symbol), None)
+            if closed is not None:
+                self._verify_intrabar_label(closed, int(payload.timestamp))
+        return None
+
+    def _intrabar_interval_ns(self) -> Optional[int]:
+        from .strategy_window import base_interval_minutes
+
+        minutes = base_interval_minutes(self.freq)
+        return None if minutes is None else int(minutes) * 60 * 1_000_000_000
+
+    def _verify_intrabar_label(self, closed: PartialBar, bar_ts: int) -> None:
+        interval = self._intrabar_interval_ns()
+        if interval is None:
+            return
+        predicted = end_stamp_label(closed.timestamp, interval)
+        if predicted == bar_ts:
+            return
+        mismatched: set[str] = self.__dict__.setdefault(
+            "_intrabar_label_mismatch", set()
+        )
+        if closed.symbol not in mismatched:
+            mismatched.add(closed.symbol)
+            _live_subscribe_logger.warning(
+                "intrabar: 标的 %s 的基础 bar 时间戳 %d 与区间末打戳的预测 %d 不符"
+                "(行情源可能按区间起点打戳)。该标的的临时点不再上报绘图, 策略内 "
+                "[0] 仍可读到临时值",
+                closed.symbol,
+                bar_ts,
+                predicted,
+            )
+
+    def _peek_base_intrabar(
+        self,
+        name: str,
+        item: IndicatorDeclaration,
+        tick: Tick,
+        partial: PartialBar,
+    ) -> None:
+        """基础周期指标在一笔 tick 上的试算: 用形成中 bar 喂副本, 原状态不动."""
+        symbol = str(tick.symbol)
+        item.intrabar_symbols.add(symbol)
+        if item.input_mode in _TICK_UNSUPPORTED_INPUT_MODES:
+            # 与非 intrabar 路径同一套会话末覆盖率核验: 全程无 bar 的 H/L 指标
+            # 不能因为走了试算分支就绕过报错。
+            item.tick_only_symbols.add(symbol)
+        resolved_symbol = self._resolve_incremental_indicator_symbol(item, symbol)
+        instance = self._get_incremental_indicator_instance(name, symbol)
+        args = self._build_incremental_indicator_args(
+            payload=partial, source=item.source, input_mode=item.input_mode
+        )
+        value = peek_indicator(instance, args)
+        interval = self._intrabar_interval_ns()
+        label = (
+            UNKNOWN_LABEL
+            if interval is None
+            else end_stamp_label(int(tick.timestamp), interval)
+        )
+        item.set_provisional(resolved_symbol, value, label)
+        if not item.plot or label == UNKNOWN_LABEL:
+            if item.plot:
+                self._intrabar_stream_allowed()  # 只为告警一次
+            return
+        if symbol in self.__dict__.get("_intrabar_label_mismatch", set()):
+            return
+        self._report_declared_indicator(
+            name, item, resolved_symbol, value, timestamp=label, confirmed=False
+        )
+
+    def _peek_intrabar_indicators(self, bar: Bar) -> None:
+        """基础 bar 闭合后, 给开了 ``intrabar`` 的窗口指标试算临时值.
+
+        用 ``ctx.current_window()`` 的未闭合快照喂指标**副本**(见
+        :func:`peek_indicator`), 原状态不受污染; 快照的 ``timestamp`` 就是该窗口
+        将来闭合的标签(基础周期已知时), 于是临时点与确认点同 time, 前端按 time
+        覆盖。基础周期未知时标签会随每根基础 bar 漂移, 只算 ``[0]`` 不发流事件,
+        并告警一次。
+        """
+        ctx = self.ctx
+        if ctx is None:
+            return
+        bar_symbol = str(bar.symbol)
+        for name in list(self._incremental_indicators.keys()):
+            item = self._get_incremental_registration(name)
+            if not item.intrabar or item.freq is None or item.precomputed:
+                continue
+            if item.symbols is not None and bar_symbol not in item.symbols:
+                continue
+            partial = ctx.current_window(bar_symbol, item.freq)
+            if partial is None:
+                continue
+            resolved_symbol = self._resolve_incremental_indicator_symbol(
+                item, bar_symbol
+            )
+            label = int(partial.timestamp)
+            if item.pending_confirmation(resolved_symbol, label):
+                continue
+            instance = self._get_incremental_indicator_instance(name, bar_symbol)
+            args = self._build_incremental_indicator_args(
+                payload=partial, source=item.source, input_mode=item.input_mode
+            )
+            value = peek_indicator(instance, args)
+            item.set_provisional(resolved_symbol, value, label)
+            if not item.plot:
+                continue
+            if not self._intrabar_stream_allowed():
+                continue
+            self._report_declared_indicator(
+                name,
+                item,
+                resolved_symbol,
+                value,
+                timestamp=label,
+                confirmed=False,
+            )
+
+    def _intrabar_stream_allowed(self) -> bool:
+        """临时点只在基础周期已知时上报(否则窗口标签漂移, 前端无法覆盖)."""
+        from .strategy_window import base_interval_minutes
+
+        if base_interval_minutes(self.freq) is not None:
+            return True
+        if not getattr(self, "_warned_intrabar_unknown_freq", False):
+            self._warned_intrabar_unknown_freq = True
+            _live_subscribe_logger.warning(
+                "intrabar 指标的临时值不会上报绘图: 基础数据周期未知(self.freq=None), "
+                "未闭合窗口的时间标签会随每根基础 bar 漂移。回测请用 "
+                "run_backtest(data=[Tick,...], freq=), 实盘请让行情网关声明 "
+                "metadata['freq']。策略内 [0] 仍可读到临时值"
+            )
+        return False
+
+    def _report_declared_indicator(
+        self,
+        name: str,
+        declaration: IndicatorDeclaration,
+        symbol: str,
+        value: Any,
+        *,
+        timestamp: Optional[int] = None,
+        confirmed: bool = True,
+    ) -> None:
+        """把一次指标更新自动上报为绘图点.
+
+        在 ``on_bar`` **之前**调用, 于是用户在 ``on_bar`` 里手写的
+        ``record_indicator`` 与这里的自动上报落在同一个
+        ``flush_stream_snapshot`` 周期内, 时间戳一致, 前端收到的是完整快照。
+        """
+        for key, display_name, item in declaration.report_items(name, value):
+            if not is_reportable_value(item):
+                continue
+            self.record_indicator(
+                key,
+                item,
+                symbol=symbol,
+                display_name=display_name,
+                pane=declaration.pane,
+                render_type=declaration.render_type,
+                unit=declaration.unit,
+                precision=declaration.precision,
+                color=declaration.color,
+                reference_lines=declaration.reference_lines,
+                scale_group=declaration.scale_group,
+                timestamp=timestamp,
+                confirmed=confirmed,
+            )
 
     def _check_symbol_data_coverage(self) -> None:
         """会话结束时核验: symbols 里有没有标的全程没收到过任何行情事件.
@@ -1851,6 +2184,15 @@ class Strategy:
             return
         for name in list(self._incremental_indicators.keys()):
             item = self._get_incremental_registration(name)
+            never_confirmed = item.intrabar_symbols - item.bar_seen_symbols
+            if never_confirmed:
+                raise StrategyConfigurationError(
+                    f"intrabar 指标 {name!r} 的标的 {sorted(never_confirmed)!r} "
+                    "全程只收到 "
+                    'tick、从未收到任何 bar: 没有 bar 流就没有"确认", 指标会永远停在'
+                    "临时值。纯 tick 会话请去掉 intrabar=True, 或给 run_backtest 传 "
+                    "freq(如 freq='1min')把 tick 聚合成 bar"
+                )
             never_had_bar = item.tick_only_symbols - item.bar_seen_symbols
             if never_had_bar:
                 raise StrategyConfigurationError(
@@ -1864,7 +2206,7 @@ class Strategy:
 
     def _bootstrap_incremental_indicators(self, data: Dict[str, pd.DataFrame]) -> None:
         """在实时增量更新前，用历史数据预热增量指标."""
-        if self.indicator_mode != "incremental" or self.is_restored:
+        if self.is_restored:
             return
         if not self._incremental_indicators:
             return
@@ -1875,7 +2217,11 @@ class Strategy:
         bootstrap_applied = False
         for name in list(self._incremental_indicators.keys()):
             item = self._get_incremental_registration(name)
-            if item.warmup_bars <= 0:
+            if item.warmup_bars <= 0 or item.precomputed:
+                continue
+            if item.freq is not None:
+                # 窗口周期指标没有可用的离线预热数据(基础数据不是它的周期),
+                # 由运行期窗口 bar 驱动。
                 continue
             target_symbols = (
                 sorted(item.symbols)
@@ -1948,14 +2294,12 @@ class Strategy:
             raise ValueError("source must be one of: open, high, low, close, volume")
         return input_mode_key
 
-    def _get_incremental_registration(
-        self, name: str
-    ) -> IncrementalIndicatorRegistration:
+    def _get_incremental_registration(self, name: str) -> IndicatorDeclaration:
         item = self._incremental_indicators[name]
-        if isinstance(item, IncrementalIndicatorRegistration):
+        if isinstance(item, IndicatorDeclaration):
             return item
         legacy_item = cast(Dict[str, Any], item)
-        registration = IncrementalIndicatorRegistration(
+        registration = IndicatorDeclaration(
             source=str(legacy_item.get("source", "close")).strip().lower(),
             symbols=legacy_item.get("symbols"),
             input_mode=str(legacy_item.get("input_mode", "source")).strip().lower(),
@@ -1975,6 +2319,10 @@ class Strategy:
         )
         if resolved_symbol in registration.instances:
             return registration.instances[resolved_symbol]
+        if registration.precomputed:
+            # Indicator 自己按 symbol 缓存整段结果, 天然多标的, 不套"共享实例"校验
+            registration.instances[resolved_symbol] = registration.base_indicator
+            return registration.base_indicator
         if registration.factory is not None:
             indicator = registration.factory()
         elif registration.primary_symbol is None:
@@ -1985,14 +2333,14 @@ class Strategy:
         else:
             raise ValueError(
                 f"Incremental indicator '{name}' was registered with a shared instance "
-                "and cannot be used across multiple symbols. Use indicator_factory "
+                "and cannot be used across multiple symbols. Use factory= "
                 "for multi-symbol incremental indicators."
             )
         registration.instances[resolved_symbol] = indicator
         return indicator
 
     def _resolve_incremental_indicator_symbol(
-        self, registration: IncrementalIndicatorRegistration, symbol: Optional[str]
+        self, registration: IndicatorDeclaration, symbol: Optional[str]
     ) -> str:
         if symbol is not None:
             return str(symbol)
@@ -2165,6 +2513,14 @@ class Strategy:
         self._check_order_events()
         return self._take_pending_engine_plans()
 
+    def _on_window_bar_event_and_flush(
+        self, bar: Bar, ctx: StrategyContext
+    ) -> Optional[Tuple[Any, Any]]:
+        """引擎单次调用入口: 窗口 bar 回调 + 订单事件收尾 + 取待注册计划 (Internal)."""
+        _on_window_bar_event_impl(self, bar, ctx)
+        self._check_order_events()
+        return self._take_pending_engine_plans()
+
     def _on_timer_event_and_flush(
         self, payload: str, ctx: StrategyContext
     ) -> Optional[Tuple[Any, Any]]:
@@ -2180,6 +2536,43 @@ class Strategy:
         用户应重写此方法.
         """
         pass
+
+    def on_window_bar(self, bar: Bar) -> None:
+        """多周期窗口 bar 回调 (subscribe_bars 未指定 callback 时走这里).
+
+        ``bar.freq`` 为周期标签(如 ``"5min"``), 多周期共用本回调时据此分流。
+        触发时机: 闭合该窗口的那根基础 bar 的 ``on_bar`` 之后、同一引擎步内。
+        """
+
+    def subscribe_bars(
+        self,
+        freq: str,
+        callback: Optional[Callable[[Bar], None]] = None,
+        symbols: Optional[Union[str, Iterable[str]]] = None,
+        *,
+        session_windows: Optional[List[Tuple[str, str]]] = None,
+    ) -> None:
+        """声明一条更高周期的窗口序列, 由引擎从基础 bar 聚合.
+
+        必须在 ``__init__`` 里调用。回测与实盘同一份代码。
+
+        :param freq: ``"5min"`` / ``"15min"`` / ``"1h"`` / ``"1d"``
+            (整数分钟、整数小时或 1d)
+        :param callback: 窗口闭合时的回调; 省略则调用 :meth:`on_window_bar`
+        :param symbols: 只对这些标的聚合; 省略覆盖本次运行的全部标的
+        :param session_windows: 本地交易时段
+            ``[("09:30", "11:30"), ("13:00", "15:00")]``,
+            给定则窗口不跨时段拼接(避免跨午休的脏 bar)
+        :raises ValueError: 周期不可解析 / 不高于基础周期(引擎配置时检查) / 时段非法
+        :raises RuntimeError: 引擎已启动后调用
+        """
+        _subscribe_bars_impl(self, freq, callback, symbols, session_windows)
+
+    def current_window(
+        self, symbol: Optional[str] = None, freq: str = ""
+    ) -> Optional[Bar]:
+        """某标的某周期正在形成、尚未闭合的窗口快照; 不触发回调, 无则 None."""
+        return _current_window_impl(self, symbol, freq)
 
     @property
     def position(self) -> Position:
@@ -2246,10 +2639,29 @@ class Strategy:
         reference_lines: Optional[list[Dict[str, Any]]] = None,
         scale_group: Optional[str] = None,
         warmup: bool = False,
+        confirmed: bool = True,
     ) -> None:
-        """Record one indicator point for downstream visualization and export."""
+        """Record one indicator point for downstream visualization and export.
+
+        :param confirmed: False 表示未闭合窗口上的临时值: 只走流事件不进
+            DataFrame / export, 前端按同 ``(indicator_key, symbol, timestamp)``
+            用后来的确认点覆盖。
+        """
         recorder = getattr(self, "_indicator_recorder", None)
         if recorder is None:
+            return
+        accepts_confirmed = self._sink_accepts_confirmed(recorder)
+        if not confirmed and not accepts_confirmed:
+            # 旧协议 sink 分不清临时点与确认点, 给它临时点只会在图上留下永不被
+            # 覆盖的脏点; 跳过并告警一次, 确认点照常送达。
+            if not getattr(self, "_warned_sink_no_confirmed", False):
+                self._warned_sink_no_confirmed = True
+                _live_subscribe_logger.warning(
+                    "IndicatorSink %s 的 record() 不接受 confirmed= 参数(1.2 版协议), "
+                    "intrabar 临时点将不会送达该 sink; 请给 record 加上 confirmed "
+                    "参数或 **kwargs",
+                    type(recorder).__name__,
+                )
             return
 
         resolved_symbol = self._resolve_symbol(symbol)
@@ -2277,7 +2689,28 @@ class Strategy:
             reference_lines=reference_lines,
             scale_group=scale_group,
             warmup=warmup,
+            **({"confirmed": confirmed} if accepts_confirmed else {}),
         )
+
+    def _sink_accepts_confirmed(self, recorder: Any) -> bool:
+        """sink.record 是否接受 ``confirmed=``(显式参数或 **kwargs); 按 sink 缓存.
+
+        ``IndicatorSink`` 协议在 1.3 版加了 ``confirmed``, 但按旧协议签名实现的
+        第三方 sink 仍然合法, 不能因为一个新增关键字让它们首次记录就 TypeError。
+        """
+        cache: Dict[int, bool] = self.__dict__.setdefault("_sink_confirmed_support", {})
+        key = id(recorder)
+        if key in cache:
+            return cache[key]
+        try:
+            params = inspect.signature(recorder.record).parameters
+            ok = "confirmed" in params or any(
+                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+        except (TypeError, ValueError):
+            ok = True  # 拿不到签名(C 扩展等)时按新协议对待
+        cache[key] = ok
+        return ok
 
     def get_position(self, symbol: Optional[str] = None) -> float:
         """

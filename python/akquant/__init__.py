@@ -8,7 +8,7 @@ try:
 except metadata.PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
-__engine_rule_version__ = "1.5.5"  # Increment on behavior-changing updates
+__engine_rule_version__ = "1.6.0"  # Increment on behavior-changing updates
 
 from . import akquant as _akquant
 from . import log as _log
@@ -63,6 +63,7 @@ from .feed_adapter import (
 )
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .indicator import Indicator, IndicatorSet
+from .indicator_declaration import IndicatorBinding, IndicatorDeclaration
 from .indicator_recording import IndicatorRecorder, IndicatorSink
 from .indicator_stream import (
     is_indicator_stream_event,
@@ -102,6 +103,7 @@ from .strategy_loader import (
     resolve_strategy_input,
 )
 from .stream_schema import STREAM_SCHEMA_VERSION
+from .study import Study, StudyCannotTradeError
 from .trade_stream import (
     is_trade_stream_event,
     to_trade_message,
@@ -141,6 +143,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "PercentSizer",
         "AllInSizer",
         "Strategy",
+        "Study",
+        "StudyCannotTradeError",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
         "BarGenerator",
@@ -171,6 +175,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
         "Indicator",
+        "IndicatorBinding",
+        "IndicatorDeclaration",
         "IndicatorRecorder",
         "IndicatorSet",
         "IndicatorSink",
@@ -272,6 +278,8 @@ else:
         "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
         "Indicator",
+        "IndicatorBinding",
+        "IndicatorDeclaration",
         "IndicatorRecorder",
         "IndicatorSet",
         "IndicatorSink",

@@ -588,9 +588,6 @@ class StrategyConfig:
                              capped at 25% of the bar's volume. Default 0.25.
     :param exit_on_last_bar: Auto-close all positions at the end of backtest.
                              Default True.
-    :param indicator_mode: Indicator execution mode. "incremental" updates indicator
-                           state on each bar; "precompute" prepares full series before
-                           run.
 
     **Constraints & Risk:**
     :param max_long_positions: Max number of simultaneous long positions.
@@ -620,7 +617,6 @@ class StrategyConfig:
 
     # Other
     exit_on_last_bar: bool = True
-    indicator_mode: str = "precompute"
 
     # Risk Config
     risk: Optional[RiskConfig] = None

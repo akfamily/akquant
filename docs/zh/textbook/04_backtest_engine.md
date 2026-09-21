@@ -776,7 +776,7 @@ def on_bar(self, bar):
 
 *   `freq` 只支持整数分钟（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 会报错并指向 `feed_adapter.resample`，不静默取整。词汇与 pandas `to_offset` 对齐。
 *   末尾未满一个周期的 tick 不产生 bar（聚合器不提供 flush）。
-*   预计算指标（`indicator_mode="precompute"`）不支持含 tick 的输入，请改用增量指标或 `freq` 聚合。
+*   向量化预计算指标（`self.I(Indicator(...))`）不支持含 tick 的输入，请改用增量指标 `self.I(aq.SMA(20), ...)` 或 `freq` 聚合。
 *   构造 `Bar` / `Tick` 时**时间戳必须是真实纳秒**：构造器会把小于 `1e10` 的值乘 `1e9`，传 `100` 之类的小整数会被静默改写。
 
 完整清单见[数据指南的「Tick 输入」一节](../guide/data.md)。

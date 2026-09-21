@@ -37,6 +37,7 @@ def plot_kline_review(
     theme: str = "light",
     initial_symbol: Optional[str] = None,
     show: bool = False,
+    include_indicators: bool = True,
 ) -> str:
     """生成离线自包含的 LWC 交互式 K 线买卖点复盘 HTML.
 
@@ -48,13 +49,16 @@ def plot_kline_review(
     :param theme: ``"light"`` 或 ``"dark"``.
     :param initial_symbol: 初始展示的标的;缺省为首个.
     :param show: 是否在浏览器中打开.
+    :param include_indicators: 是否把策略上报的指标按 pane 画成副图/主图叠加.
     :return: 写出的 HTML 文件绝对路径.
     :raises ValueError: ``market_data`` 为空,或无有效行情可复盘.
     """
     if market_data is None:
         raise ValueError("plot_kline_review 需要 market_data(K 线复盘的行情来源)。")
     initial_theme = theme if theme in THEMES else "light"
-    payload = build_review_payload(result, market_data, symbols=symbols)
+    payload = build_review_payload(
+        result, market_data, symbols=symbols, include_indicators=include_indicators
+    )
     rendered_symbols = [s["symbol"] for s in payload["symbols"]]
     initial_index = 0
     if initial_symbol is not None:

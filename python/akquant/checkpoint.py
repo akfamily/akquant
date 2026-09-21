@@ -126,6 +126,12 @@ def save_checkpoint(
             # `data` 容器整体当作 bar 序列装载, 而 `tick_data` 因
             # `#[serde(default)]` 留空——见 load_checkpoint 里的告警。
             "history_tick_split": True,
+            # 标记该存档携带原生多周期窗口序列 (native multi-timeframe plan):
+            # HistoryBufferSnapshot.window_data 与
+            # EngineSnapshot.window_aggregator_state。旧存档 (无此标记) 恢复后,
+            # 若策略声明了 subscribe_bars(), 窗口历史与在制窗口都会从空开始——
+            # 见 load_checkpoint 里的告警。
+            "history_window_series": True,
         },
         "backtest_config": backtest_config,
         "version": _VERSION,
@@ -203,6 +209,25 @@ def load_checkpoint(
             "AKQuant version to avoid this. If the checkpoint's run never "
             "involved tick data (bar-only backtest or live session), this "
             "warning does not apply and can be ignored." % filepath
+        )
+        warnings.warn(warning_message, RuntimeWarning, stacklevel=2)
+        logger.warning(warning_message)
+
+    history_window_series_available = bool(
+        snapshot_features.get("history_window_series", False)
+    )
+    if (
+        history_buffer_snapshot_available
+        and not history_window_series_available
+        and getattr(strategy, "_window_subscriptions", None)
+    ):
+        warning_message = (
+            "Checkpoint '%s' predates native multi-timeframe window series "
+            "(snapshot_features missing 'history_window_series') but the strategy "
+            "declares subscribe_bars(). Window history and the in-progress window "
+            "start empty after resume: get_history(freq=<window>) returns NaN until "
+            "new windows close, and freq-scoped incremental indicators warm up again. "
+            "Regenerate the checkpoint with the current AKQuant version." % filepath
         )
         warnings.warn(warning_message, RuntimeWarning, stacklevel=2)
         logger.warning(warning_message)

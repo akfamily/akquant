@@ -3,9 +3,11 @@
 """
 AKQuant custom indicator demo.
 
-This example shows two recommended ways to add private indicators:
-1. Precompute mode with `Indicator(name, fn)`.
-2. Incremental mode with a custom `Indicator` subclass plus `indicator_factory`.
+This example shows the three ways to declare a private indicator through the
+single `self.I()` entry point:
+1. Vectorized precompute with `Indicator(name, fn)`.
+2. Incremental with a custom `Indicator` subclass (stateful `update`).
+3. Both at once in one strategy - no mutually exclusive mode switch.
 """
 
 from collections import deque
@@ -67,18 +69,21 @@ class RollingMomentum(Indicator):
 class PrecomputeCustomIndicatorStrategy(Strategy):
     """Vectorized custom indicator example."""
 
-    def __init__(self) -> None:
-        """Initialize the precompute demo strategy."""
-        super().__init__()
-        self.indicator_mode = "precompute"
-        self.mom3 = Indicator("mom3", lambda df: df["close"] - df["close"].shift(2))
-        self.register_precomputed_indicator("mom3", self.mom3)
+    mom3: Any
+
+    def on_start(self) -> None:
+        """Declare a vectorized indicator - computed once, queried by timestamp."""
+        self.mom3 = self.I(
+            Indicator("mom3", lambda df: df["close"] - df["close"].shift(2)),
+            name="mom3",
+        )
 
     def on_bar(self, bar: Bar) -> None:
         """Print the current precomputed custom indicator value."""
-        value = self.mom3.get_value(bar.symbol, bar.timestamp)
+        value = self.mom3[0]
         local_ts = self.format_time(bar.timestamp)
-        print(f"[precompute] {local_ts} | close={bar.close:.2f} | mom3={value:.2f}")
+        shown = "n/a" if value is None else f"{value:.2f}"
+        print(f"[precompute] {local_ts} | close={bar.close:.2f} | mom3={shown}")
 
 
 class IncrementalCustomIndicatorStrategy(Strategy):
@@ -86,16 +91,11 @@ class IncrementalCustomIndicatorStrategy(Strategy):
 
     mom3: Any
 
-    def __init__(self) -> None:
-        """Initialize the incremental demo strategy."""
-        super().__init__()
-        self.indicator_mode = "incremental"
-
     def on_start(self) -> None:
-        """Register the incremental custom indicator with bootstrap history."""
-        self.register_incremental_indicator(
-            "mom3",
-            indicator_factory=lambda: RollingMomentum(period=3),
+        """Declare the incremental custom indicator with bootstrap history."""
+        self.mom3 = self.I(
+            factory=lambda: RollingMomentum(period=3),
+            name="mom3",
             source="close",
             symbols=["DEMO"],
             warmup_bars=3,
@@ -103,9 +103,42 @@ class IncrementalCustomIndicatorStrategy(Strategy):
 
     def on_bar(self, bar: Bar) -> None:
         """Print the current incremental custom indicator value."""
-        value = self.mom3.value
+        value = self.mom3[0]
         local_ts = self.format_time(bar.timestamp)
-        print(f"[incremental] {local_ts} | close={bar.close:.2f} | mom3={value:.2f}")
+        shown = "n/a" if value is None else f"{value:.2f}"
+        print(f"[incremental] {local_ts} | close={bar.close:.2f} | mom3={shown}")
+
+
+class MixedIndicatorStrategy(Strategy):
+    """Both kinds side by side - impossible before the mode switch was removed."""
+
+    vec_mom: Any
+    inc_sma: Any
+
+    def on_start(self) -> None:
+        """Declare one vectorized and one incremental indicator together."""
+        self.vec_mom = self.I(
+            Indicator("vec_mom", lambda df: df["close"] - df["close"].shift(2)),
+            name="vec_mom",
+        )
+        # Plot metadata makes the framework report this one automatically -
+        # no record_indicator call needed in on_bar.
+        self.inc_sma = self.I(aq.SMA(3), name="inc_sma", pane=0, color="#3f51b5")
+
+    def on_bar(self, bar: Bar) -> None:
+        """Read both indicators, including one-bar lookback."""
+        local_ts = self.format_time(bar.timestamp)
+        mom = self.vec_mom[0]
+        sma_now, sma_prev = self.inc_sma[0], self.inc_sma[1]
+        mom_text = "n/a" if mom is None else f"{mom:.2f}"
+        sma_text = "n/a" if sma_now is None else f"{sma_now:.2f}"
+        trend = "-"
+        if sma_now is not None and sma_prev is not None:
+            trend = "up" if sma_now > sma_prev else "down"
+        print(
+            f"[mixed] {local_ts} | close={bar.close:.2f} | "
+            f"vec_mom={mom_text} | inc_sma={sma_text} ({trend})"
+        )
 
 
 def run_precompute_demo(data: pd.DataFrame) -> None:
@@ -137,7 +170,23 @@ def run_incremental_demo(data: pd.DataFrame) -> None:
     )
 
 
+def run_mixed_demo(data: pd.DataFrame) -> None:
+    """Run both indicator kinds inside a single strategy."""
+    print("\n=== Mixed (Precompute + Incremental) Demo ===")
+    result = aq.run_backtest(
+        strategy=MixedIndicatorStrategy,
+        data=data,
+        symbols=["DEMO"],
+        initial_cash=100000.0,
+        show_progress=False,
+        timezone="UTC",
+    )
+    frame = result.indicator_df()
+    print(f"auto-reported indicator points: {len(frame)}")
+
+
 if __name__ == "__main__":
     demo_data = make_demo_data()
     run_precompute_demo(demo_data)
     run_incremental_demo(demo_data)
+    run_mixed_demo(demo_data)

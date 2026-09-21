@@ -493,7 +493,6 @@ class StrategyConfig:
     slippage: Union[float, Dict[str, Any], None] = 0.0
     volume_limit_pct: float = 0.25
     exit_on_last_bar: bool = True
-    indicator_mode: str = "precompute"
 
     # Position Sizing
     max_long_positions: Optional[int] = None

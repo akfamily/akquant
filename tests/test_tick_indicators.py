@@ -121,14 +121,10 @@ class _PairRecorder:
 class _SmaProbe(Strategy):
     """在 tick 路径上注册单值增量指标.
 
-    注意 ``register_incremental_indicator`` 的真实签名是
-    ``(name, indicator=None, source="close", symbols=None, *, warmup_bars=0,
-    indicator_factory=None, input_mode="source")``——第二个位置参数是**指标对象**,
-    不是指标名字符串, 也没有 ``period`` 关键字。且必须先设
-    ``indicator_mode = "incremental"``, 否则注册时抛 ValueError。
+    ``self.I()`` 的第一个位置参数是**指标对象**(需有 ``update()``), 不是名字;
+    名字走 ``name=`` 关键字, 省略时按指标类名生成。
 
-    读值经 ``IncrementalIndicatorBinding``: 注册后 ``self.<name>`` 是一个
-    binding 对象, 用 ``.value`` 取当前值(``strategy.py:255``)。
+    返回的 ``IndicatorBinding`` 用 ``.value`` 或 ``[0]`` 取当前值。
     """
 
     def __init__(self) -> None:
@@ -140,8 +136,7 @@ class _SmaProbe(Strategy):
     def on_start(self) -> None:
         """订阅并注册增量指标."""
         self.subscribe(SYMBOL)
-        self.indicator_mode = "incremental"
-        self.register_incremental_indicator("sma3", self.recorder, source="close")
+        self.sma3 = self.I(self.recorder, name="sma3", source="close")
 
     def on_tick(self, tick: Any) -> None:
         """在第 5 个 tick 上读取指标值."""
@@ -195,37 +190,33 @@ def test_single_value_indicator_advances_on_tick() -> None:
     assert strategy.observed == pytest.approx(10.4, abs=1e-9)
 
 
-def test_mixed_input_with_precompute_mode_raises() -> None:
+def test_mixed_input_with_precomputed_indicator_raises() -> None:
     """混合 [Bar, Tick] + precompute 必须显式报错, 而非静默丢失指标.
 
     归一后走 DataFeed 分支, 它不构建 data_map_for_indicators; 纯 bar 列表分支会构建。
     不报错的话, 同一批 bar 单独传有指标、加一个 tick 就没了, 用户无从察觉。
     """
     from akquant.akquant import Bar
+    from akquant.indicator import Indicator
 
-    class _DummyPrecomputed:
-        """最简预计算指标: 只需能被 register_precomputed_indicator 收下."""
-
-        def update(self, value: float) -> None:
-            """接收一个值(本测试不校验它被调用)."""
+    def _make_precomputed() -> Indicator:
+        """最简向量化预计算指标."""
+        return Indicator("dummy", lambda df: df["close"])
 
     class _Precompute(Strategy):
         """真正注册一个预计算指标的最小策略.
 
-        判据是 ``_precomputed_indicators`` 非空, **不是** ``indicator_mode``——
-        后者默认就是 ``"precompute"``(``strategy.py``), 用它做判据会误伤所有未显式
-        改模式的 tick 用户。所以这里必须真的注册一个指标。
+        判据是 ``_precomputed_indicators`` 非空: 只有 ``self.I(Indicator(...))``
+        这条路才需要完整 DataFrame, 增量指标的 tick 路径不受影响。所以这里必须
+        真的声明一个向量化预计算指标。
 
         注册放在 ``on_start`` 里是安全的: 引擎先调 ``on_start``(``engine.py`` 内
         ``strategy_instance.on_start()``), 之后才走到归一块, 已核实此时序。
         """
 
         def on_start(self) -> None:
-            """注册一个预计算指标."""
-            self.register_precomputed_indicator(
-                "dummy",
-                _DummyPrecomputed(),  # type: ignore[arg-type]
-            )
+            """声明一个预计算指标."""
+            self.dummy = self.I(_make_precomputed(), name="dummy")
 
         def on_bar(self, bar: Any) -> None:
             """不做任何事."""
@@ -239,7 +230,7 @@ def test_mixed_input_with_precompute_mode_raises() -> None:
         volume=1000.0,
         symbol=SYMBOL,
     )
-    with pytest.raises(ValueError, match="precompute"):
+    with pytest.raises(ValueError, match="预计算指标"):
         run_backtest(
             data=[bar, _ticks(1)[0]],
             strategy=_Precompute(),
@@ -268,8 +259,7 @@ def test_hl_indicator_works_with_freq_aggregation() -> None:
         def on_start(self) -> None:
             """订阅并注册 H/L 指标."""
             self.subscribe(SYMBOL)
-            self.indicator_mode = "incremental"
-            self.register_incremental_indicator("hl", self.recorder, input_mode="hl")
+            self.hl = self.I(self.recorder, name="hl", input_mode="hl")
 
         def on_bar(self, bar: Any) -> None:
             """不做任何事."""
@@ -308,8 +298,7 @@ def test_bar_hl_indicator_survives_added_tick() -> None:
         def on_start(self) -> None:
             """订阅并注册."""
             self.subscribe(SYMBOL)
-            self.indicator_mode = "incremental"
-            self.register_incremental_indicator("hl", self.recorder, input_mode="hl")
+            self.hl = self.I(self.recorder, name="hl", input_mode="hl")
 
         def on_bar(self, bar: Any) -> None:
             """不做任何事."""
@@ -363,8 +352,7 @@ def test_pure_tick_hl_indicator_raises_to_caller() -> None:
         def on_start(self) -> None:
             """订阅并注册 H/L 指标."""
             self.subscribe(SYMBOL)
-            self.indicator_mode = "incremental"
-            self.register_incremental_indicator("hl", self.recorder, input_mode="hl")
+            self.hl = self.I(self.recorder, name="hl", input_mode="hl")
 
         def on_bar(self, bar: Any) -> None:
             """不做任何事."""

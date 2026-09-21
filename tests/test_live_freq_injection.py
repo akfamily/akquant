@@ -8,12 +8,21 @@
 
 from types import SimpleNamespace
 
+import pytest
 from akquant.live._runner import LiveRunner
 from akquant.strategy import Strategy
 
 
 class _Reader(Strategy):
     """只用来读 self.freq 的空策略."""
+
+
+class _WindowSubscriber(Strategy):
+    """构造时声明窗口订阅, 用于验证无 engine 时的报错保护."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.subscribe_bars("5min")
 
 
 def _runner() -> LiveRunner:
@@ -68,3 +77,10 @@ def test_explicit_none_freq_stays_none() -> None:
     strategy = _Reader()
     _runner()._inject_data_freq([strategy], _bundle({"freq": None}))
     assert strategy.freq is None
+
+
+def test_inject_data_freq_without_engine_raises_when_strategy_subscribes() -> None:
+    """Runner 尚未建 engine 时若策略声明了 subscribe_bars, 必须报错而非静默丢弃."""
+    strategy = _WindowSubscriber()
+    with pytest.raises(RuntimeError, match="subscribe_bars"):
+        _runner()._inject_data_freq([strategy], _bundle({"freq": "1min"}))

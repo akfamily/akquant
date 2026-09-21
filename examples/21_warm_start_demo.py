@@ -14,14 +14,21 @@ Warm Start (热启动) 示例.
 """
 
 import os
+from functools import partial
 from typing import List
 
 import akquant as aq
 import akquant.indicator as ind
 import akshare as ak
-import numpy as np
 import pandas as pd
 from akquant import Bar, IntParam, Strategy
+
+
+# Warm Start 下指标工厂必须是模块级可 pickle 对象: 快照要序列化策略实例,
+# 而 on_start 里的 lambda 是局部对象, pickle 不了。
+def _make_sma(window: int) -> ind.SMA:
+    """构造一个 SMA —— 模块级函数, 可被 pickle 引用."""
+    return ind.SMA(window)
 
 
 # 1. 定义一个简单的均线策略
@@ -39,7 +46,6 @@ class MovingAverageStrategy(Strategy):
         ``__init__``，此处若无条件执行会把 buy_count/sell_count 等
         累积计数清零，破坏跨阶段的连续性。
         """
-        # 注册指标 (akquant 会自动处理指标状态的序列化)
         # 使用框架提供的 self.is_restored 判断是否是从快照恢复
         if not self.is_restored:
             # 记录一些状态变量，验证它们是否被正确保存和恢复
@@ -47,13 +53,21 @@ class MovingAverageStrategy(Strategy):
             self.sell_count = 0
             self.total_volume = 0
             self._debug_count = 0
-            self.sma_fast = ind.SMA(self.params.fast_window)
-            self.sma_slow = ind.SMA(self.params.slow_window)
         else:
             print("[Strategy] Resumed from snapshot. Indicators restored.")
 
-        self.register_precomputed_indicator("sma_fast", self.sma_fast)
-        self.register_precomputed_indicator("sma_slow", self.sma_slow)
+        # 声明式指标: 框架每根 bar 自动推进, 恢复时沿用快照里的指标状态
+        # (self.I 内部按 is_restored 短路, 不会覆盖已恢复的状态)。
+        self.sma_fast = self.I(
+            factory=partial(_make_sma, self.params.fast_window),
+            name="sma_fast",
+            source="close",
+        )
+        self.sma_slow = self.I(
+            factory=partial(_make_sma, self.params.slow_window),
+            name="sma_slow",
+            source="close",
+        )
         print(
             f"[Strategy] Started. Fast={self.params.fast_window}, "
             f"Slow={self.params.slow_window}"
@@ -71,12 +85,9 @@ class MovingAverageStrategy(Strategy):
         # 累加状态变量
         self.total_volume += int(bar.volume)
 
-        # 简单的双均线逻辑
-        self.sma_fast.update(bar.close)
-        self.sma_slow.update(bar.close)
-
-        fast = self.sma_fast.value
-        slow = self.sma_slow.value
+        # 简单的双均线逻辑 —— 指标由框架在 on_bar 之前推进, 这里只读值
+        fast = self.sma_fast[0]
+        slow = self.sma_slow[0]
 
         # Debug: 打印前几个 bar 的指标值
         if self.total_volume < 1e7:  # 仅打印少量
@@ -87,10 +98,10 @@ class MovingAverageStrategy(Strategy):
             if self._debug_count < 20:
                 print(
                     f"Debug: {pd.Timestamp(bar.timestamp, unit='ns')} "
-                    f"Close={bar.close:.2f} Fast={fast:.2f} Slow={slow:.2f}"
+                    f"Close={bar.close:.2f} Fast={fast} Slow={slow}"
                 )
 
-        if np.isnan(fast) or np.isnan(slow):
+        if fast is None or slow is None:
             return
 
         pos = self.get_position(bar.symbol)

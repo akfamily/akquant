@@ -42,6 +42,11 @@ pub struct Bar {
     pub symbol: String, // 标的代码
     #[pyo3(get, set)]
     pub extra: HashMap<String, f64>, // 自定义字段
+    /// 该 bar 所属周期。基础输入 bar 为 `None`; 引擎 `WindowAggregator` 聚合出的
+    /// 窗口 bar 带 `"5min"` / `"1h"` / `"1d"` 之类的标签, 供共用回调分流。
+    #[pyo3(get, set)]
+    #[serde(default)]
+    pub freq: Option<String>,
 }
 
 #[gen_stub_pymethods]
@@ -57,8 +62,9 @@ impl Bar {
     /// :param volume: 成交量
     /// :param symbol: 标的代码
     /// :param extra: 自定义字段 (可选)
+    /// :param freq: 周期标签 (可选, 引擎聚合出的窗口 bar 才带)
     #[new]
-    #[pyo3(signature = (timestamp, open, high, low, close, volume, symbol, extra=None))]
+    #[pyo3(signature = (timestamp, open, high, low, close, volume, symbol, extra=None, freq=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         timestamp: &Bound<'_, PyAny>,
@@ -69,6 +75,7 @@ impl Bar {
         volume: &Bound<'_, PyAny>,
         symbol: String,
         extra: Option<HashMap<String, f64>>,
+        freq: Option<String>,
     ) -> PyResult<Self> {
         let ts_val = extract_timestamp(timestamp)?;
         let open_val = extract_decimal(open)?;
@@ -86,6 +93,7 @@ impl Bar {
             volume: volume_val,
             symbol,
             extra: extra.unwrap_or_default(),
+            freq,
         })
     }
 
@@ -151,10 +159,16 @@ impl Bar {
     }
 
     pub fn __repr__(&self) -> String {
-        format!(
-            "Bar(symbol={}, time={}, close={})",
-            self.symbol, self.timestamp, self.close
-        )
+        match &self.freq {
+            Some(freq) => format!(
+                "Bar(symbol={}, time={}, close={}, freq={})",
+                self.symbol, self.timestamp, self.close, freq
+            ),
+            None => format!(
+                "Bar(symbol={}, time={}, close={})",
+                self.symbol, self.timestamp, self.close
+            ),
+        }
     }
 }
 

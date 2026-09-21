@@ -99,6 +99,59 @@ mod tests {
     }
 
     #[test]
+    fn preload_history_feeds_window_aggregator_without_dispatch() {
+        use crate::model::Bar;
+        use rust_decimal::Decimal;
+        use std::collections::HashMap;
+        let mut engine = Engine::new();
+        engine.configure_history_depth(100);
+        engine
+            .configure_window_subscriptions(vec![(None, "5min".to_string(), None)], Some(1))
+            .unwrap();
+        let base = 1_704_159_060_000_000_000_i64; // 2024-01-02 09:31:00 +08:00
+        let bars: Vec<Bar> = (0..10)
+            .map(|i| Bar {
+                timestamp: base + i * 60_000_000_000,
+                open: Decimal::from(10 + i),
+                high: Decimal::from(11 + i),
+                low: Decimal::from(9 + i),
+                close: Decimal::from(10 + i),
+                volume: Decimal::from(1),
+                symbol: "X".to_string(),
+                extra: HashMap::new(),
+                freq: None,
+            })
+            .collect();
+        engine.preload_history(bars);
+        let buffer = engine.history_buffer.read().unwrap();
+        let w = buffer
+            .get_window_history("X", "5min")
+            .expect("预加载必须同时产出窗口历史");
+        assert_eq!(w.closes.len(), 2);
+        assert_eq!(w.closes[0], 14.0);
+        assert!(engine.pending_window_bars.is_empty(), "预加载不派发");
+        // 第 10 根(09:40)恰好闭合第二根窗口, 因此不应残留在形成窗口
+        assert!(
+            engine
+                .window_aggregator
+                .read()
+                .unwrap()
+                .current("X", "5min")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn configure_window_subscriptions_rejects_bad_freq() {
+        let mut engine = Engine::new();
+        assert!(
+            engine
+                .configure_window_subscriptions(vec![(None, "30s".to_string(), None)], None)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn test_engine_snapshot_serialization() {
         use crate::engine::state::EngineSnapshot;
         use crate::history::HistoryBufferSnapshot;
@@ -137,8 +190,10 @@ mod tests {
             history_state: Some(HistoryBufferSnapshot {
                 data: HashMap::new(),
                 tick_data: HashMap::new(),
+                window_data: Vec::new(),
                 default_capacity: 3,
             }),
+            window_aggregator_state: None,
             strategy_risk_state: Default::default(),
         };
 

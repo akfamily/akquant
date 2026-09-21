@@ -46,6 +46,7 @@ class IndicatorSink(Protocol):
         reference_lines: Optional[list[Dict[str, Any]]] = ...,
         scale_group: Optional[str] = ...,
         warmup: bool = ...,
+        confirmed: bool = ...,
     ) -> None:
         """Record one indicator point."""
         ...
@@ -71,6 +72,14 @@ class IndicatorSink(Protocol):
 def _normalize_text(value: Any, default: str = "") -> str:
     text = str(value or "").strip()
     return text or default
+
+
+def all_items_confirmed(items: list[Dict[str, Any]]) -> str:
+    """快照级 confirmed: 任一 item 是临时值则整份快照标 false.
+
+    回测 recorder 与实盘 sink 共用, 两边的快照口径必须严格一致。
+    """
+    return "true" if all(bool(i.get("confirmed", True)) for i in items) else "false"
 
 
 def _normalize_timestamp_ns(timestamp: Any) -> int:
@@ -126,8 +135,13 @@ class IndicatorRecorder:
         reference_lines: Optional[list[Dict[str, Any]]] = None,
         scale_group: Optional[str] = None,
         warmup: bool = False,
+        confirmed: bool = True,
     ) -> None:
-        """Record one indicator definition, instance, and point update."""
+        """Record one indicator definition, instance, and point update.
+
+        ``confirmed=False`` 的临时点**不进** ``_points``(DataFrame / export 只含
+        确认值), 只发流事件 —— 与实盘 sink "只发不累积" 的口径一致。
+        """
         indicator_key = _normalize_text(name)
         if not indicator_key:
             raise ValueError("indicator name cannot be empty")
@@ -193,18 +207,19 @@ class IndicatorRecorder:
             }
             self._instances[instance_key] = instance
 
-        self._points.append(
-            {
-                "instance_id": instance["instance_id"],
-                "owner_strategy_id": strategy_id,
-                "symbol": symbol_text,
-                "indicator_key": indicator_key,
-                "timestamp": timestamp_ns,
-                "timestamp_ms": timestamp_ms,
-                "value": numeric_value,
-                "warmup": bool(warmup),
-            }
-        )
+        if confirmed:
+            self._points.append(
+                {
+                    "instance_id": instance["instance_id"],
+                    "owner_strategy_id": strategy_id,
+                    "symbol": symbol_text,
+                    "indicator_key": indicator_key,
+                    "timestamp": timestamp_ns,
+                    "timestamp_ms": timestamp_ms,
+                    "value": numeric_value,
+                    "warmup": bool(warmup),
+                }
+            )
         if self._stream_emitter is not None:
             self._stream_emitter(
                 "indicator_point",
@@ -221,6 +236,7 @@ class IndicatorRecorder:
                     "timestamp_ms": str(timestamp_ms),
                     "value": repr(numeric_value),
                     "warmup": str(bool(warmup)).lower(),
+                    "confirmed": str(bool(confirmed)).lower(),
                     "scale_group": scale_group_norm,
                     "meta_json": meta_json,
                 },
@@ -235,6 +251,7 @@ class IndicatorRecorder:
                     "render_type": render_type_text,
                     "value": numeric_value,
                     "warmup": bool(warmup),
+                    "confirmed": bool(confirmed),
                     "meta_json": meta_json,
                 }
             )
@@ -257,6 +274,7 @@ class IndicatorRecorder:
                     "timestamp": str(timestamp_ns),
                     "timestamp_ms": str(timestamp_ms_from_ns(timestamp_ns)),
                     "indicator_count": str(len(items)),
+                    "confirmed": all_items_confirmed(items),
                     "items_json": json.dumps(
                         items,
                         ensure_ascii=False,

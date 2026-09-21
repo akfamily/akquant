@@ -37,7 +37,7 @@ def _infer_freq(strategy: Any, freq: Optional[str]) -> Optional[str]:
     """`freq` 省略时按当前所处的回调推断粒度.
 
     双流(同一 symbol 同时存在 bar 与 tick 两条历史序列)下省略 ``freq`` 会让
-    Rust 侧 ``resolve_use_tick_history`` 抛歧义错误, 要求显式指定。该规则对
+    Rust 侧 ``resolve_history_source`` 抛歧义错误, 要求显式指定。该规则对
     「策略同时挂 on_bar 与 on_tick」是必要的, 但**对只挂 on_bar 的策略是误伤**:
     tick 序列由 ``HistoryBuffer::update_tick`` **无条件**写入(与策略是否覆写
     ``on_tick`` 无关, 见 src/pipeline/stages/data.rs), 于是用户只要订阅了 tick
@@ -52,16 +52,35 @@ def _infer_freq(strategy: Any, freq: Optional[str]) -> Optional[str]:
     与 ``freq`` 已显式传入时不做任何干预(显式优先), 单流场景也完全不受影响
     (单流下 ``freq=None`` 本就直接命中唯一存在的那条序列, 推断出的值与它一致)。
 
+    窗口回调(``on_window_bar`` 或 ``subscribe_bars(callback=)``)内省略 ``freq``
+    时取该窗口的周期(``_framework_current_callback`` 形如 ``"window:5min"``)。
+
+    显式或推断出的窗口周期必须已 ``subscribe_bars``, 否则报 ``ValueError`` 并指向
+    ``subscribe_bars`` —— 否则 Rust 侧只会返回空序列, 用户看到一列 NaN 却不知为何。
+
     :param strategy: 策略实例
     :param freq: 用户传入的粒度, ``None`` 表示未指定
     :return: 推断后的粒度; 无法推断时原样返回 ``freq``
     """
-    if freq is not None:
-        return freq
-    callback = getattr(strategy, "_framework_current_callback", None)
-    if not isinstance(callback, str):
-        return freq
-    return _CALLBACK_FREQ.get(callback, freq)
+    resolved = freq
+    if resolved is None:
+        callback = getattr(strategy, "_framework_current_callback", None)
+        if isinstance(callback, str):
+            if callback.startswith("window:"):
+                resolved = callback[len("window:") :]
+            else:
+                resolved = _CALLBACK_FREQ.get(callback, None)
+    if resolved is not None and resolved not in ("bar", "tick"):
+        from .strategy_window import window_freqs
+
+        label = str(resolved).strip().lower()
+        if label not in window_freqs(strategy):
+            raise ValueError(
+                f"get_history(freq={resolved!r}) 未订阅该周期, 请先在策略 __init__ 里 "
+                f"subscribe_bars({label!r})"
+            )
+        return label
+    return resolved
 
 
 def _resolve_history_cutoff(strategy: Any) -> Optional[int]:

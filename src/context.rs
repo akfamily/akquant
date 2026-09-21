@@ -4,7 +4,7 @@ use crate::history::HistoryBuffer;
 use crate::market::MarketModel;
 use crate::model::market_data::extract_decimal;
 use crate::model::{
-    AssetType, ExecutionMode, ExecutionPolicyCore, Instrument, Order, OrderSide, OrderType,
+    AssetType, Bar, ExecutionMode, ExecutionPolicyCore, Instrument, Order, OrderSide, OrderType,
     PositionEffect, TimeInForce, Timer, Trade, TradingSession,
 };
 use crate::portfolio::Portfolio;
@@ -52,6 +52,7 @@ pub struct ContextInit {
     pub recent_rejected_orders: Vec<Order>,
     pub recent_expiry_events: Vec<ExpiryEvent>,
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
+    pub window_aggregator: Option<Arc<RwLock<crate::data::WindowAggregator>>>,
     pub event_tx: Option<Sender<Event>>,
     pub risk_config: RiskConfig,
     pub strategy_id: Option<String>,
@@ -358,6 +359,8 @@ pub struct StrategyContext {
     pub recent_expiry_events: Vec<ExpiryEvent>,
     // History Buffer (Shared with Engine)
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
+    /// 多周期窗口聚合器(与 Engine 共享), 只读: 供 `current_window` 看在形成窗口。
+    pub(crate) window_aggregator: Option<Arc<RwLock<crate::data::WindowAggregator>>>,
     // Event Channel (Optional, for async order submission)
     pub event_tx: Option<Sender<Event>>,
     #[pyo3(get)]
@@ -421,6 +424,7 @@ impl StrategyContext {
             recent_rejected_orders: init.recent_rejected_orders,
             recent_expiry_events: init.recent_expiry_events,
             history_buffer: init.history_buffer,
+            window_aggregator: init.window_aggregator,
             event_tx: init.event_tx,
             risk_config: init.risk_config,
             strategy_id: init.strategy_id,
@@ -455,11 +459,7 @@ impl StrategyContext {
     /// 用于 auto 拆腿判定"还能平多少";`false` 投影全部在途单(按各自
     /// `position_effect`),用于目标仓位算 delta 判定"仓位将落在哪"。
     fn project_pending_position(&self, symbol: &str, reducing_only: bool) -> Decimal {
-        let mut projected = self
-            .positions
-            .get(symbol)
-            .copied()
-            .unwrap_or(Decimal::ZERO);
+        let mut projected = self.positions.get(symbol).copied().unwrap_or(Decimal::ZERO);
         for order in self.active_orders.iter().chain(self.orders.iter()) {
             if order.symbol != symbol {
                 continue;
@@ -506,28 +506,55 @@ impl StrategyContext {
 /// 注意:此 helper 同时被 `history()` 与 `history_multi()`(以及它们背后更多的
 /// Python 侧入口,如 `get_history_df`/`get_rolling_data`)调用,报错文案里不写
 /// 具体的方法名——写死一个方法名会在从另一个入口触发时指错调用者实际调用的 API。
-fn resolve_use_tick_history(
+/// 历史序列来源。
+enum HistorySource {
+    Bar,
+    Tick,
+    /// 引擎聚合出的窗口序列, 值为周期标签(如 "5min")。
+    Window(String),
+}
+
+/// `freq` 解析规则:
+/// - `"bar"` / `"tick"` 显式选桶;
+/// - `None` 只在 bar / tick 之间解析(窗口序列是 opt-in 且有名字, 永不被隐式选中);
+///   二者并存则报错, 文案列出该 symbol 现有的**全部**序列;
+/// - 其他取值若能被 `WindowFreq::parse` 接受, 视为窗口周期(是否订阅由 Python 侧
+///   在调用前校验); 否则报错。
+///
+/// 注意:此 helper 同时被 `history()` 与 `history_multi()`(以及它们背后更多的
+/// Python 侧入口,如 `get_history_df`/`get_rolling_data`)调用,报错文案里不写
+/// 具体的方法名——写死一个方法名会在从另一个入口触发时指错调用者实际调用的 API。
+fn resolve_history_source(
     buffer: &HistoryBuffer,
     symbol: &str,
     freq: Option<&str>,
-) -> PyResult<bool> {
+) -> PyResult<HistorySource> {
     match freq {
-        Some("tick") => Ok(true),
-        Some("bar") => Ok(false),
+        Some("tick") => Ok(HistorySource::Tick),
+        Some("bar") => Ok(HistorySource::Bar),
         None => {
             let has_bar = buffer.has_bar_history(symbol);
             let has_tick = buffer.has_tick_history(symbol);
             if has_bar && has_tick {
+                let mut series = vec!["bar".to_string(), "tick".to_string()];
+                series.extend(buffer.window_freqs(symbol));
                 return Err(PyValueError::new_err(format!(
-                    "symbol {symbol} 同时存在 bar 与 tick 两条历史序列, 无法判断该取哪条; \
-                     请在取历史数据时显式指定 freq='bar' 或 freq='tick'"
+                    "symbol {symbol} 同时存在多条历史序列 {series:?}, 无法判断该取哪条; \
+                     请在取历史数据时显式指定 freq(如 'bar' / 'tick' / '5min')"
                 )));
             }
-            Ok(has_tick)
+            Ok(if has_tick {
+                HistorySource::Tick
+            } else {
+                HistorySource::Bar
+            })
         }
-        Some(other) => Err(PyValueError::new_err(format!(
-            "不支持的 freq={other:?}; 当前支持 'tick' / 'bar' / None"
-        ))),
+        Some(other) => match crate::data::window::WindowFreq::parse(other) {
+            Ok(_) => Ok(HistorySource::Window(other.trim().to_ascii_lowercase())),
+            Err(_) => Err(PyValueError::new_err(format!(
+                "不支持的 freq={other:?}; 当前支持 'tick' / 'bar' / 已订阅的窗口周期(如 '5min' / '1h' / '1d')"
+            ))),
+        },
     }
 }
 
@@ -613,6 +640,7 @@ impl StrategyContext {
             recent_rejected_orders: Vec::new(),
             recent_expiry_events: recent_expiry_events.unwrap_or_default(),
             history_buffer: None,
+            window_aggregator: None,
             event_tx: None,
             risk_config: risk_config.unwrap_or_default(),
             strategy_id,
@@ -642,8 +670,9 @@ impl StrategyContext {
     /// :param symbol: 标的代码
     /// :param field: 字段名 (open, high, low, close, volume)
     /// :param count: 获取的数据长度
-    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错;
-    ///     其他未识别取值也会报错,不会兜底成 bar)
+    /// :param freq: 序列来源,`"tick"` / `"bar"` / 已订阅的窗口周期(如 `"5min"` / `"1h"` /
+    ///     `"1d"`) / `None`(缺省时只在 bar/tick 之间解析,若双流序列并存则报错;窗口序列
+    ///     永不被隐式选中;其他未识别取值也会报错,不会兜底成 bar)
     /// :return: numpy array or None
     fn history<'py>(
         &self,
@@ -656,11 +685,21 @@ impl StrategyContext {
     ) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
         if let Some(ref buffer_lock) = self.history_buffer {
             let buffer = buffer_lock.read().unwrap();
-            let use_tick = resolve_use_tick_history(&buffer, &symbol, freq)?;
-            let current = if use_tick {
-                buffer.get_tick_history(&symbol)
-            } else {
-                buffer.get_history(&symbol)
+            let source = resolve_history_source(&buffer, &symbol, freq)?;
+            let use_tick = matches!(source, HistorySource::Tick);
+            let (current, previous) = match &source {
+                HistorySource::Tick => (
+                    buffer.get_tick_history(&symbol),
+                    buffer.get_previous_tick_history(&symbol),
+                ),
+                HistorySource::Bar => (
+                    buffer.get_history(&symbol),
+                    buffer.get_previous_history(&symbol),
+                ),
+                HistorySource::Window(label) => (
+                    buffer.get_window_history(&symbol, label),
+                    buffer.get_previous_window_history(&symbol, label),
+                ),
             };
             let history = match (current, end_before_ns) {
                 (Some(history), Some(cutoff))
@@ -669,11 +708,6 @@ impl StrategyContext {
                         .back()
                         .is_some_and(|timestamp| *timestamp >= cutoff) =>
                 {
-                    let previous = if use_tick {
-                        buffer.get_previous_tick_history(&symbol)
-                    } else {
-                        buffer.get_previous_history(&symbol)
-                    };
                     previous.unwrap_or(history)
                 }
                 (Some(history), _) => history,
@@ -737,8 +771,9 @@ impl StrategyContext {
     /// :param fields: 字段名列表 (open/high/low/close/volume 或额外数值字段)
     /// :param count: 获取的数据长度
     /// :param end_before_ns: 可选,历史可见性截断时间戳 (纳秒)
-    /// :param freq: 序列来源,`"tick"` / `"bar"` / `None`(缺省时若双流序列并存则报错;
-    ///     其他未识别取值也会报错,不会兜底成 bar)
+    /// :param freq: 序列来源,`"tick"` / `"bar"` / 已订阅的窗口周期(如 `"5min"` / `"1h"` /
+    ///     `"1d"`) / `None`(缺省时只在 bar/tick 之间解析,若双流序列并存则报错;窗口序列
+    ///     永不被隐式选中;其他未识别取值也会报错,不会兜底成 bar)
     /// :return: {field: numpy array} 或 None
     fn history_multi<'py>(
         &self,
@@ -751,11 +786,21 @@ impl StrategyContext {
     ) -> PyResult<Option<HashMap<String, Bound<'py, PyArray1<f64>>>>> {
         if let Some(ref buffer_lock) = self.history_buffer {
             let buffer = buffer_lock.read().unwrap();
-            let use_tick = resolve_use_tick_history(&buffer, &symbol, freq)?;
-            let current = if use_tick {
-                buffer.get_tick_history(&symbol)
-            } else {
-                buffer.get_history(&symbol)
+            let source = resolve_history_source(&buffer, &symbol, freq)?;
+            let use_tick = matches!(source, HistorySource::Tick);
+            let (current, previous) = match &source {
+                HistorySource::Tick => (
+                    buffer.get_tick_history(&symbol),
+                    buffer.get_previous_tick_history(&symbol),
+                ),
+                HistorySource::Bar => (
+                    buffer.get_history(&symbol),
+                    buffer.get_previous_history(&symbol),
+                ),
+                HistorySource::Window(label) => (
+                    buffer.get_window_history(&symbol, label),
+                    buffer.get_previous_window_history(&symbol, label),
+                ),
             };
             let history = match (current, end_before_ns) {
                 (Some(history), Some(cutoff))
@@ -764,11 +809,6 @@ impl StrategyContext {
                         .back()
                         .is_some_and(|timestamp| *timestamp >= cutoff) =>
                 {
-                    let previous = if use_tick {
-                        buffer.get_previous_tick_history(&symbol)
-                    } else {
-                        buffer.get_previous_history(&symbol)
-                    };
                     previous.unwrap_or(history)
                 }
                 (Some(history), _) => history,
@@ -823,6 +863,20 @@ impl StrategyContext {
     #[getter]
     fn get_last_closed_trade(&self) -> Option<ClosedTrade> {
         self.closed_trades.last().cloned()
+    }
+
+    /// 某标的某周期正在形成、尚未闭合的窗口快照; 无则 None。不触发回调。
+    ///
+    /// 放在 ctx 上而非 Engine 上: 引擎 run() 期间独占可变借用, 回调里再入 Engine
+    /// pymethod 会 "Already borrowed"; ctx 走共享的 Arc<RwLock> 读锁即可。
+    ///
+    /// :param symbol: 标的代码
+    /// :param freq: 已订阅的窗口周期(如 "5min" / "1h" / "1d")
+    /// :return: 在形成窗口的 Bar 快照, 无则 None
+    pub fn current_window(&self, symbol: &str, freq: &str) -> Option<Bar> {
+        let lock = self.window_aggregator.as_ref()?;
+        let aggregator = lock.read().ok()?;
+        aggregator.current(symbol, freq)
     }
 
     #[getter]
@@ -1003,8 +1057,7 @@ impl StrategyContext {
                 (true, false) => OrderType::Limit,
                 (false, false) => OrderType::Market,
             });
-        let fill_policy_override =
-            parse_order_fill_policy_override(fill_mode, fill_timer_timing)?;
+        let fill_policy_override = parse_order_fill_policy_override(fill_mode, fill_timer_timing)?;
         let (slippage_type_override, slippage_value_override) =
             parse_order_slippage_override(fill_slippage_type, fill_slippage_value)?;
         let (commission_type_override, commission_value_override) =
@@ -1111,8 +1164,7 @@ impl StrategyContext {
                 (true, false) => OrderType::Limit,
                 (false, false) => OrderType::Market,
             });
-        let fill_policy_override =
-            parse_order_fill_policy_override(fill_mode, fill_timer_timing)?;
+        let fill_policy_override = parse_order_fill_policy_override(fill_mode, fill_timer_timing)?;
         let (slippage_type_override, slippage_value_override) =
             parse_order_slippage_override(fill_slippage_type, fill_slippage_value)?;
         let (commission_type_override, commission_value_override) =

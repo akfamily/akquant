@@ -3,7 +3,7 @@
 
 配置类此前住在 ``strategy.py``, 写入侧 helper 住在 ``backtest/engine.py``, 读取侧
 默认值又在 ``strategy_framework_hooks.py`` 里手写了第三份 —— 三处分散的直接后果是
-``_RUNTIME_DEFAULTS`` 漏了 ``indicator_mode`` 却没人发现。现在类和写入侧都归本模块,
+``_RUNTIME_DEFAULTS`` 漏了当时的一个字段却没人发现。现在类和写入侧都归本模块,
 读取侧从 ``dataclass`` 派生默认值, 漂移在结构上不再可能。
 
 **依赖方向是本模块存在的前提**: 本模块运行时不导入任何本包模块(``Strategy`` 只做
@@ -31,7 +31,6 @@ class StrategyRuntimeConfig:
     portfolio_update_eps: float = 0.0
     error_mode: Literal["raise", "continue", "legacy"] = "raise"
     re_raise_on_error: bool = True
-    indicator_mode: Literal["incremental", "precompute"] = "precompute"
 
     def __post_init__(self) -> None:
         """校验并标准化配置."""
@@ -42,10 +41,6 @@ class StrategyRuntimeConfig:
         if mode not in {"raise", "continue", "legacy"}:
             raise ValueError("error_mode must be one of: raise, continue, legacy")
         self.error_mode = cast(Literal["raise", "continue", "legacy"], mode)
-        indicator_mode = str(self.indicator_mode).strip().lower()
-        if indicator_mode not in {"incremental", "precompute"}:
-            raise ValueError("indicator_mode must be one of: incremental, precompute")
-        self.indicator_mode = cast(Literal["incremental", "precompute"], indicator_mode)
         self.enable_precise_day_boundary_hooks = bool(
             self.enable_precise_day_boundary_hooks
         )
@@ -58,7 +53,7 @@ RUNTIME_CONFIG_DEFAULTS: Dict[str, Any] = {
     f.name: f.default for f in fields(StrategyRuntimeConfig)
 }
 """逐字段默认值, 供读取侧兜底。从 ``dataclass`` 派生而非手写 —— 手写那份曾漏掉
-``indicator_mode``, 新增字段时同样的漏项会再次发生。"""
+当时的 ``indicator_mode`` 字段, 新增字段时同样的漏项会再次发生。"""
 
 
 def coerce_strategy_runtime_config(
@@ -75,7 +70,6 @@ def coerce_strategy_runtime_config(
             portfolio_update_eps=value.portfolio_update_eps,
             error_mode=value.error_mode,
             re_raise_on_error=value.re_raise_on_error,
-            indicator_mode=value.indicator_mode,
         )
     if isinstance(value, dict):
         unknown_fields = sorted(set(value.keys()) - RUNTIME_CONFIG_FIELDS)

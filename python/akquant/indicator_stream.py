@@ -106,6 +106,9 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
             "value": _to_float_or_text(payload.get("value")),
             "scale_group": str(payload.get("scale_group", "")),
             "warmup": _to_bool(payload.get("warmup", False)),
+            # 缺失时默认 True: 早期事件与第三方 IndicatorSink 都只在 bar
+            # 闭合后产点, 把它们当作已确认是正确的语义。
+            "confirmed": _to_bool(payload.get("confirmed", "true")),
             "meta": _json_loads_or_default(payload.get("meta_json"), {}),
         }
         return base_message
@@ -124,6 +127,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
                     "render_type": str(raw_item.get("render_type", "")),
                     "value": _to_float_or_text(raw_item.get("value")),
                     "warmup": _to_bool(raw_item.get("warmup", False)),
+                    "confirmed": _to_bool(raw_item.get("confirmed", True)),
                     "meta": _json_loads_or_default(raw_item.get("meta_json"), {}),
                 }
             )
@@ -150,6 +154,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
         # straight to a chart library. Items share the snapshot timestamp.
         "timestamp_ms": _timestamp_ms(payload, timestamp_ns),
         "indicator_count": _to_int(payload.get("indicator_count", len(items))),
+        "confirmed": _to_bool(payload.get("confirmed", "true")),
         "items": items,
         "indicator_keys": indicator_keys,
         "panes": panes,

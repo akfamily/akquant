@@ -178,16 +178,28 @@ def build_review_payload(
     result: Any,
     market_data: Union[pd.DataFrame, dict[str, pd.DataFrame]],
     symbols: Optional[list[str]] = None,
+    *,
+    include_indicators: bool = True,
 ) -> dict[str, Any]:
     """构建 LWC 复盘 payload(主题无关:颜色由前端按主题上色).
 
-    :param result: BacktestResult(需提供 ``trades_df``).
+    :param result: BacktestResult(需提供 ``trades_df``; 有 ``indicator_outputs``
+        时其指标随各标的一并输出).
     :param market_data: 单表或 ``{symbol: df}`` 行情.
     :param symbols: 可选,限定渲染的标的;默认取全部可用标的.
-    :return: ``{"symbols": [{"symbol","candles","volume","markers"}, ...]}``.
+    :param include_indicators: 是否把策略上报的指标(``self.I`` /
+        ``record_indicator``)按 pane 带进 payload;关掉时各段仍给空列表。
+    :return: ``{"symbols": [...]}``, 每段含 ``symbol`` / ``candles`` / ``volume`` /
+        ``markers`` / ``indicators``.
     :raises ValueError: 无任何标的产出有效 K 线数据时.
     """
+    # 局部导入: _indicators 依赖本模块的 _bar_time, 顶层互相导入会成环。
+    from ._indicators import to_lwc_indicator_series
+
     trades = result.trades_df if hasattr(result, "trades_df") else pd.DataFrame()
+    outputs = getattr(result, "indicator_outputs", None) or {}
+    ind_defs = list(outputs.get("definitions", [])) if include_indicators else []
+    ind_points = list(outputs.get("points", [])) if include_indicators else []
     series: list[dict[str, Any]] = []
     for sym in _resolve_symbols(market_data, trades, symbols):
         df = extract_symbol_market_data(market_data, sym)
@@ -205,12 +217,18 @@ def build_review_payload(
         if not candles:
             continue
         markers = _build_markers(trades, sym, index, intraday)
+        indicators = (
+            to_lwc_indicator_series(ind_defs, ind_points, sym, intraday)
+            if ind_defs
+            else []
+        )
         series.append(
             {
                 "symbol": sym,
                 "candles": candles,
                 "volume": volume,
                 "markers": markers,
+                "indicators": indicators,
             }
         )
     if not series:

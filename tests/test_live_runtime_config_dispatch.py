@@ -6,8 +6,8 @@
 在策略内部自己写 ``self.runtime_config = ...``。
 
 下发复用与回测同一个 ``apply_strategy_runtime_config``, 冲突检测与告警去重两侧
-因此一致。时序上必须早于任何 ``on_start``: ``indicator_mode`` 决定指标注册走增量
-还是预计算, 而指标在 ``on_start`` 里注册。
+因此一致。时序上必须早于任何 ``on_start``: ``error_mode`` 决定 ``on_start`` 自身
+出错时的行为, 而策略的指标声明(``self.I``)正在 ``on_start`` 里。
 """
 
 import logging
@@ -51,8 +51,8 @@ def test_dispatches_config_object() -> None:
 def test_dispatches_into_every_slot() -> None:
     """多槽位下主策略与每个槽位策略都要拿到 —— 这是回测 :2903/:2910 的对称行为."""
     targets: list[Strategy] = [_Reader(), _Reader(), _Reader()]
-    _runner({"indicator_mode": "incremental"})._apply_runtime_config(targets)
-    assert [t.runtime_config.indicator_mode for t in targets] == ["incremental"] * 3
+    _runner({"error_mode": "continue"})._apply_runtime_config(targets)
+    assert [t.runtime_config.error_mode for t in targets] == ["continue"] * 3
 
 
 def test_each_target_gets_its_own_instance() -> None:
@@ -162,7 +162,7 @@ def test_run_live_exposes_both_parameters() -> None:
 
 
 def test_dispatch_happens_before_slot_on_start() -> None:
-    """下发必须早于槽位 on_start —— indicator_mode 决定指标注册走哪条路.
+    """下发必须早于槽位 on_start —— error_mode 决定 on_start 出错时的行为.
 
     源码顺序守卫: 匹配 ``self.`` 前缀的真实调用点, 并先剥掉注释行 —— 否则注释里
     提到的方法名会被当成调用点(这个断言最初就是这么误报的)。

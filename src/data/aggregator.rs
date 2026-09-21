@@ -139,6 +139,7 @@ impl BarAggregator {
                     volume: bar.volume_curr,
                     symbol: symbol.clone(),
                     extra: HashMap::new(),
+                    freq: None,
                 };
                 self.feed.add_bar(finished_bar)?;
 

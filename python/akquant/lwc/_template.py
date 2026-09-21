@@ -100,6 +100,73 @@ _APP_JS = """
   if(chart.panes && chart.panes()[1]){chart.panes()[1].setHeight(120);}
   var markerPrim = LWC.createSeriesMarkers(candle, []);
   var curIdx = cfg.initial_symbol_index||0;
+  // 指标 series 随标的切换重建; 元素 {series, ind, idx}。signal 类不建 series,
+  // 作为 marker 与买卖点一起交给 markerPrim。
+  var indSeries = [];
+  var palette = cfg.palette || {};
+  function indColor(ind, i){
+    var p = palette[cur] || palette.light || ['#1976d2'];
+    return ind.color || p[i % p.length];
+  }
+  function tcmp(a,b){return a.time<b.time?-1:(a.time>b.time?1:0);}
+  function clearIndicators(){
+    indSeries.forEach(function(x){ try{ chart.removeSeries(x.series); }catch(e){} });
+    indSeries = [];
+  }
+  function indOptions(ind, i){
+    var c = indColor(ind, i);
+    var o = {color:c, lineWidth:2, priceLineVisible:false, lastValueVisible:true,
+      title: ind.display_name || ind.indicator_key};
+    if(ind.series_type==='Area'){
+      o.lineColor=c; o.topColor=c+'55'; o.bottomColor=c+'05';
+    }
+    if(ind.render_type==='scatter'){
+      o.lineVisible=false; o.pointMarkersVisible=true;
+    }
+    return o;
+  }
+  function drawIndicators(s){
+    clearIndicators();
+    var signals = [];
+    // payload 的 pane 已是 LWC 口径(0 主图, >=2 副图), 但可能不连续
+    // (用户只声明了 pane 3); LWC 要求 paneIndex 连续, 这里按出现顺序压实。
+    var paneMap = {}, nextPane = 2;
+    (s.indicators||[]).forEach(function(ind, i){
+      if(ind.series_type==='Marker'){
+        (ind.points||[]).forEach(function(p){
+          signals.push({time:p.time, position:'aboveBar', shape:'circle',
+            text: ind.display_name || ind.indicator_key,
+            color: indColor(ind, i)});
+        });
+        return;
+      }
+      var ctor = LWC[ind.series_type + 'Series'] || LWC.LineSeries;
+      var paneIdx = 0;
+      if(ind.pane >= 2){
+        if(!(ind.pane in paneMap)){ paneMap[ind.pane] = nextPane++; }
+        paneIdx = paneMap[ind.pane];
+      }
+      var opts = indOptions(ind, i);
+      var series = chart.addSeries(ctor, opts, paneIdx);
+      series.setData(ind.points || []);
+      (ind.price_lines||[]).forEach(function(pl){
+        series.createPriceLine({price: pl.value, title: pl.label || '',
+          color: pl.color || opts.color, lineWidth:1, lineStyle:2,
+          axisLabelVisible:true});
+      });
+      if(paneIdx >= 2 && chart.panes && chart.panes()[paneIdx]){
+        chart.panes()[paneIdx].setHeight(100);
+      }
+      indSeries.push({series:series, ind:ind, idx:i});
+    });
+    return signals;
+  }
+  function recolorIndicators(){
+    indSeries.forEach(function(x){
+      if(x.ind.color) return;  // 用户指定的颜色不随主题变
+      x.series.applyOptions(indOptions(x.ind, x.idx));
+    });
+  }
 
   function applyTheme(){
     var t = T();
@@ -129,18 +196,24 @@ _APP_JS = """
         text:m.text,color:m.buy?t.up:t.down};
     });
   }
+  function allMarkers(s, signals){
+    return colorMarkers(s).concat(signals || []).sort(tcmp);
+  }
+  var curSignals = [];
   function draw(i){
     var s = all[i]; if(!s) return;
     curIdx = i;
     candle.setData(s.candles||[]);
     vol.setData(colorVol(s));
-    markerPrim.setMarkers(colorMarkers(s));
+    curSignals = drawIndicators(s);
+    markerPrim.setMarkers(allMarkers(s, curSignals));
     chart.timeScale().fitContent();
   }
   function recolorCurrent(){
     var s = all[curIdx]; if(!s) return;
     vol.setData(colorVol(s));
-    markerPrim.setMarkers(colorMarkers(s));
+    recolorIndicators();
+    markerPrim.setMarkers(allMarkers(s, curSignals));
   }
   sel.addEventListener('change',function(){draw(parseInt(sel.value,10)||0);});
   toggle.addEventListener('click',function(){
@@ -151,6 +224,13 @@ _APP_JS = """
   sel.value = curIdx; draw(curIdx);
 })();
 """
+
+
+#: 未指定 color 的指标按主题轮转取色(明暗各一组, 与 K 线红绿避让)。
+INDICATOR_PALETTE: dict[str, list[str]] = {
+    "light": ["#1976d2", "#f57c00", "#7b1fa2", "#00897b", "#c2185b", "#5d4037"],
+    "dark": ["#64b5f6", "#ffb74d", "#ba68c8", "#4db6ac", "#f06292", "#a1887f"],
+}
 
 
 def _to_js_theme(colors: dict[str, str]) -> dict[str, str]:
@@ -189,6 +269,9 @@ def render_review_html(
     init = initial_theme if initial_theme in themes else "light"
     data = dict(payload)
     data["themes"] = {name: _to_js_theme(cols) for name, cols in themes.items()}
+    data["palette"] = {
+        name: INDICATOR_PALETTE.get(name, INDICATOR_PALETTE["light"]) for name in themes
+    }
     data["initial_theme"] = init
     data["intraday"] = bool(intraday)
     data["initial_symbol_index"] = int(initial_symbol_index)

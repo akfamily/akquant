@@ -37,7 +37,7 @@ class BrokenOnBarStrategy(Strategy):
         """打印 on_start 时刻已生效的配置 —— 下发必须早于这里."""
         print(
             f"on_start error_mode={self.runtime_config.error_mode} "
-            f"indicator_mode={self.runtime_config.indicator_mode}"
+            f"re_raise_on_error={self.runtime_config.re_raise_on_error}"
         )
 
     def on_bar(self, bar: Bar) -> None:

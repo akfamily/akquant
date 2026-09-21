@@ -10,7 +10,6 @@ This page explains how to control strategy runtime behavior from backtest and li
 - Portfolio update threshold (`portfolio_update_eps`)
 - Precise day-boundary hooks (`enable_precise_day_boundary_hooks`)
 - Legacy fallback flag (`re_raise_on_error`)
-- Indicator computation mode (`indicator_mode`)
 
 It works for all of:
 
@@ -51,7 +50,6 @@ result = run_backtest(
 | `portfolio_update_eps` | `float` (`>= 0`) | `0.0` | Skip tiny equity/cash update noise | Raises `ValueError` |
 | `enable_precise_day_boundary_hooks` | `bool` | `False` | Enable strict before/after trading by boundary timers | Coerced by bool conversion |
 | `re_raise_on_error` | `bool` | `True` | Legacy fallback when `error_mode="legacy"` | Coerced by bool conversion |
-| `indicator_mode` | `"incremental" \| "precompute"` | `"precompute"` | Choose incremental vs. fully precomputed indicators | Raises `ValueError` |
 
 ## 4. Conflict Priority
 
@@ -111,10 +109,9 @@ run_live(strategy_cls=MyStrategy, instruments=instruments,
          strategy_runtime_config={"error_mode": "continue"})
 ```
 
-Two differences from backtests are worth noting:
+One difference from backtests is worth noting:
 
 - **Omitting it changes nothing.** A `self.runtime_config` the strategy assigns itself already takes effect live (the consumer reads that attribute directly, independent of run mode); leaving the parameter unset keeps it untouched.
-- **There is no `strategy_config` fallback.** Backtests derive a default from `strategy_config.indicator_mode`; live entry points take no config object, so changing `indicator_mode` live requires passing `strategy_runtime_config` explicitly.
 
 Conflict detection, warning deduplication, and `runtime_config_override` semantics share one implementation with the backtest path, so behavior is identical.
 

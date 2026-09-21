@@ -19,6 +19,7 @@
 
 - `StrategyConfig.strategy_id`：主策略归属 ID。
 - `StrategyConfig.strategies_by_slot`：额外 slot -> 策略映射。
+- `run_backtest(studies=[...])` / `run_live(studies=[...])`：只画图不交易的 `Study` 列表，内部并入 `strategies_by_slot`（key 取 `study_id`，省略时为类名 snake_case）；与上一项同一套拓扑，见[自定义指标指南](../guide/custom_indicator.md)「可插拔 study」。
 - `StrategyConfig.strategy_max_order_value` / `StrategyConfig.strategy_max_order_size` / `StrategyConfig.strategy_max_position_size`。
 - `StrategyConfig.strategy_max_daily_loss` / `StrategyConfig.strategy_max_drawdown`。
 - `StrategyConfig.strategy_reduce_only_after_risk`。

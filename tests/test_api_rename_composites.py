@@ -10,4 +10,6 @@ def test_composite_renames() -> None:
     assert not hasattr(Strategy, "register_indicator")
     assert hasattr(Strategy, "place_bracket")
     assert hasattr(Strategy, "place_oco")
-    assert hasattr(Strategy, "register_precomputed_indicator")
+    assert not hasattr(Strategy, "register_precomputed_indicator")
+    assert not hasattr(Strategy, "register_incremental_indicator")
+    assert hasattr(Strategy, "I")

@@ -32,24 +32,25 @@ class SMACrossStrategy(Strategy):
 
     def on_start(self) -> None:
         """策略启动：基于 self.params 派生指标."""
-        # 定义指标
-        self.sma_fast = Indicator(
-            "sma_fast",
-            lambda df: df["close"].rolling(self.params.fast_period).mean(),
+        # 用 self.I() 声明向量化预计算指标: 框架在数据加载后整段算完,
+        # on_bar 里按 [0] 读取当前值。在 on_start 声明才拿得到 self.params。
+        fast, slow = self.params.fast_period, self.params.slow_period
+        self.sma_fast = self.I(
+            Indicator("sma_fast", lambda df: df["close"].rolling(fast).mean()),
+            name="sma_fast",
         )
-        self.sma_slow = Indicator(
-            "sma_slow",
-            lambda df: df["close"].rolling(self.params.slow_period).mean(),
+        self.sma_slow = self.I(
+            Indicator("sma_slow", lambda df: df["close"].rolling(slow).mean()),
+            name="sma_slow",
         )
-
-        # 订阅指标 (自动计算)
-        self._indicators = [self.sma_fast, self.sma_slow]
 
     def on_bar(self, bar: Any) -> None:
         """K线闭合回调."""
         # 获取当前值
-        fast = self.sma_fast.get_value(bar.symbol, bar.timestamp)
-        slow = self.sma_slow.get_value(bar.symbol, bar.timestamp)
+        fast = self.sma_fast[0]
+        slow = self.sma_slow[0]
+        if fast is None or slow is None:
+            return
 
         # 简单的交叉逻辑
         # 获取当前持仓
