@@ -19,6 +19,7 @@ from ..chart import (
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
+from ..indicator_recording import all_items_confirmed
 
 
 class StreamingIndicatorSink:
@@ -72,6 +73,7 @@ class StreamingIndicatorSink:
         reference_lines: Optional[list[Dict[str, Any]]] = None,
         scale_group: Optional[str] = None,
         warmup: bool = False,
+        confirmed: bool = True,
     ) -> None:
         """Emit one ``indicator_point`` and buffer it for the next snapshot."""
         indicator_key = str(name or "").strip()
@@ -105,6 +107,7 @@ class StreamingIndicatorSink:
                 "timestamp_ms": str(timestamp_ms),
                 "value": repr(numeric_value),
                 "warmup": str(bool(warmup)).lower(),
+                "confirmed": str(bool(confirmed)).lower(),
                 "scale_group": scale_group_norm,
                 "meta_json": meta_json,
             },
@@ -119,6 +122,7 @@ class StreamingIndicatorSink:
                 "render_type": render,
                 "value": numeric_value,
                 "warmup": bool(warmup),
+                "confirmed": bool(confirmed),
                 "meta_json": meta_json,
             }
         )
@@ -139,6 +143,7 @@ class StreamingIndicatorSink:
                     "timestamp": str(timestamp_ns),
                     "timestamp_ms": str(timestamp_ms_from_ns(timestamp_ns)),
                     "indicator_count": str(len(items)),
+                    "confirmed": all_items_confirmed(items),
                     "items_json": json.dumps(
                         items, ensure_ascii=False, sort_keys=True, default=str
                     ),

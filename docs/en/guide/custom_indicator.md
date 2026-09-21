@@ -15,57 +15,84 @@ In AKQuant, these are related but different tasks:
 
 | Goal | Recommended path | Typical API |
 | :--- | :--- | :--- |
-| Add a private signal to a strategy | custom `Indicator` / custom incremental object | register on `Strategy` |
-| Compute a full series from a `DataFrame` | `indicator_mode="precompute"` | `register_precomputed_indicator(...)` |
-| Maintain state bar by bar | `indicator_mode="incremental"` | `register_incremental_indicator(...)` |
-| Add a new name to `akquant.talib` | modify the compatibility layer source | not runtime plugin registration |
+| Maintain state bar by bar / tick by tick | an incremental object (has `update()`) | `self.I(aq.EMA(20), ...)` |
+| Compute a full series from a `DataFrame` with pandas | `Indicator(name, fn)` | `self.I(Indicator(...), ...)` |
+| Add a new function name to `akquant.talib` | modify the Python/Rust compatibility layer source | not runtime registration |
 
 If your goal is simply "use my own indicator inside a strategy", you usually do not need to extend `akquant.talib`.
 
-## Path 1: Precomputed Indicators
+## The Single Entry Point: `self.I()`
 
-Use `precompute` mode when the indicator is naturally vectorized over the full `DataFrame`.
-
-### Minimal example
+`Strategy.I()` is the one and only way to declare an indicator. Declare it once and the
+framework takes care of three things for you: **advancing it on every bar**, **serial
+lookback through `ind[0]` / `ind[1]`**, and **reporting plot points on demand**. This
+mirrors `ta.*` + `plot()` in TradingView Pine Script.
 
 ```python
-from akquant import Indicator, Strategy
+import akquant as aq
+from akquant import Bar, Strategy
 
 
-class PrecomputeMomentumStrategy(Strategy):
-    def __init__(self):
-        super().__init__()
-        self.indicator_mode = "precompute"
-        self.mom10 = Indicator(
-            "mom10",
-            lambda df: df["close"] - df["close"].shift(10),
-        )
-        self.register_precomputed_indicator("mom10", self.mom10)
+class MaCross(Strategy):
+    def on_start(self) -> None:
+        # One declaration = auto update + auto plot + lookback
+        self.ema_fast = self.I(aq.EMA(10), pane=0, color="#e91e63", label="EMA10")
+        self.ema_slow = self.I(aq.EMA(30), pane=0, color="#3f51b5")
+        self.rsi = self.I(aq.RSI(14), pane=1)
 
-    def on_bar(self, bar):
-        value = self.mom10.get_value(bar.symbol, bar.timestamp)
-        if value == value and value > 0:
+    def on_bar(self, bar: Bar) -> None:
+        # [0] is the current bar, [1] the previous one — same as Pine's sma[0] / sma[1]
+        if self.ema_fast[1] is None or self.ema_slow[1] is None:
+            return
+        if self.ema_fast[1] <= self.ema_slow[1] and self.ema_fast[0] > self.ema_slow[0]:
             self.buy(bar.symbol, 100)
+        # No record_indicator needed — plot arguments make reporting automatic
 ```
 
-### Good fit when
+!!! warning "Breaking change since 0.3"
+    The old `indicator_mode` switch together with `register_incremental_indicator(...)` /
+    `register_precomputed_indicator(...)` has been **removed**. `self.I()` now dispatches
+    on the object you hand it. A welcome side effect: the two kinds of indicator can
+    **coexist in the same strategy** — the old mode switch was mutually exclusive.
 
-- the indicator is naturally vectorized;
-- you want to reuse pandas `rolling`, `shift`, or `ewm`;
-- development speed matters more than streaming-style updates;
-- each symbol has a full history slice available up front.
+    | Old | New |
+    | :--- | :--- |
+    | `self.indicator_mode = "incremental"` + `register_incremental_indicator("x", obj, source="close")` | `self.x = self.I(obj, name="x", source="close")` |
+    | `self.indicator_mode = "precompute"` + `register_precomputed_indicator("x", ind)` | `self.x = self.I(ind, name="x")` |
+    | `register_incremental_indicator(..., indicator_factory=f)` | `self.I(factory=f, ...)` |
 
-### Notes
+### Where to declare
 
-- `Indicator(name, fn, **kwargs)` expects a function returning a `pd.Series`;
-- `get_value(symbol, timestamp)` reads from the cached series;
-- results are cached per symbol.
+Both `__init__` and `on_start` work, but **`on_start` is recommended**: `self.params` is
+injected *after* `__init__`, so a parameterized indicator (the kind `run_grid_search`
+sweeps) can only read its parameter values from `on_start`. Reserve `__init__` for literal
+arguments.
 
-## Path 2: Incremental Indicators
+`subscribe_bars` is the exception — it **must** be called in `__init__`, because the
+subscription table is frozen before the engine starts. `self.I(freq="5min")` then validates
+that the requested frequency was actually subscribed.
 
-Use `incremental` mode when the indicator should evolve inside the event stream.
+### Serial lookback
 
-### Minimal example
+- `ind[0]`: the value on the current bar (`.value` is an alias for it)
+- `ind[1]`: the previous bar; `ind[n]`: n bars back
+- **Out-of-range access returns `None` instead of raising** — the warmup period is
+  out of range by nature, and raising would force every strategy to wrap reads in `try`
+- Lookback depth is bounded by `lookback` (default `128`) over a ring buffer: a live
+  session is an unbounded stream, and an unbounded buffer would leak
+
+A not-ready value is always `None` (both a native indicator with an unfilled window and a
+precomputed indicator whose asof lookup misses are normalized to `None`), so a single
+`if value is None` check is enough — no separate `NaN` handling.
+
+## Path 1: Incremental Indicators
+
+Passing any object that exposes `update()` selects the incremental path. AKQuant ships
+100+ stateful indicator classes implemented in Rust (`aq.SMA` / `aq.EMA` / `aq.RSI` /
+`aq.MACD` / `aq.ATR` / `aq.BollingerBands` and many more) — they are the equivalent of
+Pine's `ta.*` and work out of the box.
+
+### Writing your own incremental indicator
 
 ```python
 from collections import deque
@@ -97,50 +124,59 @@ class MyMomentum(Indicator):
 
 
 class IncrementalMomentumStrategy(Strategy):
-    def __init__(self):
-        super().__init__()
-        self.indicator_mode = "incremental"
-
     def on_start(self):
-        self.register_incremental_indicator(
-            "mom10",
-            indicator_factory=lambda: MyMomentum(period=10),
+        self.mom10 = self.I(
+            factory=lambda: MyMomentum(period=10),
+            name="mom10",
             source="close",
             symbols=["AAPL", "MSFT"],
             warmup_bars=10,
         )
 
     def on_bar(self, bar):
-        value = self.mom10.value
-        if value == value and value > 0:
+        value = self.mom10[0]
+        if value is not None and value > 0:
             self.buy(bar.symbol, 100)
 ```
 
-## Why `indicator_factory` is recommended
+### Why `factory` is recommended
 
-In a multi-symbol strategy, incremental indicators usually carry internal state. Reusing one instance across multiple symbols can mix state and produce incorrect results.
+In a multi-symbol strategy, incremental indicators usually carry internal state. Sharing
+one instance across symbols would cross the wires, so passing an *instance* (rather than a
+`factory`) and then using it across multiple symbols raises an error immediately — state is
+never silently shared.
 
 Recommended:
 
 ```python
-self.register_incremental_indicator(
-    "mom10",
-    indicator_factory=lambda: MyMomentum(period=10),
-    source="close",
-    symbols=["AAPL", "MSFT"],
-)
+self.mom10 = self.I(factory=lambda: MyMomentum(period=10), source="close")
 ```
 
-Single-instance form, better for quick single-symbol experiments:
+Rather than:
 
 ```python
-self.mom10 = MyMomentum(period=10)
-self.register_incremental_indicator("mom10", self.mom10, source="close")
+self.mom10 = self.I(MyMomentum(period=10), source="close")  # single symbol only
 ```
 
-## What `source` means
+!!! warning "`factory` must be picklable under warm start"
+    A checkpoint serializes the strategy instance, and a lambda defined inside `on_start`
+    is a local object that cannot be pickled. When you plan to use `run_from_checkpoint`,
+    switch to a module-level function plus `functools.partial`:
 
-`source` tells the framework which field from the market event should be fed into the indicator. Common choices:
+    ```python
+    from functools import partial
+
+    def _make_sma(window: int):
+        return aq.SMA(window)
+
+    # inside on_start:
+    self.sma = self.I(factory=partial(_make_sma, 20), name="sma")
+    ```
+
+### What `source` means
+
+`source` tells the framework which field from the market event should be fed into the
+indicator. Common choices:
 
 - `source="close"`
 - `source="open"`
@@ -148,22 +184,215 @@ self.register_incremental_indicator("mom10", self.mom10, source="close")
 - `source="low"`
 - `source="volume"`
 
-If your indicator needs multiple inputs, align your `update(...)` signature with the incremental input mode expected by the framework.
+Indicators that need several inputs (ATR and friends) declare the feeding shape with
+`input_mode`: `"source"` (single value, the default) / `"hl"` / `"hlc"` / `"ohlc"` /
+`"close_volume"`. The framework passes the fields to your `update(...)` in that order.
+
+### Multi-value indicators: `outputs`
+
+For indicators such as MACD that emit several components at once, name the components with
+`outputs`. They are split into independent lines (`indicator_key` looks like `macd.dif`)
+instead of handing a raw tuple to the frontend:
+
+```python
+self.macd = self.I(aq.MACD(12, 26, 9), name="macd", pane=2,
+                   outputs=("dif", "dea", "hist"))
+
+# Reading:
+self.macd[0]        # the whole tuple (dif, dea, hist)
+self.macd.dif[0]    # a single component, which also supports [1] lookback
+```
+
+If the number of `outputs` does not match the indicator's actual component count, you get
+an error rather than a silent misalignment.
+
+## Path 2: Precomputed Indicators
+
+When the indicator is a better fit for a one-shot computation over the full `DataFrame`,
+pass an `Indicator(name, fn)` instance and `self.I()` routes it to the vectorized
+precompute path.
+
+### Minimal example
+
+```python
+from akquant import Indicator, Strategy
+
+
+class PrecomputeMomentumStrategy(Strategy):
+    def on_start(self):
+        self.mom10 = self.I(
+            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            name="mom10",
+        )
+
+    def on_bar(self, bar):
+        value = self.mom10[0]
+        if value is not None and value > 0:
+            self.buy(bar.symbol, 100)
+```
+
+### Good fit when
+
+- the indicator is naturally vectorized;
+- it mostly relies on pandas `rolling` / `shift` / `ewm`;
+- backtest development speed matters more than streaming-style updates;
+- the full history of each symbol can be prepared up front.
+
+### Limitations
+
+- **Not available in live trading**: a live session has no complete history `DataFrame`;
+- **Tick input raises**: precompute needs full OHLC, while a tick only carries a trade price;
+- **`freq=` is not supported**: use an incremental indicator for windowed frequencies.
+- **No `warmup_bars=`**: there is no incremental state to warm up - the whole series is computed up front.
+- **Multi-symbol out of the box**: `Indicator` caches its full series per symbol, so no `factory=` is needed.
+
+## Automatic Plotting
+
+Passing any plot argument (`pane` / `color` / `label` / `render_type` / `reference_lines` /
+`scale_group`), or setting `plot=True` explicitly, makes the framework report a plot point
+after every update — **no hand-written `record_indicator` inside `on_bar`**.
+
+**Nothing is reported by default**, matching Pine (`ta.sma()` only computes; `plot()` draws).
+This is not merely a style choice: the live indicator sink emits one event per point, and
+turning every indicator on by default across many symbols would flood the frontend link.
+
+Points that are not ready yet (value `None`) are not reported — the counterpart of Pine's
+`na` during warmup.
+
+```python
+# Compute only, do not draw
+self.atr = self.I(aq.ATR(14), input_mode="hlc")
+
+# Compute and draw
+self.rsi = self.I(aq.RSI(14), pane=1, reference_lines=[
+    {"value": 70, "label": "Overbought"},
+    {"value": 30, "label": "Oversold"},
+])
+
+# With no other plot argument, opt in explicitly with plot=True
+self.sma = self.I(aq.SMA(20), plot=True)
+```
+
+The plot arguments mean exactly what they mean on `record_indicator`; see "Export
+Indicators For Frontend Use" below. `record_indicator` remains as the low-level escape
+hatch for recording **non-indicator** custom values (position size, signal strength,
+risk-control intermediates) that `self.I()` does not cover.
+
+## Realtime values: intrabar on the forming window
+
+TradingView refreshes indicators on the realtime bar with every trade and confirms them at
+close (`barstate.isrealtime` / `isconfirmed`). AKQuant offers the same semantics for
+window-period indicators: declare `intrabar=True` and on every base bar close the framework
+computes a **provisional** value on a **copy** of the indicator from the partial window
+snapshot (`ctx.current_window()`) - the real state is never touched. The real `update()`
+runs when the window closes.
+
+```python
+class S(Strategy):
+    def __init__(self):
+        super().__init__()
+        self.subscribe_bars("5min")
+
+    def on_start(self):
+        self.sma5 = self.I(aq.SMA(20), freq="5min", intrabar=True, pane=0)
+
+    def on_bar(self, bar):                 # every 1-minute bar
+        v0 = self.sma5[0]                  # provisional value on the forming 5-minute window
+        v1 = self.sma5[1]                  # last confirmed 5-minute value
+        if not self.sma5.confirmed: ...    # [0] is currently provisional
+```
+
+Index semantics match Pine exactly: a provisional value occupies `[0]` and the confirmed
+series shifts by one. Stream events mark provisional points with `confirmed=false`, and
+**their timestamp is the label the window will close with**; the confirmed point arrives
+later with the same `time`, so a frontend overwrites by `(indicator_key, symbol, timestamp)`
+(`akquant.lwc.to_lwc_update()` already does). Provisional points **never** enter
+`indicator_df()` / `export_indicators()` - those exits hold confirmed values only.
+
+Three limits:
+
+- **Base-period indicators (no `freq=`) peek on every tick**: the framework builds the forming
+  bar from the ticks itself (real open/high/low/close, so ATR-style H/L indicators work too);
+  ticks **no longer `update()`** such an indicator - only the bar close commits state. The
+  provisional timestamp is predicted with the aggregator's end-of-interval stamp
+  (`(ts // interval + 1) * interval - 1ns`); if a closing bar disagrees (a source stamping at
+  interval start), streaming stops for that symbol with one warning while `[0]` keeps working.
+  **With the default `intrabar=False` ticks still `update()` base indicators** - pure-tick
+  strategies rely on that and it is unchanged.
+- **Provisional points stream only when the base period is known** (backtest:
+  `run_backtest(data=[Tick,...], freq=)`; live: the gateway declares `metadata["freq"]`).
+  With an unknown base period the window label drifts every base bar and a frontend could
+  not overwrite; `[0]` is still computed, nothing is streamed, one warning is logged.
+- Peeking relies on copying indicator state: built-in Rust indicators go through
+  `akquant.clone_indicator()` (pyo3 does not expose `__copy__` for `#[derive(Clone)]`, so
+  `copy` / `deepcopy` / `pickle` all raise `TypeError` on them); user-written Python
+  indicators go through `copy.deepcopy`.
+
+Runnable examples: [75_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/75_intrabar_indicators.py)
+(window period) and [76_tick_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/76_tick_intrabar_indicators.py)
+(base period, tick-driven).
+
+## Pluggable studies: draw, never trade
+
+TradingView separates indicator scripts from strategy scripts, and a chart can stack any
+number of indicator-only scripts. AKQuant's counterpart is `Study`: subclass it, declare
+indicators with `self.I()` in `on_start`, and attach it to any backtest or live run with
+`studies=[...]`.
+
+```python
+import akquant as aq
+from akquant import Study, run_backtest
+
+
+class RsiStudy(Study):
+    def on_start(self):
+        self.rsi = self.I(aq.RSI(14), pane=1)
+
+
+class MacdStudy(Study):
+    study_id = "macd_view"          # defaults to the snake_case class name: "macd_study"
+
+    def on_start(self):
+        self.macd = self.I(aq.MACD(12, 26, 9), pane=2, outputs=("dif", "dea", "hist"))
+
+
+result = run_backtest(strategy=MyStrategy, data=data, symbols=["600000"],
+                      strategy_id="main", studies=[RsiStudy, MacdStudy])
+result.indicator_df(owner="rsi_study")    # only this study's points
+result.viz.review(data)                   # studies land on the LWC chart too
+```
+
+Three things to know:
+
+- **No new pipeline.** Each study is one slot of the multi-strategy topology
+  (`strategies_by_slot`); its points carry their own `owner_strategy_id`, window
+  subscriptions merge across slots, and `run_live(studies=...)` has identical semantics.
+- **Not trading is a hard guarantee.** Every trading API on `Study` (`buy` / `sell` /
+  `place_*` / `order_target*` / `rebalance_*` / `cancel_*` ...) raises
+  `StudyCannotTradeError`. A stray order inside `on_bar` fails fast inside the engine
+  loop instead of silently filling. Subclass `Strategy` if you need to trade.
+- **Ids must not collide.** A `study_id` equal to `strategy_id` or an existing slot key
+  is a `ValueError`; a non-`Study` class inside `studies=` is a `TypeError` - otherwise
+  the no-trading guarantee would be void.
+
+Runnable example: [74_pluggable_studies.py](https://github.com/akfamily/akquant/blob/main/examples/74_pluggable_studies.py).
 
 ## Using `warmup_bars`
 
-`warmup_bars` bootstraps the incremental indicator with bars before `start_time`.
+`warmup_bars` bootstraps the indicator with bars before `start_time`, ahead of the active
+event stream.
 
 Use it when:
 
 - you want a valid value on the first active bar;
-- your indicator depends on a rolling window;
+- your indicator depends on a rolling window, e.g. `period=20`;
 - you do not want to manually skip the first N bars inside `on_bar`.
 
-Runnable example:
+Runnable examples:
 
 - [58_incremental_bootstrap_demo.py](https://github.com/akfamily/akquant/blob/main/examples/58_incremental_bootstrap_demo.py)
 - [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py)
+- [72_declarative_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/72_declarative_indicators.py)
 
 ## Warm Start And Serialization
 
@@ -372,6 +601,25 @@ fig = result.viz.indicators(
 
 If you need enterprise-grade multi-panel UX, persistence, permissions, or realtime subscriptions, keep those concerns in external systems and let AKQuant stay responsible for the preview plus normalized data production.
 
+#### Indicators on the LWC review chart
+
+`result.viz.review()` now draws the indicators reported through `self.I()` /
+`record_indicator` **by default** (`include_indicators=True`): `pane=0` overlays the
+main candlestick pane, `pane=k>=1` lands in the `k+1`-th LWC pane below the volume
+pane; `reference_lines` become dashed price lines; indicators without a `color`
+cycle through a per-theme palette. All seven `render_type` values are mapped -
+`line`/`area`/`bar`/`column`/`histogram`/`scatter` get their own series, `signal`
+is rendered as markers on the candles instead of a separate series.
+
+```python
+result.viz.review(market_data, filename="review.html")            # with indicators
+result.viz.review(market_data, filename="review.html", include_indicators=False)
+```
+
+The adapter underneath is `akquant.lwc.to_lwc_indicator_series()` - the mirror of
+`akquant.chart.to_d3kline_options()`: one indicator contract, two frontends. Reuse
+it directly when building your own LWC page.
+
 ### Optional Indicator Section In Reports
 
 If you want the indicator preview embedded into the built-in HTML report instead of a separate figure, enable it explicitly:
@@ -514,6 +762,33 @@ without retaining historical points in memory, avoiding unbounded growth over
 long runs. If you pass only `on_event` (no `indicator_recorder`), `run_live`
 enables this streaming sink automatically.
 
+### Live increments to an LWC chart
+
+If your frontend is lightweight-charts you do not need to unpack the fields of
+`to_indicator_message()` yourself: `akquant.lwc.to_lwc_update()` turns a point
+message into an increment that `series.update()` consumes as-is
+(`{indicator_key, pane, series_type, color, confirmed, point:{time, value}}`).
+`confirmed` is passed through - once intrabar provisional points exist they will
+share the `time` of the confirmed point, and LWC's `update()` overwrites by `time`,
+so the frontend needs no change.
+
+```python
+from akquant.lwc import load_lwc_js, to_lwc_update
+
+def on_event(event):
+    message = aq.to_indicator_message(event)
+    update = to_lwc_update(message) if message else None
+    if update is not None:
+        push_to_page(update)           # transport is yours: polling / WebSocket / SSE
+```
+
+`load_lwc_js()` returns the vendored LWC source for inlining into your own page (no
+CDN). The full loop is in `examples/73_lwc_live_indicators.py`:
+`run_live(broker="replay")` + a stdlib `http.server` poll endpoint + series created
+lazily the first time a key appears. The HTTP/WS transport deliberately stays in the
+example layer and out of the core package.
+
+
 ### Zero-Dependency Browser Live Preview
 
 If you want a browser-based demo that product or frontend teammates can open
@@ -641,26 +916,33 @@ In short, AKQuant should act as the indicator producer, not the full enterprise 
 ## Common Pitfalls
 
 - Pitfall 1: every custom indicator must inherit from `Indicator`
-  - Not always. `Indicator(name, fn)` is enough for many precompute cases.
+  - Not so. `Indicator(name, fn)` covers the precompute case, and any object with an
+    `update()` works for the incremental case.
 - Pitfall 2: one incremental instance can be shared safely across symbols
-  - Usually no. Prefer `indicator_factory` for production multi-symbol strategies.
+  - It cannot. Passing an instance and using it across symbols raises; production
+    multi-symbol strategies use `factory=`.
 - Pitfall 3: `warmup_bars=20` double-consumes the first active bar
   - It does not. Warmup only uses history before the active start boundary.
 - Pitfall 4: custom indicators automatically work with warm start
-  - Not guaranteed. Verify serialization.
+  - Not guaranteed. Verify the object is picklable, and that `factory` is not a lambda.
 - Pitfall 5: strategy-local indicators and `akquant.talib` extensions are the same thing
   - They solve different problems at different layers.
+- Pitfall 6: declaring an indicator draws it automatically
+  - It does not. Pass a plot argument or `plot=True`, matching Pine where `ta.*` computes
+    and `plot()` draws.
 
 ## Recommendation Matrix
 
 | Goal | Recommended approach |
 | :--- | :--- |
-| Validate an idea quickly | `Indicator(name, fn)` + `precompute` |
-| Single-symbol bar-by-bar state | `incremental` + single instance |
-| Multi-symbol production strategy | `incremental` + `indicator_factory` |
-| Need valid values on the first active bar | incremental + `warmup_bars` |
-| Need resumable state | ensure the indicator is serializable |
-| Need maximum performance | consider a Rust implementation later |
+| Validate an idea quickly | `self.I(Indicator(name, fn))` |
+| Single-symbol bar-by-bar state | `self.I(aq.EMA(20))` |
+| Multi-symbol production strategy | `self.I(factory=...)` |
+| Need valid values on the first active bar | `self.I(..., warmup_bars=N)` |
+| Need it drawn on the chart | add `pane=` / `color=`, or `plot=True` |
+| Detect a golden/death cross | serial lookback via `ind[0]` / `ind[1]` |
+| Need resumable state | keep indicator state serializable; use `partial`, not a lambda, for `factory` |
+| Need maximum performance | start from the 100+ built-in Rust indicator classes, then consider writing Rust |
 
 ## Further Reading
 
@@ -669,3 +951,4 @@ In short, AKQuant should act as the indicator producer, not the full enterprise 
 - [AKQuant Indicator Reference](./rust_indicator_reference.md)
 - [Indicator Playbook](./talib_indicator_playbook.md)
 - [Runnable example: 60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py)
+- [Runnable example: 72_declarative_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/72_declarative_indicators.py)

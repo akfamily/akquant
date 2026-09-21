@@ -14,7 +14,7 @@ different scenario and none replacing the others:
 
 | Path | Fits | Backtest | Live | Feeds `get_history`/indicators | Daily label convention |
 | --- | --- | --- | --- | --- | --- |
-| `subscribe_bars` (recommended) | Declarative in-strategy multi-timeframe subscription | Yes | Yes | Yes, via `get_history(freq=)` / `register_incremental_indicator(freq=)` | Last base bar of the trading day |
+| `subscribe_bars` (recommended) | Declarative in-strategy multi-timeframe subscription | Yes | Yes | Yes, via `get_history(freq=)` / `self.I(freq=)` | Last base bar of the trading day |
 | `BarGenerator` | In-strategy manual aggregation, no engine configuration needed | Yes | Yes | No — only the bar delivered to the callback is available | Next midnight (pandas `resample` convention) |
 | `feed.resample` / `feed.replay` | Offline data orchestration before `run_backtest` | Backtest only | No | Requires a synthetic symbol; timestamps are user-defined | User-defined |
 
@@ -74,7 +74,7 @@ Key API:
   window snapshot for a symbol (callable only from inside a market data
   callback); it never fires a callback.
 - `get_history(count, symbol, field, freq=)` / `get_history_multi(...)` /
-  `register_incremental_indicator(..., freq=)`: pass an already-subscribed
+  `self.I(..., freq=)`: pass an already-subscribed
   window period label as `freq` to read that period's history; inside a
   window callback `freq` can be omitted (it resolves to the current callback's
   period automatically).
@@ -143,8 +143,8 @@ self.subscribe_bars(
     callback=self.on_daily,
     session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
 )
-self.register_incremental_indicator(
-    "daily_sma", aq.SMA(self.ma_window), source="close", freq="1d"
+self.daily_sma = self.I(
+    aq.SMA(self.ma_window), name="daily_sma", source="close", freq="1d"
 )
 ```
 

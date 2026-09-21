@@ -3111,6 +3111,18 @@ def check_strategy_limits(
     ...
 
 # B2′ 向量化列计算原语 (numpy 零拷贝读入, 返回 float64 数组)
+def clone_indicator(indicator: typing.Any) -> typing.Any:
+    r"""
+    复制一个内建增量指标的完整状态, 返回同类型的新对象.
+
+    服务于"试算不提交"(intrabar peek): 用未闭合窗口的快照喂副本算出临时值, 原对象
+    状态不受污染。非内建指标(用户自写的 Python 类)请走 `copy.deepcopy`。
+
+    :param indicator: 任一内建增量指标实例(``SMA`` / ``EMA`` / ``MACD`` …)
+    :return: 状态完全相同的新实例
+    :raises TypeError: 传入对象不是内建增量指标
+    """
+
 def vec_sma(values: numpy.ndarray, period: int) -> numpy.ndarray: ...
 def vec_ema(values: numpy.ndarray, period: int) -> numpy.ndarray: ...
 def vec_wma(values: numpy.ndarray, period: int) -> numpy.ndarray: ...

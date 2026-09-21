@@ -483,7 +483,6 @@ class StrategyConfig:
     max_long_positions: Optional[int] = None
     max_short_positions: Optional[int] = None
     exit_on_last_bar: bool = True
-    indicator_mode: str = "precompute"
     risk: Optional[RiskConfig] = None
     strategy_id: Optional[str] = None
     strategies_by_slot: Optional[Dict[str, Any]] = None

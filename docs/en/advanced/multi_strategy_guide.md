@@ -20,6 +20,7 @@ This guide focuses on organizing multi-slot execution under a shared account mod
 
 - `StrategyConfig.strategy_id`
 - `StrategyConfig.strategies_by_slot`
+- `run_backtest(studies=[...])` / `run_live(studies=[...])`: a list of indicator-only `Study` classes, merged into `strategies_by_slot` internally (key = `study_id`, default snake_case class name). Same topology as the previous item; see the custom indicator guide, "Pluggable studies".
 - `StrategyConfig.strategy_max_order_value` / `strategy_max_order_size` / `strategy_max_position_size`
 - `StrategyConfig.strategy_max_daily_loss` / `strategy_max_drawdown`
 - `StrategyConfig.strategy_reduce_only_after_risk`

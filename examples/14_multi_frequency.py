@@ -89,7 +89,6 @@ class MultiFreqStrategy(aq.Strategy):
     def __init__(self) -> None:
         """订阅日线窗口并注册按日线周期驱动的 SMA 增量指标."""
         super().__init__()
-        self.indicator_mode = "incremental"
         self.ma_window = 3
         self.daily_trend = 0
         self.subscribe_bars(
@@ -97,8 +96,8 @@ class MultiFreqStrategy(aq.Strategy):
             callback=self.on_daily,
             session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
         )
-        self.register_incremental_indicator(
-            "daily_sma", aq.SMA(self.ma_window), source="close", freq="1d"
+        self.daily_sma = self.I(
+            aq.SMA(self.ma_window), name="daily_sma", source="close", freq="1d"
         )
 
     def on_daily(self, bar: aq.Bar) -> None:
@@ -140,7 +139,6 @@ if __name__ == "__main__":
     config = BacktestConfig(
         strategy_config=StrategyConfig(
             initial_cash=100_000.0,
-            indicator_mode="incremental",
         ),
         instruments_config=[stock_1m_config],
         show_progress=True,

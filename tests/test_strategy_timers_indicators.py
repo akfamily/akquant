@@ -3,7 +3,6 @@ from unittest.mock import MagicMock
 
 import akquant
 import pandas as pd
-import pytest
 from akquant.akquant import StrategyContext
 from akquant.indicator import Indicator
 from akquant.strategy import Strategy
@@ -111,34 +110,16 @@ def test_timer_registration() -> None:
     assert (daily_ts_2, "__daily__|14:55:00|daily_timer") in clean_call_args
 
 
-def test_register_precomputed_indicator() -> None:
-    """Registers precomputed indicator under precompute mode."""
+def test_declared_precomputed_indicator_enters_precompute_list() -> None:
+    """self.I(Indicator(...)) 走向量化预计算路径."""
     strategy = MyTimerStrategy()
-    strategy.indicator_mode = "precompute"
     indicator = SMA(5)
 
-    strategy.register_precomputed_indicator("sma5", indicator)
+    binding = strategy.I(indicator, name="sma5")
 
-    assert getattr(strategy, "sma5") is indicator
     assert indicator in strategy._precomputed_indicators
-
-
-def test_register_incremental_indicator_requires_incremental_mode() -> None:
-    """Rejects incremental registration when mode is precompute."""
-    strategy = MyTimerStrategy()
-    strategy.indicator_mode = "precompute"
-
-    with pytest.raises(ValueError, match="indicator_mode='incremental'"):
-        strategy.register_incremental_indicator("sma5", MagicMock())
-
-
-def test_register_precomputed_indicator_requires_precompute_mode() -> None:
-    """Rejects precomputed registration when mode is incremental."""
-    strategy = MyTimerStrategy()
-    strategy.indicator_mode = "incremental"
-
-    with pytest.raises(ValueError, match="indicator_mode='precompute'"):
-        strategy.register_precomputed_indicator("sma5", SMA(5))
+    assert strategy._incremental_indicators["sma5"].precomputed is True
+    assert binding.get_instance() is indicator
 
 
 def test_incremental_indicator_updates_from_bar_close() -> None:
@@ -160,9 +141,8 @@ def test_incremental_indicator_updates_from_bar_close() -> None:
             self.volume = 0.0
 
     strategy = MyTimerStrategy()
-    strategy.indicator_mode = "incremental"
     indicator = IncrementalIndicator()
-    strategy.register_incremental_indicator("inc_sma", indicator, source="close")
+    strategy.inc_sma = strategy.I(indicator, name="inc_sma", source="close")
 
     strategy._update_incremental_indicators(FakeBar(close=12.5))  # type: ignore[arg-type]
 
@@ -189,11 +169,10 @@ def test_incremental_indicator_symbol_filter() -> None:
             self.volume = 0.0
 
     strategy = MyTimerStrategy()
-    strategy.indicator_mode = "incremental"
     indicator = IncrementalIndicator()
-    strategy.register_incremental_indicator(
-        "inc_sma",
+    strategy.inc_sma = strategy.I(
         indicator,
+        name="inc_sma",
         source="close",
         symbols=["000001.SZ_1D"],
     )
@@ -228,10 +207,9 @@ def test_incremental_indicator_uses_symbol_scoped_instances() -> None:
             self.volume = 0.0
 
     strategy = MyTimerStrategy()
-    strategy.indicator_mode = "incremental"
-    strategy.register_incremental_indicator(
-        "inc_sma",
-        indicator_factory=IncrementalIndicator,
+    strategy.inc_sma = strategy.I(
+        factory=IncrementalIndicator,
+        name="inc_sma",
         source="close",
     )
 
@@ -261,12 +239,11 @@ def test_incremental_indicator_bootstrap_respects_active_start_boundary() -> Non
 
         def __init__(self) -> None:
             super().__init__()
-            self.runtime_config = {"indicator_mode": "incremental"}
 
         def on_start(self) -> None:
-            self.register_incremental_indicator(
-                "inc_sma",
-                indicator_factory=IncrementalIndicator,
+            self.inc_sma = self.I(
+                factory=IncrementalIndicator,
+                name="inc_sma",
                 source="close",
                 warmup_bars=2,
             )

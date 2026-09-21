@@ -236,12 +236,9 @@ def test_window_bars_match_pandas_resample_and_dispatch_order() -> None:
 class _IndicatorByFreq(Strategy):
     def __init__(self) -> None:
         super().__init__()
-        self.indicator_mode = "incremental"
         self.subscribe_bars("5min")
-        self.register_incremental_indicator("sma_base", SMA(2), source="close")
-        self.register_incremental_indicator(
-            "sma_5m", SMA(2), source="close", freq="5min"
-        )
+        self.sma_base = self.I(SMA(2), name="sma_base", source="close")
+        self.sma_5m = self.I(SMA(2), name="sma_5m", source="close", freq="5min")
         self.updates_5m: list[float] = []
 
     def on_window_bar(self, bar: Bar) -> None:
@@ -268,7 +265,7 @@ def test_incremental_indicator_driven_only_by_its_freq() -> None:
 
 
 def test_subscribe_bars_validation_errors() -> None:
-    """subscribe_bars/register_incremental_indicator(freq=) 的各类非法输入报错."""
+    """subscribe_bars/I(freq=) 的各类非法输入报错."""
     s = Strategy()
     with pytest.raises(ValueError, match="30s"):
         s.subscribe_bars("30s")
@@ -279,11 +276,8 @@ def test_subscribe_bars_validation_errors() -> None:
     with pytest.raises(ValueError, match="session_windows"):
         s.subscribe_bars("5min", session_windows=[("11:30", "09:30")])
     s.subscribe_bars("5min")
-    with pytest.raises(ValueError, match="indicator_mode"):
-        s.register_incremental_indicator("x", SMA(2), freq="5min")  # 默认 precompute
-    s.indicator_mode = "incremental"
     with pytest.raises(ValueError, match="subscribe_bars"):
-        s.register_incremental_indicator("x", SMA(2), freq="15min")  # 未订阅
+        s.I(SMA(2), name="x", freq="15min")  # 未订阅
 
 
 def test_subscribe_bars_after_engine_configured_raises() -> None:

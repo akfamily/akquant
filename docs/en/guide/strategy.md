@@ -867,26 +867,25 @@ Supported Indicators: `SMA`, `EMA`, `MACD`, `RSI`, `BollingerBands`, `ATR`.
 
 ### 7.1 Registration and Usage
 
-AKQuant follows a dual-platform and single-strategy style. Each strategy must explicitly set `indicator_mode` and use the matching registration API:
+Indicators have a single declaration entry point, `self.I(...)`. AKQuant dispatches on the object you pass: anything with an `update()` method takes the **incremental** path, while an `Indicator(name, fn)` instance takes the **vectorized precompute** path. Both kinds can coexist in one strategy.
 
-* `indicator_mode="precompute"` + `register_precomputed_indicator(...)`
-* `indicator_mode="incremental"` + `register_incremental_indicator(...)`
+Declaring once gets you three things: the framework advances the indicator on every bar, `ind[0]` / `ind[1]` series lookback works, and plot points are reported on demand.
 
 ```python
-from akquant import Bar, SMA, Strategy
+from akquant import Bar, Indicator, Strategy
 
-class IndicatorStrategy(Strategy):
-    def __init__(self):
-        self.indicator_mode = "precompute"
-        self.sma20 = SMA(20)
-        self.register_precomputed_indicator("sma20", self.sma20)
-
+class PrecomputeIndicatorStrategy(Strategy):
     def on_start(self):
+        # Passing an Indicator instance -> vectorized precompute
+        self.mom10 = self.I(
+            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            name="mom10",
+        )
         self.subscribe("AAPL")
 
     def on_bar(self, bar: Bar):
-        val = self.sma20.get_value(bar.symbol, bar.timestamp)
-        if bar.close > val:
+        val = self.mom10[0]
+        if val is not None and val > 0:
             self.buy(bar.symbol, 100)
 ```
 
@@ -894,49 +893,40 @@ class IndicatorStrategy(Strategy):
 from akquant import Bar, SMA, Strategy
 
 class IncrementalIndicatorStrategy(Strategy):
-    def __init__(self):
-        self.indicator_mode = "incremental"
-        self.sma20 = SMA(20)
-        self.register_incremental_indicator(
-            "sma20",
-            self.sma20,
-            source="close",
-            symbols=["AAPL"],
-        )
+    def on_start(self):
+        # Passing an object with update() -> incremental
+        self.sma20 = self.I(SMA(20), name="sma20", source="close", symbols=["AAPL"])
 
     def on_bar(self, bar: Bar):
         if bar.symbol != "AAPL":
             return
-        val = self.sma20.value
+        val = self.sma20[0]
         if val is None:
             return
         if bar.close > val:
             self.buy(bar.symbol, 100)
 ```
 
-Incremental mode now supports two recommended capabilities:
+The incremental path offers two recommended capabilities:
 
-* `indicator_factory`: creates an isolated indicator instance per `symbol`, which is the recommended pattern for multi-symbol strategies.
+* `factory`: creates an isolated indicator instance per `symbol`, which is the recommended pattern for multi-symbol strategies.
 * `warmup_bars`: bootstraps incremental indicators with bars before `start_time` before the live event stream begins.
 
 ```python
 from akquant import Bar, SMA, Strategy
 
 class MultiSymbolIncrementalStrategy(Strategy):
-    def __init__(self):
-        self.indicator_mode = "incremental"
-
     def on_start(self):
-        self.register_incremental_indicator(
-            "sma20",
-            indicator_factory=lambda: SMA(20),
+        self.sma20 = self.I(
+            factory=lambda: SMA(20),
+            name="sma20",
             source="close",
             symbols=["AAPL", "MSFT"],
             warmup_bars=20,
         )
 
     def on_bar(self, bar: Bar):
-        val = self.sma20.value
+        val = self.sma20[0]
         if val is None:
             return
         if bar.close > val:
@@ -945,9 +935,10 @@ class MultiSymbolIncrementalStrategy(Strategy):
 
 Notes:
 
-* The legacy single-symbol form `register_incremental_indicator("sma20", self.sma20, ...)` remains supported.
-* If one shared instance is reused across multiple symbols, AKQuant raises an explicit error and points users to `indicator_factory`.
+* `ind[0]` is the current bar's value (`.value` is an alias) and `ind[1]` is the previous bar. Out-of-range lookback returns `None` instead of raising, so a single `if val is None` check covers the warmup period.
+* If one shared instance is reused across multiple symbols, AKQuant raises an explicit error and points users to `factory=`.
 * `warmup_bars` only consumes history before the active start boundary and does not double-consume the first active bar.
+* Plot points are reported automatically once you pass any plotting argument (`pane` / `color` / `label`, ...) or `plot=True`; nothing is reported by default.
 * If you need to build private indicators instead of only using built-ins such as `SMA` or `EMA`, continue with the [Custom Indicator Guide](./custom_indicator.md).
 
 ## 7. Strategy Cookbook

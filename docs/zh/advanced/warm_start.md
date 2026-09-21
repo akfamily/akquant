@@ -91,20 +91,40 @@ def on_start(self):
 使用 `self.is_restored` 属性判断当前是否为恢复模式。
 
 ```python
-def on_start(self):
-    # 1. 初始化指标 (仅在冷启动时)
-    if not self.is_restored:
-        self.sma = SMA(30)
-        # 初始化其他非持久化状态...
-    else:
-        self.log("Resumed from snapshot. Indicators retained.")
+from functools import partial
 
-    # 2. 注册指标 (必须执行，以便 Engine 知道需要更新它)
-    self.register_precomputed_indicator("sma", self.sma)
+import akquant as aq
 
-    # 3. 订阅行情 (必须执行，因为连接是临时的)
-    self.subscribe(self.symbol)
+
+# 指标工厂必须是模块级函数：快照要序列化策略实例，on_start 里的 lambda 是
+# 局部对象，pickle 不了。
+def _make_sma(window: int):
+    return aq.SMA(window)
+
+
+class MyStrategy(Strategy):
+    def on_start(self):
+        # 1. 初始化非持久化状态 (仅在冷启动时)
+        if not self.is_restored:
+            self.buy_count = 0
+            # 初始化其他非持久化状态...
+        else:
+            self.log("Resumed from snapshot. Indicators retained.")
+
+        # 2. 声明指标 (必须执行，框架据此每根 bar 自动推进)
+        #    self.I 内部按 is_restored 短路，不会覆盖快照里已恢复的指标状态，
+        #    因此无需包在 if not self.is_restored 分支里。
+        self.sma = self.I(factory=partial(_make_sma, 30), name="sma", source="close")
+
+        # 3. 订阅行情 (必须执行，因为连接是临时的)
+        self.subscribe(self.symbol)
 ```
+
+!!! warning "`factory` 不能是 lambda"
+    快照会 `pickle` 整个策略实例，而 `on_start` 里写的 `lambda: SMA(30)` 是一个局部
+    对象，`pickle` 不了，`save_checkpoint` 会直接失败。热启动场景请一律改成**模块级
+    函数 + `functools.partial`**，如上例的 `partial(_make_sma, 30)`。完整可运行写法见
+    [21_warm_start_demo.py](https://github.com/akfamily/akquant/blob/main/examples/21_warm_start_demo.py)。
 
 ### 3.3 指标持久化
 
@@ -120,6 +140,7 @@ AKQuant 内置的指标（如 `SMA`, `EMA`）已经支持 Pickle 序列化。如
 6.  **运行时配置注入**：可通过 `strategy_runtime_config` 在恢复阶段覆盖错误处理和快照阈值等运行时行为。
 7.  **策略级风控状态可恢复**：策略限额、策略现金流、日损基线、回撤峰值、仅平仓激活态等会随快照保存并恢复，便于断点续跑后保持风控行为连续。
 8.  **默认时区**：`run_from_checkpoint` 未显式传入 `timezone` 时，默认使用 `Asia/Shanghai`。
+9.  **`self.I(factory=...)` 的工厂必须可 `pickle`**：快照会序列化策略实例，局部的 `lambda` 无法 `pickle`。请改用模块级函数 + `functools.partial`。
 
 ## 5. 完整示例
 
@@ -127,11 +148,18 @@ AKQuant 内置的指标（如 `SMA`, `EMA`）已经支持 Pickle 序列化。如
 
 ```python
 # 示例摘要
+from functools import partial
+
+
+def _make_sma(window: int):
+    return aq.SMA(window)
+
+
 class MyStrategy(Strategy):
     def on_start(self):
         if not self.is_restored:
-            self.sma = SMA(10)
-        self.register_precomputed_indicator("sma", self.sma)
+            self.buy_count = 0
+        self.sma = self.I(factory=partial(_make_sma, 10), name="sma", source="close")
 
 # ... 运行 Phase 1 ...
 save_checkpoint(engine, strategy, "checkpoint.pkl")

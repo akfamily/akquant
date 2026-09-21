@@ -10,7 +10,7 @@ AKQuant 目前有三条独立的多周期路径，覆盖不同场景，互不替
 
 | 路径 | 适用 | 回测 | 实盘 | 高周期进历史与指标 | 日线时间戳口径 |
 | --- | --- | --- | --- | --- | --- |
-| `subscribe_bars`（推荐） | 策略内声明式订阅多周期 | 支持 | 支持 | 进 `get_history(freq=)` / `register_incremental_indicator(freq=)` | 当日最后一根基础 bar |
+| `subscribe_bars`（推荐） | 策略内声明式订阅多周期 | 支持 | 支持 | 进 `get_history(freq=)` / `self.I(freq=)` | 当日最后一根基础 bar |
 | `BarGenerator` | 策略内手工聚合，不想动引擎配置 | 支持 | 支持 | 不进历史/指标，只有聚合后回调收到的那一根 | 次日零点（pandas `resample` 口径） |
 | `feed.resample` / `feed.replay` | 离线数据编排，喂给 `run_backtest` 之前就要多频率 feed | 仅回测 | 不支持 | 需要伪标的拼接，用户自己打时间戳 | 用户自定 |
 
@@ -58,7 +58,7 @@ class FiveMinuteTrend(Strategy):
 - `callback`：省略时闭合的窗口 bar 会回调策略的 `on_window_bar(bar)`；传入具体函数（如示例 14 的 `on_daily`）则改由该函数接收，`on_window_bar` 不再触发该条订阅。
 - `on_window_bar(bar)`：默认窗口回调，`bar.freq` 是该 bar 所属的周期标签（如 `"5min"`、`"1d"`）。
 - `current_window(symbol, freq)`：查看某标的当前正在形成、尚未闭合的窗口快照（只能在行情回调内调用），不会触发回调。
-- `get_history(count, symbol, field, freq=)` / `get_history_multi(...)` / `register_incremental_indicator(..., freq=)`：`freq` 传已订阅的窗口周期标签，取的是该周期的历史序列；在窗口回调内可省略 `freq`（自动按当前回调定档）。
+- `get_history(count, symbol, field, freq=)` / `get_history_multi(...)` / `self.I(..., freq=)`：`freq` 传已订阅的窗口周期标签，取的是该周期的历史序列；在窗口回调内可省略 `freq`（自动按当前回调定档）。
 
 ## 闭合规则：即时 vs 延迟
 
@@ -87,8 +87,8 @@ self.subscribe_bars(
     callback=self.on_daily,
     session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
 )
-self.register_incremental_indicator(
-    "daily_sma", aq.SMA(self.ma_window), source="close", freq="1d"
+self.daily_sma = self.I(
+    aq.SMA(self.ma_window), name="daily_sma", source="close", freq="1d"
 )
 ```
 

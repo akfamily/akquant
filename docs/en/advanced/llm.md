@@ -41,8 +41,9 @@ Your task is to write trading strategies or backtest scripts based on user requi
 
 4.  **Indicators**:
     *   Prefer using `akquant.indicators` (e.g., `SMA`, `RSI`).
-    *   Register in `__init__` or `on_start`: `self.sma = SMA(20); self.register_precomputed_indicator("sma", self.sma)`.
-    *   Access value via `self.sma.value`.
+    *   Declare in `on_start` through the single entry point `self.I(...)`: `self.sma = self.I(SMA(20), name="sma")`.
+    *   Read the value via `self.sma[0]` (current bar; `.value` is an alias) and `self.sma[1]` (previous bar). Out-of-range lookback returns `None`.
+    *   Multi-symbol strategies must pass `factory=` (e.g. `self.I(factory=lambda: SMA(20), symbols=["AAPL", "MSFT"])`); passing one instance across several symbols raises.
 
 5.  **Backtest Execution**:
     *   Use `akquant.run_backtest` with explicit arguments.

@@ -431,45 +431,42 @@ class FSMStrategy(Strategy):
 
 `AKQuant` 目前已经提供了 `AKQuant.talib` 兼容层，并支持 `python/rust` 双后端；但在实战中，我们仍会频繁遇到需要开发私有指标或策略专用信号的场景。
 
-### 5.5.1 两种自定义指标路径
+### 5.5.1 统一入口 `self.I()` 与两条路径
 
-在 AKQuant 里，“自定义指标”通常有两条主路径：
+在 AKQuant 里，自定义指标只有一个声明入口 `self.I()`，它按你传入的对象自动分派到两条路径：
 
-一条是**预计算指标（`precompute`）**，适合一次性对完整 `DataFrame` 做向量化计算；另一条是**增量指标（`incremental`）**，适合在事件流里逐 Bar 更新状态，便于多标的、热启动和实时场景复用。两条路径都可以使用 `AKQuant` 的 `Indicator` 体系，区别只在于接入方式不同。
+一条是**增量指标**（传任何有 `update()` 的对象），在事件流里逐 Bar 更新状态，便于多标的、热启动和实时场景复用；另一条是**预计算指标**（传 `Indicator(name, fn)` 实例），一次性对完整 `DataFrame` 做向量化计算。两者可以共存于同一个策略。
 
-### 5.5.2 预计算：使用 `Indicator(name, fn, **kwargs)`
+声明一次，框架负责三件事：每根 Bar 自动推进、支持 `ind[0]` / `ind[1]` 序列回溯、按需自动上报绘图点。这对标 TradingView Pine Script 的 `ta.*` + `plot()`。
 
-如果你的指标天然适合用 pandas / numpy 在整段历史上一次性计算，最简单的方式是直接构造 `Indicator`：
+### 5.5.2 增量：`self.I(有 update() 的对象)`
+
+AKQuant 内置了 100+ 个 Rust 实现的有状态指标类，开箱即用：
 
 ```python
-from akquant import Indicator, Strategy
+import akquant as aq
+from akquant import Strategy
 
 
-class PrecomputeMomentumStrategy(Strategy):
-    def __init__(self):
-        super().__init__()
-        self.indicator_mode = "precompute"
-        self.mom10 = Indicator(
-            "mom10",
-            lambda df: df["close"] - df["close"].shift(10),
-        )
-        self.register_precomputed_indicator("mom10", self.mom10)
+class MaCrossStrategy(Strategy):
+    def on_start(self):
+        # 声明一次 = 自动更新 + 自动绘图 + 可回溯
+        self.ema_fast = self.I(aq.EMA(10), pane=0, color="#e91e63")
+        self.ema_slow = self.I(aq.EMA(30), pane=0, color="#3f51b5")
 
     def on_bar(self, bar):
-        value = self.mom10.get_value(bar.symbol, bar.timestamp)
-        if value == value and value > 0:
+        # [0] 是当前 Bar，[1] 是上一根；未就绪或越界时是 None
+        if self.ema_fast[1] is None or self.ema_slow[1] is None:
+            return
+        if self.ema_fast[1] <= self.ema_slow[1] and self.ema_fast[0] > self.ema_slow[0]:
             self.buy(bar.symbol, 100)
 ```
 
-这种写法的优点是：
+指标声明推荐写在 `on_start` 而不是 `__init__`：`self.params` 在 `__init__` 之后才注入，参数化指标（`run_grid_search` 要扫的那些）只有在 `on_start` 里才拿得到参数值。
 
-- 代码最短，适合快速原型；
-- 指标结果会按 `symbol` 缓存；
-- 可以直接复用 pandas `rolling` / `shift` / `ewm` 等向量化能力。
+### 5.5.3 自定义增量指标：继承 `Indicator` 并实现 `update`
 
-### 5.5.3 增量：继承 `Indicator` 并实现 `update`
-
-如果你希望指标跟随事件流逐步更新，或者需要把内部状态一起随热启动保存，推荐继承 `Indicator` 并实现 `update`：
+内置指标不够用时，写一个有 `update()` 的类即可：
 
 ```python
 from collections import deque
@@ -500,44 +497,77 @@ class MyMomentum(Indicator):
         return self._current_value
 ```
 
-### 5.5.4 在策略中注册增量指标
-
-手动在 `on_bar` 里直接调用 `update()` 可以做快速实验，但工程里更推荐通过框架注册，让 AKQuant 负责按 `source` 自动喂数、按 `symbol` 隔离实例，并和热启动逻辑保持一致：
+把它交给框架，由 AKQuant 负责按 `source` 自动喂数、按 `symbol` 隔离实例，并和热启动逻辑保持一致：
 
 ```python
 from akquant import Strategy
 
 
 class IncrementalMomentumStrategy(Strategy):
-    def __init__(self):
-        super().__init__()
-        self.indicator_mode = "incremental"
-
     def on_start(self):
-        self.register_incremental_indicator(
-            "mom10",
-            indicator_factory=lambda: MyMomentum(period=10),
+        self.mom10 = self.I(
+            factory=lambda: MyMomentum(period=10),
+            name="mom10",
             source="close",
             symbols=["AAPL", "MSFT"],
             warmup_bars=10,
         )
 
     def on_bar(self, bar):
-        value = self.mom10.value
-        if value == value and value > 0:
+        value = self.mom10[0]
+        if value is not None and value > 0:
             self.buy(bar.symbol, 100)
 ```
 
 实战建议：
 
 - 单标的临时实验：可以直接传单个指标实例；
-- 多标的正式策略：优先使用 `indicator_factory`，为每个 `symbol` 创建独立实例；
+- 多标的正式策略：必须用 `factory=`，为每个 `symbol` 创建独立实例（传实例跨多标的会直接报错，不会静默共享状态）；
 - 需要首根有效 Bar 就有值：结合 `warmup_bars` 使用；
-- 需要断点续跑：确保自定义指标可被 `pickle` 序列化。
+- 需要断点续跑：确保自定义指标可被 `pickle` 序列化，且 `factory` 不能是 lambda（要用模块级函数 + `functools.partial`）。
+
+### 5.5.4 预计算：`self.I(Indicator(name, fn))`
+
+如果你的指标天然适合用 pandas / numpy 在整段历史上一次性计算，传一个 `Indicator` 实例即可：
+
+```python
+from akquant import Indicator, Strategy
+
+
+class PrecomputeMomentumStrategy(Strategy):
+    def on_start(self):
+        self.mom10 = self.I(
+            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            name="mom10",
+        )
+
+    def on_bar(self, bar):
+        value = self.mom10[0]
+        if value is not None and value > 0:
+            self.buy(bar.symbol, 100)
+```
+
+这种写法的优点是代码最短、适合快速原型，并可直接复用 pandas `rolling` / `shift` / `ewm` 等向量化能力。但它有三条硬限制：**实盘用不了**（没有完整的历史 `DataFrame`）、**含 Tick 的输入会报错**、**不支持 `freq=`**。
+
+### 5.5.5 自动绘图
+
+传了任一绘图参数（`pane` / `color` / `label` / `render_type` / `reference_lines` / `scale_group`）或显式 `plot=True`，框架就会在每次更新后自动上报绘图点，不必在 `on_bar` 里手写 `record_indicator`。
+
+**默认不上报**——与 Pine 一致（`ta.sma()` 只算、`plot()` 才画）。这不只是风格：实盘的指标 sink 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路。
+
+多值指标用 `outputs` 拆成多条独立的线：
+
+```python
+self.macd = self.I(aq.MACD(12, 26, 9), name="macd", pane=2,
+                   outputs=("dif", "dea", "hist"))
+
+self.macd[0]      # 整个元组 (dif, dea, hist)
+self.macd.dif[0]  # 单个分量，同样支持 [1] 回溯
+```
 
 更系统的说明，请直接参考：[自定义指标指南](../guide/custom_indicator.md)。
 
-### 5.5.5 使用 `AKQuant.talib` 双后端
+### 5.5.6 使用 `AKQuant.talib` 双后端
 
 当策略从 TA-Lib 迁移时，建议先保持函数签名不变，再通过 `backend` 参数切换执行后端。
 
@@ -609,7 +639,7 @@ if np.isnan(last_signal):
 3. 用固定数据集回归验证 warmup 与输出形态（单值或 tuple）一致。
 4. 对支持 `period` 别名的指标优先沿用旧参数命名，降低迁移成本。
 
-### 5.5.6 指标选型与组合模板
+### 5.5.7 指标选型与组合模板
 
 实战里不建议“单指标决策”，更推荐“趋势 + 动量 + 波动率/风险”组合。
 
@@ -833,7 +863,7 @@ result = aq.run_backtest(
 
 - [AKQuant 策略指南](../guide/strategy.md) —— 回调触发顺序、类风格与函数式能力差异的权威说明，对应本章 5.1、5.2、5.7。
 - [AKQuant 自定义指标指南](../guide/custom_indicator.md) —— 预计算与增量两种指标接入方式的完整文档，对应本章 5.5。
-- [AKQuant 指标组合实战手册](../guide/talib_indicator_playbook.md) —— `AKQuant.talib` 双后端与指标组合模板的实战说明，对应本章 5.5.5、5.5.6。
+- [AKQuant 指标组合实战手册](../guide/talib_indicator_playbook.md) —— `AKQuant.talib` 双后端与指标组合模板的实战说明，对应本章 5.5.6、5.5.7。
 
 **本书相关**
 

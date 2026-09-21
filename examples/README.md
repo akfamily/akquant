@@ -61,10 +61,15 @@
 - [55_functional_ml_walk_forward.py](./55_functional_ml_walk_forward.py): 函数式 `on_train_signal(ctx)` + Walk-Forward 训练评估示例。
 - [56_functional_warm_start_demo.py](./56_functional_warm_start_demo.py): 函数式 `on_resume(ctx)` 热启动续跑最小示例。
 - [57_functional_multi_slot_warm_start_demo.py](./57_functional_multi_slot_warm_start_demo.py): 函数式多 slot `on_resume(ctx)` 热启动续跑示例。
-- [58_incremental_bootstrap_demo.py](./58_incremental_bootstrap_demo.py): 增量指标“历史预热 + 实时更新”最小示例，演示 `indicator_factory` 与 `warmup_bars`。
+- [58_incremental_bootstrap_demo.py](./58_incremental_bootstrap_demo.py): 增量指标“历史预热 + 实时更新”最小示例，演示 `self.I(factory=...)` 与 `warmup_bars`。
 - [59_akshare_etf_rotation.py](./59_akshare_etf_rotation.py): AKShare + ETF 轮动最小示例，演示单个拼接后 `DataFrame` 的推荐多标输入方式。
-- [60_custom_indicator_demo.py](./60_custom_indicator_demo.py): 自定义指标最小示例，同时演示 `Indicator(name, fn)` 的预计算写法和 `indicator_factory` 的增量写法。
+- [60_custom_indicator_demo.py](./60_custom_indicator_demo.py): 自定义指标最小示例，演示 `self.I()` 的三种用法：`Indicator(name, fn)` 向量化预计算、自定义增量对象、以及两者共存于同一策略。
 - [70_csv_multi_symbol_import_demo.py](./70_csv_multi_symbol_import_demo.py): 从 CSV 文件导入多品种数据的回测示例，覆盖平台对接的固定 7 列格式（`date`/`symbol`/`open`/`high`/`low`/`close`/`volume`，symbol 去后缀纯数字、date naive 东八区、多标 `concat` 后显式传 `symbols=[...]`）；含 `pd.read_csv` 对纯数字 symbol 丢前导 0 的实测坑。
+- [72_declarative_indicators.py](./72_declarative_indicators.py): TradingView / Pine 风格的声明式指标示例，`self.I()` 声明一次即自动更新 + 自动绘图，含 `ind[0]`/`ind[1]` 序列回溯判金叉、MACD 多值 `outputs` 拆线、以及“只算不画”的默认行为。
+- [73_lwc_live_indicators.py](./73_lwc_live_indicators.py): 「`self.I()` 声明一行 → 浏览器 K 线上多一条实时线」的闭环示例：`run_live(broker="replay")` + `akquant.lwc.to_lwc_update()` 增量消息 + 内联 lightweight-charts 的轮询页（`load_lwc_js()`，无 CDN）；HTTP 传输刻意留在示例层不进核心。
+- [74_pluggable_studies.py](./74_pluggable_studies.py): 可插拔 study 示例：`Study` 子类只声明指标不交易，`run_backtest(studies=[...])` 把它们挂成独立 slot，`indicator_df(owner=)` 按归属取点；含 `StudyCannotTradeError` 护栏演示（study 里误写 `self.buy` 当场报错）。
+- [75_intrabar_indicators.py](./75_intrabar_indicators.py): 窗口周期指标的实时值（对标 Pine 的 realtime bar）：`self.I(..., freq="5min", intrabar=True)` 后每根 1min bar 上 `[0]` 是未闭合 5min 窗口的试算值、`[1]` 是上一根已确认、`binding.confirmed` 标明状态；流事件临时点 `confirmed=false` 与确认点同 time。`run_live(broker="replay")` + 网关声明 `freq`。
+- [76_tick_intrabar_indicators.py](./76_tick_intrabar_indicators.py): 基础周期指标在 **tick** 上的实时值：`self.I(aq.SMA(3), intrabar=True)` 后 tick 只试算不提交、bar 闭合才推进状态，框架从 tick 累出形成中 bar（含真实 H/L，ATR 可用）；临时点时间戳按区间末打戳公式预测并与闭合 bar 自校验。`run_backtest(data=[Tick,...], freq="1min")`。
 - [71_native_multi_timeframe_live.py](./71_native_multi_timeframe_live.py): 实盘（`broker="replay"`）多周期示例，行情网关声明 `metadata["freq"]` 后 `subscribe_bars("5min")` 零延迟闭合，`on_window_bar` 与 `run_backtest` 同一份策略代码不改一行。
 
 ## 流式回测与实时报告

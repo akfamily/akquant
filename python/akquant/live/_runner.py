@@ -668,9 +668,10 @@ class LiveRunner:
         # 那时局部名尚未绑定。
         self._stop_target_strategy = strategy_instance
         self._stop_target_slot_strategies = slot_strategy_instances
-        # 运行时配置下发放在最前: indicator_mode 决定指标注册走哪条路, 而指标在
-        # on_start 里注册(主策略由 Rust 在 engine.run() 内触发, 槽位由
-        # _dispatch_slot_strategy_start 触发) —— 两者都在下面。
+        # 运行时配置下发放在最前: error_mode 等字段影响 on_start 自身的异常
+        # 处理与指标声明(self.I 在 on_start 里调用) —— 主策略的 on_start 由
+        # Rust 在 engine.run() 内触发, 槽位由 _dispatch_slot_strategy_start
+        # 触发, 两者都在下面。
         self._apply_runtime_config(
             [strategy_instance, *slot_strategy_instances.values()]
         )
@@ -1057,10 +1058,11 @@ class LiveRunner:
         ``apply_strategy_runtime_config``), 冲突检测与告警去重因此两侧一致。
         入口没传就整个跳过 —— 策略自设的 ``self.runtime_config`` 保持不动。
 
-        **必须早于任何 ``on_start``**: ``runtime_config`` 含 ``indicator_mode``,
-        它决定指标走增量还是预计算, 而指标在 ``on_start`` 里注册。主策略的
-        ``on_start`` 由 Rust 在 ``engine.run()`` 内触发, 槽位策略的由
-        ``_dispatch_slot_strategy_start`` 触发, 本方法在两者之前调用。
+        **必须早于任何 ``on_start``**: ``runtime_config`` 的 ``error_mode`` /
+        ``re_raise_on_error`` 决定 ``on_start`` 自身出错时的行为, 而策略的指标
+        声明(``self.I``)正在 ``on_start`` 里。主策略的 ``on_start`` 由 Rust 在
+        ``engine.run()`` 内触发, 槽位策略的由 ``_dispatch_slot_strategy_start``
+        触发, 本方法在两者之前调用。
 
         :param targets: 主策略与各槽位策略实例
         """

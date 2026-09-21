@@ -1213,26 +1213,25 @@ class MetaAwareStrategy(Strategy):
 
 ### 7.2 指标 (Indicators)
 
-AKQuant 采用“平台双主流、策略单主流”模式。每个策略需要显式设置 `indicator_mode`，并使用对应注册接口：
+指标只有一个声明入口 `self.I(...)`，框架按传入对象自动分派：有 `update()` 方法的对象走**增量**路径，`Indicator(name, fn)` 实例走**向量化预计算**路径。两类指标可以共存于同一个策略。
 
-*   `indicator_mode="precompute"` + `register_precomputed_indicator(...)`
-*   `indicator_mode="incremental"` + `register_incremental_indicator(...)`
+声明一次，框架负责三件事：每根 bar 自动推进、支持 `ind[0]` / `ind[1]` 序列回溯、按需自动上报绘图点。
 
 ```python
-from akquant import Bar, SMA, Strategy
+from akquant import Bar, Indicator, Strategy
 
-class IndicatorStrategy(Strategy):
-    def __init__(self):
-        self.indicator_mode = "precompute"
-        self.sma20 = SMA(20)
-        self.register_precomputed_indicator("sma20", self.sma20)
-
+class PrecomputeIndicatorStrategy(Strategy):
     def on_start(self):
+        # 传 Indicator 实例 -> 向量化预计算
+        self.mom10 = self.I(
+            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            name="mom10",
+        )
         self.subscribe("AAPL")
 
     def on_bar(self, bar: Bar):
-        val = self.sma20.get_value(bar.symbol, bar.timestamp)
-        if bar.close > val:
+        val = self.mom10[0]
+        if val is not None and val > 0:
             self.buy(bar.symbol, 100)
 ```
 
@@ -1240,60 +1239,52 @@ class IndicatorStrategy(Strategy):
 from akquant import Bar, SMA, Strategy
 
 class IncrementalIndicatorStrategy(Strategy):
-    def __init__(self):
-        self.indicator_mode = "incremental"
-        self.sma20 = SMA(20)
-        self.register_incremental_indicator(
-            "sma20",
-            self.sma20,
-            source="close",
-            symbols=["AAPL"],
-        )
+    def on_start(self):
+        # 传有 update() 的对象 -> 增量
+        self.sma20 = self.I(SMA(20), name="sma20", source="close", symbols=["AAPL"])
 
     def on_bar(self, bar: Bar):
         if bar.symbol != "AAPL":
             return
-        val = self.sma20.value
+        val = self.sma20[0]
         if val is None:
             return
         if bar.close > val:
             self.buy(bar.symbol, 100)
 ```
 
-增量模式新增了两项推荐能力：
+增量路径上有两项推荐能力：
 
-*   `indicator_factory`: 为每个 `symbol` 创建独立指标实例，适合多标的策略，避免状态串线。
+*   `factory`: 为每个 `symbol` 创建独立指标实例，适合多标的策略，避免状态串线。
 *   `warmup_bars`: 在进入正式事件流前，先用 `start_time` 之前的历史 Bar 预热增量指标。
 
 ```python
 from akquant import Bar, SMA, Strategy
 
 class MultiSymbolIncrementalStrategy(Strategy):
-    def __init__(self):
-        self.indicator_mode = "incremental"
-
     def on_start(self):
-        self.register_incremental_indicator(
-            "sma20",
-            indicator_factory=lambda: SMA(20),
+        self.sma20 = self.I(
+            factory=lambda: SMA(20),
+            name="sma20",
             source="close",
             symbols=["AAPL", "MSFT"],
             warmup_bars=20,
         )
 
     def on_bar(self, bar: Bar):
-        val = self.sma20.value
+        val = self.sma20[0]
         if val is None:
             return
         if bar.close > val:
             self.buy(bar.symbol, 100)
-
+```
 
 说明：
 
-*   单标的旧写法 `register_incremental_indicator("sma20", self.sma20, ...)` 仍然兼容。
-*   如果一个共享实例被多个 `symbol` 复用，框架会显式报错，提示改为 `indicator_factory`。
+*   `ind[0]` 是当前 Bar 的值（`.value` 是它的别名），`ind[1]` 是上一根，越界返回 `None` 而不抛异常，因此判空统一写 `if val is None`。
+*   如果一个共享实例被多个 `symbol` 复用，框架会显式报错，提示改为 `factory=`。
 *   `warmup_bars` 只会消费正式开始时间之前的历史数据，不会重复消费第一根有效 Bar。
+*   传了绘图参数（`pane` / `color` / `label` 等）或 `plot=True` 就会自动上报绘图点，默认不上报。
 *   如果你需要编写自己的私有指标，而不仅仅是使用内置 `SMA/EMA`，请继续阅读：[自定义指标指南](./custom_indicator.md)。
 ## 8. 高级特性：热启动 (Warm Start)
 
@@ -1315,19 +1306,28 @@ AKQuant 支持**热启动 (Warm Start)** 功能，允许你保存回测状态并
 **示例代码**：
 
 ```python
+from functools import partial
+
+import akquant as aq
+
+
+# 热启动下指标工厂必须是模块级函数: 快照要 pickle 策略实例, lambda 不行。
+def _make_sma(window: int):
+    return aq.SMA(window)
+
+
 def on_start(self):
-    # 1. 初始化指标 (仅在冷启动时)
+    # 1. 初始化非持久化状态 (仅在冷启动时)
     if not self.is_restored:
-        self.sma = SMA(30)
+        self.buy_count = 0
     else:
         self.log("Resumed from snapshot. Indicators retained.")
 
-    # 2. 注册指标 (必须执行)
-    self.register_precomputed_indicator("sma", self.sma)
+    # 2. 声明指标 (必须执行; self.I 按 is_restored 短路, 不会覆盖已恢复的状态)
+    self.sma = self.I(factory=partial(_make_sma, 30), name="sma", source="close")
 
     # 3. 订阅行情 (必须执行)
     self.subscribe(self.symbol)
 ```
 
 更多详细信息，请参阅 [热启动指南](../advanced/warm_start.md)。
-```

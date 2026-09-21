@@ -88,15 +88,37 @@ def on_start(self):
 Correct:
 
 ```python
-def on_start(self):
-    if not self.is_restored:
-        self.sma = SMA(30)
-    else:
-        self.log("Resumed from snapshot. Indicators retained.")
+from functools import partial
 
-    self.register_precomputed_indicator("sma", self.sma)
-    self.subscribe(self.symbol)
+import akquant as aq
+
+
+# The indicator factory must be a module-level function: the snapshot pickles the
+# strategy instance, and a lambda defined inside on_start is a local object.
+def _make_sma(window: int):
+    return aq.SMA(window)
+
+
+class MyStrategy(Strategy):
+    def on_start(self):
+        if not self.is_restored:
+            self.buy_count = 0
+        else:
+            self.log("Resumed from snapshot. Indicators retained.")
+
+        # self.I short-circuits on is_restored, so it never overwrites the
+        # indicator state recovered from the snapshot.
+        self.sma = self.I(factory=partial(_make_sma, 30), name="sma", source="close")
+        self.subscribe(self.symbol)
 ```
+
+!!! warning "`factory` must not be a lambda"
+    The snapshot pickles the whole strategy instance, and a `lambda: SMA(30)` written
+    inside `on_start` is a local object that cannot be pickled — `save_checkpoint`
+    fails outright. For warm start always use a **module-level function plus
+    `functools.partial`**, as in `partial(_make_sma, 30)` above. See
+    [21_warm_start_demo.py](https://github.com/akfamily/akquant/blob/main/examples/21_warm_start_demo.py)
+    for the complete runnable form.
 
 ### 3.3 Indicator Serialization
 
@@ -112,17 +134,25 @@ Built-in indicators (`SMA`, `EMA`, etc.) support pickle serialization. For custo
 6. **Runtime config injection**: Use `strategy_runtime_config` in `run_from_checkpoint` to override runtime behavior at resume.
 7. **Strategy-level risk state continuity**: Strategy limits, strategy cashflow, daily-loss baseline, drawdown peak, and reduce-only activation state are persisted and restored.
 8. **Default timezone**: If `timezone` is not explicitly provided to `run_from_checkpoint`, default is `Asia/Shanghai`.
+9. **`self.I(factory=...)` factories must be picklable**: the snapshot serializes the strategy instance, and a local `lambda` cannot be pickled. Use a module-level function plus `functools.partial`.
 
 ## 5. Full Example
 
 See [21_warm_start_demo.py](https://github.com/akfamily/akquant/blob/main/examples/21_warm_start_demo.py) for a complete runnable example.
 
 ```python
+from functools import partial
+
+
+def _make_sma(window: int):
+    return aq.SMA(window)
+
+
 class MyStrategy(Strategy):
     def on_start(self):
         if not self.is_restored:
-            self.sma = SMA(10)
-        self.register_precomputed_indicator("sma", self.sma)
+            self.buy_count = 0
+        self.sma = self.I(factory=partial(_make_sma, 10), name="sma", source="close")
 
 # ... run phase 1 ...
 save_checkpoint(engine, strategy, "checkpoint.pkl")

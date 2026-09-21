@@ -4039,11 +4039,11 @@ def test_runtime_config_validation_rejects_invalid_values() -> None:
 
 
 def test_runtime_config_defaults_derive_from_dataclass() -> None:
-    """读取侧默认值必须与 dataclass 逐字段一致 —— 手写那份曾漏掉 indicator_mode.
+    """读取侧默认值必须与 dataclass 逐字段一致 —— 手写那份曾漏掉新增字段.
 
-    读取侧 ``_runtime_option`` 一度用手写的 4 键字典兜底, 于是 dataclass 新增
-    ``indicator_mode`` 后读取侧对它直接 KeyError。派生自 ``fields()`` 后新增字段
-    会自动进来, 这个断言守的就是"不许再改回手写"。
+    读取侧 ``_runtime_option`` 一度用手写字典兜底, 于是 dataclass 新增字段后
+    读取侧对它直接 KeyError。派生自 ``fields()`` 后新增字段会自动进来, 这个
+    断言守的就是"不许再改回手写"。
     """
     from dataclasses import fields
 
@@ -4052,7 +4052,7 @@ def test_runtime_config_defaults_derive_from_dataclass() -> None:
     assert RUNTIME_CONFIG_DEFAULTS == {
         f.name: f.default for f in fields(StrategyRuntimeConfig)
     }
-    assert "indicator_mode" in RUNTIME_CONFIG_DEFAULTS
+    assert "error_mode" in RUNTIME_CONFIG_DEFAULTS
 
 
 def test_read_side_resolves_every_config_field() -> None:
