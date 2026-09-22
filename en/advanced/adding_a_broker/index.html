@@ -1,0 +1,1420 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/en/advanced/adding_a_broker/">
+      
+      
+      
+      
+        
+          <link rel="alternate" href="../../../advanced/adding_a_broker/" hreflang="zh">
+        
+          <link rel="alternate" href="./" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>如何新增一个 Broker - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#broker" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../" title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              如何新增一个 Broker
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="../../../advanced/adding_a_broker/" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../textbook/" class="md-tabs__link">
+          
+  
+  
+  Textbook
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/python_basics/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../ml/" class="md-tabs__link">
+          
+  
+  
+  Advanced Topics
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  Architecture & Internals
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../" title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../textbook/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Textbook
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/python_basics/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Topics
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture & Internals
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        总览：五步契约
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-builder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Builder：注册入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-brokercapability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 声明 BrokerCapability
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-tradergatewaybase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 继承 TraderGatewayBase
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-place_order-id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. place_order 里的路由与 id 映射
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-broker-feed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 纯交易 broker：行情走现有 feed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        委托状态映射：终态与非终态
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        恢复节奏与柜台限流
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        委托回报的标的过滤
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        最小骨架
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        参考实现与相关文档
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="broker">如何新增一个 Broker<a class="headerlink" href="#broker" title="Permanent link">&para;</a></h1>
+<p>本页说明 akquant broker 网关层的插件契约：新增一个 broker 需要实现哪些接口、
+声明哪些能力、以及如何把下单请求路由到具体柜台。目标是让接入者不修改
+<code>akquant.gateway</code> 核心代码即可插入一个新的交易通道。</p>
+<p>如果只是想在不改内置工厂分支的前提下注册一个 broker，先看
+<a href="../custom_broker_registry/">自定义 Broker 注册</a>；本页补充的是"网关本身怎么写"。</p>
+<h2 id="_1">总览：五步契约<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<ol>
+<li>写 <strong>builder</strong> 函数，通过 <code>register_broker(name, builder)</code> 注册（或者内置
+   broker 直接放进 <code>python/akquant/gateway/brokers/builtins.py</code>，由
+   <code>register_builtin_brokers()</code> 统一注册）。</li>
+<li>声明 <strong><code>BrokerCapability</code></strong>：<code>broker_extra_fields</code> 列出本 broker 允许的
+   订单专属字段，<code>features</code> 声明任意能力标志。</li>
+<li>继承 <strong><code>TraderGatewayBase</code></strong> 实现必需方法。</li>
+<li>在 <code>place_order</code> 里按 <code>req.asset_type</code> 路由品种、从 <code>req.extra</code> 取专属
+   字段，并维护 broker 订单号与 <code>client_order_id</code> 的映射。</li>
+<li>纯交易 broker（不接行情）令 <code>GatewayBundle(market_gateway=None, ...)</code>，
+   行情继续走 akquant 现有 <code>DataFeed</code>。</li>
+</ol>
+<h2 id="1-builder">1. Builder：注册入口<a class="headerlink" href="#1-builder" title="Permanent link">&para;</a></h2>
+<p>Builder 是一个可调用对象，签名固定为：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">builder</span><span class="p">(</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">feed</span><span class="p">:</span> <span class="n">DataFeed</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">symbols</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">use_aggregator</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GatewayBundle</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="o">...</span>
+</span></code></pre></div>
+<ul>
+<li>第三方/内部 broker：调用 <code>register_broker(name, builder)</code>（来自
+  <code>akquant.gateway</code>），注册后 <code>create_gateway_bundle(broker=name, ...)</code> 会
+  优先解析到它。</li>
+<li>想合并进内置分支的 broker：把 builder 函数加进
+  <code>python/akquant/gateway/brokers/builtins.py</code>，并在
+  <code>register_builtin_brokers()</code> 里追加一行 <code>register_broker("xxx", _build_xxx)</code>。</li>
+</ul>
+<p>Builder 内部通常做三件事：校验必填 <code>kwargs</code>、构造 <code>TraderGateway</code>（以及可选的
+<code>MarketGateway</code>）、把 <code>trader_gateway.get_capabilities()</code> 的结果写入
+<code>GatewayBundle.trader_capabilities</code>，供上层校验 <code>extra</code> 字段用。</p>
+<h2 id="2-brokercapability">2. 声明 <code>BrokerCapability</code><a class="headerlink" href="#2-brokercapability" title="Permanent link">&para;</a></h2>
+<p><code>BrokerCapability</code>（<code>from akquant.gateway.broker_models import BrokerCapability</code>）
+是一个 frozen dataclass，描述这个 broker 的执行语义边界：</p>
+<ul>
+<li><code>broker_extra_fields: tuple[str, ...]</code>：策略下单时通过
+  <code>submit_order(..., extra={...})</code> 传入的柜台专属字段，必须在这里声明；
+  未声明的 key 会在校验时被拒绝（<code>validate_broker_extra</code> 会抛
+  <code>RuntimeError</code>，列出未声明字段与已声明集合）。</li>
+<li><code>features: frozenset[str]</code>：任意能力标志的开放集合，用于策略侧按需探测
+  "这个 broker 支不支持某个特性"，不做强类型约束。</li>
+<li>其余字段（<code>position_effect</code>、<code>reduce_only</code>、<code>supports_short_sell</code>、
+  <code>supported_position_effects</code> 等）描述开平仓/做空等语义是否可用，按 broker
+  实际能力如实填写即可，不确定的保持默认值（保守）。</li>
+</ul>
+<p><code>TraderGateway</code> 协议要求实现 <code>get_capabilities() -&gt; BrokerCapability</code>，
+通常返回一个模块级的 <code>default_capability()</code> 单例：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">default_capability</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">BrokerCapability</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="k">return</span> <span class="n">BrokerCapability</span><span class="p">(</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>        <span class="n">broker_name</span><span class="o">=</span><span class="s2">"mybroker"</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>        <span class="n">broker_extra_fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"account_id"</span><span class="p">,</span> <span class="s2">"order_style"</span><span class="p">),</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        <span class="n">features</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"supports_stop_limit"</span><span class="p">}),</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="p">)</span>
+</span></code></pre></div>
+<h2 id="3-tradergatewaybase">3. 继承 <code>TraderGatewayBase</code><a class="headerlink" href="#3-tradergatewaybase" title="Permanent link">&para;</a></h2>
+<p><code>from akquant.gateway.trader_base import TraderGatewayBase</code> 提供了所有
+broker 共享的管件：回调注册、id 反查表、以及默认的
+<code>heartbeat</code>/<code>sync_open_orders</code>/<code>sync_today_trades</code> 实现。子类只需要实现
+<code>TraderGateway</code> 协议中还缺的部分：</p>
+<p>必须实现：</p>
+<ul>
+<li><code>connect()</code> / <code>disconnect()</code> / <code>start()</code> —— 生命周期</li>
+<li><code>place_order(req) -&gt; str</code> / <code>cancel_order(broker_order_id)</code></li>
+<li><code>query_order(broker_order_id)</code> / <code>query_trades(since=None)</code></li>
+<li><code>query_account()</code> / <code>query_positions()</code></li>
+<li><code>get_capabilities() -&gt; BrokerCapability</code></li>
+</ul>
+<p>基类已提供、通常不需要重写：</p>
+<ul>
+<li>回调注册：<code>on_order</code> / <code>on_trade</code> / <code>on_execution_report</code></li>
+<li>id 反查：<code>record_broker_order(broker_order_id, client_order_id)</code> /
+  <code>client_order_id_for(broker_order_id)</code></li>
+<li>分发：<code>_emit_order</code> / <code>_emit_trade</code> / <code>_emit_exec_from_order</code></li>
+<li>默认实现：<code>heartbeat()</code>（恒真）、<code>sync_open_orders()</code> /
+  <code>sync_today_trades()</code>（空列表）—— 如果 broker 支持断线补齐，覆盖这两个
+  方法即可。</li>
+</ul>
+<p>可选实现：</p>
+<ul>
+<li><code>classify_order_error(exc: BaseException) -&gt; UnifiedErrorType</code> —— 把
+  <code>place_order</code>/<code>cancel_order</code> 抛出的异常分类成「柜台明确回绝」还是「订单状态
+  不可知」，供核心决定该回吐拒单事件（<code>on_reject</code> + <code>record_reject</code>）还是只报
+  「状态未知」（<code>on_error(exc, "order_submit", request)</code> + CRITICAL 日志，绝不
+  伪造拒单）。这是唯一懂本 broker 错误码语义的地方——核心仓不 import 插件，
+  分类知识只能留在这里。</li>
+</ul>
+<p><strong>保守缺省：不实现 = 一律按状态未知处理。</strong> <code>classify_order_error</code> 是可选
+  方法，核心用 <code>getattr</code> 探测；未实现、返回值无法识别为
+  <code>UnifiedErrorType</code>、或该方法自身抛错，都会被
+  <code>python/akquant/gateway/order_errors.py::classify_gateway_error</code> 归入
+  <code>RETRYABLE</code>（状态未知），不会二次崩溃。这个缺省是刻意保守的：宁可让策略多
+  等一轮 <code>sync_open_orders</code> 对账，也不谎报「这单没报出去」。</p>
+<p><strong>不实现的实际代价不是「行为不变」。</strong> 未实现该方法时，本 broker 的<strong>每一笔
+  普通拒单</strong>（如「资金不足」「委托价不符合最小变动单位」这类柜台明确回绝、
+  订单确定不存在的场景）都会被当成状态未知处理——永远不会触发 <code>on_reject</code>，
+  而是每次都触发 <code>on_error</code> + CRITICAL 日志。这正是本次改动要修的症状，插件
+  作者不实现它就会在自己的 broker 上原样复现。</p>
+<p>以 <code>akquant-middleware</code> 的实现为例（<code>src/akquant_middleware/adapter.py</code>）：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">classify_order_error</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span> <span class="ne">BaseException</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">UnifiedErrorType</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span><span class="sd">"""400 业务拒绝 / 409 幂等冲突 / 422 参数校验失败：中间件在柜台侧已把</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="sd">    这笔单判掉了，订单确定不存在 → NON_RETRYABLE。</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="sd">    5xx 与 httpx 传输异常（超时、连接断开）：报文可能已经转给柜台，是否</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="sd">    成单不可知 → RETRYABLE，核心据此不会谎报拒单。</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="sd">    """</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">exc</span><span class="p">,</span> <span class="n">MiddlewareApiError</span><span class="p">)</span> <span class="ow">and</span> <span class="n">exc</span><span class="o">.</span><span class="n">status_code</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">400</span><span class="p">,</span> <span class="mi">409</span><span class="p">,</span> <span class="mi">422</span><span class="p">):</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>        <span class="k">return</span> <span class="n">UnifiedErrorType</span><span class="o">.</span><span class="n">NON_RETRYABLE</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="k">return</span> <span class="n">UnifiedErrorType</span><span class="o">.</span><span class="n">RETRYABLE</span>
+</span></code></pre></div>
+<p><code>UnifiedErrorType</code> 的取值与「哪些分类会被视为明确拒单」定义在
+  <code>python/akquant/gateway/order_errors.py</code>（<code>_DEFINITE_REJECT_TYPES</code> 目前只收
+  <code>RISK_REJECTED</code> 与 <code>NON_RETRYABLE</code>；其余含未知一律按状态未知处理）。</p>
+<h2 id="4-place_order-id">4. <code>place_order</code> 里的路由与 id 映射<a class="headerlink" href="#4-place_order-id" title="Permanent link">&para;</a></h2>
+<p><code>UnifiedOrderRequest</code> 里的 <code>asset_type</code> 用来在 <code>place_order</code> 内部路由到不同
+品种的下单通道（例如证券 vs 期货）；<code>extra: dict[str, Any]</code> 携带的是
+<code>BrokerCapability.broker_extra_fields</code> 里声明过的柜台专属字段，直接从
+<code>req.extra</code> 取值即可（上层已按声明集合校验过，未声明的 key 不会出现）。</p>
+<p>下单成功后，用 <code>self.record_broker_order(broker_order_id, req.client_order_id)</code>
+记录柜台委托号到策略 <code>client_order_id</code> 的映射；收到委托/成交回报时，用
+<code>self.client_order_id_for(broker_order_id)</code> 反查回 <code>client_order_id</code>，再拼成
+统一模型对象经 <code>self._emit_order(...)</code> / <code>self._emit_trade(...)</code> /
+<code>self._emit_exec_from_order(...)</code> 分发给策略层回调。</p>
+<h2 id="5-broker-feed">5. 纯交易 broker：行情走现有 feed<a class="headerlink" href="#5-broker-feed" title="Permanent link">&para;</a></h2>
+<p>如果新 broker 只做交易、不提供行情（多数国内前置机/柜台都是这种情况），
+builder 返回的 <code>GatewayBundle</code> 里 <code>market_gateway=None</code> 即可，行情继续由
+akquant 现有的 <code>DataFeed</code> 提供：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">return</span> <span class="n">GatewayBundle</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">market_gateway</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">trader_gateway</span><span class="o">=</span><span class="n">trader_gateway</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">trader_capabilities</span><span class="o">=</span><span class="n">trader_gateway</span><span class="o">.</span><span class="n">get_capabilities</span><span class="p">(),</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">"broker"</span><span class="p">:</span> <span class="s2">"mybroker"</span><span class="p">},</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="_2">委托状态映射：终态与非终态<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p><code>UnifiedOrderStatus</code> 分两类，映射错一条的代价不对称，所以单列一节：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>取值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>非终态</td>
+<td><code>New</code> / <code>Submitted</code> / <code>PartiallyFilled</code></td>
+<td>还可能继续成交，<code>sync_open_orders()</code> <strong>只应返回这三种</strong></td>
+</tr>
+<tr>
+<td>终态</td>
+<td><code>Filled</code> / <code>Cancelled</code> / <code>Rejected</code> / <code>Expired</code></td>
+<td>不会再变，核心据此关闭 id 映射、停止跟踪</td>
+</tr>
+</tbody>
+</table>
+<p>终态集在核心侧的落点是 <code>python/akquant/live/_payload_utils.py</code>
+的 <code>_TERMINAL_STATUSES</code>，三个内置 broker 的 <code>_is_terminal_status()</code> 与之同口径；
+回测侧对应 <code>strategy_order_events._TERMINAL_ORDER_STATUSES</code>。<code>Expired</code> 是
+日内单收盘作废、柜台把单判废这类场景，<strong>别漏</strong>：漏掉它等于把终态单当活单。</p>
+<p>三条容易踩的坑：</p>
+<ol>
+<li><strong>未识别的柜台状态请兜底成非终态，但必须记 <code>warning</code>。</strong> 兜底成非终态是保守
+   的（宁可多查一次挂单，也不要把活单当终态丢掉），可一旦静默，柜台新增的终态
+   码值就会永远留在挂单表里，<code>cancel_all_orders</code> 每轮对它撤一次，柜台回
+   「委托状态错误不能撤单」。有日志才有人发现。</li>
+<li><strong>不要用 <code>status == Filled</code> 判断成交。</strong> IOC / 最优五档即时成交剩余撤销这类
+   委托，<strong>正常收尾就是 <code>Cancelled</code></strong>（部分成交时柜台状态是「部撤」），成交量由
+   <code>filled_quantity</code> 承载。策略与 broker 内部都应以 <code>filled_quantity</code> 为准。</li>
+<li><strong>不要复用 <code>create_default_mapper()</code> 里的单字符码值。</strong> 那张表是 CTP 口径
+   （<code>0</code>=全部成交、<code>5</code>=已撤单），与恒生《数据词典》1203「委托状态」的数字码
+   （<code>0</code>=未报、<code>5</code>=部撤、<code>8</code>=已成）<strong>完全冲突</strong>。接非 CTP 柜台请自带映射表——
+   <code>akquant-middleware</code> 就是把整张表收在自己的 <code>mapper.py</code> 里的。</li>
+</ol>
+<h2 id="_3">恢复节奏与柜台限流<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>实盘会话有一个后台恢复循环，负责心跳、断线补齐和资金刷新。它<strong>不是</strong>一个统一节拍，
+而是三档独立节奏（默认值可由 <code>gateway_options</code> 覆盖）：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>调用</th>
+<th>默认间隔</th>
+<th><code>gateway_options</code> 键</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>心跳</td>
+<td><code>heartbeat()</code> / 失败后 <code>connect()</code></td>
+<td>每拍 1 秒</td>
+<td><code>recovery_interval_sec</code></td>
+</tr>
+<tr>
+<td>资金</td>
+<td><code>query_account()</code></td>
+<td>5 秒</td>
+<td><code>recovery_account_interval_sec</code></td>
+</tr>
+<tr>
+<td>补齐</td>
+<td><code>sync_open_orders()</code> + <code>sync_today_trades()</code></td>
+<td>30 秒（带 ±10% 抖动）</td>
+<td><code>recovery_sync_interval_sec</code></td>
+</tr>
+</tbody>
+</table>
+<p>三档的语义差别，写自定义 broker 时要按它设计接口成本：</p>
+<ul>
+<li><strong><code>heartbeat()</code> 会被每秒调用</strong>，它必须便宜。不要在里面做全量查询，理想实现是读一个连接
+  状态标志或发一次轻量 ping。</li>
+<li><strong><code>sync_open_orders()</code> / <code>sync_today_trades()</code> 不是高频接口</strong>。它们的定位是「断线之后
+  把漏掉的回报补回来」，平时的回报应该走推送（<code>on_order</code> / <code>on_trade</code> 回调）。默认 30 秒
+  兜底只是防推送漏帧的保险，不是主通道。如果你的实现里这两个方法要拉全账户数据、开销很大，
+  那是正常的——把节奏调长即可，不要试图让它变快。</li>
+<li><strong>断线重连成功后，本轮会立刻跑一次全量 sync</strong>，不等 30 秒兜底。这是补齐真正该发生的时机，
+  所以 <code>heartbeat()</code> 返回 <code>False</code> 的准确性直接决定补齐的及时性。</li>
+</ul>
+<p><strong>按柜台限流调整</strong>：各家柜台的限流阈值不同，且往往只在部署到具体环境后才知道。三档间隔
+都可以在 <code>run_live(gateway_options={...})</code> 里覆盖，越界会被钳制（约束是心跳 ≤ 资金 ≤ 补齐）
+并打 WARNING，非法值回退默认——<strong>不会抛异常打断启动</strong>。</p>
+<p>30 秒那档带 ±10% 抖动是刻意的：平台常常并发起多个任务，整齐的固定间隔会让各任务的全量
+sync 对齐到同一秒集中打柜台。</p>
+<h2 id="_4">委托回报的标的过滤<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>核心已经按 <code>run_live(instruments=...)</code> 过滤委托与成交回报，<strong>自定义 broker 不需要自己再
+过滤一遍标的</strong>。这件事放在核心做，是因为「柜台返回全账户数据」是协议层的普遍现象，不是
+某一家的特例。</p>
+<p>你需要知道的是过滤的判据顺序，它会影响你实现推送时该填哪些字段。以下 1/2 两层
+<strong>只作用于 <code>order</code>/<code>trade</code>/<code>execution_report</code> 三类事件</strong>，<code>account</code>（账户快照）没有
+<code>client_order_id</code> 概念，不经过这两层，直接进入原有逻辑（恒放行）：</p>
+<ol>
+<li><strong>会话标记前缀</strong>：<code>run_live</code> 生成的 <code>client_order_id</code> 格式是
+   <code>{broker}-{session_tag}-{run_salt}{seq}</code>（<code>session_tag</code> 默认随机、可由
+   <code>run_live(session_tag=...)</code> 改成平台任务 ID；<code>run_salt</code> 是每次 <code>run_live</code> 独立
+   生成的 4 位随机段，拼在序号前而不影响前缀——固定 <code>session_tag</code> 场景下用来防止
+   重启后序号从 0 重来与柜台里的历史委托撞号）。推送帧里的 <code>client_order_id</code>
+   若以本会话的前缀 <code>{broker}-{session_tag}-</code> 开头，一律放行——<strong>即使标的不在
+   <code>instruments</code> 挂载列表内</strong>。这条优先于以下所有判据，覆盖外部信号源经
+   <code>BrokerOrderSink</code> 直调 <code>submitter.submit_order</code>、不经引擎合约登记表就能合法报出
+   挂载集合之外标的的场景。</li>
+<li><strong>会话标记不匹配 + 严格模式已启用</strong>（即调用方显式传了 <code>session_tag</code>）→
+   主动拒绝，计入会话收尾摘要的 <code>Dropped (foreign task)</code> 计数。这是<strong>多任务
+   交易同一标的</strong>时的隔离手段：同账户同标的下别的任务报的单，凭标的过滤和
+   订单归属都无法排除，只有比对 <code>client_order_id</code> 前缀才能判定「不是我的」。</li>
+<li>其余情况（未启用严格模式 / <code>client_order_id</code> 为空 / 前缀不匹配但严格模式
+   未启用）落到原有两级判据：</li>
+<li><strong>先认「这单是不是本会话自己报出来的」</strong>——按 <code>broker_order_id</code>、再按
+     <code>client_order_id</code> 查会话内的委托映射，命中就一律放行。所以<strong>推送帧里的
+     <code>broker_order_id</code> 要与 <code>place_order()</code> 返回的保持一致</strong>，否则本会话自己
+     的回报会退化到下一步去判。</li>
+<li>查不到归属时，才按标的判。比较会对两侧做后缀归一化（只规整最后一段
+     后缀），所以 <code>600008.sh</code> 与 <code>600008.SH</code> 能对上，而期货合约代码里有意义
+     的小写（<code>ag2612</code>）不受影响。</li>
+</ol>
+<p>边界一律<strong>放行</strong>：订阅集为空、推送帧没有 <code>symbol</code> 字段、访问器抛异常，都选择多派发而不是
+丢弃——吞掉真实回报的代价远大于多派发一条。被丢弃的事件会按标的（或按外来 tag 前缀）点名
+一次 WARNING、之后降 DEBUG，并分别计入会话收尾摘要的 <code>Dropped (foreign symbol)</code> /
+<code>Dropped (foreign task)</code> 计数——二者刻意分开：<code>foreign_symbol</code> 异常增长指向标的配置错误，
+<code>foreign_task</code> 在多任务稳态下必然持续增长，是正常工作量而非故障信号。</p>
+<p><strong>自定义 broker 支持多任务隔离的前提</strong>：第 1/2 层判据完全依赖推送帧里的 <code>client_order_id</code>
+与本地下单时生成的值逐字一致——<strong>你的推送必须原样回传 <code>client_order_id</code>，不能截断、
+不能改写字符</strong>。如果柜台协议对该字段有长度上限或字符集限制，请在文档里写明，让调用方在
+决定是否传 <code>session_tag</code> 前先摸清这个前提；<code>run_live(session_tag=...)</code> 默认不启用严格
+拒绝，正是为了在这个前提不成立时也不会误伤本会话自己的回报（现象是「下单成功却收不到
+回调」）。</p>
+<p><strong>内置的 <code>ctp</code> broker 不满足这个前提</strong>：<code>brokers/ctp/adapter.py</code> 的 <code>client_order_id</code>
+是本地按 <code>order_ref</code> 反查出来的，从不发给柜台；柜台推送帧里没有这个字段，外来单落到
+第 3 层时 <code>client_order_id</code> 恒为空，直接判 <code>None</code> 走标的兜底。也就是说对 <code>ctp</code>，第 1/2
+两层会话判据实际是空操作——传了 <code>session_tag</code> 既不会报错，也不会拒绝任何外来单，<strong>不会
+产生隔离效果</strong>。目前已知只有原样回传 <code>client_order_id</code> 的柜台（如 middleware）能从这项
+能力受益，接入前请先确认自己的 broker 是否回传该字段。</p>
+<p><strong>长度自查公式</strong>：框架生成的 <code>client_order_id</code> 是
+<code>{broker}-{session_tag}-{run_salt}{seq}</code>，最坏情况总长为</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>len(broker) + 1 + len(session_tag) + 1 + 4 + len(str(单日最大委托笔数))
+</span></code></pre></div>
+<p>其中 <code>run_salt</code> 固定 4 字符（每次启动新生成，用于避免序号从 1 重新开始导致的跨重启撞号）。
+<code>session_tag</code> 框架侧限 32 字符，但<strong>真正的上限由你的柜台字段决定</strong> —— 把上式算出来与柜台
+协议里该字段的长度限制比对，若会超出，请在自己的 broker 文档里给出建议的 <code>session_tag</code>
+长度，而不是等运行时被截断。</p>
+<p><strong>截断的后果特别昂贵</strong>：被截断的 <code>client_order_id</code> 前缀对不上，严格模式会把<strong>本会话自己
+的</strong>回报判成外来的全部丢弃 —— 现象是「下单成功却永远收不到回调」，且日志只有 DEBUG。
+所以建议接入方在启用严格模式前，用一个满长度的 <code>session_tag</code> 实测一笔，确认回报里的
+<code>client_order_id</code> 与下单时逐字一致。</p>
+<h2 id="_5">最小骨架<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Sequence</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataFeed</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.gateway</span><span class="w"> </span><span class="kn">import</span> <span class="n">register_broker</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.gateway.broker_models</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">BrokerCapability</span><span class="p">,</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">UnifiedAccount</span><span class="p">,</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="n">UnifiedOrderRequest</span><span class="p">,</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="n">UnifiedOrderSnapshot</span><span class="p">,</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    <span class="n">UnifiedPosition</span><span class="p">,</span>
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>    <span class="n">UnifiedTrade</span><span class="p">,</span>
+</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="p">)</span>
+</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.gateway.protocols</span><span class="w"> </span><span class="kn">import</span> <span class="n">GatewayBundle</span>
+</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.gateway.trader_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">TraderGatewayBase</span>
+</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>
+</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>
+</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="k">def</span><span class="w"> </span><span class="nf">default_capability</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">BrokerCapability</span><span class="p">:</span>
+</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>    <span class="k">return</span> <span class="n">BrokerCapability</span><span class="p">(</span>
+</span><span id="__span-5-21"><a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>        <span class="n">broker_name</span><span class="o">=</span><span class="s2">"mybroker"</span><span class="p">,</span>
+</span><span id="__span-5-22"><a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>        <span class="n">broker_extra_fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"account_id"</span><span class="p">,),</span>
+</span><span id="__span-5-23"><a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a>        <span class="n">features</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">(),</span>
+</span><span id="__span-5-24"><a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>    <span class="p">)</span>
+</span><span id="__span-5-25"><a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>
+</span><span id="__span-5-26"><a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>
+</span><span id="__span-5-27"><a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyTraderGateway</span><span class="p">(</span><span class="n">TraderGatewayBase</span><span class="p">):</span>
+</span><span id="__span-5-28"><a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a><span class="w">    </span><span class="sd">"""最小可运行的 TraderGateway 骨架。"""</span>
+</span><span id="__span-5-29"><a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a>
+</span><span id="__span-5-30"><a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">capability</span><span class="p">:</span> <span class="n">BrokerCapability</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-5-31"><a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span><span id="__span-5-32"><a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_capability</span> <span class="o">=</span> <span class="n">capability</span> <span class="ow">or</span> <span class="n">default_capability</span><span class="p">()</span>
+</span><span id="__span-5-33"><a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a>
+</span><span id="__span-5-34"><a id="__codelineno-5-34" name="__codelineno-5-34" href="#__codelineno-5-34"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-5-35"><a id="__codelineno-5-35" name="__codelineno-5-35" href="#__codelineno-5-35"></a>        <span class="o">...</span>  <span class="c1"># 登录/建立会话</span>
+</span><span id="__span-5-36"><a id="__codelineno-5-36" name="__codelineno-5-36" href="#__codelineno-5-36"></a>
+</span><span id="__span-5-37"><a id="__codelineno-5-37" name="__codelineno-5-37" href="#__codelineno-5-37"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">disconnect</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-5-38"><a id="__codelineno-5-38" name="__codelineno-5-38" href="#__codelineno-5-38"></a>        <span class="o">...</span>  <span class="c1"># 释放连接</span>
+</span><span id="__span-5-39"><a id="__codelineno-5-39" name="__codelineno-5-39" href="#__codelineno-5-39"></a>
+</span><span id="__span-5-40"><a id="__codelineno-5-40" name="__codelineno-5-40" href="#__codelineno-5-40"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-5-41"><a id="__codelineno-5-41" name="__codelineno-5-41" href="#__codelineno-5-41"></a>        <span class="o">...</span>  <span class="c1"># 建立推送长连、开始分发回报</span>
+</span><span id="__span-5-42"><a id="__codelineno-5-42" name="__codelineno-5-42" href="#__codelineno-5-42"></a>
+</span><span id="__span-5-43"><a id="__codelineno-5-43" name="__codelineno-5-43" href="#__codelineno-5-43"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_capabilities</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BrokerCapability</span><span class="p">:</span>
+</span><span id="__span-5-44"><a id="__codelineno-5-44" name="__codelineno-5-44" href="#__codelineno-5-44"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_capability</span>
+</span><span id="__span-5-45"><a id="__codelineno-5-45" name="__codelineno-5-45" href="#__codelineno-5-45"></a>
+</span><span id="__span-5-46"><a id="__codelineno-5-46" name="__codelineno-5-46" href="#__codelineno-5-46"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">place_order</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">req</span><span class="p">:</span> <span class="n">UnifiedOrderRequest</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-5-47"><a id="__codelineno-5-47" name="__codelineno-5-47" href="#__codelineno-5-47"></a>        <span class="c1"># 按 req.asset_type 路由品种；req.extra 取柜台专属字段。</span>
+</span><span id="__span-5-48"><a id="__codelineno-5-48" name="__codelineno-5-48" href="#__codelineno-5-48"></a>        <span class="n">account_id</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="n">extra</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"account_id"</span><span class="p">)</span>
+</span><span id="__span-5-49"><a id="__codelineno-5-49" name="__codelineno-5-49" href="#__codelineno-5-49"></a>        <span class="n">broker_order_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_send_order_to_broker</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">account_id</span><span class="p">)</span>
+</span><span id="__span-5-50"><a id="__codelineno-5-50" name="__codelineno-5-50" href="#__codelineno-5-50"></a>        <span class="k">if</span> <span class="n">broker_order_id</span><span class="p">:</span>
+</span><span id="__span-5-51"><a id="__codelineno-5-51" name="__codelineno-5-51" href="#__codelineno-5-51"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">record_broker_order</span><span class="p">(</span><span class="n">broker_order_id</span><span class="p">,</span> <span class="n">req</span><span class="o">.</span><span class="n">client_order_id</span><span class="p">)</span>
+</span><span id="__span-5-52"><a id="__codelineno-5-52" name="__codelineno-5-52" href="#__codelineno-5-52"></a>        <span class="k">return</span> <span class="n">broker_order_id</span>
+</span><span id="__span-5-53"><a id="__codelineno-5-53" name="__codelineno-5-53" href="#__codelineno-5-53"></a>
+</span><span id="__span-5-54"><a id="__codelineno-5-54" name="__codelineno-5-54" href="#__codelineno-5-54"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">cancel_order</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">broker_order_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-5-55"><a id="__codelineno-5-55" name="__codelineno-5-55" href="#__codelineno-5-55"></a>        <span class="o">...</span>  <span class="c1"># 调用柜台撤单接口</span>
+</span><span id="__span-5-56"><a id="__codelineno-5-56" name="__codelineno-5-56" href="#__codelineno-5-56"></a>
+</span><span id="__span-5-57"><a id="__codelineno-5-57" name="__codelineno-5-57" href="#__codelineno-5-57"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">query_order</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">broker_order_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">UnifiedOrderSnapshot</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-5-58"><a id="__codelineno-5-58" name="__codelineno-5-58" href="#__codelineno-5-58"></a>        <span class="o">...</span>  <span class="c1"># 查询单笔委托并转换为 UnifiedOrderSnapshot</span>
+</span><span id="__span-5-59"><a id="__codelineno-5-59" name="__codelineno-5-59" href="#__codelineno-5-59"></a>
+</span><span id="__span-5-60"><a id="__codelineno-5-60" name="__codelineno-5-60" href="#__codelineno-5-60"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">query_trades</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">since</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">UnifiedTrade</span><span class="p">]:</span>
+</span><span id="__span-5-61"><a id="__codelineno-5-61" name="__codelineno-5-61" href="#__codelineno-5-61"></a>        <span class="o">...</span>  <span class="c1"># 查询成交并转换为 UnifiedTrade 列表</span>
+</span><span id="__span-5-62"><a id="__codelineno-5-62" name="__codelineno-5-62" href="#__codelineno-5-62"></a>
+</span><span id="__span-5-63"><a id="__codelineno-5-63" name="__codelineno-5-63" href="#__codelineno-5-63"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">query_account</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">UnifiedAccount</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-5-64"><a id="__codelineno-5-64" name="__codelineno-5-64" href="#__codelineno-5-64"></a>        <span class="o">...</span>  <span class="c1"># 查询资金账户</span>
+</span><span id="__span-5-65"><a id="__codelineno-5-65" name="__codelineno-5-65" href="#__codelineno-5-65"></a>
+</span><span id="__span-5-66"><a id="__codelineno-5-66" name="__codelineno-5-66" href="#__codelineno-5-66"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">query_positions</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">UnifiedPosition</span><span class="p">]:</span>
+</span><span id="__span-5-67"><a id="__codelineno-5-67" name="__codelineno-5-67" href="#__codelineno-5-67"></a>        <span class="o">...</span>  <span class="c1"># 查询持仓</span>
+</span><span id="__span-5-68"><a id="__codelineno-5-68" name="__codelineno-5-68" href="#__codelineno-5-68"></a>
+</span><span id="__span-5-69"><a id="__codelineno-5-69" name="__codelineno-5-69" href="#__codelineno-5-69"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_on_broker_push</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-5-70"><a id="__codelineno-5-70" name="__codelineno-5-70" href="#__codelineno-5-70"></a>        <span class="c1"># 收到推送后：反查 client_order_id，再分发给策略层回调。</span>
+</span><span id="__span-5-71"><a id="__codelineno-5-71" name="__codelineno-5-71" href="#__codelineno-5-71"></a>        <span class="n">broker_order_id</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"order_id"</span><span class="p">,</span> <span class="s2">""</span><span class="p">))</span>
+</span><span id="__span-5-72"><a id="__codelineno-5-72" name="__codelineno-5-72" href="#__codelineno-5-72"></a>        <span class="n">client_order_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">client_order_id_for</span><span class="p">(</span><span class="n">broker_order_id</span><span class="p">)</span>
+</span><span id="__span-5-73"><a id="__codelineno-5-73" name="__codelineno-5-73" href="#__codelineno-5-73"></a>        <span class="k">if</span> <span class="n">event</span> <span class="o">==</span> <span class="s2">"order_update"</span><span class="p">:</span>
+</span><span id="__span-5-74"><a id="__codelineno-5-74" name="__codelineno-5-74" href="#__codelineno-5-74"></a>            <span class="n">snapshot</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parse_order</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">client_order_id</span><span class="p">)</span>
+</span><span id="__span-5-75"><a id="__codelineno-5-75" name="__codelineno-5-75" href="#__codelineno-5-75"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_emit_order</span><span class="p">(</span><span class="n">snapshot</span><span class="p">)</span>
+</span><span id="__span-5-76"><a id="__codelineno-5-76" name="__codelineno-5-76" href="#__codelineno-5-76"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_emit_exec_from_order</span><span class="p">(</span><span class="n">snapshot</span><span class="p">)</span>
+</span><span id="__span-5-77"><a id="__codelineno-5-77" name="__codelineno-5-77" href="#__codelineno-5-77"></a>        <span class="k">elif</span> <span class="n">event</span> <span class="o">==</span> <span class="s2">"trade_update"</span><span class="p">:</span>
+</span><span id="__span-5-78"><a id="__codelineno-5-78" name="__codelineno-5-78" href="#__codelineno-5-78"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_emit_trade</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_parse_trade</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">client_order_id</span><span class="p">))</span>
+</span><span id="__span-5-79"><a id="__codelineno-5-79" name="__codelineno-5-79" href="#__codelineno-5-79"></a>
+</span><span id="__span-5-80"><a id="__codelineno-5-80" name="__codelineno-5-80" href="#__codelineno-5-80"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_send_order_to_broker</span><span class="p">(</span>
+</span><span id="__span-5-81"><a id="__codelineno-5-81" name="__codelineno-5-81" href="#__codelineno-5-81"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">req</span><span class="p">:</span> <span class="n">UnifiedOrderRequest</span><span class="p">,</span> <span class="n">account_id</span><span class="p">:</span> <span class="n">Any</span>
+</span><span id="__span-5-82"><a id="__codelineno-5-82" name="__codelineno-5-82" href="#__codelineno-5-82"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-5-83"><a id="__codelineno-5-83" name="__codelineno-5-83" href="#__codelineno-5-83"></a>        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+</span><span id="__span-5-84"><a id="__codelineno-5-84" name="__codelineno-5-84" href="#__codelineno-5-84"></a>
+</span><span id="__span-5-85"><a id="__codelineno-5-85" name="__codelineno-5-85" href="#__codelineno-5-85"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_parse_order</span><span class="p">(</span>
+</span><span id="__span-5-86"><a id="__codelineno-5-86" name="__codelineno-5-86" href="#__codelineno-5-86"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">client_order_id</span><span class="p">:</span> <span class="nb">str</span>
+</span><span id="__span-5-87"><a id="__codelineno-5-87" name="__codelineno-5-87" href="#__codelineno-5-87"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">UnifiedOrderSnapshot</span><span class="p">:</span>
+</span><span id="__span-5-88"><a id="__codelineno-5-88" name="__codelineno-5-88" href="#__codelineno-5-88"></a>        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+</span><span id="__span-5-89"><a id="__codelineno-5-89" name="__codelineno-5-89" href="#__codelineno-5-89"></a>
+</span><span id="__span-5-90"><a id="__codelineno-5-90" name="__codelineno-5-90" href="#__codelineno-5-90"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_parse_trade</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">client_order_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">UnifiedTrade</span><span class="p">:</span>
+</span><span id="__span-5-91"><a id="__codelineno-5-91" name="__codelineno-5-91" href="#__codelineno-5-91"></a>        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+</span><span id="__span-5-92"><a id="__codelineno-5-92" name="__codelineno-5-92" href="#__codelineno-5-92"></a>
+</span><span id="__span-5-93"><a id="__codelineno-5-93" name="__codelineno-5-93" href="#__codelineno-5-93"></a>
+</span><span id="__span-5-94"><a id="__codelineno-5-94" name="__codelineno-5-94" href="#__codelineno-5-94"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_mybroker</span><span class="p">(</span>
+</span><span id="__span-5-95"><a id="__codelineno-5-95" name="__codelineno-5-95" href="#__codelineno-5-95"></a>    <span class="n">feed</span><span class="p">:</span> <span class="n">DataFeed</span><span class="p">,</span> <span class="n">symbols</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">use_aggregator</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span>
+</span><span id="__span-5-96"><a id="__codelineno-5-96" name="__codelineno-5-96" href="#__codelineno-5-96"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GatewayBundle</span><span class="p">:</span>
+</span><span id="__span-5-97"><a id="__codelineno-5-97" name="__codelineno-5-97" href="#__codelineno-5-97"></a>    <span class="n">_</span> <span class="o">=</span> <span class="p">(</span><span class="n">feed</span><span class="p">,</span> <span class="n">symbols</span><span class="p">,</span> <span class="n">use_aggregator</span><span class="p">)</span>
+</span><span id="__span-5-98"><a id="__codelineno-5-98" name="__codelineno-5-98" href="#__codelineno-5-98"></a>    <span class="n">trader_gateway</span> <span class="o">=</span> <span class="n">MyTraderGateway</span><span class="p">()</span>
+</span><span id="__span-5-99"><a id="__codelineno-5-99" name="__codelineno-5-99" href="#__codelineno-5-99"></a>    <span class="k">return</span> <span class="n">GatewayBundle</span><span class="p">(</span>
+</span><span id="__span-5-100"><a id="__codelineno-5-100" name="__codelineno-5-100" href="#__codelineno-5-100"></a>        <span class="n">market_gateway</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>  <span class="c1"># 纯交易 broker：行情走 akquant 现有 feed</span>
+</span><span id="__span-5-101"><a id="__codelineno-5-101" name="__codelineno-5-101" href="#__codelineno-5-101"></a>        <span class="n">trader_gateway</span><span class="o">=</span><span class="n">trader_gateway</span><span class="p">,</span>
+</span><span id="__span-5-102"><a id="__codelineno-5-102" name="__codelineno-5-102" href="#__codelineno-5-102"></a>        <span class="n">trader_capabilities</span><span class="o">=</span><span class="n">trader_gateway</span><span class="o">.</span><span class="n">get_capabilities</span><span class="p">(),</span>
+</span><span id="__span-5-103"><a id="__codelineno-5-103" name="__codelineno-5-103" href="#__codelineno-5-103"></a>        <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">"broker"</span><span class="p">:</span> <span class="s2">"mybroker"</span><span class="p">},</span>
+</span><span id="__span-5-104"><a id="__codelineno-5-104" name="__codelineno-5-104" href="#__codelineno-5-104"></a>    <span class="p">)</span>
+</span><span id="__span-5-105"><a id="__codelineno-5-105" name="__codelineno-5-105" href="#__codelineno-5-105"></a>
+</span><span id="__span-5-106"><a id="__codelineno-5-106" name="__codelineno-5-106" href="#__codelineno-5-106"></a>
+</span><span id="__span-5-107"><a id="__codelineno-5-107" name="__codelineno-5-107" href="#__codelineno-5-107"></a><span class="n">register_broker</span><span class="p">(</span><span class="s2">"mybroker"</span><span class="p">,</span> <span class="n">build_mybroker</span><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="_6">参考实现与相关文档<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../custom_broker_registry/">自定义 Broker 注册</a> —— <code>register_broker</code> /
+  <code>create_gateway_bundle</code> 等注册 API 的详细说明。</li>
+<li><a href="../broker_capability_matrix/">Broker Capability Matrix</a> —— 各内置 broker
+  的能力矩阵与统一错误规范，声明 <code>BrokerCapability</code> 前建议先对照。</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/mathjax.js"></script>
+      
+        <script src="../../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

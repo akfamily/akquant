@@ -1,0 +1,4080 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/textbook/15_live_trading/">
+      
+      
+        <link rel="prev" href="../14_factor/">
+      
+      
+        <link rel="next" href="../16_rust_indicators/">
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/textbook/15_live_trading/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>第15章：实盘交易系统与运维 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#15" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              第15章：实盘交易系统与运维
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/textbook/15_live_trading/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    量化教材
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程简介
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../00_glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    术语表与符号约定
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第一部分：基础篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第一部分：基础篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../01_foundations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第1章：量化投资概述与环境搭建
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02_programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第2章：量化编程基础
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../03_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第3章：金融数据获取与处理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第二部分：引擎篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第二部分：引擎篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../04_backtest_engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第4章：事件驱动回测原理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../05_strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第5章：策略开发实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第三部分：策略篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第三部分：策略篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06_stock_a/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第6章：A 股市场微观结构与策略实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../07_futures/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第7章：期货市场与衍生品策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第8章：期权定价与波动率策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../09_funds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第9章：基金投资与资产配置理论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第四部分：高阶篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第四部分：高阶篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../10_analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第10章：策略评价体系与风险指标
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../11_optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第11章：参数优化与稳健性检验
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../12_ml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第12章：机器学习在量化中的应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../13_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第13章：策略可视化与报表分析
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../14_factor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第14章：高性能因子挖掘与表达式引擎
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_7" id="__nav_2_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第五部分：实盘篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第五部分：实盘篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第15章：实盘交易系统与运维
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第15章：实盘交易系统与运维
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#151" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1 实盘架构与接口
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.1 实盘架构与接口">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1511" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1.1 回测与实盘的差异
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1512-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1.2 交易接口 (Gateway)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1513-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1.3 离线验证实盘通路：内置 replay 行情源
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1514" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1.4 回测 → 实盘最小切换清单
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#152-order-management-system-oms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.2 订单管理系统 (Order Management System, OMS)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.2 订单管理系统 (Order Management System, OMS)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1521" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.2.1 订单状态机
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1522-synchronization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.2.2 状态同步 (Synchronization)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#153-risk-management-system-rms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.3 风险管理系统 (Risk Management System, RMS)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.3 风险管理系统 (Risk Management System, RMS)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1531" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.3.1 核心风控规则
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#154-algorithmic-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.4 算法交易 (Algorithmic Execution)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.4 算法交易 (Algorithmic Execution)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1541-twap-time-weighted-average-price" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.4.1 TWAP (Time Weighted Average Price)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1542-vwap-volume-weighted-average-price" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.4.2 VWAP (Volume Weighted Average Price)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#155" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5 实盘部署与运维
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.5 实盘部署与运维">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1551" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.1 部署环境
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1552" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.2 监控与报警
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1553" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.3 代码示例：启动实盘
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1554-warm-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.4 热启动与状态持久化 (Warm Start)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1555-strategy-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.5 动态策略加载 (Strategy Loader)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#156-high-availability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.6 高可用架构 (High Availability)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.6 高可用架构 (High Availability)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1561-primary-backup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.6.1 主备切换 (Primary-Backup)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1562-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.6.2 状态持久化 (Persistence)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#157-low-latency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.7 低延迟优化 (Low Latency)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#158-monitoring-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.8 监控体系 (Monitoring Stack)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#159-post-mortem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.9 实盘事故复盘 (Post-Mortem)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1510-hardware-acceleration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.10 硬件加速 (Hardware Acceleration)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.10 硬件加速 (Hardware Acceleration)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#15101-fpga-field-programmable-gate-array" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.10.1 FPGA (Field-Programmable Gate Array)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15102-gpu-graphics-processing-unit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.10.2 GPU (Graphics Processing Unit)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1511-external-signal-ingestion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11 外部信号接入 (External Signal Ingestion)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.11 外部信号接入 (External Signal Ingestion)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#15111" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.1 信号是指令，不是事件
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.2 幂等：分布式系统的必修课
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15113" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.3 回执：不告诉对端等于骗它
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15114" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.4 安全：能下单的网络端点
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15115" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.5 ⚠️ 两种模式的风控覆盖面不同
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15116" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.6 部署形态
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1512-team-collaboration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.12 量化团队协作 (Team Collaboration)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_8" id="__nav_2_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第六部分：指标工程篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第六部分：指标工程篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../16_rust_indicators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第16章：AKQuant 技术指标体系与应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程项目：端到端实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_10" id="__nav_2_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    附录
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 A：环境与复现
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_cite/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 B：引用、许可与勘误
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_pitfalls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 C：常见误区对照表
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/python_basics/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#151" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1 实盘架构与接口
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.1 实盘架构与接口">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1511" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1.1 回测与实盘的差异
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1512-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1.2 交易接口 (Gateway)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1513-replay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1.3 离线验证实盘通路：内置 replay 行情源
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1514" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.1.4 回测 → 实盘最小切换清单
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#152-order-management-system-oms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.2 订单管理系统 (Order Management System, OMS)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.2 订单管理系统 (Order Management System, OMS)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1521" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.2.1 订单状态机
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1522-synchronization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.2.2 状态同步 (Synchronization)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#153-risk-management-system-rms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.3 风险管理系统 (Risk Management System, RMS)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.3 风险管理系统 (Risk Management System, RMS)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1531" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.3.1 核心风控规则
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#154-algorithmic-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.4 算法交易 (Algorithmic Execution)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.4 算法交易 (Algorithmic Execution)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1541-twap-time-weighted-average-price" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.4.1 TWAP (Time Weighted Average Price)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1542-vwap-volume-weighted-average-price" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.4.2 VWAP (Volume Weighted Average Price)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#155" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5 实盘部署与运维
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.5 实盘部署与运维">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1551" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.1 部署环境
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1552" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.2 监控与报警
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1553" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.3 代码示例：启动实盘
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1554-warm-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.4 热启动与状态持久化 (Warm Start)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1555-strategy-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.5.5 动态策略加载 (Strategy Loader)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#156-high-availability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.6 高可用架构 (High Availability)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.6 高可用架构 (High Availability)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1561-primary-backup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.6.1 主备切换 (Primary-Backup)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1562-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.6.2 状态持久化 (Persistence)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#157-low-latency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.7 低延迟优化 (Low Latency)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#158-monitoring-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.8 监控体系 (Monitoring Stack)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#159-post-mortem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.9 实盘事故复盘 (Post-Mortem)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1510-hardware-acceleration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.10 硬件加速 (Hardware Acceleration)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.10 硬件加速 (Hardware Acceleration)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#15101-fpga-field-programmable-gate-array" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.10.1 FPGA (Field-Programmable Gate Array)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15102-gpu-graphics-processing-unit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.10.2 GPU (Graphics Processing Unit)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1511-external-signal-ingestion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11 外部信号接入 (External Signal Ingestion)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15.11 外部信号接入 (External Signal Ingestion)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#15111" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.1 信号是指令，不是事件
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15112" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.2 幂等：分布式系统的必修课
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15113" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.3 回执：不告诉对端等于骗它
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15114" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.4 安全：能下单的网络端点
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15115" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.5 ⚠️ 两种模式的风控覆盖面不同
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15116" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.11.6 部署形态
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1512-team-collaboration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15.12 量化团队协作 (Team Collaboration)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="导航栏" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    首页
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    量化教材
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="./" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    第五部分：实盘篇
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="15">第 15 章：实盘交易系统与运维<a class="headerlink" href="#15" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>⏱️ 预计阅读 ~30 分钟 ｜ 🎯 难度 ★★★★☆（核心）</p>
+</blockquote>
+<p>量化投资的终极目标是实盘获利。从回测到实盘，不仅是代码环境的切换，更是对<strong>系统稳定性</strong>、<strong>执行效率</strong>和<strong>风险控制</strong>的全面考验。本章将介绍 <code>AKQuant</code> 的实盘架构，并深入探讨订单管理系统 (OMS)、风控系统 (RMS) 以及高可用部署方案。</p>
+<h2 id="_1">学习目标<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li>理解回测与实盘在数据、订单、风控和运维上的关键差异。</li>
+<li>掌握网关、OMS、RMS、热启动与动态策略加载的基本作用。</li>
+<li>建立准实盘与实盘迁移中的最小工程化意识。</li>
+</ul>
+<h2 id="_2">前置知识<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li>已掌握回测引擎、策略开发与风险管理基础。</li>
+<li>了解部署、日志与监控的基本概念即可。</li>
+</ul>
+<h2 id="_3">本章实践入口<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<ul>
+<li>主示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading.py">examples/textbook/ch15_live_trading.py</a></li>
+<li>进阶示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py">examples/textbook/ch15_strategy_loader.py</a></li>
+<li>离线实盘示例（<code>broker="replay"</code>，无需柜台）：<a href="https://github.com/akfamily/akquant/blob/main/examples/38_live_functional_strategy_demo.py">examples/38_live_functional_strategy_demo.py</a></li>
+<li>行情/交易源分开指定示例（无需柜台）：<a href="https://github.com/akfamily/akquant/blob/main/examples/39_live_mixed_broker_demo.py">examples/39_live_mixed_broker_demo.py</a></li>
+<li>日志/审计示例（自包含，无需网关）：<a href="https://github.com/akfamily/akquant/blob/main/examples/66_logging_audit_demo.py">examples/66_logging_audit_demo.py</a></li>
+<li>外部信号接入示例（HTTP webhook，无需柜台）：<a href="https://github.com/akfamily/akquant/blob/main/examples/61_signal_platform_webhook.py">examples/61_signal_platform_webhook.py</a></li>
+<li>函数式孪生示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading_functional.py">examples/textbook/ch15_live_trading_functional.py</a>（主示例孪生）、<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader_functional.py">examples/textbook/ch15_strategy_loader_functional.py</a>（进阶示例孪生）</li>
+<li>对应指南：<a href="../../advanced/live_functional_quickstart/">实盘函数式指南</a>、<a href="../../advanced/signal_ingestion/">外部信号平台接入</a></li>
+</ul>
+<h2 id="_4">快速运行与验收<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>examples/textbook/ch15_live_trading.py
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>examples/textbook/ch15_live_trading_functional.py
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>python<span class="w"> </span>examples/textbook/ch15_strategy_loader.py
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>python<span class="w"> </span>examples/textbook/ch15_strategy_loader_functional.py
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>python<span class="w"> </span>examples/38_live_functional_strategy_demo.py
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>python<span class="w"> </span>examples/39_live_mixed_broker_demo.py
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>python<span class="w"> </span>examples/66_logging_audit_demo.py
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>python<span class="w"> </span>examples/61_signal_platform_webhook.py
+</span></code></pre></div>
+<p>验收要点：</p>
+<ol>
+<li>示例可启动并完成最小实盘流程演示。</li>
+<li>日志中可观察到订单状态、网关事件或风控检查信息。</li>
+<li>调整风控参数后，策略行为变化符合预期。</li>
+<li><code>66_logging_audit_demo.py</code> 能看到：敏感字段被脱敏、订单审计单独落 JSON 文件、<code>language="zh"</code> 只改控制台审计行而文件恒英文。</li>
+<li><code>38_live_functional_strategy_demo.py</code> 与 <code>39_live_mixed_broker_demo.py</code> <strong>无需任何柜台或可选依赖即可实跑</strong>：前者用 <code>broker="replay"</code> 验证函数式回调链路，后者演示行情源与交易源分开指定。两者都应打印出 4 根 bar 后自行结束（不必等到 <code>duration</code> 超时）。</li>
+</ol>
+<h2 id="151">15.1 实盘架构与接口<a class="headerlink" href="#151" title="Permanent link">&para;</a></h2>
+<h3 id="1511">15.1.1 回测与实盘的差异<a class="headerlink" href="#1511" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">维度</th>
+<th style="text-align: left;">回测 (Backtest)</th>
+<th style="text-align: left;">实盘 (Live Trading)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>时间流</strong></td>
+<td style="text-align: left;">历史数据重放 (Replay)</td>
+<td style="text-align: left;">实时数据流 (Stream)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>成交机制</strong></td>
+<td style="text-align: left;">假设成交 (Perfect Fill)</td>
+<td style="text-align: left;">真实撮合 (Partial/Reject)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>延迟</strong></td>
+<td style="text-align: left;">零延迟 (Zero Latency)</td>
+<td style="text-align: left;">网络延迟 + 内部处理延迟</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>状态管理</strong></td>
+<td style="text-align: left;">内存状态 (Transient)</td>
+<td style="text-align: left;">持久化状态 (Persistent)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>缺省卖出量</strong></td>
+<td style="text-align: left;"><code>sell()</code> 不传量时平总持仓</td>
+<td style="text-align: left;">平<strong>可用</strong>持仓（T+1 当日买入部分不可卖）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>标的静态属性</strong></td>
+<td style="text-align: left;"><code>InstrumentConfig</code> 注入，字段齐全</td>
+<td style="text-align: left;">仅 <code>Instrument</code> 可回读字段，期权/结算类字段为 <code>None</code></td>
+</tr>
+</tbody>
+</table>
+<p>前两行是数据与撮合层面的固有差异，后两行是接口层面的差异：同一段策略代码在两侧都能跑，但缺省下单量与可读的标的字段不完全一致，写策略时不要假设"回测读得到的字段实盘也读得到"。</p>
+<h3 id="1512-gateway">15.1.2 交易接口 (Gateway)<a class="headerlink" href="#1512-gateway" title="Permanent link">&para;</a></h3>
+<p><code>AKQuant</code> 通过适配器模式支持多种柜台接口，以便用同一套上层逻辑对接不同市场。其中 CTP (China Trading Platform) 是期货市场的标准接口，支持行情与交易链路；MiniQMT 是面向本地 A 股交易生态的适配接口入口，但当前仓库内置实现更偏向占位骨架与联调层，不应直接理解为已完成生产级实盘适配；PTrade 则是可接入券商量化终端的适配接口入口，其当前仓库内置实现同样更偏向占位骨架与联调层，不应直接理解为已完成生产级实盘适配。在实盘模式下，<code>DataFeed</code> 会切换为实时行情源，交易执行则由对应 broker gateway 负责。</p>
+<p>需要特别区分两层含义：</p>
+<ol>
+<li><code>AKQuant</code> 提供的是统一交易框架与 adapter 接口；</li>
+<li>某个 broker 是否真正支持 A 股集合竞价专用委托、新股/新债打新、券商特定价格类型与业务代码，取决于该 broker adapter 是否已经补齐对应柜台语义。</li>
+</ol>
+<p>因此，当前内置 <code>MiniQMT/PTrade</code> 不应被视为“开箱即用支持 A 股集合竞价与打新”的官方承诺；这类场景通常仍需通过自定义 broker 或增强现有 adapter 来落地。</p>
+<p>CTP 交易链路支持 <code>execution_semantics_mode</code>：</p>
+<ul>
+<li><code>strict</code>（默认，推荐生产）：终态仅由柜台订单回报确认。</li>
+<li><code>compatible</code>：兼容旧行为，允许部分场景在本地提前推进终态。</li>
+</ul>
+<p>当内置网关不满足需求时，可以通过注册机制扩展自定义 broker，且注册 broker 会被工厂优先解析，再回退到内置 <code>ctp/miniqmt/ptrade</code>。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataFeed</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.gateway</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_gateway_bundle</span><span class="p">,</span> <span class="n">register_broker</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">register_broker</span><span class="p">(</span><span class="s2">"demo"</span><span class="p">,</span> <span class="n">demo_builder</span><span class="p">)</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">bundle</span> <span class="o">=</span> <span class="n">create_gateway_bundle</span><span class="p">(</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">broker</span><span class="o">=</span><span class="s2">"demo"</span><span class="p">,</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">feed</span><span class="o">=</span><span class="n">DataFeed</span><span class="p">(),</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">symbols</span><span class="o">=</span><span class="p">[</span><span class="s2">"000001.SZ"</span><span class="p">],</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>一个 broker 并不必须同时提供行情与交易两条通道：<code>GatewayBundle</code> 的
+<code>market_gateway</code> 与 <code>trader_gateway</code> 是两个独立可选字段。内置的 <code>replay</code> 就只有
+行情（无法下单），而某些券商/柜台插件只有交易通道（收不到行情，<code>on_bar</code> /
+<code>on_tick</code> 不触发、<code>self.current_tick</code> 恒为 <code>None</code>）。</p>
+<p>这两类「单边 broker」可以组合使用：同时指定 <code>market_broker</code>（行情源）与
+<code>trader_broker</code>（交易源），各供一侧。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">run_live</span><span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">strategy_cls</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">instruments</span><span class="o">=</span><span class="n">instruments</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">market_broker</span><span class="o">=</span><span class="s2">"replay"</span><span class="p">,</span>                <span class="c1"># 行情源</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">trader_broker</span><span class="o">=</span><span class="s2">"my_trade_only_broker"</span><span class="p">,</span>  <span class="c1"># 交易源</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">trading_mode</span><span class="o">=</span><span class="s2">"paper"</span><span class="p">,</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">gateway_options</span><span class="o">=</span><span class="p">{</span><span class="s2">"bars"</span><span class="p">:</span> <span class="n">bars</span><span class="p">},</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>两侧必须<strong>同时写明</strong>，只给一侧会报错——若让 <code>broker</code> 兼任缺失的那侧，它就一词双义
+了（读 <code>broker='qmf', market_broker='replay'</code> 得先知道「qmf 只有交易通道」才能推出
+<code>broker</code> 在此指交易源）。<code>broker</code> 只用于「单个 broker 供两侧」的场景，此时语义不变。</p>
+<p>这个组合的价值在于：既能用确定性回放数据驱动策略，又能把订单真正发往柜台仿真
+环境做联调。</p>
+<p>建议结合以下文档落地：</p>
+<ul>
+<li><a href="../../advanced/custom_broker_registry/">自定义 Broker 注册</a></li>
+<li><a href="../../advanced/custom_broker_production_checklist/">自定义 Broker 生产接入清单</a></li>
+<li><a href="../../reference/api/#mixed-market-trader-broker">行情源与交易源分开指定</a></li>
+</ul>
+<h3 id="1513-replay">15.1.3 离线验证实盘通路：内置 <code>replay</code> 行情源<a class="headerlink" href="#1513-replay" title="Permanent link">&para;</a></h3>
+<p>学到这里会遇到一个现实困难：<strong>没有柜台账号，实盘代码就没法跑</strong>。而实盘链路恰恰是
+最需要提前验证的部分——策略能否收到 bar/tick、多品种是否都到齐、<code>current_tick</code>
+是否正确、订单回调是否触发。</p>
+<p><code>AKQuant</code> 内置了 <code>broker="replay"</code>：把一段确定性的 <code>Bar</code> / <code>Tick</code> 序列推入实盘
+数据通路（<code>DataFeed</code> → 引擎 → <code>on_bar</code> / <code>on_tick</code>），无需柜台、也无需
+<code>openctp-ctp</code> 等可选依赖即可实跑。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">AssetType</span><span class="p">,</span> <span class="n">Instrument</span><span class="p">,</span> <span class="n">run_live</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Bar</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">run_live</span><span class="p">(</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">strategy_cls</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">instruments</span><span class="o">=</span><span class="p">[</span><span class="n">Instrument</span><span class="p">(</span><span class="n">symbol</span><span class="o">=</span><span class="s2">"DEMO_A"</span><span class="p">,</span> <span class="n">asset_type</span><span class="o">=</span><span class="n">AssetType</span><span class="o">.</span><span class="n">Stock</span><span class="p">,</span> <span class="o">...</span><span class="p">)],</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">broker</span><span class="o">=</span><span class="s2">"replay"</span><span class="p">,</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">trading_mode</span><span class="o">=</span><span class="s2">"paper"</span><span class="p">,</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">gateway_options</span><span class="o">=</span><span class="p">{</span><span class="s2">"bars"</span><span class="p">:</span> <span class="n">bars</span><span class="p">,</span> <span class="s2">"freq"</span><span class="p">:</span> <span class="s2">"1min"</span><span class="p">},</span>   <span class="c1"># list[Bar] / list[Tick] / DataFrame</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">duration</span><span class="o">=</span><span class="s2">"60s"</span><span class="p">,</span>                   <span class="c1"># 安全网</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>事件按时间戳升序推送，多品种全局交错；数据放完后会话<strong>自行结束</strong>（<code>replay</code> 通过
+<code>metadata</code> 声明事件总数，引擎据此终止，无需等 <code>duration</code> 超时）。</p>
+<p>上面顺带传了 <code>"freq": "1min"</code>：行情网关可以声明数据周期，框架把它注入策略的只读属性
+<code>self.freq</code>，策略因此不必把周期写死在代码里或从外部参数重复传一遍。取值用<strong>回测侧口径</strong>
+（<code>"1min"</code> / <code>"1d"</code>），与 <code>run_backtest(freq=)</code> 一致——klinedata 这类网关会把自己的表示法
+（<code>period="M1"</code>）转换后再注入，所以同一套策略代码在回测与实盘读到的是同一个值。不声明时
+<code>self.freq</code> 为 <code>None</code>（CTP 等只有逐笔源的网关、trader-only broker 都是这种情形），框架<strong>不做
+推断</strong>，请在策略里显式处理 <code>None</code>。</p>
+<p>要认清它的边界，别把它当"实盘彩排"的全部：</p>
+<ol>
+<li><strong>只有行情，不模拟成交</strong>（<code>trader_gateway=None</code>），因此不能用于
+   <code>trading_mode="broker_live"</code>；撮合由 paper 模式的模拟执行后端负责。</li>
+<li><strong>不覆盖 timer 语义</strong>。回放数据带历史时间戳，而实盘引擎按墙钟判定 timer 到期，
+   两条时间线错位——<code>on_timer</code> / <code>schedule_daily</code> 在回放会话中的行为不作保证，
+   要验证定时任务请用回测。</li>
+<li><strong>非正时间戳会被引擎静默丢弃</strong>，导致声明的事件总数永远达不到、会话挂死。常见
+   诱因是日期列存在无法解析的值（产出 <code>NaT</code> 进而变成非正时间戳）。构建期已有校验，
+   但数据源不完全受控时，仍建议显式传 <code>duration</code> 兜底。</li>
+</ol>
+<p>配套示例 <code>examples/38_live_functional_strategy_demo.py</code> 用它跑通了完整的函数式实盘
+回调链路；更多细节见<a href="../../advanced/live_functional_quickstart/">实盘函数式指南</a>的
+「离线验证」一节。</p>
+<h3 id="1514">15.1.4 回测 → 实盘最小切换清单<a class="headerlink" href="#1514" title="Permanent link">&para;</a></h3>
+<p>从回测走向实盘，最稳妥的路径不是"一步到位接柜台"，而是按下面这份清单逐层确认。它也帮你把"哪些是 AKQuant 已就绪的能力、哪些仍需自己补齐"分清楚。</p>
+<ol>
+<li><strong>先跑 paper（模拟盘）</strong>：同一套 <code>Strategy</code> 代码先以 <code>paper</code> 模式运行，确认信号、下单与日志链路无误，再切 <code>broker_live</code>。切勿跳过这一步直接实盘。</li>
+<li><strong>查询执行能力再下单</strong>：实盘前用 <code>self.get_execution_capabilities()</code> 读取 <code>account_mode</code>、<code>supports_short_sell</code>、<code>position_effect</code> 等字段，据此决定是否启用做空、<code>close_today</code> 等语义，避免回测能跑、实盘被拒。</li>
+<li><strong>数据源切换</strong>：把历史重放的 <code>DataFeed</code> 换成实时行情源，由对应 broker gateway 驱动。若策略逻辑依赖数据周期，用只读属性 <code>self.freq</code> 读取（回测由 <code>run_backtest(freq=)</code> 注入，实盘由行情网关声明，两侧口径统一），不要把周期写死或另传一份参数；网关未声明时它是 <code>None</code>，需显式处理。</li>
+<li><strong>网关选型要清醒</strong>：内置 <code>MiniQMT/PTrade</code> 当前更偏占位骨架与联调层，<strong>不应视为已完成生产级 A 股适配</strong>；集合竞价专用委托、打新等场景通常需自定义 broker 或增强 adapter（见 15.1.2 与《自定义 Broker 注册/生产接入清单》）。</li>
+<li><strong>成交语义从严</strong>：CTP 链路使用 <code>execution_semantics_mode="strict"</code>（默认、推荐生产）——撤单/拒单/成交等<strong>终态一律以柜台 <code>OnRtnOrder</code> 回报为准</strong>，不要凭本地请求成功就推进状态（详见 15.2.2）。</li>
+<li><strong>风控前置必须开</strong>：实盘务必显式配置 RMS 前置风控（单笔最大委托量、资金使用率、日内撤单次数、策略级止损），它是防"乌龙指"的最后一道防线（见 15.3）。</li>
+<li><strong>状态可恢复</strong>：用 <code>save_checkpoint</code> 定期落盘、<code>run_from_checkpoint</code> 重启后续跑，保证宕机后"断点续传"（见 15.5.4、15.6.2）。</li>
+<li><strong>可观测性到位</strong>：启动前用 <code>akquant.configure_logging(LogConfig(profile="live", file_json=True, ...))</code> 打开结构化日志，并接入监控告警（见 15.5.2、15.8）。</li>
+</ol>
+<p>一句话原则：<strong>先 paper 后实盘、先查能力后下单、终态以柜台回报为准、风控与可观测性先于收益。</strong></p>
+<h2 id="152-order-management-system-oms">15.2 订单管理系统 (Order Management System, OMS)<a class="headerlink" href="#152-order-management-system-oms" title="Permanent link">&para;</a></h2>
+<p>OMS 是实盘交易的核心，负责维护订单的全生命周期状态。</p>
+<h3 id="1521">15.2.1 订单状态机<a class="headerlink" href="#1521" title="Permanent link">&para;</a></h3>
+<p>实盘中的订单状态远比回测复杂，常见状态包括：</p>
+<ol>
+<li><strong>New</strong>：策略已创建订单。</li>
+<li><strong>Submitted</strong>：订单已提交到交易通道。</li>
+<li><strong>Accepted</strong>：柜台/交易所确认接收。</li>
+<li><strong>PartiallyFilled</strong>：部分成交。</li>
+<li><strong>Filled</strong>：全部成交。</li>
+<li><strong>Cancelled</strong>：已撤单。</li>
+<li><strong>Rejected</strong>：废单（如资金不足、不在交易时间、风控拒绝）。</li>
+</ol>
+<h3 id="1522-synchronization">15.2.2 状态同步 (Synchronization)<a class="headerlink" href="#1522-synchronization" title="Permanent link">&para;</a></h3>
+<p>策略持仓 (<code>Strategy Position</code>) 与柜台持仓 (<code>Broker Position</code>) 可能因网络丢包或人工干预而不一致。</p>
+<ul>
+<li><strong>定时同步</strong>：每隔 N 秒查询柜台持仓，强制覆盖本地状态。</li>
+<li><strong>事件驱动</strong>：通过 <code>on_order</code>、<code>on_trade</code>（以及可选 <code>on_broker_event</code>）实时更新状态并做审计落盘。</li>
+</ul>
+<p>在 CTP 严格模式下，建议遵循以下判定：</p>
+<ol>
+<li>发送撤单请求成功 ≠ <code>Cancelled</code>，必须等待 <code>OnRtnOrder(Cancelled)</code>。</li>
+<li>收到报单错误 ≠ <code>Rejected</code>，应以最终 <code>OnRtnOrder</code> 状态为准。</li>
+<li><code>Filled</code> 以订单回报终态确认，成交回报用于补充成交明细与审计。</li>
+</ol>
+<h2 id="153-risk-management-system-rms">15.3 风险管理系统 (Risk Management System, RMS)<a class="headerlink" href="#153-risk-management-system-rms" title="Permanent link">&para;</a></h2>
+<p>在实盘中，<strong>风控前置 (Pre-trade Risk Check)</strong> 是防止“乌龙指”的最后一道防线。</p>
+<h3 id="1531">15.3.1 核心风控规则<a class="headerlink" href="#1531" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>单笔最大委托量 (Max Order Size)</strong>：防止代码错误导致的天量下单。</li>
+<li><strong>资金使用率限制 (Margin Usage Limit)</strong>：防止满仓操作，预留安全垫。</li>
+<li><strong>日内撤单次数限制</strong>：交易所对频繁撤单有惩罚措施（如上期所 500 次）。</li>
+<li><strong>策略级止损</strong>：当策略当日亏损超过 N% 时，强制平仓并停止运行。</li>
+</ol>
+<h2 id="154-algorithmic-execution">15.4 算法交易 (Algorithmic Execution)<a class="headerlink" href="#154-algorithmic-execution" title="Permanent link">&para;</a></h2>
+<p>对于大资金，直接下单会产生巨大的<strong>冲击成本 (Market Impact)</strong>。算法交易旨在拆解大单，降低成本。</p>
+<h3 id="1541-twap-time-weighted-average-price">15.4.1 TWAP (Time Weighted Average Price)<a class="headerlink" href="#1541-twap-time-weighted-average-price" title="Permanent link">&para;</a></h3>
+<p>时间加权平均价格算法的思路是将大单均匀拆分到一段时间内执行。在逻辑上，它每隔 <span class="arithmatex">\(t\)</span> 秒下单 <span class="arithmatex">\(q\)</span> 手；正因为拆单节奏固定，它更适用于流动性均匀的市场。</p>
+<h3 id="1542-vwap-volume-weighted-average-price">15.4.2 VWAP (Volume Weighted Average Price)<a class="headerlink" href="#1542-vwap-volume-weighted-average-price" title="Permanent link">&para;</a></h3>
+<p>成交量加权平均价格算法则根据历史成交量分布来调整节奏，在流动性好的时候多下单、流动性差的时候少下单，其目标是让成交均价尽量接近市场 VWAP。</p>
+<h2 id="155">15.5 实盘部署与运维<a class="headerlink" href="#155" title="Permanent link">&para;</a></h2>
+<h3 id="1551">15.5.1 部署环境<a class="headerlink" href="#1551" title="Permanent link">&para;</a></h3>
+<p>在部署环境上，云服务器 (ECS) 推荐使用靠近交易所机房的节点（如上海、深圳）以降低延迟；而 Docker 容器化则用来确保实盘环境与测试环境完全一致，从而避免 "It works on my machine" 这类环境差异问题。</p>
+<h3 id="1552">15.5.2 监控与报警<a class="headerlink" href="#1552" title="Permanent link">&para;</a></h3>
+<p>监控与报警通常由三层手段共同支撑。心跳监测 (Heartbeat) 负责确保程序存活；日志 (Logging) 负责详细记录每一笔 Tick、Signal 和 Order；消息推送则集成钉钉/飞书/邮件机器人，实时推送成交和异常信息。</p>
+<p>推荐在实盘或准实盘启动前显式打开日志，而不是依赖默认输出：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">akquant</span><span class="o">.</span><span class="n">configure_logging</span><span class="p">(</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">akquant</span><span class="o">.</span><span class="n">LogConfig</span><span class="p">(</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        <span class="n">profile</span><span class="o">=</span><span class="s2">"live"</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="n">level</span><span class="o">=</span><span class="s2">"INFO"</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>        <span class="n">console</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>        <span class="n">filename</span><span class="o">=</span><span class="s2">"logs/live.log"</span><span class="p">,</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>        <span class="n">file_level</span><span class="o">=</span><span class="s2">"DEBUG"</span><span class="p">,</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>        <span class="n">file_json</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>        <span class="n">file_max_bytes</span><span class="o">=</span><span class="mi">50_000_000</span><span class="p">,</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        <span class="n">file_backup_count</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="p">)</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>这样做有几个直接收益：</p>
+<ul>
+<li><code>on_order</code> / <code>on_trade</code> / <code>on_reject</code> 中的策略日志会自动携带 <code>order_id</code>、<code>client_order_id</code>、<code>strategy_id</code>、<code>symbol</code> 等结构化字段。</li>
+<li>网关与执行链路中的 warning 也会进入同一套日志管线；例如拒单、未知撤单、收盘过期、严格语义下终态尚未确认等问题，都更容易统一排查。</li>
+<li>如果打开 <code>file_json=True</code>，后续接入日志平台、告警系统或审计落盘会更顺手。</li>
+</ul>
+<p><strong>订单审计（可脱机复盘的凭证）。</strong> 在 <code>broker_live</code> 下，每一笔订单的提交 / 回报 / 成交 / 撤单 / 拒单都会经 <code>akquant.audit.order</code> 命名空间产出结构化 INFO 审计。设置 <code>order_audit_file</code> 后，这些审计还会以 JSON line 单独落到一份纯审计文件——<strong>进程停止后仍可仅凭它重建订单全生命周期，用于对账与事故复盘</strong>：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">akquant</span><span class="o">.</span><span class="n">configure_logging</span><span class="p">(</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">akquant</span><span class="o">.</span><span class="n">LogConfig</span><span class="p">(</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>        <span class="n">profile</span><span class="o">=</span><span class="s2">"live"</span><span class="p">,</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>        <span class="n">console</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>        <span class="n">console_level</span><span class="o">=</span><span class="s2">"WARNING"</span><span class="p">,</span>          <span class="c1"># 控制台只留需人关注的拒单/断连</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="n">filename</span><span class="o">=</span><span class="s2">"logs/live.log"</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>        <span class="n">file_level</span><span class="o">=</span><span class="s2">"INFO"</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>        <span class="n">order_audit_file</span><span class="o">=</span><span class="s2">"logs/orders_audit.log"</span><span class="p">,</span>  <span class="c1"># 逐笔订单审计 JSON 流</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>        <span class="n">order_audit_level</span><span class="o">=</span><span class="s2">"INFO"</span><span class="p">,</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="p">)</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>高频策略实盘时强烈建议这样分流：控制台 <code>WARNING</code> 保持清爽，逐笔 INFO 审计单独落盘，避免刷屏又不丢凭证。</p>
+<p><strong>实盘柜台拒单不抛异常</strong></p>
+<p>柜台明确回绝一笔报单时（如「证券可用数量不足」「委托价不符合最小变动单位」），
+<code>buy()</code> / <code>sell()</code> / <code>order_target_*</code> <strong>不会抛异常</strong>，而是返回空回执并触发
+<code>on_reject</code>，与回测口径一致。请用 <code>on_reject</code> 感知拒单，不要依赖 <code>try/except</code>。</p>
+<p>若因超时或连接断开导致<strong>订单状态不可知</strong>（报文可能已到柜台），框架不会谎报拒单：
+此时触发的是 <code>on_error(exc, "order_submit", request)</code>，并在审计流水里记一条
+<code>order_submit_unknown</code>。这笔单的真实状态由下一轮 <code>sync_open_orders</code> 对账浮出。</p>
+<p><strong>例外：本地止损单的重试口径按失败原因区分，而非"一律交给对账"。</strong> 止损/跟踪止损单
+不下发柜台，由框架本地盯价触发后再调用 <code>submit_order</code> 报出（见
+<code>python/akquant/gateway/broker_execution.py</code> 的 <code>check_stop_triggers</code> /
+<code>_handle_stop_submit_failure</code>），触发提交失败时按 <code>OrderReceipt.failure</code> 分流：</p>
+<ul>
+<li><strong>柜台明确拒单</strong>（<code>failure == "rejected"</code>，订单确定不存在）：仍会重试，最多
+  <code>MAX_STOP_SUBMIT_ATTEMPTS = 3</code> 次；每次重试都经 <code>submit_order</code> 生成一个<strong>新的</strong>
+  <code>client_order_id</code>，但因为订单确定未被柜台接受，这不构成重复委托。</li>
+<li><strong>状态未知</strong>（<code>failure == "unknown"</code>，超时/断连，报文可能已到柜台）：框架<strong>不再自动
+  重试</strong>——重试会生成新的 <code>client_order_id</code>，柜台无从去重，一旦报文其实已经到达柜台，
+  重试就是一笔真实的重复委托。因此该止损单会被直接放弃，打一条 CRITICAL 日志并触发
+  <code>on_error(exc, "stop_trigger", order)</code>，需要人工介入核实。</li>
+</ul>
+<p><strong>已知局限</strong>：被放弃的这张止损单，如果报文其实已经到达柜台，其回报<strong>无法</strong>被自动关联
+回本地止损 id——<code>_record_stop_remap</code>（<code>python/akquant/live/_runner.py</code>）只在提交
+<strong>成功</strong>、拿到 <code>broker_order_id</code> 时才建立 <code>broker_order_id → local_id</code> 的映射；状态未知
+时根本没有 <code>broker_order_id</code> 可供记录。这笔回报之后会以一笔"来源不明"的普通订单面貌
+到达策略，而不会被识别成某张本地止损单的回报，需要人工在对账时核实。</p>
+<p><strong>敏感脱敏（默认开启）。</strong> 日志默认对密钥类字段（<code>password</code>/<code>token</code>/<code>api_key</code> 等）全掩码、对账户类字段（<code>user_id</code>/<code>account</code> 等）保留尾 4 位。这是 handler 层兜底——即便某处新增日志忘了脱敏，账号密钥也不会明文落盘；如需关闭设 <code>mask_sensitive=False</code>。</p>
+<p><strong>日志语言。</strong> 日志消息默认英文（可搜索、可协作、可被告警/日志系统消费的通用契约），结构化字段（<code>event</code>/<code>side</code>/<code>price</code>）也恒为英文。如偏好中文控制台，设 <code>language="zh"</code>——它只把<strong>控制台的订单审计行</strong>渲染成中文，<strong>文件与 JSON 审计流仍是英文</strong>，因此 grep/对账/告警不会因语言分裂。<code>CRITICAL</code> 用于交易前置断连、runner 崩溃等系统级致命事件，建议单独接告警通道。</p>
+<h3 id="1553">15.5.3 代码示例：启动实盘<a class="headerlink" href="#1553" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="sd">"""</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="sd">第 15 章：实盘交易系统 (Live Trading).</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="sd">本示例展示了如何将策略部署到实盘环境。</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="sd">AKQuant 支持通过内置 broker 网关（ctp/miniqmt/ptrade）接入行情与交易链路。</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="sd">注意：</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="sd">1. 实盘交易涉及真实资金，请务必在模拟盘充分测试。</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="sd">2. 本代码仅为配置演示，无法直接运行，因为需要有效账户信息。</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="sd">配置流程：</span>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="sd">1. 准备对应 broker 的账户凭证与连接参数。</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="sd">2. 获取行情与交易前置地址（若 broker 需要）。</span>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="sd">3. 配置 run_live 并启动。</span>
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="sd">"""</span>
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Bar</span><span class="p">,</span> <span class="n">Instrument</span><span class="p">,</span> <span class="n">Strategy</span><span class="p">,</span> <span class="n">run_live</span>
+</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>
+</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>
+</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a><span class="k">class</span><span class="w"> </span><span class="nc">LiveDemoStrategy</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a><span class="w">    </span><span class="sd">"""实盘演示策略."""</span>
+</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>
+</span><span id="__span-6-24"><a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">:</span> <span class="n">Bar</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-6-25"><a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a><span class="w">        </span><span class="sd">"""收到 Bar 事件的回调."""</span>
+</span><span id="__span-6-26"><a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[Live] Received Bar: </span><span class="si">{</span><span class="n">bar</span><span class="o">.</span><span class="n">symbol</span><span class="si">}</span><span class="s2"> @ </span><span class="si">{</span><span class="n">bar</span><span class="o">.</span><span class="n">close</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a>
+</span><span id="__span-6-28"><a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a>        <span class="n">closes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_history</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="n">bar</span><span class="o">.</span><span class="n">symbol</span><span class="p">,</span> <span class="s2">"close"</span><span class="p">)</span>
+</span><span id="__span-6-29"><a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a>        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">closes</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">20</span><span class="p">:</span>
+</span><span id="__span-6-30"><a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a>            <span class="k">return</span>
+</span><span id="__span-6-31"><a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a>
+</span><span id="__span-6-32"><a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a>        <span class="n">ma5</span> <span class="o">=</span> <span class="n">closes</span><span class="p">[</span><span class="o">-</span><span class="mi">5</span><span class="p">:]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-6-33"><a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a>        <span class="n">ma20</span> <span class="o">=</span> <span class="n">closes</span><span class="p">[</span><span class="o">-</span><span class="mi">20</span><span class="p">:]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+</span><span id="__span-6-34"><a id="__codelineno-6-34" name="__codelineno-6-34" href="#__codelineno-6-34"></a>
+</span><span id="__span-6-35"><a id="__codelineno-6-35" name="__codelineno-6-35" href="#__codelineno-6-35"></a>        <span class="n">pos</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_position</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">symbol</span><span class="p">)</span>
+</span><span id="__span-6-36"><a id="__codelineno-6-36" name="__codelineno-6-36" href="#__codelineno-6-36"></a>
+</span><span id="__span-6-37"><a id="__codelineno-6-37" name="__codelineno-6-37" href="#__codelineno-6-37"></a>        <span class="k">if</span> <span class="n">ma5</span> <span class="o">&gt;</span> <span class="n">ma20</span> <span class="ow">and</span> <span class="n">pos</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-6-38"><a id="__codelineno-6-38" name="__codelineno-6-38" href="#__codelineno-6-38"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="s2">"金叉 -&gt; 买入开仓"</span><span class="p">)</span>
+</span><span id="__span-6-39"><a id="__codelineno-6-39" name="__codelineno-6-39" href="#__codelineno-6-39"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">buy</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">symbol</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-6-40"><a id="__codelineno-6-40" name="__codelineno-6-40" href="#__codelineno-6-40"></a>        <span class="k">elif</span> <span class="n">ma5</span> <span class="o">&lt;</span> <span class="n">ma20</span> <span class="ow">and</span> <span class="n">pos</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-6-41"><a id="__codelineno-6-41" name="__codelineno-6-41" href="#__codelineno-6-41"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="s2">"死叉 -&gt; 卖出平仓"</span><span class="p">)</span>
+</span><span id="__span-6-42"><a id="__codelineno-6-42" name="__codelineno-6-42" href="#__codelineno-6-42"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">close_position</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">symbol</span><span class="p">)</span>
+</span><span id="__span-6-43"><a id="__codelineno-6-43" name="__codelineno-6-43" href="#__codelineno-6-43"></a>
+</span><span id="__span-6-44"><a id="__codelineno-6-44" name="__codelineno-6-44" href="#__codelineno-6-44"></a>
+</span><span id="__span-6-45"><a id="__codelineno-6-45" name="__codelineno-6-45" href="#__codelineno-6-45"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+</span><span id="__span-6-46"><a id="__codelineno-6-46" name="__codelineno-6-46" href="#__codelineno-6-46"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"正在配置实盘环境..."</span><span class="p">)</span>
+</span><span id="__span-6-47"><a id="__codelineno-6-47" name="__codelineno-6-47" href="#__codelineno-6-47"></a>
+</span><span id="__span-6-48"><a id="__codelineno-6-48" name="__codelineno-6-48" href="#__codelineno-6-48"></a>    <span class="n">rb2310</span> <span class="o">=</span> <span class="n">Instrument</span><span class="p">(</span>
+</span><span id="__span-6-49"><a id="__codelineno-6-49" name="__codelineno-6-49" href="#__codelineno-6-49"></a>        <span class="n">symbol</span><span class="o">=</span><span class="s2">"rb2310"</span><span class="p">,</span>
+</span><span id="__span-6-50"><a id="__codelineno-6-50" name="__codelineno-6-50" href="#__codelineno-6-50"></a>        <span class="n">asset_type</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">AssetType</span><span class="o">.</span><span class="n">Futures</span><span class="p">,</span>
+</span><span id="__span-6-51"><a id="__codelineno-6-51" name="__codelineno-6-51" href="#__codelineno-6-51"></a>        <span class="n">multiplier</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-6-52"><a id="__codelineno-6-52" name="__codelineno-6-52" href="#__codelineno-6-52"></a>        <span class="n">margin_ratio</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span>
+</span><span id="__span-6-53"><a id="__codelineno-6-53" name="__codelineno-6-53" href="#__codelineno-6-53"></a>    <span class="p">)</span>
+</span><span id="__span-6-54"><a id="__codelineno-6-54" name="__codelineno-6-54" href="#__codelineno-6-54"></a>
+</span><span id="__span-6-55"><a id="__codelineno-6-55" name="__codelineno-6-55" href="#__codelineno-6-55"></a>    <span class="n">CTP_CONFIG</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-6-56"><a id="__codelineno-6-56" name="__codelineno-6-56" href="#__codelineno-6-56"></a>        <span class="s2">"md_front"</span><span class="p">:</span> <span class="s2">"tcp://180.168.146.187:10131"</span><span class="p">,</span>
+</span><span id="__span-6-57"><a id="__codelineno-6-57" name="__codelineno-6-57" href="#__codelineno-6-57"></a>        <span class="s2">"td_front"</span><span class="p">:</span> <span class="s2">"tcp://180.168.146.187:10130"</span><span class="p">,</span>
+</span><span id="__span-6-58"><a id="__codelineno-6-58" name="__codelineno-6-58" href="#__codelineno-6-58"></a>        <span class="s2">"broker_id"</span><span class="p">:</span> <span class="s2">"9999"</span><span class="p">,</span>
+</span><span id="__span-6-59"><a id="__codelineno-6-59" name="__codelineno-6-59" href="#__codelineno-6-59"></a>        <span class="s2">"user_id"</span><span class="p">:</span> <span class="s2">"YOUR_USER_ID"</span><span class="p">,</span>
+</span><span id="__span-6-60"><a id="__codelineno-6-60" name="__codelineno-6-60" href="#__codelineno-6-60"></a>        <span class="s2">"password"</span><span class="p">:</span> <span class="s2">"YOUR_PASSWORD"</span><span class="p">,</span>
+</span><span id="__span-6-61"><a id="__codelineno-6-61" name="__codelineno-6-61" href="#__codelineno-6-61"></a>        <span class="s2">"app_id"</span><span class="p">:</span> <span class="s2">"simnow_client_test"</span><span class="p">,</span>
+</span><span id="__span-6-62"><a id="__codelineno-6-62" name="__codelineno-6-62" href="#__codelineno-6-62"></a>        <span class="s2">"auth_code"</span><span class="p">:</span> <span class="s2">"0000000000000000"</span><span class="p">,</span>
+</span><span id="__span-6-63"><a id="__codelineno-6-63" name="__codelineno-6-63" href="#__codelineno-6-63"></a>    <span class="p">}</span>
+</span><span id="__span-6-64"><a id="__codelineno-6-64" name="__codelineno-6-64" href="#__codelineno-6-64"></a>
+</span><span id="__span-6-65"><a id="__codelineno-6-65" name="__codelineno-6-65" href="#__codelineno-6-65"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-6-66"><a id="__codelineno-6-66" name="__codelineno-6-66" href="#__codelineno-6-66"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"启动 CTP 接口..."</span><span class="p">)</span>
+</span><span id="__span-6-67"><a id="__codelineno-6-67" name="__codelineno-6-67" href="#__codelineno-6-67"></a>        <span class="n">run_live</span><span class="p">(</span>
+</span><span id="__span-6-68"><a id="__codelineno-6-68" name="__codelineno-6-68" href="#__codelineno-6-68"></a>            <span class="n">strategy_cls</span><span class="o">=</span><span class="n">LiveDemoStrategy</span><span class="p">,</span>
+</span><span id="__span-6-69"><a id="__codelineno-6-69" name="__codelineno-6-69" href="#__codelineno-6-69"></a>            <span class="n">instruments</span><span class="o">=</span><span class="p">[</span><span class="n">rb2310</span><span class="p">],</span>
+</span><span id="__span-6-70"><a id="__codelineno-6-70" name="__codelineno-6-70" href="#__codelineno-6-70"></a>            <span class="n">md_front</span><span class="o">=</span><span class="n">CTP_CONFIG</span><span class="p">[</span><span class="s2">"md_front"</span><span class="p">],</span>
+</span><span id="__span-6-71"><a id="__codelineno-6-71" name="__codelineno-6-71" href="#__codelineno-6-71"></a>            <span class="n">td_front</span><span class="o">=</span><span class="n">CTP_CONFIG</span><span class="p">[</span><span class="s2">"td_front"</span><span class="p">],</span>
+</span><span id="__span-6-72"><a id="__codelineno-6-72" name="__codelineno-6-72" href="#__codelineno-6-72"></a>            <span class="n">broker_id</span><span class="o">=</span><span class="n">CTP_CONFIG</span><span class="p">[</span><span class="s2">"broker_id"</span><span class="p">],</span>
+</span><span id="__span-6-73"><a id="__codelineno-6-73" name="__codelineno-6-73" href="#__codelineno-6-73"></a>            <span class="n">user_id</span><span class="o">=</span><span class="n">CTP_CONFIG</span><span class="p">[</span><span class="s2">"user_id"</span><span class="p">],</span>
+</span><span id="__span-6-74"><a id="__codelineno-6-74" name="__codelineno-6-74" href="#__codelineno-6-74"></a>            <span class="n">password</span><span class="o">=</span><span class="n">CTP_CONFIG</span><span class="p">[</span><span class="s2">"password"</span><span class="p">],</span>
+</span><span id="__span-6-75"><a id="__codelineno-6-75" name="__codelineno-6-75" href="#__codelineno-6-75"></a>            <span class="n">app_id</span><span class="o">=</span><span class="n">CTP_CONFIG</span><span class="p">[</span><span class="s2">"app_id"</span><span class="p">],</span>
+</span><span id="__span-6-76"><a id="__codelineno-6-76" name="__codelineno-6-76" href="#__codelineno-6-76"></a>            <span class="n">auth_code</span><span class="o">=</span><span class="n">CTP_CONFIG</span><span class="p">[</span><span class="s2">"auth_code"</span><span class="p">],</span>
+</span><span id="__span-6-77"><a id="__codelineno-6-77" name="__codelineno-6-77" href="#__codelineno-6-77"></a>            <span class="n">cash</span><span class="o">=</span><span class="mi">500_000</span><span class="p">,</span>
+</span><span id="__span-6-78"><a id="__codelineno-6-78" name="__codelineno-6-78" href="#__codelineno-6-78"></a>        <span class="p">)</span>
+</span><span id="__span-6-79"><a id="__codelineno-6-79" name="__codelineno-6-79" href="#__codelineno-6-79"></a>
+</span><span id="__span-6-80"><a id="__codelineno-6-80" name="__codelineno-6-80" href="#__codelineno-6-80"></a>    <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+</span><span id="__span-6-81"><a id="__codelineno-6-81" name="__codelineno-6-81" href="#__codelineno-6-81"></a>        <span class="nb">print</span><span class="p">(</span>
+</span><span id="__span-6-82"><a id="__codelineno-6-82" name="__codelineno-6-82" href="#__codelineno-6-82"></a>            <span class="s2">"错误: 未找到 CTP 接口库。请确保已安装 akquant[ctp] 或手动配置 "</span>
+</span><span id="__span-6-83"><a id="__codelineno-6-83" name="__codelineno-6-83" href="#__codelineno-6-83"></a>            <span class="s2">"thosttraderapi。"</span>
+</span><span id="__span-6-84"><a id="__codelineno-6-84" name="__codelineno-6-84" href="#__codelineno-6-84"></a>        <span class="p">)</span>
+</span><span id="__span-6-85"><a id="__codelineno-6-85" name="__codelineno-6-85" href="#__codelineno-6-85"></a>    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+</span><span id="__span-6-86"><a id="__codelineno-6-86" name="__codelineno-6-86" href="#__codelineno-6-86"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"实盘启动失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>推荐进一步查看以下实盘脚本：</p>
+<ul>
+<li><code>examples/38_live_functional_strategy_demo.py</code>：函数式策略入口（paper / broker_live）。</li>
+<li><code>examples/39_live_broker_submit_order_demo.py</code>：<code>broker_live</code> 下最小下单闭环。</li>
+<li><code>examples/42_live_broker_event_audit_demo.py</code>：统一 broker 事件审计与策略归属追踪。</li>
+<li><code>examples/35_custom_broker_registry_demo.py</code>：自定义 broker 注册与工厂接入。</li>
+</ul>
+<h3 id="1554-warm-start">15.5.4 热启动与状态持久化 (Warm Start)<a class="headerlink" href="#1554-warm-start" title="Permanent link">&para;</a></h3>
+<p>在准实盘/长会话回放场景中，系统可能会因网络波动或维护重启。为了保证策略状态（如指标缓存、持仓记录）不丢失，<code>AKQuant</code> 提供了<strong>热启动</strong>机制。</p>
+<p><strong>1. 保存状态 (Checkpoint)</strong></p>
+<p>在每日收盘后或定期调用 <code>save_checkpoint</code>：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># 保存当前引擎状态和策略变量</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">aq</span><span class="o">.</span><span class="n">save_checkpoint</span><span class="p">(</span><span class="n">engine</span><span class="p">,</span> <span class="n">strategy</span><span class="p">,</span> <span class="s2">"strategy_checkpoint.pkl"</span><span class="p">)</span>
+</span></code></pre></div>
+<p><strong>2. 恢复运行 (Restore)</strong></p>
+<p>系统重启后，使用 <code>run_from_checkpoint</code> 加载快照并注入新的数据源：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># 加载最新的数据源 (包含历史数据 + 今日新数据)</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">data_feed</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">CSVFeedAdapter</span><span class="p">(</span><span class="n">path_template</span><span class="o">=</span><span class="s2">"latest_data_</span><span class="si">{symbol}</span><span class="s2">.csv"</span><span class="p">)</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">engine_result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_from_checkpoint</span><span class="p">(</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">checkpoint_path</span><span class="o">=</span><span class="s2">"strategy_checkpoint.pkl"</span><span class="p">,</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">data</span><span class="o">=</span><span class="n">data_feed</span><span class="p">,</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">symbols</span><span class="o">=</span><span class="s2">"rb2310"</span><span class="p">,</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="p">)</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="c1"># 获取恢复后的引擎和策略</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">engine_result</span><span class="o">.</span><span class="n">engine</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="n">strategy</span> <span class="o">=</span> <span class="n">engine_result</span><span class="o">.</span><span class="n">strategy</span>
+</span></code></pre></div>
+<p><code>run_from_checkpoint</code> 会恢复 checkpoint 中的策略实例，不会通过 <code>strategy_source/strategy_loader</code> 重新加载策略实现。</p>
+<h3 id="1555-strategy-loader">15.5.5 动态策略加载 (Strategy Loader)<a class="headerlink" href="#1555-strategy-loader" title="Permanent link">&para;</a></h3>
+<p>在实盘与准实盘场景中，策略实现有时需要按运行时配置动态加载，而不是在脚本中静态 <code>import</code>。<code>AKQuant</code> 支持通过 <code>strategy_source + strategy_loader</code> 机制完成策略注入。</p>
+<p>下面示例演示了两种加载方式：</p>
+<ol>
+<li><code>python_plain</code>：从源码文件按类名加载策略。</li>
+<li><code>encrypted_external</code>：由外部回调解密并返回策略类。</li>
+</ol>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="sd">"""</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="sd">第 15 章：动态策略加载（Strategy Loader）.</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="sd">本章演示如何在不直接导入策略类的情况下，通过 strategy_source + strategy_loader</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="sd">在运行时加载策略实现。</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="sd">"""</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span><span class="p">,</span> <span class="n">timezone</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="kn">from</span><span class="w"> </span><span class="nn">tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="n">TemporaryDirectory</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Bar</span><span class="p">,</span> <span class="n">Strategy</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="k">def</span><span class="w"> </span><span class="nf">make_bars</span><span class="p">(</span><span class="n">symbol</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">count</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Bar</span><span class="p">]:</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="w">    </span><span class="sd">"""构造示例 K 线."""</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>    <span class="n">start</span> <span class="o">=</span> <span class="n">datetime</span><span class="p">(</span><span class="mi">2024</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">9</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="n">tzinfo</span><span class="o">=</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>    <span class="n">bars</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Bar</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">count</span><span class="p">):</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>        <span class="n">dt</span> <span class="o">=</span> <span class="n">start</span> <span class="o">+</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="n">i</span><span class="p">)</span>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>        <span class="n">ts_ns</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">dt</span><span class="o">.</span><span class="n">timestamp</span><span class="p">()</span> <span class="o">*</span> <span class="mi">1_000_000_000</span><span class="p">)</span>
+</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>        <span class="n">price</span> <span class="o">=</span> <span class="mf">50.0</span> <span class="o">+</span> <span class="nb">float</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+</span><span id="__span-9-25"><a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>        <span class="n">bars</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+</span><span id="__span-9-26"><a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a>            <span class="n">Bar</span><span class="p">(</span>
+</span><span id="__span-9-27"><a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a>                <span class="n">timestamp</span><span class="o">=</span><span class="n">ts_ns</span><span class="p">,</span>
+</span><span id="__span-9-28"><a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a>                <span class="nb">open</span><span class="o">=</span><span class="n">price</span><span class="p">,</span>
+</span><span id="__span-9-29"><a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a>                <span class="n">high</span><span class="o">=</span><span class="n">price</span> <span class="o">+</span> <span class="mf">0.8</span><span class="p">,</span>
+</span><span id="__span-9-30"><a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a>                <span class="n">low</span><span class="o">=</span><span class="n">price</span> <span class="o">-</span> <span class="mf">0.8</span><span class="p">,</span>
+</span><span id="__span-9-31"><a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a>                <span class="n">close</span><span class="o">=</span><span class="n">price</span> <span class="o">+</span> <span class="mf">0.3</span><span class="p">,</span>
+</span><span id="__span-9-32"><a id="__codelineno-9-32" name="__codelineno-9-32" href="#__codelineno-9-32"></a>                <span class="n">volume</span><span class="o">=</span><span class="mf">2000.0</span> <span class="o">+</span> <span class="nb">float</span><span class="p">(</span><span class="n">i</span><span class="p">),</span>
+</span><span id="__span-9-33"><a id="__codelineno-9-33" name="__codelineno-9-33" href="#__codelineno-9-33"></a>                <span class="n">symbol</span><span class="o">=</span><span class="n">symbol</span><span class="p">,</span>
+</span><span id="__span-9-34"><a id="__codelineno-9-34" name="__codelineno-9-34" href="#__codelineno-9-34"></a>            <span class="p">)</span>
+</span><span id="__span-9-35"><a id="__codelineno-9-35" name="__codelineno-9-35" href="#__codelineno-9-35"></a>        <span class="p">)</span>
+</span><span id="__span-9-36"><a id="__codelineno-9-36" name="__codelineno-9-36" href="#__codelineno-9-36"></a>    <span class="k">return</span> <span class="n">bars</span>
+</span><span id="__span-9-37"><a id="__codelineno-9-37" name="__codelineno-9-37" href="#__codelineno-9-37"></a>
+</span><span id="__span-9-38"><a id="__codelineno-9-38" name="__codelineno-9-38" href="#__codelineno-9-38"></a>
+</span><span id="__span-9-39"><a id="__codelineno-9-39" name="__codelineno-9-39" href="#__codelineno-9-39"></a><span class="k">def</span><span class="w"> </span><span class="nf">chapter_plain_loader</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-9-40"><a id="__codelineno-9-40" name="__codelineno-9-40" href="#__codelineno-9-40"></a><span class="w">    </span><span class="sd">"""场景一：python_plain 从源码文件加载策略类."""</span>
+</span><span id="__span-9-41"><a id="__codelineno-9-41" name="__codelineno-9-41" href="#__codelineno-9-41"></a>    <span class="n">bars</span> <span class="o">=</span> <span class="n">make_bars</span><span class="p">(</span><span class="s2">"CH15_PLAIN"</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-9-42"><a id="__codelineno-9-42" name="__codelineno-9-42" href="#__codelineno-9-42"></a>    <span class="k">with</span> <span class="n">TemporaryDirectory</span><span class="p">()</span> <span class="k">as</span> <span class="n">tmp_dir</span><span class="p">:</span>
+</span><span id="__span-9-43"><a id="__codelineno-9-43" name="__codelineno-9-43" href="#__codelineno-9-43"></a>        <span class="n">strategy_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">tmp_dir</span><span class="p">)</span> <span class="o">/</span> <span class="s2">"chapter_strategy.py"</span>
+</span><span id="__span-9-44"><a id="__codelineno-9-44" name="__codelineno-9-44" href="#__codelineno-9-44"></a>        <span class="n">strategy_path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span>
+</span><span id="__span-9-45"><a id="__codelineno-9-45" name="__codelineno-9-45" href="#__codelineno-9-45"></a>            <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+</span><span id="__span-9-46"><a id="__codelineno-9-46" name="__codelineno-9-46" href="#__codelineno-9-46"></a>                <span class="p">[</span>
+</span><span id="__span-9-47"><a id="__codelineno-9-47" name="__codelineno-9-47" href="#__codelineno-9-47"></a>                    <span class="s2">"from akquant.strategy import Strategy"</span><span class="p">,</span>
+</span><span id="__span-9-48"><a id="__codelineno-9-48" name="__codelineno-9-48" href="#__codelineno-9-48"></a>                    <span class="s2">""</span><span class="p">,</span>
+</span><span id="__span-9-49"><a id="__codelineno-9-49" name="__codelineno-9-49" href="#__codelineno-9-49"></a>                    <span class="s2">"class ChapterPlainStrategy(Strategy):"</span><span class="p">,</span>
+</span><span id="__span-9-50"><a id="__codelineno-9-50" name="__codelineno-9-50" href="#__codelineno-9-50"></a>                    <span class="s2">"    def __init__(self):"</span><span class="p">,</span>
+</span><span id="__span-9-51"><a id="__codelineno-9-51" name="__codelineno-9-51" href="#__codelineno-9-51"></a>                    <span class="s2">"        self.calls = 0"</span><span class="p">,</span>
+</span><span id="__span-9-52"><a id="__codelineno-9-52" name="__codelineno-9-52" href="#__codelineno-9-52"></a>                    <span class="s2">""</span><span class="p">,</span>
+</span><span id="__span-9-53"><a id="__codelineno-9-53" name="__codelineno-9-53" href="#__codelineno-9-53"></a>                    <span class="s2">"    def on_bar(self, bar):"</span><span class="p">,</span>
+</span><span id="__span-9-54"><a id="__codelineno-9-54" name="__codelineno-9-54" href="#__codelineno-9-54"></a>                    <span class="s2">"        self.calls += 1"</span><span class="p">,</span>
+</span><span id="__span-9-55"><a id="__codelineno-9-55" name="__codelineno-9-55" href="#__codelineno-9-55"></a>                <span class="p">]</span>
+</span><span id="__span-9-56"><a id="__codelineno-9-56" name="__codelineno-9-56" href="#__codelineno-9-56"></a>            <span class="p">),</span>
+</span><span id="__span-9-57"><a id="__codelineno-9-57" name="__codelineno-9-57" href="#__codelineno-9-57"></a>            <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">,</span>
+</span><span id="__span-9-58"><a id="__codelineno-9-58" name="__codelineno-9-58" href="#__codelineno-9-58"></a>        <span class="p">)</span>
+</span><span id="__span-9-59"><a id="__codelineno-9-59" name="__codelineno-9-59" href="#__codelineno-9-59"></a>        <span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-9-60"><a id="__codelineno-9-60" name="__codelineno-9-60" href="#__codelineno-9-60"></a>            <span class="n">data</span><span class="o">=</span><span class="n">bars</span><span class="p">,</span>
+</span><span id="__span-9-61"><a id="__codelineno-9-61" name="__codelineno-9-61" href="#__codelineno-9-61"></a>            <span class="n">strategy</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-9-62"><a id="__codelineno-9-62" name="__codelineno-9-62" href="#__codelineno-9-62"></a>            <span class="n">strategy_source</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">strategy_path</span><span class="p">),</span>
+</span><span id="__span-9-63"><a id="__codelineno-9-63" name="__codelineno-9-63" href="#__codelineno-9-63"></a>            <span class="n">strategy_loader</span><span class="o">=</span><span class="s2">"python_plain"</span><span class="p">,</span>
+</span><span id="__span-9-64"><a id="__codelineno-9-64" name="__codelineno-9-64" href="#__codelineno-9-64"></a>            <span class="n">strategy_loader_options</span><span class="o">=</span><span class="p">{</span><span class="s2">"strategy_attr"</span><span class="p">:</span> <span class="s2">"ChapterPlainStrategy"</span><span class="p">},</span>
+</span><span id="__span-9-65"><a id="__codelineno-9-65" name="__codelineno-9-65" href="#__codelineno-9-65"></a>            <span class="n">symbols</span><span class="o">=</span><span class="s2">"CH15_PLAIN"</span><span class="p">,</span>
+</span><span id="__span-9-66"><a id="__codelineno-9-66" name="__codelineno-9-66" href="#__codelineno-9-66"></a>            <span class="n">show_progress</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-9-67"><a id="__codelineno-9-67" name="__codelineno-9-67" href="#__codelineno-9-67"></a>        <span class="p">)</span>
+</span><span id="__span-9-68"><a id="__codelineno-9-68" name="__codelineno-9-68" href="#__codelineno-9-68"></a>    <span class="n">strategy</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">strategy</span>
+</span><span id="__span-9-69"><a id="__codelineno-9-69" name="__codelineno-9-69" href="#__codelineno-9-69"></a>    <span class="n">calls</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">strategy</span><span class="p">,</span> <span class="s2">"calls"</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="k">if</span> <span class="n">strategy</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="o">-</span><span class="mi">1</span>
+</span><span id="__span-9-70"><a id="__codelineno-9-70" name="__codelineno-9-70" href="#__codelineno-9-70"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"chapter15_plain_calls=</span><span class="si">{</span><span class="n">calls</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-9-71"><a id="__codelineno-9-71" name="__codelineno-9-71" href="#__codelineno-9-71"></a>
+</span><span id="__span-9-72"><a id="__codelineno-9-72" name="__codelineno-9-72" href="#__codelineno-9-72"></a>
+</span><span id="__span-9-73"><a id="__codelineno-9-73" name="__codelineno-9-73" href="#__codelineno-9-73"></a><span class="k">def</span><span class="w"> </span><span class="nf">chapter_encrypted_loader</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-9-74"><a id="__codelineno-9-74" name="__codelineno-9-74" href="#__codelineno-9-74"></a><span class="w">    </span><span class="sd">"""场景二：encrypted_external 通过外部回调加载策略类."""</span>
+</span><span id="__span-9-75"><a id="__codelineno-9-75" name="__codelineno-9-75" href="#__codelineno-9-75"></a>    <span class="n">bars</span> <span class="o">=</span> <span class="n">make_bars</span><span class="p">(</span><span class="s2">"CH15_ENC"</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-9-76"><a id="__codelineno-9-76" name="__codelineno-9-76" href="#__codelineno-9-76"></a>
+</span><span id="__span-9-77"><a id="__codelineno-9-77" name="__codelineno-9-77" href="#__codelineno-9-77"></a>    <span class="k">class</span><span class="w"> </span><span class="nc">ChapterEncryptedStrategy</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-9-78"><a id="__codelineno-9-78" name="__codelineno-9-78" href="#__codelineno-9-78"></a>        <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-9-79"><a id="__codelineno-9-79" name="__codelineno-9-79" href="#__codelineno-9-79"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">calls</span> <span class="o">=</span> <span class="mi">0</span>
+</span><span id="__span-9-80"><a id="__codelineno-9-80" name="__codelineno-9-80" href="#__codelineno-9-80"></a>
+</span><span id="__span-9-81"><a id="__codelineno-9-81" name="__codelineno-9-81" href="#__codelineno-9-81"></a>        <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">:</span> <span class="n">Bar</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-9-82"><a id="__codelineno-9-82" name="__codelineno-9-82" href="#__codelineno-9-82"></a>            <span class="n">_</span> <span class="o">=</span> <span class="n">bar</span>
+</span><span id="__span-9-83"><a id="__codelineno-9-83" name="__codelineno-9-83" href="#__codelineno-9-83"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">calls</span> <span class="o">+=</span> <span class="mi">1</span>
+</span><span id="__span-9-84"><a id="__codelineno-9-84" name="__codelineno-9-84" href="#__codelineno-9-84"></a>
+</span><span id="__span-9-85"><a id="__codelineno-9-85" name="__codelineno-9-85" href="#__codelineno-9-85"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">decrypt_and_load</span><span class="p">(</span><span class="n">source</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">type</span><span class="p">[</span><span class="n">Strategy</span><span class="p">]:</span>
+</span><span id="__span-9-86"><a id="__codelineno-9-86" name="__codelineno-9-86" href="#__codelineno-9-86"></a>        <span class="n">_</span> <span class="o">=</span> <span class="n">source</span>
+</span><span id="__span-9-87"><a id="__codelineno-9-87" name="__codelineno-9-87" href="#__codelineno-9-87"></a>        <span class="n">_</span> <span class="o">=</span> <span class="n">options</span>
+</span><span id="__span-9-88"><a id="__codelineno-9-88" name="__codelineno-9-88" href="#__codelineno-9-88"></a>        <span class="k">return</span> <span class="n">ChapterEncryptedStrategy</span>
+</span><span id="__span-9-89"><a id="__codelineno-9-89" name="__codelineno-9-89" href="#__codelineno-9-89"></a>
+</span><span id="__span-9-90"><a id="__codelineno-9-90" name="__codelineno-9-90" href="#__codelineno-9-90"></a>    <span class="n">result</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">run_backtest</span><span class="p">(</span>
+</span><span id="__span-9-91"><a id="__codelineno-9-91" name="__codelineno-9-91" href="#__codelineno-9-91"></a>        <span class="n">data</span><span class="o">=</span><span class="n">bars</span><span class="p">,</span>
+</span><span id="__span-9-92"><a id="__codelineno-9-92" name="__codelineno-9-92" href="#__codelineno-9-92"></a>        <span class="n">strategy</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-9-93"><a id="__codelineno-9-93" name="__codelineno-9-93" href="#__codelineno-9-93"></a>        <span class="n">strategy_source</span><span class="o">=</span><span class="sa">b</span><span class="s2">"chapter15_encrypted_payload"</span><span class="p">,</span>
+</span><span id="__span-9-94"><a id="__codelineno-9-94" name="__codelineno-9-94" href="#__codelineno-9-94"></a>        <span class="n">strategy_loader</span><span class="o">=</span><span class="s2">"encrypted_external"</span><span class="p">,</span>
+</span><span id="__span-9-95"><a id="__codelineno-9-95" name="__codelineno-9-95" href="#__codelineno-9-95"></a>        <span class="n">strategy_loader_options</span><span class="o">=</span><span class="p">{</span><span class="s2">"decrypt_and_load"</span><span class="p">:</span> <span class="n">decrypt_and_load</span><span class="p">},</span>
+</span><span id="__span-9-96"><a id="__codelineno-9-96" name="__codelineno-9-96" href="#__codelineno-9-96"></a>        <span class="n">symbols</span><span class="o">=</span><span class="s2">"CH15_ENC"</span><span class="p">,</span>
+</span><span id="__span-9-97"><a id="__codelineno-9-97" name="__codelineno-9-97" href="#__codelineno-9-97"></a>        <span class="n">show_progress</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-9-98"><a id="__codelineno-9-98" name="__codelineno-9-98" href="#__codelineno-9-98"></a>    <span class="p">)</span>
+</span><span id="__span-9-99"><a id="__codelineno-9-99" name="__codelineno-9-99" href="#__codelineno-9-99"></a>    <span class="n">strategy</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">strategy</span>
+</span><span id="__span-9-100"><a id="__codelineno-9-100" name="__codelineno-9-100" href="#__codelineno-9-100"></a>    <span class="n">calls</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">strategy</span><span class="p">,</span> <span class="s2">"calls"</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="k">if</span> <span class="n">strategy</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="o">-</span><span class="mi">1</span>
+</span><span id="__span-9-101"><a id="__codelineno-9-101" name="__codelineno-9-101" href="#__codelineno-9-101"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"chapter15_encrypted_calls=</span><span class="si">{</span><span class="n">calls</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-9-102"><a id="__codelineno-9-102" name="__codelineno-9-102" href="#__codelineno-9-102"></a>
+</span><span id="__span-9-103"><a id="__codelineno-9-103" name="__codelineno-9-103" href="#__codelineno-9-103"></a>
+</span><span id="__span-9-104"><a id="__codelineno-9-104" name="__codelineno-9-104" href="#__codelineno-9-104"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-9-105"><a id="__codelineno-9-105" name="__codelineno-9-105" href="#__codelineno-9-105"></a><span class="w">    </span><span class="sd">"""运行第 15 章示例."""</span>
+</span><span id="__span-9-106"><a id="__codelineno-9-106" name="__codelineno-9-106" href="#__codelineno-9-106"></a>    <span class="n">chapter_plain_loader</span><span class="p">()</span>
+</span><span id="__span-9-107"><a id="__codelineno-9-107" name="__codelineno-9-107" href="#__codelineno-9-107"></a>    <span class="n">chapter_encrypted_loader</span><span class="p">()</span>
+</span><span id="__span-9-108"><a id="__codelineno-9-108" name="__codelineno-9-108" href="#__codelineno-9-108"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"done_ch15_strategy_loader"</span><span class="p">)</span>
+</span><span id="__span-9-109"><a id="__codelineno-9-109" name="__codelineno-9-109" href="#__codelineno-9-109"></a>
+</span><span id="__span-9-110"><a id="__codelineno-9-110" name="__codelineno-9-110" href="#__codelineno-9-110"></a>
+</span><span id="__span-9-111"><a id="__codelineno-9-111" name="__codelineno-9-111" href="#__codelineno-9-111"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+</span><span id="__span-9-112"><a id="__codelineno-9-112" name="__codelineno-9-112" href="#__codelineno-9-112"></a>    <span class="n">main</span><span class="p">()</span>
+</span></code></pre></div>
+<p>当你需要将“策略参数 + 策略代码来源 + 运行模式”统一交给调度平台管理时，这条路径比手工改脚本更稳健。完整参数说明可结合《运行时配置指南》一起使用。</p>
+<p>你也可以使用通用示例 <code>examples/44_strategy_source_loader_demo.py</code> 作为最小验证入口，先在回测中验证策略装载链路，再切换到实盘调度。</p>
+<h2 id="156-high-availability">15.6 高可用架构 (High Availability)<a class="headerlink" href="#156-high-availability" title="Permanent link">&para;</a></h2>
+<p>实盘系统最怕的不是亏损，而是<strong>宕机</strong>。一旦系统崩溃，持仓状态丢失，正在进行的订单无法撤销，后果不堪设想。</p>
+<h3 id="1561-primary-backup">15.6.1 主备切换 (Primary-Backup)<a class="headerlink" href="#1561-primary-backup" title="Permanent link">&para;</a></h3>
+<p>构建两套完全相同的系统：</p>
+<ol>
+<li><strong>主机 (Master)</strong>：负责接收行情、计算信号、发送订单。</li>
+<li><strong>备机 (Slave)</strong>：实时接收行情和主机状态，但不发单。</li>
+<li><strong>心跳 (Heartbeat)</strong>：主机每秒向备机发送心跳包。</li>
+<li><strong>切换 (Failover)</strong>：当备机连续 N 秒未收到心跳，判定主机宕机，自动接管交易权限，并报警通知人工介入。</li>
+</ol>
+<h3 id="1562-persistence">15.6.2 状态持久化 (Persistence)<a class="headerlink" href="#1562-persistence" title="Permanent link">&para;</a></h3>
+<p>内存中的状态（持仓、订单、信号）必须实时落地到数据库（如 Redis AOF 或 SQLite）。</p>
+<ul>
+<li><strong>Crash Recovery</strong>：程序重启后，首先读取数据库恢复现场，确保“断点续传”。</li>
+</ul>
+<h2 id="157-low-latency">15.7 低延迟优化 (Low Latency)<a class="headerlink" href="#157-low-latency" title="Permanent link">&para;</a></h2>
+<p>对于高频交易 (HFT)，速度就是利润。</p>
+<p>低延迟优化往往沿着从物理链路到软件细节的层层下探。最外层是共置 (Co-location)，即把服务器托管在交易所机房（如上交所金桥数据中心），光纤直连，将物理距离缩短至米级，延迟可从毫秒级 (ms) 降至微秒级 (<span class="arithmatex">\(\mu s\)</span>)。再往里是内核旁路 (Kernel Bypass)，它使用 Solarflare 网卡和 OpenOnload 技术绕过操作系统内核，直接在用户态处理网络包，从而减少上下文切换。继续深入到处理器层面，则可借助 CPU 亲和性 (CPU Affinity)，把交易进程绑定到特定的 CPU 核心，独占 L1/L2 缓存以避免缓存失效 (Cache Miss)。最后落到代码层面的是无锁编程 (Lock-free)，即在 C++ 或 Rust 中使用原子操作 (Atomic) 和无锁队列 (Ring Buffer) 替代互斥锁，避免线程阻塞。</p>
+<h2 id="158-monitoring-stack">15.8 监控体系 (Monitoring Stack)<a class="headerlink" href="#158-monitoring-stack" title="Permanent link">&para;</a></h2>
+<p>仅仅有日志是不够的，我们需要可视化的仪表盘。</p>
+<ol>
+<li><strong>Prometheus</strong>：时序数据库，采集系统指标。<ul>
+<li><code>strategy_latency</code>: 策略计算耗时。</li>
+<li><code>order_latency</code>: 订单往返延时 (RTT)。</li>
+<li><code>position_exposure</code>: 当前持仓敞口。</li>
+<li><code>pnl_realtime</code>: 实时盈亏。</li>
+</ul>
+</li>
+<li><strong>Grafana</strong>：可视化展示。配置大屏，实时显示资金曲线、持仓分布、系统负载。</li>
+<li><strong>AlertManager</strong>：报警中心。<ul>
+<li><strong>P0 级报警</strong>：程序崩溃、网络断开、资金不足。电话通知。</li>
+<li><strong>P1 级报警</strong>：策略亏损超限、未成交订单过多。短信通知。</li>
+<li><strong>P2 级报警</strong>：延迟抖动、CPU 高负载。邮件通知。</li>
+</ul>
+</li>
+</ol>
+<h2 id="159-post-mortem">15.9 实盘事故复盘 (Post-Mortem)<a class="headerlink" href="#159-post-mortem" title="Permanent link">&para;</a></h2>
+<p>前车之鉴，后事之师。</p>
+<p>两起经典事故从不同侧面印证了前面所讲的原则。光大乌龙指 (2013) 是策略系统错误生成巨量市价单，且缺乏资金校验风控，导致瞬间买入 234 亿元股票，拉升上证指数 5%；它留下的教训是，风控系统必须独立于交易系统，且拥有最高权限（“熔断机制”）。骑士资本 (2012) 则是由于部署失误，旧代码被错误激活，在 45 分钟内疯狂买卖，亏损 4.4 亿美元，最终导致公司破产；它的教训在于，灰度发布和自动化部署是生命线，新代码上线前必须在模拟盘 (Paper Trading) 充分验证。</p>
+<h2 id="1510-hardware-acceleration">15.10 硬件加速 (Hardware Acceleration)<a class="headerlink" href="#1510-hardware-acceleration" title="Permanent link">&para;</a></h2>
+<p>当通用 CPU 的性能达到瓶颈时，我们需要借助专用硬件。</p>
+<h3 id="15101-fpga-field-programmable-gate-array">15.10.1 FPGA (Field-Programmable Gate Array)<a class="headerlink" href="#15101-fpga-field-programmable-gate-array" title="Permanent link">&para;</a></h3>
+<p>FPGA 允许直接在硬件电路层面编程，将网络包处理、行情解析、订单构建等逻辑烧录到芯片中。正因如此，它的延迟可达亚微秒级 (Sub-microsecond)，从接收行情到发出订单仅需 500ns，主要应用于做市商 (Market Making) 与高频套利等场景；但代价是开发成本极高，需要使用 Verilog/VHDL 语言，调试也相当困难。</p>
+<h3 id="15102-gpu-graphics-processing-unit">15.10.2 GPU (Graphics Processing Unit)<a class="headerlink" href="#15102-gpu-graphics-processing-unit" title="Permanent link">&para;</a></h3>
+<p>GPU 擅长大规模并行计算，因此常用于深度学习训练 (Training) 与大规模期权定价 (Monte Carlo)。不过它也有明显限制：由于 PCIe 总线的延迟，GPU 不适合处理对延迟极度敏感的即时交易逻辑，更适合盘中实时计算复杂的因子或风险指标。</p>
+<h2 id="1511-external-signal-ingestion">15.11 外部信号接入 (External Signal Ingestion)<a class="headerlink" href="#1511-external-signal-ingestion" title="Permanent link">&para;</a></h2>
+<p>前面各节假定信号在 AKQuant 内部由策略产生。但工业界另一种常见分工是：信号在<strong>外部平台</strong>生成（因子、择时、组合优化都在那边），执行系统只负责接收指令、风控、下单、审计。这一节讨论这种形态。</p>
+<h3 id="15111">15.11.1 信号是指令，不是事件<a class="headerlink" href="#15111" title="Permanent link">&para;</a></h3>
+<p>理解这个区分是设计的关键。策略回调收到的 <code>Bar</code> 是<strong>事件</strong> —— 需要策略判断该不该交易；而信号平台推来的是<strong>指令</strong> —— 判断已经做完了。</p>
+<p>因此外部信号<strong>不经过策略回调</strong>，直接成为委托。让它再过一次策略决策是多余的一跳，还会把「外部指令」与「自有信号」的责任边界搅混。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_live</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.signal</span><span class="w"> </span><span class="kn">import</span> <span class="n">QueueSignalSource</span><span class="p">,</span> <span class="n">Signal</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">source</span> <span class="o">=</span> <span class="n">QueueSignalSource</span><span class="p">()</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">source</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">Signal</span><span class="p">(</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">signal_id</span><span class="o">=</span><span class="s2">"platform-0001"</span><span class="p">,</span>   <span class="c1"># 幂等键</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="n">symbol</span><span class="o">=</span><span class="s2">"000001.SZ"</span><span class="p">,</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="n">action</span><span class="o">=</span><span class="s2">"buy"</span><span class="p">,</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="n">quantity</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="n">price</span><span class="o">=</span><span class="mf">10.5</span><span class="p">,</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="p">))</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="n">run_live</span><span class="p">(</span><span class="n">instruments</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">],</span> <span class="n">broker</span><span class="o">=</span><span class="s2">"ctp"</span><span class="p">,</span>
+</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>         <span class="n">trading_mode</span><span class="o">=</span><span class="s2">"paper"</span><span class="p">,</span> <span class="n">signal_source</span><span class="o">=</span><span class="n">source</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="15112">15.11.2 幂等：分布式系统的必修课<a class="headerlink" href="#15112" title="Permanent link">&para;</a></h3>
+<p>信号平台重连、重启、网络重试都会重推同一条指令。<strong>没有幂等键就意味着每次重推都是一笔新委托</strong> —— 这是这类系统最常见的事故来源。</p>
+<p><code>signal_id</code> 就是幂等键。框架按它去重，其中两条边界值得推敲：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>是否放开去重标记</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>投递抛异常（网关挂了）</td>
+<td>✅ 放开</td>
+<td>那一笔并未真正下单，平台重推应被受理</td>
+</tr>
+<tr>
+<td>同步返回未下单（风控拦下）</td>
+<td>❌ 不放开</td>
+<td>指令已判定不可执行，重推只会再被拒一次</td>
+</tr>
+</tbody>
+</table>
+<p>这个区分体现了一个通用原则：<strong>幂等的边界应画在"副作用是否已发生"上</strong>，而不是"调用是否成功"上。</p>
+<h3 id="15113">15.11.3 回执：不告诉对端等于骗它<a class="headerlink" href="#15113" title="Permanent link">&para;</a></h3>
+<p>平台推完指令后需要知道它有没有生效。缺了回执，被风控拒掉的信号在平台侧看起来是"下成功了"，持仓账本随即不一致。</p>
+<p>框架把四种结果回吐给信号源：<code>accepted</code>（已投递，<strong>不代表已成交</strong>）、<code>duplicate</code>、<code>rejected</code>、<code>error</code>。柜台的<strong>异步</strong>拒单也会经 <code>on_reject</code> 反查回原始 <code>signal_id</code> 后回执。</p>
+<h3 id="15114">15.11.4 安全：能下单的网络端点<a class="headerlink" href="#15114" title="Permanent link">&para;</a></h3>
+<p><code>HttpSignalSource</code> 是一个能触发真实下单的 HTTP 入口。它的安全约束是<strong>硬性</strong>的：token 必填（构造即校验）、默认只听 <code>127.0.0.1</code>（绑其他地址直接报错）、可选 HMAC 签名 + 时间戳窗口防重放、鉴权失败统一回 <code>401</code> 不做区分预言机。</p>
+<p>这些取舍对标 Freqtrade：其 <code>force_entry_enable</code> 默认关闭、只听 localhost、官方明确警告勿暴露公网。<strong>AKQuant 同样不承诺传输层安全</strong> —— HTTPS 与公网暴露须在反向代理层解决。</p>
+<h3 id="15115">15.11.5 ⚠️ 两种模式的风控覆盖面不同<a class="headerlink" href="#15115" title="Permanent link">&para;</a></h3>
+<p>这是<strong>引擎架构决定的事实，不是配置项</strong>，上线前必须知道：</p>
+<table>
+<thead>
+<tr>
+<th>限额</th>
+<th><code>paper</code></th>
+<th><code>broker_live</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_order_value</code> / <code>max_order_size</code> / <code>max_position_size</code></td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>max_daily_loss</code> / <code>max_drawdown</code> / <code>strategy_risk_budget</code></td>
+<td>✅</td>
+<td>❌ <strong>不生效</strong></td>
+</tr>
+</tbody>
+</table>
+<p>原因：引擎的实盘执行器不向柜台报单，故 broker_live 的订单走 Python 侧柜台通道，那条路上只有策略级三项限额做了前置校验。</p>
+<p><strong>实践含义</strong>：先在 <code>paper</code> 下用真实信号流验证限额配置，再切 <code>broker_live</code>，并在平台侧或柜台侧补上账户级熔断。这与 15.1.4 的切换清单是同一套纪律。</p>
+<h3 id="15116">15.11.6 部署形态<a class="headerlink" href="#15116" title="Permanent link">&para;</a></h3>
+<p>对标 vn.py 的取舍（WebTrader 是独立进程 + RPC），生产推荐<strong>进程分离</strong>：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>平台 ──HTTPS──&gt; 反向代理 ──&gt; 收单进程 ──Redis Stream──&gt; 交易进程
+</span></code></pre></div>
+<p>HTTP 服务的故障与负载被进程边界隔开，不会波及交易主循环。开发单机可用 <code>HttpSignalSource</code> 同进程直收；测试用 <code>QueueSignalSource</code>，无网络依赖。</p>
+<p>详见<a href="../../advanced/signal_ingestion/">外部信号平台接入指南</a>。</p>
+<h2 id="1512-team-collaboration">15.12 量化团队协作 (Team Collaboration)<a class="headerlink" href="#1512-team-collaboration" title="Permanent link">&para;</a></h2>
+<p>量化交易不再是单打独斗的时代，而是一个工业化的流水线。</p>
+<ol>
+<li><strong>基金经理 (PM)</strong>：制定顶层投资逻辑，管理投资组合风险，对最终盈亏负责。</li>
+<li><strong>量化研究员 (Quant Researcher)</strong>：挖掘因子，构建模型，撰写研究报告 (Jupyter Notebook)。</li>
+<li><strong>量化开发 (Quant Developer)</strong>：<ul>
+<li><strong>平台开发</strong>：维护回测引擎 (<code>AKQuant</code>)、数据清洗管线。</li>
+<li><strong>策略开发</strong>：将研究员的 Python 代码重构为高性能的 C++/Rust 实盘代码。</li>
+</ul>
+</li>
+<li><strong>数据工程师 (Data Engineer)</strong>：负责大数据的采集、存储和清洗。</li>
+<li><strong>运维 (SRE)</strong>：负责服务器维护、网络监控、故障排查。</li>
+</ol>
+<h2 id="_5">本章小结<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h3 id="_6">必须掌握<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>实盘系统的核心不只是策略收益，而是网关、OMS、RMS 与运维闭环的稳定性。</li>
+<li>热启动、审计日志和监控告警决定了策略是否能长期运行。</li>
+</ul>
+<h3 id="_7">理解即可<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>高可用、低延迟、硬件加速与团队协作属于行业拓展，应放在主线之后理解。</li>
+</ul>
+<h3 id="_8">实践提醒<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>先完成可复现的准实盘闭环，再讨论更高阶的生产级实盘话题。</li>
+</ul>
+<h2 id="_9">主线推进<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
+<p>贯穿全书的那条最小多均线 / 趋势策略，到本章终于走出回测环境，迈向准实盘与实盘运维这一步。在此之前，它已经是一个事件驱动的标准策略类，经历了多资产扩展、严谨的绩效评价与风险约束；但它始终运行在历史数据重放之上，享受着零延迟与完美成交的理想假设。本章把这条主线接入真实的工程闭环：通过统一网关与 adapter 接口面对真实撮合与拒单，用 OMS 维护订单从 New 到 Filled/Rejected 的完整状态机，用前置风控 (RMS) 为它装上“乌龙指”的最后一道防线，再借助热启动与状态持久化让它能在重启后“断点续传”。与此同时，结构化日志、监控告警、主备切换与算法执行（TWAP/VWAP），把它从“一段能跑出收益的代码”推进为“一个可以被运维、被监控、可长期存活”的准实盘系统。至此，主线策略已经具备从模拟盘走向实盘的工程骨架，只待在真实柜台语义与生产级 broker adapter 补齐后完成最后一跃。</p>
+<h2 id="_10">延伸阅读<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<p><strong>经典著作</strong></p>
+<ul>
+<li>Aldridge, I. <em>High-Frequency Trading: A Practical Guide to Algorithmic Strategies and Trading Systems</em>（第 2 版），John Wiley &amp; Sons, 2013 —— 系统讲解高频交易的策略类型、交易系统架构、延迟与执行成本，是理解本章 15.4（算法交易）、15.7（低延迟）与 15.10（硬件加速）的实务读本。</li>
+<li>Johnson, B. <em>Algorithmic Trading and DMA: An Introduction to Direct Access Trading Strategies</em>，4Myeloma Press, 2010 —— 从市场微观结构出发，详尽讲解 TWAP、VWAP 等执行算法与直接市场接入 (DMA) 的机制，对应本章 15.1（网关接口）与 15.4（TWAP/VWAP）。</li>
+<li>Harris, L. <em>Trading and Exchanges: Market Microstructure for Practitioners</em>，Oxford University Press, 2003 —— 市场微观结构的权威实务专著，解释撮合、流动性供给与交易成本的来源，为本章 15.1.1（回测与实盘差异）与算法交易的冲击成本提供理论背景。</li>
+<li>Beyer, B., Jones, C., Petoff, J., &amp; Murphy, N. R.（编）<em>Site Reliability Engineering: How Google Runs Production Systems</em>，O'Reilly Media, 2016 —— Google SRE 团队的实践合集，系统讨论监控、告警分级、心跳与故障恢复等运维原则，对应本章 15.5（部署与运维）、15.6（高可用）与 15.8（监控体系）。</li>
+</ul>
+<p><strong>官方文档与工具</strong></p>
+<ul>
+<li><a href="../../advanced/live_functional_quickstart/">AKQuant 实盘函数式指南</a> —— <code>paper / broker_live</code> 运行模式、网关与下单闭环的权威说明，对应本章 15.1 与 15.5.3。</li>
+<li><a href="../../advanced/custom_broker_registry/">自定义 Broker 注册</a> 与 <a href="../../advanced/custom_broker_production_checklist/">自定义 Broker 生产接入清单</a> —— 扩展自定义柜台接口与生产落地核对的官方文档，对应本章 15.1.2。</li>
+<li><a href="https://prometheus.io/docs/">Prometheus 官方文档</a> 与 <a href="https://grafana.com/docs/">Grafana 官方文档</a> —— 时序指标采集与可视化大屏的工具文档，对应本章 15.8（监控体系）。</li>
+</ul>
+<p><strong>本书相关</strong></p>
+<ul>
+<li><a href="../04_backtest_engine/">第 4 章：事件驱动回测原理</a> —— 本章 15.1.1 对比的“回测 vs 实盘”，正是建立在第 4 章事件驱动引擎之上的延伸。</li>
+<li><a href="../10_analysis/">第 10 章：策略评价体系与风险指标</a> —— 本章 15.3 的实盘前置风控 (RMS) 所约束的风险敞口，正是第 10 章风险指标在实盘链路上的工程化前置。</li>
+</ul>
+<h2 id="_11">课后练习<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
+<h3 id="_12">基础题<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
+<ol>
+<li>启动一个最小实盘或准实盘示例，记录关键日志字段。</li>
+</ol>
+<h3 id="_13">应用题<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p>模拟一次异常中断并验证热启动恢复流程。</p>
+</li>
+<li>
+<p>用 <code>QueueSignalSource</code> 接一路外部信号，投递两次相同 <code>signal_id</code>，观察回执与实际成交笔数。</p>
+</li>
+</ol>
+<h3 id="_14">综合题<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
+<ol>
+<li>设计一份包含网关、OMS、RMS 与监控项的最小上线检查表。</li>
+<li>你的信号平台把指令推给两个 AKQuant 实例（主备）。设计一套机制，保证主备切换时不出现重复下单，也不漏单。说明你依赖了哪些前提。</li>
+</ol>
+<details class="note">
+<summary>参考答案要点（先独立思考再展开）</summary>
+<p><strong>基础题</strong>：以 <code>paper</code> 模式启动，调用 <code>configure_logging(..., file_json=True)</code>，记录 <code>order_id</code>、<code>client_order_id</code>、<code>strategy_id</code>、<code>symbol</code> 等结构化字段。</p>
+<p><strong>应用题</strong>：<code>save_checkpoint</code> 落盘 → 模拟中断 → <code>run_from_checkpoint</code> 加载快照并注入新数据源，验证持仓与指标缓存恢复一致、无重复下单。</p>
+<p><strong>应用题 2</strong>：两次投递后回执应为一条 <code>accepted</code> 与一条 <code>duplicate</code>，实际成交仅一笔。若两笔都成交，检查是否漏传 <code>signal_id</code>（缺幂等键时框架无法去重，只能按"每次都是新信号"处理）。</p>
+<p><strong>综合题 1</strong>：参见 15.1.4 的切换清单——paper 验证、能力查询、CTP strict 终态、RMS 前置风控、热启动、监控告警、灰度发布。</p>
+<p><strong>综合题 2</strong>：关键是把幂等状态从进程内移到共享存储：<code>signal_id</code> 已处理集合放 Redis（而非各自的进程内 <code>SignalDedup</code>），配合 <code>SETNX</code> 式的原子占位，使同一 id 只有一个实例能领走。不漏单则依赖 Redis Stream 消费组的 pending 语义——未 ack 的消息在实例崩溃后仍可被另一实例 <code>XCLAIM</code> 接管。须说明的前提：① 共享存储自身高可用，否则它成了新的单点；② 下单与"标记已处理"无法真正原子，故仍需对账兜底（比对柜台委托与信号台账），这是分布式系统的固有限制而非实现缺陷。</p>
+</details>
+<h2 id="_15">常见错误与排查<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h2>
+<ol>
+<li>订单状态不同步：检查本地状态与柜台回报对账流程。</li>
+<li>异常延迟增大：排查网络链路、消息积压和策略阻塞代码。</li>
+<li>实盘风险失控：核对仓位限制、熔断阈值和报警通道是否生效。</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
