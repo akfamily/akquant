@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union, cast
+from typing import Any, Dict, FrozenSet, List, Literal, Optional, Union, cast
 
 """
 AKQuant Configuration System.
@@ -64,6 +64,7 @@ config = BacktestConfig(
 
 InstrumentSettlementType = Literal["cash", "settlement_price", "force_close"]
 InstrumentAssetType = Literal["STOCK", "FUTURES", "FUND", "OPTION"]
+InstrumentProductPreset = Literal["ETF_OPTION", "CONVERTIBLE_BOND"]
 InstrumentOptionType = Literal["CALL", "PUT"]
 InstrumentOptionMarginModel = Literal[
     "RATIO",
@@ -106,7 +107,9 @@ class InstrumentOptionMarginModelEnum(str, Enum):
     US_BROKER_SINGLE_LEG_VOL_ADJUSTED = "US_BROKER_SINGLE_LEG_VOL_ADJUSTED"
 
 
-InstrumentAssetTypeInput = Union[InstrumentAssetType, InstrumentAssetTypeEnum]
+InstrumentAssetTypeInput = Union[
+    InstrumentAssetType, InstrumentAssetTypeEnum, InstrumentProductPreset
+]
 InstrumentOptionTypeInput = Union[InstrumentOptionType, InstrumentOptionTypeEnum]
 InstrumentOptionMarginModelInput = Union[
     InstrumentOptionMarginModel, InstrumentOptionMarginModelEnum
@@ -114,6 +117,28 @@ InstrumentOptionMarginModelInput = Union[
 InstrumentSettlementTypeInput = Union[
     InstrumentSettlementType, InstrumentSettlementTypeEnum
 ]
+
+# 品种预设: asset_type 写预设名时, 展开成底层资产类型并补上该品种的缺省规则。
+# 用户显式传入的字段一律优先。Rust 侧只认底层类型。
+_PRODUCT_PRESETS: Dict[str, Dict[str, Any]] = {
+    # 沪深 ETF 期权: 合约单位 10000, 最小变动 0.0001, T+0, 中国单腿保证金
+    "ETF_OPTION": {
+        "asset_type": "OPTION",
+        "multiplier": 10000.0,
+        "tick_size": 0.0001,
+        "lot_size": 1,
+        "sellable_after_days": 0,
+        "option_margin_model": "CHINA_SINGLE_LEG",
+    },
+    # 沪深可转债: 价格按每张(面值 100)计, 1 手 = 10 张, 最小变动 0.001, T+0
+    "CONVERTIBLE_BOND": {
+        "asset_type": "FUND",
+        "multiplier": 1.0,
+        "tick_size": 0.001,
+        "lot_size": 10,
+        "sellable_after_days": 0,
+    },
+}
 
 
 @dataclass
@@ -129,11 +154,15 @@ class InstrumentConfig:
 
     **Core Properties:**
     :param symbol: Instrument symbol (e.g., "AAPL", "RB2305").
-    :param asset_type: Asset type ("STOCK", "FUTURES", "FUND", "OPTION").
+    :param asset_type: Asset type ("STOCK", "FUTURES", "FUND", "OPTION"),
+                       or a product preset ("ETF_OPTION", "CONVERTIBLE_BOND")
+                       that expands to OPTION / FUND with market defaults.
                        Default "STOCK".
-    :param multiplier: Contract multiplier. Default 1.0.
+    :param multiplier: Contract multiplier.
+                       Default None → 1.0 (or preset value).
     :param margin_ratio: Margin ratio (e.g., 0.1 for 10% margin).
                          主要用于期货/线性资产；期权仅在 `RATIO` 模式下使用。
+                         Default None → 1.0 (or preset value).
     :param tick_size: Minimum price movement. Default is asset-type-dependent:
                       0.01 for stocks/others, 0.001 for funds/ETFs
                       (including convertible bonds).
@@ -166,8 +195,10 @@ class InstrumentConfig:
 
     symbol: str
     asset_type: InstrumentAssetTypeInput = InstrumentAssetTypeEnum.STOCK
-    multiplier: float = 1.0
-    margin_ratio: float = 1.0
+    # None 表示"没传": __post_init__ 按预设或 1.0 填充, 并记入 defaulted_fields。
+    # 注解保持 float——__post_init__ 之后恒非 None, 下游不必处理 Optional。
+    multiplier: float = None  # type: ignore[assignment]
+    margin_ratio: float = None  # type: ignore[assignment]
     tick_size: Optional[float] = None
     lot_size: Optional[int] = None
 
@@ -190,6 +221,12 @@ class InstrumentConfig:
     settlement_price: Optional[float] = None
     sellable_after_days: Optional[int] = None
     static_attrs: Dict[str, Union[str, int, float, bool]] = field(default_factory=dict)
+    # 展开前的品种预设名(ETF_OPTION / CONVERTIBLE_BOND), 没用预设时为 None
+    product_preset: Optional[str] = field(default=None, init=False)
+    # 由缺省值填充(而非用户显式传入)的字段名, 供期货模板等判断"用户没传"
+    defaulted_fields: FrozenSet[str] = field(
+        default=frozenset(), init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         """Validate and normalize instrument config."""
@@ -198,11 +235,28 @@ class InstrumentConfig:
             if isinstance(self.asset_type, Enum)
             else self.asset_type
         )
-        self.asset_type = cast(InstrumentAssetType, str(asset_raw).strip().upper())
+        asset_name = str(asset_raw).strip().upper()
+        preset = _PRODUCT_PRESETS.get(asset_name)
+        if preset is not None:
+            self.product_preset = asset_name
+            asset_name = str(preset["asset_type"])
+            for key, value in preset.items():
+                if key != "asset_type" and getattr(self, key) is None:
+                    setattr(self, key, value)
+        self.asset_type = cast(InstrumentAssetType, asset_name)
         if self.asset_type not in {"STOCK", "FUTURES", "FUND", "OPTION"}:
             raise ValueError(f"Unsupported asset_type: {self.asset_type}")
+        defaulted: set[str] = set()
+        if self.multiplier is None:
+            self.multiplier = 1.0
+            defaulted.add("multiplier")
+        if self.margin_ratio is None:
+            self.margin_ratio = 1.0
+            defaulted.add("margin_ratio")
         if self.tick_size is None:
             self.tick_size = 0.001 if self.asset_type == "FUND" else 0.01
+            defaulted.add("tick_size")
+        self.defaulted_fields = frozenset(defaulted)
         if self.option_type is not None:
             option_raw = (
                 self.option_type.value

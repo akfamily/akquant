@@ -4431,14 +4431,20 @@ def run_backtest(
                 else float(current_lot_size or 1.0)
             )
             if futures_template and p_asset_type == AssetType.Futures:
-                if i_conf.multiplier == 1 and futures_template.multiplier is not None:
+                # 只有用户没传的字段才由模板填充; 以前用 "== 1" / "== 0.01" 猜测,
+                # 会把显式传入的 1 当成没传。
+                defaulted = i_conf.defaulted_fields
+                if (
+                    "multiplier" in defaulted
+                    and futures_template.multiplier is not None
+                ):
                     p_multiplier = futures_template.multiplier
                 if (
-                    i_conf.margin_ratio == 1
+                    "margin_ratio" in defaulted
                     and futures_template.margin_ratio is not None
                 ):
                     p_margin = futures_template.margin_ratio
-                if i_conf.tick_size == 0.01 and futures_template.tick_size is not None:
+                if "tick_size" in defaulted and futures_template.tick_size is not None:
                     p_tick = futures_template.tick_size
                 if i_conf.lot_size is None and futures_template.lot_size is not None:
                     p_lot = futures_template.lot_size
