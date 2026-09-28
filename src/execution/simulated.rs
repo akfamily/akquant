@@ -415,6 +415,11 @@ impl SimulatedExecutionClient {
                                     trade.side,
                                     trade.price,
                                     trade.quantity,
+                                    projected_portfolio
+                                        .positions
+                                        .get(&trade.symbol)
+                                        .copied()
+                                        .unwrap_or(Decimal::ZERO),
                                 );
 
                                 let base_used_margin = projected_portfolio
@@ -510,6 +515,11 @@ impl SimulatedExecutionClient {
                                                 trade.side,
                                                 trade.price,
                                                 new_qty,
+                                                projected_portfolio
+                                                    .positions
+                                                    .get(&trade.symbol)
+                                                    .copied()
+                                                    .unwrap_or(Decimal::ZERO),
                                             );
                                             let mut resized_projection =
                                                 projected_portfolio.clone();
@@ -646,6 +656,11 @@ impl SimulatedExecutionClient {
                                     trade.side,
                                     trade.price,
                                     trade.quantity,
+                                    projected_portfolio
+                                        .positions
+                                        .get(&trade.symbol)
+                                        .copied()
+                                        .unwrap_or(Decimal::ZERO),
                                 );
                                 projected_portfolio.adjust_cash(-commission);
                                 if is_futures_margin_account(instrument, ctx.risk_config) {

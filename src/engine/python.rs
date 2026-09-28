@@ -1089,21 +1089,52 @@ impl Engine {
             .set_fund_fee_rules(commission_rate, transfer_fee, min_commission);
     }
 
-    /// 设置期权费率规则
+    /// 设置期权费率规则(元/张)
     ///
-    /// :param commission_per_contract: 每张合约佣金 (如 5.0)
-    fn set_option_fee_rules(&mut self, commission_per_contract: f64) {
+    /// :param commission_per_contract: 券商佣金
+    /// :param exchange_fee_per_contract: 交易经手费
+    /// :param clearing_fee_per_contract: 交易结算费
+    /// :param exercise_fee_per_contract: 行权结算费
+    /// :param sell_open_exempt: 卖出开仓是否免收经手费与结算费
+    fn set_option_fee_rules(
+        &mut self,
+        commission_per_contract: f64,
+        exchange_fee_per_contract: f64,
+        clearing_fee_per_contract: f64,
+        exercise_fee_per_contract: f64,
+        sell_open_exempt: bool,
+    ) {
         self.market_manager
-            .set_option_fee_rules(commission_per_contract);
+            .set_option_fee_rules(crate::market::manager::option_fee_config(
+                commission_per_contract,
+                exchange_fee_per_contract,
+                clearing_fee_per_contract,
+                exercise_fee_per_contract,
+                sell_open_exempt,
+            ));
     }
 
+    /// 设置按品种前缀的期权费率规则(元/张), 参数含义同 set_option_fee_rules
+    #[allow(clippy::too_many_arguments)]
     fn set_options_fee_rules_by_prefix(
         &mut self,
         symbol_prefix: String,
         commission_per_contract: f64,
+        exchange_fee_per_contract: f64,
+        clearing_fee_per_contract: f64,
+        exercise_fee_per_contract: f64,
+        sell_open_exempt: bool,
     ) {
-        self.market_manager
-            .set_options_fee_rules_by_prefix(symbol_prefix, commission_per_contract);
+        self.market_manager.set_options_fee_rules_by_prefix(
+            symbol_prefix,
+            crate::market::manager::option_fee_config(
+                commission_per_contract,
+                exchange_fee_per_contract,
+                clearing_fee_per_contract,
+                exercise_fee_per_contract,
+                sell_open_exempt,
+            ),
+        );
     }
 
     /// 设置加密货币费率规则 (按金额比例)

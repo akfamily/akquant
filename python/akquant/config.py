@@ -403,20 +403,38 @@ class ChinaFuturesConfig:
                 seen_template[template.symbol_prefix] = idx
 
 
+def _check_non_negative(owner: str, **values: float) -> None:
+    for name, value in values.items():
+        if value < 0:
+            raise ValueError(f"{name} must be >= 0")
+
+
 @dataclass
 class ChinaOptionsFeeConfig:
-    """中国期权费率配置."""
+    """中国期权按品种前缀的费率配置(元/张).
+
+    缺省值取沪深 ETF 期权现行口径, 字段含义见 ``ChinaOptionsConfig``。
+    """
 
     symbol_prefix: str
     commission_per_contract: float
+    exchange_fee_per_contract: float = 1.3
+    clearing_fee_per_contract: float = 0.3
+    exercise_fee_per_contract: float = 0.6
+    sell_open_exempt: bool = True
 
     def __post_init__(self) -> None:
         """Validate and normalize option fee config."""
         self.symbol_prefix = self.symbol_prefix.strip().upper()
         if not self.symbol_prefix:
             raise ValueError("symbol_prefix must not be empty")
-        if self.commission_per_contract < 0:
-            raise ValueError("commission_per_contract must be >= 0")
+        _check_non_negative(
+            "ChinaOptionsFeeConfig",
+            commission_per_contract=self.commission_per_contract,
+            exchange_fee_per_contract=self.exchange_fee_per_contract,
+            clearing_fee_per_contract=self.clearing_fee_per_contract,
+            exercise_fee_per_contract=self.exercise_fee_per_contract,
+        )
 
 
 @dataclass
@@ -433,14 +451,28 @@ class ChinaOptionsConfig:
     """中国期权增强配置."""
 
     use_china_market: bool = True
-    fee_per_contract: Optional[float] = None
+    # 券商佣金(元/张), 卖出开仓照收
+    commission_per_contract: float = 5.0
+    # 交易所交易经手费(元/张), 双向收取
+    exchange_fee_per_contract: float = 1.3
+    # 中国结算交易结算费(元/张), 双向收取
+    clearing_fee_per_contract: float = 0.3
+    # 行权结算费(元/张), 到期时向实值被行权的多头收取
+    exercise_fee_per_contract: float = 0.6
+    # 卖出开仓(含备兑)免收经手费与结算费; 交易所恢复收费时设为 False
+    sell_open_exempt: bool = True
     fee_by_symbol_prefix: Optional[List[ChinaOptionsFeeConfig]] = None
     sessions: Optional[List[ChinaOptionsSessionConfig]] = None
 
     def __post_init__(self) -> None:
         """Validate china options config fields."""
-        if self.fee_per_contract is not None and self.fee_per_contract < 0:
-            raise ValueError("fee_per_contract must be >= 0")
+        _check_non_negative(
+            "ChinaOptionsConfig",
+            commission_per_contract=self.commission_per_contract,
+            exchange_fee_per_contract=self.exchange_fee_per_contract,
+            clearing_fee_per_contract=self.clearing_fee_per_contract,
+            exercise_fee_per_contract=self.exercise_fee_per_contract,
+        )
         if self.fee_by_symbol_prefix:
             seen_fee: Dict[str, int] = {}
             for idx, fee in enumerate(self.fee_by_symbol_prefix):

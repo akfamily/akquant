@@ -475,7 +475,19 @@ pub(crate) fn check_affordability(
     // margin path rather than panicking in the market model's raw arithmetic.
     let commission = instruments
         .get(&order.symbol)
-        .map(|instr| market_model.calculate_commission(instr, order.side, price, order.quantity))
+        .map(|instr| {
+            market_model.calculate_commission(
+                instr,
+                order.side,
+                price,
+                order.quantity,
+                projected_portfolio
+                    .positions
+                    .get(&order.symbol)
+                    .copied()
+                    .unwrap_or(Decimal::ZERO),
+            )
+        })
         .unwrap_or(Decimal::ZERO);
     let required = (margin_delta + commission).max(Decimal::ZERO);
 

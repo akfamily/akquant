@@ -117,23 +117,27 @@ impl ChinaMarket {
         }
         best_match
     }
+}
 
-    fn option_config_for_symbol(&self, symbol: &str) -> Option<&option::OptionConfig> {
-        let mut best_match: Option<&option::OptionConfig> = None;
-        let mut best_len = 0usize;
-        let symbol_upper = symbol.to_uppercase();
-        for (prefix, cfg) in &self.config.options_fee_by_prefix {
-            let normalized = prefix.trim().to_uppercase();
-            if normalized.is_empty() {
-                continue;
-            }
-            if symbol_upper.starts_with(&normalized) && normalized.len() > best_len {
-                best_match = Some(cfg);
-                best_len = normalized.len();
-            }
+/// 按 symbol 取期权费用配置: 最长前缀匹配优先, 其次全局配置。
+pub(crate) fn resolve_option_config<'a>(
+    config: &'a ChinaMarketConfig,
+    symbol: &str,
+) -> Option<&'a option::OptionConfig> {
+    let mut best_match: Option<&option::OptionConfig> = None;
+    let mut best_len = 0usize;
+    let symbol_upper = symbol.to_uppercase();
+    for (prefix, cfg) in &config.options_fee_by_prefix {
+        let normalized = prefix.trim().to_uppercase();
+        if normalized.is_empty() {
+            continue;
         }
-        best_match
+        if symbol_upper.starts_with(&normalized) && normalized.len() > best_len {
+            best_match = Some(cfg);
+            best_len = normalized.len();
+        }
     }
+    best_match.or(config.option.as_ref())
 }
 
 impl MarketModel for ChinaMarket {
@@ -152,6 +156,7 @@ impl MarketModel for ChinaMarket {
         side: OrderSide,
         price: Decimal,
         quantity: Decimal,
+        position_before: Decimal,
     ) -> Decimal {
         match instrument.asset_type {
             AssetType::Stock => {
@@ -200,18 +205,8 @@ impl MarketModel for ChinaMarket {
                 }
             }
             AssetType::Option => {
-                if let Some(config) = self
-                    .option_config_for_symbol(instrument.symbol())
-                    .or(self.config.option.as_ref())
-                {
-                    option::calculate_commission(
-                        config,
-                        instrument,
-                        side,
-                        price,
-                        quantity,
-                        instrument.multiplier(),
-                    )
+                if let Some(config) = resolve_option_config(&self.config, instrument.symbol()) {
+                    option::calculate_commission(config, side, quantity, position_before)
                 } else {
                     panic!("Option market configuration not found but received option order");
                 }

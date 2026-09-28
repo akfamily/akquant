@@ -3923,8 +3923,10 @@ def run_backtest(
             engine.use_china_futures_market()
         if t_plus_one:
             engine.set_t_plus_one(True)
-    elif china_options_config and has_options_instruments:
-        if china_options_config.use_china_market:
+    elif has_options_instruments:
+        # 期权按张计费、行权结算费都只在 ChinaMarket 里实现; SimpleMarket 会按成交额
+        # 百分比收期权费用, 口径完全不对。只有显式 use_china_market=False 才走 Simple。
+        if china_options_config is None or china_options_config.use_china_market:
             engine.use_china_market()
         else:
             if hasattr(engine, "use_simple_market_policy"):
@@ -3997,11 +3999,15 @@ def run_backtest(
             kwargs.get("fund_min_commission", 0.0),
         )
 
-    if china_options_config and has_options_instruments:
-        if china_options_config.fee_per_contract is not None:
-            engine.set_option_fee_rules(china_options_config.fee_per_contract)
-    elif "option_commission" in kwargs:
-        engine.set_option_fee_rules(kwargs["option_commission"])
+    if has_options_instruments:
+        option_fees = china_options_config or ChinaOptionsConfig()
+        engine.set_option_fee_rules(
+            float(option_fees.commission_per_contract),
+            float(option_fees.exchange_fee_per_contract),
+            float(option_fees.clearing_fee_per_contract),
+            float(option_fees.exercise_fee_per_contract),
+            bool(option_fees.sell_open_exempt),
+        )
 
     if china_futures_config and has_futures_instruments:
         template_validation_by_prefix: Dict[
@@ -4126,6 +4132,10 @@ def run_backtest(
                     cast(Any, engine).set_options_fee_rules_by_prefix(
                         prefix,
                         float(option_fee_rule.commission_per_contract),
+                        float(option_fee_rule.exchange_fee_per_contract),
+                        float(option_fee_rule.clearing_fee_per_contract),
+                        float(option_fee_rule.exercise_fee_per_contract),
+                        bool(option_fee_rule.sell_open_exempt),
                     )
                 else:
                     logger.warning(

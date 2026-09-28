@@ -51,6 +51,7 @@ impl MarketModel for SimpleMarket {
         side: OrderSide,
         price: Decimal,
         quantity: Decimal,
+        _position_before: Decimal,
     ) -> Decimal {
         let turnover = price * quantity * instrument.multiplier();
         let mut commission = match self.config.commission_mode {

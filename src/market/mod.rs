@@ -79,6 +79,7 @@ mod tests {
             OrderSide::Buy,
             Decimal::from(4000),
             Decimal::from(1),
+            Decimal::ZERO,
         );
     }
 
@@ -115,6 +116,7 @@ mod tests {
             OrderSide::Buy,
             Decimal::from(3500),
             Decimal::from(2),
+            Decimal::ZERO,
         );
         assert_eq!(commission, Decimal::from_str("35").unwrap());
     }
@@ -129,6 +131,7 @@ mod tests {
             "OPT".to_string(),
             option::OptionConfig {
                 commission_per_contract: Decimal::from(12),
+                ..Default::default()
             },
         ));
 
@@ -157,7 +160,8 @@ mod tests {
             OrderSide::Buy,
             Decimal::from_str("0.1234").unwrap(),
             Decimal::from(3),
+            Decimal::ZERO,
         );
-        assert_eq!(commission, Decimal::from(36));
+        assert_eq!(commission, Decimal::from_str("40.8").unwrap());
     }
 }
