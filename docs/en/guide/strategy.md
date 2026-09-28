@@ -685,6 +685,8 @@ def on_trade(self, trade):
 
 Triggered only after the engine actually executes an `expiry_date` driven settlement/removal. The callback receives an event dict, and portfolio state is already updated when it runs.
 
+Settlement happens at the start of the first trading day after `expiry_date`, using the expiry-day close. `cash_flow` is gross; `fee` is the option exercise fee, so the account receives `cash_flow - fee`. The catch-up settlement at the end of a backtest does not fire this callback.
+
 Runnable example: `examples/49_on_expiry_demo.py`.
 
 ```python
@@ -695,6 +697,7 @@ def on_expiry(self, event):
         event["expiry_date"],
         event["quantity_closed"],
         event["cash_flow"],
+        event["fee"],
         event.get("settlement_type"),
     )
 ```

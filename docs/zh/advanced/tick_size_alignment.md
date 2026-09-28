@@ -2,7 +2,7 @@
 
 委托价必须是标的最小变动价位（tick size）的整数倍——这是交易所层面的硬约束，
 不是 AKQuant 自造的规则。本页说明框架如何校验它、为什么**只校验不自动取整**，
-以及如何用 `AssetType.Fund` 在回测里近似可转债。
+以及如何用品种预设（`CONVERTIBLE_BOND` / `ETF_OPTION`）拿到正确的缺省 tick。
 
 ## 1. 为什么框架不自动取整
 
@@ -87,6 +87,7 @@ class MyStrategy(Strategy):
 | A 股股票 | 0.01 | 交易所通行规则 |
 | ETF / 基金 | 0.001 | 深圳证券交易所交易规则第 3.3.13 条 |
 | 债券（含可转债） | 0.001 | 上海证券交易所可转换公司债券交易实施细则第六条；**沪深两市口径一致**，均为 0.001 |
+| 沪深 ETF 期权 | 0.0001 | 沪深交易所 ETF 期权合约基本条款 |
 
 > 网上部分资料称上交所可转债 tick 为 0.01，那是 2022 年之前已被替代的旧规则，
 > 引用时请以现行细则为准。
@@ -104,10 +105,21 @@ class MyStrategy(Strategy):
 0.001，这两条规则是确定的，缺省值就该按它们分流，而不是像 Lean 那样在元数据缺失
 时统一回退到一个粗粒度的值。
 
-需要你自己注意的坑：**如果 ETF 或可转债在 `InstrumentConfig` 里被配成
-`asset_type="STOCK"`（而不是 `"FUND"`），缺省 tick 会变成 0.01，与它们实际的
-0.001 规则不符**，必须显式传 `tick_size=0.001` 覆盖，否则会出现合法委托被误拒、
-或者—如果你手工设的价格恰好是 0.01 的整数倍—悄悄跳过了本该更细的校验粒度。
+`InstrumentConfig` 还提供两个品种预设，展开后自带正确的 tick（显式传入的字段仍然优先）：
+
+| `asset_type` | 底层类型 | 缺省 tick | 其它缺省值 |
+|---|---|---|---|
+| `"CONVERTIBLE_BOND"` | FUND | 0.001 | 1 手 10 张、T+0 |
+| `"ETF_OPTION"` | OPTION | 0.0001 | 乘数 10000、T+0、中国单腿保证金 |
+
+需要你自己注意的坑：
+
+- **期权的通用缺省 tick 是 0.01**，而沪深 ETF 期权实际是 0.0001。请用
+  `asset_type="ETF_OPTION"`，或显式传 `tick_size=0.0001`。
+- **如果 ETF 或可转债被配成 `asset_type="STOCK"`**，缺省 tick 会变成 0.01，与它们
+  实际的 0.001 规则不符。ETF 请用 `"FUND"`，可转债请用 `"CONVERTIBLE_BOND"`，否则
+  会出现合法委托被误拒，或者（手工价格恰好是 0.01 的整数倍时）悄悄跳过了本该更细的
+  校验粒度。
 
 ## 5. 关闭校验
 
@@ -133,19 +145,21 @@ config = BacktestConfig(
 - 关闭校验不会让"提交一个不合规的价格"这件事本身消失，只是把发现它的时间点
   推迟、推给了更贵的环节。
 
-## 6. 用 `AssetType.Fund` 回测可转债
+## 6. 用 `CONVERTIBLE_BOND` 预设回测可转债
 
-框架目前**没有** `AssetType::Bond`，可转债通过把它建模成
-`AssetType.Fund` 来近似：
+框架目前**没有** `AssetType::Bond`。`asset_type="CONVERTIBLE_BOND"` 会展开成
+`AssetType.Fund`，并带上可转债的缺省规则：
 
 - `tick_size=0.001`——沪深口径一致（见第 3 节）
-- `sellable_after_days=0`——可转债 T+0，当天买入当天可卖
-- `multiplier=1`——面值 100 元，1 手 = 10 张，因此下单数量按"张"计，一次买 10
-  张即 1 手
-- 免印花税——`AssetType::Fund` 本来就不收印花税
+- `sellable_after_days=0`——可转债 T+0，当天买入当天可卖（全局 `t_plus_one=True` 时也成立）
+- `lot_size=10`——面值 100 元，1 手 = 10 张，下单数量按"张"计，不足 10 张的委托会被拒
+- `multiplier=1`——价格按每张计
+- 免印花税——`AssetType::Fund` 缺省不收印花税
   （对比 [`src/market/fund.rs`](https://github.com/akfamily/akquant/blob/main/src/market/fund.rs)
   与收印花税的 [`src/market/stock.rs`](https://github.com/akfamily/akquant/blob/main/src/market/stock.rs)），
   这恰好匹配可转债的真实费用结构
+- 可转债与 ETF 共用 FUND 费率；如需单独设置，可在 `InstrumentConfig` 上传
+  `commission_rate` / `min_commission`，它们会按品种覆盖市场费率
 
 ```python
 import pandas as pd
@@ -173,7 +187,7 @@ df = pd.DataFrame(
 
 
 class ConvertibleBondStrategy(Strategy):
-    """最小示例：用 AssetType.Fund 近似可转债，买单显式向下取整."""
+    """最小示例：用 CONVERTIBLE_BOND 预设回测可转债，买单显式向下取整."""
 
     def on_bar(self, bar):
         symbol = bar.symbol
@@ -190,13 +204,7 @@ result = run_backtest(
     config=BacktestConfig(
         strategy_config=StrategyConfig(initial_cash=100000.0),
         instruments_config=[
-            InstrumentConfig(
-                symbol="113050.SH",
-                asset_type="FUND",
-                tick_size=0.001,
-                sellable_after_days=0,
-                multiplier=1,
-            )
+            InstrumentConfig(symbol="113050.SH", asset_type="CONVERTIBLE_BOND")
         ],
         china_stock=ChinaStockConfig(enforce_tick_size=True),
     ),

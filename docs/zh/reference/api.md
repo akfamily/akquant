@@ -422,6 +422,7 @@ def merge_results(
 *   `cash_flow`: 到期结算现金流（`expiry`）。
 *   `settlement_type`: 到期结算模式（`expiry`，如 `cash`、`settlement_price`、`force_close`）。
 *   `settlement_price`: 实际采用的结算价（`expiry`，存在时提供）。
+*   流式 `expiry` 事件不含 `fee` 字段；期权行权结算费只出现在 `on_expiry` 回调的事件字典里（`fee`）。
 
 **`finished.payload` 常用字段:**
 
