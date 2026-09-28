@@ -403,7 +403,7 @@ class ChinaFuturesConfig:
                 seen_template[template.symbol_prefix] = idx
 
 
-def _check_non_negative(owner: str, **values: float) -> None:
+def _check_non_negative(**values: float) -> None:
     for name, value in values.items():
         if value < 0:
             raise ValueError(f"{name} must be >= 0")
@@ -429,7 +429,6 @@ class ChinaOptionsFeeConfig:
         if not self.symbol_prefix:
             raise ValueError("symbol_prefix must not be empty")
         _check_non_negative(
-            "ChinaOptionsFeeConfig",
             commission_per_contract=self.commission_per_contract,
             exchange_fee_per_contract=self.exchange_fee_per_contract,
             clearing_fee_per_contract=self.clearing_fee_per_contract,
@@ -467,7 +466,6 @@ class ChinaOptionsConfig:
     def __post_init__(self) -> None:
         """Validate china options config fields."""
         _check_non_negative(
-            "ChinaOptionsConfig",
             commission_per_contract=self.commission_per_contract,
             exchange_fee_per_contract=self.exchange_fee_per_contract,
             clearing_fee_per_contract=self.clearing_fee_per_contract,

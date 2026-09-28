@@ -103,15 +103,26 @@ def test_sell_crossing_zero_splits_fee() -> None:
     assert fees == pytest.approx([13.2, 13.2, 15.0])
 
 
-def test_china_options_config_overrides_fee_fields() -> None:
-    """ChinaOptionsConfig 的五个字段都生效."""
+@pytest.mark.parametrize(
+    ("sell_open_exempt", "expected"),
+    [
+        # 不豁免: 3 × (2 + 1.0 + 0.5)
+        (False, 10.5),
+        # 豁免: 卖开只收佣金 3 × 2
+        (True, 6.0),
+    ],
+)
+def test_china_options_config_overrides_fee_fields(
+    sell_open_exempt: bool, expected: float
+) -> None:
+    """ChinaOptionsConfig 的费率字段与 sell_open_exempt 开关都生效."""
     cfg = akquant.ChinaOptionsConfig(
         commission_per_contract=2.0,
-        exchange_fee_per_contract=0.0,
-        clearing_fee_per_contract=0.0,
-        sell_open_exempt=False,
+        exchange_fee_per_contract=1.0,
+        clearing_fee_per_contract=0.5,
+        sell_open_exempt=sell_open_exempt,
     )
-    assert _commissions({1: ("sell", 3)}, cfg) == pytest.approx([6.0])
+    assert _commissions({1: ("sell", 3)}, cfg) == pytest.approx([expected])
 
 
 def test_prefix_fee_rule_takes_priority() -> None:
