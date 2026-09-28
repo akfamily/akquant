@@ -116,6 +116,9 @@ pub struct OptionInstrument {
     pub expiry_date: u32,
     pub underlying_symbol: String,
     pub settlement_type: Option<SettlementType>,
+    /// 到期日标的结算价。配置了就优先于标的最近成交价用于到期结算。
+    #[serde(default)]
+    pub settlement_price: Option<Decimal>,
     pub implied_volatility: Option<Decimal>,
     pub reference_volatility: Option<Decimal>,
 }
@@ -305,6 +308,7 @@ impl Instrument {
                 expiry_date: expiry_date.unwrap_or(0),
                 underlying_symbol: underlying_symbol.unwrap_or_default(),
                 settlement_type,
+                settlement_price: settlement_price_val,
                 implied_volatility: implied_volatility_val,
                 reference_volatility: reference_volatility_val,
             }),
@@ -486,6 +490,7 @@ impl Instrument {
     pub fn settlement_price(&self) -> Option<Decimal> {
         match &self.inner {
             InstrumentEnum::Futures(f) => f.settlement_price,
+            InstrumentEnum::Option(o) => o.settlement_price,
             _ => None,
         }
     }

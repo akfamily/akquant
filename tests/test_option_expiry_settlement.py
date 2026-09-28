@@ -148,3 +148,50 @@ def test_futures_expiry_uses_expiry_day_close() -> None:
     )
     assert strat.day_positions["2023-12-01"] == 1.0
     assert strat.day_positions["2023-12-04"] == 0.0
+
+
+def test_missing_underlying_defers_until_price_arrives() -> None:
+    """标的 12/04 才有第一根 bar: 12/04 当天仍持有, 12/05 起按 12/04 价格结算."""
+    days = DAYS + ["2023-12-05"]
+    strat = _ExpiryRecorder()
+    _run(
+        strat,
+        {
+            "OPT": _daily("OPT", days, [1.0] * 5),
+            "UL": _daily("UL", days[3:], [130.0, 130.0]),
+        },
+        [_call(), akquant.InstrumentConfig(symbol="UL", asset_type="STOCK")],
+    )
+    assert strat.day_positions["2023-12-04"] == 1.0
+    assert strat.day_positions["2023-12-05"] == 0.0
+    assert strat.expiries[0]["cash_flow"] == pytest.approx(3000.0)
+
+
+def test_configured_settlement_price_is_used() -> None:
+    """配置了 settlement_price 就用它, 不看标的最近价."""
+    strat = _ExpiryRecorder()
+    _run(
+        strat,
+        {
+            "OPT": _daily("OPT", DAYS, [1.0] * 4),
+            "UL": _daily("UL", DAYS, [100.0, 101.0, 120.0, 120.0]),
+        },
+        [
+            _call(settlement_price=110.0),
+            akquant.InstrumentConfig(symbol="UL", asset_type="STOCK"),
+        ],
+    )
+    assert strat.expiries[0]["cash_flow"] == pytest.approx(1000.0)
+    assert strat.expiries[0]["settlement_price"] == pytest.approx(110.0)
+
+
+def test_no_underlying_ever_keeps_position() -> None:
+    """标的始终没有价格: 不按 0 作废, 持仓一直保留到回测结束."""
+    strat = _ExpiryRecorder()
+    _run(
+        strat,
+        {"OPT": _daily("OPT", DAYS, [1.0] * 4)},
+        [_call()],
+    )
+    assert strat.day_positions["2023-12-04"] == 1.0
+    assert strat.expiries == []

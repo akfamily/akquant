@@ -11,15 +11,20 @@ use super::handler::{SettlementHandler, SettlementTask};
 #[derive(Debug, Clone, Default)]
 pub struct OptionSettlementHandler;
 
-impl SettlementHandler for OptionSettlementHandler {
-    fn check_settlement(
+impl OptionSettlementHandler {
+    /// 找出应到期结算的期权持仓。
+    ///
+    /// 返回 `(tasks, deferred)`: `deferred` 是本应到期结算、但既没有配置
+    /// `settlement_price` 也拿不到标的任何价格而延后的 symbol。
+    pub fn check_with_deferred(
         &self,
         date: NaiveDate,
         portfolio: &Portfolio,
         instruments: &HashMap<String, Instrument>,
         last_prices: &HashMap<String, Decimal>,
-    ) -> Vec<SettlementTask> {
+    ) -> (Vec<SettlementTask>, Vec<String>) {
         let mut tasks = Vec::new();
+        let mut deferred = Vec::new();
 
         // Convert NaiveDate to YYYYMMDD u32 for comparison
         let (_, year_ce) = date.year_ce();
@@ -30,62 +35,71 @@ impl SettlementHandler for OptionSettlementHandler {
                 continue;
             }
 
-            if let Some(instr) = instruments.get(symbol)
-                && instr.asset_type == AssetType::Option
-                && let Some(expiry_date_int) = instr.expiry_date()
-                // 结算在"进入新交易日"时触发, 所以必须严格大于: 进入到期日当天就结算会用
-                // 前一日收盘价, 且策略在到期日当天再也交易不到这张合约。
-                && current_date_int > expiry_date_int
-            {
-                // Expired
-                // Calculate Payoff
-                let strike = instr.strike_price().unwrap_or(Decimal::ZERO);
-                let underlying_price = if let Some(us) = instr.underlying_symbol() {
-                    last_prices
-                        .get(us.as_str())
-                        .copied()
-                        .unwrap_or(Decimal::ZERO)
-                } else {
-                    Decimal::ZERO
-                };
-
-                let mut payoff_per_unit = Decimal::ZERO;
-                if underlying_price > Decimal::ZERO {
-                    match instr.option_type() {
-                        Some(OptionType::Call) => {
-                            if underlying_price > strike {
-                                payoff_per_unit = underlying_price - strike;
-                            }
-                        }
-                        Some(OptionType::Put) => {
-                            if strike > underlying_price {
-                                payoff_per_unit = strike - underlying_price;
-                            }
-                        }
-                        None => {}
-                    }
-                }
-
-                // Total Cash Flow
-                // Long (Qty > 0): Receives Payoff * Multiplier * Qty
-                // Short (Qty < 0): Pays Payoff * Multiplier * Abs(Qty) -> Qty * Payoff * Multiplier
-                let cash_flow = *qty * payoff_per_unit * instr.multiplier();
-
-                tasks.push(SettlementTask {
-                    symbol: symbol.clone(),
-                    asset_type: instr.asset_type,
-                    expiry_date: Some(expiry_date_int),
-                    quantity: *qty, // Full position quantity to close
-                    cash_flow,
-                    settlement_type: None,
-                    settlement_price: None,
-                    reason: "expiry".to_string(),
-                    description: format!("Option Expiry for {symbol}"),
-                });
+            let Some(instr) = instruments.get(symbol) else {
+                continue;
+            };
+            if instr.asset_type != AssetType::Option {
+                continue;
             }
+            let Some(expiry_date_int) = instr.expiry_date() else {
+                continue;
+            };
+            // 结算在"进入新交易日"时触发, 所以必须严格大于: 进入到期日当天就结算会用
+            // 前一日收盘价, 且策略在到期日当天再也交易不到这张合约。
+            if current_date_int <= expiry_date_int {
+                continue;
+            }
+
+            let strike = instr.strike_price().unwrap_or(Decimal::ZERO);
+            // 标的价格来源: 配置的到期结算价 > 标的最近已知价格(价格表不按天清空)。
+            // 两者都没有时不能按 0 结算——那等于把实值期权静默作废; 延后到拿到价格为止。
+            let underlying_price = instr.settlement_price().or_else(|| {
+                instr
+                    .underlying_symbol()
+                    .and_then(|us| last_prices.get(us.as_str()).copied())
+            });
+            let Some(underlying_price) = underlying_price.filter(|p| *p > Decimal::ZERO) else {
+                deferred.push(symbol.clone());
+                continue;
+            };
+            let payoff_per_unit = match instr.option_type() {
+                Some(OptionType::Call) => (underlying_price - strike).max(Decimal::ZERO),
+                Some(OptionType::Put) => (strike - underlying_price).max(Decimal::ZERO),
+                None => Decimal::ZERO,
+            };
+
+            // Total Cash Flow
+            // Long (Qty > 0): Receives Payoff * Multiplier * Qty
+            // Short (Qty < 0): Pays Payoff * Multiplier * Abs(Qty) -> Qty * Payoff * Multiplier
+            let cash_flow = *qty * payoff_per_unit * instr.multiplier();
+
+            tasks.push(SettlementTask {
+                symbol: symbol.clone(),
+                asset_type: instr.asset_type,
+                expiry_date: Some(expiry_date_int),
+                quantity: *qty, // Full position quantity to close
+                cash_flow,
+                settlement_type: None,
+                settlement_price: Some(underlying_price),
+                reason: "expiry".to_string(),
+                description: format!("Option Expiry for {symbol}"),
+            });
         }
 
-        tasks
+        (tasks, deferred)
+    }
+}
+
+impl SettlementHandler for OptionSettlementHandler {
+    fn check_settlement(
+        &self,
+        date: NaiveDate,
+        portfolio: &Portfolio,
+        instruments: &HashMap<String, Instrument>,
+        last_prices: &HashMap<String, Decimal>,
+    ) -> Vec<SettlementTask> {
+        self.check_with_deferred(date, portfolio, instruments, last_prices)
+            .0
     }
 }
 
@@ -117,6 +131,7 @@ mod tests {
                 expiry_date,
                 underlying_symbol: "UNDERLYING".to_string(),
                 settlement_type: None,
+                settlement_price: None,
                 implied_volatility: None,
                 reference_volatility: None,
             }),
@@ -214,5 +229,56 @@ mod tests {
             &last_prices,
         );
         assert!(tasks.is_empty());
+    }
+
+    fn one_long_call_portfolio() -> Portfolio {
+        let mut positions = HashMap::new();
+        positions.insert("OPT_CALL".to_string(), dec!(1));
+        Portfolio {
+            cash: dec!(0),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn test_missing_underlying_price_defers_instead_of_zero_payoff() {
+        let handler = OptionSettlementHandler;
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "OPT_CALL".to_string(),
+            create_test_option("OPT_CALL", 20240101, OptionType::Call, dec!(100)),
+        );
+        let (tasks, deferred) = handler.check_with_deferred(
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            &one_long_call_portfolio(),
+            &instruments,
+            &HashMap::new(),
+        );
+        assert!(tasks.is_empty());
+        assert_eq!(deferred, vec!["OPT_CALL".to_string()]);
+    }
+
+    #[test]
+    fn test_configured_settlement_price_wins_over_last_price() {
+        let handler = OptionSettlementHandler;
+        let mut option = create_test_option("OPT_CALL", 20240101, OptionType::Call, dec!(100));
+        if let InstrumentEnum::Option(ref mut o) = option.inner {
+            o.settlement_price = Some(dec!(130));
+        }
+        let mut instruments = HashMap::new();
+        instruments.insert("OPT_CALL".to_string(), option);
+        let mut last_prices = HashMap::new();
+        last_prices.insert("UNDERLYING".to_string(), dec!(110));
+        let (tasks, deferred) = handler.check_with_deferred(
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            &one_long_call_portfolio(),
+            &instruments,
+            &last_prices,
+        );
+        assert!(deferred.is_empty());
+        // (130 - 100) × 乘数 100 × 1 张
+        assert_eq!(tasks[0].cash_flow, dec!(3000));
+        assert_eq!(tasks[0].settlement_price, Some(dec!(130)));
     }
 }

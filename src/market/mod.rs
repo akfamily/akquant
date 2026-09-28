@@ -150,6 +150,7 @@ mod tests {
                 expiry_date: 20260131,
                 underlying_symbol: "510050.SH".to_string(),
                 settlement_type: None,
+                settlement_price: None,
                 implied_volatility: None,
                 reference_volatility: None,
             }),

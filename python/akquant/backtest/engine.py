@@ -4521,7 +4521,9 @@ def run_backtest(
         if p_asset_type != AssetType.Futures:
             p_settlement_type = None
             p_settlement_mode = None
-            p_settlement_price = None
+            # 期权的 settlement_price 表示"到期日标的结算价", 到期结算时优先使用
+            if p_asset_type != AssetType.Option:
+                p_settlement_price = None
         if p_asset_type != AssetType.Option:
             p_option_margin_model = None
             p_implied_volatility = None
@@ -5867,7 +5869,9 @@ def run_from_checkpoint(
         if p_asset_type != AssetType.Futures:
             p_settlement_type = None
             p_settlement_mode = None
-            p_settlement_price = None
+            # 期权的 settlement_price 表示"到期日标的结算价", 到期结算时优先使用
+            if p_asset_type != AssetType.Option:
+                p_settlement_price = None
         if p_asset_type != AssetType.Option:
             p_option_margin_model = None
             p_implied_volatility = None

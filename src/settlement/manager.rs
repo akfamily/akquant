@@ -12,7 +12,7 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use super::expiry::ExpirySettlementHandler;
@@ -61,11 +61,21 @@ pub struct SettlementOutcome {
     pub forced_liquidation_events: Vec<Event>,
 }
 
+/// 一次到期结算的结果。
+#[derive(Debug, Clone, Default)]
+pub struct ExpirySettlement {
+    pub events: Vec<ExecutedExpiryEvent>,
+    /// 已到期但拿不到标的价格而延后结算的期权 symbol
+    pub deferred: Vec<String>,
+}
+
 /// Settlement Manager
 /// Centralizes daily settlement logic including T+1 settlement, option expiry, and order expiration.
 pub struct SettlementManager {
     option_handler: OptionSettlementHandler,
     expiry_handler: ExpirySettlementHandler,
+    /// 已告警过的延后结算期权 symbol(每个只告警一次)
+    deferred_warned: Mutex<HashSet<String>>,
 }
 
 impl SettlementManager {
@@ -74,7 +84,21 @@ impl SettlementManager {
         Self {
             option_handler: OptionSettlementHandler,
             expiry_handler: ExpirySettlementHandler,
+            deferred_warned: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// 记录延后结算的 symbol, 返回其中首次出现的(调用方只对这些打告警)。
+    pub fn note_deferred(&self, symbols: &[String]) -> Vec<String> {
+        let mut warned = self
+            .deferred_warned
+            .lock()
+            .expect("deferred_warned 锁被污染");
+        symbols
+            .iter()
+            .filter(|s| warned.insert((*s).clone()))
+            .cloned()
+            .collect()
     }
 
     /// Process daily settlement routine
@@ -101,13 +125,15 @@ impl SettlementManager {
         );
 
         // 2. Option / Futures / Stock Expiry
-        let expiry_events = self.settle_expiries(
-            ctx.date,
-            portfolio,
-            ctx.instruments,
-            ctx.last_prices,
-            ctx.market_manager,
-        );
+        let expiry_events = self
+            .settle_expiries(
+                ctx.date,
+                portfolio,
+                ctx.instruments,
+                ctx.last_prices,
+                ctx.market_manager,
+            )
+            .events;
 
         // 3. Order Expiration (Day Orders)
         // Partition orders into expired and kept. A Day order is expired at
@@ -135,7 +161,7 @@ impl SettlementManager {
         }
     }
 
-    /// 执行到期结算(期权 + 期货/股票), 返回已执行的到期事件。
+    /// 执行到期结算(期权 + 期货/股票), 返回已执行的到期事件与延后结算的期权。
     ///
     /// `date` 是"正在进入的交易日": 到期日严格小于它的持仓才会结算。回测收尾时
     /// 传最后交易日的次日, 以结算恰好在最后一天到期的持仓。
@@ -146,11 +172,18 @@ impl SettlementManager {
         instruments: &HashMap<String, Instrument>,
         last_prices: &HashMap<String, Decimal>,
         market_manager: &MarketManager,
-    ) -> Vec<ExecutedExpiryEvent> {
+    ) -> ExpirySettlement {
         let _ = market_manager; // Task 4 用它取行权结算费
-        let mut tasks =
+        let (mut tasks, deferred) =
             self.option_handler
-                .check_settlement(date, portfolio, instruments, last_prices);
+                .check_with_deferred(date, portfolio, instruments, last_prices);
+        for symbol in self.note_deferred(&deferred) {
+            log::warn!(
+                target: "akquant::settlement",
+                "期权 {symbol} 已到期, 但既没有配置 settlement_price, 也没有标的的任何价格, \
+                 暂不结算、持仓保留, 之后每个交易日重试。请把标的行情一起放进回测数据。"
+            );
+        }
         tasks.extend(self.expiry_handler.check_settlement(
             date,
             portfolio,
@@ -207,7 +240,10 @@ impl SettlementManager {
                 description: task.description.clone(),
             });
         }
-        expiry_events
+        ExpirySettlement {
+            events: expiry_events,
+            deferred,
+        }
     }
 
     fn process_margin_interest_and_liquidation(
@@ -707,6 +743,20 @@ mod tests {
         assert_eq!(
             outcome_long_first.liquidated_symbols.first(),
             Some(&"LONG".to_string())
+        );
+    }
+
+    #[test]
+    fn note_deferred_reports_each_symbol_once() {
+        let manager = SettlementManager::new();
+        assert_eq!(
+            manager.note_deferred(&["A".to_string()]),
+            vec!["A".to_string()]
+        );
+        assert!(manager.note_deferred(&["A".to_string()]).is_empty());
+        assert_eq!(
+            manager.note_deferred(&["A".to_string(), "B".to_string()]),
+            vec!["B".to_string()]
         );
     }
 }

@@ -1384,7 +1384,7 @@ impl Engine {
             && let Some(next_date) = last_date.succ_opt()
         {
             let prices = self.last_prices.read().expect("last_prices 读锁被污染");
-            let events = self.settlement_manager.settle_expiries(
+            let settlement = self.settlement_manager.settle_expiries(
                 next_date,
                 &mut self.state.portfolio,
                 &self.instruments,
@@ -1392,13 +1392,21 @@ impl Engine {
                 &self.market_manager,
             );
             drop(prices);
-            for event in &events {
+            for event in &settlement.events {
                 log::info!(
                     target: "akquant::settlement",
                     "回测结束时补结算到期持仓: {} 数量 {} 现金流 {}",
                     event.symbol,
                     event.quantity_closed,
                     event.cash_flow
+                );
+            }
+            if !settlement.deferred.is_empty() {
+                log::warn!(
+                    target: "akquant::settlement",
+                    "回测结束时仍有 {} 个到期期权因缺少标的价格未能结算: {}",
+                    settlement.deferred.len(),
+                    settlement.deferred.join(", ")
                 );
             }
         }
