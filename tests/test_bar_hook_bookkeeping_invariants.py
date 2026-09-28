@@ -109,4 +109,5 @@ def test_get_holding_bars_advances_for_timer_driven_strategy() -> None:
     跳过 bar 级回调会让它恒返 0——不抛异常, 静默错数.
     """
     strategy = _run()
-    assert strategy.holding_bars_seen == [0, 1, 2, 0, 0]
+    # 到期日 1/31 当天仍持有(第 3 根持仓 bar), 进入 2/1 时才结算归零
+    assert strategy.holding_bars_seen == [0, 1, 2, 3, 0]

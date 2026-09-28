@@ -1377,6 +1377,32 @@ impl Engine {
         // Final cleanup
         self.state.order_manager.cleanup_finished_orders();
 
+        // 回测收尾补做到期结算: 结算平时在"进入新交易日"时触发, 数据恰好在到期日
+        // (或之后再无交易日)结束时就永远等不到那一刻。实盘不做——实盘到期由柜台处理。
+        if !self.execution_model.is_live()
+            && let Some(last_date) = self.current_date
+            && let Some(next_date) = last_date.succ_opt()
+        {
+            let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+            let events = self.settlement_manager.settle_expiries(
+                next_date,
+                &mut self.state.portfolio,
+                &self.instruments,
+                &prices,
+                &self.market_manager,
+            );
+            drop(prices);
+            for event in &events {
+                log::info!(
+                    target: "akquant::settlement",
+                    "回测结束时补结算到期持仓: {} 数量 {} 现金流 {}",
+                    event.symbol,
+                    event.quantity_closed,
+                    event.cash_flow
+                );
+            }
+        }
+
         // Record final snapshot if we have data
         if self.current_date.is_some()
             && let Some(timestamp) = self.terminal_result_timestamp()

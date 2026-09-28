@@ -33,7 +33,9 @@ impl SettlementHandler for OptionSettlementHandler {
             if let Some(instr) = instruments.get(symbol)
                 && instr.asset_type == AssetType::Option
                 && let Some(expiry_date_int) = instr.expiry_date()
-                && current_date_int >= expiry_date_int
+                // 结算在"进入新交易日"时触发, 所以必须严格大于: 进入到期日当天就结算会用
+                // 前一日收盘价, 且策略在到期日当天再也交易不到这张合约。
+                && current_date_int > expiry_date_int
             {
                 // Expired
                 // Calculate Payoff
@@ -124,7 +126,7 @@ mod tests {
     #[test]
     fn test_option_expiry_call_in_the_money() {
         let handler = OptionSettlementHandler;
-        let expiry_date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let expiry_date = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
 
         let mut positions = HashMap::new();
         positions.insert("OPT_CALL".to_string(), dec!(10)); // 10 Long Calls
@@ -159,7 +161,7 @@ mod tests {
     #[test]
     fn test_option_expiry_out_of_the_money() {
         let handler = OptionSettlementHandler;
-        let expiry_date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let expiry_date = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
 
         let mut positions = HashMap::new();
         positions.insert("OPT_PUT".to_string(), dec!(1));
@@ -181,21 +183,36 @@ mod tests {
 
         let tasks = handler.check_settlement(expiry_date, &portfolio, &instruments, &last_prices);
 
-        // Should not generate tasks if OTM?
-        // Wait, check_settlement checks if expiry_date >= current_date.
-        // If expired, it generates task regardless of payoff?
-        // Logic: if current_date >= expiry_date -> calculate payoff.
-        // If payoff > 0, cash_flow > 0.
-        // But task is generated anyway?
-        // Let's check logic:
-        // if current_date_int >= expiry_date_int {
-        //     // ... calc payoff ...
-        //     tasks.push(SettlementTask { ... })
-        // }
-        // So yes, it generates task to close position (cash flow 0).
+        // 虚值到期也生成任务, 现金流为 0, 用于平掉持仓
 
         assert_eq!(tasks.len(), 1);
         let task = &tasks[0];
         assert_eq!(task.cash_flow, dec!(0));
+    }
+    #[test]
+    fn test_option_not_settled_on_expiry_date_itself() {
+        let handler = OptionSettlementHandler;
+        let mut positions = HashMap::new();
+        positions.insert("OPT_CALL".to_string(), dec!(10));
+        let portfolio = Portfolio {
+            cash: dec!(100000),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "OPT_CALL".to_string(),
+            create_test_option("OPT_CALL", 20240101, OptionType::Call, dec!(100)),
+        );
+        let mut last_prices = HashMap::new();
+        last_prices.insert("UNDERLYING".to_string(), dec!(110));
+        // 到期日当天还能交易, 结算要等到期日收盘后(进入下一个交易日时)才发生
+        let tasks = handler.check_settlement(
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            &portfolio,
+            &instruments,
+            &last_prices,
+        );
+        assert!(tasks.is_empty());
     }
 }

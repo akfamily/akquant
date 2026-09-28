@@ -100,21 +100,63 @@ impl SettlementManager {
             ctx.instruments,
         );
 
-        // 2. Option Expiry
-        let mut tasks = self.option_handler.check_settlement(
+        // 2. Option / Futures / Stock Expiry
+        let expiry_events = self.settle_expiries(
             ctx.date,
             portfolio,
             ctx.instruments,
             ctx.last_prices,
+            ctx.market_manager,
         );
-        // 3. Futures/Stock Expiry
-        tasks.extend(self.expiry_handler.check_settlement(
-            ctx.date,
-            portfolio,
-            ctx.instruments,
-            ctx.last_prices,
-        ));
 
+        // 3. Order Expiration (Day Orders)
+        // Partition orders into expired and kept. A Day order is expired at
+        // settlement UNLESS it is in `day_orders_awaiting_fill_slice` — orders
+        // whose matchable slice has not yet arrived (a next-open order created
+        // after the previous day's close fills at *this* day's open, which the
+        // caller matches *after* settlement). Expiring those before their only
+        // fill chance meant on_cross_section + TimeInForce.Day never traded.
+        let (expired, kept): (Vec<Order>, Vec<Order>) = active_orders
+            .drain(..)
+            .partition(|o| {
+                o.time_in_force == TimeInForce::Day
+                    && !ctx.day_orders_awaiting_fill_slice.contains(&o.id)
+            });
+
+        *active_orders = kept;
+
+        for mut o in expired {
+            o.status = OrderStatus::Expired;
+            expired_orders_out.push(o);
+        }
+        SettlementOutcome {
+            expiry_events,
+            ..outcome
+        }
+    }
+
+    /// 执行到期结算(期权 + 期货/股票), 返回已执行的到期事件。
+    ///
+    /// `date` 是"正在进入的交易日": 到期日严格小于它的持仓才会结算。回测收尾时
+    /// 传最后交易日的次日, 以结算恰好在最后一天到期的持仓。
+    pub fn settle_expiries(
+        &self,
+        date: NaiveDate,
+        portfolio: &mut Portfolio,
+        instruments: &HashMap<String, Instrument>,
+        last_prices: &HashMap<String, Decimal>,
+        market_manager: &MarketManager,
+    ) -> Vec<ExecutedExpiryEvent> {
+        let _ = market_manager; // Task 4 用它取行权结算费
+        let mut tasks =
+            self.option_handler
+                .check_settlement(date, portfolio, instruments, last_prices);
+        tasks.extend(self.expiry_handler.check_settlement(
+            date,
+            portfolio,
+            instruments,
+            last_prices,
+        ));
         let mut expiry_events = Vec::new();
         for task in tasks {
             let quantity_before = portfolio
@@ -154,7 +196,7 @@ impl SettlementManager {
             expiry_events.push(ExecutedExpiryEvent {
                 symbol: task.symbol.clone(),
                 asset_type: task.asset_type,
-                trading_date: ctx.date,
+                trading_date: date,
                 expiry_date: task.expiry_date,
                 quantity_before,
                 quantity_closed: task.quantity,
@@ -165,31 +207,7 @@ impl SettlementManager {
                 description: task.description.clone(),
             });
         }
-
-        // 4. Order Expiration (Day Orders)
-        // Partition orders into expired and kept. A Day order is expired at
-        // settlement UNLESS it is in `day_orders_awaiting_fill_slice` — orders
-        // whose matchable slice has not yet arrived (a next-open order created
-        // after the previous day's close fills at *this* day's open, which the
-        // caller matches *after* settlement). Expiring those before their only
-        // fill chance meant on_cross_section + TimeInForce.Day never traded.
-        let (expired, kept): (Vec<Order>, Vec<Order>) = active_orders
-            .drain(..)
-            .partition(|o| {
-                o.time_in_force == TimeInForce::Day
-                    && !ctx.day_orders_awaiting_fill_slice.contains(&o.id)
-            });
-
-        *active_orders = kept;
-
-        for mut o in expired {
-            o.status = OrderStatus::Expired;
-            expired_orders_out.push(o);
-        }
-        SettlementOutcome {
-            expiry_events,
-            ..outcome
-        }
+        expiry_events
     }
 
     fn process_margin_interest_and_liquidation(
