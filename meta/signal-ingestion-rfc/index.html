@@ -1,0 +1,1641 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/meta/signal-ingestion-rfc/">
+      
+      
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/meta/signal-ingestion-rfc/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>RFC:外部信号平台接入 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rfc" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              RFC:外部信号平台接入
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/meta/signal-ingestion-rfc/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../textbook/" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../textbook/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/python_basics/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. 背景与动机
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 目标与非目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 设计原则
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 现状审计
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. 现状审计">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 三条看似自然的注入路径,均不可行
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-eventmanager-crossbeam-sender" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 正解:EventManager 的 crossbeam sender
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-broker_live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 既存缺口:broker_live 下引擎风控不在下单路径上 ⚠️
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. 变更提案
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. 变更提案">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-p0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 P0:统一指令入口(已落地)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.1 P0:统一指令入口(已落地)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#411-run_live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1.1 使用约束(实测得出,已写入 run_live 文档)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-p1broker_live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 P1:broker_live 报单前置风控(已落地)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.2 P1:broker_live 报单前置风控(已落地)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#421" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2.1 被实测否决的原始设计
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#422" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2.2 实际落地:无状态限额校验
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#423" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2.3 实际影响
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-p2akquantsignal-p3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 P2:akquant.signal 模块(已落地,传输层实现留 P3)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4.3 P2:akquant.signal 模块(已落地,传输层实现留 P3)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#431" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3.1 实际落地形态
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#432-p3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3.2 P3 实际落地(传输层与安全)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 安全基线(硬约束,非建议)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 部署形态建议
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#46-duration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.6 顺带查出的既存缺陷:duration 在无行情时不生效(已修)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-changelog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 破坏性变更清单(供 CHANGELOG)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. 分期实施
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 验收 / 测试
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. 明确不做的方向(记录否决理由)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. 明确不做的方向(记录否决理由)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#81-on_signal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.1 新增 on_signal 策略钩子
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#82-timer-tick-feed-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.2 把信号包装成 Timer 或伪 Tick 推进 feed channel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#83-python-timer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.3 Python 侧队列 + timer 自持轮询
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#84" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.4 在引擎外自建风控层
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="rfc">RFC:外部信号平台接入<a class="headerlink" href="#rfc" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>状态</strong>:草案(Draft) · <strong>日期</strong>:2026-08-07 · <strong>范围</strong>:新增 <code>akquant.signal</code> 子包 + Rust 指令入口 + <code>RealtimeExecutionClient</code> 补实;<strong>允许破坏性变更</strong>(broker_live 下单时序与 <code>OrderReceipt</code> 语义)</p>
+<p>对标实现:<strong>Freqtrade</strong>(producer/consumer WebSocket + <code>POST /forceenter</code>)、<strong>vn.py</strong>(WebTrader:独立进程 FastAPI + RpcClient ↔ 交易进程 RpcServer)、<strong>nautilus_trader</strong>(<code>MessageBusConfig.external_streams</code> + Redis backing,回调 <code>on_data</code>)、<strong>QuantConnect LEAN</strong>(自定义数据源拉信号)。</p>
+<p>与 <a href="../hooks-rfc/">hooks-rfc.md</a> / <a href="../timer-api-rfc/">timer-api-rfc.md</a> 的关系:<strong>严格遵守二者已确立的不变量</strong>——不新增 <code>on_signal</code> 钩子(hooks-rfc 设计原则第 1 条字面举 <code>on_signal</code> 为反例),不新增引擎事件刻度。本 RFC 的信号<strong>不经策略回调</strong>,直接成为订单,故两条不变量都不受触碰。</p>
+<p>与 <a href="../issue-329-fix-plan/">issue-329-fix-plan.md</a> 的关系:信号单 <code>created_at</code> 落在任意墙钟时刻,与 bar 时间戳天然不对齐,正是 #329 第 3 环暴露的那个面。该修复已落地,本 RFC <strong>只补一条针对信号单的回归测试</strong>锚死它,不重开引擎缺陷。</p>
+</blockquote>
+<hr />
+<h2 id="0">0. 背景与动机<a class="headerlink" href="#0" title="Permanent link">&para;</a></h2>
+<p>需求来自对接<strong>外部量化信号平台</strong>:信号在平台侧生成,AKQuant 只负责接收指令、风控、执行、审计。</p>
+<p>现状是「底层能力齐备、上层入口缺失」:</p>
+<ul>
+<li>行情侧已有跨线程通道(<code>DataFeed.create_live()</code> 的 channel),CTP 行情网关就跑在独立 daemon 线程上往里推数据;</li>
+<li><code>broker='replay'</code> 证明了「自定义网关在 daemon 线程推事件」这一形态可行;</li>
+<li><code>register_broker</code> + entry-point 组 <code>akquant.brokers</code> 已是成熟的插件注册机制;</li>
+<li><code>strategy_loader</code> 甚至已支持动态加载策略代码。</li>
+</ul>
+<p>但<strong>指令侧没有任何外部入口</strong>:订单只能由策略在回调内通过 <code>self.buy()</code> / <code>self.sell()</code> 产生。想接信号平台,用户只能自己起线程写队列,再在 <code>on_bar</code> 里排空——延迟取决于行情到达,标的不活跃或盘中间隙时指令会压到下一根 bar。</p>
+<p>盘点过程中另外查出一个<strong>既存缺口</strong>(见 3.3):broker_live 下引擎风控不在下单路径上。它与本需求是同一处架构的两面,必须一并处理——否则外部信号将不经风控直连柜台。</p>
+<h2 id="1">1. 目标与非目标<a class="headerlink" href="#1" title="Permanent link">&para;</a></h2>
+<p><strong>目标</strong></p>
+<ul>
+<li>外部指令与策略回调下单<strong>走完全同一条路</strong>(同一风控、同一审计、同一持仓账本)。</li>
+<li>指令注入到落地的延迟<strong>不依赖行情到达</strong>。</li>
+<li>传输层可插拔(进程内队列 / HTTP / Redis / MQ),语义层与传输层解耦。</li>
+<li>幂等:同一 <code>signal_id</code> 重复投递不重复下单。</li>
+<li>危险能力<strong>默认关闭</strong>,网络端点默认只绑本机且强制鉴权。</li>
+<li>补实 broker_live 的风控路径,使 <code>strategy_max_*</code> 在实盘首次真实生效。</li>
+</ul>
+<p><strong>非目标</strong></p>
+<ul>
+<li><strong>不做信号生成</strong>:因子计算、择时、组合优化都在平台侧,AKQuant 不介入。</li>
+<li><strong>不新增策略钩子</strong>:见头部与 8.1。</li>
+<li><strong>不做信号回测</strong>:历史信号回放用既有 <code>broker='replay'</code> 覆盖,不在本 RFC。</li>
+<li><strong>不内建平台协议适配</strong>:只定契约与参考实现,具体平台的字段映射由用户或插件仓完成。</li>
+</ul>
+<h2 id="2">2. 设计原则<a class="headerlink" href="#2" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>单一下单路径</strong>:任何订单来源(策略回调 / 外部信号 / 本地止损)都汇进 <code>Event::OrderRequest</code>,风控是这条路上不可绕过的一环。新增来源不得新开旁路。</li>
+<li><strong>信号不是钩子</strong>:外部指令直接成为订单,不为它开策略回调。用户需要干预时,干预点是<strong>信号源</strong>(过滤、改写、拒绝)而非策略回调。</li>
+<li><strong>传输与语义解耦</strong>:<code>Signal</code> 契约与 <code>SignalSource</code> 协议稳定,HTTP / Redis / MQ 都只是它的实现。</li>
+<li><strong>危险默认关闭</strong>:能触发真实下单的网络端点,默认 <code>enabled=False</code>、默认绑 <code>127.0.0.1</code>、缺鉴权则启动失败(不降级为警告)。照抄 Freqtrade <code>force_entry_enable</code> 的取舍。</li>
+<li><strong>幂等优先于顺序</strong>:信号平台重连/重推是常态。按 <code>signal_id</code> 去重,不假设投递顺序。</li>
+</ol>
+<h2 id="3">3. 现状审计<a class="headerlink" href="#3" title="Permanent link">&para;</a></h2>
+<h3 id="31">3.1 三条看似自然的注入路径,均不可行<a class="headerlink" href="#31" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>路径</th>
+<th>结论</th>
+<th>硬理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>推 <code>Event::Timer</code> 进 <strong>feed</strong> channel</td>
+<td>✗ 静默丢弃</td>
+<td><code>src/pipeline/stages/data.rs</code> 的 <code>FeedAction::Event</code> 分支只给 <code>Bar</code>/<code>Tick</code> 取时间戳,其余落 <code>_ =&gt; 0</code>;随后 <code>timestamp &lt;= engine.snapshot_time</code> 必然成立 → <code>ProcessorResult::Loop</code>。<code>RealtimeDataClient::peek_timestamp</code>(<code>src/data/client.rs</code>)同样把 Timer 打成 0</td>
+</tr>
+<tr>
+<td>新增 <code>on_signal</code> 钩子</td>
+<td>✗ 撞已落地原则</td>
+<td><a href="../hooks-rfc/">hooks-rfc.md</a> 设计原则第 1 条:「When-not-what……<code>on_bar</code> 而非 <code>on_signal</code>」——字面把 <code>on_signal</code> 举为反例。Nautilus 的同类能力也用 <code>on_data</code> + 类型分流,不开语义钩子</td>
+</tr>
+<tr>
+<td>外部线程直接调 <code>strategy.buy()</code> / <code>ctx.schedule()</code></td>
+<td>✗ 不安全</td>
+<td>前者撞 <code>python/akquant/strategy_trading_api.py</code> 的 <code>if strategy.ctx is None: raise RuntimeError("Context not ready")</code>;后者 ctx 是 pyclass,<code>run()</code> 期间 <code>py_ctx.borrow(py)</code> 有 <code>PyBorrowMutError</code> 风险</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-eventmanager-crossbeam-sender">3.2 正解:<code>EventManager</code> 的 crossbeam sender<a class="headerlink" href="#32-eventmanager-crossbeam-sender" title="Permanent link">&para;</a></h3>
+<p><code>src/event_manager.rs</code> 用 <code>crossbeam_channel::unbounded()</code>,<code>sender()</code> 返回的 <code>Sender&lt;Event&gt;</code> 是 <code>Send + Sync + Clone</code>——<strong>天然跨线程</strong>。策略下单本就走这条路:<code>src/engine/core.rs</code> 把它作为 <code>event_tx</code> 注入 <code>StrategyContext</code>,<code>src/context.rs</code> 里 <code>tx.send(Event::OrderRequest(order))</code>。</p>
+<p><strong>注入后无需等待行情</strong>,因为 pipeline 的编排(<code>src/engine/core.rs</code> 的 <code>add_processor</code> 序列)把 <code>ChannelProcessor</code> 排在<strong>第一位</strong>,<code>DataProcessor</code> 在其后:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ChannelProcessor  ← 排空 event_manager
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>DataProcessor     ← 无行情时 FeedAction::Wait → ProcessorResult::Loop → continue 'main_loop
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>ExecutionProcessor / ChannelProcessor / StrategyProcessor / ...
+</span></code></pre></div>
+<p><code>Loop</code> 重启主循环后<strong>先跑 ChannelProcessor</strong>,注入的 <code>OrderRequest</code> 即被消费 → <code>risk_manager.check_and_adjust</code> → <code>Event::OrderValidated</code> → <code>add_active_order</code>。无需伪造 tick,无需 timer 轮询。延迟上界是 <code>DataProcessor</code> 里 <code>wait_peek</code> 的 1 秒 timeout(4.1 将其降为微秒级)。</p>
+<h3 id="33-broker_live">3.3 既存缺口:broker_live 下引擎风控不在下单路径上 ⚠️<a class="headerlink" href="#33-broker_live" title="Permanent link">&para;</a></h3>
+<p>这是盘点中查出的、<strong>与本需求正交但必须一并修</strong>的缺陷。</p>
+<p>broker_live 的订单不走引擎:<code>_runner.py</code> 用 <code>_install_broker_order_submitter</code> 覆盖策略的 <code>submit_order</code>,<code>python/akquant/gateway/order_submitter.py</code> 里直接 <code>self._trader_gateway.place_order(request)</code> 送柜台。该文件<strong>全文没有 <code>risk_manager</code> 调用</strong>,也不经过 <code>ChannelProcessor</code>。</p>
+<p>而 <code>strategy_max_order_value</code> / <code>strategy_max_order_size</code> / <code>strategy_max_position_size</code> / <code>strategy_max_daily_loss</code> / <code>strategy_max_drawdown</code> / <code>strategy_risk_budget</code> 这一组参数,是经 <code>engine.set_strategy_max_*_limits()</code> 下发到 <strong>Rust <code>risk_manager</code></strong> 的。</p>
+<p><strong>结论:这些风控参数在 <code>trading_mode='broker_live'</code> 下实际不生效。</strong> 用户按文档配了限额,实盘却不拦单。</p>
+<p>根因在执行器是空壳(<code>src/execution/realtime.rs</code>):</p>
+<div class="language-rust highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">impl</span><span class="w"> </span><span class="n">ExecutionClient</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">RealtimeExecutionClient</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">on_order</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">_order</span><span class="p">:</span><span class="w"> </span><span class="nc">Order</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">        </span><span class="c1">// In real impl, send to broker API      ← 函数体为空</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="p">}</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>引擎在 broker_live 下 <code>use_realtime_execution()</code> 装的就是它,于是 <code>OrderValidated</code> 落到 <code>add_active_order</code> 后无人送柜台;Python 侧只能绕开引擎自己直连,风控随之被绕开。</p>
+<p>测试没兜住:<code>tests/test_live_runner_broker_bridge.py</code> 用 <code>_DummyEngine</code> 只断言「配置被下发到 engine」,未断言<strong>风控真的拦住了订单</strong>。</p>
+<h2 id="4">4. 变更提案<a class="headerlink" href="#4" title="Permanent link">&para;</a></h2>
+<h3 id="41-p0">4.1 P0:统一指令入口(<strong>已落地</strong>)<a class="headerlink" href="#41-p0" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>改动</th>
+<th>位置</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>std mpsc → crossbeam</td>
+<td><code>src/data/client.rs</code> 的 <code>RealtimeDataClient</code>、<code>src/data/feed.rs</code> 的 <code>live_sender</code></td>
+<td>换完<strong>删掉了</strong> <code>Arc&lt;Mutex&lt;Sender&gt;&gt;</code> 包装——它存在只因 <code>std::sync::mpsc::Sender</code> 非 <code>Sync</code>,crossbeam 的 <code>Sender</code> 本身 <code>Sync</code>。少一层锁</td>
+</tr>
+<tr>
+<td><code>select!</code> 零延迟唤醒</td>
+<td><code>DataClient::wait_peek_with_wakeup</code> + <code>WaitOutcome</code>;<code>DataProcessor</code> 传入 <code>EventManager::receiver()</code></td>
+<td>用 <code>Select::ready_timeout</code> 同时探测行情通道与引擎内部事件通道。<strong>只探测就绪、不取走</strong>唤醒通道的事件——消费仍归 <code>ChannelProcessor</code>,否则事件会被吞。就绪即返回 <code>FeedAction::Wait</code> → 主循环 <code>Loop</code> → 回到首位的 <code>ChannelProcessor</code></td>
+</tr>
+<tr>
+<td><code>SignalPort</code> pyclass</td>
+<td>新增 <code>src/signal_port.rs</code>;<code>Engine::signal_port(strategy_id)</code> 取用</td>
+<td>持 <code>Sender&lt;Event&gt;</code> 克隆 + <code>owner_strategy_id</code>,<code>submit(...)</code> 构造 <code>Order</code> 并发 <code>Event::OrderRequest</code>。入参校验(空 symbol / 非正数量 / 未知枚举)在端口内完成</td>
+</tr>
+<tr>
+<td><code>signal_port_ready</code> 回调</td>
+<td><code>run_live</code> / <code>LiveRunner</code></td>
+<td>会话启动前把端口交给调用方。P2 的 <code>SignalSource</code> 将建于其上</td>
+</tr>
+</tbody>
+</table>
+<p><code>crossbeam-channel</code> 0.5 已在 <code>Cargo.toml</code>,无新增依赖。</p>
+<p><code>SignalPort</code> 只负责构造 <code>Order</code> 并投递,<strong>不做风控</strong>——风控由 <code>ChannelProcessor</code> 统一执行,这是原则 1 的直接体现。已实测:注入单同样被 <code>strategy_max_order_value</code> 拦下并触发 <code>on_reject</code>。</p>
+<h4 id="411-run_live">4.1.1 使用约束(实测得出,已写入 <code>run_live</code> 文档)<a class="headerlink" href="#411-run_live" title="Permanent link">&para;</a></h4>
+<p><strong>① 回调内启动的线程必须确认其已就绪再返回。</strong> <code>signal_port_ready</code> 由 runner 同步调用,一返回主线程即进入 Rust 主循环并长期持有 GIL;若新线程此刻尚未被调度,它可能整场会话都拿不到执行机会:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">bind</span><span class="p">(</span><span class="n">port</span><span class="p">):</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">running</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">worker</span><span class="p">():</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>        <span class="n">running</span><span class="o">.</span><span class="n">set</span><span class="p">()</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="o">...</span>  <span class="c1"># port.submit(...)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">worker</span><span class="p">,</span> <span class="n">daemon</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">running</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>   <span class="c1"># 关键</span>
+</span></code></pre></div>
+<p><strong>② 注入单只在"后续"市场事件到来时成交。</strong> 落在最后一根 bar 之后的注入会停在 <code>New</code> 状态——这是撮合语义的必然(无价格无法成交),非缺陷。</p>
+<p><strong>③ 不存在 GIL 饥饿。</strong> 曾怀疑 live 会话会饿死外部线程,已实测否决:探针线程以 0.05s 周期运行 2 秒,最大间隔 0.063s。</p>
+<p><strong>验收</strong>:<code>tests/test_signal_port_injection.py</code> 5 条(外部线程注入被接受并成交、注入单仍过风控被拦、submit 即时返回、入参校验、市价单注入),连跑三轮稳定通过。</p>
+<h3 id="42-p1broker_live">4.2 P1:broker_live 报单前置风控(<strong>已落地</strong>)<a class="headerlink" href="#42-p1broker_live" title="Permanent link">&para;</a></h3>
+<p>修 3.3 的缺口:让 <code>strategy_max_*</code> 在实盘真实拦单。</p>
+<h4 id="421">4.2.1 被实测否决的原始设计<a class="headerlink" href="#421" title="Permanent link">&para;</a></h4>
+<p>原方案是「让 <code>RealtimeExecutionClient</code> 持有 Python 下单桥,订单经 <code>Event::OrderRequest</code> → <code>ChannelProcessor</code> 风控 → <code>OrderValidated</code> → <code>on_order</code> 回调下单」。</p>
+<p><strong>实测不可行</strong>。报单发生在策略回调内,而策略回调是 <code>Engine::run(&amp;mut self)</code> 从 Rust 内部回调进 Python 的——那一刻引擎对象正被独占可变借用,任何经 Python 侧触达 <code>Engine</code> 的调用都会:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>RuntimeError: Already borrowed
+</span></code></pre></div>
+<p>这条约束对 <code>&amp;self</code> 方法同样成立(pyo3 的 <code>&amp;mut</code> 借用独占),因此<strong>"在策略回调内调用引擎任何方法"整体不可行</strong>,不只是风控。这也顺带解释了为什么 broker_live 当初会绕开引擎自建下单路径。</p>
+<h4 id="422">4.2.2 实际落地:无状态限额校验<a class="headerlink" href="#422" title="Permanent link">&para;</a></h4>
+<p>把限额判定抽成<strong>不依赖 <code>&amp;Engine</code></strong> 的自由函数,两条路径共用:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>src/risk/strategy_limits.rs
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>├── exceeds_order_value / exceeds_order_size / exceeds_position_size   ← 判定逻辑单一来源
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>├── check_all(...)                                                     ← 串联顺序与引擎一致
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>└── check_strategy_limits(...)  #[pyfunction]                          ← 暴露给 Python
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>Engine::check_strategy_*_limit ──转发──┐
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>                                       ├──&gt; 同一批自由函数
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>BrokerOrderSubmitter._check_risk ──────┘   (拒单文案逐字一致, 无第二套规则)
+</span></code></pre></div>
+<p><code>BrokerOrderSubmitter</code> 收<strong>限额快照</strong>(<code>{"max_order_value": {"_default": 500.0}, ...}</code>)而非 engine 引用,由 <code>LiveRunner</code> 在装配 submitter 时传入。报单前调 <code>check_strategy_limits</code>,拒单则构造 <code>Rejected</code> 的 <code>StrategyOrder</code> 依次派发 <code>on_order</code> / <code>on_reject</code>(与回测同口径:回测的风控拒单也经 <code>ExecutionReport(Rejected)</code> 落到 <code>on_reject</code>)。</p>
+<h4 id="423">4.2.3 实际影响<a class="headerlink" href="#423" title="Permanent link">&para;</a></h4>
+<p><strong>零破坏性</strong>——这是与原设计最大的差别:</p>
+<ul>
+<li><code>OrderReceipt.primary</code> 语义<strong>不变</strong>(仍是柜台 id),<code>broker_execution.py</code> 的本地止损路径无需重构;</li>
+<li>下单仍是<strong>同步</strong>的,策略代码无需改动;</li>
+<li><code>__engine_rule_version__</code> <strong>无需递增</strong>(未改引擎行为,仅新增一个不参与回测路径的 pyfunction)。</li>
+</ul>
+<p>唯一可观测变更:此前配了 <code>strategy_max_*</code> 却从未被拦的实盘策略,现在会真的被拦——这是修复而非回归。</p>
+<p><strong>覆盖范围与残留缺口</strong>:本次覆盖 <code>max_order_value</code> / <code>max_order_size</code> / <code>max_position_size</code> 三项(判定只需限额 + 委托 + 持仓快照)。<code>max_daily_loss</code> / <code>max_drawdown</code> / <code>strategy_risk_budget</code> / <code>reduce_only_after_risk</code> / <code>risk_cooldown_bars</code> 依赖引擎累计盈亏与预算用量,受同一条借用约束限制,<strong>在 broker_live 下仍未生效</strong>。要补齐需把这些累计量也做成可跨边界读取的快照,属独立议题。</p>
+<p><strong>验收</strong>:<code>tests/test_broker_live_risk_enforcement.py</code> 三条端到端断言(拦超限名义 / 放行限额内 / 拦超限数量),<code>src/risk/strategy_limits.rs</code> 8 条单元测试(含边界值、多空对称、文案一致性、串联顺序)。</p>
+<h3 id="43-p2akquantsignal-p3">4.3 P2:<code>akquant.signal</code> 模块(<strong>已落地</strong>,传输层实现留 P3)<a class="headerlink" href="#43-p2akquantsignal-p3" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python/akquant/signal/
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>├── __init__.py        # 公开 run_live(signal_source=...) 所需符号
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>├── models.py          # Signal(pydantic):signal_id/symbol/action/quantity/price/
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>│                      #   order_type/strategy_id/timestamp/tag
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>├── protocols.py       # SignalSource 协议:start()/stop()/on_signal(cb),形状对齐 MarketGateway
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>├── dedup.py           # 按 signal_id 幂等去重
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>├── dispatcher.py      # 信号 → SignalPort.submit(),含审计与拒单回执
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>├── registry.py        # entry-point 组 akquant.signal_sources
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>└── sources/
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    ├── queue.py       # QueueSignalSource:进程内队列(参考实现 + 测试基座)
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    ├── http.py        # HttpSignalSource:FastAPI webhook(可选 extra)
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    └── redis.py       # RedisSignalSource:Redis Stream 消费(可选 extra)
+</span></code></pre></div>
+<ul>
+<li><strong>幂等</strong>照抄 <code>python/akquant/gateway/broker_strategy_api.py</code> 里 <code>applied_fill_ids</code> 的思路(会话级 set + 无 id 时退回保守路径)。恢复循环重放成交已证明过这套模式的必要性。</li>
+<li><strong>审计</strong>接 <code>python/akquant/gateway/order_audit.py</code>,记录「signal_id → client_order_id → broker_order_id」全链,可回溯。</li>
+<li><strong>拒单回执</strong>:风控拒或柜台拒时回调信号源,让平台侧知道指令未生效。缺这一环平台会以为下成功了。</li>
+<li><strong>registry</strong> 复用 <code>python/akquant/gateway/brokers/plugins.py</code> 的失败隔离范式(单插件失败不拖垮 import)。</li>
+<li><strong>strategy_id 路由</strong>:<code>Signal.strategy_id</code> 接进已有的 <code>strategies_by_slot</code> / 按 strategy_id 的 <code>strategy_max_*</code> 字典,使不同信号源走各自的风控预算。</li>
+</ul>
+<h4 id="431">4.3.1 实际落地形态<a class="headerlink" href="#431" title="Permanent link">&para;</a></h4>
+<p>实现比原计划多一层 <strong><code>OrderSink</code></strong> 抽象,这是必需的:两种模式的下单出口完全不同(paper 走引擎注入、broker_live 走柜台通道),但幂等/审计/回执逻辑必须只有一份。</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>python/akquant/signal/
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>├── models.py        Signal / SignalResult / SignalAction / SignalStatus (pydantic)
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>├── protocols.py     SignalSource / OrderSink 协议 + SignalSourceBase 便利基类
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>├── dedup.py         SignalDedup:有界 LRU, 达容量时告警(静默淘汰=静默重复下单)
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>├── sinks.py         PaperOrderSink(SignalPort) / BrokerOrderSink(BrokerOrderSubmitter)
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>├── dispatcher.py    SignalDispatcher:幂等 → 下单 → 审计 → 回执, 唯一决策点
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>└── sources/queue.py QueueSignalSource:参考实现 + 测试基座
+</span></code></pre></div>
+<p><code>run_live(signal_source=...)</code> 托管其生命周期:<code>bind</code> → <code>start</code>(引擎循环前)→ <code>stop</code>(收尾)。</p>
+<p><strong>两处与原计划的偏离</strong>:</p>
+<ol>
+<li><strong><code>SignalPort</code> 只用于 paper</strong>。<code>BrokerOrderSink</code> 直接走 <code>BrokerOrderSubmitter</code> —— 因为引擎的 <code>RealtimeExecutionClient</code> 不向柜台报单(见 4.2.1 的调研),经引擎注入的订单在 broker_live 下永不成交。两种模式的<strong>风控覆盖面因此不同</strong>,这是引擎架构事实而非配置项,已在模块 docstring 与 <code>run_live</code> 文档中写明。</li>
+<li><strong>信号源启动失败必须中止会话</strong>(不同于 <code>signal_port_ready</code> 交付失败只记日志)。信号源是该会话的<strong>唯一订单来源</strong>,静默继续会跑出一个永不下单的空会话。</li>
+</ol>
+<p><strong>幂等的两条边界</strong>(实现中确定,均有测试锚定):</p>
+<ul>
+<li>投递<strong>抛异常</strong>时放开去重标记 —— 那一笔并未真正下单,平台重推应被受理;</li>
+<li>出口<strong>同步返回未下单</strong>(broker 侧被前置风控拦下)时<strong>不</strong>放开 —— 指令已判定不可执行,重推只会再被拒一次。</li>
+</ul>
+<p><strong>验收</strong>:<code>tests/test_signal_module.py</code> 7 条 —— 信号到引擎并成交、同 id 投三次只下一单、拒单回执给来源、去重在 16 线程并发下原子、达容量淘汰并计数、投递失败后可重推、契约校验(含 <code>action</code> 字符串归一)。连跑两轮稳定。</p>
+<p>调用形态与 <code>run_backtest</code> / <code>run_live</code> 保持对称,新增一个参数:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_live</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.signal</span><span class="w"> </span><span class="kn">import</span> <span class="n">HttpSignalSource</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">run_live</span><span class="p">(</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">instruments</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">],</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">broker</span><span class="o">=</span><span class="s2">"qmf"</span><span class="p">,</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">trading_mode</span><span class="o">=</span><span class="s2">"broker_live"</span><span class="p">,</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="n">signal_source</span><span class="o">=</span><span class="n">HttpSignalSource</span><span class="p">(</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>        <span class="n">host</span><span class="o">=</span><span class="s2">"127.0.0.1"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8765</span><span class="p">,</span> <span class="n">token</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"AKQUANT_SIGNAL_TOKEN"</span><span class="p">]</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    <span class="p">),</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>    <span class="n">strategy_cls</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>        <span class="c1"># 纯信号驱动:不需要策略</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="p">)</span>
+</span></code></pre></div>
+<p><code>strategy_cls=None</code> 且 <code>signal_source</code> 存在时为<strong>纯信号驱动</strong>会话:引擎照常跑行情、持仓、结算、风控,只是订单来源全部是外部指令。这也是 <code>strategy_cls</code> 首次允许为 None——目前 <code>run_live</code> 会在无策略时无事可做。</p>
+<p>信号源与策略<strong>可以共存</strong>:策略产自有信号,平台推补充指令,两者经同一风控汇入同一账本。</p>
+<h3 id="432-p3">4.3.2 P3 实际落地(传输层与安全)<a class="headerlink" href="#432-p3" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python/akquant/signal/
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>├── security.py             TokenAuth / sign / AuthError:鉴权与防重放
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>└── sources/
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    ├── http.py             HttpSignalSource —— 标准库 http.server
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    └── redis_stream.py     RedisSignalSource —— Redis Stream 消费组
+</span></code></pre></div>
+<p><strong>与原计划的偏离:HTTP 源不用 FastAPI,改标准库 <code>http.server</code>。</strong></p>
+<p>理由是可验证性:这个端点能触发真实下单,安全逻辑最需要在 CI 里被真的测到——起服务、发请求、断言拒绝。而 FastAPI/uvicorn 是可选依赖,本机与 CI 环境未必安装(<strong>实测本机三者全缺</strong>),届时只能靠 mock 覆盖,等于把最关键的一环留在测试之外。标准库对"接一个 webhook"这个单一职责完全够用。高吞吐/复杂路由场景走 4.5 的部署建议(独立 Web 进程 + Redis)。</p>
+<p><strong>Redis 源用 Stream 而非 List</strong>:<code>XREADGROUP</code> 提供消费组与显式 ack,崩溃重启后未 ack 的消息仍在 pending 中可被重投;<code>BLPOP</code> 取走即丢,崩在处理中途就丢单。坏消息也 ack——<code>dispatch</code> 内部已按 <code>signal_id</code> 幂等,不 ack 会让它永远堵在 pending 里反复重投。</p>
+<p><strong>验证边界(必须如实说明)</strong>:</p>
+<ul>
+<li>HTTP 源:<strong>真实端到端</strong>——起真实服务、用 httpx 发真实请求,覆盖正常受理/坏 token/缺签名/坏负载/错路径/并发重复。</li>
+<li>Redis 源:注入 fake client 覆盖消费循环(XREADGROUP → dispatch → XACK)、坏消息 ack、BUSYGROUP 容错。<strong>真实 Redis 连接路径未验证</strong>(环境未装 <code>redis</code> 包)。</li>
+<li><code>redis</code> 经 <code>signal-redis</code> extra 提供,惰性导入,未安装时只在实际使用时报错,不影响 <code>import akquant</code>。</li>
+</ul>
+<h3 id="44">4.4 安全基线(硬约束,非建议)<a class="headerlink" href="#44" title="Permanent link">&para;</a></h3>
+<p><code>HttpSignalSource</code> 是能触发真实下单的网络入口。以下为实现层面的硬约束:</p>
+<table>
+<thead>
+<tr>
+<th>约束</th>
+<th>落地行为</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>默认关闭</td>
+<td>不传 <code>signal_source</code> 即零监听。<strong>未做</strong> <code>enabled=False</code> 开关——它与"强制鉴权"重复:没有 token 就构造不出实例,再加一个布尔开关只是多一处可被误配的地方</td>
+<td>✅(以更强形式)</td>
+</tr>
+<tr>
+<td>默认本机</td>
+<td><code>host</code> 默认 <code>127.0.0.1</code>;绑非本机<strong>直接 <code>ValueError</code></strong>,须显式 <code>allow_remote=True</code> 才允许,且打警告。比原设计的"仅警告"更严</td>
+<td>✅(更严)</td>
+</tr>
+<tr>
+<td>强制鉴权</td>
+<td><code>token</code> 非空字符串,否则构造即 <code>ValueError</code>。<strong>须显式挡 <code>None</code></strong>:走 <code>str(None)</code> 会得到字面量 <code>"None"</code>,那就成了看似有鉴权的端点——从缺失的环境变量读 token 正是这个场景(测试期间实际踩到并修)</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>防重放</td>
+<td>HMAC-SHA256(<code>secret</code>,<code>{ts}.{body}</code>)+ 时间戳窗口(默认 ±30s)+ <code>signal_id</code> 幂等,三重。<code>compare_digest</code> 常量时间比较,避免按字节泄漏</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>不做区分预言机</td>
+<td>鉴权失败统一回 <code>401 {"error":"unauthorized"}</code>,不区分"token 错"/"签名错"/"超窗",具体原因只进日志</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>幂等重复回 200</td>
+<td>重复投递回 <code>200 + duplicate</code> 而非错误码——回错误码会让平台一直重试</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>传输层不承诺</td>
+<td>HTTPS 与公网暴露须在反向代理层解决,文档与构造警告中均写明</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<p>对标依据:Freqtrade 的 <code>force_entry_enable</code> 默认关闭、JWT Bearer 鉴权、默认只听 localhost,且官方文档明确警告不要暴露到公网、不原生支持 HTTPS。本 RFC 采同一姿态,并在文档中同样明确:<strong>HTTPS / 公网暴露由用户在反向代理层解决,AKQuant 不承诺传输层安全</strong>。</p>
+<h3 id="45">4.5 部署形态建议<a class="headerlink" href="#45" title="Permanent link">&para;</a></h3>
+<p>vn.py 的 WebTrader 把 Web 服务放在<strong>独立进程</strong>(FastAPI + RpcClient ↔ 交易进程 RpcServer),交易主循环与 HTTP 服务之间有进程边界。这个取舍值得沿用。</p>
+<p>因此文档应推荐:</p>
+<ul>
+<li><strong>生产</strong>:外部进程收 HTTP/WS,只把规范化后的 <code>Signal</code> 投进 Redis Stream,交易进程用 <code>RedisSignalSource</code> 消费。uvicorn 不进交易进程,故障与负载都被进程边界隔开。</li>
+<li><strong>开发/单机</strong>:<code>HttpSignalSource</code> 同进程直收,省一个组件。</li>
+<li><strong>测试</strong>:<code>QueueSignalSource</code>,无网络依赖。</li>
+</ul>
+<h3 id="46-duration">4.6 顺带查出的既存缺陷:<code>duration</code> 在无行情时不生效(<strong>已修</strong>)<a class="headerlink" href="#46-duration" title="Permanent link">&para;</a></h3>
+<p><code>LiveRunner._apply_time_limit</code> 是通过 patch 策略的 <code>on_bar</code> / <code>on_tick</code> 实现的——墙钟检查只在<strong>有行情事件时</strong>才执行:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">wrapped_on_bar</span><span class="p">(</span><span class="n">bar</span><span class="p">):</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="k">if</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span> <span class="o">&gt;</span> <span class="n">duration_sec</span><span class="p">:</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>        <span class="k">raise</span> <span class="ne">KeyboardInterrupt</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">original_on_bar</span><span class="p">(</span><span class="n">bar</span><span class="p">)</span>
+</span></code></pre></div>
+<p>于是行情一停(网关线程退出、或盘后无推送),引擎永远阻塞在 <code>wait_peek</code> 上,<code>on_bar</code> 不再被调用,<code>duration</code> 便永不触发,<strong>会话挂死</strong>。</p>
+<p>这与 <code>_runner.py</code> 里"<code>duration</code> 仍作安全网:……墙钟兜底避免挂死"的注释所承诺的行为不符——它不是墙钟兜底。</p>
+<p>实测触发路径:自定义行情网关推完最后一根 bar 即退出、且未声明 <code>bounded_event_total</code> → 会话永久挂起。<code>replay</code> 之所以不挂,是因为它声明了 <code>bounded_event_total</code>,由 <code>_apply_bounded_event_limit</code> 在最后一根 bar 处终止(同样挂在 <code>on_bar</code> 上,只是恰好能触发)。</p>
+<p><strong>修法(已落地)</strong>:把截止时刻下沉到等待循环本身,不再依赖事件到达。</p>
+<ul>
+<li>Rust:<code>Engine.session_deadline_ns</code> 字段 + <code>set_session_deadline_ns(Option&lt;i64&gt;)</code> pymethod(非正值视为不限);<code>DataProcessor::process</code> 在 <strong>feed 等待之前</strong>比对墙钟,到点即 <code>finalize_current_timestamp</code> 后 <code>ProcessorResult::Break</code>。放在等待之前是必要的——等待本身可长达 1 秒,而行情停摆时 <code>Wait</code> 会无限循环。</li>
+<li>Python:<code>_apply_time_limit</code> 改为设置引擎时限;<strong>保留</strong>原有的回调 patch 作为互补(有行情时能更早在事件边界处停下),故无行为回退。引擎不支持该方法时打警告降级。</li>
+</ul>
+<p><strong>验证</strong>:<code>tests/test_live_duration_wallclock.py</code> —— 自定义网关推一根 bar 即退出、刻意不声明 <code>bounded_event_total</code>(否则会掩盖缺陷),断言会话在时限附近结束。测试自带 <code>join(timeout)</code>,缺陷复现时表现为断言失败而非套件卡死。</p>
+<p><strong>已确认该测试能抓到缺陷</strong>:临时屏蔽 <code>set_session_deadline_ns</code> 后,会话 12 秒内不结束(挂死);启用后 3 秒时限正常退出。</p>
+<p><code>bounded_event_total</code> 仍挂在 <code>on_bar</code> 上,<strong>未改</strong>——它的语义就是"数行情事件",在行情事件上计数是正确的;<code>duration</code> 现在是它的真正兜底。</p>
+<h2 id="5-changelog">5. 破坏性变更清单(供 CHANGELOG)<a class="headerlink" href="#5-changelog" title="Permanent link">&para;</a></h2>
+<p><strong>P1(已落地)</strong>:</p>
+<ol>
+<li><strong>行为变更</strong> <code>strategy_max_order_value</code> / <code>max_order_size</code> / <code>max_position_size</code> 在 <code>trading_mode='broker_live'</code> 下开始真实拦单(修复 3.3)。此前这些限额在实盘静默失效,依赖旧行为(即"配了也不拦")的部署会看到订单被拒。</li>
+<li><strong>新增</strong> Rust pyfunction <code>check_strategy_limits</code>(模块级,非 Engine 方法)。</li>
+<li>无 API 破坏:<code>OrderReceipt</code> 语义、下单同步性、<code>__engine_rule_version__</code> 均不变(理由见 4.2.3)。</li>
+</ol>
+<p><strong>P0 / P2 及以后(待实施)</strong>:</p>
+<ol>
+<li><strong>新增</strong> <code>run_live(signal_source=...)</code>;<code>strategy_cls</code> 允许为 <code>None</code>(纯信号驱动)。</li>
+<li>内部:<code>RealtimeDataClient</code> / <code>DataFeed.live_sender</code> 由 std mpsc 改为 crossbeam,<code>Arc&lt;Mutex&lt;Sender&gt;&gt;</code> 包装移除。</li>
+<li><code>SignalPort</code> 走 <code>Event::OrderRequest</code> 注入时,其订单<strong>经</strong> <code>ChannelProcessor</code> 的完整风控(与策略回调下单不同——后者受 4.2.1 的借用约束,只能走前置快照校验)。两条路径的风控覆盖面因此不同,需在文档中写明。</li>
+</ol>
+<h2 id="6">6. 分期实施<a class="headerlink" href="#6" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>内容</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>P1</strong></td>
+<td>broker_live 报单前置风控 + 拦单回归测试(修 3.3)</td>
+<td>✅ <strong>已落地</strong></td>
+</tr>
+<tr>
+<td><strong>P0</strong></td>
+<td>crossbeam 统一 + <code>select!</code> 唤醒 + <code>SignalPort</code> + <code>signal_port_ready</code></td>
+<td>✅ <strong>已落地</strong></td>
+</tr>
+<tr>
+<td><strong>P2</strong></td>
+<td><code>Signal</code> / <code>SignalSource</code> / <code>OrderSink</code> / <code>dedup</code> / <code>dispatcher</code> / <code>QueueSignalSource</code> + <code>run_live</code> 接线</td>
+<td>✅ <strong>已落地</strong></td>
+</tr>
+<tr>
+<td><strong>P3</strong></td>
+<td><code>HttpSignalSource</code> + <code>RedisSignalSource</code> + 安全基线 + 可选 extra + 示例</td>
+<td>✅ <strong>已落地</strong></td>
+</tr>
+<tr>
+<td><strong>P4</strong></td>
+<td>中英文档章节 + 教材映射表 + entry-point 插件化</td>
+<td>待实施</td>
+</tr>
+</tbody>
+</table>
+<p>P1 先行的判断已被验证正确:3.3 是正在影响实盘用户的风控失效,紧急度高于信号接入本身;且它暴露的借用约束(4.2.1)直接改写了 P0 的设计前提——<code>SignalPort</code> 必须在<strong>引擎线程之外</strong>注入 <code>Event::OrderRequest</code>(crossbeam sender 可跨线程,不碰 pyclass 借用),不能设计成"策略回调内调用"的形态。</p>
+<p>P0 与 P2 的依赖关系不变(P2 需要 <code>SignalPort</code>)。</p>
+<h2 id="7">7. 验收 / 测试<a class="headerlink" href="#7" title="Permanent link">&para;</a></h2>
+<p><strong>P0</strong></p>
+<ul>
+<li>Rust 单测:外部线程持 <code>Sender&lt;Event&gt;</code> 注入 <code>OrderRequest</code>,断言 <code>ChannelProcessor</code> 在<strong>无任何行情事件</strong>的情况下消费到它并落进 <code>active_orders</code>。</li>
+<li>延迟测试:注入到落地的墙钟耗时,断言 <code>&lt; 50ms</code>(<code>select!</code> 生效的证据;未生效时会是 ~1s)。</li>
+</ul>
+<p><strong>P1(已完成,实跑结果)</strong></p>
+<ul>
+<li><code>tests/test_broker_live_risk_enforcement.py</code> —— 端到端 <code>broker_live</code> 会话(<code>market_broker="replay"</code> + 桩 trader gateway),三条断言:超限名义不到柜台且触发 <code>on_reject</code>、限额内正常报单(防误杀)、超限数量同样拦下。<strong>修复前第一条为 RED</strong>(<code>strict=True</code> 的 xfail),修复后转 PASS。</li>
+<li><code>src/risk/strategy_limits.rs</code> —— 8 条单元测试:边界值(恰好等于上限不拒)、无参考价时跳过名义校验、多空绝对值对称、减仓放行、拒单文案带符号、<code>check_all</code> 串联顺序与引擎一致、无限额时放行、<code>Sell</code> 映射为负 delta。</li>
+<li>全量实跑:<strong>1512 条 Python 测试通过</strong>(含 golden 基线未变)、<strong>141 条 Rust 测试通过</strong>、<code>ruff check</code> + <code>ruff format --check</code> 通过、<code>clippy</code> 对新代码零警告。</li>
+<li>未做:<code>tests/test_live_runner_broker_bridge.py</code> 那组 <code>_DummyEngine</code>「只验证配置下发」的断言仍保留(它们本身没错,只是不足);新增文件已覆盖真实拦截,故不改动既有测试。</li>
+</ul>
+<p><strong>P2 / P3</strong></p>
+<ul>
+<li>幂等:同一 <code>signal_id</code> 投递 3 次,断言只报单 1 次。</li>
+<li><strong>信号单终态化</strong>(#329 回归锚):对停牌/无行情标的注入信号,断言订单在其可撮合切片过后进入终态(<code>Rejected</code>),不会逐日累积挤占保证金。参见 <a href="../issue-329-fix-plan/">issue-329-fix-plan.md</a>。</li>
+<li>鉴权:无 token 启动断言 <code>ValueError</code>;错误签名断言 401 且不产生订单;超窗时间戳断言被拒。</li>
+<li>拒单回执:风控拒单后断言信号源收到回执。</li>
+<li>HTTP/Redis 源用 mock 传输测试(不依赖真实服务),与两个 plugin 仓的 <code>httpx MockTransport</code> 范式一致。</li>
+</ul>
+<h2 id="8">8. 明确不做的方向(记录否决理由)<a class="headerlink" href="#8" title="Permanent link">&para;</a></h2>
+<h3 id="81-on_signal">8.1 新增 <code>on_signal</code> 策略钩子<a class="headerlink" href="#81-on_signal" title="Permanent link">&para;</a></h3>
+<p>最直觉的设计,但撞 <a href="../hooks-rfc/">hooks-rfc.md</a> 设计原则第 1 条,该原则<strong>字面</strong>把 <code>on_signal</code> 举为反例(「<code>on_bar</code> 而非 <code>on_signal</code>」)。外部佐证:nautilus_trader 的同类能力(外部流 / 自定义数据)落地回调是 <code>on_data</code>,靠 <code>isinstance</code> 类型分流,同样不为语义开钩子。</p>
+<p>更根本的是:信号已经是<strong>指令</strong>而不是<strong>事件</strong>,它不需要策略再做一次决策。让它经过策略回调是多余的一跳,还会把「外部指令」与「自有信号」的责任边界搅混。<strong>否决。</strong></p>
+<h3 id="82-timer-tick-feed-channel">8.2 把信号包装成 Timer 或伪 Tick 推进 feed channel<a class="headerlink" href="#82-timer-tick-feed-channel" title="Permanent link">&para;</a></h3>
+<p>Timer 会被静默丢弃(3.1)。伪 Tick 能唤醒引擎,但会污染 <code>last_prices</code>、指标计算与 bar 聚合——用假行情驱动真实下单,是不可接受的语义污染。<strong>否决。</strong></p>
+<h3 id="83-python-timer">8.3 Python 侧队列 + timer 自持轮询<a class="headerlink" href="#83-python-timer" title="Permanent link">&para;</a></h3>
+<p>零 Rust 改动即可实现:信号源写 <code>queue.Queue</code>,策略在 <code>on_timer</code> 里排空并自排下一枚 timer(<code>ctx.schedule</code> 写 <code>timers_arc</code>,回调返回后引擎收走)。延迟 ≤~1s。</p>
+<p>在<strong>禁止改 Rust</strong>的前提下这是最优解,但本 RFC 允许改 Rust,则它的三个缺点无法接受:① 延迟比 4.1 高三个数量级;② 每秒一枚 timer 会持续触发 <code>finalize_current_timestamp</code>,与 #329 家族的时序修复面持续摩擦;③ 信号必须经策略回调,违反 8.1 的结论。<strong>降级为「不改 Rust 时的临时方案」,不作为目标形态。</strong></p>
+<h3 id="84">8.4 在引擎外自建风控层<a class="headerlink" href="#84" title="Permanent link">&para;</a></h3>
+<p>即「外部信号自己做一遍限额检查再直连柜台」。这会产生两套风控实现、两份持仓视图,且把 3.3 的缺口固化为设计。<strong>否决——风控必须是下单路径上不可绕过的一环(原则 1)。</strong></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

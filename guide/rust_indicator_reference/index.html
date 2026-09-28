@@ -1,0 +1,3285 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/guide/rust_indicator_reference/">
+      
+      
+        <link rel="prev" href="../talib_indicator_playbook/">
+      
+      
+        <link rel="next" href="../indicator_scenario_quickref/">
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/guide/rust_indicator_reference/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>AKQuant 指标全量说明 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#akquant-103" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AKQuant 指标全量说明
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/guide/rust_indicator_reference/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../textbook/" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../textbook/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    核心指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python 金融入门
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quant_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化交易新手指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../factor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    因子表达式引擎指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    策略开发手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../custom_indicator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自定义指标指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cross_section_checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    横截面策略清单
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../talib_indicator_playbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指标组合实战手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AKQuant 指标全量说明
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AKQuant 指标全量说明
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        使用约定
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        全量索引总表（单表）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        中文补充说明（用途与推荐起始参数）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-momentum8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1) Momentum（8）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-moving-average-transforms59" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2) Moving Average &amp; Transforms（59）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2) Moving Average &amp; Transforms（59）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 平滑与趋势类
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 窗口统计与区间类
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 代数、三角、对数与变换类
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-trend20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3) Trend（20）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-volatility11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4) Volatility（11）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-volume5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5) Volume（5）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见问题
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="常见问题">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-backendpython" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 什么时候先用 backend="python"？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-nan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 为什么看到前几根是 NaN？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 多输出如何解包？
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关资料
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../indicator_scenario_quickref/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指标场景速查（四象限）
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    回测结果与指标详解
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可视化与报告
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    参数优化指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    测试指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    示例集合
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        使用约定
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        全量索引总表（单表）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        中文补充说明（用途与推荐起始参数）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-momentum8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1) Momentum（8）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-moving-average-transforms59" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2) Moving Average &amp; Transforms（59）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2) Moving Average &amp; Transforms（59）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 平滑与趋势类
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 窗口统计与区间类
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 代数、三角、对数与变换类
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-trend20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3) Trend（20）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-volatility11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4) Volatility（11）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-volume5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5) Volume（5）
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见问题
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="常见问题">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-backendpython" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 什么时候先用 backend="python"？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-nan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 为什么看到前几根是 NaN？
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 多输出如何解包？
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关资料
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="导航栏" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    首页
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../python_basics/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    核心指南
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="akquant-103">AKQuant 指标全量说明（103 个）<a class="headerlink" href="#akquant-103" title="Permanent link">&para;</a></h1>
+<p>本页是 <code>akquant.talib</code> 的完整指标说明，面向“查指标含义 + 判断输入输出 + 了解 warmup 预期”三个核心需求。AKQuant 的底层高性能计算由 Rust 实现，对外保持统一易用的 Python 接口。</p>
+<h2 id="_1">使用约定<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li>所有函数均可直接在 <code>akquant.talib</code> 中使用，<code>backend="auto"</code> 默认走 <code>rust</code>。</li>
+<li>需要做历史策略基线对齐时，建议临时显式设置 <code>backend="python"</code>。</li>
+<li>如需全局覆盖 <code>auto</code> 行为，可设置环境变量 <code>AKQUANT_TALIB_AUTO_BACKEND=python|rust</code>。</li>
+<li>单输出指标返回单序列；多输出指标返回 tuple。</li>
+<li>绝大多数窗口类指标在 warmup 区段会返回 <code>NaN</code> 或空位，这属于正常行为。</li>
+<li>本页统计口径来自 AKQuant 当前指标注册表，当前总计 <strong>103 个指标</strong>。</li>
+</ul>
+<h2 id="_2">全量索引总表（单表）<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">类别</th>
+<th style="text-align: left;">指标</th>
+<th style="text-align: left;">常见输入</th>
+<th style="text-align: left;">输出</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Momentum</td>
+<td style="text-align: left;">CMO</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Momentum</td>
+<td style="text-align: left;">MOM</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Momentum</td>
+<td style="text-align: left;">ROC</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Momentum</td>
+<td style="text-align: left;">ROCP</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Momentum</td>
+<td style="text-align: left;">ROCR</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Momentum</td>
+<td style="text-align: left;">ROCR100</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Momentum</td>
+<td style="text-align: left;">RSI</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Momentum</td>
+<td style="text-align: left;">WILLR</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">ABS</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">ACOS</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">ADD</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">APO</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">ASIN</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">ATAN</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">AVGDEV</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">CEIL</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">CLAMP01</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">CLIP</td>
+<td style="text-align: left;"><code>value,min,max</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">COS</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">COSH</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">CUBE</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">DEG2RAD</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">DEMA</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">DIV</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">EMA</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">EXP</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">EXPM1</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">FLOOR</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">HT_TRENDLINE</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">INV_SQRT</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">KAMA</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">LN</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">LOG1P</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">LOG10</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MACD</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">三序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MAMA</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">双序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MAX</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MAX2</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MAXINDEX</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MIDPOINT</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MIN</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MIN2</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MININDEX</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MINMAX</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">双序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MINMAXINDEX</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">双序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MOD</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">MULT</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">POW</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">PPO</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">RANGE</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">RECIP</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">ROUND</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">SIGN</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">SIN</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">SINH</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">SMA</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">SQ</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">SQRT</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">SUB</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">SUM</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">T3</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">TAN</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">TANH</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">TEMA</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">TRIMA</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">TRIX</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">WMA</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">ADX</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">ADXR</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">AROON</td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">双序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">AROONOSC</td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">BETA</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">CCI</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">CORREL</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">COVAR</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">DX</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">LINEARREG</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">LINEARREG_ANGLE</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">LINEARREG_INTERCEPT</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">LINEARREG_R2</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">LINEARREG_SLOPE</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">MINUS_DI</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">PLUS_DI</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">SAR</td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">STOCH</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">双序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">TSF</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">ULTOSC</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">ATR</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">AVGPRICE</td>
+<td style="text-align: left;"><code>open,high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">BollingerBands</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">三序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">MEDPRICE</td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">MIDPRICE</td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">NATR</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">STDDEV</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">TRANGE</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">TYPPRICE</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">VAR</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">WCLPRICE</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volume</td>
+<td style="text-align: left;">AD</td>
+<td style="text-align: left;"><code>high,low,close,volume</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volume</td>
+<td style="text-align: left;">ADOSC</td>
+<td style="text-align: left;"><code>high,low,close,volume</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volume</td>
+<td style="text-align: left;">BOP</td>
+<td style="text-align: left;"><code>open,high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volume</td>
+<td style="text-align: left;">MFI</td>
+<td style="text-align: left;"><code>high,low,close,volume</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">Volume</td>
+<td style="text-align: left;">OBV</td>
+<td style="text-align: left;"><code>close,volume</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_3">中文补充说明（用途与推荐起始参数）<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">类别</th>
+<th style="text-align: left;">典型用途</th>
+<th style="text-align: left;">推荐起始参数（教学/实盘起步）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Momentum</td>
+<td style="text-align: left;">判断速度、强弱、超买超卖</td>
+<td style="text-align: left;"><code>RSI(14)</code>、<code>ROC(10)</code>、<code>MOM(10)</code>、<code>WILLR(14)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">Moving Average</td>
+<td style="text-align: left;">主趋势判断、平滑降噪、信号交叉</td>
+<td style="text-align: left;"><code>EMA(20/60)</code>、<code>SMA(20/60)</code>、<code>MACD(12,26,9)</code>、<code>KAMA(10)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">Trend</td>
+<td style="text-align: left;">趋势强度过滤、回归/角度分析、跟踪止损</td>
+<td style="text-align: left;"><code>ADX(14)</code>、<code>SAR(0.02,0.2)</code>、<code>STOCH(14,3,3)</code>、<code>LINEARREG(14)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">Volatility</td>
+<td style="text-align: left;">风险尺度、仓位控制、通道边界</td>
+<td style="text-align: left;"><code>ATR(14)</code>、<code>NATR(14)</code>、<code>STDDEV(20,1.0)</code>、<code>BBANDS(20,2.0)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">Volume</td>
+<td style="text-align: left;">量价确认、过滤假突破、资金动量验证</td>
+<td style="text-align: left;"><code>OBV</code>、<code>MFI(14)</code>、<code>AD</code>、<code>ADOSC(3,10)</code>、<code>BOP</code></td>
+</tr>
+</tbody>
+</table>
+<p>说明：</p>
+<ul>
+<li>“推荐起始参数”是默认起步值，不是最优值；应在你的品种与周期上再做回测微调。</li>
+<li>教学建议按“主信号 + 过滤器 + 风控”三层结构组合，而不是单指标独立使用。</li>
+<li>若要做迁移对齐，先用 <code>backend="python"</code> 对齐历史策略，再切到高性能后端。</li>
+</ul>
+<h2 id="1-momentum8">1) Momentum（8）<a class="headerlink" href="#1-momentum8" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">指标</th>
+<th style="text-align: left;">解释</th>
+<th style="text-align: left;">常见输入</th>
+<th style="text-align: left;">输出</th>
+<th style="text-align: left;">warmup 参考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">RSI</td>
+<td style="text-align: left;">相对强弱指数，衡量涨跌强弱比</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">ROC</td>
+<td style="text-align: left;">价格变化率（百分比）</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period+1</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">ROCP</td>
+<td style="text-align: left;">价格变化率（比例）</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period+1</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">ROCR</td>
+<td style="text-align: left;">价格比率（当前/过去）</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period+1</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">ROCR100</td>
+<td style="text-align: left;">价格比率×100</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period+1</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">MOM</td>
+<td style="text-align: left;">动量（当前减过去）</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period+1</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">WILLR</td>
+<td style="text-align: left;">威廉指标，区间位置振荡器</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">CMO</td>
+<td style="text-align: left;">Chande 动量振荡器</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="2-moving-average-transforms59">2) Moving Average &amp; Transforms（59）<a class="headerlink" href="#2-moving-average-transforms59" title="Permanent link">&para;</a></h2>
+<h3 id="21">2.1 平滑与趋势类<a class="headerlink" href="#21" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">指标</th>
+<th style="text-align: left;">解释</th>
+<th style="text-align: left;">常见输入</th>
+<th style="text-align: left;">输出</th>
+<th style="text-align: left;">warmup 参考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">SMA</td>
+<td style="text-align: left;">简单移动平均</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">EMA</td>
+<td style="text-align: left;">指数移动平均</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">常从首值开始</td>
+</tr>
+<tr>
+<td style="text-align: left;">WMA</td>
+<td style="text-align: left;">加权移动平均</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">TRIMA</td>
+<td style="text-align: left;">三角移动平均</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">DEMA</td>
+<td style="text-align: left;">双指数均线</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">约 <code>2*period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">TEMA</td>
+<td style="text-align: left;">三指数均线</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">约 <code>3*period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">TRIX</td>
+<td style="text-align: left;">三重 EMA 的变化率</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">约 <code>3*period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">KAMA</td>
+<td style="text-align: left;">自适应均线</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period+1</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">T3</td>
+<td style="text-align: left;">Tillson T3 平滑</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">较长（多级 EMA）</td>
+</tr>
+<tr>
+<td style="text-align: left;">HT_TRENDLINE</td>
+<td style="text-align: left;">近似 Hilbert 趋势线</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">固定窗口</td>
+</tr>
+<tr>
+<td style="text-align: left;">MAMA</td>
+<td style="text-align: left;">自适应双线 <code>(mama,fama)</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">双序列</td>
+<td style="text-align: left;">需初始点</td>
+</tr>
+<tr>
+<td style="text-align: left;">MACD</td>
+<td style="text-align: left;"><code>(macd,signal,hist)</code> 三输出</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">三序列</td>
+<td style="text-align: left;"><code>slow+signal</code> 量级</td>
+</tr>
+<tr>
+<td style="text-align: left;">APO</td>
+<td style="text-align: left;">绝对价格振荡器（快慢均线差）</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>slow</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">PPO</td>
+<td style="text-align: left;">百分比价格振荡器</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>slow</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="22">2.2 窗口统计与区间类<a class="headerlink" href="#22" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">指标</th>
+<th style="text-align: left;">解释</th>
+<th style="text-align: left;">常见输入</th>
+<th style="text-align: left;">输出</th>
+<th style="text-align: left;">warmup 参考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">MIDPOINT</td>
+<td style="text-align: left;">窗口中点 <code>(max+min)/2</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">MAX</td>
+<td style="text-align: left;">窗口最大值</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">MIN</td>
+<td style="text-align: left;">窗口最小值</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">MAXINDEX</td>
+<td style="text-align: left;">窗口最大值对应索引</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">MININDEX</td>
+<td style="text-align: left;">窗口最小值对应索引</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">MINMAX</td>
+<td style="text-align: left;">同时输出 <code>(min,max)</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">双序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">MINMAXINDEX</td>
+<td style="text-align: left;">输出 <code>(minidx,maxidx)</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">双序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">SUM</td>
+<td style="text-align: left;">窗口求和</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">AVGDEV</td>
+<td style="text-align: left;">平均绝对偏差</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">RANGE</td>
+<td style="text-align: left;">窗口振幅 <code>max-min</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="23">2.3 代数、三角、对数与变换类<a class="headerlink" href="#23" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">指标</th>
+<th style="text-align: left;">解释</th>
+<th style="text-align: left;">常见输入</th>
+<th style="text-align: left;">输出</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">LN</td>
+<td style="text-align: left;">自然对数</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">LOG10</td>
+<td style="text-align: left;">常用对数</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">SQRT</td>
+<td style="text-align: left;">平方根</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">CEIL</td>
+<td style="text-align: left;">向上取整</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">FLOOR</td>
+<td style="text-align: left;">向下取整</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">SIN</td>
+<td style="text-align: left;">正弦</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">COS</td>
+<td style="text-align: left;">余弦</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">TAN</td>
+<td style="text-align: left;">正切</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">ASIN</td>
+<td style="text-align: left;">反正弦</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">ACOS</td>
+<td style="text-align: left;">反余弦</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">ATAN</td>
+<td style="text-align: left;">反正切</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">SINH</td>
+<td style="text-align: left;">双曲正弦</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">COSH</td>
+<td style="text-align: left;">双曲余弦</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">TANH</td>
+<td style="text-align: left;">双曲正切</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">EXP</td>
+<td style="text-align: left;">指数 <code>e^x</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">EXPM1</td>
+<td style="text-align: left;"><code>e^x-1</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">LOG1P</td>
+<td style="text-align: left;"><code>ln(1+x)</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">DEG2RAD</td>
+<td style="text-align: left;">角度转弧度</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">RECIP</td>
+<td style="text-align: left;">倒数 <code>1/x</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">INV_SQRT</td>
+<td style="text-align: left;">逆平方根 <code>1/sqrt(x)</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">ABS</td>
+<td style="text-align: left;">绝对值</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">SIGN</td>
+<td style="text-align: left;">符号函数</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">ROUND</td>
+<td style="text-align: left;">四舍五入</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">SQ</td>
+<td style="text-align: left;">平方</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">CUBE</td>
+<td style="text-align: left;">立方</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">CLAMP01</td>
+<td style="text-align: left;">截断到 <code>[0,1]</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">ADD</td>
+<td style="text-align: left;">加法</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">SUB</td>
+<td style="text-align: left;">减法</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">MULT</td>
+<td style="text-align: left;">乘法</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">DIV</td>
+<td style="text-align: left;">除法</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">MOD</td>
+<td style="text-align: left;">取模</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">POW</td>
+<td style="text-align: left;">幂运算</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">MAX2</td>
+<td style="text-align: left;">双输入取大</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">MIN2</td>
+<td style="text-align: left;">双输入取小</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+<tr>
+<td style="text-align: left;">CLIP</td>
+<td style="text-align: left;">按 <code>[min,max]</code> 截断</td>
+<td style="text-align: left;"><code>value,min,max</code></td>
+<td style="text-align: left;">单序列</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-trend20">3) Trend（20）<a class="headerlink" href="#3-trend20" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">指标</th>
+<th style="text-align: left;">解释</th>
+<th style="text-align: left;">常见输入</th>
+<th style="text-align: left;">输出</th>
+<th style="text-align: left;">warmup 参考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">ADX</td>
+<td style="text-align: left;">趋势强度，不分方向</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>2*period</code> 量级</td>
+</tr>
+<tr>
+<td style="text-align: left;">ADXR</td>
+<td style="text-align: left;">ADX 平滑再平滑</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">略长于 ADX</td>
+</tr>
+<tr>
+<td style="text-align: left;">DX</td>
+<td style="text-align: left;">方向动量差异度</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">PLUS_DI</td>
+<td style="text-align: left;">正向方向指标</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">MINUS_DI</td>
+<td style="text-align: left;">负向方向指标</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">CCI</td>
+<td style="text-align: left;">典型价格偏离度</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">AROON</td>
+<td style="text-align: left;"><code>(_down,_up)</code> 趋势新高新低时距</td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">双序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">AROONOSC</td>
+<td style="text-align: left;">AROON 振荡值</td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">STOCH</td>
+<td style="text-align: left;">随机指标 <code>(slowk,slowd)</code></td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">双序列</td>
+<td style="text-align: left;">多窗口叠加</td>
+</tr>
+<tr>
+<td style="text-align: left;">SAR</td>
+<td style="text-align: left;">抛物线转向止损</td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">需初始化点</td>
+</tr>
+<tr>
+<td style="text-align: left;">ULTOSC</td>
+<td style="text-align: left;">终极振荡器</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period3</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">LINEARREG</td>
+<td style="text-align: left;">线性回归末端值</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">LINEARREG_SLOPE</td>
+<td style="text-align: left;">回归斜率</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">LINEARREG_INTERCEPT</td>
+<td style="text-align: left;">回归截距</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">LINEARREG_ANGLE</td>
+<td style="text-align: left;">回归角度</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">LINEARREG_R2</td>
+<td style="text-align: left;">决定系数 <code>R²</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">TSF</td>
+<td style="text-align: left;">时间序列预测值</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">CORREL</td>
+<td style="text-align: left;">相关系数</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">BETA</td>
+<td style="text-align: left;">Beta（协方差/方差）</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">COVAR</td>
+<td style="text-align: left;">协方差</td>
+<td style="text-align: left;"><code>x,y</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="4-volatility11">4) Volatility（11）<a class="headerlink" href="#4-volatility11" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">指标</th>
+<th style="text-align: left;">解释</th>
+<th style="text-align: left;">常见输入</th>
+<th style="text-align: left;">输出</th>
+<th style="text-align: left;">warmup 参考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">BollingerBands</td>
+<td style="text-align: left;">布林带 <code>(upper,middle,lower)</code></td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">三序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">ATR</td>
+<td style="text-align: left;">平均真实波幅</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">NATR</td>
+<td style="text-align: left;">归一化 ATR（%）</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">TRANGE</td>
+<td style="text-align: left;">真实波幅（当期）</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">极短</td>
+</tr>
+<tr>
+<td style="text-align: left;">STDDEV</td>
+<td style="text-align: left;">标准差（可带倍数）</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">VAR</td>
+<td style="text-align: left;">方差（可带倍数）</td>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">MEDPRICE</td>
+<td style="text-align: left;">中间价 <code>(high+low)/2</code></td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">无明显 warmup</td>
+</tr>
+<tr>
+<td style="text-align: left;">TYPPRICE</td>
+<td style="text-align: left;">典型价 <code>(h+l+c)/3</code></td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">无明显 warmup</td>
+</tr>
+<tr>
+<td style="text-align: left;">WCLPRICE</td>
+<td style="text-align: left;">加权收盘价</td>
+<td style="text-align: left;"><code>high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">无明显 warmup</td>
+</tr>
+<tr>
+<td style="text-align: left;">AVGPRICE</td>
+<td style="text-align: left;">平均价 <code>(o+h+l+c)/4</code></td>
+<td style="text-align: left;"><code>open,high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">无明显 warmup</td>
+</tr>
+<tr>
+<td style="text-align: left;">MIDPRICE</td>
+<td style="text-align: left;">区间中价 <code>(maxH+minL)/2</code></td>
+<td style="text-align: left;"><code>high,low</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-volume5">5) Volume（5）<a class="headerlink" href="#5-volume5" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">指标</th>
+<th style="text-align: left;">解释</th>
+<th style="text-align: left;">常见输入</th>
+<th style="text-align: left;">输出</th>
+<th style="text-align: left;">warmup 参考</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">OBV</td>
+<td style="text-align: left;">能量潮，价格方向累计成交量</td>
+<td style="text-align: left;"><code>close,volume</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">很短</td>
+</tr>
+<tr>
+<td style="text-align: left;">MFI</td>
+<td style="text-align: left;">资金流量指数</td>
+<td style="text-align: left;"><code>high,low,close,volume</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;"><code>period</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">AD</td>
+<td style="text-align: left;">累积/派发线</td>
+<td style="text-align: left;"><code>high,low,close,volume</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">很短</td>
+</tr>
+<tr>
+<td style="text-align: left;">ADOSC</td>
+<td style="text-align: left;">AD 的快慢振荡</td>
+<td style="text-align: left;"><code>high,low,close,volume</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">快慢窗叠加</td>
+</tr>
+<tr>
+<td style="text-align: left;">BOP</td>
+<td style="text-align: left;">买卖力量平衡</td>
+<td style="text-align: left;"><code>open,high,low,close</code></td>
+<td style="text-align: left;">单序列</td>
+<td style="text-align: left;">很短</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_4">常见问题<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<h3 id="1-backendpython">1. 什么时候先用 <code>backend="python"</code>？<a class="headerlink" href="#1-backendpython" title="Permanent link">&para;</a></h3>
+<ul>
+<li>当你在迁移旧策略、需要与原 TA-Lib 结果逐步对齐时。</li>
+<li>对齐通过后，再切换高性能后端获取性能收益。</li>
+</ul>
+<h3 id="2-nan">2. 为什么看到前几根是 <code>NaN</code>？<a class="headerlink" href="#2-nan" title="Permanent link">&para;</a></h3>
+<ul>
+<li>窗口类指标需要积累足够历史数据，这是指标定义的一部分，不是错误。</li>
+</ul>
+<h3 id="3">3. 多输出如何解包？<a class="headerlink" href="#3" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>MACD -&gt; (macd, signal, hist)</code></li>
+<li><code>BollingerBands -&gt; (upper, middle, lower)</code></li>
+<li><code>STOCH -&gt; (slowk, slowd)</code></li>
+<li><code>AROON -&gt; (aroondown, aroonup)</code></li>
+</ul>
+<h2 id="_5">相关资料<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../talib_indicator_playbook/">指标组合实战手册</a></li>
+<li><a href="../indicator_scenario_quickref/">按策略场景选指标速查表（四象限）</a></li>
+<li><a href="../../textbook/16_rust_indicators/">第 16 章：AKQuant 指标全景与工程化使用</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,3113 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/guide/custom_indicator/">
+      
+      
+        <link rel="prev" href="../strategy/">
+      
+      
+        <link rel="next" href="../cross_section_checklist/">
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/guide/custom_indicator/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>自定义指标指南 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#_1" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              自定义指标指南
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/guide/custom_indicator/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../textbook/" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../textbook/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    核心指南
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python 金融入门
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quant_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化交易新手指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    数据指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../factor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    因子表达式引擎指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    策略开发手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自定义指标指南
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    自定义指标指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        先做判断
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selfi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        统一入口：self.I()
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="统一入口：self.I()">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        在哪里声明
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        序列回溯
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        路径一：增量指标
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="路径一：增量指标">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自定义增量指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#factory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        为什么推荐 factory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        source 代表什么
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        多值指标：outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        路径二：预计算指标
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="路径二：预计算指标">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        最小示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        何时适合
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        限制
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自动绘图
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#intrabar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实时值：未闭合窗口上的 intrabar
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#study" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        可插拔 study：只画图不交易
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warmup_bars" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        warmup_bars 怎么用
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        热启动与序列化
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#akquanttalib" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        与 akquant.talib 的边界
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        导出指标给前端
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="导出指标给前端">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        最小示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        内置最小可视化
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="内置最小可视化">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lwc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        在 LWC 复盘图上看指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        报告中的可选指标区块
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        流式桥接到前端消息
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indicatorsink" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        注入自定义指标采集器（IndicatorSink）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实盘实时指标流
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lwc_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实时增量到 LWC 图表
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        零依赖浏览器实时预览
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        当前输出结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d3kline-indicatoroption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        可选适配器：转成 d3Kline 的 IndicatorOption
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐边界
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_23" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见误区
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_24" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        选择建议
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_25" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cross_section_checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    横截面策略清单
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../talib_indicator_playbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指标组合实战手册
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust_indicator_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AKQuant 指标全量说明
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../indicator_scenario_quickref/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指标场景速查（四象限）
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    回测结果与指标详解
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    可视化与报告
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    参数优化指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    测试指南
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    示例集合
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        先做判断
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selfi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        统一入口：self.I()
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="统一入口：self.I()">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        在哪里声明
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        序列回溯
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        路径一：增量指标
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="路径一：增量指标">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自定义增量指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#factory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        为什么推荐 factory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        source 代表什么
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        多值指标：outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        路径二：预计算指标
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="路径二：预计算指标">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        最小示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        何时适合
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        限制
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自动绘图
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#intrabar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实时值：未闭合窗口上的 intrabar
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#study" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        可插拔 study：只画图不交易
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#warmup_bars" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        warmup_bars 怎么用
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        热启动与序列化
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#akquanttalib" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        与 akquant.talib 的边界
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        导出指标给前端
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="导出指标给前端">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        最小示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        内置最小可视化
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="内置最小可视化">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lwc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        在 LWC 复盘图上看指标
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        报告中的可选指标区块
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        流式桥接到前端消息
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indicatorsink" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        注入自定义指标采集器（IndicatorSink）
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实盘实时指标流
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lwc_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实时增量到 LWC 图表
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        零依赖浏览器实时预览
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        当前输出结构
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d3kline-indicatoroption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        可选适配器：转成 d3Kline 的 IndicatorOption
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐边界
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_23" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见误区
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_24" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        选择建议
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_25" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        推荐阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="导航栏" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    首页
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../python_basics/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    核心指南
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="_1">自定义指标指南<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>本页聚焦一个问题：当 AKQuant 内置指标不够用时，如何安全地编写、注册并维护你自己的指标。</p>
+<p>适用场景：</p>
+<ul>
+<li>私有因子或策略专用信号；</li>
+<li>需要在 pandas 上快速验证的原型指标；</li>
+<li>需要在事件流里逐 Bar 更新状态的增量指标；</li>
+<li>需要配合热启动一起恢复的状态型指标。</li>
+</ul>
+<h2 id="_2">先做判断<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>在 AKQuant 中，常见有三种“指标扩展”需求，它们不是同一件事：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">需求</th>
+<th style="text-align: left;">推荐路径</th>
+<th style="text-align: left;">典型用法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">逐 Bar / 逐 Tick 维护状态</td>
+<td style="text-align: left;">增量指标对象（有 <code>update()</code>）</td>
+<td style="text-align: left;"><code>self.I(aq.EMA(20), ...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">用 pandas 一次性计算整段历史</td>
+<td style="text-align: left;"><code>Indicator(name, fn)</code></td>
+<td style="text-align: left;"><code>self.I(Indicator(...), ...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">给 <code>akquant.talib</code> 增加一个新函数名</td>
+<td style="text-align: left;">修改 Python/Rust 兼容层源码</td>
+<td style="text-align: left;">不属于运行时动态注册</td>
+</tr>
+</tbody>
+</table>
+<p>如果你的目标只是“在策略里用一个自己的指标”，通常不需要修改 <code>akquant.talib</code>。</p>
+<h2 id="selfi">统一入口：<code>self.I()</code><a class="headerlink" href="#selfi" title="Permanent link">&para;</a></h2>
+<p>指标只有一个声明入口 <code>Strategy.I()</code>。声明一次，框架负责三件事：<strong>每根 bar 自动推进</strong>、
+<strong>支持 <code>ind[0]</code> / <code>ind[1]</code> 序列回溯</strong>、<strong>按需自动上报绘图点</strong>。这对标 TradingView
+Pine Script 的 <code>ta.*</code> + <code>plot()</code>。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Bar</span><span class="p">,</span> <span class="n">Strategy</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">MaCross</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_start</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        <span class="c1"># 声明一次 = 自动更新 + 自动绘图 + 可回溯</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">ema_fast</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">EMA</span><span class="p">(</span><span class="mi">10</span><span class="p">),</span> <span class="n">pane</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">"#e91e63"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"EMA10"</span><span class="p">)</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">ema_slow</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">EMA</span><span class="p">(</span><span class="mi">30</span><span class="p">),</span> <span class="n">pane</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">"#3f51b5"</span><span class="p">)</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">rsi</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">RSI</span><span class="p">(</span><span class="mi">14</span><span class="p">),</span> <span class="n">pane</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">:</span> <span class="n">Bar</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        <span class="c1"># [0] 是当前 bar，[1] 是上一根 —— 与 Pine 的 sma[0] / sma[1] 一致</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ema_fast</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">ema_slow</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>            <span class="k">return</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ema_fast</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ema_slow</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">ema_fast</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">ema_slow</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">buy</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">symbol</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>        <span class="c1"># 无需再写 record_indicator —— 传了绘图参数就会自动上报</span>
+</span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">0.3 起的破坏性变更</p>
+<p>旧的 <code>indicator_mode</code> 开关与 <code>register_incremental_indicator(...)</code> /
+<code>register_precomputed_indicator(...)</code> 已<strong>移除</strong>，统一由 <code>self.I()</code> 按传入对象
+自动分派。副产品是两类指标现在可以<strong>共存于同一个策略</strong>——旧的模式开关是互斥的。</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">旧写法</th>
+<th style="text-align: left;">新写法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>self.indicator_mode = "incremental"</code> + <code>register_incremental_indicator("x", obj, source="close")</code></td>
+<td style="text-align: left;"><code>self.x = self.I(obj, name="x", source="close")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>self.indicator_mode = "precompute"</code> + <code>register_precomputed_indicator("x", ind)</code></td>
+<td style="text-align: left;"><code>self.x = self.I(ind, name="x")</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>register_incremental_indicator(..., indicator_factory=f)</code></td>
+<td style="text-align: left;"><code>self.I(factory=f, ...)</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="_3">在哪里声明<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h3>
+<p><code>__init__</code> 与 <code>on_start</code> 都可以，但<strong>推荐 <code>on_start</code></strong>：<code>self.params</code> 在 <code>__init__</code>
+之后才注入，参数化指标（<code>run_grid_search</code> 要扫的那些）只有在 <code>on_start</code> 里才拿得到
+参数值。<code>__init__</code> 只适合字面量参数。</p>
+<p><code>subscribe_bars</code> 是例外，它<strong>只能</strong>在 <code>__init__</code> 调用（引擎启动前要冻结订阅表）；
+<code>self.I(freq="5min")</code> 会校验该周期已被订阅。</p>
+<h3 id="_4">序列回溯<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ind[0]</code>：当前 bar 的值（<code>.value</code> 是它的别名）</li>
+<li><code>ind[1]</code>：上一根；<code>ind[n]</code>：前 n 根</li>
+<li><strong>越界返回 <code>None</code>，不抛异常</strong>——预热期天然越界，抛错会逼每个策略都写 <code>try</code></li>
+<li>回溯深度由 <code>lookback</code> 界定（默认 128），底层是有界环形缓冲：实盘是无限流，
+  无界缓冲必然泄漏</li>
+</ul>
+<p>未就绪时取值为 <code>None</code>（原生指标未满窗、预计算指标 asof 落空都归一成 <code>None</code>），
+因此判空统一写 <code>if value is None</code>，不必再区分 <code>NaN</code>。</p>
+<h2 id="_5">路径一：增量指标<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<p>传入任何有 <code>update()</code> 的对象即走增量路径。AKQuant 内置了 100+ 个 Rust 实现的
+有状态指标类（<code>aq.SMA</code> / <code>aq.EMA</code> / <code>aq.RSI</code> / <code>aq.MACD</code> / <code>aq.ATR</code> / <code>aq.BollingerBands</code> 等），
+它们就是 Pine <code>ta.*</code> 的等价物，开箱即用。</p>
+<h3 id="_6">自定义增量指标<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">deque</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Indicator</span><span class="p">,</span> <span class="n">Strategy</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyMomentum</span><span class="p">(</span><span class="n">Indicator</span><span class="p">):</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">period</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">):</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="s2">"my_momentum"</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">df</span><span class="p">:</span> <span class="n">df</span><span class="p">[</span><span class="s2">"close"</span><span class="p">]</span> <span class="o">-</span> <span class="n">df</span><span class="p">[</span><span class="s2">"close"</span><span class="p">]</span><span class="o">.</span><span class="n">shift</span><span class="p">(</span><span class="n">period</span><span class="p">))</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">period</span> <span class="o">=</span> <span class="n">period</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">:</span> <span class="n">deque</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="n">deque</span><span class="p">(</span><span class="n">maxlen</span><span class="o">=</span><span class="n">period</span><span class="p">)</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_current_value</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s2">"nan"</span><span class="p">)</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>        <span class="k">if</span> <span class="n">pd</span><span class="o">.</span><span class="n">isna</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_current_value</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">period</span><span class="p">:</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_current_value</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s2">"nan"</span><span class="p">)</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>        <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">_current_value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_current_value</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>    <span class="nd">@property</span>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">value</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_current_value</span>
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="k">class</span><span class="w"> </span><span class="nc">IncrementalMomentumStrategy</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">mom10</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span>
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>            <span class="n">factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">MyMomentum</span><span class="p">(</span><span class="n">period</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>            <span class="n">name</span><span class="o">=</span><span class="s2">"mom10"</span><span class="p">,</span>
+</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>            <span class="n">source</span><span class="o">=</span><span class="s2">"close"</span><span class="p">,</span>
+</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>            <span class="n">symbols</span><span class="o">=</span><span class="p">[</span><span class="s2">"AAPL"</span><span class="p">,</span> <span class="s2">"MSFT"</span><span class="p">],</span>
+</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>            <span class="n">warmup_bars</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a>        <span class="p">)</span>
+</span><span id="__span-1-38"><a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a>
+</span><span id="__span-1-39"><a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">):</span>
+</span><span id="__span-1-40"><a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a>        <span class="n">value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mom10</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-1-41"><a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a>        <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-1-42"><a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">buy</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">symbol</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="factory">为什么推荐 <code>factory</code><a class="headerlink" href="#factory" title="Permanent link">&para;</a></h3>
+<p>多标的策略里，增量指标通常都有内部状态。多个 <code>symbol</code> 共用同一个实例会串线，
+因此传实例（而非 <code>factory</code>）时跨多标的使用会直接报错，不会静默共享状态。</p>
+<p>推荐写法：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="bp">self</span><span class="o">.</span><span class="n">mom10</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">MyMomentum</span><span class="p">(</span><span class="n">period</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span> <span class="n">source</span><span class="o">=</span><span class="s2">"close"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>而不是：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="bp">self</span><span class="o">.</span><span class="n">mom10</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">MyMomentum</span><span class="p">(</span><span class="n">period</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span> <span class="n">source</span><span class="o">=</span><span class="s2">"close"</span><span class="p">)</span>  <span class="c1"># 仅适合单标的</span>
+</span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">热启动下 <code>factory</code> 必须可 pickle</p>
+<p>快照会序列化策略实例，<code>on_start</code> 里的 lambda 是局部对象，pickle 不了。
+要配合 <code>run_from_checkpoint</code> 时，请改用模块级函数 + <code>functools.partial</code>：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">_make_sma</span><span class="p">(</span><span class="n">window</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">SMA</span><span class="p">(</span><span class="n">window</span><span class="p">)</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># on_start 里：</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="bp">self</span><span class="o">.</span><span class="n">sma</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">factory</span><span class="o">=</span><span class="n">partial</span><span class="p">(</span><span class="n">_make_sma</span><span class="p">,</span> <span class="mi">20</span><span class="p">),</span> <span class="n">name</span><span class="o">=</span><span class="s2">"sma"</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<h3 id="source"><code>source</code> 代表什么<a class="headerlink" href="#source" title="Permanent link">&para;</a></h3>
+<p><code>source</code> 指定框架从行情对象里拿哪个字段喂给指标。最常见的是：</p>
+<ul>
+<li><code>source="close"</code></li>
+<li><code>source="open"</code></li>
+<li><code>source="high"</code></li>
+<li><code>source="low"</code></li>
+<li><code>source="volume"</code></li>
+</ul>
+<p>需要多输入的指标（ATR 之类）用 <code>input_mode</code> 指定喂入形态：<code>"source"</code>（单值，默认）/
+<code>"hl"</code> / <code>"hlc"</code> / <code>"ohlc"</code> / <code>"close_volume"</code>，框架会按该顺序把字段传给你的 <code>update(...)</code>。</p>
+<h3 id="outputs">多值指标：<code>outputs</code><a class="headerlink" href="#outputs" title="Permanent link">&para;</a></h3>
+<p>MACD 这类一次产出多个分量的指标，用 <code>outputs</code> 声明分量名，它们会被拆成多条
+独立的线（<code>indicator_key</code> 形如 <code>macd.dif</code>），而不是把元组丢给前端去拆：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="bp">self</span><span class="o">.</span><span class="n">macd</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">MACD</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">26</span><span class="p">,</span> <span class="mi">9</span><span class="p">),</span> <span class="n">name</span><span class="o">=</span><span class="s2">"macd"</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>                   <span class="n">outputs</span><span class="o">=</span><span class="p">(</span><span class="s2">"dif"</span><span class="p">,</span> <span class="s2">"dea"</span><span class="p">,</span> <span class="s2">"hist"</span><span class="p">))</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># 读取：</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="bp">self</span><span class="o">.</span><span class="n">macd</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>        <span class="c1"># 整个元组 (dif, dea, hist)</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="bp">self</span><span class="o">.</span><span class="n">macd</span><span class="o">.</span><span class="n">dif</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>    <span class="c1"># 单个分量，同样支持 [1] 回溯</span>
+</span></code></pre></div>
+<p><code>outputs</code> 个数与指标实际分量数不符时会直接报错，不会静默错位。</p>
+<h2 id="_7">路径二：预计算指标<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<p>当你的指标更适合一次性对完整 <code>DataFrame</code> 计算时，传一个 <code>Indicator(name, fn)</code>
+实例即可，<code>self.I()</code> 会自动走向量化预计算路径。</p>
+<h3 id="_8">最小示例<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Indicator</span><span class="p">,</span> <span class="n">Strategy</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">PrecomputeMomentumStrategy</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">mom10</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>            <span class="n">Indicator</span><span class="p">(</span><span class="s2">"mom10"</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">df</span><span class="p">:</span> <span class="n">df</span><span class="p">[</span><span class="s2">"close"</span><span class="p">]</span> <span class="o">-</span> <span class="n">df</span><span class="p">[</span><span class="s2">"close"</span><span class="p">]</span><span class="o">.</span><span class="n">shift</span><span class="p">(</span><span class="mi">10</span><span class="p">)),</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>            <span class="n">name</span><span class="o">=</span><span class="s2">"mom10"</span><span class="p">,</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>        <span class="p">)</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">):</span>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>        <span class="n">value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mom10</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>        <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">buy</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">symbol</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="_9">何时适合<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>指标天然可向量化；</li>
+<li>主要依赖 pandas <code>rolling</code> / <code>shift</code> / <code>ewm</code>；</li>
+<li>更关心回测开发效率，而不是在线增量更新；</li>
+<li>同一个 <code>symbol</code> 的整段历史可以提前准备好。</li>
+</ul>
+<h3 id="_10">限制<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>实盘用不了</strong>：实盘没有完整的历史 <code>DataFrame</code>；</li>
+<li><strong>含 Tick 的输入会报错</strong>：预计算需要完整 OHLC，tick 只有成交价；</li>
+<li><strong>不支持 <code>freq=</code></strong>：窗口周期请改用增量指标。</li>
+<li><strong>不支持 <code>warmup_bars=</code></strong>：它没有增量状态可预热，整段本来就算好了；</li>
+<li><strong>多标的天然可用</strong>：<code>Indicator</code> 自己按 symbol 缓存整段结果，不需要 <code>factory=</code>。</li>
+</ul>
+<h2 id="_11">自动绘图<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
+<p>传了任一绘图参数（<code>pane</code> / <code>color</code> / <code>label</code> / <code>render_type</code> / <code>reference_lines</code> /
+<code>scale_group</code>）或显式 <code>plot=True</code>，框架就会在每次更新后自动上报一个绘图点，
+<strong>无需在 <code>on_bar</code> 里手写 <code>record_indicator</code></strong>。</p>
+<p><strong>默认不上报</strong>——与 Pine 一致（<code>ta.sma()</code> 只计算，<code>plot()</code> 才画）。这不只是风格：
+实盘的指标 sink 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路。</p>
+<p>未就绪的点（值为 <code>None</code>）不上报，对应 Pine 预热期的 <code>na</code>。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># 只算不画</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="bp">self</span><span class="o">.</span><span class="n">atr</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">ATR</span><span class="p">(</span><span class="mi">14</span><span class="p">),</span> <span class="n">input_mode</span><span class="o">=</span><span class="s2">"hlc"</span><span class="p">)</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># 算且画</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="bp">self</span><span class="o">.</span><span class="n">rsi</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">RSI</span><span class="p">(</span><span class="mi">14</span><span class="p">),</span> <span class="n">pane</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">reference_lines</span><span class="o">=</span><span class="p">[</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="p">{</span><span class="s2">"value"</span><span class="p">:</span> <span class="mi">70</span><span class="p">,</span> <span class="s2">"label"</span><span class="p">:</span> <span class="s2">"超买"</span><span class="p">},</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="p">{</span><span class="s2">"value"</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span> <span class="s2">"label"</span><span class="p">:</span> <span class="s2">"超卖"</span><span class="p">},</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="p">])</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="c1"># 没有其它绘图参数时，用 plot=True 显式开启</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="bp">self</span><span class="o">.</span><span class="n">sma</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">SMA</span><span class="p">(</span><span class="mi">20</span><span class="p">),</span> <span class="n">plot</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></code></pre></div>
+<p>绘图参数的含义与 <code>record_indicator</code> 完全一致，详见下文「导出指标给前端」。
+<code>record_indicator</code> 保留为底层逃生口，用于记录<strong>非指标类</strong>的自定义值（仓位、
+信号强度、风控中间量等），那些是 <code>self.I()</code> 覆盖不了的。</p>
+<h2 id="intrabar">实时值：未闭合窗口上的 intrabar<a class="headerlink" href="#intrabar" title="Permanent link">&para;</a></h2>
+<p>TradingView 的 realtime bar 会随每笔成交刷新指标，收盘后才确认（<code>barstate.isrealtime</code> /
+<code>isconfirmed</code>）。AKQuant 对窗口周期指标提供同样的语义：声明 <code>intrabar=True</code> 后，每根基础
+bar 闭合时，框架用 <code>ctx.current_window()</code> 的<strong>未闭合窗口快照</strong>在指标<strong>副本</strong>上试算一个临时值，
+真实状态不受污染；窗口闭合时才真正 <code>update()</code>。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">S</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">subscribe_bars</span><span class="p">(</span><span class="s2">"5min"</span><span class="p">)</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">sma5</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">SMA</span><span class="p">(</span><span class="mi">20</span><span class="p">),</span> <span class="n">freq</span><span class="o">=</span><span class="s2">"5min"</span><span class="p">,</span> <span class="n">intrabar</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">):</span>                 <span class="c1"># 每根 1min bar</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>        <span class="n">v0</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sma5</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>                  <span class="c1"># 有临时值时: 未闭合 5min 窗口上的试算值</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>        <span class="n">v1</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sma5</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>                  <span class="c1"># 上一根已确认的 5min 值</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">sma5</span><span class="o">.</span><span class="n">confirmed</span><span class="p">:</span> <span class="o">...</span>    <span class="c1"># 当前 [0] 是临时值</span>
+</span></code></pre></div>
+<p>下标语义与 Pine 完全一致：有临时值时它占据 <code>[0]</code>，已确认序列整体后移一位。流事件里临时点带
+<code>confirmed=false</code>，且<strong>时间戳就是该窗口将来闭合的标签</strong>，确认点随后以同一 <code>time</code> 到达——前端按
+<code>(indicator_key, symbol, timestamp)</code> 覆盖即可（<code>akquant.lwc.to_lwc_update()</code> 已按此处理）。
+临时点<strong>不进</strong> <code>indicator_df()</code> / <code>export_indicators()</code>，那两个出口只含确认值。</p>
+<p>三条限制：</p>
+<ul>
+<li><strong>基础周期指标（不给 <code>freq=</code>）在每笔 tick 上试算</strong>：框架从 tick 自己累出形成中的 bar
+  （真实的 open/high/low/close，ATR 之类 H/L 指标也能试算），tick <strong>不再 <code>update()</code></strong> 该指标，
+  只有 bar 闭合才推进状态。临时点的时间戳按聚合器的区间末打戳公式预测
+  （<code>(ts // 间隔 + 1) * 间隔 − 1ns</code>），bar 真闭合时若与实际不符（行情源按起点打戳），该标的
+  停发临时点并告警一次，<code>[0]</code> 仍可读。<strong>默认 <code>intrabar=False</code> 时 tick 照旧 <code>update()</code> 基础
+  指标</strong>——纯 tick 策略依赖这个行为，未改动。</li>
+<li><strong>临时点只在基础周期已知时上报</strong>（回测 <code>run_backtest(data=[Tick,...], freq=)</code>，实盘网关声明
+  <code>metadata["freq"]</code>）。基础周期未知时窗口标签会随每根基础 bar 漂移，前端无法覆盖，此时只算
+  <code>[0]</code> 不发流事件，告警一次。</li>
+<li>试算靠复制指标状态：内建 Rust 指标走 <code>akquant.clone_indicator()</code>（pyo3 不为
+  <code>#[derive(Clone)]</code> 暴露 <code>__copy__</code>，<code>copy</code> / <code>deepcopy</code> / <code>pickle</code> 对它们一律 TypeError），
+  用户自写的 Python 指标走 <code>copy.deepcopy</code>。</li>
+</ul>
+<p>可运行示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/75_intrabar_indicators.py">75_intrabar_indicators.py</a>（窗口周期）、
+<a href="https://github.com/akfamily/akquant/blob/main/examples/76_tick_intrabar_indicators.py">76_tick_intrabar_indicators.py</a>（基础周期，tick 驱动）。</p>
+<h2 id="study">可插拔 study：只画图不交易<a class="headerlink" href="#study" title="Permanent link">&para;</a></h2>
+<p>TradingView 里 indicator 脚本与 strategy 脚本是两类东西，一张图上可以叠 N 个只画图的
+indicator。AKQuant 的对应物是 <code>Study</code>：继承它、在 <code>on_start</code> 里用 <code>self.I()</code> 声明指标，
+然后用 <code>studies=[...]</code> 挂到任意一次回测或实盘上。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Study</span><span class="p">,</span> <span class="n">run_backtest</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">RsiStudy</span><span class="p">(</span><span class="n">Study</span><span class="p">):</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">rsi</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">RSI</span><span class="p">(</span><span class="mi">14</span><span class="p">),</span> <span class="n">pane</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="k">class</span><span class="w"> </span><span class="nc">MacdStudy</span><span class="p">(</span><span class="n">Study</span><span class="p">):</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="n">study_id</span> <span class="o">=</span> <span class="s2">"macd_view"</span>          <span class="c1"># 省略时取类名 snake_case: "macd_study"</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">macd</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">I</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">MACD</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">26</span><span class="p">,</span> <span class="mi">9</span><span class="p">),</span> <span class="n">pane</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">outputs</span><span class="o">=</span><span class="p">(</span><span class="s2">"dif"</span><span class="p">,</span> <span class="s2">"dea"</span><span class="p">,</span> <span class="s2">"hist"</span><span class="p">))</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="n">result</span> <span class="o">=</span> <span class="n">run_backtest</span><span class="p">(</span><span class="n">strategy</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">symbols</span><span class="o">=</span><span class="p">[</span><span class="s2">"600000"</span><span class="p">],</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>                      <span class="n">strategy_id</span><span class="o">=</span><span class="s2">"main"</span><span class="p">,</span> <span class="n">studies</span><span class="o">=</span><span class="p">[</span><span class="n">RsiStudy</span><span class="p">,</span> <span class="n">MacdStudy</span><span class="p">])</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a><span class="n">result</span><span class="o">.</span><span class="n">indicator_df</span><span class="p">(</span><span class="n">owner</span><span class="o">=</span><span class="s2">"rsi_study"</span><span class="p">)</span>    <span class="c1"># 只看这个 study 的点</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a><span class="n">result</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">review</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>                   <span class="c1"># study 的指标一样画到 LWC 图上</span>
+</span></code></pre></div>
+<p>三条要点：</p>
+<ul>
+<li><strong>不新建管线</strong>：每个 study 就是多策略拓扑里的一个 slot（<code>strategies_by_slot</code>），指标点带
+  自己的 <code>owner_strategy_id</code>，窗口订阅跨 slot 合并，<code>run_live(studies=...)</code> 同一套语义。</li>
+<li><strong>不交易是硬保证</strong>：<code>Study</code> 上所有交易 API（<code>buy</code> / <code>sell</code> / <code>place_*</code> / <code>order_target*</code> /
+  <code>rebalance_*</code> / <code>cancel_*</code> …）一律抛 <code>StudyCannotTradeError</code>，在引擎回调里误写也会当场
+  报错，不会静默成交。要下单请继承 <code>Strategy</code>。</li>
+<li><strong>id 不许撞</strong>：<code>study_id</code> 与 <code>strategy_id</code> 或已有 slot key 重复时直接 <code>ValueError</code>；
+  <code>studies=</code> 里塞进非 <code>Study</code> 的类会 <code>TypeError</code>——否则"不交易"的保证就没了。</li>
+</ul>
+<p>可运行示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/74_pluggable_studies.py">74_pluggable_studies.py</a>。</p>
+<h2 id="warmup_bars"><code>warmup_bars</code> 怎么用<a class="headerlink" href="#warmup_bars" title="Permanent link">&para;</a></h2>
+<p><code>warmup_bars</code> 用于在正式事件流开始前，先使用 <code>start_time</code> 之前的历史 Bar 预热指标。</p>
+<p>适合以下场景：</p>
+<ul>
+<li>你希望第一根有效 Bar 就拿到完整指标值；</li>
+<li>指标依赖窗口历史，如 <code>period=20</code>；</li>
+<li>你不想在 <code>on_bar</code> 里手工跳过前 N 根。</li>
+</ul>
+<p>推荐示例可参考：</p>
+<ul>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/58_incremental_bootstrap_demo.py">58_incremental_bootstrap_demo.py</a></li>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py">60_custom_indicator_demo.py</a></li>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/72_declarative_indicators.py">72_declarative_indicators.py</a></li>
+</ul>
+<h2 id="_12">热启动与序列化<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h2>
+<p>如果你的策略会使用 <code>run_from_checkpoint</code>，自定义指标需要考虑状态持久化。</p>
+<p>原则如下：</p>
+<ul>
+<li>纯 Python 简单对象通常可直接 <code>pickle</code>；</li>
+<li>如果指标里持有文件句柄、网络连接、线程锁等对象，需自行处理；</li>
+<li>必要时实现 <code>__getstate__</code> 和 <code>__setstate__</code>，只保存必要状态。</li>
+</ul>
+<p>例如：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">__getstate__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="k">return</span> <span class="n">state</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="k">def</span><span class="w"> </span><span class="nf">__setstate__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">):</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">state</span><span class="p">)</span>
+</span></code></pre></div>
+<p>更多背景见：<a href="../../advanced/warm_start/">热启动指南</a>。</p>
+<h2 id="akquanttalib">与 <code>akquant.talib</code> 的边界<a class="headerlink" href="#akquanttalib" title="Permanent link">&para;</a></h2>
+<p>很多用户会把“自定义策略指标”和“扩展 <code>akquant.talib</code>”混在一起。建议按下面理解：</p>
+<ul>
+<li><code>akquant.talib</code>：内置 TA-Lib 风格兼容层，主要服务于已有函数式指标调用；</li>
+<li>自定义策略指标：服务于你的具体策略，可直接注册到 <code>Strategy</code>；</li>
+<li>新增 Rust 高性能指标：需要改源码、重新编译，不是运行时热插拔。</li>
+</ul>
+<p>如果你只是要一个策略内的私有信号，优先写自定义指标，而不是去扩展 <code>akquant.talib</code>。</p>
+<h2 id="_13">导出指标给前端<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h2>
+<p>如果你的目标不只是“在策略里使用指标”，而是要把指标结果进一步交给 Web 前端展示，建议把“计算指标”和“输出指标”分开处理：</p>
+<ul>
+<li>指标计算仍然放在 <code>Strategy</code> / <code>Indicator</code> 里；</li>
+<li>指标输出使用 <code>Strategy.record_indicator(...)</code> 记录标准化点位；</li>
+<li>回测结束后，通过 <code>BacktestResult.indicator_df(...)</code> 或 <code>export_indicators(...)</code> 交给外部服务或前端。</li>
+</ul>
+<h3 id="_14">最小示例<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">Bar</span><span class="p">,</span> <span class="n">Strategy</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">IndicatorExportStrategy</span><span class="p">(</span><span class="n">Strategy</span><span class="p">):</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">:</span> <span class="n">Bar</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>        <span class="n">spread</span> <span class="o">=</span> <span class="n">bar</span><span class="o">.</span><span class="n">high</span> <span class="o">-</span> <span class="n">bar</span><span class="o">.</span><span class="n">low</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">record_indicator</span><span class="p">(</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>            <span class="n">name</span><span class="o">=</span><span class="s2">"intrabar_spread"</span><span class="p">,</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>            <span class="n">value</span><span class="o">=</span><span class="n">spread</span><span class="p">,</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>            <span class="n">display_name</span><span class="o">=</span><span class="s2">"Intra Bar Spread"</span><span class="p">,</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>            <span class="n">pane</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>            <span class="n">render_type</span><span class="o">=</span><span class="s2">"line"</span><span class="p">,</span>
+</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>            <span class="n">precision</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>            <span class="n">meta</span><span class="o">=</span><span class="p">{</span><span class="s2">"source"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"high"</span><span class="p">,</span> <span class="s2">"low"</span><span class="p">]},</span>
+</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>        <span class="p">)</span>
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">关于 <code>symbol</code> 归属</p>
+<p>每个指标点位都<strong>必然归属于某一个标的</strong>，<code>symbol</code> 决定这条指标画在哪只标的的图上。</p>
+<p>省略 <code>symbol</code> 时（推荐），自动取当前正在处理的 bar / tick 的标的。多标的回测下，
+同一句 <code>record_indicator</code> 会在每个标的下各自独立记录一条序列——这正是你想要的：
+每只标的都有自己的 MA5。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">:</span> <span class="n">Bar</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="c1"># 省略 symbol：自动归属 bar.symbol</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    <span class="c1"># 多标的回测下，每个标的各得一条独立的 ma5 序列</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">record_indicator</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"ma5"</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">ma5</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">pane</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</span></code></pre></div>
+<p>显式传 <code>symbol</code> 只在"把指标记到另一个标的名下"时才需要（例如给基准或指数标的
+记录一条参考线）。注意此时<strong>每个标的的 bar 都会触发一次记录</strong>，若不加条件判断，
+同一时间戳会被重复写入多条：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">on_bar</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bar</span><span class="p">:</span> <span class="n">Bar</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="c1"># 只在主标的的 bar 上记录一次，避免其它标的的 bar 重复触发</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="k">if</span> <span class="n">bar</span><span class="o">.</span><span class="n">symbol</span> <span class="o">==</span> <span class="s2">"000300.SH"</span><span class="p">:</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">record_indicator</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"bench_ma"</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="n">v</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="s2">"000300.SH"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>既拿不到当前 bar / tick、也没有显式传入时会抛 <code>ValueError</code>，不会静默落到某个
+占位标的上。消费端可依赖"<code>symbol</code> 一定非空"这个前提做分组。</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">关于 <code>pane</code> 取值</p>
+<p><code>pane</code> 是<strong>整数行索引</strong>：<code>0</code> 表示主图（价格图），<code>1</code>..<code>N</code> 表示主图下方堆叠的副图。
+省略 <code>pane</code> 默认落在主图（<code>0</code>）。默认上限 <code>N</code> 为 <code>8</code>——这是一个基于屏幕可读性的
+<strong>软上限</strong>，而非硬性限制。多因子或衍生品场景若需要更多副图，可在运行前设置环境变量
+<code>AKQUANT_MAX_SUB_PANES</code> 抬高上限。取值超出 <code>0..N</code> 会直接报错（fail-fast），
+确保写错的索引不会被静默塞进错误的窗格。这与图表渲染器实际消费的形态一致，
+<code>record_indicator</code> 在纯回测导出与前端流式桥接两条路径上输出相同的整数 <code>pane</code>。</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">0.3 起的破坏性变更</p>
+<p>早期版本 <code>pane</code> 曾支持 <code>"main"</code> / <code>"sub1"</code> / <code>"主图"</code> / <code>"signal"</code> 等字符串写法，现已移除。
+请改用整数索引；原先画交易信号用的 <code>pane="signal"</code> 语义，改为用 <code>render_type="signal"</code>
+在主图（<code>pane=0</code>）上渲染标记。</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">关于 <code>render_type</code> 取值</p>
+<p><code>render_type</code> 是一个<strong>封闭枚举</strong>，共 7 个值，消费者可据此穷举渲染分支：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">值</th>
+<th style="text-align: left;">渲染</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>line</code></td>
+<td style="text-align: left;">折线（默认）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>area</code></td>
+<td style="text-align: left;">折线 + 向零填充</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>bar</code></td>
+<td style="text-align: left;">垂直柱</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>column</code></td>
+<td style="text-align: left;"><code>bar</code> 的别名（语义化：分类柱）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>histogram</code></td>
+<td style="text-align: left;"><code>bar</code> 的别名（语义化：分布柱）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>scatter</code></td>
+<td style="text-align: left;">离散点标记</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>signal</code></td>
+<td style="text-align: left;">交易信号标记，渲染在主图</td>
+</tr>
+</tbody>
+</table>
+<p>传入枚举以外的值会直接抛 <code>ValueError</code>（fail-fast），不会静默退化成折线。</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">关于 <code>reference_lines</code> 与 <code>scale_group</code></p>
+<ul>
+<li><code>reference_lines</code>：可选，静态参考线列表，每项 <code>{"value": 数值, "label": 文字, "color": 颜色}</code>；
+  用于超买/超卖线、0 轴等固定横线。会动的线请用独立指标逐 bar 记录。</li>
+<li><code>scale_group</code>：可选，共享刻度分组的语义组名（如 <code>"percent"</code>），纯提示，前端据此判断
+  同量纲指标；不改变 <code>pane</code> 决定的行布局。</li>
+</ul>
+</div>
+<p>带参考线与刻度分组的 RSI 示例：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="bp">self</span><span class="o">.</span><span class="n">record_indicator</span><span class="p">(</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">"rsi"</span><span class="p">,</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">value</span><span class="o">=</span><span class="n">rsi_value</span><span class="p">,</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">pane</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">reference_lines</span><span class="o">=</span><span class="p">[</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>        <span class="p">{</span><span class="s2">"value"</span><span class="p">:</span> <span class="mi">70</span><span class="p">,</span> <span class="s2">"label"</span><span class="p">:</span> <span class="s2">"超买"</span><span class="p">,</span> <span class="s2">"color"</span><span class="p">:</span> <span class="s2">"#ef4444"</span><span class="p">},</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>        <span class="p">{</span><span class="s2">"value"</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span> <span class="s2">"label"</span><span class="p">:</span> <span class="s2">"超卖"</span><span class="p">,</span> <span class="s2">"color"</span><span class="p">:</span> <span class="s2">"#22c55e"</span><span class="p">},</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="p">],</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="n">scale_group</span><span class="o">=</span><span class="s2">"percent"</span><span class="p">,</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>运行结束后：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">result</span> <span class="o">=</span> <span class="o">...</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># 1) 在 Python 里直接读取</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">indicator_df</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">indicator_df</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"intrabar_spread"</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="s2">"AAPL"</span><span class="p">)</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="c1"># 2) 在本地做一个轻量预览</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="n">fig</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">indicators</span><span class="p">(</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">"intrabar_spread"</span><span class="p">,</span>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    <span class="n">symbol</span><span class="o">=</span><span class="s2">"AAPL"</span><span class="p">,</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>    <span class="n">show</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="n">filename</span><span class="o">=</span><span class="s2">"indicator_preview.html"</span><span class="p">,</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="p">)</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="c1"># 3) 导出给前端或外部服务</span>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="n">result</span><span class="o">.</span><span class="n">export_indicators</span><span class="p">(</span><span class="s2">"indicator_outputs.json"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"json"</span><span class="p">)</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a><span class="n">result</span><span class="o">.</span><span class="n">export_indicators</span><span class="p">(</span><span class="s2">"indicator_outputs"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"parquet"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>其中 JSON 导出在可用时会额外带上顶层 <code>run_id</code>，方便外部服务把离线导出与流式事件链路关联起来。</p>
+<h3 id="_15">内置最小可视化<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h3>
+<p>如果你只是想快速确认指标历史形态，而不是立刻接入完整前端，可以直接使用：</p>
+<ul>
+<li><code>result.viz.indicators(...)</code></li>
+<li><code>from akquant.plot import plot_indicators</code></li>
+</ul>
+<p>这条内置路径的定位是“轻量 history preview”，特点是：</p>
+<ul>
+<li>保持现有 <code>result.viz.dashboard()</code> 继续只做账户 dashboard；</li>
+<li>按 <code>pane</code> 自动拆分子图；</li>
+<li>复用 <code>render_type</code>，第一版支持常见的 <code>line</code> / <code>bar</code>；</li>
+<li>支持 <code>name</code>、<code>symbol</code>、<code>include_warmup</code> 过滤；</li>
+<li>可直接输出为本地 HTML，方便和导出的 JSON 一起联调。</li>
+</ul>
+<p>例如：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">fig</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">indicators</span><span class="p">(</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">"intrabar_spread"</span><span class="p">,</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="n">symbol</span><span class="o">=</span><span class="s2">"AAPL"</span><span class="p">,</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="n">include_warmup</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="n">show</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="n">filename</span><span class="o">=</span><span class="s2">"indicator_preview.html"</span><span class="p">,</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>    <span class="n">title</span><span class="o">=</span><span class="s2">"Indicator Preview"</span><span class="p">,</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>如果你需要的是企业级多图联动、权限、持久化和实时订阅，这些仍建议放在外部平台实现；AKQuant 内部只提供最小预览和标准化数据输出。</p>
+<h4 id="lwc">在 LWC 复盘图上看指标<a class="headerlink" href="#lwc" title="Permanent link">&para;</a></h4>
+<p><code>result.viz.review()</code> 会把 <code>self.I()</code> / <code>record_indicator</code> 上报的指标<strong>默认一并画出</strong>
+（<code>include_indicators=True</code>）：<code>pane=0</code> 叠在主图 K 线上，<code>pane=k≥1</code> 落到成交量之下的
+第 <code>k+1</code> 个副图；<code>reference_lines</code> 成为虚线参考线；未指定 <code>color</code> 时按主题色板轮转。
+<code>render_type</code> 的 7 个值全部有对应：<code>line</code>/<code>area</code>/<code>bar</code>/<code>column</code>/<code>histogram</code>/<code>scatter</code>
+各画各的，<code>signal</code> 走 K 线上的标记而不建独立序列。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">result</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">review</span><span class="p">(</span><span class="n">market_data</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s2">"review.html"</span><span class="p">)</span>            <span class="c1"># 带指标</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">result</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">review</span><span class="p">(</span><span class="n">market_data</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s2">"review.html"</span><span class="p">,</span> <span class="n">include_indicators</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span></code></pre></div>
+<p>底层适配器是 <code>akquant.lwc.to_lwc_indicator_series()</code>，与 <code>akquant.chart.to_d3kline_options()</code>
+是同一份指标契约面向两个前端的镜像实现；自建 LWC 页面可以直接复用。</p>
+<h3 id="_16">报告中的可选指标区块<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h3>
+<p>如果你希望把指标预览放进内置 HTML 报告，而不是单独输出一个图，也可以显式开启：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">result</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">report</span><span class="p">(</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>    <span class="n">filename</span><span class="o">=</span><span class="s2">"akquant_report.html"</span><span class="p">,</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    <span class="n">show</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="n">include_indicators</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="n">indicator_name</span><span class="o">=</span><span class="s2">"intrabar_spread"</span><span class="p">,</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="n">indicator_symbol</span><span class="o">=</span><span class="s2">"AAPL"</span><span class="p">,</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="n">indicator_include_warmup</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>这条路径有几个约束：</p>
+<ul>
+<li>默认关闭，不会改变现有 <code>report()</code> 的输出；</li>
+<li>适合把“一个轻量指标区块”嵌进策略报告；</li>
+<li>如果没有指标数据，会在报告里显示空状态提示；</li>
+<li>如果你需要复杂交互布局，仍建议交给外部前端实现。</li>
+</ul>
+<h3 id="_17">流式桥接到前端消息<a class="headerlink" href="#_17" title="Permanent link">&para;</a></h3>
+<p>如果你的外部服务是 WebSocket / SSE 网关，推荐不要把原始 <code>payload</code> 解析逻辑散落在业务代码里，可以直接使用：</p>
+<ul>
+<li><code>akquant.is_indicator_stream_event(event)</code></li>
+<li><code>akquant.to_indicator_message(event)</code></li>
+<li><code>akquant.to_indicator_messages(events)</code></li>
+</ul>
+<p>例如：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">on_event</span><span class="p">(</span><span class="n">event</span><span class="p">):</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">aq</span><span class="o">.</span><span class="n">is_indicator_stream_event</span><span class="p">(</span><span class="n">event</span><span class="p">):</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>        <span class="k">return</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>    <span class="n">message</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">to_indicator_message</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>    <span class="k">if</span> <span class="n">message</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>        <span class="n">websocket</span><span class="o">.</span><span class="n">broadcast_json</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+</span></code></pre></div>
+<p>这条 helper 的目标是：</p>
+<ul>
+<li>只桥接 <code>indicator_point</code> / <code>indicator_snapshot</code></li>
+<li>把数值字段转成更适合前端消费的类型</li>
+<li>自动解开 <code>meta_json</code> / <code>items_json</code></li>
+<li>保留 <code>run_id</code>、<code>seq</code>、<code>ts</code> 等外层流式语义</li>
+<li>同时给出 <code>timestamp</code>（纳秒）与 <code>timestamp_ms</code>（毫秒）两个时间字段</li>
+</ul>
+<p>当前 <code>snapshot</code> 桥接结果除了 <code>items</code> 之外，还会补充几组快捷字段，方便前端减少二次遍历：</p>
+<ul>
+<li><code>indicator_keys</code></li>
+<li><code>panes</code></li>
+<li><code>render_types</code></li>
+<li><code>value_by_key</code></li>
+<li><code>items_by_key</code></li>
+<li><code>warmup_count</code></li>
+<li><code>has_warmup</code></li>
+</ul>
+<p>另外，bridge helper 也会把 <code>_unknown</code> / 空 <code>symbol</code> 规整为 <code>None</code>，并兼容已经预先解码成
+<code>dict/list</code> 的 <code>meta_json</code> / <code>items_json</code> 值，便于网关层做二次封装。</p>
+<p><code>timestamp_ms</code> 在 <code>point</code> 与 <code>snapshot</code> 两种消息上都有，取值与同一次
+<code>record_indicator</code> 在 <code>indicator_df()</code>、<code>export_indicators()</code> 两个出口上的值一致——
+三个出口的字段口径统一，前端不必自己做纳秒到毫秒的换算。若事件来自早期版本或
+第三方 <code>IndicatorSink</code>、payload 里只有纳秒 <code>timestamp</code>，桥接会自动换算补齐。</p>
+<div class="admonition tip">
+<p class="admonition-title">用 <code>schema_version</code> 协商可选字段</p>
+<p>每条消息的信封里都有 <code>schema_version</code>（<code>MAJOR.MINOR</code>，见 <code>akquant.STREAM_SCHEMA_VERSION</code>）。
+向后兼容的新增字段会升 MINOR，前端据此判断某字段是否存在即可，不必做
+<code>try/except</code> 式的探测。<code>timestamp_ms</code> 自 <code>1.2</code> 起在指标流上提供；读不到
+该版本的旧消息时，回落到纳秒 <code>timestamp</code> 自行换算。</p>
+</div>
+<p>它不是新的传输层，只是把 AKQuant 的事件结构整理成更稳定的“前端消息对象”。</p>
+<h3 id="indicatorsink">注入自定义指标采集器（IndicatorSink）<a class="headerlink" href="#indicatorsink" title="Permanent link">&para;</a></h3>
+<p>如果你想把指标点位直接接进自己的采集/转发逻辑（例如推进一个广播队列、写入时序库），
+不必去 monkey-patch 策略的私有属性。<code>run_backtest</code> / <code>run_live</code> 都接受一个公开的
+<code>indicator_recorder</code> 参数，它是一个实现 <code>akquant.IndicatorSink</code> 协议的对象：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">IndicatorSink</span><span class="p">,</span> <span class="n">run_backtest</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">QueueSink</span><span class="p">:</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">    </span><span class="sd">"""把每个指标点位塞进自己的队列，而不在内存累积。"""</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">record</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">symbol</span><span class="p">,</span> <span class="n">timestamp</span><span class="p">,</span> <span class="n">owner_strategy_id</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>        <span class="n">my_queue</span><span class="o">.</span><span class="n">put</span><span class="p">((</span><span class="n">name</span><span class="p">,</span> <span class="n">symbol</span><span class="p">,</span> <span class="n">timestamp</span><span class="p">,</span> <span class="n">value</span><span class="p">))</span>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>
+</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">build_payload</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a>        <span class="k">return</span> <span class="p">{</span><span class="s2">"definitions"</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"instances"</span><span class="p">:</span> <span class="p">[],</span> <span class="s2">"points"</span><span class="p">:</span> <span class="p">[]}</span>
+</span><span id="__span-20-12"><a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a>
+</span><span id="__span-20-13"><a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">flush_stream_snapshot</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-20-14"><a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a>        <span class="o">...</span>
+</span><span id="__span-20-15"><a id="__codelineno-20-15" name="__codelineno-20-15" href="#__codelineno-20-15"></a>
+</span><span id="__span-20-16"><a id="__codelineno-20-16" name="__codelineno-20-16" href="#__codelineno-20-16"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">set_stream_emitter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">emitter</span><span class="p">):</span>
+</span><span id="__span-20-17"><a id="__codelineno-20-17" name="__codelineno-20-17" href="#__codelineno-20-17"></a>        <span class="o">...</span>
+</span><span id="__span-20-18"><a id="__codelineno-20-18" name="__codelineno-20-18" href="#__codelineno-20-18"></a>
+</span><span id="__span-20-19"><a id="__codelineno-20-19" name="__codelineno-20-19" href="#__codelineno-20-19"></a>
+</span><span id="__span-20-20"><a id="__codelineno-20-20" name="__codelineno-20-20" href="#__codelineno-20-20"></a><span class="n">run_backtest</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">indicator_recorder</span><span class="o">=</span><span class="n">QueueSink</span><span class="p">())</span>
+</span></code></pre></div>
+<p><code>IndicatorSink</code> 是"指标采集器"的公开扩展点（对标 Backtrader 的 Analyzer/Observer）：
+- 内置的 <code>IndicatorRecorder</code> 天然满足该协议（回测默认用它，跑完 <code>build_payload</code> 累积导出）；
+- 你可以传入自己的实现，把指标数据接进任意下游，无需触碰 AKQuant 内部。</p>
+<h3 id="_18">实盘实时指标流<a class="headerlink" href="#_18" title="Permanent link">&para;</a></h3>
+<p>回测与实盘的指标流是<strong>同构</strong>的：<code>run_live</code> 同样接受 <code>on_event</code> 与 <code>indicator_recorder</code>，
+产出与回测一致的 <code>indicator_point</code> / <code>indicator_snapshot</code> 事件，因此前端一套消费逻辑通吃。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_live</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="n">run_live</span><span class="p">(</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>    <span class="n">strategy_cls</span><span class="o">=</span><span class="n">MyStrategy</span><span class="p">,</span>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>    <span class="n">instruments</span><span class="o">=</span><span class="n">instruments</span><span class="p">,</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>    <span class="n">broker</span><span class="o">=</span><span class="s2">"ctp"</span><span class="p">,</span>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>    <span class="n">trading_mode</span><span class="o">=</span><span class="s2">"broker_live"</span><span class="p">,</span>
+</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>    <span class="n">on_event</span><span class="o">=</span><span class="n">on_event</span><span class="p">,</span>   <span class="c1"># 与 run_backtest 相同的事件回调</span>
+</span><span id="__span-21-9"><a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>实盘是长跑进程，默认使用一个<strong>只发不累积</strong>的轻量流式 sink：它只发射 stream 事件、
+不在内存里堆积历史点位，避免长时间运行导致内存无界增长。若只传 <code>on_event</code>（不传
+<code>indicator_recorder</code>），<code>run_live</code> 会自动启用这个流式 sink。</p>
+<h3 id="lwc_1">实时增量到 LWC 图表<a class="headerlink" href="#lwc_1" title="Permanent link">&para;</a></h3>
+<p>前端如果用 lightweight-charts，不必自己解析 <code>to_indicator_message()</code> 的字段：
+<code>akquant.lwc.to_lwc_update()</code> 把 point 消息转成 <code>series.update()</code> 可直接消费的增量
+（<code>{indicator_key, pane, series_type, color, confirmed, point:{time, value}}</code>）。
+<code>confirmed</code> 原样带出——将来未闭合 bar 的临时点与确认点同 <code>time</code>，LWC 的 <code>update()</code>
+按 <code>time</code> 覆盖，前端零改动。</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.lwc</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_lwc_js</span><span class="p">,</span> <span class="n">to_lwc_update</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">on_event</span><span class="p">(</span><span class="n">event</span><span class="p">):</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>    <span class="n">message</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">to_indicator_message</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>    <span class="n">update</span> <span class="o">=</span> <span class="n">to_lwc_update</span><span class="p">(</span><span class="n">message</span><span class="p">)</span> <span class="k">if</span> <span class="n">message</span> <span class="k">else</span> <span class="kc">None</span>
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>    <span class="k">if</span> <span class="n">update</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>        <span class="n">push_to_page</span><span class="p">(</span><span class="n">update</span><span class="p">)</span>           <span class="c1"># 传输层由你决定：轮询 / WebSocket / SSE</span>
+</span></code></pre></div>
+<p><code>load_lwc_js()</code> 返回 vendored 的 LWC 源码文本，供自建页面内联（无 CDN）。完整闭环见
+<code>examples/73_lwc_live_indicators.py</code>：<code>run_live(broker="replay")</code> + 标准库 <code>http.server</code>
+轮询 + 首次出现时惰性建 series。HTTP/WS 传输刻意留在示例层，不进核心。</p>
+<h3 id="_19">零依赖浏览器实时预览<a class="headerlink" href="#_19" title="Permanent link">&para;</a></h3>
+<p>如果你想先给业务方或前端同事一个“打开浏览器就能看到”的最小接入样板，而暂时不引入
+<code>fastapi</code>、<code>uvicorn</code> 或 <code>websockets</code> 等依赖，可以直接参考
+<code>examples/64_indicator_live_web.py</code>。</p>
+<p>这个示例做了三件事：</p>
+<ul>
+<li>用 <code>run_backtest(..., on_event=...)</code> 接收流式事件；</li>
+<li>用 <code>aq.to_indicator_message(event)</code> 规整成前端友好消息；</li>
+<li>用内置 <code>http.server</code> 暴露 <code>/state</code> JSON，并由浏览器轮询绘制 <code>close_echo</code> 折线。</li>
+</ul>
+<p>现在这个示例同时支持两种轮询方式：</p>
+<ul>
+<li>直接请求 <code>/state</code>，拿最近窗口内的完整快照；</li>
+<li>请求 <code>/state?since_seq=123</code>，只拿 <code>seq &gt; 123</code> 的增量消息，同时保留总量统计和最新游标。</li>
+</ul>
+<p>当前返回结构也做了区分，便于前端减少分支歧义：</p>
+<ul>
+<li>公共字段放在 <code>cursor</code>、<code>counts</code>、<code>latest_indicator_values</code></li>
+<li>全量模式把消息窗口放在 <code>window.point_messages</code> / <code>window.snapshot_messages</code></li>
+<li>增量模式把新增消息放在 <code>delta.point_messages</code> / <code>delta.snapshot_messages</code></li>
+</ul>
+<p>运行方式：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nv">UV_INDEX_URL</span><span class="o">=</span>https://pypi.org/simple<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>examples/64_indicator_live_web.py<span class="w"> </span>--open
+</span></code></pre></div>
+<p>如果你只是想快速验证链路，也可以缩短保活时间：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="nv">UV_INDEX_URL</span><span class="o">=</span>https://pypi.org/simple<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>examples/64_indicator_live_web.py<span class="w"> </span>--keep-seconds<span class="w"> </span><span class="m">1</span>
+</span></code></pre></div>
+<p>这个样板的定位不是完整前端产品，而是帮助你更快完成以下工作：</p>
+<ul>
+<li>验证指标流是否已经成功出站；</li>
+<li>让前端先对接稳定的消息结构和 <code>/state</code> JSON；</li>
+<li>在不新增依赖栈的前提下演示实时指标预览效果。</li>
+</ul>
+<h3 id="_20">当前输出结构<a class="headerlink" href="#_20" title="Permanent link">&para;</a></h3>
+<p>第一版实现会输出三类结构化结果：</p>
+<ul>
+<li>指标定义：如 <code>display_name</code>、<code>pane</code>、<code>render_type</code></li>
+<li>指标实例：按 <code>strategy/symbol/indicator/meta</code> 归并后的实例信息</li>
+<li>指标点位：按时间记录的数值序列</li>
+</ul>
+<p>每个指标点位同时带有 <code>timestamp</code>（纳秒）与 <code>timestamp_ms</code>（毫秒）两个时间字段：前者供
+Python 侧按纳秒解析，后者可被前端图表库直接使用，无需再做单位换算。指标 <code>meta</code> 采用
+<code>ensure_ascii=False</code> 序列化，中文等非 ASCII 字符保持可读。</p>
+<p>点位的 <code>symbol</code> 保证非空（见上文「关于 <code>symbol</code> 归属」），因此消费端可直接按
+<code>symbol</code> + <code>indicator_key</code> 分组，不必处理"无归属"的情形。多标的回测下同名指标会
+按标的拆成多条独立序列，切记按 <code>symbol</code> 过滤后再绘制，否则不同标的的同名指标会
+串成一条线。</p>
+<p>这三层结构的目的，是让 AKQuant 负责“生产标准化指标数据”，而不是直接耦合某个具体前端图表库。</p>
+<h3 id="d3kline-indicatoroption">可选适配器：转成 d3Kline 的 <code>IndicatorOption</code><a class="headerlink" href="#d3kline-indicatoroption" title="Permanent link">&para;</a></h3>
+<p>如果你的前端是 d3Kline（金融界期魔方前端的 K 线渲染器），可以直接用
+<code>akquant.chart.to_d3kline_options()</code> 把指标定义与点位转成 <code>IndicatorManager.create()</code>
+能直接消费的结构，不必自己写映射：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">akquant.chart</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_d3kline_options</span><span class="p">,</span> <span class="n">to_raw_panes</span>
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>
+</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="n">defs</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">indicator_definitions</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(</span><span class="n">orient</span><span class="o">=</span><span class="s2">"records"</span><span class="p">)</span>
+</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="n">points_by_key</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-25-5"><a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>    <span class="n">key</span><span class="p">:</span> <span class="n">group</span><span class="p">[[</span><span class="s2">"timestamp_ms"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">]]</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(</span><span class="n">orient</span><span class="o">=</span><span class="s2">"records"</span><span class="p">)</span>
+</span><span id="__span-25-6"><a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">indicator_df</span><span class="p">()</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="s2">"indicator_key"</span><span class="p">)</span>
+</span><span id="__span-25-7"><a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a><span class="p">}</span>
+</span><span id="__span-25-8"><a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a><span class="n">options</span> <span class="o">=</span> <span class="n">to_d3kline_options</span><span class="p">(</span><span class="n">defs</span><span class="p">,</span> <span class="n">points_by_key</span><span class="p">)</span>  <span class="c1"># 喂给前端 IndicatorManager.create()</span>
+</span><span id="__span-25-9"><a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a><span class="n">panes</span> <span class="o">=</span> <span class="n">to_raw_panes</span><span class="p">(</span><span class="n">defs</span><span class="p">,</span> <span class="n">points_by_key</span><span class="p">)</span>  <span class="c1"># 保留 akquant 原生语义，供其它前端</span>
+</span></code></pre></div>
+<p>它是<strong>可选的消费端适配器</strong>，与上文的流式桥接同一性质，不改变“生产者不耦合前端”的定位。
+把它放进核心包的唯一理由是：回测服务与实盘服务两条链路都要产出这套结构，而前端用同一套
+渲染逻辑消费——两边各写一份必然漂移，这里是单一事实来源。</p>
+<p>几条刻意为之的转换规则（改动前请先理解原因）：</p>
+<ul>
+<li><strong>同一 pane 的多个指标打包成一个 option</strong>，各指标是 <code>dataList</code> 里的一条 series。
+  d3Kline 的 <code>IndicatorManager</code> 有 <code>MAX_SUB_INDICATORS = 3</code> 的上限且超限<strong>静默丢弃</strong>，
+  按 pane 打包能让“5 个副图指标只占 2 个 pane”时只消耗 2 个名额。</li>
+<li><strong>主图（pane 0）不带 <code>style.height</code></strong>，避免挤压 K 线区；副图给默认 100。</li>
+<li><strong>无颜色时省略整个 <code>style</code> 字段</strong>，而不是传 <code>{"color": null}</code>——前端的合并写法是
+  <code>{color: 默认色, ...old, ...s.style}</code>，<code>null</code> 会覆盖掉默认色导致指标无色。</li>
+<li><code>render_type</code> 的七个值降级到 d3Kline 仅有的 <code>line | bar</code>；发生降级时附带原值
+  <code>render_type</code>，前端将来支持 area/scatter 时可无损升级。</li>
+<li>series 的 <code>name</code> 用 <code>indicator_key</code>（前端以 name 做合并身份，pane 内必须唯一），
+  中文展示名放在 <code>label</code>。</li>
+</ul>
+<p>输入用普通 <code>Mapping</code>（dict）而非特定模型，缺失字段按契约默认值处理（<code>pane=0</code>、
+<code>render_type="line"</code>），<code>pane</code> 允许是字符串。</p>
+<h3 id="_21">推荐边界<a class="headerlink" href="#_21" title="Permanent link">&para;</a></h3>
+<p>建议把职责切开：</p>
+<ul>
+<li><code>AKQuant</code> 内部负责：</li>
+<li>指标计算</li>
+<li>指标记录</li>
+<li>指标查询</li>
+<li>指标导出</li>
+<li>外部平台负责：</li>
+<li>存储服务</li>
+<li>API 查询</li>
+<li>WebSocket 推送</li>
+<li>前端图表页面</li>
+</ul>
+<p>也就是说，AKQuant 更适合作为“指标生产者”，而不是企业前端平台本身。</p>
+<h3 id="_22">推荐示例<a class="headerlink" href="#_22" title="Permanent link">&para;</a></h3>
+<ul>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py">60_custom_indicator_demo.py</a></li>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/61_indicator_visualization_export_demo.py">61_indicator_visualization_export_demo.py</a></li>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/62_indicator_streaming_demo.py">62_indicator_streaming_demo.py</a></li>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/63_indicator_ws_bridge_demo.py">63_indicator_ws_bridge_demo.py</a></li>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/64_indicator_live_web.py">64_indicator_live_web.py</a></li>
+</ul>
+<h2 id="_23">常见误区<a class="headerlink" href="#_23" title="Permanent link">&para;</a></h2>
+<ul>
+<li>误区 1：所有自定义指标都必须继承 <code>Indicator</code></li>
+<li>不是。预计算场景可以直接用 <code>Indicator(name, fn)</code>；增量场景传任何有 <code>update()</code> 的对象都行。</li>
+<li>误区 2：多标的一定可以共用一个增量实例</li>
+<li>不行。传实例跨多标的会直接报错，正式策略请用 <code>factory=</code>。</li>
+<li>误区 3：<code>warmup_bars=20</code> 会重复消费第一根正式 Bar</li>
+<li>不会。预热只使用正式开始前的历史数据。</li>
+<li>误区 4：自定义指标自然支持热启动</li>
+<li>不一定。需要确认对象可 <code>pickle</code>，<code>factory</code> 也不能是 lambda。</li>
+<li>误区 5：策略自定义指标和 <code>akquant.talib</code> 扩展是一回事</li>
+<li>不是，二者面向的层级不同。</li>
+<li>误区 6：声明了指标就会自动画出来</li>
+<li>不会。要传绘图参数或 <code>plot=True</code>，与 Pine 的 <code>ta.*</code> 不画、<code>plot()</code> 才画一致。</li>
+</ul>
+<h2 id="_24">选择建议<a class="headerlink" href="#_24" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">你的目标</th>
+<th style="text-align: left;">建议方案</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">先快速验证一个想法</td>
+<td style="text-align: left;"><code>self.I(Indicator(name, fn))</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">单标的逐 Bar 更新</td>
+<td style="text-align: left;"><code>self.I(aq.EMA(20))</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">多标的正式策略</td>
+<td style="text-align: left;"><code>self.I(factory=...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">首根有效 Bar 就要有值</td>
+<td style="text-align: left;"><code>self.I(..., warmup_bars=N)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">要在图上画出来</td>
+<td style="text-align: left;">加 <code>pane=</code> / <code>color=</code>，或 <code>plot=True</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">判断金叉死叉</td>
+<td style="text-align: left;"><code>ind[0]</code> / <code>ind[1]</code> 序列回溯</td>
+</tr>
+<tr>
+<td style="text-align: left;">需要断点续跑</td>
+<td style="text-align: left;">指标状态可序列化，<code>factory</code> 用 <code>partial</code> 而非 lambda</td>
+</tr>
+<tr>
+<td style="text-align: left;">需要极致性能</td>
+<td style="text-align: left;">先用内置的 100+ 个 Rust 指标类，再考虑自己写 Rust</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_25">推荐阅读<a class="headerlink" href="#_25" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../strategy/">策略开发手册</a></li>
+<li><a href="../../advanced/warm_start/">热启动指南</a></li>
+<li><a href="../rust_indicator_reference/">AKQuant 指标全量说明</a></li>
+<li><a href="../talib_indicator_playbook/">指标组合实战手册</a></li>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py">可运行示例：60_custom_indicator_demo.py</a></li>
+<li><a href="https://github.com/akfamily/akquant/blob/main/examples/72_declarative_indicators.py">可运行示例：72_declarative_indicators.py</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
