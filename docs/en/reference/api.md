@@ -531,14 +531,15 @@ class InstrumentConfig:
     symbol: str
     asset_type: Union[
         Literal["STOCK", "FUTURES", "FUND", "OPTION"],
+        Literal["ETF_OPTION", "CONVERTIBLE_BOND"],  # product presets, expand to OPTION / FUND
         InstrumentAssetTypeEnum
     ] = InstrumentAssetTypeEnum.STOCK
-    multiplier: float = 1.0    # Contract multiplier
-    margin_ratio: float = 1.0  # Margin ratio (0.1 means 10% margin)
-    tick_size: float = 0.01    # Minimum price variation
+    multiplier: float = None   # Contract multiplier; filled from preset or 1.0
+    margin_ratio: float = None # Margin ratio (0.1 means 10% margin); filled from preset or 1.0
+    tick_size: Optional[float] = None  # Minimum price variation; filled from preset or asset type
     lot_size: Optional[int] = None
 
-    # Costs & Execution (Asset Specific)
+    # Costs & Execution (Asset Specific; override global rates, options unaffected)
     commission_rate: Optional[float] = None
     min_commission: Optional[float] = None
     stamp_tax_rate: Optional[float] = None
@@ -561,9 +562,29 @@ class InstrumentConfig:
             InstrumentSettlementTypeEnum
         ]
     ] = None
-    settlement_price: Optional[float] = None
+    settlement_price: Optional[float] = None  # options: underlying settlement price on expiry day
+    sellable_after_days: Optional[int] = None
     static_attrs: Dict[str, Union[str, int, float, bool]] = field(default_factory=dict)
+
+    # Filled by __post_init__, not constructor arguments
+    product_preset: Optional[str]      # preset name before expansion, None if unused
+    defaulted_fields: FrozenSet[str]   # names of fields filled from defaults
 ```
+
+Product presets (explicitly passed fields always win):
+
+| Field | `ETF_OPTION` | `CONVERTIBLE_BOND` |
+|---|---|---|
+| underlying asset_type | OPTION | FUND |
+| multiplier | 10000 | 1 (price per bond) |
+| tick_size | 0.0001 | 0.001 |
+| lot_size | 1 | 10 |
+| sellable_after_days | 0 | 0 |
+| option_margin_model | CHINA_SINGLE_LEG | — |
+
+`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` override market rates per symbol in `run_backtest` (ChinaMarket: all four for stocks/funds, only `commission_rate` for futures; SimpleMarket: all four for every asset; options are charged per contract and unaffected). Known limitations: these overrides are not applied by `run_from_checkpoint`, and `slippage` is not yet honored.
+
+Option fees (`ChinaOptionsConfig`, CNY per contract): `commission_per_contract=5.0` (renamed from `fee_per_contract`), `exchange_fee_per_contract=1.3`, `clearing_fee_per_contract=0.3`, `exercise_fee_per_contract=0.6` (ITM long only, reported in `ExpiryEvent.fee`, not in `total_commission`), `sell_open_exempt=True` (sell-to-open pays commission only). Any option instrument in a backtest selects ChinaMarket unless `ChinaOptionsConfig(use_china_market=False)`. Expiry settles at the start of the first trading day after `expiry_date` using the expiry-day close; see the Chinese API reference and textbook chapter 8 for details.
 
 Common enums (available directly from top-level `akquant`):
 

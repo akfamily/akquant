@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **期权费用按沪深 ETF 期权实际口径拆成四项，卖出开仓减免经手费与结算费**。此前 `ChinaOptionsConfig` 只有一个 `fee_per_contract`，且没配 `china_options`、`t_plus_one=False` 时引擎走 SimpleMarket，期权按成交额百分比收费，按张规则根本不生效。现在 `ChinaOptionsConfig` / `ChinaOptionsFeeConfig` 字段为（元/张）：`commission_per_contract`（券商佣金，缺省 5.0）、`exchange_fee_per_contract`（1.3）、`clearing_fee_per_contract`（0.3）、`exercise_fee_per_contract`（0.6）、`sell_open_exempt`（`True`）。口径：
+
+  | 费用项 | 标准 | 卖出开仓（含备兑开仓） |
+  |---|---|---|
+  | 交易经手费 | 1.3 元/张，双向收取 | 暂免 |
+  | 交易结算费 | 0.3 元/张，双向收取 | 暂免 |
+  | 券商佣金 | 由券商与客户约定 | 照收 |
+  | 行权结算费 | 0.6 元/张，只向行权方收取 | — |
+
+  出处：[上交所收费管理规则适用指引第 1 号（2023 年 8 月修订）](https://www.sse.com.cn/lawandrules/sselawsrules2025/charge/c/c_20250610_10781461.shtml)；[信达证券 2022-09 关于沪深 500ETF / 创业板 ETF 期权上市的通知](https://www.cindasc.com/osoa/views/a/20220919/46254.html)（沪深同标准）。`MarketModel::calculate_commission` 新增 `position_before` 参数，卖单按成交前持仓拆成"平多"（全额收费）与"卖出开仓"（`sell_open_exempt` 时只收佣金）两段；`position_effect="auto"` 下穿越零持仓的卖单本来就会拆成平仓单与开仓单。
+- **期权行权结算费与 `ExpiryEvent.fee`**：到期时只对实值被行权的多头按 `张数 × exercise_fee_per_contract` 收取，虚值放弃与空头不收。`ExpiryEvent.fee` / `on_expiry` 事件字典新增 `fee`；`cash_flow` 保持毛额，账户实收 `cash_flow - fee`。`examples/07_option_test.py` 期末权益随之变为 99892.8。
+- **品种预设 `asset_type="ETF_OPTION"` / `"CONVERTIBLE_BOND"`**：在 `InstrumentConfig.__post_init__` 展开，显式传入的字段一律优先。`ETF_OPTION` → OPTION、乘数 10000、tick 0.0001、1 张一手、T+0、`CHINA_SINGLE_LEG` 保证金；`CONVERTIBLE_BOND` → FUND、乘数 1（按每张计价）、tick 0.001、1 手 10 张、T+0。新增 `InstrumentConfig.product_preset`（展开前的预设名）与 `defaulted_fields`（由缺省值填充的字段名），类型新增 `InstrumentProductPreset`。
+- **`Engine.set_instrument_fee_override(symbol, commission_rate=, min_commission=, stamp_tax_rate=, transfer_fee_rate=)`** 与 `FundConfig.stamp_tax`（基金卖出印花税，缺省 0，用于接住按品种的印花税覆盖）。
+
+### Changed
+- **只要回测里有期权合约，默认使用 ChinaMarket**；只有显式 `ChinaOptionsConfig(use_china_market=False)` 才走 SimpleMarket（此时行权结算费为 0）。副作用：同一回测里的 ETF 等基金改按 ChinaMarket 的 FUND 费率计费。
+- **`InstrumentConfig.multiplier` / `margin_ratio` / `tick_size` 默认值改为 `None`**，在 `__post_init__` 中按"预设 → 1.0（`tick_size` 按资产类型）"填充并记入 `defaulted_fields`；期货模板不再用 `== 1` / `== 0.01` 猜测"用户没传"，改为查 `defaulted_fields`（此前显式传 `multiplier=1` 会被模板静默覆盖）。
+- **破坏性变更**：`ChinaOptionsConfig.fee_per_contract` 改名为 `commission_per_contract`（不保留别名）；删除无文档、无测试的 `run_backtest(option_commission=)`；`Engine.set_option_fee_rules(commission_per_contract, exchange_fee_per_contract, clearing_fee_per_contract, exercise_fee_per_contract, sell_open_exempt)` 与 `Engine.set_options_fee_rules_by_prefix(symbol_prefix, ...同上)` 签名变化。
+- **已知限制**：期权到期仍按现金结算内在价值近似（不做实物交割、不支持主动行权）；`run_from_checkpoint` 续跑时按品种费用覆盖暂不生效；行权结算费体现在 `ExpiryEvent.fee` 与现金中，但**不计入** `trade_metrics.total_commission`；回测收尾补结算只记日志，不触发 `on_expiry`、不推送流式事件；`InstrumentConfig.slippage` 仍未接入撮合（死字段）。
+
+### Fixed
+- **期权 / 期货到期结算提前一天（`__engine_rule_version__` 升至 1.7.0）**：结算在"进入新交易日"时触发，判定条件却是 `当前日期 >= 到期日`，于是一进入到期日就用**前一天的收盘价**结算，策略在到期日当天也无法再交易该合约。复现：认购期权行权价 100、乘数 100、到期日 12/01，标的 11/30 收 101、12/01 收 120——旧逻辑按 101 结算每张得 100 元，新逻辑按 120 结算每张得 2000 元（扣行权结算费后 1999.4）。期权与期货 / 股票到期统一改为 `当前日期 > 到期日`，即到期日之后第一个交易日开始时、用到期日收盘价结算；数据在到期日（或之后无新交易日）结束时，回测收尾对 `到期日 <= 最后交易日` 的持仓补结算并计入最终权益（仅回测，实盘不做）。
+  同时修正**期权缺标的价时按 0 静默作废**：结算用的标的价格依次取合约配置的 `settlement_price`（含义为到期日标的结算价，此前 Python 构建 `Instrument` 时对非期货清空、Rust `OptionInstrument` 也没有该字段，链路不通）→ 标的最近已知价格 → 都没有则本次不结算、持仓保留、同一合约只告警一次并每日重试，回测结束仍未结算的再打一条汇总告警。未配置 `expiry_date` 的期权视为不到期（此前按到期日 0 处理，首次换日即以 0 作废）。
+  Golden 基线仅 `option_basic` 变化：手续费 0 → 6.6（期权改走 ChinaMarket 按张计费：佣金 5 + 经手费 1.3 + 结算费 0.3），`total_return_pct` -40 → 29.934（该合约无 `expiry_date`，旧逻辑首次换日即按 0 作废，现在不到期、按市价估值），期末卖单由 `rejected` 变为未成交 `new`；其余三个场景只有 `metrics.json` 中的版本号变化（重新生成的订单文件仅 UUID 与行序不同，未提交）。
+- **`InstrumentConfig` 的按品种费用字段此前被静默忽略**：`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` 文档写"覆盖全局"，但回测主路径构建 `Instrument` 时从未读取。现在 `run_backtest` 注册合约后对设置了任一字段的标的调用 `set_instrument_fee_override`，覆盖表存进 `ChinaMarketConfig` / `SimpleMarketConfig.fee_overrides`，切换市场（`use_*_market`）时一并带过去。ChinaMarket 下股票 / 基金四项全部生效、期货只认 `commission_rate`（优先于按前缀配置）；SimpleMarket 下四项对所有资产生效；期权按张计费不受影响。
+
+### Added
 - **声明式指标层：`Strategy.I()` 一次声明 = 自动增量更新 + 序列回溯 + 自动绘图（对标 TradingView Pine Script，**破坏性变更**：删除 `indicator_mode` 与两个 `register_*` 方法）**。此前指标能力分散在三套互不相通的机制里：`register_precomputed_indicator` 的向量化预计算（实盘用不了，没有完整 DataFrame）、`register_incremental_indicator` 的有状态增量、以及在 `on_bar` 里 `get_history(N)` 全量重算；前两者还被 `indicator_mode` 这个**互斥**开关锁死，只能二选一。更关键的是**计算与绘图完全脱钩**——算出一个值和把它画出来是两件毫不相干的事，用户得在每根 bar 手写 `record_indicator` 并重传一遍 pane/color 等元数据；而指标本身只暴露 `.value`，判断金叉这种最基本的形态还要自己维护 `deque`。
   现在只有一个入口 `self.I()`，按传入对象**自动分派**：有 `update()` 的走增量（`src/indicators/*.rs` 已有的 100+ 个 Rust 有状态指标类 `aq.SMA`/`aq.EMA`/`aq.RSI`/`aq.MACD`/`aq.ATR` 等即 Pine `ta.*` 的等价物），`Indicator(name, fn)` 实例走向量化预计算。删掉互斥开关的直接收益是**两类指标可以共存于同一个策略**。返回的 `IndicatorBinding` 支持 `ind[0]`（当前 bar，`.value` 是别名）/ `ind[1]`（上一根）/ `ind[n]` 回溯，与 Pine 的 `sma[0]`/`sma[1]` 一致；**越界返回 `None` 而非抛异常**——预热期天然越界，抛错会逼每个策略都写 `try`。回溯深度由 `lookback` 界定（默认 128），底层 `deque(maxlen=)` **有界**：实盘是无限流，无界缓冲必然泄漏。未就绪的取值统一归一成 `None`（原生指标未满窗返回 `None`、预计算 asof 落空返回 `NaN`，两条路对用户必须长一个样）。
   **自动绘图**：传了任一绘图参数（`pane`/`color`/`label`/`render_type`/`reference_lines`/`scale_group`）或显式 `plot=True` 即自动上报，消灭每 bar 的 `record_indicator` 样板。**默认不上报**——与 Pine 一致（`ta.sma()` 只算、`plot()` 才画），且实盘 `StreamingIndicatorSink` 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路；未就绪的点不上报，对应 Pine 预热期的 `na`。上报时机在指标 `update()` 之后、`on_bar` **之前**，于是用户手写的 `record_indicator` 与自动上报落在同一个 `flush_stream_snapshot` 周期，时间戳一致。**多值指标**用 `outputs=("dif","dea","hist")` 拆成多条独立的线（`indicator_key` 形如 `macd.dif`），而不是把元组丢给前端去解析——前端的渲染单元是"一条线"；`self.macd[0]` 仍取整个元组，`self.macd.dif[0]` 取分量且同样支持回溯，个数与实际分量数不符时 fail-fast。

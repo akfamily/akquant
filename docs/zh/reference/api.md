@@ -514,14 +514,15 @@ class InstrumentConfig:
     symbol: str
     asset_type: Union[
         Literal["STOCK", "FUTURES", "FUND", "OPTION"],
+        Literal["ETF_OPTION", "CONVERTIBLE_BOND"],  # 品种预设, 展开为 OPTION / FUND
         InstrumentAssetTypeEnum
     ] = InstrumentAssetTypeEnum.STOCK
-    multiplier: float = 1.0    # 合约乘数
-    margin_ratio: float = 1.0  # 保证金率 (0.1 表示 10% 保证金)
-    tick_size: float = 0.01    # 最小变动价位
+    multiplier: float = None   # 合约乘数; 缺省按预设或 1.0 填充
+    margin_ratio: float = None # 保证金率 (0.1 表示 10% 保证金); 缺省按预设或 1.0 填充
+    tick_size: Optional[float] = None  # 最小变动价位; 缺省按预设或资产类型填充
     lot_size: Optional[int] = None
 
-    # 费率与执行 (资产专用)
+    # 费率与执行 (资产专用, 覆盖全局; 期权按张计费不受影响)
     commission_rate: Optional[float] = None
     min_commission: Optional[float] = None
     stamp_tax_rate: Optional[float] = None
@@ -544,9 +545,16 @@ class InstrumentConfig:
             InstrumentSettlementTypeEnum
         ]
     ] = None
-    settlement_price: Optional[float] = None
+    settlement_price: Optional[float] = None  # 期权: 到期日标的结算价
+    sellable_after_days: Optional[int] = None
     static_attrs: Dict[str, Union[str, int, float, bool]] = field(default_factory=dict)
+
+    # 以下由 __post_init__ 填写, 不可传入
+    product_preset: Optional[str]      # 展开前的品种预设名, 未用预设时为 None
+    defaulted_fields: FrozenSet[str]   # 由缺省值填充的字段名
 ```
+
+`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` 在 `run_backtest` 中按标的覆盖市场费率（ChinaMarket 下股票/基金四项全部生效、期货只认 `commission_rate`；SimpleMarket 下四项对所有资产生效；期权不受影响）。已知限制：`run_from_checkpoint` 续跑时这些覆盖暂不生效；`slippage` 字段目前尚未接入撮合。
 
 常用枚举（均可在 `akquant` 顶层直接访问）：
 
@@ -680,26 +688,64 @@ config = BacktestConfig(
 *   同级规则冲突时，以显式规则覆盖模板规则。
 *   撮合校验路径按更具体前缀优先（更长匹配优先）。
 
-中国期权扩展配置位于 `BacktestConfig.china_options`，用于管理中国期权费率：
+中国期权扩展配置位于 `BacktestConfig.china_options`（`ChinaOptionsConfig`），用于管理中国期权费率。缺省值取沪深 ETF 期权现行口径，单位均为元/张：
 
-- `fee_per_contract`: 全局每张合约手续费
-- `fee_by_symbol_prefix`: 按品种前缀覆盖每张合约手续费
-- `use_china_market`: 是否切换到 ChinaMarket
-- `sessions`: 可选时段覆盖（不与期货会话配置冲突时生效）
+| 字段 | 缺省值 | 说明 |
+|---|---|---|
+| `commission_per_contract` | `5.0` | 券商佣金，双向收取，卖出开仓照收（原 `fee_per_contract`，已改名） |
+| `exchange_fee_per_contract` | `1.3` | 交易所交易经手费，双向收取 |
+| `clearing_fee_per_contract` | `0.3` | 中国结算交易结算费，双向收取 |
+| `exercise_fee_per_contract` | `0.6` | 行权结算费，到期时只向实值被行权的多头收取 |
+| `sell_open_exempt` | `True` | 卖出开仓（含备兑开仓）免收经手费与结算费；交易所恢复收费时设为 `False` |
+| `fee_by_symbol_prefix` | `None` | `ChinaOptionsFeeConfig` 列表，按品种前缀覆盖上面五项（字段同名同缺省，`commission_per_contract` 必填） |
+| `use_china_market` | `True` | 是否使用 ChinaMarket；只有显式设为 `False` 才走 SimpleMarket（此时期权按成交额百分比计费，行权结算费为 0） |
+| `sessions` | `None` | 可选时段覆盖（不与期货会话配置冲突时生效） |
+
+只要回测里有期权合约，**默认就使用 ChinaMarket**（不再需要配置 `china_options` 或 `t_plus_one=True`）。副作用：同一回测里的 ETF 等基金改按 ChinaMarket 的 FUND 费率计费。
+
+卖单按"成交前持仓"拆成两段计费：先平掉多头的部分照收全部费用，超出多头的部分视为卖出开仓，`sell_open_exempt=True` 时只收佣金。`position_effect="auto"` 下，一笔穿越零持仓的卖单会被拆成一笔平仓单和一笔开仓单。行权结算费计入到期事件 `ExpiryEvent.fee` 并从到期现金流中扣除（`cash_flow` 为毛额，账户实收 `cash_flow - fee`），**不计入** `trade_metrics.total_commission`。
 
 中国期权扩展推荐使用以下优先级口径：
 
 | 配置项 | 高优先级 | 中优先级 | 默认值 |
 |---|---|---|---|
-| 期权费率（按张） | `fee_by_symbol_prefix` | `fee_per_contract` | `set_option_fee_rules` 默认配置 |
-| 市场路由 | `use_china_market=True` | 混合资产时自动 ChinaMarket | `use_simple_market` |
+| 期权费率（按张） | `fee_by_symbol_prefix` | `ChinaOptionsConfig` 全局字段 | 上表缺省值 |
+| 市场路由 | `use_china_market=False` 时 SimpleMarket | — | 有期权合约即 ChinaMarket |
+
+品种预设：`InstrumentConfig.asset_type` 除四个基础类型外，还可以写品种预设名，在 `__post_init__` 中展开，显式传入的字段一律优先；展开后原始预设名保存在 `InstrumentConfig.product_preset`，由缺省值填充的字段名记在 `defaulted_fields`。
+
+| 字段 | `ETF_OPTION` | `CONVERTIBLE_BOND` |
+|---|---|---|
+| 底层 asset_type | OPTION | FUND |
+| multiplier | 10000 | 1（价格按每张计） |
+| tick_size | 0.0001 | 0.001 |
+| lot_size | 1 | 10 |
+| sellable_after_days | 0 | 0 |
+| option_margin_model | CHINA_SINGLE_LEG | — |
+| 费用 | 上述全局期权规则 | 全局 FUND 规则；可用 `InstrumentConfig.commission_rate` 等字段按品种覆盖 |
+
+```python
+from akquant import InstrumentConfig
+
+option = InstrumentConfig(
+    symbol="10007000.SH",
+    asset_type="ETF_OPTION",
+    option_type="CALL",
+    strike_price=3.0,
+    expiry_date=20260325,
+    underlying_symbol="510050.SH",
+)
+cb = InstrumentConfig(symbol="113050.SH", asset_type="CONVERTIBLE_BOND")
+```
+
+`multiplier`、`margin_ratio`、`tick_size` 的缺省值为 `None`，在 `__post_init__` 中按"预设 → 1.0（`tick_size` 为按资产类型的缺省值）"填充。
 
 期货 vs 期权配置能力对照：
 
 | 能力维度 | 中国期货（`china_futures`） | 中国期权（`china_options`） |
 |---|---|---|
 | 路由开关 | `use_china_futures_market` | `use_china_market` |
-| 全局费率 | `StrategyConfig.commission_policy` / `StrategyConfig.commission_rate` 或模板费率 | `fee_per_contract` |
+| 全局费率 | `StrategyConfig.commission_policy` / `StrategyConfig.commission_rate` 或模板费率 | `commission_per_contract` 等四项按张费用 |
 | 前缀费率覆盖 | `fee_by_symbol_prefix` | `fee_by_symbol_prefix` |
 | 合约参数模板 | 支持（乘数/保证金/tick/手数） | 不支持 |
 | 撮合校验开关 | 支持（tick/手数，含前缀覆盖） | 不支持 |
@@ -1099,7 +1145,9 @@ run_live(
 *   `set_futures_validation_options(enforce_tick_size, enforce_lot_size)`: 设置期货撮合前校验开关。
 *   `set_futures_validation_options_by_prefix(symbol_prefix, enforce_tick_size, enforce_lot_size)`: 设置期货品种前缀校验开关。
 *   `set_fund_fee_rules(...)`: 设置基金费率。
-*   `set_option_fee_rules(...)`: 设置期权费率。
+*   `set_option_fee_rules(commission_per_contract, exchange_fee_per_contract, clearing_fee_per_contract, exercise_fee_per_contract, sell_open_exempt)`: 设置期权费率（元/张）。
+*   `set_options_fee_rules_by_prefix(symbol_prefix, commission_per_contract, exchange_fee_per_contract, clearing_fee_per_contract, exercise_fee_per_contract, sell_open_exempt)`: 设置期权品种前缀费率。
+*   `set_instrument_fee_override(symbol, commission_rate=None, min_commission=None, stamp_tax_rate=None, transfer_fee_rate=None)`: 设置单个标的的费用覆盖，未传的项沿用市场配置。
 *   `set_slippage(type, value)`: 设置滑点 (Fixed 或 Percent)。
 *   `set_volume_limit(limit)`: 设置成交量限制 (如 0.1 表示不超过 Bar 成交量的 10%)。
 *   `set_market_sessions(sessions)`: 设置交易时段。
