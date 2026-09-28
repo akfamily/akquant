@@ -539,7 +539,7 @@ class InstrumentConfig:
     tick_size: Optional[float] = None  # Minimum price variation; filled from preset or asset type
     lot_size: Optional[int] = None
 
-    # Costs & Execution (Asset Specific; override global rates, options unaffected)
+    # Costs & Execution (Asset Specific; override global rates; options unaffected under ChinaMarket)
     commission_rate: Optional[float] = None
     min_commission: Optional[float] = None
     stamp_tax_rate: Optional[float] = None
@@ -582,9 +582,9 @@ Product presets (explicitly passed fields always win):
 | sellable_after_days | 0 | 0 |
 | option_margin_model | CHINA_SINGLE_LEG | — |
 
-`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` override market rates per symbol in `run_backtest` (ChinaMarket: all four for stocks/funds, only `commission_rate` for futures; SimpleMarket: all four for every asset; options are charged per contract and unaffected). Known limitations: these overrides are not applied by `run_from_checkpoint`, and `slippage` is not yet honored.
+`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` override market rates per symbol in `run_backtest` (ChinaMarket: all four for stocks/funds, only `commission_rate` for futures; SimpleMarket: all four for every asset). Under ChinaMarket, options are charged per contract and unaffected by these fields; but with an explicit `use_china_market=False` (SimpleMarket), the overrides apply to options too, same as any other asset. Known limitations: these overrides are not applied by `run_from_checkpoint`, which also does not forward `china_options` at all — on resume, options are charged by SimpleMarket's percent commission policy with no exercise fee (unless `t_plus_one=True` routes the resumed run through ChinaMarket); if a backtest is split via checkpoint, `on_expiry` for a position settled at the end of the first segment is never delivered; `slippage` is not yet honored.
 
-Option fees (`ChinaOptionsConfig`, CNY per contract): `commission_per_contract=5.0` (renamed from `fee_per_contract`), `exchange_fee_per_contract=1.3`, `clearing_fee_per_contract=0.3`, `exercise_fee_per_contract=0.6` (ITM long only, reported in `ExpiryEvent.fee`, not in `total_commission`), `sell_open_exempt=True` (sell-to-open pays commission only). Any option instrument in a backtest selects ChinaMarket unless `ChinaOptionsConfig(use_china_market=False)`. Expiry settles at the start of the first trading day after `expiry_date` using the expiry-day close; see the Chinese API reference and textbook chapter 8 for details.
+Option fees (`ChinaOptionsConfig`, CNY per contract): `commission_per_contract=5.0` (renamed from `fee_per_contract`), `exchange_fee_per_contract=1.3`, `clearing_fee_per_contract=0.3`, `exercise_fee_per_contract=0.6` (ITM long only, reported in `ExpiryEvent.fee`, not in `total_commission`), `sell_open_exempt=True` (sell-to-open pays commission only). These defaults are the SSE/SZSE ETF-option schedule only; commodity futures options / index options (e.g. RB, MO, IO) use different rates — set them explicitly via `fee_by_symbol_prefix`. Any option instrument in a backtest selects ChinaMarket unless `ChinaOptionsConfig(use_china_market=False)`; in the same backtest, futures keep the user's percent commission rate (a non-percent commission policy cannot be applied to ChinaMarket futures and falls back to the futures default rate, with a warning logged). Expiry settles at the start of the first trading day after `expiry_date` using the expiry-day close; see the Chinese API reference and textbook chapter 8 for details.
 
 Common enums (available directly from top-level `akquant`):
 

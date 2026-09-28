@@ -522,7 +522,7 @@ class InstrumentConfig:
     tick_size: Optional[float] = None  # 最小变动价位; 缺省按预设或资产类型填充
     lot_size: Optional[int] = None
 
-    # 费率与执行 (资产专用, 覆盖全局; 期权按张计费不受影响)
+    # 费率与执行 (资产专用, 覆盖全局; ChinaMarket 下期权按张计费不受影响)
     commission_rate: Optional[float] = None
     min_commission: Optional[float] = None
     stamp_tax_rate: Optional[float] = None
@@ -554,7 +554,7 @@ class InstrumentConfig:
     defaulted_fields: FrozenSet[str]   # 由缺省值填充的字段名
 ```
 
-`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` 在 `run_backtest` 中按标的覆盖市场费率（ChinaMarket 下股票/基金四项全部生效、期货只认 `commission_rate`；SimpleMarket 下四项对所有资产生效；期权不受影响）。已知限制：`run_from_checkpoint` 续跑时这些覆盖暂不生效；`slippage` 字段目前尚未接入撮合。
+`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` 在 `run_backtest` 中按标的覆盖市场费率（ChinaMarket 下股票/基金四项全部生效、期货只认 `commission_rate`；SimpleMarket 下四项对所有资产生效）。ChinaMarket 下期权按张计费不受这些字段影响；但显式 `use_china_market=False` 走 SimpleMarket 时，覆盖同样作用于期权。已知限制：`run_from_checkpoint` 续跑时这些覆盖暂不生效，且完全不下发 `china_options` 配置——续跑段的期权按 SimpleMarket 的百分比佣金计费、不收行权结算费（除非 `t_plus_one=True`）；若回测通过 checkpoint 拆分运行，前一段结束时补结算的持仓的 `on_expiry` 不会送达；`slippage` 字段目前尚未接入撮合。
 
 常用枚举（均可在 `akquant` 顶层直接访问）：
 
@@ -701,7 +701,9 @@ config = BacktestConfig(
 | `use_china_market` | `True` | 是否使用 ChinaMarket；只有显式设为 `False` 才走 SimpleMarket（此时期权按成交额百分比计费，行权结算费为 0） |
 | `sessions` | `None` | 可选时段覆盖（不与期货会话配置冲突时生效） |
 
-只要回测里有期权合约，**默认就使用 ChinaMarket**（不再需要配置 `china_options` 或 `t_plus_one=True`）。副作用：同一回测里的 ETF 等基金改按 ChinaMarket 的 FUND 费率计费。
+以上缺省值只适用于沪深 ETF 期权；商品期货期权 / 股指期权（如 RB、MO、IO 等）费率与减免规则不同，请用 `fee_by_symbol_prefix` 显式设置费率与 `sell_open_exempt`。
+
+只要回测里有期权合约，**默认就使用 ChinaMarket**（不再需要配置 `china_options` 或 `t_plus_one=True`）。副作用：同一回测里的 ETF 等基金改按 ChinaMarket 的 FUND 费率计费；同一回测里的期货沿用用户设置的百分比佣金率，非百分比佣金策略无法应用到 ChinaMarket 期货（回退为期货缺省费率并打一条 warning）。
 
 卖单按"成交前持仓"拆成两段计费：先平掉多头的部分照收全部费用，超出多头的部分视为卖出开仓，`sell_open_exempt=True` 时只收佣金。`position_effect="auto"` 下，一笔穿越零持仓的卖单会被拆成一笔平仓单和一笔开仓单。行权结算费计入到期事件 `ExpiryEvent.fee` 并从到期现金流中扣除（`cash_flow` 为毛额，账户实收 `cash_flow - fee`），**不计入** `trade_metrics.total_commission`。
 

@@ -267,7 +267,7 @@ $$ Margin = \text{权利金} + \max(12\% \times S - \text{虚值额}, 7\% \times
 | 券商佣金 | 由券商与客户约定（缺省 5 元/张） | 照收 | `commission_per_contract` |
 | 行权结算费 | 0.6 元/张，只向行权方收取 | — | `exercise_fee_per_contract` |
 
-出处：[上交所收费管理规则适用指引第 1 号（2023 年 8 月修订）](https://www.sse.com.cn/lawandrules/sselawsrules2025/charge/c/c_20250610_10781461.shtml)；[信达证券 2022-09 关于沪深 500ETF / 创业板 ETF 期权上市的通知](https://www.cindasc.com/osoa/views/a/20220919/46254.html)（沪深同标准）。
+出处：[上交所收费管理规则适用指引第 1 号（2023 年 8 月修订）](https://www.sse.com.cn/lawandrules/sselawsrules2025/charge/c/c_20250610_10781461.shtml)；[信达证券 2022-09 关于沪深 500ETF / 创业板 ETF 期权上市的通知](https://www.cindasc.com/osoa/views/a/20220919/46254.html)（沪深同标准）。以上默认值只适用于沪深 ETF 期权；商品期权（如 RB、MO、IO 等期货期权/股指期权）费率与减免规则不同，请用 `ChinaOptionsConfig.fee_by_symbol_prefix` 显式设置费率与 `sell_open_exempt`。
 
 几点计费细节：
 
@@ -284,9 +284,9 @@ $$ Margin = \text{权利金} + \max(12\% \times S - \text{虚值额}, 7\% \times
 
 没有配置 `expiry_date` 的期权视为不到期，会一直按市价估值。
 
-**回测收尾补结算**：如果数据恰好在到期日（或之后没有新交易日）结束，就不会有"进入下一天"来触发结算。回测结束时会对到期日不晚于最后交易日的持仓补跑一次到期结算（期权与期货 / 股票都覆盖），结果计入最终权益。这次补结算只记日志，**不触发** `on_expiry`，也不推送流式事件；实盘不做补结算。
+**会话收尾补结算**：如果数据恰好在到期日（或之后没有新交易日）结束，就不会有"进入下一天"来触发结算。会话结束时会对到期日不晚于最后交易日的持仓补跑一次到期结算（期权与期货 / 股票都覆盖），结果计入最终权益。这次补结算只记日志，**不触发** `on_expiry`，也不推送流式事件；broker 实盘不做补结算（到期由柜台处理），但 `run_live` 的 paper/replay 会话结束时同样会补结算（若在到期日当天停止，用的是当时已知的最新价而非真正的到期日收盘价）。
 
-**已知限制**：到期一律按现金结算内在价值近似，不做实物交割，也不支持主动行权。
+**已知限制**：到期一律按现金结算内在价值近似，不做实物交割，也不支持主动行权；`run_from_checkpoint` 续跑完全不下发 `china_options` 配置，续跑段的期权按 SimpleMarket 的百分比佣金计费、不收行权结算费（除非 `t_plus_one=True` 让续跑走上 ChinaMarket）；若回测通过 checkpoint 拆分运行，前一段结束时补结算的持仓不会触发 `on_expiry`。
 
 ## 8.9 波动率套利 (Volatility Arbitrage)
 
