@@ -180,8 +180,8 @@ impl SettlementManager {
         for symbol in self.note_deferred(&deferred) {
             log::warn!(
                 target: "akquant::settlement",
-                "期权 {symbol} 已到期, 但既没有配置 settlement_price, 也没有标的的任何价格, \
-                 暂不结算、持仓保留, 之后每个交易日重试。请把标的行情一起放进回测数据。"
+                "期权 {symbol} 已到期, 但拿不到有效的标的结算价(未配置正的 settlement_price, \
+                 也没有标的任何价格), 暂不结算、持仓保留, 之后每个交易日重试。请把标的行情一起放进回测数据。"
             );
         }
         tasks.extend(self.expiry_handler.check_settlement(

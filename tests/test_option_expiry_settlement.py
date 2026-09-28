@@ -195,3 +195,22 @@ def test_no_underlying_ever_keeps_position() -> None:
     )
     assert strat.day_positions["2023-12-04"] == 1.0
     assert strat.expiries == []
+
+
+def test_option_without_expiry_date_never_expires() -> None:
+    """未配置 expiry_date 的期权永不到期: 持仓一直保留, 不产生到期事件."""
+    strat = _ExpiryRecorder()
+    _run(
+        strat,
+        {
+            "OPT": _daily("OPT", DAYS, [1.0] * 4),
+            "UL": _daily("UL", DAYS, [100.0, 101.0, 120.0, 120.0]),
+        },
+        [
+            _call(expiry_date=None),
+            akquant.InstrumentConfig(symbol="UL", asset_type="STOCK"),
+        ],
+    )
+    for day in DAYS[1:]:
+        assert strat.day_positions[day] == 1.0
+    assert strat.expiries == []

@@ -432,7 +432,8 @@ impl Instrument {
         match &self.inner {
             InstrumentEnum::Stock(s) => s.expiry_date,
             InstrumentEnum::Futures(f) => f.expiry_date,
-            InstrumentEnum::Option(o) => Some(o.expiry_date),
+            // 0 表示未配置到期日, 视为不到期
+            InstrumentEnum::Option(o) => (o.expiry_date != 0).then_some(o.expiry_date),
             _ => None,
         }
     }

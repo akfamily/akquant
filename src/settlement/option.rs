@@ -281,4 +281,31 @@ mod tests {
         assert_eq!(tasks[0].cash_flow, dec!(3000));
         assert_eq!(tasks[0].settlement_price, Some(dec!(130)));
     }
+
+    #[test]
+    fn test_option_without_expiry_date_never_expires() {
+        // expiry_date = 0 表示未配置到期日: 任何日期都不结算, 也不算延后
+        let handler = OptionSettlementHandler;
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "OPT_CALL".to_string(),
+            create_test_option("OPT_CALL", 0, OptionType::Call, dec!(100)),
+        );
+        let mut last_prices = HashMap::new();
+        last_prices.insert("UNDERLYING".to_string(), dec!(110));
+        for date in [
+            NaiveDate::from_ymd_opt(1970, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2099, 12, 31).unwrap(),
+        ] {
+            let (tasks, deferred) = handler.check_with_deferred(
+                date,
+                &one_long_call_portfolio(),
+                &instruments,
+                &last_prices,
+            );
+            assert!(tasks.is_empty(), "{date}: 不应生成到期任务");
+            assert!(deferred.is_empty(), "{date}: 不应进入延后列表");
+        }
+    }
 }
