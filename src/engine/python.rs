@@ -1405,8 +1405,12 @@ impl Engine {
         // Final cleanup
         self.state.order_manager.cleanup_finished_orders();
 
-        // 回测收尾补做到期结算: 结算平时在"进入新交易日"时触发, 数据恰好在到期日
-        // (或之后再无交易日)结束时就永远等不到那一刻。实盘不做——实盘到期由柜台处理。
+        // 会话收尾补做到期结算: 结算平时在"进入新交易日"时触发, 数据恰好在到期日
+        // (或之后再无交易日)结束时就永远等不到那一刻。判据是 execution_model.is_live()
+        // (仅 RealtimeExecutionClient 对接 broker 时为 true): broker 实盘不做——实盘到期
+        // 由柜台处理; run_live 的 paper/replay 走 SimulatedExecutionClient, is_live()
+        // 为 false, 会话结束时同样补结算(若在到期日当天停止, 用的是当时已知的最新价而非
+        // 真正的到期日收盘价)。
         if !self.execution_model.is_live()
             && let Some(last_date) = self.current_date
             && let Some(next_date) = last_date.succ_opt()

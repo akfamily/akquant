@@ -3928,6 +3928,22 @@ def run_backtest(
         # 百分比收期权费用, 口径完全不对。只有显式 use_china_market=False 才走 Simple。
         if china_options_config is None or china_options_config.use_china_market:
             engine.use_china_market()
+            if has_futures_instruments:
+                # 没有期权时期货走 SimpleMarket, 按用户的 commission_rate 收费; 这里被
+                # 期权带进 ChinaMarket 后若不下发, 期货会静默回落到 FuturesConfig
+                # 缺省费率 0.000023。ChinaMarket 的期货费率只支持按成交额百分比。
+                if commission_policy["type"] == "percent":
+                    engine.set_futures_fee_rules(float(commission_policy["value"]))
+                else:
+                    logger.warning(
+                        "Option instruments switch the backtest to ChinaMarket, "
+                        "whose futures fees only support a percent rate; "
+                        "commission_policy type %r cannot be applied to futures, "
+                        "which fall back to the default futures rate. Configure "
+                        "ChinaFuturesConfig.fee_by_symbol_prefix or "
+                        "InstrumentConfig.commission_rate for futures explicitly.",
+                        commission_policy["type"],
+                    )
         else:
             if hasattr(engine, "use_simple_market_policy"):
                 cast(Any, engine).use_simple_market_policy(
