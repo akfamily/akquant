@@ -61,7 +61,7 @@ def test_option_example_builders_match_current_run_backtest_api() -> None:
         commission_rate=0.0,
         show_progress=False,
     )
-    assert result.metrics.end_market_value == 99900.0
+    assert result.metrics.end_market_value == pytest.approx(99892.8)
 
 
 def test_option_example_main_uses_keyword_arguments(monkeypatch: Any) -> None:
@@ -76,7 +76,7 @@ def test_option_example_main_uses_keyword_arguments(monkeypatch: Any) -> None:
         captured.update(kwargs)
         return SimpleNamespace(
             orders=[],
-            metrics=SimpleNamespace(end_market_value=99900.0),
+            metrics=SimpleNamespace(end_market_value=99892.8),
             trades_df=pd.DataFrame(),
         )
 

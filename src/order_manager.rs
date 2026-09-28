@@ -342,6 +342,12 @@ impl OrderManager {
             // 2. Calculate Final Commission
             let instr_opt = instruments.get(&trade.symbol);
             if let Some(instr) = instr_opt {
+                // 组合在第 3 步才更新, 此处取到的正是成交前持仓
+                let position_before = portfolio
+                    .positions
+                    .get(&trade.symbol)
+                    .copied()
+                    .unwrap_or(Decimal::ZERO);
                 let order_override = self
                     .active_orders
                     .iter()
@@ -369,6 +375,7 @@ impl OrderManager {
                             trade.side,
                             trade.price,
                             trade.quantity,
+                            position_before,
                         ),
                     };
                 } else {
@@ -377,6 +384,7 @@ impl OrderManager {
                         trade.side,
                         trade.price,
                         trade.quantity,
+                        position_before,
                     );
                 }
             }

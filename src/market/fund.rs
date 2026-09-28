@@ -9,6 +9,8 @@ pub struct FundConfig {
     pub transfer_fee: Decimal,
     pub min_commission: Decimal,
     pub t_plus_one: bool,
+    /// 印花税率(仅卖出收取), 场内基金/可转债现行为 0, 留作按品种覆盖
+    pub stamp_tax: Decimal,
 }
 
 impl Default for FundConfig {
@@ -18,6 +20,7 @@ impl Default for FundConfig {
             transfer_fee: Decimal::from_str("0.00001").unwrap(),
             min_commission: Decimal::from(5),
             t_plus_one: true,
+            stamp_tax: Decimal::ZERO,
         }
     }
 }
@@ -26,7 +29,7 @@ impl Default for FundConfig {
 pub fn calculate_commission(
     config: &FundConfig,
     _instrument: &Instrument,
-    _side: OrderSide,
+    side: OrderSide,
     price: Decimal,
     quantity: Decimal,
     multiplier: Decimal,
@@ -43,6 +46,11 @@ pub fn calculate_commission(
 
     // 2. 过户费
     commission += transaction_value * config.transfer_fee;
+
+    // 3. 印花税 (仅卖出收取)
+    if side == OrderSide::Sell {
+        commission += transaction_value * config.stamp_tax;
+    }
 
     commission
 }

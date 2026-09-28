@@ -7,8 +7,27 @@ use crate::market::{
     ChinaMarketConfig, MarketConfig, MarketModel, SessionRange, SimpleMarketConfig, fund, futures,
     option, stock,
 };
+use crate::market::fee_override::FeeOverride;
 use crate::market::stock::CommissionMode;
 use crate::model::{Instrument, TradingSession};
+
+/// 从 Python 传入的 f64 构造期权费率配置, 非法值按 0 处理(与其它 setter 一致)。
+pub fn option_fee_config(
+    commission_per_contract: f64,
+    exchange_fee_per_contract: f64,
+    clearing_fee_per_contract: f64,
+    exercise_fee_per_contract: f64,
+    sell_open_exempt: bool,
+) -> option::OptionConfig {
+    let d = |v: f64| Decimal::from_f64(v).unwrap_or(Decimal::ZERO);
+    option::OptionConfig {
+        commission_per_contract: d(commission_per_contract),
+        exchange_fee_per_contract: d(exchange_fee_per_contract),
+        clearing_fee_per_contract: d(clearing_fee_per_contract),
+        exercise_fee_per_contract: d(exercise_fee_per_contract),
+        sell_open_exempt,
+    }
+}
 
 /// 市场管理器
 /// 负责管理市场配置、市场模型以及相关的费率和交易时段设置
@@ -36,12 +55,46 @@ impl MarketManager {
         }
     }
 
+    /// 期权行权结算费(元/张)。只有 ChinaMarket 配置了期权费率; SimpleMarket 下为 0。
+    pub fn option_exercise_fee_per_contract(&self, symbol: &str) -> Decimal {
+        match &self.config {
+            MarketConfig::China(c) => crate::market::china::resolve_option_config(c, symbol)
+                .map_or(Decimal::ZERO, |o| o.exercise_fee_per_contract),
+            MarketConfig::Simple(_) => Decimal::ZERO,
+        }
+    }
+
+    /// 设置某个标的的费用覆盖; 空覆盖等于删除。
+    pub fn set_instrument_fee_override(&mut self, symbol: &str, fee: FeeOverride) {
+        let key = crate::model::instrument::normalize_symbol_suffix(symbol.trim());
+        let overrides = match &mut self.config {
+            MarketConfig::China(c) => &mut c.fee_overrides,
+            MarketConfig::Simple(c) => &mut c.fee_overrides,
+        };
+        if fee.is_empty() {
+            overrides.remove(&key);
+        } else {
+            overrides.insert(key, fee);
+        }
+        self.model = self.config.create_model();
+    }
+
+    /// 当前配置里的费用覆盖表, 供整体替换市场配置时带过去。
+    fn fee_overrides(&self) -> HashMap<String, FeeOverride> {
+        match &self.config {
+            MarketConfig::China(c) => c.fee_overrides.clone(),
+            MarketConfig::Simple(c) => c.fee_overrides.clone(),
+        }
+    }
+
     /// 启用 SimpleMarket (7x24小时, T+0, 无税, 简单佣金)
     ///
     /// :param commission_rate: 佣金率
     pub fn use_simple_market(&mut self, commission_rate: f64) {
+        let fee_overrides = self.fee_overrides();
         let config = SimpleMarketConfig {
             commission_rate: Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO),
+            fee_overrides,
             ..Default::default()
         };
         self.config = MarketConfig::Simple(config);
@@ -49,9 +102,11 @@ impl MarketManager {
     }
 
     pub fn use_simple_market_policy(&mut self, commission_type: String, commission_value: f64) {
+        let fee_overrides = self.fee_overrides();
         let config = SimpleMarketConfig {
             commission_mode: parse_commission_mode(&commission_type),
             commission_rate: Decimal::from_f64(commission_value).unwrap_or(Decimal::ZERO),
+            fee_overrides,
             ..Default::default()
         };
         self.config = MarketConfig::Simple(config);
@@ -60,11 +115,13 @@ impl MarketManager {
 
     /// 启用 ChinaMarket (支持 T+1/T+0, 印花税, 过户费, 交易时段等)
     pub fn use_china_market(&mut self) {
+        let fee_overrides = self.fee_overrides();
         let config = ChinaMarketConfig {
             stock: Some(stock::StockConfig::default()),
             futures: Some(futures::FuturesConfig::default()),
             fund: Some(fund::FundConfig::default()),
             option: Some(option::OptionConfig::default()),
+            fee_overrides,
             ..Default::default()
         };
         self.config = MarketConfig::China(config);
@@ -91,8 +148,10 @@ impl MarketManager {
     /// - 仅启用期货配置
     /// - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
     pub fn use_china_futures_market(&mut self) {
+        let fee_overrides = self.fee_overrides();
         let config = ChinaMarketConfig {
             futures: Some(futures::FuturesConfig::default()),
+            fee_overrides,
             ..Default::default()
         };
         self.config = MarketConfig::China(config);
@@ -208,43 +267,33 @@ impl MarketManager {
         }
     }
 
-    /// 设置期权费率规则
-    ///
-    /// :param commission_per_contract: 每张合约佣金 (如 5.0)
-    pub fn set_option_fee_rules(&mut self, commission_per_contract: f64) {
+    /// 设置全局期权费率规则
+    pub fn set_option_fee_rules(&mut self, fees: option::OptionConfig) {
         if let MarketConfig::China(ref mut c) = self.config {
-            let option = c.option.get_or_insert_with(option::OptionConfig::default);
-            option.commission_per_contract =
-                Decimal::from_f64(commission_per_contract).unwrap_or(Decimal::ZERO);
+            c.option = Some(fees);
             self.model = self.config.create_model();
         }
     }
 
+    /// 设置按品种前缀的期权费率规则(同一前缀重复设置时覆盖)
     pub fn set_options_fee_rules_by_prefix(
         &mut self,
         symbol_prefix: String,
-        commission_per_contract: f64,
+        fees: option::OptionConfig,
     ) {
         if let MarketConfig::China(ref mut c) = self.config {
             let prefix = symbol_prefix.trim().to_uppercase();
             if prefix.is_empty() {
                 return;
             }
-            let mut updated = false;
-            for (existing_prefix, cfg) in &mut c.options_fee_by_prefix {
-                if existing_prefix == &prefix {
-                    cfg.commission_per_contract =
-                        Decimal::from_f64(commission_per_contract).unwrap_or(Decimal::ZERO);
-                    updated = true;
-                    break;
-                }
-            }
-            if !updated {
-                let cfg = option::OptionConfig {
-                    commission_per_contract: Decimal::from_f64(commission_per_contract)
-                        .unwrap_or(Decimal::ZERO),
-                };
-                c.options_fee_by_prefix.push((prefix, cfg));
+            if let Some((_, cfg)) = c
+                .options_fee_by_prefix
+                .iter_mut()
+                .find(|(p, _)| *p == prefix)
+            {
+                *cfg = fees;
+            } else {
+                c.options_fee_by_prefix.push((prefix, fees));
             }
             self.model = self.config.create_model();
         }

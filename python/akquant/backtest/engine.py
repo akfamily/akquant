@@ -3923,9 +3923,27 @@ def run_backtest(
             engine.use_china_futures_market()
         if t_plus_one:
             engine.set_t_plus_one(True)
-    elif china_options_config and has_options_instruments:
-        if china_options_config.use_china_market:
+    elif has_options_instruments:
+        # 期权按张计费、行权结算费都只在 ChinaMarket 里实现; SimpleMarket 会按成交额
+        # 百分比收期权费用, 口径完全不对。只有显式 use_china_market=False 才走 Simple。
+        if china_options_config is None or china_options_config.use_china_market:
             engine.use_china_market()
+            if has_futures_instruments:
+                # 没有期权时期货走 SimpleMarket, 按用户的 commission_rate 收费; 这里被
+                # 期权带进 ChinaMarket 后若不下发, 期货会静默回落到 FuturesConfig
+                # 缺省费率 0.000023。ChinaMarket 的期货费率只支持按成交额百分比。
+                if commission_policy["type"] == "percent":
+                    engine.set_futures_fee_rules(float(commission_policy["value"]))
+                else:
+                    logger.warning(
+                        "Option instruments switch the backtest to ChinaMarket, "
+                        "whose futures fees only support a percent rate; "
+                        "commission_policy type %r cannot be applied to futures, "
+                        "which fall back to the default futures rate. Configure "
+                        "ChinaFuturesConfig.fee_by_symbol_prefix or "
+                        "InstrumentConfig.commission_rate for futures explicitly.",
+                        commission_policy["type"],
+                    )
         else:
             if hasattr(engine, "use_simple_market_policy"):
                 cast(Any, engine).use_simple_market_policy(
@@ -3997,11 +4015,15 @@ def run_backtest(
             kwargs.get("fund_min_commission", 0.0),
         )
 
-    if china_options_config and has_options_instruments:
-        if china_options_config.fee_per_contract is not None:
-            engine.set_option_fee_rules(china_options_config.fee_per_contract)
-    elif "option_commission" in kwargs:
-        engine.set_option_fee_rules(kwargs["option_commission"])
+    if has_options_instruments:
+        option_fees = china_options_config or ChinaOptionsConfig()
+        engine.set_option_fee_rules(
+            float(option_fees.commission_per_contract),
+            float(option_fees.exchange_fee_per_contract),
+            float(option_fees.clearing_fee_per_contract),
+            float(option_fees.exercise_fee_per_contract),
+            bool(option_fees.sell_open_exempt),
+        )
 
     if china_futures_config and has_futures_instruments:
         template_validation_by_prefix: Dict[
@@ -4126,6 +4148,10 @@ def run_backtest(
                     cast(Any, engine).set_options_fee_rules_by_prefix(
                         prefix,
                         float(option_fee_rule.commission_per_contract),
+                        float(option_fee_rule.exchange_fee_per_contract),
+                        float(option_fee_rule.clearing_fee_per_contract),
+                        float(option_fee_rule.exercise_fee_per_contract),
+                        bool(option_fee_rule.sell_open_exempt),
                     )
                 else:
                     logger.warning(
@@ -4421,14 +4447,20 @@ def run_backtest(
                 else float(current_lot_size or 1.0)
             )
             if futures_template and p_asset_type == AssetType.Futures:
-                if i_conf.multiplier == 1 and futures_template.multiplier is not None:
+                # 只有用户没传的字段才由模板填充; 以前用 "== 1" / "== 0.01" 猜测,
+                # 会把显式传入的 1 当成没传。
+                defaulted = i_conf.defaulted_fields
+                if (
+                    "multiplier" in defaulted
+                    and futures_template.multiplier is not None
+                ):
                     p_multiplier = futures_template.multiplier
                 if (
-                    i_conf.margin_ratio == 1
+                    "margin_ratio" in defaulted
                     and futures_template.margin_ratio is not None
                 ):
                     p_margin = futures_template.margin_ratio
-                if i_conf.tick_size == 0.01 and futures_template.tick_size is not None:
+                if "tick_size" in defaulted and futures_template.tick_size is not None:
                     p_tick = futures_template.tick_size
                 if i_conf.lot_size is None and futures_template.lot_size is not None:
                     p_lot = futures_template.lot_size
@@ -4511,7 +4543,9 @@ def run_backtest(
         if p_asset_type != AssetType.Futures:
             p_settlement_type = None
             p_settlement_mode = None
-            p_settlement_price = None
+            # 期权的 settlement_price 表示"到期日标的结算价", 到期结算时优先使用
+            if p_asset_type != AssetType.Option:
+                p_settlement_price = None
         if p_asset_type != AssetType.Option:
             p_option_margin_model = None
             p_implied_volatility = None
@@ -4582,6 +4616,24 @@ def run_backtest(
             ),
             static_attrs=dict(static_attrs),
         )
+
+    # InstrumentConfig 上的四个费用字段按品种覆盖市场费率。必须在市场选择与全局费率
+    # 设置之后调用(Rust 侧整体替换市场配置时会带上已有覆盖, 但先设全局再设覆盖更直观)。
+    for conf_symbol, conf in inst_conf_map.items():
+        fee_fields = {
+            "commission_rate": conf.commission_rate,
+            "min_commission": conf.min_commission,
+            "stamp_tax_rate": conf.stamp_tax_rate,
+            "transfer_fee_rate": conf.transfer_fee_rate,
+        }
+        if any(v is not None for v in fee_fields.values()):
+            engine.set_instrument_fee_override(
+                str(conf_symbol),
+                **{
+                    k: (float(v) if v is not None else None)
+                    for k, v in fee_fields.items()
+                },
+            )
 
     for current_strategy in all_strategy_instances:
         current_strategy._set_instrument_snapshots(instrument_snapshots)
@@ -5857,7 +5909,9 @@ def run_from_checkpoint(
         if p_asset_type != AssetType.Futures:
             p_settlement_type = None
             p_settlement_mode = None
-            p_settlement_price = None
+            # 期权的 settlement_price 表示"到期日标的结算价", 到期结算时优先使用
+            if p_asset_type != AssetType.Option:
+                p_settlement_price = None
         if p_asset_type != AssetType.Option:
             p_option_margin_model = None
             p_implied_volatility = None

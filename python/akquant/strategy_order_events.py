@@ -221,6 +221,7 @@ def check_expiry_events(strategy: Any) -> None:
             "quantity_before": getattr(event, "quantity_before", None),
             "quantity_closed": getattr(event, "quantity_closed", None),
             "cash_flow": getattr(event, "cash_flow", None),
+            "fee": getattr(event, "fee", None),
             "settlement_type": getattr(event, "settlement_type", None),
             "settlement_price": getattr(event, "settlement_price", None),
             "reason": getattr(event, "reason", None),

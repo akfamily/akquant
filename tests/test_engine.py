@@ -4622,7 +4622,7 @@ def test_run_backtest_china_options_fee_prefix() -> None:
             )
         ],
         china_options=akquant.ChinaOptionsConfig(
-            fee_per_contract=0.0,
+            commission_per_contract=0.0,
             fee_by_symbol_prefix=[
                 akquant.ChinaOptionsFeeConfig(
                     symbol_prefix="OPT",
@@ -4654,7 +4654,7 @@ def test_run_backtest_china_options_fee_prefix() -> None:
             )
         ],
         china_options=akquant.ChinaOptionsConfig(
-            fee_per_contract=0.0,
+            commission_per_contract=0.0,
             fee_by_symbol_prefix=[
                 akquant.ChinaOptionsFeeConfig(
                     symbol_prefix="OPT",

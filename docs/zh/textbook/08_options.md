@@ -37,13 +37,18 @@ python examples/textbook/ch08_options_functional.py
 
 ## 8.0 AKQuant 中国期权配置速览
 
-`AKQuant` 提供 `BacktestConfig.china_options` 用于中国期权费率配置：
+沪深 ETF 期权合约推荐直接用品种预设 `asset_type="ETF_OPTION"`：它展开为 `OPTION`，并自动带上合约乘数 10000、最小变动价位 0.0001、1 张一手、T+0 和中国单腿保证金模型（`CHINA_SINGLE_LEG`）。显式传入的字段一律优先于预设。
 
-- `fee_per_contract`: 全局每张合约手续费
-- `fee_by_symbol_prefix`: 按品种前缀覆盖手续费
-- `use_china_market`: 中国市场路由开关
+费率通过 `BacktestConfig.china_options`（`ChinaOptionsConfig`）配置，单位均为元/张，缺省值即沪深 ETF 期权现行口径：
 
-与中国期货配置能力的详细对照可参考 API 文档中的“期货 vs 期权配置能力对照”。
+- `commission_per_contract`: 券商佣金，缺省 5.0
+- `exchange_fee_per_contract` / `clearing_fee_per_contract`: 交易经手费 / 交易结算费，缺省 1.3 / 0.3
+- `exercise_fee_per_contract`: 行权结算费，缺省 0.6
+- `sell_open_exempt`: 卖出开仓是否免收经手费和结算费，缺省 `True`
+- `fee_by_symbol_prefix`: 按品种前缀覆盖以上各项
+- `use_china_market`: 缺省 `True`；只要回测里有期权合约就默认使用 ChinaMarket，显式设为 `False` 才走 SimpleMarket
+
+费用口径与到期结算规则详见 8.8.3 节；与中国期货配置能力的详细对照可参考 API 文档中的“期货 vs 期权配置能力对照”。
 
 示例：
 
@@ -60,19 +65,20 @@ config = BacktestConfig(
     strategy_config=StrategyConfig(initial_cash=500_000),
     instruments_config=[
         InstrumentConfig(
-            symbol="RB2310-C-3800",
-            asset_type="OPTION",
+            symbol="10007000.SH",
+            asset_type="ETF_OPTION",
             option_type="CALL",
-            strike_price=3800.0,
-            underlying_symbol="RB2310",
+            strike_price=3.0,
+            expiry_date=20260325,
+            underlying_symbol="510050.SH",
         )
     ],
     china_options=ChinaOptionsConfig(
-        fee_per_contract=5.0,
+        commission_per_contract=5.0,
         fee_by_symbol_prefix=[
             ChinaOptionsFeeConfig(
-                symbol_prefix="RB",
-                commission_per_contract=8.0,
+                symbol_prefix="1000",
+                commission_per_contract=3.0,
             )
         ],
     ),
@@ -228,19 +234,19 @@ BSM 模型假设 $\sigma$ 为常数，但实际上，不同行权价 ($K$) 的�
 在 `AKQuant` 中，配置期权合约需指定 `option_type`, `strike_price` 和 `expiry_date`。
 
 ```python
-from akquant import InstrumentConfig, OptionType
+from akquant import InstrumentConfig
 
 # 配置某个月份的购 4000 合约
 opt_config = InstrumentConfig(
     symbol="MO2309-C-4000",
     asset_type="OPTION",
-    option_type=OptionType.CALL,
+    option_type="CALL",
     strike_price=4000.0,
-    expiry_date="2023-09-15"
+    expiry_date=20230915,  # 也可传 date/datetime
 )
 ```
 
-如果你的期权策略需要在到期后执行额外逻辑，例如记录行权/到期结算结果、移除失效合约后重建候选池，推荐实现 `on_expiry(event)`。该回调仅在引擎实际执行 `expiry_date` 驱动的到期结算/移除后触发。最小可运行示例见：`examples/49_on_expiry_demo.py`。
+如果你的期权策略需要在到期后执行额外逻辑，例如记录行权/到期结算结果、移除失效合约后重建候选池，推荐实现 `on_expiry(event)`。该回调仅在引擎实际执行 `expiry_date` 驱动的到期结算/移除后触发（回测收尾时的补结算只记日志，不触发 `on_expiry`，见 8.8.3 节）。最小可运行示例见：`examples/49_on_expiry_demo.py`。
 
 ### 8.8.2 保证金计算
 
@@ -249,6 +255,38 @@ opt_config = InstrumentConfig(
 $$ Margin = \text{权利金} + \max(12\% \times S - \text{虚值额}, 7\% \times S) $$
 
 这意味着卖出期权的杠杆并不是固定的，而是随着标的价格变化而动态变化的。策略必须预留足够的现金以防**追加保证金 (Margin Call)**。
+
+### 8.8.3 费用与到期结算
+
+**费用口径（沪深 ETF 期权）**：`ChinaOptionsConfig` 的缺省值即按下表计费。
+
+| 费用项 | 标准 | 卖出开仓（含备兑开仓） | 对应字段 |
+|---|---|---|---|
+| 交易经手费 | 1.3 元/张，双向收取 | 暂免 | `exchange_fee_per_contract` |
+| 交易结算费 | 0.3 元/张，双向收取 | 暂免 | `clearing_fee_per_contract` |
+| 券商佣金 | 由券商与客户约定（缺省 5 元/张） | 照收 | `commission_per_contract` |
+| 行权结算费 | 0.6 元/张，只向行权方收取 | — | `exercise_fee_per_contract` |
+
+出处：[上交所收费管理规则适用指引第 1 号（2023 年 8 月修订）](https://www.sse.com.cn/lawandrules/sselawsrules2025/charge/c/c_20250610_10781461.shtml)；[信达证券 2022-09 关于沪深 500ETF / 创业板 ETF 期权上市的通知](https://www.cindasc.com/osoa/views/a/20220919/46254.html)（沪深同标准）。以上默认值只适用于沪深 ETF 期权；商品期权（如 RB、MO、IO 等期货期权/股指期权）费率与减免规则不同，请用 `ChinaOptionsConfig.fee_by_symbol_prefix` 显式设置费率与 `sell_open_exempt`。
+
+几点计费细节：
+
+*   卖单按成交前的持仓拆开计费：平掉多头的部分照收全部费用，超出部分视为卖出开仓，`sell_open_exempt=True` 时只收佣金。
+*   行权结算费只对**实值被行权的多头**收取；虚值到期自动放弃不收，空头（被指派的义务方）不收。它记在到期事件的 `fee` 字段里（`ExpiryEvent.fee` / `on_expiry` 的 `fee`），`cash_flow` 是毛额，账户实收 `cash_flow - fee`；它**不计入** `trade_metrics.total_commission`。
+
+**到期结算时点**：结算发生在**到期日之后第一个交易日开始时**，使用到期日的收盘价，因此策略在到期日当天仍可交易该合约。期权按现金结算内在价值：认购 $\max(S - K, 0)$、认沽 $\max(K - S, 0)$，再乘以合约乘数与张数。
+
+**标的价格来源**依次为：
+
+1.  合约上配置的 `settlement_price`（含义是"到期日标的结算价"）；
+2.  标的最近一次已知价格（通常就是到期日收盘价）；
+3.  两者都没有时**本次不结算**：持仓保留、对该合约打一次 warning，之后每个交易日重试；回测结束仍未结算的，再打一条汇总 warning。不会再按 0 把实值期权静默作废。
+
+没有配置 `expiry_date` 的期权视为不到期，会一直按市价估值。
+
+**会话收尾补结算**：如果数据恰好在到期日（或之后没有新交易日）结束，就不会有"进入下一天"来触发结算。会话结束时会对到期日不晚于最后交易日的持仓补跑一次到期结算（期权与期货 / 股票都覆盖），结果计入最终权益。这次补结算只记日志，**不触发** `on_expiry`，也不推送流式事件；broker 实盘不做补结算（到期由柜台处理），但 `run_live` 的 paper/replay 会话结束时同样会补结算（若在到期日当天停止，用的是当时已知的最新价而非真正的到期日收盘价）。
+
+**已知限制**：到期一律按现金结算内在价值近似，不做实物交割，也不支持主动行权；`run_from_checkpoint` 续跑完全不下发 `china_options` 配置，续跑段的期权按 SimpleMarket 的百分比佣金计费、不收行权结算费（除非 `t_plus_one=True` 让续跑走上 ChinaMarket）；若回测通过 checkpoint 拆分运行，前一段结束时补结算的持仓不会触发 `on_expiry`。
 
 ## 8.9 波动率套利 (Volatility Arbitrage)
 

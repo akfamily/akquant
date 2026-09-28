@@ -1,9 +1,11 @@
 use crate::model::{AssetType, Instrument, OrderSide, TradingSession};
 use chrono::NaiveTime;
 use rust_decimal::Decimal;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::core::MarketModel;
+use super::fee_override::FeeOverride;
 use super::{fund, futures, option, stock};
 
 #[derive(Clone, Debug)]
@@ -22,6 +24,8 @@ pub struct ChinaMarketConfig {
     pub sessions: Vec<SessionRange>,
     pub futures_fee_by_prefix: Vec<(String, futures::FuturesConfig)>,
     pub options_fee_by_prefix: Vec<(String, option::OptionConfig)>,
+    /// 按品种费用覆盖(Stock/Fund 四项, Futures 仅佣金率), 键为归一化后的 symbol
+    pub fee_overrides: HashMap<String, FeeOverride>,
 }
 
 fn default_sessions() -> Vec<SessionRange> {
@@ -76,6 +80,7 @@ impl Default for ChinaMarketConfig {
             sessions: default_sessions(),
             futures_fee_by_prefix: Vec::new(),
             options_fee_by_prefix: Vec::new(),
+            fee_overrides: HashMap::new(),
         }
     }
 }
@@ -117,23 +122,27 @@ impl ChinaMarket {
         }
         best_match
     }
+}
 
-    fn option_config_for_symbol(&self, symbol: &str) -> Option<&option::OptionConfig> {
-        let mut best_match: Option<&option::OptionConfig> = None;
-        let mut best_len = 0usize;
-        let symbol_upper = symbol.to_uppercase();
-        for (prefix, cfg) in &self.config.options_fee_by_prefix {
-            let normalized = prefix.trim().to_uppercase();
-            if normalized.is_empty() {
-                continue;
-            }
-            if symbol_upper.starts_with(&normalized) && normalized.len() > best_len {
-                best_match = Some(cfg);
-                best_len = normalized.len();
-            }
+/// 按 symbol 取期权费用配置: 最长前缀匹配优先, 其次全局配置。
+pub(crate) fn resolve_option_config<'a>(
+    config: &'a ChinaMarketConfig,
+    symbol: &str,
+) -> Option<&'a option::OptionConfig> {
+    let mut best_match: Option<&option::OptionConfig> = None;
+    let mut best_len = 0usize;
+    let symbol_upper = symbol.to_uppercase();
+    for (prefix, cfg) in &config.options_fee_by_prefix {
+        let normalized = prefix.trim().to_uppercase();
+        if normalized.is_empty() {
+            continue;
         }
-        best_match
+        if symbol_upper.starts_with(&normalized) && normalized.len() > best_len {
+            best_match = Some(cfg);
+            best_len = normalized.len();
+        }
     }
+    best_match.or(config.option.as_ref())
 }
 
 impl MarketModel for ChinaMarket {
@@ -152,12 +161,18 @@ impl MarketModel for ChinaMarket {
         side: OrderSide,
         price: Decimal,
         quantity: Decimal,
+        position_before: Decimal,
     ) -> Decimal {
+        let ov = self.config.fee_overrides.get(instrument.symbol());
         match instrument.asset_type {
             AssetType::Stock => {
                 if let Some(config) = &self.config.stock {
+                    let cfg: Cow<'_, stock::StockConfig> = match ov {
+                        Some(o) => Cow::Owned(o.apply_stock(config)),
+                        None => Cow::Borrowed(config),
+                    };
                     stock::calculate_commission(
-                        config,
+                        &cfg,
                         instrument,
                         side,
                         price,
@@ -173,8 +188,12 @@ impl MarketModel for ChinaMarket {
                     .futures_config_for_symbol(instrument.symbol())
                     .or(self.config.futures.as_ref())
                 {
+                    let cfg: Cow<'_, futures::FuturesConfig> = match ov {
+                        Some(o) => Cow::Owned(o.apply_futures(config)),
+                        None => Cow::Borrowed(config),
+                    };
                     futures::calculate_commission(
-                        config,
+                        &cfg,
                         instrument,
                         side,
                         price,
@@ -187,8 +206,12 @@ impl MarketModel for ChinaMarket {
             }
             AssetType::Fund => {
                 if let Some(config) = &self.config.fund {
+                    let cfg: Cow<'_, fund::FundConfig> = match ov {
+                        Some(o) => Cow::Owned(o.apply_fund(config)),
+                        None => Cow::Borrowed(config),
+                    };
                     fund::calculate_commission(
-                        config,
+                        &cfg,
                         instrument,
                         side,
                         price,
@@ -200,18 +223,8 @@ impl MarketModel for ChinaMarket {
                 }
             }
             AssetType::Option => {
-                if let Some(config) = self
-                    .option_config_for_symbol(instrument.symbol())
-                    .or(self.config.option.as_ref())
-                {
-                    option::calculate_commission(
-                        config,
-                        instrument,
-                        side,
-                        price,
-                        quantity,
-                        instrument.multiplier(),
-                    )
+                if let Some(config) = resolve_option_config(&self.config, instrument.symbol()) {
+                    option::calculate_commission(config, side, quantity, position_before)
                 } else {
                     panic!("Option market configuration not found but received option order");
                 }

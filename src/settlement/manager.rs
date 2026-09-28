@@ -12,7 +12,7 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use super::expiry::ExpirySettlementHandler;
@@ -46,6 +46,8 @@ pub struct ExecutedExpiryEvent {
     pub quantity_before: Decimal,
     pub quantity_closed: Decimal,
     pub cash_flow: Decimal,
+    /// 结算费用(期权行权结算费)。账户实际入账 = cash_flow - fee
+    pub fee: Decimal,
     pub settlement_type: Option<String>,
     pub settlement_price: Option<Decimal>,
     pub reason: String,
@@ -61,11 +63,21 @@ pub struct SettlementOutcome {
     pub forced_liquidation_events: Vec<Event>,
 }
 
+/// 一次到期结算的结果。
+#[derive(Debug, Clone, Default)]
+pub struct ExpirySettlement {
+    pub events: Vec<ExecutedExpiryEvent>,
+    /// 已到期但拿不到标的价格而延后结算的期权 symbol
+    pub deferred: Vec<String>,
+}
+
 /// Settlement Manager
 /// Centralizes daily settlement logic including T+1 settlement, option expiry, and order expiration.
 pub struct SettlementManager {
     option_handler: OptionSettlementHandler,
     expiry_handler: ExpirySettlementHandler,
+    /// 已告警过的延后结算期权 symbol(每个只告警一次)
+    deferred_warned: Mutex<HashSet<String>>,
 }
 
 impl SettlementManager {
@@ -74,7 +86,21 @@ impl SettlementManager {
         Self {
             option_handler: OptionSettlementHandler,
             expiry_handler: ExpirySettlementHandler,
+            deferred_warned: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// 记录延后结算的 symbol, 返回其中首次出现的(调用方只对这些打告警)。
+    pub fn note_deferred(&self, symbols: &[String]) -> Vec<String> {
+        let mut warned = self
+            .deferred_warned
+            .lock()
+            .expect("deferred_warned 锁被污染");
+        symbols
+            .iter()
+            .filter(|s| warned.insert((*s).clone()))
+            .cloned()
+            .collect()
     }
 
     /// Process daily settlement routine
@@ -100,21 +126,81 @@ impl SettlementManager {
             ctx.instruments,
         );
 
-        // 2. Option Expiry
-        let mut tasks = self.option_handler.check_settlement(
-            ctx.date,
-            portfolio,
-            ctx.instruments,
-            ctx.last_prices,
-        );
-        // 3. Futures/Stock Expiry
-        tasks.extend(self.expiry_handler.check_settlement(
-            ctx.date,
-            portfolio,
-            ctx.instruments,
-            ctx.last_prices,
-        ));
+        // 2. Option / Futures / Stock Expiry
+        let expiry_events = self
+            .settle_expiries(
+                ctx.date,
+                portfolio,
+                ctx.instruments,
+                ctx.last_prices,
+                ctx.market_manager,
+            )
+            .events;
 
+        // 3. Order Expiration (Day Orders)
+        // Partition orders into expired and kept. A Day order is expired at
+        // settlement UNLESS it is in `day_orders_awaiting_fill_slice` — orders
+        // whose matchable slice has not yet arrived (a next-open order created
+        // after the previous day's close fills at *this* day's open, which the
+        // caller matches *after* settlement). Expiring those before their only
+        // fill chance meant on_cross_section + TimeInForce.Day never traded.
+        let (expired, kept): (Vec<Order>, Vec<Order>) = active_orders
+            .drain(..)
+            .partition(|o| {
+                o.time_in_force == TimeInForce::Day
+                    && !ctx.day_orders_awaiting_fill_slice.contains(&o.id)
+            });
+
+        *active_orders = kept;
+
+        for mut o in expired {
+            o.status = OrderStatus::Expired;
+            expired_orders_out.push(o);
+        }
+        SettlementOutcome {
+            expiry_events,
+            ..outcome
+        }
+    }
+
+    /// 执行到期结算(期权 + 期货/股票), 返回已执行的到期事件与延后结算的期权。
+    ///
+    /// `date` 是"正在进入的交易日": 到期日严格小于它的持仓才会结算。回测收尾时
+    /// 传最后交易日的次日, 以结算恰好在最后一天到期的持仓。
+    pub fn settle_expiries(
+        &self,
+        date: NaiveDate,
+        portfolio: &mut Portfolio,
+        instruments: &HashMap<String, Instrument>,
+        last_prices: &HashMap<String, Decimal>,
+        market_manager: &MarketManager,
+    ) -> ExpirySettlement {
+        let (mut tasks, deferred) =
+            self.option_handler
+                .check_with_deferred(date, portfolio, instruments, last_prices);
+        for symbol in self.note_deferred(&deferred) {
+            log::warn!(
+                target: "akquant::settlement",
+                "期权 {symbol} 已到期, 但拿不到有效的标的结算价(未配置正的 settlement_price, \
+                 也没有标的任何价格), 暂不结算、持仓保留, 之后每个交易日重试。请把标的行情一起放进回测数据。"
+            );
+        }
+        tasks.extend(self.expiry_handler.check_settlement(
+            date,
+            portfolio,
+            instruments,
+            last_prices,
+        ));
+        for task in &mut tasks {
+            // 行权结算费只向行权方收取: 实值(现金流 > 0)的多头。虚值放弃与被指派的空头都不收。
+            if task.asset_type == crate::model::types::AssetType::Option
+                && task.quantity > Decimal::ZERO
+                && task.cash_flow > Decimal::ZERO
+            {
+                task.fee =
+                    task.quantity * market_manager.option_exercise_fee_per_contract(&task.symbol);
+            }
+        }
         let mut expiry_events = Vec::new();
         for task in tasks {
             let quantity_before = portfolio
@@ -124,8 +210,9 @@ impl SettlementManager {
                 .unwrap_or(Decimal::ZERO);
             // Execute settlement task
             // 1. Adjust Cash
-            if !task.cash_flow.is_zero() {
-                portfolio.cash += task.cash_flow;
+            let net = task.cash_flow - task.fee;
+            if !net.is_zero() {
+                portfolio.cash += net;
             }
 
             // 2. Close Position
@@ -154,41 +241,21 @@ impl SettlementManager {
             expiry_events.push(ExecutedExpiryEvent {
                 symbol: task.symbol.clone(),
                 asset_type: task.asset_type,
-                trading_date: ctx.date,
+                trading_date: date,
                 expiry_date: task.expiry_date,
                 quantity_before,
                 quantity_closed: task.quantity,
                 cash_flow: task.cash_flow,
+                fee: task.fee,
                 settlement_type: task.settlement_type.clone(),
                 settlement_price: task.settlement_price,
                 reason: task.reason.clone(),
                 description: task.description.clone(),
             });
         }
-
-        // 4. Order Expiration (Day Orders)
-        // Partition orders into expired and kept. A Day order is expired at
-        // settlement UNLESS it is in `day_orders_awaiting_fill_slice` — orders
-        // whose matchable slice has not yet arrived (a next-open order created
-        // after the previous day's close fills at *this* day's open, which the
-        // caller matches *after* settlement). Expiring those before their only
-        // fill chance meant on_cross_section + TimeInForce.Day never traded.
-        let (expired, kept): (Vec<Order>, Vec<Order>) = active_orders
-            .drain(..)
-            .partition(|o| {
-                o.time_in_force == TimeInForce::Day
-                    && !ctx.day_orders_awaiting_fill_slice.contains(&o.id)
-            });
-
-        *active_orders = kept;
-
-        for mut o in expired {
-            o.status = OrderStatus::Expired;
-            expired_orders_out.push(o);
-        }
-        SettlementOutcome {
-            expiry_events,
-            ..outcome
+        ExpirySettlement {
+            events: expiry_events,
+            deferred,
         }
     }
 
@@ -690,5 +757,81 @@ mod tests {
             outcome_long_first.liquidated_symbols.first(),
             Some(&"LONG".to_string())
         );
+    }
+
+    #[test]
+    fn note_deferred_reports_each_symbol_once() {
+        let manager = SettlementManager::new();
+        assert_eq!(
+            manager.note_deferred(&["A".to_string()]),
+            vec!["A".to_string()]
+        );
+        assert!(manager.note_deferred(&["A".to_string()]).is_empty());
+        assert_eq!(
+            manager.note_deferred(&["A".to_string(), "B".to_string()]),
+            vec!["B".to_string()]
+        );
+    }
+
+    #[test]
+    fn exercise_fee_charged_only_on_itm_long() {
+        use crate::model::instrument::{InstrumentEnum, OptionInstrument};
+        use crate::model::types::{AssetType, OptionType};
+        use rust_decimal_macros::dec;
+
+        let make = |symbol: &str, option_type: OptionType| Instrument {
+            asset_type: AssetType::Option,
+            inner: InstrumentEnum::Option(OptionInstrument {
+                symbol: symbol.to_string(),
+                multiplier: dec!(100),
+                margin_ratio: dec!(0.2),
+                tick_size: dec!(0.0001),
+                option_margin_model: crate::model::OptionMarginModel::ChinaSingleLeg,
+                option_type,
+                strike_price: dec!(100),
+                expiry_date: 20240101,
+                underlying_symbol: "UL".to_string(),
+                settlement_type: None,
+                settlement_price: None,
+                implied_volatility: None,
+                reference_volatility: None,
+            }),
+        };
+        let mut instruments = HashMap::new();
+        instruments.insert("ITM_LONG".to_string(), make("ITM_LONG", OptionType::Call));
+        instruments.insert("ITM_SHORT".to_string(), make("ITM_SHORT", OptionType::Call));
+        instruments.insert("OTM_LONG".to_string(), make("OTM_LONG", OptionType::Put));
+        let mut positions = HashMap::new();
+        positions.insert("ITM_LONG".to_string(), dec!(3));
+        positions.insert("ITM_SHORT".to_string(), dec!(-2));
+        positions.insert("OTM_LONG".to_string(), dec!(4));
+        let mut portfolio = Portfolio {
+            cash: dec!(0),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut last_prices = HashMap::new();
+        last_prices.insert("UL".to_string(), dec!(110));
+
+        let settlement = SettlementManager::new().settle_expiries(
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            &mut portfolio,
+            &instruments,
+            &last_prices,
+            &MarketManager::new(),
+        );
+        let fee_of = |s: &str| {
+            settlement
+                .events
+                .iter()
+                .find(|e| e.symbol == s)
+                .unwrap()
+                .fee
+        };
+        assert_eq!(fee_of("ITM_LONG"), dec!(1.8)); // 3 张 × 0.6
+        assert_eq!(fee_of("ITM_SHORT"), dec!(0)); // 义务方不收
+        assert_eq!(fee_of("OTM_LONG"), dec!(0)); // 虚值放弃不收
+        // 现金 = 3×10×100 - 1.8 - 2×10×100
+        assert_eq!(portfolio.cash, dec!(998.2));
     }
 }

@@ -2,9 +2,11 @@ use crate::model::{Instrument, OrderSide, TradingSession};
 use chrono::NaiveTime;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::core::MarketModel;
+use super::fee_override::FeeOverride;
 use super::stock::CommissionMode;
 
 /// 简单市场配置
@@ -15,6 +17,8 @@ pub struct SimpleMarketConfig {
     pub stamp_tax: Decimal,
     pub transfer_fee: Decimal,
     pub min_commission: Decimal,
+    /// 按品种费用覆盖, 键为归一化后的 symbol
+    pub fee_overrides: HashMap<String, FeeOverride>,
 }
 
 impl Default for SimpleMarketConfig {
@@ -25,6 +29,7 @@ impl Default for SimpleMarketConfig {
             stamp_tax: Decimal::ZERO,
             transfer_fee: Decimal::ZERO,
             min_commission: Decimal::ZERO,
+            fee_overrides: HashMap::new(),
         }
     }
 }
@@ -51,22 +56,28 @@ impl MarketModel for SimpleMarket {
         side: OrderSide,
         price: Decimal,
         quantity: Decimal,
+        _position_before: Decimal,
     ) -> Decimal {
+        let cfg: Cow<'_, SimpleMarketConfig> =
+            match self.config.fee_overrides.get(instrument.symbol()) {
+                Some(o) => Cow::Owned(o.apply_simple(&self.config)),
+                None => Cow::Borrowed(&self.config),
+            };
         let turnover = price * quantity * instrument.multiplier();
-        let mut commission = match self.config.commission_mode {
-            CommissionMode::Percent => turnover * self.config.commission_rate,
-            CommissionMode::Fixed => self.config.commission_rate,
-            CommissionMode::PerUnit => quantity * self.config.commission_rate,
+        let mut commission = match cfg.commission_mode {
+            CommissionMode::Percent => turnover * cfg.commission_rate,
+            CommissionMode::Fixed => cfg.commission_rate,
+            CommissionMode::PerUnit => quantity * cfg.commission_rate,
         };
-        if commission < self.config.min_commission {
-            commission = self.config.min_commission;
+        if commission < cfg.min_commission {
+            commission = cfg.min_commission;
         }
         let tax = if side == OrderSide::Sell {
-            turnover * self.config.stamp_tax
+            turnover * cfg.stamp_tax
         } else {
             Decimal::ZERO
         };
-        let transfer = turnover * self.config.transfer_fee;
+        let transfer = turnover * cfg.transfer_fee;
         commission + tax + transfer
     }
 

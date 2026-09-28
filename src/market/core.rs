@@ -28,12 +28,17 @@ impl MarketConfig {
 }
 
 pub trait MarketModel: Send + Sync {
+    /// 计算一笔成交的费用。
+    ///
+    /// `position_before` 是成交前该标的的带符号持仓(调用方从投影组合或实际组合取)。
+    /// 目前只有期权用它区分卖出开仓, 其余资产忽略。
     fn calculate_commission(
         &self,
         instrument: &Instrument,
         side: OrderSide,
         price: Decimal,
         quantity: Decimal,
+        position_before: Decimal,
     ) -> Decimal;
 
     fn update_available_position(

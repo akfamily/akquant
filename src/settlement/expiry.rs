@@ -35,7 +35,9 @@ impl SettlementHandler for ExpirySettlementHandler {
             let Some(expiry_date_int) = instr.expiry_date() else {
                 continue;
             };
-            if current_date_int < expiry_date_int {
+            // 结算在"进入新交易日"时触发, 所以到期日当天不结算: 进入到期日当天就结算会用
+            // 前一日收盘价, 且策略在到期日当天再也交易不到这张合约。
+            if current_date_int <= expiry_date_int {
                 continue;
             }
             let maybe_price = if instr.asset_type == AssetType::Futures {
@@ -59,6 +61,7 @@ impl SettlementHandler for ExpirySettlementHandler {
                 expiry_date: Some(expiry_date_int),
                 quantity: *qty,
                 cash_flow,
+                fee: Decimal::ZERO,
                 settlement_type: match instr.asset_type {
                     AssetType::Futures => Some(
                         match instr.settlement_type().unwrap_or(SettlementType::Cash) {
@@ -124,7 +127,7 @@ mod tests {
         let mut prices = HashMap::new();
         prices.insert("STK_EXP".to_string(), dec!(10));
         let tasks = handler.check_settlement(
-            NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
+            NaiveDate::from_ymd_opt(2026, 2, 1).expect("valid date"),
             &portfolio,
             &instruments,
             &prices,
@@ -162,7 +165,7 @@ mod tests {
         let mut prices = HashMap::new();
         prices.insert("FUT_EXP".to_string(), dec!(100));
         let tasks = handler.check_settlement(
-            NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
+            NaiveDate::from_ymd_opt(2026, 2, 1).expect("valid date"),
             &portfolio,
             &instruments,
             &prices,
@@ -200,12 +203,49 @@ mod tests {
         let mut prices = HashMap::new();
         prices.insert("FUT_SETTLE".to_string(), dec!(100));
         let tasks = handler.check_settlement(
-            NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
+            NaiveDate::from_ymd_opt(2026, 2, 1).expect("valid date"),
             &portfolio,
             &instruments,
             &prices,
         );
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].cash_flow, dec!(880));
+    }
+
+    #[test]
+    fn test_futures_not_settled_on_expiry_date_itself() {
+        let handler = ExpirySettlementHandler;
+        let mut positions = HashMap::new();
+        positions.insert("FUT_EXP".to_string(), dec!(2));
+        let portfolio = Portfolio {
+            cash: dec!(1000),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "FUT_EXP".to_string(),
+            Instrument {
+                asset_type: AssetType::Futures,
+                inner: InstrumentEnum::Futures(FuturesInstrument {
+                    symbol: "FUT_EXP".to_string(),
+                    multiplier: dec!(10),
+                    margin_ratio: dec!(0.1),
+                    tick_size: dec!(0.2),
+                    expiry_date: Some(20260131),
+                    settlement_type: None,
+                    settlement_price: None,
+                }),
+            },
+        );
+        let mut prices = HashMap::new();
+        prices.insert("FUT_EXP".to_string(), dec!(100));
+        let tasks = handler.check_settlement(
+            NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
+            &portfolio,
+            &instruments,
+            &prices,
+        );
+        assert!(tasks.is_empty());
     }
 }

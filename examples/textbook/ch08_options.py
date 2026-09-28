@@ -139,7 +139,7 @@ if __name__ == "__main__":
         strategy_config=StrategyConfig(initial_cash=500_000),
         instruments_config=[rb_fut_config, rb_opt_config],
         china_options=ChinaOptionsConfig(
-            fee_per_contract=5.0,
+            commission_per_contract=5.0,
             fee_by_symbol_prefix=[
                 ChinaOptionsFeeConfig(
                     symbol_prefix="RB",

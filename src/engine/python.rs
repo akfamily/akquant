@@ -1089,21 +1089,80 @@ impl Engine {
             .set_fund_fee_rules(commission_rate, transfer_fee, min_commission);
     }
 
-    /// 设置期权费率规则
+    /// 设置单个标的的费用覆盖(对应 InstrumentConfig 的四个费用字段), 未传的项沿用市场配置
     ///
-    /// :param commission_per_contract: 每张合约佣金 (如 5.0)
-    fn set_option_fee_rules(&mut self, commission_per_contract: f64) {
-        self.market_manager
-            .set_option_fee_rules(commission_per_contract);
+    /// :param symbol: 标的代码
+    /// :param commission_rate: 佣金率
+    /// :param min_commission: 最低佣金
+    /// :param stamp_tax_rate: 印花税率(卖出)
+    /// :param transfer_fee_rate: 过户费率
+    #[pyo3(signature = (symbol, commission_rate=None, min_commission=None, stamp_tax_rate=None, transfer_fee_rate=None))]
+    fn set_instrument_fee_override(
+        &mut self,
+        symbol: String,
+        commission_rate: Option<f64>,
+        min_commission: Option<f64>,
+        stamp_tax_rate: Option<f64>,
+        transfer_fee_rate: Option<f64>,
+    ) {
+        let d = |v: Option<f64>| v.and_then(Decimal::from_f64);
+        self.market_manager.set_instrument_fee_override(
+            &symbol,
+            crate::market::fee_override::FeeOverride {
+                commission_rate: d(commission_rate),
+                min_commission: d(min_commission),
+                stamp_tax: d(stamp_tax_rate),
+                transfer_fee: d(transfer_fee_rate),
+            },
+        );
     }
 
+    /// 设置期权费率规则(元/张)
+    ///
+    /// :param commission_per_contract: 券商佣金
+    /// :param exchange_fee_per_contract: 交易经手费
+    /// :param clearing_fee_per_contract: 交易结算费
+    /// :param exercise_fee_per_contract: 行权结算费
+    /// :param sell_open_exempt: 卖出开仓是否免收经手费与结算费
+    fn set_option_fee_rules(
+        &mut self,
+        commission_per_contract: f64,
+        exchange_fee_per_contract: f64,
+        clearing_fee_per_contract: f64,
+        exercise_fee_per_contract: f64,
+        sell_open_exempt: bool,
+    ) {
+        self.market_manager
+            .set_option_fee_rules(crate::market::manager::option_fee_config(
+                commission_per_contract,
+                exchange_fee_per_contract,
+                clearing_fee_per_contract,
+                exercise_fee_per_contract,
+                sell_open_exempt,
+            ));
+    }
+
+    /// 设置按品种前缀的期权费率规则(元/张), 参数含义同 set_option_fee_rules
+    #[allow(clippy::too_many_arguments)]
     fn set_options_fee_rules_by_prefix(
         &mut self,
         symbol_prefix: String,
         commission_per_contract: f64,
+        exchange_fee_per_contract: f64,
+        clearing_fee_per_contract: f64,
+        exercise_fee_per_contract: f64,
+        sell_open_exempt: bool,
     ) {
-        self.market_manager
-            .set_options_fee_rules_by_prefix(symbol_prefix, commission_per_contract);
+        self.market_manager.set_options_fee_rules_by_prefix(
+            symbol_prefix,
+            crate::market::manager::option_fee_config(
+                commission_per_contract,
+                exchange_fee_per_contract,
+                clearing_fee_per_contract,
+                exercise_fee_per_contract,
+                sell_open_exempt,
+            ),
+        );
     }
 
     /// 设置加密货币费率规则 (按金额比例)
@@ -1345,6 +1404,45 @@ impl Engine {
 
         // Final cleanup
         self.state.order_manager.cleanup_finished_orders();
+
+        // 会话收尾补做到期结算: 结算平时在"进入新交易日"时触发, 数据恰好在到期日
+        // (或之后再无交易日)结束时就永远等不到那一刻。判据是 execution_model.is_live()
+        // (仅 RealtimeExecutionClient 对接 broker 时为 true): broker 实盘不做——实盘到期
+        // 由柜台处理; run_live 的 paper/replay 走 SimulatedExecutionClient, is_live()
+        // 为 false, 会话结束时同样补结算(若在到期日当天停止, 用的是当时已知的最新价而非
+        // 真正的到期日收盘价)。
+        if !self.execution_model.is_live()
+            && let Some(last_date) = self.current_date
+            && let Some(next_date) = last_date.succ_opt()
+        {
+            let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+            let settlement = self.settlement_manager.settle_expiries(
+                next_date,
+                &mut self.state.portfolio,
+                &self.instruments,
+                &prices,
+                &self.market_manager,
+            );
+            drop(prices);
+            for event in &settlement.events {
+                log::info!(
+                    target: "akquant::settlement",
+                    "回测结束时补结算到期持仓: {} 数量 {} 现金流 {} 费用 {}",
+                    event.symbol,
+                    event.quantity_closed,
+                    event.cash_flow,
+                    event.fee
+                );
+            }
+            if !settlement.deferred.is_empty() {
+                log::warn!(
+                    target: "akquant::settlement",
+                    "回测结束时仍有 {} 个到期期权因缺少标的价格未能结算: {}",
+                    settlement.deferred.len(),
+                    settlement.deferred.join(", ")
+                );
+            }
+        }
 
         // Record final snapshot if we have data
         if self.current_date.is_some()

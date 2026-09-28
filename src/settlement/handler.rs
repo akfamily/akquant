@@ -14,6 +14,8 @@ pub struct SettlementTask {
     pub expiry_date: Option<u32>,
     pub quantity: Decimal,
     pub cash_flow: Decimal,
+    /// 结算费用(目前只有期权行权结算费), 从现金流中另行扣除
+    pub fee: Decimal,
     pub settlement_type: Option<String>,
     pub settlement_price: Option<Decimal>,
     pub reason: String,
@@ -33,8 +35,9 @@ pub trait SettlementHandler: Send + Sync {
 
     /// Execute a settlement task on the portfolio
     fn execute(&self, task: SettlementTask, portfolio: &mut Portfolio) {
-        if !task.cash_flow.is_zero() {
-            portfolio.adjust_cash(task.cash_flow);
+        let net = task.cash_flow - task.fee;
+        if !net.is_zero() {
+            portfolio.adjust_cash(net);
         }
 
         // Remove position (assuming full settlement for now, or use adjust_position for partial)

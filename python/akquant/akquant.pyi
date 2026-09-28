@@ -814,23 +814,46 @@ class Engine:
         """
         ...
 
-    def set_option_fee_rules(self, commission_per_contract: float) -> None:
-        r"""
-        设置期权费率规则.
+    def set_instrument_fee_override(
+        self,
+        symbol: str,
+        commission_rate: typing.Optional[float] = None,
+        min_commission: typing.Optional[float] = None,
+        stamp_tax_rate: typing.Optional[float] = None,
+        transfer_fee_rate: typing.Optional[float] = None,
+    ) -> None:
+        r"""设置单个标的的费用覆盖, 未传的项沿用市场配置."""
+        ...
 
-        :param commission_per_contract: 每张合约佣金 (如 5.0)
+    def set_option_fee_rules(
+        self,
+        commission_per_contract: float,
+        exchange_fee_per_contract: float,
+        clearing_fee_per_contract: float,
+        exercise_fee_per_contract: float,
+        sell_open_exempt: bool,
+    ) -> None:
+        r"""
+        设置期权费率规则(元/张).
+
+        :param commission_per_contract: 券商佣金
+        :param exchange_fee_per_contract: 交易经手费
+        :param clearing_fee_per_contract: 交易结算费
+        :param exercise_fee_per_contract: 行权结算费
+        :param sell_open_exempt: 卖出开仓是否免收经手费与结算费
         """
         ...
 
     def set_options_fee_rules_by_prefix(
-        self, symbol_prefix: str, commission_per_contract: float
+        self,
+        symbol_prefix: str,
+        commission_per_contract: float,
+        exchange_fee_per_contract: float,
+        clearing_fee_per_contract: float,
+        exercise_fee_per_contract: float,
+        sell_open_exempt: bool,
     ) -> None:
-        r"""
-        设置期权品种前缀费率规则.
-
-        :param symbol_prefix: 品种前缀 (如 1000ETF_C, IO)
-        :param commission_per_contract: 每张合约佣金
-        """
+        r"""设置按品种前缀的期权费率规则(元/张), 参数含义同 set_option_fee_rules."""
         ...
 
     def set_crypto_fee_rules(self, commission_rate: float) -> None:
@@ -2862,6 +2885,7 @@ class ExpiryEvent:
     quantity_before: float
     quantity_closed: float
     cash_flow: float
+    fee: float
     settlement_type: typing.Optional[str]
     settlement_price: typing.Optional[float]
     reason: str

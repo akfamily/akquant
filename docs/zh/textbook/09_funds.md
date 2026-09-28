@@ -82,6 +82,36 @@ $$ P_{CB} = P_{Bond} + P_{Option} $$
 
 **双低**指“低价格 + 低溢价率”，这两个维度恰好对应了转债的攻守两端：**低价格**意味着贴近债底，防守性强；**低转股溢价率**意味着股性强，进攻性好。基于这一点的轮动逻辑是，构建双低转债组合，定期剔除不再双低的标的，买入新的双低标的，从而实现“高抛低吸”。
 
+### 9.2.4 在 AKQuant 中配置可转债
+
+沪深可转债推荐直接用品种预设 `asset_type="CONVERTIBLE_BOND"`：
+
+```python
+from akquant import InstrumentConfig
+
+cb = InstrumentConfig(symbol="113050.SH", asset_type="CONVERTIBLE_BOND")
+```
+
+预设在 `InstrumentConfig.__post_init__` 中展开，显式传入的字段一律优先：
+
+*   底层资产类型为 `FUND`（引擎侧按基金处理）；原始预设名保存在 `cb.product_preset`。
+*   **T+0**（`sellable_after_days=0`）：当天买入当天即可卖出。
+*   **1 手 10 张**（`lot_size=10`），价格按每张（面值 100 元）计，`multiplier=1`。
+*   **最小变动价位 0.001**（`tick_size=0.001`）。
+
+可转债的费率与股票、ETF 通常不同，可以用 `commission_rate` / `min_commission` 单独设置，覆盖全局费率（未设置的项沿用全局 FUND 规则）：
+
+```python
+cb = InstrumentConfig(
+    symbol="113050.SH",
+    asset_type="CONVERTIBLE_BOND",
+    commission_rate=0.00005,  # 万分之 0.5
+    min_commission=0.1,
+)
+```
+
+说明：这些按品种的费用覆盖在 `run_backtest` 中生效，`run_from_checkpoint` 续跑时暂不生效。本期只做交易层面的建模，转股、强赎、回售、到期赎回等条款事件以及应计利息 / 净价全价尚未建模。
+
 ## 9.3 现代投资组合理论 (Modern Portfolio Theory, MPT)
 
 MPT 由 Harry Markowitz 提出，其核心思想是通过分散化 (Diversification) 降低非系统性风险。换言之，把资金分散到彼此并不完全同涨同跌的资产上，组合整体的波动会低于各资产波动的简单加权，这正是分散化带来的“免费午餐”。

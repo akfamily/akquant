@@ -116,6 +116,9 @@ pub struct OptionInstrument {
     pub expiry_date: u32,
     pub underlying_symbol: String,
     pub settlement_type: Option<SettlementType>,
+    /// 到期日标的结算价。配置了就优先于标的最近成交价用于到期结算。
+    #[serde(default)]
+    pub settlement_price: Option<Decimal>,
     pub implied_volatility: Option<Decimal>,
     pub reference_volatility: Option<Decimal>,
 }
@@ -173,7 +176,7 @@ pub enum InstrumentEnum {
 /// 合约登记都从它派生。上游用小写登记时，这三处会各自以不同面貌失败
 /// (回报被静默丢弃 / `get_instrument` KeyError / `Instrument not found` 拒单)，
 /// 在源头收敛比在三个下游各打一个补丁便宜得多。
-fn normalize_symbol_suffix(symbol: &str) -> String {
+pub(crate) fn normalize_symbol_suffix(symbol: &str) -> String {
     match symbol.rsplit_once('.') {
         Some((code, suffix)) if suffix.chars().any(|c| c.is_ascii_lowercase()) => {
             let normalized = format!("{}.{}", code, suffix.to_ascii_uppercase());
@@ -305,6 +308,7 @@ impl Instrument {
                 expiry_date: expiry_date.unwrap_or(0),
                 underlying_symbol: underlying_symbol.unwrap_or_default(),
                 settlement_type,
+                settlement_price: settlement_price_val,
                 implied_volatility: implied_volatility_val,
                 reference_volatility: reference_volatility_val,
             }),
@@ -428,7 +432,8 @@ impl Instrument {
         match &self.inner {
             InstrumentEnum::Stock(s) => s.expiry_date,
             InstrumentEnum::Futures(f) => f.expiry_date,
-            InstrumentEnum::Option(o) => Some(o.expiry_date),
+            // 0 表示未配置到期日, 视为不到期
+            InstrumentEnum::Option(o) => (o.expiry_date != 0).then_some(o.expiry_date),
             _ => None,
         }
     }
@@ -486,6 +491,7 @@ impl Instrument {
     pub fn settlement_price(&self) -> Option<Decimal> {
         match &self.inner {
             InstrumentEnum::Futures(f) => f.settlement_price,
+            InstrumentEnum::Option(o) => o.settlement_price,
             _ => None,
         }
     }
