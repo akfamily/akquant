@@ -1,9 +1,11 @@
 use crate::model::{AssetType, Instrument, OrderSide, TradingSession};
 use chrono::NaiveTime;
 use rust_decimal::Decimal;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::core::MarketModel;
+use super::fee_override::FeeOverride;
 use super::{fund, futures, option, stock};
 
 #[derive(Clone, Debug)]
@@ -22,6 +24,8 @@ pub struct ChinaMarketConfig {
     pub sessions: Vec<SessionRange>,
     pub futures_fee_by_prefix: Vec<(String, futures::FuturesConfig)>,
     pub options_fee_by_prefix: Vec<(String, option::OptionConfig)>,
+    /// 按品种费用覆盖(Stock/Fund 四项, Futures 仅佣金率), 键为归一化后的 symbol
+    pub fee_overrides: HashMap<String, FeeOverride>,
 }
 
 fn default_sessions() -> Vec<SessionRange> {
@@ -76,6 +80,7 @@ impl Default for ChinaMarketConfig {
             sessions: default_sessions(),
             futures_fee_by_prefix: Vec::new(),
             options_fee_by_prefix: Vec::new(),
+            fee_overrides: HashMap::new(),
         }
     }
 }
@@ -158,11 +163,16 @@ impl MarketModel for ChinaMarket {
         quantity: Decimal,
         position_before: Decimal,
     ) -> Decimal {
+        let ov = self.config.fee_overrides.get(instrument.symbol());
         match instrument.asset_type {
             AssetType::Stock => {
                 if let Some(config) = &self.config.stock {
+                    let cfg: Cow<'_, stock::StockConfig> = match ov {
+                        Some(o) => Cow::Owned(o.apply_stock(config)),
+                        None => Cow::Borrowed(config),
+                    };
                     stock::calculate_commission(
-                        config,
+                        &cfg,
                         instrument,
                         side,
                         price,
@@ -178,8 +188,12 @@ impl MarketModel for ChinaMarket {
                     .futures_config_for_symbol(instrument.symbol())
                     .or(self.config.futures.as_ref())
                 {
+                    let cfg: Cow<'_, futures::FuturesConfig> = match ov {
+                        Some(o) => Cow::Owned(o.apply_futures(config)),
+                        None => Cow::Borrowed(config),
+                    };
                     futures::calculate_commission(
-                        config,
+                        &cfg,
                         instrument,
                         side,
                         price,
@@ -192,8 +206,12 @@ impl MarketModel for ChinaMarket {
             }
             AssetType::Fund => {
                 if let Some(config) = &self.config.fund {
+                    let cfg: Cow<'_, fund::FundConfig> = match ov {
+                        Some(o) => Cow::Owned(o.apply_fund(config)),
+                        None => Cow::Borrowed(config),
+                    };
                     fund::calculate_commission(
-                        config,
+                        &cfg,
                         instrument,
                         side,
                         price,

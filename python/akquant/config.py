@@ -141,7 +141,8 @@ class InstrumentConfig:
 
     **Cost & Execution Overrides:**
     These fields override the global settings in `StrategyConfig` for
-    this specific asset.
+    this specific asset. 期权按张计费，不受这四个费用字段影响；
+    `run_from_checkpoint` 续跑时暂不生效。
     :param commission_rate: Commission rate (e.g., 0.0003).
     :param min_commission: Minimum commission per order.
     :param stamp_tax_rate: Stamp tax rate (sell side only).

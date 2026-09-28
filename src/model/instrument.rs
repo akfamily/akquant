@@ -176,7 +176,7 @@ pub enum InstrumentEnum {
 /// 合约登记都从它派生。上游用小写登记时，这三处会各自以不同面貌失败
 /// (回报被静默丢弃 / `get_instrument` KeyError / `Instrument not found` 拒单)，
 /// 在源头收敛比在三个下游各打一个补丁便宜得多。
-fn normalize_symbol_suffix(symbol: &str) -> String {
+pub(crate) fn normalize_symbol_suffix(symbol: &str) -> String {
     match symbol.rsplit_once('.') {
         Some((code, suffix)) if suffix.chars().any(|c| c.is_ascii_lowercase()) => {
             let normalized = format!("{}.{}", code, suffix.to_ascii_uppercase());

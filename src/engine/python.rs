@@ -1089,6 +1089,34 @@ impl Engine {
             .set_fund_fee_rules(commission_rate, transfer_fee, min_commission);
     }
 
+    /// 设置单个标的的费用覆盖(对应 InstrumentConfig 的四个费用字段), 未传的项沿用市场配置
+    ///
+    /// :param symbol: 标的代码
+    /// :param commission_rate: 佣金率
+    /// :param min_commission: 最低佣金
+    /// :param stamp_tax_rate: 印花税率(卖出)
+    /// :param transfer_fee_rate: 过户费率
+    #[pyo3(signature = (symbol, commission_rate=None, min_commission=None, stamp_tax_rate=None, transfer_fee_rate=None))]
+    fn set_instrument_fee_override(
+        &mut self,
+        symbol: String,
+        commission_rate: Option<f64>,
+        min_commission: Option<f64>,
+        stamp_tax_rate: Option<f64>,
+        transfer_fee_rate: Option<f64>,
+    ) {
+        let d = |v: Option<f64>| v.and_then(Decimal::from_f64);
+        self.market_manager.set_instrument_fee_override(
+            &symbol,
+            crate::market::fee_override::FeeOverride {
+                commission_rate: d(commission_rate),
+                min_commission: d(min_commission),
+                stamp_tax: d(stamp_tax_rate),
+                transfer_fee: d(transfer_fee_rate),
+            },
+        );
+    }
+
     /// 设置期权费率规则(元/张)
     ///
     /// :param commission_per_contract: 券商佣金

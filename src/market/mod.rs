@@ -1,6 +1,7 @@
 pub mod china;
 pub mod core;
 pub mod corporate_action;
+pub mod fee_override;
 pub mod fund;
 pub mod futures;
 pub mod manager;

@@ -814,6 +814,17 @@ class Engine:
         """
         ...
 
+    def set_instrument_fee_override(
+        self,
+        symbol: str,
+        commission_rate: typing.Optional[float] = None,
+        min_commission: typing.Optional[float] = None,
+        stamp_tax_rate: typing.Optional[float] = None,
+        transfer_fee_rate: typing.Optional[float] = None,
+    ) -> None:
+        r"""设置单个标的的费用覆盖, 未传的项沿用市场配置."""
+        ...
+
     def set_option_fee_rules(
         self,
         commission_per_contract: float,

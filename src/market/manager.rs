@@ -7,6 +7,7 @@ use crate::market::{
     ChinaMarketConfig, MarketConfig, MarketModel, SessionRange, SimpleMarketConfig, fund, futures,
     option, stock,
 };
+use crate::market::fee_override::FeeOverride;
 use crate::market::stock::CommissionMode;
 use crate::model::{Instrument, TradingSession};
 
@@ -63,12 +64,37 @@ impl MarketManager {
         }
     }
 
+    /// 设置某个标的的费用覆盖; 空覆盖等于删除。
+    pub fn set_instrument_fee_override(&mut self, symbol: &str, fee: FeeOverride) {
+        let key = crate::model::instrument::normalize_symbol_suffix(symbol.trim());
+        let overrides = match &mut self.config {
+            MarketConfig::China(c) => &mut c.fee_overrides,
+            MarketConfig::Simple(c) => &mut c.fee_overrides,
+        };
+        if fee.is_empty() {
+            overrides.remove(&key);
+        } else {
+            overrides.insert(key, fee);
+        }
+        self.model = self.config.create_model();
+    }
+
+    /// 当前配置里的费用覆盖表, 供整体替换市场配置时带过去。
+    fn fee_overrides(&self) -> HashMap<String, FeeOverride> {
+        match &self.config {
+            MarketConfig::China(c) => c.fee_overrides.clone(),
+            MarketConfig::Simple(c) => c.fee_overrides.clone(),
+        }
+    }
+
     /// 启用 SimpleMarket (7x24小时, T+0, 无税, 简单佣金)
     ///
     /// :param commission_rate: 佣金率
     pub fn use_simple_market(&mut self, commission_rate: f64) {
+        let fee_overrides = self.fee_overrides();
         let config = SimpleMarketConfig {
             commission_rate: Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO),
+            fee_overrides,
             ..Default::default()
         };
         self.config = MarketConfig::Simple(config);
@@ -76,9 +102,11 @@ impl MarketManager {
     }
 
     pub fn use_simple_market_policy(&mut self, commission_type: String, commission_value: f64) {
+        let fee_overrides = self.fee_overrides();
         let config = SimpleMarketConfig {
             commission_mode: parse_commission_mode(&commission_type),
             commission_rate: Decimal::from_f64(commission_value).unwrap_or(Decimal::ZERO),
+            fee_overrides,
             ..Default::default()
         };
         self.config = MarketConfig::Simple(config);
@@ -87,11 +115,13 @@ impl MarketManager {
 
     /// 启用 ChinaMarket (支持 T+1/T+0, 印花税, 过户费, 交易时段等)
     pub fn use_china_market(&mut self) {
+        let fee_overrides = self.fee_overrides();
         let config = ChinaMarketConfig {
             stock: Some(stock::StockConfig::default()),
             futures: Some(futures::FuturesConfig::default()),
             fund: Some(fund::FundConfig::default()),
             option: Some(option::OptionConfig::default()),
+            fee_overrides,
             ..Default::default()
         };
         self.config = MarketConfig::China(config);
@@ -118,8 +148,10 @@ impl MarketManager {
     /// - 仅启用期货配置
     /// - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
     pub fn use_china_futures_market(&mut self) {
+        let fee_overrides = self.fee_overrides();
         let config = ChinaMarketConfig {
             futures: Some(futures::FuturesConfig::default()),
+            fee_overrides,
             ..Default::default()
         };
         self.config = MarketConfig::China(config);

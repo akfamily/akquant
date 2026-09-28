@@ -4595,6 +4595,24 @@ def run_backtest(
             static_attrs=dict(static_attrs),
         )
 
+    # InstrumentConfig 上的四个费用字段按品种覆盖市场费率。必须在市场选择与全局费率
+    # 设置之后调用(Rust 侧整体替换市场配置时会带上已有覆盖, 但先设全局再设覆盖更直观)。
+    for conf_symbol, conf in inst_conf_map.items():
+        fee_fields = {
+            "commission_rate": conf.commission_rate,
+            "min_commission": conf.min_commission,
+            "stamp_tax_rate": conf.stamp_tax_rate,
+            "transfer_fee_rate": conf.transfer_fee_rate,
+        }
+        if any(v is not None for v in fee_fields.values()):
+            engine.set_instrument_fee_override(
+                str(conf_symbol),
+                **{
+                    k: (float(v) if v is not None else None)
+                    for k, v in fee_fields.items()
+                },
+            )
+
     for current_strategy in all_strategy_instances:
         current_strategy._set_instrument_snapshots(instrument_snapshots)
 
