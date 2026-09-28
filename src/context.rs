@@ -126,6 +126,9 @@ pub struct ExpiryEvent {
     pub quantity_closed: f64,
     #[pyo3(get)]
     pub cash_flow: f64,
+    /// 结算费用(期权行权结算费)。账户实际入账 = cash_flow - fee
+    #[pyo3(get)]
+    pub fee: f64,
     #[pyo3(get)]
     pub settlement_type: Option<String>,
     #[pyo3(get)]
@@ -140,6 +143,20 @@ pub struct ExpiryEvent {
 #[pymethods]
 impl ExpiryEvent {
     #[new]
+    #[pyo3(signature = (
+        symbol,
+        asset_type,
+        trading_date,
+        expiry_date,
+        quantity_before,
+        quantity_closed,
+        cash_flow,
+        settlement_type,
+        settlement_price,
+        reason,
+        description,
+        fee = 0.0
+    ))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         symbol: String,
@@ -153,6 +170,7 @@ impl ExpiryEvent {
         settlement_price: Option<f64>,
         reason: String,
         description: String,
+        fee: f64,
     ) -> Self {
         Self {
             symbol,
@@ -162,10 +180,30 @@ impl ExpiryEvent {
             quantity_before,
             quantity_closed,
             cash_flow,
+            fee,
             settlement_type,
             settlement_price,
             reason,
             description,
+        }
+    }
+}
+
+impl ExpiryEvent {
+    pub(crate) fn from_executed(event: &crate::settlement::manager::ExecutedExpiryEvent) -> Self {
+        Self {
+            symbol: event.symbol.clone(),
+            asset_type: event.asset_type,
+            trading_date: event.trading_date.to_string(),
+            expiry_date: event.expiry_date,
+            quantity_before: event.quantity_before.to_f64().unwrap_or_default(),
+            quantity_closed: event.quantity_closed.to_f64().unwrap_or_default(),
+            cash_flow: event.cash_flow.to_f64().unwrap_or_default(),
+            fee: event.fee.to_f64().unwrap_or_default(),
+            settlement_type: event.settlement_type.clone(),
+            settlement_price: event.settlement_price.and_then(|v| v.to_f64()),
+            reason: event.reason.clone(),
+            description: event.description.clone(),
         }
     }
 }

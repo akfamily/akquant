@@ -114,10 +114,12 @@ def main() -> None:
 
     print(f"Final Cash: {result.metrics.end_market_value:.2f}")
     final_val = result.metrics.end_market_value
-    if 99899.0 <= final_val <= 99901.0:
+    # 内在价值 (105-100)×100=500, 权利金 600,
+    # 买入费用 6.6(佣金5+经手1.3+结算0.3), 行权结算费 0.6
+    if abs(final_val - 99892.8) < 0.01:
         print("SUCCESS: Option Settlement Verified!")
     else:
-        print(f"FAILURE: Expected ~99900, got {final_val}")
+        print(f"FAILURE: Expected ~99892.8, got {final_val}")
 
     print(result.trades_df)
 

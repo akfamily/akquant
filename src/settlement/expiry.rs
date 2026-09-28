@@ -61,6 +61,7 @@ impl SettlementHandler for ExpirySettlementHandler {
                 expiry_date: Some(expiry_date_int),
                 quantity: *qty,
                 cash_flow,
+                fee: Decimal::ZERO,
                 settlement_type: match instr.asset_type {
                     AssetType::Futures => Some(
                         match instr.settlement_type().unwrap_or(SettlementType::Cash) {

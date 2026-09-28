@@ -2874,6 +2874,7 @@ class ExpiryEvent:
     quantity_before: float
     quantity_closed: float
     cash_flow: float
+    fee: float
     settlement_type: typing.Optional[str]
     settlement_price: typing.Optional[float]
     reason: str

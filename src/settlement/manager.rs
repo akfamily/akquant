@@ -46,6 +46,8 @@ pub struct ExecutedExpiryEvent {
     pub quantity_before: Decimal,
     pub quantity_closed: Decimal,
     pub cash_flow: Decimal,
+    /// 结算费用(期权行权结算费)。账户实际入账 = cash_flow - fee
+    pub fee: Decimal,
     pub settlement_type: Option<String>,
     pub settlement_price: Option<Decimal>,
     pub reason: String,
@@ -173,7 +175,6 @@ impl SettlementManager {
         last_prices: &HashMap<String, Decimal>,
         market_manager: &MarketManager,
     ) -> ExpirySettlement {
-        let _ = market_manager; // Task 4 用它取行权结算费
         let (mut tasks, deferred) =
             self.option_handler
                 .check_with_deferred(date, portfolio, instruments, last_prices);
@@ -190,6 +191,16 @@ impl SettlementManager {
             instruments,
             last_prices,
         ));
+        for task in &mut tasks {
+            // 行权结算费只向行权方收取: 实值(现金流 > 0)的多头。虚值放弃与被指派的空头都不收。
+            if task.asset_type == crate::model::types::AssetType::Option
+                && task.quantity > Decimal::ZERO
+                && task.cash_flow > Decimal::ZERO
+            {
+                task.fee =
+                    task.quantity * market_manager.option_exercise_fee_per_contract(&task.symbol);
+            }
+        }
         let mut expiry_events = Vec::new();
         for task in tasks {
             let quantity_before = portfolio
@@ -199,8 +210,9 @@ impl SettlementManager {
                 .unwrap_or(Decimal::ZERO);
             // Execute settlement task
             // 1. Adjust Cash
-            if !task.cash_flow.is_zero() {
-                portfolio.cash += task.cash_flow;
+            let net = task.cash_flow - task.fee;
+            if !net.is_zero() {
+                portfolio.cash += net;
             }
 
             // 2. Close Position
@@ -234,6 +246,7 @@ impl SettlementManager {
                 quantity_before,
                 quantity_closed: task.quantity,
                 cash_flow: task.cash_flow,
+                fee: task.fee,
                 settlement_type: task.settlement_type.clone(),
                 settlement_price: task.settlement_price,
                 reason: task.reason.clone(),
@@ -758,5 +771,67 @@ mod tests {
             manager.note_deferred(&["A".to_string(), "B".to_string()]),
             vec!["B".to_string()]
         );
+    }
+
+    #[test]
+    fn exercise_fee_charged_only_on_itm_long() {
+        use crate::model::instrument::{InstrumentEnum, OptionInstrument};
+        use crate::model::types::{AssetType, OptionType};
+        use rust_decimal_macros::dec;
+
+        let make = |symbol: &str, option_type: OptionType| Instrument {
+            asset_type: AssetType::Option,
+            inner: InstrumentEnum::Option(OptionInstrument {
+                symbol: symbol.to_string(),
+                multiplier: dec!(100),
+                margin_ratio: dec!(0.2),
+                tick_size: dec!(0.0001),
+                option_margin_model: crate::model::OptionMarginModel::ChinaSingleLeg,
+                option_type,
+                strike_price: dec!(100),
+                expiry_date: 20240101,
+                underlying_symbol: "UL".to_string(),
+                settlement_type: None,
+                settlement_price: None,
+                implied_volatility: None,
+                reference_volatility: None,
+            }),
+        };
+        let mut instruments = HashMap::new();
+        instruments.insert("ITM_LONG".to_string(), make("ITM_LONG", OptionType::Call));
+        instruments.insert("ITM_SHORT".to_string(), make("ITM_SHORT", OptionType::Call));
+        instruments.insert("OTM_LONG".to_string(), make("OTM_LONG", OptionType::Put));
+        let mut positions = HashMap::new();
+        positions.insert("ITM_LONG".to_string(), dec!(3));
+        positions.insert("ITM_SHORT".to_string(), dec!(-2));
+        positions.insert("OTM_LONG".to_string(), dec!(4));
+        let mut portfolio = Portfolio {
+            cash: dec!(0),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut last_prices = HashMap::new();
+        last_prices.insert("UL".to_string(), dec!(110));
+
+        let settlement = SettlementManager::new().settle_expiries(
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            &mut portfolio,
+            &instruments,
+            &last_prices,
+            &MarketManager::new(),
+        );
+        let fee_of = |s: &str| {
+            settlement
+                .events
+                .iter()
+                .find(|e| e.symbol == s)
+                .unwrap()
+                .fee
+        };
+        assert_eq!(fee_of("ITM_LONG"), dec!(1.8)); // 3 张 × 0.6
+        assert_eq!(fee_of("ITM_SHORT"), dec!(0)); // 义务方不收
+        assert_eq!(fee_of("OTM_LONG"), dec!(0)); // 虚值放弃不收
+        // 现金 = 3×10×100 - 1.8 - 2×10×100
+        assert_eq!(portfolio.cash, dec!(998.2));
     }
 }

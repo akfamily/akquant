@@ -214,3 +214,29 @@ def test_option_without_expiry_date_never_expires() -> None:
     for day in DAYS[1:]:
         assert strat.day_positions[day] == 1.0
     assert strat.expiries == []
+
+
+def test_exercise_fee_reported_and_deducted() -> None:
+    """行权结算费 0.6/张: 事件里报 fee, 现金流是毛额, 期末权益扣除费用."""
+    strat = _ExpiryRecorder()
+    options = akquant.ChinaOptionsConfig(
+        commission_per_contract=0.0,
+        exchange_fee_per_contract=0.0,
+        clearing_fee_per_contract=0.0,
+        exercise_fee_per_contract=0.6,
+    )
+    result = _run(
+        strat,
+        {
+            "OPT": _daily("OPT", DAYS, [1.0] * 4),
+            "UL": _daily("UL", DAYS, [100.0, 101.0, 120.0, 120.0]),
+        },
+        [_call(), akquant.InstrumentConfig(symbol="UL", asset_type="STOCK")],
+        china_options=options,
+    )
+    event = strat.expiries[0]
+    assert event["cash_flow"] == pytest.approx(2000.0)
+    assert event["fee"] == pytest.approx(0.6)
+    assert result.metrics.end_market_value == pytest.approx(
+        100_000.0 - 100.0 + 2000.0 - 0.6
+    )

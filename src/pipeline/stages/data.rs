@@ -398,21 +398,7 @@ impl Processor for DataProcessor {
                     engine.recent_expiry_events = settlement_outcome
                         .expiry_events
                         .iter()
-                        .map(|event| crate::context::ExpiryEvent {
-                            symbol: event.symbol.clone(),
-                            asset_type: event.asset_type,
-                            trading_date: event.trading_date.to_string(),
-                            expiry_date: event.expiry_date,
-                            quantity_before: event.quantity_before.to_f64().unwrap_or_default(),
-                            quantity_closed: event.quantity_closed.to_f64().unwrap_or_default(),
-                            cash_flow: event.cash_flow.to_f64().unwrap_or_default(),
-                            settlement_type: event.settlement_type.clone(),
-                            settlement_price: event
-                                .settlement_price
-                                .and_then(|value| value.to_f64()),
-                            reason: event.reason.clone(),
-                            description: event.description.clone(),
-                        })
+                        .map(crate::context::ExpiryEvent::from_executed)
                         .collect();
                     engine.margin_daily_interest = settlement_outcome.daily_interest;
                     engine.margin_accrued_interest += settlement_outcome.daily_interest;

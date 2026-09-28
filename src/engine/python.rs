@@ -1395,10 +1395,11 @@ impl Engine {
             for event in &settlement.events {
                 log::info!(
                     target: "akquant::settlement",
-                    "回测结束时补结算到期持仓: {} 数量 {} 现金流 {}",
+                    "回测结束时补结算到期持仓: {} 数量 {} 现金流 {} 费用 {}",
                     event.symbol,
                     event.quantity_closed,
-                    event.cash_flow
+                    event.cash_flow,
+                    event.fee
                 );
             }
             if !settlement.deferred.is_empty() {

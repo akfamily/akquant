@@ -79,6 +79,7 @@ impl OptionSettlementHandler {
                 expiry_date: Some(expiry_date_int),
                 quantity: *qty, // Full position quantity to close
                 cash_flow,
+                fee: Decimal::ZERO,
                 settlement_type: None,
                 settlement_price: Some(underlying_price),
                 reason: "expiry".to_string(),

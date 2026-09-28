@@ -54,6 +54,15 @@ impl MarketManager {
         }
     }
 
+    /// 期权行权结算费(元/张)。只有 ChinaMarket 配置了期权费率; SimpleMarket 下为 0。
+    pub fn option_exercise_fee_per_contract(&self, symbol: &str) -> Decimal {
+        match &self.config {
+            MarketConfig::China(c) => crate::market::china::resolve_option_config(c, symbol)
+                .map_or(Decimal::ZERO, |o| o.exercise_fee_per_contract),
+            MarketConfig::Simple(_) => Decimal::ZERO,
+        }
+    }
+
     /// 启用 SimpleMarket (7x24小时, T+0, 无税, 简单佣金)
     ///
     /// :param commission_rate: 佣金率
