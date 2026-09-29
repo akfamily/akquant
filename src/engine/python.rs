@@ -1415,15 +1415,23 @@ impl Engine {
             && let Some(last_date) = self.current_date
             && let Some(next_date) = last_date.succ_opt()
         {
-            let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+            let prices = self
+                .last_prices
+                .read()
+                .expect("last_prices 读锁被污染")
+                .clone();
+            let expiry_timestamp = self.terminal_result_timestamp().unwrap_or(0);
             let settlement = self.settlement_manager.settle_expiries(
                 next_date,
                 &mut self.state.portfolio,
+                &mut self.state.order_manager.trade_tracker,
                 &self.instruments,
                 &prices,
                 &self.market_manager,
+                &self.risk_manager.config,
+                expiry_timestamp,
+                self.bar_count,
             );
-            drop(prices);
             for event in &settlement.events {
                 log::info!(
                     target: "akquant::settlement",

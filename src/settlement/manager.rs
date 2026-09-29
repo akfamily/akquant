@@ -105,8 +105,11 @@ impl SettlementManager {
 
     /// Process daily settlement routine
     /// 1. T+1 Settlement (`MarketManager`)
-    /// 2. Option Expiry
-    /// 3. Order Expiration (Day orders)
+    /// 2. Order Expiration (Day orders)
+    ///
+    /// 到期结算(期权/期货/股票)不在这里做: 它要写 `TradeTracker`(合成平仓成交),
+    /// 而 `SettlementContext` 只持有只读引用, 调用方需另行调用 [`Self::settle_expiries`]。
+    /// 返回值的 `expiry_events` 恒为空。
     pub fn process_daily_settlement(
         &self,
         portfolio: &mut Portfolio,
@@ -126,18 +129,7 @@ impl SettlementManager {
             ctx.instruments,
         );
 
-        // 2. Option / Futures / Stock Expiry
-        let expiry_events = self
-            .settle_expiries(
-                ctx.date,
-                portfolio,
-                ctx.instruments,
-                ctx.last_prices,
-                ctx.market_manager,
-            )
-            .events;
-
-        // 3. Order Expiration (Day Orders)
+        // 2. Order Expiration (Day Orders)
         // Partition orders into expired and kept. A Day order is expired at
         // settlement UNLESS it is in `day_orders_awaiting_fill_slice` — orders
         // whose matchable slice has not yet arrived (a next-open order created
@@ -157,23 +149,29 @@ impl SettlementManager {
             o.status = OrderStatus::Expired;
             expired_orders_out.push(o);
         }
-        SettlementOutcome {
-            expiry_events,
-            ..outcome
-        }
+        outcome
     }
 
     /// 执行到期结算(期权 + 期货/股票), 返回已执行的到期事件与延后结算的期权。
     ///
     /// `date` 是"正在进入的交易日": 到期日严格小于它的持仓才会结算。回测收尾时
     /// 传最后交易日的次日, 以结算恰好在最后一天到期的持仓。
+    ///
+    /// 每笔到期平仓都记为一笔合成平仓成交(`id = "expiry:<symbol>:<date>"`,
+    /// tag `__expiry__`)写入 `trade_tracker`, 使其进入 `trades_df` / 交易统计;
+    /// 期权行权费计入该成交的 commission。保证金账户的期货到期只入账平仓盈亏。
+    #[allow(clippy::too_many_arguments)]
     pub fn settle_expiries(
         &self,
         date: NaiveDate,
         portfolio: &mut Portfolio,
+        trade_tracker: &mut TradeTracker,
         instruments: &HashMap<String, Instrument>,
         last_prices: &HashMap<String, Decimal>,
         market_manager: &MarketManager,
+        risk_config: &RiskConfig,
+        timestamp: i64,
+        bar_index: usize,
     ) -> ExpirySettlement {
         let (mut tasks, deferred) =
             self.option_handler
@@ -210,7 +208,41 @@ impl SettlementManager {
                 .unwrap_or(Decimal::ZERO);
             // Execute settlement task
             // 1. Adjust Cash
-            let net = task.cash_flow - task.fee;
+            let instr = instruments.get(&task.symbol);
+            let multiplier = instr.map_or(Decimal::ONE, |i| i.multiplier());
+            let close_qty = task.quantity.abs();
+            // 多头到期 = 卖出平仓, 空头到期 = 买入平仓
+            let side = if task.quantity > Decimal::ZERO {
+                OrderSide::Sell
+            } else {
+                OrderSide::Buy
+            };
+            // 合成成交价: 期权取每单位内在价值(cash_flow 已是 qty×payoff×乘数), 其余取结算价
+            let close_price = if task.asset_type == crate::model::types::AssetType::Option {
+                if close_qty.is_zero() || multiplier.is_zero() {
+                    Decimal::ZERO
+                } else {
+                    (task.cash_flow / (task.quantity * multiplier)).abs()
+                }
+            } else {
+                task.settlement_price.unwrap_or(Decimal::ZERO)
+            };
+            // 保证金账户期货只入账平仓盈亏; 必须在 process_trade 之前算(它读库存)
+            let margin_futures =
+                instr.is_some_and(|i| crate::account::is_futures_margin_account(i, risk_config));
+            let cash_flow = if margin_futures {
+                estimate_futures_realized_pnl(
+                    trade_tracker,
+                    &task.symbol,
+                    side,
+                    close_qty,
+                    close_price,
+                    multiplier,
+                )
+            } else {
+                task.cash_flow
+            };
+            let net = cash_flow - task.fee;
             if !net.is_zero() {
                 portfolio.cash += net;
             }
@@ -238,6 +270,37 @@ impl SettlementManager {
                 }
             }
 
+            // 3. 记合成平仓成交, 使到期平仓进入 trades_df / 交易统计
+            let trade_id = format!("expiry:{}:{}", task.symbol, date);
+            let trade = Trade {
+                id: trade_id.clone(),
+                order_id: trade_id,
+                symbol: task.symbol.clone(),
+                side,
+                position_effect: PositionEffect::Close,
+                quantity: close_qty,
+                price: close_price,
+                commission: task.fee,
+                timestamp,
+                bar_index,
+                owner_strategy_id: None,
+            };
+            let portfolio_value = calculate_account_metrics(
+                portfolio,
+                last_prices,
+                instruments,
+                trade_tracker,
+                risk_config,
+            )
+            .equity;
+            trade_tracker.process_trade(
+                &trade,
+                multiplier,
+                Some("__expiry__"),
+                None,
+                portfolio_value,
+            );
+
             expiry_events.push(ExecutedExpiryEvent {
                 symbol: task.symbol.clone(),
                 asset_type: task.asset_type,
@@ -245,7 +308,7 @@ impl SettlementManager {
                 expiry_date: task.expiry_date,
                 quantity_before,
                 quantity_closed: task.quantity,
-                cash_flow: task.cash_flow,
+                cash_flow,
                 fee: task.fee,
                 settlement_type: task.settlement_type.clone(),
                 settlement_price: task.settlement_price,
@@ -816,9 +879,13 @@ mod tests {
         let settlement = SettlementManager::new().settle_expiries(
             NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
             &mut portfolio,
+            &mut TradeTracker::new(),
             &instruments,
             &last_prices,
             &MarketManager::new(),
+            &RiskConfig::new(),
+            0,
+            0,
         );
         let fee_of = |s: &str| {
             settlement
@@ -833,5 +900,68 @@ mod tests {
         assert_eq!(fee_of("OTM_LONG"), dec!(0)); // 虚值放弃不收
         // 现金 = 3×10×100 - 1.8 - 2×10×100
         assert_eq!(portfolio.cash, dec!(998.2));
+    }
+
+    #[test]
+    fn margin_futures_expiry_books_realized_pnl_not_notional() {
+        use crate::model::instrument::{FuturesInstrument, InstrumentEnum};
+        use rust_decimal_macros::dec;
+
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "F".to_string(),
+            Instrument {
+                asset_type: AssetType::Futures,
+                inner: InstrumentEnum::Futures(FuturesInstrument {
+                    symbol: "F".to_string(),
+                    multiplier: dec!(10),
+                    margin_ratio: dec!(0.1),
+                    tick_size: dec!(1),
+                    expiry_date: Some(20260130),
+                    settlement_type: None,
+                    settlement_price: None,
+                }),
+            },
+        );
+        let mut tracker = TradeTracker::new();
+        let open = Trade {
+            id: "t1".into(),
+            order_id: "o1".into(),
+            symbol: "F".into(),
+            side: OrderSide::Buy,
+            position_effect: PositionEffect::Open,
+            quantity: dec!(1),
+            price: dec!(110),
+            commission: dec!(0),
+            timestamp: 0,
+            bar_index: 0,
+            owner_strategy_id: None,
+        };
+        tracker.process_trade(&open, dec!(10), None, None, dec!(100000));
+        let mut positions = HashMap::new();
+        positions.insert("F".to_string(), dec!(1));
+        let mut portfolio = Portfolio {
+            cash: dec!(100000),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut prices = HashMap::new();
+        prices.insert("F".to_string(), dec!(120));
+        let mut risk = RiskConfig::new();
+        risk.account_mode = "margin".to_string();
+        let settlement = SettlementManager::new().settle_expiries(
+            NaiveDate::from_ymd_opt(2026, 2, 2).unwrap(),
+            &mut portfolio,
+            &mut tracker,
+            &instruments,
+            &prices,
+            &MarketManager::new(),
+            &risk,
+            0,
+            0,
+        );
+        assert_eq!(portfolio.cash, dec!(100100)); // (120-110)*10
+        assert_eq!(settlement.events[0].cash_flow, dec!(100));
+        assert_eq!(tracker.closed_trades.len(), 1);
     }
 }
