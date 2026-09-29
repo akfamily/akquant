@@ -222,3 +222,48 @@ def test_margin_futures_expiry_is_not_also_force_liquidated() -> None:
     assert str(trades["exit_tag"].iloc[0]) == "__expiry__"
     assert float(trades["pnl"].iloc[0]) == pytest.approx((99.0 - 110.0) * 10.0)
     assert result.metrics.end_market_value == pytest.approx(120.0 - 110.0)
+
+
+class _BuyThenRecordAvailable(_OpenOnFirstDay):
+    """首日下单, 之后每根 bar 记录 ctx.available_positions 快照."""
+
+    snapshots: list[dict[str, float]]
+
+    def on_bar(self, bar: Bar) -> None:
+        """先按父类下单, 再记录可用持仓."""
+        super().on_bar(bar)
+        assert self.ctx is not None
+        self.snapshots.append(
+            {k: float(v) for k, v in dict(self.ctx.available_positions).items()}
+        )
+
+
+def test_t_plus_one_stock_expiring_while_locked_leaves_no_negative_available() -> None:
+    """T+1 股票当天买入即到期(可用仓未释放): 到期后可用仓不能残留 -100."""
+    days = ["2023-11-29", "2023-11-30", "2023-12-01", "2023-12-04", "2023-12-05"]
+    strategy = _BuyThenRecordAvailable()
+    strategy.target, strategy.side, strategy.first_day = "STK", "buy", days[1]
+    strategy.quantity = 100
+    strategy.snapshots = []
+    config = akquant.BacktestConfig(
+        strategy_config=akquant.StrategyConfig(initial_cash=100_000.0),
+        instruments_config=[
+            akquant.InstrumentConfig(
+                symbol="STK", asset_type="STOCK", expiry_date=20231201
+            )
+        ],
+    )
+    result = akquant.run_backtest(
+        data={"STK": _daily("STK", days, [10.0] * 5)},
+        strategy=strategy,
+        config=config,
+        t_plus_one=True,
+        show_progress=False,
+    )
+    assert len(result.trades_df) == 1  # 12/01 开盘买入, 12/04 进入时到期平仓
+    assert len(strategy.snapshots) == 5
+    # 12/01 当天已买入但锁定(T+1)
+    assert strategy.snapshots[2].get("STK", 0.0) == pytest.approx(0.0)
+    for snap in strategy.snapshots[3:]:
+        assert snap.get("STK", 0.0) == pytest.approx(0.0), snap
+        assert snap.get("STK", 0.0) >= 0.0

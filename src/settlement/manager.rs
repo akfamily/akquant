@@ -262,12 +262,28 @@ impl SettlementManager {
             }
 
             // Remove from available positions
+            // 到期结算先于 on_day_close(T+1 释放) 执行: T+1 标的当天买入的部分此时仍锁定,
+            // 可用仓可能小于到期数量。直接相减会留下负可用仓, 而持仓已删, on_day_close
+            // 再也不会覆盖它 —— 所以持仓清零时一并删可用仓, 否则夹在 [0, 剩余持仓] 内。
             {
+                let remaining = portfolio.positions.get(&task.symbol).copied();
                 let avail_pos = Arc::make_mut(&mut portfolio.available_positions);
                 if let Some(qty) = avail_pos.get_mut(&task.symbol) {
                     *qty -= task.quantity;
-                    if qty.is_zero() {
-                        avail_pos.remove(&task.symbol);
+                    match remaining {
+                        None => {
+                            avail_pos.remove(&task.symbol);
+                        }
+                        Some(rem) => {
+                            *qty = if rem > Decimal::ZERO {
+                                (*qty).clamp(Decimal::ZERO, rem)
+                            } else {
+                                (*qty).clamp(rem, Decimal::ZERO)
+                            };
+                            if qty.is_zero() {
+                                avail_pos.remove(&task.symbol);
+                            }
+                        }
                     }
                 }
             }
@@ -965,5 +981,56 @@ mod tests {
         assert_eq!(portfolio.cash, dec!(100100)); // (120-110)*10
         assert_eq!(settlement.events[0].cash_flow, dec!(100));
         assert_eq!(tracker.closed_trades.len(), 1);
+    }
+
+    /// T+1 标的当天买入、当天到期(可用仓尚未在 on_day_close 释放): 结算后持仓与
+    /// 可用仓都应消失, 可用仓不能残留负数。
+    #[test]
+    fn expiry_of_locked_t_plus_one_position_leaves_no_negative_available() {
+        use rust_decimal_macros::dec;
+
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "STK".to_string(),
+            Instrument {
+                asset_type: AssetType::Stock,
+                inner: InstrumentEnum::Stock(StockInstrument {
+                    symbol: "STK".to_string(),
+                    lot_size: Decimal::ONE,
+                    tick_size: dec!(0.01),
+                    expiry_date: Some(20231201),
+                    sellable_after_days: 1,
+                }),
+            },
+        );
+        let mut positions = HashMap::new();
+        positions.insert("STK".to_string(), dec!(100));
+        let mut available = HashMap::new();
+        available.insert("STK".to_string(), dec!(0));
+        let mut portfolio = Portfolio {
+            cash: dec!(0),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(available),
+        };
+        let mut prices = HashMap::new();
+        prices.insert("STK".to_string(), dec!(10));
+        let settlement = SettlementManager::new().settle_expiries(
+            NaiveDate::from_ymd_opt(2023, 12, 4).unwrap(),
+            &mut portfolio,
+            &mut TradeTracker::new(),
+            &instruments,
+            &prices,
+            &MarketManager::new(),
+            &RiskConfig::new(),
+            0,
+            0,
+        );
+        assert_eq!(settlement.events.len(), 1);
+        assert!(!portfolio.positions.contains_key("STK"));
+        assert!(
+            !portfolio.available_positions.contains_key("STK"),
+            "available_positions = {:?}",
+            portfolio.available_positions
+        );
     }
 }
