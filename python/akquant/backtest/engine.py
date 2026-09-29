@@ -1475,6 +1475,131 @@ def _build_instrument_slippage_map(
     return result or None
 
 
+def _apply_option_market_rules(
+    engine: Any,
+    *,
+    china_options_config: Optional[ChinaOptionsConfig],
+    has_futures_instruments: bool,
+    commission_policy: CommissionPolicy,
+    logger: logging.Logger,
+) -> None:
+    """含期权标的(且未走期货市场)时的市场选择; 不含 set_t_plus_one.
+
+    run_backtest 与 run_from_checkpoint 共用, 保证冷热启动口径一致。
+    """
+    # 同 run_backtest 的 commission_rate 推导(DEFAULT_COMMISSION_RATE = 0.0)。
+    commission_rate = (
+        float(commission_policy["value"])
+        if commission_policy["type"] == "percent"
+        else 0.0
+    )
+    # 期权按张计费、行权结算费都只在 ChinaMarket 里实现; SimpleMarket 会按成交额
+    # 百分比收期权费用, 口径完全不对。只有显式 use_china_market=False 才走 Simple。
+    if china_options_config is None or china_options_config.use_china_market:
+        engine.use_china_market()
+        if has_futures_instruments:
+            # 没有期权时期货走 SimpleMarket, 按用户的 commission_rate 收费; 这里被
+            # 期权带进 ChinaMarket 后若不下发, 期货会静默回落到 FuturesConfig
+            # 缺省费率 0.000023。ChinaMarket 的期货费率只支持按成交额百分比。
+            if commission_policy["type"] == "percent":
+                engine.set_futures_fee_rules(float(commission_policy["value"]))
+            else:
+                logger.warning(
+                    "Option instruments switch the backtest to ChinaMarket, "
+                    "whose futures fees only support a percent rate; "
+                    "commission_policy type %r cannot be applied to futures, "
+                    "which fall back to the default futures rate. Configure "
+                    "ChinaFuturesConfig.fee_by_symbol_prefix or "
+                    "InstrumentConfig.commission_rate for futures explicitly.",
+                    commission_policy["type"],
+                )
+    else:
+        if hasattr(engine, "use_simple_market_policy"):
+            cast(Any, engine).use_simple_market_policy(
+                commission_policy["type"], float(commission_policy["value"])
+            )
+        else:
+            engine.use_simple_market(commission_rate)
+
+
+def _apply_option_fee_rules(
+    engine: Any,
+    china_options_config: Optional[ChinaOptionsConfig],
+    logger: logging.Logger,
+    *,
+    log_strategy_id: Optional[str] = None,
+) -> None:
+    """下发全局期权费率与按品种前缀的期权费率规则(调用方保证含期权标的)."""
+    option_fees = china_options_config or ChinaOptionsConfig()
+    engine.set_option_fee_rules(
+        float(option_fees.commission_per_contract),
+        float(option_fees.exchange_fee_per_contract),
+        float(option_fees.clearing_fee_per_contract),
+        float(option_fees.exercise_fee_per_contract),
+        bool(option_fees.sell_open_exempt),
+    )
+    if china_options_config and china_options_config.fee_by_symbol_prefix:
+        for option_fee_rule in china_options_config.fee_by_symbol_prefix:
+            prefix = option_fee_rule.symbol_prefix.strip().upper()
+            if not prefix:
+                continue
+            if hasattr(engine, "set_options_fee_rules_by_prefix"):
+                cast(Any, engine).set_options_fee_rules_by_prefix(
+                    prefix,
+                    float(option_fee_rule.commission_per_contract),
+                    float(option_fee_rule.exchange_fee_per_contract),
+                    float(option_fee_rule.clearing_fee_per_contract),
+                    float(option_fee_rule.exercise_fee_per_contract),
+                    bool(option_fee_rule.sell_open_exempt),
+                )
+            else:
+                logger.warning(
+                    "set_options_fee_rules_by_prefix is not available "
+                    "in current engine binary",
+                    extra=_build_backtest_log_extra(
+                        phase="risk",
+                        strategy_id=log_strategy_id,
+                        slot=log_strategy_id,
+                    ),
+                )
+                break
+
+
+def _apply_instrument_overrides(
+    engine: Any,
+    strategies: Sequence[Any],
+    inst_conf_map: Dict[str, Any],
+    logger: logging.Logger,
+) -> None:
+    """InstrumentConfig 按品种费用覆盖下发引擎, 按品种滑点映射挂到每个策略."""
+    # InstrumentConfig 上的四个费用字段按品种覆盖市场费率。必须在市场选择与全局费率
+    # 设置之后调用(Rust 侧整体替换市场配置时会带上已有覆盖, 但先设全局再设覆盖更直观)。
+    for conf_symbol, conf in inst_conf_map.items():
+        fee_fields = {
+            "commission_rate": conf.commission_rate,
+            "min_commission": conf.min_commission,
+            "stamp_tax_rate": conf.stamp_tax_rate,
+            "transfer_fee_rate": conf.transfer_fee_rate,
+        }
+        if any(v is not None for v in fee_fields.values()):
+            engine.set_instrument_fee_override(
+                str(conf_symbol),
+                **{
+                    k: (float(v) if v is not None else None)
+                    for k, v in fee_fields.items()
+                },
+            )
+
+    # InstrumentConfig.slippage 按品种生效, 优先于策略级/全局滑点(见设计 A)。
+    instrument_slippage_map = _build_instrument_slippage_map(inst_conf_map, logger)
+    for current_strategy in strategies:
+        setattr(
+            current_strategy,
+            "_instrument_slippage_map",
+            dict(instrument_slippage_map) if instrument_slippage_map else None,
+        )
+
+
 def _normalize_strategy_commission_map(
     strategy_commission: Optional[Dict[str, CommissionPolicy]],
     configured_slot_ids: Sequence[str],
@@ -3942,33 +4067,13 @@ def run_backtest(
         if t_plus_one:
             engine.set_t_plus_one(True)
     elif has_options_instruments:
-        # 期权按张计费、行权结算费都只在 ChinaMarket 里实现; SimpleMarket 会按成交额
-        # 百分比收期权费用, 口径完全不对。只有显式 use_china_market=False 才走 Simple。
-        if china_options_config is None or china_options_config.use_china_market:
-            engine.use_china_market()
-            if has_futures_instruments:
-                # 没有期权时期货走 SimpleMarket, 按用户的 commission_rate 收费; 这里被
-                # 期权带进 ChinaMarket 后若不下发, 期货会静默回落到 FuturesConfig
-                # 缺省费率 0.000023。ChinaMarket 的期货费率只支持按成交额百分比。
-                if commission_policy["type"] == "percent":
-                    engine.set_futures_fee_rules(float(commission_policy["value"]))
-                else:
-                    logger.warning(
-                        "Option instruments switch the backtest to ChinaMarket, "
-                        "whose futures fees only support a percent rate; "
-                        "commission_policy type %r cannot be applied to futures, "
-                        "which fall back to the default futures rate. Configure "
-                        "ChinaFuturesConfig.fee_by_symbol_prefix or "
-                        "InstrumentConfig.commission_rate for futures explicitly.",
-                        commission_policy["type"],
-                    )
-        else:
-            if hasattr(engine, "use_simple_market_policy"):
-                cast(Any, engine).use_simple_market_policy(
-                    commission_policy["type"], float(commission_policy["value"])
-                )
-            else:
-                engine.use_simple_market(commission_rate)
+        _apply_option_market_rules(
+            engine,
+            china_options_config=china_options_config,
+            has_futures_instruments=has_futures_instruments,
+            commission_policy=commission_policy,
+            logger=logger,
+        )
         if t_plus_one:
             engine.set_t_plus_one(True)
     elif t_plus_one or any_t_plus_one_instrument:
@@ -4034,13 +4139,13 @@ def run_backtest(
         )
 
     if has_options_instruments:
-        option_fees = china_options_config or ChinaOptionsConfig()
-        engine.set_option_fee_rules(
-            float(option_fees.commission_per_contract),
-            float(option_fees.exchange_fee_per_contract),
-            float(option_fees.clearing_fee_per_contract),
-            float(option_fees.exercise_fee_per_contract),
-            bool(option_fees.sell_open_exempt),
+        # 全局期权费率 + 前缀规则(前缀规则原在下方 sessions 块内, 其间只有期货
+        # 校验/费率/时段设置, 不重置期权费率, 提前到此处等价)。
+        _apply_option_fee_rules(
+            engine,
+            china_options_config,
+            logger,
+            log_strategy_id=effective_strategy_id,
         )
 
     if china_futures_config and has_futures_instruments:
@@ -4157,31 +4262,6 @@ def run_backtest(
             )
 
     if china_options_config and has_options_instruments:
-        if china_options_config.fee_by_symbol_prefix:
-            for option_fee_rule in china_options_config.fee_by_symbol_prefix:
-                prefix = option_fee_rule.symbol_prefix.strip().upper()
-                if not prefix:
-                    continue
-                if hasattr(engine, "set_options_fee_rules_by_prefix"):
-                    cast(Any, engine).set_options_fee_rules_by_prefix(
-                        prefix,
-                        float(option_fee_rule.commission_per_contract),
-                        float(option_fee_rule.exchange_fee_per_contract),
-                        float(option_fee_rule.clearing_fee_per_contract),
-                        float(option_fee_rule.exercise_fee_per_contract),
-                        bool(option_fee_rule.sell_open_exempt),
-                    )
-                else:
-                    logger.warning(
-                        "set_options_fee_rules_by_prefix is not available "
-                        "in current engine binary",
-                        extra=_build_backtest_log_extra(
-                            phase="risk",
-                            strategy_id=effective_strategy_id,
-                            slot=effective_strategy_id,
-                        ),
-                    )
-                    break
         if china_options_config.sessions:
             option_session_ranges: List[Tuple[str, str, TradingSession]] = []
             for option_session_rule in china_options_config.sessions:
@@ -4635,32 +4715,7 @@ def run_backtest(
             static_attrs=dict(static_attrs),
         )
 
-    # InstrumentConfig 上的四个费用字段按品种覆盖市场费率。必须在市场选择与全局费率
-    # 设置之后调用(Rust 侧整体替换市场配置时会带上已有覆盖, 但先设全局再设覆盖更直观)。
-    for conf_symbol, conf in inst_conf_map.items():
-        fee_fields = {
-            "commission_rate": conf.commission_rate,
-            "min_commission": conf.min_commission,
-            "stamp_tax_rate": conf.stamp_tax_rate,
-            "transfer_fee_rate": conf.transfer_fee_rate,
-        }
-        if any(v is not None for v in fee_fields.values()):
-            engine.set_instrument_fee_override(
-                str(conf_symbol),
-                **{
-                    k: (float(v) if v is not None else None)
-                    for k, v in fee_fields.items()
-                },
-            )
-
-    # InstrumentConfig.slippage 按品种生效, 优先于策略级/全局滑点(见设计 A)。
-    instrument_slippage_map = _build_instrument_slippage_map(inst_conf_map, logger)
-    for current_strategy in all_strategy_instances:
-        setattr(
-            current_strategy,
-            "_instrument_slippage_map",
-            dict(instrument_slippage_map) if instrument_slippage_map else None,
-        )
+    _apply_instrument_overrides(engine, all_strategy_instances, inst_conf_map, logger)
 
     for current_strategy in all_strategy_instances:
         current_strategy._set_instrument_snapshots(instrument_snapshots)
@@ -6063,7 +6118,29 @@ def run_from_checkpoint(
     if "t_plus_one" not in kwargs and "t_plus_one" in restored_backtest_config:
         t_plus_one = bool(restored_backtest_config.get("t_plus_one"))
 
-    if t_plus_one:
+    # 市场选择与 run_backtest 对齐期权口径: 含期权(且未走期货市场)时由
+    # _apply_option_market_rules 选 China/Simple。必须在 set_stock_fee_policy 之前,
+    # use_china_market() 会重置股票费率。
+    china_options_config = config.china_options if config is not None else None
+    china_futures_config = config.china_futures if config is not None else None
+    has_options_instruments = any(
+        _parse_asset_type_name(c.asset_type) == "option" for c in inst_conf_map.values()
+    )
+    has_futures_instruments = any(
+        _parse_asset_type_name(c.asset_type) == "futures"
+        for c in inst_conf_map.values()
+    )
+    if has_options_instruments and not (
+        china_futures_config and has_futures_instruments
+    ):
+        _apply_option_market_rules(
+            engine,
+            china_options_config=china_options_config,
+            has_futures_instruments=has_futures_instruments,
+            commission_policy=resolved_commission_policy,
+            logger=logger,
+        )
+    elif t_plus_one:
         # ChinaMarket implies T+1 and specific fee rules
         engine.use_china_market()
     else:
@@ -6080,6 +6157,8 @@ def run_from_checkpoint(
                 else 0.0
             )
             engine.use_simple_market(commission)
+    if t_plus_one:
+        engine.set_t_plus_one(True)
 
     # Apply fee rules if engine supports it
     # (and if not ChinaMarket which has fixed rules?)
@@ -6107,6 +6186,19 @@ def run_from_checkpoint(
         )
         engine.set_stock_fee_rules(commission, stamp_tax, transfer_fee, min_commission)
         logger.info(f"Re-configured market fees: comm={commission}, stamp={stamp_tax}")
+
+    if has_options_instruments:
+        _apply_option_fee_rules(engine, china_options_config, logger)
+
+    # 按品种费用覆盖/滑点映射: 引擎快照与策略 pickle 都不可靠地携带这些静态配置,
+    # 续跑须与 run_backtest 一样重新下发。须在市场选择与全局费率之后; 此处策略实例
+    # 已装配完成(见上方 strategy_instance / slot_strategy_instances)。
+    _apply_instrument_overrides(
+        engine,
+        [strategy_instance, *slot_strategy_instances.values()],
+        inst_conf_map,
+        logger,
+    )
 
     # 2.7 Re-configure Slippage & Volume Limit (issue #282)
     # 引擎状态不保留滑点/量比配置，热启动须与 run_backtest 一样重新应用，
