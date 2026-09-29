@@ -31,3 +31,7 @@ golden 套件复跑结果为 `2 passed`，四个基线场景（`futures_margin`/
 | futures_margin / order_cancel / stock_t1 | `metrics.json` 仅 `engine_rule_version`、`akquant_version` 变化；重新生成的 `orders.parquet` 仅订单 UUID 与行序变化 | 去掉 `id` 并按 `created_at/side/order_type/quantity/limit_price` 排序后逐列比对完全一致，故这三个 `orders.parquet` 保留旧文件不提交；`equity_curve` 与 `trades` 未变。期货场景无到期日，不受到期时点修正影响。 |
 
 复跑 `pytest tests/golden/test_golden.py` 结果 `2 passed`。
+
+## 2026-09-29: `__engine_rule_version__` 1.7.0 → 1.7.1（期权/可转债一期遗留项）
+
+规则版本 1.7.0 → 1.7.1，golden 数值不变，未重新生成基线（`metrics.json` 中 `engine_rule_version` 仍为 1.7.0）。四个场景均不涉及按品种滑点、checkpoint 续跑、到期平仓或保证金账户期货到期，复跑 `pytest tests/golden/test_golden.py` 仍 `2 passed`。

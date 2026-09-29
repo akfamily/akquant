@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - R3 回测收尾补结算现在也触发 `on_expiry` 与流式 `expiry` 事件；此前 checkpoint 拆分运行会永久丢失这笔回调。
   - R4 到期平仓记为一笔合成平仓成交送入 `TradeTracker`：`order_tag="__expiry__"`、`order_id="expiry:<symbol>:<trading_date>"`，成交价期权取每单位内在价值、其余取结算价，手续费为行权结算费；`trades_df` 因此出现到期行、`total_commission` 因此包含行权结算费；合成成交不进入 `orders_df` / `executions`。
   - R5 保证金账户期货到期改为记入平仓盈亏（`estimate_futures_realized_pnl`），不再把名义金额记入现金。复现：110 买入 1 手（乘数 10），按 110 结算到期——旧逻辑权益凭空 +1100，新逻辑权益不变；现金账户同场景结果不变。
-  - 一并修复：到期结算从 `process_daily_settlement` 中抽出单独调用，且移到保证金利息 / 强平 / T+1 处理 / 当日挂单过期**之前**执行，消除了强平与到期结算在同一日重复平掉同一持仓、留下反向幻影仓位的 bug（副作用：到期日当天的保证金利息按到期结算后的现金计算）。
+  - 一并修复：到期结算从 `process_daily_settlement` 中抽出单独调用，且移到保证金利息 / 强平 / T+1 处理 / 当日挂单过期**之前**执行，消除了强平与到期结算在同一日重复平掉同一持仓、留下反向幻影仓位的 bug（副作用：到期日当天的保证金利息按到期结算后的现金计算）。因到期结算先于 T+1 释放执行，T+1 标的在可用仓尚未释放时到期，可用持仓不再被减成负数残留（持仓清零即一并删除可用仓，否则夹在 `[0, 剩余持仓]` 内）。
 
 ### Changed
 - **`trades_df` 出现到期平仓行**（`order_tag="__expiry__"`），胜率等统计口径随之包含到期平仓；到期行的 `mae` / `mfe` 恒为 `0`（合成成交未传入价格历史）。
@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **只要回测里有期权合约，默认使用 ChinaMarket**；只有显式 `ChinaOptionsConfig(use_china_market=False)` 才走 SimpleMarket（此时行权结算费为 0）。副作用：同一回测里的 ETF 等基金改按 ChinaMarket 的 FUND 费率计费；同一回测里的期货沿用用户的百分比佣金率（见下方 Fixed），非百分比佣金策略无法应用到 ChinaMarket 下的期货（回退为期货缺省费率并打一条 warning）。
 - **`InstrumentConfig.multiplier` / `margin_ratio` / `tick_size` 默认值改为 `None`**，在 `__post_init__` 中按"预设 → 1.0（`tick_size` 按资产类型）"填充并记入 `defaulted_fields`；期货模板不再用 `== 1` / `== 0.01` 猜测"用户没传"，改为查 `defaulted_fields`（此前显式传 `multiplier=1` 会被模板静默覆盖）。
 - **破坏性变更**：`ChinaOptionsConfig.fee_per_contract` 改名为 `commission_per_contract`（不保留别名）；删除无文档、无测试的 `run_backtest(option_commission=)`；`Engine.set_option_fee_rules(commission_per_contract, exchange_fee_per_contract, clearing_fee_per_contract, exercise_fee_per_contract, sell_open_exempt)` 与 `Engine.set_options_fee_rules_by_prefix(symbol_prefix, ...同上)` 签名变化。
-- **已知限制**：期权到期仍按现金结算内在价值近似（不做实物交割、不支持主动行权）；`run_from_checkpoint` 若第二阶段完全不传 `instruments`，第一阶段仅由数据键重新登记的期权会被判定为 STOCK；期货市场规则（`ChinaFuturesConfig`、交易时段、期货前缀费率规则）续跑时仍不会重新下发；识别出第一阶段的期权可能使续跑切换到 ChinaMarket。以上四条已在 1.7.1 修复：续跑按品种费用覆盖生效、`china_options` 配置下发、行权结算费计入 `total_commission`、会话收尾补结算触发 `on_expiry` 与流式事件、`InstrumentConfig.slippage` 已接入撮合。
+- **已知限制**：一期所列 5 条限制已在 1.7.1 修复（续跑按品种费用覆盖生效、续跑下发 `china_options` 配置、行权结算费计入 `total_commission`、会话收尾补结算触发 `on_expiry` 与流式事件、`InstrumentConfig.slippage` 接入撮合，见上方 Unreleased / Fixed）。仍存在的限制：期权到期仍按现金结算内在价值近似（不做实物交割、不支持主动行权）；`run_from_checkpoint` 若第二阶段完全不传 `instruments`，第一阶段仅由数据键重新登记的期权会被判定为 STOCK；期货市场规则（`ChinaFuturesConfig`、交易时段、期货前缀费率规则）续跑时仍不会重新下发；若第一阶段有期权，续跑可能因识别到期权而切到 ChinaMarket（股票缺省 T+1 语义）；到期平仓合成成交的 `mae` / `mfe` 恒为 0。
 
 ### Fixed
 - **期权 / 期货到期结算提前一天（`__engine_rule_version__` 升至 1.7.0）**：结算在"进入新交易日"时触发，判定条件却是 `当前日期 >= 到期日`，于是一进入到期日就用**前一天的收盘价**结算，策略在到期日当天也无法再交易该合约。复现：认购期权行权价 100、乘数 100、到期日 12/01，标的 11/30 收 101、12/01 收 120——旧逻辑按 101 结算每张得 100 元，新逻辑按 120 结算每张得 2000 元（扣行权结算费后 1999.4）。期权与期货 / 股票到期统一改为 `当前日期 > 到期日`，即到期日之后第一个交易日开始时、用到期日收盘价结算；数据在到期日（或之后无新交易日）结束时，会话收尾对 `到期日 <= 最后交易日` 的持仓补结算并计入最终权益（broker 实盘不做，到期由柜台处理；`run_live` 的 paper/replay 会话结束时同样会补结算，若在到期日当天停止则用当时已知的最新价而非真正的到期日收盘价）。
