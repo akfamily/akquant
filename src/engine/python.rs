@@ -1410,7 +1410,8 @@ impl Engine {
         // (仅 RealtimeExecutionClient 对接 broker 时为 true): broker 实盘不做——实盘到期
         // 由柜台处理; run_live 的 paper/replay 走 SimulatedExecutionClient, is_live()
         // 为 false, 会话结束时同样补结算(若在到期日当天停止, 用的是当时已知的最新价而非
-        // 真正的到期日收盘价)。
+        // 真正的到期日收盘价)。补结算与日常路径一致: 记合成成交、发 `expiry` 流事件、
+        // 派发 on_expiry。
         if !self.execution_model.is_live()
             && let Some(last_date) = self.current_date
             && let Some(next_date) = last_date.succ_opt()
@@ -1450,6 +1451,14 @@ impl Engine {
                     settlement.deferred.join(", ")
                 );
             }
+            // 收尾时已没有下一根 bar 来触发常规回调入口, 这里直接发流事件并派发 on_expiry。
+            self.recent_expiry_events = settlement
+                .events
+                .iter()
+                .map(crate::context::ExpiryEvent::from_executed)
+                .collect();
+            self.emit_expiry_stream_events(py);
+            self.flush_terminal_expiry_events(py, strategy)?;
         }
 
         // Record final snapshot if we have data

@@ -477,47 +477,7 @@ impl Processor for DataProcessor {
                     for event in settlement_outcome.forced_liquidation_events {
                         let _ = engine.event_manager.send(event);
                     }
-                    let recent_expiry_events = engine.recent_expiry_events.clone();
-                    for expiry_event in recent_expiry_events {
-                        let expiry_symbol = expiry_event.symbol.clone();
-                        let mut expiry_payload = HashMap::new();
-                        expiry_payload.insert("symbol", expiry_symbol.clone());
-                        expiry_payload.insert(
-                            "asset_type",
-                            format!("{:?}", expiry_event.asset_type).to_ascii_uppercase(),
-                        );
-                        expiry_payload.insert("trading_date", expiry_event.trading_date.clone());
-                        if let Some(expiry_date) = expiry_event.expiry_date {
-                            expiry_payload.insert("expiry_date", expiry_date.to_string());
-                        }
-                        expiry_payload
-                            .insert("quantity_before", expiry_event.quantity_before.to_string());
-                        expiry_payload
-                            .insert("quantity_closed", expiry_event.quantity_closed.to_string());
-                        expiry_payload.insert("cash_flow", expiry_event.cash_flow.to_string());
-                        if let Some(ref settlement_type) = expiry_event.settlement_type {
-                            expiry_payload.insert("settlement_type", settlement_type.clone());
-                        }
-                        if let Some(settlement_price) = expiry_event.settlement_price {
-                            expiry_payload.insert("settlement_price", settlement_price.to_string());
-                        }
-                        expiry_payload.insert("reason", expiry_event.reason.clone());
-                        expiry_payload.insert("description", expiry_event.description.clone());
-                        if let Some(owner_strategy_id) = engine
-                            .default_strategy_id
-                            .clone()
-                            .filter(|text| !text.trim().is_empty())
-                        {
-                            expiry_payload.insert("owner_strategy_id", owner_strategy_id);
-                        }
-                        engine.emit_stream_event(
-                            py,
-                            "expiry",
-                            Some(expiry_symbol.as_str()),
-                            "info",
-                            expiry_payload,
-                        );
-                    }
+                    engine.emit_expiry_stream_events(py);
 
                     for o in expired_orders {
                         // Tell the execution client to drop the order too. Daily

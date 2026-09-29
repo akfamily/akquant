@@ -235,6 +235,13 @@ def check_expiry_events(strategy: Any) -> None:
         mark_portfolio_dirty(strategy)
 
 
+def flush_terminal_expiry_events(strategy: Any, ctx: Any) -> None:
+    """收尾补结算之后派发 on_expiry(没有下一根 bar 来触发常规入口)."""
+    ensure_framework_state(strategy)
+    strategy.ctx = ctx
+    check_expiry_events(strategy)
+
+
 def order_event_key(order: Any) -> Tuple[Any, ...]:
     """生成订单事件去重 Key(**状态指纹**).
 

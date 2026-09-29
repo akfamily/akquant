@@ -87,6 +87,9 @@ from .strategy_order_events import (
     check_order_events as _check_order_events_impl,
 )
 from .strategy_order_events import (
+    flush_terminal_expiry_events as _flush_terminal_expiry_events_impl,
+)
+from .strategy_order_events import (
     key_value as _key_value_impl,
 )
 from .strategy_order_events import (
@@ -2470,6 +2473,9 @@ class Strategy:
 
     def _flush_pending_order_events(self, ctx: StrategyContext) -> None:
         _flush_pending_order_events_impl(self, ctx)
+
+    def _flush_terminal_expiry_events(self, ctx: StrategyContext) -> None:
+        _flush_terminal_expiry_events_impl(self, ctx)
 
     def _take_pending_engine_plans(self) -> Optional[Tuple[Any, Any]]:
         """取出并清空待注册的 OCO 组与 bracket 计划 (Internal).
