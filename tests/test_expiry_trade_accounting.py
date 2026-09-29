@@ -36,19 +36,23 @@ class _OpenOnFirstDay(Strategy):
     target: str
     side: str
     first_day: str
+    quantity: int = 1
 
     def on_bar(self, bar: Bar) -> None:
         if bar.symbol == self.target and str(bar.timestamp_iso)[:10] == self.first_day:
             if self.get_position(self.target) == 0:
                 if self.side == "buy":
-                    self.buy(symbol=self.target, quantity=1)
+                    self.buy(symbol=self.target, quantity=self.quantity)
                 else:
-                    self.sell(symbol=self.target, quantity=1)
+                    self.sell(symbol=self.target, quantity=self.quantity)
 
 
-def _strategy(target: str, side: str, first_day: str) -> _OpenOnFirstDay:
+def _strategy(
+    target: str, side: str, first_day: str, quantity: int = 1
+) -> _OpenOnFirstDay:
     s = _OpenOnFirstDay()
     s.target, s.side, s.first_day = target, side, first_day
+    s.quantity = quantity
     return s
 
 
@@ -56,7 +60,10 @@ OPT_DAYS = ["2023-11-29", "2023-11-30", "2023-12-01", "2023-12-04"]
 
 
 def _run_option(
-    side: str, option_type: Literal["CALL", "PUT"], ul_closes: list[float]
+    side: str,
+    option_type: Literal["CALL", "PUT"],
+    ul_closes: list[float],
+    quantity: int = 1,
 ) -> Any:
     config = akquant.BacktestConfig(
         strategy_config=akquant.StrategyConfig(initial_cash=100_000.0),
@@ -78,7 +85,7 @@ def _run_option(
             "OPT": _daily("OPT", OPT_DAYS, [1.0] * 4),
             "UL": _daily("UL", OPT_DAYS, ul_closes),
         },
-        strategy=_strategy("OPT", side, OPT_DAYS[0]),
+        strategy=_strategy("OPT", side, OPT_DAYS[0], quantity),
         config=config,
         show_progress=False,
     )
@@ -108,6 +115,16 @@ def test_assigned_short_option_expiry_is_a_losing_trade() -> None:
     trades = result.trades_df
     assert len(trades) == 1
     assert float(trades["pnl"].iloc[0]) == pytest.approx((1.0 - 20.0) * 100.0)
+
+
+def test_multi_contract_itm_put_expiry_prices_per_unit() -> None:
+    """3 张实值 PUT: 仍是 1 笔已平仓, 盈亏 = 3 x (内在价值 15 - 权利金 1) x 100."""
+    result = _run_option("buy", "PUT", [100.0, 99.0, 85.0, 85.0], quantity=3)
+    trades = result.trades_df
+    assert len(trades) == 1
+    assert float(trades["quantity"].iloc[0]) == pytest.approx(3.0)
+    assert float(trades["exit_price"].iloc[0]) == pytest.approx(15.0)
+    assert float(trades["pnl"].iloc[0]) == pytest.approx(3 * (15.0 - 1.0) * 100.0)
 
 
 FUT_DAYS = ["2026-01-29", "2026-01-30", "2026-02-02", "2026-02-03"]
@@ -159,3 +176,49 @@ def test_futures_expiry_profit(account_mode: str) -> None:
     )
     assert float(result.orders_df["avg_price"].iloc[0]) == pytest.approx(110.0)
     assert result.metrics.end_market_value == pytest.approx(100_000.0 + 100.0)
+
+
+def test_margin_futures_expiry_is_not_also_force_liquidated() -> None:
+    """保证金账户: 到期日持仓已跌穿维持保证金, 日切时应先到期结算再判强平.
+
+    120 元本金, 1/30 开盘 110 买入 1 手(乘数 10), 收盘 99: 权益 10, 保证金 99,
+    维持率 0.10 < 0.3。若强平先于到期结算选仓, 会对已到期平掉的持仓再平一次,
+    留下反向幻影仓位(随后又被到期/强平反复处理)。
+    """
+    config = akquant.BacktestConfig(
+        strategy_config=akquant.StrategyConfig(
+            initial_cash=120.0,
+            commission_rate=0.0,
+            risk=RiskConfig(account_mode="margin", allow_force_liquidation=True),
+        ),
+        instruments_config=[
+            akquant.InstrumentConfig(
+                symbol="F",
+                asset_type="FUTURES",
+                multiplier=10.0,
+                margin_ratio=0.1,
+                expiry_date=20260130,
+            )
+        ],
+    )
+    result = akquant.run_backtest(
+        data={
+            "F": _daily(
+                "F",
+                FUT_DAYS,
+                closes=[100.0, 99.0, 99.0, 99.0],
+                opens=[100.0, 110.0, 99.0, 99.0],
+            )
+        },
+        strategy=_strategy("F", "buy", FUT_DAYS[0]),
+        config=config,
+        show_progress=False,
+    )
+    orders = result.orders_df
+    assert len(orders) == 1  # 只有开仓单, 没有强平单
+    assert float(orders["avg_price"].iloc[0]) == pytest.approx(110.0)
+    trades = result.trades_df
+    assert len(trades) == 1
+    assert str(trades["exit_tag"].iloc[0]) == "__expiry__"
+    assert float(trades["pnl"].iloc[0]) == pytest.approx((99.0 - 110.0) * 10.0)
+    assert result.metrics.end_market_value == pytest.approx(120.0 - 110.0)

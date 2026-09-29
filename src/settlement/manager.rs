@@ -108,7 +108,9 @@ impl SettlementManager {
     /// 2. Order Expiration (Day orders)
     ///
     /// 到期结算(期权/期货/股票)不在这里做: 它要写 `TradeTracker`(合成平仓成交),
-    /// 而 `SettlementContext` 只持有只读引用, 调用方需另行调用 [`Self::settle_expiries`]。
+    /// 而 `SettlementContext` 只持有只读引用, 调用方需在本函数**之前**另行调用
+    /// [`Self::settle_expiries`] —— 强平选仓必须看到到期后的组合, 否则排队的强平
+    /// 成交会对已到期平掉的持仓再平一次。
     /// 返回值的 `expiry_events` 恒为空。
     pub fn process_daily_settlement(
         &self,

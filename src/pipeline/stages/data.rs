@@ -373,6 +373,28 @@ impl Processor for DataProcessor {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    // 到期结算必须先于日终结算(利息/强平/T+1/挂单过期): 强平按当时的
+                    // 组合选仓, 而它生成的强平成交要到 apply_execution_report 才落地;
+                    // 若先强平后到期, 到期会立刻清掉持仓与 tracker 库存, 排队的强平成交
+                    // 再平一次就留下反向幻影仓位。强平必须看到到期后的组合。
+                    // 单独调用是因为它要写 TradeTracker(合成平仓成交), 而
+                    // SettlementContext 只持有只读引用。
+                    let expiry_prices = engine
+                        .last_prices
+                        .read()
+                        .expect("last_prices 读锁被污染")
+                        .clone();
+                    let expiry_settlement = engine.settlement_manager.settle_expiries(
+                        local_date,
+                        &mut engine.state.portfolio,
+                        &mut engine.state.order_manager.trade_tracker,
+                        &engine.instruments,
+                        &expiry_prices,
+                        &engine.market_manager,
+                        &engine.risk_manager.config,
+                        timestamp,
+                        engine.bar_count,
+                    );
                     let settlement_prices =
                         engine.last_prices.read().expect("last_prices 读锁被污染");
                     let settlement_ctx = crate::settlement::manager::SettlementContext {
@@ -395,24 +417,6 @@ impl Processor for DataProcessor {
                     );
                     drop(settlement_ctx);
                     drop(settlement_prices);
-                    // 到期结算单独调用: 它要写 TradeTracker(合成平仓成交), 而
-                    // SettlementContext 只持有只读引用。放在挂单过期之后不影响结果。
-                    let expiry_prices = engine
-                        .last_prices
-                        .read()
-                        .expect("last_prices 读锁被污染")
-                        .clone();
-                    let expiry_settlement = engine.settlement_manager.settle_expiries(
-                        local_date,
-                        &mut engine.state.portfolio,
-                        &mut engine.state.order_manager.trade_tracker,
-                        &engine.instruments,
-                        &expiry_prices,
-                        &engine.market_manager,
-                        &engine.risk_manager.config,
-                        timestamp,
-                        engine.bar_count,
-                    );
                     engine.recent_expiry_events = expiry_settlement
                         .events
                         .iter()
