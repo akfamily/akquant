@@ -1,7 +1,7 @@
 """run_from_checkpoint 续跑段: 期权按张计费、按品种费用覆盖生效."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import akquant
 import pandas as pd
@@ -56,6 +56,7 @@ def _phase2_fees(
     instruments: list[akquant.InstrumentConfig],
     target: str,
     china_options: Optional[akquant.ChinaOptionsConfig] = None,
+    phase2_prebuilt: Optional[list[akquant.Instrument]] = None,
 ) -> list[float]:
     strat = _BuyEachPhase()
     strat.target = target
@@ -73,11 +74,17 @@ def _phase2_fees(
     )
     ckpt = tmp_path / "c.pkl"
     save_checkpoint(r1.engine, r1.strategy, str(ckpt))  # type: ignore[arg-type]
+    # phase2_prebuilt 给定时, 续跑段 config 不带 instruments_config, 合约改由
+    # instruments= 预构建对象登记。
+    extra: dict[str, Any] = {}
+    if phase2_prebuilt is not None:
+        extra["instruments"] = phase2_prebuilt
     r2 = run_from_checkpoint(
         checkpoint_path=str(ckpt),
         data=data2,
-        config=_config(instruments, china_options),
+        config=_config(instruments if phase2_prebuilt is None else [], china_options),
         show_progress=False,
+        **extra,
     )
     orders = r2.orders_df
     filled = orders[(orders["filled_quantity"] > 0) & (orders["symbol"] == target)]
@@ -116,6 +123,41 @@ def test_resumed_custom_option_fee_config(tmp_path: Path) -> None:
     )
     fees = _phase2_fees(tmp_path, _option_instruments(), "OPT", china_options)
     assert fees
+    assert fees[-1] == pytest.approx(1.0)
+
+
+def test_resumed_option_fees_without_instruments_config(tmp_path: Path) -> None:
+    """续跑段 config 不含 instruments_config 时, 靠合约快照识别期权并按张计费.
+
+    合约由 instruments= 预构建对象登记(完全不传合约时续跑段会把 OPT 按默认
+    资产类型重新登记为股票, 期权口径无从谈起, 那是另一个问题)。
+    """
+    prebuilt = [
+        akquant.Instrument(
+            symbol="OPT",
+            asset_type=akquant.AssetType.Option,
+            multiplier=10000.0,
+            tick_size=0.0001,
+            option_type=akquant.OptionType.Call,
+            strike_price=2.0,
+            expiry_date=20991231,
+            underlying_symbol="UL",
+        ),
+        akquant.Instrument(symbol="UL", asset_type=akquant.AssetType.Fund),
+    ]
+    china_options = akquant.ChinaOptionsConfig(
+        commission_per_contract=1.0,
+        exchange_fee_per_contract=0.0,
+        clearing_fee_per_contract=0.0,
+    )
+    fees = _phase2_fees(
+        tmp_path,
+        _option_instruments(),
+        "OPT",
+        china_options,
+        phase2_prebuilt=prebuilt,
+    )
+    assert len(fees) == 2  # 两段各成交一笔, [-1] 是续跑段
     assert fees[-1] == pytest.approx(1.0)
 
 

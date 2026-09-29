@@ -6123,10 +6123,21 @@ def run_from_checkpoint(
     # use_china_market() 会重置股票费率。
     china_options_config = config.china_options if config is not None else None
     china_futures_config = config.china_futures if config is not None else None
-    has_options_instruments = any(
+    # 判定来源: 本段 instruments_config + 合约快照(第一段登记、从 checkpoint 恢复的
+    # existing_instrument_snapshots, 以及本段新建的 warm_start_instrument_snapshots,
+    # 含 instruments= 预构建合约)。二者在上方 2.5 节已构建完成。快照 asset_type 为
+    # 大写字符串("OPTION"/"FUTURES")。
+    snapshot_asset_types = {
+        str(getattr(snap, "asset_type", "") or "").upper()
+        for snap in [
+            *existing_instrument_snapshots.values(),
+            *warm_start_instrument_snapshots.values(),
+        ]
+    }
+    has_options_instruments = "OPTION" in snapshot_asset_types or any(
         _parse_asset_type_name(c.asset_type) == "option" for c in inst_conf_map.values()
     )
-    has_futures_instruments = any(
+    has_futures_instruments = "FUTURES" in snapshot_asset_types or any(
         _parse_asset_type_name(c.asset_type) == "futures"
         for c in inst_conf_map.values()
     )
