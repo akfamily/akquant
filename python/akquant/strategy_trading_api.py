@@ -429,7 +429,7 @@ def _submit_buy_side_orders(
     fill_mode_enum, fill_timer_timing = _normalize_order_fill_policy(
         effective_fill_policy
     )
-    effective_slippage = _resolve_effective_order_slippage(strategy, slippage)
+    effective_slippage = _resolve_effective_order_slippage(strategy, symbol, slippage)
     fill_slippage_type, fill_slippage_value = _normalize_order_slippage(
         strategy,
         symbol,
@@ -598,7 +598,7 @@ def _submit_sell_side_orders(
     fill_mode_enum, fill_timer_timing = _normalize_order_fill_policy(
         effective_fill_policy
     )
-    effective_slippage = _resolve_effective_order_slippage(strategy, slippage)
+    effective_slippage = _resolve_effective_order_slippage(strategy, symbol, slippage)
     fill_slippage_type, fill_slippage_value = _normalize_order_slippage(
         strategy,
         symbol,
@@ -908,10 +908,17 @@ def _resolve_effective_order_fill_policy(
 
 
 def _resolve_effective_order_slippage(
-    strategy: Any, slippage: Optional[Union[OrderSlippage, float, int]]
+    strategy: Any, symbol: str, slippage: Optional[Union[OrderSlippage, float, int]]
 ) -> Optional[Union[OrderSlippage, float, int]]:
+    # 优先级: 订单显式 > 品种(InstrumentConfig.slippage) > 策略级映射 > 引擎全局
     if slippage is not None:
         return slippage
+    instrument_map = cast(
+        Optional[Dict[str, OrderSlippage]],
+        getattr(strategy, "_instrument_slippage_map", None),
+    )
+    if instrument_map and symbol in instrument_map:
+        return dict(instrument_map[symbol])
     owner_strategy_id = str(getattr(strategy, "_owner_strategy_id", "") or "").strip()
     if not owner_strategy_id:
         owner_strategy_id = "_default"

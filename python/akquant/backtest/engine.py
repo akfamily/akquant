@@ -1457,6 +1457,24 @@ def _normalize_strategy_slippage_map(
     return normalized
 
 
+def _build_instrument_slippage_map(
+    inst_conf_map: Dict[str, Any], logger: logging.Logger
+) -> Optional[Dict[str, SlippagePolicy]]:
+    """收集 InstrumentConfig.slippage 为 {symbol: policy}, 校验口径同策略级滑点."""
+    result: Dict[str, SlippagePolicy] = {}
+    for symbol, conf in inst_conf_map.items():
+        raw = getattr(conf, "slippage", None)
+        if raw is None:
+            continue
+        result[str(symbol)] = _normalize_slippage_policy(
+            raw,
+            logger=logger,
+            scope=f"InstrumentConfig[{symbol}].slippage",
+            resolve_ticks=False,
+        )
+    return result or None
+
+
 def _normalize_strategy_commission_map(
     strategy_commission: Optional[Dict[str, CommissionPolicy]],
     configured_slot_ids: Sequence[str],
@@ -4634,6 +4652,15 @@ def run_backtest(
                     for k, v in fee_fields.items()
                 },
             )
+
+    # InstrumentConfig.slippage 按品种生效, 优先于策略级/全局滑点(见设计 A)。
+    instrument_slippage_map = _build_instrument_slippage_map(inst_conf_map, logger)
+    for current_strategy in all_strategy_instances:
+        setattr(
+            current_strategy,
+            "_instrument_slippage_map",
+            dict(instrument_slippage_map) if instrument_slippage_map else None,
+        )
 
     for current_strategy in all_strategy_instances:
         current_strategy._set_instrument_snapshots(instrument_snapshots)
