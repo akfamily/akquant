@@ -172,9 +172,8 @@ class InstrumentConfig:
     These fields override the global settings in `StrategyConfig` for
     this specific asset. ChinaMarket 下期权按张计费，不受这四个费用字段影响；
     但显式 `use_china_market=False` 走 SimpleMarket 时，覆盖同样作用于期权。
-    `run_from_checkpoint` 续跑时这些覆盖暂不生效，且完全不下发 `china_options`
-    配置——续跑段的期权按 SimpleMarket 的百分比佣金计费、不收行权结算费
-    （除非 `t_plus_one=True`）。
+    `run_from_checkpoint` 续跑时这些覆盖同样生效，`china_options` 配置
+    （取自调用方传入的 `config.china_options`）也会下发到续跑段。
     :param commission_rate: Commission rate (e.g., 0.0003).
     :param min_commission: Minimum commission per order.
     :param stamp_tax_rate: Stamp tax rate (sell side only).
