@@ -793,21 +793,32 @@ impl Engine {
     /// 3. 同时喂窗口聚合器: 须在 `configure_window_subscriptions()` **之后**调用,
     ///    否则预加载期间不会产生任何窗口历史(订阅表为空时聚合器直接返回)。
     ///
+    /// 返回回放序列: 每根基础 bar 之后紧跟它闭合出的窗口 bar(`freq` 为窗口周期),
+    /// 与实盘 `on_bar` 先于 `on_window_bar` 的派发顺序一致。Python 侧据此在策略
+    /// `on_start` 之后逐根回放声明式指标(含 `freq=` 窗口指标), 让历史段与实时段
+    /// 由同一批指标实例连续算出。
+    ///
     /// :param bars: 历史 K 线列表
-    pub fn preload_history(&mut self, bars: Vec<Bar>) {
+    /// :return: 回放序列(基础 bar 与窗口 bar 交错)
+    pub fn preload_history(&mut self, bars: Vec<Bar>) -> Vec<Bar> {
         let mut buffer = self.history_buffer.write().unwrap();
         let mut aggregator = self
             .window_aggregator
             .write()
             .expect("window_aggregator 写锁被污染");
-        for bar in &bars {
-            buffer.update(bar);
+        let mut events = Vec::with_capacity(bars.len());
+        for bar in bars {
+            buffer.update(&bar);
             // 预加载也要喂窗口聚合器, 否则启动时窗口历史为空、按周期注册的指标要
             // 重新预热(规格 7.2)。闭合出的窗口 bar 只写历史, 不派发回调。
-            for window_bar in aggregator.update(bar) {
+            let closed = aggregator.update(&bar);
+            events.push(bar);
+            for window_bar in closed {
                 buffer.update_window(&window_bar);
+                events.push(window_bar);
             }
         }
+        events
     }
 
     /// 配置多周期窗口订阅(由 Python 侧 `Strategy.subscribe_bars` 收集后下发)。
@@ -1410,20 +1421,29 @@ impl Engine {
         // (仅 RealtimeExecutionClient 对接 broker 时为 true): broker 实盘不做——实盘到期
         // 由柜台处理; run_live 的 paper/replay 走 SimulatedExecutionClient, is_live()
         // 为 false, 会话结束时同样补结算(若在到期日当天停止, 用的是当时已知的最新价而非
-        // 真正的到期日收盘价)。
+        // 真正的到期日收盘价)。补结算与日常路径一致: 记合成成交、发 `expiry` 流事件、
+        // 派发 on_expiry。
         if !self.execution_model.is_live()
             && let Some(last_date) = self.current_date
             && let Some(next_date) = last_date.succ_opt()
         {
-            let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+            let prices = self
+                .last_prices
+                .read()
+                .expect("last_prices 读锁被污染")
+                .clone();
+            let expiry_timestamp = self.terminal_result_timestamp().unwrap_or(0);
             let settlement = self.settlement_manager.settle_expiries(
                 next_date,
                 &mut self.state.portfolio,
+                &mut self.state.order_manager.trade_tracker,
                 &self.instruments,
                 &prices,
                 &self.market_manager,
+                &self.risk_manager.config,
+                expiry_timestamp,
+                self.bar_count,
             );
-            drop(prices);
             for event in &settlement.events {
                 log::info!(
                     target: "akquant::settlement",
@@ -1442,6 +1462,14 @@ impl Engine {
                     settlement.deferred.join(", ")
                 );
             }
+            // 收尾时已没有下一根 bar 来触发常规回调入口, 这里直接发流事件并派发 on_expiry。
+            self.recent_expiry_events = settlement
+                .events
+                .iter()
+                .map(crate::context::ExpiryEvent::from_executed)
+                .collect();
+            self.emit_expiry_stream_events(py);
+            self.flush_terminal_expiry_events(py, strategy)?;
         }
 
         // Record final snapshot if we have data

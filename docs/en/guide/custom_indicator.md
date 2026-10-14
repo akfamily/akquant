@@ -697,6 +697,9 @@ derives the millisecond value.
     frontend can decide whether a field exists instead of probing for it.
     `timestamp_ms` ships on the indicator stream from `1.2` onward; when reading
     older messages, fall back to converting the nanosecond `timestamp` yourself.
+    `phase` ships from `1.4` onward (on points, snapshots and every snapshot
+    item): `"preload"` marks points replayed from `run_live(preload_history=)`,
+    everything else is `"run"`; treat a missing field as `"run"`.
 
 This is not a new transport layer. It is just a normalization layer that turns AKQuant stream events into steadier frontend message objects.
 
@@ -762,15 +765,75 @@ without retaining historical points in memory, avoiding unbounded growth over
 long runs. If you pass only `on_event` (no `indicator_recorder`), `run_live`
 enables this streaming sink automatically.
 
+### Live history preload: one continuous series
+
+A chart usually needs the indicators before the session started *and* the live
+ones after it. Do not stitch a backtest onto a live run for that: bars can be
+missed or duplicated at the seam, and the backtest's indicator instances are not
+the live ones, so recursive indicators such as EMA or MACD re-converge and jump.
+Use `run_live(preload_history=...)` instead, so one session and one set of
+indicator instances consume the history first and then the live feed:
+
+```python
+from akquant import run_live
+
+history = fetch_my_history()      # up to the last closed bar; no built-in data source
+
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="klinedata",
+    preload_history=history,      # DataFrame / {symbol: DataFrame} / list[Bar], same as run_backtest(data=)
+    on_event=on_event,
+)
+```
+
+What the preload does:
+
+- Fills the history buffer, so `get_history` works from the first live bar.
+  Without an explicit `set_history_depth`, the depth is lifted to the preload
+  depth (max rows per symbol); a larger value you set is never lowered.
+- Feeds the `subscribe_bars` window aggregator: windows closed during the
+  preload land in the window history too.
+- Counts toward `warmup_period`: N preloaded bars count as N bars seen.
+- Replays every `self.I()` indicator bar by bar **after** `on_start` (window
+  `freq=` indicators included), so parameterised indicators declared in
+  `on_start` are covered. Plot points stream as usual, tagged
+  `phase="preload"`; afterwards the same instances continue on live bars with
+  `phase="run"`.
+
+What it does not do: drive `on_bar`, match orders or touch the account - zero
+order risk. Indicators computed by hand in `on_bar` and reported through
+`record_indicator` are not replayed; declare them with `self.I()` if they need
+the preload.
+
+Boundaries:
+
+- Rows later than session start are dropped with a warning (no look-ahead).
+- A first live bar that is not newer than the symbol's preload tail is warned
+  about but **still dispatched** (one duplicate is far cheaper than one lost
+  bar). Frontends overwrite by `(indicator_key, symbol, timestamp)`.
+- A strategy restored from a checkpoint skips the indicator replay (its state
+  was restored); the history buffer is still filled.
+- A tick-driven session becomes bar/tick dual-stream once bars are preloaded:
+  outside `on_bar` / `on_tick` (e.g. `on_timer`) pass `freq='bar'` or
+  `freq='tick'` to `get_history`.
+
+The frontend receives one continuous series and can style or filter on
+`phase`. The full loop is in `examples/73_lwc_live_indicators.py`: the first 40
+bars are preloaded, the last 20 arrive live, and the chart shows one unbroken
+line.
+
 ### Live increments to an LWC chart
 
 If your frontend is lightweight-charts you do not need to unpack the fields of
 `to_indicator_message()` yourself: `akquant.lwc.to_lwc_update()` turns a point
 message into an increment that `series.update()` consumes as-is
-(`{indicator_key, pane, series_type, color, confirmed, point:{time, value}}`).
+(`{indicator_key, pane, series_type, color, confirmed, phase, point:{time, value}}`).
 `confirmed` is passed through - once intrabar provisional points exist they will
 share the `time` of the confirmed point, and LWC's `update()` overwrites by `time`,
-so the frontend needs no change.
+so the frontend needs no change. `phase` is passed through as well (`"preload"` /
+`"run"`, see the previous section).
 
 ```python
 from akquant.lwc import load_lwc_js, to_lwc_update

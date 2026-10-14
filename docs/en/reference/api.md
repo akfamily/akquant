@@ -5,6 +5,7 @@ This API documentation covers the core classes and methods of AKQuant.
 Quick links:
 
 *   [run_live broker-live semantics](#live-broker-semantics)
+*   [run_live live history preload](#live-preload-history)
 
 ## 1. High-Level API
 
@@ -583,9 +584,11 @@ Product presets (explicitly passed fields always win):
 | sellable_after_days | 0 | 0 |
 | option_margin_model | CHINA_SINGLE_LEG | — |
 
-`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` override market rates per symbol in `run_backtest` (ChinaMarket: all four for stocks/funds, only `commission_rate` for futures; SimpleMarket: all four for every asset). Under ChinaMarket, options are charged per contract and unaffected by these fields; but with an explicit `use_china_market=False` (SimpleMarket), the overrides apply to options too, same as any other asset. Known limitations: these overrides are not applied by `run_from_checkpoint`, which also does not forward `china_options` at all — on resume, options are charged by SimpleMarket's percent commission policy with no exercise fee (unless `t_plus_one=True` routes the resumed run through ChinaMarket); if a backtest is split via checkpoint, `on_expiry` for a position settled at the end of the first segment is never delivered; `slippage` is not yet honored.
+`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` override market rates per symbol in `run_backtest` and `run_from_checkpoint` (ChinaMarket: all four for stocks/funds, only `commission_rate` for futures; SimpleMarket: all four for every asset). Under ChinaMarket, options are charged per contract and unaffected by these fields; but with an explicit `use_china_market=False` (SimpleMarket), the overrides apply to options too, same as any other asset. `slippage` is honored during matching; resolution order: order-level `slippage=` > per-instrument `InstrumentConfig.slippage` > strategy-level `strategy_slippage` > global `StrategyConfig.slippage`; `run_from_checkpoint` resolves it the same way. `run_from_checkpoint` now forwards option market rules (`china_options`, exercise fee) and per-instrument fee / slippage overrides to the resumed segment. Known limitations: if the second phase call passes no `instruments` at all, an option re-registered from stage-one data keys is misclassified as STOCK; futures market rules (`ChinaFuturesConfig`, sessions, futures prefix fee rules) are still not re-applied on resume; detecting a stage-one option may switch the resumed run to ChinaMarket.
 
-Option fees (`ChinaOptionsConfig`, CNY per contract): `commission_per_contract=5.0` (renamed from `fee_per_contract`), `exchange_fee_per_contract=1.3`, `clearing_fee_per_contract=0.3`, `exercise_fee_per_contract=0.6` (ITM long only, reported in `ExpiryEvent.fee`, not in `total_commission`), `sell_open_exempt=True` (sell-to-open pays commission only). These defaults are the SSE/SZSE ETF-option schedule only; commodity futures options / index options (e.g. RB, MO, IO) use different rates — set them explicitly via `fee_by_symbol_prefix`. Any option instrument in a backtest selects ChinaMarket unless `ChinaOptionsConfig(use_china_market=False)`; in the same backtest, futures keep the user's percent commission rate (a non-percent commission policy cannot be applied to ChinaMarket futures and falls back to the futures default rate, with a warning logged). Expiry settles at the start of the first trading day after `expiry_date` using the expiry-day close; see the Chinese API reference and textbook chapter 8 for details.
+Option fees (`ChinaOptionsConfig`, CNY per contract): `commission_per_contract=5.0` (renamed from `fee_per_contract`), `exchange_fee_per_contract=1.3`, `clearing_fee_per_contract=0.3`, `exercise_fee_per_contract=0.6` (ITM long only, reported in `ExpiryEvent.fee` and included in `total_commission`), `sell_open_exempt=True` (sell-to-open pays commission only). These defaults are the SSE/SZSE ETF-option schedule only; commodity futures options / index options (e.g. RB, MO, IO) use different rates — set them explicitly via `fee_by_symbol_prefix`. Any option instrument in a backtest selects ChinaMarket unless `ChinaOptionsConfig(use_china_market=False)`; in the same backtest, futures keep the user's percent commission rate (a non-percent commission policy cannot be applied to ChinaMarket futures and falls back to the futures default rate, with a warning logged). Expiry settles at the start of the first trading day after `expiry_date` using the expiry-day close; see the Chinese API reference and textbook chapter 8 for details.
+
+Expiry settlement is recorded as a synthetic closing trade in `trades_df` (`order_tag="__expiry__"`, `order_id="expiry:<symbol>:<trading_date>"`); fill price is per-unit intrinsic value for options and the settlement price otherwise, and the fee is the exercise fee. Win rate and other trade metrics therefore include expiry closes, but that row's `mae`/`mfe` are always `0` (no price history is replayed for it). The synthetic trade does **not** appear in `orders_df` / `executions` — it isn't an order. For margin-account futures, `ExpiryEvent.cash_flow` is the realized close-out P&L (matching what is actually booked); cash-account futures, stocks, and options still book the gross expiry cash flow (`cash_flow - fee`).
 
 Common enums (available directly from top-level `akquant`):
 
@@ -1049,6 +1052,19 @@ Strict-mode notes:
 
 *   Cancel request sent does not imply `Cancelled`; wait for `OnRtnOrder(Cancelled)`.
 *   Error callback received does not imply `Rejected`; final status is confirmed by order callback.
+
+### `akquant.run_live(preload_history=...)` (live history preload) {: #live-preload-history }
+
+```python
+run_live(..., preload_history=history)
+```
+
+*   `preload_history`: `pd.DataFrame` / `dict[str, pd.DataFrame]` / `list[Bar]` / `None` (default). Same shapes and columns as `run_backtest(data=)`. The framework ships no data source; supply bars ending at the last closed bar.
+*   **Does**: fills the history buffer (the strategy's `_history_depth` is lifted to the preload depth, never lowered); feeds the `subscribe_bars` window aggregator; counts toward per-symbol `warmup_period`; replays `self.I()` indicators bar by bar after `on_start` (window `freq=` indicators included), streaming plot points with `phase="preload"`.
+*   **Does not**: drive `on_bar`, match orders or touch the account.
+*   **Validation**: missing required columns, or no symbol matching `instruments`, raises `ValueError`; partially unmatched symbols, rows later than session start and empty input are warned about and skipped; a first live bar not newer than the preload tail is warned about but still dispatched.
+*   **Warm start**: a strategy restored from a checkpoint skips the indicator replay; the history buffer is still filled.
+*   See the "Live history preload" section of the [custom indicator guide](../guide/custom_indicator.md).
 
 ## 3. Core Engine
 

@@ -1209,7 +1209,7 @@ class MetaAwareStrategy(Strategy):
 
 *   `on_order(self, order)`: 订单状态更新时触发。
 *   `on_trade(self, trade)`: 订单成交时触发。
-*   `on_expiry(self, event)`: 到期结算事件触发。仅当引擎实际执行到期结算/移除后触发，回调参数为事件字典，常见字段包括 `symbol`、`expiry_date`、`quantity_closed`、`cash_flow`、`fee` 与 `settlement_type`（`cash_flow` 为毛额，`fee` 为期权行权结算费，账户实收 `cash_flow - fee`）。到期结算在到期日之后第一个交易日开始时进行；回测收尾时的补结算不触发该回调。最小可运行示例见：`examples/49_on_expiry_demo.py`。
+*   `on_expiry(self, event)`: 到期结算事件触发。仅当引擎实际执行到期结算/移除后触发，回调参数为事件字典，常见字段包括 `symbol`、`expiry_date`、`quantity_closed`、`cash_flow`、`fee` 与 `settlement_type`（`cash_flow` 为毛额，`fee` 为期权行权结算费，账户实收 `cash_flow - fee`；保证金账户期货的 `cash_flow` 为平仓盈亏）。到期结算在到期日之后第一个交易日开始时进行；回测收尾时的补结算同样触发该回调（含流式 `expiry` 事件），checkpoint 拆分运行也不会丢失。到期平仓还会以 `order_tag="__expiry__"` 的合成成交记入 `trades_df`（不进入 `orders_df`）。最小可运行示例见：`examples/49_on_expiry_demo.py`。
 
 ### 7.2 指标 (Indicators)
 

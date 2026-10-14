@@ -43,6 +43,11 @@ def _json_loads_or_default(value: Any, default: Any) -> Any:
         return default
 
 
+def _to_phase(value: Any) -> str:
+    text = str(value or "").strip()
+    return text or "run"
+
+
 def _normalize_symbol(value: Any) -> Optional[str]:
     """Normalize unknown or empty symbols into None."""
     if value in (None, "", "_unknown"):
@@ -109,6 +114,8 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
             # 缺失时默认 True: 早期事件与第三方 IndicatorSink 都只在 bar
             # 闭合后产点, 把它们当作已确认是正确的语义。
             "confirmed": _to_bool(payload.get("confirmed", "true")),
+            # 缺失时默认 run: 1.4 之前的事件与旧协议 sink 都不来自预热回放。
+            "phase": _to_phase(payload.get("phase")),
             "meta": _json_loads_or_default(payload.get("meta_json"), {}),
         }
         return base_message
@@ -128,6 +135,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
                     "value": _to_float_or_text(raw_item.get("value")),
                     "warmup": _to_bool(raw_item.get("warmup", False)),
                     "confirmed": _to_bool(raw_item.get("confirmed", True)),
+                    "phase": _to_phase(raw_item.get("phase")),
                     "meta": _json_loads_or_default(raw_item.get("meta_json"), {}),
                 }
             )
@@ -155,6 +163,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
         "timestamp_ms": _timestamp_ms(payload, timestamp_ns),
         "indicator_count": _to_int(payload.get("indicator_count", len(items))),
         "confirmed": _to_bool(payload.get("confirmed", "true")),
+        "phase": _to_phase(payload.get("phase")),
         "items": items,
         "indicator_keys": indicator_keys,
         "panes": panes,

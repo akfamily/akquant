@@ -26,6 +26,7 @@ from .strategy_ml import (
     should_trigger_training,
 )
 from .strategy_order_events import check_expiry_events
+from .strategy_preload import check_preload_overlap
 from .strategy_scheduler import flush_pending_schedules
 
 logger = get_logger("strategy.events")
@@ -134,6 +135,7 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     strategy.current_bar = None
     strategy.current_tick = None
 
+    check_preload_overlap(strategy, str(symbol), int(bar.timestamp))
     if _is_before_active_start(strategy, int(bar.timestamp)):
         return
 

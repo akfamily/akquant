@@ -567,7 +567,7 @@ class Engine:
         """
         ...
 
-    def preload_history(self, bars: list[Bar]) -> None:
+    def preload_history(self, bars: list[Bar]) -> list[Bar]:
         r"""
         批量灌入历史 K 线, 只写历史缓冲, 不进 pipeline.
 
@@ -575,6 +575,8 @@ class Engine:
         (symbol, timestamp) 升序。
 
         :param bars: 历史 K 线列表
+        :return: 回放序列: 每根基础 bar 之后紧跟它闭合出的窗口 bar
+            (``freq`` 为窗口周期), 与实盘 on_bar 先于 on_window_bar 的顺序一致
         """
         ...
 
@@ -607,6 +609,16 @@ class Engine:
     def set_history_depth(self, depth: int) -> None:
         r"""
         设置历史数据长度.
+
+        :param depth: 历史数据长度
+        """
+        ...
+
+    def configure_history_depth(self, depth: int) -> None:
+        r"""
+        设置历史缓冲容量, 保留已有数据(按新容量裁剪最旧的).
+
+        与 ``set_history_depth`` 不同, 它不清空缓冲, 可在 ``preload_history`` 之后调用。
 
         :param depth: 历史数据长度
         """

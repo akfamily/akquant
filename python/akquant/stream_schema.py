@@ -27,6 +27,14 @@ History:
   always confirmed" would make that addition breaking. Consumers should
   treat a later point with the same ``(indicator_key, symbol, timestamp)``
   as superseding an earlier one.
+- ``1.4`` — added ``phase`` to the indicator channel's ``indicator`` (point)
+  and ``snapshot`` objects (and to each snapshot item). ``"preload"`` marks
+  points replayed from ``run_live(preload_history=)`` before the first live
+  bar; ``"run"`` marks everything else (all backtest points, all live points
+  after the preload). A snapshot is ``"preload"`` only when every item is.
+  Absent means ``"run"``. The preload and live segments are produced by the
+  same indicator instances, so a frontend can draw them as one continuous
+  series and just style or filter on ``phase``.
 """
 
-STREAM_SCHEMA_VERSION = "1.3"
+STREAM_SCHEMA_VERSION = "1.4"

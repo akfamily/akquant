@@ -52,6 +52,7 @@ from ._payload_utils import (
     payload_field,
     payload_to_dict,
 )
+from ._preload import PreloadResult, normalize_preload_history
 from ._strategy_maps import (
     normalize_strategy_bool_map,
     normalize_strategy_float_map,
@@ -61,6 +62,10 @@ from ._strategy_maps import (
 from ._stream_sink import StreamingIndicatorSink
 
 logger = get_logger("gateway.live")
+
+#: 实盘引擎历史缓冲的默认容量, 对齐 ``Engine::new`` 里的 ``HistoryBuffer::new(10000)``。
+#: 预热扩容取 ``max(预热深度, 本值)``: 超大预热扩容而非截断(设计 §9.1)。
+_DEFAULT_HISTORY_CAPACITY = 10000
 
 # Backward-compatible alias; canonical definition lives in _gateway_setup.
 _LEGACY_GATEWAY_OPTION_KEYS = LEGACY_GATEWAY_OPTION_KEYS
@@ -377,6 +382,7 @@ class LiveRunner:
         ] = None,
         runtime_config_override: bool = True,
         session_tag: Optional[str] = None,
+        preload_history: Any = None,
     ):
         """
         Initialize the LiveRunner.
@@ -527,6 +533,8 @@ class LiveRunner:
         if session_tag is not None:
             _validate_session_tag(session_tag)
         self.session_tag = session_tag
+        self.preload_history = preload_history
+        self._preload_result: Optional[PreloadResult] = None
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
         self._indicator_recorder_override: Optional[IndicatorSink] = None
@@ -682,6 +690,12 @@ class LiveRunner:
             [strategy_instance, *slot_strategy_instances.values()], bundle
         )
         self._attach_indicator_stream(
+            [strategy_instance, *slot_strategy_instances.values()]
+        )
+        # 历史预热: 必须在 _inject_data_freq(下发窗口订阅)之后 —— 否则灌入时
+        # 聚合器订阅表为空, 不产出窗口历史; 又必须在任何 on_start 之前 ——
+        # 指标回放挂在 _on_start_internal 末尾, 靠这里先把回放序列交给策略。
+        self._apply_preload_history(
             [strategy_instance, *slot_strategy_instances.values()]
         )
         # Broker callbacks + submit/state/cancel overrides are broker_live-only.
@@ -892,6 +906,54 @@ class LiveRunner:
                 slot_input
             )
         return strategy_instance, slot_strategy_instances, self.strategy_id
+
+    def _apply_preload_history(self, strategies: list[Strategy]) -> None:
+        """会话启动前把调用方给的历史 bar 灌进引擎, 并把回放序列交给各策略.
+
+        只写历史缓冲与窗口聚合器: 不触发 on_bar、不撮合、不动账户。指标回放与
+        warmup 计数由策略在 ``_on_start_internal`` 末尾消费 ``_preload_events``
+        完成(主策略的 on_start 在 ``engine.run()`` 内触发, Python 侧在它之后
+        没有时点, 只能挂在策略自己身上)。
+
+        **容量只能用 configure_history_depth**: ``set_history_depth`` 绑的是
+        ``HistoryBuffer::set_capacity``, 会 ``data.clear()`` 把刚灌的全清掉。
+        还要抬 ``strategy._history_depth``: 一是实盘此前从不设置它,
+        ``get_history`` 会直接抛 "History tracking is not enabled"; 二是
+        ``engine.run()`` 开头按主策略的 ``_history_depth`` 重设容量, 不抬就会把
+        预热裁到用户原先设的长度以下。
+
+        **不设** ``_active_start_time_ns``: 回测靠它划"预热区间", 但在实盘
+        设了会让与预热末尾重叠的首根实盘 bar 被 ``on_bar_event`` 当作预热期
+        数据静默吞掉, 违背"重叠只告警不丢"(设计 §4.4)。
+        """
+        preload = getattr(self, "preload_history", None)
+        if preload is None:
+            return
+        result = normalize_preload_history(
+            preload, self._subscribed_symbol_set(), time.time_ns()
+        )
+        if result is None or not result.bars:
+            return
+        self.engine.configure_history_depth(
+            max(result.depth, _DEFAULT_HISTORY_CAPACITY)
+        )
+        events = self.engine.preload_history(result.bars)
+        # 多个策略共享同一个 dict: 首根实盘 bar 的重叠检查按标的只报一次。
+        overlap_guard = dict(result.last_timestamp_ns)
+        for strategy in strategies:
+            current = int(getattr(strategy, "_history_depth", 0) or 0)
+            if result.depth > current:
+                strategy.set_history_depth(result.depth)
+            strategy._preload_events = events
+            strategy._preload_overlap_guard = overlap_guard
+        self._preload_result = result
+        logger.info(
+            "历史预热完成: %s 个标的, 每标的最多 %s 根, 回放事件 %s 个",
+            len(result.frames),
+            result.depth,
+            len(events),
+            extra=self._runner_log_extra(phase="live"),
+        )
 
     def _dispatch_slot_strategy_start(
         self, slot_strategies: Dict[str, Strategy]

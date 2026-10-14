@@ -5,6 +5,7 @@
 快速跳转：
 
 *   [run_live broker_live 执行语义](#live-broker-semantics)
+*   [run_live 实盘历史预热](#live-preload-history)
 
 ## 1. 高级入口 (High-Level API)
 
@@ -555,7 +556,7 @@ class InstrumentConfig:
     defaulted_fields: FrozenSet[str]   # 由缺省值填充的字段名
 ```
 
-`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` 在 `run_backtest` 中按标的覆盖市场费率（ChinaMarket 下股票/基金四项全部生效、期货只认 `commission_rate`；SimpleMarket 下四项对所有资产生效）。ChinaMarket 下期权按张计费不受这些字段影响；但显式 `use_china_market=False` 走 SimpleMarket 时，覆盖同样作用于期权。已知限制：`run_from_checkpoint` 续跑时这些覆盖暂不生效，且完全不下发 `china_options` 配置——续跑段的期权按 SimpleMarket 的百分比佣金计费、不收行权结算费（除非 `t_plus_one=True`）；若回测通过 checkpoint 拆分运行，前一段结束时补结算的持仓的 `on_expiry` 不会送达；`slippage` 字段目前尚未接入撮合。
+`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` 在 `run_backtest` 与 `run_from_checkpoint` 中按标的覆盖市场费率（ChinaMarket 下股票/基金四项全部生效、期货只认 `commission_rate`；SimpleMarket 下四项对所有资产生效）。ChinaMarket 下期权按张计费不受这些字段影响；但显式 `use_china_market=False` 走 SimpleMarket 时，覆盖同样作用于期权。`slippage` 字段已接入撮合，优先级：订单级 `slippage=` > 品种级 `InstrumentConfig.slippage` > 策略级 `strategy_slippage` > 全局 `StrategyConfig.slippage`；`run_from_checkpoint` 续跑同样按此优先级生效。`run_from_checkpoint` 续跑段现在会补齐期权市场规则（`china_options` 配置下发、行权结算费）与按品种费用 / 滑点覆盖；已知限制：若第二阶段调用完全不传 `instruments`，第一阶段仅由数据键重新登记的期权会被判定为 STOCK；期货市场规则（`ChinaFuturesConfig`、交易时段、期货前缀费率规则）续跑时仍不会重新下发；识别出第一阶段的期权可能使续跑切换到 ChinaMarket。
 
 常用枚举（均可在 `akquant` 顶层直接访问）：
 
@@ -706,7 +707,9 @@ config = BacktestConfig(
 
 只要回测里有期权合约，**默认就使用 ChinaMarket**（不再需要配置 `china_options` 或 `t_plus_one=True`）。副作用：同一回测里的 ETF 等基金改按 ChinaMarket 的 FUND 费率计费；同一回测里的期货沿用用户设置的百分比佣金率，非百分比佣金策略无法应用到 ChinaMarket 期货（回退为期货缺省费率并打一条 warning）。
 
-卖单按"成交前持仓"拆成两段计费：先平掉多头的部分照收全部费用，超出多头的部分视为卖出开仓，`sell_open_exempt=True` 时只收佣金。`position_effect="auto"` 下，一笔穿越零持仓的卖单会被拆成一笔平仓单和一笔开仓单。行权结算费计入到期事件 `ExpiryEvent.fee` 并从到期现金流中扣除（`cash_flow` 为毛额，账户实收 `cash_flow - fee`），**不计入** `trade_metrics.total_commission`。
+卖单按"成交前持仓"拆成两段计费：先平掉多头的部分照收全部费用，超出多头的部分视为卖出开仓，`sell_open_exempt=True` 时只收佣金。`position_effect="auto"` 下，一笔穿越零持仓的卖单会被拆成一笔平仓单和一笔开仓单。行权结算费计入到期事件 `ExpiryEvent.fee` 并从到期现金流中扣除（`cash_flow` 为毛额，账户实收 `cash_flow - fee`），**计入** `trade_metrics.total_commission`。
+
+到期平仓会作为一笔合成成交记入 `trades_df`（`order_tag="__expiry__"`、`order_id="expiry:<symbol>:<trading_date>"`），成交价期权取每单位内在价值、期货/股票取结算价，手续费为行权结算费；胜率等交易统计随之包含到期平仓，但该行的 `mae`/`mfe` 恒为 `0`（未回放持仓期内的价格历史）。合成成交**不会**出现在 `orders_df` / `executions` 中——它不是一笔订单。保证金账户期货到期时，`ExpiryEvent.cash_flow` 为平仓盈亏（与实际入账一致）；现金账户、股票、期权仍按到期现金流毛额计（`cash_flow - fee` 入账）。
 
 中国期权扩展推荐使用以下优先级口径：
 
@@ -1119,6 +1122,19 @@ run_live(
 
 *   撤单请求发送成功不等于 `Cancelled`，需等待 `OnRtnOrder(Cancelled)`。
 *   收到错误回报不等于 `Rejected`，最终状态以订单回报为准。
+
+### `akquant.run_live(preload_history=...)`（实盘历史预热） {: #live-preload-history }
+
+```python
+run_live(..., preload_history=history)
+```
+
+*   `preload_history`：`pd.DataFrame` / `dict[str, pd.DataFrame]` / `list[Bar]` / `None`（默认）。形态与列约定同 `run_backtest(data=)`。框架不内置数据源，数据由调用方提供，应截止到上一根已收盘 bar。
+*   **会做**：灌入历史缓冲（策略的 `_history_depth` 自动抬到预热深度，不下调已设的更大值）；喂 `subscribe_bars` 窗口聚合器；计入 per-symbol `warmup_period`；在 `on_start` 之后逐根回放 `self.I()` 指标（含 `freq=` 窗口指标），绘图点以 `phase="preload"` 进入指标流。
+*   **不会做**：不触发 `on_bar`、不撮合、不动账户。
+*   **校验**：缺必需列、或一个标的都匹配不上 `instruments` 时抛 `ValueError`；部分标的不匹配、晚于会话启动的行、空数据均告警后跳过；实盘首根 bar 不晚于预热末戳时告警但照常派发。
+*   **热启动**：从存档恢复的策略跳过指标回放，历史缓冲仍会灌入。
+*   详见[自定义指标指南](../guide/custom_indicator.md)「实盘历史预热」一节。
 
 ## 3. 核心引擎 (Core)
 

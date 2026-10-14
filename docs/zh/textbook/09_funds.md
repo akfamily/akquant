@@ -110,7 +110,7 @@ cb = InstrumentConfig(
 )
 ```
 
-说明：这些按品种的费用覆盖在 `run_backtest` 中生效，`run_from_checkpoint` 续跑时暂不生效。本期只做交易层面的建模，转股、强赎、回售、到期赎回等条款事件以及应计利息 / 净价全价尚未建模。
+说明：这些按品种的费用覆盖在 `run_backtest` 与 `run_from_checkpoint` 中均生效。本期只做交易层面的建模，转股、强赎、回售、到期赎回等条款事件以及应计利息 / 净价全价尚未建模。
 
 ## 9.3 现代投资组合理论 (Modern Portfolio Theory, MPT)
 

@@ -373,6 +373,28 @@ impl Processor for DataProcessor {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    // 到期结算必须先于日终结算(利息/强平/T+1/挂单过期): 强平按当时的
+                    // 组合选仓, 而它生成的强平成交要到 apply_execution_report 才落地;
+                    // 若先强平后到期, 到期会立刻清掉持仓与 tracker 库存, 排队的强平成交
+                    // 再平一次就留下反向幻影仓位。强平必须看到到期后的组合。
+                    // 单独调用是因为它要写 TradeTracker(合成平仓成交), 而
+                    // SettlementContext 只持有只读引用。
+                    let expiry_prices = engine
+                        .last_prices
+                        .read()
+                        .expect("last_prices 读锁被污染")
+                        .clone();
+                    let expiry_settlement = engine.settlement_manager.settle_expiries(
+                        local_date,
+                        &mut engine.state.portfolio,
+                        &mut engine.state.order_manager.trade_tracker,
+                        &engine.instruments,
+                        &expiry_prices,
+                        &engine.market_manager,
+                        &engine.risk_manager.config,
+                        timestamp,
+                        engine.bar_count,
+                    );
                     let settlement_prices =
                         engine.last_prices.read().expect("last_prices 读锁被污染");
                     let settlement_ctx = crate::settlement::manager::SettlementContext {
@@ -395,8 +417,8 @@ impl Processor for DataProcessor {
                     );
                     drop(settlement_ctx);
                     drop(settlement_prices);
-                    engine.recent_expiry_events = settlement_outcome
-                        .expiry_events
+                    engine.recent_expiry_events = expiry_settlement
+                        .events
                         .iter()
                         .map(crate::context::ExpiryEvent::from_executed)
                         .collect();
@@ -455,47 +477,7 @@ impl Processor for DataProcessor {
                     for event in settlement_outcome.forced_liquidation_events {
                         let _ = engine.event_manager.send(event);
                     }
-                    let recent_expiry_events = engine.recent_expiry_events.clone();
-                    for expiry_event in recent_expiry_events {
-                        let expiry_symbol = expiry_event.symbol.clone();
-                        let mut expiry_payload = HashMap::new();
-                        expiry_payload.insert("symbol", expiry_symbol.clone());
-                        expiry_payload.insert(
-                            "asset_type",
-                            format!("{:?}", expiry_event.asset_type).to_ascii_uppercase(),
-                        );
-                        expiry_payload.insert("trading_date", expiry_event.trading_date.clone());
-                        if let Some(expiry_date) = expiry_event.expiry_date {
-                            expiry_payload.insert("expiry_date", expiry_date.to_string());
-                        }
-                        expiry_payload
-                            .insert("quantity_before", expiry_event.quantity_before.to_string());
-                        expiry_payload
-                            .insert("quantity_closed", expiry_event.quantity_closed.to_string());
-                        expiry_payload.insert("cash_flow", expiry_event.cash_flow.to_string());
-                        if let Some(ref settlement_type) = expiry_event.settlement_type {
-                            expiry_payload.insert("settlement_type", settlement_type.clone());
-                        }
-                        if let Some(settlement_price) = expiry_event.settlement_price {
-                            expiry_payload.insert("settlement_price", settlement_price.to_string());
-                        }
-                        expiry_payload.insert("reason", expiry_event.reason.clone());
-                        expiry_payload.insert("description", expiry_event.description.clone());
-                        if let Some(owner_strategy_id) = engine
-                            .default_strategy_id
-                            .clone()
-                            .filter(|text| !text.trim().is_empty())
-                        {
-                            expiry_payload.insert("owner_strategy_id", owner_strategy_id);
-                        }
-                        engine.emit_stream_event(
-                            py,
-                            "expiry",
-                            Some(expiry_symbol.as_str()),
-                            "info",
-                            expiry_payload,
-                        );
-                    }
+                    engine.emit_expiry_stream_events(py);
 
                     for o in expired_orders {
                         // Tell the execution client to drop the order too. Daily

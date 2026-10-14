@@ -641,7 +641,9 @@ def on_event(event):
     每条消息的信封里都有 `schema_version`（`MAJOR.MINOR`，见 `akquant.STREAM_SCHEMA_VERSION`）。
     向后兼容的新增字段会升 MINOR，前端据此判断某字段是否存在即可，不必做
     `try/except` 式的探测。`timestamp_ms` 自 `1.2` 起在指标流上提供；读不到
-    该版本的旧消息时，回落到纳秒 `timestamp` 自行换算。
+    该版本的旧消息时，回落到纳秒 `timestamp` 自行换算。`phase` 自 `1.4` 起提供
+    （point、snapshot 及其每个 item 上都有），`"preload"` 表示来自
+    `run_live(preload_history=)` 的回放，其余一律为 `"run"`；缺失时按 `"run"` 处理。
 
 它不是新的传输层，只是把 AKQuant 的事件结构整理成更稳定的“前端消息对象”。
 
@@ -699,13 +701,59 @@ run_live(
 不在内存里堆积历史点位，避免长时间运行导致内存无界增长。若只传 `on_event`（不传
 `indicator_recorder`），`run_live` 会自动启用这个流式 sink。
 
+### 实盘历史预热：历史段与实时段连续
+
+图表通常既要画启动前的历史指标，又要接着画实时指标。不要用“先跑一段回测、再启动实盘”来拼：
+两段之间可能漏 bar 或重复 bar，回测里的指标实例和实盘里的也不是同一个对象，EMA、MACD 这类
+递归指标到了实盘要重新收敛，接缝处会跳变。改用 `run_live(preload_history=...)`，让同一个会话、
+同一批指标实例先吃历史、再吃实时：
+
+```python
+from akquant import run_live
+
+history = fetch_my_history()      # 截止到上一根已收盘 bar；框架不内置数据源
+
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="klinedata",
+    preload_history=history,      # DataFrame / {symbol: DataFrame} / list[Bar]，与 run_backtest(data=) 同形态
+    on_event=on_event,
+)
+```
+
+预热做什么：
+
+- 灌入历史缓冲：首根实盘 bar 里 `get_history` 就有数据。未显式 `set_history_depth` 时，历史深度
+  自动抬到预热深度（每标的最大根数），已设的更大值不会被下调；
+- 喂 `subscribe_bars` 的窗口聚合器：预热期间闭合的窗口同样进入窗口历史；
+- 计入 `warmup_period`：预热了 N 根就算已经攒了 N 根；
+- 在 `on_start` **之后**逐根回放每个 `self.I()` 指标（含 `freq=` 窗口指标），所以 `on_start` 里
+  声明的参数化指标同样吃得到。绘图点照常进指标流，只是带 `phase="preload"`；回放结束后同一批
+  实例接着算实时 bar，点带 `phase="run"`。
+
+预热不做什么：不触发 `on_bar`、不撮合、不动账户，零下单风险。在 `on_bar` 里手算、再用
+`record_indicator` 上报的指标不会被回放——需要预热的指标请改用 `self.I()` 声明。
+
+几条边界：
+
+- 晚于会话启动时刻的行会被裁掉并告警（防止“看到未来”）；
+- 实盘首根 bar 若不晚于该标的的预热末戳，会点名告警但**照常派发**（重复一根远比丢一根轻）。
+  前端按同 `(indicator_key, symbol, timestamp)` 用后到的点覆盖即可；
+- 从存档热启动的策略跳过指标回放（状态已随存档恢复），历史缓冲仍会灌入；
+- tick 驱动的会话灌入 bar 预热后会变成 bar/tick 双流，`on_timer` 等回调之外读历史需显式传
+  `freq='bar'` 或 `freq='tick'`。
+
+前端拿到的是一条连续序列，按 `phase` 决定是否区分样式即可。完整闭环见
+`examples/73_lwc_live_indicators.py`：前 40 根作为预热、后 20 根实时到达，图上是一条不间断的线。
+
 ### 实时增量到 LWC 图表
 
 前端如果用 lightweight-charts，不必自己解析 `to_indicator_message()` 的字段：
 `akquant.lwc.to_lwc_update()` 把 point 消息转成 `series.update()` 可直接消费的增量
-（`{indicator_key, pane, series_type, color, confirmed, point:{time, value}}`）。
+（`{indicator_key, pane, series_type, color, confirmed, phase, point:{time, value}}`）。
 `confirmed` 原样带出——将来未闭合 bar 的临时点与确认点同 `time`，LWC 的 `update()`
-按 `time` 覆盖，前端零改动。
+按 `time` 覆盖，前端零改动。`phase` 同样原样带出（`"preload"` / `"run"`，见上一节）。
 
 ```python
 from akquant.lwc import load_lwc_js, to_lwc_update

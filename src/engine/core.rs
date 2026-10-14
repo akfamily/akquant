@@ -1586,6 +1586,101 @@ impl Engine {
         self.dispatch_window_bars(py, strategy, bars)
     }
 
+    /// 把 recent_expiry_events 逐条发成 `expiry` 流事件(日常路径与收尾补结算共用)。
+    pub(crate) fn emit_expiry_stream_events(&mut self, py: Python<'_>) {
+        let recent_expiry_events = self.recent_expiry_events.clone();
+        for expiry_event in recent_expiry_events {
+            let expiry_symbol = expiry_event.symbol.clone();
+            let mut expiry_payload = HashMap::new();
+            expiry_payload.insert("symbol", expiry_symbol.clone());
+            expiry_payload.insert(
+                "asset_type",
+                format!("{:?}", expiry_event.asset_type).to_ascii_uppercase(),
+            );
+            expiry_payload.insert("trading_date", expiry_event.trading_date.clone());
+            if let Some(expiry_date) = expiry_event.expiry_date {
+                expiry_payload.insert("expiry_date", expiry_date.to_string());
+            }
+            expiry_payload.insert("quantity_before", expiry_event.quantity_before.to_string());
+            expiry_payload.insert("quantity_closed", expiry_event.quantity_closed.to_string());
+            expiry_payload.insert("cash_flow", expiry_event.cash_flow.to_string());
+            if let Some(ref settlement_type) = expiry_event.settlement_type {
+                expiry_payload.insert("settlement_type", settlement_type.clone());
+            }
+            if let Some(settlement_price) = expiry_event.settlement_price {
+                expiry_payload.insert("settlement_price", settlement_price.to_string());
+            }
+            expiry_payload.insert("reason", expiry_event.reason.clone());
+            expiry_payload.insert("description", expiry_event.description.clone());
+            if let Some(owner_strategy_id) = self
+                .default_strategy_id
+                .clone()
+                .filter(|text| !text.trim().is_empty())
+            {
+                expiry_payload.insert("owner_strategy_id", owner_strategy_id);
+            }
+            self.emit_stream_event(
+                py,
+                "expiry",
+                Some(expiry_symbol.as_str()),
+                "info",
+                expiry_payload,
+            );
+        }
+    }
+
+    /// 收尾补结算之后, 逐个策略槽位派发 on_expiry(日常路径靠下一根 bar 的回调入口派发,
+    /// 收尾时已没有下一根 bar)。
+    pub(crate) fn flush_terminal_expiry_events(
+        &mut self,
+        py: Python<'_>,
+        strategy: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        if self.recent_expiry_events.is_empty() {
+            return Ok(());
+        }
+
+        self.ensure_strategy_slot_exists();
+        self.ensure_strategy_context_capacity();
+        let slot_count = self.strategy_slots.len();
+        let active_orders = Arc::new(self.state.order_manager.active_orders.clone());
+        // 不清空 step 列表: 这里只派发到期回调, 订单/成交回调归 flush_terminal_pending_order_events。
+        let step_trades = self.state.order_manager.current_step_trades.clone();
+        let step_rejected_orders = self
+            .state
+            .order_manager
+            .current_step_rejected_orders
+            .clone();
+        let previous_cash = self.state.portfolio.cash;
+        let previous_account_metrics = self.current_account_metrics();
+
+        for slot_index in 0..slot_count {
+            self.active_strategy_slot = slot_index;
+            let py_ctx = self.get_or_create_strategy_context(
+                py,
+                slot_index,
+                active_orders.clone(),
+                step_trades.clone(),
+                step_rejected_orders.clone(),
+                previous_cash,
+                previous_account_metrics,
+            )?;
+            let slot_strategy = self
+                .strategy_slot_strategies
+                .get(slot_index)
+                .and_then(|slot| slot.as_ref())
+                .map(|slot| slot.clone_ref(py));
+            if let Some(ref slot_py) = slot_strategy {
+                slot_py
+                    .bind(py)
+                    .call_method1("_flush_terminal_expiry_events", (py_ctx.clone_ref(py),))?;
+            } else {
+                strategy.call_method1("_flush_terminal_expiry_events", (py_ctx,))?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn flush_terminal_pending_order_events(
         &mut self,
         py: Python<'_>,

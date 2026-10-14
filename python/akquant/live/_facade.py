@@ -9,6 +9,8 @@ stream indicators exactly like backtests.
 
 from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
 
+import pandas as pd
+
 from ..akquant import Bar, Instrument
 from ..backtest import BacktestStreamEvent
 from ..indicator_recording import IndicatorSink
@@ -86,6 +88,9 @@ def run_live(
     ] = None,
     runtime_config_override: bool = True,
     session_tag: Optional[str] = None,
+    preload_history: Optional[
+        Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]
+    ] = None,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -210,7 +215,26 @@ def run_live(
         with a ready-to-use suggestion. Values are not silently rewritten —
         that would let the platform believe isolation is active when it
         silently is not.
-    :return: ``None``.
+    :param preload_history: Optional historical bars that warm the session up
+        before the first live bar, so history and live are computed by **one**
+        session instead of stitching a backtest onto a live run. Accepts the
+        same shapes as ``run_backtest(data=)`` — a DataFrame, a
+        ``{symbol: DataFrame}`` mapping, or a list of ``Bar``. The framework
+        does not fetch history itself; supply it from your own data source
+        (e.g. ``akquant_klinedata.fetch_history_bars``), ending at the last
+        **closed** bar.
+
+        What it does: fills the history buffer (so ``get_history`` works from
+        the first live bar; ``_history_depth`` is lifted automatically), feeds
+        the ``subscribe_bars`` window aggregator, counts toward
+        ``warmup_period``, and replays every ``self.I()`` indicator bar by bar
+        right after ``on_start`` (window ``freq=`` indicators included). Plotted
+        indicators stream their historical points with ``phase="preload"``,
+        then the same indicator instances continue live with ``phase="run"``
+        — no seam. What it does **not** do: drive ``on_bar``, match orders, or
+        touch the account. Rows later than session start are dropped with a
+        warning; a first live bar not newer than the preload tail is warned
+        about but still dispatched.
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")
@@ -275,6 +299,7 @@ def run_live(
         strategy_runtime_config=strategy_runtime_config,
         runtime_config_override=runtime_config_override,
         session_tag=session_tag,
+        preload_history=preload_history,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event
