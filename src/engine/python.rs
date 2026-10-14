@@ -793,21 +793,32 @@ impl Engine {
     /// 3. 同时喂窗口聚合器: 须在 `configure_window_subscriptions()` **之后**调用,
     ///    否则预加载期间不会产生任何窗口历史(订阅表为空时聚合器直接返回)。
     ///
+    /// 返回回放序列: 每根基础 bar 之后紧跟它闭合出的窗口 bar(`freq` 为窗口周期),
+    /// 与实盘 `on_bar` 先于 `on_window_bar` 的派发顺序一致。Python 侧据此在策略
+    /// `on_start` 之后逐根回放声明式指标(含 `freq=` 窗口指标), 让历史段与实时段
+    /// 由同一批指标实例连续算出。
+    ///
     /// :param bars: 历史 K 线列表
-    pub fn preload_history(&mut self, bars: Vec<Bar>) {
+    /// :return: 回放序列(基础 bar 与窗口 bar 交错)
+    pub fn preload_history(&mut self, bars: Vec<Bar>) -> Vec<Bar> {
         let mut buffer = self.history_buffer.write().unwrap();
         let mut aggregator = self
             .window_aggregator
             .write()
             .expect("window_aggregator 写锁被污染");
-        for bar in &bars {
-            buffer.update(bar);
+        let mut events = Vec::with_capacity(bars.len());
+        for bar in bars {
+            buffer.update(&bar);
             // 预加载也要喂窗口聚合器, 否则启动时窗口历史为空、按周期注册的指标要
             // 重新预热(规格 7.2)。闭合出的窗口 bar 只写历史, 不派发回调。
-            for window_bar in aggregator.update(bar) {
+            let closed = aggregator.update(&bar);
+            events.push(bar);
+            for window_bar in closed {
                 buffer.update_window(&window_bar);
+                events.push(window_bar);
             }
         }
+        events
     }
 
     /// 配置多周期窗口订阅(由 Python 侧 `Strategy.subscribe_bars` 收集后下发)。

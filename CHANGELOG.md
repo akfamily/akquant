@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`run_live(preload_history=...)` 实盘历史预热**：接收与 `run_backtest(data=)` 同形态的历史 bar（DataFrame / `{symbol: DataFrame}` / `list[Bar]`），会话启动前灌入历史缓冲与 `subscribe_bars` 窗口聚合器，首根实盘 bar 里 `get_history` 即可用（未显式设深度时自动抬到预热深度），预热根数计入 per-symbol `warmup_period`；并在 `on_start` 之后逐根回放 `self.I()` 指标（含 `freq=` 窗口指标），历史段与实时段由同一批指标实例连续算出，取代“先回测再接实盘”的拼接做法。不触发 `on_bar`、不撮合、不动账户；晚于会话启动的行裁掉并告警，首根实盘 bar 与预热末尾重叠时告警但照常派发；热启动恢复的策略跳过指标回放。`examples/73_lwc_live_indicators.py` 改为“40 根预热 + 20 根实时”的连续图。
+- **指标流 `phase` 字段，`STREAM_SCHEMA_VERSION` 升至 `1.4`**：point、snapshot 及 snapshot 的每个 item 新增 `phase`，`"preload"` 表示预热回放产出的点，其余为 `"run"`，缺失按 `"run"` 处理；`akquant.lwc.to_lwc_update()` 原样带出。`IndicatorSink.record()` 协议新增可选关键字 `phase`，按旧签名实现的第三方 sink 自动探测、不传该参数，预热点照常送达。
+- **`Engine.preload_history()` 返回回放序列**（基础 bar 与其闭合出的窗口 bar 交错，顺序同实盘派发），此前返回 `None`；`akquant.pyi` 补上 `Engine.configure_history_depth` 存根。
+
 ### Fixed
 - **一期遗留项修复（R1–R5，`__engine_rule_version__` 升至 1.7.1）**：
   - R1 `InstrumentConfig.slippage` 接入撮合（此前是死字段）：优先级订单级 `slippage=` > 品种级 `InstrumentConfig.slippage` > 策略级 `strategy_slippage` > 全局 `StrategyConfig.slippage`；`run_from_checkpoint` 续跑同样生效。

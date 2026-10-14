@@ -102,6 +102,7 @@ from .strategy_order_events import (
     trade_event_key as _trade_event_key_impl,
 )
 from .strategy_position import Position
+from .strategy_preload import PHASE_RUN, replay_preload_history
 from .strategy_runtime_config import StrategyRuntimeConfig
 from .strategy_scheduler import _nth_per_group as _nth_per_group_impl
 from .strategy_scheduler import schedule as _schedule_impl
@@ -381,6 +382,12 @@ class Strategy:
     # 时改用实际恢复的历史深度回填, 而不是从 0 重新计数(见
     # strategy_events.py::_next_symbol_warmup_count)。
     _symbol_bar_counts_needs_history_backfill: bool
+    # 实盘 preload_history: runner 挂上回放序列, _on_start_internal 末尾消费
+    # (见 strategy_preload.py); 回放期间 _indicator_phase 为 "preload", 随
+    # record_indicator 进指标流事件的 phase 字段。
+    _preload_events: List[Bar]
+    _preload_overlap_guard: Dict[str, int]
+    _indicator_phase: str
     _framework_last_local_date: Optional[dt.date]
     _framework_before_trading_done_date: Optional[dt.date]
     _framework_after_trading_done_date: Optional[dt.date]
@@ -547,6 +554,7 @@ class Strategy:
         # per-symbol warmup 门槛计数(与全局 _bar_count 分离, 见该字段注释)。
         instance._symbol_bar_counts = defaultdict(int)
         instance._symbol_bar_counts_needs_history_backfill = False
+        instance._indicator_phase = PHASE_RUN
         instance.timezone = getattr(instance, "timezone", "Asia/Shanghai")
         raw_runtime_config = getattr(instance, "_runtime_config", None)
 
@@ -1061,6 +1069,9 @@ class Strategy:
         self.on_start()
         _register_pre_open_timers_impl(self)
         self._start_initialized = True
+        # 实盘 preload_history: on_start 里声明的指标此刻才存在, 回放只能排在
+        # 这里(主策略的 on_start 由 Rust 在 engine.run() 内触发)。
+        replay_preload_history(self)
 
     def on_stop(self) -> None:
         """
@@ -2656,7 +2667,7 @@ class Strategy:
         recorder = getattr(self, "_indicator_recorder", None)
         if recorder is None:
             return
-        accepts_confirmed = self._sink_accepts_confirmed(recorder)
+        accepts_confirmed = self._sink_accepts(recorder, "confirmed")
         if not confirmed and not accepts_confirmed:
             # 旧协议 sink 分不清临时点与确认点, 给它临时点只会在图上留下永不被
             # 覆盖的脏点; 跳过并告警一次, 确认点照常送达。
@@ -2696,21 +2707,30 @@ class Strategy:
             scale_group=scale_group,
             warmup=warmup,
             **({"confirmed": confirmed} if accepts_confirmed else {}),
+            # 旧协议 sink 收不到 phase 也无妨: 预热点都是确认值, 照常送达。
+            **(
+                {"phase": self._indicator_phase}
+                if self._sink_accepts(recorder, "phase")
+                else {}
+            ),
         )
 
-    def _sink_accepts_confirmed(self, recorder: Any) -> bool:
-        """sink.record 是否接受 ``confirmed=``(显式参数或 **kwargs); 按 sink 缓存.
+    def _sink_accepts(self, recorder: Any, keyword: str) -> bool:
+        """sink.record 是否接受某个关键字(显式参数或 **kwargs); 按 sink 缓存.
 
-        ``IndicatorSink`` 协议在 1.3 版加了 ``confirmed``, 但按旧协议签名实现的
-        第三方 sink 仍然合法, 不能因为一个新增关键字让它们首次记录就 TypeError。
+        ``IndicatorSink`` 协议在 1.3 版加了 ``confirmed``、1.4 版加了 ``phase``,
+        但按旧协议签名实现的第三方 sink 仍然合法, 不能因为一个新增关键字让它们
+        首次记录就 TypeError。
         """
-        cache: Dict[int, bool] = self.__dict__.setdefault("_sink_confirmed_support", {})
-        key = id(recorder)
+        cache: Dict[Tuple[int, str], bool] = self.__dict__.setdefault(
+            "_sink_keyword_support", {}
+        )
+        key = (id(recorder), keyword)
         if key in cache:
             return cache[key]
         try:
             params = inspect.signature(recorder.record).parameters
-            ok = "confirmed" in params or any(
+            ok = keyword in params or any(
                 p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
             )
         except (TypeError, ValueError):

@@ -9,6 +9,10 @@ wire up.
 
 1. `run_live(broker="replay")` drives the strategy on a deterministic bar feed
    in a background thread - no broker or market connection needed.
+   `preload_history=` hands in the history first: the same indicator
+   instances replay it (stream points tagged `phase="preload"`) and then
+   continue on live bars (`phase="run"`), so the chart shows one continuous
+   line instead of a backtest stitched onto a live run.
 2. Indicators declared with plot metadata are reported automatically; the
    `on_event` callback bridges them with `aq.to_indicator_message()` and then
    `akquant.lwc.to_lwc_update()` into `series.update()`-ready increments.
@@ -232,6 +236,11 @@ def make_handler(state: PageState) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+#: The first ``PRELOAD_BARS`` bars play the role of history fetched before the
+#: session (e.g. ``akquant_klinedata.fetch_history_bars``); the rest arrive live.
+PRELOAD_BARS = 40
+
+
 def run_live_thread(state: PageState, done: threading.Event, sleep_ms: int) -> None:
     """Drive the strategy on the replay feed and feed the page state."""
 
@@ -246,6 +255,12 @@ def run_live_thread(state: PageState, done: threading.Event, sleep_ms: int) -> N
             time.sleep(sleep_ms / 1000.0)
 
     LiveDeclarativeStrategy.page_state = state
+    bars = make_bars()
+    history, live = bars[:PRELOAD_BARS], bars[PRELOAD_BARS:]
+    # preload_history does not drive on_bar, so the page gets the historical
+    # candles here; indicator points for them come through on_event.
+    for bar in history:
+        state.add_candle(bar)
 
     instruments = [
         Instrument(
@@ -265,7 +280,8 @@ def run_live_thread(state: PageState, done: threading.Event, sleep_ms: int) -> N
         instruments=instruments,
         broker="replay",
         trading_mode="paper",
-        gateway_options={"bars": make_bars()},
+        gateway_options={"bars": live},
+        preload_history=history,
         cash=1_000_000,
         show_progress=False,
         on_event=on_event,
@@ -312,8 +328,10 @@ def main() -> None:
 
     snap = state.snapshot(None)
     keys = sorted({u["indicator_key"] for u in snap["updates"]})
+    preload_updates = sum(1 for u in snap["updates"] if u["phase"] == "preload")
     print(f"lwc_live_candles={len(snap['candles'])}")
     print(f"lwc_live_updates={len(snap['updates'])}")
+    print(f"lwc_live_preload_updates={preload_updates}")
     print(f"lwc_live_indicator_keys={keys}")
     print("done_lwc_live_indicators")
 

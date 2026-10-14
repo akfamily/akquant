@@ -122,7 +122,23 @@ mod tests {
                 freq: None,
             })
             .collect();
-        engine.preload_history(bars);
+        let events = engine.preload_history(bars);
+        // 返回值是回放序列: 每根基础 bar 之后紧跟它闭合出的窗口 bar,
+        // 与实盘 on_bar 先于 on_window_bar 的派发顺序一致。
+        let shape: Vec<(i64, Option<String>)> = events
+            .iter()
+            .map(|b| (b.timestamp, b.freq.clone()))
+            .collect();
+        assert_eq!(shape.len(), 12);
+        let window_at: Vec<usize> = shape
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, f))| f.is_some())
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(window_at, vec![5, 11]);
+        assert_eq!(shape[5].1.as_deref(), Some("5min"));
+        assert_eq!(events[5].close, Decimal::from(14));
         let buffer = engine.history_buffer.read().unwrap();
         let w = buffer
             .get_window_history("X", "5min")

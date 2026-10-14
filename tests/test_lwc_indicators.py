@@ -199,8 +199,27 @@ def test_to_lwc_update_converts_bridge_point_message() -> None:
         "series_type": "Line",
         "color": None,
         "confirmed": True,
+        "phase": "run",
         "point": {"time": 1_704_067_200, "value": 12.5},
     }
+
+
+def test_to_lwc_update_carries_preload_phase() -> None:
+    """``phase`` 原样带出(缺失当 run), 前端可对预热段单独着色或过滤."""
+    message = {
+        "type": "point",
+        "symbol": "A",
+        "indicator": {
+            "indicator_key": "x",
+            "timestamp_ms": _DAY1,
+            "value": 1.0,
+            "phase": "preload",
+        },
+    }
+
+    out = to_lwc_update(message)
+
+    assert out is not None and out["phase"] == "preload"
 
 
 def test_to_lwc_update_ignores_non_point_and_unready_values() -> None:

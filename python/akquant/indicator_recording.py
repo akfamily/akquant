@@ -47,8 +47,15 @@ class IndicatorSink(Protocol):
         scale_group: Optional[str] = ...,
         warmup: bool = ...,
         confirmed: bool = ...,
+        phase: str = ...,
     ) -> None:
-        """Record one indicator point."""
+        """Record one indicator point.
+
+        ``phase`` is ``"preload"`` for points replayed from
+        ``run_live(preload_history=)`` and ``"run"`` otherwise (1.4). Sinks
+        written against the 1.3 protocol may omit it; the framework detects
+        that and simply does not pass it.
+        """
         ...
 
     def build_payload(self) -> Dict[str, list[Dict[str, Any]]]:
@@ -80,6 +87,16 @@ def all_items_confirmed(items: list[Dict[str, Any]]) -> str:
     回测 recorder 与实盘 sink 共用, 两边的快照口径必须严格一致。
     """
     return "true" if all(bool(i.get("confirmed", True)) for i in items) else "false"
+
+
+def snapshot_phase(items: list[Dict[str, Any]]) -> str:
+    """快照级 phase: 全部 item 都来自预热回放才标 preload, 否则 run.
+
+    回测 recorder 与实盘 sink 共用, 两边的快照口径必须严格一致。
+    """
+    if items and all(i.get("phase") == "preload" for i in items):
+        return "preload"
+    return "run"
 
 
 def _normalize_timestamp_ns(timestamp: Any) -> int:
@@ -136,6 +153,7 @@ class IndicatorRecorder:
         scale_group: Optional[str] = None,
         warmup: bool = False,
         confirmed: bool = True,
+        phase: str = "run",
     ) -> None:
         """Record one indicator definition, instance, and point update.
 
@@ -158,6 +176,7 @@ class IndicatorRecorder:
         scale_group_norm = normalize_scale_group(scale_group)
         timestamp_ns = _normalize_timestamp_ns(timestamp)
         timestamp_ms = timestamp_ms_from_ns(timestamp_ns)
+        phase_text = _normalize_text(phase, default="run")
 
         try:
             numeric_value = float(value)
@@ -237,6 +256,7 @@ class IndicatorRecorder:
                     "value": repr(numeric_value),
                     "warmup": str(bool(warmup)).lower(),
                     "confirmed": str(bool(confirmed)).lower(),
+                    "phase": phase_text,
                     "scale_group": scale_group_norm,
                     "meta_json": meta_json,
                 },
@@ -252,6 +272,7 @@ class IndicatorRecorder:
                     "value": numeric_value,
                     "warmup": bool(warmup),
                     "confirmed": bool(confirmed),
+                    "phase": phase_text,
                     "meta_json": meta_json,
                 }
             )
@@ -275,6 +296,7 @@ class IndicatorRecorder:
                     "timestamp_ms": str(timestamp_ms_from_ns(timestamp_ns)),
                     "indicator_count": str(len(items)),
                     "confirmed": all_items_confirmed(items),
+                    "phase": snapshot_phase(items),
                     "items_json": json.dumps(
                         items,
                         ensure_ascii=False,

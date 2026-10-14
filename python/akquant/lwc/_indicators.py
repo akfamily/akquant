@@ -161,7 +161,8 @@ def to_lwc_update(message: Mapping[str, Any]) -> Optional[dict[str, Any]]:
     产出可直接喂给前端 ``series.update({time, value})``。时间恒用 UTC 秒: 实时
     路径都是日内。``confirmed`` 原样带出, 缺失当 ``True``(早期版本与第三方
     sink 只在 bar 闭合后产点); 临时点与确认点同 time, LWC ``update()`` 按 time
-    覆盖, 所以 L2 落地后前端零改动。
+    覆盖, 所以 L2 落地后前端零改动。``phase`` 同样原样带出, 缺失当 ``"run"``:
+    ``"preload"`` 是 ``run_live(preload_history=)`` 回放出的历史段点。
 
     :return: 增量更新 dict; 非 point 消息或未就绪(``None``/``NaN``)点返回 ``None``.
     """
@@ -191,6 +192,7 @@ def to_lwc_update(message: Mapping[str, Any]) -> Optional[dict[str, Any]]:
         "series_type": LWC_SERIES_TYPE.get(render_type, "Line"),
         "color": str(color) if color else None,
         "confirmed": confirmed,
+        "phase": str(indicator.get("phase") or "run"),
         "point": {
             "time": int(indicator["timestamp_ms"]) // 1000,
             "value": number,
