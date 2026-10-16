@@ -1,0 +1,3255 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/textbook/03_data/">
+      
+      
+        <link rel="prev" href="../02_programming/">
+      
+      
+        <link rel="next" href="../04_backtest_engine/">
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/textbook/03_data/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>第3章：金融数据获取与处理 - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#3" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              第3章：金融数据获取与处理
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/textbook/03_data/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../meta/architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    量化教材
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程简介
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../00_glossary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    术语表与符号约定
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第一部分：基础篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第一部分：基础篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../01_foundations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第1章：量化投资概述与环境搭建
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../02_programming/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第2章：量化编程基础
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第3章：金融数据获取与处理
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第3章：金融数据获取与处理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#31-akshare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 AKShare：量化投资的开源数据基石
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.1 AKShare：量化投资的开源数据基石">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#311" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1.1 安装与验证
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#32-ohlcv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 金融时间序列数据 (OHLCV)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.2 金融时间序列数据 (OHLCV)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#321-adjustment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2.1 复权 (Adjustment)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.2.1 复权 (Adjustment)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#adjustment-factor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        复权因子计算 (Adjustment Factor)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#322-data-frequency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2.2 数据频率 (Data Frequency)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#33-etl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 数据治理与 ETL 流程
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.3 数据治理与 ETL 流程">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#331-data-cleaning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3.1 数据清洗 (Data Cleaning)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#332-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3.2 数据存储 (Storage)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#333" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3.3 标准化字段定义
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#334-etl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3.4 ETL 脚本示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        运行结果
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#34-database-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 数据库设计 (Database Design)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.4 数据库设计 (Database Design)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#341-relational-db" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4.1 关系型数据库 (Relational DB)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#342-time-series-db" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4.2 时序数据库 (Time-Series DB)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#35-feature-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 特征存储 (Feature Store)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#36-real-time-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.6 实时数据流 (Real-time Stream)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第二部分：引擎篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第二部分：引擎篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../04_backtest_engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第4章：事件驱动回测原理
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../05_strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第5章：策略开发实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第三部分：策略篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第三部分：策略篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../06_stock_a/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第6章：A 股市场微观结构与策略实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../07_futures/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第7章：期货市场与衍生品策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../08_options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第8章：期权定价与波动率策略
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../09_funds/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第9章：基金投资与资产配置理论
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第四部分：高阶篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第四部分：高阶篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../10_analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第10章：策略评价体系与风险指标
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../11_optimization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第11章：参数优化与稳健性检验
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../12_ml/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第12章：机器学习在量化中的应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../13_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第13章：策略可视化与报表分析
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../14_factor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第14章：高性能因子挖掘与表达式引擎
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_7" id="__nav_2_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第五部分：实盘篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第五部分：实盘篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../15_live_trading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第15章：实盘交易系统与运维
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_8" id="__nav_2_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第六部分：指标工程篇
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    第六部分：指标工程篇
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../16_rust_indicators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    第16章：AKQuant 技术指标体系与应用
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../capstone/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    课程项目：端到端实战
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_10" id="__nav_2_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    附录
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 A：环境与复现
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_cite/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 B：引用、许可与勘误
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appendix_pitfalls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    附录 C：常见误区对照表
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/python_basics/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../meta/architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        学习目标
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置知识
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章实践入口
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速运行与验收
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#31-akshare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 AKShare：量化投资的开源数据基石
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.1 AKShare：量化投资的开源数据基石">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#311" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1.1 安装与验证
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#32-ohlcv" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 金融时间序列数据 (OHLCV)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.2 金融时间序列数据 (OHLCV)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#321-adjustment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2.1 复权 (Adjustment)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.2.1 复权 (Adjustment)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#adjustment-factor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        复权因子计算 (Adjustment Factor)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#322-data-frequency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2.2 数据频率 (Data Frequency)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#33-etl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 数据治理与 ETL 流程
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.3 数据治理与 ETL 流程">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#331-data-cleaning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3.1 数据清洗 (Data Cleaning)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#332-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3.2 数据存储 (Storage)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#333" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3.3 标准化字段定义
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#334-etl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3.4 ETL 脚本示例
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        运行结果
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#34-database-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 数据库设计 (Database Design)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.4 数据库设计 (Database Design)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#341-relational-db" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4.1 关系型数据库 (Relational DB)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#342-time-series-db" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4.2 时序数据库 (Time-Series DB)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#35-feature-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 特征存储 (Feature Store)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#36-real-time-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.6 实时数据流 (Real-time Stream)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        本章小结
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="本章小结">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        必须掌握
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        理解即可
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        实践提醒
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主线推进
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        延伸阅读
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        课后练习
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="课后练习">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        基础题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        应用题
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        综合题
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        常见错误与排查
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="导航栏" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    首页
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    量化教材
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../01_foundations/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    第一部分：基础篇
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="3">第 3 章：金融数据获取与处理<a class="headerlink" href="#3" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>⏱️ 预计阅读 ~20 分钟 ｜ 🎯 难度 ★★★☆☆（进阶）</p>
+</blockquote>
+<h2 id="_1">学习目标<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li>理解 OHLCV、复权、频率转换与时间序列字段的核心语义。</li>
+<li>掌握量化数据清洗、标准化、存储与最小 ETL 流程。</li>
+<li>建立离线研究与实时数据流之间的统一数据口径意识。</li>
+</ul>
+<h2 id="_2">前置知识<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li>熟悉第 2 章中的 Pandas 基础操作。</li>
+<li>了解 A 股日线、分钟线与交易日历的基本概念。</li>
+</ul>
+<h2 id="_3">本章实践入口<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<ul>
+<li>主示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/textbook/ch03_data.py">examples/textbook/ch03_data.py</a></li>
+<li>进阶示例：<a href="https://github.com/akfamily/akquant/blob/main/examples/37_feed_replay_alignment_demo.py">examples/37_feed_replay_alignment_demo.py</a></li>
+<li>对应指南：<a href="../../guide/data/">数据指南</a></li>
+</ul>
+<h2 id="_4">快速运行与验收<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>examples/textbook/ch03_data.py
+</span></code></pre></div>
+<p>验收要点：</p>
+<ol>
+<li>脚本可成功拉取并处理一段历史行情数据。</li>
+<li>输出中能看到数据行数、时间范围或字段结构等基本信息。</li>
+<li>数据可被后续回测脚本直接复用。</li>
+</ol>
+<h2 id="31-akshare">3.1 AKShare：量化投资的开源数据基石<a class="headerlink" href="#31-akshare" title="Permanent link">&para;</a></h2>
+<p>在量化投资中，数据质量决定了策略的上限 (Garbage In, Garbage Out)。对于中国市场，<a href="https://akshare.akfamily.xyz/">AKShare</a> 是目前最流行的开源金融数据接口库。它提供了从股票、期货、期权、基金到宏观经济的全维度数据。</p>
+<h3 id="311">3.1.1 安装与验证<a class="headerlink" href="#311" title="Permanent link">&para;</a></h3>
+<p>在第 1 章中我们已经安装了 <code>akshare</code>。可以通过以下命令验证版本：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akshare</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ak</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">ak</span><span class="o">.</span><span class="n">__version__</span><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="32-ohlcv">3.2 金融时间序列数据 (OHLCV)<a class="headerlink" href="#32-ohlcv" title="Permanent link">&para;</a></h2>
+<p>量化回测中最基础的数据单元是 <strong>K线 (Candlestick)</strong>，通常包含以下字段，简称为 <strong>OHLCV</strong>：</p>
+<ul>
+<li><strong>Open</strong>：开盘价</li>
+<li><strong>High</strong>：最高价</li>
+<li><strong>Low</strong>：最低价</li>
+<li><strong>Close</strong>：收盘价</li>
+<li><strong>Volume</strong>：成交量</li>
+</ul>
+<h3 id="321-adjustment">3.2.1 复权 (Adjustment)<a class="headerlink" href="#321-adjustment" title="Permanent link">&para;</a></h3>
+<p>股票价格会受到<strong>分红</strong>、<strong>配股</strong>、<strong>拆细</strong>等除权除息行为的影响，导致价格出现断层。为了保证回测的连续性，必须对价格进行<strong>复权</strong>处理。复权方式通常有三种，差别在于以哪个时点为基准重新对齐价格序列。<strong>前复权 (Forward Adjustment)</strong> 以当前价格为基准，向前推算历史价格；由于它保留了当前的真实价格水平，方便计算买入股数，因此<strong>回测推荐使用前复权</strong>。<strong>后复权 (Backward Adjustment)</strong> 则反向操作，以历史上市首日价格为基准向后推算当前价格，更适合计算长周期的收益率。至于<strong>不复权 (No Adjustment)</strong>，它保留的是原始价格，除权日会出现巨大的价格跳空，因此<strong>严禁直接用于策略回测</strong>。</p>
+<h4 id="adjustment-factor">复权因子计算 (Adjustment Factor)<a class="headerlink" href="#adjustment-factor" title="Permanent link">&para;</a></h4>
+<p>前复权价格的计算公式如下：</p>
+<div class="arithmatex">\[ P_{adj} = P_{raw} \times \frac{P_{today}}{P_{ex-right}} \]</div>
+<p>其中 <span class="arithmatex">\(P_{adj}\)</span> 是复权后价格，<span class="arithmatex">\(P_{raw}\)</span> 是原始价格。对于分红（每股分红 <span class="arithmatex">\(D\)</span>），除权价 <span class="arithmatex">\(P_{ex-right} = P_{close} - D\)</span>。这意味着历史价格会相应<strong>调低</strong>，使得收益率曲线平滑连接。</p>
+<h3 id="322-data-frequency">3.2.2 数据频率 (Data Frequency)<a class="headerlink" href="#322-data-frequency" title="Permanent link">&para;</a></h3>
+<p>量化回测通常使用不同频率的数据，它们沿着“聚合粒度由细到粗”的方向排列。最细的是 <strong>Tick 数据</strong>，即逐笔成交数据，包含每一笔成交的时间、价格、量；它的数据量极大，适合高频策略 (HFT)。向上聚合一层便是 <strong>Bar 数据 (OHLCV)</strong>，它把一段时间内的 Tick 聚合为一个数据点（如 1分钟 Bar、日线 Bar），是最常用的格式。再粗一层的 <strong>Daily 数据</strong> 即日线数据，包含开高低收及成交量，适合中低频策略（如趋势跟踪、多因子选股）。</p>
+<p><code>AKQuant</code> 核心引擎基于 Bar 数据驱动，支持任意周期的 Bar（1分钟、5分钟、日线等）。</p>
+<p>在 <code>akshare</code> 中获取前复权数据非常简单：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akshare</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ak</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1"># 获取浦发银行 (600000) 的日线数据，前复权</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">df</span> <span class="o">=</span> <span class="n">ak</span><span class="o">.</span><span class="n">stock_zh_a_hist</span><span class="p">(</span><span class="n">symbol</span><span class="o">=</span><span class="s2">"600000"</span><span class="p">,</span> <span class="n">period</span><span class="o">=</span><span class="s2">"daily"</span><span class="p">,</span> <span class="n">start_date</span><span class="o">=</span><span class="s2">"20200101"</span><span class="p">,</span> <span class="n">end_date</span><span class="o">=</span><span class="s2">"20231231"</span><span class="p">,</span> <span class="n">adjust</span><span class="o">=</span><span class="s2">"qfq"</span><span class="p">)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</span></code></pre></div>
+<h2 id="33-etl">3.3 数据治理与 ETL 流程<a class="headerlink" href="#33-etl" title="Permanent link">&para;</a></h2>
+<p>在金融工程中，数据被视为核心资产。构建高质量的数据库需要严格遵循 <strong>ETL (Extract, Transform, Load)</strong> 流程。</p>
+<h3 id="331-data-cleaning">3.3.1 数据清洗 (Data Cleaning)<a class="headerlink" href="#331-data-cleaning" title="Permanent link">&para;</a></h3>
+<p>原始数据通常包含噪音、缺失值甚至错误，常见的数据治理问题大体可分为两类：一类是看得见的脏数据，另一类是更隐蔽、会系统性扭曲回测结论的偏差。</p>
+<p>在脏数据这一侧，最常见的是 <strong>缺失值 (Missing Data)</strong>，它往往源于停牌、数据源故障或非交易日，处理上可采用前向填充 (Forward Fill)、插值法或直接剔除。其次是 <strong>异常值 (Outliers)</strong>，多由乌龙指或数据录入错误造成，可使用 MAD (绝对中位差) 或 3<span class="arithmatex">\(\sigma\)</span> 原则识别并修正。</p>
+<p>更值得警惕的是两类偏差。一是 <strong>幸存者偏差 (Survivorship Bias)</strong>：如果在回测中只包含当前存在的股票，而忽略了历史上已退市的股票，会导致回测结果虚高（因为退市股票通常表现很差），其对策是必须维护包含所有历史退市股票的“全集数据库”。二是 <strong>前视偏差 (Look-ahead Bias)</strong>：即在 <span class="arithmatex">\(T\)</span> 时刻做决策时，使用了 <span class="arithmatex">\(T+1\)</span> 时刻才能获得的数据（如使用当天的收盘价来决定当天的开盘买入），其对策是严格的时间戳对齐，使用 Point-in-Time (PIT) 数据库。</p>
+<h3 id="332-storage">3.3.2 数据存储 (Storage)<a class="headerlink" href="#332-storage" title="Permanent link">&para;</a></h3>
+<p>对于高频或海量数据，CSV 并非最佳选择，应改用更高效的二进制格式，且选型可随数据规模与应用层级递进。日常研究中最实用的是 <strong>Parquet / Feather</strong>，它采用列式存储，读取速度快、压缩率高，且 Pandas 完美支持；面向大规模数值矩阵存储则可选用 <strong>HDF5</strong>；而当应用进入机构级场景时，则会动用 <strong>KDB+ / DolphinDB</strong> 这类专业的时序数据库 (Time Series Database)。</p>
+<div class="admonition tip">
+<p class="admonition-title">超出内存的数据集：out-of-core 流式回测</p>
+<p>当数据大到无法一次性放进内存（例如全市场多年分钟线）时，AKQuant 支持<strong>有界内存流式回测</strong>：先用 <code>akquant.write_canonical_parquet(源, "market.parquet")</code> 把任意来源规范化为按时间排序的 Parquet，再用 <code>akquant.DataFeed.from_parquet("market.parquet")</code> 分块流式喂给 <code>run_backtest</code>——回测<strong>峰值内存与数据总量无关</strong>。详见《数据准备与加载指南 · 2.6》。</p>
+</div>
+<h3 id="333">3.3.3 标准化字段定义<a class="headerlink" href="#333" title="Permanent link">&para;</a></h3>
+<p>为了适配 <code>AKQuant</code> 引擎，所有数据必须被映射到以下标准字段：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">字段名</th>
+<th style="text-align: left;">类型</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>date</code></td>
+<td style="text-align: left;"><code>pd.Timestamp</code></td>
+<td style="text-align: left;">交易日期/时间</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>symbol</code></td>
+<td style="text-align: left;"><code>str</code></td>
+<td style="text-align: left;">标的代码 (如 <code>sh600000</code>)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>open</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">开盘价</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>high</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">最高价</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>low</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">最低价</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>close</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">收盘价</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>volume</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">成交量</td>
+</tr>
+</tbody>
+</table>
+<h3 id="334-etl">3.3.4 ETL 脚本示例<a class="headerlink" href="#334-etl" title="Permanent link">&para;</a></h3>
+<p>下面的代码演示了完整的 ETL 流程：从 AKShare 提取数据，清洗为标准格式，并保存为 Parquet 文件。</p>
+<p>创建文件 <code>examples/textbook/ch03_data.py</code>：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="sd">"""</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="sd">第 3 章：金融数据获取与处理.</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="sd">本示例演示了量化交易中数据工程的核心步骤：</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="sd">1. 获取数据：从 AKShare 获取 A 股历史日线数据</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="sd">2. 数据清洗：将原始数据转换为 AKQuant 所需的标准格式</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="sd">3. 数据存储：将清洗后的数据保存为高性能的 Parquet 格式</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="sd">4. 数据读取：从本地加载数据进行验证</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="sd">这些步骤是构建任何量化策略的基石。</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="sd">"""</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="kn">import</span><span class="w"> </span><span class="nn">akshare</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ak</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>
+</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>
+</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="k">def</span><span class="w"> </span><span class="nf">generate_mock_raw_data</span><span class="p">(</span><span class="n">length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">240</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="w">    </span><span class="sd">"""断网兜底：生成 AKShare 风格（中文列名）的原始日线数据.</span>
+</span><span id="__span-3-23"><a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>
+</span><span id="__span-3-24"><a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="sd">    保持与 ``stock_zh_a_hist`` 相同的中文列名，使后续重命名与清洗流程</span>
+</span><span id="__span-3-25"><a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="sd">    在离线时也能完整演示。</span>
+</span><span id="__span-3-26"><a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="sd">    """</span>
+</span><span id="__span-3-27"><a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>    <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span>
+</span><span id="__span-3-28"><a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>    <span class="n">dates</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">date_range</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="s2">"2023-01-03"</span><span class="p">,</span> <span class="n">periods</span><span class="o">=</span><span class="n">length</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="s2">"B"</span><span class="p">)</span>
+</span><span id="__span-3-29"><a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>    <span class="n">close</span> <span class="o">=</span> <span class="mf">7.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">length</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.06</span><span class="p">)</span>
+</span><span id="__span-3-30"><a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>    <span class="n">open_</span> <span class="o">=</span> <span class="n">close</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">length</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.03</span>
+</span><span id="__span-3-31"><a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a>    <span class="n">high</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">open_</span><span class="p">,</span> <span class="n">close</span><span class="p">)</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">length</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.05</span><span class="p">)</span>
+</span><span id="__span-3-32"><a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>    <span class="n">low</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">minimum</span><span class="p">(</span><span class="n">open_</span><span class="p">,</span> <span class="n">close</span><span class="p">)</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">length</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.05</span><span class="p">)</span>
+</span><span id="__span-3-33"><a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a>    <span class="n">volume</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">1e6</span><span class="p">,</span> <span class="mf">5e6</span><span class="p">,</span> <span class="n">length</span><span class="p">)</span>
+</span><span id="__span-3-34"><a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a>    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+</span><span id="__span-3-35"><a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a>        <span class="p">{</span>
+</span><span id="__span-3-36"><a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a>            <span class="s2">"日期"</span><span class="p">:</span> <span class="n">dates</span><span class="p">,</span>
+</span><span id="__span-3-37"><a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a>            <span class="s2">"开盘"</span><span class="p">:</span> <span class="n">open_</span><span class="p">,</span>
+</span><span id="__span-3-38"><a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a>            <span class="s2">"最高"</span><span class="p">:</span> <span class="n">high</span><span class="p">,</span>
+</span><span id="__span-3-39"><a id="__codelineno-3-39" name="__codelineno-3-39" href="#__codelineno-3-39"></a>            <span class="s2">"最低"</span><span class="p">:</span> <span class="n">low</span><span class="p">,</span>
+</span><span id="__span-3-40"><a id="__codelineno-3-40" name="__codelineno-3-40" href="#__codelineno-3-40"></a>            <span class="s2">"收盘"</span><span class="p">:</span> <span class="n">close</span><span class="p">,</span>
+</span><span id="__span-3-41"><a id="__codelineno-3-41" name="__codelineno-3-41" href="#__codelineno-3-41"></a>            <span class="s2">"成交量"</span><span class="p">:</span> <span class="n">volume</span><span class="p">,</span>
+</span><span id="__span-3-42"><a id="__codelineno-3-42" name="__codelineno-3-42" href="#__codelineno-3-42"></a>        <span class="p">}</span>
+</span><span id="__span-3-43"><a id="__codelineno-3-43" name="__codelineno-3-43" href="#__codelineno-3-43"></a>    <span class="p">)</span>
+</span><span id="__span-3-44"><a id="__codelineno-3-44" name="__codelineno-3-44" href="#__codelineno-3-44"></a>
+</span><span id="__span-3-45"><a id="__codelineno-3-45" name="__codelineno-3-45" href="#__codelineno-3-45"></a>
+</span><span id="__span-3-46"><a id="__codelineno-3-46" name="__codelineno-3-46" href="#__codelineno-3-46"></a><span class="k">def</span><span class="w"> </span><span class="nf">fetch_and_clean_data</span><span class="p">(</span><span class="n">symbol</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">start_date</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">end_date</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+</span><span id="__span-3-47"><a id="__codelineno-3-47" name="__codelineno-3-47" href="#__codelineno-3-47"></a><span class="w">    </span><span class="sd">"""</span>
+</span><span id="__span-3-48"><a id="__codelineno-3-48" name="__codelineno-3-48" href="#__codelineno-3-48"></a><span class="sd">    获取 A 股日线数据并清洗为 AKQuant 标准格式.</span>
+</span><span id="__span-3-49"><a id="__codelineno-3-49" name="__codelineno-3-49" href="#__codelineno-3-49"></a>
+</span><span id="__span-3-50"><a id="__codelineno-3-50" name="__codelineno-3-50" href="#__codelineno-3-50"></a><span class="sd">    :param symbol: 股票代码 (如 "600000")</span>
+</span><span id="__span-3-51"><a id="__codelineno-3-51" name="__codelineno-3-51" href="#__codelineno-3-51"></a><span class="sd">    :param start_date: 开始日期 (如 "20230101")</span>
+</span><span id="__span-3-52"><a id="__codelineno-3-52" name="__codelineno-3-52" href="#__codelineno-3-52"></a><span class="sd">    :param end_date: 结束日期 (如 "20231231")</span>
+</span><span id="__span-3-53"><a id="__codelineno-3-53" name="__codelineno-3-53" href="#__codelineno-3-53"></a><span class="sd">    :return: 清洗后的 DataFrame</span>
+</span><span id="__span-3-54"><a id="__codelineno-3-54" name="__codelineno-3-54" href="#__codelineno-3-54"></a><span class="sd">    """</span>
+</span><span id="__span-3-55"><a id="__codelineno-3-55" name="__codelineno-3-55" href="#__codelineno-3-55"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"正在获取 </span><span class="si">{</span><span class="n">symbol</span><span class="si">}</span><span class="s2"> 的历史数据 (</span><span class="si">{</span><span class="n">start_date</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">end_date</span><span class="si">}</span><span class="s2">)..."</span><span class="p">)</span>
+</span><span id="__span-3-56"><a id="__codelineno-3-56" name="__codelineno-3-56" href="#__codelineno-3-56"></a>
+</span><span id="__span-3-57"><a id="__codelineno-3-57" name="__codelineno-3-57" href="#__codelineno-3-57"></a>    <span class="c1"># 1. 获取数据</span>
+</span><span id="__span-3-58"><a id="__codelineno-3-58" name="__codelineno-3-58" href="#__codelineno-3-58"></a>    <span class="c1"># 使用 stock_zh_a_hist 接口获取历史行情</span>
+</span><span id="__span-3-59"><a id="__codelineno-3-59" name="__codelineno-3-59" href="#__codelineno-3-59"></a>    <span class="c1"># adjust="qfq" 表示前复权，这是回测中最常用的复权方式</span>
+</span><span id="__span-3-60"><a id="__codelineno-3-60" name="__codelineno-3-60" href="#__codelineno-3-60"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-3-61"><a id="__codelineno-3-61" name="__codelineno-3-61" href="#__codelineno-3-61"></a>        <span class="n">df</span> <span class="o">=</span> <span class="n">ak</span><span class="o">.</span><span class="n">stock_zh_a_hist</span><span class="p">(</span>
+</span><span id="__span-3-62"><a id="__codelineno-3-62" name="__codelineno-3-62" href="#__codelineno-3-62"></a>            <span class="n">symbol</span><span class="o">=</span><span class="n">symbol</span><span class="p">,</span>
+</span><span id="__span-3-63"><a id="__codelineno-3-63" name="__codelineno-3-63" href="#__codelineno-3-63"></a>            <span class="n">period</span><span class="o">=</span><span class="s2">"daily"</span><span class="p">,</span>
+</span><span id="__span-3-64"><a id="__codelineno-3-64" name="__codelineno-3-64" href="#__codelineno-3-64"></a>            <span class="n">start_date</span><span class="o">=</span><span class="n">start_date</span><span class="p">,</span>
+</span><span id="__span-3-65"><a id="__codelineno-3-65" name="__codelineno-3-65" href="#__codelineno-3-65"></a>            <span class="n">end_date</span><span class="o">=</span><span class="n">end_date</span><span class="p">,</span>
+</span><span id="__span-3-66"><a id="__codelineno-3-66" name="__codelineno-3-66" href="#__codelineno-3-66"></a>            <span class="n">adjust</span><span class="o">=</span><span class="s2">"qfq"</span><span class="p">,</span>
+</span><span id="__span-3-67"><a id="__codelineno-3-67" name="__codelineno-3-67" href="#__codelineno-3-67"></a>        <span class="p">)</span>
+</span><span id="__span-3-68"><a id="__codelineno-3-68" name="__codelineno-3-68" href="#__codelineno-3-68"></a>    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>  <span class="c1"># noqa: BLE001 - 示例容错：网络/依赖异常一律回退</span>
+</span><span id="__span-3-69"><a id="__codelineno-3-69" name="__codelineno-3-69" href="#__codelineno-3-69"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"AKShare 获取失败（</span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">），改用本地合成数据。"</span><span class="p">)</span>
+</span><span id="__span-3-70"><a id="__codelineno-3-70" name="__codelineno-3-70" href="#__codelineno-3-70"></a>        <span class="n">df</span> <span class="o">=</span> <span class="n">generate_mock_raw_data</span><span class="p">()</span>
+</span><span id="__span-3-71"><a id="__codelineno-3-71" name="__codelineno-3-71" href="#__codelineno-3-71"></a>
+</span><span id="__span-3-72"><a id="__codelineno-3-72" name="__codelineno-3-72" href="#__codelineno-3-72"></a>    <span class="k">if</span> <span class="n">df</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+</span><span id="__span-3-73"><a id="__codelineno-3-73" name="__codelineno-3-73" href="#__codelineno-3-73"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"警告: 获取到的数据为空，改用本地合成数据。"</span><span class="p">)</span>
+</span><span id="__span-3-74"><a id="__codelineno-3-74" name="__codelineno-3-74" href="#__codelineno-3-74"></a>        <span class="n">df</span> <span class="o">=</span> <span class="n">generate_mock_raw_data</span><span class="p">()</span>
+</span><span id="__span-3-75"><a id="__codelineno-3-75" name="__codelineno-3-75" href="#__codelineno-3-75"></a>
+</span><span id="__span-3-76"><a id="__codelineno-3-76" name="__codelineno-3-76" href="#__codelineno-3-76"></a>    <span class="c1"># 2. 重命名列 (AKShare 中文列名 -&gt; AKQuant 标准英文列名)</span>
+</span><span id="__span-3-77"><a id="__codelineno-3-77" name="__codelineno-3-77" href="#__codelineno-3-77"></a>    <span class="c1"># 标准列名: date, open, high, low, close, volume</span>
+</span><span id="__span-3-78"><a id="__codelineno-3-78" name="__codelineno-3-78" href="#__codelineno-3-78"></a>    <span class="n">rename_map</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-3-79"><a id="__codelineno-3-79" name="__codelineno-3-79" href="#__codelineno-3-79"></a>        <span class="s2">"日期"</span><span class="p">:</span> <span class="s2">"date"</span><span class="p">,</span>
+</span><span id="__span-3-80"><a id="__codelineno-3-80" name="__codelineno-3-80" href="#__codelineno-3-80"></a>        <span class="s2">"开盘"</span><span class="p">:</span> <span class="s2">"open"</span><span class="p">,</span>
+</span><span id="__span-3-81"><a id="__codelineno-3-81" name="__codelineno-3-81" href="#__codelineno-3-81"></a>        <span class="s2">"最高"</span><span class="p">:</span> <span class="s2">"high"</span><span class="p">,</span>
+</span><span id="__span-3-82"><a id="__codelineno-3-82" name="__codelineno-3-82" href="#__codelineno-3-82"></a>        <span class="s2">"最低"</span><span class="p">:</span> <span class="s2">"low"</span><span class="p">,</span>
+</span><span id="__span-3-83"><a id="__codelineno-3-83" name="__codelineno-3-83" href="#__codelineno-3-83"></a>        <span class="s2">"收盘"</span><span class="p">:</span> <span class="s2">"close"</span><span class="p">,</span>
+</span><span id="__span-3-84"><a id="__codelineno-3-84" name="__codelineno-3-84" href="#__codelineno-3-84"></a>        <span class="s2">"成交量"</span><span class="p">:</span> <span class="s2">"volume"</span><span class="p">,</span>
+</span><span id="__span-3-85"><a id="__codelineno-3-85" name="__codelineno-3-85" href="#__codelineno-3-85"></a>    <span class="p">}</span>
+</span><span id="__span-3-86"><a id="__codelineno-3-86" name="__codelineno-3-86" href="#__codelineno-3-86"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="n">rename_map</span><span class="p">)</span>
+</span><span id="__span-3-87"><a id="__codelineno-3-87" name="__codelineno-3-87" href="#__codelineno-3-87"></a>
+</span><span id="__span-3-88"><a id="__codelineno-3-88" name="__codelineno-3-88" href="#__codelineno-3-88"></a>    <span class="c1"># 3. 格式转换与清洗</span>
+</span><span id="__span-3-89"><a id="__codelineno-3-89" name="__codelineno-3-89" href="#__codelineno-3-89"></a>    <span class="c1"># 转换日期列为 pandas datetime 类型</span>
+</span><span id="__span-3-90"><a id="__codelineno-3-90" name="__codelineno-3-90" href="#__codelineno-3-90"></a>    <span class="n">df</span><span class="p">[</span><span class="s2">"date"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_datetime</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"date"</span><span class="p">])</span>
+</span><span id="__span-3-91"><a id="__codelineno-3-91" name="__codelineno-3-91" href="#__codelineno-3-91"></a>
+</span><span id="__span-3-92"><a id="__codelineno-3-92" name="__codelineno-3-92" href="#__codelineno-3-92"></a>    <span class="c1"># 筛选必要的列，去除多余字段 (如涨跌幅、换手率等，除非策略需要)</span>
+</span><span id="__span-3-93"><a id="__codelineno-3-93" name="__codelineno-3-93" href="#__codelineno-3-93"></a>    <span class="n">required_cols</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"date"</span><span class="p">,</span> <span class="s2">"open"</span><span class="p">,</span> <span class="s2">"high"</span><span class="p">,</span> <span class="s2">"low"</span><span class="p">,</span> <span class="s2">"close"</span><span class="p">,</span> <span class="s2">"volume"</span><span class="p">]</span>
+</span><span id="__span-3-94"><a id="__codelineno-3-94" name="__codelineno-3-94" href="#__codelineno-3-94"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">required_cols</span><span class="p">]</span>
+</span><span id="__span-3-95"><a id="__codelineno-3-95" name="__codelineno-3-95" href="#__codelineno-3-95"></a>
+</span><span id="__span-3-96"><a id="__codelineno-3-96" name="__codelineno-3-96" href="#__codelineno-3-96"></a>    <span class="c1"># 添加 symbol 列 (多标的回测时必需)</span>
+</span><span id="__span-3-97"><a id="__codelineno-3-97" name="__codelineno-3-97" href="#__codelineno-3-97"></a>    <span class="n">df</span><span class="p">[</span><span class="s2">"symbol"</span><span class="p">]</span> <span class="o">=</span> <span class="n">symbol</span>
+</span><span id="__span-3-98"><a id="__codelineno-3-98" name="__codelineno-3-98" href="#__codelineno-3-98"></a>
+</span><span id="__span-3-99"><a id="__codelineno-3-99" name="__codelineno-3-99" href="#__codelineno-3-99"></a>    <span class="c1"># 处理缺失值 (简单的丢弃策略)</span>
+</span><span id="__span-3-100"><a id="__codelineno-3-100" name="__codelineno-3-100" href="#__codelineno-3-100"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">dropna</span><span class="p">()</span>
+</span><span id="__span-3-101"><a id="__codelineno-3-101" name="__codelineno-3-101" href="#__codelineno-3-101"></a>
+</span><span id="__span-3-102"><a id="__codelineno-3-102" name="__codelineno-3-102" href="#__codelineno-3-102"></a>    <span class="c1"># 按日期升序排序</span>
+</span><span id="__span-3-103"><a id="__codelineno-3-103" name="__codelineno-3-103" href="#__codelineno-3-103"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">sort_values</span><span class="p">(</span><span class="s2">"date"</span><span class="p">)</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-3-104"><a id="__codelineno-3-104" name="__codelineno-3-104" href="#__codelineno-3-104"></a>
+</span><span id="__span-3-105"><a id="__codelineno-3-105" name="__codelineno-3-105" href="#__codelineno-3-105"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"数据清洗完成，共 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2"> 条记录"</span><span class="p">)</span>
+</span><span id="__span-3-106"><a id="__codelineno-3-106" name="__codelineno-3-106" href="#__codelineno-3-106"></a>    <span class="k">return</span> <span class="n">df</span>  <span class="c1"># type: ignore</span>
+</span><span id="__span-3-107"><a id="__codelineno-3-107" name="__codelineno-3-107" href="#__codelineno-3-107"></a>
+</span><span id="__span-3-108"><a id="__codelineno-3-108" name="__codelineno-3-108" href="#__codelineno-3-108"></a>
+</span><span id="__span-3-109"><a id="__codelineno-3-109" name="__codelineno-3-109" href="#__codelineno-3-109"></a><span class="k">def</span><span class="w"> </span><span class="nf">save_to_parquet</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-3-110"><a id="__codelineno-3-110" name="__codelineno-3-110" href="#__codelineno-3-110"></a><span class="w">    </span><span class="sd">"""</span>
+</span><span id="__span-3-111"><a id="__codelineno-3-111" name="__codelineno-3-111" href="#__codelineno-3-111"></a><span class="sd">    将 DataFrame 保存为 Parquet 格式.</span>
+</span><span id="__span-3-112"><a id="__codelineno-3-112" name="__codelineno-3-112" href="#__codelineno-3-112"></a>
+</span><span id="__span-3-113"><a id="__codelineno-3-113" name="__codelineno-3-113" href="#__codelineno-3-113"></a><span class="sd">    Parquet 是一种高性能列式存储格式，读写速度远快于 CSV。</span>
+</span><span id="__span-3-114"><a id="__codelineno-3-114" name="__codelineno-3-114" href="#__codelineno-3-114"></a><span class="sd">    """</span>
+</span><span id="__span-3-115"><a id="__codelineno-3-115" name="__codelineno-3-115" href="#__codelineno-3-115"></a>    <span class="c1"># 确保父目录存在</span>
+</span><span id="__span-3-116"><a id="__codelineno-3-116" name="__codelineno-3-116" href="#__codelineno-3-116"></a>    <span class="n">Path</span><span class="p">(</span><span class="n">file_path</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-3-117"><a id="__codelineno-3-117" name="__codelineno-3-117" href="#__codelineno-3-117"></a>
+</span><span id="__span-3-118"><a id="__codelineno-3-118" name="__codelineno-3-118" href="#__codelineno-3-118"></a>    <span class="n">df</span><span class="o">.</span><span class="n">to_parquet</span><span class="p">(</span><span class="n">file_path</span><span class="p">)</span>
+</span><span id="__span-3-119"><a id="__codelineno-3-119" name="__codelineno-3-119" href="#__codelineno-3-119"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"数据已保存至: </span><span class="si">{</span><span class="n">file_path</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-3-120"><a id="__codelineno-3-120" name="__codelineno-3-120" href="#__codelineno-3-120"></a>
+</span><span id="__span-3-121"><a id="__codelineno-3-121" name="__codelineno-3-121" href="#__codelineno-3-121"></a>
+</span><span id="__span-3-122"><a id="__codelineno-3-122" name="__codelineno-3-122" href="#__codelineno-3-122"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_from_parquet</span><span class="p">(</span><span class="n">file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+</span><span id="__span-3-123"><a id="__codelineno-3-123" name="__codelineno-3-123" href="#__codelineno-3-123"></a><span class="w">    </span><span class="sd">"""从 Parquet 文件读取数据."""</span>
+</span><span id="__span-3-124"><a id="__codelineno-3-124" name="__codelineno-3-124" href="#__codelineno-3-124"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">file_path</span><span class="p">):</span>
+</span><span id="__span-3-125"><a id="__codelineno-3-125" name="__codelineno-3-125" href="#__codelineno-3-125"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"文件不存在: </span><span class="si">{</span><span class="n">file_path</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-3-126"><a id="__codelineno-3-126" name="__codelineno-3-126" href="#__codelineno-3-126"></a>        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">()</span>
+</span><span id="__span-3-127"><a id="__codelineno-3-127" name="__codelineno-3-127" href="#__codelineno-3-127"></a>
+</span><span id="__span-3-128"><a id="__codelineno-3-128" name="__codelineno-3-128" href="#__codelineno-3-128"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="n">file_path</span><span class="p">)</span>
+</span><span id="__span-3-129"><a id="__codelineno-3-129" name="__codelineno-3-129" href="#__codelineno-3-129"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"从本地加载数据成功，共 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2"> 条记录"</span><span class="p">)</span>
+</span><span id="__span-3-130"><a id="__codelineno-3-130" name="__codelineno-3-130" href="#__codelineno-3-130"></a>    <span class="k">return</span> <span class="n">df</span>
+</span><span id="__span-3-131"><a id="__codelineno-3-131" name="__codelineno-3-131" href="#__codelineno-3-131"></a>
+</span><span id="__span-3-132"><a id="__codelineno-3-132" name="__codelineno-3-132" href="#__codelineno-3-132"></a>
+</span><span id="__span-3-133"><a id="__codelineno-3-133" name="__codelineno-3-133" href="#__codelineno-3-133"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+</span><span id="__span-3-134"><a id="__codelineno-3-134" name="__codelineno-3-134" href="#__codelineno-3-134"></a>    <span class="c1"># 配置参数</span>
+</span><span id="__span-3-135"><a id="__codelineno-3-135" name="__codelineno-3-135" href="#__codelineno-3-135"></a>    <span class="n">SYMBOL</span> <span class="o">=</span> <span class="s2">"600000"</span>  <span class="c1"># 浦发银行</span>
+</span><span id="__span-3-136"><a id="__codelineno-3-136" name="__codelineno-3-136" href="#__codelineno-3-136"></a>    <span class="n">START_DATE</span> <span class="o">=</span> <span class="s2">"20230101"</span>
+</span><span id="__span-3-137"><a id="__codelineno-3-137" name="__codelineno-3-137" href="#__codelineno-3-137"></a>    <span class="n">END_DATE</span> <span class="o">=</span> <span class="s2">"20231231"</span>
+</span><span id="__span-3-138"><a id="__codelineno-3-138" name="__codelineno-3-138" href="#__codelineno-3-138"></a>    <span class="n">DATA_DIR</span> <span class="o">=</span> <span class="s2">"data"</span>  <span class="c1"># 数据存储目录</span>
+</span><span id="__span-3-139"><a id="__codelineno-3-139" name="__codelineno-3-139" href="#__codelineno-3-139"></a>
+</span><span id="__span-3-140"><a id="__codelineno-3-140" name="__codelineno-3-140" href="#__codelineno-3-140"></a>    <span class="c1"># 1. 获取并清洗数据</span>
+</span><span id="__span-3-141"><a id="__codelineno-3-141" name="__codelineno-3-141" href="#__codelineno-3-141"></a>    <span class="n">df_clean</span> <span class="o">=</span> <span class="n">fetch_and_clean_data</span><span class="p">(</span><span class="n">SYMBOL</span><span class="p">,</span> <span class="n">START_DATE</span><span class="p">,</span> <span class="n">END_DATE</span><span class="p">)</span>
+</span><span id="__span-3-142"><a id="__codelineno-3-142" name="__codelineno-3-142" href="#__codelineno-3-142"></a>
+</span><span id="__span-3-143"><a id="__codelineno-3-143" name="__codelineno-3-143" href="#__codelineno-3-143"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">df_clean</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+</span><span id="__span-3-144"><a id="__codelineno-3-144" name="__codelineno-3-144" href="#__codelineno-3-144"></a>        <span class="c1"># 打印前 5 行预览</span>
+</span><span id="__span-3-145"><a id="__codelineno-3-145" name="__codelineno-3-145" href="#__codelineno-3-145"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">数据预览 (Head):"</span><span class="p">)</span>
+</span><span id="__span-3-146"><a id="__codelineno-3-146" name="__codelineno-3-146" href="#__codelineno-3-146"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">df_clean</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</span><span id="__span-3-147"><a id="__codelineno-3-147" name="__codelineno-3-147" href="#__codelineno-3-147"></a>
+</span><span id="__span-3-148"><a id="__codelineno-3-148" name="__codelineno-3-148" href="#__codelineno-3-148"></a>        <span class="c1"># 打印数据类型信息</span>
+</span><span id="__span-3-149"><a id="__codelineno-3-149" name="__codelineno-3-149" href="#__codelineno-3-149"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">数据信息 (Info):"</span><span class="p">)</span>
+</span><span id="__span-3-150"><a id="__codelineno-3-150" name="__codelineno-3-150" href="#__codelineno-3-150"></a>        <span class="n">df_clean</span><span class="o">.</span><span class="n">info</span><span class="p">()</span>
+</span><span id="__span-3-151"><a id="__codelineno-3-151" name="__codelineno-3-151" href="#__codelineno-3-151"></a>
+</span><span id="__span-3-152"><a id="__codelineno-3-152" name="__codelineno-3-152" href="#__codelineno-3-152"></a>        <span class="c1"># 2. 保存数据</span>
+</span><span id="__span-3-153"><a id="__codelineno-3-153" name="__codelineno-3-153" href="#__codelineno-3-153"></a>        <span class="n">file_path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">DATA_DIR</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">SYMBOL</span><span class="si">}</span><span class="s2">.parquet"</span>
+</span><span id="__span-3-154"><a id="__codelineno-3-154" name="__codelineno-3-154" href="#__codelineno-3-154"></a>        <span class="n">save_to_parquet</span><span class="p">(</span><span class="n">df_clean</span><span class="p">,</span> <span class="n">file_path</span><span class="p">)</span>
+</span><span id="__span-3-155"><a id="__codelineno-3-155" name="__codelineno-3-155" href="#__codelineno-3-155"></a>
+</span><span id="__span-3-156"><a id="__codelineno-3-156" name="__codelineno-3-156" href="#__codelineno-3-156"></a>        <span class="c1"># 3. 验证读取</span>
+</span><span id="__span-3-157"><a id="__codelineno-3-157" name="__codelineno-3-157" href="#__codelineno-3-157"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">正在验证读取..."</span><span class="p">)</span>
+</span><span id="__span-3-158"><a id="__codelineno-3-158" name="__codelineno-3-158" href="#__codelineno-3-158"></a>        <span class="n">df_loaded</span> <span class="o">=</span> <span class="n">load_from_parquet</span><span class="p">(</span><span class="n">file_path</span><span class="p">)</span>
+</span><span id="__span-3-159"><a id="__codelineno-3-159" name="__codelineno-3-159" href="#__codelineno-3-159"></a>
+</span><span id="__span-3-160"><a id="__codelineno-3-160" name="__codelineno-3-160" href="#__codelineno-3-160"></a>        <span class="c1"># 简单验证</span>
+</span><span id="__span-3-161"><a id="__codelineno-3-161" name="__codelineno-3-161" href="#__codelineno-3-161"></a>        <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">df_clean</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">df_loaded</span><span class="p">)</span>
+</span><span id="__span-3-162"><a id="__codelineno-3-162" name="__codelineno-3-162" href="#__codelineno-3-162"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">"验证通过：读取的数据与原始数据一致"</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="_5">运行结果<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>examples/textbook/ch03_data.py
+</span></code></pre></div>
+<p>你将在控制台看到数据清洗前后的对比，并在 <code>data/</code> 目录下找到生成的 <code>.parquet</code> 文件。</p>
+<h2 id="34-database-design">3.4 数据库设计 (Database Design)<a class="headerlink" href="#34-database-design" title="Permanent link">&para;</a></h2>
+<p>随着数据量的增长，单纯的文件存储（CSV/Parquet）将难以满足查询需求。我们需要引入专业的数据库。</p>
+<h3 id="341-relational-db">3.4.1 关系型数据库 (Relational DB)<a class="headerlink" href="#341-relational-db" title="Permanent link">&para;</a></h3>
+<p>这类数据库以 <strong>PostgreSQL、MySQL</strong> 为代表，适用于资产基础信息（如股票代码、上市日期、行业分类）与交易账户信息（如资金流水、订单记录）；其特点是支持复杂关联查询 (JOIN)，且事务一致性 (ACID) 强。</p>
+<h3 id="342-time-series-db">3.4.2 时序数据库 (Time-Series DB)<a class="headerlink" href="#342-time-series-db" title="Permanent link">&para;</a></h3>
+<p>这类数据库以 <strong>ClickHouse、InfluxDB、DolphinDB</strong> 为代表，适用于行情数据 (Tick/Bar) 与高频因子数据。它之所以契合时序场景，源于三方面特点：<strong>写入快</strong>，每秒可写入百万级数据点；<strong>压缩率高</strong>，得益于列式存储与针对时间序列优化的压缩算法（如 Delta Encoding）；以及<strong>聚合快</strong>，计算“某股票过去一年的平均成交量”仅需毫秒级。</p>
+<p><strong>ClickHouse 建表示例</strong>：
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">kline_1m</span><span class="w"> </span><span class="p">(</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span><span class="nb">date</span><span class="w"> </span><span class="nb">Date</span><span class="p">,</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="n">datetime</span><span class="w"> </span><span class="n">DateTime</span><span class="p">,</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="n">symbol</span><span class="w"> </span><span class="n">String</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="k">open</span><span class="w"> </span><span class="n">Float32</span><span class="p">,</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="n">high</span><span class="w"> </span><span class="n">Float32</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="n">low</span><span class="w"> </span><span class="n">Float32</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="k">close</span><span class="w"> </span><span class="n">Float32</span><span class="p">,</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span><span class="n">volume</span><span class="w"> </span><span class="n">Float64</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="p">)</span><span class="w"> </span><span class="n">ENGINE</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MergeTree</span><span class="p">()</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="n">PARTITION</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">toYYYYMM</span><span class="p">(</span><span class="nb">date</span><span class="p">)</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="p">(</span><span class="n">symbol</span><span class="p">,</span><span class="w"> </span><span class="n">datetime</span><span class="p">);</span>
+</span></code></pre></div></p>
+<h2 id="35-feature-store">3.5 特征存储 (Feature Store)<a class="headerlink" href="#35-feature-store" title="Permanent link">&para;</a></h2>
+<p>在机器学习项目中，特征工程往往是最耗时的。为了避免重复计算，我们需要构建<strong>特征存储 (Feature Store)</strong>，它通常由训练侧与推理侧两套存储构成。<strong>离线存储 (Offline Store)</strong> 存储历史特征（如过去 10 年的 5日均线），用于模型训练，通常基于数仓 (Hive) 或对象存储 (S3)；与之对应的 <strong>在线存储 (Online Store)</strong> 则存储最新特征（如当天的 5日均线），用于实盘预测，通常基于 Redis 以满足低延迟读取。无论走哪条路径，都必须保证<strong>一致性</strong>，即训练和推理使用完全相同的特征计算逻辑。</p>
+<h2 id="36-real-time-stream">3.6 实时数据流 (Real-time Stream)<a class="headerlink" href="#36-real-time-stream" title="Permanent link">&para;</a></h2>
+<p>在实盘交易中，我们需要处理实时推送的数据流，这通常涉及传输与缓冲两个环节。在传输环节，<strong>WebSocket</strong> 建立持久连接、由服务端主动推送数据，比轮询 (Polling) HTTP 接口效率高得多。在缓冲环节，<strong>消息队列 (Kafka/RabbitMQ)</strong> 在数据源和策略引擎之间引入缓冲层，防止行情爆发时（如开盘瞬间）数据积压导致系统崩溃。</p>
+<p><code>AKQuant</code> 的实盘网关模块内置了 WebSocket 客户端，并自动处理断线重连和心跳保活。</p>
+<hr />
+<h2 id="_6">本章小结<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<h3 id="_7">必须掌握<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li>数据质量决定策略上限，清洗、对齐与口径统一是回测前置条件。</li>
+<li>OHLCV、复权、停牌处理是中国市场数据工程中的高频问题。</li>
+</ul>
+<h3 id="_8">理解即可<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li>从离线存储到实时流式处理，本质上都在解决统一字段与时间语义问题。</li>
+</ul>
+<h3 id="_9">实践提醒<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li>每次入库前先检查时区、重复时间戳、缺失值与复权方式。</li>
+</ul>
+<h2 id="_10">主线推进<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<p>回到那条贯穿全书的最小多均线 / 趋势策略：第 1 章里它还只是用一段直接拉取的行情跑通了第一个回测，数据口径是临时的。本章把它向前推进了关键一步——为这条主线建立了<strong>可复现的数据地基</strong>。从现在起，主线策略所消费的 K 线不再是随手获取的原始数据，而是经过统一流程处理的标准件：用 AKShare 以前复权 (<code>adjust="qfq"</code>) 拉取，按本章 3.3.3 的标准字段 (<code>date</code>/<code>symbol</code>/<code>open</code>/<code>high</code>/<code>low</code>/<code>close</code>/<code>volume</code>) 映射，做过缺失值与时间戳对齐的最小清洗，并落盘为 Parquet 便于反复读取。这样一来，后续第 4、5 章把策略改造成事件驱动版本时，引擎拿到的就是干净、对齐、口径一致的数据，双均线信号的每一次金叉死叉都可被精确复现，而不必再担心复权跳空或前视偏差悄悄污染结论。</p>
+<h2 id="_11">延伸阅读<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
+<p><strong>经典著作</strong></p>
+<ul>
+<li>Marcos López de Prado. <em>Advances in Financial Machine Learning</em>, Wiley, 2018 —— 系统讨论金融数据结构、样本去重与回测中的前视/幸存者偏差，可对照本章 3.3.1（数据清洗与偏差）。</li>
+<li>Yves Hilpisch. <em>Python for Finance: Mastering Data-Driven Finance</em>（第 2 版），O'Reilly, 2018 —— 用 Pandas 处理金融时间序列、复权与重采样的实操参考，对照本章 3.2（OHLCV 与频率）。</li>
+<li>Wes McKinney. <em>Python for Data Analysis</em>（第 3 版），O'Reilly, 2022 —— Pandas 作者所著，讲透时间序列、缺失值与列式存储 (Parquet) 读写，对照本章 3.3（清洗与存储）。</li>
+<li>Martin Kleppmann. <em>Designing Data-Intensive Applications</em>, O'Reilly, 2017 —— 关系型与时序存储、批处理与流处理的权威综述，对照本章 3.4 与 3.6（数据库设计与实时流）。</li>
+</ul>
+<p><strong>官方文档与工具</strong></p>
+<ul>
+<li><a href="https://akshare.akfamily.xyz/">AKShare 官方文档</a> —— 本章 <code>stock_zh_a_hist</code> 等行情接口与复权参数 <code>adjust</code> 的权威说明，对照 3.1 与 3.2。</li>
+<li><a href="https://parquet.apache.org/docs/">Apache Parquet 官方文档</a> —— 列式存储格式说明，对照本章 3.3.2（数据存储）。</li>
+<li><a href="https://clickhouse.com/docs">ClickHouse 官方文档</a> —— 时序数据库建表与 MergeTree 引擎说明，对照本章 3.4.2。</li>
+<li><a href="https://pandas.pydata.org/docs/user_guide/timeseries.html">pandas 官方文档：时间序列与重采样</a> —— 频率转换与时间戳对齐参考，对照本章 3.2.2。</li>
+</ul>
+<p><strong>本书相关</strong></p>
+<ul>
+<li><a href="../../guide/data/">数据指南</a> —— 本章主示例 <code>examples/textbook/ch03_data.py</code> 的配套说明，承接 3.3.4 的 ETL 流程。</li>
+<li><a href="../01_foundations/">第 1 章：量化投资概述与环境搭建</a> —— 本章数据口径中的 UTC / 本地时区心智模型在第 1 章已建立，对照 3.3.1 的时间戳对齐与本章小结。</li>
+</ul>
+<h2 id="_12">课后练习<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h2>
+<h3 id="_13">基础题<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h3>
+<ol>
+<li>下载同一标的的日线与分钟线，比较字段与时间粒度差异。</li>
+</ol>
+<h3 id="_14">应用题<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
+<ol>
+<li>对一段数据分别做前复权与不复权，观察价格序列变化。</li>
+</ol>
+<h3 id="_15">综合题<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h3>
+<ol>
+<li>编写一个最小校验脚本，自动检查缺失值与重复时间戳。</li>
+</ol>
+<details class="note">
+<summary>参考答案要点（先独立思考再展开）</summary>
+<p><strong>基础题</strong>：日线与分钟线字段一致（OHLCV），但分钟线时间粒度更细、行数大得多，且需处理交易时段与午休缺口。</p>
+<p><strong>应用题</strong>：不复权在除权日会出现价格跳空断层；前复权平滑连接历史，适合回测计算收益率与买入股数。</p>
+<p><strong>综合题</strong>：用 <code>df.isna().sum()</code> 查缺失、<code>df["date"].duplicated().any()</code> 查重复时间戳，再结合交易日历对齐校验。</p>
+</details>
+<h2 id="_16">常见错误与排查<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h2>
+<ol>
+<li>时间列错位：确认时区和交易日历是否一致。</li>
+<li>价格跳变异常：检查是否遗漏复权处理。</li>
+<li>回测读不到数据：核对本地缓存路径与字段命名是否与引擎约定一致。</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
