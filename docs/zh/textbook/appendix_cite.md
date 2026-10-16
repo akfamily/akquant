@@ -33,7 +33,7 @@
 教材难免有疏漏。如果你发现**事实错误、失效链接、示例无法运行、文献信息有误或表述不清**，欢迎反馈：
 
 - **提交 Issue**：前往 [github.com/akfamily/akquant/issues](https://github.com/akfamily/akquant/issues)，尽量附上章节定位、复现步骤与环境信息（系统、Python 与 AKQuant 版本）。
-- **提交 PR**：协作约定以仓库 `dev` 为开发分支、`main` 为 PR 目标分支；文档类改动建议使用中文 Conventional Commits（如 `docs(textbook): ...`）。改动示例脚本时请先真正运行通过（exit 0），并通过 `uvx ruff check` 与 `uvx ruff format --check`。
+- **提交 PR**：协作约定以仓库 `dev` 为开发分支、`main` 为 PR 目标分支；文档类改动建议使用中文 Conventional Commits（如 `docs(textbook): ...`）。改动示例脚本时请先真正运行通过（exit 0），并通过 `uv run ruff check` 与 `uv run ruff format --check`。
 
 高质量的勘误与补充会被吸收进后续版本，并在变更记录中体现。
 

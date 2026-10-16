@@ -1,6 +1,6 @@
 """测试双流下 freq 自动推断: on_bar 里取 bar, on_tick 里取 tick, 其余位置仍报错.
 
-对应反馈 vendor/docs/报错.txt: 只写 on_bar 的策略在 tick 流存在时(实盘
+对应用户反馈: 只写 on_bar 的策略在 tick 流存在时(实盘
 emit_ticks / 回测 run_backtest(data=[Tick,...], freq=...)) 撞双流歧义 ValueError
 并中止会话 —— 而它从不读 tick, 调用点意图并无歧义。
 """
