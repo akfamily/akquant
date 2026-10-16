@@ -666,7 +666,10 @@ class LiveRunner:
             )
             self._connect_and_start_trader(bundle.trader_gateway)
 
-        time.sleep(2.0)
+        # 这里不等网关连上: 交易网关就绪由下方 _await_broker_ready 轮询
+        # heartbeat() 裁定; 行情网关的 subscribe() 在连上前只记订阅集, 登录/
+        # 就绪后自行下发(CTP OnRspUserLogin、klinedata on_ready)。原先固定
+        # sleep(2.0) 只让每次 run_live 白等 2 秒。
 
         # Create Strategy Instances
         strategy_instance, slot_strategy_instances, effective_strategy_id = (

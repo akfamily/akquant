@@ -10,20 +10,29 @@ repos:
         args: ['--maxkb=1000']
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.9
+    rev: v0.17.1
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [ --fix ]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.20.0
+    rev: v2.4.0
     hooks:
       - id: mypy
         pass_filenames: false
         args: ["--config-file=pyproject.toml", "."]
+        # 版本钉死：hook 环境重建时若装到 numpy>=2.5，其存根用了需 py3.12 的 PEP 695
+        # 语法，按 python_version=3.11 检查会误报（如 ndarray.cumprod() 无参调用报错；
+        # mypy 1.x 下更是直接中止）。
         additional_dependencies:
-          [types-pytz, pandas-stubs, numpy, pytest, polars, quantstats, pydantic]
+          - types-pytz==2026.2.0.20260518
+          - pandas-stubs==3.0.3.260530
+          - numpy==2.4.6
+          - pytest==9.0.3
+          - polars==1.41.2
+          - quantstats==0.0.81
+          - pydantic==2.13.4
 
   - repo: local
     hooks:

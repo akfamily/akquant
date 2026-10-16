@@ -3,8 +3,10 @@ target/
 build/
 dist/
 site/
-refs/
 *.egg-info/
+# stub_gen（pyo3-stub-gen）的产物目录；入库存根是 python/akquant/akquant.pyi，
+# 新增条目从这里手抄过去，本目录本身不入库
+/python/akquant/akquant/
 
 # ── Python ──
 __pycache__/
@@ -23,8 +25,6 @@ uv.lock
 # ── IDE / 编辑器 ──
 .idea/
 .vscode/
-.agents/
-.trae/
 *.swp
 
 # ── 操作系统 ──
@@ -35,7 +35,6 @@ uv.lock
 *.err
 
 # ── 本地配置 ──
-.cargo/config.toml
 CLAUDE.md
 
 # ── 本地数据 ──
@@ -61,9 +60,6 @@ docs/superpowers
 /examples/*_middleware_*.py
 /docs/zh/advanced/qmf_broker_gateway.md
 /docs/en/advanced/qmf_broker_gateway.md
-
-# ── 外部前置机/回测服务子项目（vendored，独立仓库，不纳入本仓版本管理）──
-/vendor/
 
 # ── golden 测试的"当前运行"产物（每次运行由 runner 重新生成并与 baselines 比对，
 #    无需入库；baselines/ 才是锁定的参照）──

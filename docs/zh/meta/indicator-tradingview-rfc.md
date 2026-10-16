@@ -198,17 +198,7 @@ ready 判定统一为 `value is not None`,对象有 `is_ready` 属性时优先�
 
 ### 4.1 外部消费者影响
 
-`vendor/indicator_server_g/`(Pine 风格 DSL 的指标服务,**独立仓库、本仓 gitignore**)有 5 个策略文件使用 `indicator_mode` + `register_*` 旧 API:
-
-```
-examples/akquant_strategy_multi_indicators.py
-examples/test_akquant_strategy.py
-examples/test_strategy_indicator_same_file.py
-indicators/boll_ema_macd_rsi_strategy.py
-indicators/boll_ema_macd_rsi_record_strategy.py
-```
-
-**不在本仓修改**,但升级 AKQuant 版本时必须同步迁移,否则它会直接起不来。该项目面向用户的 DSL 用**字符串 pane**,与核心的整数 pane 分属不同层,迁移时不要顺手「统一」掉。
+使用 `indicator_mode` + `register_*` 旧 API 的外部项目,升级 AKQuant 版本时必须同步迁移到 `self.I()`,否则会直接起不来。外部项目若有自己面向用户的 DSL(例如字符串形式的 pane),与核心的整数 pane 分属不同层,迁移时不要顺手「统一」掉。
 
 ---
 

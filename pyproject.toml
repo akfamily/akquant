@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "akquant"
-version = "0.3.66"
+version = "0.3.67"
 description = "High-performance quantitative trading framework based on Rust and Python"
 readme = "README.md"
 license = {text = "MIT License"}
@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "License :: OSI Approved :: MIT License",
 ]
 requires-python = ">=3.10"
@@ -66,12 +67,12 @@ full = [
     "quantstats>=0.0.60",
 ]
 dev = [
-    "mypy>=1.0.0",
+    "mypy==2.4.0",  # 与 .pre-commit-config.yaml 的 mirrors-mypy rev 保持一致
     "maturin>=1.11.5",
     "pandas-stubs>=2.3.3.260113",
     "pre-commit>=3.0.0",
     "pytest>=7.0.0",
-    "ruff>=0.1.0",
+    "ruff==0.17.1",  # 与 .pre-commit-config.yaml 的 ruff-pre-commit rev 保持一致
     "types-pytz>=2025.2.0.20251108",
 ]
 
@@ -88,6 +89,9 @@ include = [
 [tool.ruff]
 line-length = 88
 target-version = "py310"
+# ruff 0.17 起默认会格式化 Markdown 里的 Python 代码块；文档代码块（含故意省略的
+# `...` 片段、对齐的行尾注释）不交给 ruff 改写。
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "D"]
@@ -97,7 +101,10 @@ ignore = ["D100", "D104"]
 convention = "pep257"
 
 [tool.mypy]
-python_version = "3.10"
+# 按 3.11 检查:pandas-stubs 3.x 要求 >=3.11,目标设为 3.10 时 mypy 2.x 会把整个
+# pandas 静默当作 Any(1.x 则部分失效),pandas 相关类型错误全部漏检。
+# 3.10 运行时只能装 pandas 2,本就不在这套存根的覆盖范围内。
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -106,8 +113,8 @@ exclude = '(?x)(^|[\\/])vendor([\\/]|$)'
 # import-untyped: pyarrow/akshare 等无 py.typed 存根的第三方库噪声(与本项目
 #   类型安全无关; per-module override 对 .pyi 入口失效, 故全局禁用)。
 # syntax: numpy 2.5.x 存根用 PEP 695 `type` 语句(需 py3.12), 与本项目
-#   python_version="3.10" 目标冲突; numpy 2.5 本身也不支持 3.10, 其存根语法
-#   错误与本项目代码无关, 一并禁用避免阻断整体检查。
+#   python_version 目标冲突, 其存根语法错误与本项目代码无关, 一并禁用。
+#   (注意 syntax 错误是阻断性的, 此项禁用实际压不住; pre-commit 环境因此钉 numpy==2.4.6。)
 disable_error_code = ["import-untyped", "syntax"]
 
 [[tool.mypy.overrides]]
@@ -129,8 +136,3 @@ module = [
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
-
-# numpy 2.5.x 的类型存根用 PEP 695 `type` 语句(需 py3.12),与本项目
-# python_version="3.10" 目标冲突(numpy 2.5 本身也不支持 3.10)。跳过对其
-# 存根的分析(视为 Any),不影响本项目代码仍按 3.10 检查;公开 standalone CI
-# 在 3.10 环境解析的是 3.10 兼容的旧版 numpy 存根,不受影响。

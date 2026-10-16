@@ -70,16 +70,13 @@
 3.  **编写代码**:
     *   遵循 PEP 8 编码规范。
     *   确保添加了类型注解 (Type Hints)。
-    *   如果是 Python 代码，请运行检查：
-        ```bash
-        uv run ruff check .
-        uv run mypy .
-        ```
-    *   推荐在提交前统一执行：
+    *   如果是 Python 代码，请在提交前运行检查（包含 ruff、ruff-format、mypy 与文档检查）：
         ```bash
         uv run pre-commit run --all-files
         ```
         说明：
+        *   ruff 与 mypy 的版本在 `.pre-commit-config.yaml` 与 `pyproject.toml` 中钉为一致；改代码过程中可用 `uv run ruff check .` 快速自查，但以 pre-commit 结果为准。
+        *   不要直接运行 `uv run mypy .`：开发环境中的 numpy 2.5 存根用了需 Python 3.12 的语法，按项目的 3.11 目标检查会产生误报，环境里的 torch 等可选依赖也会改变结论。pre-commit 的 mypy hook 使用钉死版本的独立环境，不受影响。
         *   仓库中的 mypy hook 已配置为以项目根目录运行并读取 `pyproject.toml`，用于避免 `__init__.py` 与 `__init__.pyi` 的重复模块报错。
         *   如果你修改了 pre-commit 配置或首次运行遇到环境问题，可执行：
             ```bash
@@ -146,10 +143,7 @@
 
 3.  **代码风格检查**:
     ```bash
-    uv run ruff check .
-    uv run mypy .
-    uv run python scripts/check_docs_links.py
-    uv run python scripts/check_docs_api_examples.py
+    uv run pre-commit run --all-files
     ```
     如需仅检查本次变更文档，可使用：
     ```bash
@@ -164,9 +158,7 @@
 在提交 PR 之前，请检查：
 
 - [ ] 代码可以通过 `uvx maturin develop` 编译成功。
-- [ ] 运行了 `uv run ruff check .` 和 `uv run mypy .` 没有报错。
-- [ ] 运行了 `uv run python scripts/check_docs_links.py` 且通过。
-- [ ] 运行了 `uv run python scripts/check_docs_api_examples.py` 且通过。
+- [ ] 运行了 `uv run pre-commit run --all-files` 且全部通过（含 ruff、mypy、文档链接与文档 API 示例检查）。
 - [ ] 如果是新功能，是否添加了简单的测试或示例？
 - [ ] 文档是否已更新？
 

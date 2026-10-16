@@ -41,7 +41,9 @@ def _bar_times(index: pd.DatetimeIndex, intraday: bool) -> list[Union[str, int]]
     先统一到 ns 再换算成秒,避免按 ns 假设导致的量纲错误。
     """
     if intraday:
-        ns = index.as_unit("ns").asi8
+        # 显式转 datetime64[ns] 再取整数:tz-aware 索引会先换算到 UTC,与 asi8 等价,
+        # 且有类型存根(asi8 不在 pandas-stubs 中)。
+        ns = index.as_unit("ns").to_numpy(dtype="datetime64[ns]").astype("int64")
         return [int(s) for s in (ns // _NS_PER_SEC).tolist()]
     return index.strftime("%Y-%m-%d").tolist()
 
@@ -104,9 +106,7 @@ def _snap_time(ts: pd.Timestamp, bar_index: pd.DatetimeIndex) -> Optional[pd.Tim
     if len(bar_index) == 0:
         return None
     ts = _align_tz(ts, bar_index)
-    pos = bar_index.searchsorted(ts, side="right") - 1
-    if pos < 0:
-        pos = 0
+    pos = max(int(bar_index.searchsorted(ts, side="right")) - 1, 0)
     return cast(pd.Timestamp, bar_index[pos])
 
 
@@ -130,7 +130,10 @@ def _build_markers(
         side = str(tr.get("side", "long")).strip().lower()
         is_long = side != "short"
         for kind in ("entry", "exit"):
-            ts = pd.to_datetime(tr.get(f"{kind}_time"), errors="coerce")
+            raw_time = tr.get(f"{kind}_time")
+            if raw_time is None:
+                continue
+            ts = pd.to_datetime(raw_time, errors="coerce")
             if pd.isna(ts):
                 continue
             snapped = _snap_time(ts, bar_index)
