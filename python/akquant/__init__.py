@@ -97,6 +97,7 @@ from .plot import plot_indicators, plot_result
 from .precomputed import PrecomputedIndicator
 from .sizer import AllInSizer, FixedSize, PercentSizer, Sizer
 from .strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
+from .strategy_inspect import InspectResult, inspect_strategy
 from .strategy_loader import (
     get_strategy_loader,
     register_plugin_strategy_loaders,
@@ -145,6 +146,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "Strategy",
         "Indicator",
         "IndicatorCannotTradeError",
+        "InspectResult",
+        "inspect_strategy",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
         "BarGenerator",
@@ -252,6 +255,8 @@ else:
         "PercentSizer",
         "AllInSizer",
         "Strategy",
+        "InspectResult",
+        "inspect_strategy",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
         "BarGenerator",
