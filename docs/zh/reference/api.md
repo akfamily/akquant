@@ -1165,7 +1165,7 @@ run_live(..., preload_history=history)
 ```
 
 *   `preload_history`：`pd.DataFrame` / `dict[str, pd.DataFrame]` / `list[Bar]` / `None`（默认）。形态与列约定同 `run_backtest(data=)`。框架不内置数据源，数据由调用方提供，应截止到上一根已收盘 bar。
-*   **会做**：灌入历史缓冲（策略的 `_history_depth` 自动抬到预热深度，不下调已设的更大值）；喂 `subscribe_bars` 窗口聚合器；计入 per-symbol `warmup_period`；在 `on_start` 之后逐根回放 `self.I()` 指标（含 `freq=` 窗口指标），绘图点以 `phase="preload"` 进入指标流。
+*   **会做**：灌入历史缓冲（策略的 `_history_depth` 自动抬到预热深度，不下调已设的更大值）；喂 `subscribe_bars` 窗口聚合器；计入 per-symbol `warmup_period`；在主策略与全部 slot（含指标脚本）的 `on_start` 都跑完之后逐根回放 `self.I()` 指标（含 `freq=` 窗口指标），绘图点以 `phase="preload"` 进入指标流。
 *   **不会做**：不触发 `on_bar`、不撮合、不动账户。
 *   **校验**：缺必需列、或一个标的都匹配不上 `instruments` 时抛 `ValueError`；部分标的不匹配、晚于会话启动的行、空数据均告警后跳过；实盘首根 bar 不晚于预热末戳时告警但照常派发。
 *   **热启动**：从存档恢复的策略跳过指标回放，历史缓冲仍会灌入。

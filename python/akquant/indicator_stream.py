@@ -48,6 +48,12 @@ def _to_phase(value: Any) -> str:
     return text or "run"
 
 
+def _series_key(raw: Any, indicator_key: str) -> str:
+    """取 series_key, 缺失或为空时回落到 indicator_key(兼容 1.4 事件)."""
+    text = str(raw.get("series_key") or "").strip() if isinstance(raw, dict) else ""
+    return text or indicator_key
+
+
 def _normalize_symbol(value: Any) -> Optional[str]:
     """Normalize unknown or empty symbols into None."""
     if value in (None, "", "_unknown"):
@@ -96,9 +102,13 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
 
     if event_type == "indicator_point":
         timestamp_ns = _to_int(payload.get("timestamp", 0))
+        point_key = str(payload.get("indicator_key", ""))
         base_message["indicator"] = {
             "owner_strategy_id": str(payload.get("owner_strategy_id", "")),
-            "indicator_key": str(payload.get("indicator_key", "")),
+            "indicator_key": point_key,
+            # 图上的 series 名, 与历史接口 series_keys 同规则(1.5);
+            # 1.4 事件与第三方 sink 没有它, 回落到 indicator_key。
+            "series_key": _series_key(payload, point_key),
             "display_name": str(payload.get("display_name", "")),
             "pane": _to_int(payload.get("pane", 0)),
             "render_type": str(payload.get("render_type", "")),
@@ -121,14 +131,22 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
         return base_message
 
     raw_items = _json_loads_or_default(payload.get("items_json"), [])
+    snapshot_owner = str(payload.get("owner_strategy_id", ""))
     items: list[dict[str, Any]] = []
     if isinstance(raw_items, list):
         for raw_item in raw_items:
             if not isinstance(raw_item, dict):
                 continue
+            item_key = str(raw_item.get("indicator_key", ""))
             items.append(
                 {
-                    "indicator_key": str(raw_item.get("indicator_key", "")),
+                    # 1.5 起 item 自带 owner; 1.4 事件回落到快照的 owner
+                    # (一份快照只含一个 owner 的点)。
+                    "owner_strategy_id": str(
+                        raw_item.get("owner_strategy_id") or snapshot_owner
+                    ),
+                    "indicator_key": item_key,
+                    "series_key": _series_key(raw_item, item_key),
                     "display_name": str(raw_item.get("display_name", "")),
                     "pane": _to_int(raw_item.get("pane", 0)),
                     "render_type": str(raw_item.get("render_type", "")),
@@ -140,22 +158,22 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
                 }
             )
 
-    indicator_keys = [item["indicator_key"] for item in items if item["indicator_key"]]
+    keyed_items = [item for item in items if item["indicator_key"]]
+    indicator_keys = [item["indicator_key"] for item in keyed_items]
+    # 与 indicator_keys 一一对应; 两个 owner 同名时 series_key 不同, 下面两个
+    # 映射按它作键才不会互相覆盖(1.5)。
+    series_keys = [item["series_key"] for item in keyed_items]
     panes = sorted({item["pane"] for item in items})
     render_types = sorted(
         {item["render_type"] for item in items if item["render_type"]}
     )
-    value_by_key = {
-        item["indicator_key"]: item["value"] for item in items if item["indicator_key"]
-    }
-    items_by_key = {
-        item["indicator_key"]: item for item in items if item["indicator_key"]
-    }
+    value_by_key = {item["series_key"]: item["value"] for item in keyed_items}
+    items_by_key = {item["series_key"]: item for item in keyed_items}
     warmup_count = sum(1 for item in items if bool(item.get("warmup", False)))
 
     timestamp_ns = _to_int(payload.get("timestamp", 0))
     base_message["snapshot"] = {
-        "owner_strategy_id": str(payload.get("owner_strategy_id", "")),
+        "owner_strategy_id": snapshot_owner,
         "symbol": _normalize_symbol(payload.get("symbol")),
         "timestamp": timestamp_ns,
         # Milliseconds alongside the nanosecond value, so a snapshot can be fed
@@ -166,6 +184,7 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
         "phase": _to_phase(payload.get("phase")),
         "items": items,
         "indicator_keys": indicator_keys,
+        "series_keys": series_keys,
         "panes": panes,
         "render_types": render_types,
         "value_by_key": value_by_key,

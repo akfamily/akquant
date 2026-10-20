@@ -1095,7 +1095,7 @@ run_live(..., preload_history=history)
 ```
 
 *   `preload_history`: `pd.DataFrame` / `dict[str, pd.DataFrame]` / `list[Bar]` / `None` (default). Same shapes and columns as `run_backtest(data=)`. The framework ships no data source; supply bars ending at the last closed bar.
-*   **Does**: fills the history buffer (the strategy's `_history_depth` is lifted to the preload depth, never lowered); feeds the `subscribe_bars` window aggregator; counts toward per-symbol `warmup_period`; replays `self.I()` indicators bar by bar after `on_start` (window `freq=` indicators included), streaming plot points with `phase="preload"`.
+*   **Does**: fills the history buffer (the strategy's `_history_depth` is lifted to the preload depth, never lowered); feeds the `subscribe_bars` window aggregator; counts toward per-symbol `warmup_period`; replays `self.I()` indicators bar by bar after the main strategy's and every slot's (indicator scripts included) `on_start` (window `freq=` indicators included), streaming plot points with `phase="preload"`.
 *   **Does not**: drive `on_bar`, match orders or touch the account.
 *   **Validation**: missing required columns, or no symbol matching `instruments`, raises `ValueError`; partially unmatched symbols, rows later than session start and empty input are warned about and skipped; a first live bar not newer than the preload tail is warned about but still dispatched.
 *   **Warm start**: a strategy restored from a checkpoint skips the indicator replay; the history buffer is still filled.

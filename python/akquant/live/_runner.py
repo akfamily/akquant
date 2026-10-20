@@ -34,7 +34,7 @@ from ..gateway.order_submitter import (
 )
 from ..gateway.symbol_match import normalize_symbol_for_match
 from ..gateway.trader_base import TraderGatewayBase
-from ..indicator_recording import IndicatorSink
+from ..indicator_recording import IndicatorSink, declare_plotted_indicators
 from ..log import build_log_extra, get_logger
 from ..strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
 from ..strategy_loader import resolve_strategy_input
@@ -914,9 +914,13 @@ class LiveRunner:
         """会话启动前把调用方给的历史 bar 灌进引擎, 并把回放序列交给各策略.
 
         只写历史缓冲与窗口聚合器: 不触发 on_bar、不撮合、不动账户。指标回放与
-        warmup 计数由策略在 ``_on_start_internal`` 末尾消费 ``_preload_events``
-        完成(主策略的 on_start 在 ``engine.run()`` 内触发, Python 侧在它之后
-        没有时点, 只能挂在策略自己身上)。
+        warmup 计数由**主策略**在 ``_on_start_internal`` 末尾消费
+        ``_preload_events`` 完成, 先回放自己、再依次回放各 slot(主策略的
+        on_start 在 ``engine.run()`` 内触发, Python 侧在它之后没有时点, 只能挂在
+        策略自己身上; 它又是全部 on_start 里最晚的一个, 此时各方的 ``self.I``
+        都已登记, 流里的 series_key 从第一个预热点起就是最终值)。
+
+        ``strategies`` 的第一个元素必须是主策略, 其余为 slot。
 
         **容量只能用 configure_history_depth**: ``set_history_depth`` 绑的是
         ``HistoryBuffer::set_capacity``, 会 ``data.clear()`` 把刚灌的全清掉。
@@ -949,6 +953,16 @@ class LiveRunner:
                 strategy.set_history_depth(result.depth)
             strategy._preload_events = events
             strategy._preload_overlap_guard = overlap_guard
+        # 指标回放统一排在主策略 on_start 之后: slot 的 on_start 先于主策略
+        # (后者由 Rust 在 engine.run() 内触发), 若 slot 在自己 on_start 末尾就
+        # 回放, 主策略 on_start 里的同名 self.I 还没登记, slot 的预热点会以
+        # 不带 owner 前缀的 series_key 发出, 随后整条线改名并告警。所以 slot 只
+        # 打标记跳过, 由主策略的 _on_start_internal 末尾依次代为回放。
+        main_strategy, *slot_strategies = strategies
+        for slot_strategy in slot_strategies:
+            slot_strategy._defer_preload_replay = True
+        if slot_strategies:
+            main_strategy._preload_followers = list(slot_strategies)
         self._preload_result = result
         logger.info(
             "历史预热完成: %s 个标的, 每标的最多 %s 根, 回放事件 %s 个",
@@ -1250,6 +1264,10 @@ class LiveRunner:
             return
         for target in targets:
             setattr(target, "_indicator_recorder", recorder)
+        # 补登挂载前(__init__ 里)的 plot=True 声明; owner 已由
+        # _configure_strategy_slots 在本步之前设好。
+        for target in targets:
+            declare_plotted_indicators(target, recorder)
         flush = getattr(recorder, "flush_stream_snapshot", None)
         if not callable(flush):
             return

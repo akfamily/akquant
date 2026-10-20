@@ -300,7 +300,7 @@ class S(Strategy):
 
 下标语义与 Pine 完全一致：有临时值时它占据 `[0]`，已确认序列整体后移一位。流事件里临时点带
 `confirmed=false`，且**时间戳就是该窗口将来闭合的标签**，确认点随后以同一 `time` 到达——前端按
-`(indicator_key, symbol, timestamp)` 覆盖即可（`akquant.lwc.to_lwc_update()` 已按此处理）。
+`(owner_strategy_id, indicator_key, symbol, timestamp)` 覆盖即可（`akquant.lwc.to_lwc_update()` 已按此处理）。
 临时点**不进** `indicator_df()` / `export_indicators()`，那两个出口只含确认值。
 
 三条限制：
@@ -704,12 +704,18 @@ def on_event(event):
 当前 `snapshot` 桥接结果除了 `items` 之外，还会补充几组快捷字段，方便前端减少二次遍历：
 
 - `indicator_keys`
+- `series_keys`（与 `indicator_keys` 一一对应）
 - `panes`
 - `render_types`
-- `value_by_key`
-- `items_by_key`
+- `value_by_key`（按 `series_key` 作键）
+- `items_by_key`（按 `series_key` 作键）
 - `warmup_count`
 - `has_warmup`
+
+`point` 消息的 `indicator` 带 `series_key`，`snapshot` 的每个 item 带 `owner_strategy_id`
+与 `series_key`。`series_key` 与历史接口的规则相同（见下文「指标身份与 series 键」）：
+单 owner 时就是 `indicator_key`，主策略与指标脚本同名时为 `"{owner}:{key}"`。前端按
+`series_key` 建线即可，不必再自己拼接或先拉定义表建映射。
 
 另外，bridge helper 也会把 `_unknown` / 空 `symbol` 规整为 `None`，并兼容已经预先解码成
 `dict/list` 的 `meta_json` / `items_json` 值，便于网关层做二次封装。
@@ -726,6 +732,10 @@ def on_event(event):
     该版本的旧消息时，回落到纳秒 `timestamp` 自行换算。`phase` 自 `1.4` 起提供
     （point、snapshot 及其每个 item 上都有），`"preload"` 表示来自
     `run_live(preload_history=)` 的回放，其余一律为 `"run"`；缺失时按 `"run"` 处理。
+    `series_key`（point 与每个 snapshot item）及 item 上的 `owner_strategy_id`、snapshot 的
+    `series_keys` 自 `1.5` 起提供，同时 `items_by_key` / `value_by_key` 改按 `series_key`
+    作键；读到 `1.4` 的消息时桥接把 `series_key` 回落为 `indicator_key`、item owner 回落为
+    snapshot 的 owner，单 owner 场景键名与此前一致。
 
 它不是新的传输层，只是把 AKQuant 的事件结构整理成更稳定的“前端消息对象”。
 
@@ -811,7 +821,9 @@ run_live(
 - 喂 `subscribe_bars` 的窗口聚合器：预热期间闭合的窗口同样进入窗口历史；
 - 计入 `warmup_period`：预热了 N 根就算已经攒了 N 根；
 - 在 `on_start` **之后**逐根回放每个 `self.I()` 指标（含 `freq=` 窗口指标），所以 `on_start` 里
-  声明的参数化指标同样吃得到。绘图点照常进指标流，只是带 `phase="preload"`；回放结束后同一批
+  声明的参数化指标同样吃得到。挂了指标脚本或多个 slot 时，回放统一排在主策略与全部 slot 的
+  `on_start` 都跑完之后（先主策略、再各 slot），保证同名指标从第一个预热点起就带上最终的
+  `series_key`。绘图点照常进指标流，只是带 `phase="preload"`；回放结束后同一批
   实例接着算实时 bar，点带 `phase="run"`。
 
 预热不做什么：不触发 `on_bar`、不撮合、不动账户，零下单风险。在 `on_bar` 里手算、再用
@@ -821,7 +833,7 @@ run_live(
 
 - 晚于会话启动时刻的行会被裁掉并告警（防止“看到未来”）；
 - 实盘首根 bar 若不晚于该标的的预热末戳，会点名告警但**照常派发**（重复一根远比丢一根轻）。
-  前端按同 `(indicator_key, symbol, timestamp)` 用后到的点覆盖即可；
+  前端按同 `(owner_strategy_id, indicator_key, symbol, timestamp)` 用后到的点覆盖即可；
 - 从存档热启动的策略跳过指标回放（状态已随存档恢复），历史缓冲仍会灌入；
 - tick 驱动的会话灌入 bar 预热后会变成 bar/tick 双流，`on_timer` 等回调之外读历史需显式传
   `freq='bar'` 或 `freq='tick'`。
@@ -833,7 +845,9 @@ run_live(
 
 前端如果用 lightweight-charts，不必自己解析 `to_indicator_message()` 的字段：
 `akquant.lwc.to_lwc_update()` 把 point 消息转成 `series.update()` 可直接消费的增量
-（`{indicator_key, pane, series_type, color, confirmed, phase, point:{time, value}}`）。
+（`{owner_strategy_id, indicator_key, series_key, pane, series_type, color, confirmed, phase, point:{time, value}}`）。
+按 `series_key` 找线：它与 `to_lwc_indicator_series()` 历史 series 的 `series_key` 同规则，
+主策略与指标脚本同名时也不会合成一条。
 `confirmed` 原样带出——将来未闭合 bar 的临时点与确认点同 `time`，LWC 的 `update()`
 按 `time` 覆盖，前端零改动。`phase` 同样原样带出（`"preload"` / `"run"`，见上一节）。
 
@@ -923,6 +937,29 @@ Python 侧按纳秒解析，后者可被前端图表库直接使用，无需再�
 `"{owner}:{key}"`，例如 `_default:ema` 与 `sub:ema`。图例显示名在用户没写 label（展示名
 等于 `indicator_key`）时随之变为 series 键；写了 label 时保持原样。LWC、d3Kline、plotly
 三个出口统一经由 `akquant.indicator_identity.series_keys()` 取键，自建前端也应复用它。
+
+实时流（`on_event` 的 point / snapshot 消息、`to_lwc_update()`）同样带 `series_key`，
+规则与上面相同，由同一个函数算出。流在发出每条消息时就要给出名字，而这时还没有完整的
+定义表，所以录制器（回测的 `IndicatorRecorder`、实盘的 `StreamingIndicatorSink`）维护
+一张会话级登记表：挂载时补登各策略与指标脚本已有的 `plot=True` 声明（`__init__` 里的
+`self.I`），挂载后 `self.I(plot=True)` 的声明（`on_start` 里）即时登记，每次
+`record_indicator` 也登记。因此在回测和实盘（含 `preload_history` 回放）中，`__init__` 与
+`on_start` 里的声明都会在第一个点发出之前登记完毕，同名指标从第一个点起就是最终的
+`series_key`。自定义 `IndicatorSink` 可实现可选方法
+`declare(owner_strategy_id, indicator_key)` 接收这些登记，不实现也不影响 `record()`。
+
+与历史接口有两处已知差异：
+
+- 运行中途才有第二个 owner 用了已有的键（例如在 `on_bar` 里手写同名的
+  `record_indicator`）时，该键的所有 owner 从这一刻起都改为 `"{owner}:{key}"`，此前已发出
+  的点仍是不带前缀的名字，不追溯修改；每个键只打一次 warning。把同名指标用
+  `self.I(plot=True)` 在 `__init__` / `on_start` 里声明，或改用不同的 `name`，可避免切换。
+- 声明了 `plot=True`、但整场一个点都没产出的指标（例如始终未就绪）会参与实时流的冲突
+  判断，却不在历史定义表里，可能出现实时侧加了前缀、历史侧没加的情况。
+
+另外，point 的 `series_key` 在发出那一刻计算，snapshot item 的在本轮 flush 时计算：若冲突恰好
+在同一个快照周期内出现，同一轮里先发的 point 与 snapshot item 的 `series_key` 可能不同，以
+snapshot 为准。
 
 这三层结构的目的，是让 AKQuant 负责“生产标准化指标数据”，而不是直接耦合某个具体前端图表库。
 

@@ -19,7 +19,12 @@ from ..chart import (
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
-from ..indicator_recording import all_items_confirmed, snapshot_phase
+from ..indicator_recording import (
+    SeriesKeyRegistry,
+    all_items_confirmed,
+    snapshot_phase,
+    stamp_snapshot_items,
+)
 
 
 class StreamingIndicatorSink:
@@ -39,6 +44,12 @@ class StreamingIndicatorSink:
         self._run_id = str(run_id)
         self._seq = 0
         self._pending: Dict[Tuple[str, str, int], List[Dict[str, Any]]] = {}
+        # 只存 (owner, key) 登记表, 规模与声明数同阶, 不随点数增长
+        self._series_registry = SeriesKeyRegistry()
+
+    def declare(self, owner_strategy_id: str, indicator_key: str) -> None:
+        """登记一个将要上报的 ``(owner, key)``, 供流消息提前算出 series_key."""
+        self._series_registry.register(owner_strategy_id, indicator_key)
 
     def _emit(
         self, event_type: str, symbol: Optional[str], payload: Dict[str, str], ts: int
@@ -95,12 +106,16 @@ class StreamingIndicatorSink:
         except (TypeError, ValueError):
             numeric_value = float("nan")
 
+        self._series_registry.register(strategy_id, indicator_key)
         self._emit(
             "indicator_point",
             None if symbol_text == "_unknown" else symbol_text,
             {
                 "owner_strategy_id": strategy_id,
                 "indicator_key": indicator_key,
+                "series_key": self._series_registry.series_key(
+                    strategy_id, indicator_key
+                ),
                 "display_name": display,
                 "pane": str(pane_index),
                 "render_type": render,
@@ -138,6 +153,7 @@ class StreamingIndicatorSink:
         for (strategy_id, symbol_text, timestamp_ns), items in list(
             self._pending.items()
         ):
+            stamp_snapshot_items(self._series_registry, strategy_id, items)
             self._emit(
                 "indicator_snapshot",
                 None if symbol_text == "_unknown" else symbol_text,

@@ -325,7 +325,7 @@ class S(Strategy):
 Index semantics match Pine exactly: a provisional value occupies `[0]` and the confirmed
 series shifts by one. Stream events mark provisional points with `confirmed=false`, and
 **their timestamp is the label the window will close with**; the confirmed point arrives
-later with the same `time`, so a frontend overwrites by `(indicator_key, symbol, timestamp)`
+later with the same `time`, so a frontend overwrites by `(owner_strategy_id, indicator_key, symbol, timestamp)`
 (`akquant.lwc.to_lwc_update()` already does). Provisional points **never** enter
 `indicator_df()` / `export_indicators()` - those exits hold confirmed values only.
 
@@ -768,12 +768,20 @@ The bridged `snapshot` payload now also includes a few shortcut fields so fronte
 code does not have to rescan `items` on every update:
 
 - `indicator_keys`
+- `series_keys` (parallel to `indicator_keys`)
 - `panes`
 - `render_types`
-- `value_by_key`
-- `items_by_key`
+- `value_by_key` (keyed by `series_key`)
+- `items_by_key` (keyed by `series_key`)
 - `warmup_count`
 - `has_warmup`
+
+A `point` message's `indicator` carries `series_key`, and every `snapshot` item carries
+`owner_strategy_id` and `series_key`. `series_key` follows the same rule as the
+historical exits (see "Indicator identity and series keys" below): the plain
+`indicator_key` for a single owner, `"{owner}:{key}"` when the main strategy and an
+indicator script share a key. Frontends can key their lines by `series_key` directly
+instead of building a mapping from the definition table first.
 
 The bridge helper also normalizes `_unknown` or empty `symbol` values into `None`,
 and accepts already-decoded `dict/list` values for `meta_json` and `items_json`,
@@ -795,6 +803,11 @@ derives the millisecond value.
     `phase` ships from `1.4` onward (on points, snapshots and every snapshot
     item): `"preload"` marks points replayed from `run_live(preload_history=)`,
     everything else is `"run"`; treat a missing field as `"run"`.
+    `series_key` (on points and every snapshot item), the item-level
+    `owner_strategy_id` and the snapshot's `series_keys` ship from `1.5` onward,
+    and `items_by_key` / `value_by_key` are keyed by `series_key` since then. For
+    `1.4` messages the bridge falls back to `indicator_key` for `series_key` and to
+    the snapshot owner for the item owner, so single-owner keys are unchanged.
 
 This is not a new transport layer. It is just a normalization layer that turns AKQuant stream events into steadier frontend message objects.
 
@@ -893,7 +906,10 @@ What the preload does:
 - Counts toward `warmup_period`: N preloaded bars count as N bars seen.
 - Replays every `self.I()` indicator bar by bar **after** `on_start` (window
   `freq=` indicators included), so parameterised indicators declared in
-  `on_start` are covered. Plot points stream as usual, tagged
+  `on_start` are covered. With indicator scripts or several slots, the replay
+  runs once the main strategy's and every slot's `on_start` have all finished
+  (main first, then each slot), so same-named indicators carry their final
+  `series_key` from the first preload point. Plot points stream as usual, tagged
   `phase="preload"`; afterwards the same instances continue on live bars with
   `phase="run"`.
 
@@ -907,7 +923,7 @@ Boundaries:
 - Rows later than session start are dropped with a warning (no look-ahead).
 - A first live bar that is not newer than the symbol's preload tail is warned
   about but **still dispatched** (one duplicate is far cheaper than one lost
-  bar). Frontends overwrite by `(indicator_key, symbol, timestamp)`.
+  bar). Frontends overwrite by `(owner_strategy_id, indicator_key, symbol, timestamp)`.
 - A strategy restored from a checkpoint skips the indicator replay (its state
   was restored); the history buffer is still filled.
 - A tick-driven session becomes bar/tick dual-stream once bars are preloaded:
@@ -924,7 +940,10 @@ line.
 If your frontend is lightweight-charts you do not need to unpack the fields of
 `to_indicator_message()` yourself: `akquant.lwc.to_lwc_update()` turns a point
 message into an increment that `series.update()` consumes as-is
-(`{indicator_key, pane, series_type, color, confirmed, phase, point:{time, value}}`).
+(`{owner_strategy_id, indicator_key, series_key, pane, series_type, color, confirmed, phase, point:{time, value}}`).
+Find the line by `series_key`: it follows the same rule as the `series_key` of the
+historical `to_lwc_indicator_series()` series, so same-named keys from the main
+strategy and an indicator script no longer merge into one line.
 `confirmed` is passed through - once intrabar provisional points exist they will
 share the `time` of the confirmed point, and LWC's `update()` overwrites by `time`,
 so the frontend needs no change. `phase` is passed through as well (`"preload"` /
@@ -1016,6 +1035,38 @@ unchanged; when several owners use it, the series key becomes `"{owner}:{key}"`,
 no label (display name equal to `indicator_key`) and stays as written otherwise. The LWC,
 d3Kline and plotly outputs all take their keys from
 `akquant.indicator_identity.series_keys()`; custom frontends should reuse it too.
+
+The live stream (`on_event` point / snapshot messages and `to_lwc_update()`) carries
+`series_key` as well, computed by the same function. The stream has to name each
+message as it is emitted, before any complete definition table exists, so the
+recorder (`IndicatorRecorder` in backtests, `StreamingIndicatorSink` live) keeps a
+session-level registry: when it is attached it registers the existing `plot=True`
+declarations of every strategy and indicator script (`self.I` in `__init__`), later
+`self.I(plot=True)` declarations (in `on_start`) register immediately, and every
+`record_indicator` call registers too. So in both backtests and live runs
+(including the `preload_history` replay), declarations in `__init__` and
+`on_start` are all registered before the first point is emitted, and same-named
+indicators carry their final `series_key` from the first point. A custom `IndicatorSink` may implement the
+optional method `declare(owner_strategy_id, indicator_key)` to receive these
+registrations; without it, `record()` works as before.
+
+Two known differences from the historical exits:
+
+- If a second owner starts using an existing key mid-run (for example a hand-written
+  `record_indicator` with the same name in `on_bar`), every owner of that key switches
+  to `"{owner}:{key}"` from that moment on; points already emitted keep the
+  unprefixed name and are not rewritten, and one warning is logged per key. Declaring
+  same-named indicators with `self.I(plot=True)` in `__init__` / `on_start`, or using a
+  different `name`, avoids the switch.
+- An indicator declared with `plot=True` that never produces a point (for example, it
+  never becomes ready) takes part in the live conflict check but is absent from the
+  historical definition table, so the live side may prefix a key the historical side
+  does not.
+
+Also, a point's `series_key` is computed when it is emitted, a snapshot item's when
+the cycle is flushed: if a conflict appears within one snapshot cycle, a point emitted
+earlier in that cycle may carry a different `series_key` from the matching snapshot
+item; the snapshot wins.
 
 This keeps AKQuant focused on producing stable indicator data instead of coupling the framework to a specific charting library.
 

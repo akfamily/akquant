@@ -178,7 +178,10 @@ _PAGE = """<!DOCTYPE html>
   var paneMap = {}, nextPane = 1;
   var lastSeq = null, n = 0;
   function ensureSeries(u){
-    if(series[u.indicator_key]) return series[u.indicator_key];
+    // series_key (stream schema 1.5) keeps same-named keys from different
+    // owners apart; older messages only have indicator_key.
+    var key = u.series_key || u.indicator_key;
+    if(series[key]) return series[key];
     var ctor = LWC[u.series_type + 'Series'] || LWC.LineSeries;
     var paneIdx = 0;
     if(u.pane >= 2){
@@ -190,7 +193,7 @@ _PAGE = """<!DOCTYPE html>
     if(paneIdx >= 1 && chart.panes && chart.panes()[paneIdx]){
       chart.panes()[paneIdx].setHeight(120);
     }
-    series[u.indicator_key] = s;
+    series[key] = s;
     return s;
   }
   async function tick(){

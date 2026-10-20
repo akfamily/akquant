@@ -47,7 +47,11 @@ from ..config import (
 )
 from ..data import ParquetDataCatalog
 from ..feed_adapter import DEFAULT_INPUT_TIMEZONE, DataFeedAdapter, FeedSlice
-from ..indicator_recording import IndicatorRecorder, IndicatorSink
+from ..indicator_recording import (
+    IndicatorRecorder,
+    IndicatorSink,
+    declare_plotted_indicators,
+)
 from ..indicator_script import Indicator, merge_indicators_into_slots
 from ..log import build_log_extra, get_logger, has_configured_handler, register_logger
 from ..normalize import (
@@ -891,6 +895,10 @@ def _attach_indicator_recorder(
     setattr(strategy_instance, "_indicator_recorder", recorder)
     for slot_strategy in slot_strategy_instances.values():
         setattr(slot_strategy, "_indicator_recorder", recorder)
+    # 补登挂载前(__init__ 里)的 plot=True 声明, 让实时流的 series_key 从第一个
+    # 点起就按全部已知 owner 判冲突; owner 已在调用方设好。
+    for target in [strategy_instance, *slot_strategy_instances.values()]:
+        declare_plotted_indicators(target, recorder)
     return recorder
 
 

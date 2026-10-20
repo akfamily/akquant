@@ -178,6 +178,8 @@ def to_lwc_update(message: Mapping[str, Any]) -> Optional[dict[str, Any]]:
     sink 只在 bar 闭合后产点); 临时点与确认点同 time, LWC ``update()`` 按 time
     覆盖, 所以 L2 落地后前端零改动。``phase`` 同样原样带出, 缺失当 ``"run"``:
     ``"preload"`` 是 ``run_live(preload_history=)`` 回放出的历史段点。
+    ``owner_strategy_id``(缺失按 ``"_default"``)与 ``series_key``(缺失回落到
+    ``indicator_key``)也一并带出(1.5): 两个 owner 同名时按 ``series_key`` 区分线。
 
     :return: 增量更新 dict; 非 point 消息或未就绪(``None``/``NaN``)点返回 ``None``.
     """
@@ -197,9 +199,14 @@ def to_lwc_update(message: Mapping[str, Any]) -> Optional[dict[str, Any]]:
         if isinstance(confirmed_raw, bool)
         else str(confirmed_raw).strip().lower() in {"1", "true", "yes", "on"}
     )
+    owner, indicator_key = identity_of(indicator)
     return {
         "symbol": message.get("symbol") or indicator.get("symbol"),
+        "owner_strategy_id": owner,
         "indicator_key": str(indicator.get("indicator_key", "")),
+        # 与 indicator_series() 的 series_key 同规则, 前端按它找到同一条线;
+        # 1.4 消息没有该字段时回落到 indicator_key。
+        "series_key": str(indicator.get("series_key") or indicator_key),
         "display_name": str(
             indicator.get("display_name") or indicator.get("indicator_key", "")
         ),

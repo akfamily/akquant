@@ -46,7 +46,7 @@ from .indicator_declaration import (
     peek_indicator,
     resolve_plot_defaults,
 )
-from .indicator_recording import IndicatorRecorder
+from .indicator_recording import IndicatorRecorder, declare_plotted_indicators
 from .log import get_logger as _get_logger
 from .params import ParamModel, ParamSpec, legacy_init_warning_message
 from .sizer import FixedSize, Sizer
@@ -401,6 +401,10 @@ class Strategy:
     # record_indicator 进指标流事件的 phase 字段。
     _preload_events: List[Bar]
     _preload_overlap_guard: Dict[str, int]
+    # slot 打 _defer_preload_replay, 由主策略按 _preload_followers 代为回放
+    # (见 live/_runner.py::_apply_preload_history)
+    _defer_preload_replay: bool
+    _preload_followers: List["Strategy"]
     _indicator_phase: str
     _framework_last_local_date: Optional[dt.date]
     _framework_before_trading_done_date: Optional[dt.date]
@@ -1105,8 +1109,13 @@ class Strategy:
         _register_pre_open_timers_impl(self)
         self._start_initialized = True
         # 实盘 preload_history: on_start 里声明的指标此刻才存在, 回放只能排在
-        # 这里(主策略的 on_start 由 Rust 在 engine.run() 内触发)。
-        replay_preload_history(self)
+        # 这里(主策略的 on_start 由 Rust 在 engine.run() 内触发)。slot 被 runner
+        # 标记为延后: 它们的 on_start 早于主策略, 由主策略在这里代为回放, 保证
+        # 回放时所有 owner 的 self.I 都已登记(见 _apply_preload_history)。
+        if not self.__dict__.get("_defer_preload_replay", False):
+            replay_preload_history(self)
+            for follower in self.__dict__.pop("_preload_followers", []):
+                replay_preload_history(follower)
 
     def on_stop(self) -> None:
         """
@@ -1760,6 +1769,11 @@ class Strategy:
             reference_lines=reference_lines,
             scale_group=scale_group,
         )
+        recorder = getattr(self, "_indicator_recorder", None)
+        if resolved_plot and recorder is not None:
+            # 挂载后的声明(如 on_start 里)即时登记, 让实时流在第一个点之前
+            # 就知道同名冲突; 挂载前(__init__)的声明由挂载点补登。
+            declare_plotted_indicators(self, recorder, [indicator_name])
         return IndicatorBinding(self, indicator_name)
 
     def _resolve_indicator_name(
@@ -2692,8 +2706,9 @@ class Strategy:
         """Record one indicator point for downstream visualization and export.
 
         :param confirmed: False 表示未闭合窗口上的临时值: 只走流事件不进
-            DataFrame / export, 前端按同 ``(indicator_key, symbol, timestamp)``
-            用后来的确认点覆盖。
+            DataFrame / export, 前端按同
+            ``(owner_strategy_id, indicator_key, symbol, timestamp)`` 用后来的
+            确认点覆盖。
         """
         recorder = getattr(self, "_indicator_recorder", None)
         if recorder is None:

@@ -193,7 +193,10 @@ def test_to_lwc_update_converts_bridge_point_message() -> None:
 
     assert out == {
         "symbol": "A",
+        # 1.5 新增: 消息缺 owner/series_key 时分别回落到 "_default" 与 indicator_key
+        "owner_strategy_id": "_default",
         "indicator_key": "ema_fast",
+        "series_key": "ema_fast",
         "display_name": "EMA10",
         "pane": 0,
         "series_type": "Line",

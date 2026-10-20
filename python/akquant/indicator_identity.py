@@ -12,11 +12,17 @@ LWC、d3kline、plotly 等所有出口都必须经由 :func:`series_keys` 取键
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+from typing import Any, Collection, Iterable, Mapping
 
 DEFAULT_OWNER = "_default"
 
-__all__ = ["DEFAULT_OWNER", "display_label", "identity_of", "series_keys"]
+__all__ = [
+    "DEFAULT_OWNER",
+    "display_label",
+    "identity_of",
+    "resolve_series_key",
+    "series_keys",
+]
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -39,6 +45,25 @@ def identity_of(definition: Mapping[str, Any]) -> tuple[str, str]:
     return owner, key
 
 
+def resolve_series_key(
+    owner: str, key: str, owners_by_key: Mapping[str, Collection[str]]
+) -> str:
+    """按登记表计算单个 ``(owner, key)`` 的 series 键.
+
+    历史出口 :func:`series_keys` 与实时流的录制器/sink 共用本函数, 保证两边
+    规则一致: ``key`` 在登记表里至多一个 owner 时就是 ``key``, 否则为
+    ``"{owner}:{key}"``。
+
+    :param owner: 已归一的 owner(缺失按 ``"_default"``, 见 :func:`identity_of`)
+    :param key: 已归一的 ``indicator_key``
+    :param owners_by_key: ``indicator_key`` -> 使用它的 owner 集合
+    :return: 图上的 series 键
+    """
+    if len(owners_by_key.get(key, ())) <= 1:
+        return key
+    return f"{owner}:{key}"
+
+
 def series_keys(defs: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str], str]:
     """(owner, key) -> 图上的 series 键.
 
@@ -58,7 +83,7 @@ def series_keys(defs: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str], str]
         identities.append(identity)
         owners_by_key.setdefault(identity[1], set()).add(identity[0])
     return {
-        (owner, key): (key if len(owners_by_key[key]) == 1 else f"{owner}:{key}")
+        (owner, key): resolve_series_key(owner, key, owners_by_key)
         for owner, key in identities
     }
 
