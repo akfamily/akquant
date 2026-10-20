@@ -1668,7 +1668,7 @@ class BacktestResult:
         """Get recorded indicator points as a DataFrame.
 
         :param owner: 只留该 ``owner_strategy_id`` 的点(主策略的 ``strategy_id``
-            或某个 slot / study 的 key)。
+            或某个 slot / 指标脚本的 key)。
         """
         frame = cast(pd.DataFrame, self._indicator_points_df.copy())
         if frame.empty:

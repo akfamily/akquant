@@ -98,7 +98,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   **Purpose**: Resume backtest/live trading from a saved state without replaying history.
     *   **Save**: `akquant.save_checkpoint(engine, strategy, "checkpoint.pkl")`.
     *   **Load**: Use `akquant.run_from_checkpoint("checkpoint.pkl", data=new_data)` for easiest resumption.
-    *   **Note**: Strategy class must support pickling (avoid open files/sockets in `__init__`). Use `akquant.indicator` classes instead of raw pandas for proper state saving.
+    *   **Note**: Strategy class must support pickling (avoid open files/sockets in `__init__`). Declare indicators with `self.I()` (built-in incremental indicators or `akquant.PrecomputedIndicator`) instead of raw pandas for proper state saving.
 
 ### Example Strategy (Reference)
 

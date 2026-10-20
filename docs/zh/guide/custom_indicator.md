@@ -16,7 +16,7 @@
 | 需求 | 推荐路径 | 典型用法 |
 | :--- | :--- | :--- |
 | 逐 Bar / 逐 Tick 维护状态 | 增量指标对象（有 `update()`） | `self.I(aq.EMA(20), ...)` |
-| 用 pandas 一次性计算整段历史 | `Indicator(name, fn)` | `self.I(Indicator(...), ...)` |
+| 用 pandas 一次性计算整段历史 | `PrecomputedIndicator(name, fn)` | `self.I(PrecomputedIndicator(...), ...)` |
 | 给 `akquant.talib` 增加一个新函数名 | 修改 Python/Rust 兼容层源码 | 不属于运行时动态注册 |
 
 如果你的目标只是“在策略里用一个自己的指标”，通常不需要修改 `akquant.talib`。
@@ -34,10 +34,10 @@ from akquant import Bar, Strategy
 
 class MaCross(Strategy):
     def on_start(self) -> None:
-        # 声明一次 = 自动更新 + 自动绘图 + 可回溯
-        self.ema_fast = self.I(aq.EMA(10), pane=0, color="#e91e63", label="EMA10")
-        self.ema_slow = self.I(aq.EMA(30), pane=0, color="#3f51b5")
-        self.rsi = self.I(aq.RSI(14), pane=1)
+        # 声明一次 = 自动更新 + 可回溯；写 plot=True 再加上自动绘图
+        self.ema_fast = self.I(aq.EMA(10), pane=0, color="#e91e63", label="EMA10", plot=True)
+        self.ema_slow = self.I(aq.EMA(30), pane=0, color="#3f51b5", plot=True)
+        self.rsi = self.I(aq.RSI(14), pane=1, plot=True)
 
     def on_bar(self, bar: Bar) -> None:
         # [0] 是当前 bar，[1] 是上一根 —— 与 Pine 的 sma[0] / sma[1] 一致
@@ -45,7 +45,7 @@ class MaCross(Strategy):
             return
         if self.ema_fast[1] <= self.ema_slow[1] and self.ema_fast[0] > self.ema_slow[0]:
             self.buy(bar.symbol, 100)
-        # 无需再写 record_indicator —— 传了绘图参数就会自动上报
+        # 无需再写 record_indicator —— 写了 plot=True 就会自动上报
 ```
 
 !!! warning "0.3 起的破坏性变更"
@@ -91,10 +91,10 @@ class MaCross(Strategy):
 from collections import deque
 
 import pandas as pd
-from akquant import Indicator, Strategy
+from akquant import PrecomputedIndicator, Strategy
 
 
-class MyMomentum(Indicator):
+class MyMomentum(PrecomputedIndicator):
     def __init__(self, period: int = 10):
         super().__init__("my_momentum", lambda df: df["close"] - df["close"].shift(period))
         self.period = period
@@ -183,7 +183,7 @@ MACD 这类一次产出多个分量的指标，用 `outputs` 声明分量名，�
 
 ```python
 self.macd = self.I(aq.MACD(12, 26, 9), name="macd", pane=2,
-                   outputs=("dif", "dea", "hist"))
+                   outputs=("dif", "dea", "hist"), plot=True)
 
 # 读取：
 self.macd[0]        # 整个元组 (dif, dea, hist)
@@ -194,19 +194,19 @@ self.macd.dif[0]    # 单个分量，同样支持 [1] 回溯
 
 ## 路径二：预计算指标
 
-当你的指标更适合一次性对完整 `DataFrame` 计算时，传一个 `Indicator(name, fn)`
+当你的指标更适合一次性对完整 `DataFrame` 计算时，传一个 `PrecomputedIndicator(name, fn)`
 实例即可，`self.I()` 会自动走向量化预计算路径。
 
 ### 最小示例
 
 ```python
-from akquant import Indicator, Strategy
+from akquant import PrecomputedIndicator, Strategy
 
 
 class PrecomputeMomentumStrategy(Strategy):
     def on_start(self):
         self.mom10 = self.I(
-            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            PrecomputedIndicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
             name="mom10",
         )
 
@@ -229,16 +229,32 @@ class PrecomputeMomentumStrategy(Strategy):
 - **含 Tick 的输入会报错**：预计算需要完整 OHLC，tick 只有成交价；
 - **不支持 `freq=`**：窗口周期请改用增量指标。
 - **不支持 `warmup_bars=`**：它没有增量状态可预热，整段本来就算好了；
-- **多标的天然可用**：`Indicator` 自己按 symbol 缓存整段结果，不需要 `factory=`。
+- **多标的天然可用**：`PrecomputedIndicator` 自己按 symbol 缓存整段结果，不需要 `factory=`。
 
 ## 自动绘图
 
-传了任一绘图参数（`pane` / `color` / `label` / `render_type` / `reference_lines` /
-`scale_group`）或显式 `plot=True`，框架就会在每次更新后自动上报一个绘图点，
-**无需在 `on_bar` 里手写 `record_indicator`**。
+要画的指标，框架会在每次更新后自动上报一个绘图点，**无需在 `on_bar` 里手写
+`record_indicator`**。画不画只由两件事决定：**`self.I` 写在哪类脚本里**，以及有没有显式写
+`plot=`：
 
-**默认不上报**——与 Pine 一致（`ta.sma()` 只计算，`plot()` 才画）。这不只是风格：
-实盘的指标 sink 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路。
+- 在 `aq.Strategy` 里**默认不画**——与 Pine 一致（`ta.sma()` 只计算，`plot()` 才画）。这不只是
+  风格：实盘的指标 sink 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路。
+- 在指标脚本 `aq.Indicator` 里**默认画**——指标脚本本来就是为了画图（见下文“指标脚本”一节）。
+- `plot=True` / `plot=False` 显式覆盖默认值。
+- `pane` / `color` / `label` / `render_type` / `reference_lines` / `scale_group` 只决定“怎么画”，
+  **不再隐含 `plot=True`**。策略里只写了 `pane=` 想画图的，需补 `plot=True`。
+
+| 写在哪里 | 写法 | 画不画 | pane |
+| :--- | :--- | :--- | :--- |
+| `aq.Strategy` | `self.I(x)` | 不画 | 0 |
+| `aq.Strategy` | `self.I(x, color="red")` | 不画 | 0 |
+| `aq.Strategy` | `self.I(x, pane=1)` | 不画 | 1 |
+| `aq.Strategy` | `self.I(x, plot=True)` | 画 | 0 |
+| `aq.Indicator`（`overlay=False`，默认） | `self.I(x)` | 画 | 1 |
+| `aq.Indicator`（`overlay=False`，默认） | `self.I(x, pane=0)` | 画 | 0 |
+| `aq.Indicator`（`overlay=False`，默认） | `self.I(x, plot=False)` | 不画 | 1 |
+| `aq.Indicator`（`overlay=True`） | `self.I(x)` | 画 | 0 |
+| `aq.Indicator`（`overlay=True`） | `self.I(x, pane=2)` | 画 | 2 |
 
 未就绪的点（值为 `None`）不上报，对应 Pine 预热期的 `na`。
 
@@ -246,14 +262,14 @@ class PrecomputeMomentumStrategy(Strategy):
 # 只算不画
 self.atr = self.I(aq.ATR(14), input_mode="hlc")
 
-# 算且画
-self.rsi = self.I(aq.RSI(14), pane=1, reference_lines=[
+# 算且画（策略里必须显式写 plot=True）
+self.rsi = self.I(aq.RSI(14), pane=1, plot=True, reference_lines=[
     {"value": 70, "label": "超买"},
     {"value": 30, "label": "超卖"},
 ])
 
-# 没有其它绘图参数时，用 plot=True 显式开启
-self.sma = self.I(aq.SMA(20), plot=True)
+# 只写 pane= 不会画——绘图参数不再隐含 plot=True
+self.sma = self.I(aq.SMA(20), pane=0)
 ```
 
 绘图参数的含义与 `record_indicator` 完全一致，详见下文「导出指标给前端」。
@@ -274,7 +290,7 @@ class S(Strategy):
         self.subscribe_bars("5min")
 
     def on_start(self):
-        self.sma5 = self.I(aq.SMA(20), freq="5min", intrabar=True, pane=0)
+        self.sma5 = self.I(aq.SMA(20), freq="5min", intrabar=True, pane=0, plot=True)
 
     def on_bar(self, bar):                 # 每根 1min bar
         v0 = self.sma5[0]                  # 有临时值时: 未闭合 5min 窗口上的试算值
@@ -305,46 +321,110 @@ class S(Strategy):
 可运行示例：[75_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/75_intrabar_indicators.py)（窗口周期）、
 [76_tick_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/76_tick_intrabar_indicators.py)（基础周期，tick 驱动）。
 
-## 可插拔 study：只画图不交易
+## 指标脚本 `aq.Indicator`：只画图不交易
 
-TradingView 里 indicator 脚本与 strategy 脚本是两类东西，一张图上可以叠 N 个只画图的
-indicator。AKQuant 的对应物是 `Study`：继承它、在 `on_start` 里用 `self.I()` 声明指标，
-然后用 `studies=[...]` 挂到任意一次回测或实盘上。
+TradingView 里 `indicator()` 脚本与 `strategy()` 脚本是两类东西，一张图上可以叠 N 个只画图的
+指标脚本。AKQuant 的对应物是 `aq.Indicator`（对标 Pine v5 的 `indicator()`）：继承它、在
+`on_start` 里用 `self.I()` 声明指标，然后用 `indicators=[...]` 挂到任意一次回测或实盘上。
+
+脚本元数据写在类定义行上，与 Pine 的 `indicator(title=..., overlay=...)` 对应：
+
+| 参数 | 含义 | 省略时 |
+| :--- | :--- | :--- |
+| `title` | 显示名，只用于展示 | 类名 |
+| `overlay` | `True` 画主图（叠在 K 线上），`False` 画本脚本的附图 | `False`（附图） |
+| `id` | 机器标识，即指标点的 `owner_strategy_id` / slot key | 类名 snake_case |
 
 ```python
 import akquant as aq
-from akquant import Study, run_backtest
+from akquant import run_backtest
 
 
-class RsiStudy(Study):
+class DualMA(aq.Indicator, title="双均线", overlay=True, id="dual_ma"):
     def on_start(self):
-        self.rsi = self.I(aq.RSI(14), pane=1)
+        self.fast = self.I(aq.EMA(10), name="ema_fast")    # overlay=True：默认画主图 pane=0
+        self.slow = self.I(aq.EMA(30), name="ema_slow")
 
 
-class MacdStudy(Study):
-    study_id = "macd_view"          # 省略时取类名 snake_case: "macd_study"
+class RsiIndicator(aq.Indicator, title="RSI"):            # id 省略为 "rsi_indicator"
+    def on_start(self):
+        self.rsi = self.I(aq.RSI(14), name="rsi")          # overlay=False：默认画附图 pane=1
 
+
+class MacdIndicator(aq.Indicator, title="MACD", id="macd_view"):
     def on_start(self):
         self.macd = self.I(aq.MACD(12, 26, 9), pane=2, outputs=("dif", "dea", "hist"))
 
 
 result = run_backtest(strategy=MyStrategy, data=data, symbols=["600000"],
-                      strategy_id="main", studies=[RsiStudy, MacdStudy])
-result.indicator_df(owner="rsi_study")    # 只看这个 study 的点
-result.viz.review(data)                   # study 的指标一样画到 LWC 图上
+                      strategy_id="main",
+                      indicators=[DualMA, RsiIndicator, MacdIndicator])
+result.indicator_df(owner="rsi_indicator")   # 只看这个指标脚本的点
+result.viz.review(data)                      # 指标脚本的指标一样画到 LWC 图上
 ```
 
-三条要点：
+要点：
 
-- **不新建管线**：每个 study 就是多策略拓扑里的一个 slot（`strategies_by_slot`），指标点带
-  自己的 `owner_strategy_id`，窗口订阅跨 slot 合并，`run_live(studies=...)` 同一套语义。
-- **不交易是硬保证**：`Study` 上所有交易 API（`buy` / `sell` / `place_*` / `order_target*` /
-  `rebalance_*` / `cancel_*` …）一律抛 `StudyCannotTradeError`，在引擎回调里误写也会当场
-  报错，不会静默成交。要下单请继承 `Strategy`。
-- **id 不许撞**：`study_id` 与 `strategy_id` 或已有 slot key 重复时直接 `ValueError`；
-  `studies=` 里塞进非 `Study` 的类会 `TypeError`——否则"不交易"的保证就没了。
+- **pane 编号只在脚本内有效**：`overlay=True` 时 `self.I` 默认 `pane=0`，否则默认 `pane=1`；
+  需要多个附图时显式写 `pane=2`、`pane=3`……。显式写的 `pane=` 总是优先。
+- **不新建管线**：每个指标脚本就是多策略拓扑里的一个 slot（`strategies_by_slot`），指标点带
+  自己的 `owner_strategy_id`，窗口订阅跨 slot 合并，`run_live(indicators=...)` 同一套语义。
+- **不交易是硬保证**：`aq.Indicator` 上所有交易 API（`buy` / `sell` / `place_*` /
+  `order_target*` / `rebalance_*` / `cancel_*` ……）一律抛 `aq.IndicatorCannotTradeError`，
+  在引擎回调里误写也会当场报错，不会静默成交。要下单请继承 `aq.Strategy`。
+- **id 不许撞**：脚本 id 与 `strategy_id` 或已有 slot key 重复时直接 `ValueError`；
+  `indicators=` 里塞进非 `aq.Indicator` 的类会 `TypeError`——否则“不交易”的保证就没了。
+- **`aq.Strategy` 也能写 `title=` / `id=`**：`class Trend(aq.Strategy, title="趋势", id="trend")`。
+  策略没有主图/附图之分，写 `overlay=` 会报 `TypeError`；类上的 `id` 与 `run_backtest/run_live`
+  的 `strategy_id=` 不一致时报 `ValueError`。不写 `id` 的策略，`strategy_id` 仍默认 `"_default"`。
 
-可运行示例：[74_pluggable_studies.py](https://github.com/akfamily/akquant/blob/main/examples/74_pluggable_studies.py)。
+可运行示例：[74_indicator_scripts.py](https://github.com/akfamily/akquant/blob/main/examples/74_indicator_scripts.py)。
+
+## 静态检查：`aq.inspect_strategy`
+
+平台在列出用户上传的脚本时，往往需要先知道“这个文件里是指标还是策略、画主图还是附图、
+有没有要画的线”，用来分类展示、把不适用的操作灰显——但又不能为此去执行用户代码。
+`aq.inspect_strategy(path_or_source)` 只用 `ast` 解析源码，**不导入、不执行**，返回
+`aq.InspectResult`（`to_dict()` 可直接序列化为 JSON）：
+
+```python
+report = aq.inspect_strategy("strategies/dual_ma.py")   # 也可以直接传源码字符串
+report.to_dict()
+```
+
+```python
+{
+  "classes": [
+    {
+      "name": "DualMA",
+      "kind": "indicator",          # "indicator" | "strategy" | "unknown"
+      "title": "双均线",
+      "id": "dual_ma",
+      "overlay": True,              # kind != "indicator" 时为 None
+      "draws_indicators": True,     # 至少有一项 plot=True，或者 plot 是动态的
+      "indicators": [
+        {"name": "ema_fast", "pane": 0, "plot": True,
+         "outputs": None, "label": "EMA10", "dynamic": []},
+      ],
+      "has_dynamic": False
+    }
+  ],
+  "error": None                     # 语法错误时填 "SyntaxError: ... (line N)"，classes 为空
+}
+```
+
+使用约定：
+
+- **只接受明文**：传路径时按 UTF-8 读取（带 BOM 也可以），加密的策略文件需由调用方先解密。
+  以 `.py` 结尾但不存在的路径报 `FileNotFoundError`；其余问题都写进 `error` / `dynamic`，不抛异常。
+- **`dynamic` 表示“静态看不出来”**：值来自参数（如 `pane=self.params["pane"]`）、写在循环或推导式里、
+  用了 `factory=` 或 `**kwargs`、出现在条件分支或辅助方法里、调用了无法识别的可调用对象时，
+  对应字段取 `None`，字段名记进 `dynamic`（循环与 `factory=` 记为 `"count"`，表示条数不确定），
+  类上的 `has_dynamic` 为 `True`。平台据此提示“需运行后才能确定”，不要自行猜测。
+- **`kind="unknown"`**：基类来自其他文件、无法在本文件内追到 `Indicator` / `Strategy`。
+- **`akquant` 与 `qmfquant` 的导入都识别**：`import akquant as aq`、`from akquant import Indicator`
+  （含 `as` 别名），以及平台重新打包的 `qmfquant` 同名写法。
+- `pane` / `plot` 的解析规则与运行时完全一致（见上文“自动绘图”的规则表），两边共用同一个函数。
 
 ## `warmup_bars` 怎么用
 
@@ -895,8 +975,9 @@ panes = to_raw_panes(defs, points_by_key)  # 保留 akquant 原生语义，供�
 
 ## 常见误区
 
-- 误区 1：所有自定义指标都必须继承 `Indicator`
-  - 不是。预计算场景可以直接用 `Indicator(name, fn)`；增量场景传任何有 `update()` 的对象都行。
+- 误区 1：所有自定义指标都必须继承某个指标基类
+  - 不是。预计算场景可以直接用 `PrecomputedIndicator(name, fn)`；增量场景传任何有 `update()` 的对象都行。
+    `aq.Indicator` 是“只画图不交易”的指标脚本基类，与“写一个自定义指标”是两回事。
 - 误区 2：多标的一定可以共用一个增量实例
   - 不行。传实例跨多标的会直接报错，正式策略请用 `factory=`。
 - 误区 3：`warmup_bars=20` 会重复消费第一根正式 Bar
@@ -906,17 +987,18 @@ panes = to_raw_panes(defs, points_by_key)  # 保留 akquant 原生语义，供�
 - 误区 5：策略自定义指标和 `akquant.talib` 扩展是一回事
   - 不是，二者面向的层级不同。
 - 误区 6：声明了指标就会自动画出来
-  - 不会。要传绘图参数或 `plot=True`，与 Pine 的 `ta.*` 不画、`plot()` 才画一致。
+  - 在 `aq.Strategy` 里不会，要写 `plot=True`（只写 `pane=` / `color=` 不够），与 Pine 的 `ta.*`
+    不画、`plot()` 才画一致；在指标脚本 `aq.Indicator` 里默认画，`plot=False` 关闭。
 
 ## 选择建议
 
 | 你的目标 | 建议方案 |
 | :--- | :--- |
-| 先快速验证一个想法 | `self.I(Indicator(name, fn))` |
+| 先快速验证一个想法 | `self.I(PrecomputedIndicator(name, fn))` |
 | 单标的逐 Bar 更新 | `self.I(aq.EMA(20))` |
 | 多标的正式策略 | `self.I(factory=...)` |
 | 首根有效 Bar 就要有值 | `self.I(..., warmup_bars=N)` |
-| 要在图上画出来 | 加 `pane=` / `color=`，或 `plot=True` |
+| 要在图上画出来 | 策略里写 `plot=True`，或改写成指标脚本 `aq.Indicator` |
 | 判断金叉死叉 | `ind[0]` / `ind[1]` 序列回溯 |
 | 需要断点续跑 | 指标状态可序列化，`factory` 用 `partial` 而非 lambda |
 | 需要极致性能 | 先用内置的 100+ 个 Rust 指标类，再考虑自己写 Rust |

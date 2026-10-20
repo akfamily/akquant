@@ -63,6 +63,7 @@ def run_backtest(
     runtime_config_override: bool = True,
     strategy_id: Optional[str] = None,
     strategies_by_slot: Optional[Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]] = None,
+    indicators: Optional[Sequence[Union[Type[Indicator], Indicator]]] = None,
     strategy_max_order_value: Optional[Dict[str, float]] = None,
     strategy_max_order_size: Optional[Dict[str, float]] = None,
     strategy_max_position_size: Optional[Dict[str, float]] = None,
@@ -232,6 +233,7 @@ def run_from_checkpoint(
 *   `risk_config`: 风控配置。支持字典 (e.g., `{"max_position_pct": 0.1}`) 或 `RiskConfig` 对象。如果同时提供了 `config.strategy_config.risk`，此参数将覆盖其中的同名字段。
 *   `strategy_runtime_config` / `runtime_config_override`: 运行时行为注入与冲突处理开关，支持 `StrategyRuntimeConfig` 或 `dict`。
 *   `strategies_by_slot`: 可选多策略映射。键为 slot id，值为策略类/实例/函数式 on_bar 回调；用于启用 slot 迭代执行。
+*   `indicators`: 可选指标脚本列表（`aq.Indicator` 的子类或实例），每个脚本并入 `strategies_by_slot` 成为独立 slot，key 取类定义行的 `id`（省略为类名 snake_case）。与 `strategy_id` 或已有 slot key 重复时报 `ValueError`，混入非 `aq.Indicator` 时报 `TypeError`。`run_live(indicators=...)` 语义相同。见下文 [`akquant.Indicator`](#akquant-indicator)。
 *   `strategy_fill_policy`: 可选策略级默认成交策略映射（`strategy_id -> FillMode`）。
     下单时优先级：订单级 `fill_mode` > `strategy_fill_policy[strategy_id]` > 运行级 `fill_policy`。
 *   `strategy_slippage`: 可选策略级默认滑点映射（`strategy_id -> slippage`）。
@@ -1072,6 +1074,39 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `set_rolling_window(train_window, step)`: 设置滚动训练窗口。
 *   `get_rolling_data(length, symbol, freq=None)`: 获取滚动训练数据 (X, y)。`freq` 语义与限制同上一节的 `get_history` 系列（底层基于 `get_history_df`）。
 *   `prepare_features(df, mode)`: (需重写) 特征工程与标签生成。
+
+**类定义行参数:**
+
+*   `class MyStrategy(aq.Strategy, title="趋势", id="trend")`：`title` 为显示名（省略为类名），`id` 为机器标识。写了 `id` 时它就是 `strategy_id`，与 `run_backtest/run_live(strategy_id=...)` 不一致报 `ValueError`；不写 `id` 时 `strategy_id` 仍默认 `"_default"`。策略不接受 `overlay=`（报 `TypeError`）。
+*   `self.I(...)` 在策略里**默认不画图**，要画写 `plot=True`；`pane` / `color` / `label` 等绘图参数不再隐含 `plot=True`。
+
+### `akquant.Indicator` {: #akquant-indicator }
+
+指标脚本基类，对标 Pine v5 的 `indicator()`：只声明指标、不交易，经 `run_backtest/run_live(indicators=[...])` 挂载。
+
+```python
+class DualMA(aq.Indicator, title="双均线", overlay=True, id="dual_ma"):
+    def on_start(self):
+        self.fast = self.I(aq.EMA(10), name="ema_fast")
+```
+
+*   `title`: 显示名，只用于展示，省略为类名。
+*   `overlay`: `True` 画主图，`False`（默认）画附图。`self.I` 默认画图：`overlay=True` 时默认 `pane=0`，否则默认 `pane=1`（pane 编号只在本脚本内有效）；`plot=False` 关闭。
+*   `id`: 机器标识（即指标点的 `owner_strategy_id`），省略为类名 snake_case。
+*   全部交易 API（`buy` / `sell` / `submit_order` / `place_*` / `order_target*` / `rebalance_*` / `close_position` / `cancel_*`）抛 `akquant.IndicatorCannotTradeError`。
+*   详见[自定义指标指南](../guide/custom_indicator.md)。
+
+### `akquant.PrecomputedIndicator`
+
+向量化预计算指标：`PrecomputedIndicator(name, fn)`，`fn(df) -> pd.Series` 对单个标的的完整 `DataFrame` 一次性计算，经 `self.I(PrecomputedIndicator(...))` 声明。只用于回测；不支持含 Tick 的输入、`freq=` 与 `warmup_bars=`。
+
+### `akquant.inspect_strategy`
+
+```python
+def inspect_strategy(source: Union[str, os.PathLike[str]]) -> InspectResult
+```
+
+静态检查策略/指标脚本文件或源码字符串：只用 `ast` 解析，不导入、不执行用户代码，只接受明文（UTF-8，可带 BOM）。返回 `InspectResult`（`classes`、`error`，`to_dict()` 可序列化为 JSON），每个类给出 `kind`（`"indicator"` / `"strategy"` / `"unknown"`）、`title`、`id`、`overlay`、`draws_indicators` 与每条 `self.I` 的 `name` / `pane` / `plot` / `outputs` / `label`；静态确定不了的值为 `None` 并记入 `dynamic`。同时识别 `akquant` 与 `qmfquant` 的导入。以 `.py` 结尾但不存在的路径报 `FileNotFoundError`，入参类型错报 `TypeError`，其余问题写进 `error` / `dynamic`。详见[自定义指标指南](../guide/custom_indicator.md)「静态检查」一节。
 
 ### `akquant.Bar`
 

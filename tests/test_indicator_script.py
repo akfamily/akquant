@@ -21,7 +21,7 @@ from akquant import (
     run_backtest,
 )
 
-SYMBOL = "STUDY"
+SYMBOL = "IND_SCRIPT"
 
 
 def _md(n: int = 10) -> pd.DataFrame:

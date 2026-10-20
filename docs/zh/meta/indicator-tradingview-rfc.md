@@ -107,7 +107,9 @@ sma.is_ready        # 是否已满窗
 
 `IndicatorDeclaration` 与驱动管线**不依赖 `Strategy` 的交易 API**。L3 的 study 是「只有指标声明、没有交易逻辑」的单元,复用同一个声明体与同一套 `_update_indicators` 驱动,挂在既有的多 slot 策略拓扑上,不新建并行管线。
 
-**L3 已落地(2026-09-21)**:`akquant.Study(Strategy)` 把 `TRADING_API_NAMES` 里的 19 个交易方法全部换成抛 `StudyCannotTradeError`;`run_backtest(studies=[...])` / `run_live(studies=[...])` 经 `study.merge_studies_into_slots()` 并入 `strategies_by_slot`(key 取 `study_id`,省略为类名 snake_case;撞 key 抛 `ValueError`,非 `Study` 抛 `TypeError`);`indicator_df(owner=)` 按归属过滤。spike 先证明了 study 走 `strategies_by_slot` 在回测与实盘 replay 下**零改动即可用**,L3 的增量只是护栏与入口糖。
+**L3 已落地(2026-09-21)**:原 `Study`(已改名为 `aq.Indicator`)继承 `Strategy`,把 `TRADING_API_NAMES` 里的 19 个交易方法全部换成抛专用异常(现为 `IndicatorCannotTradeError`);`run_backtest` / `run_live` 的挂载参数(现为 `indicators=[...]`)经合并函数(现为 `indicator_script.merge_indicators_into_slots()`)并入 `strategies_by_slot`(key 取脚本 id,省略为类名 snake_case;撞 key 抛 `ValueError`,类型不对抛 `TypeError`);`indicator_df(owner=)` 按归属过滤。spike 先证明了 study 走 `strategies_by_slot` 在回测与实盘 replay 下**零改动即可用**,L3 的增量只是护栏与入口糖。
+
+**2026-10-20**:`Study` 重做为 `aq.Indicator`(对标 Pine `indicator()`),详见 `docs/superpowers/specs/2026-10-20-indicator-script-design.md`。类定义行写 `title` / `overlay` / `id`;`self.I` 画不画改由脚本类型决定(指标脚本默认画、策略默认不画,绘图参数不再隐含 `plot=True`);新增静态检查接口 `aq.inspect_strategy`。原预计算类 `Indicator` 改名为 `PrecomputedIndicator`,`IndicatorSet` 删除。
 
 ### 2.5 前端消费格式(L4 预留)
 
@@ -177,6 +179,7 @@ class MaCross(Strategy):
 
 1. **默认不上报**(`plot=False`)。传了任一绘图参数(`pane`/`color`/`label`/`render_type`/`reference_lines`/`scale_group`)或显式 `plot=True` 才上报。
    *理由*:与 Pine 一致——`ta.sma()` 只计算,`plot()` 才画。且实盘 `StreamingIndicatorSink` 是**每点一个事件**,多标的 × 多指标默认全开会淹没前端链路。
+   *2026-10-20 修订*:“绘图参数隐含 `plot=True`”已取消。画不画改由脚本类型决定:`aq.Indicator` 里默认画,`aq.Strategy` 里默认不画,`plot=` 显式覆盖;本节其余示例按旧规则书写,以 `docs/superpowers/specs/2026-10-20-indicator-script-design.md` 为准。
 2. **`is_ready=False` 时不上报**。Pine 预热期是 `na`,不画。避免前端收到一长串 NaN 还得自己过滤。
 3. **`lookback` 默认 128**。足够绝大多数形态判断(交叉、背离、N 日新高),环形缓冲有界。
 
@@ -189,12 +192,12 @@ ready 判定统一为 `value is not None`,对象有 `is_ready` 属性时优先�
 | 删除 | 替代 |
 |---|---|
 | `Strategy.indicator_mode` 属性 | 无需替代——`self.I()` 按对象类型自动分派 |
-| `Strategy.register_precomputed_indicator()` | `self.I(Indicator(...))` |
+| `Strategy.register_precomputed_indicator()` | `self.I(PrecomputedIndicator(...))` |
 | `Strategy.register_incremental_indicator()` | `self.I(aq.EMA(20), ...)` |
 | `StrategyRuntimeConfig.indicator_mode` 字段 | 无。该配置项失去意义 |
 | `BacktestConfig.indicator_mode` | 同上 |
 
-**保留**:`record_indicator()`(非指标类自定义值的逃生口)、`Indicator` / `IndicatorSet`(`self.I()` 仍接受它们走预计算路径)。
+**保留**:`record_indicator()`(非指标类自定义值的逃生口)、`PrecomputedIndicator`(`self.I()` 仍接受它走预计算路径;2026-10-20 前名为 `Indicator`,同期删除了 `IndicatorSet`)。
 
 ### 4.1 外部消费者影响
 

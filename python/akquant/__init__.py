@@ -255,6 +255,8 @@ else:
         "PercentSizer",
         "AllInSizer",
         "Strategy",
+        "Indicator",
+        "IndicatorCannotTradeError",
         "InspectResult",
         "inspect_strategy",
         "StrategyRuntimeConfig",

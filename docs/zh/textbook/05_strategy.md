@@ -435,7 +435,7 @@ class FSMStrategy(Strategy):
 
 在 AKQuant 里，自定义指标只有一个声明入口 `self.I()`，它按你传入的对象自动分派到两条路径：
 
-一条是**增量指标**（传任何有 `update()` 的对象），在事件流里逐 Bar 更新状态，便于多标的、热启动和实时场景复用；另一条是**预计算指标**（传 `Indicator(name, fn)` 实例），一次性对完整 `DataFrame` 做向量化计算。两者可以共存于同一个策略。
+一条是**增量指标**（传任何有 `update()` 的对象），在事件流里逐 Bar 更新状态，便于多标的、热启动和实时场景复用；另一条是**预计算指标**（传 `PrecomputedIndicator(name, fn)` 实例），一次性对完整 `DataFrame` 做向量化计算。两者可以共存于同一个策略。
 
 声明一次，框架负责三件事：每根 Bar 自动推进、支持 `ind[0]` / `ind[1]` 序列回溯、按需自动上报绘图点。这对标 TradingView Pine Script 的 `ta.*` + `plot()`。
 
@@ -450,9 +450,9 @@ from akquant import Strategy
 
 class MaCrossStrategy(Strategy):
     def on_start(self):
-        # 声明一次 = 自动更新 + 自动绘图 + 可回溯
-        self.ema_fast = self.I(aq.EMA(10), pane=0, color="#e91e63")
-        self.ema_slow = self.I(aq.EMA(30), pane=0, color="#3f51b5")
+        # 声明一次 = 自动更新 + 可回溯；策略里要画图须写 plot=True
+        self.ema_fast = self.I(aq.EMA(10), pane=0, color="#e91e63", plot=True)
+        self.ema_slow = self.I(aq.EMA(30), pane=0, color="#3f51b5", plot=True)
 
     def on_bar(self, bar):
         # [0] 是当前 Bar，[1] 是上一根；未就绪或越界时是 None
@@ -464,7 +464,7 @@ class MaCrossStrategy(Strategy):
 
 指标声明推荐写在 `on_start` 而不是 `__init__`：`self.params` 在 `__init__` 之后才注入，参数化指标（`run_grid_search` 要扫的那些）只有在 `on_start` 里才拿得到参数值。
 
-### 5.5.3 自定义增量指标：继承 `Indicator` 并实现 `update`
+### 5.5.3 自定义增量指标：继承 `PrecomputedIndicator` 并实现 `update`
 
 内置指标不够用时，写一个有 `update()` 的类即可：
 
@@ -472,10 +472,10 @@ class MaCrossStrategy(Strategy):
 from collections import deque
 
 import pandas as pd
-from akquant import Indicator
+from akquant import PrecomputedIndicator
 
 
-class MyMomentum(Indicator):
+class MyMomentum(PrecomputedIndicator):
     def __init__(self, period: int = 10):
         super().__init__("my_momentum", lambda df: df["close"] - df["close"].shift(period))
         self.period = period
@@ -526,18 +526,18 @@ class IncrementalMomentumStrategy(Strategy):
 - 需要首根有效 Bar 就有值：结合 `warmup_bars` 使用；
 - 需要断点续跑：确保自定义指标可被 `pickle` 序列化，且 `factory` 不能是 lambda（要用模块级函数 + `functools.partial`）。
 
-### 5.5.4 预计算：`self.I(Indicator(name, fn))`
+### 5.5.4 预计算：`self.I(PrecomputedIndicator(name, fn))`
 
-如果你的指标天然适合用 pandas / numpy 在整段历史上一次性计算，传一个 `Indicator` 实例即可：
+如果你的指标天然适合用 pandas / numpy 在整段历史上一次性计算，传一个 `PrecomputedIndicator` 实例即可：
 
 ```python
-from akquant import Indicator, Strategy
+from akquant import PrecomputedIndicator, Strategy
 
 
 class PrecomputeMomentumStrategy(Strategy):
     def on_start(self):
         self.mom10 = self.I(
-            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            PrecomputedIndicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
             name="mom10",
         )
 
@@ -551,15 +551,15 @@ class PrecomputeMomentumStrategy(Strategy):
 
 ### 5.5.5 自动绘图
 
-传了任一绘图参数（`pane` / `color` / `label` / `render_type` / `reference_lines` / `scale_group`）或显式 `plot=True`，框架就会在每次更新后自动上报绘图点，不必在 `on_bar` 里手写 `record_indicator`。
+策略里写了 `plot=True` 的指标，框架会在每次更新后自动上报绘图点，不必在 `on_bar` 里手写 `record_indicator`。`pane` / `color` / `label` / `render_type` / `reference_lines` / `scale_group` 只决定“怎么画”，**不再隐含 `plot=True`**。
 
-**默认不上报**——与 Pine 一致（`ta.sma()` 只算、`plot()` 才画）。这不只是风格：实盘的指标 sink 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路。
+**策略里默认不上报**——与 Pine 一致（`ta.sma()` 只算、`plot()` 才画）。这不只是风格：实盘的指标 sink 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路。只画图不交易的单元可以写成指标脚本 `aq.Indicator`（对标 Pine 的 `indicator()`），那里的 `self.I` 默认就画，`overlay` 决定主图还是附图，详见[自定义指标指南](../guide/custom_indicator.md)。
 
 多值指标用 `outputs` 拆成多条独立的线：
 
 ```python
 self.macd = self.I(aq.MACD(12, 26, 9), name="macd", pane=2,
-                   outputs=("dif", "dea", "hist"))
+                   outputs=("dif", "dea", "hist"), plot=True)
 
 self.macd[0]      # 整个元组 (dif, dea, hist)
 self.macd.dif[0]  # 单个分量，同样支持 [1] 回溯

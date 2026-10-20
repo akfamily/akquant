@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **破坏性：指标脚本 `Study` 重做为 `aq.Indicator`，对标 Pine v5 的 `indicator()`**。写法 `class DualMA(aq.Indicator, title="双均线", overlay=True, id="dual_ma")`；`overlay` 默认 `False`（附图），`title` 只用于显示（省略为类名），`id` 省略为类名 snake_case。`aq.Strategy` 同样支持类定义行 `title=`/`id=`，写 `overlay=` 报错；类上的 `id` 与 `strategy_id=` 不一致时报错。迁移对照：
+
+  | 旧 | 新 |
+  |---|---|
+  | `aq.Study` | `aq.Indicator` |
+  | `study_id = "x"` 类属性 | 类定义行 `id="x"` |
+  | `run_backtest/run_live(studies=[...])` | `indicators=[...]` |
+  | `StudyCannotTradeError` | `IndicatorCannotTradeError` |
+  | 预计算 `aq.Indicator(name, fn)` | `aq.PrecomputedIndicator(name, fn)` |
+  | `akquant.indicator` 模块 | `akquant.precomputed` |
+  | `aq.IndicatorSet` | 已删除 |
+- **破坏性：`self.I` 画不画改由脚本类型决定**。`aq.Indicator` 里默认画（`overlay=False` 时默认 `pane=1`），`aq.Strategy` 里默认不画；`plot=True/False` 显式覆盖。`pane`/`color`/`label` 等绘图参数**不再隐含 `plot=True`**——策略里只写了 `pane=` 想画图的，需补 `plot=True`。
+
 ### Added
+- **`aq.inspect_strategy(path_or_source)` 静态检查接口**：纯 `ast` 解析、不执行用户代码，返回每个类的 `kind`（indicator/strategy/unknown）、`title`、`id`、`overlay`、`draws_indicators` 与每条 `self.I` 的 `name/pane/plot/outputs/label`；参数化、循环、`factory` 等识别不了的项标记在 `dynamic` 里。同时识别 `akquant` 与 `qmfquant` 导入。供平台在不运行文件的前提下区分指标与策略、标注主图/附图。
 - **`run_live(preload_history=...)` 实盘历史预热**：接收与 `run_backtest(data=)` 同形态的历史 bar（DataFrame / `{symbol: DataFrame}` / `list[Bar]`），会话启动前灌入历史缓冲与 `subscribe_bars` 窗口聚合器，首根实盘 bar 里 `get_history` 即可用（未显式设深度时自动抬到预热深度），预热根数计入 per-symbol `warmup_period`；并在 `on_start` 之后逐根回放 `self.I()` 指标（含 `freq=` 窗口指标），历史段与实时段由同一批指标实例连续算出，取代“先回测再接实盘”的拼接做法。不触发 `on_bar`、不撮合、不动账户；晚于会话启动的行裁掉并告警，首根实盘 bar 与预热末尾重叠时告警但照常派发；热启动恢复的策略跳过指标回放。`examples/73_lwc_live_indicators.py` 改为“40 根预热 + 20 根实时”的连续图。
 - **指标流 `phase` 字段，`STREAM_SCHEMA_VERSION` 升至 `1.4`**：point、snapshot 及 snapshot 的每个 item 新增 `phase`，`"preload"` 表示预热回放产出的点，其余为 `"run"`，缺失按 `"run"` 处理；`akquant.lwc.to_lwc_update()` 原样带出。`IndicatorSink.record()` 协议新增可选关键字 `phase`，按旧签名实现的第三方 sink 自动探测、不传该参数，预热点照常送达。
 - **`Engine.preload_history()` 返回回放序列**（基础 bar 与其闭合出的窗口 bar 交错，顺序同实盘派发），此前返回 `None`；`akquant.pyi` 补上 `Engine.configure_history_depth` 存根。

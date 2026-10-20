@@ -1,4 +1,4 @@
-"""实盘: 多 slot(主策略 + study)各自订阅不同窗口周期, 订阅合并下发与指标归属.
+"""实盘: 多 slot(主策略 + 指标脚本)各自订阅不同窗口周期, 订阅合并下发与指标归属.
 
 回测侧 ``test_window_subscriptions`` 已覆盖跨 slot 合并; 实盘走的是同一个
 ``configure_engine_window_subscriptions(engine, targets, ...)``, 但此前没有测试
@@ -6,8 +6,8 @@
 (窗口零延迟闭合)复现三种订阅关系:
 
 - 主策略 15min(全标的)
-- study A 5min(全标的)
-- study B 5min(只限一个标的) —— 与 A 同周期、标的范围重叠但不完全相同,
+- 指标脚本 A 5min(全标的)
+- 指标脚本 B 5min(只限一个标的) —— 与 A 同周期、标的范围重叠但不完全相同,
   正是 ``_merge_scoped_specs`` 必须合并成一条 ``(None, "5min")`` spec 的场景;
   不合并会被 Rust 侧 ``dedup_and_validate`` 拒绝, 会话直接起不来。
 """
@@ -92,7 +92,7 @@ class MainStrategy(Strategy):
         WINDOW_HITS[("main", str(bar.freq), bar.symbol)] += 1
 
 
-class FiveMinStudy(Indicator, id="five_all"):
+class FiveMinIndicator(Indicator, id="five_all"):
     """指标脚本 A: 5min 窗口, 全标的."""
 
     def __init__(self) -> None:
@@ -111,7 +111,7 @@ class FiveMinStudy(Indicator, id="five_all"):
         WINDOW_HITS[("five_all", str(bar.freq), bar.symbol)] += 1
 
 
-class FiveMinOneSymbolStudy(Indicator, id="five_one"):
+class FiveMinOneSymbolIndicator(Indicator, id="five_one"):
     """指标脚本 B: 同为 5min, 但只订阅第一只标的 —— 与 A 范围重叠不相同."""
 
     def __init__(self) -> None:
@@ -159,7 +159,7 @@ def live_stream() -> Dict[str, Any]:
         on_event=on_event,
         duration="60s",
         strategy_id="main",
-        indicators=[FiveMinStudy, FiveMinOneSymbolStudy],
+        indicators=[FiveMinIndicator, FiveMinOneSymbolIndicator],
     )
     by_owner: Dict[str, List[dict[str, Any]]] = collections.defaultdict(list)
     for p in points:
@@ -170,7 +170,7 @@ def live_stream() -> Dict[str, Any]:
 def test_live_each_slot_gets_only_its_own_window_freq(
     live_stream: Dict[str, Any],
 ) -> None:
-    """主策略只收 15min 窗口, 两个 study 只收 5min 窗口 —— 订阅按 slot 隔离."""
+    """主策略只收 15min 窗口, 两个指标脚本只收 5min 窗口 —— 订阅按 slot 隔离."""
     hits = live_stream["hits"]
     freqs_by_owner: Dict[str, set[str]] = collections.defaultdict(set)
     for owner, freq, _ in hits:
@@ -199,7 +199,7 @@ def test_live_overlapping_same_freq_subscriptions_merge_and_scope(
     assert a_sym0 == 7, hits
     assert a_sym1 == 7, hits
     assert b_sym0 == 7, hits
-    assert b_sym1 == 0, "study B 只订阅了第一只标的, 不该收到第二只"
+    assert b_sym1 == 0, "指标脚本 B 只订阅了第一只标的, 不该收到第二只"
 
 
 def test_live_main_window_count_matches_15min_grid(live_stream: Dict[str, Any]) -> None:

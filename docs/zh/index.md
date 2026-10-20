@@ -50,7 +50,7 @@ def generate_data():
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         # 简单的策略逻辑 (示例)
-        # 实际回测推荐使用 IndicatorSet 进行向量化计算
+        # 实际回测推荐用 self.I() 声明指标（预计算可用 PrecomputedIndicator）
         position = self.get_position(bar.symbol)
         if position == 0:
             self.buy(symbol=bar.symbol, quantity=100)

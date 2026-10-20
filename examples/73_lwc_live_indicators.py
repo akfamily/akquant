@@ -13,7 +13,7 @@ wire up.
    instances replay it (stream points tagged `phase="preload"`) and then
    continue on live bars (`phase="run"`), so the chart shows one continuous
    line instead of a backtest stitched onto a live run.
-2. Indicators declared with plot metadata are reported automatically; the
+2. Indicators declared with ``plot=True`` are reported automatically; the
    `on_event` callback bridges them with `aq.to_indicator_message()` and then
    `akquant.lwc.to_lwc_update()` into `series.update()`-ready increments.
 3. A tiny stdlib `http.server` exposes `/state?since_seq=N`; the page (LWC

@@ -151,10 +151,10 @@ Example response (showing parameter routing result):
     *   **Option Strategy**: Demonstrates option backtest configuration (premium, per contract fee). Refer to [Strategy Guide](strategy.md#multi-asset).
 
 *   **Vectorized Indicators**:
-    *   Demonstrates how to use `IndicatorSet` to pre-calculate indicators to improve backtest speed. Refer to [Strategy Guide](strategy.md#indicatorset).
+    *   Demonstrates how to pre-calculate indicators with `PrecomputedIndicator(name, fn)` to improve backtest speed. Refer to [Strategy Guide](strategy.md#indicatorset).
 
 *   **Custom Indicators**:
-    *   Demonstrates both the precompute style with `Indicator(name, fn)` and the incremental style with `indicator_factory`. Refer to the [Custom Indicator Guide](custom_indicator.md) and [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py).
+    *   Demonstrates both the precompute style with `PrecomputedIndicator(name, fn)` and the incremental style with `indicator_factory`. Refer to the [Custom Indicator Guide](custom_indicator.md) and [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py).
 
 ### Fetching A-Share Daily Data with AKShare (stock_zh_a_daily)
 

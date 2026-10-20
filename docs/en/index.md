@@ -111,7 +111,7 @@ def generate_data():
 class MyStrategy(Strategy):
     def on_bar(self, bar):
         # Simple strategy logic (example)
-        # For real backtests, using IndicatorSet for vectorized calculation is recommended
+        # For real backtests, declare indicators with self.I() (PrecomputedIndicator for vectorized precompute)
         position = self.get_position(bar.symbol)
         if position == 0:
             self.buy(symbol=bar.symbol, quantity=100)

@@ -157,10 +157,10 @@ Content-Type: application/json
     *   **期权策略**: 展示期权回测配置（权利金、按张收费）。参考 [策略指南](strategy.md)。
 
 *   **向量化指标 (Vectorized Indicators)**:
-    *   展示如何使用 `IndicatorSet` 预计算指标以提高回测速度。参考 [策略指南](strategy.md)。
+    *   展示如何用 `PrecomputedIndicator(name, fn)` 向量化预计算指标以提高回测速度。参考 [自定义指标指南](custom_indicator.md)。
 
 *   **自定义指标 (Custom Indicators)**:
-    *   展示如何同时使用 `Indicator(name, fn)` 的预计算模式与 `indicator_factory` 的增量模式。参考 [自定义指标指南](custom_indicator.md) 与 [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py)。
+    *   展示如何同时使用 `PrecomputedIndicator(name, fn)` 的预计算模式与 `indicator_factory` 的增量模式。参考 [自定义指标指南](custom_indicator.md) 与 [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py)。
 
 ### 使用 AKShare 获取 A 股日线数据 (stock_zh_a_daily)
 

@@ -49,7 +49,10 @@ class DeclarativeIndicatorStrategy(Strategy):
         Declaring in ``on_start`` (not ``__init__``) is what lets the periods
         come from ``self.params`` - parameters are injected after ``__init__``.
         """
-        # Plot metadata present -> reported automatically for charting.
+        # Inside a Strategy ``self.I`` does not plot by default - write
+        # ``plot=True`` to chart it. ``pane``/``color``/``label`` alone no
+        # longer imply plotting (inside an ``aq.Indicator`` script it is the
+        # opposite: plotted by default, ``plot=False`` to hide).
         self.ema_fast = self.I(
             aq.EMA(10),
             name="ema_fast",
