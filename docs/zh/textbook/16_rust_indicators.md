@@ -151,6 +151,38 @@ AKQuant 的指标接口并不只是“换一个更快的 TA-Lib 后端”。它�
 
 这一类指标在传统技术分析里不一定显眼，但在第 12 章和第 14 章那种“把信号送入模型或表达式引擎”的任务里很有价值。
 
+### 16.4.6 K 线形态指标：平均 K 线 `HeikinAshi`
+
+`aq.HeikinAshi()` 把原始 OHLC 换算成平均 K 线：
+
+- `ha_close = (O + H + L + C) / 4`；
+- `ha_open` 第一根取 `(O + C) / 2`，之后取上一根 `(ha_open + ha_close) / 2`；
+- `ha_high`、`ha_low` 分别取原始高低价与 `ha_open`、`ha_close` 中的最大值和最小值。
+
+它输出四个值，适合用来过滤噪声、看清趋势段。要画成 K 线而不是四条线，用 `render_type="candle"` 并写明四个分量：
+
+```python
+import akquant as aq
+
+
+class HA(aq.Indicator, title="平均K线", overlay=True, replaces_price=True):
+    def on_start(self):
+        self.ha = self.I(
+            aq.HeikinAshi(),
+            name="ha",
+            input_mode="ohlc",
+            outputs=("open", "high", "low", "close"),
+            render_type="candle",
+        )
+```
+
+要点：
+
+1. `outputs` 必须恰好是 `open`、`high`、`low`、`close` 四个，顺序不限；读取时用 `self.ha.close[0]` 这样的分量。
+2. 复盘页 `result.viz.review()` 画出一组 K 线，单色、下跌空心，与价格 K 线区分开；`replaces_price=True` 只是给前端的提示，是否隐藏原 K 线由前端决定。
+3. d3Kline 前端目前不支持 K 线型指标，这类指标在 d3kline 格式里降级为只输出收盘线；完整的开高低收在 `format=raw` 的 `group` / `role` 字段里。
+
+
 ## 16.5 三个最常见的工程坑位
 
 ### 16.5.1 warmup 区段误用

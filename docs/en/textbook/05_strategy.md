@@ -91,6 +91,9 @@ result = aq.run_backtest(data=df, strategy=Trend, indicators=[DualMA])
   `overlay=True`) and does not plot inside `aq.Strategy`; `plot=True/False` overrides.
   Chart arguments such as `pane=` or `color=` no longer imply `plot=True`.
 - Indicator scripts cannot trade: any trading call raises `aq.IndicatorCannotTradeError`.
+- `replaces_price=True` (indicator scripts only, requires `overlay=True`) hints that the
+  script replaces the price candles; candle-shaped output uses `render_type="candle"`
+  with `outputs=("open", "high", "low", "close")`, e.g. `aq.HeikinAshi()`.
 - `aq.inspect_strategy(path_or_source)` statically classifies every class (indicator /
   strategy / unknown) and lists each declared line's `pane` and `plot` without importing
   or executing the file; values it cannot determine are reported in `dynamic`.

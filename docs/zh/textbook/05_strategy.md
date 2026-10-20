@@ -596,13 +596,16 @@ class Trend(aq.Strategy, title="趋势策略"):
         self.fast = self.I(aq.EMA(10), name="ema_fast")   # 策略里默认不画
 ```
 
-类定义行的三个关键字：
+类定义行的关键字：
 
 | 关键字 | 含义 | 省略时 |
 |---|---|---|
 | `title` | 显示名，可写中文，不进入任何标识字段 | 类名 |
 | `overlay` | `True` 画主图，`False` 画本脚本的附图（仅 `aq.Indicator`） | `False`，子类继承父类的值 |
 | `id` | 机器标识，用作 slot 键和指标点的 `owner_strategy_id` | 指标脚本取类名 snake_case；策略沿用 `strategy_id` 默认值 `"_default"` |
+| `replaces_price` | 提示前端“本脚本用来替代原 K 线”，例如平均 K 线；是否隐藏原 K 线由前端决定（仅 `aq.Indicator`，且须 `overlay=True`） | `False`，子类继承父类的值 |
+
+K 线形态的指标（例如平均 K 线）用 `render_type="candle"` 输出开高低收四个分量，写法见第 16 章 16.4.6。
 
 `self.I` 画不画由脚本类型决定，`plot=` 可显式覆盖：
 

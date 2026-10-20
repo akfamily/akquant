@@ -190,6 +190,8 @@ result.viz.review(df, filename="review.html")   # include_indicators=True 为默
 
 只为复盘看图、不参与交易的指标，写成 `aq.Indicator` 指标脚本再用 `indicators=` 叠加，比塞进策略更干净：指标脚本调用交易接口会直接报错，不会污染成交。写法与默认值规则见第 5 章 5.5.6。
 
+`render_type="candle"` 的指标（例如平均 K 线 `aq.HeikinAshi`）在复盘页画成一组 K 线：单色、下跌空心，不使用主题的涨跌色，以免与价格 K 线混淆；写法见第 16 章 16.4.6。
+
 ## 13.4 第三方工具集成：QuantStats
 
 `AKQuant` 完美支持 `QuantStats`，这是一个强大的 Python 量化分析库，能生成媲美专业基金的 Tearsheet。

@@ -46,6 +46,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   Read the value via `self.sma[0]` (current bar; `.value` is an alias) and `self.sma[1]` (previous bar). Out-of-range lookback returns `None`.
     *   Multi-symbol strategies must pass `factory=` (e.g. `self.I(factory=lambda: SMA(20), symbols=["AAPL", "MSFT"])`); passing one instance across several symbols raises.
     *   Plotting: inside `aq.Strategy`, `self.I` does not plot unless `plot=True` is passed (`pane=` / `color=` alone do not plot). Chart-only logic belongs in an `aq.Indicator` script (`class X(aq.Indicator, title="...", overlay=True)`), which plots by default, cannot trade, and is attached with `run_backtest(..., indicators=[X])`.
+    *   Candle-shaped indicators (e.g. `aq.HeikinAshi()`): `self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc", outputs=("open", "high", "low", "close"), render_type="candle")`; the four `outputs` names are mandatory. `class X(aq.Indicator, overlay=True, replaces_price=True)` hints that the script replaces the price candles.
 
 5.  **Backtest Execution**:
     *   Use `akquant.run_backtest` with explicit arguments.

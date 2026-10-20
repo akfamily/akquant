@@ -855,6 +855,10 @@ derives the millisecond value.
     and `items_by_key` / `value_by_key` are keyed by `series_key` since then. For
     `1.4` messages the bridge falls back to `indicator_key` for `series_key` and to
     the snapshot owner for the item owner, so single-owner keys are unchanged.
+    `group` and `role` (on points and every snapshot item) ship from `1.6`
+    onward: the four components of a candle indicator carry the group name and
+    open/high/low/close, every other indicator carries empty strings; older
+    messages decode to empty strings.
 
 This is not a new transport layer. It is just a normalization layer that turns AKQuant stream events into steadier frontend message objects.
 

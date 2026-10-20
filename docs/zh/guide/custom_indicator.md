@@ -778,6 +778,8 @@ def on_event(event):
     `series_keys` 自 `1.5` 起提供，同时 `items_by_key` / `value_by_key` 改按 `series_key`
     作键；读到 `1.4` 的消息时桥接把 `series_key` 回落为 `indicator_key`、item owner 回落为
     snapshot 的 owner，单 owner 场景键名与此前一致。
+    `group` 与 `role`（point 与每个 snapshot item）自 `1.6` 起提供：candle 指标的四个分量
+    带组名和 open/high/low/close，其余指标为空串；读到更早的消息时按空串处理。
 
 它不是新的传输层，只是把 AKQuant 的事件结构整理成更稳定的“前端消息对象”。
 
