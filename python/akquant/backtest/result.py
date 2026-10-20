@@ -19,6 +19,7 @@ import pandas as pd
 
 from ..akquant import BacktestResult as RustBacktestResult
 from ..akquant import ClosedTrade, Order, Trade
+from ..indicator_identity import identity_of
 
 _POSITION_EFFECT_TEXT = {
     "auto": "auto",
@@ -1575,6 +1576,7 @@ class BacktestResult:
         """Get normalized indicator definition metadata."""
         rows = list(self.indicator_outputs.get("definitions", []))
         columns = [
+            "owner_strategy_id",
             "indicator_key",
             "display_name",
             "pane",
@@ -1591,7 +1593,18 @@ class BacktestResult:
         for column in columns:
             if column not in frame.columns:
                 frame[column] = None
-        frame = frame[columns].sort_values("indicator_key").reset_index(drop=True)
+        # 身份是 (owner, key); 外部 sink 未带 owner(None/NaN/空串)时按 "_default" 补齐
+        frame["owner_strategy_id"] = [
+            identity_of(
+                {"owner_strategy_id": owner if isinstance(owner, str) else None}
+            )[0]
+            for owner in frame["owner_strategy_id"]
+        ]
+        frame = (
+            frame[columns]
+            .sort_values(["owner_strategy_id", "indicator_key"])
+            .reset_index(drop=True)
+        )
         return cast(pd.DataFrame, frame)
 
     @cached_property

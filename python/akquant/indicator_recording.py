@@ -114,7 +114,8 @@ class IndicatorRecorder:
         ] = None,
     ) -> None:
         """Initialize recorder state and optional stream emitter."""
-        self._definitions: Dict[str, Dict[str, Any]] = {}
+        # 定义身份是 (owner_strategy_id, indicator_key): 主策略与指标脚本可同名
+        self._definitions: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self._instances: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
         self._points: list[Dict[str, Any]] = []
         self._stream_emitter = stream_emitter
@@ -183,9 +184,11 @@ class IndicatorRecorder:
         except (TypeError, ValueError):
             numeric_value = float("nan")
 
-        definition = self._definitions.get(indicator_key)
+        definition_key = (strategy_id, indicator_key)
+        definition = self._definitions.get(definition_key)
         if definition is None:
-            self._definitions[indicator_key] = {
+            self._definitions[definition_key] = {
+                "owner_strategy_id": strategy_id,
                 "indicator_key": indicator_key,
                 "display_name": display_name_text,
                 "pane": pane_index,
@@ -310,7 +313,7 @@ class IndicatorRecorder:
     def build_payload(self) -> Dict[str, list[Dict[str, Any]]]:
         """Return stable row-oriented outputs for result access and export."""
         definitions = [
-            self._definitions[key] for key in sorted(self._definitions.keys(), key=str)
+            self._definitions[key] for key in sorted(self._definitions.keys())
         ]
         instances = sorted(
             self._instances.values(),
