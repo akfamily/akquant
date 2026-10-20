@@ -62,7 +62,6 @@ from .feed_adapter import (
     ResampledFeedAdapter,
 )
 from .gateway.order_receipt import OrderLeg, OrderReceipt
-from .indicator import Indicator, IndicatorSet
 from .indicator_declaration import IndicatorBinding, IndicatorDeclaration
 from .indicator_recording import IndicatorRecorder, IndicatorSink
 from .indicator_stream import (
@@ -94,6 +93,7 @@ from .params_adapter import (
     validate_strategy_params,
 )
 from .plot import plot_indicators, plot_result
+from .precomputed import PrecomputedIndicator
 from .sizer import AllInSizer, FixedSize, PercentSizer, Sizer
 from .strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
 from .strategy_loader import (
@@ -174,11 +174,10 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
-        "Indicator",
+        "PrecomputedIndicator",
         "IndicatorBinding",
         "IndicatorDeclaration",
         "IndicatorRecorder",
-        "IndicatorSet",
         "IndicatorSink",
         "is_indicator_stream_event",
         "to_indicator_message",
@@ -277,11 +276,10 @@ else:
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
-        "Indicator",
+        "PrecomputedIndicator",
         "IndicatorBinding",
         "IndicatorDeclaration",
         "IndicatorRecorder",
-        "IndicatorSet",
         "IndicatorSink",
         "is_indicator_stream_event",
         "to_indicator_message",

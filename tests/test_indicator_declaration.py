@@ -400,7 +400,9 @@ def test_precomputed_indicator_declared_through_same_entry() -> None:
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.mom = self.I(aq.Indicator("mom", lambda df: df["close"].diff()))
+            self.mom = self.I(
+                aq.PrecomputedIndicator("mom", lambda df: df["close"].diff())
+            )
             self.sma = self.I(aq.SMA(2))
 
         def on_bar(self, bar: Bar) -> None:
@@ -421,7 +423,9 @@ def test_precomputed_indicator_supports_lookback() -> None:
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.mom = self.I(aq.Indicator("mom", lambda df: df["close"].diff()))
+            self.mom = self.I(
+                aq.PrecomputedIndicator("mom", lambda df: df["close"].diff())
+            )
 
         def on_bar(self, bar: Bar) -> None:
             seen.append((self.mom[0], self.mom[1]))
@@ -506,12 +510,14 @@ def test_precomputed_indicator_fails_fast_in_live_session(
     """
     import logging
 
-    from akquant import Indicator, run_live
+    from akquant import PrecomputedIndicator, run_live
     from akquant.akquant import AssetType, Instrument
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.mom = self.I(Indicator("mom", lambda df: df["close"].diff()))
+            self.mom = self.I(
+                PrecomputedIndicator("mom", lambda df: df["close"].diff())
+            )
 
         def on_bar(self, bar: Bar) -> None:
             pass

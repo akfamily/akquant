@@ -3343,7 +3343,8 @@ def run_backtest(
             # 预计算指标依赖 data_map_for_indicators, 而归一后走的 DataFeed 分支不
             # 构建它。静默丢失指标比报错危险得多, 故显式拒绝并指向可用的替代方案。
             #
-            # 判据是"是否真的声明过预计算指标": 只有 self.I(Indicator(...)) 这条路
+            # 判据是"是否真的声明过预计算指标":
+            # 只有 self.I(PrecomputedIndicator(...)) 这条路
             # 才需要完整 DataFrame, 增量指标的 tick 路径不受影响。
             if ticks_part and any(
                 getattr(one_strategy, "_precomputed_indicators", None)

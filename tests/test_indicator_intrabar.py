@@ -142,7 +142,8 @@ def test_intrabar_rejects_precomputed_indicator() -> None:
     class Probe(Strategy):
         def on_start(self) -> None:
             self.mom = self.I(
-                aq.Indicator("m", lambda df: df["close"].diff()), intrabar=True
+                aq.PrecomputedIndicator("m", lambda df: df["close"].diff()),
+                intrabar=True,
             )
 
         def on_bar(self, bar: Bar) -> None:

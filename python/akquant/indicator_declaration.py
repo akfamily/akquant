@@ -135,7 +135,8 @@ class IndicatorDeclaration:
     #: 该指标由哪个周期驱动: None=基础行情(bar/tick), 否则是 subscribe_bars 的
     #: 周期标签(如 "5min")。见 ``Strategy._update_incremental_indicators``。
     freq: Optional[str] = None
-    #: True 表示向量化预计算指标(``indicator.py::Indicator``): 数据加载后整段
+    #: True 表示向量化预计算指标
+    #: (``precomputed.py::PrecomputedIndicator``): 数据加载后整段
     #: 算完缓存, 运行期按时间戳 asof 查询, 而非逐 bar ``update()``。
     precomputed: bool = False
 

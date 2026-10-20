@@ -18,7 +18,7 @@ from functools import partial
 from typing import List
 
 import akquant as aq
-import akquant.indicator as ind
+import akquant.precomputed as ind
 import akshare as ak
 import pandas as pd
 from akquant import Bar, IntParam, Strategy

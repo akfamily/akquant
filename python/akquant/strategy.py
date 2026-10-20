@@ -201,8 +201,8 @@ from .utils.price import round_to_tick as _round_to_tick
 
 if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
-    from .indicator import Indicator
     from .ml.model import QuantModel
+    from .precomputed import PrecomputedIndicator
 
 # 实盘 subscribe() 告警用: 与 strategy_logging 的 "strategy" 通道同源。
 _live_subscribe_logger = _get_logger("strategy")
@@ -328,7 +328,7 @@ class Strategy:
     # Rust maintains HistoryBuffer for indicator calculation.
     # Python side accesses it via self.ctx.history() (efficient copy).
     # No duplicate storage in Python.
-    _precomputed_indicators: List["Indicator"]
+    _precomputed_indicators: List["PrecomputedIndicator"]
     _incremental_indicators: Dict[str, IndicatorDeclaration]
     _subscriptions: List[str]
     _live_market_data_owner: bool
@@ -1662,19 +1662,20 @@ class Strategy:
         if int(lookback) < 1:
             raise ValueError("lookback must be >= 1")
         source_key = str(source).strip().lower()
-        # 分派: 有 update() 走增量, 是 Indicator 走向量化预计算。删掉
+        # 分派: 有 update() 走增量, 是 PrecomputedIndicator 走向量化预计算。删掉
         # 原先的互斥模式开关后, 两者可在同一个策略里共存。
-        # 局部导入避免与 indicator.py 的循环依赖(该模块顶层只在 TYPE_CHECKING
-        # 下导入 Indicator, 运行期拿不到)。
-        from .indicator import Indicator as _Indicator
+        # 局部导入避免与 precomputed.py 的循环依赖(该模块顶层只在 TYPE_CHECKING
+        # 下导入 PrecomputedIndicator, 运行期拿不到)。
+        from .precomputed import PrecomputedIndicator
 
-        is_precomputed = isinstance(indicator, _Indicator)
+        is_precomputed = isinstance(indicator, PrecomputedIndicator)
         if is_precomputed and getattr(self, "_live_market_data_owner", False):
             # 实盘没有完整的历史 DataFrame, _prepare_indicators 永远不会跑,
             # get_value 恒 NaN —— 静默返回是最坏的失败方式(用户以为策略在正常
             # 运行)。run_live 装配时已打上 _live_market_data_owner 标记。
             raise ValueError(
-                "实盘不支持向量化预计算指标 self.I(Indicator(...)): 实盘没有完整的"
+                "实盘不支持向量化预计算指标 "
+                "self.I(PrecomputedIndicator(...)): 实盘没有完整的"
                 "历史 DataFrame。请改用增量指标, 如 self.I(aq.SMA(20), ...)"
             )
         if intrabar and is_precomputed:
@@ -2334,7 +2335,8 @@ class Strategy:
         if resolved_symbol in registration.instances:
             return registration.instances[resolved_symbol]
         if registration.precomputed:
-            # Indicator 自己按 symbol 缓存整段结果, 天然多标的, 不套"共享实例"校验
+            # PrecomputedIndicator 自己按 symbol 缓存整段结果, 天然多标的,
+            # 不套"共享实例"校验
             registration.instances[resolved_symbol] = registration.base_indicator
             return registration.base_indicator
         if registration.factory is not None:
