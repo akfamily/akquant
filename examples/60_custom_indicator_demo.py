@@ -123,9 +123,11 @@ class MixedIndicatorStrategy(Strategy):
             ),
             name="vec_mom",
         )
-        # Plot metadata makes the framework report this one automatically -
+        # plot=True makes the framework report this one automatically -
         # no record_indicator call needed in on_bar.
-        self.inc_sma = self.I(aq.SMA(3), name="inc_sma", pane=0, color="#3f51b5")
+        self.inc_sma = self.I(
+            aq.SMA(3), name="inc_sma", pane=0, color="#3f51b5", plot=True
+        )
 
     def on_bar(self, bar: Bar) -> None:
         """Read both indicators, including one-bar lookback."""

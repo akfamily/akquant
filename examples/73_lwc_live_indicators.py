@@ -55,15 +55,26 @@ class LiveDeclarativeStrategy(Strategy):
     def on_start(self) -> None:
         """Two overlays on the main pane, one oscillator in a sub-pane."""
         self.ema_fast = self.I(
-            aq.EMA(5), name="ema_fast", pane=0, color="#e91e63", label="EMA5"
+            aq.EMA(5),
+            name="ema_fast",
+            pane=0,
+            color="#e91e63",
+            label="EMA5",
+            plot=True,
         )
         self.ema_slow = self.I(
-            aq.EMA(12), name="ema_slow", pane=0, color="#3f51b5", label="EMA12"
+            aq.EMA(12),
+            name="ema_slow",
+            pane=0,
+            color="#3f51b5",
+            label="EMA12",
+            plot=True,
         )
         self.rsi = self.I(
             aq.RSI(6),
             name="rsi",
             pane=1,
+            plot=True,
             reference_lines=[
                 {"value": 70.0, "label": "OB"},
                 {"value": 30.0, "label": "OS"},

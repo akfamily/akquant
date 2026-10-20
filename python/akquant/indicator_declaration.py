@@ -121,6 +121,29 @@ def is_reportable_value(value: Any) -> bool:
     return True
 
 
+def resolve_plot_defaults(
+    *,
+    is_indicator_script: bool,
+    overlay: bool,
+    plot: Optional[bool],
+    pane: Optional[int],
+) -> Tuple[bool, int]:
+    """解析 self.I 的最终 (plot, pane); 运行时与静态检查共用这一处规则.
+
+    - ``plot`` 省略: 指标脚本里画, 策略里不画。``pane``/``color`` 等绘图参数
+      只管画在哪、长什么样, 不再顺带决定画不画。
+    - ``pane`` 省略: 指标脚本 ``overlay=False`` 时取 1(本脚本的附图), 其余取 0。
+    """
+    resolved_plot = bool(plot) if plot is not None else bool(is_indicator_script)
+    if pane is not None:
+        resolved_pane = int(pane)
+    elif is_indicator_script and not overlay:
+        resolved_pane = 1
+    else:
+        resolved_pane = 0
+    return resolved_plot, resolved_pane
+
+
 @dataclass
 class IndicatorDeclaration:
     """一条 ``Strategy.I()`` 声明: 计算参数 + 绘图元数据 + 运行期状态."""

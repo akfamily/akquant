@@ -6,7 +6,7 @@ AKQuant declarative indicators demo (TradingView / Pine Script style).
 `self.I()` declares an indicator once and the framework takes care of the rest:
 1. Incremental update before every bar callback - no manual `update()` calls.
 2. Series lookback `ind[0]` / `ind[1]`, matching Pine's `sma[0]` / `sma[1]`.
-3. Automatic chart reporting when plot metadata is supplied - no per-bar
+3. Automatic chart reporting when `plot=True` is passed - no per-bar
    `record_indicator()` boilerplate.
 4. Multi-output indicators (MACD) split into separate lines via `outputs=`.
 """
@@ -51,15 +51,26 @@ class DeclarativeIndicatorStrategy(Strategy):
         """
         # Plot metadata present -> reported automatically for charting.
         self.ema_fast = self.I(
-            aq.EMA(10), name="ema_fast", pane=0, color="#e91e63", label="EMA10"
+            aq.EMA(10),
+            name="ema_fast",
+            pane=0,
+            color="#e91e63",
+            label="EMA10",
+            plot=True,
         )
         self.ema_slow = self.I(
-            aq.EMA(30), name="ema_slow", pane=0, color="#3f51b5", label="EMA30"
+            aq.EMA(30),
+            name="ema_slow",
+            pane=0,
+            color="#3f51b5",
+            label="EMA30",
+            plot=True,
         )
         self.rsi = self.I(
             aq.RSI(14),
             name="rsi",
             pane=1,
+            plot=True,
             reference_lines=[
                 {"value": 30.0, "label": "超卖"},
                 {"value": 70.0, "label": "超买"},
@@ -67,10 +78,14 @@ class DeclarativeIndicatorStrategy(Strategy):
         )
         # Multi-output: one declaration, three independent lines.
         self.macd = self.I(
-            aq.MACD(12, 26, 9), name="macd", pane=2, outputs=("dif", "dea", "hist")
+            aq.MACD(12, 26, 9),
+            name="macd",
+            pane=2,
+            outputs=("dif", "dea", "hist"),
+            plot=True,
         )
-        # No plot metadata -> computed only, never reported. Same as Pine's
-        # bare `ta.atr(14)` without a `plot()` call.
+        # No plot=True -> computed only, never reported (the default inside a
+        # Strategy). Same as Pine's bare `ta.atr(14)` without a `plot()` call.
         self.atr = self.I(aq.ATR(14), name="atr", input_mode="hlc")
 
         self.crosses = 0

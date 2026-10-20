@@ -176,7 +176,7 @@ class _DeclaredSma(Strategy):
         self.prev_at_first_bar: List[Any] = []
 
     def on_start(self) -> None:
-        self.sma = self.I(aq.SMA(2), name="sma2", pane=0, color="#e91e63")
+        self.sma = self.I(aq.SMA(2), name="sma2", pane=0, color="#e91e63", plot=True)
 
     def on_bar(self, bar: Any) -> None:
         if not self.prev_at_first_bar:
@@ -252,7 +252,7 @@ class _WindowSma(Strategy):
         self.subscribe_bars("5min")
 
     def on_start(self) -> None:
-        self.wsma = self.I(aq.SMA(2), name="wsma", freq="5min", pane=0)
+        self.wsma = self.I(aq.SMA(2), name="wsma", freq="5min", pane=0, plot=True)
 
     def on_bar(self, bar: Any) -> None:
         pass

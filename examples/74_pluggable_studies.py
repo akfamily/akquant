@@ -86,8 +86,12 @@ class TrendStrategy(Strategy):
 
     def on_start(self) -> None:
         """Overlay both EMAs on the main pane."""
-        self.fast = self.I(aq.EMA(10), name="ema_fast", pane=0, color="#e91e63")
-        self.slow = self.I(aq.EMA(30), name="ema_slow", pane=0, color="#3f51b5")
+        self.fast = self.I(
+            aq.EMA(10), name="ema_fast", pane=0, color="#e91e63", plot=True
+        )
+        self.slow = self.I(
+            aq.EMA(30), name="ema_slow", pane=0, color="#3f51b5", plot=True
+        )
 
     def on_bar(self, bar: Bar) -> None:
         """Enter on golden cross, exit on death cross."""

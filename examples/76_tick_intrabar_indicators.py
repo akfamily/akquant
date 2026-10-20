@@ -58,9 +58,14 @@ class TickIntrabarStrategy(Strategy):
 
     def on_start(self) -> None:
         """No ``freq=``: these are base-period indicators."""
-        self.sma3 = self.I(aq.SMA(3), name="sma3", intrabar=True, pane=0)
+        self.sma3 = self.I(aq.SMA(3), name="sma3", intrabar=True, pane=0, plot=True)
         self.atr3 = self.I(
-            aq.ATR(3), name="atr3", input_mode="hlc", intrabar=True, pane=1
+            aq.ATR(3),
+            name="atr3",
+            input_mode="hlc",
+            intrabar=True,
+            pane=1,
+            plot=True,
         )
 
     def on_tick(self, tick: Tick) -> None:

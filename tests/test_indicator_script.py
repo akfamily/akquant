@@ -52,7 +52,7 @@ class MainStrategy(Strategy):
 
     def on_start(self) -> None:
         """声明主图 SMA."""
-        self.sma = self.I(aq.SMA(2), name="sma", pane=0)
+        self.sma = self.I(aq.SMA(2), name="sma", pane=0, plot=True)
 
     def on_bar(self, bar: Bar) -> None:
         """SMA 抬头且空仓时买入."""
@@ -364,7 +364,7 @@ def _plotting_trend() -> Any:
 
         def on_start(self) -> None:
             """声明主图 SMA."""
-            self.sma = self.I(aq.SMA(2), name="sma", pane=0)
+            self.sma = self.I(aq.SMA(2), name="sma", pane=0, plot=True)
 
     return Trend
 

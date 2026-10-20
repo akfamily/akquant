@@ -44,6 +44,7 @@ from .indicator_declaration import (
     end_stamp_label,
     is_reportable_value,
     peek_indicator,
+    resolve_plot_defaults,
 )
 from .indicator_recording import IndicatorRecorder
 from .log import get_logger as _get_logger
@@ -1650,18 +1651,18 @@ class Strategy:
         ``__init__`` 只适合字面量参数。``subscribe_bars`` 仍只能在
         ``__init__``, 本方法的 ``freq=`` 校验该周期已订阅。
 
-        传了任一绘图参数(``pane``/``color``/``label``/``render_type``/
-        ``reference_lines``/``scale_group``)或显式 ``plot=True`` 时, 框架在每次
-        更新后自动上报一个绘图点, 无需在 ``on_bar`` 里手写
-        ``record_indicator``。**默认不上报**: 与 Pine 一致(``ta.sma()`` 只算、
-        ``plot()`` 才画), 且实盘 sink 是每点一个事件, 默认全开会淹没前端。
+        画不画由脚本类型决定: 在 ``aq.Indicator`` 指标脚本里默认画(位置由类定义行
+        ``overlay`` 决定: True 主图, False 本脚本附图 1), 在 ``aq.Strategy`` 里默认
+        不画——策略里的指标多用于判断, 且实盘 sink 每点一个事件, 全开会淹没前端。
+        ``plot=True/False`` 显式覆盖; ``pane``/``color`` 等只决定画在哪、长什么样。
         未就绪(值为 ``None``/``NaN``)的点不上报——Pine 预热期是 ``na``。
 
         :param indicator: 指标实例, 需有 ``update()``; 与 ``factory`` 二选一
         :param factory: 多标的场景下的指标工厂, 每个 symbol 造一个独立实例
         :param lookback: 回溯缓冲深度, 有界(实盘是无限流)
         :param name: 指标标识, 省略时按指标类名自动生成
-        :param plot: 是否自动上报绘图点; ``None`` 表示"给了绘图参数就上报"
+        :param plot: 是否自动上报绘图点; ``None`` 表示按脚本类型取默认
+        :param pane: 0 主图, >=1 本脚本内的附图编号; ``None`` 按脚本类型取默认
         :param intrabar: bar 未闭合期间是否试算临时值(对齐 Pine 的 realtime bar):
             有临时值时 ``[0]`` 是它、``[1]`` 是上一根已确认, ``binding.confirmed``
             告知当前 ``[0]`` 是否已确认; 流事件带 ``confirmed=false``。窗口周期
@@ -1729,18 +1730,12 @@ class Strategy:
                     "窗口周期请改用增量指标(有 update() 的对象)"
                 )
             self._precomputed_indicators.append(indicator)
-        chart_args = (
-            pane,
-            render_type,
-            color,
-            label,
-            unit,
-            precision,
-            reference_lines,
-            scale_group,
-        )
-        should_plot = (
-            bool(plot) if plot is not None else any(a is not None for a in chart_args)
+        cls = type(self)
+        resolved_plot, resolved_pane = resolve_plot_defaults(
+            is_indicator_script=bool(cls._aq_is_indicator_script),
+            overlay=bool(getattr(cls, "_aq_overlay", False)),
+            plot=plot,
+            pane=pane,
         )
         self._incremental_indicators[indicator_name] = IndicatorDeclaration(
             source=source_key,
@@ -1754,8 +1749,8 @@ class Strategy:
             precomputed=is_precomputed,
             intrabar=bool(intrabar),
             outputs=None if outputs is None else tuple(str(o) for o in outputs),
-            plot=should_plot,
-            pane=0 if pane is None else int(pane),
+            plot=resolved_plot,
+            pane=resolved_pane,
             render_type="line" if render_type is None else str(render_type),
             color=color,
             label=label,

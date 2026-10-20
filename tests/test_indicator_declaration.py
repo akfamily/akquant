@@ -118,7 +118,9 @@ def test_plot_metadata_triggers_automatic_reporting() -> None:
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.sma = self.I(aq.SMA(2), pane=0, color="#e91e63", label="SMA2")
+            self.sma = self.I(
+                aq.SMA(2), pane=0, color="#e91e63", label="SMA2", plot=True
+            )
 
         def on_bar(self, bar: Bar) -> None:
             pass
@@ -197,7 +199,9 @@ def test_multi_output_indicator_splits_into_separate_lines() -> None:
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.macd = self.I(aq.MACD(2, 3, 2), pane=2, outputs=("dif", "dea", "hist"))
+            self.macd = self.I(
+                aq.MACD(2, 3, 2), pane=2, outputs=("dif", "dea", "hist"), plot=True
+            )
 
         def on_bar(self, bar: Bar) -> None:
             pass

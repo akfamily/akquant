@@ -377,8 +377,10 @@ def test_end_to_end_backtest_with_declared_indicators_renders_review(
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.sma = self.I(aq.SMA(2), name="sma2", pane=0, color="#3f51b5")
-            self.rsi = self.I(aq.RSI(2), name="rsi2", pane=1)
+            self.sma = self.I(
+                aq.SMA(2), name="sma2", pane=0, color="#3f51b5", plot=True
+            )
+            self.rsi = self.I(aq.RSI(2), name="rsi2", pane=1, plot=True)
 
         def on_bar(self, bar: Bar) -> None:
             pass
