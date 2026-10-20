@@ -16,6 +16,7 @@ This chapter is currently maintained in Chinese first.
   - Expiry callback example: [examples/49_on_expiry_demo.py](https://github.com/akfamily/akquant/blob/main/examples/49_on_expiry_demo.py)
   - Indicator playbook example: [examples/45_talib_indicator_playbook_demo.py](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py)
   - Real-data mode: `python examples/45_talib_indicator_playbook_demo.py --data-source akshare --symbol sh600000 --start-date 20240101 --end-date 20260301`
+  - Indicator script example: [examples/74_indicator_scripts.py](https://github.com/akfamily/akquant/blob/main/examples/74_indicator_scripts.py)
   - Functional twin example: [examples/textbook/ch05_strategy_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch05_strategy_functional.py)
   - Guide: [Strategy Guide](../guide/strategy.md)
   - Guide: [Custom Indicator Guide](../guide/custom_indicator.md)
@@ -60,6 +61,39 @@ if np.isnan(ema_fast[-1]) or np.isnan(adx[-1]):
 if ema_fast[-1] > ema_slow[-1] and adx[-1] >= 20:
     self.buy(symbol, 100)
 ```
+
+## Indicator Scripts (`aq.Indicator`)
+
+AKQuant mirrors TradingView's split between `indicator()` and `strategy()` scripts.
+Script metadata goes on the class line:
+
+```python
+import akquant as aq
+
+
+class DualMA(aq.Indicator, title="Dual MA", overlay=True):
+    def on_start(self):
+        self.fast = self.I(aq.EMA(10), name="ema_fast")   # plotted, main pane
+        self.slow = self.I(aq.EMA(30), name="ema_slow")
+
+
+class Trend(aq.Strategy, title="Trend"):
+    def on_start(self):
+        self.fast = self.I(aq.EMA(10), name="ema_fast")   # not plotted in a Strategy
+
+
+result = aq.run_backtest(data=df, strategy=Trend, indicators=[DualMA])
+```
+
+- `title` is display-only (defaults to the class name); `overlay` defaults to `False`
+  (the script's own sub-pane); `id` defaults to the snake_case class name.
+- `self.I` plots by default inside `aq.Indicator` (default `pane` is 1, or 0 with
+  `overlay=True`) and does not plot inside `aq.Strategy`; `plot=True/False` overrides.
+  Chart arguments such as `pane=` or `color=` no longer imply `plot=True`.
+- Indicator scripts cannot trade: any trading call raises `aq.IndicatorCannotTradeError`.
+- `aq.inspect_strategy(path_or_source)` statically classifies every class (indicator /
+  strategy / unknown) and lists each declared line's `pane` and `plot` without importing
+  or executing the file; values it cannot determine are reported in `dynamic`.
 
 For complete Chinese content including the full `on_xxx` callback map, warmup handling, pre-open execution semantics, staged next-day execution patterns, and migration tips:
 - [第 5 章：策略开发实战 (Strategy Implementation)](../../zh/textbook/05_strategy.md)

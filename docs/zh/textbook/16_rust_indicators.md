@@ -242,6 +242,7 @@ if np.isnan([ema_fast[-1], ema_slow[-1], adx[-1], natr[-1], rsi[-1]]).any():
 3. 第 3 周：引入 `ADX` / `NATR` / `SAR` 做风险过滤。
 4. 第 4 周：做一次 `python -> rust` 迁移实验与回归验证。
 5. 第 5 周：把数学变换类指标接入简单特征工程实验。
+6. 第 6 周：把常用指标组合写成 `aq.Indicator` 指标脚本（`overlay` 定主图/附图），用 `indicators=` 叠到策略上，并用 `aq.inspect_strategy` 静态检查它声明了哪些线（见第 5 章 5.5.6、示例 `examples/74_indicator_scripts.py`）。
 
 ## 本章小结
 

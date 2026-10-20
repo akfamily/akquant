@@ -24,6 +24,7 @@
 - 盘前开盘语义示例：[examples/52_pre_open_demo.py](https://github.com/akfamily/akquant/blob/main/examples/52_pre_open_demo.py)
 - 双阶段盘前执行示例：[examples/53_timer_to_pre_open_demo.py](https://github.com/akfamily/akquant/blob/main/examples/53_timer_to_pre_open_demo.py)
 - 函数式孪生示例：[examples/textbook/ch05_strategy_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch05_strategy_functional.py)
+- 指标脚本示例：[examples/74_indicator_scripts.py](https://github.com/akfamily/akquant/blob/main/examples/74_indicator_scripts.py)
 - 对应指南：[策略指南](../guide/strategy.md)
 
 建议学习路径：
@@ -34,12 +35,14 @@
 4. 需要 Tick 级策略时，运行 `examples/51_class_tick_callbacks_demo.py`。
 5. 如果你的场景是“盘前信号，本次 open 成交”，运行 `examples/52_pre_open_demo.py`。
 6. 如果你还需要“前一日准备、次日盘前执行”的双阶段写法，运行 `examples/53_timer_to_pre_open_demo.py`。
+7. 需要只画图、不交易的指标脚本时，运行 `examples/74_indicator_scripts.py`（见 5.5.6）。
 
 ## 快速运行与验收
 
 ```bash
 python examples/textbook/ch05_strategy.py
 python examples/textbook/ch05_strategy_functional.py
+python examples/74_indicator_scripts.py
 ```
 
 验收要点：
@@ -47,6 +50,7 @@ python examples/textbook/ch05_strategy_functional.py
 1. 脚本可完成策略初始化、信号生成、下单与回测统计输出。
 2. 日志中可观察到订单状态变化与关键风控触发信息。
 3. 调整均线参数后，回测结果会出现可解释的变化。
+4. `74_indicator_scripts.py` 输出 `indicator_orders=0` 与 `sneaky_indicator_blocked=True (IndicatorCannotTradeError)`，并逐类打印 `inspect_strategy` 识别出的 `kind` / `title` / `overlay` / `pane`。
 
 ## 5.1 策略类结构与继承
 
@@ -553,7 +557,7 @@ class PrecomputeMomentumStrategy(Strategy):
 
 策略里写了 `plot=True` 的指标，框架会在每次更新后自动上报绘图点，不必在 `on_bar` 里手写 `record_indicator`。`pane` / `color` / `label` / `render_type` / `reference_lines` / `scale_group` 只决定“怎么画”，**不再隐含 `plot=True`**。
 
-**策略里默认不上报**——与 Pine 一致（`ta.sma()` 只算、`plot()` 才画）。这不只是风格：实盘的指标 sink 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路。只画图不交易的单元可以写成指标脚本 `aq.Indicator`（对标 Pine 的 `indicator()`），那里的 `self.I` 默认就画，`overlay` 决定主图还是附图，详见[自定义指标指南](../guide/custom_indicator.md)。
+**策略里默认不上报**——与 Pine 一致（`ta.sma()` 只算、`plot()` 才画）。这不只是风格：实盘的指标 sink 是每点一个事件，多标的 × 多指标默认全开会淹没前端链路。只画图不交易的单元可以写成指标脚本 `aq.Indicator`（对标 Pine 的 `indicator()`），那里的 `self.I` 默认就画，`overlay` 决定主图还是附图，见 5.5.6。
 
 多值指标用 `outputs` 拆成多条独立的线：
 
@@ -567,7 +571,73 @@ self.macd.dif[0]  # 单个分量，同样支持 [1] 回溯
 
 更系统的说明，请直接参考：[自定义指标指南](../guide/custom_indicator.md)。
 
-### 5.5.6 使用 `AKQuant.talib` 双后端
+### 5.5.6 指标脚本 `aq.Indicator` 与静态检查
+
+TradingView 把脚本分成两类：`indicator()` 只画图，`strategy()` 才交易。AKQuant 的对应物是 `aq.Indicator` 与 `aq.Strategy`，脚本元数据写在类定义行：
+
+```python
+import akquant as aq
+
+
+class DualMA(aq.Indicator, title="双均线", overlay=True):
+    def on_start(self):
+        self.fast = self.I(aq.EMA(10), name="ema_fast")   # 默认画，主图
+        self.slow = self.I(aq.EMA(30), name="ema_slow")
+
+
+class RsiPanel(aq.Indicator, title="RSI"):              # overlay 默认 False：附图
+    def on_start(self):
+        self.rsi = self.I(aq.RSI(14), name="rsi",
+                          reference_lines=[{"value": 30}, {"value": 70}])
+
+
+class Trend(aq.Strategy, title="趋势策略"):
+    def on_start(self):
+        self.fast = self.I(aq.EMA(10), name="ema_fast")   # 策略里默认不画
+```
+
+类定义行的三个关键字：
+
+| 关键字 | 含义 | 省略时 |
+|---|---|---|
+| `title` | 显示名，可写中文，不进入任何标识字段 | 类名 |
+| `overlay` | `True` 画主图，`False` 画本脚本的附图（仅 `aq.Indicator`） | `False`，子类继承父类的值 |
+| `id` | 机器标识，用作 slot 键和指标点的 `owner_strategy_id` | 指标脚本取类名 snake_case；策略沿用 `strategy_id` 默认值 `"_default"` |
+
+`self.I` 画不画由脚本类型决定，`plot=` 可显式覆盖：
+
+| 脚本 | 不写 `plot` | 不写 `pane` |
+|---|---|---|
+| `aq.Strategy` | 不画 | 0 |
+| `aq.Indicator`，`overlay=False` | 画 | 1（本脚本的第一个附图） |
+| `aq.Indicator`，`overlay=True` | 画 | 0（主图） |
+
+`pane` 编号只在本脚本内有效：两个附图脚本都画在“自己的 pane 1”，叠到同一张图上时由前端重新编号。
+
+指标脚本经 `indicators=` 叠加到主策略上，回测与实盘同一写法，每个脚本各占一个 slot：
+
+```python
+result = aq.run_backtest(data=df, strategy=Trend, indicators=[DualMA, RsiPanel])
+result.indicator_df(owner="rsi_panel")   # 按脚本 id 取它画出的点
+```
+
+指标脚本**不能交易**：在 `on_bar` 里误写 `self.buy(...)` 会抛 `aq.IndicatorCannotTradeError`，而不是静默成交。类定义行写错关键字（例如 `overlap=True`）、策略写了 `overlay=`、类上的 `id` 与 `run_backtest(strategy_id=)` 不一致，都会直接报错。
+
+平台要在**不运行文件**的前提下区分指标与策略（指标列表、主图/附图标注、把不画图的策略灰显），用 `aq.inspect_strategy`：
+
+```python
+res = aq.inspect_strategy("my_scripts.py")   # 也接受源码字符串
+for c in res.classes:
+    print(c.kind, c.title, c.overlay, c.draws_indicators,
+          [(i.name, i.pane, i.plot) for i in c.indicators])
+# indicator 双均线 True True [('ema_fast', 0, True), ('ema_slow', 0, True)]
+# indicator RSI False True [('rsi', 1, True)]
+# strategy 趋势策略 None False [('ema_fast', 0, False)]
+```
+
+它只用 `ast` 读源码、不导入也不执行用户代码，同时识别 `akquant` 与 `qmfquant` 的导入；只接受明文，加密文件由调用方先解密。参数化的 `pane=self.params.p`、循环里的声明、`factory=`、`**kwargs` 这类静态推不出的值不会被猜测，而是置为 `None` 并列在 `dynamic` 里。完整的返回结构见[自定义指标指南](../guide/custom_indicator.md)。
+
+### 5.5.7 使用 `AKQuant.talib` 双后端
 
 当策略从 TA-Lib 迁移时，建议先保持函数签名不变，再通过 `backend` 参数切换执行后端。
 
@@ -639,7 +709,7 @@ if np.isnan(last_signal):
 3. 用固定数据集回归验证 warmup 与输出形态（单值或 tuple）一致。
 4. 对支持 `period` 别名的指标优先沿用旧参数命名，降低迁移成本。
 
-### 5.5.7 指标选型与组合模板
+### 5.5.8 指标选型与组合模板
 
 实战里不建议“单指标决策”，更推荐“趋势 + 动量 + 波动率/风险”组合。
 
@@ -842,6 +912,7 @@ result = aq.run_backtest(
 ### 理解即可
 
 - 自定义指标、状态机与统一事件流是策略工程化的重要扩展能力。
+- 只画图的单元写成 `aq.Indicator`（对标 Pine 的 `indicator()`），用 `indicators=` 叠加；`self.I` 在指标脚本里默认画、在策略里默认不画。
 
 ### 实践提醒
 
@@ -863,7 +934,7 @@ result = aq.run_backtest(
 
 - [AKQuant 策略指南](../guide/strategy.md) —— 回调触发顺序、类风格与函数式能力差异的权威说明，对应本章 5.1、5.2、5.7。
 - [AKQuant 自定义指标指南](../guide/custom_indicator.md) —— 预计算与增量两种指标接入方式的完整文档，对应本章 5.5。
-- [AKQuant 指标组合实战手册](../guide/talib_indicator_playbook.md) —— `AKQuant.talib` 双后端与指标组合模板的实战说明，对应本章 5.5.6、5.5.7。
+- [AKQuant 指标组合实战手册](../guide/talib_indicator_playbook.md) —— `AKQuant.talib` 双后端与指标组合模板的实战说明，对应本章 5.5.7、5.5.8。
 
 **本书相关**
 
@@ -897,3 +968,5 @@ result = aq.run_backtest(
 1. 无交易发生：检查信号条件是否过严或数据窗口不足。
 2. 订单被拒绝：核对现金、持仓、最小交易单位和交易方向约束。
 3. 回测结果异常抖动：确认是否存在未来函数或未对齐的数据字段。
+4. 策略里写了 `self.I(..., pane=1)` 却没有画出来：策略里 `self.I` 默认不画，绘图参数不再隐含画图，要画须写 `plot=True`；只画图的逻辑可改写成 `aq.Indicator`。
+5. 指标脚本报 `IndicatorCannotTradeError`：`aq.Indicator` 禁止调用交易接口，下单逻辑放回 `aq.Strategy`。
