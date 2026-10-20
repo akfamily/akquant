@@ -6,7 +6,7 @@
 
 分类知识归插件: 只有适配器懂自己柜台的错误码, 而核心仓不能 import 插件。
 故约定一个**可选**方法 `TraderGateway.classify_order_error(exc)`, 用 `getattr`
-探测而不加进 Protocol 必需成员——既有插件(ctp/miniqmt/ptrade/qmf)不改也不会挂,
+探测而不加进 Protocol 必需成员——既有插件(ctp/miniqmt/ptrade)不改也不会挂,
 行为自动落到保守分支。
 
 保守缺省: 未实现该方法、返回值无法识别、分类方法自身抛错, 一律归入

@@ -419,8 +419,8 @@ class LiveRunner:
         :param on_broker_connected: Optional callback fired once the broker
             trader gateway reports readiness (heartbeat) after connect+start.
         :param broker_ready_timeout: Max seconds to poll trader_gateway.heartbeat()
-            before giving up (default 30.0, sized for a real broker login such as
-            QMF's dual-session login plus WS connect).
+            before giving up (default 30.0, sized for a real broker login, e.g. a
+            multi-session login plus WS connect).
         :param broker_ready_required: If True (default), raise when broker
             readiness is not reached within broker_ready_timeout; pass False to
             only warn. Readiness is only polled in ``trading_mode='broker_live'``,
@@ -472,7 +472,7 @@ class LiveRunner:
         self.use_aggregator = use_aggregator
         self.broker = broker
         # 行情源与交易源可分别覆盖 broker: 补齐单边 broker
-        # (qmf 只有交易 / replay 只有行情)。
+        # (middleware 只有交易 / replay 只有行情)。
         self.market_broker = market_broker
         self.trader_broker = trader_broker
         self.trading_mode = trading_mode
@@ -1086,7 +1086,7 @@ class LiveRunner:
     def _warn_if_no_market_gateway(self, bundle: Any) -> None:
         """trader-only broker 无行情网关时告警.
 
-        ``broker='middleware'``/``'qmf'`` 这类只有交易通道的 broker 会让
+        ``broker='middleware'`` 这类只有交易通道的 broker 会让
         ``market_gateway`` 为 ``None``: ``on_bar``/``on_tick`` 永不触发,
         ``current_tick`` 恒为 ``None``。这是**预期行为**(见 ``run_live``
         docstring), 但启动阶段此前完全静默, 用户只看到"策略没反应", 无从判断
@@ -1193,7 +1193,7 @@ class LiveRunner:
     def _install_subscription_forwarder(self, targets: list[Strategy]) -> None:
         """给各策略装上 subscribe() → 行情网关的运行期转发器.
 
-        没有行情网关时(如 ``broker='qmf'`` 的 ``market_gateway=None``)不装,
+        没有行情网关时(如 ``broker='middleware'`` 的 ``market_gateway=None``)不装,
         ``Strategy.subscribe()`` 便退回告警——那类 broker 确实无处可下发。
 
         下发的是 ``instruments ∪ 全部 slot 的 _subscriptions`` 的**并集**:
@@ -1450,7 +1450,7 @@ class LiveRunner:
 
         connect() may block (CTP's connect() == start() enters the event loop
         via Join()), so it must NOT run on the main thread. Running both on the
-        daemon thread fixes the QMF login gap (connect()=login before start()=WS)
+        daemon thread covers brokers whose connect() logs in before start() opens WS
         without blocking run(); readiness is confirmed by the heartbeat poll.
         """
 

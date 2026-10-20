@@ -61,7 +61,7 @@ def _submitter(
             captured.append(req)
             return f"b{len(captured)}"
 
-    cap = capability or BrokerCapability(broker_name="qmf")
+    cap = capability or BrokerCapability(broker_name="middleware")
     return BrokerOrderSubmitter(
         trader_gateway=_Gw(),
         strategy=strategy,

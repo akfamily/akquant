@@ -110,7 +110,7 @@ def run_live(
         only provide a trading channel (no market data, so ``on_bar`` /
         ``on_tick`` never fire and ``current_tick`` stays ``None``)::
 
-            run_live(..., market_broker="replay", trader_broker="qmf")
+            run_live(..., market_broker="replay", trader_broker="middleware")
     :param broker_ready_timeout: Max seconds to poll ``trader_gateway.heartbeat()``
         before giving up (default 30.0).
     :param broker_ready_required: If True (default), abort the run when the broker

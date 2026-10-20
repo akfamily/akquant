@@ -1,6 +1,6 @@
 """``run_live(market_broker=...)``: 行情源与交易源分开指定的端到端通路.
 
-对应 ``broker='qmf'`` 形态的缺口: 交易通道齐备但 ``market_gateway=None``, 此前
+对应 ``broker='middleware'`` 形态的缺口: 交易通道齐备但 ``market_gateway=None``, 此前
 无法借用别的 broker 的行情。本模块用"只有交易的 broker + replay 行情"跑通整条
 链路 facade → runner → factory → 行情网关 → feed → 引擎 → 策略回调。
 """
@@ -52,7 +52,7 @@ def _bar(ts: int, symbol: str, close: float) -> Bar:
 
 
 class _TraderOnlyGateway:
-    """只提供交易的网关替身(模拟 qmf: 无行情通道)."""
+    """只提供交易的网关替身(模拟 middleware: 无行情通道)."""
 
     def connect(self) -> None:
         """no-op."""

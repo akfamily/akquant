@@ -142,7 +142,7 @@ def test_live_subscribe_does_not_warn_when_forwarded(
 def test_live_subscribe_still_warns_without_market_gateway(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """网关缺失时(如 broker='qmf' 的 market_gateway=None)必须保留告警.
+    """网关缺失时(如 broker='middleware' 的 market_gateway=None)必须保留告警.
 
     这类 broker 压根没有行情通道可供下发, 静默会让用户继续误以为订阅成功。
     """

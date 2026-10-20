@@ -1298,8 +1298,8 @@ run_live(
 ```
 
 **只传其中一个会报错**，要求把另一侧也写明。这是刻意的设计：如果让 `broker` 去
-兼任缺失的那一侧，它就一词双义了——读 `broker='qmf', market_broker='replay'` 时，
-你必须先知道「qmf 只有交易通道」才能推断出 `broker` 在这里指交易源，而参数名本身
+兼任缺失的那一侧，它就一词双义了——读 `broker='middleware', market_broker='replay'` 时，
+你必须先知道「middleware 只有交易通道」才能推断出 `broker` 在这里指交易源，而参数名本身
 没有表达这件事。两侧都写明则无需这层推断。
 
 要点：

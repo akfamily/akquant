@@ -34,7 +34,7 @@ class _FakeTrader:
 def _runner(**over: Any) -> LiveRunner:
     """Construct a bare LiveRunner, mirroring test_live_runner_broker_bridge.py."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "qmf"
+    runner.broker = "middleware"
     runner.on_broker_connected = None
     runner.broker_ready_timeout = 10.0
     runner.broker_ready_required = False
@@ -99,7 +99,7 @@ def test_broker_ready_defaults_are_fail_fast() -> None:
             f"{func.__qualname__}: broker_ready_required 默认应为 True"
         )
         assert params["broker_ready_timeout"].default >= 30.0, (
-            f"{func.__qualname__}: 超时应足够真实柜台登录(QMF 双会话 + WS 建连)"
+            f"{func.__qualname__}: 超时应足够真实柜台登录(多会话登录 + WS 建连)"
         )
 
 

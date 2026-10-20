@@ -112,8 +112,8 @@ run_live(
 ```
 
 两侧必须**同时写明**，只给一侧会报错——若让 `broker` 兼任缺失的那侧，它就一词双义
-了（读 `broker='qmf', market_broker='replay'` 得先知道「qmf 只有交易通道」才能推出
-`broker` 在此指交易源）。`broker` 只用于「单个 broker 供两侧」的场景，此时语义不变。
+了（读 `broker='middleware', market_broker='replay'` 得先知道「middleware 只有交易通道」
+才能推出 `broker` 在此指交易源）。`broker` 只用于「单个 broker 供两侧」的场景，此时语义不变。
 
 这个组合的价值在于：既能用确定性回放数据驱动策略，又能把订单真正发往柜台仿真
 环境做联调。

@@ -69,7 +69,7 @@ def main() -> None:
     ]
 
     # broker="replay": 内置的确定性回放行情源, 无需柜台与可选依赖即可跑通
-    # 实盘数据通路。真实交易请换成 ctp / qmf / middleware 等 broker。
+    # 实盘数据通路。真实交易请换成 ctp / middleware 等 broker。
     bars = [
         Bar(
             timestamp=int(pd.Timestamp(text, tz="Asia/Shanghai").value),

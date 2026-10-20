@@ -1,6 +1,6 @@
 """trader-only broker 无行情时的启动告警.
 
-``broker='middleware'``/``'qmf'`` 这类只有交易通道的 broker 会让
+``broker='middleware'`` 这类只有交易通道的 broker 会让
 ``bundle.market_gateway is None``: ``on_bar``/``on_tick`` 永不触发,
 ``current_tick`` 恒为 ``None``。这是**预期行为**(``run_live`` docstring 已写明),
 但此前启动阶段完全静默, 用户只看到"策略没反应"而无从判断是配置问题还是没行情。

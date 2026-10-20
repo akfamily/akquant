@@ -177,8 +177,8 @@ run_live(
 ```
 
 **只给一侧会报错**，要求把另一侧也写明。这是刻意的：若让 `broker` 兼任缺失的那侧，
-它就一词双义了——读 `broker='qmf', market_broker='replay'` 得先知道「qmf 只有交易
-通道」才能推出 `broker` 在此指交易源。两侧都写明就没有这层推断。
+它就一词双义了——读 `broker='middleware', market_broker='replay'` 得先知道
+「middleware 只有交易通道」才能推出 `broker` 在此指交易源。两侧都写明就没有这层推断。
 
 几个要点：
 

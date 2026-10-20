@@ -521,7 +521,8 @@ class Strategy:
         # 包装类的构造参数是依赖注入(回调/预算数据), 不是"可调策略参数", 迁移文案
         # 对它们不适用; 用户模块(examples/tests 等)不受此豁免影响。
         # 用等值/带点前缀判断而非裸 startswith("akquant"): 避免把 akquant_middleware、
-        # akquant_qmf 等名字前缀相似但并非 akquant 包本身的第三方/插件模块一并豁免。
+        # akquant_klinedata 等名字前缀相似但并非 akquant 包本身的第三方/插件模块
+        # 一并豁免。
         module_name = str(cls.__module__)
         is_akquant_internal = module_name == "akquant" or module_name.startswith(
             "akquant."
@@ -1809,7 +1810,7 @@ class Strategy:
 
         实盘: 由 ``run_live`` 装上转发器后, 调用会把 ``instruments`` 与各 slot
         订阅的并集下发到行情网关(网关的 subscribe 是整集替换语义)。若该 broker
-        没有行情网关(如 ``broker='qmf'`` 的 ``market_gateway=None``), 则无处可
+        没有行情网关(如 ``broker='middleware'`` 的 ``market_gateway=None``), 则无处可
         下发, 退回记录一条 warning。实盘不做白名单校验。
 
         :param instrument_id: The instrument identifier (e.g., '600000').
