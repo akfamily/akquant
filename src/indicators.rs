@@ -19,8 +19,8 @@ pub use trend::{
     LINEARREG_INTERCEPT, LINEARREG_R2, LINEARREG_SLOPE, MINUS_DI, PLUS_DI, SAR, STOCH, TSF, ULTOSC,
 };
 pub use volatility::{
-    ATR, AVGPRICE, BollingerBands, MEDPRICE, MIDPRICE, NATR, STDDEV, TRANGE, TYPPRICE, VAR,
-    WCLPRICE,
+    ATR, AVGPRICE, BollingerBands, HeikinAshi, MEDPRICE, MIDPRICE, NATR, STDDEV, TRANGE, TYPPRICE,
+    VAR, WCLPRICE,
 };
 pub use volume::{AD, ADOSC, BOP, MFI, OBV};
 
@@ -138,6 +138,7 @@ pub fn clone_indicator(py: Python<'_>, indicator: &Bound<'_, PyAny>) -> PyResult
         ATR,
         AVGPRICE,
         BollingerBands,
+        HeikinAshi,
         MEDPRICE,
         MIDPRICE,
         NATR,

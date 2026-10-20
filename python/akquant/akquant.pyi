@@ -208,6 +208,40 @@ class TRANGE:
         """
         ...
 
+class HeikinAshi:
+    r"""平均 K 线 (Heikin-Ashi) 指标, 输出平滑后的 (open, high, low, close).
+
+    ha_close = (O+H+L+C)/4; ha_open 第一根取 (O+C)/2, 之后取前一根
+    (ha_open+ha_close)/2; ha_high = max(H, ha_open, ha_close);
+    ha_low = min(L, ha_open, ha_close)。第一根即有值。
+    """
+
+    value: typing.Optional[tuple[float, float, float, float]]
+    def __new__(cls) -> "HeikinAshi": ...
+    def update(
+        self, open: float, high: float, low: float, close: float
+    ) -> typing.Optional[tuple[float, float, float, float]]:
+        r"""
+        更新指标值.
+
+        :return: (ha_open, ha_high, ha_low, ha_close)
+        """
+        ...
+    def update_many_ohlc(
+        self,
+        opens: typing.Sequence[float],
+        highs: typing.Sequence[float],
+        lows: typing.Sequence[float],
+        closes: typing.Sequence[float],
+    ) -> tuple[
+        numpy.typing.NDArray[numpy.float64],
+        numpy.typing.NDArray[numpy.float64],
+        numpy.typing.NDArray[numpy.float64],
+        numpy.typing.NDArray[numpy.float64],
+    ]:
+        r"""批量更新, 返回四个与输入等长的数组."""
+        ...
+
 class MEDPRICE:
     r"""中位价指标 (MEDPRICE)."""
 
