@@ -192,6 +192,45 @@ self.macd.dif[0]    # 单个分量，同样支持 [1] 回溯
 
 `outputs` 个数与指标实际分量数不符时会直接报错，不会静默错位。
 
+### K 线形态指标：`render_type="candle"`
+
+平均 K 线（Heikin-Ashi）这类指标一次产出一整根 K 线。对应 Pine 的 `plotcandle`，
+AKQuant 的写法是四个分量的 `outputs` 加上 `render_type="candle"`：
+
+```python
+class HA(aq.Indicator, title="平均K线", overlay=True, replaces_price=True):
+    def on_start(self):
+        self.ha = self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc",
+                         outputs=("open", "high", "low", "close"),
+                         render_type="candle", label="Heikin-Ashi")
+```
+
+- 契约不变：四个分量仍然各自上报单值点，`indicator_key` 为 `ha.open` / `ha.high` /
+  `ha.low` / `ha.close`。定义行和流消息多了 `group`（组名，即 `self.I` 的 `name`）与
+  `role`（`open`/`high`/`low`/`close`），非 candle 指标这两个字段为空串。
+- 校验：`outputs` 必须恰好是这四个名字（顺序不限），否则声明时报 `ValueError`；四个分量
+  共用 `pane`、`color`、`label`。`record_indicator` 不能直接写 `render_type="candle"`。
+- `aq.HeikinAshi()` 是内置 Rust 指标：`update(open, high, low, close)` 返回
+  `(ha_open, ha_high, ha_low, ha_close)`，第一根就有值。
+- 类定义行的 `replaces_price=True` 只是给前端的提示（“这个指标替代价格 K 线”），只能写在
+  `aq.Indicator` 上且必须同时 `overlay=True`；隐藏原 K 线由前端决定，框架不处理。
+  `X.resolve_replaces_price()` 与 `aq.inspect_strategy` 的 `replaces_price` 字段可读出它。
+
+各出口的画法：
+
+| 出口 | 画法 |
+| :--- | :--- |
+| LWC 复盘（`result.viz.review`、`to_lwc_indicator_series`） | 每个 `(owner, group)` 一条 Candlestick，点位为 `{time, open, high, low, close}` |
+| plotly（`plot_indicators`、报告指标区块） | 每组一个 `go.Candlestick` |
+| d3Kline（`to_d3kline_options`） | **降级**：d3Kline 没有 K 线型指标，只输出 close 分量的一条 line，`name` 为组的 series 键，并带 `render_type="candle"` 标明降级 |
+| `to_raw_panes` | 四个分量各占一个条目，带 `group` / `role` / `group_series_key`，可自行拼回 OHLC |
+| 实时流 / `to_lwc_update` | 每个分量一条点，带 `group` / `role`；按 `(owner_strategy_id, group, symbol, timestamp)` 收齐四个分量即得一根 K 线 |
+
+LWC 与 plotly 给 candle 指标配色时**不用**主题的涨跌色（否则与价格 K 线分不清）：只用一种颜色（`color`，未写时取指标色板），上涨为实心、下跌为空心（TradingView 空心 K 线的惯例）。某个时刻缺任一分量时，LWC 与 plotly 跳过该时刻，不会报错。组的 series 键见下文
+「指标身份与 series 键」。
+
+可运行示例：[77_heikin_ashi_indicator.py](https://github.com/akfamily/akquant/blob/main/examples/77_heikin_ashi_indicator.py)。
+
 ## 路径二：预计算指标
 
 当你的指标更适合一次性对完整 `DataFrame` 计算时，传一个 `PrecomputedIndicator(name, fn)`
@@ -334,6 +373,7 @@ TradingView 里 `indicator()` 脚本与 `strategy()` 脚本是两类东西，一
 | `title` | 显示名，只用于展示 | 类名 |
 | `overlay` | `True` 画主图（叠在 K 线上），`False` 画本脚本的附图 | `False`（附图） |
 | `id` | 机器标识，即指标点的 `owner_strategy_id` / slot key | 类名 snake_case |
+| `replaces_price` | `True` 表示本脚本替代价格 K 线（如平均 K 线），只是给前端的提示；必须同时 `overlay=True` | `False` |
 
 ```python
 import akquant as aq
@@ -424,6 +464,7 @@ report.to_dict()
 - **`kind="unknown"`**：基类来自其他文件、无法在本文件内追到 `Indicator` / `Strategy`。
 - **`akquant` 与 `qmfquant` 的导入都识别**：`import akquant as aq`、`from akquant import Indicator`
   （含 `as` 别名），以及平台重新打包的 `qmfquant` 同名写法。
+- 类上另有 `replaces_price`：策略为 `None`，指标默认 `False`，值无法静态确定时为 `None` 并记入 `dynamic`。
 - `pane` / `plot` 的解析规则与运行时完全一致（见上文“自动绘图”的规则表），两边共用同一个函数。
 
 ## `warmup_bars` 怎么用
@@ -546,7 +587,7 @@ class IndicatorExportStrategy(Strategy):
     在主图（`pane=0`）上渲染标记。
 
 !!! note "关于 `render_type` 取值"
-    `render_type` 是一个**封闭枚举**，共 7 个值，消费者可据此穷举渲染分支：
+    `render_type` 是一个**封闭枚举**，共 8 个值，消费者可据此穷举渲染分支：
 
     | 值 | 渲染 |
     | :--- | :--- |
@@ -557,6 +598,7 @@ class IndicatorExportStrategy(Strategy):
     | `histogram` | `bar` 的别名（语义化：分布柱） |
     | `scatter` | 离散点标记 |
     | `signal` | 交易信号标记，渲染在主图 |
+    | `candle` | K 线（四个分量作一组，只能经 `self.I(outputs=...)` 声明，见上文） |
 
     传入枚举以外的值会直接抛 `ValueError`（fail-fast），不会静默退化成折线。
 
@@ -639,8 +681,8 @@ fig = result.viz.indicators(
 `result.viz.review()` 会把 `self.I()` / `record_indicator` 上报的指标**默认一并画出**
 （`include_indicators=True`）：`pane=0` 叠在主图 K 线上，`pane=k≥1` 落到成交量之下的
 第 `k+1` 个副图；`reference_lines` 成为虚线参考线；未指定 `color` 时按主题色板轮转。
-`render_type` 的 7 个值全部有对应：`line`/`area`/`bar`/`column`/`histogram`/`scatter`
-各画各的，`signal` 走 K 线上的标记而不建独立序列。
+`render_type` 的 8 个值全部有对应：`line`/`area`/`bar`/`column`/`histogram`/`scatter`
+各画各的，`signal` 走 K 线上的标记而不建独立序列，`candle` 的四个分量合成一条 Candlestick。
 
 ```python
 result.viz.review(market_data, filename="review.html")            # 带指标
@@ -938,6 +980,15 @@ Python 侧按纳秒解析，后者可被前端图表库直接使用，无需再�
 等于 `indicator_key`）时随之变为 series 键；写了 label 时保持原样。LWC、d3Kline、plotly
 三个出口统一经由 `akquant.indicator_identity.series_keys()` 取键，自建前端也应复用它。
 
+candle 组在图上是一条 series，它的键由 `akquant.indicator_identity.chart_series_keys()`
+计算：candle 组以 `(owner, group)`、普通线以 `(owner, indicator_key)` 进入**同一个**命名
+空间。两个指标脚本都有 `ha` 组，或者一个脚本的 `ha` 组遇上另一个 owner 的普通线 `ha`，
+双方都变成 `"{owner}:ha"`。图上出口（LWC、d3Kline、`to_raw_panes`、plotly）都用它；
+实时流里分量的 `series_key` 仍按分量键（如 `ha.open`，冲突时 `ha_two:ha.open`）计算，
+流消费者按 `(owner_strategy_id, group, symbol, timestamp)` 拼 K 线，不依赖组的键。
+同一 owner 既有普通线 `ha`（例如直接 `record_indicator("ha")`）又有 candle 组 `ha` 时，
+组保持 `ha`，普通线在图上改为 `ha:line`，并告警一次。
+
 实时流（`on_event` 的 point / snapshot 消息、`to_lwc_update()`）同样带 `series_key`，
 规则与上面相同，由同一个函数算出。流在发出每条消息时就要给出名字，而这时还没有完整的
 定义表，所以录制器（回测的 `IndicatorRecorder`、实盘的 `StreamingIndicatorSink`）维护
@@ -993,8 +1044,9 @@ panes = to_raw_panes(defs, points_by_identity)  # 保留 akquant 原生语义，
 - **主图（pane 0）不带 `style.height`**，避免挤压 K 线区；副图给默认 100。
 - **无颜色时省略整个 `style` 字段**，而不是传 `{"color": null}`——前端的合并写法是
   `{color: 默认色, ...old, ...s.style}`，`null` 会覆盖掉默认色导致指标无色。
-- `render_type` 的七个值降级到 d3Kline 仅有的 `line | bar`；发生降级时附带原值
-  `render_type`，前端将来支持 area/scatter 时可无损升级。
+- `render_type` 的八个值降级到 d3Kline 仅有的 `line | bar`；发生降级时附带原值
+  `render_type`，前端将来支持 area/scatter 时可无损升级。`candle` 组只输出 close 分量的
+  一条 line，`name` 为组的 series 键。
 - series 的 `name` 用 series 键（前端以 name 做合并身份，必须唯一）：同名键只属于一个
   owner 时就是 `indicator_key`，跨 owner 冲突时为 `"{owner}:{key}"`；中文展示名放在
   `label`。点位按 `(owner_strategy_id, indicator_key)` 查找，`to_raw_panes()` 的每个指标

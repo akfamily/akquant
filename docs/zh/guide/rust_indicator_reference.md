@@ -1,4 +1,4 @@
-# AKQuant 指标全量说明（103 个）
+# AKQuant 指标全量说明（104 个）
 
 本页是 `akquant.talib` 的完整指标说明，面向“查指标含义 + 判断输入输出 + 了解 warmup 预期”三个核心需求。AKQuant 的底层高性能计算由 Rust 实现，对外保持统一易用的 Python 接口。
 
@@ -9,7 +9,8 @@
 - 如需全局覆盖 `auto` 行为，可设置环境变量 `AKQUANT_TALIB_AUTO_BACKEND=python|rust`。
 - 单输出指标返回单序列；多输出指标返回 tuple。
 - 绝大多数窗口类指标在 warmup 区段会返回 `NaN` 或空位，这属于正常行为。
-- 本页统计口径来自 AKQuant 当前指标注册表，当前总计 **103 个指标**。
+- 本页统计口径来自 AKQuant 当前指标注册表，当前总计 **104 个指标**。
+- `HeikinAshi`（平均 K 线）只提供增量指标类 `aq.HeikinAshi()`，没有 `akquant.talib` 批量函数；配合 `self.I(..., outputs=("open","high","low","close"), render_type="candle")` 画成 K 线，见[自定义指标](./custom_indicator.md)。
 
 ## 全量索引总表（单表）
 
@@ -105,6 +106,7 @@
 | Volatility | ATR | `high,low,close` | 单序列 |
 | Volatility | AVGPRICE | `open,high,low,close` | 单序列 |
 | Volatility | BollingerBands | `close` | 三序列 |
+| Volatility | HeikinAshi | `open,high,low,close` | 四序列 |
 | Volatility | MEDPRICE | `high,low` | 单序列 |
 | Volatility | MIDPRICE | `high,low` | 单序列 |
 | Volatility | NATR | `high,low,close` | 单序列 |
@@ -249,7 +251,7 @@
 | BETA | Beta（协方差/方差） | `x,y` | 单序列 | `period` |
 | COVAR | 协方差 | `x,y` | 单序列 | `period` |
 
-## 4) Volatility（11）
+## 4) Volatility（12）
 
 | 指标 | 解释 | 常见输入 | 输出 | warmup 参考 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -263,6 +265,7 @@
 | TYPPRICE | 典型价 `(h+l+c)/3` | `high,low,close` | 单序列 | 无明显 warmup |
 | WCLPRICE | 加权收盘价 | `high,low,close` | 单序列 | 无明显 warmup |
 | AVGPRICE | 平均价 `(o+h+l+c)/4` | `open,high,low,close` | 单序列 | 无明显 warmup |
+| HeikinAshi | 平均 K 线 `(ha_open,ha_high,ha_low,ha_close)`；仅增量类 `aq.HeikinAshi()` | `open,high,low,close` | 四序列 | 无（第一根即有值） |
 | MIDPRICE | 区间中价 `(maxH+minL)/2` | `high,low` | 单序列 | `period` |
 
 ## 5) Volume（5）
@@ -292,6 +295,7 @@
 - `BollingerBands -> (upper, middle, lower)`
 - `STOCH -> (slowk, slowd)`
 - `AROON -> (aroondown, aroonup)`
+- `HeikinAshi.update(o, h, l, c) -> (ha_open, ha_high, ha_low, ha_close)`
 
 ## 相关资料
 

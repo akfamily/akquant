@@ -33,6 +33,7 @@ from .akquant import (
     Tick,
     TimeInForce,
 )
+from .chart import CANDLE_ROLES
 from .gateway.order_receipt import OrderReceipt
 from .indicator_declaration import (
     DEFAULT_LOOKBACK,
@@ -489,6 +490,11 @@ class Strategy:
             raise TypeError(
                 f"{cls.__name__}: overlay= 只适用于 aq.Indicator 指标脚本, "
                 "策略里的指标位置用 self.I(pane=) 指定"
+            )
+        if "replaces_price" in kwargs:
+            raise TypeError(
+                f"{cls.__name__}: replaces_price= 只适用于 aq.Indicator 指标脚本"
+                "(且须同时写 overlay=True)"
             )
         super().__init_subclass__(**kwargs)
         cls._aq_title = _validate_script_label("title", title, cls.__name__)
@@ -1692,11 +1698,26 @@ class Strategy:
                     f"I(freq={freq!r}) 未订阅该周期, "
                     f"请先在 __init__ 里 subscribe_bars({freq_label!r})"
                 )
+        # 只归一一次: outputs 可能是生成器, 多次遍历会读到空
+        outs: Optional[Tuple[str, ...]] = (
+            None if outputs is None else tuple(str(o) for o in outputs)
+        )
+        candle = str(render_type or "").strip().lower() == "candle"
+        if candle and (
+            outs is None
+            or len(outs) != len(CANDLE_ROLES)
+            or set(outs) != set(CANDLE_ROLES)
+        ):
+            raise ValueError(
+                f"I(render_type='candle') 要求 outputs 恰好是 "
+                f"{CANDLE_ROLES!r} 这四个(顺序不限), 收到 outputs={outs!r}"
+            )
         indicator_name = self._resolve_indicator_name(name, indicator, factory)
         # warm start 恢复: 声明照旧执行(on_start 会重跑), 但不能覆盖已恢复的
         # 指标状态, 否则预热白做。
         if self.is_restored and indicator_name in self._incremental_indicators:
             return IndicatorBinding(self, indicator_name)
+        self._check_candle_key_collision(indicator_name, outs, candle)
         if indicator is not None and factory is not None:
             raise ValueError("indicator and factory cannot both be provided")
         if indicator is None and factory is None:
@@ -1758,10 +1779,14 @@ class Strategy:
             lookback=int(lookback),
             precomputed=is_precomputed,
             intrabar=bool(intrabar),
-            outputs=None if outputs is None else tuple(str(o) for o in outputs),
+            outputs=outs,
             plot=resolved_plot,
             pane=resolved_pane,
-            render_type="line" if render_type is None else str(render_type),
+            render_type=(
+                "candle"
+                if candle
+                else ("line" if render_type is None else str(render_type))
+            ),
             color=color,
             label=label,
             unit=unit,
@@ -1775,6 +1800,35 @@ class Strategy:
             # 就知道同名冲突; 挂载前(__init__)的声明由挂载点补登。
             declare_plotted_indicators(self, recorder, [indicator_name])
         return IndicatorBinding(self, indicator_name)
+
+    def _check_candle_key_collision(
+        self, name: str, outs: Optional[Tuple[str, ...]], candle: bool
+    ) -> None:
+        """同一 owner 内, candle 分量键不能与其他声明的上报键重名(先后顺序都查).
+
+        否则 ``ha.open`` 这条普通线和 candle 组 ``ha`` 的 open 分量会落到同一个
+        ``(owner, indicator_key)`` 定义上, 前端拼 K 线时混进别的指标的点。
+
+        :raises ValueError: 重名
+        """
+        if outs:
+            new_keys = {f"{name}.{out}" for out in outs}
+        else:
+            new_keys = {name}
+        for other_name, other in self._incremental_indicators.items():
+            if other_name == name:
+                continue  # 同名重声明是覆盖, 不是撞键
+            other_candle = other.render_type == "candle"
+            if not (candle or other_candle):
+                continue
+            other_keys = {entry.key for entry in other.report_entries(other_name, None)}
+            clash = sorted(new_keys & other_keys)
+            if clash:
+                group = name if candle else other_name
+                raise ValueError(
+                    f"I(name={name!r}) 的上报键 {clash!r} 与本策略 candle 指标 "
+                    f"{group!r} 的分量键重名; 请换一个 name"
+                )
 
     def _resolve_indicator_name(
         self, name: Optional[str], indicator: Any, factory: Optional[Callable[[], Any]]
@@ -2126,14 +2180,16 @@ class Strategy:
         ``record_indicator`` 与这里的自动上报落在同一个
         ``flush_stream_snapshot`` 周期内, 时间戳一致, 前端收到的是完整快照。
         """
-        for key, display_name, item in declaration.report_items(name, value):
-            if not is_reportable_value(item):
+        for entry in declaration.report_entries(name, value):
+            if not is_reportable_value(entry.value):
                 continue
-            self.record_indicator(
-                key,
-                item,
+            self._record_indicator_point(
+                entry.key,
+                entry.value,
                 symbol=symbol,
-                display_name=display_name,
+                group=entry.group,
+                role=entry.role,
+                display_name=entry.display_name,
                 pane=declaration.pane,
                 render_type=declaration.render_type,
                 unit=declaration.unit,
@@ -2709,10 +2765,81 @@ class Strategy:
             DataFrame / export, 前端按同
             ``(owner_strategy_id, indicator_key, symbol, timestamp)`` 用后来的
             确认点覆盖。
+        :raises ValueError: ``render_type="candle"`` —— K 线形态的四个分量必须
+            成组, 只能经 ``self.I(outputs=("open","high","low","close"),
+            render_type="candle")`` 声明
+        """
+        if str(render_type or "").strip().lower() == "candle":
+            raise ValueError(
+                "record_indicator 不支持 render_type='candle': K 线形态指标请用 "
+                'self.I(ind, outputs=("open", "high", "low", "close"), '
+                'render_type="candle") 声明, 四个分量会自动成组上报'
+            )
+        self._record_indicator_point(
+            name,
+            value,
+            symbol,
+            timestamp=timestamp,
+            display_name=display_name,
+            pane=pane,
+            render_type=render_type,
+            unit=unit,
+            precision=precision,
+            color=color,
+            meta=meta,
+            reference_lines=reference_lines,
+            scale_group=scale_group,
+            warmup=warmup,
+            confirmed=confirmed,
+        )
+
+    def _record_indicator_point(
+        self,
+        name: str,
+        value: Any,
+        symbol: Optional[str] = None,
+        *,
+        timestamp: Optional[Any] = None,
+        display_name: Optional[str] = None,
+        pane: int = 0,
+        render_type: str = "line",
+        unit: Optional[str] = None,
+        precision: Optional[int] = None,
+        color: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
+        reference_lines: Optional[list[Dict[str, Any]]] = None,
+        scale_group: Optional[str] = None,
+        warmup: bool = False,
+        confirmed: bool = True,
+        group: str = "",
+        role: str = "",
+    ) -> None:
+        """``record_indicator`` 的实现, 另收 candle 分量的 ``group``/``role``.
+
+        ``self.I`` 的自动上报直接走这里(candle 只能由它产生)。sink 不接受
+        ``group``/``role``(1.5 版协议)时不传这两个字段, 并把 candle 降级为
+        ``line``: 缺了组名的分量拼不成 K 线, 四条独立的线是最接近的可用表达。
         """
         recorder = getattr(self, "_indicator_recorder", None)
         if recorder is None:
             return
+        group_role: Dict[str, str] = {}
+        if self._sink_accepts(recorder, "group") and self._sink_accepts(
+            recorder, "role"
+        ):
+            group_role = {"group": group, "role": role}
+        elif str(render_type).strip().lower() == "candle":
+            render_type = "line"
+            # 四个分量共用 label, 降级成四条线后要靠分量键区分
+            display_name = name
+            if not getattr(self, "_warned_sink_no_group_role", False):
+                self._warned_sink_no_group_role = True
+                _live_subscribe_logger.warning(
+                    "IndicatorSink %s 的 record() 不接受 group=/role= 参数"
+                    "(1.5 版协议), render_type='candle' 的分量将以 line 送达该 "
+                    "sink; 请给 record 加上 group/role 参数或 **kwargs",
+                    type(recorder).__name__,
+                )
         accepts_confirmed = self._sink_accepts(recorder, "confirmed")
         if not confirmed and not accepts_confirmed:
             # 旧协议 sink 分不清临时点与确认点, 给它临时点只会在图上留下永不被
@@ -2759,12 +2886,14 @@ class Strategy:
                 if self._sink_accepts(recorder, "phase")
                 else {}
             ),
+            **group_role,
         )
 
     def _sink_accepts(self, recorder: Any, keyword: str) -> bool:
         """sink.record 是否接受某个关键字(显式参数或 **kwargs); 按 sink 缓存.
 
-        ``IndicatorSink`` 协议在 1.3 版加了 ``confirmed``、1.4 版加了 ``phase``,
+        ``IndicatorSink`` 协议在 1.3 版加了 ``confirmed``、1.4 版加了 ``phase``、
+        1.6 版加了 ``group``/``role``,
         但按旧协议签名实现的第三方 sink 仍然合法, 不能因为一个新增关键字让它们
         首次记录就 TypeError。
         """

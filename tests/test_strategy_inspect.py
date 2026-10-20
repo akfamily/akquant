@@ -197,6 +197,7 @@ def test_to_dict_is_json_serializable() -> None:
         "indicators",
         "has_dynamic",
         "dynamic",
+        "replaces_price",
     }
 
 
@@ -397,3 +398,39 @@ def test_title_id_strip_and_overlay_none() -> None:
     c = _cls(aq.inspect_strategy(src), "C")
     assert (c.title, c.id, c.overlay) == ("趋势", None, True)
     assert c.dynamic == ["id"]
+
+
+REPLACES_PRICE_CASES = [
+    # (类定义, 运行时是否合法)
+    ("class K(aq.Indicator, overlay=True, replaces_price=True):\n    pass\n", True),
+    ("class K(aq.Indicator, overlay=True):\n    pass\n", True),
+    (
+        "class P(aq.Indicator, overlay=True, replaces_price=True):\n    pass\n"
+        "class K(P):\n    pass\n",
+        True,
+    ),
+    ("class K(aq.Indicator, replaces_price=True):\n    pass\n", False),
+    (
+        "class P(aq.Indicator, overlay=True, replaces_price=True):\n    pass\n"
+        "class K(P, overlay=False):\n    pass\n",
+        False,
+    ),
+    ("class K(aq.Strategy, replaces_price=True):\n    pass\n", False),
+]
+
+
+@pytest.mark.parametrize("body,valid", REPLACES_PRICE_CASES)
+def test_static_replaces_price_matches_runtime(body: str, valid: bool) -> None:
+    """replaces_price: 合法组合静态 == 运行时; 非法组合运行时报错、静态记为动态."""
+    src = "import akquant as aq\n" + body
+    static = _cls(aq.inspect_strategy(src), "K")
+    namespace: dict[str, Any] = {}
+    if valid:
+        exec(compile(src, "<case>", "exec"), namespace)  # 测试里执行可信源码
+        assert static.replaces_price == namespace["K"].resolve_replaces_price()
+        assert "replaces_price" not in static.dynamic
+    else:
+        with pytest.raises((TypeError, ValueError), match="replaces_price"):
+            exec(compile(src, "<case>", "exec"), namespace)
+        assert static.replaces_price is None
+        assert "replaces_price" in static.dynamic

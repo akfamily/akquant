@@ -2,15 +2,16 @@ import json
 from typing import Any, Callable, Dict, Optional, Protocol, Tuple, runtime_checkable
 
 from .chart import (
-    normalize_meta_json as _normalize_meta_json,
-)
-from .chart import (
+    normalize_group_role,
     normalize_pane_index,
     normalize_reference_lines,
     normalize_render_type,
     normalize_scale_group,
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
+)
+from .chart import (
+    normalize_meta_json as _normalize_meta_json,
 )
 from .indicator_identity import DEFAULT_OWNER, identity_of, resolve_series_key
 
@@ -56,6 +57,8 @@ class IndicatorSink(Protocol):
         warmup: bool = ...,
         confirmed: bool = ...,
         phase: str = ...,
+        group: str = ...,
+        role: str = ...,
     ) -> None:
         """Record one indicator point.
 
@@ -63,6 +66,15 @@ class IndicatorSink(Protocol):
         ``run_live(preload_history=)`` and ``"run"`` otherwise (1.4). Sinks
         written against the 1.3 protocol may omit it; the framework detects
         that and simply does not pass it.
+
+        ``group``/``role`` (1.6) identify one OHLC component of a
+        ``render_type="candle"`` declaration: ``group`` is the ``Strategy.I``
+        name and ``role`` is ``open``/``high``/``low``/``close``; both are
+        ``""`` for every other render type. Sinks written against the 1.5
+        protocol may omit them; the framework then does not pass them and
+        downgrades the candle components to ``render_type="line"`` for that
+        sink (four separate lines), since a candle point without its group
+        cannot be assembled into a bar.
         """
         ...
 
@@ -264,6 +276,8 @@ class IndicatorRecorder:
         warmup: bool = False,
         confirmed: bool = True,
         phase: str = "run",
+        group: str = "",
+        role: str = "",
     ) -> None:
         """Record one indicator definition, instance, and point update.
 
@@ -278,6 +292,7 @@ class IndicatorRecorder:
         strategy_id = _normalize_text(owner_strategy_id, default="_default")
         pane_index = normalize_pane_index(pane)
         render_type_text = normalize_render_type(render_type)
+        group_text, role_text = normalize_group_role(render_type_text, group, role)
         display_name_text = _normalize_text(display_name, default=indicator_key)
         unit_text = _normalize_text(unit)
         color_text = _normalize_text(color)
@@ -307,6 +322,8 @@ class IndicatorRecorder:
                 "color": color_text,
                 "reference_lines": reference_lines_norm,
                 "scale_group": scale_group_norm,
+                "group": group_text,
+                "role": role_text,
             }
         else:
             if not definition.get("display_name"):
@@ -325,6 +342,9 @@ class IndicatorRecorder:
                 definition["reference_lines"] = reference_lines_norm
             if not definition.get("scale_group") and scale_group_norm:
                 definition["scale_group"] = scale_group_norm
+            if not definition.get("group") and group_text:
+                definition["group"] = group_text
+                definition["role"] = role_text
 
         instance_key = (strategy_id, symbol_text, indicator_key, meta_json)
         instance = self._instances.get(instance_key)
@@ -374,6 +394,8 @@ class IndicatorRecorder:
                     "confirmed": str(bool(confirmed)).lower(),
                     "phase": phase_text,
                     "scale_group": scale_group_norm,
+                    "group": group_text,
+                    "role": role_text,
                     "meta_json": meta_json,
                 },
             )
@@ -389,6 +411,8 @@ class IndicatorRecorder:
                     "warmup": bool(warmup),
                     "confirmed": bool(confirmed),
                     "phase": phase_text,
+                    "group": group_text,
+                    "role": role_text,
                     "meta_json": meta_json,
                 }
             )

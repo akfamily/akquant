@@ -304,6 +304,9 @@ def test_single_owner_payload_only_adds_series_key(kind: str) -> None:
         "confirmed": "true",
         "phase": "run",
         "scale_group": "",
+        # 1.6 新增; 非 candle 为空串
+        "group": "",
+        "role": "",
         "meta_json": "",
     }
     item = json.loads(payloads[1]["items_json"])[0]
@@ -318,6 +321,8 @@ def test_single_owner_payload_only_adds_series_key(kind: str) -> None:
         "warmup": False,
         "confirmed": True,
         "phase": "run",
+        "group": "",
+        "role": "",
         "meta_json": "",
     }
 
@@ -528,7 +533,7 @@ def test_point_message_passes_series_key_through() -> None:
     message = aq.to_indicator_message(_point_event(series_key="sub:ema"))
     assert message is not None
     assert message["indicator"]["series_key"] == "sub:ema"
-    assert message["schema_version"] == "1.5"
+    assert message["schema_version"] == aq.STREAM_SCHEMA_VERSION
 
 
 def test_to_lwc_update_carries_owner_and_series_key() -> None:
@@ -546,9 +551,10 @@ def test_to_lwc_update_carries_owner_and_series_key() -> None:
     assert legacy_update["series_key"] == "ema"
 
 
-def test_stream_schema_version_is_1_5() -> None:
-    """契约升到 1.5."""
-    assert aq.STREAM_SCHEMA_VERSION == "1.5"
+def test_stream_schema_version_at_least_1_5() -> None:
+    """契约至少是 1.5(1.6 起另加 group/role, 见 test_candle_render_type)."""
+    major, _, minor = aq.STREAM_SCHEMA_VERSION.partition(".")
+    assert (int(major), int(minor)) >= (1, 5), aq.STREAM_SCHEMA_VERSION
 
 
 # ------------------------------------------------------------- 实盘 + 预热

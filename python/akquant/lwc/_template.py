@@ -108,6 +108,7 @@ _APP_JS = """
     var p = palette[cur] || palette.light || ['#1976d2'];
     return ind.color || p[i % p.length];
   }
+  var CANDLE_HOLLOW = 'rgba(0,0,0,0)';
   function tcmp(a,b){return a.time<b.time?-1:(a.time>b.time?1:0);}
   function clearIndicators(){
     indSeries.forEach(function(x){ try{ chart.removeSeries(x.series); }catch(e){} });
@@ -115,6 +116,15 @@ _APP_JS = """
   }
   function indOptions(ind, i){
     var c = indColor(ind, i);
+    if(ind.series_type==='Candlestick'){
+      // candle 指标绝不用主题的涨跌色(否则与价格 K 线分不清): 单色 c,
+      // 涨为实心、跌为空心(TradingView hollow candles 惯例);
+      // 点位为 {time,open,high,low,close}
+      return {upColor:c, downColor:CANDLE_HOLLOW, borderUpColor:c,
+        borderDownColor:c, wickUpColor:c, wickDownColor:c,
+        priceLineVisible:false, lastValueVisible:true,
+        title: ind.display_name || ind.series_key || ind.indicator_key};
+    }
     var o = {color:c, lineWidth:2, priceLineVisible:false, lastValueVisible:true,
       title: ind.display_name || ind.series_key || ind.indicator_key};
     if(ind.series_type==='Area'){

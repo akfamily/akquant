@@ -11,14 +11,26 @@ AKQuant 的定位是"标准化指标数据的生产者"，本模块是它面向�
 输入刻意用 ``Mapping[str, Any]`` 而非 pydantic 模型：两个消费方一个传 sqlite
 Row 转的裸 dict、一个传 ``model_dump()``，最低公分母是 Mapping。缺失字段一律
 按 akquant 契约的默认值处理（``pane=0``、``render_type="line"``）。
+
+``render_type="candle"``：d3Kline 没有 K 线型指标系列，同一 ``(owner, group)``
+的四个分量**降级为只输出 close 分量的一条 line**，``name`` 为组的 series 键
+（:func:`akquant.indicator_identity.chart_series_keys`），并带
+``render_type="candle"`` 标明降级；``to_raw_panes`` 保留四个分量并带
+``group``/``role``，消费方可自行拼回 OHLC。
 """
 
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from ..indicator_identity import display_label, identity_of, series_keys
+from ..indicator_identity import (
+    candle_group_of,
+    chart_series_keys,
+    display_label,
+    group_display_label,
+    identity_of,
+)
 
-# akquant render_type（封闭 7 值）→ d3Kline IndicatorSeriesOption.type（仅 line/bar）
+# akquant render_type（封闭 8 值）→ d3Kline IndicatorSeriesOption.type（仅 line/bar）
 D3KLINE_SERIES_TYPE: dict[str, str] = {
     "line": "line",
     "area": "line",  # d3Kline 无面积图
@@ -27,6 +39,7 @@ D3KLINE_SERIES_TYPE: dict[str, str] = {
     "histogram": "bar",
     "scatter": "line",  # d3Kline 无散点
     "signal": "line",  # 标记类应走 trade-markers 通道，此处兜底
+    "candle": "line",  # d3Kline 无 K 线型指标：只画 close 分量
 }
 
 # 副图默认高度，对齐前端 indicatorMeta.ts 内置指标惯例（多数 100）
@@ -80,7 +93,7 @@ def to_d3kline_options(
     ``IndicatorManager`` 的 ``MAX_SUB_INDICATORS=3`` 静默丢弃。
 
     指标身份是 ``(owner_strategy_id, indicator_key)``；series ``name`` 用
-    :func:`akquant.indicator_identity.series_keys` 给出的 series 键（同名键被多个
+    :func:`akquant.indicator_identity.chart_series_keys` 给出的 series 键（同名键被多个
     owner 使用时为 ``"owner:key"``，否则就是 ``indicator_key``）。调用方需保证
     ``(owner, key)`` 唯一（存储层的 UNIQUE 约束负责）；本函数不去重，重复的身份
     会产出同名 series 而前端 ``_mergeIndicator`` 会按 name 合并掉其中一条。
@@ -95,21 +108,31 @@ def to_d3kline_options(
     """
     options: list[dict[str, Any]] = []
     defs = list(defs)
-    keys = series_keys(defs)
+    keys = chart_series_keys(defs)
     grouped = _group_by_pane(defs)
     for pane in sorted(grouped):
         is_main = pane == 0
         data_list: list[dict[str, Any]] = []
         for definition in grouped[pane]:
             identity = identity_of(definition)
-            series_key = keys[identity]
+            group = candle_group_of(definition)
+            if group:
+                # candle 降级：只留 close 分量，名字用组的 series 键
+                role = str(definition.get("role") or "").strip().lower()
+                if role != "close":
+                    continue
+                series_key = keys.groups[(identity[0], group)]
+                label = group_display_label(definition, series_key)
+            else:
+                series_key = keys.lines[identity]
+                label = display_label(definition, series_key)
             render_type = str(definition.get("render_type") or "line").strip().lower()
             series_type = D3KLINE_SERIES_TYPE.get(render_type, "line")
             series: dict[str, Any] = {
                 # series 身份用 series 键：前端 _mergeIndicator 以 name 做
                 # merge，必须唯一（同名键跨 owner 时已加 owner 前缀）
                 "name": series_key,
-                "label": display_label(definition, series_key),
+                "label": label,
                 "type": series_type,
                 "data": [
                     {"timestamp": point["timestamp_ms"], "value": point["value"]}
@@ -152,22 +175,38 @@ def to_raw_panes(
     ``indicator_key``），**不**经过 :func:`akquant.indicator_identity.display_label`
     处理；跨 owner 的同名键冲突由 ``series_key`` 区分，消费方需要唯一名称时用它。
 
+    每个条目带 ``group``/``role``（非 candle 为 ``""``）。candle 的四个分量各占一个
+    条目，``series_key`` 是分量口径（与实时流一致，如 ``ha.open``），另带
+    ``group_series_key``（组的 series 键，与 LWC / d3kline 的组名一致；非 candle
+    为 ``""``）；消费方按 ``(owner_strategy_id, group)`` 收齐四个分量、按
+    ``timestamp_ms`` 对齐即可拼回 OHLC。
+
     :param points_by_identity: 同 :func:`to_d3kline_options`。
     """
     panes: list[dict[str, Any]] = []
     defs = list(defs)
-    keys = series_keys(defs)
+    keys = chart_series_keys(defs)
     grouped = _group_by_pane(defs)
     for pane in sorted(grouped):
         indicators: list[dict[str, Any]] = []
         for definition in grouped[pane]:
             identity = identity_of(definition)
             owner, key = identity
+            group = candle_group_of(definition)
             indicators.append(
                 {
                     "owner_strategy_id": owner,
                     "indicator_key": key,
-                    "series_key": keys[identity],
+                    "series_key": (
+                        keys.components[identity] if group else keys.lines[identity]
+                    ),
+                    "group": group,
+                    "role": (
+                        str(definition.get("role") or "").strip().lower()
+                        if group
+                        else ""
+                    ),
+                    "group_series_key": keys.groups[(owner, group)] if group else "",
                     "display_name": definition.get("display_name") or key,
                     "render_type": definition.get("render_type") or "line",
                     "color": definition.get("color"),

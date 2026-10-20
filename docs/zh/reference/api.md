@@ -1093,6 +1093,7 @@ class DualMA(aq.Indicator, title="双均线", overlay=True, id="dual_ma"):
 *   `title`: 显示名，只用于展示，省略为类名。
 *   `overlay`: `True` 画主图，`False`（默认）画附图。`self.I` 默认画图：`overlay=True` 时默认 `pane=0`，否则默认 `pane=1`（pane 编号只在本脚本内有效）；`plot=False` 关闭。
 *   `id`: 机器标识（即指标点的 `owner_strategy_id`），省略为类名 snake_case。
+*   `replaces_price`: `True` 表示本脚本替代价格 K 线（如平均 K 线），只是给前端的提示，隐藏原 K 线由前端决定；必须同时写 `overlay=True`（否则 `ValueError`），值须为 `bool`（否则 `TypeError`），可被子类继承，默认 `False`。`X.resolve_replaces_price()` 返回生效值。`aq.Strategy` 上写报 `TypeError`。
 *   全部交易 API（`buy` / `sell` / `submit_order` / `place_*` / `order_target*` / `rebalance_*` / `close_position` / `cancel_*`）抛 `akquant.IndicatorCannotTradeError`。
 *   详见[自定义指标指南](../guide/custom_indicator.md)。
 
@@ -1100,13 +1101,26 @@ class DualMA(aq.Indicator, title="双均线", overlay=True, id="dual_ma"):
 
 向量化预计算指标：`PrecomputedIndicator(name, fn)`，`fn(df) -> pd.Series` 对单个标的的完整 `DataFrame` 一次性计算，经 `self.I(PrecomputedIndicator(...))` 声明。只用于回测；不支持含 Tick 的输入、`freq=` 与 `warmup_bars=`。
 
+### `akquant.HeikinAshi`
+
+内置 Rust 增量指标：平均 K 线（Heikin-Ashi）。
+
+```python
+ha = aq.HeikinAshi()
+ha.update(open, high, low, close)  # -> (ha_open, ha_high, ha_low, ha_close)，第一根即有值
+```
+
+*   公式：`ha_close = (O+H+L+C)/4`；`ha_open` 第一根取 `(O+C)/2`，之后取前一根 `(ha_open+ha_close)/2`；`ha_high = max(H, ha_open, ha_close)`；`ha_low = min(L, ha_open, ha_close)`。
+*   另有 `value` 属性与批量方法 `update_many_ohlc`；支持 `clone_indicator` 与 `intrabar=True`。没有 `akquant.talib` 批量函数。
+*   画成 K 线：`self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc", outputs=("open", "high", "low", "close"), render_type="candle")`。四个分量（`ha.open` 等）的定义带 `group="ha"` 与 `role`；LWC 与 plotly 画成一条 K 线，d3Kline 降级为 close 一条线。见[自定义指标指南](../guide/custom_indicator.md)。
+
 ### `akquant.inspect_strategy`
 
 ```python
 def inspect_strategy(source: Union[str, os.PathLike[str]]) -> InspectResult
 ```
 
-静态检查策略/指标脚本文件或源码字符串：只用 `ast` 解析，不导入、不执行用户代码，只接受明文（UTF-8，可带 BOM）。返回 `InspectResult`（`classes`、`error`，`to_dict()` 可序列化为 JSON），每个类给出 `kind`（`"indicator"` / `"strategy"` / `"unknown"`）、`title`、`id`、`overlay`、`draws_indicators` 与每条 `self.I` 的 `name` / `pane` / `plot` / `outputs` / `label`；静态确定不了的值为 `None` 并记入 `dynamic`。同时识别 `akquant` 与 `qmfquant` 的导入。以 `.py` 结尾但不存在的路径报 `FileNotFoundError`，入参类型错报 `TypeError`，其余问题写进 `error` / `dynamic`。详见[自定义指标指南](../guide/custom_indicator.md)「静态检查」一节。
+静态检查策略/指标脚本文件或源码字符串：只用 `ast` 解析，不导入、不执行用户代码，只接受明文（UTF-8，可带 BOM）。返回 `InspectResult`（`classes`、`error`，`to_dict()` 可序列化为 JSON），每个类给出 `kind`（`"indicator"` / `"strategy"` / `"unknown"`）、`title`、`id`、`overlay`、`replaces_price`（策略为 `None`，指标默认 `False`）、`draws_indicators` 与每条 `self.I` 的 `name` / `pane` / `plot` / `outputs` / `label`；静态确定不了的值为 `None` 并记入 `dynamic`。同时识别 `akquant` 与 `qmfquant` 的导入。以 `.py` 结尾但不存在的路径报 `FileNotFoundError`，入参类型错报 `TypeError`，其余问题写进 `error` / `dynamic`。详见[自定义指标指南](../guide/custom_indicator.md)「静态检查」一节。
 
 ### `akquant.Bar`
 

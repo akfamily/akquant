@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..backtest import BacktestStreamEvent
 from ..chart import (
+    normalize_group_role,
     normalize_meta_json,
     normalize_pane_index,
     normalize_render_type,
@@ -86,6 +87,8 @@ class StreamingIndicatorSink:
         warmup: bool = False,
         confirmed: bool = True,
         phase: str = "run",
+        group: str = "",
+        role: str = "",
     ) -> None:
         """Emit one ``indicator_point`` and buffer it for the next snapshot."""
         indicator_key = str(name or "").strip()
@@ -95,6 +98,7 @@ class StreamingIndicatorSink:
         strategy_id = str(owner_strategy_id or "").strip() or "_default"
         pane_index = normalize_pane_index(pane)
         render = normalize_render_type(render_type)
+        group_text, role_text = normalize_group_role(render, group, role)
         display = str(display_name or "").strip() or indicator_key
         meta_json = normalize_meta_json(meta)
         scale_group_norm = normalize_scale_group(scale_group)
@@ -127,6 +131,8 @@ class StreamingIndicatorSink:
                 "confirmed": str(bool(confirmed)).lower(),
                 "phase": phase_text,
                 "scale_group": scale_group_norm,
+                "group": group_text,
+                "role": role_text,
                 "meta_json": meta_json,
             },
             timestamp_ns,
@@ -142,6 +148,8 @@ class StreamingIndicatorSink:
                 "warmup": bool(warmup),
                 "confirmed": bool(confirmed),
                 "phase": phase_text,
+                "group": group_text,
+                "role": role_text,
                 "meta_json": meta_json,
             }
         )

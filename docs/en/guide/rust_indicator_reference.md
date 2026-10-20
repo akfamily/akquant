@@ -2,7 +2,7 @@
 
 This page is currently maintained in Chinese first.
 
-- Chinese page: [AKQuant 指标全量说明（103 个）](../../zh/guide/rust_indicator_reference.md)
+- Chinese page: [AKQuant 指标全量说明（104 个）](../../zh/guide/rust_indicator_reference.md)
 - Related docs:
   - [Indicator Playbook](talib_indicator_playbook.md)
   - [Indicator Scenario Quickref](indicator_scenario_quickref.md)

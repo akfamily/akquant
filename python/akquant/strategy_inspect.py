@@ -20,7 +20,9 @@ __all__ = ["ClassInfo", "IndicatorInfo", "InspectResult", "inspect_strategy"]
 #: 视为 AKQuant 的模块名; qmfquant 是平台使用的重新打包版本。
 _AK_MODULES = frozenset({"akquant", "qmfquant"})
 _BASE_KINDS = {"Indicator": "indicator", "Strategy": "strategy"}
-_CLASS_KEYWORDS = ("title", "id", "overlay")
+_CLASS_KEYWORDS = ("title", "id", "overlay", "replaces_price")
+#: 类定义行里取 bool、可沿父类继承的画法关键字
+_BOOL_KEYWORDS = ("overlay", "replaces_price")
 _I_FIELDS = ("name", "pane", "plot", "outputs", "label")
 _LOOP_NODES = (
     ast.For,
@@ -108,6 +110,9 @@ class ClassInfo:
     indicators: List[IndicatorInfo]
     has_dynamic: bool
     dynamic: List[str] = field(default_factory=list)
+    #: 类定义行 ``replaces_price``(可沿同文件父类继承): 策略为 None, 指标脚本默认
+    #: False; 值不是字面量时为 None 并记入 ``dynamic``。
+    replaces_price: Optional[bool] = None
 
 
 @dataclass
@@ -247,7 +252,10 @@ def _literal(expr: ast.expr) -> Any:
 
 
 def _class_keywords(node: ast.ClassDef) -> Dict[str, Any]:
-    """类定义行的 title/id/overlay; 写成 None 视同没写, 取不到值记为哨兵."""
+    """类定义行的 title/id/overlay/replaces_price.
+
+    写成 None 视同没写, 取不到值记为哨兵。
+    """
     out: Dict[str, Any] = {}
     for kw in node.keywords:
         if kw.arg is None or kw.arg not in _CLASS_KEYWORDS:
@@ -255,7 +263,7 @@ def _class_keywords(node: ast.ClassDef) -> Dict[str, Any]:
         value = _literal(kw.value)
         if value is None:
             continue
-        if kw.arg == "overlay":
+        if kw.arg in _BOOL_KEYWORDS:
             ok = isinstance(value, bool)
         else:
             ok = isinstance(value, str) and bool(value.strip())
@@ -265,22 +273,45 @@ def _class_keywords(node: ast.ClassDef) -> Dict[str, Any]:
     return out
 
 
-def _inherited_overlay(
-    node: ast.ClassDef, by_name: Dict[str, ast.ClassDef], seen: Set[str]
+def _inherited_keyword(
+    node: ast.ClassDef, by_name: Dict[str, ast.ClassDef], seen: Set[str], keyword: str
 ) -> Any:
-    """同文件父类链上最近一次写的 overlay; 都没写为 None(即默认 False)."""
+    """同文件父类链上最近一次写的 ``keyword``; 都没写为 None(即默认 False)."""
     if node.name in seen:
         return None
     for base in node.bases:
         if isinstance(base, ast.Name) and base.id in by_name:
             parent = by_name[base.id]
             kws = _class_keywords(parent)
-            if "overlay" in kws:
-                return kws["overlay"]
-            found = _inherited_overlay(parent, by_name, seen | {node.name})
+            if keyword in kws:
+                return kws[keyword]
+            found = _inherited_keyword(parent, by_name, seen | {node.name}, keyword)
             if found is not None:
                 return found
     return None
+
+
+def _resolve_bool_keyword(
+    node: ast.ClassDef,
+    kws: Dict[str, Any],
+    by_name: Dict[str, ast.ClassDef],
+    keyword: str,
+    dynamic: List[str],
+) -> Optional[bool]:
+    """指标脚本的 bool 画法关键字: 本类写了取本类, 否则沿同文件父类继承.
+
+    非字面量时返回 None 并记入 ``dynamic``; 都没写为 False。
+    """
+    raw = (
+        kws[keyword]
+        if keyword in kws
+        else _inherited_keyword(node, by_name, set(), keyword)
+    )
+    if raw is _NOT_LITERAL:
+        if keyword not in dynamic:
+            dynamic.append(keyword)
+        return None
+    return bool(raw)  # None(都没写) 即默认 False
 
 
 def _inspect_class(
@@ -298,17 +329,25 @@ def _inspect_class(
     title = kws.get("title")
     declared_id = kws.get("id")
     overlay: Optional[bool] = None
+    replaces_price: Optional[bool] = None
     if kind == "indicator":
-        raw = (
-            kws["overlay"]
-            if "overlay" in kws
-            else _inherited_overlay(node, by_name, set())
+        overlay = _resolve_bool_keyword(node, kws, by_name, "overlay", dynamic)
+        replaces_price = _resolve_bool_keyword(
+            node, kws, by_name, "replaces_price", dynamic
         )
-        if raw is _NOT_LITERAL:
-            if "overlay" not in dynamic:
-                dynamic.append("overlay")
-        else:
-            overlay = bool(raw)  # None(都没写) 即默认 False
+        if replaces_price is not False and overlay is not True:
+            # 运行时 replaces_price=True 而 overlay 不为 True 会在定义类时报错;
+            # overlay 动态时也无法确认合法。都不报成有效值, 也不抛异常。
+            replaces_price = None
+            if "replaces_price" not in dynamic:
+                dynamic.append("replaces_price")
+    elif (
+        "replaces_price" in kws
+        or _inherited_keyword(node, by_name, set(), "replaces_price") is not None
+    ):
+        # 策略上写 replaces_price 运行时抛 TypeError; 静态只标记, 不抛
+        if "replaces_price" not in dynamic:
+            dynamic.append("replaces_price")
     if "title" in dynamic:
         resolved_title: Optional[str] = None
     else:
@@ -331,6 +370,7 @@ def _inspect_class(
         indicators=indicators,
         has_dynamic=bool(dynamic) or any(i.dynamic for i in indicators),
         dynamic=dynamic,
+        replaces_price=replaces_price,
     )
 
 

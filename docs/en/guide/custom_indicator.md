@@ -206,6 +206,48 @@ self.macd.dif[0]    # a single component, which also supports [1] lookback
 If the number of `outputs` does not match the indicator's actual component count, you get
 an error rather than a silent misalignment.
 
+### Candle-shaped indicators: `render_type="candle"`
+
+Indicators such as Heikin-Ashi produce a whole candle per bar. The counterpart of Pine's
+`plotcandle` is a four-component `outputs` plus `render_type="candle"`:
+
+```python
+class HA(aq.Indicator, title="Heikin-Ashi", overlay=True, replaces_price=True):
+    def on_start(self):
+        self.ha = self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc",
+                         outputs=("open", "high", "low", "close"),
+                         render_type="candle", label="Heikin-Ashi")
+```
+
+- The contract is unchanged: each component is still reported as single-value points with
+  `indicator_key` `ha.open` / `ha.high` / `ha.low` / `ha.close`. Definitions and stream
+  messages gain `group` (the `self.I` name) and `role` (`open`/`high`/`low`/`close`); both
+  are `""` for every other render type.
+- Validation: `outputs` must be exactly these four names (any order), otherwise the
+  declaration raises `ValueError`; the four components share `pane`, `color` and `label`.
+  `record_indicator` cannot write `render_type="candle"` directly.
+- `aq.HeikinAshi()` is a built-in Rust indicator: `update(open, high, low, close)` returns
+  `(ha_open, ha_high, ha_low, ha_close)`, with a value from the first bar.
+- `replaces_price=True` on the class line is only a hint for frontends ("this indicator
+  replaces the price candles"). It is only allowed on `aq.Indicator` and requires
+  `overlay=True`; hiding the original candles is the frontend's job.
+  `X.resolve_replaces_price()` and the `replaces_price` field of `aq.inspect_strategy` expose it.
+
+How each exporter draws it:
+
+| Exporter | Rendering |
+| :--- | :--- |
+| LWC review (`result.viz.review`, `to_lwc_indicator_series`) | one Candlestick per `(owner, group)`, points `{time, open, high, low, close}` |
+| plotly (`plot_indicators`, report indicator section) | one `go.Candlestick` per group |
+| d3Kline (`to_d3kline_options`) | **downgraded**: d3Kline has no candle indicator type, so only the close component is emitted as a line named by the group's series key, with `render_type="candle"` marking the downgrade |
+| `to_raw_panes` | one entry per component with `group` / `role` / `group_series_key`, so a consumer can rebuild OHLC |
+| live stream / `to_lwc_update` | one point per component with `group` / `role`; collect the four components of one `(owner_strategy_id, group, symbol, timestamp)` to get a candle |
+
+LWC and plotly **never** colour candle indicators with the theme's up/down price colours (they would be indistinguishable from the price candles): a single colour (`color`, or the indicator palette when unset), solid for up and hollow for down (TradingView's hollow-candle convention). Timestamps missing any component are skipped by LWC and plotly instead of raising. For the
+group's series key see "Indicator identity and series keys" below.
+
+Runnable example: [77_heikin_ashi_indicator.py](https://github.com/akfamily/akquant/blob/main/examples/77_heikin_ashi_indicator.py).
+
 ## Path 2: Precomputed Indicators
 
 When the indicator is a better fit for a one-shot computation over the full `DataFrame`,
@@ -366,6 +408,7 @@ Script metadata goes on the class line, matching Pine's `indicator(title=..., ov
 | `title` | Display name, used for presentation only | the class name |
 | `overlay` | `True` draws on the main pane (over the candles), `False` on the script's sub-pane | `False` (sub-pane) |
 | `id` | Machine id, i.e. the points' `owner_strategy_id` / slot key | snake_case class name |
+| `replaces_price` | `True` means the script replaces the price candles (e.g. Heikin-Ashi) - a frontend hint only; requires `overlay=True` | `False` |
 
 ```python
 import akquant as aq
@@ -467,6 +510,8 @@ Conventions:
 - **Both `akquant` and `qmfquant` imports are recognized**: `import akquant as aq`,
   `from akquant import Indicator` (including `as` aliases), and the same forms for the
   platform's repackaged `qmfquant`.
+- Classes also carry `replaces_price`: `None` for strategies, `False` by default for
+  indicators, `None` (and listed in `dynamic`) when it cannot be determined statically.
 - `pane` / `plot` resolve exactly as at runtime (see the rule table under "Automatic
   Plotting"); both sides share one function.
 
@@ -601,7 +646,7 @@ class IndicatorExportStrategy(Strategy):
     `render_type="signal"` rendered on the main pane (`pane=0`).
 
 !!! note "About the `render_type` value"
-    `render_type` is a **closed enum** of 7 values, so consumers can implement
+    `render_type` is a **closed enum** of 8 values, so consumers can implement
     exhaustive rendering branches:
 
     | Value | Rendering |
@@ -613,6 +658,7 @@ class IndicatorExportStrategy(Strategy):
     | `histogram` | Alias of `bar` (semantic: distribution bars) |
     | `scatter` | Disconnected point markers |
     | `signal` | Trade-signal markers, drawn on the main pane |
+    | `candle` | Candles (four components as one group, declared only via `self.I(outputs=...)`, see above) |
 
     Passing a value outside the enum raises `ValueError` (fail-fast) rather than
     silently degrading to a line.
@@ -700,9 +746,10 @@ If you need enterprise-grade multi-panel UX, persistence, permissions, or realti
 `record_indicator` **by default** (`include_indicators=True`): `pane=0` overlays the
 main candlestick pane, `pane=k>=1` lands in the `k+1`-th LWC pane below the volume
 pane; `reference_lines` become dashed price lines; indicators without a `color`
-cycle through a per-theme palette. All seven `render_type` values are mapped -
+cycle through a per-theme palette. All eight `render_type` values are mapped -
 `line`/`area`/`bar`/`column`/`histogram`/`scatter` get their own series, `signal`
-is rendered as markers on the candles instead of a separate series.
+is rendered as markers on the candles instead of a separate series, and the four
+`candle` components become one Candlestick series.
 
 ```python
 result.viz.review(market_data, filename="review.html")            # with indicators
@@ -1036,6 +1083,18 @@ no label (display name equal to `indicator_key`) and stays as written otherwise.
 d3Kline and plotly outputs all take their keys from
 `akquant.indicator_identity.series_keys()`; custom frontends should reuse it too.
 
+A candle group is one series on the chart; its key comes from
+`akquant.indicator_identity.chart_series_keys()`: candle groups as `(owner, group)` and
+plain lines as `(owner, indicator_key)` share **one** namespace. Two scripts that both have
+an `ha` group, or one script's `ha` group next to another owner's plain line `ha`, both
+become `"{owner}:ha"`. All chart exporters (LWC, d3Kline, `to_raw_panes`, plotly) use it.
+In the live stream the component `series_key` is still computed per component key (e.g.
+`ha.open`, or `ha_two:ha.open` on a conflict); stream consumers assemble candles by
+`(owner_strategy_id, group, symbol, timestamp)` and do not need the group key.
+When one owner has both a plain line `ha` (e.g. a direct `record_indicator("ha")`) and a
+candle group `ha`, the group keeps `ha`, the plain line becomes `ha:line` on the chart, and a
+warning is logged once.
+
 The live stream (`on_event` point / snapshot messages and `to_lwc_update()`) carries
 `series_key` as well, computed by the same function. The stream has to name each
 message as it is emitted, before any complete definition table exists, so the
@@ -1105,9 +1164,10 @@ Deliberate rules baked in (understand them before changing):
 - **When an indicator has no color the whole `style` key is omitted**, never
   `{"color": null}`. The frontend merges as `{color: default, ...old, ...s.style}`, so
   `null` would override the default and render the series invisible.
-- The seven `render_type` values are downgraded to d3Kline's `line | bar`; a downgraded
+- The eight `render_type` values are downgraded to d3Kline's `line | bar`; a downgraded
   series also carries the original `render_type`, so the frontend can upgrade losslessly
-  once it supports area/scatter.
+  once it supports area/scatter. A `candle` group emits only its close component as one
+  line, named by the group's series key.
 - Series `name` is the series key (the frontend merges by name; it must be unique): the
   plain `indicator_key` when only one owner uses it, `"{owner}:{key}"` on a cross-owner
   conflict; the human-readable name goes in `label`. Points are looked up by

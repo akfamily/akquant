@@ -43,6 +43,11 @@ def _json_loads_or_default(value: Any, default: Any) -> Any:
         return default
 
 
+def _to_text(value: Any) -> str:
+    """None/缺失归一成空串, 其余去首尾空白."""
+    return str(value or "").strip()
+
+
 def _to_phase(value: Any) -> str:
     text = str(value or "").strip()
     return text or "run"
@@ -126,6 +131,9 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
             "confirmed": _to_bool(payload.get("confirmed", "true")),
             # 缺失时默认 run: 1.4 之前的事件与旧协议 sink 都不来自预热回放。
             "phase": _to_phase(payload.get("phase")),
+            # candle 分量的组名与分量名(1.6); 其余 render_type 与 1.5 事件为空串。
+            "group": _to_text(payload.get("group")),
+            "role": _to_text(payload.get("role")),
             "meta": _json_loads_or_default(payload.get("meta_json"), {}),
         }
         return base_message
@@ -154,6 +162,8 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
                     "warmup": _to_bool(raw_item.get("warmup", False)),
                     "confirmed": _to_bool(raw_item.get("confirmed", True)),
                     "phase": _to_phase(raw_item.get("phase")),
+                    "group": _to_text(raw_item.get("group")),
+                    "role": _to_text(raw_item.get("role")),
                     "meta": _json_loads_or_default(raw_item.get("meta_json"), {}),
                 }
             )

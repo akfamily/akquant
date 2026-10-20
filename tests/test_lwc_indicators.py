@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from akquant.chart import RENDER_TYPE_CANONICAL
 from akquant.lwc._indicators import (
     LWC_SERIES_TYPE,
     lwc_pane_index,
@@ -17,7 +18,7 @@ from akquant.lwc._indicators import (
     to_lwc_update,
 )
 
-_RENDER_TYPES = ("line", "area", "bar", "column", "histogram", "scatter", "signal")
+_RENDER_TYPES = RENDER_TYPE_CANONICAL
 
 
 def _def(key: str, **over: Any) -> dict[str, Any]:
@@ -49,7 +50,7 @@ _DAY = 86_400_000
 
 
 def test_every_render_type_maps_to_an_lwc_series_kind() -> None:
-    """7 值 render_type 枚举必须全部有映射, 不能有值静默落到默认分支."""
+    """render_type 枚举必须全部有映射, 不能有值静默落到默认分支."""
     assert set(LWC_SERIES_TYPE) == set(_RENDER_TYPES)
     assert LWC_SERIES_TYPE["line"] == "Line"
     assert LWC_SERIES_TYPE["area"] == "Area"
@@ -58,6 +59,8 @@ def test_every_render_type_maps_to_an_lwc_series_kind() -> None:
     # scatter 用 Line 系列关掉连线只画点; signal 走 K 线 marker, 不建 series
     assert LWC_SERIES_TYPE["scatter"] == "Line"
     assert LWC_SERIES_TYPE["signal"] == "Marker"
+    # candle(1.6): 同组四个分量合成一条 Candlestick
+    assert LWC_SERIES_TYPE["candle"] == "Candlestick"
 
 
 def test_pane_index_offsets_sub_panes_past_volume() -> None:
@@ -201,6 +204,9 @@ def test_to_lwc_update_converts_bridge_point_message() -> None:
         "pane": 0,
         "series_type": "Line",
         "color": None,
+        # 1.6 新增: 非 candle 的 group/role 为空串
+        "group": "",
+        "role": "",
         "confirmed": True,
         "phase": "run",
         "point": {"time": 1_704_067_200, "value": 12.5},

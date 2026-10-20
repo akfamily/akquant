@@ -1025,6 +1025,7 @@ class DualMA(aq.Indicator, title="Dual MA", overlay=True, id="dual_ma"):
 *   `title`: display name only; defaults to the class name.
 *   `overlay`: `True` draws on the main pane, `False` (default) on a sub-pane. `self.I` plots by default: default `pane=0` with `overlay=True`, otherwise `pane=1` (pane numbers are local to the script); `plot=False` turns a line off.
 *   `id`: machine id (the indicator points' `owner_strategy_id`); defaults to the snake_case class name.
+*   `replaces_price`: `True` means the script replaces the price candles (e.g. Heikin-Ashi). It is only a frontend hint; hiding the original candles is up to the frontend. Requires `overlay=True` (otherwise `ValueError`), must be a `bool` (otherwise `TypeError`), is inherited by subclasses, defaults to `False`. `X.resolve_replaces_price()` returns the effective value. Writing it on `aq.Strategy` raises `TypeError`.
 *   Every trading API (`buy` / `sell` / `submit_order` / `place_*` / `order_target*` / `rebalance_*` / `close_position` / `cancel_*`) raises `akquant.IndicatorCannotTradeError`.
 *   See the [custom indicator guide](../guide/custom_indicator.md).
 
@@ -1032,13 +1033,26 @@ class DualMA(aq.Indicator, title="Dual MA", overlay=True, id="dual_ma"):
 
 Vectorized precomputed indicator: `PrecomputedIndicator(name, fn)`, where `fn(df) -> pd.Series` computes over one symbol's full `DataFrame` at once; declare it with `self.I(PrecomputedIndicator(...))`. Backtest only; it does not support tick input, `freq=` or `warmup_bars=`.
 
+### `akquant.HeikinAshi`
+
+Built-in Rust incremental indicator: Heikin-Ashi candles.
+
+```python
+ha = aq.HeikinAshi()
+ha.update(open, high, low, close)  # -> (ha_open, ha_high, ha_low, ha_close), ready from the first bar
+```
+
+*   Formula: `ha_close = (O+H+L+C)/4`; `ha_open` is `(O+C)/2` on the first bar, then the previous bar's `(ha_open+ha_close)/2`; `ha_high = max(H, ha_open, ha_close)`; `ha_low = min(L, ha_open, ha_close)`.
+*   Also provides a `value` property and the batch method `update_many_ohlc`; works with `clone_indicator` and `intrabar=True`. There is no `akquant.talib` batch function.
+*   Draw it as candles: `self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc", outputs=("open", "high", "low", "close"), render_type="candle")`. The four components (`ha.open`, ...) carry `group="ha"` and a `role`; LWC and plotly draw one candle series, d3Kline degrades to the close line. See the [custom indicator guide](../guide/custom_indicator.md).
+
 ### `akquant.inspect_strategy`
 
 ```python
 def inspect_strategy(source: Union[str, os.PathLike[str]]) -> InspectResult
 ```
 
-Static inspection of a strategy / indicator-script file or source string: parsed with `ast` only, never imported or executed; plaintext only (UTF-8, BOM allowed). Returns `InspectResult` (`classes`, `error`; `to_dict()` is JSON-serializable). Each class reports `kind` (`"indicator"` / `"strategy"` / `"unknown"`), `title`, `id`, `overlay`, `draws_indicators`, and each `self.I` line's `name` / `pane` / `plot` / `outputs` / `label`. Values that cannot be determined statically are `None` and listed in `dynamic`. Both `akquant` and `qmfquant` imports are recognized. A non-existent path ending in `.py` raises `FileNotFoundError`, a wrong argument type raises `TypeError`; everything else is reported through `error` / `dynamic`.
+Static inspection of a strategy / indicator-script file or source string: parsed with `ast` only, never imported or executed; plaintext only (UTF-8, BOM allowed). Returns `InspectResult` (`classes`, `error`; `to_dict()` is JSON-serializable). Each class reports `kind` (`"indicator"` / `"strategy"` / `"unknown"`), `title`, `id`, `overlay`, `replaces_price` (`None` for strategies, `False` by default for indicators), `draws_indicators`, and each `self.I` line's `name` / `pane` / `plot` / `outputs` / `label`. Values that cannot be determined statically are `None` and listed in `dynamic`. Both `akquant` and `qmfquant` imports are recognized. A non-existent path ending in `.py` raises `FileNotFoundError`, a wrong argument type raises `TypeError`; everything else is reported through `error` / `dynamic`.
 
 ### `akquant.Bar`
 

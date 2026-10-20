@@ -1,6 +1,6 @@
 """指标契约 → lightweight-charts v5 series 的适配层.
 
-``chart/d3kline.py`` 的镜像: 同一份指标契约(``indicator_definitions`` 的 7 值
+``chart/d3kline.py`` 的镜像: 同一份指标契约(``indicator_definitions`` 的 8 值
 ``render_type``、整数 ``pane``、点位 ``timestamp_ms``)面向第二个具体前端。
 AKQuant 仍只是"标准化指标数据的生产者", 本模块是可选的消费端适配器。
 
@@ -13,6 +13,11 @@ AKQuant 仍只是"标准化指标数据的生产者", 本模块是可选的消�
 
 pane 映射: akquant ``0`` 叠主图 → LWC pane ``0``; akquant ``k>=1`` → LWC pane
 ``k+1`` —— LWC pane ``1`` 已被成交量占用, 量纲不同的指标不该被成交量压扁。
+
+``render_type="candle"``: 同一 ``(owner, group)`` 的四个分量合成**一个**
+``Candlestick`` series, 点位为 ``{time, open, high, low, close}``; 某个时刻缺
+任一分量时跳过该时刻。组的 series 键来自
+:func:`akquant.indicator_identity.chart_series_keys`。
 """
 
 from __future__ import annotations
@@ -23,10 +28,17 @@ from typing import Any, Optional, Union
 
 import pandas as pd
 
-from ..indicator_identity import display_label, identity_of, series_keys
+from ..chart._normalize import CANDLE_ROLES
+from ..indicator_identity import (
+    candle_group_of,
+    chart_series_keys,
+    display_label,
+    group_display_label,
+    identity_of,
+)
 from ._payload import _bar_time
 
-#: akquant render_type(封闭 7 值)→ LWC v5 series 构造名。``Marker`` 不是 LWC
+#: akquant render_type → LWC v5 series 构造名。``Marker`` 不是 LWC
 #: series: signal 的契约是"主图上的标记类渲染", 前端把它交给 K 线的
 #: ``createSeriesMarkers`` 而不建 series。scatter 用 Line 系列关掉连线只画点
 #: (``lineVisible=false`` + ``pointMarkersVisible=true``)。
@@ -38,6 +50,7 @@ LWC_SERIES_TYPE: dict[str, str] = {
     "histogram": "Histogram",
     "scatter": "Line",
     "signal": "Marker",
+    "candle": "Candlestick",
 }
 
 #: 成交量占用的 LWC pane, 指标副图从它之后排。
@@ -110,11 +123,13 @@ def to_lwc_indicator_series(
         indicator_key)`` 关联; 每条 series 带 ``owner_strategy_id`` 与
         ``series_key``(见 :func:`akquant.indicator_identity.series_keys`: 同名键
         被多个 owner 使用时为 ``"owner:key"``, 否则就是 ``indicator_key``),
-        ``indicator_key`` 保持原始值.
+        ``indicator_key`` 保持原始值. candle 组只输出一条
+        ``series_type="Candlestick"`` 的 series: ``indicator_key`` 与 ``group``
+        为组名, ``series_key`` 为组的 series 键, 点位为 OHLC.
     """
     target = str(symbol).strip()
     defs = list(defs)
-    keys = series_keys(defs)
+    keys = chart_series_keys(defs)
     by_identity: dict[tuple[str, str], dict[Union[str, int], float]] = {}
     for point in points:
         if str(point.get("symbol", "")).strip() != target:
@@ -131,8 +146,30 @@ def to_lwc_indicator_series(
 
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    # candle 组: (owner, group) -> {role: 该分量的定义}; 组在首个分量出现的位置输出
+    groups: dict[tuple[str, str], dict[str, Definition]] = {}
+    for definition in defs:
+        group = candle_group_of(definition)
+        if group:
+            role = str(definition.get("role") or "").strip().lower()
+            groups.setdefault((identity_of(definition)[0], group), {})[role] = (
+                definition
+            )
+    seen_groups: set[tuple[str, str]] = set()
     for definition in defs:
         identity = identity_of(definition)
+        group = candle_group_of(definition)
+        if group:
+            group_id = (identity[0], group)
+            if group_id in seen_groups:
+                continue
+            seen_groups.add(group_id)
+            candle_series = _candle_series(
+                group_id, groups[group_id], keys.groups[group_id], by_identity
+            )
+            if candle_series is not None:
+                out.append(candle_series)
+            continue
         if identity in seen:
             continue
         seen.add(identity)
@@ -140,7 +177,7 @@ def to_lwc_indicator_series(
         if not bucket:
             continue
         owner, key = identity
-        series_key = keys[identity]
+        series_key = keys.lines[identity]
         render_type = str(definition.get("render_type") or "line").strip().lower()
         color = definition.get("color")
         out.append(
@@ -164,6 +201,51 @@ def to_lwc_indicator_series(
     return out
 
 
+def _candle_series(
+    group_id: tuple[str, str],
+    components: Mapping[str, Definition],
+    series_key: str,
+    by_identity: Mapping[tuple[str, str], Mapping[Union[str, int], float]],
+) -> Optional[dict[str, Any]]:
+    """把一个 candle 组的四个分量拼成一条 Candlestick series.
+
+    只保留四个分量在同一 time 都有值的时刻(缺任一分量的时刻跳过); 定义里缺
+    分量或没有完整时刻时返回 ``None``。
+    """
+    owner, group = group_id
+    if any(role not in components for role in CANDLE_ROLES):
+        return None
+    buckets = [
+        by_identity.get(identity_of(components[role]), {}) for role in CANDLE_ROLES
+    ]
+    times = set(buckets[0])
+    for bucket in buckets[1:]:
+        times &= set(bucket)
+    if not times:
+        return None
+    points = []
+    for time_value in sorted(times, key=lambda t: _sort_key((t, 0.0))):
+        point: dict[str, Any] = {"time": time_value}
+        for role, bucket in zip(CANDLE_ROLES, buckets):
+            point[role] = bucket[time_value]
+        points.append(point)
+    first = components["close"]
+    color = first.get("color")
+    return {
+        "owner_strategy_id": owner,
+        "indicator_key": group,
+        "group": group,
+        "series_key": series_key,
+        "display_name": group_display_label(first, series_key),
+        "pane": lwc_pane_index(first.get("pane")),
+        "render_type": "candle",
+        "series_type": "Candlestick",
+        "color": str(color) if color else None,
+        "price_lines": _price_lines(first.get("reference_lines")),
+        "points": points,
+    }
+
+
 def _sort_key(item: tuple[Union[str, int], float]) -> tuple[int, Union[str, int]]:
     # 同一 series 内 time 类型一致(全字符串或全整数); 兜底把两类分开排避免比较报错
     t = item[0]
@@ -180,6 +262,10 @@ def to_lwc_update(message: Mapping[str, Any]) -> Optional[dict[str, Any]]:
     ``"preload"`` 是 ``run_live(preload_history=)`` 回放出的历史段点。
     ``owner_strategy_id``(缺失按 ``"_default"``)与 ``series_key``(缺失回落到
     ``indicator_key``)也一并带出(1.5): 两个 owner 同名时按 ``series_key`` 区分线。
+    ``group``/``role``(1.6, 缺失为 ``""``)同样带出: candle 分量的
+    ``series_type`` 为 ``"Candlestick"``, ``point`` 仍是单值; 前端按
+    ``(owner_strategy_id, group, symbol, point.time)`` 把四个分量合成一根 K 线,
+    凑齐 open/high/low/close 后再 ``series.update({time, open, high, low, close})``。
 
     :return: 增量更新 dict; 非 point 消息或未就绪(``None``/``NaN``)点返回 ``None``.
     """
@@ -213,6 +299,8 @@ def to_lwc_update(message: Mapping[str, Any]) -> Optional[dict[str, Any]]:
         "pane": lwc_pane_index(indicator.get("pane")),
         "series_type": LWC_SERIES_TYPE.get(render_type, "Line"),
         "color": str(color) if color else None,
+        "group": str(indicator.get("group") or "").strip(),
+        "role": str(indicator.get("role") or "").strip().lower(),
         "confirmed": confirmed,
         "phase": str(indicator.get("phase") or "run"),
         "point": {

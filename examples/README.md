@@ -70,6 +70,7 @@
 - [74_indicator_scripts.py](./74_indicator_scripts.py): 指标脚本示例（对标 Pine `indicator()`）：`aq.Indicator` 子类在类定义行写 `title`/`overlay`/`id`，只声明指标不交易，`run_backtest(indicators=[...])` 把它们挂成独立 slot，`indicator_df(owner=)` 按归属取点；含 `IndicatorCannotTradeError` 护栏演示（指标脚本里误写 `self.buy` 当场报错），以及用 `aq.inspect_strategy(__file__)` 静态识别每个类的类别与 pane。
 - [75_intrabar_indicators.py](./75_intrabar_indicators.py): 窗口周期指标的实时值（对标 Pine 的 realtime bar）：`self.I(..., freq="5min", intrabar=True)` 后每根 1min bar 上 `[0]` 是未闭合 5min 窗口的试算值、`[1]` 是上一根已确认、`binding.confirmed` 标明状态；流事件临时点 `confirmed=false` 与确认点同 time。`run_live(broker="replay")` + 网关声明 `freq`。
 - [76_tick_intrabar_indicators.py](./76_tick_intrabar_indicators.py): 基础周期指标在 **tick** 上的实时值：`self.I(aq.SMA(3), intrabar=True)` 后 tick 只试算不提交、bar 闭合才推进状态，框架从 tick 累出形成中 bar（含真实 H/L，ATR 可用）；临时点时间戳按区间末打戳公式预测并与闭合 bar 自校验。`run_backtest(data=[Tick,...], freq="1min")`。
+- [77_heikin_ashi_indicator.py](./77_heikin_ashi_indicator.py): K 线形态指标（对标 Pine `plotcandle`）：内置 `aq.HeikinAshi()` 经 `self.I(..., input_mode="ohlc", outputs=("open","high","low","close"), render_type="candle")` 声明成一组，定义带 `group`/`role`；`viz.review` 画成一条空心/实心单色 Candlestick，d3kline 降级为 close 一条线；类定义行 `replaces_price=True` 给前端提示，`aq.inspect_strategy` 静态读出。
 - [71_native_multi_timeframe_live.py](./71_native_multi_timeframe_live.py): 实盘（`broker="replay"`）多周期示例，行情网关声明 `metadata["freq"]` 后 `subscribe_bars("5min")` 零延迟闭合，`on_window_bar` 与 `run_backtest` 同一份策略代码不改一行。
 
 ## 流式回测与实时报告

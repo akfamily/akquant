@@ -49,6 +49,16 @@ History:
   points are not rewritten. Single-owner sessions see no value changes. The
   supersede rule from ``1.3`` is scoped by owner:
   ``(owner_strategy_id, indicator_key, symbol, timestamp)``.
+- ``1.6`` — added ``group`` and ``role`` to the indicator channel's
+  ``indicator`` (point) object and to each snapshot item, and the new
+  ``render_type`` value ``"candle"``. A candle indicator
+  (``Strategy.I(outputs=("open","high","low","close"), render_type="candle")``)
+  still emits one single-value point per component (``indicator_key`` like
+  ``ha.open``); ``group`` is the declaration name (``ha``) and ``role`` is the
+  component (``open``/``high``/``low``/``close``), so a frontend can merge the
+  four points of one ``(owner_strategy_id, group, symbol, timestamp)`` into a
+  bar. Both fields are ``""`` for every other render type, and absent
+  (1.5 events) means ``""``.
 """
 
-STREAM_SCHEMA_VERSION = "1.5"
+STREAM_SCHEMA_VERSION = "1.6"

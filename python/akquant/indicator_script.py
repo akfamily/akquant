@@ -73,20 +73,29 @@ class Indicator(Strategy):
     """指标脚本基类; 经 ``run_backtest/run_live(indicators=[...])`` 挂载.
 
     类定义行可写 ``title``(显示名)、``overlay``(默认 False=附图)、``id``(机器标识,
-    省略为类名 snake_case)。在 ``on_start`` 里用 :meth:`Strategy.I` 声明指标。
+    省略为类名 snake_case)、``replaces_price``(默认 False; True 提示前端隐藏原 K 线,
+    须同时 ``overlay=True``)。在 ``on_start`` 里用 :meth:`Strategy.I` 声明指标。
     """
 
     _aq_is_indicator_script: ClassVar[bool] = True
     #: 类定义行 ``overlay=`` 的值; 省略时继承父类, 直到这里的 False。
     _aq_overlay: ClassVar[bool] = False
+    #: 类定义行 ``replaces_price=`` 的值; 和 overlay 一样属于画法, 省略时继承父类。
+    _aq_replaces_price: ClassVar[bool] = False
 
     def __init_subclass__(
         cls,
         *,
         overlay: Optional[bool] = None,
+        replaces_price: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        """在 Strategy 的 title/id 之外再接收 ``overlay``."""
+        """在 Strategy 的 title/id 之外再接收 ``overlay`` 与 ``replaces_price``.
+
+        :raises TypeError: 两者不是 bool
+        :raises ValueError: ``replaces_price=True``(含继承来的)而 overlay 不是 True
+            —— 替换主图 K 线的指标必须画在主图上
+        """
         super().__init_subclass__(**kwargs)
         if overlay is not None:
             if not isinstance(overlay, bool):
@@ -94,6 +103,18 @@ class Indicator(Strategy):
                     f"{cls.__name__}: overlay= 必须是 bool, 收到 {overlay!r}"
                 )
             cls._aq_overlay = overlay
+        if replaces_price is not None:
+            if not isinstance(replaces_price, bool):
+                raise TypeError(
+                    f"{cls.__name__}: replaces_price= 必须是 bool, "
+                    f"收到 {replaces_price!r}"
+                )
+            cls._aq_replaces_price = replaces_price
+        if cls._aq_replaces_price and not cls._aq_overlay:
+            raise ValueError(
+                f"{cls.__name__}: replaces_price=True 须同时 overlay=True"
+                "(替换主图 K 线的指标必须画在主图上)"
+            )
 
     @classmethod
     def resolve_id(cls) -> str:
@@ -104,6 +125,11 @@ class Indicator(Strategy):
     def resolve_overlay(cls) -> bool:
         """返回是否画主图: True 画主图, False(默认)画本脚本的附图."""
         return cls._aq_overlay
+
+    @classmethod
+    def resolve_replaces_price(cls) -> bool:
+        """返回是否提示前端隐藏原 K 线(本脚本的 candle 指标替换主图价格)."""
+        return cls._aq_replaces_price
 
 
 for _name in TRADING_API_NAMES:
