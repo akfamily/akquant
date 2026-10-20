@@ -141,9 +141,8 @@ def main() -> None:
         keys = sorted(set(result.indicator_df(owner=owner)["indicator_key"]))
         print(f"  {owner}: {keys}")
     print(f"strategy_orders={len(result.orders_df)}")
-    print(
-        f"indicator_orders={int((result.orders_df['owner_strategy_id'] != 'trend').sum())}"
-    )
+    non_trend = result.orders_df["owner_strategy_id"] != "trend"
+    print(f"indicator_orders={int(non_trend.sum())}")
 
     # Indicator scripts land on the LWC review chart like any other indicator.
     out_dir = Path(tempfile.mkdtemp(prefix="akq_indicator_scripts_"))

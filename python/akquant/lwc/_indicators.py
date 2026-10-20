@@ -23,6 +23,7 @@ from typing import Any, Optional, Union
 
 import pandas as pd
 
+from ..indicator_identity import display_label, identity_of, series_keys
 from ._payload import _bar_time
 
 #: akquant render_type(封闭 7 值)→ LWC v5 series 构造名。``Marker`` 不是 LWC
@@ -100,40 +101,54 @@ def to_lwc_indicator_series(
 
     :param defs: 指标定义, 字段同 ``BacktestResult.indicator_definitions`` 的列.
     :param points: 点位, 字段同 ``indicator_df()`` 的行(``symbol`` /
-        ``indicator_key`` / ``timestamp_ms`` / ``value``); 跨 symbol 混传可以,
-        这里按 ``symbol`` 过滤.
+        ``owner_strategy_id`` / ``indicator_key`` / ``timestamp_ms`` / ``value``);
+        跨 symbol 混传可以, 这里按 ``symbol`` 过滤.
     :param symbol: 目标标的.
     :param intraday: 与该标的 K 线同一口径的日内标记, 决定时间值格式.
-    :return: 按 ``(pane, indicator_key)`` 排序的 series; 该 symbol 无点位的指标
-        不输出(免得前端建空副图).
+    :return: 按 ``(pane, series_key)`` 排序的 series; 该 symbol 无点位的指标
+        不输出(免得前端建空副图). 定义与点位按 ``(owner_strategy_id,
+        indicator_key)`` 关联; 每条 series 带 ``owner_strategy_id`` 与
+        ``series_key``(见 :func:`akquant.indicator_identity.series_keys`: 同名键
+        被多个 owner 使用时为 ``"owner:key"``, 否则就是 ``indicator_key``),
+        ``indicator_key`` 保持原始值.
     """
     target = str(symbol).strip()
-    by_key: dict[str, dict[Union[str, int], float]] = {}
+    defs = list(defs)
+    keys = series_keys(defs)
+    by_identity: dict[tuple[str, str], dict[Union[str, int], float]] = {}
     for point in points:
         if str(point.get("symbol", "")).strip() != target:
             continue
         number = _as_float(point.get("value"))
         if number is None:
             continue
-        key = str(point.get("indicator_key", ""))
-        if not key:
+        identity = identity_of(point)
+        if not identity[1]:
             continue
         time_value = _time_of(point.get("timestamp_ms"), intraday)
-        # dict 按 time 去重, 后来者覆盖 —— 与 confirmed 语义一致
-        by_key.setdefault(key, {})[time_value] = number
+        # 按 (owner, key) 分桶, 桶内按 time 去重、后来者覆盖 —— 与 confirmed 语义一致
+        by_identity.setdefault(identity, {})[time_value] = number
 
     out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
     for definition in defs:
-        key = str(definition.get("indicator_key", ""))
-        bucket = by_key.get(key)
+        identity = identity_of(definition)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        bucket = by_identity.get(identity)
         if not bucket:
             continue
+        owner, key = identity
+        series_key = keys[identity]
         render_type = str(definition.get("render_type") or "line").strip().lower()
         color = definition.get("color")
         out.append(
             {
+                "owner_strategy_id": owner,
                 "indicator_key": key,
-                "display_name": str(definition.get("display_name") or key),
+                "series_key": series_key,
+                "display_name": display_label(definition, series_key),
                 "pane": lwc_pane_index(definition.get("pane")),
                 "render_type": render_type,
                 "series_type": LWC_SERIES_TYPE.get(render_type, "Line"),
@@ -145,7 +160,7 @@ def to_lwc_indicator_series(
                 ],
             }
         )
-    out.sort(key=lambda s: (s["pane"], s["indicator_key"]))
+    out.sort(key=lambda s: (s["pane"], s["series_key"]))
     return out
 
 

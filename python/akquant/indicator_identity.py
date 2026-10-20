@@ -36,7 +36,9 @@ def identity_of(definition: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def series_keys(defs: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str], str]:
-    """(owner, key) -> 图上的 series 键: key 只属于一个 owner 时就是 key, 否则 "owner:key".
+    """(owner, key) -> 图上的 series 键.
+
+    key 只属于一个 owner 时就是 key, 否则为 ``"owner:key"``。
 
     :param defs: 指标定义行, 字段同 ``BacktestResult.indicator_definitions`` 的列;
         只用到 ``owner_strategy_id`` 与 ``indicator_key``。缺失 owner 按

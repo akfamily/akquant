@@ -116,7 +116,7 @@ _APP_JS = """
   function indOptions(ind, i){
     var c = indColor(ind, i);
     var o = {color:c, lineWidth:2, priceLineVisible:false, lastValueVisible:true,
-      title: ind.display_name || ind.indicator_key};
+      title: ind.display_name || ind.series_key || ind.indicator_key};
     if(ind.series_type==='Area'){
       o.lineColor=c; o.topColor=c+'55'; o.bottomColor=c+'05';
     }
@@ -135,7 +135,7 @@ _APP_JS = """
       if(ind.series_type==='Marker'){
         (ind.points||[]).forEach(function(p){
           signals.push({time:p.time, position:'aboveBar', shape:'circle',
-            text: ind.display_name || ind.indicator_key,
+            text: ind.display_name || ind.series_key || ind.indicator_key,
             color: indColor(ind, i)});
         });
         return;

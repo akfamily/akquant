@@ -648,7 +648,9 @@ result.viz.review(market_data, filename="review.html", include_indicators=False)
 ```
 
 底层适配器是 `akquant.lwc.to_lwc_indicator_series()`，与 `akquant.chart.to_d3kline_options()`
-是同一份指标契约面向两个前端的镜像实现；自建 LWC 页面可以直接复用。
+是同一份指标契约面向两个前端的镜像实现；自建 LWC 页面可以直接复用。每条 series 带
+`owner_strategy_id` 与 `series_key`（规则见下文「指标身份与 series 键」），`indicator_key`
+保持原始值。
 
 ### 报告中的可选指标区块
 
@@ -908,6 +910,20 @@ Python 侧按纳秒解析，后者可被前端图表库直接使用，无需再�
 按标的拆成多条独立序列，切记按 `symbol` 过滤后再绘制，否则不同标的的同名指标会
 串成一条线。
 
+#### 指标身份与 series 键
+
+指标定义的身份是 `(owner_strategy_id, indicator_key)`：主策略（owner 为 `_default`）
+与指标脚本（owner 为其 `id`，默认取类名的 snake_case）可以使用同名键，各自保留自己的 `pane`、`color` 等定义。
+`result.indicator_definitions` 的第一列是 `owner_strategy_id`，按 `(owner, key)` 排序；
+点位本来就带 `owner_strategy_id`，消费端应按 `(owner_strategy_id, indicator_key)` 关联
+定义与点位。
+
+图上的 series 键只在冲突时加前缀：某个 `indicator_key` 只属于一个 owner 时，series 键
+就是 `indicator_key`，现有图和前端不受影响；被多个 owner 使用时，series 键为
+`"{owner}:{key}"`，例如 `_default:ema` 与 `sub:ema`。图例显示名在用户没写 label（展示名
+等于 `indicator_key`）时随之变为 series 键；写了 label 时保持原样。LWC、d3Kline、plotly
+三个出口统一经由 `akquant.indicator_identity.series_keys()` 取键，自建前端也应复用它。
+
 这三层结构的目的，是让 AKQuant 负责“生产标准化指标数据”，而不是直接耦合某个具体前端图表库。
 
 ### 可选适配器：转成 d3Kline 的 `IndicatorOption`
@@ -917,15 +933,15 @@ Python 侧按纳秒解析，后者可被前端图表库直接使用，无需再�
 能直接消费的结构，不必自己写映射：
 
 ```python
-from akquant.chart import to_d3kline_options, to_raw_panes
+from akquant.chart import group_points_by_identity, to_d3kline_options, to_raw_panes
 
 defs = result.indicator_definitions.to_dict(orient="records")
-points_by_key = {
-    key: group[["timestamp_ms", "value"]].to_dict(orient="records")
-    for key, group in result.indicator_df().groupby("indicator_key")
-}
-options = to_d3kline_options(defs, points_by_key)  # 喂给前端 IndicatorManager.create()
-panes = to_raw_panes(defs, points_by_key)  # 保留 akquant 原生语义，供其它前端
+# (owner_strategy_id, indicator_key) -> 点位列表
+points_by_identity = group_points_by_identity(
+    result.indicator_df().to_dict(orient="records")
+)
+options = to_d3kline_options(defs, points_by_identity)  # 喂给前端 IndicatorManager.create()
+panes = to_raw_panes(defs, points_by_identity)  # 保留 akquant 原生语义，供其它前端
 ```
 
 它是**可选的消费端适配器**，与上文的流式桥接同一性质，不改变“生产者不耦合前端”的定位。
@@ -942,8 +958,10 @@ panes = to_raw_panes(defs, points_by_key)  # 保留 akquant 原生语义，供�
   `{color: 默认色, ...old, ...s.style}`，`null` 会覆盖掉默认色导致指标无色。
 - `render_type` 的七个值降级到 d3Kline 仅有的 `line | bar`；发生降级时附带原值
   `render_type`，前端将来支持 area/scatter 时可无损升级。
-- series 的 `name` 用 `indicator_key`（前端以 name 做合并身份，pane 内必须唯一），
-  中文展示名放在 `label`。
+- series 的 `name` 用 series 键（前端以 name 做合并身份，必须唯一）：同名键只属于一个
+  owner 时就是 `indicator_key`，跨 owner 冲突时为 `"{owner}:{key}"`；中文展示名放在
+  `label`。点位按 `(owner_strategy_id, indicator_key)` 查找，`to_raw_panes()` 的每个指标
+  另带 `owner_strategy_id` 与 `series_key`。
 
 输入用普通 `Mapping`（dict）而非特定模型，缺失字段按契约默认值处理（`pane=0`、
 `render_type="line"`），`pane` 允许是字符串。

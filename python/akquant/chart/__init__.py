@@ -19,6 +19,7 @@ from ._normalize import (
 from .d3kline import (
     D3KLINE_SERIES_TYPE,
     SUB_PANE_HEIGHT,
+    group_points_by_identity,
     to_d3kline_options,
     to_raw_panes,
 )
@@ -26,6 +27,7 @@ from .d3kline import (
 __all__ = [
     "D3KLINE_SERIES_TYPE",
     "MAX_SUB_PANES",
+    "group_points_by_identity",
     "RENDER_TYPE_CANONICAL",
     "normalize_meta_json",
     "normalize_pane_index",

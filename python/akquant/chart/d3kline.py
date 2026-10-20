@@ -16,6 +16,8 @@ Row 转的裸 dict、一个传 ``model_dump()``，最低公分母是 Mapping。�
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from ..indicator_identity import display_label, identity_of, series_keys
+
 # akquant render_type（封闭 7 值）→ d3Kline IndicatorSeriesOption.type（仅 line/bar）
 D3KLINE_SERIES_TYPE: dict[str, str] = {
     "line": "line",
@@ -32,6 +34,20 @@ SUB_PANE_HEIGHT = 100
 
 Definition = Mapping[str, Any]
 Point = Mapping[str, Any]
+#: 指标身份 ``(owner_strategy_id, indicator_key)``, 见 :mod:`akquant.indicator_identity`
+Identity = tuple[str, str]
+
+
+def group_points_by_identity(points: Iterable[Point]) -> dict[Identity, list[Point]]:
+    """把扁平点位按 ``(owner_strategy_id, indicator_key)`` 分组, 保持原顺序.
+
+    给 :func:`to_d3kline_options` / :func:`to_raw_panes` 准备 ``points_by_identity``;
+    缺失 owner 按 ``"_default"`` 处理(与定义同口径)。
+    """
+    grouped: dict[Identity, list[Point]] = {}
+    for point in points:
+        grouped.setdefault(identity_of(point), []).append(point)
+    return grouped
 
 
 def _pane_of(definition: Definition) -> int:
@@ -55,7 +71,7 @@ def _group_by_pane(defs: Iterable[Definition]) -> dict[int, list[Definition]]:
 
 def to_d3kline_options(
     defs: Iterable[Definition],
-    points_by_key: Mapping[str, Iterable[Point]],
+    points_by_identity: Mapping[Identity, Iterable[Point]],
 ) -> list[dict[str, Any]]:
     """Build d3Kline ``IndicatorOption`` dicts ready for ``IndicatorManager.create``.
 
@@ -63,34 +79,41 @@ def to_d3kline_options(
     series——这样「5 个副图指标只用 2 个 pane」时前端只占 2 个 record，可缓解
     ``IndicatorManager`` 的 ``MAX_SUB_INDICATORS=3`` 静默丢弃。
 
-    调用方需保证同一 pane 内 ``indicator_key`` 唯一（存储层的 UNIQUE 约束负责）；
-    本函数不校验、不去重，重复的 key 会产出同名 series 而前端 ``_mergeIndicator``
-    会按 name 合并掉其中一条。
+    指标身份是 ``(owner_strategy_id, indicator_key)``；series ``name`` 用
+    :func:`akquant.indicator_identity.series_keys` 给出的 series 键（同名键被多个
+    owner 使用时为 ``"owner:key"``，否则就是 ``indicator_key``）。调用方需保证
+    ``(owner, key)`` 唯一（存储层的 UNIQUE 约束负责）；本函数不去重，重复的身份
+    会产出同名 series 而前端 ``_mergeIndicator`` 会按 name 合并掉其中一条。
 
     :param defs: 指标定义，字段同 ``BacktestResult.indicator_definitions`` 的列
-        （``indicator_key`` 必填，其余可缺）。
-    :param points_by_key: ``indicator_key`` → 点位序列，每个点位含
-        ``timestamp_ms`` 与 ``value``。
+        （``indicator_key`` 必填，``owner_strategy_id`` 缺失按 ``"_default"``，
+        其余可缺）。
+    :param points_by_identity: ``(owner_strategy_id, indicator_key)`` → 点位序列，
+        每个点位含 ``timestamp_ms`` 与 ``value``；扁平点位可用
+        :func:`group_points_by_identity` 分组。
     :return: d3Kline ``IndicatorOption`` 的 dict 列表，按 pane 升序。
     """
     options: list[dict[str, Any]] = []
+    defs = list(defs)
+    keys = series_keys(defs)
     grouped = _group_by_pane(defs)
     for pane in sorted(grouped):
         is_main = pane == 0
         data_list: list[dict[str, Any]] = []
         for definition in grouped[pane]:
-            key = str(definition["indicator_key"])
+            identity = identity_of(definition)
+            series_key = keys[identity]
             render_type = str(definition.get("render_type") or "line").strip().lower()
             series_type = D3KLINE_SERIES_TYPE.get(render_type, "line")
             series: dict[str, Any] = {
-                # series 身份用 indicator_key：前端 _mergeIndicator 以 name 做
-                # merge，必须在 pane 内唯一
-                "name": key,
-                "label": definition.get("display_name") or key,
+                # series 身份用 series 键：前端 _mergeIndicator 以 name 做
+                # merge，必须唯一（同名键跨 owner 时已加 owner 前缀）
+                "name": series_key,
+                "label": display_label(definition, series_key),
                 "type": series_type,
                 "data": [
                     {"timestamp": point["timestamp_ms"], "value": point["value"]}
-                    for point in points_by_key.get(key, [])
+                    for point in points_by_identity.get(identity, [])
                     if point.get("value") is not None
                 ],
             }
@@ -118,22 +141,33 @@ def to_d3kline_options(
 
 def to_raw_panes(
     defs: Iterable[Definition],
-    points_by_key: Mapping[str, Iterable[Point]],
+    points_by_identity: Mapping[Identity, Iterable[Point]],
 ) -> list[dict[str, Any]]:
     """Group by pane while keeping akquant-native semantics (no frontend downgrade).
 
     供非 d3Kline 的消费方使用。点位键名保留 ``timestamp_ms``（与 ``to_d3kline_options``
-    的 ``timestamp`` 不同），字段与 ``indicator_definitions`` 一一对应。
+    的 ``timestamp`` 不同），字段与 ``indicator_definitions`` 一一对应；另带
+    ``owner_strategy_id`` 与 ``series_key``（同 :func:`to_d3kline_options` 的 name），
+    ``indicator_key`` 保持原始值。``display_name`` 是定义里的原始 label（缺失时为
+    ``indicator_key``），**不**经过 :func:`akquant.indicator_identity.display_label`
+    处理；跨 owner 的同名键冲突由 ``series_key`` 区分，消费方需要唯一名称时用它。
+
+    :param points_by_identity: 同 :func:`to_d3kline_options`。
     """
     panes: list[dict[str, Any]] = []
+    defs = list(defs)
+    keys = series_keys(defs)
     grouped = _group_by_pane(defs)
     for pane in sorted(grouped):
         indicators: list[dict[str, Any]] = []
         for definition in grouped[pane]:
-            key = str(definition["indicator_key"])
+            identity = identity_of(definition)
+            owner, key = identity
             indicators.append(
                 {
+                    "owner_strategy_id": owner,
                     "indicator_key": key,
+                    "series_key": keys[identity],
                     "display_name": definition.get("display_name") or key,
                     "render_type": definition.get("render_type") or "line",
                     "color": definition.get("color"),
@@ -142,7 +176,7 @@ def to_raw_panes(
                     "scale_group": definition.get("scale_group"),
                     "points": [
                         {"timestamp_ms": point["timestamp_ms"], "value": point["value"]}
-                        for point in points_by_key.get(key, [])
+                        for point in points_by_identity.get(identity, [])
                     ],
                 }
             )

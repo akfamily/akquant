@@ -711,7 +711,9 @@ result.viz.review(market_data, filename="review.html", include_indicators=False)
 
 The adapter underneath is `akquant.lwc.to_lwc_indicator_series()` - the mirror of
 `akquant.chart.to_d3kline_options()`: one indicator contract, two frontends. Reuse
-it directly when building your own LWC page.
+it directly when building your own LWC page. Each series carries `owner_strategy_id`
+and `series_key` (see "Indicator identity and series keys" below); `indicator_key`
+keeps its original value.
 
 ### Optional Indicator Section In Reports
 
@@ -998,6 +1000,23 @@ Each indicator point carries both `timestamp` (nanoseconds) and `timestamp_ms` (
 
 A point's `symbol` is guaranteed to be non-empty (see "About `symbol` ownership" above), so consumers can group directly by `symbol` + `indicator_key` without handling an "unowned" case. In a multi-symbol backtest the same indicator name is split into one independent series per symbol — always filter by `symbol` before plotting, otherwise same-named indicators from different instruments are drawn as a single line.
 
+#### Indicator identity and series keys
+
+An indicator definition is identified by `(owner_strategy_id, indicator_key)`: the main
+strategy (owner `_default`) and an indicator script (owner = its `id`, by default the
+snake_case of the class name) may use the same key and each keeps its own `pane`, `color` and so on. `result.indicator_definitions` has
+`owner_strategy_id` as its first column and is sorted by `(owner, key)`; points have
+always carried `owner_strategy_id`, so consumers should join definitions and points on
+`(owner_strategy_id, indicator_key)`.
+
+Chart series keys are prefixed only on conflict: when an `indicator_key` belongs to a
+single owner, the series key is just `indicator_key`, so existing charts and frontends are
+unchanged; when several owners use it, the series key becomes `"{owner}:{key}"`, e.g.
+`_default:ema` and `sub:ema`. The legend label follows the series key when the user gave
+no label (display name equal to `indicator_key`) and stays as written otherwise. The LWC,
+d3Kline and plotly outputs all take their keys from
+`akquant.indicator_identity.series_keys()`; custom frontends should reuse it too.
+
 This keeps AKQuant focused on producing stable indicator data instead of coupling the framework to a specific charting library.
 
 ### Optional adapter: d3Kline `IndicatorOption`
@@ -1007,15 +1026,15 @@ indicator definitions and points into the structure `IndicatorManager.create()`
 consumes directly, so you do not hand-write the mapping:
 
 ```python
-from akquant.chart import to_d3kline_options, to_raw_panes
+from akquant.chart import group_points_by_identity, to_d3kline_options, to_raw_panes
 
 defs = result.indicator_definitions.to_dict(orient="records")
-points_by_key = {
-    key: group[["timestamp_ms", "value"]].to_dict(orient="records")
-    for key, group in result.indicator_df().groupby("indicator_key")
-}
-options = to_d3kline_options(defs, points_by_key)  # feed IndicatorManager.create()
-panes = to_raw_panes(defs, points_by_key)  # akquant-native shape for other frontends
+# (owner_strategy_id, indicator_key) -> list of points
+points_by_identity = group_points_by_identity(
+    result.indicator_df().to_dict(orient="records")
+)
+options = to_d3kline_options(defs, points_by_identity)  # feed IndicatorManager.create()
+panes = to_raw_panes(defs, points_by_identity)  # akquant-native shape for other frontends
 ```
 
 It is an **optional consumer-side adapter**, the same kind of thing as the stream bridge
@@ -1038,8 +1057,11 @@ Deliberate rules baked in (understand them before changing):
 - The seven `render_type` values are downgraded to d3Kline's `line | bar`; a downgraded
   series also carries the original `render_type`, so the frontend can upgrade losslessly
   once it supports area/scatter.
-- Series `name` is the `indicator_key` (the frontend merges by name; it must be unique
-  within a pane); the human-readable name goes in `label`.
+- Series `name` is the series key (the frontend merges by name; it must be unique): the
+  plain `indicator_key` when only one owner uses it, `"{owner}:{key}"` on a cross-owner
+  conflict; the human-readable name goes in `label`. Points are looked up by
+  `(owner_strategy_id, indicator_key)`, and each indicator in `to_raw_panes()` also
+  carries `owner_strategy_id` and `series_key`.
 
 Input is plain `Mapping` (dict), not a specific model. Missing fields take contract
 defaults (`pane=0`, `render_type="line"`), and `pane` may arrive as a string.
