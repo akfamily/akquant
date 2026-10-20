@@ -20,8 +20,12 @@ __all__ = ["DEFAULT_OWNER", "display_label", "identity_of", "series_keys"]
 
 
 def _text(value: Any, default: str = "") -> str:
-    # 与 indicator_recording._normalize_text 同口径: None/空白 -> default
-    text = str(value or "").strip()
+    # 与 indicator_recording._normalize_text 同口径: None/空白 -> default;
+    # 另把 float NaN 视为缺失: DataFrame.to_dict("records") 会把缺列补成 NaN,
+    # 而 NaN 为真值, str(NaN or "") 会得到 "nan"
+    if value is None or (isinstance(value, float) and value != value):
+        return default
+    text = str(value).strip()
     return text or default
 
 

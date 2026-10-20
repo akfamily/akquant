@@ -335,3 +335,35 @@ def test_plot_trace_names_distinct_when_both_owners_share_label() -> None:
     assert fig is not None
     names = sorted(trace.name for trace in fig.data)
     assert names == ["EMA <_default>", "EMA <labeled_sub>"]
+
+
+# ------------------------------------------------ NaN owner(DataFrame 往返)
+
+
+def test_nan_owner_from_dataframe_roundtrip_is_default() -> None:
+    """DataFrame 缺列补成 NaN 的 owner 按 _default 处理, 不误判冲突."""
+    from akquant.chart import group_points_by_identity
+    from akquant.indicator_identity import identity_of
+
+    rows: list[dict[str, Any]] = pd.DataFrame(  # type: ignore[assignment]
+        [
+            {"indicator_key": "ma", "value": 1.0},
+            {"indicator_key": "rsi", "owner_strategy_id": "s", "value": 2.0},
+        ]
+    ).to_dict("records")
+    assert identity_of(rows[0]) == ("_default", "ma")
+    assert series_keys(rows) == {("_default", "ma"): "ma", ("s", "rsi"): "rsi"}
+    grouped = group_points_by_identity(rows)
+    assert set(grouped) == {("_default", "ma"), ("s", "rsi")}
+    assert [p["value"] for p in grouped[("_default", "ma")]] == [1.0]
+
+    conflict: list[dict[str, Any]] = pd.DataFrame(  # type: ignore[assignment]
+        [
+            {"indicator_key": "ma"},
+            {"indicator_key": "ma", "owner_strategy_id": "s"},
+        ]
+    ).to_dict("records")
+    assert series_keys(conflict) == {
+        ("_default", "ma"): "_default:ma",
+        ("s", "ma"): "s:ma",
+    }

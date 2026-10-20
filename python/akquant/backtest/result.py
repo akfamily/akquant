@@ -1595,9 +1595,7 @@ class BacktestResult:
                 frame[column] = None
         # 身份是 (owner, key); 外部 sink 未带 owner(None/NaN/空串)时按 "_default" 补齐
         frame["owner_strategy_id"] = [
-            identity_of(
-                {"owner_strategy_id": owner if isinstance(owner, str) else None}
-            )[0]
+            identity_of({"owner_strategy_id": owner})[0]
             for owner in frame["owner_strategy_id"]
         ]
         frame = (
