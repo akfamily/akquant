@@ -10,6 +10,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    ClassVar,
     Deque,
     Dict,
     Iterable,
@@ -311,6 +312,18 @@ def _legacy_init_arg_names(func: Any) -> List[str]:
     return names
 
 
+def _validate_script_label(field: str, value: Any, cls_name: str) -> Optional[str]:
+    """校验类定义行的 title/id: 省略为 None, 给了就必须是非空字符串."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"{cls_name}: {field}= 必须是字符串, 收到 {value!r}")
+    text = value.strip()
+    if not text:
+        raise ValueError(f"{cls_name}: {field}= 不能为空")
+    return text
+
+
 class Strategy:
     """
     策略基类 (Base Strategy Class).
@@ -452,9 +465,29 @@ class Strategy:
     # 重新扫描）。
     __own_param_specs__: Dict[str, ParamSpec] = {}
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        """收集子类内联声明的 ParamSpec 字段，构建只读 __param_model__."""
+    #: 由 ``aq.Indicator`` 置 True。self.I 的绘图默认值与检查接口都据此区分脚本类型。
+    _aq_is_indicator_script: ClassVar[bool] = False
+    #: 类定义行 ``title=`` 的值; 每个类各自赋值, 不从父类继承。
+    _aq_title: ClassVar[Optional[str]] = None
+    #: 类定义行 ``id=`` 的值; 每个类各自赋值, 不从父类继承。
+    _aq_id: ClassVar[Optional[str]] = None
+
+    def __init_subclass__(
+        cls,
+        *,
+        title: Optional[str] = None,
+        id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        """接收类定义行的 title/id, 并收集 ParamSpec 字段构建只读 __param_model__."""
+        if "overlay" in kwargs:
+            raise TypeError(
+                f"{cls.__name__}: overlay= 只适用于 aq.Indicator 指标脚本, "
+                "策略里的指标位置用 self.I(pane=) 指定"
+            )
         super().__init_subclass__(**kwargs)
+        cls._aq_title = _validate_script_label("title", title, cls.__name__)
+        cls._aq_id = _validate_script_label("id", id, cls.__name__)
         # 记录当前类命名空间中直接声明的字段
         own_specs: Dict[str, ParamSpec] = {
             name: value
@@ -3746,6 +3779,36 @@ class Strategy:
             commission,
             reduce_only,
         )
+
+    @classmethod
+    def resolve_title(cls) -> str:
+        """显示名: 类定义行的 ``title``, 省略时为类名."""
+        return cls._aq_title or cls.__name__
+
+    @classmethod
+    def resolve_id(cls) -> Optional[str]:
+        """机器标识: 类定义行的 ``id``; 策略省略时为 None(沿用 strategy_id 默认值)."""
+        return cls._aq_id
+
+
+def reconcile_strategy_id(strategy: Any, strategy_id: Optional[str]) -> Optional[str]:
+    """合并类定义行的 ``id`` 与入口参数 ``strategy_id``.
+
+    只给其一取给出的那个; 都给且不一致抛 ValueError(不静默二选一)。
+    ``strategy`` 不是 Strategy 类/实例(None、函数式策略、待加载的源码)时原样返回。
+    """
+    cls = strategy if isinstance(strategy, type) else type(strategy)
+    if not (isinstance(cls, type) and issubclass(cls, Strategy)):
+        return strategy_id
+    declared = cls.resolve_id()
+    given = (str(strategy_id).strip() or None) if strategy_id is not None else None
+    if declared is None:
+        return strategy_id
+    if given is not None and given != declared:
+        raise ValueError(
+            f"strategy_id={given!r} 与 {cls.__name__} 类定义行的 id={declared!r} 不一致"
+        )
+    return declared
 
 
 class VectorizedStrategy(Strategy):

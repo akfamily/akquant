@@ -5,15 +5,15 @@ AKQuant pluggable studies demo (TradingView "indicator script" style).
 
 A *study* declares indicators and never trades - the counterpart of a
 TradingView indicator script next to a strategy script. Plug any number of them
-into a run with ``studies=[...]``; each one becomes its own slot, so its points
+into a run with ``indicators=[...]``; each one becomes its own slot, so its points
 carry their own ``owner_strategy_id`` and never mix with the strategy's.
 
 Shown here:
 1. Two studies alongside one trading strategy in a single backtest.
 2. ``indicator_df(owner=...)`` to pull one study's points.
 3. The hard guarantee: a study that calls ``self.buy`` raises
-   ``StudyCannotTradeError`` instead of silently placing an order.
-4. The same ``studies=`` argument works for ``run_live`` (not run here).
+   ``IndicatorCannotTradeError`` instead of silently placing an order.
+4. The same ``indicators=`` argument works for ``run_live`` (not run here).
 """
 
 from __future__ import annotations
@@ -24,7 +24,13 @@ from pathlib import Path
 
 import akquant as aq
 import pandas as pd
-from akquant import Bar, Strategy, Study, StudyCannotTradeError, run_backtest
+from akquant import (
+    Bar,
+    Indicator,
+    IndicatorCannotTradeError,
+    Strategy,
+    run_backtest,
+)
 
 SYMBOL = "STUDY_DEMO"
 
@@ -49,7 +55,7 @@ def make_demo_data(periods: int = 120) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-class RsiStudy(Study):
+class RsiStudy(Indicator):
     """Only draws RSI in sub-pane 1. Never trades."""
 
     def on_start(self) -> None:
@@ -65,10 +71,8 @@ class RsiStudy(Study):
         )
 
 
-class MacdStudy(Study):
-    """MACD split into three lines in sub-pane 2; explicit study_id."""
-
-    study_id = "macd_view"
+class MacdStudy(Indicator, id="macd_view"):
+    """MACD split into three lines in sub-pane 2; explicit id."""
 
     def on_start(self) -> None:
         """Multi-output indicator -> three independent lines."""
@@ -97,7 +101,7 @@ class TrendStrategy(Strategy):
             self.sell(bar.symbol, position)
 
 
-class SneakyStudy(Study):
+class SneakyStudy(Indicator):
     """A study that tries to trade - used to show the guard."""
 
     def on_bar(self, bar: Bar) -> None:
@@ -116,7 +120,7 @@ def main() -> None:
         show_progress=False,
         timezone="UTC",
         strategy_id="trend",
-        studies=[RsiStudy, MacdStudy],
+        indicators=[RsiStudy, MacdStudy],
     )
 
     frame = result.indicator_df()
@@ -145,10 +149,10 @@ def main() -> None:
             show_progress=False,
             timezone="UTC",
             strategy_id="trend",
-            studies=[SneakyStudy],
+            indicators=[SneakyStudy],
         )
         print("sneaky_study_blocked=False")
-    except StudyCannotTradeError as exc:
+    except IndicatorCannotTradeError as exc:
         print(f"sneaky_study_blocked=True ({type(exc).__name__})")
 
     print("done_pluggable_studies")

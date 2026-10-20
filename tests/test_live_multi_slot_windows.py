@@ -20,7 +20,7 @@ from typing import Any, Dict, List
 import akquant as aq
 import pandas as pd
 import pytest
-from akquant import AssetType, Bar, Instrument, Strategy, Study, run_live
+from akquant import AssetType, Bar, Indicator, Instrument, Strategy, run_live
 
 SYMBOLS = ("600000", "600001")
 
@@ -92,10 +92,8 @@ class MainStrategy(Strategy):
         WINDOW_HITS[("main", str(bar.freq), bar.symbol)] += 1
 
 
-class FiveMinStudy(Study):
-    """study A: 5min 窗口, 全标的."""
-
-    study_id = "five_all"
+class FiveMinStudy(Indicator, id="five_all"):
+    """指标脚本 A: 5min 窗口, 全标的."""
 
     def __init__(self) -> None:
         """订阅 5min 窗口, 全标的."""
@@ -113,10 +111,8 @@ class FiveMinStudy(Study):
         WINDOW_HITS[("five_all", str(bar.freq), bar.symbol)] += 1
 
 
-class FiveMinOneSymbolStudy(Study):
-    """study B: 同为 5min, 但只订阅第一只标的 —— 与 A 范围重叠不相同."""
-
-    study_id = "five_one"
+class FiveMinOneSymbolStudy(Indicator, id="five_one"):
+    """指标脚本 B: 同为 5min, 但只订阅第一只标的 —— 与 A 范围重叠不相同."""
 
     def __init__(self) -> None:
         """订阅 5min 窗口, 只限第一只标的."""
@@ -163,7 +159,7 @@ def live_stream() -> Dict[str, Any]:
         on_event=on_event,
         duration="60s",
         strategy_id="main",
-        studies=[FiveMinStudy, FiveMinOneSymbolStudy],
+        indicators=[FiveMinStudy, FiveMinOneSymbolStudy],
     )
     by_owner: Dict[str, List[dict[str, Any]]] = collections.defaultdict(list)
     for p in points:

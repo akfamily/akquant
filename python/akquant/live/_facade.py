@@ -14,8 +14,8 @@ import pandas as pd
 from ..akquant import Bar, Instrument
 from ..backtest import BacktestStreamEvent
 from ..indicator_recording import IndicatorSink
-from ..strategy import Strategy, StrategyRuntimeConfig
-from ..study import Study, merge_studies_into_slots
+from ..indicator_script import Indicator, merge_indicators_into_slots
+from ..strategy import Strategy, StrategyRuntimeConfig, reconcile_strategy_id
 from ._runner import LiveRunner
 
 
@@ -35,7 +35,7 @@ def run_live(
     strategies_by_slot: Optional[
         Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]
     ] = None,
-    studies: Optional[Sequence[Union[Type[Study], Study]]] = None,
+    indicators: Optional[Sequence[Union[Type[Indicator], Indicator]]] = None,
     md_front: str = "",
     td_front: Optional[str] = None,
     broker_id: str = "",
@@ -184,6 +184,7 @@ def run_live(
     :param runtime_config_override: Whether to override a ``runtime_config`` the
         strategy already set itself (default True). Either way a conflict is
         logged; False keeps the strategy's own value and only warns.
+    :param indicators: 叠加的指标脚本(aq.Indicator 子类或实例), 各占一个 slot, 不交易
     :param session_tag: Optional session marker embedded in every
         ``client_order_id`` this session generates (``{broker}-{session_tag}-{seq}``),
         replacing the default random uuid. **Recommended: pass your platform's
@@ -239,9 +240,10 @@ def run_live(
     if instruments is None:
         raise ValueError("run_live requires instruments")
 
-    # 与 run_backtest 同一套合并规则: study 就是一个只画图的 slot。
-    strategies_by_slot = merge_studies_into_slots(
-        strategy_id, strategies_by_slot, studies
+    # 与 run_backtest 同一套合并规则: 指标脚本就是一个只画图的 slot。
+    strategy_id = reconcile_strategy_id(strategy_cls, strategy_id)
+    strategies_by_slot = merge_indicators_into_slots(
+        strategy_id, strategies_by_slot, indicators
     )
     runner = LiveRunner(
         strategy_cls=strategy_cls,

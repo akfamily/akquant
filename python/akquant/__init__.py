@@ -64,6 +64,7 @@ from .feed_adapter import (
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .indicator_declaration import IndicatorBinding, IndicatorDeclaration
 from .indicator_recording import IndicatorRecorder, IndicatorSink
+from .indicator_script import Indicator, IndicatorCannotTradeError
 from .indicator_stream import (
     is_indicator_stream_event,
     to_indicator_message,
@@ -103,7 +104,6 @@ from .strategy_loader import (
     resolve_strategy_input,
 )
 from .stream_schema import STREAM_SCHEMA_VERSION
-from .study import Study, StudyCannotTradeError
 from .trade_stream import (
     is_trade_stream_event,
     to_trade_message,
@@ -143,8 +143,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "PercentSizer",
         "AllInSizer",
         "Strategy",
-        "Study",
-        "StudyCannotTradeError",
+        "Indicator",
+        "IndicatorCannotTradeError",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
         "BarGenerator",
