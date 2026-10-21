@@ -4136,13 +4136,14 @@ def run_backtest(
                 normalized_global_slippage,
             )
 
-    if volume_limit_pct != 0.25:
-        if hasattr(engine, "set_volume_limit"):
-            engine.set_volume_limit(volume_limit_pct)
-        else:
-            logger.warning(
-                f"Volume limit {volume_limit_pct} set but not supported by Engine."
-            )
+    # Always push the limit through: the engine's own default is 0.0 (no limit),
+    # so short-circuiting on the Python-side default of 0.25 silently disabled it.
+    if hasattr(engine, "set_volume_limit"):
+        engine.set_volume_limit(volume_limit_pct)
+    else:
+        logger.warning(
+            f"Volume limit {volume_limit_pct} set but not supported by Engine."
+        )
 
     # Configure other asset fees if provided
     if "fund_commission" in kwargs:
@@ -6268,7 +6269,6 @@ def run_from_checkpoint(
         )
     if (
         warm_start_volume_limit is not None
-        and warm_start_volume_limit != 0.25
         and hasattr(engine, "set_volume_limit")
     ):
         engine.set_volume_limit(warm_start_volume_limit)
