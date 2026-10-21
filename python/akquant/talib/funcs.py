@@ -138,6 +138,24 @@ def _batch_call(
     return cast(object, method(*arrays))
 
 
+def _mask_warmup(values: pd.Series | np.ndarray, warmup: int) -> pd.Series | np.ndarray:
+    """Mask the leading warm-up region of a rust-backend result to NaN.
+
+    The rust indicators emit a value on every bar, including the warm-up region
+    where the recurrence is not yet defined. TA-Lib masks that region to NaN and
+    the python backends below do the same, so align the rust path with them:
+    without this, `auto` (which resolves to rust) hands back fabricated numbers
+    where the first EMA of a DEMA has only seen a handful of bars.
+    """
+    if warmup <= 0:
+        return values
+    if isinstance(values, pd.Series):
+        values.iloc[:warmup] = np.nan
+    else:
+        values[:warmup] = np.nan
+    return values
+
+
 def _run_rust_single_series(
     values: pd.Series,
     update_fn: Callable[[float], float | None],
@@ -1328,6 +1346,7 @@ def EMA(
     if backend_key == "rust":
         indicator = RustEMA(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
+        out = _mask_warmup(out, use_period - 1)
         return finalize_output(out, as_series=as_series)
     out = cast(
         pd.Series,
@@ -2637,6 +2656,9 @@ def MACD(
                         float(out[1]),
                         float(out[2]),
                     )
+        dif = _mask_warmup(dif, slow_p + signal_p - 2)
+        dea = _mask_warmup(dea, slow_p + signal_p - 2)
+        hist = _mask_warmup(hist, slow_p + signal_p - 2)
         dif_s = pd.Series(dif, index=close_series.index, dtype=float)
         dea_s = pd.Series(dea, index=close_series.index, dtype=float)
         hist_s = pd.Series(hist, index=close_series.index, dtype=float)
@@ -3098,6 +3120,7 @@ def DEMA(
     if backend_key == "rust":
         indicator = RustDEMA(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
+        out = _mask_warmup(out, 2 * use_period - 2)
         return finalize_output(out, as_series=as_series)
     ema1 = cast(
         pd.Series,
@@ -3128,6 +3151,7 @@ def TRIX(
     if backend_key == "rust":
         indicator = RustTRIX(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
+        out = _mask_warmup(out, 3 * use_period - 2)
         return finalize_output(out, as_series=as_series)
     ema1 = cast(
         pd.Series,
@@ -3204,6 +3228,7 @@ def TEMA(
     if backend_key == "rust":
         indicator = RustTEMA(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
+        out = _mask_warmup(out, 3 * use_period - 2)
         return finalize_output(out, as_series=as_series)
     ema1 = cast(
         pd.Series,
