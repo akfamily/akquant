@@ -100,3 +100,69 @@ def test_missing_entry_point_is_tolerated() -> None:
 
     with pytest.raises(KeyboardInterrupt):
         strategy._on_bar_event_and_flush("b1", None)
+
+
+def test_slots_receive_the_last_event_before_stop() -> None:
+    """多 slot 时, 第 N 个事件要派发完所有 slot 才结束会话.
+
+    Rust 对每个事件按 slot 0(主策略)→ slot 1..k 顺序派发
+    (src/pipeline/stages/strategy.rs)。若在主策略处理完第 N 个事件时就抛
+    KeyboardInterrupt, 后面的 slot 永远收不到最后一根 bar。
+    """
+    main = _CountingStrategy()
+    slot_a = _CountingStrategy()
+    slot_b = _CountingStrategy()
+    _runner()._apply_bounded_event_limit(main, 2, [slot_a, slot_b])
+    for event in ("e1", "e2"):
+        main._on_bar_event_and_flush(event, None)
+        slot_a._on_bar_event_and_flush(event, None)
+        if event == "e2":
+            with pytest.raises(KeyboardInterrupt):
+                slot_b._on_bar_event_and_flush(event, None)
+        else:
+            slot_b._on_bar_event_and_flush(event, None)
+    assert main.bar_calls == slot_a.bar_calls == slot_b.bar_calls == ["e1", "e2"]
+
+
+def test_replay_slots_get_every_live_bar() -> None:
+    """端到端: replay 有界会话里, 指标脚本 slot 与主策略收到同样多的 bar."""
+    import akquant as aq
+    import pandas as pd
+    from akquant import AssetType, Bar, Instrument
+
+    seen: dict[str, list[float]] = {}
+
+    class Main(aq.Strategy):
+        def on_bar(self, bar: Any) -> None:
+            seen.setdefault("main", []).append(bar.close)
+
+    class Sub(aq.Indicator):
+        def on_bar(self, bar: Any) -> None:
+            seen.setdefault("sub", []).append(bar.close)
+
+    day0 = pd.Timestamp("2026-08-25 15:00", tz="Asia/Shanghai")
+    bars = [
+        Bar(
+            timestamp=int((day0 + pd.Timedelta(days=k)).value),
+            open=20.0 + k,
+            high=20.0 + k,
+            low=20.0 + k,
+            close=20.0 + k,
+            volume=1000.0,
+            symbol="600000",
+        )
+        for k in range(3)
+    ]
+    aq.run_live(
+        strategy_cls=Main,
+        instruments=[Instrument("600000", AssetType.Stock, 1.0, 0.01, 100)],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars, "freq": "1d"},
+        cash=1e6,
+        duration="30s",
+        strategy_id="main",
+        indicators=[Sub],
+    )
+    assert seen["main"] == [20.0, 21.0, 22.0]
+    assert seen["sub"] == [20.0, 21.0, 22.0]

@@ -15,6 +15,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Sequence,
     Type,
     Union,
     cast,
@@ -749,7 +750,11 @@ class LiveRunner:
                 bounded_total,
                 extra=self._runner_log_extra(phase="live"),
             )
-            self._apply_bounded_event_limit(strategy_instance, bounded_total)
+            self._apply_bounded_event_limit(
+                strategy_instance,
+                bounded_total,
+                list(slot_strategy_instances.values()),
+            )
 
         # 外部信号端口: 必须在 engine.run() 之前取。run() 会独占可变借用引擎对象,
         # 之后再取会撞 "Already borrowed"(见 signal-ingestion-rfc.md 4.2.1)。
@@ -2547,7 +2552,12 @@ class LiveRunner:
                         ),
                     )
 
-    def _apply_bounded_event_limit(self, strategy: Any, total_events: int) -> None:
+    def _apply_bounded_event_limit(
+        self,
+        strategy: Any,
+        total_events: int,
+        slot_strategies: Sequence[Any] = (),
+    ) -> None:
         """让有界 live 会话在收到 ``total_events`` 个行情事件后自行结束.
 
         live 循环在 channel 空时返回 ``FeedAction::Wait`` 并无限循环
@@ -2570,17 +2580,32 @@ class LiveRunner:
 
         本机制不含具体 broker 语义: 任何在 ``GatewayBundle.metadata`` 中声明
         ``bounded_event_total`` 的 broker 都能复用。
+
+        多 slot: Rust 对每个事件按 slot 0(主策略)→ slot 1..k 的顺序派发
+        (``src/pipeline/stages/strategy.rs``)。计数放在主策略上(每个事件最先
+        到它), 但中断要等**最后一个** slot 处理完第 N 个事件才抛——否则会话在
+        主策略处理完最后一根 bar 时就结束, 后面的 slot 永远收不到它。
+
+        :param slot_strategies: 按派发顺序排列的其余 slot 策略
         """
         if total_events <= 0:
             return
 
+        method_names = ("_on_bar_event_and_flush", "_on_tick_event_and_flush")
         state = {"count": 0}
 
-        def _make_wrapper(original: Any) -> Any:
+        def _counting(original: Any) -> Any:
+            def wrapped(event: Any, ctx: Any) -> Any:
+                result = original(event, ctx)
+                state["count"] += 1
+                return result
+
+            return wrapped
+
+        def _stopping(original: Any) -> Any:
             def wrapped(event: Any, ctx: Any) -> Any:
                 # 先处理完本事件再判断, 使第 N 个事件不被截断。
                 result = original(event, ctx)
-                state["count"] += 1
                 if state["count"] >= total_events:
                     raise KeyboardInterrupt(
                         f"bounded live session complete: {total_events} events"
@@ -2589,11 +2614,18 @@ class LiveRunner:
 
             return wrapped
 
-        for method_name in ("_on_bar_event_and_flush", "_on_tick_event_and_flush"):
+        for method_name in method_names:
             original = getattr(strategy, method_name, None)
-            if original is None:
-                continue
-            setattr(strategy, method_name, _make_wrapper(original))
+            if original is not None:
+                setattr(strategy, method_name, _counting(original))
+            # 最后一个有该入口的目标负责中断(只有主策略时就是它自己)。
+            targets = [strategy, *slot_strategies]
+            last = next(
+                (t for t in reversed(targets) if getattr(t, method_name, None)),
+                None,
+            )
+            if last is not None:
+                setattr(last, method_name, _stopping(getattr(last, method_name)))
 
     def _apply_time_limit(self, strategy: Strategy, duration_str: str) -> None:
         """Inject time check into strategy methods."""
