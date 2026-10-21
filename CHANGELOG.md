@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **有界 live 会话（如 `broker="replay"`）里 slot 收不到最后一个行情事件**：会话按事件总数自动结束时，中断在主策略处理完第 N 个事件后就抛出，而同一事件随后才派发给 slot 1..k，于是指标脚本与多策略 slot 总是少最后一根 bar（回测不受影响）。现在等最后一个 slot 处理完才结束会话。
+- **`aq.HeikinAshi` 遇 NaN/inf 输入后所有后续值都变成 NaN**：现在非有限值的 bar 返回 `None`、不推进状态，下一根有效 bar 接着上一根有效 bar 计算。
+- **`strategy_source=` 加载的策略，类定义行的 `id=` 被静默忽略**：`run_backtest` 与 `run_live` 现在在加载后同样把类 `id` 与 `strategy_id` 对账（不一致报错，与已有 slot key 重复报错）。
+
+### Docs
+- **示例 73 与自定义指标指南改为“历史段一次 `setData()` 下发、实时段才逐点 `update()`”**：此前示例把预热点逐个推给页面并每条 sleep 20ms，照此接入会出现“预热两三分钟、从左往右画”。
+
 ## [0.3.68] - 2026-10-21
 
 > **含破坏性改名，升级前请对照下方迁移表**：`Study` / `studies=` / 预计算 `Indicator` /
