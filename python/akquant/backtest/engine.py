@@ -2686,7 +2686,15 @@ def run_backtest(
             )
     # 指标脚本是"只画图不交易"的 slot: 复用多策略拓扑, 在风控校验之前并入 slot 表,
     # 让后续所有按 slot key 的校验/归属/窗口订阅合并对它一视同仁。
-    strategy_id = reconcile_strategy_id(strategy, strategy_id)
+    # 先解析策略(含 strategy_source 加载), 让类定义行的 id 参与 strategy_id 对账:
+    # 否则从源码加载的策略写了 id= 会被静默忽略。
+    strategy_input = resolve_strategy_input(
+        strategy=strategy,
+        strategy_source=strategy_source,
+        strategy_loader=strategy_loader,
+        strategy_loader_options=strategy_loader_options,
+    )
+    strategy_id = reconcile_strategy_id(strategy_input, strategy_id)
     strategies_by_slot = merge_indicators_into_slots(
         strategy_id, strategies_by_slot, indicators
     )
@@ -2844,12 +2852,6 @@ def run_backtest(
         api_name="run_backtest",
     )
 
-    strategy_input = resolve_strategy_input(
-        strategy=strategy,
-        strategy_source=strategy_source,
-        strategy_loader=strategy_loader,
-        strategy_loader_options=strategy_loader_options,
-    )
     strategy_kwargs = dict(kwargs)
     if start_time and _accepts_strategy_kwarg(strategy_input, "start_time"):
         strategy_kwargs["start_time"] = start_time

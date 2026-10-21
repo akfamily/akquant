@@ -409,3 +409,70 @@ def test_run_live_rejects_conflicting_strategy_id() -> None:
             trading_mode="paper",
             strategy_id="other",
         )
+
+
+_SOURCE_WITH_ID = '''
+import akquant as aq
+
+
+class Trend(aq.Strategy, id="trend"):
+    """类定义行带 id 的策略(从源码加载)."""
+
+    def on_start(self):
+        self.sma = self.I(aq.SMA(2), name="sma", pane=0, plot=True)
+'''
+
+
+def test_run_backtest_strategy_source_class_id_becomes_owner(tmp_path: Any) -> None:
+    """strategy_source 加载的类, 类定义行 id 同样生效(此前被静默忽略)."""
+    path = tmp_path / "trend_with_id.py"
+    path.write_text(_SOURCE_WITH_ID, encoding="utf-8")
+    result = run_backtest(
+        strategy_source=str(path),
+        data=_md(),
+        symbols=[SYMBOL],
+        show_progress=False,
+        timezone="UTC",
+    )
+    assert set(result.indicator_df()["owner_strategy_id"]) == {"trend"}
+
+
+def test_run_backtest_strategy_source_conflicting_id_raises(tmp_path: Any) -> None:
+    """strategy_source 加载的类 id 与 strategy_id 不一致时报错."""
+    path = tmp_path / "trend_with_id.py"
+    path.write_text(_SOURCE_WITH_ID, encoding="utf-8")
+    with pytest.raises(ValueError, match="trend"):
+        run_backtest(
+            strategy_source=str(path),
+            data=_md(),
+            symbols=[SYMBOL],
+            show_progress=False,
+            timezone="UTC",
+            strategy_id="other",
+        )
+
+
+def test_live_runner_strategy_source_class_id_reconciled(tmp_path: Any) -> None:
+    """实盘 runner 加载 strategy_source 后补对账: 类 id 成为 strategy_id."""
+    from akquant.live._runner import LiveRunner
+
+    path = tmp_path / "trend_with_id.py"
+    path.write_text(_SOURCE_WITH_ID, encoding="utf-8")
+
+    def _runner(strategy_id: Any) -> Any:
+        runner = LiveRunner.__new__(LiveRunner)
+        runner.strategy_cls = None
+        runner.strategy_source = str(path)
+        runner.strategy_loader = None
+        runner.strategy_loader_options = None
+        runner.strategies_by_slot = {}
+        runner.strategy_id = (strategy_id or "_default").strip() or "_default"
+        runner._explicit_strategy_id = strategy_id
+        return runner
+
+    _, _, effective = _runner(None)._build_strategy_topology()
+    assert effective == "trend"
+    _, _, same = _runner("trend")._build_strategy_topology()
+    assert same == "trend"
+    with pytest.raises(ValueError, match="trend"):
+        _runner("other")._build_strategy_topology()

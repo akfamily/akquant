@@ -37,7 +37,12 @@ from ..gateway.symbol_match import normalize_symbol_for_match
 from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink, declare_plotted_indicators
 from ..log import build_log_extra, get_logger
-from ..strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
+from ..strategy import (
+    InstrumentSnapshot,
+    Strategy,
+    StrategyRuntimeConfig,
+    reconcile_strategy_id,
+)
 from ..strategy_loader import resolve_strategy_input
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
@@ -450,6 +455,11 @@ class LiveRunner:
         self.strategy_loader = strategy_loader
         self.strategy_loader_options = strategy_loader_options
         self.strategy_id = (strategy_id or "_default").strip() or "_default"
+        # 保留调用方是否显式给了 strategy_id: 从 strategy_source 加载的类可能在
+        # 类定义行写了 id=, 要在加载后再对账一次(见 _build_strategy_topology)。
+        self._explicit_strategy_id: Optional[str] = (
+            str(strategy_id).strip() or None if strategy_id is not None else None
+        )
         self.strategies_by_slot = strategies_by_slot or {}
         self.instruments = instruments
         self._subscribed_symbols_cache: set[str] | None = None
@@ -905,6 +915,18 @@ class LiveRunner:
 
     def _build_strategy_topology(self) -> tuple[Strategy, Dict[str, Strategy], str]:
         strategy_instance = self._build_strategy_instance(self.strategy_cls)
+        # run_live 门面只能对已传入的类对账; strategy_source 加载出的类要在这里
+        # 补一次, 否则类定义行的 id= 被静默忽略。
+        declared_id = reconcile_strategy_id(
+            strategy_instance, getattr(self, "_explicit_strategy_id", None)
+        )
+        if declared_id and declared_id != self.strategy_id:
+            if declared_id in self.strategies_by_slot:
+                raise ValueError(
+                    f"策略类定义行的 id={declared_id!r} 与已有 slot key 重复; "
+                    "请改用其他 id"
+                )
+            self.strategy_id = declared_id
         slot_strategy_instances: Dict[str, Strategy] = {}
         for slot_key, slot_input in self.strategies_by_slot.items():
             slot_key_str = str(slot_key).strip()
