@@ -224,7 +224,8 @@ class HeikinAshi:
         r"""
         更新指标值.
 
-        :return: (ha_open, ha_high, ha_low, ha_close)
+        :return: (ha_open, ha_high, ha_low, ha_close); 任一输入为 NaN/inf 时返回
+            None 且不推进状态(``value`` 仍是上一根有效值)
         """
         ...
     def update_many_ohlc(

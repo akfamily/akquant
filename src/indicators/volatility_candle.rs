@@ -36,6 +36,11 @@ impl HeikinAshi {
         low: f64,
         close: f64,
     ) -> Option<(f64, f64, f64, f64)> {
+        // 任一输入非有限值(NaN/inf, 例如停牌缺价)时本根不出值, 也不推进状态:
+        // 否则 NaN 会写进 prev_ha_*, 此后每一根的 ha_open 都是 NaN。
+        if !(open.is_finite() && high.is_finite() && low.is_finite() && close.is_finite()) {
+            return None;
+        }
         let ha_close = (open + high + low + close) / 4.0;
         let ha_open = match (self.prev_ha_open, self.prev_ha_close) {
             (Some(po), Some(pc)) => (po + pc) / 2.0,
@@ -145,5 +150,19 @@ mod tests {
         // ha_open2=(15+12.5)/2=13.75, close2=(5+5+5+5)/4=5 -> high 取 13.75, low 取 5
         let (o, h, l, c) = ha.update(5.0, 5.0, 5.0, 5.0).unwrap();
         assert!(close_to(o, 13.75) && close_to(h, 13.75) && close_to(l, 5.0) && close_to(c, 5.0));
+    }
+
+    #[test]
+    fn heikin_ashi_non_finite_bar_is_skipped_without_poisoning_state() {
+        let mut ha = HeikinAshi::new();
+        ha.update(10.0, 12.0, 9.0, 11.0); // open=10.5, close=10.5
+        // 坏 bar: 不出值, 也不改状态
+        assert!(ha.update(f64::NAN, 12.0, 9.0, 11.0).is_none());
+        assert!(ha.update(10.0, f64::INFINITY, 9.0, 11.0).is_none());
+        let last = ha.value().unwrap();
+        assert!(close_to(last.0, 10.5) && close_to(last.3, 10.5));
+        // 下一根好 bar 接着上一根好 bar 算: ha_open=(10.5+10.5)/2
+        let (o, _, _, c) = ha.update(11.0, 13.0, 10.0, 12.0).unwrap();
+        assert!(close_to(o, 10.5) && close_to(c, 11.5));
     }
 }
