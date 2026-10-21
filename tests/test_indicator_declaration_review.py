@@ -12,7 +12,7 @@ from typing import Any, List, cast
 import akquant as aq
 import pandas as pd
 import pytest
-from akquant import Bar, Indicator, Strategy, run_backtest
+from akquant import Bar, PrecomputedIndicator, Strategy, run_backtest
 from akquant.akquant import Tick
 from akquant.indicator_declaration import IndicatorBinding
 
@@ -168,7 +168,7 @@ def test_pickle_restores_binding_on_user_attribute_not_declaration_name(
 # finding 3: 预计算指标没有增量状态, warmup_bars 对它无意义且会让 bootstrap 崩
 # --------------------------------------------------------------------------
 def test_precomputed_indicator_rejects_warmup_bars() -> None:
-    """self.I(Indicator(...), warmup_bars=5) 应直接报错.
+    """self.I(PrecomputedIndicator(...), warmup_bars=5) 应直接报错.
 
     而不是等到数据准备阶段才抛 NotImplementedError.
     """
@@ -176,7 +176,8 @@ def test_precomputed_indicator_rejects_warmup_bars() -> None:
     class Probe(Strategy):
         def on_start(self) -> None:
             self.mom = self.I(
-                Indicator("mom", lambda df: df["close"].diff()), warmup_bars=5
+                PrecomputedIndicator("mom", lambda df: df["close"].diff()),
+                warmup_bars=5,
             )
 
         def on_bar(self, bar: Bar) -> None:
@@ -195,7 +196,8 @@ def test_precomputed_indicator_rejects_warmup_bars() -> None:
 
 
 # --------------------------------------------------------------------------
-# finding 5: 预计算 Indicator 天然按 symbol 缓存, 多标的下代理属性不能报"共享实例"错
+# finding 5: 预计算 PrecomputedIndicator 天然按 symbol 缓存,
+# 多标的下代理属性不能报"共享实例"错
 # --------------------------------------------------------------------------
 def test_precomputed_indicator_proxies_work_across_symbols() -> None:
     """两只标的 + 预计算指标: get_instance()/代理属性对第二只标的不抛 ValueError."""
@@ -204,7 +206,7 @@ def test_precomputed_indicator_proxies_work_across_symbols() -> None:
     class Probe(Strategy):
         def on_start(self) -> None:
             self.mom = self.I(
-                Indicator("mom", lambda df: df["close"].diff()), name="mom"
+                PrecomputedIndicator("mom", lambda df: df["close"].diff()), name="mom"
             )
 
         def on_bar(self, bar: Bar) -> None:

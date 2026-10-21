@@ -6,8 +6,10 @@ backtest path and any frontend chart bridge emit identical payloads.
 """
 
 from ._normalize import (
+    CANDLE_ROLES,
     MAX_SUB_PANES,
     RENDER_TYPE_CANONICAL,
+    normalize_group_role,
     normalize_meta_json,
     normalize_pane_index,
     normalize_reference_lines,
@@ -19,14 +21,18 @@ from ._normalize import (
 from .d3kline import (
     D3KLINE_SERIES_TYPE,
     SUB_PANE_HEIGHT,
+    group_points_by_identity,
     to_d3kline_options,
     to_raw_panes,
 )
 
 __all__ = [
+    "CANDLE_ROLES",
     "D3KLINE_SERIES_TYPE",
     "MAX_SUB_PANES",
+    "group_points_by_identity",
     "RENDER_TYPE_CANONICAL",
+    "normalize_group_role",
     "normalize_meta_json",
     "normalize_pane_index",
     "normalize_reference_lines",

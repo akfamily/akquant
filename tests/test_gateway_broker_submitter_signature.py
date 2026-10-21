@@ -32,7 +32,7 @@ def _submitter(captured: list[UnifiedOrderRequest]) -> BrokerOrderSubmitter:
             captured.append(req)
             return "b1"
 
-    cap = BrokerCapability(broker_name="qmf")
+    cap = BrokerCapability(broker_name="middleware")
     return BrokerOrderSubmitter(
         trader_gateway=_Gw(),
         strategy=_Strategy(),

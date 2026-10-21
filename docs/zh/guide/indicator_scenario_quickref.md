@@ -115,6 +115,6 @@ enter_long = price_breakout and volume_confirm
 
 ## 相关资料
 
-- [AKQuant 指标全量说明（103 个）](./rust_indicator_reference.md)
+- [AKQuant 指标全量说明（104 个）](./rust_indicator_reference.md)
 - [指标组合实战手册](./talib_indicator_playbook.md)
 - [第 16 章：AKQuant 指标全景与工程化使用](../textbook/16_rust_indicators.md)

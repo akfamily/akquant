@@ -18,7 +18,7 @@
 ## 本章实践入口
 
 - 主示例：[examples/textbook/ch16_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators.py)
-- 进阶示例：[examples/72_declarative_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/72_declarative_indicators.py), [examples/73_lwc_live_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/73_lwc_live_indicators.py), [examples/74_pluggable_studies.py](https://github.com/akfamily/akquant/blob/main/examples/74_pluggable_studies.py), [examples/75_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/75_intrabar_indicators.py), [examples/76_tick_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/76_tick_intrabar_indicators.py), [examples/45_talib_indicator_playbook_demo.py](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py), [examples/60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py), [examples/62_indicator_streaming_demo.py](https://github.com/akfamily/akquant/blob/main/examples/62_indicator_streaming_demo.py), [examples/61_indicator_visualization_export_demo.py](https://github.com/akfamily/akquant/blob/main/examples/61_indicator_visualization_export_demo.py)
+- 进阶示例：[examples/72_declarative_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/72_declarative_indicators.py), [examples/73_lwc_live_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/73_lwc_live_indicators.py), [examples/74_indicator_scripts.py](https://github.com/akfamily/akquant/blob/main/examples/74_indicator_scripts.py), [examples/75_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/75_intrabar_indicators.py), [examples/76_tick_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/76_tick_intrabar_indicators.py), [examples/45_talib_indicator_playbook_demo.py](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py), [examples/60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py), [examples/62_indicator_streaming_demo.py](https://github.com/akfamily/akquant/blob/main/examples/62_indicator_streaming_demo.py), [examples/61_indicator_visualization_export_demo.py](https://github.com/akfamily/akquant/blob/main/examples/61_indicator_visualization_export_demo.py), [examples/77_heikin_ashi_indicator.py](https://github.com/akfamily/akquant/blob/main/examples/77_heikin_ashi_indicator.py)
 - 函数式孪生示例：[examples/textbook/ch16_indicators_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators_functional.py)
 - 对应指南：[AKQuant 指标全量说明](../guide/rust_indicator_reference.md)
 
@@ -27,6 +27,7 @@
 ```bash
 python examples/textbook/ch16_indicators.py
 python examples/textbook/ch16_indicators_functional.py
+python examples/77_heikin_ashi_indicator.py
 # 可选：接入真实 A 股数据
 python examples/textbook/ch16_indicators.py --symbol sh600000
 ```
@@ -36,6 +37,7 @@ python examples/textbook/ch16_indicators.py --symbol sh600000
 1. 脚本依次输出三课演示：读指标（输入/输出/warmup）、用指标（EMA+ADX+NATR 角色分工回测）、迁移指标（python/rust 后端对齐）。
 2. 切换 `backend="python"` 与 `backend="rust"` 后，收敛尾段数值基本一致且可解释。
 3. 能识别 warmup 导致的空值区段，并在计算指标前剔除前部 NaN 填充，避免把无效值喂给策略信号。
+4. `77_heikin_ashi_indicator.py` 输出 `candle_groups=['ha']`、`first_ha_close_matches=True`、`review_has_candlestick=True`、`d3kline_series=['ha']`，以及 `replaces_price=True`，最后打印 `done_heikin_ashi`。
 
 ## 16.1 为什么单独学习 Rust 指标体系
 
@@ -45,23 +47,23 @@ AKQuant 的指标接口并不只是“换一个更快的 TA-Lib 后端”。它�
 2. **迁移友好**：你可以先让旧策略在 Python 后端上对齐，再切换到 Rust 后端提速。
 3. **工程化复用**：指标可以作为主信号、过滤器、风控尺度，甚至可视化与特征工程输入。
 
-因此，本章关注的不是“把 103 个指标背下来”，而是学会三件真正重要的事：
+因此，本章关注的不是“把 104 个指标背下来”，而是学会三件真正重要的事：
 
 - 指标**吃什么输入**；
 - 指标**吐什么输出**；
 - 指标在前若干根 K 线上的 **warmup 行为**是什么。
 
-## 16.2 全量覆盖范围（当前 103 个）
+## 16.2 全量覆盖范围（当前 104 个）
 
 - Momentum：8 个
 - Moving Average & Transforms：59 个
 - Trend：20 个
-- Volatility：11 个
+- Volatility：12 个
 - Volume：5 个
 
 完整逐项解释、参数口径与返回说明请始终以参考页为准：
 
-- [Rust 指标全量说明（103 个）](../guide/rust_indicator_reference.md)
+- [Rust 指标全量说明（104 个）](../guide/rust_indicator_reference.md)
 
 这意味着本章的定位不是“把字典搬进正文”，而是帮你建立**读指标、选指标、迁移指标**的方法。
 
@@ -148,6 +150,38 @@ AKQuant 的指标接口并不只是“换一个更快的 TA-Lib 后端”。它�
 - 规整变换：`ABS` / `SIGN` / `ROUND` / `CLIP` / `CLAMP01` / `SQ` / `CUBE` / `RECIP` / `INV_SQRT` / `DEG2RAD`
 
 这一类指标在传统技术分析里不一定显眼，但在第 12 章和第 14 章那种“把信号送入模型或表达式引擎”的任务里很有价值。
+
+### 16.4.6 K 线形态指标：平均 K 线 `HeikinAshi`
+
+`aq.HeikinAshi()` 把原始 OHLC 换算成平均 K 线：
+
+- `ha_close = (O + H + L + C) / 4`；
+- `ha_open` 第一根取 `(O + C) / 2`，之后取上一根 `(ha_open + ha_close) / 2`；
+- `ha_high`、`ha_low` 分别取原始高低价与 `ha_open`、`ha_close` 中的最大值和最小值。
+
+它输出四个值，适合用来过滤噪声、看清趋势段。要画成 K 线而不是四条线，用 `render_type="candle"` 并写明四个分量：
+
+```python
+import akquant as aq
+
+
+class HA(aq.Indicator, title="平均K线", overlay=True, replaces_price=True):
+    def on_start(self):
+        self.ha = self.I(
+            aq.HeikinAshi(),
+            name="ha",
+            input_mode="ohlc",
+            outputs=("open", "high", "low", "close"),
+            render_type="candle",
+        )
+```
+
+要点：
+
+1. `outputs` 必须恰好是 `open`、`high`、`low`、`close` 四个，顺序不限；读取时用 `self.ha.close[0]` 这样的分量。
+2. 复盘页 `result.viz.review()` 画出一组 K 线，单色、下跌空心，与价格 K 线区分开；`replaces_price=True` 只是给前端的提示，是否隐藏原 K 线由前端决定。
+3. d3Kline 前端目前不支持 K 线型指标，这类指标在 d3kline 格式里降级为只输出收盘线；完整的开高低收在 `format=raw` 的 `group` / `role` 字段里。
+
 
 ## 16.5 三个最常见的工程坑位
 
@@ -242,6 +276,7 @@ if np.isnan([ema_fast[-1], ema_slow[-1], adx[-1], natr[-1], rsi[-1]]).any():
 3. 第 3 周：引入 `ADX` / `NATR` / `SAR` 做风险过滤。
 4. 第 4 周：做一次 `python -> rust` 迁移实验与回归验证。
 5. 第 5 周：把数学变换类指标接入简单特征工程实验。
+6. 第 6 周：把常用指标组合写成 `aq.Indicator` 指标脚本（`overlay` 定主图/附图），用 `indicators=` 叠到策略上，并用 `aq.inspect_strategy` 静态检查它声明了哪些线（见第 5 章 5.5.6、示例 `examples/74_indicator_scripts.py`）。
 
 ## 本章小结
 
@@ -257,7 +292,7 @@ if np.isnan([ema_fast[-1], ema_slow[-1], adx[-1], natr[-1], rsi[-1]]).any():
 ### 实践提醒
 
 - 做指标迁移时先对齐结果，再切后端提速。
-- 完整指标字典、参数说明与返回结构请始终以参考页为准：[Rust 指标全量说明（103 个）](../guide/rust_indicator_reference.md)。
+- 完整指标字典、参数说明与返回结构请始终以参考页为准：[Rust 指标全量说明（104 个）](../guide/rust_indicator_reference.md)。
 
 ## 主线推进
 
@@ -273,7 +308,7 @@ if np.isnan([ema_fast[-1], ema_slow[-1], adx[-1], natr[-1], rsi[-1]]).any():
 
 **官方文档与工具**
 
-- [AKQuant 指标全量说明（103 个）](../guide/rust_indicator_reference.md) —— 本章正文反复强调的权威参考页，给出全部指标的输入、输出、参数口径与返回结构，对应本章 16.2 的覆盖范围与 16.3 的「读指标」方法。
+- [AKQuant 指标全量说明（104 个）](../guide/rust_indicator_reference.md) —— 本章正文反复强调的权威参考页，给出全部指标的输入、输出、参数口径与返回结构，对应本章 16.2 的覆盖范围与 16.3 的「读指标」方法。
 - [TA-Lib Functions List](https://ta-lib.org/functions/) —— TA-Lib 官方函数清单，逐一列出 ADX、MACD、BBANDS、ATR、OBV 等全部指标及其英文全称，可对照本章 16.4 的五大类划分与 16.4.5 的数学变换类。
 - [TA-Lib Python 文档](https://ta-lib.github.io/ta-lib-python/) —— TA-Lib 的 Python 封装文档，说明函数返回数组、lookback（warmup）区段会以 NaN 填充等行为，呼应本章 16.3.3 与 16.5.1 对 warmup 空值的处理要求。
 

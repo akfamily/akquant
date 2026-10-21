@@ -870,18 +870,18 @@ Supported Indicators: `SMA`, `EMA`, `MACD`, `RSI`, `BollingerBands`, `ATR`.
 
 ### 7.1 Registration and Usage
 
-Indicators have a single declaration entry point, `self.I(...)`. AKQuant dispatches on the object you pass: anything with an `update()` method takes the **incremental** path, while an `Indicator(name, fn)` instance takes the **vectorized precompute** path. Both kinds can coexist in one strategy.
+Indicators have a single declaration entry point, `self.I(...)`. AKQuant dispatches on the object you pass: anything with an `update()` method takes the **incremental** path, while a `PrecomputedIndicator(name, fn)` instance takes the **vectorized precompute** path. Both kinds can coexist in one strategy.
 
 Declaring once gets you three things: the framework advances the indicator on every bar, `ind[0]` / `ind[1]` series lookback works, and plot points are reported on demand.
 
 ```python
-from akquant import Bar, Indicator, Strategy
+from akquant import Bar, PrecomputedIndicator, Strategy
 
 class PrecomputeIndicatorStrategy(Strategy):
     def on_start(self):
-        # Passing an Indicator instance -> vectorized precompute
+        # Passing a PrecomputedIndicator instance -> vectorized precompute
         self.mom10 = self.I(
-            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            PrecomputedIndicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
             name="mom10",
         )
         self.subscribe("AAPL")
@@ -941,7 +941,7 @@ Notes:
 * `ind[0]` is the current bar's value (`.value` is an alias) and `ind[1]` is the previous bar. Out-of-range lookback returns `None` instead of raising, so a single `if val is None` check covers the warmup period.
 * If one shared instance is reused across multiple symbols, AKQuant raises an explicit error and points users to `factory=`.
 * `warmup_bars` only consumes history before the active start boundary and does not double-consume the first active bar.
-* Plot points are reported automatically once you pass any plotting argument (`pane` / `color` / `label`, ...) or `plot=True`; nothing is reported by default.
+* Inside a strategy, plot points are reported automatically only with `plot=True`; nothing is reported by default, and plotting arguments (`pane` / `color` / `label`, ...) no longer imply `plot=True`. A draw-only unit can be written as an `aq.Indicator` script, which plots by default.
 * If you need to build private indicators instead of only using built-ins such as `SMA` or `EMA`, continue with the [Custom Indicator Guide](./custom_indicator.md).
 
 ## 7. Strategy Cookbook

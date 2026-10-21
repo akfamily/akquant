@@ -10,6 +10,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    ClassVar,
     Deque,
     Dict,
     Iterable,
@@ -32,6 +33,7 @@ from .akquant import (
     Tick,
     TimeInForce,
 )
+from .chart import CANDLE_ROLES
 from .gateway.order_receipt import OrderReceipt
 from .indicator_declaration import (
     DEFAULT_LOOKBACK,
@@ -43,8 +45,9 @@ from .indicator_declaration import (
     end_stamp_label,
     is_reportable_value,
     peek_indicator,
+    resolve_plot_defaults,
 )
-from .indicator_recording import IndicatorRecorder
+from .indicator_recording import IndicatorRecorder, declare_plotted_indicators
 from .log import get_logger as _get_logger
 from .params import ParamModel, ParamSpec, legacy_init_warning_message
 from .sizer import FixedSize, Sizer
@@ -201,8 +204,8 @@ from .utils.price import round_to_tick as _round_to_tick
 
 if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
-    from .indicator import Indicator
     from .ml.model import QuantModel
+    from .precomputed import PrecomputedIndicator
 
 # 实盘 subscribe() 告警用: 与 strategy_logging 的 "strategy" 通道同源。
 _live_subscribe_logger = _get_logger("strategy")
@@ -311,6 +314,18 @@ def _legacy_init_arg_names(func: Any) -> List[str]:
     return names
 
 
+def _validate_script_label(field: str, value: Any, cls_name: str) -> Optional[str]:
+    """校验类定义行的 title/id: 省略为 None, 给了就必须是非空字符串."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"{cls_name}: {field}= 必须是字符串, 收到 {value!r}")
+    text = value.strip()
+    if not text:
+        raise ValueError(f"{cls_name}: {field}= 不能为空")
+    return text
+
+
 class Strategy:
     """
     策略基类 (Base Strategy Class).
@@ -328,7 +343,7 @@ class Strategy:
     # Rust maintains HistoryBuffer for indicator calculation.
     # Python side accesses it via self.ctx.history() (efficient copy).
     # No duplicate storage in Python.
-    _precomputed_indicators: List["Indicator"]
+    _precomputed_indicators: List["PrecomputedIndicator"]
     _incremental_indicators: Dict[str, IndicatorDeclaration]
     _subscriptions: List[str]
     _live_market_data_owner: bool
@@ -387,6 +402,10 @@ class Strategy:
     # record_indicator 进指标流事件的 phase 字段。
     _preload_events: List[Bar]
     _preload_overlap_guard: Dict[str, int]
+    # slot 打 _defer_preload_replay, 由主策略按 _preload_followers 代为回放
+    # (见 live/_runner.py::_apply_preload_history)
+    _defer_preload_replay: bool
+    _preload_followers: List["Strategy"]
     _indicator_phase: str
     _framework_last_local_date: Optional[dt.date]
     _framework_before_trading_done_date: Optional[dt.date]
@@ -452,9 +471,34 @@ class Strategy:
     # 重新扫描）。
     __own_param_specs__: Dict[str, ParamSpec] = {}
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        """收集子类内联声明的 ParamSpec 字段，构建只读 __param_model__."""
+    #: 由 ``aq.Indicator`` 置 True。self.I 的绘图默认值与检查接口都据此区分脚本类型。
+    _aq_is_indicator_script: ClassVar[bool] = False
+    #: 类定义行 ``title=`` 的值; 每个类各自赋值, 不从父类继承。
+    _aq_title: ClassVar[Optional[str]] = None
+    #: 类定义行 ``id=`` 的值; 每个类各自赋值, 不从父类继承。
+    _aq_id: ClassVar[Optional[str]] = None
+
+    def __init_subclass__(
+        cls,
+        *,
+        title: Optional[str] = None,
+        id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        """接收类定义行的 title/id, 并收集 ParamSpec 字段构建只读 __param_model__."""
+        if "overlay" in kwargs:
+            raise TypeError(
+                f"{cls.__name__}: overlay= 只适用于 aq.Indicator 指标脚本, "
+                "策略里的指标位置用 self.I(pane=) 指定"
+            )
+        if "replaces_price" in kwargs:
+            raise TypeError(
+                f"{cls.__name__}: replaces_price= 只适用于 aq.Indicator 指标脚本"
+                "(且须同时写 overlay=True)"
+            )
         super().__init_subclass__(**kwargs)
+        cls._aq_title = _validate_script_label("title", title, cls.__name__)
+        cls._aq_id = _validate_script_label("id", id, cls.__name__)
         # 记录当前类命名空间中直接声明的字段
         own_specs: Dict[str, ParamSpec] = {
             name: value
@@ -487,7 +531,8 @@ class Strategy:
         # 包装类的构造参数是依赖注入(回调/预算数据), 不是"可调策略参数", 迁移文案
         # 对它们不适用; 用户模块(examples/tests 等)不受此豁免影响。
         # 用等值/带点前缀判断而非裸 startswith("akquant"): 避免把 akquant_middleware、
-        # akquant_qmf 等名字前缀相似但并非 akquant 包本身的第三方/插件模块一并豁免。
+        # akquant_klinedata 等名字前缀相似但并非 akquant 包本身的第三方/插件模块
+        # 一并豁免。
         module_name = str(cls.__module__)
         is_akquant_internal = module_name == "akquant" or module_name.startswith(
             "akquant."
@@ -1070,8 +1115,13 @@ class Strategy:
         _register_pre_open_timers_impl(self)
         self._start_initialized = True
         # 实盘 preload_history: on_start 里声明的指标此刻才存在, 回放只能排在
-        # 这里(主策略的 on_start 由 Rust 在 engine.run() 内触发)。
-        replay_preload_history(self)
+        # 这里(主策略的 on_start 由 Rust 在 engine.run() 内触发)。slot 被 runner
+        # 标记为延后: 它们的 on_start 早于主策略, 由主策略在这里代为回放, 保证
+        # 回放时所有 owner 的 self.I 都已登记(见 _apply_preload_history)。
+        if not self.__dict__.get("_defer_preload_replay", False):
+            replay_preload_history(self)
+            for follower in self.__dict__.pop("_preload_followers", []):
+                replay_preload_history(follower)
 
     def on_stop(self) -> None:
         """
@@ -1617,18 +1667,18 @@ class Strategy:
         ``__init__`` 只适合字面量参数。``subscribe_bars`` 仍只能在
         ``__init__``, 本方法的 ``freq=`` 校验该周期已订阅。
 
-        传了任一绘图参数(``pane``/``color``/``label``/``render_type``/
-        ``reference_lines``/``scale_group``)或显式 ``plot=True`` 时, 框架在每次
-        更新后自动上报一个绘图点, 无需在 ``on_bar`` 里手写
-        ``record_indicator``。**默认不上报**: 与 Pine 一致(``ta.sma()`` 只算、
-        ``plot()`` 才画), 且实盘 sink 是每点一个事件, 默认全开会淹没前端。
+        画不画由脚本类型决定: 在 ``aq.Indicator`` 指标脚本里默认画(位置由类定义行
+        ``overlay`` 决定: True 主图, False 本脚本附图 1), 在 ``aq.Strategy`` 里默认
+        不画——策略里的指标多用于判断, 且实盘 sink 每点一个事件, 全开会淹没前端。
+        ``plot=True/False`` 显式覆盖; ``pane``/``color`` 等只决定画在哪、长什么样。
         未就绪(值为 ``None``/``NaN``)的点不上报——Pine 预热期是 ``na``。
 
         :param indicator: 指标实例, 需有 ``update()``; 与 ``factory`` 二选一
         :param factory: 多标的场景下的指标工厂, 每个 symbol 造一个独立实例
         :param lookback: 回溯缓冲深度, 有界(实盘是无限流)
         :param name: 指标标识, 省略时按指标类名自动生成
-        :param plot: 是否自动上报绘图点; ``None`` 表示"给了绘图参数就上报"
+        :param plot: 是否自动上报绘图点; ``None`` 表示按脚本类型取默认
+        :param pane: 0 主图, >=1 本脚本内的附图编号; ``None`` 按脚本类型取默认
         :param intrabar: bar 未闭合期间是否试算临时值(对齐 Pine 的 realtime bar):
             有临时值时 ``[0]`` 是它、``[1]`` 是上一根已确认, ``binding.confirmed``
             告知当前 ``[0]`` 是否已确认; 流事件带 ``confirmed=false``。窗口周期
@@ -1648,11 +1698,26 @@ class Strategy:
                     f"I(freq={freq!r}) 未订阅该周期, "
                     f"请先在 __init__ 里 subscribe_bars({freq_label!r})"
                 )
+        # 只归一一次: outputs 可能是生成器, 多次遍历会读到空
+        outs: Optional[Tuple[str, ...]] = (
+            None if outputs is None else tuple(str(o) for o in outputs)
+        )
+        candle = str(render_type or "").strip().lower() == "candle"
+        if candle and (
+            outs is None
+            or len(outs) != len(CANDLE_ROLES)
+            or set(outs) != set(CANDLE_ROLES)
+        ):
+            raise ValueError(
+                f"I(render_type='candle') 要求 outputs 恰好是 "
+                f"{CANDLE_ROLES!r} 这四个(顺序不限), 收到 outputs={outs!r}"
+            )
         indicator_name = self._resolve_indicator_name(name, indicator, factory)
         # warm start 恢复: 声明照旧执行(on_start 会重跑), 但不能覆盖已恢复的
         # 指标状态, 否则预热白做。
         if self.is_restored and indicator_name in self._incremental_indicators:
             return IndicatorBinding(self, indicator_name)
+        self._check_candle_key_collision(indicator_name, outs, candle)
         if indicator is not None and factory is not None:
             raise ValueError("indicator and factory cannot both be provided")
         if indicator is None and factory is None:
@@ -1662,19 +1727,20 @@ class Strategy:
         if int(lookback) < 1:
             raise ValueError("lookback must be >= 1")
         source_key = str(source).strip().lower()
-        # 分派: 有 update() 走增量, 是 Indicator 走向量化预计算。删掉
+        # 分派: 有 update() 走增量, 是 PrecomputedIndicator 走向量化预计算。删掉
         # 原先的互斥模式开关后, 两者可在同一个策略里共存。
-        # 局部导入避免与 indicator.py 的循环依赖(该模块顶层只在 TYPE_CHECKING
-        # 下导入 Indicator, 运行期拿不到)。
-        from .indicator import Indicator as _Indicator
+        # 局部导入避免与 precomputed.py 的循环依赖(该模块顶层只在 TYPE_CHECKING
+        # 下导入 PrecomputedIndicator, 运行期拿不到)。
+        from .precomputed import PrecomputedIndicator
 
-        is_precomputed = isinstance(indicator, _Indicator)
+        is_precomputed = isinstance(indicator, PrecomputedIndicator)
         if is_precomputed and getattr(self, "_live_market_data_owner", False):
             # 实盘没有完整的历史 DataFrame, _prepare_indicators 永远不会跑,
             # get_value 恒 NaN —— 静默返回是最坏的失败方式(用户以为策略在正常
             # 运行)。run_live 装配时已打上 _live_market_data_owner 标记。
             raise ValueError(
-                "实盘不支持向量化预计算指标 self.I(Indicator(...)): 实盘没有完整的"
+                "实盘不支持向量化预计算指标 "
+                "self.I(PrecomputedIndicator(...)): 实盘没有完整的"
                 "历史 DataFrame。请改用增量指标, 如 self.I(aq.SMA(20), ...)"
             )
         if intrabar and is_precomputed:
@@ -1695,18 +1761,12 @@ class Strategy:
                     "窗口周期请改用增量指标(有 update() 的对象)"
                 )
             self._precomputed_indicators.append(indicator)
-        chart_args = (
-            pane,
-            render_type,
-            color,
-            label,
-            unit,
-            precision,
-            reference_lines,
-            scale_group,
-        )
-        should_plot = (
-            bool(plot) if plot is not None else any(a is not None for a in chart_args)
+        cls = type(self)
+        resolved_plot, resolved_pane = resolve_plot_defaults(
+            is_indicator_script=bool(cls._aq_is_indicator_script),
+            overlay=bool(getattr(cls, "_aq_overlay", False)),
+            plot=plot,
+            pane=pane,
         )
         self._incremental_indicators[indicator_name] = IndicatorDeclaration(
             source=source_key,
@@ -1719,10 +1779,14 @@ class Strategy:
             lookback=int(lookback),
             precomputed=is_precomputed,
             intrabar=bool(intrabar),
-            outputs=None if outputs is None else tuple(str(o) for o in outputs),
-            plot=should_plot,
-            pane=0 if pane is None else int(pane),
-            render_type="line" if render_type is None else str(render_type),
+            outputs=outs,
+            plot=resolved_plot,
+            pane=resolved_pane,
+            render_type=(
+                "candle"
+                if candle
+                else ("line" if render_type is None else str(render_type))
+            ),
             color=color,
             label=label,
             unit=unit,
@@ -1730,7 +1794,41 @@ class Strategy:
             reference_lines=reference_lines,
             scale_group=scale_group,
         )
+        recorder = getattr(self, "_indicator_recorder", None)
+        if resolved_plot and recorder is not None:
+            # 挂载后的声明(如 on_start 里)即时登记, 让实时流在第一个点之前
+            # 就知道同名冲突; 挂载前(__init__)的声明由挂载点补登。
+            declare_plotted_indicators(self, recorder, [indicator_name])
         return IndicatorBinding(self, indicator_name)
+
+    def _check_candle_key_collision(
+        self, name: str, outs: Optional[Tuple[str, ...]], candle: bool
+    ) -> None:
+        """同一 owner 内, candle 分量键不能与其他声明的上报键重名(先后顺序都查).
+
+        否则 ``ha.open`` 这条普通线和 candle 组 ``ha`` 的 open 分量会落到同一个
+        ``(owner, indicator_key)`` 定义上, 前端拼 K 线时混进别的指标的点。
+
+        :raises ValueError: 重名
+        """
+        if outs:
+            new_keys = {f"{name}.{out}" for out in outs}
+        else:
+            new_keys = {name}
+        for other_name, other in self._incremental_indicators.items():
+            if other_name == name:
+                continue  # 同名重声明是覆盖, 不是撞键
+            other_candle = other.render_type == "candle"
+            if not (candle or other_candle):
+                continue
+            other_keys = {entry.key for entry in other.report_entries(other_name, None)}
+            clash = sorted(new_keys & other_keys)
+            if clash:
+                group = name if candle else other_name
+                raise ValueError(
+                    f"I(name={name!r}) 的上报键 {clash!r} 与本策略 candle 指标 "
+                    f"{group!r} 的分量键重名; 请换一个 name"
+                )
 
     def _resolve_indicator_name(
         self, name: Optional[str], indicator: Any, factory: Optional[Callable[[], Any]]
@@ -1780,7 +1878,7 @@ class Strategy:
 
         实盘: 由 ``run_live`` 装上转发器后, 调用会把 ``instruments`` 与各 slot
         订阅的并集下发到行情网关(网关的 subscribe 是整集替换语义)。若该 broker
-        没有行情网关(如 ``broker='qmf'`` 的 ``market_gateway=None``), 则无处可
+        没有行情网关(如 ``broker='middleware'`` 的 ``market_gateway=None``), 则无处可
         下发, 退回记录一条 warning。实盘不做白名单校验。
 
         :param instrument_id: The instrument identifier (e.g., '600000').
@@ -2082,14 +2180,16 @@ class Strategy:
         ``record_indicator`` 与这里的自动上报落在同一个
         ``flush_stream_snapshot`` 周期内, 时间戳一致, 前端收到的是完整快照。
         """
-        for key, display_name, item in declaration.report_items(name, value):
-            if not is_reportable_value(item):
+        for entry in declaration.report_entries(name, value):
+            if not is_reportable_value(entry.value):
                 continue
-            self.record_indicator(
-                key,
-                item,
+            self._record_indicator_point(
+                entry.key,
+                entry.value,
                 symbol=symbol,
-                display_name=display_name,
+                group=entry.group,
+                role=entry.role,
+                display_name=entry.display_name,
                 pane=declaration.pane,
                 render_type=declaration.render_type,
                 unit=declaration.unit,
@@ -2334,7 +2434,8 @@ class Strategy:
         if resolved_symbol in registration.instances:
             return registration.instances[resolved_symbol]
         if registration.precomputed:
-            # Indicator 自己按 symbol 缓存整段结果, 天然多标的, 不套"共享实例"校验
+            # PrecomputedIndicator 自己按 symbol 缓存整段结果, 天然多标的,
+            # 不套"共享实例"校验
             registration.instances[resolved_symbol] = registration.base_indicator
             return registration.base_indicator
         if registration.factory is not None:
@@ -2661,12 +2762,84 @@ class Strategy:
         """Record one indicator point for downstream visualization and export.
 
         :param confirmed: False 表示未闭合窗口上的临时值: 只走流事件不进
-            DataFrame / export, 前端按同 ``(indicator_key, symbol, timestamp)``
-            用后来的确认点覆盖。
+            DataFrame / export, 前端按同
+            ``(owner_strategy_id, indicator_key, symbol, timestamp)`` 用后来的
+            确认点覆盖。
+        :raises ValueError: ``render_type="candle"`` —— K 线形态的四个分量必须
+            成组, 只能经 ``self.I(outputs=("open","high","low","close"),
+            render_type="candle")`` 声明
+        """
+        if str(render_type or "").strip().lower() == "candle":
+            raise ValueError(
+                "record_indicator 不支持 render_type='candle': K 线形态指标请用 "
+                'self.I(ind, outputs=("open", "high", "low", "close"), '
+                'render_type="candle") 声明, 四个分量会自动成组上报'
+            )
+        self._record_indicator_point(
+            name,
+            value,
+            symbol,
+            timestamp=timestamp,
+            display_name=display_name,
+            pane=pane,
+            render_type=render_type,
+            unit=unit,
+            precision=precision,
+            color=color,
+            meta=meta,
+            reference_lines=reference_lines,
+            scale_group=scale_group,
+            warmup=warmup,
+            confirmed=confirmed,
+        )
+
+    def _record_indicator_point(
+        self,
+        name: str,
+        value: Any,
+        symbol: Optional[str] = None,
+        *,
+        timestamp: Optional[Any] = None,
+        display_name: Optional[str] = None,
+        pane: int = 0,
+        render_type: str = "line",
+        unit: Optional[str] = None,
+        precision: Optional[int] = None,
+        color: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
+        reference_lines: Optional[list[Dict[str, Any]]] = None,
+        scale_group: Optional[str] = None,
+        warmup: bool = False,
+        confirmed: bool = True,
+        group: str = "",
+        role: str = "",
+    ) -> None:
+        """``record_indicator`` 的实现, 另收 candle 分量的 ``group``/``role``.
+
+        ``self.I`` 的自动上报直接走这里(candle 只能由它产生)。sink 不接受
+        ``group``/``role``(1.5 版协议)时不传这两个字段, 并把 candle 降级为
+        ``line``: 缺了组名的分量拼不成 K 线, 四条独立的线是最接近的可用表达。
         """
         recorder = getattr(self, "_indicator_recorder", None)
         if recorder is None:
             return
+        group_role: Dict[str, str] = {}
+        if self._sink_accepts(recorder, "group") and self._sink_accepts(
+            recorder, "role"
+        ):
+            group_role = {"group": group, "role": role}
+        elif str(render_type).strip().lower() == "candle":
+            render_type = "line"
+            # 四个分量共用 label, 降级成四条线后要靠分量键区分
+            display_name = name
+            if not getattr(self, "_warned_sink_no_group_role", False):
+                self._warned_sink_no_group_role = True
+                _live_subscribe_logger.warning(
+                    "IndicatorSink %s 的 record() 不接受 group=/role= 参数"
+                    "(1.5 版协议), render_type='candle' 的分量将以 line 送达该 "
+                    "sink; 请给 record 加上 group/role 参数或 **kwargs",
+                    type(recorder).__name__,
+                )
         accepts_confirmed = self._sink_accepts(recorder, "confirmed")
         if not confirmed and not accepts_confirmed:
             # 旧协议 sink 分不清临时点与确认点, 给它临时点只会在图上留下永不被
@@ -2713,12 +2886,14 @@ class Strategy:
                 if self._sink_accepts(recorder, "phase")
                 else {}
             ),
+            **group_role,
         )
 
     def _sink_accepts(self, recorder: Any, keyword: str) -> bool:
         """sink.record 是否接受某个关键字(显式参数或 **kwargs); 按 sink 缓存.
 
-        ``IndicatorSink`` 协议在 1.3 版加了 ``confirmed``、1.4 版加了 ``phase``,
+        ``IndicatorSink`` 协议在 1.3 版加了 ``confirmed``、1.4 版加了 ``phase``、
+        1.6 版加了 ``group``/``role``,
         但按旧协议签名实现的第三方 sink 仍然合法, 不能因为一个新增关键字让它们
         首次记录就 TypeError。
         """
@@ -3744,6 +3919,36 @@ class Strategy:
             commission,
             reduce_only,
         )
+
+    @classmethod
+    def resolve_title(cls) -> str:
+        """显示名: 类定义行的 ``title``, 省略时为类名."""
+        return cls._aq_title or cls.__name__
+
+    @classmethod
+    def resolve_id(cls) -> Optional[str]:
+        """机器标识: 类定义行的 ``id``; 策略省略时为 None(沿用 strategy_id 默认值)."""
+        return cls._aq_id
+
+
+def reconcile_strategy_id(strategy: Any, strategy_id: Optional[str]) -> Optional[str]:
+    """合并类定义行的 ``id`` 与入口参数 ``strategy_id``.
+
+    只给其一取给出的那个; 都给且不一致抛 ValueError(不静默二选一)。
+    ``strategy`` 不是 Strategy 类/实例(None、函数式策略、待加载的源码)时原样返回。
+    """
+    cls = strategy if isinstance(strategy, type) else type(strategy)
+    if not (isinstance(cls, type) and issubclass(cls, Strategy)):
+        return strategy_id
+    declared = cls.resolve_id()
+    given = (str(strategy_id).strip() or None) if strategy_id is not None else None
+    if declared is None:
+        return strategy_id
+    if given is not None and given != declared:
+        raise ValueError(
+            f"strategy_id={given!r} 与 {cls.__name__} 类定义行的 id={declared!r} 不一致"
+        )
+    return declared
 
 
 class VectorizedStrategy(Strategy):

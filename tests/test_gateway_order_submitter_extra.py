@@ -42,7 +42,9 @@ def _make_submitter(
 def test_submit_with_declared_extra_reaches_place_order() -> None:
     """Declared extra + asset_type are normalized onto the request."""
     captured: list = []
-    cap = BrokerCapability(broker_name="qmf", broker_extra_fields=("entrust_oc",))
+    cap = BrokerCapability(
+        broker_name="middleware", broker_extra_fields=("entrust_oc",)
+    )
     sub = _make_submitter(captured, cap)
     sub.submit_order(
         symbol="10004321.SH",
@@ -61,7 +63,7 @@ def test_submit_with_declared_extra_reaches_place_order() -> None:
 def test_submit_with_undeclared_extra_raises() -> None:
     """Undeclared extra keys are rejected."""
     captured: list = []
-    cap = BrokerCapability(broker_name="qmf", broker_extra_fields=())
+    cap = BrokerCapability(broker_name="middleware", broker_extra_fields=())
     sub = _make_submitter(captured, cap)
     with pytest.raises(RuntimeError):
         sub.submit_order(

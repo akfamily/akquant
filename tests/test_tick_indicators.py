@@ -197,16 +197,17 @@ def test_mixed_input_with_precomputed_indicator_raises() -> None:
     不报错的话, 同一批 bar 单独传有指标、加一个 tick 就没了, 用户无从察觉。
     """
     from akquant.akquant import Bar
-    from akquant.indicator import Indicator
+    from akquant.precomputed import PrecomputedIndicator
 
-    def _make_precomputed() -> Indicator:
+    def _make_precomputed() -> PrecomputedIndicator:
         """最简向量化预计算指标."""
-        return Indicator("dummy", lambda df: df["close"])
+        return PrecomputedIndicator("dummy", lambda df: df["close"])
 
     class _Precompute(Strategy):
         """真正注册一个预计算指标的最小策略.
 
-        判据是 ``_precomputed_indicators`` 非空: 只有 ``self.I(Indicator(...))``
+        判据是 ``_precomputed_indicators`` 非空:
+        只有 ``self.I(PrecomputedIndicator(...))``
         这条路才需要完整 DataFrame, 增量指标的 tick 路径不受影响。所以这里必须
         真的声明一个向量化预计算指标。
 

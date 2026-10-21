@@ -34,6 +34,7 @@ python examples/textbook/ch13_visualization_functional.py
 1. 脚本可生成至少一组回测图表或可视化产物。
 2. 图表包含收益曲线与回撤维度信息。
 3. 修改参数后图表形态变化可用于解释策略风险特征。
+4. 需要在 K 线上复盘指标时，用 `result.viz.review()`（见 13.3.5），策略里要上图的 `self.I` 须写 `plot=True`。
 
 ## 13.1 可视化原则与核心图表
 
@@ -162,6 +163,34 @@ result.viz.report(filename="report_margin.html", show=False)
 
 1. 强平审计明细表（日期、当日计息、强平标的、强平顺序）
 2. 风险图表区中的按日强平统计图（有数据时展示）
+
+### 13.3.5 K 线复盘叠加策略指标
+
+`result.viz.review()` 生成离线自包含的交互式 K 线复盘页（lightweight-charts），默认把策略里画出的指标按 pane 叠上去：pane 0 叠在主图，pane ≥ 1 画在成交量下方的附图。
+
+```python
+import akquant as aq
+
+
+class Trend(aq.Strategy, title="趋势策略"):
+    def on_start(self):
+        # 策略里 self.I 默认不画，要上图须写 plot=True
+        self.fast = self.I(aq.EMA(10), name="ema_fast", plot=True)
+        self.slow = self.I(aq.EMA(30), name="ema_slow", plot=True)
+
+
+class RsiPanel(aq.Indicator, title="RSI"):   # 指标脚本：默认画，overlay=False 画附图
+    def on_start(self):
+        self.rsi = self.I(aq.RSI(14), name="rsi")
+
+
+result = aq.run_backtest(data=df, strategy=Trend, indicators=[RsiPanel])
+result.viz.review(df, filename="review.html")   # include_indicators=True 为默认
+```
+
+只为复盘看图、不参与交易的指标，写成 `aq.Indicator` 指标脚本再用 `indicators=` 叠加，比塞进策略更干净：指标脚本调用交易接口会直接报错，不会污染成交。写法与默认值规则见第 5 章 5.5.6。
+
+`render_type="candle"` 的指标（例如平均 K 线 `aq.HeikinAshi`）在复盘页画成一组 K 线：单色、下跌空心，不使用主题的涨跌色，以免与价格 K 线混淆；写法见第 16 章 16.4.6。
 
 ## 13.4 第三方工具集成：QuantStats
 

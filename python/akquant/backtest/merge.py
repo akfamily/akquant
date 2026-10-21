@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 import pandas as pd
 
+from ..indicator_identity import identity_of
+
 if TYPE_CHECKING:
     from .result import BacktestResult
 
@@ -474,7 +476,8 @@ def _merge_indicator_outputs(
         if not isinstance(outputs, dict):
             continue
         for d in outputs.get("definitions", []):
-            key = d.get("name") if isinstance(d, dict) else None
+            # 定义身份是 (owner_strategy_id, indicator_key), 缺失 owner 按 _default
+            key = identity_of(d) if isinstance(d, dict) else None
             if key is not None and key in seen_def:
                 continue
             if key is not None:

@@ -6,6 +6,8 @@ This chapter is currently maintained in Chinese first.
 - Textbook home: [Chinese textbook index](../../zh/textbook/index.md)
 - Practice links:
   - Primary example: [examples/textbook/ch16_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators.py)
+  - Indicator script example: [examples/74_indicator_scripts.py](https://github.com/akfamily/akquant/blob/main/examples/74_indicator_scripts.py)
+  - Extended example: [examples/77_heikin_ashi_indicator.py](https://github.com/akfamily/akquant/blob/main/examples/77_heikin_ashi_indicator.py)
   - Functional twin example: [examples/textbook/ch16_indicators_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch16_indicators_functional.py)
 - Related docs:
   - [AKQuant Indicator Reference](../guide/rust_indicator_reference.md)

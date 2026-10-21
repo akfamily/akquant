@@ -19,6 +19,7 @@ import pandas as pd
 
 from ..akquant import BacktestResult as RustBacktestResult
 from ..akquant import ClosedTrade, Order, Trade
+from ..indicator_identity import identity_of
 
 _POSITION_EFFECT_TEXT = {
     "auto": "auto",
@@ -1575,6 +1576,7 @@ class BacktestResult:
         """Get normalized indicator definition metadata."""
         rows = list(self.indicator_outputs.get("definitions", []))
         columns = [
+            "owner_strategy_id",
             "indicator_key",
             "display_name",
             "pane",
@@ -1584,6 +1586,9 @@ class BacktestResult:
             "color",
             "reference_lines",
             "scale_group",
+            # candle 分量的组名与分量名(stream schema 1.6); 其余指标为空串
+            "group",
+            "role",
         ]
         if not rows:
             return pd.DataFrame(columns=columns)
@@ -1591,7 +1596,22 @@ class BacktestResult:
         for column in columns:
             if column not in frame.columns:
                 frame[column] = None
-        frame = frame[columns].sort_values("indicator_key").reset_index(drop=True)
+        # 外部 sink 的旧定义行没有 group/role: 与 recorder 口径一致补空串
+        for column in ("group", "role"):
+            frame[column] = [
+                "" if value is None or value != value else str(value)
+                for value in frame[column]
+            ]
+        # 身份是 (owner, key); 外部 sink 未带 owner(None/NaN/空串)时按 "_default" 补齐
+        frame["owner_strategy_id"] = [
+            identity_of({"owner_strategy_id": owner})[0]
+            for owner in frame["owner_strategy_id"]
+        ]
+        frame = (
+            frame[columns]
+            .sort_values(["owner_strategy_id", "indicator_key"])
+            .reset_index(drop=True)
+        )
         return cast(pd.DataFrame, frame)
 
     @cached_property
@@ -1668,7 +1688,7 @@ class BacktestResult:
         """Get recorded indicator points as a DataFrame.
 
         :param owner: 只留该 ``owner_strategy_id`` 的点(主策略的 ``strategy_id``
-            或某个 slot / study 的 key)。
+            或某个 slot / 指标脚本的 key)。
         """
         frame = cast(pd.DataFrame, self._indicator_points_df.copy())
         if frame.empty:

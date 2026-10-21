@@ -15,7 +15,7 @@ import copy
 import math
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, Deque, Dict, Optional, Tuple, cast
+from typing import Any, Callable, Deque, Dict, NamedTuple, Optional, Tuple, cast
 
 from .akquant import clone_indicator as _clone_rust_indicator
 
@@ -121,6 +121,43 @@ def is_reportable_value(value: Any) -> bool:
     return True
 
 
+def resolve_plot_defaults(
+    *,
+    is_indicator_script: bool,
+    overlay: bool,
+    plot: Optional[bool],
+    pane: Optional[int],
+) -> Tuple[bool, int]:
+    """解析 self.I 的最终 (plot, pane); 运行时与静态检查共用这一处规则.
+
+    - ``plot`` 省略: 指标脚本里画, 策略里不画。``pane``/``color`` 等绘图参数
+      只管画在哪、长什么样, 不再顺带决定画不画。
+    - ``pane`` 省略: 指标脚本 ``overlay=False`` 时取 1(本脚本的附图), 其余取 0。
+    """
+    resolved_plot = bool(plot) if plot is not None else bool(is_indicator_script)
+    if pane is not None:
+        resolved_pane = int(pane)
+    elif is_indicator_script and not overlay:
+        resolved_pane = 1
+    else:
+        resolved_pane = 0
+    return resolved_plot, resolved_pane
+
+
+class ReportEntry(NamedTuple):
+    """一条待上报的单值绘图点.
+
+    ``group``/``role`` 只在 ``render_type="candle"`` 时非空: ``group`` 是
+    ``self.I`` 的 name, ``role`` 是 open/high/low/close 之一(stream schema 1.6)。
+    """
+
+    key: str
+    display_name: str
+    value: Any
+    group: str = ""
+    role: str = ""
+
+
 @dataclass
 class IndicatorDeclaration:
     """一条 ``Strategy.I()`` 声明: 计算参数 + 绘图元数据 + 运行期状态."""
@@ -135,7 +172,8 @@ class IndicatorDeclaration:
     #: 该指标由哪个周期驱动: None=基础行情(bar/tick), 否则是 subscribe_bars 的
     #: 周期标签(如 "5min")。见 ``Strategy._update_incremental_indicators``。
     freq: Optional[str] = None
-    #: True 表示向量化预计算指标(``indicator.py::Indicator``): 数据加载后整段
+    #: True 表示向量化预计算指标
+    #: (``precomputed.py::PrecomputedIndicator``): 数据加载后整段
     #: 算完缓存, 运行期按时间戳 asof 查询, 而非逐 bar ``update()``。
     precomputed: bool = False
 
@@ -278,16 +316,36 @@ class IndicatorDeclaration:
 
         :raises ValueError: ``outputs`` 个数与指标实际分量数不符
         """
+        return [
+            (entry.key, entry.display_name, entry.value)
+            for entry in self.report_entries(name, value)
+        ]
+
+    def report_entries(self, name: str, value: Any) -> list[ReportEntry]:
+        """同 :meth:`report_items`, 另带每个分量的 ``group``/``role``.
+
+        ``render_type="candle"`` 时四个分量共用 ``label``(省略为 name)作显示名,
+        ``group`` 为 name、``role`` 为分量名; 其余情况两者为空串。
+
+        :raises ValueError: ``outputs`` 个数与指标实际分量数不符
+        """
         if not self.outputs:
-            return [(name, self.label or name, value)]
+            return [ReportEntry(name, self.label or name, value)]
+        candle = self.render_type == "candle"
         if not isinstance(value, (tuple, list)):
             # 未就绪时原生指标返回 None, 不是长度不符, 交给调用方过滤。
-            return [(f"{name}.{out}", f"{name}.{out}", None) for out in self.outputs]
-        self._check_outputs_arity(value)
-        return [
-            (f"{name}.{out}", f"{name}.{out}", item)
-            for out, item in zip(self.outputs, value)
-        ]
+            items: Tuple[Any, ...] = (None,) * len(self.outputs)
+        else:
+            self._check_outputs_arity(value)
+            items = tuple(value)
+        entries: list[ReportEntry] = []
+        for out, item in zip(self.outputs, items):
+            key = f"{name}.{out}"
+            if candle:
+                entries.append(ReportEntry(key, self.label or name, item, name, out))
+            else:
+                entries.append(ReportEntry(key, key, item))
+        return entries
 
 
 class IndicatorBinding:

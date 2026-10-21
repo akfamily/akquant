@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..backtest import BacktestStreamEvent
 from ..chart import (
+    normalize_group_role,
     normalize_meta_json,
     normalize_pane_index,
     normalize_render_type,
@@ -19,7 +20,12 @@ from ..chart import (
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
-from ..indicator_recording import all_items_confirmed, snapshot_phase
+from ..indicator_recording import (
+    SeriesKeyRegistry,
+    all_items_confirmed,
+    snapshot_phase,
+    stamp_snapshot_items,
+)
 
 
 class StreamingIndicatorSink:
@@ -39,6 +45,12 @@ class StreamingIndicatorSink:
         self._run_id = str(run_id)
         self._seq = 0
         self._pending: Dict[Tuple[str, str, int], List[Dict[str, Any]]] = {}
+        # 只存 (owner, key) 登记表, 规模与声明数同阶, 不随点数增长
+        self._series_registry = SeriesKeyRegistry()
+
+    def declare(self, owner_strategy_id: str, indicator_key: str) -> None:
+        """登记一个将要上报的 ``(owner, key)``, 供流消息提前算出 series_key."""
+        self._series_registry.register(owner_strategy_id, indicator_key)
 
     def _emit(
         self, event_type: str, symbol: Optional[str], payload: Dict[str, str], ts: int
@@ -75,6 +87,8 @@ class StreamingIndicatorSink:
         warmup: bool = False,
         confirmed: bool = True,
         phase: str = "run",
+        group: str = "",
+        role: str = "",
     ) -> None:
         """Emit one ``indicator_point`` and buffer it for the next snapshot."""
         indicator_key = str(name or "").strip()
@@ -84,6 +98,7 @@ class StreamingIndicatorSink:
         strategy_id = str(owner_strategy_id or "").strip() or "_default"
         pane_index = normalize_pane_index(pane)
         render = normalize_render_type(render_type)
+        group_text, role_text = normalize_group_role(render, group, role)
         display = str(display_name or "").strip() or indicator_key
         meta_json = normalize_meta_json(meta)
         scale_group_norm = normalize_scale_group(scale_group)
@@ -95,12 +110,16 @@ class StreamingIndicatorSink:
         except (TypeError, ValueError):
             numeric_value = float("nan")
 
+        self._series_registry.register(strategy_id, indicator_key)
         self._emit(
             "indicator_point",
             None if symbol_text == "_unknown" else symbol_text,
             {
                 "owner_strategy_id": strategy_id,
                 "indicator_key": indicator_key,
+                "series_key": self._series_registry.series_key(
+                    strategy_id, indicator_key
+                ),
                 "display_name": display,
                 "pane": str(pane_index),
                 "render_type": render,
@@ -112,6 +131,8 @@ class StreamingIndicatorSink:
                 "confirmed": str(bool(confirmed)).lower(),
                 "phase": phase_text,
                 "scale_group": scale_group_norm,
+                "group": group_text,
+                "role": role_text,
                 "meta_json": meta_json,
             },
             timestamp_ns,
@@ -127,6 +148,8 @@ class StreamingIndicatorSink:
                 "warmup": bool(warmup),
                 "confirmed": bool(confirmed),
                 "phase": phase_text,
+                "group": group_text,
+                "role": role_text,
                 "meta_json": meta_json,
             }
         )
@@ -138,6 +161,7 @@ class StreamingIndicatorSink:
         for (strategy_id, symbol_text, timestamp_ns), items in list(
             self._pending.items()
         ):
+            stamp_snapshot_items(self._series_registry, strategy_id, items)
             self._emit(
                 "indicator_snapshot",
                 None if symbol_text == "_unknown" else symbol_text,

@@ -63,6 +63,7 @@ def run_backtest(
     runtime_config_override: bool = True,
     strategy_id: Optional[str] = None,
     strategies_by_slot: Optional[Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]] = None,
+    indicators: Optional[Sequence[Union[Type[Indicator], Indicator]]] = None,
     strategy_max_order_value: Optional[Dict[str, float]] = None,
     strategy_max_order_size: Optional[Dict[str, float]] = None,
     strategy_max_position_size: Optional[Dict[str, float]] = None,
@@ -128,6 +129,7 @@ def run_backtest(
 *   `strategy_runtime_config` / `runtime_config_override`: Runtime behavior injection and conflict-resolution controls. Accepts `StrategyRuntimeConfig` or `dict`.
 *   `strategy_id`: Primary strategy ownership id. Default `_default`.
 *   `strategies_by_slot`: Optional multi-strategy mapping. Keys are slot ids and values are strategy class/instance/functional callback used by slot-iterative execution.
+*   `indicators`: Optional list of indicator scripts (`aq.Indicator` subclasses or instances). Each becomes its own slot keyed by its class-line `id` (default: snake_case class name). A key colliding with `strategy_id` or an existing slot raises `ValueError`; a non-`aq.Indicator` item raises `TypeError`. `run_live(indicators=...)` behaves the same. See [`akquant.Indicator`](#akquant-indicator).
 *   `strategy_max_order_size` / `strategy_max_order_value` / `strategy_max_position_size`: Optional strategy-level risk maps keyed by strategy id.
 *   `strategy_max_daily_loss` / `strategy_max_drawdown`: Optional strategy-level stop maps keyed by strategy id.
 *   `strategy_reduce_only_after_risk` / `strategy_risk_cooldown_bars`: Optional post-risk behavior maps keyed by strategy id.
@@ -1005,6 +1007,53 @@ Notes:
 *   `get_rolling_data(length, symbol, freq=None)`: Get rolling training data (X, y). `freq` has the same semantics and limits as the `get_history` family above (it's built on `get_history_df` internally).
 *   `prepare_features(df, mode)`: (Override required) Feature engineering and label generation.
 
+**Script metadata and plotting:**
+
+*   `class MyStrategy(aq.Strategy, title="Trend", id="trend")`: `title` is a display name (defaults to the class name); `id` is the machine id. When `id` is given it is the `strategy_id`; a different `run_backtest/run_live(strategy_id=...)` raises `ValueError`. Without `id`, `strategy_id` still defaults to `"_default"`. Strategies do not accept `overlay=` (`TypeError`).
+*   `self.I(...)` does **not** plot by default inside a strategy; pass `plot=True` to draw. Chart arguments such as `pane` / `color` / `label` no longer imply `plot=True`.
+
+### `akquant.Indicator` {: #akquant-indicator }
+
+Indicator-script base class, mirroring Pine v5's `indicator()`: it declares indicators and never trades. Attach scripts with `run_backtest/run_live(indicators=[...])`.
+
+```python
+class DualMA(aq.Indicator, title="Dual MA", overlay=True, id="dual_ma"):
+    def on_start(self):
+        self.fast = self.I(aq.EMA(10), name="ema_fast")
+```
+
+*   `title`: display name only; defaults to the class name.
+*   `overlay`: `True` draws on the main pane, `False` (default) on a sub-pane. `self.I` plots by default: default `pane=0` with `overlay=True`, otherwise `pane=1` (pane numbers are local to the script); `plot=False` turns a line off.
+*   `id`: machine id (the indicator points' `owner_strategy_id`); defaults to the snake_case class name.
+*   `replaces_price`: `True` means the script replaces the price candles (e.g. Heikin-Ashi). It is only a frontend hint; hiding the original candles is up to the frontend. Requires `overlay=True` (otherwise `ValueError`), must be a `bool` (otherwise `TypeError`), is inherited by subclasses, defaults to `False`. `X.resolve_replaces_price()` returns the effective value. Writing it on `aq.Strategy` raises `TypeError`.
+*   Every trading API (`buy` / `sell` / `submit_order` / `place_*` / `order_target*` / `rebalance_*` / `close_position` / `cancel_*`) raises `akquant.IndicatorCannotTradeError`.
+*   See the [custom indicator guide](../guide/custom_indicator.md).
+
+### `akquant.PrecomputedIndicator`
+
+Vectorized precomputed indicator: `PrecomputedIndicator(name, fn)`, where `fn(df) -> pd.Series` computes over one symbol's full `DataFrame` at once; declare it with `self.I(PrecomputedIndicator(...))`. Backtest only; it does not support tick input, `freq=` or `warmup_bars=`.
+
+### `akquant.HeikinAshi`
+
+Built-in Rust incremental indicator: Heikin-Ashi candles.
+
+```python
+ha = aq.HeikinAshi()
+ha.update(open, high, low, close)  # -> (ha_open, ha_high, ha_low, ha_close), ready from the first bar
+```
+
+*   Formula: `ha_close = (O+H+L+C)/4`; `ha_open` is `(O+C)/2` on the first bar, then the previous bar's `(ha_open+ha_close)/2`; `ha_high = max(H, ha_open, ha_close)`; `ha_low = min(L, ha_open, ha_close)`.
+*   Also provides a `value` property and the batch method `update_many_ohlc`; works with `clone_indicator` and `intrabar=True`. There is no `akquant.talib` batch function.
+*   Draw it as candles: `self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc", outputs=("open", "high", "low", "close"), render_type="candle")`. The four components (`ha.open`, ...) carry `group="ha"` and a `role`; LWC and plotly draw one candle series, d3Kline degrades to the close line. See the [custom indicator guide](../guide/custom_indicator.md).
+
+### `akquant.inspect_strategy`
+
+```python
+def inspect_strategy(source: Union[str, os.PathLike[str]]) -> InspectResult
+```
+
+Static inspection of a strategy / indicator-script file or source string: parsed with `ast` only, never imported or executed; plaintext only (UTF-8, BOM allowed). Returns `InspectResult` (`classes`, `error`; `to_dict()` is JSON-serializable). Each class reports `kind` (`"indicator"` / `"strategy"` / `"unknown"`), `title`, `id`, `overlay`, `replaces_price` (`None` for strategies, `False` by default for indicators), `draws_indicators`, and each `self.I` line's `name` / `pane` / `plot` / `outputs` / `label`. Values that cannot be determined statically are `None` and listed in `dynamic`. Both `akquant` and `qmfquant` imports are recognized. A non-existent path ending in `.py` raises `FileNotFoundError`, a wrong argument type raises `TypeError`; everything else is reported through `error` / `dynamic`.
+
 ### `akquant.Bar`
 
 Bar data object.
@@ -1060,7 +1109,7 @@ run_live(..., preload_history=history)
 ```
 
 *   `preload_history`: `pd.DataFrame` / `dict[str, pd.DataFrame]` / `list[Bar]` / `None` (default). Same shapes and columns as `run_backtest(data=)`. The framework ships no data source; supply bars ending at the last closed bar.
-*   **Does**: fills the history buffer (the strategy's `_history_depth` is lifted to the preload depth, never lowered); feeds the `subscribe_bars` window aggregator; counts toward per-symbol `warmup_period`; replays `self.I()` indicators bar by bar after `on_start` (window `freq=` indicators included), streaming plot points with `phase="preload"`.
+*   **Does**: fills the history buffer (the strategy's `_history_depth` is lifted to the preload depth, never lowered); feeds the `subscribe_bars` window aggregator; counts toward per-symbol `warmup_period`; replays `self.I()` indicators bar by bar after the main strategy's and every slot's (indicator scripts included) `on_start` (window `freq=` indicators included), streaming plot points with `phase="preload"`.
 *   **Does not**: drive `on_bar`, match orders or touch the account.
 *   **Validation**: missing required columns, or no symbol matching `instruments`, raises `ValueError`; partially unmatched symbols, rows later than session start and empty input are warned about and skipped; a first live bar not newer than the preload tail is warned about but still dispatched.
 *   **Warm start**: a strategy restored from a checkpoint skips the indicator replay; the history buffer is still filled.

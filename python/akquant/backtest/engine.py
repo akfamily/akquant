@@ -47,7 +47,12 @@ from ..config import (
 )
 from ..data import ParquetDataCatalog
 from ..feed_adapter import DEFAULT_INPUT_TIMEZONE, DataFeedAdapter, FeedSlice
-from ..indicator_recording import IndicatorRecorder, IndicatorSink
+from ..indicator_recording import (
+    IndicatorRecorder,
+    IndicatorSink,
+    declare_plotted_indicators,
+)
+from ..indicator_script import Indicator, merge_indicators_into_slots
 from ..log import build_log_extra, get_logger, has_configured_handler, register_logger
 from ..normalize import (
     coerce_to_pandas,
@@ -67,6 +72,7 @@ from ..strategy import (
     Strategy,
     StrategyConfigurationError,
     StrategyRuntimeConfig,
+    reconcile_strategy_id,
 )
 from ..strategy import (
     _legacy_init_arg_names as _legacy_init_arg_names_impl,
@@ -86,7 +92,6 @@ from ..strategy_window import (
     configure_engine_window_subscriptions,
     freeze_window_subscriptions,
 )
-from ..study import Study, merge_studies_into_slots
 from ..utils.inspector import infer_warmup_period
 from .fill_mode import FillMode
 from .result import BacktestResult
@@ -890,6 +895,10 @@ def _attach_indicator_recorder(
     setattr(strategy_instance, "_indicator_recorder", recorder)
     for slot_strategy in slot_strategy_instances.values():
         setattr(slot_strategy, "_indicator_recorder", recorder)
+    # 补登挂载前(__init__ 里)的 plot=True 声明, 让实时流的 series_key 从第一个
+    # 点起就按全部已知 owner 判冲突; owner 已在调用方设好。
+    for target in [strategy_instance, *slot_strategy_instances.values()]:
+        declare_plotted_indicators(target, recorder)
     return recorder
 
 
@@ -2428,7 +2437,7 @@ def run_backtest(
     strategies_by_slot: Optional[
         Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]
     ] = None,
-    studies: Optional[Sequence[Union[Type[Study], Study]]] = None,
+    indicators: Optional[Sequence[Union[Type[Indicator], Indicator]]] = None,
     strategy_max_order_value: Optional[Dict[str, float]] = None,
     strategy_max_order_size: Optional[Dict[str, float]] = None,
     strategy_max_position_size: Optional[Dict[str, float]] = None,
@@ -2533,6 +2542,7 @@ def run_backtest(
     :param runtime_config_override: 是否覆盖策略实例内已有 runtime_config (默认 True)
     :param strategy_id: 策略归属 ID（预留多策略归因字段，默认 "_default"）
     :param strategies_by_slot: 可选 slot->策略映射，用于启用多策略 slot 迭代执行
+    :param indicators: 叠加的指标脚本(aq.Indicator 子类或实例), 各占一个 slot, 不交易
     :param strategy_max_order_value: 可选策略级单笔下单金额上限映射
                                     （strategy_id->max_value）
     :param strategy_max_order_size: 可选策略级单笔下单数量上限映射
@@ -2674,10 +2684,11 @@ def run_backtest(
             min_commission = cast(
                 Optional[float], broker_profile_values.get("min_commission")
             )
-    # study 是"只画图不交易"的 slot: 复用多策略拓扑, 在风控校验之前并入 slot 表,
+    # 指标脚本是"只画图不交易"的 slot: 复用多策略拓扑, 在风控校验之前并入 slot 表,
     # 让后续所有按 slot key 的校验/归属/窗口订阅合并对它一视同仁。
-    strategies_by_slot = merge_studies_into_slots(
-        strategy_id, strategies_by_slot, studies
+    strategy_id = reconcile_strategy_id(strategy, strategy_id)
+    strategies_by_slot = merge_indicators_into_slots(
+        strategy_id, strategies_by_slot, indicators
     )
     portfolio_risk_budget, risk_budget_mode = _validate_strategy_risk_inputs(
         strategies_by_slot=strategies_by_slot,
@@ -3343,7 +3354,8 @@ def run_backtest(
             # 预计算指标依赖 data_map_for_indicators, 而归一后走的 DataFeed 分支不
             # 构建它。静默丢失指标比报错危险得多, 故显式拒绝并指向可用的替代方案。
             #
-            # 判据是"是否真的声明过预计算指标": 只有 self.I(Indicator(...)) 这条路
+            # 判据是"是否真的声明过预计算指标":
+            # 只有 self.I(PrecomputedIndicator(...)) 这条路
             # 才需要完整 DataFrame, 增量指标的 tick 路径不受影响。
             if ticks_part and any(
                 getattr(one_strategy, "_precomputed_indicators", None)

@@ -240,7 +240,7 @@ from akquant.signal import HttpSignalSource
 
 run_live(
     instruments=[...],
-    broker="qmf",
+    broker="middleware",
     trading_mode="broker_live",
     signal_source=HttpSignalSource(
         host="127.0.0.1", port=8765, token=os.environ["AKQUANT_SIGNAL_TOKEN"]

@@ -45,6 +45,8 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   Declare in `on_start` through the single entry point `self.I(...)`: `self.sma = self.I(SMA(20), name="sma")`.
     *   Read the value via `self.sma[0]` (current bar; `.value` is an alias) and `self.sma[1]` (previous bar). Out-of-range lookback returns `None`.
     *   Multi-symbol strategies must pass `factory=` (e.g. `self.I(factory=lambda: SMA(20), symbols=["AAPL", "MSFT"])`); passing one instance across several symbols raises.
+    *   Plotting: inside `aq.Strategy`, `self.I` does not plot unless `plot=True` is passed (`pane=` / `color=` alone do not plot). Chart-only logic belongs in an `aq.Indicator` script (`class X(aq.Indicator, title="...", overlay=True)`), which plots by default, cannot trade, and is attached with `run_backtest(..., indicators=[X])`.
+    *   Candle-shaped indicators (e.g. `aq.HeikinAshi()`): `self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc", outputs=("open", "high", "low", "close"), render_type="candle")`; the four `outputs` names are mandatory. `class X(aq.Indicator, overlay=True, replaces_price=True)` hints that the script replaces the price candles.
 
 5.  **Backtest Execution**:
     *   Use `akquant.run_backtest` with explicit arguments.
@@ -98,7 +100,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   **Purpose**: Resume backtest/live trading from a saved state without replaying history.
     *   **Save**: `akquant.save_checkpoint(engine, strategy, "checkpoint.pkl")`.
     *   **Load**: Use `akquant.run_from_checkpoint("checkpoint.pkl", data=new_data)` for easiest resumption.
-    *   **Note**: Strategy class must support pickling (avoid open files/sockets in `__init__`). Use `akquant.indicator` classes instead of raw pandas for proper state saving.
+    *   **Note**: Strategy class must support pickling (avoid open files/sockets in `__init__`). Declare indicators with `self.I()` (built-in incremental indicators or `akquant.PrecomputedIndicator`) instead of raw pandas for proper state saving.
 
 ### Example Strategy (Reference)
 

@@ -62,9 +62,9 @@ from .feed_adapter import (
     ResampledFeedAdapter,
 )
 from .gateway.order_receipt import OrderLeg, OrderReceipt
-from .indicator import Indicator, IndicatorSet
 from .indicator_declaration import IndicatorBinding, IndicatorDeclaration
 from .indicator_recording import IndicatorRecorder, IndicatorSink
+from .indicator_script import Indicator, IndicatorCannotTradeError
 from .indicator_stream import (
     is_indicator_stream_event,
     to_indicator_message,
@@ -94,8 +94,10 @@ from .params_adapter import (
     validate_strategy_params,
 )
 from .plot import plot_indicators, plot_result
+from .precomputed import PrecomputedIndicator
 from .sizer import AllInSizer, FixedSize, PercentSizer, Sizer
 from .strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
+from .strategy_inspect import InspectResult, inspect_strategy
 from .strategy_loader import (
     get_strategy_loader,
     register_plugin_strategy_loaders,
@@ -103,7 +105,6 @@ from .strategy_loader import (
     resolve_strategy_input,
 )
 from .stream_schema import STREAM_SCHEMA_VERSION
-from .study import Study, StudyCannotTradeError
 from .trade_stream import (
     is_trade_stream_event,
     to_trade_message,
@@ -143,8 +144,10 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "PercentSizer",
         "AllInSizer",
         "Strategy",
-        "Study",
-        "StudyCannotTradeError",
+        "Indicator",
+        "IndicatorCannotTradeError",
+        "InspectResult",
+        "inspect_strategy",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
         "BarGenerator",
@@ -174,11 +177,10 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
-        "Indicator",
+        "PrecomputedIndicator",
         "IndicatorBinding",
         "IndicatorDeclaration",
         "IndicatorRecorder",
-        "IndicatorSet",
         "IndicatorSink",
         "is_indicator_stream_event",
         "to_indicator_message",
@@ -253,6 +255,10 @@ else:
         "PercentSizer",
         "AllInSizer",
         "Strategy",
+        "Indicator",
+        "IndicatorCannotTradeError",
+        "InspectResult",
+        "inspect_strategy",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
         "BarGenerator",
@@ -277,11 +283,10 @@ else:
         "ChinaOptionsFeeConfig",
         "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
-        "Indicator",
+        "PrecomputedIndicator",
         "IndicatorBinding",
         "IndicatorDeclaration",
         "IndicatorRecorder",
-        "IndicatorSet",
         "IndicatorSink",
         "is_indicator_stream_event",
         "to_indicator_message",

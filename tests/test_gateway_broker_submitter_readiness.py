@@ -20,7 +20,7 @@ def _submitter(strategy: _Strategy) -> BrokerOrderSubmitter:
         def place_order(self, req: UnifiedOrderRequest) -> str:
             return "b1"
 
-    cap = BrokerCapability(broker_name="qmf")
+    cap = BrokerCapability(broker_name="middleware")
     return BrokerOrderSubmitter(
         trader_gateway=_Gw(),
         strategy=strategy,

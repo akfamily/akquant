@@ -176,7 +176,7 @@ class _DeclaredSma(Strategy):
         self.prev_at_first_bar: List[Any] = []
 
     def on_start(self) -> None:
-        self.sma = self.I(aq.SMA(2), name="sma2", pane=0, color="#e91e63")
+        self.sma = self.I(aq.SMA(2), name="sma2", pane=0, color="#e91e63", plot=True)
 
     def on_bar(self, bar: Any) -> None:
         if not self.prev_at_first_bar:
@@ -225,7 +225,11 @@ def test_preload_snapshot_carries_phase() -> None:
     messages = [to_indicator_message(e) for e in events]
     snaps = [m["snapshot"] for m in messages if m is not None and "snapshot" in m]
     assert [s["phase"] for s in snaps] == ["preload", "preload", "run"]
-    assert all(m["schema_version"] == "1.4" for m in messages if m is not None)
+    assert all(
+        m["schema_version"] == aq.STREAM_SCHEMA_VERSION
+        for m in messages
+        if m is not None
+    )
     # 每根预热 bar 一个快照周期: 前端按时间顺序增量画, 不会等预热全部回放完
     # 才一次性收到所有快照。
     kinds = [m["type"] for m in messages if m is not None]
@@ -252,7 +256,7 @@ class _WindowSma(Strategy):
         self.subscribe_bars("5min")
 
     def on_start(self) -> None:
-        self.wsma = self.I(aq.SMA(2), name="wsma", freq="5min", pane=0)
+        self.wsma = self.I(aq.SMA(2), name="wsma", freq="5min", pane=0, plot=True)
 
     def on_bar(self, bar: Any) -> None:
         pass

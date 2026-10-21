@@ -62,8 +62,10 @@ class IntrabarStrategy(Strategy):
         self.subscribe_bars("5min")
 
     def on_start(self) -> None:
-        """``intrabar=True`` needs ``freq=``; plot metadata turns on streaming."""
-        self.sma5 = self.I(aq.SMA(2), name="sma5", freq="5min", intrabar=True, pane=0)
+        """``intrabar=True`` needs ``freq=``; ``plot=True`` turns on streaming."""
+        self.sma5 = self.I(
+            aq.SMA(2), name="sma5", freq="5min", intrabar=True, pane=0, plot=True
+        )
 
     def on_bar(self, bar: Bar) -> None:
         """Every base bar: provisional [0], last confirmed [1]."""

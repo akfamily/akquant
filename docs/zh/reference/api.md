@@ -63,6 +63,7 @@ def run_backtest(
     runtime_config_override: bool = True,
     strategy_id: Optional[str] = None,
     strategies_by_slot: Optional[Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]] = None,
+    indicators: Optional[Sequence[Union[Type[Indicator], Indicator]]] = None,
     strategy_max_order_value: Optional[Dict[str, float]] = None,
     strategy_max_order_size: Optional[Dict[str, float]] = None,
     strategy_max_position_size: Optional[Dict[str, float]] = None,
@@ -232,6 +233,7 @@ def run_from_checkpoint(
 *   `risk_config`: 风控配置。支持字典 (e.g., `{"max_position_pct": 0.1}`) 或 `RiskConfig` 对象。如果同时提供了 `config.strategy_config.risk`，此参数将覆盖其中的同名字段。
 *   `strategy_runtime_config` / `runtime_config_override`: 运行时行为注入与冲突处理开关，支持 `StrategyRuntimeConfig` 或 `dict`。
 *   `strategies_by_slot`: 可选多策略映射。键为 slot id，值为策略类/实例/函数式 on_bar 回调；用于启用 slot 迭代执行。
+*   `indicators`: 可选指标脚本列表（`aq.Indicator` 的子类或实例），每个脚本并入 `strategies_by_slot` 成为独立 slot，key 取类定义行的 `id`（省略为类名 snake_case）。与 `strategy_id` 或已有 slot key 重复时报 `ValueError`，混入非 `aq.Indicator` 时报 `TypeError`。`run_live(indicators=...)` 语义相同。见下文 [`akquant.Indicator`](#akquant-indicator)。
 *   `strategy_fill_policy`: 可选策略级默认成交策略映射（`strategy_id -> FillMode`）。
     下单时优先级：订单级 `fill_mode` > `strategy_fill_policy[strategy_id]` > 运行级 `fill_policy`。
 *   `strategy_slippage`: 可选策略级默认滑点映射（`strategy_id -> slippage`）。
@@ -1073,6 +1075,53 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `get_rolling_data(length, symbol, freq=None)`: 获取滚动训练数据 (X, y)。`freq` 语义与限制同上一节的 `get_history` 系列（底层基于 `get_history_df`）。
 *   `prepare_features(df, mode)`: (需重写) 特征工程与标签生成。
 
+**类定义行参数:**
+
+*   `class MyStrategy(aq.Strategy, title="趋势", id="trend")`：`title` 为显示名（省略为类名），`id` 为机器标识。写了 `id` 时它就是 `strategy_id`，与 `run_backtest/run_live(strategy_id=...)` 不一致报 `ValueError`；不写 `id` 时 `strategy_id` 仍默认 `"_default"`。策略不接受 `overlay=`（报 `TypeError`）。
+*   `self.I(...)` 在策略里**默认不画图**，要画写 `plot=True`；`pane` / `color` / `label` 等绘图参数不再隐含 `plot=True`。
+
+### `akquant.Indicator` {: #akquant-indicator }
+
+指标脚本基类，对标 Pine v5 的 `indicator()`：只声明指标、不交易，经 `run_backtest/run_live(indicators=[...])` 挂载。
+
+```python
+class DualMA(aq.Indicator, title="双均线", overlay=True, id="dual_ma"):
+    def on_start(self):
+        self.fast = self.I(aq.EMA(10), name="ema_fast")
+```
+
+*   `title`: 显示名，只用于展示，省略为类名。
+*   `overlay`: `True` 画主图，`False`（默认）画附图。`self.I` 默认画图：`overlay=True` 时默认 `pane=0`，否则默认 `pane=1`（pane 编号只在本脚本内有效）；`plot=False` 关闭。
+*   `id`: 机器标识（即指标点的 `owner_strategy_id`），省略为类名 snake_case。
+*   `replaces_price`: `True` 表示本脚本替代价格 K 线（如平均 K 线），只是给前端的提示，隐藏原 K 线由前端决定；必须同时写 `overlay=True`（否则 `ValueError`），值须为 `bool`（否则 `TypeError`），可被子类继承，默认 `False`。`X.resolve_replaces_price()` 返回生效值。`aq.Strategy` 上写报 `TypeError`。
+*   全部交易 API（`buy` / `sell` / `submit_order` / `place_*` / `order_target*` / `rebalance_*` / `close_position` / `cancel_*`）抛 `akquant.IndicatorCannotTradeError`。
+*   详见[自定义指标指南](../guide/custom_indicator.md)。
+
+### `akquant.PrecomputedIndicator`
+
+向量化预计算指标：`PrecomputedIndicator(name, fn)`，`fn(df) -> pd.Series` 对单个标的的完整 `DataFrame` 一次性计算，经 `self.I(PrecomputedIndicator(...))` 声明。只用于回测；不支持含 Tick 的输入、`freq=` 与 `warmup_bars=`。
+
+### `akquant.HeikinAshi`
+
+内置 Rust 增量指标：平均 K 线（Heikin-Ashi）。
+
+```python
+ha = aq.HeikinAshi()
+ha.update(open, high, low, close)  # -> (ha_open, ha_high, ha_low, ha_close)，第一根即有值
+```
+
+*   公式：`ha_close = (O+H+L+C)/4`；`ha_open` 第一根取 `(O+C)/2`，之后取前一根 `(ha_open+ha_close)/2`；`ha_high = max(H, ha_open, ha_close)`；`ha_low = min(L, ha_open, ha_close)`。
+*   另有 `value` 属性与批量方法 `update_many_ohlc`；支持 `clone_indicator` 与 `intrabar=True`。没有 `akquant.talib` 批量函数。
+*   画成 K 线：`self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc", outputs=("open", "high", "low", "close"), render_type="candle")`。四个分量（`ha.open` 等）的定义带 `group="ha"` 与 `role`；LWC 与 plotly 画成一条 K 线，d3Kline 降级为 close 一条线。见[自定义指标指南](../guide/custom_indicator.md)。
+
+### `akquant.inspect_strategy`
+
+```python
+def inspect_strategy(source: Union[str, os.PathLike[str]]) -> InspectResult
+```
+
+静态检查策略/指标脚本文件或源码字符串：只用 `ast` 解析，不导入、不执行用户代码，只接受明文（UTF-8，可带 BOM）。返回 `InspectResult`（`classes`、`error`，`to_dict()` 可序列化为 JSON），每个类给出 `kind`（`"indicator"` / `"strategy"` / `"unknown"`）、`title`、`id`、`overlay`、`replaces_price`（策略为 `None`，指标默认 `False`）、`draws_indicators` 与每条 `self.I` 的 `name` / `pane` / `plot` / `outputs` / `label`；静态确定不了的值为 `None` 并记入 `dynamic`。同时识别 `akquant` 与 `qmfquant` 的导入。以 `.py` 结尾但不存在的路径报 `FileNotFoundError`，入参类型错报 `TypeError`，其余问题写进 `error` / `dynamic`。详见[自定义指标指南](../guide/custom_indicator.md)「静态检查」一节。
+
 ### `akquant.Bar`
 
 K 线数据对象。
@@ -1130,7 +1179,7 @@ run_live(..., preload_history=history)
 ```
 
 *   `preload_history`：`pd.DataFrame` / `dict[str, pd.DataFrame]` / `list[Bar]` / `None`（默认）。形态与列约定同 `run_backtest(data=)`。框架不内置数据源，数据由调用方提供，应截止到上一根已收盘 bar。
-*   **会做**：灌入历史缓冲（策略的 `_history_depth` 自动抬到预热深度，不下调已设的更大值）；喂 `subscribe_bars` 窗口聚合器；计入 per-symbol `warmup_period`；在 `on_start` 之后逐根回放 `self.I()` 指标（含 `freq=` 窗口指标），绘图点以 `phase="preload"` 进入指标流。
+*   **会做**：灌入历史缓冲（策略的 `_history_depth` 自动抬到预热深度，不下调已设的更大值）；喂 `subscribe_bars` 窗口聚合器；计入 per-symbol `warmup_period`；在主策略与全部 slot（含指标脚本）的 `on_start` 都跑完之后逐根回放 `self.I()` 指标（含 `freq=` 窗口指标），绘图点以 `phase="preload"` 进入指标流。
 *   **不会做**：不触发 `on_bar`、不撮合、不动账户。
 *   **校验**：缺必需列、或一个标的都匹配不上 `instruments` 时抛 `ValueError`；部分标的不匹配、晚于会话启动的行、空数据均告警后跳过；实盘首根 bar 不晚于预热末戳时告警但照常派发。
 *   **热启动**：从存档恢复的策略跳过指标回放，历史缓冲仍会灌入。
@@ -1263,8 +1312,8 @@ run_live(
 ```
 
 **只传其中一个会报错**，要求把另一侧也写明。这是刻意的设计：如果让 `broker` 去
-兼任缺失的那一侧，它就一词双义了——读 `broker='qmf', market_broker='replay'` 时，
-你必须先知道「qmf 只有交易通道」才能推断出 `broker` 在这里指交易源，而参数名本身
+兼任缺失的那一侧，它就一词双义了——读 `broker='middleware', market_broker='replay'` 时，
+你必须先知道「middleware 只有交易通道」才能推断出 `broker` 在这里指交易源，而参数名本身
 没有表达这件事。两侧都写明则无需这层推断。
 
 要点：

@@ -4,12 +4,12 @@ from unittest.mock import MagicMock
 import akquant
 import pandas as pd
 from akquant.akquant import StrategyContext
-from akquant.indicator import Indicator
+from akquant.precomputed import PrecomputedIndicator
 from akquant.strategy import Strategy
 
 
-# Mock Indicator
-class SMA(Indicator):
+# Mock PrecomputedIndicator
+class SMA(PrecomputedIndicator):
     """Mock SMA indicator."""
 
     def __init__(self, period: int) -> None:
@@ -111,7 +111,7 @@ def test_timer_registration() -> None:
 
 
 def test_declared_precomputed_indicator_enters_precompute_list() -> None:
-    """self.I(Indicator(...)) 走向量化预计算路径."""
+    """self.I(PrecomputedIndicator(...)) 走向量化预计算路径."""
     strategy = MyTimerStrategy()
     indicator = SMA(5)
 

@@ -157,8 +157,8 @@ trait Clock          { fn now(&self) -> ts; fn timers(); }      // TestClock(随
 ```
 
 - 策略只依赖 `Portfolio`/`OrderManager` facade,**backtest↔live 唯一差异是注入哪套三件套**。
-- 现有 `gateway/`(ctp/miniqmt/ptrade + middleware/qmf 插件)接到 `ExecutionClient`/`LiveDataEngine`;`SimulatedExchange` 包住现有 `custom_matchers`。
-- 收益:策略回测验证后**零改上实盘**——对含两个实盘插件的仓库价值最大。
+- 现有 `gateway/`(ctp/miniqmt/ptrade + middleware 插件)接到 `ExecutionClient`/`LiveDataEngine`;`SimulatedExchange` 包住现有 `custom_matchers`。
+- 收益:策略回测验证后**零改上实盘**——对含实盘插件的仓库价值最大。
 
 ## 8. 时点正确性 · 双时态(E 期,golden 会变更)
 
@@ -216,7 +216,7 @@ res = run_backtest(data=pl_df, strategy=...)         # 快速测试仍收内存 
 | 4 | **`strategy_history` 返回 `np.ndarray`/`pd.DataFrame`** | ml、rolling、用户 | Arrow→numpy 零拷贝,签名不变 |
 | 5 | **`BacktestResult` 的 pandas 输出** | plot/analysis 全家 | 保持 pandas 表面,内部可 Arrow 计算 |
 
-**插件仓库结论:基本免疫。** `akquant-middleware`/`akquant-qmf` 仅依赖 `gateway.*` + `DataFeed`,不碰 Bar 字段、归一化器、`run_backtest` 数据路径。A–C 期几乎无感;D 期被触及但为收益(接入统一 `ExecutionClient`);E 期若推 tick/quote 需扩 `broker_models`,是加法。
+**插件仓库结论:基本免疫。** `akquant-middleware` 仅依赖 `gateway.*` + `DataFeed`,不碰 Bar 字段、归一化器、`run_backtest` 数据路径。A–C 期几乎无感;D 期被触及但为收益(接入统一 `ExecutionClient`);E 期若推 tick/quote 需扩 `broker_models`,是加法。
 
 **pandas 定位澄清**:深嵌于报表/研究边缘(strategy_history.get_history_df、plot/*、ml/model、analysis/benchmark、talib/*、backtest/result),**不移除、退到边缘层**;列式化只接管 ingest→引擎→批量计算核心链路。
 

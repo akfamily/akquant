@@ -1014,6 +1014,7 @@ def _build_chart_html_sections(
             indicator_defs_view = _rename_table_columns(
                 indicator_defs,
                 {
+                    "owner_strategy_id": "所属 (Owner)",
                     "indicator_key": "指标键 (Indicator Key)",
                     "display_name": "展示名 (Display Name)",
                     "pane": "面板 (Pane)",

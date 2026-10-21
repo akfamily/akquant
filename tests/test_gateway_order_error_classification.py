@@ -12,7 +12,7 @@ from akquant.gateway.order_errors import classify_gateway_error, is_definite_rej
 
 
 class _NoClassify:
-    """不实现 classify_order_error 的网关(ctp/miniqmt/ptrade/qmf 现状)."""
+    """不实现 classify_order_error 的网关(ctp/miniqmt/ptrade 现状)."""
 
 
 class _Classifying:

@@ -2,9 +2,7 @@ import json
 from typing import Any, Callable, Dict, Optional, Protocol, Tuple, runtime_checkable
 
 from .chart import (
-    normalize_meta_json as _normalize_meta_json,
-)
-from .chart import (
+    normalize_group_role,
     normalize_pane_index,
     normalize_reference_lines,
     normalize_render_type,
@@ -12,6 +10,10 @@ from .chart import (
     timestamp_ms_from_ns,
     timestamp_to_ms_and_ns,
 )
+from .chart import (
+    normalize_meta_json as _normalize_meta_json,
+)
+from .indicator_identity import DEFAULT_OWNER, identity_of, resolve_series_key
 
 
 @runtime_checkable
@@ -26,6 +28,13 @@ class IndicatorSink(Protocol):
     payload attached to :class:`BacktestResult.indicator_outputs`.
 
     The built-in :class:`IndicatorRecorder` satisfies this protocol.
+
+    A sink may additionally implement the **optional**
+    ``declare(owner_strategy_id, indicator_key)`` method (1.5): the framework
+    calls it, when present, for every ``plot=True`` ``Strategy.I()`` declaration
+    so the sink can compute stream ``series_key`` values before the first point.
+    It is detected with ``getattr`` and deliberately not part of this protocol,
+    so sinks written against 1.4 remain valid.
     """
 
     def record(
@@ -48,6 +57,8 @@ class IndicatorSink(Protocol):
         warmup: bool = ...,
         confirmed: bool = ...,
         phase: str = ...,
+        group: str = ...,
+        role: str = ...,
     ) -> None:
         """Record one indicator point.
 
@@ -55,6 +66,15 @@ class IndicatorSink(Protocol):
         ``run_live(preload_history=)`` and ``"run"`` otherwise (1.4). Sinks
         written against the 1.3 protocol may omit it; the framework detects
         that and simply does not pass it.
+
+        ``group``/``role`` (1.6) identify one OHLC component of a
+        ``render_type="candle"`` declaration: ``group`` is the ``Strategy.I``
+        name and ``role`` is ``open``/``high``/``low``/``close``; both are
+        ``""`` for every other render type. Sinks written against the 1.5
+        protocol may omit them; the framework then does not pass them and
+        downgrades the candle components to ``render_type="line"`` for that
+        sink (four separate lines), since a candle point without its group
+        cannot be assembled into a bar.
         """
         ...
 
@@ -104,6 +124,102 @@ def _normalize_timestamp_ns(timestamp: Any) -> int:
     return timestamp_ns
 
 
+class SeriesKeyRegistry:
+    """会话级登记表: 实时流消息的 ``series_key`` 按它在发出时计算.
+
+    回测录制器与实盘 sink 共用, 两边口径必须一致。登记来源: 挂载时补登已有的
+    ``plot=True`` 声明、挂载后 ``self.I`` 的声明(经 ``declare``)、每次
+    ``record``。命名规则只来自 :func:`akquant.indicator_identity.resolve_series_key`。
+
+    某个 key 已经以不带前缀的名字发出过、之后才有第二个 owner 用它时(运行中途
+    撞名), 该 key 的所有 owner 从此刻起都改用 ``owner:key``, 已发出的点不追溯;
+    每个 key 只告警一次。
+    """
+
+    def __init__(self) -> None:
+        """初始化空登记表."""
+        self._owners_by_key: Dict[str, set[str]] = {}
+        # 已经以不带前缀的名字发出过流消息的 key
+        self._emitted_plain: set[str] = set()
+        self._warned: set[str] = set()
+
+    def register(self, owner_strategy_id: Any, indicator_key: Any) -> None:
+        """登记一个 ``(owner, key)``; owner 缺失/空白/NaN 按 ``"_default"``."""
+        owner, key = identity_of(
+            {"owner_strategy_id": owner_strategy_id, "indicator_key": indicator_key}
+        )
+        if not key:
+            return
+        owners = self._owners_by_key.setdefault(key, set())
+        if owner in owners:
+            return
+        owners.add(owner)
+        if len(owners) > 1 and key in self._emitted_plain and key not in self._warned:
+            self._warned.add(key)
+            from .log import get_logger
+
+            get_logger("indicator").warning(
+                "指标键 %r 在运行中途被第二个 owner(%s)使用: 从此刻起实时流的 "
+                "series_key 改为 'owner:%s'(涉及 %s), 此前已发出的点仍是 %r, "
+                "不追溯修改。在 __init__/on_start 里用 self.I(plot=True) 声明, "
+                "或改用不同的 name, 可避免这一切换",
+                key,
+                owner,
+                key,
+                ", ".join(sorted(owners)),
+                key,
+            )
+
+    def series_key(self, owner_strategy_id: Any, indicator_key: Any) -> str:
+        """返回流消息此刻应带的 ``series_key``(并记下不带前缀的发出)."""
+        owner, key = identity_of(
+            {"owner_strategy_id": owner_strategy_id, "indicator_key": indicator_key}
+        )
+        resolved = resolve_series_key(owner, key, self._owners_by_key)
+        if resolved == key:
+            self._emitted_plain.add(key)
+        return resolved
+
+
+def declare_plotted_indicators(
+    strategy: Any, recorder: Any, names: Optional[list[str]] = None
+) -> None:
+    """把策略的 ``plot=True`` 声明登记到 sink(可选的 ``declare`` 方法).
+
+    挂载录制器时不传 ``names``, 补登全部已有声明 —— ``__init__`` 里的 ``self.I``
+    早于挂载, 只能在这里补登; ``self.I`` 在挂载后声明时只传它自己的名字。
+    sink 没实现 ``declare``、或策略没有声明表(测试替身)时什么都不做。
+    """
+    declare = getattr(recorder, "declare", None)
+    if not callable(declare):
+        return
+    declarations = getattr(strategy, "_incremental_indicators", None)
+    if not isinstance(declarations, dict):
+        return
+    owner = getattr(strategy, "_owner_strategy_id", None) or DEFAULT_OWNER
+    selected = list(declarations) if names is None else names
+    for name in selected:
+        declaration = declarations.get(name)
+        if declaration is None or not getattr(declaration, "plot", False):
+            continue
+        for key, _, _ in declaration.report_items(name, None):
+            declare(owner, key)
+
+
+def stamp_snapshot_items(
+    registry: SeriesKeyRegistry, owner_strategy_id: str, items: list[Dict[str, Any]]
+) -> None:
+    """快照发出时给每个 item 补上 ``owner_strategy_id`` 与此刻的 ``series_key``.
+
+    回测 recorder 与实盘 sink 共用, 两边的快照口径必须严格一致。
+    """
+    for item in items:
+        item["owner_strategy_id"] = owner_strategy_id
+        item["series_key"] = registry.series_key(
+            owner_strategy_id, item.get("indicator_key")
+        )
+
+
 class IndicatorRecorder:
     """Collect normalized indicator metadata and point values during a run."""
 
@@ -114,11 +230,17 @@ class IndicatorRecorder:
         ] = None,
     ) -> None:
         """Initialize recorder state and optional stream emitter."""
-        self._definitions: Dict[str, Dict[str, Any]] = {}
+        # 定义身份是 (owner_strategy_id, indicator_key): 主策略与指标脚本可同名
+        self._definitions: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self._instances: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
         self._points: list[Dict[str, Any]] = []
         self._stream_emitter = stream_emitter
         self._pending_snapshots: Dict[Tuple[str, str, int], list[Dict[str, Any]]] = {}
+        self._series_registry = SeriesKeyRegistry()
+
+    def declare(self, owner_strategy_id: str, indicator_key: str) -> None:
+        """登记一个将要上报的 ``(owner, key)``, 供流消息提前算出 series_key."""
+        self._series_registry.register(owner_strategy_id, indicator_key)
 
     @property
     def has_data(self) -> bool:
@@ -154,6 +276,8 @@ class IndicatorRecorder:
         warmup: bool = False,
         confirmed: bool = True,
         phase: str = "run",
+        group: str = "",
+        role: str = "",
     ) -> None:
         """Record one indicator definition, instance, and point update.
 
@@ -168,6 +292,7 @@ class IndicatorRecorder:
         strategy_id = _normalize_text(owner_strategy_id, default="_default")
         pane_index = normalize_pane_index(pane)
         render_type_text = normalize_render_type(render_type)
+        group_text, role_text = normalize_group_role(render_type_text, group, role)
         display_name_text = _normalize_text(display_name, default=indicator_key)
         unit_text = _normalize_text(unit)
         color_text = _normalize_text(color)
@@ -183,9 +308,11 @@ class IndicatorRecorder:
         except (TypeError, ValueError):
             numeric_value = float("nan")
 
-        definition = self._definitions.get(indicator_key)
+        definition_key = (strategy_id, indicator_key)
+        definition = self._definitions.get(definition_key)
         if definition is None:
-            self._definitions[indicator_key] = {
+            self._definitions[definition_key] = {
+                "owner_strategy_id": strategy_id,
                 "indicator_key": indicator_key,
                 "display_name": display_name_text,
                 "pane": pane_index,
@@ -195,6 +322,8 @@ class IndicatorRecorder:
                 "color": color_text,
                 "reference_lines": reference_lines_norm,
                 "scale_group": scale_group_norm,
+                "group": group_text,
+                "role": role_text,
             }
         else:
             if not definition.get("display_name"):
@@ -213,6 +342,9 @@ class IndicatorRecorder:
                 definition["reference_lines"] = reference_lines_norm
             if not definition.get("scale_group") and scale_group_norm:
                 definition["scale_group"] = scale_group_norm
+            if not definition.get("group") and group_text:
+                definition["group"] = group_text
+                definition["role"] = role_text
 
         instance_key = (strategy_id, symbol_text, indicator_key, meta_json)
         instance = self._instances.get(instance_key)
@@ -239,6 +371,7 @@ class IndicatorRecorder:
                     "warmup": bool(warmup),
                 }
             )
+        self._series_registry.register(strategy_id, indicator_key)
         if self._stream_emitter is not None:
             self._stream_emitter(
                 "indicator_point",
@@ -247,6 +380,9 @@ class IndicatorRecorder:
                 {
                     "owner_strategy_id": strategy_id,
                     "indicator_key": indicator_key,
+                    "series_key": self._series_registry.series_key(
+                        strategy_id, indicator_key
+                    ),
                     "display_name": display_name_text,
                     "pane": str(pane_index),
                     "render_type": render_type_text,
@@ -258,6 +394,8 @@ class IndicatorRecorder:
                     "confirmed": str(bool(confirmed)).lower(),
                     "phase": phase_text,
                     "scale_group": scale_group_norm,
+                    "group": group_text,
+                    "role": role_text,
                     "meta_json": meta_json,
                 },
             )
@@ -273,6 +411,8 @@ class IndicatorRecorder:
                     "warmup": bool(warmup),
                     "confirmed": bool(confirmed),
                     "phase": phase_text,
+                    "group": group_text,
+                    "role": role_text,
                     "meta_json": meta_json,
                 }
             )
@@ -285,6 +425,7 @@ class IndicatorRecorder:
         for (strategy_id, symbol_text, timestamp_ns), items in list(
             self._pending_snapshots.items()
         ):
+            stamp_snapshot_items(self._series_registry, strategy_id, items)
             self._stream_emitter(
                 "indicator_snapshot",
                 None if symbol_text == "_unknown" else symbol_text,
@@ -310,7 +451,7 @@ class IndicatorRecorder:
     def build_payload(self) -> Dict[str, list[Dict[str, Any]]]:
         """Return stable row-oriented outputs for result access and export."""
         definitions = [
-            self._definitions[key] for key in sorted(self._definitions.keys(), key=str)
+            self._definitions[key] for key in sorted(self._definitions.keys())
         ]
         instances = sorted(
             self._instances.values(),

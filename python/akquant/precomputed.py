@@ -4,11 +4,11 @@ from typing import Any, Callable, Dict
 import pandas as pd
 
 
-class Indicator:
-    """Wrapper for technical indicators."""
+class PrecomputedIndicator:
+    """向量化预计算指标: 整段 DataFrame 算完缓存, 按时间点 asof 查询. 实盘不可用."""
 
     def __init__(self, name: str, fn: Callable, **kwargs: Any) -> None:
-        """Initialize the Indicator."""
+        """Initialize the PrecomputedIndicator."""
         self.name = name
         self.fn = fn
         self.kwargs = kwargs
@@ -76,30 +76,7 @@ class Indicator:
             return float("nan")
 
 
-class IndicatorSet:
-    """Collection of indicators for easy management."""
-
-    def __init__(self) -> None:
-        """Initialize the IndicatorSet."""
-        self._indicators: Dict[str, Indicator] = {}
-
-    def add(self, name: str, fn: Callable, **kwargs: Any) -> None:
-        """Add an indicator to the set."""
-        self._indicators[name] = Indicator(name, fn, **kwargs)
-
-    def get(self, name: str) -> Indicator:
-        """Get an indicator by name."""
-        return self._indicators[name]
-
-    def calculate_all(self, df: pd.DataFrame, symbol: str) -> Dict[str, pd.Series]:
-        """Calculate all indicators for the given dataframe."""
-        results = {}
-        for name, ind in self._indicators.items():
-            results[name] = ind(df, symbol)
-        return results
-
-
-class SMA(Indicator):
+class SMA(PrecomputedIndicator):
     """Simple Moving Average."""
 
     def __init__(self, window: int) -> None:

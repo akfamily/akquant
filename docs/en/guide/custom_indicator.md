@@ -16,7 +16,7 @@ In AKQuant, these are related but different tasks:
 | Goal | Recommended path | Typical API |
 | :--- | :--- | :--- |
 | Maintain state bar by bar / tick by tick | an incremental object (has `update()`) | `self.I(aq.EMA(20), ...)` |
-| Compute a full series from a `DataFrame` with pandas | `Indicator(name, fn)` | `self.I(Indicator(...), ...)` |
+| Compute a full series from a `DataFrame` with pandas | `PrecomputedIndicator(name, fn)` | `self.I(PrecomputedIndicator(...), ...)` |
 | Add a new function name to `akquant.talib` | modify the Python/Rust compatibility layer source | not runtime registration |
 
 If your goal is simply "use my own indicator inside a strategy", you usually do not need to extend `akquant.talib`.
@@ -35,10 +35,10 @@ from akquant import Bar, Strategy
 
 class MaCross(Strategy):
     def on_start(self) -> None:
-        # One declaration = auto update + auto plot + lookback
-        self.ema_fast = self.I(aq.EMA(10), pane=0, color="#e91e63", label="EMA10")
-        self.ema_slow = self.I(aq.EMA(30), pane=0, color="#3f51b5")
-        self.rsi = self.I(aq.RSI(14), pane=1)
+        # One declaration = auto update + lookback; add plot=True for auto plotting
+        self.ema_fast = self.I(aq.EMA(10), pane=0, color="#e91e63", label="EMA10", plot=True)
+        self.ema_slow = self.I(aq.EMA(30), pane=0, color="#3f51b5", plot=True)
+        self.rsi = self.I(aq.RSI(14), pane=1, plot=True)
 
     def on_bar(self, bar: Bar) -> None:
         # [0] is the current bar, [1] the previous one — same as Pine's sma[0] / sma[1]
@@ -46,7 +46,7 @@ class MaCross(Strategy):
             return
         if self.ema_fast[1] <= self.ema_slow[1] and self.ema_fast[0] > self.ema_slow[0]:
             self.buy(bar.symbol, 100)
-        # No record_indicator needed — plot arguments make reporting automatic
+        # No record_indicator needed — plot=True makes reporting automatic
 ```
 
 !!! warning "Breaking change since 0.3"
@@ -98,10 +98,10 @@ Pine's `ta.*` and work out of the box.
 from collections import deque
 
 import pandas as pd
-from akquant import Indicator, Strategy
+from akquant import PrecomputedIndicator, Strategy
 
 
-class MyMomentum(Indicator):
+class MyMomentum(PrecomputedIndicator):
     def __init__(self, period: int = 10):
         super().__init__("my_momentum", lambda df: df["close"] - df["close"].shift(period))
         self.period = period
@@ -196,7 +196,7 @@ instead of handing a raw tuple to the frontend:
 
 ```python
 self.macd = self.I(aq.MACD(12, 26, 9), name="macd", pane=2,
-                   outputs=("dif", "dea", "hist"))
+                   outputs=("dif", "dea", "hist"), plot=True)
 
 # Reading:
 self.macd[0]        # the whole tuple (dif, dea, hist)
@@ -206,22 +206,64 @@ self.macd.dif[0]    # a single component, which also supports [1] lookback
 If the number of `outputs` does not match the indicator's actual component count, you get
 an error rather than a silent misalignment.
 
+### Candle-shaped indicators: `render_type="candle"`
+
+Indicators such as Heikin-Ashi produce a whole candle per bar. The counterpart of Pine's
+`plotcandle` is a four-component `outputs` plus `render_type="candle"`:
+
+```python
+class HA(aq.Indicator, title="Heikin-Ashi", overlay=True, replaces_price=True):
+    def on_start(self):
+        self.ha = self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc",
+                         outputs=("open", "high", "low", "close"),
+                         render_type="candle", label="Heikin-Ashi")
+```
+
+- The contract is unchanged: each component is still reported as single-value points with
+  `indicator_key` `ha.open` / `ha.high` / `ha.low` / `ha.close`. Definitions and stream
+  messages gain `group` (the `self.I` name) and `role` (`open`/`high`/`low`/`close`); both
+  are `""` for every other render type.
+- Validation: `outputs` must be exactly these four names (any order), otherwise the
+  declaration raises `ValueError`; the four components share `pane`, `color` and `label`.
+  `record_indicator` cannot write `render_type="candle"` directly.
+- `aq.HeikinAshi()` is a built-in Rust indicator: `update(open, high, low, close)` returns
+  `(ha_open, ha_high, ha_low, ha_close)`, with a value from the first bar.
+- `replaces_price=True` on the class line is only a hint for frontends ("this indicator
+  replaces the price candles"). It is only allowed on `aq.Indicator` and requires
+  `overlay=True`; hiding the original candles is the frontend's job.
+  `X.resolve_replaces_price()` and the `replaces_price` field of `aq.inspect_strategy` expose it.
+
+How each exporter draws it:
+
+| Exporter | Rendering |
+| :--- | :--- |
+| LWC review (`result.viz.review`, `to_lwc_indicator_series`) | one Candlestick per `(owner, group)`, points `{time, open, high, low, close}` |
+| plotly (`plot_indicators`, report indicator section) | one `go.Candlestick` per group |
+| d3Kline (`to_d3kline_options`) | **downgraded**: d3Kline has no candle indicator type, so only the close component is emitted as a line named by the group's series key, with `render_type="candle"` marking the downgrade |
+| `to_raw_panes` | one entry per component with `group` / `role` / `group_series_key`, so a consumer can rebuild OHLC |
+| live stream / `to_lwc_update` | one point per component with `group` / `role`; collect the four components of one `(owner_strategy_id, group, symbol, timestamp)` to get a candle |
+
+LWC and plotly **never** colour candle indicators with the theme's up/down price colours (they would be indistinguishable from the price candles): a single colour (`color`, or the indicator palette when unset), solid for up and hollow for down (TradingView's hollow-candle convention). Timestamps missing any component are skipped by LWC and plotly instead of raising. For the
+group's series key see "Indicator identity and series keys" below.
+
+Runnable example: [77_heikin_ashi_indicator.py](https://github.com/akfamily/akquant/blob/main/examples/77_heikin_ashi_indicator.py).
+
 ## Path 2: Precomputed Indicators
 
 When the indicator is a better fit for a one-shot computation over the full `DataFrame`,
-pass an `Indicator(name, fn)` instance and `self.I()` routes it to the vectorized
+pass a `PrecomputedIndicator(name, fn)` instance and `self.I()` routes it to the vectorized
 precompute path.
 
 ### Minimal example
 
 ```python
-from akquant import Indicator, Strategy
+from akquant import PrecomputedIndicator, Strategy
 
 
 class PrecomputeMomentumStrategy(Strategy):
     def on_start(self):
         self.mom10 = self.I(
-            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            PrecomputedIndicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
             name="mom10",
         )
 
@@ -244,17 +286,37 @@ class PrecomputeMomentumStrategy(Strategy):
 - **Tick input raises**: precompute needs full OHLC, while a tick only carries a trade price;
 - **`freq=` is not supported**: use an incremental indicator for windowed frequencies.
 - **No `warmup_bars=`**: there is no incremental state to warm up - the whole series is computed up front.
-- **Multi-symbol out of the box**: `Indicator` caches its full series per symbol, so no `factory=` is needed.
+- **Multi-symbol out of the box**: `PrecomputedIndicator` caches its full series per symbol, so no `factory=` is needed.
 
 ## Automatic Plotting
 
-Passing any plot argument (`pane` / `color` / `label` / `render_type` / `reference_lines` /
-`scale_group`), or setting `plot=True` explicitly, makes the framework report a plot point
-after every update — **no hand-written `record_indicator` inside `on_bar`**.
+For an indicator that is drawn, the framework reports a plot point after every update —
+**no hand-written `record_indicator` inside `on_bar`**. Whether it is drawn depends on two
+things only: **which kind of script `self.I` is called in**, and whether `plot=` is written
+explicitly:
 
-**Nothing is reported by default**, matching Pine (`ta.sma()` only computes; `plot()` draws).
-This is not merely a style choice: the live indicator sink emits one event per point, and
-turning every indicator on by default across many symbols would flood the frontend link.
+- Inside an `aq.Strategy`, **nothing is drawn by default**, matching Pine (`ta.sma()` only
+  computes; `plot()` draws). This is not merely a style choice: the live indicator sink emits
+  one event per point, and turning every indicator on by default across many symbols would
+  flood the frontend link.
+- Inside an indicator script `aq.Indicator`, **everything is drawn by default** - drawing is
+  what an indicator script is for (see "Indicator scripts" below).
+- `plot=True` / `plot=False` overrides the default.
+- `pane` / `color` / `label` / `render_type` / `reference_lines` / `scale_group` only decide
+  *how* to draw and **no longer imply `plot=True`**. A strategy that wrote only `pane=` to get
+  a chart must add `plot=True`.
+
+| Where | Call | Drawn | pane |
+| :--- | :--- | :--- | :--- |
+| `aq.Strategy` | `self.I(x)` | no | 0 |
+| `aq.Strategy` | `self.I(x, color="red")` | no | 0 |
+| `aq.Strategy` | `self.I(x, pane=1)` | no | 1 |
+| `aq.Strategy` | `self.I(x, plot=True)` | yes | 0 |
+| `aq.Indicator` (`overlay=False`, default) | `self.I(x)` | yes | 1 |
+| `aq.Indicator` (`overlay=False`, default) | `self.I(x, pane=0)` | yes | 0 |
+| `aq.Indicator` (`overlay=False`, default) | `self.I(x, plot=False)` | no | 1 |
+| `aq.Indicator` (`overlay=True`) | `self.I(x)` | yes | 0 |
+| `aq.Indicator` (`overlay=True`) | `self.I(x, pane=2)` | yes | 2 |
 
 Points that are not ready yet (value `None`) are not reported — the counterpart of Pine's
 `na` during warmup.
@@ -263,14 +325,14 @@ Points that are not ready yet (value `None`) are not reported — the counterpar
 # Compute only, do not draw
 self.atr = self.I(aq.ATR(14), input_mode="hlc")
 
-# Compute and draw
-self.rsi = self.I(aq.RSI(14), pane=1, reference_lines=[
+# Compute and draw (a strategy must write plot=True explicitly)
+self.rsi = self.I(aq.RSI(14), pane=1, plot=True, reference_lines=[
     {"value": 70, "label": "Overbought"},
     {"value": 30, "label": "Oversold"},
 ])
 
-# With no other plot argument, opt in explicitly with plot=True
-self.sma = self.I(aq.SMA(20), plot=True)
+# pane= alone does not draw - plot arguments no longer imply plot=True
+self.sma = self.I(aq.SMA(20), pane=0)
 ```
 
 The plot arguments mean exactly what they mean on `record_indicator`; see "Export
@@ -294,7 +356,7 @@ class S(Strategy):
         self.subscribe_bars("5min")
 
     def on_start(self):
-        self.sma5 = self.I(aq.SMA(20), freq="5min", intrabar=True, pane=0)
+        self.sma5 = self.I(aq.SMA(20), freq="5min", intrabar=True, pane=0, plot=True)
 
     def on_bar(self, bar):                 # every 1-minute bar
         v0 = self.sma5[0]                  # provisional value on the forming 5-minute window
@@ -305,7 +367,7 @@ class S(Strategy):
 Index semantics match Pine exactly: a provisional value occupies `[0]` and the confirmed
 series shifts by one. Stream events mark provisional points with `confirmed=false`, and
 **their timestamp is the label the window will close with**; the confirmed point arrives
-later with the same `time`, so a frontend overwrites by `(indicator_key, symbol, timestamp)`
+later with the same `time`, so a frontend overwrites by `(owner_strategy_id, indicator_key, symbol, timestamp)`
 (`akquant.lwc.to_lwc_update()` already does). Provisional points **never** enter
 `indicator_df()` / `export_indicators()` - those exits hold confirmed values only.
 
@@ -332,50 +394,126 @@ Runnable examples: [75_intrabar_indicators.py](https://github.com/akfamily/akqua
 (window period) and [76_tick_intrabar_indicators.py](https://github.com/akfamily/akquant/blob/main/examples/76_tick_intrabar_indicators.py)
 (base period, tick-driven).
 
-## Pluggable studies: draw, never trade
+## Indicator scripts (`aq.Indicator`): draw, never trade
 
-TradingView separates indicator scripts from strategy scripts, and a chart can stack any
-number of indicator-only scripts. AKQuant's counterpart is `Study`: subclass it, declare
-indicators with `self.I()` in `on_start`, and attach it to any backtest or live run with
-`studies=[...]`.
+TradingView separates `indicator()` scripts from `strategy()` scripts, and a chart can stack
+any number of indicator-only scripts. AKQuant's counterpart is `aq.Indicator` (mirroring Pine
+v5's `indicator()`): subclass it, declare indicators with `self.I()` in `on_start`, and attach
+it to any backtest or live run with `indicators=[...]`.
+
+Script metadata goes on the class line, matching Pine's `indicator(title=..., overlay=...)`:
+
+| Argument | Meaning | When omitted |
+| :--- | :--- | :--- |
+| `title` | Display name, used for presentation only | the class name |
+| `overlay` | `True` draws on the main pane (over the candles), `False` on the script's sub-pane | `False` (sub-pane) |
+| `id` | Machine id, i.e. the points' `owner_strategy_id` / slot key | snake_case class name |
+| `replaces_price` | `True` means the script replaces the price candles (e.g. Heikin-Ashi) - a frontend hint only; requires `overlay=True` | `False` |
 
 ```python
 import akquant as aq
-from akquant import Study, run_backtest
+from akquant import run_backtest
 
 
-class RsiStudy(Study):
+class DualMA(aq.Indicator, title="Dual MA", overlay=True, id="dual_ma"):
     def on_start(self):
-        self.rsi = self.I(aq.RSI(14), pane=1)
+        self.fast = self.I(aq.EMA(10), name="ema_fast")    # overlay=True: main pane, pane=0
+        self.slow = self.I(aq.EMA(30), name="ema_slow")
 
 
-class MacdStudy(Study):
-    study_id = "macd_view"          # defaults to the snake_case class name: "macd_study"
+class RsiIndicator(aq.Indicator, title="RSI"):            # id defaults to "rsi_indicator"
+    def on_start(self):
+        self.rsi = self.I(aq.RSI(14), name="rsi")          # overlay=False: sub-pane, pane=1
 
+
+class MacdIndicator(aq.Indicator, title="MACD", id="macd_view"):
     def on_start(self):
         self.macd = self.I(aq.MACD(12, 26, 9), pane=2, outputs=("dif", "dea", "hist"))
 
 
 result = run_backtest(strategy=MyStrategy, data=data, symbols=["600000"],
-                      strategy_id="main", studies=[RsiStudy, MacdStudy])
-result.indicator_df(owner="rsi_study")    # only this study's points
-result.viz.review(data)                   # studies land on the LWC chart too
+                      strategy_id="main",
+                      indicators=[DualMA, RsiIndicator, MacdIndicator])
+result.indicator_df(owner="rsi_indicator")   # only this script's points
+result.viz.review(data)                      # indicator scripts land on the LWC chart too
 ```
 
-Three things to know:
+Things to know:
 
-- **No new pipeline.** Each study is one slot of the multi-strategy topology
+- **Pane numbers are local to the script.** With `overlay=True`, `self.I` defaults to
+  `pane=0`; otherwise to `pane=1`. Use `pane=2`, `pane=3`, ... for more sub-panes. An
+  explicit `pane=` always wins.
+- **No new pipeline.** Each indicator script is one slot of the multi-strategy topology
   (`strategies_by_slot`); its points carry their own `owner_strategy_id`, window
-  subscriptions merge across slots, and `run_live(studies=...)` has identical semantics.
-- **Not trading is a hard guarantee.** Every trading API on `Study` (`buy` / `sell` /
+  subscriptions merge across slots, and `run_live(indicators=...)` has identical semantics.
+- **Not trading is a hard guarantee.** Every trading API on `aq.Indicator` (`buy` / `sell` /
   `place_*` / `order_target*` / `rebalance_*` / `cancel_*` ...) raises
-  `StudyCannotTradeError`. A stray order inside `on_bar` fails fast inside the engine
-  loop instead of silently filling. Subclass `Strategy` if you need to trade.
-- **Ids must not collide.** A `study_id` equal to `strategy_id` or an existing slot key
-  is a `ValueError`; a non-`Study` class inside `studies=` is a `TypeError` - otherwise
+  `aq.IndicatorCannotTradeError`. A stray order inside `on_bar` fails fast inside the engine
+  loop instead of silently filling. Subclass `aq.Strategy` if you need to trade.
+- **Ids must not collide.** A script id equal to `strategy_id` or an existing slot key is a
+  `ValueError`; a non-`aq.Indicator` class inside `indicators=` is a `TypeError` - otherwise
   the no-trading guarantee would be void.
+- **`aq.Strategy` accepts `title=` / `id=` too**: `class Trend(aq.Strategy, title="Trend",
+  id="trend")`. Strategies have no main/sub-pane notion, so `overlay=` raises `TypeError`; a
+  class `id` that disagrees with `strategy_id=` passed to `run_backtest/run_live` raises
+  `ValueError`. A strategy without `id` keeps the default `strategy_id` `"_default"`.
 
-Runnable example: [74_pluggable_studies.py](https://github.com/akfamily/akquant/blob/main/examples/74_pluggable_studies.py).
+Runnable example: [74_indicator_scripts.py](https://github.com/akfamily/akquant/blob/main/examples/74_indicator_scripts.py).
+
+## Static inspection: `aq.inspect_strategy`
+
+A platform listing uploaded scripts usually needs to know, before anything runs, whether a
+file holds indicators or strategies, main pane or sub-pane, and whether anything is drawn at
+all - to group the list and grey out actions that do not apply - without executing user code.
+`aq.inspect_strategy(path_or_source)` parses the source with `ast` only (**no import, no
+execution**) and returns an `aq.InspectResult` (`to_dict()` is JSON-serializable):
+
+```python
+report = aq.inspect_strategy("strategies/dual_ma.py")   # a source string works too
+report.to_dict()
+```
+
+```python
+{
+  "classes": [
+    {
+      "name": "DualMA",
+      "kind": "indicator",          # "indicator" | "strategy" | "unknown"
+      "title": "Dual MA",
+      "id": "dual_ma",
+      "overlay": True,              # None when kind != "indicator"
+      "draws_indicators": True,     # at least one plot=True, or a dynamic plot
+      "indicators": [
+        {"name": "ema_fast", "pane": 0, "plot": True,
+         "outputs": None, "label": "EMA10", "dynamic": []},
+      ],
+      "has_dynamic": False
+    }
+  ],
+  "error": None                     # "SyntaxError: ... (line N)" on a syntax error; classes is empty
+}
+```
+
+Conventions:
+
+- **Plaintext only.** A path is read as UTF-8 (a BOM is fine); encrypted strategy files must
+  be decrypted by the caller first. A `.py` path that does not exist raises
+  `FileNotFoundError`; every other problem is reported through `error` / `dynamic`, never raised.
+- **`dynamic` means "cannot be known statically".** When a value comes from parameters (e.g.
+  `pane=self.params["pane"]`), the call sits in a loop or comprehension, uses `factory=` or
+  `**kwargs`, lives in a conditional branch or helper method, or calls something unrecognized,
+  the field is `None` and its name goes into `dynamic` (loops and `factory=` add `"count"`: the
+  number of entries is unknown), and the class's `has_dynamic` is `True`. Show "known after a
+  run" rather than guessing.
+- **`kind="unknown"`**: the base class comes from another file and cannot be traced to
+  `Indicator` / `Strategy` within this one.
+- **Both `akquant` and `qmfquant` imports are recognized**: `import akquant as aq`,
+  `from akquant import Indicator` (including `as` aliases), and the same forms for the
+  platform's repackaged `qmfquant`.
+- Classes also carry `replaces_price`: `None` for strategies, `False` by default for
+  indicators, `None` (and listed in `dynamic`) when it cannot be determined statically.
+- `pane` / `plot` resolve exactly as at runtime (see the rule table under "Automatic
+  Plotting"); both sides share one function.
 
 ## Using `warmup_bars`
 
@@ -508,7 +646,7 @@ class IndicatorExportStrategy(Strategy):
     `render_type="signal"` rendered on the main pane (`pane=0`).
 
 !!! note "About the `render_type` value"
-    `render_type` is a **closed enum** of 7 values, so consumers can implement
+    `render_type` is a **closed enum** of 8 values, so consumers can implement
     exhaustive rendering branches:
 
     | Value | Rendering |
@@ -520,6 +658,7 @@ class IndicatorExportStrategy(Strategy):
     | `histogram` | Alias of `bar` (semantic: distribution bars) |
     | `scatter` | Disconnected point markers |
     | `signal` | Trade-signal markers, drawn on the main pane |
+    | `candle` | Candles (four components as one group, declared only via `self.I(outputs=...)`, see above) |
 
     Passing a value outside the enum raises `ValueError` (fail-fast) rather than
     silently degrading to a line.
@@ -607,9 +746,10 @@ If you need enterprise-grade multi-panel UX, persistence, permissions, or realti
 `record_indicator` **by default** (`include_indicators=True`): `pane=0` overlays the
 main candlestick pane, `pane=k>=1` lands in the `k+1`-th LWC pane below the volume
 pane; `reference_lines` become dashed price lines; indicators without a `color`
-cycle through a per-theme palette. All seven `render_type` values are mapped -
+cycle through a per-theme palette. All eight `render_type` values are mapped -
 `line`/`area`/`bar`/`column`/`histogram`/`scatter` get their own series, `signal`
-is rendered as markers on the candles instead of a separate series.
+is rendered as markers on the candles instead of a separate series, and the four
+`candle` components become one Candlestick series.
 
 ```python
 result.viz.review(market_data, filename="review.html")            # with indicators
@@ -618,7 +758,9 @@ result.viz.review(market_data, filename="review.html", include_indicators=False)
 
 The adapter underneath is `akquant.lwc.to_lwc_indicator_series()` - the mirror of
 `akquant.chart.to_d3kline_options()`: one indicator contract, two frontends. Reuse
-it directly when building your own LWC page.
+it directly when building your own LWC page. Each series carries `owner_strategy_id`
+and `series_key` (see "Indicator identity and series keys" below); `indicator_key`
+keeps its original value.
 
 ### Optional Indicator Section In Reports
 
@@ -673,12 +815,20 @@ The bridged `snapshot` payload now also includes a few shortcut fields so fronte
 code does not have to rescan `items` on every update:
 
 - `indicator_keys`
+- `series_keys` (parallel to `indicator_keys`)
 - `panes`
 - `render_types`
-- `value_by_key`
-- `items_by_key`
+- `value_by_key` (keyed by `series_key`)
+- `items_by_key` (keyed by `series_key`)
 - `warmup_count`
 - `has_warmup`
+
+A `point` message's `indicator` carries `series_key`, and every `snapshot` item carries
+`owner_strategy_id` and `series_key`. `series_key` follows the same rule as the
+historical exits (see "Indicator identity and series keys" below): the plain
+`indicator_key` for a single owner, `"{owner}:{key}"` when the main strategy and an
+indicator script share a key. Frontends can key their lines by `series_key` directly
+instead of building a mapping from the definition table first.
 
 The bridge helper also normalizes `_unknown` or empty `symbol` values into `None`,
 and accepts already-decoded `dict/list` values for `meta_json` and `items_json`,
@@ -700,6 +850,15 @@ derives the millisecond value.
     `phase` ships from `1.4` onward (on points, snapshots and every snapshot
     item): `"preload"` marks points replayed from `run_live(preload_history=)`,
     everything else is `"run"`; treat a missing field as `"run"`.
+    `series_key` (on points and every snapshot item), the item-level
+    `owner_strategy_id` and the snapshot's `series_keys` ship from `1.5` onward,
+    and `items_by_key` / `value_by_key` are keyed by `series_key` since then. For
+    `1.4` messages the bridge falls back to `indicator_key` for `series_key` and to
+    the snapshot owner for the item owner, so single-owner keys are unchanged.
+    `group` and `role` (on points and every snapshot item) ship from `1.6`
+    onward: the four components of a candle indicator carry the group name and
+    open/high/low/close, every other indicator carries empty strings; older
+    messages decode to empty strings.
 
 This is not a new transport layer. It is just a normalization layer that turns AKQuant stream events into steadier frontend message objects.
 
@@ -798,7 +957,10 @@ What the preload does:
 - Counts toward `warmup_period`: N preloaded bars count as N bars seen.
 - Replays every `self.I()` indicator bar by bar **after** `on_start` (window
   `freq=` indicators included), so parameterised indicators declared in
-  `on_start` are covered. Plot points stream as usual, tagged
+  `on_start` are covered. With indicator scripts or several slots, the replay
+  runs once the main strategy's and every slot's `on_start` have all finished
+  (main first, then each slot), so same-named indicators carry their final
+  `series_key` from the first preload point. Plot points stream as usual, tagged
   `phase="preload"`; afterwards the same instances continue on live bars with
   `phase="run"`.
 
@@ -812,7 +974,7 @@ Boundaries:
 - Rows later than session start are dropped with a warning (no look-ahead).
 - A first live bar that is not newer than the symbol's preload tail is warned
   about but **still dispatched** (one duplicate is far cheaper than one lost
-  bar). Frontends overwrite by `(indicator_key, symbol, timestamp)`.
+  bar). Frontends overwrite by `(owner_strategy_id, indicator_key, symbol, timestamp)`.
 - A strategy restored from a checkpoint skips the indicator replay (its state
   was restored); the history buffer is still filled.
 - A tick-driven session becomes bar/tick dual-stream once bars are preloaded:
@@ -829,7 +991,10 @@ line.
 If your frontend is lightweight-charts you do not need to unpack the fields of
 `to_indicator_message()` yourself: `akquant.lwc.to_lwc_update()` turns a point
 message into an increment that `series.update()` consumes as-is
-(`{indicator_key, pane, series_type, color, confirmed, phase, point:{time, value}}`).
+(`{owner_strategy_id, indicator_key, series_key, pane, series_type, color, confirmed, phase, point:{time, value}}`).
+Find the line by `series_key`: it follows the same rule as the `series_key` of the
+historical `to_lwc_indicator_series()` series, so same-named keys from the main
+strategy and an indicator script no longer merge into one line.
 `confirmed` is passed through - once intrabar provisional points exist they will
 share the `time` of the confirmed point, and LWC's `update()` overwrites by `time`,
 so the frontend needs no change. `phase` is passed through as well (`"preload"` /
@@ -905,6 +1070,67 @@ Each indicator point carries both `timestamp` (nanoseconds) and `timestamp_ms` (
 
 A point's `symbol` is guaranteed to be non-empty (see "About `symbol` ownership" above), so consumers can group directly by `symbol` + `indicator_key` without handling an "unowned" case. In a multi-symbol backtest the same indicator name is split into one independent series per symbol — always filter by `symbol` before plotting, otherwise same-named indicators from different instruments are drawn as a single line.
 
+#### Indicator identity and series keys
+
+An indicator definition is identified by `(owner_strategy_id, indicator_key)`: the main
+strategy (owner `_default`) and an indicator script (owner = its `id`, by default the
+snake_case of the class name) may use the same key and each keeps its own `pane`, `color` and so on. `result.indicator_definitions` has
+`owner_strategy_id` as its first column and is sorted by `(owner, key)`; points have
+always carried `owner_strategy_id`, so consumers should join definitions and points on
+`(owner_strategy_id, indicator_key)`.
+
+Chart series keys are prefixed only on conflict: when an `indicator_key` belongs to a
+single owner, the series key is just `indicator_key`, so existing charts and frontends are
+unchanged; when several owners use it, the series key becomes `"{owner}:{key}"`, e.g.
+`_default:ema` and `sub:ema`. The legend label follows the series key when the user gave
+no label (display name equal to `indicator_key`) and stays as written otherwise. The LWC,
+d3Kline and plotly outputs all take their keys from
+`akquant.indicator_identity.series_keys()`; custom frontends should reuse it too.
+
+A candle group is one series on the chart; its key comes from
+`akquant.indicator_identity.chart_series_keys()`: candle groups as `(owner, group)` and
+plain lines as `(owner, indicator_key)` share **one** namespace. Two scripts that both have
+an `ha` group, or one script's `ha` group next to another owner's plain line `ha`, both
+become `"{owner}:ha"`. All chart exporters (LWC, d3Kline, `to_raw_panes`, plotly) use it.
+In the live stream the component `series_key` is still computed per component key (e.g.
+`ha.open`, or `ha_two:ha.open` on a conflict); stream consumers assemble candles by
+`(owner_strategy_id, group, symbol, timestamp)` and do not need the group key.
+When one owner has both a plain line `ha` (e.g. a direct `record_indicator("ha")`) and a
+candle group `ha`, the group keeps `ha`, the plain line becomes `ha:line` on the chart, and a
+warning is logged once.
+
+The live stream (`on_event` point / snapshot messages and `to_lwc_update()`) carries
+`series_key` as well, computed by the same function. The stream has to name each
+message as it is emitted, before any complete definition table exists, so the
+recorder (`IndicatorRecorder` in backtests, `StreamingIndicatorSink` live) keeps a
+session-level registry: when it is attached it registers the existing `plot=True`
+declarations of every strategy and indicator script (`self.I` in `__init__`), later
+`self.I(plot=True)` declarations (in `on_start`) register immediately, and every
+`record_indicator` call registers too. So in both backtests and live runs
+(including the `preload_history` replay), declarations in `__init__` and
+`on_start` are all registered before the first point is emitted, and same-named
+indicators carry their final `series_key` from the first point. A custom `IndicatorSink` may implement the
+optional method `declare(owner_strategy_id, indicator_key)` to receive these
+registrations; without it, `record()` works as before.
+
+Two known differences from the historical exits:
+
+- If a second owner starts using an existing key mid-run (for example a hand-written
+  `record_indicator` with the same name in `on_bar`), every owner of that key switches
+  to `"{owner}:{key}"` from that moment on; points already emitted keep the
+  unprefixed name and are not rewritten, and one warning is logged per key. Declaring
+  same-named indicators with `self.I(plot=True)` in `__init__` / `on_start`, or using a
+  different `name`, avoids the switch.
+- An indicator declared with `plot=True` that never produces a point (for example, it
+  never becomes ready) takes part in the live conflict check but is absent from the
+  historical definition table, so the live side may prefix a key the historical side
+  does not.
+
+Also, a point's `series_key` is computed when it is emitted, a snapshot item's when
+the cycle is flushed: if a conflict appears within one snapshot cycle, a point emitted
+earlier in that cycle may carry a different `series_key` from the matching snapshot
+item; the snapshot wins.
+
 This keeps AKQuant focused on producing stable indicator data instead of coupling the framework to a specific charting library.
 
 ### Optional adapter: d3Kline `IndicatorOption`
@@ -914,15 +1140,15 @@ indicator definitions and points into the structure `IndicatorManager.create()`
 consumes directly, so you do not hand-write the mapping:
 
 ```python
-from akquant.chart import to_d3kline_options, to_raw_panes
+from akquant.chart import group_points_by_identity, to_d3kline_options, to_raw_panes
 
 defs = result.indicator_definitions.to_dict(orient="records")
-points_by_key = {
-    key: group[["timestamp_ms", "value"]].to_dict(orient="records")
-    for key, group in result.indicator_df().groupby("indicator_key")
-}
-options = to_d3kline_options(defs, points_by_key)  # feed IndicatorManager.create()
-panes = to_raw_panes(defs, points_by_key)  # akquant-native shape for other frontends
+# (owner_strategy_id, indicator_key) -> list of points
+points_by_identity = group_points_by_identity(
+    result.indicator_df().to_dict(orient="records")
+)
+options = to_d3kline_options(defs, points_by_identity)  # feed IndicatorManager.create()
+panes = to_raw_panes(defs, points_by_identity)  # akquant-native shape for other frontends
 ```
 
 It is an **optional consumer-side adapter**, the same kind of thing as the stream bridge
@@ -942,11 +1168,15 @@ Deliberate rules baked in (understand them before changing):
 - **When an indicator has no color the whole `style` key is omitted**, never
   `{"color": null}`. The frontend merges as `{color: default, ...old, ...s.style}`, so
   `null` would override the default and render the series invisible.
-- The seven `render_type` values are downgraded to d3Kline's `line | bar`; a downgraded
+- The eight `render_type` values are downgraded to d3Kline's `line | bar`; a downgraded
   series also carries the original `render_type`, so the frontend can upgrade losslessly
-  once it supports area/scatter.
-- Series `name` is the `indicator_key` (the frontend merges by name; it must be unique
-  within a pane); the human-readable name goes in `label`.
+  once it supports area/scatter. A `candle` group emits only its close component as one
+  line, named by the group's series key.
+- Series `name` is the series key (the frontend merges by name; it must be unique): the
+  plain `indicator_key` when only one owner uses it, `"{owner}:{key}"` on a cross-owner
+  conflict; the human-readable name goes in `label`. Points are looked up by
+  `(owner_strategy_id, indicator_key)`, and each indicator in `to_raw_panes()` also
+  carries `owner_strategy_id` and `series_key`.
 
 Input is plain `Mapping` (dict), not a specific model. Missing fields take contract
 defaults (`pane=0`, `render_type="line"`), and `pane` may arrive as a string.
@@ -978,9 +1208,10 @@ In short, AKQuant should act as the indicator producer, not the full enterprise 
 
 ## Common Pitfalls
 
-- Pitfall 1: every custom indicator must inherit from `Indicator`
-  - Not so. `Indicator(name, fn)` covers the precompute case, and any object with an
-    `update()` works for the incremental case.
+- Pitfall 1: every custom indicator must inherit from some indicator base class
+  - Not so. `PrecomputedIndicator(name, fn)` covers the precompute case, and any object with
+    an `update()` works for the incremental case. `aq.Indicator` is the base class of
+    draw-only indicator scripts, which is a different thing from writing a custom indicator.
 - Pitfall 2: one incremental instance can be shared safely across symbols
   - It cannot. Passing an instance and using it across symbols raises; production
     multi-symbol strategies use `factory=`.
@@ -991,18 +1222,19 @@ In short, AKQuant should act as the indicator producer, not the full enterprise 
 - Pitfall 5: strategy-local indicators and `akquant.talib` extensions are the same thing
   - They solve different problems at different layers.
 - Pitfall 6: declaring an indicator draws it automatically
-  - It does not. Pass a plot argument or `plot=True`, matching Pine where `ta.*` computes
-    and `plot()` draws.
+  - Not inside an `aq.Strategy`: write `plot=True` (`pane=` / `color=` alone is not enough),
+    matching Pine where `ta.*` computes and `plot()` draws. Inside an indicator script
+    `aq.Indicator` it is drawn by default; `plot=False` turns it off.
 
 ## Recommendation Matrix
 
 | Goal | Recommended approach |
 | :--- | :--- |
-| Validate an idea quickly | `self.I(Indicator(name, fn))` |
+| Validate an idea quickly | `self.I(PrecomputedIndicator(name, fn))` |
 | Single-symbol bar-by-bar state | `self.I(aq.EMA(20))` |
 | Multi-symbol production strategy | `self.I(factory=...)` |
 | Need valid values on the first active bar | `self.I(..., warmup_bars=N)` |
-| Need it drawn on the chart | add `pane=` / `color=`, or `plot=True` |
+| Need it drawn on the chart | `plot=True` in a strategy, or write an `aq.Indicator` script |
 | Detect a golden/death cross | serial lookback via `ind[0]` / `ind[1]` |
 | Need resumable state | keep indicator state serializable; use `partial`, not a lambda, for `factory` |
 | Need maximum performance | start from the 100+ built-in Rust indicator classes, then consider writing Rust |

@@ -796,7 +796,7 @@ AKQuant 推荐用**内联字段**声明策略参数：直接在类体内用 `Int
 赋值，无需再单独定义 `ParamModel` 子类或手写 `__init__` 签名。
 
 ```python
-from akquant import IntParam, Indicator, Strategy
+from akquant import IntParam, PrecomputedIndicator, Strategy
 
 
 class SMACrossStrategy(Strategy):
@@ -807,11 +807,11 @@ class SMACrossStrategy(Strategy):
 
     def on_start(self):
         # 派生初始化（如指标）统一放在 on_start，此时 self.params 已就绪
-        self.sma_fast = Indicator(
+        self.sma_fast = PrecomputedIndicator(
             "sma_fast",
             lambda df: df["close"].rolling(self.params.fast_period).mean(),
         )
-        self.sma_slow = Indicator(
+        self.sma_slow = PrecomputedIndicator(
             "sma_slow",
             lambda df: df["close"].rolling(self.params.slow_period).mean(),
         )
@@ -1213,18 +1213,18 @@ class MetaAwareStrategy(Strategy):
 
 ### 7.2 指标 (Indicators)
 
-指标只有一个声明入口 `self.I(...)`，框架按传入对象自动分派：有 `update()` 方法的对象走**增量**路径，`Indicator(name, fn)` 实例走**向量化预计算**路径。两类指标可以共存于同一个策略。
+指标只有一个声明入口 `self.I(...)`，框架按传入对象自动分派：有 `update()` 方法的对象走**增量**路径，`PrecomputedIndicator(name, fn)` 实例走**向量化预计算**路径。两类指标可以共存于同一个策略。
 
 声明一次，框架负责三件事：每根 bar 自动推进、支持 `ind[0]` / `ind[1]` 序列回溯、按需自动上报绘图点。
 
 ```python
-from akquant import Bar, Indicator, Strategy
+from akquant import Bar, PrecomputedIndicator, Strategy
 
 class PrecomputeIndicatorStrategy(Strategy):
     def on_start(self):
-        # 传 Indicator 实例 -> 向量化预计算
+        # 传 PrecomputedIndicator 实例 -> 向量化预计算
         self.mom10 = self.I(
-            Indicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
+            PrecomputedIndicator("mom10", lambda df: df["close"] - df["close"].shift(10)),
             name="mom10",
         )
         self.subscribe("AAPL")
@@ -1284,7 +1284,7 @@ class MultiSymbolIncrementalStrategy(Strategy):
 *   `ind[0]` 是当前 Bar 的值（`.value` 是它的别名），`ind[1]` 是上一根，越界返回 `None` 而不抛异常，因此判空统一写 `if val is None`。
 *   如果一个共享实例被多个 `symbol` 复用，框架会显式报错，提示改为 `factory=`。
 *   `warmup_bars` 只会消费正式开始时间之前的历史数据，不会重复消费第一根有效 Bar。
-*   传了绘图参数（`pane` / `color` / `label` 等）或 `plot=True` 就会自动上报绘图点，默认不上报。
+*   策略里写了 `plot=True` 才会自动上报绘图点，默认不上报；`pane` / `color` / `label` 等绘图参数不再隐含 `plot=True`。只画图不交易的单元可写成指标脚本 `aq.Indicator`，那里默认画。
 *   如果你需要编写自己的私有指标，而不仅仅是使用内置 `SMA/EMA`，请继续阅读：[自定义指标指南](./custom_indicator.md)。
 ## 8. 高级特性：热启动 (Warm Start)
 

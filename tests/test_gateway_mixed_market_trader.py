@@ -7,8 +7,9 @@
 - 只给 ``broker``: 单 broker 供两侧(原语义, 不变);
 - 同时给 ``market_broker`` 与 ``trader_broker``: 各自供一侧, ``broker`` **不参与**;
 - 只给其中一个: 报错。此时另一侧的来源无从确定, 而让 ``broker`` 去兼任会使它
-  一词双义——读 ``broker='qmf', market_broker='replay'`` 必须先知道 "qmf 只有交易
-  通道" 才能推出 broker 在这里指交易源, 参数名本身没有表达这件事。
+  一词双义——读 ``broker='middleware', market_broker='replay'`` 必须先知道
+  "middleware 只有交易通道" 才能推出 broker 在这里指交易源, 参数名本身没有表达
+  这件事。
 """
 
 from typing import Any, Callable, Dict, List, Sequence, cast

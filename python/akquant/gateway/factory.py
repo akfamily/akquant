@@ -26,11 +26,12 @@ def create_gateway_bundle(
     / ``trader_gateway`` 本就是独立可选字段, ``replay`` 只有行情(不能下单), 而某些
     券商/柜台插件只有交易通道(收不到行情)::
 
-        create_gateway_bundle(market_broker="replay", trader_broker="qmf", ...)
+        create_gateway_bundle(market_broker="replay", trader_broker="middleware", ...)
 
     只传其中一个会报错: 另一侧的来源无从确定。让 ``broker`` 去兼任另一侧会使它
-    一词双义——读 ``broker='qmf', market_broker='replay'`` 必须先知道"qmf 只有交易
-    通道"才能推出 ``broker`` 在此指交易源, 参数名本身没有表达这件事。
+    一词双义——读 ``broker='middleware', market_broker='replay'`` 必须先知道
+    "middleware 只有交易通道"才能推出 ``broker`` 在此指交易源, 参数名本身没有
+    表达这件事。
     """
     # feed / symbols 形式上可选只为让 broker 能有默认值(Python 不允许有默认值的
     # 参数排在无默认值参数之前), 实际仍必填。

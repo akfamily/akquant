@@ -57,6 +57,9 @@ MAX_SUB_PANES = _default_max_sub_panes()
 #   histogram -> alias of bar (semantic label for distribution-style bars)
 #   scatter   -> disconnected point markers
 #   signal    -> trade-signal markers, drawn on the main price pane
+#   candle    -> one OHLC component of a candlestick group; only declared via
+#                ``Strategy.I(outputs=("open","high","low","close"))``, each
+#                point carries ``group``/``role`` (see CANDLE_ROLES)
 RENDER_TYPE_CANONICAL = (
     "line",
     "area",
@@ -65,7 +68,11 @@ RENDER_TYPE_CANONICAL = (
     "histogram",
     "scatter",
     "signal",
+    "candle",
 )
+
+#: candle 组的四个分量名(``role``); ``Strategy.I`` 的 outputs 必须恰好是这四个。
+CANDLE_ROLES = ("open", "high", "low", "close")
 
 
 def normalize_render_type(render_type: Any = "line") -> str:
@@ -232,3 +239,44 @@ def normalize_scale_group(value: Any = None) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def normalize_group_role(
+    render_type: str, group: Any = "", role: Any = ""
+) -> Tuple[str, str]:
+    """校验并归一一个点的 ``group``/``role``(stream schema 1.6).
+
+    ``candle`` 的每个分量必须带组名和 open/high/low/close 之一的 role; 其余
+    render_type 的这两个字段必须为空——否则前端会把普通线误拼进某根 K 线。
+
+    :param render_type: 已归一的 render_type
+    :param group: 组名, 即 ``Strategy.I`` 的 name
+    :param role: 分量名
+    :return: ``(group, role)``, 非 candle 时为 ``("", "")``
+    :raises ValueError: 两者与 render_type 不一致
+    """
+    group_text = str(group or "").strip()
+    role_text = str(role or "").strip().lower()
+    if render_type != "candle":
+        if role_text:
+            raise ValueError(
+                f"role={role_text!r} 只适用于 render_type='candle', "
+                f"当前是 {render_type!r}"
+            )
+        if group_text:
+            raise ValueError(
+                f"group={group_text!r} 只适用于 render_type='candle', "
+                f"当前是 {render_type!r}"
+            )
+        return "", ""
+    if not group_text:
+        raise ValueError(
+            "render_type='candle' 的点必须带 group; candle 只能经 "
+            'self.I(outputs=("open","high","low","close"), render_type="candle") 声明'
+        )
+    if role_text not in CANDLE_ROLES:
+        raise ValueError(
+            f"render_type='candle' 的 role 必须是 {', '.join(CANDLE_ROLES)} 之一, "
+            f"收到 {role_text!r}"
+        )
+    return group_text, role_text

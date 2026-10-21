@@ -109,8 +109,10 @@ def test_value_property_is_alias_of_index_zero() -> None:
         assert value == item0
 
 
-def test_plot_metadata_triggers_automatic_reporting() -> None:
-    """传了绘图参数就自动上报, 无需在 on_bar 里手写 record_indicator.
+def test_plot_true_triggers_automatic_reporting() -> None:
+    """写了 plot=True 就自动上报, 无需在 on_bar 里手写 record_indicator.
+
+    策略里 self.I 默认不画; pane/color/label 只决定怎么画, 不再隐含 plot=True。
 
     这是声明式指标层的第二个核心收益: 计算与绘图在 Pine 里是一件事
     (``plot(sma)``), 在旧 API 里是毫不相干的两件事。
@@ -118,7 +120,9 @@ def test_plot_metadata_triggers_automatic_reporting() -> None:
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.sma = self.I(aq.SMA(2), pane=0, color="#e91e63", label="SMA2")
+            self.sma = self.I(
+                aq.SMA(2), pane=0, color="#e91e63", label="SMA2", plot=True
+            )
 
         def on_bar(self, bar: Bar) -> None:
             pass
@@ -138,8 +142,8 @@ def test_plot_metadata_triggers_automatic_reporting() -> None:
     assert definitions.loc["sma", "pane"] == 0
 
 
-def test_declaration_without_plot_metadata_reports_nothing() -> None:
-    """没给绘图参数就只算不画 —— 与 Pine 的 ta.sma() 不画一致.
+def test_strategy_declaration_without_plot_reports_nothing() -> None:
+    """策略里没写 plot=True 就只算不画 —— 与 Pine 的 ta.sma() 不画一致.
 
     实盘 sink 是每点一个事件, 多标的 x 多指标默认全开会淹没前端链路。
     """
@@ -197,7 +201,9 @@ def test_multi_output_indicator_splits_into_separate_lines() -> None:
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.macd = self.I(aq.MACD(2, 3, 2), pane=2, outputs=("dif", "dea", "hist"))
+            self.macd = self.I(
+                aq.MACD(2, 3, 2), pane=2, outputs=("dif", "dea", "hist"), plot=True
+            )
 
         def on_bar(self, bar: Bar) -> None:
             pass
@@ -400,7 +406,9 @@ def test_precomputed_indicator_declared_through_same_entry() -> None:
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.mom = self.I(aq.Indicator("mom", lambda df: df["close"].diff()))
+            self.mom = self.I(
+                aq.PrecomputedIndicator("mom", lambda df: df["close"].diff())
+            )
             self.sma = self.I(aq.SMA(2))
 
         def on_bar(self, bar: Bar) -> None:
@@ -421,7 +429,9 @@ def test_precomputed_indicator_supports_lookback() -> None:
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.mom = self.I(aq.Indicator("mom", lambda df: df["close"].diff()))
+            self.mom = self.I(
+                aq.PrecomputedIndicator("mom", lambda df: df["close"].diff())
+            )
 
         def on_bar(self, bar: Bar) -> None:
             seen.append((self.mom[0], self.mom[1]))
@@ -506,12 +516,14 @@ def test_precomputed_indicator_fails_fast_in_live_session(
     """
     import logging
 
-    from akquant import Indicator, run_live
+    from akquant import PrecomputedIndicator, run_live
     from akquant.akquant import AssetType, Instrument
 
     class Probe(Strategy):
         def on_start(self) -> None:
-            self.mom = self.I(Indicator("mom", lambda df: df["close"].diff()))
+            self.mom = self.I(
+                PrecomputedIndicator("mom", lambda df: df["close"].diff())
+            )
 
         def on_bar(self, bar: Bar) -> None:
             pass

@@ -13,7 +13,7 @@ wire up.
    instances replay it (stream points tagged `phase="preload"`) and then
    continue on live bars (`phase="run"`), so the chart shows one continuous
    line instead of a backtest stitched onto a live run.
-2. Indicators declared with plot metadata are reported automatically; the
+2. Indicators declared with ``plot=True`` are reported automatically; the
    `on_event` callback bridges them with `aq.to_indicator_message()` and then
    `akquant.lwc.to_lwc_update()` into `series.update()`-ready increments.
 3. A tiny stdlib `http.server` exposes `/state?since_seq=N`; the page (LWC
@@ -55,15 +55,26 @@ class LiveDeclarativeStrategy(Strategy):
     def on_start(self) -> None:
         """Two overlays on the main pane, one oscillator in a sub-pane."""
         self.ema_fast = self.I(
-            aq.EMA(5), name="ema_fast", pane=0, color="#e91e63", label="EMA5"
+            aq.EMA(5),
+            name="ema_fast",
+            pane=0,
+            color="#e91e63",
+            label="EMA5",
+            plot=True,
         )
         self.ema_slow = self.I(
-            aq.EMA(12), name="ema_slow", pane=0, color="#3f51b5", label="EMA12"
+            aq.EMA(12),
+            name="ema_slow",
+            pane=0,
+            color="#3f51b5",
+            label="EMA12",
+            plot=True,
         )
         self.rsi = self.I(
             aq.RSI(6),
             name="rsi",
             pane=1,
+            plot=True,
             reference_lines=[
                 {"value": 70.0, "label": "OB"},
                 {"value": 30.0, "label": "OS"},
@@ -167,7 +178,10 @@ _PAGE = """<!DOCTYPE html>
   var paneMap = {}, nextPane = 1;
   var lastSeq = null, n = 0;
   function ensureSeries(u){
-    if(series[u.indicator_key]) return series[u.indicator_key];
+    // series_key (stream schema 1.5) keeps same-named keys from different
+    // owners apart; older messages only have indicator_key.
+    var key = u.series_key || u.indicator_key;
+    if(series[key]) return series[key];
     var ctor = LWC[u.series_type + 'Series'] || LWC.LineSeries;
     var paneIdx = 0;
     if(u.pane >= 2){
@@ -179,7 +193,7 @@ _PAGE = """<!DOCTYPE html>
     if(paneIdx >= 1 && chart.panes && chart.panes()[paneIdx]){
       chart.panes()[paneIdx].setHeight(120);
     }
-    series[u.indicator_key] = s;
+    series[key] = s;
     return s;
   }
   async function tick(){

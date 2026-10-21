@@ -34,11 +34,12 @@ def _defs() -> list[dict[str, Any]]:
     ]
 
 
-def _points() -> dict[str, list[dict[str, Any]]]:
+def _points() -> dict[tuple[str, str], list[dict[str, Any]]]:
+    # 点位按 (owner_strategy_id, indicator_key) 分组; 定义缺 owner 即 "_default"
     return {
-        "ma": [{"timestamp_ms": 1704067200000, "value": 10.0}],
-        "ema": [{"timestamp_ms": 1704067200000, "value": 10.1}],
-        "amp": [{"timestamp_ms": 1704067200000, "value": 2.0}],
+        ("_default", "ma"): [{"timestamp_ms": 1704067200000, "value": 10.0}],
+        ("_default", "ema"): [{"timestamp_ms": 1704067200000, "value": 10.1}],
+        ("_default", "amp"): [{"timestamp_ms": 1704067200000, "value": 2.0}],
     }
 
 
@@ -97,8 +98,11 @@ def test_data_items_use_timestamp_and_value() -> None:
 
 def test_none_values_are_dropped() -> None:
     """Points whose value is None are dropped from data."""
-    points: dict[str, list[dict[str, Any]]] = {
-        "ma": [{"timestamp_ms": 1, "value": None}, {"timestamp_ms": 2, "value": 1.0}]
+    points: dict[tuple[str, str], list[dict[str, Any]]] = {
+        ("_default", "ma"): [
+            {"timestamp_ms": 1, "value": None},
+            {"timestamp_ms": 2, "value": 1.0},
+        ]
     }
     options = to_d3kline_options([_defs()[0]], points)
     assert len(options[0]["dataList"][0]["data"]) == 1
@@ -136,7 +140,7 @@ def test_unknown_render_type_falls_back_to_line() -> None:
     第三方 IndicatorSink 可能写入枚举外的值。
     """
     defs = [{"indicator_key": "x", "render_type": "unknown_type", "pane": 1}]
-    points = {"x": [{"timestamp_ms": 1_704_067_200_000, "value": 1.0}]}
+    points = {("_default", "x"): [{"timestamp_ms": 1_704_067_200_000, "value": 1.0}]}
     series = to_d3kline_options(defs, points)[0]["dataList"][0]
     assert series["type"] == "line"
     assert series["render_type"] == "unknown_type"

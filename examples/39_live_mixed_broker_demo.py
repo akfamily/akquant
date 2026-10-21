@@ -9,7 +9,8 @@
   `current_tick` 恒为 None。
 - 用 `market_broker="replay"` 借用内置回放行情源补上这一侧，无需柜台即可实跑。
 - 两侧必须**同时写明**: 只给一侧会报错。这样 `broker` 不必兼任另一侧，避免
-  "读 broker='qmf', market_broker='replay' 得先知道 qmf 只有交易通道" 的歧义。
+  "读 broker='middleware', market_broker='replay' 得先知道 middleware
+  只有交易通道" 的歧义。
   `broker` 仅用于"单个 broker 供两侧"的场景。
 """
 

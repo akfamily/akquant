@@ -5,8 +5,8 @@ AKQuant custom indicator demo.
 
 This example shows the three ways to declare a private indicator through the
 single `self.I()` entry point:
-1. Vectorized precompute with `Indicator(name, fn)`.
-2. Incremental with a custom `Indicator` subclass (stateful `update`).
+1. Vectorized precompute with `PrecomputedIndicator(name, fn)`.
+2. Incremental with a custom `PrecomputedIndicator` subclass (stateful `update`).
 3. Both at once in one strategy - no mutually exclusive mode switch.
 """
 
@@ -15,7 +15,7 @@ from typing import Any
 
 import akquant as aq
 import pandas as pd
-from akquant import Bar, Indicator, Strategy
+from akquant import Bar, PrecomputedIndicator, Strategy
 
 
 def make_demo_data() -> pd.DataFrame:
@@ -38,7 +38,7 @@ def make_demo_data() -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-class RollingMomentum(Indicator):
+class RollingMomentum(PrecomputedIndicator):
     """Simple close[t] - close[t-period+1] momentum indicator."""
 
     def __init__(self, period: int = 3) -> None:
@@ -74,7 +74,7 @@ class PrecomputeCustomIndicatorStrategy(Strategy):
     def on_start(self) -> None:
         """Declare a vectorized indicator - computed once, queried by timestamp."""
         self.mom3 = self.I(
-            Indicator("mom3", lambda df: df["close"] - df["close"].shift(2)),
+            PrecomputedIndicator("mom3", lambda df: df["close"] - df["close"].shift(2)),
             name="mom3",
         )
 
@@ -118,12 +118,16 @@ class MixedIndicatorStrategy(Strategy):
     def on_start(self) -> None:
         """Declare one vectorized and one incremental indicator together."""
         self.vec_mom = self.I(
-            Indicator("vec_mom", lambda df: df["close"] - df["close"].shift(2)),
+            PrecomputedIndicator(
+                "vec_mom", lambda df: df["close"] - df["close"].shift(2)
+            ),
             name="vec_mom",
         )
-        # Plot metadata makes the framework report this one automatically -
+        # plot=True makes the framework report this one automatically -
         # no record_indicator call needed in on_bar.
-        self.inc_sma = self.I(aq.SMA(3), name="inc_sma", pane=0, color="#3f51b5")
+        self.inc_sma = self.I(
+            aq.SMA(3), name="inc_sma", pane=0, color="#3f51b5", plot=True
+        )
 
     def on_bar(self, bar: Bar) -> None:
         """Read both indicators, including one-bar lookback."""

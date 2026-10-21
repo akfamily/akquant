@@ -9,8 +9,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from akquant import (
-    Indicator,
     IntParam,
+    PrecomputedIndicator,
     Strategy,
     get_strategy_param_schema,
     run_grid_search,
@@ -36,11 +36,15 @@ class SMACrossStrategy(Strategy):
         # on_bar 里按 [0] 读取当前值。在 on_start 声明才拿得到 self.params。
         fast, slow = self.params.fast_period, self.params.slow_period
         self.sma_fast = self.I(
-            Indicator("sma_fast", lambda df: df["close"].rolling(fast).mean()),
+            PrecomputedIndicator(
+                "sma_fast", lambda df: df["close"].rolling(fast).mean()
+            ),
             name="sma_fast",
         )
         self.sma_slow = self.I(
-            Indicator("sma_slow", lambda df: df["close"].rolling(slow).mean()),
+            PrecomputedIndicator(
+                "sma_slow", lambda df: df["close"].rolling(slow).mean()
+            ),
             name="sma_slow",
         )
 
