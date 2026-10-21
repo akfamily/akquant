@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **实盘自动预加载历史：`run_live(preload_bars=)` 与 `GatewayBundle.history_provider`**：行情 broker 可在 bundle 上提供历史拉取函数，不传 `preload_history` 时 `run_live` 默认按策略需要自动预加载——每标的 `min(10000, max(3 × 推断 warmup, 500, warmup_period, 历史深度))` 根，走与 `preload_history` 相同的路径（历史缓冲、窗口聚合、warmup 计数、`self.I` 回放带 `phase="preload"`）。`preload_bars=0` 关闭、`N` 指定根数；tick 驱动的行情源默认不开启（避免既有 tick 策略变成双流）；拉取失败告警后照常启动。行情/交易分开指定时 provider 随行情侧保留。不提供 provider 的 broker 行为不变。
+
 ### Fixed
 - **有界 live 会话（如 `broker="replay"`）里 slot 收不到最后一个行情事件**：会话按事件总数自动结束时，中断在主策略处理完第 N 个事件后就抛出，而同一事件随后才派发给 slot 1..k，于是指标脚本与多策略 slot 总是少最后一根 bar（回测不受影响）。现在等最后一个 slot 处理完才结束会话。
 - **`aq.HeikinAshi` 遇 NaN/inf 输入后所有后续值都变成 NaN**：现在非有限值的 bar 返回 `None`、不推进状态，下一根有效 bar 接着上一根有效 bar 计算。

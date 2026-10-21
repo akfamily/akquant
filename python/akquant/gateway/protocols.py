@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Protocol, Sequence
 
 from .broker_models import (
     BrokerCapability,
@@ -10,6 +10,14 @@ from .broker_models import (
     UnifiedPosition,
     UnifiedTrade,
 )
+
+if TYPE_CHECKING:
+    from ..akquant import Bar
+
+#: 行情源提供的历史 bar 拉取函数, ``(symbols, count) -> list[Bar]``: 给 symbols
+#: 各拉最近 count 根**已收盘** bar, 按 (timestamp, symbol) 升序返回; 周期由行情源
+#: 自身决定(与它推送的实时 bar 同周期)。
+HistoryProvider = Callable[[Sequence[str], int], list["Bar"]]
 
 
 class MarketGateway(Protocol):
@@ -110,9 +118,16 @@ class TraderGateway(Protocol):
 
 @dataclass
 class GatewayBundle:
-    """Gateway instances and optional metadata."""
+    """Gateway instances and optional metadata.
+
+    ``history_provider`` 是行情源可选提供的历史拉取函数(签名见
+    ``HistoryProvider``)。提供时 ``run_live`` 默认在会话启动前按策略所需回看
+    深度自动预加载历史(由 ``preload_bars`` 控制); 不提供则保持原行为。实现应
+    按标的逐个拉取, 单个标的失败只跳过它并告警, 而不是整体抛异常。
+    """
 
     market_gateway: MarketGateway | None = None
     trader_gateway: TraderGateway | None = None
     trader_capabilities: BrokerCapability | None = None
     metadata: dict[str, Any] | None = None
+    history_provider: HistoryProvider | None = None

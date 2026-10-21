@@ -1183,6 +1183,8 @@ run_live(..., preload_history=history)
 *   **不会做**：不触发 `on_bar`、不撮合、不动账户。
 *   **校验**：缺必需列、或一个标的都匹配不上 `instruments` 时抛 `ValueError`；部分标的不匹配、晚于会话启动的行、空数据均告警后跳过；实盘首根 bar 不晚于预热末戳时告警但照常派发。
 *   **热启动**：从存档恢复的策略跳过指标回放，历史缓冲仍会灌入。
+*   `preload_bars`：`int` / `None`（默认）。行情 broker 在 `GatewayBundle.history_provider` 上提供了历史拉取函数（如 `klinedata`）且未传 `preload_history` 时生效，拉到的历史走与 `preload_history` 相同的路径。`None` 自动：每标的取 `min(10000, max(3 × 推断 warmup, 500, warmup_period, 历史深度))` 根（各项对主策略与全部 slot 取最大值），tick 驱动的行情源不开启；`0` 关闭；`N > 0` 取 N 根（截到 10000，tick 驱动也生效）；负数或非整数抛 `ValueError`。显式 `preload_history` 优先，此时不调用行情源。拉取抛异常告警后照常启动，返回空记 INFO。
+*   `GatewayBundle.history_provider`：`Callable[[Sequence[str], int], list[Bar]] | None`（默认 `None`）。broker 插件可选实现：给各标的拉最近 count 根已收盘 bar，按 `(timestamp, symbol)` 升序返回，周期由行情源自身决定；建议逐标的拉取，单标的失败只跳过它并告警。
 *   详见[自定义指标指南](../guide/custom_indicator.md)「实盘历史预热」一节。
 
 ## 3. 核心引擎 (Core)

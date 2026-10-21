@@ -847,7 +847,7 @@ run_live(
 ```python
 from akquant import run_live
 
-history = fetch_my_history()      # 截止到上一根已收盘 bar；框架不内置数据源
+history = fetch_my_history()      # 截止到上一根已收盘 bar；行情源能提供时也可不传，见下文 preload_bars
 
 run_live(
     strategy_cls=MyStrategy,
@@ -891,6 +891,37 @@ run_live(
     按 `series_key` 分组后用 `series.setData()` 一次画完；之后 `phase="run"` 的点再逐个 `update()`。
     框架算 2 万根 × 3 个指标约 1～2 秒，慢通常出在接入方式。`examples/73_lwc_live_indicators.py`
     就是这样做的：preload 点进一个批，页面拿到后 `setData()`，实时点才走增量。
+
+#### 行情源自动预加载：`preload_bars`
+
+行情 broker 若在 `GatewayBundle.history_provider` 上提供了历史拉取函数（如 `klinedata`），
+不传 `preload_history` 时 `run_live` 默认自动预加载，拿到的历史走与 `preload_history` 完全相同的路径
+（上面列的“做什么/不做什么”全部适用）。由 `preload_bars` 控制：
+
+| `preload_bars` | 行为 |
+|---|---|
+| `None`（默认） | 自动：每标的取 `min(10000, max(3 × 推断 warmup, 500, warmup_period, 历史深度))` 根；三项需求都对主策略与全部 slot 取最大值，推断 warmup 与 `run_backtest` 同款。tick 驱动的行情源不开启 |
+| `0` | 关闭 |
+| `N > 0` | 每标的取 N 根（截到 10000），tick 驱动也生效 |
+
+```python
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="klinedata",
+    gateway_options={"url": url, "token": token, "period": "M1"},
+    preload_bars=2000,        # 不写就按策略需要自动取；写 0 关闭
+    on_event=on_event,
+)
+```
+
+- 显式传了 `preload_history` 时完全以它为准，不调用行情源，`preload_bars` 被忽略（同时给了正的 `preload_bars` 会告警一次）；
+- 拉取失败不阻止启动：行情源抛异常记一条 WARNING、本次不预加载；返回空记一条 INFO；
+- tick 驱动（`gateway_options` 的 `drive="tick"`，或声明的周期为 tick）默认不预加载：灌入 bar 历史会让会话变成
+  tick/bar 双流，既有 tick 策略的 `get_history` 须显式 `freq=`，否则报“双流歧义”。确实需要时传 `preload_bars=N`；
+- 只看得到会话启动前已确定的深度（类属性 `warmup_period`、`__init__` 里的 `set_history_depth`）；
+  在 `on_start` 里才设的历史深度由 500 根下限兜底，不够时显式传 `preload_bars`；
+- 周期由行情源决定，与它推送的实时 bar 同周期。
 
 ### 实时增量到 LWC 图表
 

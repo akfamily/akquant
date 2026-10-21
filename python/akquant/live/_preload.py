@@ -9,7 +9,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Union
+from typing import Any, Mapping, Sequence, Union
 
 import pandas as pd
 
@@ -18,6 +18,7 @@ from ..gateway.symbol_match import normalize_symbol_for_match
 from ..log import build_log_extra, get_logger
 from ..normalize import dataframe_to_arrays, resolve_columns
 from ..schema import COLUMN_ALIASES
+from ..utils.inspector import infer_warmup_period
 
 logger = get_logger("live.preload")
 
@@ -245,3 +246,87 @@ def normalize_preload_history(
     bars = _clip_future(bars, session_start_ns)
     bars.sort(key=lambda b: (b.symbol, b.timestamp))
     return _build_result(bars)
+
+
+# ---------------------------------------------------------------------------
+# 自动预加载(行情源提供 history_provider 时), 设计见
+# docs/superpowers/specs/2026-10-21-auto-history-preload-design.md
+# ---------------------------------------------------------------------------
+
+#: 自动预加载根数下限: 推断不出指标周期(或周期很短)时也给够常见回看深度。
+AUTO_PRELOAD_MIN_BARS = 500
+#: 根数上限, 与实盘历史缓冲默认容量一致; 显式 ``preload_bars`` 也截到这里。
+AUTO_PRELOAD_MAX_BARS = 10000
+#: 推断 warmup 的放大倍数: EMA/MACD 等递推指标要远多于周期本身的根数才收敛。
+AUTO_PRELOAD_WARMUP_MULTIPLIER = 3
+
+
+def validate_preload_bars(preload_bars: object) -> int | None:
+    """校验 ``preload_bars``: ``None`` 自动, ``0`` 关闭, 正整数为显式根数.
+
+    fail-fast: 负数、bool、浮点、字符串几乎必然是配置错, 不做静默转换。
+
+    :raises ValueError: 取值不是 ``None`` 或非负整数。
+    """
+    if preload_bars is None:
+        return None
+    if isinstance(preload_bars, bool) or not isinstance(preload_bars, int):
+        raise ValueError(
+            "preload_bars 须为 None(自动)、0(关闭)或正整数(显式根数), "
+            f"收到 {preload_bars!r}"
+        )
+    if preload_bars < 0:
+        raise ValueError(
+            f"preload_bars 不能为负数, 收到 {preload_bars}; 关闭自动预加载请传 0"
+        )
+    return preload_bars
+
+
+def auto_preload_count(strategies: Sequence[object]) -> int:
+    """按策略需要算自动预加载根数(设计 H3).
+
+    ``min(上限, max(3 × 推断 warmup, 下限, warmup_period, history 深度))``,
+    三项需求都对主策略与全部 slot 取最大值。推断 warmup 用回测同款
+    ``infer_warmup_period(type(strategy))``(AST 静态分析), 取不到源码时为 0。
+    只看得到会话启动前已设好的值: ``on_start`` 里才调的 ``set_history_depth``
+    此刻尚未执行, 由下限兜底。
+    """
+    inferred = 0
+    explicit_warmup = 0
+    history_depth = 0
+    for strategy in strategies:
+        try:
+            inferred = max(inferred, int(infer_warmup_period(type(strategy))))
+        except Exception as exc:  # noqa: BLE001 - 推断失败不影响启动
+            logger.debug("推断 warmup 失败: %s", exc, extra=build_log_extra())
+        explicit_warmup = max(
+            explicit_warmup, int(getattr(strategy, "warmup_period", 0) or 0)
+        )
+        history_depth = max(
+            history_depth, int(getattr(strategy, "_history_depth", 0) or 0)
+        )
+    needed = max(
+        AUTO_PRELOAD_WARMUP_MULTIPLIER * inferred,
+        AUTO_PRELOAD_MIN_BARS,
+        explicit_warmup,
+        history_depth,
+    )
+    return min(AUTO_PRELOAD_MAX_BARS, needed)
+
+
+def clamp_preload_bars(preload_bars: int) -> int:
+    """显式根数截到 ``[1, 上限]``."""
+    return max(1, min(AUTO_PRELOAD_MAX_BARS, int(preload_bars)))
+
+
+def is_tick_driven(metadata: Mapping[str, Any] | None) -> bool:
+    """Bundle 是否声明为 tick 驱动(设计 H5).
+
+    ``metadata["drive"] == "tick"``(klinedata builder 写入), 或声明的 ``freq``
+    为 tick(如 ``replay`` 的 ``gateway_options={"freq": "tick"}``)。
+    """
+    if not metadata:
+        return False
+    drive = str(metadata.get("drive") or "").strip().lower()
+    freq = str(metadata.get("freq") or "").strip().lower()
+    return drive == "tick" or freq == "tick"

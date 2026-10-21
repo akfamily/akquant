@@ -91,6 +91,7 @@ def run_live(
     preload_history: Optional[
         Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]
     ] = None,
+    preload_bars: Optional[int] = None,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -220,10 +221,9 @@ def run_live(
         before the first live bar, so history and live are computed by **one**
         session instead of stitching a backtest onto a live run. Accepts the
         same shapes as ``run_backtest(data=)`` — a DataFrame, a
-        ``{symbol: DataFrame}`` mapping, or a list of ``Bar``. The framework
-        does not fetch history itself; supply it from your own data source
-        (e.g. ``akquant_klinedata.fetch_history_bars``), ending at the last
-        **closed** bar.
+        ``{symbol: DataFrame}`` mapping, or a list of ``Bar``, ending at the last
+        **closed** bar. Not needed when the market source provides history
+        itself (see ``preload_bars``); pass it to use your own data instead.
 
         What it does: fills the history buffer (so ``get_history`` works from
         the first live bar; ``_history_depth`` is lifted automatically), feeds
@@ -236,6 +236,33 @@ def run_live(
         touch the account. Rows later than session start are dropped with a
         warning; a first live bar not newer than the preload tail is warned
         about but still dispatched.
+
+        When given, ``preload_history`` takes full precedence: the market
+        source's ``history_provider`` is not called and ``preload_bars`` is
+        ignored (a warning is logged if ``preload_bars > 0`` was also given).
+    :param preload_bars: Automatic history preload from the market source.
+        Applies only when the market broker's ``GatewayBundle`` offers a
+        ``history_provider`` (e.g. ``klinedata``) and ``preload_history`` is not
+        given; the fetched bars go through exactly the same path as
+        ``preload_history``.
+
+        - ``None`` (default): auto. Fetches
+          ``min(10000, max(3 * inferred warmup, 500, warmup_period, history
+          depth))`` bars per symbol, each term the maximum over the main
+          strategy and all slots (warmup is inferred like ``run_backtest``
+          does). Skipped for tick-driven sources (``metadata["drive"] ==
+          "tick"`` or a ``"tick"`` freq), because bar history would turn the
+          session into a tick/bar dual stream where ``get_history`` needs an
+          explicit ``freq=``.
+        - ``0``: off.
+        - ``N > 0``: fetch N bars per symbol (clamped to 10000), tick-driven
+          sources included.
+
+        Failures never block startup: a provider exception is logged as a
+        WARNING and the session starts without preload; an empty result is
+        logged as INFO. Only depth set before session start (class attribute or
+        ``__init__``) is seen; ``set_history_depth`` called in ``on_start`` is
+        covered by the 500 floor or needs an explicit ``preload_bars``.
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")
@@ -302,6 +329,7 @@ def run_live(
         runtime_config_override=runtime_config_override,
         session_tag=session_tag,
         preload_history=preload_history,
+        preload_bars=preload_bars,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event
