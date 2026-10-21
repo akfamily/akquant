@@ -936,7 +936,7 @@ indicator instances consume the history first and then the live feed:
 ```python
 from akquant import run_live
 
-history = fetch_my_history()      # up to the last closed bar; no built-in data source
+history = fetch_my_history()      # up to the last closed bar; optional when the market source provides history (see preload_bars below)
 
 run_live(
     strategy_cls=MyStrategy,
@@ -985,6 +985,54 @@ The frontend receives one continuous series and can style or filter on
 `phase`. The full loop is in `examples/73_lwc_live_indicators.py`: the first 40
 bars are preloaded, the last 20 arrive live, and the chart shows one unbroken
 line.
+
+!!! warning "Ship the history once; stream only the live part"
+    `phase="preload"` points are a batch replayed at session start. Do **not** push them one by one
+    through `series.update()`: thousands of points, each waiting for a round trip, make a chart take
+    minutes and "draw from left to right". Collect the preload points, group them by `series_key`,
+    draw them with one `series.setData()`, and only then apply `phase="run"` points with `update()`.
+    AKQuant computes 20,000 bars x 3 indicators in about 1-2 s; slowness is almost always in the
+    wiring. `examples/73_lwc_live_indicators.py` does exactly this.
+
+#### Automatic preload from the market source: `preload_bars`
+
+When the market broker offers a history fetcher on
+`GatewayBundle.history_provider` (e.g. `klinedata`) and `preload_history` is
+not given, `run_live` preloads automatically. The fetched bars go through
+exactly the same path as `preload_history` (everything listed above applies).
+`preload_bars` controls it:
+
+| `preload_bars` | Behaviour |
+|---|---|
+| `None` (default) | Auto: `min(10000, max(3 * inferred warmup, 500, warmup_period, history depth))` bars per symbol, each term the maximum over the main strategy and all slots; warmup is inferred as in `run_backtest`. Off for tick-driven sources |
+| `0` | Off |
+| `N > 0` | N bars per symbol (clamped to 10000), tick-driven sources included |
+
+```python
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="klinedata",
+    gateway_options={"url": url, "token": token, "period": "M1"},
+    preload_bars=2000,        # omit for automatic sizing; 0 turns it off
+    on_event=on_event,
+)
+```
+
+- An explicit `preload_history` always wins: the source is not called and
+  `preload_bars` is ignored (a warning is logged once if a positive
+  `preload_bars` was also given).
+- Failures never block startup: a provider exception is logged as one WARNING
+  and the session starts without preload; an empty result is logged as INFO.
+- Tick-driven sources (`drive="tick"` in `gateway_options`, or a declared tick
+  freq) are not preloaded by default: bar history would turn the session into a
+  tick/bar dual stream, where existing tick strategies must pass `freq=` to
+  `get_history` or hit the dual-stream ambiguity error. Pass `preload_bars=N`
+  if you do want it.
+- Only depth known before session start is seen (class attribute
+  `warmup_period`, `set_history_depth` in `__init__`); depth set in `on_start`
+  is covered by the 500-bar floor, otherwise pass `preload_bars` explicitly.
+- The bar period is the source's own, the same as its live bars.
 
 ### Live increments to an LWC chart
 

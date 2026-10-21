@@ -15,6 +15,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Sequence,
     Type,
     Union,
     cast,
@@ -36,7 +37,12 @@ from ..gateway.symbol_match import normalize_symbol_for_match
 from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink, declare_plotted_indicators
 from ..log import build_log_extra, get_logger
-from ..strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
+from ..strategy import (
+    InstrumentSnapshot,
+    Strategy,
+    StrategyRuntimeConfig,
+    reconcile_strategy_id,
+)
 from ..strategy_loader import resolve_strategy_input
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
@@ -52,7 +58,14 @@ from ._payload_utils import (
     payload_field,
     payload_to_dict,
 )
-from ._preload import PreloadResult, normalize_preload_history
+from ._preload import (
+    PreloadResult,
+    auto_preload_count,
+    clamp_preload_bars,
+    is_tick_driven,
+    normalize_preload_history,
+    validate_preload_bars,
+)
 from ._strategy_maps import (
     normalize_strategy_bool_map,
     normalize_strategy_float_map,
@@ -383,6 +396,7 @@ class LiveRunner:
         runtime_config_override: bool = True,
         session_tag: Optional[str] = None,
         preload_history: Any = None,
+        preload_bars: Optional[int] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -443,12 +457,22 @@ class LiveRunner:
             before the engine loop starts. Use it to hand the port to an external
             signal source (HTTP webhook / MQ consumer) running on its own thread.
             Only meaningful for ``trading_mode='paper'``.
+        :param preload_bars: Auto-preload control when the market source offers
+            ``GatewayBundle.history_provider``. ``None`` (default) = auto (on
+            unless tick-driven), ``0`` = off, ``N > 0`` = fetch N bars per symbol
+            (clamped to 10000; also applies to tick-driven sessions). Ignored when
+            ``preload_history`` is given. See ``run_live``.
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
         self.strategy_loader = strategy_loader
         self.strategy_loader_options = strategy_loader_options
         self.strategy_id = (strategy_id or "_default").strip() or "_default"
+        # 保留调用方是否显式给了 strategy_id: 从 strategy_source 加载的类可能在
+        # 类定义行写了 id=, 要在加载后再对账一次(见 _build_strategy_topology)。
+        self._explicit_strategy_id: Optional[str] = (
+            str(strategy_id).strip() or None if strategy_id is not None else None
+        )
         self.strategies_by_slot = strategies_by_slot or {}
         self.instruments = instruments
         self._subscribed_symbols_cache: set[str] | None = None
@@ -534,6 +558,7 @@ class LiveRunner:
             _validate_session_tag(session_tag)
         self.session_tag = session_tag
         self.preload_history = preload_history
+        self.preload_bars = validate_preload_bars(preload_bars)
         self._preload_result: Optional[PreloadResult] = None
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
@@ -698,9 +723,14 @@ class LiveRunner:
         # 历史预热: 必须在 _inject_data_freq(下发窗口订阅)之后 —— 否则灌入时
         # 聚合器订阅表为空, 不产出窗口历史; 又必须在任何 on_start 之前 ——
         # 指标回放挂在 _on_start_internal 末尾, 靠这里先把回放序列交给策略。
-        self._apply_preload_history(
-            [strategy_instance, *slot_strategy_instances.values()]
-        )
+        # 调用方没给 preload_history 时, 由行情源的 history_provider 自动补
+        # (同一条灌入路径, 只是数据来源不同)。
+        preload_targets = [strategy_instance, *slot_strategy_instances.values()]
+        auto_bars = self._resolve_auto_preload(preload_targets, bundle, symbols)
+        if auto_bars is None:
+            self._apply_preload_history(preload_targets)
+        else:
+            self._apply_preload_history(preload_targets, preload=auto_bars, auto=True)
         # Broker callbacks + submit/state/cancel overrides are broker_live-only.
         # A non-broker_live run (e.g. paper) uses simulated execution, so must not
         # route submit/reads/cancel to a real trader gateway even if one was built.
@@ -749,7 +779,11 @@ class LiveRunner:
                 bounded_total,
                 extra=self._runner_log_extra(phase="live"),
             )
-            self._apply_bounded_event_limit(strategy_instance, bounded_total)
+            self._apply_bounded_event_limit(
+                strategy_instance,
+                bounded_total,
+                list(slot_strategy_instances.values()),
+            )
 
         # 外部信号端口: 必须在 engine.run() 之前取。run() 会独占可变借用引擎对象,
         # 之后再取会撞 "Already borrowed"(见 signal-ingestion-rfc.md 4.2.1)。
@@ -900,6 +934,18 @@ class LiveRunner:
 
     def _build_strategy_topology(self) -> tuple[Strategy, Dict[str, Strategy], str]:
         strategy_instance = self._build_strategy_instance(self.strategy_cls)
+        # run_live 门面只能对已传入的类对账; strategy_source 加载出的类要在这里
+        # 补一次, 否则类定义行的 id= 被静默忽略。
+        declared_id = reconcile_strategy_id(
+            strategy_instance, getattr(self, "_explicit_strategy_id", None)
+        )
+        if declared_id and declared_id != self.strategy_id:
+            if declared_id in self.strategies_by_slot:
+                raise ValueError(
+                    f"策略类定义行的 id={declared_id!r} 与已有 slot key 重复; "
+                    "请改用其他 id"
+                )
+            self.strategy_id = declared_id
         slot_strategy_instances: Dict[str, Strategy] = {}
         for slot_key, slot_input in self.strategies_by_slot.items():
             slot_key_str = str(slot_key).strip()
@@ -910,7 +956,82 @@ class LiveRunner:
             )
         return strategy_instance, slot_strategy_instances, self.strategy_id
 
-    def _apply_preload_history(self, strategies: list[Strategy]) -> None:
+    def _resolve_auto_preload(
+        self,
+        strategies: list[Strategy],
+        bundle: Any,
+        symbols: list[str],
+    ) -> Optional[list[Bar]]:
+        """决定是否经行情源的 ``history_provider`` 自动预加载, 并拉取历史.
+
+        设计 H2–H5: 显式 ``preload_history`` 完全优先(同时给了正的
+        ``preload_bars`` 告警一次); ``preload_bars=0`` 关闭; ``None`` 自动, 但
+        tick 驱动不开(灌 bar 历史会把 tick 会话变成双流, 既有 tick 策略的
+        ``get_history`` 会报"双流歧义"); 正整数为显式根数, tick 驱动也生效。
+
+        失败一律告警、照常启动: provider 抛异常记 WARNING 不预加载, 返回空记
+        INFO。
+
+        :return: 要灌入的 bar 列表; ``None`` 表示不走自动预加载。
+        """
+        preload_bars = getattr(self, "preload_bars", None)
+        extra = self._runner_log_extra(phase="live")
+        if getattr(self, "preload_history", None) is not None:
+            if preload_bars:
+                logger.warning(
+                    "同时给了 preload_history 与 preload_bars=%s: 以 "
+                    "preload_history 为准, preload_bars 被忽略",
+                    preload_bars,
+                    extra=extra,
+                )
+            return None
+        provider = getattr(bundle, "history_provider", None)
+        if provider is None or preload_bars == 0:
+            return None
+        if preload_bars is None:
+            if is_tick_driven(getattr(bundle, "metadata", None)):
+                logger.info(
+                    "行情源为 tick 驱动, 不自动预加载历史 bar(灌入会使会话变成"
+                    "tick/bar 双流, get_history 须显式 freq=); 需要时传 "
+                    "run_live(preload_bars=N) 开启",
+                    extra=extra,
+                )
+                return None
+            count = auto_preload_count(strategies)
+        else:
+            count = clamp_preload_bars(preload_bars)
+        try:
+            bars = list(provider(list(symbols), count))
+        except Exception as exc:  # noqa: BLE001 - 预加载失败不阻止启动
+            logger.warning(
+                "history_provider 拉取历史失败, 本次不预加载: %s: %s",
+                type(exc).__name__,
+                exc,
+                extra=extra,
+            )
+            return None
+        if not bars:
+            logger.info(
+                "history_provider 未返回历史 bar(每标的请求 %s 根), 本次不预加载",
+                count,
+                extra=extra,
+            )
+            return None
+        logger.info(
+            "自动预加载历史: %s 个标的, 每标的请求 %s 根, 实得 %s 根",
+            len(symbols),
+            count,
+            len(bars),
+            extra=extra,
+        )
+        return bars
+
+    def _apply_preload_history(
+        self,
+        strategies: list[Strategy],
+        preload: Any = None,
+        auto: bool = False,
+    ) -> None:
         """会话启动前把调用方给的历史 bar 灌进引擎, 并把回放序列交给各策略.
 
         只写历史缓冲与窗口聚合器: 不触发 on_bar、不撮合、不动账户。指标回放与
@@ -932,13 +1053,29 @@ class LiveRunner:
         **不设** ``_active_start_time_ns``: 回测靠它划"预热区间", 但在实盘
         设了会让与预热末尾重叠的首根实盘 bar 被 ``on_bar_event`` 当作预热期
         数据静默吞掉, 违背"重叠只告警不丢"(设计 §4.4)。
+
+        :param preload: 要灌入的历史; ``None`` 时取 ``self.preload_history``。
+        :param auto: 数据来自 ``history_provider`` 自动预加载。此时规范化阶段
+            的 fail-fast(如标的一个都对不上)降级为告警、不预加载 —— 那是行情
+            源的数据问题, 不是调用方的配置错, 不该挡住启动(设计 H4)。
         """
-        preload = getattr(self, "preload_history", None)
+        if preload is None:
+            preload = getattr(self, "preload_history", None)
         if preload is None:
             return
-        result = normalize_preload_history(
-            preload, self._subscribed_symbol_set(), time.time_ns()
-        )
+        try:
+            result = normalize_preload_history(
+                preload, self._subscribed_symbol_set(), time.time_ns()
+            )
+        except ValueError as exc:
+            if not auto:
+                raise
+            logger.warning(
+                "history_provider 返回的历史无法使用, 本次不预加载: %s",
+                exc,
+                extra=self._runner_log_extra(phase="live"),
+            )
+            return
         if result is None or not result.bars:
             return
         self.engine.configure_history_depth(
@@ -2547,7 +2684,12 @@ class LiveRunner:
                         ),
                     )
 
-    def _apply_bounded_event_limit(self, strategy: Any, total_events: int) -> None:
+    def _apply_bounded_event_limit(
+        self,
+        strategy: Any,
+        total_events: int,
+        slot_strategies: Sequence[Any] = (),
+    ) -> None:
         """让有界 live 会话在收到 ``total_events`` 个行情事件后自行结束.
 
         live 循环在 channel 空时返回 ``FeedAction::Wait`` 并无限循环
@@ -2570,17 +2712,32 @@ class LiveRunner:
 
         本机制不含具体 broker 语义: 任何在 ``GatewayBundle.metadata`` 中声明
         ``bounded_event_total`` 的 broker 都能复用。
+
+        多 slot: Rust 对每个事件按 slot 0(主策略)→ slot 1..k 的顺序派发
+        (``src/pipeline/stages/strategy.rs``)。计数放在主策略上(每个事件最先
+        到它), 但中断要等**最后一个** slot 处理完第 N 个事件才抛——否则会话在
+        主策略处理完最后一根 bar 时就结束, 后面的 slot 永远收不到它。
+
+        :param slot_strategies: 按派发顺序排列的其余 slot 策略
         """
         if total_events <= 0:
             return
 
+        method_names = ("_on_bar_event_and_flush", "_on_tick_event_and_flush")
         state = {"count": 0}
 
-        def _make_wrapper(original: Any) -> Any:
+        def _counting(original: Any) -> Any:
+            def wrapped(event: Any, ctx: Any) -> Any:
+                result = original(event, ctx)
+                state["count"] += 1
+                return result
+
+            return wrapped
+
+        def _stopping(original: Any) -> Any:
             def wrapped(event: Any, ctx: Any) -> Any:
                 # 先处理完本事件再判断, 使第 N 个事件不被截断。
                 result = original(event, ctx)
-                state["count"] += 1
                 if state["count"] >= total_events:
                     raise KeyboardInterrupt(
                         f"bounded live session complete: {total_events} events"
@@ -2589,11 +2746,18 @@ class LiveRunner:
 
             return wrapped
 
-        for method_name in ("_on_bar_event_and_flush", "_on_tick_event_and_flush"):
+        for method_name in method_names:
             original = getattr(strategy, method_name, None)
-            if original is None:
-                continue
-            setattr(strategy, method_name, _make_wrapper(original))
+            if original is not None:
+                setattr(strategy, method_name, _counting(original))
+            # 最后一个有该入口的目标负责中断(只有主策略时就是它自己)。
+            targets = [strategy, *slot_strategies]
+            last = next(
+                (t for t in reversed(targets) if getattr(t, method_name, None)),
+                None,
+            )
+            if last is not None:
+                setattr(last, method_name, _stopping(getattr(last, method_name)))
 
     def _apply_time_limit(self, strategy: Strategy, duration_str: str) -> None:
         """Inject time check into strategy methods."""

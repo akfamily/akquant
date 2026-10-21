@@ -1113,6 +1113,8 @@ run_live(..., preload_history=history)
 *   **Does not**: drive `on_bar`, match orders or touch the account.
 *   **Validation**: missing required columns, or no symbol matching `instruments`, raises `ValueError`; partially unmatched symbols, rows later than session start and empty input are warned about and skipped; a first live bar not newer than the preload tail is warned about but still dispatched.
 *   **Warm start**: a strategy restored from a checkpoint skips the indicator replay; the history buffer is still filled.
+*   `preload_bars`: `int` / `None` (default). Applies when the market broker offers a history fetcher on `GatewayBundle.history_provider` (e.g. `klinedata`) and `preload_history` is not given; fetched bars take the same path as `preload_history`. `None` = auto: `min(10000, max(3 * inferred warmup, 500, warmup_period, history depth))` bars per symbol (each term the maximum over the main strategy and all slots), off for tick-driven sources; `0` = off; `N > 0` = N bars (clamped to 10000, tick-driven sources included); negative or non-integer values raise `ValueError`. An explicit `preload_history` wins and the source is not called. A provider exception is warned about and the session still starts; an empty result is logged as INFO.
+*   `GatewayBundle.history_provider`: `Callable[[Sequence[str], int], list[Bar]] | None` (default `None`). Optional for broker plugins: fetch the latest `count` closed bars per symbol, sorted by `(timestamp, symbol)`, at the source's own period; fetch per symbol so one failing symbol is skipped with a warning instead of failing the whole call.
 *   See the "Live history preload" section of the [custom indicator guide](../guide/custom_indicator.md).
 
 ## 3. Core Engine

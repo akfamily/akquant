@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **实盘自动预加载历史：`run_live(preload_bars=)` 与 `GatewayBundle.history_provider`**：行情 broker 可在 bundle 上提供历史拉取函数，不传 `preload_history` 时 `run_live` 默认按策略需要自动预加载——每标的 `min(10000, max(3 × 推断 warmup, 500, warmup_period, 历史深度))` 根，走与 `preload_history` 相同的路径（历史缓冲、窗口聚合、warmup 计数、`self.I` 回放带 `phase="preload"`）。`preload_bars=0` 关闭、`N` 指定根数；tick 驱动的行情源默认不开启（避免既有 tick 策略变成双流）；拉取失败告警后照常启动。行情/交易分开指定时 provider 随行情侧保留。不提供 provider 的 broker 行为不变。
+
+### Fixed
+- **有界 live 会话（如 `broker="replay"`）里 slot 收不到最后一个行情事件**：会话按事件总数自动结束时，中断在主策略处理完第 N 个事件后就抛出，而同一事件随后才派发给 slot 1..k，于是指标脚本与多策略 slot 总是少最后一根 bar（回测不受影响）。现在等最后一个 slot 处理完才结束会话。
+- **`aq.HeikinAshi` 遇 NaN/inf 输入后所有后续值都变成 NaN**：现在非有限值的 bar 返回 `None`、不推进状态，下一根有效 bar 接着上一根有效 bar 计算。
+- **`strategy_source=` 加载的策略，类定义行的 `id=` 被静默忽略**：`run_backtest` 与 `run_live` 现在在加载后同样把类 `id` 与 `strategy_id` 对账（不一致报错，与已有 slot key 重复报错）。
+
+### Docs
+- **示例 73 与自定义指标指南改为“历史段一次 `setData()` 下发、实时段才逐点 `update()`”**：此前示例把预热点逐个推给页面并每条 sleep 20ms，照此接入会出现“预热两三分钟、从左往右画”。
+
+## [0.3.68] - 2026-10-21
+
+> **含破坏性改名，升级前请对照下方迁移表**：`Study` / `studies=` / 预计算 `Indicator` /
+> `IndicatorSet` 均已移除且不保留兼容别名；策略里 `self.I` 的绘图参数不再隐含 `plot=True`。
+
 ### Changed
 - **破坏性：指标脚本 `Study` 重做为 `aq.Indicator`，对标 Pine v5 的 `indicator()`**。写法 `class DualMA(aq.Indicator, title="双均线", overlay=True, id="dual_ma")`；`overlay` 默认 `False`（附图），`title` 只用于显示（省略为类名），`id` 省略为类名 snake_case。`aq.Strategy` 同样支持类定义行 `title=`/`id=`，写 `overlay=` 报错；类上的 `id` 与 `strategy_id=` 不一致时报错。迁移对照：
 
@@ -25,14 +41,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **K 线形态指标 `render_type="candle"` 与内置 `aq.HeikinAshi()`，`STREAM_SCHEMA_VERSION` 升至 `1.6`**（对应 Pine 的 `plotcandle`）。写法 `self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc", outputs=("open","high","low","close"), render_type="candle")`：四个分量仍各自上报单值点（`ha.open` 等），定义行（`indicator_definitions` 新增 `group`、`role` 两列）、流的 point 与 snapshot item 新增 `group`（组名）与 `role`（open/high/low/close），非 candle 为空串，1.5 事件缺失按空串处理。`outputs` 必须恰好是这四个名字（顺序不限），`record_indicator` 不接受 `render_type="candle"`。`aq.HeikinAshi`（Rust）：`update(o, h, l, c) -> (ha_open, ha_high, ha_low, ha_close)`，第一根即有值，带 `value`、`update_many_ohlc`，支持 `clone_indicator` 与 `intrabar=True`。出口：LWC 复盘每个 `(owner, group)` 画一条 Candlestick；plotly（`plot_indicators` 与报告）画 `go.Candlestick`；d3Kline 没有 K 线型指标，**降级**为只输出 close 分量的一条 line（带 `render_type="candle"`）；`to_raw_panes()` 的每个条目新增 `group`、`role`、`group_series_key`；`to_lwc_update()` 新增 `group`、`role`，candle 分量的 `series_type` 为 `"Candlestick"`，前端按 `(owner_strategy_id, group, symbol, time)` 收齐四个分量再更新。LWC/plotly 的 candle 指标不用主题涨跌色，单色（`color` 或指标色板）、涨实心跌空心，避免与价格 K 线混淆；某时刻缺分量时 LWC/plotly 跳过该时刻。组的 series 键由新增的 `akquant.indicator_identity.chart_series_keys()` 计算：candle 组 `(owner, group)` 与普通线 `(owner, indicator_key)` 同一命名空间，冲突时加 `owner:` 前缀；同一 owner 的普通线与 candle 组同名时普通线改为 `{key}:line` 并告警一次；流里分量的 `series_key` 仍按分量键计算。新示例 `examples/77_heikin_ashi_indicator.py`。
 - **类定义行 `replaces_price=True`**：`class HA(aq.Indicator, overlay=True, replaces_price=True)` 声明本指标替代价格 K 线，只是给前端的提示（隐藏原 K 线由前端决定）；只能用在 `aq.Indicator` 上且必须同时 `overlay=True`，可被子类继承；新增 `Indicator.resolve_replaces_price()`，`aq.inspect_strategy` 的类信息新增 `replaces_price` 字段（策略为 `None`，指标默认 `False`）。
 - **`aq.inspect_strategy(path_or_source)` 静态检查接口**：纯 `ast` 解析、不执行用户代码，返回每个类的 `kind`（indicator/strategy/unknown）、`title`、`id`、`overlay`、`draws_indicators` 与每条 `self.I` 的 `name/pane/plot/outputs/label`；参数化、循环、`factory` 等识别不了的项标记在 `dynamic` 里。同时识别 `akquant` 与 `qmfquant` 导入。供平台在不运行文件的前提下区分指标与策略、标注主图/附图。
-- **`run_live(preload_history=...)` 实盘历史预热**：接收与 `run_backtest(data=)` 同形态的历史 bar（DataFrame / `{symbol: DataFrame}` / `list[Bar]`），会话启动前灌入历史缓冲与 `subscribe_bars` 窗口聚合器，首根实盘 bar 里 `get_history` 即可用（未显式设深度时自动抬到预热深度），预热根数计入 per-symbol `warmup_period`；并在 `on_start` 之后逐根回放 `self.I()` 指标（含 `freq=` 窗口指标），历史段与实时段由同一批指标实例连续算出，取代“先回测再接实盘”的拼接做法。不触发 `on_bar`、不撮合、不动账户；晚于会话启动的行裁掉并告警，首根实盘 bar 与预热末尾重叠时告警但照常派发；热启动恢复的策略跳过指标回放。`examples/73_lwc_live_indicators.py` 改为“40 根预热 + 20 根实时”的连续图。
-- **指标流 `phase` 字段，`STREAM_SCHEMA_VERSION` 升至 `1.4`**：point、snapshot 及 snapshot 的每个 item 新增 `phase`，`"preload"` 表示预热回放产出的点，其余为 `"run"`，缺失按 `"run"` 处理；`akquant.lwc.to_lwc_update()` 原样带出。`IndicatorSink.record()` 协议新增可选关键字 `phase`，按旧签名实现的第三方 sink 自动探测、不传该参数，预热点照常送达。
 - **指标流 `series_key` 字段，`STREAM_SCHEMA_VERSION` 升至 `1.5`**：point 的 `indicator` 新增 `series_key`；snapshot 的每个 item 新增 `owner_strategy_id` 与 `series_key`，snapshot 新增 `series_keys`（与 `indicator_keys` 一一对应）；`akquant.lwc.to_lwc_update()` 输出新增 `owner_strategy_id` 与 `series_key`。`series_key` 与历史接口 `akquant.indicator_identity.series_keys()` 同规则（单 owner 时就是 `indicator_key`，多 owner 同名时为 `"{owner}:{key}"`），由新增的 `resolve_series_key(owner, key, owners_by_key)` 统一计算，`series_keys()` 也改为复用它。录制器（`IndicatorRecorder`、`StreamingIndicatorSink`）维护会话级登记表：挂载时补登各策略/指标脚本已有的 `plot=True` 声明（覆盖 `__init__` 里的 `self.I`），挂载后 `self.I(plot=True)` 即时登记，每次 `record` 也登记。`IndicatorSink` 新增**可选**方法 `declare(owner_strategy_id, indicator_key)`，框架用 `getattr` 探测，第三方 sink 不实现也不受影响，`record()` 协议不变。读到 1.4 事件时桥接把 `series_key` 回落为 `indicator_key`。已知差异：运行中途才出现的同名 owner 从那一刻起两边都改为加前缀、已发出的点不追溯（每个键告警一次）；声明了 `plot=True` 但整场无点的指标会参与实时侧冲突判断、却不在历史定义表里。
-- **`Engine.preload_history()` 返回回放序列**（基础 bar 与其闭合出的窗口 bar 交错，顺序同实盘派发），此前返回 `None`；`akquant.pyi` 补上 `Engine.configure_history_depth` 存根。
 
 ### Fixed
 - **主策略与指标脚本同名指标键串线**：主策略的 `ema`（EMA5、主图、红色）与 `aq.Indicator` 脚本的 `ema`（EMA50、附图、蓝色）同时存在时，`indicator_definitions` 只剩先写入的一行（主图、红色），`viz.review()` 只画出一条主图红线、数值却是 EMA50（点按时间去重，后来者覆盖前者）；`indicator_df()` 的点位本身一直是完整的。现在指标定义的身份改为 `(owner_strategy_id, indicator_key)`：`indicator_definitions` **新增 `owner_strategy_id` 列**（第一列，按 `(owner, key)` 排序），`indicator_outputs["definitions"]` 的每条定义同样带该字段；LWC（`to_lwc_indicator_series`）、d3Kline（`akquant.chart.to_d3kline_options` / `to_raw_panes`）、plotly（`plot_indicators` 与报告）三个出口统一按 `(owner, key)` 关联定义与点位。图上的 series 键**只在冲突时加前缀**：同一 `indicator_key` 被多个 owner 使用时为 `"{owner}:{key}"`（如 `_default:ema`、`sub:ema`），不冲突时仍是 `indicator_key`，现有图与前端不变；未写 label 时图例显示名随之变为 series 键。单一来源是新模块 `akquant.indicator_identity`（`series_keys()` / `display_label()`）。LWC series 与 `to_raw_panes()` 的每个指标新增 `owner_strategy_id`、`series_key` 字段。**破坏性**：`to_d3kline_options(defs, points_by_identity)` / `to_raw_panes(defs, points_by_identity)` 的第二个参数改为以 `(owner_strategy_id, indicator_key)` 为键（原为 `indicator_key`），扁平点位可用新增的 `akquant.chart.group_points_by_identity()` 分组；plotly trace 名不再在多 owner 时统一追加 `<owner>`，只在同名冲突且用户写了 label 时追加。一并修复 `merge_results` 定义去重按不存在的 `name` 字段、从未生效的问题，去重键改为 `(owner_strategy_id, indicator_key)`。该条修复本身未改指标流消息格式，实时流的对应修复见下一条。
 - **实时指标流里主策略与指标脚本的同名指标互相覆盖**：上一条只修了回测/历史出口，实时流仍按 `indicator_key` 区分——snapshot 的 item 不带 owner，`items_by_key`、`value_by_key` 按 `indicator_key` 作键，`to_lwc_update()` 不带 owner，前端实时侧把两个 owner 的 `ema` 合成一条线。现在 `items_by_key`、`value_by_key` 改按 `series_key` 作键（单 owner 时键名不变），流消息与 `to_lwc_update()` 都带上与历史接口一致的 `series_key`（见 Added 中 `1.5` 一条）。
+
+### Docs
+- 移除文档、注释与测试替身中对已归档 `akquant-qmf`（`broker='qmf'`）的引用，示例改用 `middleware` / `akquant_klinedata`。
+- 教材第 5、13、15、16 章与中英文指南、API 参考同步指标脚本、`candle`、`replaces_price` 与流 schema 1.6。
+
+## [0.2.15 – 0.3.67] - 未逐版拆分
+
+> 以下为 0.2.15 至 0.3.67 期间累积在 `[Unreleased]` 下、未按版本拆分的条目，按原样保留。
+
+### Added
+- **`run_live(preload_history=...)` 实盘历史预热**：接收与 `run_backtest(data=)` 同形态的历史 bar（DataFrame / `{symbol: DataFrame}` / `list[Bar]`），会话启动前灌入历史缓冲与 `subscribe_bars` 窗口聚合器，首根实盘 bar 里 `get_history` 即可用（未显式设深度时自动抬到预热深度），预热根数计入 per-symbol `warmup_period`；并在 `on_start` 之后逐根回放 `self.I()` 指标（含 `freq=` 窗口指标），历史段与实时段由同一批指标实例连续算出，取代“先回测再接实盘”的拼接做法。不触发 `on_bar`、不撮合、不动账户；晚于会话启动的行裁掉并告警，首根实盘 bar 与预热末尾重叠时告警但照常派发；热启动恢复的策略跳过指标回放。`examples/73_lwc_live_indicators.py` 改为“40 根预热 + 20 根实时”的连续图。
+- **指标流 `phase` 字段，`STREAM_SCHEMA_VERSION` 升至 `1.4`**：point、snapshot 及 snapshot 的每个 item 新增 `phase`，`"preload"` 表示预热回放产出的点，其余为 `"run"`，缺失按 `"run"` 处理；`akquant.lwc.to_lwc_update()` 原样带出。`IndicatorSink.record()` 协议新增可选关键字 `phase`，按旧签名实现的第三方 sink 自动探测、不传该参数，预热点照常送达。
+- **`Engine.preload_history()` 返回回放序列**（基础 bar 与其闭合出的窗口 bar 交错，顺序同实盘派发），此前返回 `None`；`akquant.pyi` 补上 `Engine.configure_history_depth` 存根。
+
+### Fixed
 - **一期遗留项修复（R1–R5，`__engine_rule_version__` 升至 1.7.1）**：
   - R1 `InstrumentConfig.slippage` 接入撮合（此前是死字段）：优先级订单级 `slippage=` > 品种级 `InstrumentConfig.slippage` > 策略级 `strategy_slippage` > 全局 `StrategyConfig.slippage`；`run_from_checkpoint` 续跑同样生效。
   - R2 `run_from_checkpoint` 续跑段补齐期权市场规则（默认 ChinaMarket、全局与前缀期权费率）与按品种费用 / 滑点覆盖；期权判定同时看调用方传入的 `instruments` 与已登记的合约快照（含续跑阶段一新注册的）。

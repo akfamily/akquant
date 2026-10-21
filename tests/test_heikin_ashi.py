@@ -103,3 +103,16 @@ def test_self_I_ohlc_expands_to_four_components() -> None:
     assert len(seen) == 3
     for row, exp in zip(seen, _EXPECTED):
         _assert_row(row, exp)
+
+
+def test_non_finite_bar_does_not_poison_following_values() -> None:
+    """NaN bar 不出值、不推进状态; 下一根有效 bar 接着上一根有效 bar 计算."""
+    ha = aq.HeikinAshi()
+    ha.update(10.0, 12.0, 9.0, 11.0)
+    assert ha.update(float("nan"), 12.0, 9.0, 11.0) is None
+    assert ha.value == pytest.approx((10.5, 12.0, 9.0, 10.5))
+    after = ha.update(11.0, 13.0, 10.0, 12.0)
+    assert after is not None
+    o, _, _, c = after
+    assert o == pytest.approx(10.5)
+    assert c == pytest.approx(11.5)

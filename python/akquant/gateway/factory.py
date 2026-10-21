@@ -4,6 +4,9 @@ from ..akquant import DataFeed
 from .protocols import GatewayBundle
 from .registry import create_registered_gateway_bundle, list_registered_brokers
 
+#: 描述行情数据的 metadata 键: 行情/交易分开指定时只取行情侧的值。
+_MARKET_DATA_METADATA_KEYS = ("freq", "drive", "bounded_event_total")
+
 
 def create_gateway_bundle(
     broker: Optional[str] = None,
@@ -86,7 +89,14 @@ def create_gateway_bundle(
     # 行情侧 metadata 作底、交易侧覆盖其上: 行情 broker 可能声明会话级信息
     # (如 replay 的 ``bounded_event_total`` —— runner 据此在事件放完后结束会话),
     # 只保留交易侧会丢掉它, 混搭会话便只能等 duration 墙钟超时。
-    metadata = {**(market_bundle.metadata or {}), **(trader_bundle.metadata or {})}
+    market_metadata = market_bundle.metadata or {}
+    metadata = {**market_metadata, **(trader_bundle.metadata or {})}
+    # 行情数据口径的键只认行情侧: 交易 broker 写的 freq/drive 若盖上来, 会静默
+    # 改掉 self.freq、关掉自动预加载(drive="tick")。行情侧没声明就不保留交易侧的。
+    for key in _MARKET_DATA_METADATA_KEYS:
+        metadata.pop(key, None)
+        if key in market_metadata:
+            metadata[key] = market_metadata[key]
     metadata["market_broker"] = market_key
     metadata["trader_broker"] = trader_key
     return GatewayBundle(
@@ -94,4 +104,7 @@ def create_gateway_bundle(
         trader_gateway=trader_bundle.trader_gateway,
         trader_capabilities=trader_bundle.trader_capabilities,
         metadata=metadata,
+        # 历史属于行情侧: 混搭(如 klinedata 行情 + middleware 交易)时随行情
+        # bundle 保留, 否则自动预加载在最常见的组合里静默失效。
+        history_provider=market_bundle.history_provider,
     )
