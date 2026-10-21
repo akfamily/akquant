@@ -986,6 +986,14 @@ The frontend receives one continuous series and can style or filter on
 bars are preloaded, the last 20 arrive live, and the chart shows one unbroken
 line.
 
+!!! warning "Ship the history once; stream only the live part"
+    `phase="preload"` points are a batch replayed at session start. Do **not** push them one by one
+    through `series.update()`: thousands of points, each waiting for a round trip, make a chart take
+    minutes and "draw from left to right". Collect the preload points, group them by `series_key`,
+    draw them with one `series.setData()`, and only then apply `phase="run"` points with `update()`.
+    AKQuant computes 20,000 bars x 3 indicators in about 1-2 s; slowness is almost always in the
+    wiring. `examples/73_lwc_live_indicators.py` does exactly this.
+
 ### Live increments to an LWC chart
 
 If your frontend is lightweight-charts you do not need to unpack the fields of

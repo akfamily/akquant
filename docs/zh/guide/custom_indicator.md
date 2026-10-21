@@ -885,6 +885,13 @@ run_live(
 前端拿到的是一条连续序列，按 `phase` 决定是否区分样式即可。完整闭环见
 `examples/73_lwc_live_indicators.py`：前 40 根作为预热、后 20 根实时到达，图上是一条不间断的线。
 
+!!! warning "历史段一次下发，实时段才逐点"
+    `phase="preload"` 的点是会话启动时一次性回放出来的批量结果，**不要**逐点 `series.update()` 推给前端：
+    几千个点逐个推送、每个再等一次网络往返，图会花几分钟“从左往右画”。正确做法是收集 preload 点，
+    按 `series_key` 分组后用 `series.setData()` 一次画完；之后 `phase="run"` 的点再逐个 `update()`。
+    框架算 2 万根 × 3 个指标约 1～2 秒，慢通常出在接入方式。`examples/73_lwc_live_indicators.py`
+    就是这样做的：preload 点进一个批，页面拿到后 `setData()`，实时点才走增量。
+
 ### 实时增量到 LWC 图表
 
 前端如果用 lightweight-charts，不必自己解析 `to_indicator_message()` 的字段：

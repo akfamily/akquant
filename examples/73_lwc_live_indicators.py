@@ -15,7 +15,11 @@ wire up.
    line instead of a backtest stitched onto a live run.
 2. Indicators declared with ``plot=True`` are reported automatically; the
    `on_event` callback bridges them with `aq.to_indicator_message()` and then
-   `akquant.lwc.to_lwc_update()` into `series.update()`-ready increments.
+   `akquant.lwc.to_lwc_update()`. **History and live are delivered
+   differently**: preload points are collected and shipped to the page once,
+   as whole series for `setData()`; only live points go out one by one as
+   `series.update()` increments. Pushing the history point by point is what
+   makes a chart take minutes and "draw from left to right".
 3. A tiny stdlib `http.server` exposes `/state?since_seq=N`; the page (LWC
    inlined via `akquant.lwc.load_lwc_js()`, no CDN) polls it and creates each
    indicator series lazily the first time its key shows up.
@@ -97,21 +101,37 @@ class PageState:
         self.candles: list[dict[str, Any]] = []
         self.updates: list[dict[str, Any]] = []
         self.finished = False
+        # History is shipped to the page ONCE, as whole series for setData():
+        # pushing thousands of preload points through update() one by one is
+        # what makes a chart "draw left to right" for minutes.
+        self.history_candles: list[dict[str, Any]] = []
+        self.history_series: dict[str, dict[str, Any]] = {}
+        self.history_ready = False
+
+    def set_history_candles(self, bars: list[Bar]) -> None:
+        """Store the historical candles shown before the live session."""
+        with self.lock:
+            self.history_candles = [_candle(bar) for bar in bars]
+
+    def add_history_point(self, update: dict[str, Any]) -> None:
+        """Collect one preload point into its series (not sent individually)."""
+        key = update.get("series_key") or update["indicator_key"]
+        with self.lock:
+            series = self.history_series.setdefault(
+                key, {**{k: v for k, v in update.items() if k != "point"}, "data": []}
+            )
+            series["data"].append(update["point"])
+
+    def mark_history_ready(self) -> None:
+        """Publish the history batch; called once the preload replay is done."""
+        with self.lock:
+            self.history_ready = True
 
     def add_candle(self, bar: Bar) -> None:
         """Append one closed bar as an LWC candlestick point."""
         with self.lock:
             self.seq += 1
-            self.candles.append(
-                {
-                    "seq": self.seq,
-                    "time": int(bar.timestamp) // 1_000_000_000,
-                    "open": bar.open,
-                    "high": bar.high,
-                    "low": bar.low,
-                    "close": bar.close,
-                }
-            )
+            self.candles.append({"seq": self.seq, **_candle(bar)})
 
     def add_update(self, update: dict[str, Any]) -> None:
         """Append one indicator increment produced by ``to_lwc_update``."""
@@ -123,12 +143,30 @@ class PageState:
         """Return everything newer than ``since_seq`` (all when None)."""
         with self.lock:
             floor = -1 if since_seq is None else since_seq
-            return {
+            snap: dict[str, Any] = {
                 "finished": self.finished,
+                "history_ready": self.history_ready,
                 "latest_seq": self.seq,
                 "candles": [c for c in self.candles if c["seq"] > floor],
                 "updates": [u for u in self.updates if u["seq"] > floor],
             }
+            if since_seq is None and self.history_ready:
+                snap["history"] = {
+                    "candles": self.history_candles,
+                    "series": list(self.history_series.values()),
+                }
+            return snap
+
+
+def _candle(bar: Bar) -> dict[str, Any]:
+    """One bar as an LWC candlestick point (UTC seconds)."""
+    return {
+        "time": int(bar.timestamp) // 1_000_000_000,
+        "open": bar.open,
+        "high": bar.high,
+        "low": bar.low,
+        "close": bar.close,
+    }
 
 
 def make_bars(count: int = 60) -> list[Bar]:
@@ -201,6 +239,17 @@ _PAGE = """<!DOCTYPE html>
       var qs = lastSeq === null ? '' : ('since_seq=' + lastSeq + '&');
       var r = await fetch('/state?' + qs + '_=' + Date.now());
       var st = await r.json();
+      if(lastSeq === null){
+        // History first, in one batch: setData() draws the whole segment at
+        // once. Wait (without advancing the cursor) until it is published.
+        if(!st.history_ready){
+          document.getElementById('status').textContent = 'loading history';
+          return;
+        }
+        candle.setData(st.history.candles);
+        st.history.series.forEach(function(s){ ensureSeries(s).setData(s.data); });
+        chart.timeScale().fitContent();
+      }
       (st.candles||[]).forEach(function(c){
         candle.update({time:c.time, open:c.open, high:c.high,
           low:c.low, close:c.close});
@@ -263,9 +312,17 @@ def run_live_thread(state: PageState, done: threading.Event, sleep_ms: int) -> N
         if message is None:
             return
         update = to_lwc_update(message)
-        if update is not None:
-            state.add_update(update)
+        if update is None:
+            return
+        if update["phase"] == "preload":
+            # History segment: collect, ship once as whole series (no sleep —
+            # the preload replay is a batch computation, not a live feed).
+            state.add_history_point(update)
+            return
+        state.mark_history_ready()
+        state.add_update(update)
         if sleep_ms > 0:
+            # Only to make the live part watchable in a browser.
             time.sleep(sleep_ms / 1000.0)
 
     LiveDeclarativeStrategy.page_state = state
@@ -273,8 +330,7 @@ def run_live_thread(state: PageState, done: threading.Event, sleep_ms: int) -> N
     history, live = bars[:PRELOAD_BARS], bars[PRELOAD_BARS:]
     # preload_history does not drive on_bar, so the page gets the historical
     # candles here; indicator points for them come through on_event.
-    for bar in history:
-        state.add_candle(bar)
+    state.set_history_candles(history)
 
     instruments = [
         Instrument(
@@ -301,6 +357,7 @@ def run_live_thread(state: PageState, done: threading.Event, sleep_ms: int) -> N
         on_event=on_event,
         duration="60s",  # safety net; replay ends on its own after the last bar
     )
+    state.mark_history_ready()  # also covers a session with no live points
     with state.lock:
         state.finished = True
     done.set()
@@ -341,11 +398,14 @@ def main() -> None:
     thread.join(timeout=2.0)
 
     snap = state.snapshot(None)
+    history = snap["history"]
     keys = sorted({u["indicator_key"] for u in snap["updates"]})
-    preload_updates = sum(1 for u in snap["updates"] if u["phase"] == "preload")
+    history_points = sum(len(s["data"]) for s in history["series"])
+    print(f"lwc_live_history_candles={len(history['candles'])}")
+    print(f"lwc_live_history_series={len(history['series'])}")
+    print(f"lwc_live_history_points={history_points}")
     print(f"lwc_live_candles={len(snap['candles'])}")
     print(f"lwc_live_updates={len(snap['updates'])}")
-    print(f"lwc_live_preload_updates={preload_updates}")
     print(f"lwc_live_indicator_keys={keys}")
     print("done_lwc_live_indicators")
 
