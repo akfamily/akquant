@@ -144,6 +144,42 @@ class TradingSession:
     AuctionHold: typing.ClassVar["TradingSession"]
     ClosingAuction: typing.ClassVar["TradingSession"]
 
+class SessionResolver:
+    r"""
+    交易时段解析器：把时间点或 bar 区间解析为 (交易日, 时段).
+
+    :param sessions: 代码前缀 → 时段模板名；"default" 为全局默认
+    :param trading_calendar: 交易日列表；不传时按工作日推算（节假日会算错）
+    :param timezone: IANA 时区名
+    """
+
+    def __new__(
+        cls,
+        sessions: typing.Optional[dict[str, str]] = None,
+        trading_calendar: typing.Optional[list[datetime.date]] = None,
+        timezone: str = "Asia/Shanghai",
+    ) -> "SessionResolver": ...
+    def resolve_instant(
+        self, symbol: str, timestamp: int, asset_type: typing.Optional[AssetType] = None
+    ) -> tuple[datetime.date, TradingSession]: ...
+    def resolve_bar(
+        self,
+        symbol: str,
+        timestamp: int,
+        interval_start: typing.Optional[int] = None,
+        asset_type: typing.Optional[AssetType] = None,
+    ) -> tuple[datetime.date, TradingSession]: ...
+    def day_bounds(
+        self,
+        symbol: str,
+        trading_day: datetime.date,
+        asset_type: typing.Optional[AssetType] = None,
+    ) -> tuple[int, int]: ...
+    @property
+    def uses_fallback_calendar(self) -> bool: ...
+    @staticmethod
+    def templates() -> list[str]: ...
+
 class CorporateActionType:
     Split: typing.ClassVar["CorporateActionType"]
     Dividend: typing.ClassVar["CorporateActionType"]

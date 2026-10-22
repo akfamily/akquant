@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod clock;
+pub(crate) mod python;
 pub mod resolver;
 pub mod schedule;
 pub mod trading_calendar;
