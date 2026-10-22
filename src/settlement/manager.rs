@@ -30,11 +30,12 @@ pub struct SettlementContext<'a> {
     pub timestamp: i64,
     pub bar_index: usize,
     pub default_strategy_id: Option<String>,
-    /// IDs of Day orders whose matchable slice has not yet arrived and so must
-    /// be spared from expiry this settlement (a next-open order created after
-    /// the previous close fills at *this* day's open, matched after settlement).
-    /// The caller (which owns execution-policy/timezone knowledge) computes this.
-    pub day_orders_awaiting_fill_slice: &'a HashSet<String>,
+    /// 本次结算豁免过期的 Day 单 ID：NextOpen（bar_offset == 1）且创建于本交易日
+    /// 最后一个已处理行情事件之后——它们唯一的撮合机会是下一交易日的第一个事件。
+    /// 由调用方（掌握执行策略与事件时间）计算。
+    pub exempt_day_orders: &'a HashSet<String>,
+    /// 本次结算计提利息的自然日天数（两次结算之间；首次为 1）。
+    pub accrual_days: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -133,22 +134,21 @@ impl SettlementManager {
 
         // 2. Order Expiration (Day Orders)
         // Partition orders into expired and kept. A Day order is expired at
-        // settlement UNLESS it is in `day_orders_awaiting_fill_slice` — orders
-        // whose matchable slice has not yet arrived (a next-open order created
-        // after the previous day's close fills at *this* day's open, which the
-        // caller matches *after* settlement). Expiring those before their only
-        // fill chance meant on_cross_section + TimeInForce.Day never traded.
-        let (expired, kept): (Vec<Order>, Vec<Order>) = active_orders
-            .drain(..)
-            .partition(|o| {
-                o.time_in_force == TimeInForce::Day
-                    && !ctx.day_orders_awaiting_fill_slice.contains(&o.id)
-            });
+        // settlement UNLESS it is in `exempt_day_orders` — next-open orders
+        // created at/after the trading day's last processed market event, whose
+        // only fill chance is the next trading day's first event. Expiring those
+        // before their only fill chance meant on_cross_section +
+        // TimeInForce.Day never traded.
+        let (expired, kept): (Vec<Order>, Vec<Order>) = active_orders.drain(..).partition(|o| {
+            o.time_in_force == TimeInForce::Day && !ctx.exempt_day_orders.contains(&o.id)
+        });
 
         *active_orders = kept;
 
         for mut o in expired {
             o.status = OrderStatus::Expired;
+            // 过期时刻 = 本次日终结算时刻(交易日收盘)。
+            o.updated_at = ctx.timestamp;
             expired_orders_out.push(o);
         }
         outcome
@@ -690,7 +690,8 @@ mod tests {
             timestamp: 0,
             bar_index: 0,
             default_strategy_id: None,
-            day_orders_awaiting_fill_slice: empty_pending(),
+            exempt_day_orders: empty_pending(),
+            accrual_days: 1,
         };
         let outcome = SettlementManager::new().process_daily_settlement(
             &mut portfolio,
@@ -701,6 +702,66 @@ mod tests {
         assert_eq!(portfolio.cash, Decimal::from(-5500));
         assert_eq!(outcome.daily_interest, Decimal::from(500));
         assert!(!outcome.forced_liquidation);
+    }
+
+    #[test]
+    fn day_order_expiry_spares_exempt_orders_and_stamps_close_time() {
+        let make = |id: &str, tif: TimeInForce| {
+            let mut order = Order::test_new(
+                id,
+                "AAA",
+                OrderSide::Buy,
+                OrderType::Limit,
+                Decimal::from(100),
+            );
+            order.price = Some(Decimal::ONE);
+            order.time_in_force = tif;
+            order.created_at = 5;
+            order.updated_at = 5;
+            order
+        };
+        let mut active = vec![
+            make("day-expire", TimeInForce::Day),
+            make("day-exempt", TimeInForce::Day),
+            make("gtc", TimeInForce::GTC),
+        ];
+        let exempt: HashSet<String> = ["day-exempt".to_string()].into_iter().collect();
+        let instruments = HashMap::new();
+        let prices = HashMap::new();
+        let risk = RiskConfig::new();
+        let market_manager = MarketManager::new();
+        let tracker = TradeTracker::new();
+        let ctx = SettlementContext {
+            date: NaiveDate::from_ymd_opt(2024, 1, 2).expect("valid date"),
+            instruments: &instruments,
+            last_prices: &prices,
+            market_manager: &market_manager,
+            trade_tracker: &tracker,
+            risk_config: &risk,
+            timestamp: 1_000,
+            bar_index: 0,
+            default_strategy_id: None,
+            exempt_day_orders: &exempt,
+            accrual_days: 1,
+        };
+        let mut portfolio = Portfolio {
+            cash: Decimal::from(1000),
+            positions: Arc::new(HashMap::new()),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut expired = Vec::new();
+        SettlementManager::new().process_daily_settlement(
+            &mut portfolio,
+            &mut active,
+            &mut expired,
+            &ctx,
+        );
+        let kept: Vec<&str> = active.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(kept, vec!["day-exempt", "gtc"]);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].id, "day-expire");
+        assert_eq!(expired[0].status, OrderStatus::Expired);
+        assert_eq!(expired[0].updated_at, 1_000);
     }
 
     #[test]
@@ -738,7 +799,8 @@ mod tests {
             timestamp: 0,
             bar_index: 0,
             default_strategy_id: None,
-            day_orders_awaiting_fill_slice: empty_pending(),
+            exempt_day_orders: empty_pending(),
+            accrual_days: 1,
         };
         let outcome = SettlementManager::new().process_daily_settlement(
             &mut portfolio,
@@ -796,7 +858,8 @@ mod tests {
             timestamp: 0,
             bar_index: 0,
             default_strategy_id: None,
-            day_orders_awaiting_fill_slice: empty_pending(),
+            exempt_day_orders: empty_pending(),
+            accrual_days: 1,
         };
         let outcome_short_first = SettlementManager::new().process_daily_settlement(
             &mut portfolio_short_first,
@@ -825,7 +888,8 @@ mod tests {
             timestamp: 0,
             bar_index: 0,
             default_strategy_id: None,
-            day_orders_awaiting_fill_slice: empty_pending(),
+            exempt_day_orders: empty_pending(),
+            accrual_days: 1,
         };
         let outcome_long_first = SettlementManager::new().process_daily_settlement(
             &mut portfolio_long_first,

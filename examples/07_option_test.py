@@ -34,7 +34,9 @@ class OptionExpiryStrategy(Strategy):
 
 def build_data() -> dict[str, pd.DataFrame]:
     """Build option and underlying minute-bar data."""
-    dates = pd.date_range("2023-12-01", "2023-12-02", freq="1min")
+    # 到期日 12-01 当天的分钟线，止于收盘 15:00：期权在到期日收盘结算，收盘后
+    # 的 bar 属于下一交易日，策略会在那里再买入一张已到期的期权。
+    dates = pd.date_range("2023-12-01", "2023-12-01 15:00", freq="1min")
     data_opt = pd.DataFrame(
         {
             "timestamp": dates,

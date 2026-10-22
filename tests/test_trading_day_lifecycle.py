@@ -328,3 +328,215 @@ def test_unparsable_asset_type_falls_back_to_default(
         assert asset_type_of("B") == aq.AssetType.Futures
     warnings = [r for r in caplog.records if "无法识别" in r.getMessage()]
     assert len(warnings) == 1
+
+
+def _snapshot_times(result: Any) -> List[pd.Timestamp]:
+    """日终快照时间（本地）.
+
+    取 ``result.positions`` 的索引（逐条对应引擎 ``record_snapshot``，含空仓快照）；
+    ``equity_curve`` 是逐事件的净值曲线，每根 bar 都有一个点，不能用来观察日终结算。
+    """
+    return list(result.positions.index.tz_convert("Asia/Shanghai"))
+
+
+class _BuyOnce(Strategy):
+    """第一根 bar 下一张 NextOpen 的 Day 限价单（价格够不着），观察过期时机."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done:
+            self.done = True
+            self.buy(bar.symbol, 100, price=1.0, time_in_force=aq.TimeInForce.Day)
+
+
+def test_day_order_expires_at_its_trading_day_close() -> None:
+    """日线：首根 bar 下的 NextOpen Day 单在下一交易日撮合一次，次日收盘过期."""
+    result = run_backtest(
+        strategy=_BuyOnce,
+        data=_daily_frame(["2024-01-02", "2024-01-03", "2024-01-04"]),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    orders = result.orders_df
+    assert len(orders) == 1
+    row = orders.iloc[0]
+    assert str(row["status"]).lower().endswith("expired")
+    # 01-02 收盘下单 → 豁免 → 01-03 收盘过期
+    updated = pd.Timestamp(row["updated_at"]).tz_convert("Asia/Shanghai")
+    assert updated.strftime("%Y-%m-%d %H:%M") == "2024-01-03 15:00"
+
+
+def test_last_trading_day_is_settled_at_end() -> None:
+    """回测最后一个交易日也做日终结算：期末未成交 Day 单为 Expired."""
+    result = run_backtest(
+        strategy=_BuyOnce,
+        data=_daily_frame(["2024-01-02", "2024-01-03"]),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert str(result.orders_df.iloc[0]["status"]).lower().endswith("expired")
+
+
+def test_night_session_settles_once_per_trading_day_not_at_midnight() -> None:
+    """夜盘跨 0 点：周一 21:00 起属周二，周一 15:00 结算一次，不在 0 点再结算."""
+    ts = pd.to_datetime(
+        [
+            "2024-01-08 14:00",
+            "2024-01-08 21:30",
+            "2024-01-08 23:30",
+            "2024-01-09 00:30",
+            "2024-01-09 10:00",
+            "2024-01-09 14:30",
+        ]
+    ).tz_localize("Asia/Shanghai")
+    df = pd.DataFrame(
+        {
+            "timestamp": ts,
+            "symbol": "au2406",
+            "open": 500.0,
+            "high": 501.0,
+            "low": 499.0,
+            "close": 500.0,
+            "volume": 10.0,
+        }
+    )
+    result = run_backtest(
+        strategy=_Recorder,
+        data=df,
+        symbols=["au2406"],
+        initial_cash=1e6,
+        show_progress=False,
+        # run_backtest 的 asset_type 关键字会被当成策略参数报错，期货标的改用
+        # instruments_config 声明。
+        config=aq.BacktestConfig(
+            strategy_config=aq.StrategyConfig(),
+            instruments_config=[
+                aq.InstrumentConfig(
+                    symbol="au2406",
+                    asset_type="FUTURES",
+                    multiplier=1000.0,
+                    margin_ratio=0.1,
+                )
+            ],
+        ),
+        sessions={"au": "CN_FUTURES_NIGHT_0230"},
+    )
+    snaps = [t.strftime("%Y-%m-%d %H:%M") for t in _snapshot_times(result)]
+    # 每个交易日一个收盘快照：01-08 15:00 与 01-09 15:00
+    assert "2024-01-08 15:00" in snaps and "2024-01-09 15:00" in snaps
+    assert not any(t.endswith("00:00") for t in snaps)
+
+
+class _BuyAtOpenProbe(Strategy):
+    """当日 09:25 定时器买入，记录同日收盘 bar 上的可用数量."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.available_on_bar: List[tuple] = []
+
+    def on_start(self) -> None:
+        self.schedule_daily("09:25", "buy")
+
+    def on_timer(self, payload: str) -> None:
+        if payload == "buy":
+            self.buy("600000.SH", 100)
+
+    def on_bar(self, bar: Bar) -> None:
+        day = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert("Asia/Shanghai").date()
+        self.available_on_bar.append(
+            (day, float(self.get_available_position(bar.symbol)))
+        )
+
+
+def test_t_plus_one_intraday_buy_not_sellable_on_same_day_close_bar() -> None:
+    """日线改到 15:00 后：当日 09:25 买入，当日 15:00 bar 的 on_bar 里可用必须为 0."""
+    result = run_backtest(
+        strategy=_BuyAtOpenProbe,
+        data=_daily_frame(["2024-01-02", "2024-01-03", "2024-01-04"]),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        t_plus_one=True,
+    )
+    strategy = result.strategy
+    assert strategy is not None
+    seen = dict(strategy.available_on_bar)
+    assert seen[dt.date(2024, 1, 3)] == 0.0  # 01-03 09:25 买入，当日不可卖
+    assert seen[dt.date(2024, 1, 4)] == 100.0  # 01-03 收盘结算后解冻
+
+
+class _BuyOnceAt0925SellAt1530(Strategy):
+    """01-03 09:25 按当前价买入一次；每日 15:30 记录可用并卖出全部可用."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bought = False
+        self.available_on_bar: List[tuple] = []
+        self.available_at_sell_timer: List[tuple] = []
+
+    def on_start(self) -> None:
+        self.schedule_daily("09:25", "buy")
+        self.schedule_daily("15:30", "sell")
+
+    def _local_now(self) -> pd.Timestamp:
+        assert self.ctx is not None
+        return pd.Timestamp(int(self.ctx.current_time), tz="UTC").tz_convert(
+            "Asia/Shanghai"
+        )
+
+    def on_timer(self, payload: str) -> None:
+        if payload == "buy" and not self.bought:
+            self.bought = True
+            self.buy("600000.SH", 100, fill_mode=aq.CurrentClose())
+        elif payload == "sell":
+            available = float(self.get_available_position("600000.SH"))
+            self.available_at_sell_timer.append((self._local_now().date(), available))
+            if available > 0:
+                self.sell("600000.SH", available, fill_mode=aq.CurrentClose())
+
+    def on_bar(self, bar: Bar) -> None:
+        day = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert("Asia/Shanghai").date()
+        self.available_on_bar.append(
+            (day, float(self.get_available_position(bar.symbol)))
+        )
+
+
+def test_t_plus_one_buy_then_after_close_timer_is_next_trading_day() -> None:
+    """09:25 立即成交的买入：当日 15:00 bar 不可卖；15:30 已属下一交易日.
+
+    当日收盘结算已解冻 T+1，15:30 下的卖单在下一交易日成交.
+    """
+    result = run_backtest(
+        strategy=_BuyOnceAt0925SellAt1530,
+        data=_daily_frame(["2024-01-02", "2024-01-03", "2024-01-04"]),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        t_plus_one=True,
+    )
+    strategy = result.strategy
+    assert strategy is not None
+    # 首个 09:25 是 01-03 的（01-02 的已早于首根 bar），按当前价立即成交
+    on_bar = dict(strategy.available_on_bar)
+    assert on_bar[dt.date(2024, 1, 3)] == 0.0  # 当日收盘 bar 仍冻结
+    at_timer = dict(strategy.available_at_sell_timer)
+    # 01-02 15:30 尚无持仓；01-03 15:30 在 01-03 收盘结算之后，属于 01-04 交易日
+    assert at_timer[dt.date(2024, 1, 2)] == 0.0
+    assert at_timer[dt.date(2024, 1, 3)] == 100.0
+
+    fills = result.executions_df
+    local = pd.to_datetime(fills["timestamp"]).dt.tz_convert("Asia/Shanghai")
+    sides = fills["side"].astype(str).str.lower()
+    buy_times = list(local[sides == "buy"])
+    sell_times = list(local[sides == "sell"])
+    assert [t.strftime("%Y-%m-%d %H:%M") for t in buy_times] == ["2024-01-03 09:25"]
+    # 卖出发生在买入所属交易日的收盘结算之后（不在买入当日盘中）
+    assert sell_times
+    assert all(
+        t > pd.Timestamp("2024-01-03 15:00", tz="Asia/Shanghai") for t in sell_times
+    )

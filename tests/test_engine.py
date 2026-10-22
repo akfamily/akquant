@@ -650,12 +650,11 @@ def test_order_level_current_close_daily_timer_sell_fills_same_day() -> None:
 
     sell_order = filled_sell_orders.iloc[0]
     sell_updated_at = pd.Timestamp(sell_order["updated_at"]).tz_convert("Asia/Shanghai")
-    # 交易时段重构阶段 2 过渡态: 只有日期的日线改写到当日 15:00 后, 首根 bar
-    # (04-01 15:00) 之前的 04-01 09:25/14:56 定时器不再补登记, 首笔买入是
-    # 04-02 09:25(按 04-01 收盘 10.0); 04-02 14:56 时该笔仍受 T+1 冻结, 首次
-    # 可卖是 04-03 14:56(按 04-02 收盘 11.0)。"同日"指卖单在定时器时刻按
-    # CurrentClose 成交, 不是买卖同日。T+1 解冻目前仍在"新自然日首根 bar"
-    # 发生, Task 3 改为交易日收盘结算后需复核本断言。
+    # 只有日期的日线改写到当日 15:00, 首根 bar(04-01 15:00) 之前的 04-01
+    # 09:25/14:56 定时器不补登记, 首笔买入是 04-02 09:25(按 04-01 收盘 10.0);
+    # 04-02 14:56 时该笔仍受 T+1 冻结, 04-02 收盘(15:00)日终结算解冻, 首次可卖
+    # 是 04-03 14:56(按 04-02 收盘 11.0)。"同日"指卖单在下单的交易日内按
+    # CurrentClose 于定时器时刻成交, 不是买卖同日。
     assert sell_updated_at == pd.Timestamp("2026-04-03 14:56:00", tz="Asia/Shanghai")
     assert float(sell_order["avg_price"]) == pytest.approx(11.0)
     assert float(sell_order["filled_quantity"]) == pytest.approx(1.0)

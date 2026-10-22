@@ -606,9 +606,10 @@ def test_margin_account_daily_financing_interest_is_deducted() -> None:
 
     bars = _build_bars(
         [
-            pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-01 14:00:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai"),
+            # 两个工作日: 01-01 是周日, 按会话交易日会与 01-02 并为同一交易日
+            pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 14:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-04 10:00:00", tz="Asia/Shanghai"),
         ],
         [100.0, 100.0, 100.0],
         symbol="INTEREST",
@@ -658,9 +659,10 @@ def test_margin_account_force_liquidation_on_maintenance_breach() -> None:
 
     bars = _build_bars(
         [
-            pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-01 14:00:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai"),
+            # 两个工作日: 01-01 是周日, 按会话交易日会与 01-02 并为同一交易日
+            pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 14:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-04 10:00:00", tz="Asia/Shanghai"),
         ],
         [100.0, 20.0, 20.0],
         symbol="LIQ",
@@ -919,8 +921,10 @@ def test_futures_force_liquidation_emits_callbacks_and_realizes_pnl_only() -> No
 
     bars = _build_bars(
         [
-            pd.Timestamp("2023-01-04 22:30:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-04 23:00:00", tz="Asia/Shanghai"),
+            # 日盘时刻: 默认期货时段表无夜盘, 01-04 夜间的 bar 属于交易日 01-05,
+            # 会与 01-05 日盘并为同一交易日, 强平就推迟到最后一根 bar 之后。
+            pd.Timestamp("2023-01-04 10:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-04 14:00:00", tz="Asia/Shanghai"),
             pd.Timestamp("2023-01-05 09:30:00", tz="Asia/Shanghai"),
             pd.Timestamp("2023-01-05 10:00:00", tz="Asia/Shanghai"),
         ],
@@ -981,8 +985,10 @@ def test_futures_force_liquidation_emits_callbacks_and_realizes_pnl_only() -> No
     assert float(result.positions.iloc[-1].get("RB2305", 0.0)) == pytest.approx(
         0.0, rel=0.0, abs=1e-6
     )
+    # 最后交易日 01-05 现在也做日终结算: 强平后现金 -15000 计 1 天融资利息
+    # (默认年化 8%)。
     assert float(result.equity_curve.iloc[-1]) == pytest.approx(
-        -15000.0, rel=0.0, abs=1e-6
+        -15000.0 - 15000.0 * 0.08 / 365.0, rel=0.0, abs=1e-6
     )
 
     assert any(

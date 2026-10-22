@@ -35,8 +35,6 @@ use crate::statistics::StatisticsManager;
 use super::state::SharedState;
 
 /// 用户配置的交易时段表与交易日历（`configure_sessions` 写入）。
-// 字段由后续任务（会话级交易日与日终结算）消费，本阶段只写入。
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SessionConfig {
     pub sessions: Option<Vec<(String, String)>>,
@@ -82,7 +80,19 @@ pub struct Engine {
     /// (std 的 RwLock 写锁请求会排队等待,不可重入)。
     pub(crate) last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
     pub(crate) instruments: HashMap<String, Instrument>,
-    pub(crate) current_date: Option<NaiveDate>,
+    /// 会话级时段解析器；`run()` 开始时按 `session_config` 与时区构造（见
+    /// [`Engine::ensure_session_resolver`]），配置或时区变化时置 `None` 以便重建。
+    pub(crate) session_resolver: Option<crate::calendar::resolver::SessionResolver>,
+    /// 当前所处的会话交易日（最近一个已开日的交易日）。
+    pub(crate) current_trading_day: Option<NaiveDate>,
+    /// `current_trading_day` 覆盖的时间区间 `(上一交易日收盘, 本交易日收盘]`（纳秒）。
+    pub(crate) current_day_span: Option<(i64, i64)>,
+    /// 最近一个已完成日终结算的交易日。
+    pub(crate) last_settled_trading_day: Option<NaiveDate>,
+    /// 当前交易日最后一个已处理行情事件的时间戳（Day 单豁免判据）。
+    pub(crate) last_event_ts_in_day: Option<i64>,
+    /// 已登记收盘定时器的交易日（避免重复登记）。
+    pub(crate) scheduled_day_close: Option<NaiveDate>,
     pub(crate) market_manager: MarketManager,
     pub(crate) corporate_action_manager: CorporateActionManager,
     pub(crate) execution_model: Box<dyn ExecutionClient>,
@@ -291,6 +301,71 @@ impl Engine {
             entry_prices.insert(symbol.clone(), average_price);
         }
         Arc::new(entry_prices)
+    }
+
+    /// 首次调用时按 `session_config`、引擎时区与规则 B 构造会话解析器，并把全部
+    /// 已登记标的设为在用。
+    pub(crate) fn ensure_session_resolver(&mut self) -> PyResult<()> {
+        if self.session_resolver.is_some() {
+            return Ok(());
+        }
+        let clock = crate::calendar::clock::LocalClock::new(
+            self.timezone_name.as_deref(),
+            self.timezone_offset,
+        );
+        let user = self.session_config.sessions.as_ref().map(|pairs| {
+            pairs
+                .iter()
+                .map(|(k, name)| {
+                    (
+                        k.clone(),
+                        crate::calendar::schedule::template(name)
+                            .expect("configure_sessions 已校验"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        let sessions = crate::calendar::resolver::effective_sessions(
+            user,
+            self.timezone_name.as_deref(),
+            self.timezone_offset,
+        );
+        let calendar = match &self.session_config.trading_calendar {
+            Some(days) => Some(
+                crate::calendar::trading_calendar::TradingCalendar::explicit(days.clone())
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?,
+            ),
+            None => None,
+        };
+        let mut resolver =
+            crate::calendar::resolver::SessionResolver::new(clock, calendar, sessions)
+                .map_err(PyValueError::new_err)?;
+        let active: Vec<(String, Option<crate::model::AssetType>)> = self
+            .instruments
+            .values()
+            .map(|i| (i.symbol().to_string(), Some(i.asset_type)))
+            .collect();
+        resolver.set_active(&active);
+        self.session_resolver = Some(resolver);
+        Ok(())
+    }
+
+    /// `ts` 所属的会话交易日。命中当前交易日区间时直接返回，否则交给解析器。
+    pub(crate) fn trading_day_for(&mut self, ts: i64) -> PyResult<NaiveDate> {
+        if let (Some(day), Some((prev_end, end))) =
+            (self.current_trading_day, self.current_day_span)
+            && prev_end < ts
+            && ts <= end
+        {
+            return Ok(day);
+        }
+        // run() 开始时已构造; 直接驱动 pipeline 的调用方(单测)在这里补建。
+        self.ensure_session_resolver()?;
+        let resolver = self.session_resolver.as_ref().expect("刚构造");
+        let day = resolver
+            .session_trading_day(ts)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(day)
     }
 
     pub(crate) fn is_active_timestamp(&self, timestamp: i64) -> bool {

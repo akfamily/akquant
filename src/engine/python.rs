@@ -538,7 +538,12 @@ impl Engine {
             state: SharedState::new(initial_cash),
             last_prices: Arc::new(RwLock::new(HashMap::new())),
             instruments: HashMap::new(),
-            current_date: None,
+            session_resolver: None,
+            current_trading_day: None,
+            current_day_span: None,
+            last_settled_trading_day: None,
+            last_event_ts_in_day: None,
+            scheduled_day_close: None,
             market_manager: MarketManager::new(),
             corporate_action_manager: CorporateActionManager::new(),
             execution_model: Box::new(SimulatedExecutionClient::new()),
@@ -697,6 +702,7 @@ impl Engine {
         self.state.order_manager = snapshot.order_manager;
         *self.last_prices.write().expect("last_prices 写锁被污染") = snapshot.last_prices;
         self.instruments = snapshot.instruments;
+        self.session_resolver = None;
         self.initial_cash = snapshot.initial_cash.unwrap_or(self.state.portfolio.cash);
         self.margin_accrued_interest = snapshot.margin_accrued_interest;
         self.margin_daily_interest = snapshot.margin_daily_interest;
@@ -872,6 +878,7 @@ impl Engine {
     pub fn set_timezone(&mut self, offset: i32) {
         self.timezone_offset = offset;
         self.timezone_name = None;
+        self.session_resolver = None;
         self.window_aggregator
             .write()
             .expect("window_aggregator 写锁被污染")
@@ -912,6 +919,7 @@ impl Engine {
             sessions: pairs,
             trading_calendar,
         };
+        self.session_resolver = None;
         Ok(())
     }
 
@@ -929,6 +937,7 @@ impl Engine {
             .fix()
             .local_minus_utc();
         self.timezone_name = Some(tz_name.to_string());
+        self.session_resolver = None;
         self.window_aggregator
             .write()
             .expect("window_aggregator 写锁被污染")
@@ -1304,6 +1313,8 @@ impl Engine {
     pub fn add_instrument(&mut self, instrument: Instrument) {
         self.instruments
             .insert(instrument.symbol().to_string(), instrument);
+        // 在用时段表随标的集合变化，下次 run() 重建解析器。
+        self.session_resolver = None;
     }
 
     /// 设置初始资金
@@ -1353,6 +1364,9 @@ impl Engine {
         strategy: &Bound<'_, PyAny>,
         show_progress: bool,
     ) -> PyResult<String> {
+        // 会话解析器（交易日归属、收盘时刻）在数据循环前构造，配置错误在这里报出。
+        self.ensure_session_resolver()?;
+
         // Configure history buffer if strategy has _history_depth set
         if let Ok(depth_attr) = strategy.getattr("_history_depth")
             && let Ok(depth) = depth_attr.extract::<usize>()
@@ -1454,15 +1468,23 @@ impl Engine {
         // Final cleanup
         self.state.order_manager.cleanup_finished_orders();
 
-        // 会话收尾补做到期结算: 结算平时在"进入新交易日"时触发, 数据恰好在到期日
-        // (或之后再无交易日)结束时就永远等不到那一刻。判据是 execution_model.is_live()
+        // 会话收尾。日终结算(含到期)挂在交易日收盘定时器上: 回测里最后一个交易日的
+        // 收盘定时器在数据耗尽后照常触发, 结算已完成, 这里只需把那次结算产生的到期
+        // 事件派发给策略(收尾时已没有下一个回调入口; Python 侧按事件键去重)。
+        //
+        // 当前交易日尚未结算(实盘/paper 在收盘前停止)时保持原收尾逻辑: 补做到期结算 ——
+        // 结算平时在交易日收盘时触发, 会话在收盘前结束就等不到那一刻。
+        // 判据是 execution_model.is_live()
         // (仅 RealtimeExecutionClient 对接 broker 时为 true): broker 实盘不做——实盘到期
         // 由柜台处理; run_live 的 paper/replay 走 SimulatedExecutionClient, is_live()
         // 为 false, 会话结束时同样补结算(若在到期日当天停止, 用的是当时已知的最新价而非
         // 真正的到期日收盘价)。补结算与日常路径一致: 记合成成交、发 `expiry` 流事件、
         // 派发 on_expiry。
-        if !self.execution_model.is_live()
-            && let Some(last_date) = self.current_date
+        let current_day_unsettled = self.current_trading_day.is_some()
+            && self.last_settled_trading_day != self.current_trading_day;
+        if current_day_unsettled
+            && !self.execution_model.is_live()
+            && let Some(last_date) = self.current_trading_day
             && let Some(next_date) = last_date.succ_opt()
         {
             let prices = self
@@ -1508,12 +1530,12 @@ impl Engine {
                 .collect();
             self.emit_expiry_stream_events(py);
             self.flush_terminal_expiry_events(py, strategy)?;
+        } else {
+            self.flush_terminal_expiry_events(py, strategy)?;
         }
 
-        // Record final snapshot if we have data
-        if self.current_date.is_some()
-            && let Some(timestamp) = self.terminal_result_timestamp()
-        {
+        // 最终快照只在当前交易日未结算时记; 已结算则当日收盘快照已存在。
+        if current_day_unsettled && let Some(timestamp) = self.terminal_result_timestamp() {
             let prices = self.last_prices.read().expect("last_prices 读锁被污染");
             self.statistics_manager.record_snapshot(
                 timestamp,

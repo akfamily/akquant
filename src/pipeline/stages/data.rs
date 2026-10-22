@@ -1,12 +1,15 @@
 use super::shared::{
     apply_execution_report, effective_execution_policy_for_order, flush_accumulated_trades,
 };
+use crate::calendar::trading_calendar::CalendarError;
 use crate::context::EngineContext;
 use crate::data::FeedAction;
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::model::{Bar, Order, OrderStatus, TradingSession};
 use crate::pipeline::processor::{Processor, ProcessorResult};
+use chrono::NaiveDate;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
@@ -232,6 +235,23 @@ impl Processor for DataProcessor {
             }
             FeedAction::Timer(_timestamp) => {
                 if let Some(timer) = engine.timers.pop() {
+                    // 引擎内部的日终结算定时器: 不推进 clock、不设 current_event、
+                    // 不转给策略。
+                    if timer.is_day_close() {
+                        if timer.timestamp > self.last_timestamp {
+                            self.finalize_current_timestamp(engine, py);
+                        }
+                        let day = NaiveDate::parse_from_str(
+                            &timer.payload[crate::model::timer::DAY_CLOSE_TIMER_PREFIX.len()..],
+                            "%Y-%m-%d",
+                        )
+                        .expect("内部定时器格式");
+                        if engine.last_settled_trading_day != Some(day) {
+                            run_day_close_settlement(engine, py, day, timer.timestamp - 1);
+                            engine.last_settled_trading_day = Some(day);
+                        }
+                        return Ok(ProcessorResult::Loop);
+                    }
                     // Invariant: finalize the current timestamp before any timer
                     // advances the clock past it. Previously only framework
                     // cross-section timers did this; user timers
@@ -319,177 +339,45 @@ impl Processor for DataProcessor {
                     engine.clock.session = TradingSession::Continuous;
                 }
 
-                // Daily Snapshot & Settlement
-                let local_date = engine.local_date_from_ns(timestamp);
-                if engine.is_active_timestamp(timestamp) && engine.current_date != Some(local_date)
-                {
-                    // Captured before `current_date` is advanced below: the date
-                    // whose close this settlement follows. A next-open Day order
-                    // created on this date fills at *today's* open (matched after
-                    // settlement), so it must be spared from today's expiry sweep.
-                    let previous_trading_date = engine.current_date;
-
-                    if engine.current_date.is_some() {
-                        let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
-                        engine.statistics_manager.record_snapshot(
-                            timestamp,
-                            &engine.state.portfolio,
-                            &engine.instruments,
-                            &prices,
-                            &engine.state.order_manager.trade_tracker,
-                            &engine.risk_manager.config,
-                        );
-                    }
-                    engine.current_date = Some(local_date);
-
-                    // Process Corporate Actions (Split/Dividend)
-                    engine.corporate_action_manager.process_date(
-                        local_date,
-                        &mut engine.state.portfolio,
-                        &mut engine.state.order_manager.trade_tracker,
-                    );
-
-                    // Settlement Manager (T+1, Option Expiry, Day Order Expiry)
-                    let mut expired_orders = Vec::new();
-                    // Day orders whose only matchable slice is *this* day's bar
-                    // (next-open, created after the previous close) must not be
-                    // expired by this settlement — they fill after it runs. Same-
-                    // cycle (bar_offset == 0) orders had their slice on their
-                    // creation day, so they still expire here.
-                    let day_orders_awaiting_fill_slice: HashSet<String> = previous_trading_date
-                        .map(|prev| {
-                            engine
-                                .state
-                                .order_manager
-                                .active_orders
-                                .iter()
-                                .filter(|order| {
-                                    order.time_in_force == crate::model::TimeInForce::Day
-                                        && effective_execution_policy_for_order(engine, order)
-                                            .bar_offset
-                                            == 1
-                                        && engine.local_date_from_ns(order.created_at) == prev
-                                })
-                                .map(|order| order.id.clone())
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    // 到期结算必须先于日终结算(利息/强平/T+1/挂单过期): 强平按当时的
-                    // 组合选仓, 而它生成的强平成交要到 apply_execution_report 才落地;
-                    // 若先强平后到期, 到期会立刻清掉持仓与 tracker 库存, 排队的强平成交
-                    // 再平一次就留下反向幻影仓位。强平必须看到到期后的组合。
-                    // 单独调用是因为它要写 TradeTracker(合成平仓成交), 而
-                    // SettlementContext 只持有只读引用。
-                    let expiry_prices = engine
-                        .last_prices
-                        .read()
-                        .expect("last_prices 读锁被污染")
-                        .clone();
-                    let expiry_settlement = engine.settlement_manager.settle_expiries(
-                        local_date,
-                        &mut engine.state.portfolio,
-                        &mut engine.state.order_manager.trade_tracker,
-                        &engine.instruments,
-                        &expiry_prices,
-                        &engine.market_manager,
-                        &engine.risk_manager.config,
-                        timestamp,
-                        engine.bar_count,
-                    );
-                    let settlement_prices =
-                        engine.last_prices.read().expect("last_prices 读锁被污染");
-                    let settlement_ctx = crate::settlement::manager::SettlementContext {
-                        date: local_date,
-                        instruments: &engine.instruments,
-                        last_prices: &settlement_prices,
-                        market_manager: &engine.market_manager,
-                        trade_tracker: &engine.state.order_manager.trade_tracker,
-                        risk_config: &engine.risk_manager.config,
-                        timestamp,
-                        bar_index: engine.bar_count,
-                        default_strategy_id: engine.default_strategy_id.clone(),
-                        day_orders_awaiting_fill_slice: &day_orders_awaiting_fill_slice,
-                    };
-                    let settlement_outcome = engine.settlement_manager.process_daily_settlement(
-                        &mut engine.state.portfolio,
-                        &mut engine.state.order_manager.active_orders,
-                        &mut expired_orders,
-                        &settlement_ctx,
-                    );
-                    drop(settlement_ctx);
-                    drop(settlement_prices);
-                    engine.recent_expiry_events = expiry_settlement
-                        .events
-                        .iter()
-                        .map(crate::context::ExpiryEvent::from_executed)
-                        .collect();
-                    engine.margin_daily_interest = settlement_outcome.daily_interest;
-                    engine.margin_accrued_interest += settlement_outcome.daily_interest;
-                    if settlement_outcome.daily_interest > Decimal::ZERO {
-                        let mut settlement_payload = HashMap::new();
-                        settlement_payload.insert("date", local_date.to_string());
-                        settlement_payload.insert(
-                            "daily_interest",
-                            settlement_outcome.daily_interest.to_string(),
-                        );
-                        settlement_payload.insert(
-                            "accrued_interest",
-                            engine.margin_accrued_interest.to_string(),
-                        );
-                        engine.emit_stream_event(
-                            py,
-                            "settlement",
-                            None,
-                            "info",
-                            settlement_payload,
-                        );
-                    }
-                    if settlement_outcome.forced_liquidation {
-                        let liquidated_symbols = settlement_outcome.liquidated_symbols.clone();
-                        let priority = engine.risk_manager.config.liquidation_priority.clone();
-                        engine.statistics_manager.record_liquidation_audit(
-                            crate::analysis::LiquidationAudit {
-                                timestamp,
-                                date: local_date.to_string(),
-                                daily_interest: settlement_outcome
-                                    .daily_interest
-                                    .to_f64()
-                                    .unwrap_or_default(),
-                                liquidated_count: liquidated_symbols.len(),
-                                liquidated_symbols: liquidated_symbols.clone(),
-                                priority: priority.clone(),
-                            },
-                        );
-                        let mut risk_payload = HashMap::new();
-                        risk_payload.insert("date", local_date.to_string());
-                        risk_payload
-                            .insert("liquidated_count", liquidated_symbols.len().to_string());
-                        risk_payload.insert("liquidated_symbols", liquidated_symbols.join(","));
-                        risk_payload.insert("priority", priority);
-                        if let Some(owner_strategy_id) = engine
-                            .default_strategy_id
-                            .clone()
-                            .filter(|text| !text.trim().is_empty())
+                // 开日: 第一个属于新会话交易日的(活跃)事件。日终结算不在这里做,
+                // 而是挂在该交易日收盘时刻 + 1ns 的内部定时器上(见 Timer 分支)。
+                if engine.is_active_timestamp(timestamp) {
+                    let day = engine.trading_day_for(timestamp)?;
+                    if engine.current_trading_day != Some(day) {
+                        // 上一交易日未结算(实盘漏触发等): 先补结算
+                        if let Some(prev) = engine.current_trading_day
+                            && engine.last_settled_trading_day != Some(prev)
                         {
-                            risk_payload.insert("owner_strategy_id", owner_strategy_id);
+                            let close = engine.current_day_span.map_or(timestamp, |s| s.1);
+                            run_day_close_settlement(engine, py, prev, close);
+                            engine.last_settled_trading_day = Some(prev);
                         }
-                        engine.emit_stream_event(py, "risk", None, "warn", risk_payload);
+                        // Process Corporate Actions (Split/Dividend)
+                        engine.corporate_action_manager.process_date(
+                            day,
+                            &mut engine.state.portfolio,
+                            &mut engine.state.order_manager.trade_tracker,
+                        );
+                        engine.current_trading_day = Some(day);
+                        engine.current_day_span =
+                            Some(session_day_span_for(engine, day, timestamp)?);
+                        engine.last_event_ts_in_day = None;
                     }
-                    for event in settlement_outcome.forced_liquidation_events {
-                        let _ = engine.event_manager.send(event);
+                    if engine.scheduled_day_close != Some(day)
+                        && engine.last_settled_trading_day != Some(day)
+                        && let Some((_, end)) = engine.current_day_span
+                    {
+                        engine.timers.push(crate::model::Timer {
+                            timestamp: end + 1,
+                            payload: format!(
+                                "{}{}",
+                                crate::model::timer::DAY_CLOSE_TIMER_PREFIX,
+                                day
+                            ),
+                        });
+                        engine.scheduled_day_close = Some(day);
                     }
-                    engine.emit_expiry_stream_events(py);
-
-                    for o in expired_orders {
-                        // Tell the execution client to drop the order too. Daily
-                        // settlement only flips the order-manager copy to Expired;
-                        // without this the simulated client keeps it New in its own
-                        // book and a later bar crossing the limit fills the zombie
-                        // long after it should have died (issue #329 hygiene item).
-                        // Mirrors the reject path above (reject_missing_symbol_orders).
-                        engine.execution_model.on_cancel(&o.id);
-                        engine.state.order_manager.orders.push(o);
-                    }
+                    engine.last_event_ts_in_day = Some(timestamp);
                 }
 
                 if let Event::Bar(ref b) = event {
@@ -565,5 +453,176 @@ impl Processor for DataProcessor {
                 Ok(ProcessorResult::Next)
             }
         }
+    }
+}
+
+/// 交易日 `day` 的区间 `(上一交易日收盘, 本交易日收盘]`。本交易日收盘取不到(如日历
+/// 越界)时报错; 只有"上一交易日"不在用户日历里(日历恰从首个数据日开始)时, 下界
+/// 退化为本事件时间戳 - 1 —— 下界只用于 `trading_day_for` 的区间缓存, 时间单调前进,
+/// 不会再有更早的事件需要命中它。
+fn session_day_span_for(engine: &Engine, day: NaiveDate, ts: i64) -> PyResult<(i64, i64)> {
+    let resolver = engine.session_resolver.as_ref().expect("run() 已构造");
+    let end = resolver
+        .session_day_end(day)
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    match resolver.session_day_span(day) {
+        Ok(span) => Ok(span),
+        Err(CalendarError::OutOfRange { .. }) => Ok((ts - 1, end)),
+        Err(e) => Err(PyValueError::new_err(e.to_string())),
+    }
+}
+
+/// 交易日 `day` 的日终结算：快照 → 到期 → 利息与强平 → T+1 → Day 单过期 → 流事件。
+/// `close_ts` 为会话收盘时刻（快照与流事件时间戳）。
+fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_ts: i64) {
+    // 当日收盘快照(原代码在"进入新日"时记上一日快照)
+    {
+        let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
+        engine.statistics_manager.record_snapshot(
+            close_ts,
+            &engine.state.portfolio,
+            &engine.instruments,
+            &prices,
+            &engine.state.order_manager.trade_tracker,
+            &engine.risk_manager.config,
+        );
+    }
+
+    // Settlement Manager (T+1, Option Expiry, Day Order Expiry)
+    let mut expired_orders = Vec::new();
+    // NextOpen(bar_offset == 1) 的 Day 单若创建于本交易日最后一个已处理行情事件
+    // 当时或之后, 唯一的撮合机会是下一交易日的第一个事件, 本次结算不过期。
+    // 同周期(bar_offset == 0)单在创建时的事件上已有撮合机会, 照常过期。
+    let exempt_day_orders: HashSet<String> = engine
+        .state
+        .order_manager
+        .active_orders
+        .iter()
+        .filter(|order| {
+            order.time_in_force == crate::model::TimeInForce::Day
+                && effective_execution_policy_for_order(engine, order).bar_offset == 1
+                && engine
+                    .last_event_ts_in_day
+                    .is_none_or(|last| order.created_at >= last)
+        })
+        .map(|order| order.id.clone())
+        .collect();
+    // 到期结算必须先于日终结算(利息/强平/T+1/挂单过期): 强平按当时的
+    // 组合选仓, 而它生成的强平成交要到 apply_execution_report 才落地;
+    // 若先强平后到期, 到期会立刻清掉持仓与 tracker 库存, 排队的强平成交
+    // 再平一次就留下反向幻影仓位。强平必须看到到期后的组合。
+    // 单独调用是因为它要写 TradeTracker(合成平仓成交), 而
+    // SettlementContext 只持有只读引用。
+    let expiry_prices = engine
+        .last_prices
+        .read()
+        .expect("last_prices 读锁被污染")
+        .clone();
+    // settle_expiries 的 date 是"正在进入的交易日"(到期日严格小于它才结算; 也是
+    // 到期事件的 trading_date): 收盘时传会话日历上的下一交易日, 结算到期日早于它
+    // (含 day 当天与其后的非交易日)的持仓。日历越界(用户日历最后一天)时退化为次日。
+    let entering_day = engine
+        .session_resolver
+        .as_ref()
+        .and_then(|r| r.next_session_day(day).ok())
+        .or_else(|| day.succ_opt())
+        .unwrap_or(day);
+    let expiry_settlement = engine.settlement_manager.settle_expiries(
+        entering_day,
+        &mut engine.state.portfolio,
+        &mut engine.state.order_manager.trade_tracker,
+        &engine.instruments,
+        &expiry_prices,
+        &engine.market_manager,
+        &engine.risk_manager.config,
+        close_ts,
+        engine.bar_count,
+    );
+    let settlement_prices = engine.last_prices.read().expect("last_prices 读锁被污染");
+    let settlement_ctx = crate::settlement::manager::SettlementContext {
+        date: day,
+        instruments: &engine.instruments,
+        last_prices: &settlement_prices,
+        market_manager: &engine.market_manager,
+        trade_tracker: &engine.state.order_manager.trade_tracker,
+        risk_config: &engine.risk_manager.config,
+        timestamp: close_ts,
+        bar_index: engine.bar_count,
+        default_strategy_id: engine.default_strategy_id.clone(),
+        exempt_day_orders: &exempt_day_orders,
+        accrual_days: 1,
+    };
+    let settlement_outcome = engine.settlement_manager.process_daily_settlement(
+        &mut engine.state.portfolio,
+        &mut engine.state.order_manager.active_orders,
+        &mut expired_orders,
+        &settlement_ctx,
+    );
+    drop(settlement_ctx);
+    drop(settlement_prices);
+    engine.recent_expiry_events = expiry_settlement
+        .events
+        .iter()
+        .map(crate::context::ExpiryEvent::from_executed)
+        .collect();
+    engine.margin_daily_interest = settlement_outcome.daily_interest;
+    engine.margin_accrued_interest += settlement_outcome.daily_interest;
+    if settlement_outcome.daily_interest > Decimal::ZERO {
+        let mut settlement_payload = HashMap::new();
+        settlement_payload.insert("date", day.to_string());
+        settlement_payload.insert(
+            "daily_interest",
+            settlement_outcome.daily_interest.to_string(),
+        );
+        settlement_payload.insert(
+            "accrued_interest",
+            engine.margin_accrued_interest.to_string(),
+        );
+        engine.emit_stream_event(py, "settlement", None, "info", settlement_payload);
+    }
+    if settlement_outcome.forced_liquidation {
+        let liquidated_symbols = settlement_outcome.liquidated_symbols.clone();
+        let priority = engine.risk_manager.config.liquidation_priority.clone();
+        engine
+            .statistics_manager
+            .record_liquidation_audit(crate::analysis::LiquidationAudit {
+                timestamp: close_ts,
+                date: day.to_string(),
+                daily_interest: settlement_outcome
+                    .daily_interest
+                    .to_f64()
+                    .unwrap_or_default(),
+                liquidated_count: liquidated_symbols.len(),
+                liquidated_symbols: liquidated_symbols.clone(),
+                priority: priority.clone(),
+            });
+        let mut risk_payload = HashMap::new();
+        risk_payload.insert("date", day.to_string());
+        risk_payload.insert("liquidated_count", liquidated_symbols.len().to_string());
+        risk_payload.insert("liquidated_symbols", liquidated_symbols.join(","));
+        risk_payload.insert("priority", priority);
+        if let Some(owner_strategy_id) = engine
+            .default_strategy_id
+            .clone()
+            .filter(|text| !text.trim().is_empty())
+        {
+            risk_payload.insert("owner_strategy_id", owner_strategy_id);
+        }
+        engine.emit_stream_event(py, "risk", None, "warn", risk_payload);
+    }
+    for event in settlement_outcome.forced_liquidation_events {
+        let _ = engine.event_manager.send(event);
+    }
+    engine.emit_expiry_stream_events(py);
+
+    for o in expired_orders {
+        // Tell the execution client to drop the order too. Daily
+        // settlement only flips the order-manager copy to Expired;
+        // without this the simulated client keeps it New in its own
+        // book and a later bar crossing the limit fills the zombie
+        // long after it should have died (issue #329 hygiene item).
+        // Mirrors the reject path above (reject_missing_symbol_orders).
+        engine.execution_model.on_cancel(&o.id);
+        engine.state.order_manager.orders.push(o);
     }
 }

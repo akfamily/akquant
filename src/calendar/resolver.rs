@@ -186,6 +186,11 @@ impl SessionResolver {
         Ok(end)
     }
 
+    /// 会话日历上 `day` 之后的下一个交易日。
+    pub fn next_session_day(&self, day: NaiveDate) -> Result<NaiveDate, CalendarError> {
+        self.session_calendar().after(day)
+    }
+
     pub fn session_day_span(&self, day: NaiveDate) -> Result<(i64, i64), CalendarError> {
         let prev = self.session_calendar().before(day)?;
         Ok((self.session_day_end(prev)?, self.session_day_end(day)?))
@@ -958,6 +963,8 @@ mod tests {
         let (prev_end, end) = r.session_day_span(d(2024, 1, 8)).unwrap();
         assert_eq!(prev_end, at(2024, 1, 5, 15, 0, 0));
         assert_eq!(end, at(2024, 1, 8, 15, 0, 0));
+        // 周五之后的下一会话交易日是下周一
+        assert_eq!(r.next_session_day(d(2024, 1, 5)).unwrap(), d(2024, 1, 8));
     }
 
     #[test]
