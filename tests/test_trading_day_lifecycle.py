@@ -798,7 +798,7 @@ class _HoldOnce(Strategy):
 
 
 class _Idle(Strategy):
-    """不交易的策略（带委托的策略实例含不可 pickle 的 Order，无法存档）."""
+    """不交易的策略（存档时 ``_known_orders`` 为空，策略实例可 pickle）."""
 
     def on_bar(self, bar: Bar) -> None:
         """什么也不做."""
@@ -849,8 +849,8 @@ def test_checkpoint_roundtrips_trading_day_progress() -> None:
 def test_resume_after_weekend_settles_each_day_once(tmp_path: Any) -> None:
     """周五存档、周一续跑：续跑段不重复结算周五."""
     part1 = run_backtest(
-        data=_ten_oclock_frame(["2024-01-04", "2024-01-05"]),
-        strategy=_Idle,
+        data=_ten_oclock_frame(["2024-01-03", "2024-01-04", "2024-01-05"]),
+        strategy=_HoldOnce,
         symbols=["600000.SH"],
         initial_cash=1e5,
         show_progress=False,
@@ -864,10 +864,14 @@ def test_resume_after_weekend_settles_each_day_once(tmp_path: Any) -> None:
         symbols=["600000.SH"],
         show_progress=False,
     )
+    # 周一续跑时持仓（周三买入的 100 股）跨周末仍在。
     # 续跑结果的 positions 只含续跑段的快照：周一、周二各一条日终快照，外加运行
     # 结束时的末根 bar 快照（周二 10:00）；补结算周五会多出一条周一 10:00 的快照
+    # 注意：末根 bar 的 10:00 重复快照是现有行为，Task 7 会移除它，
+    # 届时须同步更新本断言。
     times = [t.strftime("%Y-%m-%d %H:%M") for t in _snapshot_times(part2)]
     assert times == ["2024-01-08 15:00", "2024-01-09 10:00", "2024-01-09 15:00"]
+    assert (part2.positions["600000.SH"] == 100.0).all()
 
 
 def test_resume_same_day_does_not_reopen_or_resettle(tmp_path: Any) -> None:

@@ -645,7 +645,7 @@ impl Engine {
     }
 
     /// 导出当前状态为二进制数据
-    fn get_state_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+    pub(crate) fn get_state_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let history_state = Some(crate::history::HistoryBufferSnapshot::from(
             &*self.history_buffer.read().unwrap(),
         ));
@@ -711,7 +711,7 @@ impl Engine {
     }
 
     /// 从二进制数据加载状态
-    fn load_state_bytes(&mut self, data: &Bound<'_, PyBytes>) -> PyResult<()> {
+    pub(crate) fn load_state_bytes(&mut self, data: &Bound<'_, PyBytes>) -> PyResult<()> {
         let bytes = data.as_bytes();
         let snapshot: crate::engine::state::EngineSnapshot =
             rmp_serde::from_slice(bytes).map_err(|e| PyValueError::new_err(e.to_string()))?;

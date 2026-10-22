@@ -218,6 +218,27 @@ mod tests {
             last_corp_action_date: None,
         };
 
+        // 旧格式存档: msgpack 数组缺少末尾三个交易日进度字段, 读入时应为 None
+        let old_encoded: Vec<u8> = rmp_serde::to_vec(&(
+            &snapshot.current_time,
+            &snapshot.portfolio,
+            &snapshot.order_manager,
+            &snapshot.last_prices,
+            &snapshot.instruments,
+            &snapshot.initial_cash,
+            &snapshot.margin_accrued_interest,
+            &snapshot.margin_daily_interest,
+            &snapshot.history_state,
+            &snapshot.window_aggregator_state,
+            &snapshot.strategy_risk_state,
+        ))
+        .unwrap();
+        let old_decoded: EngineSnapshot = rmp_serde::from_slice(&old_encoded).unwrap();
+        assert_eq!(old_decoded.current_time, 123456789);
+        assert_eq!(old_decoded.current_trading_day, None);
+        assert_eq!(old_decoded.last_settled_trading_day, None);
+        assert_eq!(old_decoded.last_corp_action_date, None);
+
         let encoded: Vec<u8> = rmp_serde::to_vec(&snapshot).unwrap();
         let decoded: EngineSnapshot = rmp_serde::from_slice(&encoded).unwrap();
 

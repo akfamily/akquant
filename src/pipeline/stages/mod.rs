@@ -494,4 +494,132 @@ mod tests {
             assert_eq!(engine.state.portfolio.cash, dec!(100));
         });
     }
+
+    /// 构造一个带 600000.SH 股票、持仓 100 股与周六拆股(1 拆 2)的引擎, 喂入给定日期 10:00 的 bar。
+    fn resume_engine(days: &[(i32, u32, u32)]) -> Engine {
+        use crate::model::corporate_action::{CorporateAction, CorporateActionType};
+        use chrono::NaiveDate;
+
+        let mut engine = Engine::new();
+        let symbol = "600000.SH".to_string();
+        engine
+            .instruments
+            .insert(symbol.clone(), create_instrument(&symbol));
+        engine.corporate_action_manager.add(CorporateAction {
+            symbol: symbol.clone(),
+            date: NaiveDate::from_ymd_opt(2024, 1, 6).unwrap(),
+            action_type: CorporateActionType::Split,
+            value: dec!(2.0),
+        });
+        for &(y, mo, d) in days {
+            // 本地(+08:00) 10:00 = UTC 02:00
+            let ts = NaiveDate::from_ymd_opt(y, mo, d)
+                .unwrap()
+                .and_hms_opt(2, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_nanos_opt()
+                .unwrap();
+            engine
+                .state
+                .feed
+                .add_bar(Bar {
+                    timestamp: ts,
+                    symbol: symbol.clone(),
+                    open: dec!(10),
+                    high: dec!(10),
+                    low: dec!(10),
+                    close: dec!(10),
+                    volume: dec!(100),
+                    extra: HashMap::new(),
+                    freq: None,
+                    interval_start: None,
+                })
+                .unwrap();
+        }
+        engine
+    }
+
+    /// 周五处理一根 bar 后存档(未结算周五), 在新引擎上恢复并喂入周一、周二。
+    fn friday_checkpoint_then_resume(py: Python<'_>) -> Engine {
+        let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+        let symbol = "600000.SH".to_string();
+
+        let mut first = resume_engine(&[(2024, 1, 5)]);
+        {
+            let positions = Arc::make_mut(&mut first.state.portfolio.positions);
+            positions.insert(symbol.clone(), dec!(100));
+            let available = Arc::make_mut(&mut first.state.portfolio.available_positions);
+            available.insert(symbol.clone(), dec!(100));
+        }
+        let mut processor = DataProcessor::new();
+        processor.process(&mut first, py, &strategy).unwrap();
+        assert_eq!(
+            first.current_trading_day,
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 5)
+        );
+        assert_eq!(first.last_settled_trading_day, None);
+        let bytes = first.get_state_bytes(py).unwrap();
+
+        let mut second = resume_engine(&[(2024, 1, 8), (2024, 1, 9)]);
+        second.load_state_bytes(&bytes).unwrap();
+        let mut processor = DataProcessor::new();
+        // 周一
+        while processor.process(&mut second, py, &strategy).unwrap()
+            == crate::pipeline::processor::ProcessorResult::Loop
+        {}
+        second
+    }
+
+    #[test]
+    fn test_resume_applies_saturday_split_exactly_once() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let symbol = "600000.SH".to_string();
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = friday_checkpoint_then_resume(py);
+            // 周一开日: 周六拆股生效一次
+            assert_eq!(
+                engine.state.portfolio.positions.get(&symbol).unwrap(),
+                &dec!(200)
+            );
+            // 周二不得再次拆股
+            let mut processor = DataProcessor::new();
+            processor.process(&mut engine, py, &strategy).unwrap();
+            while processor.process(&mut engine, py, &strategy).unwrap()
+                == crate::pipeline::processor::ProcessorResult::Loop
+            {}
+            assert_eq!(
+                engine.state.portfolio.positions.get(&symbol).unwrap(),
+                &dec!(200)
+            );
+        });
+    }
+
+    #[test]
+    fn test_resume_catchup_settlement_uses_session_close() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let engine = friday_checkpoint_then_resume(py);
+            // 周五 15:00(+08:00) = UTC 07:00
+            let fri_close = chrono::NaiveDate::from_ymd_opt(2024, 1, 5)
+                .unwrap()
+                .and_hms_opt(7, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_nanos_opt()
+                .unwrap();
+            assert_eq!(
+                engine.last_settled_trading_day,
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 5)
+            );
+            let stamps: Vec<i64> = engine
+                .statistics_manager
+                .snapshots
+                .iter()
+                .map(|(t, _)| *t)
+                .collect();
+            assert_eq!(stamps, vec![fri_close]);
+        });
+    }
 }

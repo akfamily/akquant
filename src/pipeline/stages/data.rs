@@ -364,7 +364,17 @@ impl Processor for DataProcessor {
                         if let Some(prev) = engine.current_trading_day
                             && engine.last_settled_trading_day != Some(prev)
                         {
-                            let close = engine.current_day_span.map_or(timestamp, |s| s.1);
+                            // 收盘时刻: 优先用已登记的跨度; 从存档恢复后跨度为空,
+                            // 取该交易日的会话收盘, 不退化为本事件时间戳。
+                            let close = match engine.current_day_span {
+                                Some((_, end)) => end,
+                                None => engine
+                                    .session_resolver
+                                    .as_ref()
+                                    .expect("run() 已构造")
+                                    .session_day_end(prev)
+                                    .map_err(|e| PyValueError::new_err(e.to_string()))?,
+                            };
                             run_day_close_settlement(engine, py, prev, close);
                             engine.last_settled_trading_day = Some(prev);
                         }
