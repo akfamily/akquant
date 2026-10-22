@@ -453,6 +453,131 @@ def test_live_replay_intrabar_streams_unconfirmed_points() -> None:
 
 
 # --------------------------------------------------------------------------
+# 窗口确认点的快照要当场发出, 不能等下一个事件顺带 flush
+# --------------------------------------------------------------------------
+class _WindowOnly(Strategy):
+    """5min 窗口指标(不开 intrabar, 问题与 intrabar 无关) + 基础周期参照指标.
+
+    参照指标让下一根基础 bar 也产出事件: 若窗口快照等下一个事件顺带 flush,
+    它会排在参照点之后, 从而被测出"晚一拍"。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.subscribe_bars("5min")
+
+    def on_start(self) -> None:
+        self.sma5 = self.I(aq.SMA(2), name="sma5", freq="5min", plot=True)
+        self.base = self.I(aq.SMA(2), name="base", plot=True)
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+
+def _indicator_sequence(sink: List[Tuple[str, Any, Any]]) -> Any:
+    """收集全部指标事件: point 记 (key, ts, value), snapshot 记 (ts, {key: value})."""
+
+    def on_event(event: Any) -> None:
+        if not aq.is_indicator_stream_event(event):
+            return
+        m = aq.to_indicator_message(event)
+        if m is None:
+            return
+        if m["type"] == "point":
+            ind = m["indicator"]
+            sink.append(
+                ("point", (ind["indicator_key"], int(ind["timestamp"])), ind["value"])
+            )
+        elif m["type"] == "snapshot":
+            snap = m["snapshot"]
+            values = {item["indicator_key"]: item["value"] for item in snap["items"]}
+            sink.append(("snapshot", int(snap["timestamp"]), values))
+
+    return on_event
+
+
+def _assert_each_point_snapshotted_at_once(seq: List[Tuple[str, Any, Any]]) -> None:
+    points = [
+        i
+        for i, (kind, key, _) in enumerate(seq)
+        if kind == "point" and key[0] == "sma5"
+    ]
+    assert points, "应产出窗口确认点"
+    assert any(kind == "point" and key[0] == "base" for kind, key, _ in seq)
+    for i in points:
+        # 紧随其后的就是含该点的同 time 快照; 末尾窗口(收尾强制闭合)也不例外
+        _, (_, ts), value = seq[i]
+        assert i + 1 < len(seq), f"确认点 {seq[i]} 之后没有快照"
+        kind, snap_ts, values = seq[i + 1]
+        assert (kind, snap_ts) == ("snapshot", ts), f"确认点 {seq[i]} 后是 {seq[i + 1]}"
+        assert values.get("sma5") == value
+
+
+@pytest.mark.parametrize(("minutes", "warmup"), [(16, 0), (7, 8)])
+def test_window_confirmed_snapshot_flushed_in_window_callback(
+    minutes: int, warmup: int
+) -> None:
+    """回测: 窗口确认点在窗口回调内就发快照, 含数据结束时强制闭合的末尾窗口.
+
+    快照是只按 snapshot 落库的消费方(live_server)的唯一数据源。若等下一个
+    事件顺带 flush, 正常窗口晚一拍, 末尾窗口则永远发不出去。``(7, 8)`` 让
+    末尾窗口(第 7 根基础 bar 后收尾闭合)落在 warmup 门控提前返回的分支里。
+    """
+    seq: List[Tuple[str, Any, Any]] = []
+    strategy_cls = type("_WindowWarmup", (_WindowOnly,), {"warmup_period": warmup})
+    run_backtest(
+        strategy=strategy_cls,
+        data=_ticks(minutes),
+        freq="1min",
+        symbols=[SYMBOL],
+        initial_cash=1e5,
+        show_progress=False,
+        on_event=_indicator_sequence(seq),
+        stream_batch_size=1,
+    )
+    _assert_each_point_snapshotted_at_once(seq)
+
+
+def test_live_window_confirmed_snapshot_flushed_in_window_callback() -> None:
+    """实盘 replay: 同上, 会话结束(KeyboardInterrupt 收尾)的末尾窗口也要有快照."""
+    from akquant import run_live
+    from akquant.akquant import AssetType, Instrument
+
+    idx = pd.date_range(
+        "2024-01-02 09:31:00", periods=12, freq="1min", tz="Asia/Shanghai"
+    )
+    bars = [
+        Bar(int(ts.value), 10.0 + i, 10.5 + i, 9.5 + i, 10.1 + i, 100.0, "600000")
+        for i, ts in enumerate(idx)
+    ]
+    seq: List[Tuple[str, Any, Any]] = []
+    run_live(
+        strategy_cls=_WindowOnly,
+        instruments=[
+            Instrument(
+                symbol="600000",
+                asset_type=AssetType.Stock,
+                multiplier=1.0,
+                margin_ratio=1.0,
+                tick_size=0.01,
+                lot_size=100,
+                option_type=None,
+                strike_price=None,
+                expiry_date=None,
+            )
+        ],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars, "freq": "1min"},
+        cash=1e6,
+        show_progress=False,
+        on_event=_indicator_sequence(seq),
+        duration="30s",
+    )
+    _assert_each_point_snapshotted_at_once(seq)
+
+
+# --------------------------------------------------------------------------
 # Tier B: 基础周期指标在 tick 上的实时值(每 30s 一笔 tick, 1min 基础 bar)
 # --------------------------------------------------------------------------
 from akquant.indicator_declaration import end_stamp_label  # noqa: E402

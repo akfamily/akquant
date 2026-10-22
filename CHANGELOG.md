@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **复盘页可隐藏价格 K 线：`result.viz.review(hide_price=)` 与页面“隐藏 K 线”按钮**：当前标的带 candle 指标（如平均 K 线）时出现按钮，可随时切换，`hide_price=True` 指定初始隐藏；只隐藏价格 K 线，买卖点、成交量与其他指标照常显示，无 candle 指标的标的不受影响。
 
+### Fixed
+- **`freq=` 窗口指标的确认值快照（`indicator_snapshot`）晚一拍，末尾窗口的快照完全缺失**：窗口 bar 在基础事件回调之后才派发，而窗口回调内不发快照，确认值只能等下一个事件顺带发出——实盘只推 bar 时，5min 指标的确认值要等下一根 1min bar 才到前端；回测数据结束或实盘会话停止时强制闭合的末尾窗口后面没有事件，只发了 `indicator_point`、快照永远发不出去，只按快照落库的消费方会丢这一点。现在窗口回调结束时即发快照。`indicator_point`、`indicator_df()` 与导出不受影响。
+
 ## [0.3.69] - 2026-10-21
 
 ### Added
