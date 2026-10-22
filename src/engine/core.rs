@@ -93,6 +93,8 @@ pub struct Engine {
     pub(crate) last_event_ts_in_day: Option<i64>,
     /// 已登记收盘定时器的交易日（避免重复登记）。
     pub(crate) scheduled_day_close: Option<NaiveDate>,
+    /// 公司行动已处理到的日期(含)。开日时处理 (该日期, 当日交易日] 内的全部行动。
+    pub(crate) last_corp_action_date: Option<NaiveDate>,
     pub(crate) market_manager: MarketManager,
     pub(crate) corporate_action_manager: CorporateActionManager,
     pub(crate) execution_model: Box<dyn ExecutionClient>,

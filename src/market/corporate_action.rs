@@ -49,6 +49,29 @@ impl CorporateActionManager {
         self.actions.entry(action.date).or_default().push(action);
     }
 
+    /// 按日期升序处理日期落在 `[from, to]` 内的全部公司行动。
+    pub fn process_range(
+        &self,
+        from: NaiveDate,
+        to: NaiveDate,
+        portfolio: &mut Portfolio,
+        trade_tracker: &mut TradeTracker,
+    ) {
+        if from > to {
+            return;
+        }
+        let mut dates: Vec<NaiveDate> = self
+            .actions
+            .keys()
+            .copied()
+            .filter(|d| *d >= from && *d <= to)
+            .collect();
+        dates.sort();
+        for date in dates {
+            self.process_date(date, portfolio, trade_tracker);
+        }
+    }
+
     pub fn process_date(
         &self,
         date: NaiveDate,

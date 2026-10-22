@@ -259,6 +259,91 @@ mod tests {
     }
 
     #[test]
+    fn weekend_corporate_actions_apply_at_next_trading_day_open() {
+        pyo3::Python::initialize();
+
+        use crate::model::corporate_action::{CorporateAction, CorporateActionType};
+        use chrono::NaiveDate;
+
+        // 默认上海时区 + 工作日日历: 周六的拆股、周日的分红都顺延到周一开日处理,
+        // 不能因为周末没有交易日而被丢弃。
+        let mut engine = Engine::new();
+        let symbol = "AAPL".to_string();
+        engine
+            .instruments
+            .insert(symbol.clone(), create_instrument(&symbol));
+        {
+            let positions = Arc::make_mut(&mut engine.state.portfolio.positions);
+            positions.insert(symbol.clone(), dec!(100));
+            let available = Arc::make_mut(&mut engine.state.portfolio.available_positions);
+            available.insert(symbol.clone(), dec!(100));
+        }
+        engine.state.portfolio.cash = dec!(0);
+        engine.corporate_action_manager.add(CorporateAction {
+            symbol: symbol.clone(),
+            date: NaiveDate::from_ymd_opt(2024, 1, 6).unwrap(), // 周六
+            action_type: CorporateActionType::Split,
+            value: dec!(2.0),
+        });
+        engine.corporate_action_manager.add(CorporateAction {
+            symbol: symbol.clone(),
+            date: NaiveDate::from_ymd_opt(2024, 1, 7).unwrap(), // 周日
+            action_type: CorporateActionType::Dividend,
+            value: dec!(0.5),
+        });
+
+        let bar = |timestamp: i64| Bar {
+            timestamp,
+            symbol: symbol.clone(),
+            open: dec!(10),
+            high: dec!(10),
+            low: dec!(10),
+            close: dec!(10),
+            volume: dec!(100),
+            extra: HashMap::new(),
+            freq: None,
+            interval_start: None,
+        };
+        engine
+            .state
+            .feed
+            .add_bar(bar(1_704_420_000_000_000_000))
+            .unwrap(); // 01-05 周五 10:00
+        engine
+            .state
+            .feed
+            .add_bar(bar(1_704_679_200_000_000_000))
+            .unwrap(); // 01-08 周一 10:00
+
+        let mut processor = DataProcessor::new();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+
+            processor.process(&mut engine, py, &strategy).unwrap();
+            assert_eq!(
+                engine.state.portfolio.positions.get(&symbol).unwrap(),
+                &dec!(100)
+            );
+            assert_eq!(engine.state.portfolio.cash, dec!(0));
+
+            // 跳过周五的日终结算定时器, 直到处理周一的 bar
+            while processor.process(&mut engine, py, &strategy).unwrap()
+                == crate::pipeline::processor::ProcessorResult::Loop
+            {}
+            assert_eq!(
+                engine.current_trading_day,
+                Some(NaiveDate::from_ymd_opt(2024, 1, 8).unwrap())
+            );
+            // 先拆股(周六)再分红(周日): 200 股 × 0.5
+            assert_eq!(
+                engine.state.portfolio.positions.get(&symbol).unwrap(),
+                &dec!(200)
+            );
+            assert_eq!(engine.state.portfolio.cash, dec!(100));
+        });
+    }
+
+    #[test]
     fn test_corporate_action_processing() {
         pyo3::Python::initialize();
 

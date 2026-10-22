@@ -540,3 +540,59 @@ def test_t_plus_one_buy_then_after_close_timer_is_next_trading_day() -> None:
     assert all(
         t > pd.Timestamp("2024-01-03 15:00", tz="Asia/Shanghai") for t in sell_times
     )
+
+
+class _BuyFirstBar(Strategy):
+    """首根 bar 按当前价买入 150 股."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done:
+            self.done = True
+            self.buy(bar.symbol, 150)
+
+
+def test_close_snapshot_reflects_same_day_forced_liquidation() -> None:
+    """收盘快照记在结算之后：最后交易日收盘强平后，最后一行快照为空仓."""
+    ts = pd.to_datetime(["2024-01-03 10:00", "2024-01-03 14:00"]).tz_localize(
+        "Asia/Shanghai"
+    )
+    bars = [
+        Bar(
+            timestamp=t.value,
+            open=p,
+            high=p,
+            low=p,
+            close=p,
+            volume=10000.0,
+            symbol="LIQ",
+        )
+        for t, p in zip(ts, [100.0, 20.0])
+    ]
+    result = run_backtest(
+        strategy=_BuyFirstBar,
+        data=bars,
+        symbols=["LIQ"],
+        initial_cash=10000.0,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+        lot_size=1,
+        risk_config=aq.config.RiskConfig(
+            account_mode="margin",
+            initial_margin_ratio=0.5,
+            maintenance_margin_ratio=0.5,
+            financing_rate_annual=0.0,
+            borrow_rate_annual=0.0,
+            allow_force_liquidation=True,
+        ),
+    )
+    assert not result.liquidation_audit_df.empty
+    positions = result.positions
+    # 结果里另有 get_results 在最后事件时刻(14:00)补的期末点; 最后一行是收盘快照
+    assert positions.index[-1].tz_convert("Asia/Shanghai") == pd.Timestamp(
+        "2024-01-03 15:00", tz="Asia/Shanghai"
+    )
+    assert float(positions.iloc[-1].get("LIQ", 0.0)) == 0.0

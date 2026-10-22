@@ -544,6 +544,7 @@ impl Engine {
             last_settled_trading_day: None,
             last_event_ts_in_day: None,
             scheduled_day_close: None,
+            last_corp_action_date: None,
             market_manager: MarketManager::new(),
             corporate_action_manager: CorporateActionManager::new(),
             execution_model: Box::new(SimulatedExecutionClient::new()),

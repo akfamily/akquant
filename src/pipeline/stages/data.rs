@@ -352,12 +352,20 @@ impl Processor for DataProcessor {
                             run_day_close_settlement(engine, py, prev, close);
                             engine.last_settled_trading_day = Some(prev);
                         }
-                        // Process Corporate Actions (Split/Dividend)
-                        engine.corporate_action_manager.process_date(
+                        // 公司行动(拆股/分红): 处理日期落在 (上次处理到的日期, day] 的全部
+                        // 行动, 落在非交易日(周末、节假日)的顺延到其后第一个交易日开日。
+                        // 首个交易日从首个事件的本地日期起算(不回溯数据开始前的行动)。
+                        let corp_from = match engine.last_corp_action_date {
+                            Some(last) => last.succ_opt().unwrap_or(last),
+                            None => engine.local_date_from_ns(timestamp).min(day),
+                        };
+                        engine.corporate_action_manager.process_range(
+                            corp_from,
                             day,
                             &mut engine.state.portfolio,
                             &mut engine.state.order_manager.trade_tracker,
                         );
+                        engine.last_corp_action_date = Some(day);
                         engine.current_trading_day = Some(day);
                         engine.current_day_span =
                             Some(session_day_span_for(engine, day, timestamp)?);
@@ -472,22 +480,9 @@ fn session_day_span_for(engine: &Engine, day: NaiveDate, ts: i64) -> PyResult<(i
     }
 }
 
-/// 交易日 `day` 的日终结算：快照 → 到期 → 利息与强平 → T+1 → Day 单过期 → 流事件。
+/// 交易日 `day` 的日终结算：到期 → 利息与强平 → T+1 → Day 单过期 → 流事件 → 快照。
 /// `close_ts` 为会话收盘时刻（快照与流事件时间戳）。
 fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_ts: i64) {
-    // 当日收盘快照(原代码在"进入新日"时记上一日快照)
-    {
-        let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
-        engine.statistics_manager.record_snapshot(
-            close_ts,
-            &engine.state.portfolio,
-            &engine.instruments,
-            &prices,
-            &engine.state.order_manager.trade_tracker,
-            &engine.risk_manager.config,
-        );
-    }
-
     // Settlement Manager (T+1, Option Expiry, Day Order Expiry)
     let mut expired_orders = Vec::new();
     // NextOpen(bar_offset == 1) 的 Day 单若创建于本交易日最后一个已处理行情事件
@@ -610,9 +605,24 @@ fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate,
         }
         engine.emit_stream_event(py, "risk", None, "warn", risk_payload);
     }
+    // 强平成交就地落地(与 finalize_current_timestamp 落地撮合回报的方式相同),
+    // 而不是投进事件通道等下一轮 ChannelProcessor: 收盘快照要反映强平后的组合。
+    // 回调(on_order/on_trade)仍按原路径在下一个回调入口派发。
+    let mut liquidation_trades = Vec::new();
+    let mut oco_suppressed_fill_order_ids: HashSet<String> = HashSet::new();
     for event in settlement_outcome.forced_liquidation_events {
-        let _ = engine.event_manager.send(event);
+        if let Event::ExecutionReport(order, trade) = event {
+            apply_execution_report(
+                engine,
+                py,
+                order,
+                trade,
+                &mut oco_suppressed_fill_order_ids,
+                &mut liquidation_trades,
+            );
+        }
     }
+    flush_accumulated_trades(engine, &mut liquidation_trades);
     engine.emit_expiry_stream_events(py);
 
     for o in expired_orders {
@@ -625,4 +635,15 @@ fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate,
         engine.execution_model.on_cancel(&o.id);
         engine.state.order_manager.orders.push(o);
     }
+
+    // 当日收盘快照: 记在全部结算步骤之后, 反映结算后的组合(spec §4.2)。
+    let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
+    engine.statistics_manager.record_snapshot(
+        close_ts,
+        &engine.state.portfolio,
+        &engine.instruments,
+        &prices,
+        &engine.state.order_manager.trade_tracker,
+        &engine.risk_manager.config,
+    );
 }

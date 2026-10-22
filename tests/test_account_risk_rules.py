@@ -571,6 +571,10 @@ def test_margin_account_same_cycle_cover_then_reopen_short_releases_margin() -> 
             account_mode="margin",
             enable_short_sell=True,
             initial_margin_ratio=0.5,
+            # 最后交易日现在也做日终结算; 纯空头股票账户的维持担保比例分母
+            # (market_value + short_market_value) 为 0, 比例恒为 0, 会在收盘被强平。
+            # 本测试只验证同周期平空再开空, 关掉强平以免混入该现存问题。
+            allow_force_liquidation=False,
         ),
     )
 
@@ -981,6 +985,10 @@ def test_futures_force_liquidation_emits_callbacks_and_realizes_pnl_only() -> No
     assert len(result.trades_df) == 1
     assert float(result.trades_df.iloc[0]["exit_price"]) == pytest.approx(
         6000.0, rel=0.0, abs=1e-6
+    )
+    # 最后一行是 01-05 收盘快照, 记在强平之后, 反映强平后的空仓。
+    assert result.positions.index[-1] == pd.Timestamp(
+        "2023-01-05 15:00", tz="Asia/Shanghai"
     )
     assert float(result.positions.iloc[-1].get("RB2305", 0.0)) == pytest.approx(
         0.0, rel=0.0, abs=1e-6
