@@ -865,13 +865,31 @@ def test_resume_after_weekend_settles_each_day_once(tmp_path: Any) -> None:
         show_progress=False,
     )
     # 周一续跑时持仓（周三买入的 100 股）跨周末仍在。
-    # 续跑结果的 positions 只含续跑段的快照：周一、周二各一条日终快照，外加运行
-    # 结束时的末根 bar 快照（周二 10:00）；补结算周五会多出一条周一 10:00 的快照
-    # 注意：末根 bar 的 10:00 重复快照是现有行为，Task 7 会移除它，
-    # 届时须同步更新本断言。
+    # 续跑结果的 positions 只含续跑段的快照：周一、周二各一条日终快照（若重复
+    # 结算周五会多出一条）。最后交易日（周二）已在收盘结算，get_results 不再在
+    # 末根 bar（周二 10:00）补一条期末快照（类别 (b)）。
     times = [t.strftime("%Y-%m-%d %H:%M") for t in _snapshot_times(part2)]
-    assert times == ["2024-01-08 15:00", "2024-01-09 10:00", "2024-01-09 15:00"]
+    assert times == ["2024-01-08 15:00", "2024-01-09 15:00"]
     assert (part2.positions["600000.SH"] == 100.0).all()
+
+
+def test_settled_last_day_has_no_terminal_snapshot_before_close() -> None:
+    """最后交易日已在收盘结算：期末不在末根 bar 时刻补快照，快照时间严格递增."""
+    r = run_backtest(
+        data=_ten_oclock_frame(["2024-01-03", "2024-01-04", "2024-01-05"]),
+        strategy=_HoldOnce,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    times = [t.strftime("%Y-%m-%d %H:%M") for t in _snapshot_times(r)]
+    assert times == ["2024-01-03 15:00", "2024-01-04 15:00", "2024-01-05 15:00"]
+    # 收盘快照即期末状态：首根 bar 买入的 100 股在最后一条快照里
+    assert r.positions["600000.SH"].iloc[-1] == 100.0
+    # 净值曲线仍逐事件记点，期末点留在末根 bar 时刻（不新增收盘点）
+    last_equity_ts = r.equity_curve.index[-1].tz_convert("Asia/Shanghai")
+    assert last_equity_ts.strftime("%Y-%m-%d %H:%M") == "2024-01-05 10:00"
+    assert len(r.equity_curve) == 3
 
 
 def test_resume_same_day_does_not_reopen_or_resettle(tmp_path: Any) -> None:

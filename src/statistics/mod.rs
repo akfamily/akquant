@@ -154,6 +154,13 @@ impl StatisticsManager {
     }
 
     /// 生成最终的回测结果
+    ///
+    /// `now_ns` 处补一个期末点（权益/现金/保证金曲线与持仓快照）。
+    /// 已有晚于 `now_ns` 的持仓快照时（最后交易日在收盘做了日终结算，收盘快照晚于
+    /// 末个行情事件）不补持仓快照：收盘快照之后组合不再变化，它已是期末状态；再在
+    /// 末个行情事件时刻补一条会让结算后的状态出现在收盘之前，且排在收盘快照之后、
+    /// 时间倒流。权益类曲线仍在末个行情事件时刻覆盖为期末状态，使期末权益包含收盘
+    /// 结算（利息、到期、强平）的影响。
     pub fn generate_backtest_result(
         &self,
         portfolio: &Portfolio,
@@ -190,20 +197,23 @@ impl StatisticsManager {
             )
             .equity;
             let margin = portfolio.calculate_used_margin(last_prices, instruments);
-            let snap = Self::create_snapshot(
-                portfolio,
-                instruments,
-                last_prices,
-                &order_manager.trade_tracker,
-                risk_config,
-            );
 
             // Always overwrite the terminal point at the same timestamp so the
             // final result reflects the fully updated portfolio state.
             Self::upsert_timestamped_value(&mut equity_curve, ts, equity);
             Self::upsert_timestamped_value(&mut cash_curve, ts, portfolio.cash);
             Self::upsert_timestamped_value(&mut margin_curve, ts, margin);
-            Self::upsert_timestamped_value(&mut snapshots, ts, snap);
+            let settled_after = snapshots.last().is_some_and(|(last_ts, _)| *last_ts > ts);
+            if !settled_after {
+                let snap = Self::create_snapshot(
+                    portfolio,
+                    instruments,
+                    last_prices,
+                    &order_manager.trade_tracker,
+                    risk_config,
+                );
+                Self::upsert_timestamped_value(&mut snapshots, ts, snap);
+            }
         }
 
         BacktestResult::calculate(crate::analysis::CalculatorInput {
