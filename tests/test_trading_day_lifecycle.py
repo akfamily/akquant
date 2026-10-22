@@ -391,7 +391,7 @@ def test_night_session_settles_once_per_trading_day_not_at_midnight() -> None:
             "2024-01-08 23:30",
             "2024-01-09 00:30",
             "2024-01-09 10:00",
-            "2024-01-09 14:30",
+            "2024-01-09 15:00",
         ]
     ).tz_localize("Asia/Shanghai")
     df = pd.DataFrame(
@@ -557,7 +557,7 @@ class _BuyFirstBar(Strategy):
 
 def test_close_snapshot_reflects_same_day_forced_liquidation() -> None:
     """收盘快照记在结算之后：最后交易日收盘强平后，最后一行快照为空仓."""
-    ts = pd.to_datetime(["2024-01-03 10:00", "2024-01-03 14:00"]).tz_localize(
+    ts = pd.to_datetime(["2024-01-03 10:00", "2024-01-03 15:00"]).tz_localize(
         "Asia/Shanghai"
     )
     bars = [
@@ -591,7 +591,7 @@ def test_close_snapshot_reflects_same_day_forced_liquidation() -> None:
     )
     assert not result.liquidation_audit_df.empty
     positions = result.positions
-    # 结果里另有 get_results 在最后事件时刻(14:00)补的期末点; 最后一行是收盘快照
+    # 数据走到收盘（15:00 bar），收盘结算强平；最后一行是收盘快照
     assert positions.index[-1].tz_convert("Asia/Shanghai") == pd.Timestamp(
         "2024-01-03 15:00", tz="Asia/Shanghai"
     )
@@ -650,7 +650,7 @@ def test_user_timer_payload_with_reserved_day_close_prefix_is_rejected() -> None
 
 def test_settlement_stream_events_carry_close_time() -> None:
     """日终结算产生的流事件，信封 ts 为交易日收盘时刻（不是最后一根 bar）."""
-    ts = pd.to_datetime(["2024-01-03 10:00", "2024-01-04 10:00"]).tz_localize(
+    ts = pd.to_datetime(["2024-01-03 10:00", "2024-01-04 15:00"]).tz_localize(
         "Asia/Shanghai"
     )
     bars = [
@@ -797,11 +797,29 @@ class _HoldOnce(Strategy):
             self.buy(bar.symbol, 100)
 
 
-class _Idle(Strategy):
-    """不交易的策略（存档时 ``_known_orders`` 为空，策略实例可 pickle）."""
+class _BuyFirstThenSellAvailable(Strategy):
+    """首根 bar 买 100 股，之后有可用持仓就全部卖出；记录每根 bar 的可用持仓.
+
+    首根 bar 下的单在第二根 bar 成交，存档前已处理完（``_known_orders`` 为空，
+    策略实例可 pickle）。模块顶层定义以便 pickle。
+    """
+
+    def __init__(self) -> None:
+        """初始化."""
+        super().__init__()
+        self.n = 0
+        self.available: List[tuple] = []
 
     def on_bar(self, bar: Bar) -> None:
-        """什么也不做."""
+        """首根买入，之后卖出全部可用."""
+        self.n += 1
+        local = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert("Asia/Shanghai")
+        avail = float(self.get_available_position(bar.symbol))
+        self.available.append((local.strftime("%Y-%m-%d %H:%M"), avail))
+        if self.n == 1:
+            self.buy(bar.symbol, 100)
+        elif avail > 0:
+            self.sell(bar.symbol, avail)
 
 
 def _intraday_frame(stamps: List[str]) -> pd.DataFrame:
@@ -820,17 +838,14 @@ def _intraday_frame(stamps: List[str]) -> pd.DataFrame:
     )
 
 
-def _ten_oclock_frame(dates: List[str]) -> pd.DataFrame:
-    """每个日期 10:00 一根 bar."""
-    return _intraday_frame([f"{d} 10:00" for d in dates])
-
-
 def test_checkpoint_roundtrips_trading_day_progress() -> None:
     """存档保存当前交易日与已结算交易日."""
     from akquant.akquant import Engine
 
     r = run_backtest(
-        data=_ten_oclock_frame(["2024-01-04", "2024-01-05"]),
+        data=_intraday_frame(
+            ["2024-01-04 10:00", "2024-01-05 10:00", "2024-01-05 15:00"]
+        ),
         strategy=_HoldOnce,
         symbols=["600000.SH"],
         initial_cash=1e5,
@@ -849,7 +864,14 @@ def test_checkpoint_roundtrips_trading_day_progress() -> None:
 def test_resume_after_weekend_settles_each_day_once(tmp_path: Any) -> None:
     """周五存档、周一续跑：续跑段不重复结算周五."""
     part1 = run_backtest(
-        data=_ten_oclock_frame(["2024-01-03", "2024-01-04", "2024-01-05"]),
+        data=_intraday_frame(
+            [
+                "2024-01-03 10:00",
+                "2024-01-04 10:00",
+                "2024-01-05 10:00",
+                "2024-01-05 15:00",
+            ]
+        ),
         strategy=_HoldOnce,
         symbols=["600000.SH"],
         initial_cash=1e5,
@@ -860,7 +882,9 @@ def test_resume_after_weekend_settles_each_day_once(tmp_path: Any) -> None:
     save_checkpoint(part1.engine, part1.strategy, str(ckpt))
     part2 = run_from_checkpoint(
         checkpoint_path=str(ckpt),
-        data=_ten_oclock_frame(["2024-01-08", "2024-01-09"]),
+        data=_intraday_frame(
+            ["2024-01-08 10:00", "2024-01-09 10:00", "2024-01-09 15:00"]
+        ),
         symbols=["600000.SH"],
         show_progress=False,
     )
@@ -874,9 +898,16 @@ def test_resume_after_weekend_settles_each_day_once(tmp_path: Any) -> None:
 
 
 def test_settled_last_day_has_no_terminal_snapshot_before_close() -> None:
-    """最后交易日已在收盘结算：期末不在末根 bar 时刻补快照，快照时间严格递增."""
+    """最后交易日已在收盘结算：期末不再补快照，快照时间严格递增."""
     r = run_backtest(
-        data=_ten_oclock_frame(["2024-01-03", "2024-01-04", "2024-01-05"]),
+        data=_intraday_frame(
+            [
+                "2024-01-03 10:00",
+                "2024-01-04 10:00",
+                "2024-01-05 10:00",
+                "2024-01-05 15:00",
+            ]
+        ),
         strategy=_HoldOnce,
         symbols=["600000.SH"],
         initial_cash=1e5,
@@ -886,37 +917,60 @@ def test_settled_last_day_has_no_terminal_snapshot_before_close() -> None:
     assert times == ["2024-01-03 15:00", "2024-01-04 15:00", "2024-01-05 15:00"]
     # 收盘快照即期末状态：首根 bar 买入的 100 股在最后一条快照里
     assert r.positions["600000.SH"].iloc[-1] == 100.0
-    # 净值曲线仍逐事件记点，期末点留在末根 bar 时刻（不新增收盘点）
+    # 净值曲线仍逐事件记点，期末点留在末根 bar 时刻（不新增点）
     last_equity_ts = r.equity_curve.index[-1].tz_convert("Asia/Shanghai")
-    assert last_equity_ts.strftime("%Y-%m-%d %H:%M") == "2024-01-05 10:00"
-    assert len(r.equity_curve) == 3
+    assert last_equity_ts.strftime("%Y-%m-%d %H:%M") == "2024-01-05 15:00"
+    assert len(r.equity_curve) == 4
 
 
 def test_resume_same_day_does_not_reopen_or_resettle(tmp_path: Any) -> None:
-    """存档当日（已结算）再续跑同一天的后续 bar：不重新开日、不重复结算."""
+    """数据盘中结束不结算当日；同日续跑时当日买入仍不可卖，收盘只结算一次.
+
+    第一段数据止于 10:00（当日未收盘），旧实现在数据耗尽后仍触发 15:00 结算、
+    解冻 T+1，续跑段 13:01 就把当日 09:32 买入的股票卖掉了。
+    """
     part1 = run_backtest(
-        data=_intraday_frame(["2024-01-05 10:00"]),
-        strategy=_Idle,
+        data=_intraday_frame(
+            ["2024-01-04 09:31", "2024-01-04 09:32", "2024-01-04 10:00"]
+        ),
+        strategy=_BuyFirstThenSellAvailable,
         symbols=["600000.SH"],
         initial_cash=1e5,
         show_progress=False,
+        t_plus_one=True,
     )
-    ckpt = tmp_path / "c.pkl"
     assert part1.engine is not None
+    # 盘中结束：当日未结算，期末快照记在末根 bar（与旧收尾逻辑一致）
+    assert part1.engine.current_trading_day == dt.date(2024, 1, 4)
+    assert part1.engine.last_settled_trading_day is None
+    times1 = [t.strftime("%Y-%m-%d %H:%M") for t in _snapshot_times(part1)]
+    assert times1 == ["2024-01-04 10:00"]
+    assert part1.positions["600000.SH"].iloc[-1] == 100.0
+
+    ckpt = tmp_path / "c.pkl"
     save_checkpoint(part1.engine, part1.strategy, str(ckpt))
     part2 = run_from_checkpoint(
         checkpoint_path=str(ckpt),
-        data=_intraday_frame(["2024-01-05 14:00"]),
+        data=_intraday_frame(
+            ["2024-01-04 13:00", "2024-01-04 13:01", "2024-01-04 15:00"]
+        ),
         symbols=["600000.SH"],
         show_progress=False,
     )
     assert part2.engine is not None
-    assert part2.engine.current_trading_day == dt.date(2024, 1, 5)
-    # 存档段已在 15:00 结算过当日；续跑段不得再结算一次（整体恰一条 15:00 快照）
+    assert part2.engine.current_trading_day == dt.date(2024, 1, 4)
+    assert part2.engine.last_settled_trading_day == dt.date(2024, 1, 4)
+    strategy = part2.strategy
+    assert strategy is not None
+    # 当日买入的 100 股在当日任何 bar 上都不可卖（T+1）
+    assert all(avail == 0.0 for _, avail in strategy.available), strategy.available
+    fills = part2.executions_df
+    assert list(fills["side"].astype(str).str.lower()) == ["buy"], fills
+    # 当日只在续跑段 15:00 结算一次
     closes = [
         t
         for t in _snapshot_times(part1) + _snapshot_times(part2)
-        if t.strftime("%Y-%m-%d %H:%M") == "2024-01-05 15:00"
+        if t.strftime("%Y-%m-%d %H:%M") == "2024-01-04 15:00"
     ]
     assert len(closes) == 1
 

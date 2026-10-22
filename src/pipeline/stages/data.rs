@@ -259,8 +259,20 @@ impl Processor for DataProcessor {
                                         .and_then(|r| r.session_day_end(day).ok())
                                         .unwrap_or(timer.timestamp - 1),
                                 };
-                            run_day_close_settlement(engine, py, day, close_ts);
-                            engine.last_settled_trading_day = Some(day);
+                            // 回测数据在盘中耗尽(没有收盘时刻的行情)时当日并未收盘:
+                            // 不结算, 留给收尾路径记期末快照; 同日续跑时由续跑段收盘结算。
+                            let feed_exhausted = !engine.state.feed.is_live()
+                                && engine.state.feed.peek_timestamp().is_none();
+                            if day_close_reached(
+                                feed_exhausted,
+                                engine.current_trading_day,
+                                engine.last_event_ts_in_day,
+                                day,
+                                close_ts,
+                            ) {
+                                run_day_close_settlement(engine, py, day, close_ts);
+                                engine.last_settled_trading_day = Some(day);
+                            }
                         }
                         return Ok(ProcessorResult::Loop);
                     }
@@ -718,9 +730,43 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
     );
 }
 
+/// 收盘定时器触发时交易日 `day` 是否真的走到了收盘。
+///
+/// 回测数据耗尽(`feed_exhausted`)且 `day` 最后处理的行情事件早于会话收盘 `close_ts`
+/// 时, 数据是在盘中结束的, 当日没有收盘, 返回 `false`; 其余情况(后面还有数据、
+/// 实盘、末根事件已到收盘)返回 `true`。
+fn day_close_reached(
+    feed_exhausted: bool,
+    current_trading_day: Option<NaiveDate>,
+    last_event_ts_in_day: Option<i64>,
+    day: NaiveDate,
+    close_ts: i64,
+) -> bool {
+    if !feed_exhausted || current_trading_day != Some(day) {
+        return true;
+    }
+    last_event_ts_in_day.is_some_and(|ts| ts >= close_ts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn day_close_not_reached_when_backtest_data_ends_mid_day() {
+        let day = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
+        let close = 1_000;
+        // 数据耗尽、末根事件在收盘前: 未收盘
+        assert!(!day_close_reached(true, Some(day), Some(999), day, close));
+        assert!(!day_close_reached(true, Some(day), None, day, close));
+        // 末根事件恰在收盘或之后: 已收盘
+        assert!(day_close_reached(true, Some(day), Some(1_000), day, close));
+        // 后面还有数据(或实盘): 照常结算
+        assert!(day_close_reached(false, Some(day), Some(999), day, close));
+        // 定时器不属于当前交易日: 照常结算
+        let other = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+        assert!(day_close_reached(true, Some(day), Some(999), other, close));
+    }
 
     #[test]
     fn out_of_order_event_does_not_regress_trading_day() {

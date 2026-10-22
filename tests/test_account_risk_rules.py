@@ -930,7 +930,8 @@ def test_futures_force_liquidation_emits_callbacks_and_realizes_pnl_only() -> No
             pd.Timestamp("2023-01-04 10:00:00", tz="Asia/Shanghai"),
             pd.Timestamp("2023-01-04 14:00:00", tz="Asia/Shanghai"),
             pd.Timestamp("2023-01-05 09:30:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-05 10:00:00", tz="Asia/Shanghai"),
+            # 末根在收盘: 数据盘中结束时最后交易日不结算。
+            pd.Timestamp("2023-01-05 15:00:00", tz="Asia/Shanghai"),
         ],
         [4000.0, 6000.0, 6000.0, 6000.0],
         symbol="RB2305",
