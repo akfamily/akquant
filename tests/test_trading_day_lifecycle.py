@@ -947,6 +947,12 @@ def _local_minute(ts_ns: int) -> str:
     return local.strftime("%Y-%m-%d %H:%M")
 
 
+# _run_live_replay 截获的网关线程（按线程名），供 on_start 等待推送线程结束。
+_GATEWAY_THREADS: Dict[str, Any] = {}
+# 每次 on_start 是否找到并等到了 replay 推送线程（_run_live_replay 校验）。
+_REPLAY_THREAD_JOINED: List[bool] = []
+
+
 class _LiveDayOrderProbe(Strategy):
     """首根 bar 下一张够不着的 Day 限价单.
 
@@ -960,11 +966,14 @@ class _LiveDayOrderProbe(Strategy):
         self.active_at: Dict[str, int] = {}
 
     def on_start(self) -> None:
-        import threading
-
-        for thread in threading.enumerate():
-            if thread.name == "replay-market":
-                thread.join(timeout=10)
+        # 线程名由 live/_runner.py 按 f"{broker}-market" 命名；改名后这里找不到线程，
+        # 等待静默失效、测试变成竞态。记录是否找到并等到，由 _run_live_replay 断言。
+        # 不用 threading.enumerate()：推送线程常在 on_start 之前就已结束并退出枚举，
+        # 那样“找不到”与“已结束”无法区分。
+        thread = _GATEWAY_THREADS.get("replay-market")
+        if thread is not None:
+            thread.join(timeout=10)
+        _REPLAY_THREAD_JOINED.append(thread is not None and not thread.is_alive())
 
     def on_bar(self, bar: Bar) -> None:
         assert self.ctx is not None
@@ -984,6 +993,7 @@ def _run_live_replay(
     """
     from akquant import run_live
     from akquant.live import _facade
+    from akquant.live._gateway_setup import start_gateway_thread
 
     captured: List[Any] = []
 
@@ -992,7 +1002,12 @@ def _run_live_replay(
             super().__init__(*args, **kw)
             captured.append(self)
 
+        def _start_gateway_thread(self, target: Any, name: str) -> None:
+            _GATEWAY_THREADS[name] = start_gateway_thread(target, name)
+
     monkeypatch.setattr(_facade, "LiveRunner", _Recording)
+    _GATEWAY_THREADS.clear()
+    _REPLAY_THREAD_JOINED.clear()
     run_live(
         strategy_cls=_LiveDayOrderProbe,
         instruments=[_live_stock_instrument()],
@@ -1005,6 +1020,9 @@ def _run_live_replay(
         **kwargs,
     )
     assert len(captured) == 1
+    assert _REPLAY_THREAD_JOINED == [True], (
+        "未找到或未等到名为 replay-market 的推送线程（线程命名见 live/_runner.py）"
+    )
     return captured[0]
 
 
