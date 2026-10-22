@@ -8,10 +8,23 @@ from .log import get_logger
 logger = get_logger("scheduler")
 
 
+_RESERVED_TIMER_PREFIX = "__akq_day_close__|"
+
+
+def _check_payload(payload: str) -> None:
+    """拒绝占用引擎内部日终结算前缀的 payload."""
+    if str(payload).startswith(_RESERVED_TIMER_PREFIX):
+        raise ValueError(
+            f"定时器 payload 不能以 {_RESERVED_TIMER_PREFIX!r} 开头"
+            "（引擎内部日终结算专用前缀）"
+        )
+
+
 def schedule(
     strategy: Any, trigger_time: Union[str, dt.datetime, pd.Timestamp], payload: str
 ) -> None:
     """注册单次定时任务."""
+    _check_payload(payload)
     if strategy.ctx is None:
         pending = getattr(strategy, "_pending_schedules", None)
         if pending is None:
@@ -71,6 +84,7 @@ def flush_pending_schedules(strategy: Any) -> None:
 
 def schedule_daily(strategy: Any, time_str: str, payload: str) -> None:
     """注册每日定时任务."""
+    _check_payload(payload)
     if strategy.ctx is None:
         pending_daily = getattr(strategy, "_pending_daily_timers", None)
         if pending_daily is None:

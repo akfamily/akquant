@@ -1003,7 +1003,8 @@ impl StrategyContext {
     ///
     /// :param timestamp: 触发时间戳 (纳秒)
     /// :param payload: 携带的数据 (如回调函数名)
-    fn schedule(&mut self, timestamp: i64, payload: String) {
+    fn schedule(&mut self, timestamp: i64, payload: String) -> PyResult<()> {
+        crate::model::timer::check_user_timer_payload(&payload)?;
         let normalized = if timestamp.abs() < 1_000_000_000_000 {
             timestamp * 1_000_000_000
         } else {
@@ -1015,6 +1016,7 @@ impl StrategyContext {
                 payload,
             });
         }
+        Ok(())
     }
 
     /// 取消订单.

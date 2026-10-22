@@ -111,8 +111,10 @@ impl Engine {
         super::core::Engine::emit_stream_event_owned(self, py, event_type, symbol, level, payload);
     }
 
-    fn add_timer(&mut self, timestamp: i64, payload: String) {
+    fn add_timer(&mut self, timestamp: i64, payload: String) -> PyResult<()> {
+        crate::model::timer::check_user_timer_payload(&payload)?;
         self.timers.push(Timer { timestamp, payload });
+        Ok(())
     }
 
     fn set_stream_options(

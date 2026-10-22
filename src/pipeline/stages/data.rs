@@ -241,13 +241,24 @@ impl Processor for DataProcessor {
                         if timer.timestamp > self.last_timestamp {
                             self.finalize_current_timestamp(engine, py);
                         }
-                        let day = NaiveDate::parse_from_str(
+                        // payload 格式由引擎自己写入; 用户定时器不能使用该前缀
+                        // (add_timer/schedule 会拒绝), 解析失败就忽略。
+                        if let Ok(day) = NaiveDate::parse_from_str(
                             &timer.payload[crate::model::timer::DAY_CLOSE_TIMER_PREFIX.len()..],
                             "%Y-%m-%d",
-                        )
-                        .expect("内部定时器格式");
-                        if engine.last_settled_trading_day != Some(day) {
-                            run_day_close_settlement(engine, py, day, timer.timestamp - 1);
+                        ) && engine.last_settled_trading_day != Some(day)
+                        {
+                            // 结算时刻是会话收盘, 不是定时器时刻(实盘有宽限)。
+                            let close_ts =
+                                match (engine.current_trading_day, engine.current_day_span) {
+                                    (Some(cur), Some((_, end))) if cur == day => end,
+                                    _ => engine
+                                        .session_resolver
+                                        .as_ref()
+                                        .and_then(|r| r.session_day_end(day).ok())
+                                        .unwrap_or(timer.timestamp - 1),
+                                };
+                            run_day_close_settlement(engine, py, day, close_ts);
                             engine.last_settled_trading_day = Some(day);
                         }
                         return Ok(ProcessorResult::Loop);
@@ -340,9 +351,13 @@ impl Processor for DataProcessor {
                 }
 
                 // 开日: 第一个属于新会话交易日的(活跃)事件。日终结算不在这里做,
-                // 而是挂在该交易日收盘时刻 + 1ns 的内部定时器上(见 Timer 分支)。
+                // 而是挂在该交易日收盘后的内部定时器上(回测 +1ns, 实盘留宽限;
+                // 见 Timer 分支与 `day_close_timer_timestamp`)。
                 if engine.is_active_timestamp(timestamp) {
-                    let day = engine.trading_day_for(timestamp)?;
+                    let day = event_trading_day(
+                        engine.current_trading_day,
+                        engine.trading_day_for(timestamp)?,
+                    );
                     if engine.current_trading_day != Some(day) {
                         // 上一交易日未结算(实盘漏触发等): 先补结算
                         if let Some(prev) = engine.current_trading_day
@@ -376,7 +391,10 @@ impl Processor for DataProcessor {
                         && let Some((_, end)) = engine.current_day_span
                     {
                         engine.timers.push(crate::model::Timer {
-                            timestamp: end + 1,
+                            timestamp: crate::model::timer::day_close_timer_timestamp(
+                                end,
+                                engine.state.feed.is_live(),
+                            ),
                             payload: format!(
                                 "{}{}",
                                 crate::model::timer::DAY_CLOSE_TIMER_PREFIX,
@@ -464,6 +482,15 @@ impl Processor for DataProcessor {
     }
 }
 
+/// 事件所属的交易日。乱序到达(解析出的交易日早于当前交易日, 如实盘迟到的上一
+/// 交易日行情)时按当前交易日处理: 不让 `current_trading_day` 倒退, 也不触发结算。
+fn event_trading_day(current: Option<NaiveDate>, resolved: NaiveDate) -> NaiveDate {
+    match current {
+        Some(cur) if resolved < cur => cur,
+        _ => resolved,
+    }
+}
+
 /// 交易日 `day` 的区间 `(上一交易日收盘, 本交易日收盘]`。本交易日收盘取不到(如日历
 /// 越界)时报错; 只有"上一交易日"不在用户日历里(日历恰从首个数据日开始)时, 下界
 /// 退化为本事件时间戳 - 1 —— 下界只用于 `trading_day_for` 的区间缓存, 时间单调前进,
@@ -483,6 +510,29 @@ fn session_day_span_for(engine: &Engine, day: NaiveDate, ts: i64) -> PyResult<(i
 /// 交易日 `day` 的日终结算：到期 → 利息与强平 → T+1 → Day 单过期 → 流事件 → 快照。
 /// `close_ts` 为会话收盘时刻（快照与流事件时间戳）。
 fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_ts: i64) {
+    // 流事件信封的 ts 取 flush 时的 clock: 先把结算前已缓冲的事件按原时钟发出,
+    // 结算期间把 clock 置为收盘时刻, 结算结束再 flush 一次, 结算产生的
+    // settlement/risk/expiry 事件就都带收盘时刻。
+    engine.flush_stream_events(py);
+    let previous_clock = (engine.clock.timestamp(), engine.clock.session);
+    let session = engine.clock.session;
+    engine.clock.update(close_ts, session);
+
+    settle_day_close(engine, py, day, close_ts);
+
+    engine.flush_stream_events(py);
+    // 结算结束后还原 clock(而不是停在收盘时刻): clock 是"最后处理到的事件时刻",
+    // save_checkpoint 把它存为 current_time, 续跑时丢弃不晚于它的行情; 停在收盘会
+    // 让同一交易日内续跑的行情被整段丢弃(test_window_checkpoint 等)。补结算路径
+    // (开日时补上一交易日)发生在新事件已更新 clock 之后, 不还原则本事件的处理会
+    // 倒退到上一交易日收盘。流事件已在上面 flush, 信封时间不受还原影响。
+    if let (Some(prev_ts), prev_session) = previous_clock {
+        engine.clock.update(prev_ts, prev_session);
+    }
+}
+
+/// [`run_day_close_settlement`] 的结算步骤本体。
+fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_ts: i64) {
     // Settlement Manager (T+1, Option Expiry, Day Order Expiry)
     let mut expired_orders = Vec::new();
     // NextOpen(bar_offset == 1) 的 Day 单若创建于本交易日最后一个已处理行情事件
@@ -646,4 +696,20 @@ fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate,
         &engine.state.order_manager.trade_tracker,
         &engine.risk_manager.config,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn out_of_order_event_does_not_regress_trading_day() {
+        let d = |m, day| NaiveDate::from_ymd_opt(2024, m, day).unwrap();
+        // 迟到的上一交易日事件归当前交易日
+        assert_eq!(event_trading_day(Some(d(1, 3)), d(1, 2)), d(1, 3));
+        // 正常推进与首日
+        assert_eq!(event_trading_day(Some(d(1, 3)), d(1, 4)), d(1, 4));
+        assert_eq!(event_trading_day(Some(d(1, 3)), d(1, 3)), d(1, 3));
+        assert_eq!(event_trading_day(None, d(1, 2)), d(1, 2));
+    }
 }

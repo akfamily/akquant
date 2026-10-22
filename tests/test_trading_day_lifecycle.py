@@ -596,3 +596,101 @@ def test_close_snapshot_reflects_same_day_forced_liquidation() -> None:
         "2024-01-03 15:00", tz="Asia/Shanghai"
     )
     assert float(positions.iloc[-1].get("LIQ", 0.0)) == 0.0
+
+
+def test_intraday_data_beyond_trading_calendar_raises_chinese_value_error() -> None:
+    """分钟数据超出显式 trading_calendar：引擎开日时报中文 ValueError."""
+    ts = pd.to_datetime(["2024-01-02 10:00", "2024-01-05 10:00"]).tz_localize(
+        "Asia/Shanghai"
+    )
+    df = pd.DataFrame(
+        {
+            "timestamp": ts,
+            "symbol": "600000.SH",
+            "open": 10.0,
+            "high": 10.0,
+            "low": 10.0,
+            "close": 10.0,
+            "volume": 100.0,
+        }
+    )
+    with pytest.raises(ValueError, match="超出 trading_calendar 覆盖范围"):
+        run_backtest(
+            strategy=_Recorder,
+            data=df,
+            symbols=["600000.SH"],
+            initial_cash=1e5,
+            show_progress=False,
+            trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
+        )
+
+
+def test_user_timer_payload_with_reserved_day_close_prefix_is_rejected() -> None:
+    """用户定时器不能占用引擎内部日终结算前缀（Python 入口与 Rust 入口都拒绝）."""
+    reserved = "__akq_day_close__|2024-01-02"
+
+    class _Bad(Strategy):
+        def on_start(self) -> None:
+            self.schedule_daily("09:30", reserved)
+
+    with pytest.raises(ValueError, match="日终结算专用前缀"):
+        run_backtest(
+            strategy=_Bad,
+            data=_daily_frame(["2024-01-02", "2024-01-03"]),
+            symbols=["600000.SH"],
+            initial_cash=1e5,
+            show_progress=False,
+        )
+
+    engine = aq.Engine()
+    with pytest.raises(ValueError, match="日终结算专用前缀"):
+        engine.add_timer(1, reserved)  # type: ignore[attr-defined]
+    engine.add_timer(1, "user")  # type: ignore[attr-defined]
+
+
+def test_settlement_stream_events_carry_close_time() -> None:
+    """日终结算产生的流事件，信封 ts 为交易日收盘时刻（不是最后一根 bar）."""
+    ts = pd.to_datetime(["2024-01-03 10:00", "2024-01-04 10:00"]).tz_localize(
+        "Asia/Shanghai"
+    )
+    bars = [
+        Bar(
+            timestamp=t.value,
+            open=100.0,
+            high=100.0,
+            low=100.0,
+            close=100.0,
+            volume=1e4,
+            symbol="INT",
+        )
+        for t in ts
+    ]
+    events: List[Any] = []
+    run_backtest(
+        strategy=_BuyFirstBar,
+        data=bars,
+        symbols=["INT"],
+        initial_cash=10000.0,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+        lot_size=1,
+        risk_config=aq.config.RiskConfig(
+            account_mode="margin",
+            initial_margin_ratio=0.5,
+            financing_rate_annual=36.5,
+            borrow_rate_annual=0.0,
+            allow_force_liquidation=False,
+        ),
+        on_event=events.append,
+    )
+    settlement = {
+        e["payload"]["date"]: pd.Timestamp(int(e["ts"]), tz="UTC").tz_convert(
+            "Asia/Shanghai"
+        )
+        for e in events
+        if e.get("event_type") == "settlement"
+    }
+    assert settlement == {
+        "2024-01-03": pd.Timestamp("2024-01-03 15:00", tz="Asia/Shanghai"),
+        "2024-01-04": pd.Timestamp("2024-01-04 15:00", tz="Asia/Shanghai"),
+    }

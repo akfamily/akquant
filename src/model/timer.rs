@@ -5,6 +5,30 @@ use std::cmp::Ordering;
 /// 引擎内部日终结算定时器的 payload 前缀；不转发给策略。
 pub(crate) const DAY_CLOSE_TIMER_PREFIX: &str = "__akq_day_close__|";
 
+/// 实盘日终结算相对会话收盘的宽限(纳秒)。行情源在收盘后才推送最后一根已收盘
+/// bar(如 klinedata 15:00 之后推 14:59~15:00 的 bar), 收盘即结算会让收盘快照用
+/// 旧价、且那根 bar 的 on_bar 里 T+1 已解冻。阶段 7 改为可配置。
+pub(crate) const LIVE_DAY_CLOSE_GRACE_NS: i64 = 60_000_000_000;
+
+/// 交易日收盘定时器的触发时刻: 回测为收盘 + 1ns, 实盘为收盘 + 宽限。
+pub(crate) fn day_close_timer_timestamp(session_day_end: i64, live: bool) -> i64 {
+    if live {
+        session_day_end + LIVE_DAY_CLOSE_GRACE_NS
+    } else {
+        session_day_end + 1
+    }
+}
+
+/// 用户定时器 payload 不能占用引擎内部日终结算前缀。
+pub(crate) fn check_user_timer_payload(payload: &str) -> pyo3::PyResult<()> {
+    if payload.starts_with(DAY_CLOSE_TIMER_PREFIX) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "定时器 payload 不能以 {DAY_CLOSE_TIMER_PREFIX:?} 开头（引擎内部日终结算专用前缀）"
+        )));
+    }
+    Ok(())
+}
+
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +64,23 @@ impl PartialOrd for Timer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn day_close_timer_grace_applies_only_in_live_mode() {
+        let close = 1_000_000_000_000;
+        assert_eq!(day_close_timer_timestamp(close, false), close + 1);
+        assert_eq!(
+            day_close_timer_timestamp(close, true),
+            close + LIVE_DAY_CLOSE_GRACE_NS
+        );
+        assert_eq!(LIVE_DAY_CLOSE_GRACE_NS, 60_000_000_000);
+    }
+
+    #[test]
+    fn user_timer_payload_rejects_reserved_prefix() {
+        assert!(check_user_timer_payload("rebalance").is_ok());
+        assert!(check_user_timer_payload("__akq_day_close__|2024-01-02").is_err());
+    }
 
     #[test]
     fn day_close_timer_pops_last_among_equal_timestamps() {
