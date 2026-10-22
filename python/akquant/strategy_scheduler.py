@@ -108,9 +108,15 @@ def _register_on_days(
         logger.warning("Error parsing time: %s", time_str)
         return
 
+    # 首次登记发生在首根 bar 到达时(flush_pending_schedules)。早于当前引擎时刻的
+    # 时点已经过去, 若照登会在当前事件后立刻补触发且时间戳倒退(例如只有日期的
+    # 日线改写到 15:00 后, 当日 09:25 定时器会按当日收盘价成交), 故跳过。
+    current_time = int(getattr(strategy.ctx, "current_time", 0) or 0)
     for day in days:
         naive_dt = pd.Timestamp.combine(day.date(), t)
         dt_obj = naive_dt.tz_localize(strategy.timezone)
+        if current_time > 0 and int(dt_obj.value) < current_time:
+            continue
         schedule(strategy, dt_obj, wrapped_payload)
 
 

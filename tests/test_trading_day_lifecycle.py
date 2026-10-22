@@ -6,6 +6,7 @@ import datetime as dt
 from pathlib import Path
 from typing import Any, List
 
+import akquant as aq
 import pandas as pd
 import pytest
 from akquant import (
@@ -252,3 +253,78 @@ def test_run_from_checkpoint_rewrites_and_validates(tmp_path: Path) -> None:
         "2024-01-04 15:00",
         "2024-01-05 15:00",
     ]
+
+
+class _DailyBuyAt0925(Strategy):
+    """每日 09:25 定时买 1 股，记录所有事件时刻."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: List[tuple[str, int]] = []
+
+    def on_start(self) -> None:
+        self.schedule_daily("09:25:00", "buy")
+
+    def on_bar(self, bar: Bar) -> None:
+        self.events.append(("bar", int(bar.timestamp)))
+
+    def on_timer(self, payload: str) -> None:
+        assert self.ctx is not None
+        self.events.append(("timer", int(self.ctx.current_time)))
+        if payload == "buy":
+            self.buy(symbol="600000.SH", quantity=100, tag="timer-buy")
+
+
+def test_first_day_intraday_timer_not_backfilled_before_first_bar() -> None:
+    """首根 bar 改写到 15:00 后，当日 09:25 定时器不再补触发（无前视、时间不倒退）."""
+    result = run_backtest(
+        strategy=_DailyBuyAt0925,
+        data=_daily_frame(["2024-04-01", "2024-04-02", "2024-04-03"]),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+    )
+    strategy = result.strategy
+    assert strategy is not None
+    times = [ts for _, ts in strategy.events]
+    assert times == sorted(times), strategy.events
+
+    fills = result.executions_df
+    local = pd.to_datetime(fills["timestamp"]).dt.tz_convert("Asia/Shanghai")
+    assert not (local.dt.date == dt.date(2024, 4, 1)).any()
+    first = fills.iloc[local.argsort().iloc[0]]
+    assert pd.Timestamp(first["timestamp"]).tz_convert("Asia/Shanghai") == (
+        pd.Timestamp("2024-04-02 09:25", tz="Asia/Shanghai")
+    )
+    assert float(first["price"]) == pytest.approx(10.2)  # 04-01 收盘
+
+
+def test_engine_configure_sessions_validates_directly() -> None:
+    """Rust 侧 Engine.configure_sessions 自身校验模板名与空日历."""
+    engine = aq.Engine()
+    engine.configure_sessions({"default": "CN_STOCK"}, [dt.date(2024, 1, 2)])
+    engine.configure_sessions()
+    with pytest.raises(ValueError, match="未知时段模板"):
+        engine.configure_sessions({"IF": "NOPE"})
+    with pytest.raises(ValueError, match="trading_calendar"):
+        engine.configure_sessions(None, [])
+
+
+def test_unparsable_asset_type_falls_back_to_default(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """资产类型字符串无法识别时回退默认资产类型并只告警一次（不落到全天连续）."""
+    from akquant.backtest.engine import _build_session_asset_type_of
+
+    class _Conf:
+        asset_type = "warrant"
+
+    asset_type_of = _build_session_asset_type_of(
+        {}, {"A": _Conf(), "B": _Conf()}, aq.AssetType.Futures, []
+    )
+    with caplog.at_level("WARNING", logger="akquant"):
+        assert asset_type_of("A") == aq.AssetType.Futures
+        assert asset_type_of("B") == aq.AssetType.Futures
+    warnings = [r for r in caplog.records if "无法识别" in r.getMessage()]
+    assert len(warnings) == 1

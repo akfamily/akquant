@@ -709,37 +709,60 @@ def _build_session_asset_type_of(
 ) -> Callable[[str], Any]:
     """按与合约构建一致的优先级解析资产类型.
 
-    优先级：预构建合约 > 合约配置 > 期货品种模板 > 默认。
+    优先级：预构建合约 > 合约配置 > 期货品种模板 > 默认。无法识别的资产类型回退
+    到默认资产类型(默认本身无法识别时回退股票), 只告警一次——静默返回 None
+    会让解析器按"全天连续"取收盘时刻, 把日线改写到 23:59:59.999999999。
     """
+    names = {
+        "stock": AssetType.Stock,
+        "futures": AssetType.Futures,
+        "fund": AssetType.Fund,
+        "option": AssetType.Option,
+    }
+    warned = False
 
-    def to_asset_type(value: Any) -> Any:
+    def parse(value: Any) -> Optional[Any]:
         if isinstance(value, AssetType):
             return value
         try:
-            name = _parse_asset_type_name(value)
+            return names[_parse_asset_type_name(value)]
         except ValueError:
             return None
-        return {
-            "stock": AssetType.Stock,
-            "futures": AssetType.Futures,
-            "fund": AssetType.Fund,
-            "option": AssetType.Option,
-        }[name]
+
+    fallback = parse(default_asset_type)
+    if fallback is None:
+        fallback = AssetType.Stock
+
+    def to_asset_type(value: Any, symbol: str) -> Any:
+        nonlocal warned
+        parsed = parse(value)
+        if parsed is not None:
+            return parsed
+        if not warned:
+            warned = True
+            get_logger("backtest").warning(
+                "标的 %s 的资产类型 %r 无法识别, 改写只有日期的数据时按 %s "
+                "取交易时段(后续同类情况不再提示)",
+                symbol,
+                value,
+                fallback,
+            )
+        return fallback
 
     prefixes = [p.strip().upper() for p in futures_prefixes if p and p.strip()]
 
     def asset_type_of(symbol: str) -> Any:
         if symbol in prebuilt_instruments:
             return to_asset_type(
-                getattr(prebuilt_instruments[symbol], "asset_type", None)
+                getattr(prebuilt_instruments[symbol], "asset_type", None), symbol
             )
         conf = inst_conf_map.get(symbol)
         if conf is not None:
-            return to_asset_type(conf.asset_type)
+            return to_asset_type(conf.asset_type, symbol)
         upper = symbol.upper()
         if any(upper.startswith(p) for p in prefixes):
             return AssetType.Futures
-        return to_asset_type(default_asset_type)
+        return to_asset_type(default_asset_type, symbol)
 
     return asset_type_of
 
