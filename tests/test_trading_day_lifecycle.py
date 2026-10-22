@@ -744,3 +744,39 @@ def test_daily_loss_rule_does_not_reset_at_midnight_within_night_session() -> No
     reasons = orders["reject_reason"].fillna("").astype(str)
     rejected = orders[reasons.str.contains("Daily loss")]
     assert len(rejected) == 2, orders[["created_at", "status", "reject_reason"]]
+
+
+_NIGHT_TIMES = ["2024-01-08 21:30", "2024-01-08 23:30", "2024-01-09 00:30"]
+
+
+def _run_night(**kwargs: Any) -> pd.DataFrame:
+    """夜盘三根 bar 跑 _AlwaysBuy，返回订单表."""
+    result = run_backtest(
+        data=_bars_at(_NIGHT_TIMES, [100.0, 50.0, 50.0], "RISK"),
+        strategy=_AlwaysBuy,
+        symbols="RISK",
+        initial_cash=100000.0,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+        lot_size=1,
+        sessions={"RISK": "CN_FUTURES_NIGHT_0230"},
+        **kwargs,
+    )
+    return result.orders_df
+
+
+def test_strategy_daily_loss_does_not_reset_at_midnight_within_night_session() -> None:
+    """策略级日亏损：0 点不重置基线，00:30 的单仍被拒."""
+    orders = _run_night(strategy_id="alpha", strategy_max_daily_loss={"alpha": 100.0})
+    reasons = orders["reject_reason"].fillna("").astype(str)
+    rejected = orders[reasons.str.contains("daily loss")]
+    assert len(rejected) == 2, orders[["created_at", "status", "reject_reason"]]
+
+
+def test_risk_budget_does_not_reset_at_midnight_within_night_session() -> None:
+    """风险预算按交易日重置：0 点不重置，00:30 的单仍因预算耗尽被拒."""
+    orders = _run_night(portfolio_risk_budget=4500.0, risk_budget_reset_daily=True)
+    reasons = orders["reject_reason"].fillna("").astype(str)
+    rejected = orders[reasons.str.contains("risk budget")]
+    assert len(rejected) == 1, orders[["created_at", "status", "reject_reason"]]
+    assert pd.Timestamp(rejected.iloc[0]["created_at"]).hour == 0
