@@ -157,6 +157,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
 
         let event = Event::Bar(bar);
@@ -197,6 +198,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
 
         let event = Event::Bar(bar);
@@ -230,6 +232,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
 
         let event = Event::Bar(bar);
@@ -268,6 +271,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
 
         let event = Event::Bar(bar);
@@ -311,6 +315,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
         let first_event = Event::Bar(first_bar);
         let first_ctx = MatchContext {
@@ -337,6 +342,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
         let second_event = Event::Bar(second_bar);
         let second_ctx = MatchContext {

@@ -120,6 +120,7 @@ mod tests {
                 symbol: "X".to_string(),
                 extra: HashMap::new(),
                 freq: None,
+                interval_start: None,
             })
             .collect();
         let events = engine.preload_history(bars);

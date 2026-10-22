@@ -388,12 +388,14 @@ class Bar:
     :ivar volume: 成交量
     :ivar symbol: 标的代码
     :ivar freq: 周期标签 (基础 bar 为 None, 引擎聚合出的窗口 bar 带 "5min" 等)
+    :ivar interval_start: 区间起点 (UTC 纳秒, 不含); None 表示未知
     """
 
     timestamp: int
     symbol: str
     extra: dict[str, float]
     freq: typing.Optional[str]
+    interval_start: typing.Optional[int]
     open: float
     high: float
     low: float
@@ -411,6 +413,7 @@ class Bar:
         symbol: str,
         extra: typing.Optional[dict[str, float]] = ...,
         freq: typing.Optional[str] = ...,
+        interval_start: typing.Optional[int] = ...,
     ) -> "Bar": ...
     def set_open(self, value: float) -> None: ...
     def set_high(self, value: float) -> None: ...

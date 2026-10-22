@@ -990,6 +990,7 @@ mod tests {
             volume: Decimal::from(1000),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         }
     }
 

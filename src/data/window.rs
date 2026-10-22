@@ -201,6 +201,7 @@ impl WindowState {
             symbol: symbol.to_string(),
             extra: HashMap::new(),
             freq: Some(freq_label.to_string()),
+            interval_start: None,
         }
     }
 }
@@ -488,6 +489,7 @@ mod tests {
             symbol: symbol.to_string(),
             extra,
             freq: None,
+            interval_start: None,
         }
     }
 

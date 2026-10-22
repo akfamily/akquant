@@ -140,6 +140,7 @@ impl BarAggregator {
                     symbol: symbol.clone(),
                     extra: HashMap::new(),
                     freq: None,
+                    interval_start: None,
                 };
                 self.feed.add_bar(finished_bar)?;
 

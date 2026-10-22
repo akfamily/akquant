@@ -47,6 +47,11 @@ pub struct Bar {
     #[pyo3(get, set)]
     #[serde(default)]
     pub freq: Option<String>,
+    /// 区间起点（UTC 纳秒，不含）：bar 覆盖 `(interval_start, timestamp]`。
+    /// `None` 表示未知，按“时间戳前 1ns”判断时段。由数据入口填写。
+    #[pyo3(get, set)]
+    #[serde(default)]
+    pub interval_start: Option<i64>,
 }
 
 #[gen_stub_pymethods]
@@ -63,8 +68,9 @@ impl Bar {
     /// :param symbol: 标的代码
     /// :param extra: 自定义字段 (可选)
     /// :param freq: 周期标签 (可选, 引擎聚合出的窗口 bar 才带)
+    /// :param interval_start: 区间起点 (UTC 纳秒, 可选)
     #[new]
-    #[pyo3(signature = (timestamp, open, high, low, close, volume, symbol, extra=None, freq=None))]
+    #[pyo3(signature = (timestamp, open, high, low, close, volume, symbol, extra=None, freq=None, interval_start=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         timestamp: &Bound<'_, PyAny>,
@@ -76,6 +82,7 @@ impl Bar {
         symbol: String,
         extra: Option<HashMap<String, f64>>,
         freq: Option<String>,
+        interval_start: Option<i64>,
     ) -> PyResult<Self> {
         let ts_val = extract_timestamp(timestamp)?;
         let open_val = extract_decimal(open)?;
@@ -94,6 +101,7 @@ impl Bar {
             symbol,
             extra: extra.unwrap_or_default(),
             freq,
+            interval_start,
         })
     }
 

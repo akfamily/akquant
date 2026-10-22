@@ -76,6 +76,7 @@ impl DataProcessor {
                         volume: Decimal::ZERO,
                         extra: HashMap::default(),
                         freq: None,
+                        interval_start: None,
                     };
                     buffer.update(&bar);
                 }

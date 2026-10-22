@@ -165,6 +165,7 @@ impl BarColumns {
             symbol: sym.clone(),
             extra: bar_extra,
             freq: None,
+            interval_start: None,
         }
     }
 

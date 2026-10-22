@@ -76,6 +76,7 @@ mod tests {
             volume: dec!(100),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         };
 
         let bar_t2_b = Bar {
@@ -88,6 +89,7 @@ mod tests {
             volume: dec!(200),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         };
 
         let bar_t3_a = Bar {
@@ -100,6 +102,7 @@ mod tests {
             volume: dec!(100),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         };
 
         engine.state.feed.add_bar(bar_t1_a).unwrap();
@@ -193,6 +196,7 @@ mod tests {
             volume: dec!(100),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         };
         let bar_t2_a = Bar {
             timestamp: 2000,
@@ -204,6 +208,7 @@ mod tests {
             volume: dec!(100),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         };
 
         engine.state.feed.add_bar(bar_t1_a).unwrap();
@@ -308,6 +313,7 @@ mod tests {
             volume: dec!(100),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         };
         engine.state.feed.add_bar(bar_t1).unwrap();
 
@@ -322,6 +328,7 @@ mod tests {
             volume: dec!(100),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         };
         engine.state.feed.add_bar(bar_t2).unwrap();
 
@@ -336,6 +343,7 @@ mod tests {
             volume: dec!(100),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         };
         engine.state.feed.add_bar(bar_t3).unwrap();
 

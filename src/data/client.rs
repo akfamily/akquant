@@ -349,6 +349,7 @@ impl CsvDataClient {
                 symbol: self.symbol.clone(),
                 extra: HashMap::new(),
                 freq: None,
+                interval_start: None,
             };
             Some(Event::Bar(bar))
         } else {

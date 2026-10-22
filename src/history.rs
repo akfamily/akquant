@@ -477,6 +477,7 @@ mod tests {
             symbol: "TEST".to_string(),
             extra: extra_map,
             freq: None,
+            interval_start: None,
         }
     }
 
