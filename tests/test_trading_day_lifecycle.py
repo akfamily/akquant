@@ -780,3 +780,120 @@ def test_risk_budget_does_not_reset_at_midnight_within_night_session() -> None:
     rejected = orders[reasons.str.contains("risk budget")]
     assert len(rejected) == 1, orders[["created_at", "status", "reject_reason"]]
     assert pd.Timestamp(rejected.iloc[0]["created_at"]).hour == 0
+
+
+class _HoldOnce(Strategy):
+    """首根 bar 买入 100 股，之后不动。模块顶层定义以便 pickle."""
+
+    def __init__(self) -> None:
+        """初始化."""
+        super().__init__()
+        self.ordered = False
+
+    def on_bar(self, bar: Bar) -> None:
+        """首根 bar 买入."""
+        if not self.ordered:
+            self.ordered = True
+            self.buy(bar.symbol, 100)
+
+
+class _Idle(Strategy):
+    """不交易的策略（带委托的策略实例含不可 pickle 的 Order，无法存档）."""
+
+    def on_bar(self, bar: Bar) -> None:
+        """什么也不做."""
+
+
+def _intraday_frame(stamps: List[str]) -> pd.DataFrame:
+    """给定本地时间戳的 600000.SH 分钟线."""
+    idx = pd.to_datetime(stamps).tz_localize("Asia/Shanghai")
+    return pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "600000.SH",
+            "open": 10.0,
+            "high": 10.0,
+            "low": 10.0,
+            "close": 10.0,
+            "volume": 1e6,
+        }
+    )
+
+
+def _ten_oclock_frame(dates: List[str]) -> pd.DataFrame:
+    """每个日期 10:00 一根 bar."""
+    return _intraday_frame([f"{d} 10:00" for d in dates])
+
+
+def test_checkpoint_roundtrips_trading_day_progress() -> None:
+    """存档保存当前交易日与已结算交易日."""
+    from akquant.akquant import Engine
+
+    r = run_backtest(
+        data=_ten_oclock_frame(["2024-01-04", "2024-01-05"]),
+        strategy=_HoldOnce,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert r.engine is not None
+    assert r.engine.current_trading_day == dt.date(2024, 1, 5)
+    assert r.engine.last_settled_trading_day == dt.date(2024, 1, 5)
+    restored = Engine()
+    assert restored.current_trading_day is None
+    restored.load_state_bytes(r.engine.get_state_bytes())
+    assert restored.current_trading_day == dt.date(2024, 1, 5)
+    assert restored.last_settled_trading_day == dt.date(2024, 1, 5)
+
+
+def test_resume_after_weekend_settles_each_day_once(tmp_path: Any) -> None:
+    """周五存档、周一续跑：续跑段不重复结算周五."""
+    part1 = run_backtest(
+        data=_ten_oclock_frame(["2024-01-04", "2024-01-05"]),
+        strategy=_Idle,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    ckpt = tmp_path / "c.pkl"
+    assert part1.engine is not None
+    save_checkpoint(part1.engine, part1.strategy, str(ckpt))
+    part2 = run_from_checkpoint(
+        checkpoint_path=str(ckpt),
+        data=_ten_oclock_frame(["2024-01-08", "2024-01-09"]),
+        symbols=["600000.SH"],
+        show_progress=False,
+    )
+    # 续跑结果的 positions 只含续跑段的快照：周一、周二各一条日终快照，外加运行
+    # 结束时的末根 bar 快照（周二 10:00）；补结算周五会多出一条周一 10:00 的快照
+    times = [t.strftime("%Y-%m-%d %H:%M") for t in _snapshot_times(part2)]
+    assert times == ["2024-01-08 15:00", "2024-01-09 10:00", "2024-01-09 15:00"]
+
+
+def test_resume_same_day_does_not_reopen_or_resettle(tmp_path: Any) -> None:
+    """存档当日（已结算）再续跑同一天的后续 bar：不重新开日、不重复结算."""
+    part1 = run_backtest(
+        data=_intraday_frame(["2024-01-05 10:00"]),
+        strategy=_Idle,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    ckpt = tmp_path / "c.pkl"
+    assert part1.engine is not None
+    save_checkpoint(part1.engine, part1.strategy, str(ckpt))
+    part2 = run_from_checkpoint(
+        checkpoint_path=str(ckpt),
+        data=_intraday_frame(["2024-01-05 14:00"]),
+        symbols=["600000.SH"],
+        show_progress=False,
+    )
+    assert part2.engine is not None
+    assert part2.engine.current_trading_day == dt.date(2024, 1, 5)
+    # 存档段已在 15:00 结算过当日；续跑段不得再结算一次（整体恰一条 15:00 快照）
+    closes = [
+        t
+        for t in _snapshot_times(part1) + _snapshot_times(part2)
+        if t.strftime("%Y-%m-%d %H:%M") == "2024-01-05 15:00"
+    ]
+    assert len(closes) == 1

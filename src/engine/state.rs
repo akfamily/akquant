@@ -52,6 +52,15 @@ pub struct EngineSnapshot {
     pub window_aggregator_state: Option<crate::data::WindowAggregatorSnapshot>,
     #[serde(default)]
     pub strategy_risk_state: StrategyRiskStateSnapshot,
+    /// 存档时所在的交易日（旧存档无此字段）。
+    #[serde(default)]
+    pub current_trading_day: Option<NaiveDate>,
+    /// 已完成日终结算的最后交易日（旧存档无此字段）。
+    #[serde(default)]
+    pub last_settled_trading_day: Option<NaiveDate>,
+    /// 公司行动已处理到的日期（旧存档无此字段）。
+    #[serde(default)]
+    pub last_corp_action_date: Option<NaiveDate>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

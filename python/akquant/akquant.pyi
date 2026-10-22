@@ -670,6 +670,16 @@ class Engine:
         r"""配置多周期窗口订阅 (由 Strategy.subscribe_bars 收集后下发). 须在 run() 之前调用."""
         ...
 
+    @property
+    def current_trading_day(self) -> typing.Optional[datetime.date]:
+        r"""当前交易日（会话级）；尚未开日时为 None."""
+        ...
+
+    @property
+    def last_settled_trading_day(self) -> typing.Optional[datetime.date]:
+        r"""已完成日终结算的最后交易日；尚未结算时为 None."""
+        ...
+
     def get_state_bytes(self) -> bytes:
         r"""
         导出当前状态为二进制数据.

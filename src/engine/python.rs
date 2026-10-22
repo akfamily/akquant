@@ -632,6 +632,18 @@ impl Engine {
         }
     }
 
+    /// 当前交易日（会话级）；尚未开日时为 None。
+    #[getter]
+    fn current_trading_day(&self) -> Option<NaiveDate> {
+        self.current_trading_day
+    }
+
+    /// 已完成日终结算的最后交易日；尚未结算时为 None。
+    #[getter]
+    fn last_settled_trading_day(&self) -> Option<NaiveDate> {
+        self.last_settled_trading_day
+    }
+
     /// 导出当前状态为二进制数据
     fn get_state_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let history_state = Some(crate::history::HistoryBufferSnapshot::from(
@@ -689,6 +701,9 @@ impl Engine {
                 strategy_peak_pnl: self.strategy_peak_pnl.clone(),
                 strategy_reduce_only_active: self.strategy_reduce_only_active.clone(),
             },
+            current_trading_day: self.current_trading_day,
+            last_settled_trading_day: self.last_settled_trading_day,
+            last_corp_action_date: self.last_corp_action_date,
         };
         let bytes =
             rmp_serde::to_vec(&snapshot).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -722,6 +737,14 @@ impl Engine {
                 .restore(window_state);
         }
         self.snapshot_time = snapshot.current_time;
+        // 交易日进度：续跑时首个事件若仍在 current_trading_day 内则不再开日；
+        // 收盘定时器与跨度由首个事件按当日重新登记。
+        self.current_trading_day = snapshot.current_trading_day;
+        self.last_settled_trading_day = snapshot.last_settled_trading_day;
+        self.last_corp_action_date = snapshot.last_corp_action_date;
+        self.current_day_span = None;
+        self.scheduled_day_close = None;
+        self.last_event_ts_in_day = None;
         self.default_strategy_id = snapshot.strategy_risk_state.default_strategy_id;
         self.strategy_slots = snapshot
             .strategy_risk_state

@@ -387,6 +387,11 @@ impl Processor for DataProcessor {
                             Some(session_day_span_for(engine, day, timestamp)?);
                         engine.last_event_ts_in_day = None;
                     }
+                    if engine.current_day_span.is_none() {
+                        // 从存档恢复后同一交易日内续跑：重建当日跨度以登记收盘定时器
+                        engine.current_day_span =
+                            Some(session_day_span_for(engine, day, timestamp)?);
+                    }
                     if engine.scheduled_day_close != Some(day)
                         && engine.last_settled_trading_day != Some(day)
                         && let Some((_, end)) = engine.current_day_span

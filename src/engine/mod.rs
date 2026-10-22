@@ -174,6 +174,7 @@ mod tests {
         use crate::history::HistoryBufferSnapshot;
         use crate::order_manager::OrderManager;
         use crate::portfolio::Portfolio;
+        use chrono::NaiveDate;
         use std::collections::HashMap;
         use std::sync::Arc;
 
@@ -212,12 +213,20 @@ mod tests {
             }),
             window_aggregator_state: None,
             strategy_risk_state: Default::default(),
+            current_trading_day: Some(NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()),
+            last_settled_trading_day: None,
+            last_corp_action_date: None,
         };
 
         let encoded: Vec<u8> = rmp_serde::to_vec(&snapshot).unwrap();
         let decoded: EngineSnapshot = rmp_serde::from_slice(&encoded).unwrap();
 
         assert_eq!(decoded.current_time, 123456789);
+        assert_eq!(
+            decoded.current_trading_day,
+            NaiveDate::from_ymd_opt(2024, 1, 5)
+        );
+        assert_eq!(decoded.last_settled_trading_day, None);
         assert_eq!(decoded.portfolio.cash, Decimal::from(50000));
         assert_eq!(decoded.initial_cash, Some(Decimal::from(50000)));
         assert!(decoded.last_prices.is_empty());
