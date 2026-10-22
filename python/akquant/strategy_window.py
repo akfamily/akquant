@@ -306,9 +306,16 @@ def on_window_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
 
     与 ``strategy_events.on_bar_event`` 同构但更薄: 不动 ``_last_prices`` /
     ``_bar_count`` / 持仓符号追踪(那些是基础行情的职责), 只做: 订单事件收尾 →
-    active_start 与 warmup 门控 → 按周期驱动增量指标 → 回调。
+    active_start 与 warmup 门控 → 按周期驱动增量指标 → 回调 → 发指标快照。
+
+    快照必须在本回调内发出: 窗口 bar 在基础事件回调**之后**派发, 若留给下一个
+    事件顺带 flush, 确认点会晚一拍; 收尾强制闭合的末尾窗口后面没有事件, 则
+    永远发不出去, 只按快照落库的消费方会丢点。
     """
-    from .strategy_events import _is_before_active_start  # 局部导入避免环
+    from .strategy_events import (  # 局部导入避免环
+        _flush_indicator_snapshots,
+        _is_before_active_start,
+    )
 
     ensure_framework_state(strategy)
     strategy.ctx = ctx
@@ -329,6 +336,7 @@ def on_window_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
         strategy._update_incremental_indicators(bar)
     warmup = int(getattr(strategy, "warmup_period", 0) or 0)
     if warmup > 0 and int(strategy._symbol_bar_counts.get(bar.symbol, 0)) < warmup:
+        _flush_indicator_snapshots(strategy)
         return
     previous_bar = strategy.current_bar
     strategy.current_bar = bar
@@ -340,3 +348,4 @@ def on_window_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
             call_window_bar_callback(strategy, callback, bar)
     finally:
         strategy.current_bar = previous_bar
+    _flush_indicator_snapshots(strategy)

@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **复盘页可隐藏价格 K 线：`result.viz.review(hide_price=)` 与页面“隐藏 K 线”按钮**：当前标的带 candle 指标（如平均 K 线）时出现按钮，可随时切换，`hide_price=True` 指定初始隐藏；只隐藏价格 K 线，买卖点、成交量与其他指标照常显示，无 candle 指标的标的不受影响。
 
+### Fixed
+- **`freq=` 窗口指标的确认值快照（`indicator_snapshot`）晚一拍，末尾窗口的快照完全缺失**：窗口 bar 在基础事件回调之后才派发，而窗口回调内不发快照，确认值只能等下一个事件顺带发出——实盘只推 bar 时，5min 指标的确认值要等下一根 1min bar 才到前端；回测数据结束或实盘会话停止时强制闭合的末尾窗口后面没有事件，只发了 `indicator_point`、快照永远发不出去，只按快照落库的消费方会丢这一点。现在窗口回调结束时即发快照。`indicator_point`、`indicator_df()` 与导出不受影响。
+- **tick/bar 双流下，未开 `intrabar` 的基础周期 `self.I()` 指标被 tick 与 bar 各推进一次，值静默算错**（规则版本 1.7.2）：tick 与基础 bar 的 `freq` 都是 `None`，指标分发据此把两者都当作输入，bar 收盘时的值混进了逐笔价（例如 `SMA(2)` 变成“最后一笔 tick 与收盘价”的均值）。现在双流标的上这类指标只由 bar 推进，tick 回调里读到的是上一根 bar 的确认值；纯 tick 会话（没有 bar）里 tick 照旧推进。双流按标的判定：回测为 `run_backtest(data=[Tick, ...], freq=...)` 的全部标的，或混合 `[Bar, Tick]` 输入里同时有 bar 与 tick 的标的；实盘取行情网关在 `GatewayBundle.metadata["dual_stream"]` 的声明（`True` 为全部标的，集合为这些标的），`replay`、`ctp` 与 akquant-klinedata 已声明，**第三方网关推双流时需自行声明**，否则仍按旧行为。双流回测里用了这类指标的结果会变化。
+
 ## [0.3.69] - 2026-10-21
 
 ### Added

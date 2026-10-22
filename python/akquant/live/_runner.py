@@ -43,6 +43,7 @@ from ..strategy import (
     StrategyRuntimeConfig,
     reconcile_strategy_id,
 )
+from ..strategy_framework_hooks import normalize_dual_stream_declaration
 from ..strategy_loader import resolve_strategy_input
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
@@ -717,6 +718,9 @@ class LiveRunner:
         self._inject_data_freq(
             [strategy_instance, *slot_strategy_instances.values()], bundle
         )
+        self._inject_dual_stream(
+            [strategy_instance, *slot_strategy_instances.values()], bundle
+        )
         self._attach_indicator_stream(
             [strategy_instance, *slot_strategy_instances.values()]
         )
@@ -1340,6 +1344,30 @@ class LiveRunner:
                 )
             return
         configure_engine_window_subscriptions(engine, targets, freq, logger)
+
+    def _inject_dual_stream(self, targets: list[Strategy], bundle: Any) -> None:
+        """把行情网关声明的 tick/bar 双流注入策略(``_framework_dual_stream``).
+
+        取 ``GatewayBundle.metadata['dual_stream']``: ``True`` 表示全部标的都同时
+        推 tick 与基础 bar, 标的集合表示只有这些标的。双流标的上未开 intrabar 的
+        基础周期指标只由 bar 推进; 不注入则 tick 与 bar 各推进一次, 值静默算错。
+
+        **没有声明按"无双流"处理**(tick 照旧推进基础指标), 与升级前行为一致——
+        第三方网关若推双流, 需在 builder 的 metadata 里声明。
+
+        :param targets: 主策略与各槽位策略实例
+        :param bundle: 已构建的 ``GatewayBundle``
+        """
+        metadata = getattr(bundle, "metadata", None) or {}
+        dual_stream = normalize_dual_stream_declaration(metadata.get("dual_stream"))
+        for target in targets:
+            setattr(target, "_framework_dual_stream", dual_stream)
+        if dual_stream:
+            logger.info(
+                "tick/bar 双流(%s): 基础周期指标只由 bar 推进",
+                "全部标的" if dual_stream is True else ", ".join(sorted(dual_stream)),
+                extra=self._runner_log_extra(phase="gateway"),
+            )
 
     def _install_subscription_forwarder(self, targets: list[Strategy]) -> None:
         """给各策略装上 subscribe() → 行情网关的运行期转发器.

@@ -163,6 +163,28 @@ def _build(**gateway_options: Any) -> CTPMarketGateway:
     return bundle.market_gateway.gateway
 
 
+def test_build_ctp_declares_dual_stream_in_metadata() -> None:
+    """Builder 在 ``metadata["dual_stream"]`` 声明是否双流, 供 runner 注入策略.
+
+    双流下声明式指标只由 bar 推进(见 ``tests/test_indicator_dual_stream.py``);
+    漏声明则 tick 与 bar 都会推进基础指标, 值静默算错。
+    """
+    for options, expected in (
+        ({}, False),
+        ({"emit_ticks": True, "emit_bars": True}, True),
+        ({"use_aggregator": False}, False),
+    ):
+        opts: dict[str, Any] = {"md_front": "tcp://test", **options}
+        bundle = _build_ctp(
+            feed=DataFeed(),
+            symbols=["rb2401"],
+            use_aggregator=opts.pop("use_aggregator", True),
+            **opts,
+        )
+        assert bundle.metadata is not None
+        assert bundle.metadata["dual_stream"] is expected, options
+
+
 def test_build_ctp_default_stays_bar_only() -> None:
     """未传 emit_ticks/emit_bars 时经 builder 层仍是默认只出 bar."""
     gateway = _build()
