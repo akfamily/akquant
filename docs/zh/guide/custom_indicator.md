@@ -213,7 +213,9 @@ class HA(aq.Indicator, title="平均K线", overlay=True, replaces_price=True):
 - `aq.HeikinAshi()` 是内置 Rust 指标：`update(open, high, low, close)` 返回
   `(ha_open, ha_high, ha_low, ha_close)`，第一根就有值。
 - 类定义行的 `replaces_price=True` 只是给前端的提示（“这个指标替代价格 K 线”），只能写在
-  `aq.Indicator` 上且必须同时 `overlay=True`；隐藏原 K 线由前端决定，框架不处理。
+  `aq.Indicator` 上且必须同时 `overlay=True`；隐藏原 K 线由前端决定。它不写进回测结果，
+  所以内置复盘页不会据此自动隐藏，而是在有 candle 指标时提供“隐藏 K 线”按钮，初始状态
+  用 `result.viz.review(hide_price=True)` 指定（见下文「在 LWC 复盘图上看指标」）。
   `X.resolve_replaces_price()` 与 `aq.inspect_strategy` 的 `replaces_price` 字段可读出它。
 
 各出口的画法：
@@ -687,7 +689,12 @@ fig = result.viz.indicators(
 ```python
 result.viz.review(market_data, filename="review.html")            # 带指标
 result.viz.review(market_data, filename="review.html", include_indicators=False)
+result.viz.review(market_data, filename="review.html", hide_price=True)  # 初始隐藏价格 K 线
 ```
+
+当前标的带 candle 指标（如平均 K 线）时，页面顶部会出现“隐藏 K 线”按钮，可随时切换；
+`hide_price=True` 只决定初始状态。隐藏的是价格 K 线本身，买卖点、成交量和其他指标照常
+显示；没有 candle 指标的标的不受影响（否则主图会只剩空白）。
 
 底层适配器是 `akquant.lwc.to_lwc_indicator_series()`，与 `akquant.chart.to_d3kline_options()`
 是同一份指标契约面向两个前端的镜像实现；自建 LWC 页面可以直接复用。每条 series 带

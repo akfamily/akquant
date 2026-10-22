@@ -115,13 +115,18 @@ def main() -> None:
     ha_close = result.indicator_df(name="ha.close")["value"].iloc[0]
     print(f"first_ha_close_matches={math.isclose(ha_close, expected_close)}")
 
-    # LWC review: one Candlestick series for the group.
+    # LWC review: one Candlestick series for the group. hide_price=True opens the
+    # page with the price candles hidden (the "隐藏 K 线" button toggles it back).
     out_dir = Path(tempfile.mkdtemp(prefix="akq_heikin_ashi_"))
-    html_path = result.viz.review(data, filename=str(out_dir / "review.html"))
+    html_path = result.viz.review(
+        data, filename=str(out_dir / "review.html"), hide_price=True
+    )
     html = Path(html_path).read_text(encoding="utf-8")
     print(f"review_html_written={Path(html_path).exists()}")
     has_candlestick = '"series_type":"Candlestick"' in html
     print(f"review_has_candlestick={has_candlestick}")
+    price_hidden = '"hide_price":true' in html
+    print(f"review_price_hidden={price_hidden}")
 
     # d3kline degrades the group to its close line, named after the group.
     outputs = result.indicator_outputs

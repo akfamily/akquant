@@ -237,6 +237,33 @@ def test_review_html_embeds_candlestick_series() -> None:
     assert "downColor:CANDLE_HOLLOW" in html  # 模板里的 Candlestick 分支
 
 
+def test_review_hide_price_reaches_page_config(tmp_path: Any) -> None:
+    """viz.review(hide_price=) 写进页面配置; 默认 False."""
+    result, _ = _run()
+    md = _md().set_index("timestamp")
+    shown = result.viz.review(md, filename=str(tmp_path / "shown.html"))
+    hidden = result.viz.review(
+        md, filename=str(tmp_path / "hidden.html"), hide_price=True
+    )
+    assert '"hide_price":false' in open(shown, encoding="utf-8").read()
+    assert '"hide_price":true' in open(hidden, encoding="utf-8").read()
+
+
+def test_review_price_toggle_is_wired() -> None:
+    """「隐藏 K 线」按钮真的挂了点击、draw() 里按 candle 指标刷新显隐."""
+    result, _ = _run()
+    payload = build_review_payload(result, _md().set_index("timestamp"))
+    html = render_review_html(payload, title="t", intraday=False, hide_price=True)
+    assert 'id="price-toggle"' in html
+    assert "priceBtn.addEventListener('click'" in html
+    assert "hasCandleInd = (s.indicators" in html  # draw() 内按 candle 指标定显隐
+    # 主题切换也走 priceOptions, 否则切主题会把已隐藏的 K 线重新着色
+    theme_fn = html[
+        html.index("function applyTheme()") : html.index("function colorVol")
+    ]
+    assert "candle.applyOptions(priceOptions())" in theme_fn
+
+
 # ------------------------------------------------------------------ d3kline / raw
 
 

@@ -48,7 +48,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   #bar{display:flex;align-items:center;gap:12px;padding:10px 16px;
     border-bottom:1px solid var(--grid);}
   #bar h1{font-size:15px;font-weight:600;margin:0;}
-  #sym,#theme-toggle{padding:4px 8px;background:var(--bg);color:var(--text);
+  #sym,#theme-toggle,#price-toggle{padding:4px 8px;background:var(--bg);
+    color:var(--text);
     border:1px solid var(--grid);border-radius:4px;font-size:13px;cursor:pointer;}
   #sym{margin-left:auto;cursor:default;}
   #chart{width:100%;height:calc(100vh - 52px);}
@@ -59,6 +60,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <div id="bar">
   <h1>%%TITLE%%</h1>
   <select id="sym" aria-label="标的选择"></select>
+  <button id="price-toggle" type="button" aria-label="隐藏或显示价格 K 线"
+    style="display:none">隐藏 K 线</button>
   <button id="theme-toggle" type="button" aria-label="切换明暗主题">🌙 暗色</button>
 </div>
 <div id="chart"></div>
@@ -80,6 +83,11 @@ _APP_JS = """
   var cur = cfg.initial_theme in themes ? cfg.initial_theme : 'light';
   var sel = document.getElementById('sym');
   var toggle = document.getElementById('theme-toggle');
+  // 隐藏价格 K 线: 只在当前标的有 candle 指标(如平均 K 线)时生效并显示按钮,
+  // 否则隐藏后主图只剩空白。状态跨标的切换保留。
+  var priceBtn = document.getElementById('price-toggle');
+  var priceHidden = !!cfg.hide_price;
+  var hasCandleInd = false;
   var host = document.getElementById('chart');
   if(!all.length){host.innerHTML='<div id="empty">无可复盘的标的数据</div>';return;}
   all.forEach(function(s,i){
@@ -178,6 +186,24 @@ _APP_JS = """
     });
   }
 
+  // 隐藏用透明色而不是 visible:false —— 买卖点 marker 挂在价格 series 上,
+  // 隐藏 series 会连带隐藏 marker。
+  function priceOptions(){
+    var t = T();
+    if(priceHidden && hasCandleInd){
+      var h = CANDLE_HOLLOW;
+      return {upColor:h,downColor:h,borderUpColor:h,borderDownColor:h,
+        wickUpColor:h,wickDownColor:h,lastValueVisible:false,priceLineVisible:false};
+    }
+    return {upColor:t.up,downColor:t.down,borderUpColor:t.up,
+      borderDownColor:t.down,wickUpColor:t.up,wickDownColor:t.down,
+      lastValueVisible:true,priceLineVisible:true};
+  }
+  function applyPriceVisibility(){
+    candle.applyOptions(priceOptions());
+    priceBtn.style.display = hasCandleInd ? '' : 'none';
+    priceBtn.textContent = priceHidden ? '显示 K 线' : '隐藏 K 线';
+  }
   function applyTheme(){
     var t = T();
     chart.applyOptions({
@@ -186,10 +212,7 @@ _APP_JS = """
       rightPriceScale:{borderColor:t.grid},
       timeScale:{borderColor:t.grid}
     });
-    candle.applyOptions({
-      upColor:t.up,downColor:t.down,borderUpColor:t.up,
-      borderDownColor:t.down,wickUpColor:t.up,wickDownColor:t.down
-    });
+    candle.applyOptions(priceOptions());
     document.documentElement.setAttribute('data-theme',cur);
     toggle.textContent = cur==='dark' ? '☀️ 亮色' : '🌙 暗色';
   }
@@ -216,6 +239,10 @@ _APP_JS = """
     candle.setData(s.candles||[]);
     vol.setData(colorVol(s));
     curSignals = drawIndicators(s);
+    hasCandleInd = (s.indicators||[]).some(function(ind){
+      return ind.series_type==='Candlestick';
+    });
+    applyPriceVisibility();
     markerPrim.setMarkers(allMarkers(s, curSignals));
     chart.timeScale().fitContent();
   }
@@ -226,6 +253,10 @@ _APP_JS = """
     markerPrim.setMarkers(allMarkers(s, curSignals));
   }
   sel.addEventListener('change',function(){draw(parseInt(sel.value,10)||0);});
+  priceBtn.addEventListener('click',function(){
+    priceHidden = !priceHidden;
+    applyPriceVisibility();
+  });
   toggle.addEventListener('click',function(){
     cur = cur==='dark' ? 'light' : 'dark';
     applyTheme(); recolorCurrent();
@@ -261,6 +292,7 @@ def render_review_html(
     themes: Optional[dict[str, dict[str, str]]] = None,
     initial_theme: str = "light",
     initial_symbol_index: int = 0,
+    hide_price: bool = False,
 ) -> str:
     """把 payload 渲染成离线自包含的复盘 HTML 字符串(支持页内明暗切换).
 
@@ -270,6 +302,7 @@ def render_review_html(
     :param themes: ``{"light": {...}, "dark": {...}}`` 主题色板;缺省用 ``THEMES``.
     :param initial_theme: 初始主题键(``"light"`` / ``"dark"``).
     :param initial_symbol_index: 初始展示的标的下标.
+    :param hide_price: 初始是否隐藏价格 K 线; 只对带 candle 指标的标的生效.
     :return: 完整 HTML 文本.
     """
     if themes is None:
@@ -285,6 +318,7 @@ def render_review_html(
     data["initial_theme"] = init
     data["intraday"] = bool(intraday)
     data["initial_symbol_index"] = int(initial_symbol_index)
+    data["hide_price"] = bool(hide_price)
     safe_title = html.escape(str(title))
     # 顺序敏感:先注入受控内容与静态 JS,最后注入 DATA,
     # 避免用户数据里的 "%%...%%" 字面量被后续替换误伤(DATA 之后无替换)。

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **复盘页可隐藏价格 K 线：`result.viz.review(hide_price=)` 与页面“隐藏 K 线”按钮**：当前标的带 candle 指标（如平均 K 线）时出现按钮，可随时切换，`hide_price=True` 指定初始隐藏；只隐藏价格 K 线，买卖点、成交量与其他指标照常显示，无 candle 指标的标的不受影响。
+
 ## [0.3.69] - 2026-10-21
 
 ### Added

@@ -97,6 +97,7 @@ Notes:
 - The HTML inlines lightweight-charts with **no CDN dependency**, so it opens and archives offline.
 - A **light/dark toggle button** sits in the top bar; `theme` only sets the initial theme. Switching recolors instantly with no file regeneration.
 - Multi-symbol input (`{symbol: df}`) adds a symbol selector at the top; `initial_symbol` sets which one is shown first.
+- When the current symbol has a candle indicator (e.g. Heikin-Ashi), a "hide candles" button appears in the top bar; `hide_price=True` opens the page with the price candles already hidden. Trade markers stay visible.
 - Column names are case-insensitive and Chinese names are supported (`开盘/最高/最低/收盘/成交量/日期`, etc.).
 - Daily data uses a `YYYY-MM-DD` axis; intraday data automatically switches to a time-of-day axis.
 - Optimized for **large / intraday** datasets: the payload is built with vectorized ops and timestamps are de-duplicated, so tens of thousands of candles stay smooth (the core advantage over the plotly analytical charts).

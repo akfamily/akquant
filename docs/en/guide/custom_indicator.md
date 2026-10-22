@@ -230,7 +230,11 @@ class HA(aq.Indicator, title="Heikin-Ashi", overlay=True, replaces_price=True):
   `(ha_open, ha_high, ha_low, ha_close)`, with a value from the first bar.
 - `replaces_price=True` on the class line is only a hint for frontends ("this indicator
   replaces the price candles"). It is only allowed on `aq.Indicator` and requires
-  `overlay=True`; hiding the original candles is the frontend's job.
+  `overlay=True`; hiding the original candles is the frontend's job. It is not stored in
+  the backtest result, so the built-in review page does not hide anything on its own;
+  instead it offers a "hide candles" button whenever a candle indicator is present, and
+  `result.viz.review(hide_price=True)` sets the initial state (see "Indicators on the LWC
+  review chart" below).
   `X.resolve_replaces_price()` and the `replaces_price` field of `aq.inspect_strategy` expose it.
 
 How each exporter draws it:
@@ -754,7 +758,14 @@ is rendered as markers on the candles instead of a separate series, and the four
 ```python
 result.viz.review(market_data, filename="review.html")            # with indicators
 result.viz.review(market_data, filename="review.html", include_indicators=False)
+result.viz.review(market_data, filename="review.html", hide_price=True)  # start with price candles hidden
 ```
+
+When the current symbol has a candle indicator (e.g. Heikin-Ashi), a "hide candles"
+button appears in the top bar and can be toggled at any time; `hide_price=True` only sets
+the initial state. Only the price candles are hidden - trade markers, volume and other
+indicators stay visible. Symbols without a candle indicator are unaffected (otherwise the
+main pane would be left empty).
 
 The adapter underneath is `akquant.lwc.to_lwc_indicator_series()` - the mirror of
 `akquant.chart.to_d3kline_options()`: one indicator contract, two frontends. Reuse

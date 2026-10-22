@@ -1025,7 +1025,7 @@ class DualMA(aq.Indicator, title="Dual MA", overlay=True, id="dual_ma"):
 *   `title`: display name only; defaults to the class name.
 *   `overlay`: `True` draws on the main pane, `False` (default) on a sub-pane. `self.I` plots by default: default `pane=0` with `overlay=True`, otherwise `pane=1` (pane numbers are local to the script); `plot=False` turns a line off.
 *   `id`: machine id (the indicator points' `owner_strategy_id`); defaults to the snake_case class name.
-*   `replaces_price`: `True` means the script replaces the price candles (e.g. Heikin-Ashi). It is only a frontend hint; hiding the original candles is up to the frontend. Requires `overlay=True` (otherwise `ValueError`), must be a `bool` (otherwise `TypeError`), is inherited by subclasses, defaults to `False`. `X.resolve_replaces_price()` returns the effective value. Writing it on `aq.Strategy` raises `TypeError`.
+*   `replaces_price`: `True` means the script replaces the price candles (e.g. Heikin-Ashi). It is only a frontend hint; hiding the original candles is up to the frontend (the built-in review page offers `result.viz.review(hide_price=)` and an in-page button). Requires `overlay=True` (otherwise `ValueError`), must be a `bool` (otherwise `TypeError`), is inherited by subclasses, defaults to `False`. `X.resolve_replaces_price()` returns the effective value. Writing it on `aq.Strategy` raises `TypeError`.
 *   Every trading API (`buy` / `sell` / `submit_order` / `place_*` / `order_target*` / `rebalance_*` / `close_position` / `cancel_*`) raises `akquant.IndicatorCannotTradeError`.
 *   See the [custom indicator guide](../guide/custom_indicator.md).
 

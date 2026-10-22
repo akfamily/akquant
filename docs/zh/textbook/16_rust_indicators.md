@@ -37,7 +37,7 @@ python examples/textbook/ch16_indicators.py --symbol sh600000
 1. 脚本依次输出三课演示：读指标（输入/输出/warmup）、用指标（EMA+ADX+NATR 角色分工回测）、迁移指标（python/rust 后端对齐）。
 2. 切换 `backend="python"` 与 `backend="rust"` 后，收敛尾段数值基本一致且可解释。
 3. 能识别 warmup 导致的空值区段，并在计算指标前剔除前部 NaN 填充，避免把无效值喂给策略信号。
-4. `77_heikin_ashi_indicator.py` 输出 `candle_groups=['ha']`、`first_ha_close_matches=True`、`review_has_candlestick=True`、`d3kline_series=['ha']`，以及 `replaces_price=True`，最后打印 `done_heikin_ashi`。
+4. `77_heikin_ashi_indicator.py` 输出 `candle_groups=['ha']`、`first_ha_close_matches=True`、`review_has_candlestick=True`、`review_price_hidden=True`、`d3kline_series=['ha']`，以及 `replaces_price=True`，最后打印 `done_heikin_ashi`。
 
 ## 16.1 为什么单独学习 Rust 指标体系
 
