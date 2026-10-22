@@ -48,6 +48,9 @@ class _FakeEngine:
     def use_china_futures_market(self) -> None:
         pass
 
+    def configure_sessions(self, *a: Any) -> None:
+        pass
+
     def set_force_session_continuous(self, *a: Any) -> None:
         pass
 

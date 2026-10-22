@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List
 
 import akquant as aq
 import pandas as pd
@@ -901,3 +901,190 @@ def test_resume_same_day_does_not_reopen_or_resettle(tmp_path: Any) -> None:
         if t.strftime("%Y-%m-%d %H:%M") == "2024-01-05 15:00"
     ]
     assert len(closes) == 1
+
+
+def _live_stock_instrument() -> Any:
+    from akquant.akquant import AssetType, Instrument
+
+    return Instrument(
+        symbol="600000",
+        asset_type=AssetType.Stock,
+        multiplier=1.0,
+        margin_ratio=1.0,
+        tick_size=0.01,
+        lot_size=100,
+        option_type=None,
+        strike_price=None,
+        expiry_date=None,
+    )
+
+
+def _local_bars(stamps: List[str]) -> List[Bar]:
+    idx = pd.to_datetime(stamps).tz_localize("Asia/Shanghai")
+    return [Bar(int(t.value), 10.0, 10.0, 10.0, 10.0, 100.0, "600000") for t in idx]
+
+
+def _local_minute(ts_ns: int) -> str:
+    local = pd.Timestamp(ts_ns, tz="UTC").tz_convert("Asia/Shanghai")
+    return local.strftime("%Y-%m-%d %H:%M")
+
+
+class _LiveDayOrderProbe(Strategy):
+    """首根 bar 下一张够不着的 Day 限价单.
+
+    on_start 里等 replay 推送线程结束：全部行情先进 feed，引擎取下一动作时
+    “有事件可取”是确定的，不受推送线程与主循环的竞态影响。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+        self.active_at: Dict[str, int] = {}
+
+    def on_start(self) -> None:
+        import threading
+
+        for thread in threading.enumerate():
+            if thread.name == "replay-market":
+                thread.join(timeout=10)
+
+    def on_bar(self, bar: Bar) -> None:
+        assert self.ctx is not None
+        self.active_at[_local_minute(int(bar.timestamp))] = len(self.ctx.active_orders)
+        if not self.done:
+            self.done = True
+            self.buy("600000", 100, price=1.0, time_in_force=aq.TimeInForce.Day)
+
+
+def _run_live_replay(
+    monkeypatch: pytest.MonkeyPatch, bars: List[Bar], **kwargs: Any
+) -> Any:
+    """run_live(broker="replay") 跑完后返回 runner，供读取引擎结果.
+
+    run_live 不返回结果，且日终过期不触发 on_order（订单离开在途账本时
+    只留档、不回调），只能从引擎结果里读订单终态。
+    """
+    from akquant import run_live
+    from akquant.live import _facade
+
+    captured: List[Any] = []
+
+    class _Recording(_facade.LiveRunner):  # type: ignore[misc,valid-type]
+        def __init__(self, *args: Any, **kw: Any) -> None:
+            super().__init__(*args, **kw)
+            captured.append(self)
+
+    monkeypatch.setattr(_facade, "LiveRunner", _Recording)
+    run_live(
+        strategy_cls=_LiveDayOrderProbe,
+        instruments=[_live_stock_instrument()],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars, "freq": "1min"},
+        cash=1e6,
+        show_progress=False,
+        duration="30s",
+        **kwargs,
+    )
+    assert len(captured) == 1
+    return captured[0]
+
+
+def _expired_at(runner: Any) -> List[str]:
+    orders = runner.engine.get_results().orders
+    return [
+        _local_minute(int(o.updated_at))
+        for o in orders
+        if o.status == aq.OrderStatus.Expired
+    ]
+
+
+def _snapshot_minutes(runner: Any) -> List[str]:
+    return [_local_minute(int(ts)) for ts, _ in runner.engine.get_results().snapshots]
+
+
+def test_live_replay_settles_at_trading_day_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """实盘 replay：日终结算在交易日收盘触发（Day 单在所属交易日收盘过期）."""
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(
+            [
+                "2024-01-02 10:00",
+                "2024-01-02 14:00",
+                "2024-01-03 10:00",
+                "2024-01-03 14:00",
+            ]
+        ),
+        trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
+    )
+    # 10:00 下单（非当日最后切片，不豁免）→ 01-02 15:00 过期
+    assert _expired_at(runner) == ["2024-01-02 15:00"]
+
+
+def test_live_replay_forwards_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_live 的 sessions 下发到引擎：全天连续时交易日在本地 0 点收盘."""
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(
+            [
+                "2024-01-02 10:00",
+                "2024-01-02 14:00",
+                "2024-01-03 10:00",
+                "2024-01-03 14:00",
+            ]
+        ),
+        sessions={"default": "ALWAYS_OPEN"},
+    )
+    assert _expired_at(runner) == ["2024-01-03 00:00"]
+
+
+def test_live_replay_forwards_trading_calendar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_live 的 trading_calendar 下发到引擎：01-02 非交易日并入 01-03."""
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(
+            [
+                "2024-01-02 10:00",
+                "2024-01-02 14:00",
+                "2024-01-03 10:00",
+                "2024-01-03 14:00",
+                "2024-01-04 10:00",
+            ]
+        ),
+        trading_calendar=["2023-12-29", "2024-01-03", "2024-01-04"],
+    )
+    # 01-02 的行情属于交易日 01-03（区间 (12-29 15:00, 01-03 15:00]）
+    assert _expired_at(runner) == ["2024-01-03 15:00"]
+
+
+def test_live_replay_next_day_event_inside_grace_window_settles_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """实盘宽限窗口内到达的下一交易日行情：先补结算上一交易日，定时器随后空转.
+
+    全天连续时 01-02 收盘 = 01-03 00:00，实盘收盘定时器在 00:01。00:00:30 的
+    行情已在 feed 中且早于定时器，引擎先取事件，开日时补结算 01-02；之后到期
+    的定时器发现已结算，不再重复。
+    """
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(
+            [
+                "2024-01-02 10:00:00",
+                "2024-01-02 14:00:00",
+                "2024-01-03 00:00:30",
+                "2024-01-03 10:00:00",
+            ]
+        ),
+        sessions={"default": "ALWAYS_OPEN"},
+    )
+    assert _expired_at(runner) == ["2024-01-03 00:00"]
+    # 补结算先于新交易日首个事件的 on_bar
+    assert runner._stop_target_strategy.active_at["2024-01-03 00:00"] == 0
+    assert runner._stop_target_strategy.active_at["2024-01-02 14:00"] == 1
+    # 01-02 只结算一次
+    assert _snapshot_minutes(runner).count("2024-01-03 00:00") == 1

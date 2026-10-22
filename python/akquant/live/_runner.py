@@ -12,8 +12,10 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Iterable,
     Iterator,
     List,
+    Mapping,
     Optional,
     Sequence,
     Type,
@@ -398,6 +400,8 @@ class LiveRunner:
         session_tag: Optional[str] = None,
         preload_history: Any = None,
         preload_bars: Optional[int] = None,
+        sessions: Optional[Mapping[str, str]] = None,
+        trading_calendar: Optional[Iterable[Any]] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -463,6 +467,12 @@ class LiveRunner:
             unless tick-driven), ``0`` = off, ``N > 0`` = fetch N bars per symbol
             (clamped to 10000; also applies to tick-driven sessions). Ignored when
             ``preload_history`` is given. See ``run_live``.
+        :param sessions: 代码前缀 → 时段模板名（"default" 为全局默认）；
+            不传时中国时区按资产类型取默认（股票 CN_STOCK、期货 CN_FUTURES_DAY、
+            期权 CN_OPTION），其他时区全天连续。可选模板见
+            aq.SessionResolver.templates()
+        :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传按工作日
+            推算，节假日前后的夜盘与日终结算会算错
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
@@ -560,6 +570,14 @@ class LiveRunner:
         self.session_tag = session_tag
         self.preload_history = preload_history
         self.preload_bars = validate_preload_bars(preload_bars)
+        # 交易时段表与交易日历: 日历在构造时归一(空/类型错立即报错), 时段模板名
+        # 由 run() 里 engine.configure_sessions 校验。
+        from ..backtest.engine import _normalize_trading_calendar
+
+        self.sessions: Optional[Dict[str, str]] = (
+            dict(sessions) if sessions is not None else None
+        )
+        self.trading_calendar = _normalize_trading_calendar(trading_calendar)
         self._preload_result: Optional[PreloadResult] = None
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
@@ -650,6 +668,8 @@ class LiveRunner:
         else:
             self.engine.use_china_market()
         self.engine.set_force_session_continuous(True)
+        # 交易日划分与日终结算时刻(引擎时区沿用默认 Asia/Shanghai)
+        self.engine.configure_sessions(self.sessions, self.trading_calendar)
 
         symbols = [inst.symbol for inst in self.instruments]
         gateway_kwargs = self._build_gateway_kwargs()

@@ -7,7 +7,18 @@ the ``indicator_recorder`` / ``on_event`` extension points so live runs can
 stream indicators exactly like backtests.
 """
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Type,
+    Union,
+)
 
 import pandas as pd
 
@@ -92,6 +103,8 @@ def run_live(
         Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]
     ] = None,
     preload_bars: Optional[int] = None,
+    sessions: Optional[Mapping[str, str]] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -263,6 +276,12 @@ def run_live(
         logged as INFO. Only depth set before session start (class attribute or
         ``__init__``) is seen; ``set_history_depth`` called in ``on_start`` is
         covered by the 500 floor or needs an explicit ``preload_bars``.
+    :param sessions: 代码前缀 → 时段模板名（"default" 为全局默认）；
+                     不传时中国时区按资产类型取默认（股票 CN_STOCK、
+                     期货 CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。
+                     可选模板见 aq.SessionResolver.templates()
+    :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传按工作日
+                             推算，节假日前后的夜盘与日终结算会算错
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")
@@ -330,6 +349,8 @@ def run_live(
         session_tag=session_tag,
         preload_history=preload_history,
         preload_bars=preload_bars,
+        sessions=sessions,
+        trading_calendar=trading_calendar,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event
