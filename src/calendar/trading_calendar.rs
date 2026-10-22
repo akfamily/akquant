@@ -11,8 +11,13 @@ pub enum TradingCalendar {
     /// 每个自然日都是交易日。
     AllDays,
     /// 用户传入的交易日集合。
-    Explicit(BTreeSet<NaiveDate>),
+    Explicit(ExplicitDays),
 }
+
+/// 非空的显式交易日集合。字段私有：只能经 `TradingCalendar::explicit()` 构造，
+/// 从而保证集合非空（日历内部的 `expect("非空")` 不可达）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplicitDays(BTreeSet<NaiveDate>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CalendarError {
@@ -21,6 +26,15 @@ pub enum CalendarError {
         requested: NaiveDate,
         first: NaiveDate,
         last: NaiveDate,
+    },
+    /// 日历首日的夜盘归属需要首日之前的一个交易日，而日历里没有。
+    NightNeedsPreviousDay {
+        first: NaiveDate,
+    },
+    /// bar 区间起点不早于终点。
+    InvalidInterval {
+        start: i64,
+        end: i64,
     },
 }
 
@@ -37,6 +51,16 @@ impl fmt::Display for CalendarError {
                 "日期 {requested} 超出 trading_calendar 覆盖范围 {first} ~ {last}；\
                  请传入覆盖全部数据日期的交易日历（起点至少比数据早一个交易日，以便确定夜盘归属）"
             ),
+            CalendarError::NightNeedsPreviousDay { first } => write!(
+                f,
+                "trading_calendar 首日 {first} 的夜盘时段需要其前一个交易日（{}）才能确定归属，\
+                 日历里没有；请把 trading_calendar 的起点提前到比数据至少早一个交易日",
+                *first - Duration::days(1)
+            ),
+            CalendarError::InvalidInterval { start, end } => write!(
+                f,
+                "bar 区间起点 {start} 必须早于终点 {end}（区间为 (起点, 终点]）"
+            ),
         }
     }
 }
@@ -51,12 +75,12 @@ impl TradingCalendar {
         if set.is_empty() {
             return Err(CalendarError::Empty);
         }
-        Ok(TradingCalendar::Explicit(set))
+        Ok(TradingCalendar::Explicit(ExplicitDays(set)))
     }
 
     pub fn first_day(&self) -> Option<NaiveDate> {
         match self {
-            TradingCalendar::Explicit(set) => set.first().copied(),
+            TradingCalendar::Explicit(ExplicitDays(set)) => set.first().copied(),
             _ => None,
         }
     }
@@ -73,7 +97,7 @@ impl TradingCalendar {
         match self {
             TradingCalendar::Weekdays => is_weekday(d),
             TradingCalendar::AllDays => true,
-            TradingCalendar::Explicit(set) => set.contains(&d),
+            TradingCalendar::Explicit(ExplicitDays(set)) => set.contains(&d),
         }
     }
 
@@ -87,7 +111,7 @@ impl TradingCalendar {
                 Ok(x)
             }
             TradingCalendar::AllDays => Ok(d),
-            TradingCalendar::Explicit(set) => {
+            TradingCalendar::Explicit(ExplicitDays(set)) => {
                 if d < *set.first().expect("非空") {
                     return Err(Self::bounds_error(set, d));
                 }
@@ -113,7 +137,7 @@ impl TradingCalendar {
                 Ok(x)
             }
             TradingCalendar::AllDays => Ok(d - Duration::days(1)),
-            TradingCalendar::Explicit(set) => {
+            TradingCalendar::Explicit(ExplicitDays(set)) => {
                 if d > *set.last().expect("非空") {
                     return Err(Self::bounds_error(set, d));
                 }
@@ -163,6 +187,17 @@ mod tests {
             Err(CalendarError::OutOfRange { .. })
         ));
         assert_eq!(c.first_day(), Some(d(2024, 2, 7)));
+    }
+
+    #[test]
+    fn explicit_before_after_last_is_out_of_range() {
+        let c = TradingCalendar::explicit([d(2024, 1, 2), d(2024, 1, 3)]).unwrap();
+        // last + 1 天：before 也必须报越界，而不是返回 last
+        assert!(matches!(
+            c.before(d(2024, 1, 4)),
+            Err(CalendarError::OutOfRange { .. })
+        ));
+        assert_eq!(c.before(d(2024, 1, 3)).unwrap(), d(2024, 1, 2));
     }
 
     #[test]

@@ -84,3 +84,16 @@ def test_resolver_templates_listed() -> None:
     """内置模板名可枚举."""
     names = aq.SessionResolver.templates()
     assert "CN_STOCK" in names and "CN_FUTURES_NIGHT_0230" in names
+
+
+def test_resolve_bar_extreme_and_invalid_interval() -> None:
+    """极端时间戳不得 panic, 非法区间抛 ValueError."""
+    r = aq.SessionResolver()
+    try:
+        r.resolve_bar("BTC", -(2**63))
+    except ValueError:
+        pass
+    except BaseException as exc:  # noqa: BLE001
+        pytest.fail(f"不应抛出 {type(exc).__name__}: {exc}")
+    with pytest.raises(ValueError, match="起点"):
+        r.resolve_bar("BTC", timestamp=5, interval_start=10)

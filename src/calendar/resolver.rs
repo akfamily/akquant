@@ -21,6 +21,9 @@ struct DayWindow {
     start: i64,
     end: i64,
     segments: Vec<(i64, i64, TradingSession)>,
+    /// 锚定前一交易日的（夜盘）时段是否已展开。日历首日没有前一交易日时为 false，
+    /// 此时 segments 只含锚定当日的时段。
+    night_known: bool,
 }
 
 /// 交易日查找的最多迭代次数（按交易日计；正常 1-3 次即可命中）。
@@ -149,14 +152,23 @@ impl SessionResolver {
         }
         let cal = self.calendar_for(schedule);
         let prev = if schedule.has_night() {
-            Some(cal.before(day)?)
+            match cal.before(day) {
+                Ok(p) => Some(p),
+                // 日历首日没有前一交易日：只展开日盘段，夜盘归属未知
+                Err(_) if cal.first_day() == Some(day) => None,
+                Err(e) => return Err(e),
+            }
         } else {
             None
         };
+        let night_known = prev.is_some() || !schedule.has_night();
         let mut segments = Vec::with_capacity(schedule.segments.len());
         for seg in &schedule.segments {
             let anchor_date = match seg.anchor {
-                Anchor::PrevTradingDay => prev.expect("has_night 时已求出"),
+                Anchor::PrevTradingDay => match prev {
+                    Some(p) => p,
+                    None => continue,
+                },
                 Anchor::TradingDay => day,
             };
             segments.push((
@@ -165,11 +177,15 @@ impl SessionResolver {
                 seg.session,
             ));
         }
+        if segments.is_empty() {
+            return Err(CalendarError::NightNeedsPreviousDay { first: day });
+        }
         segments.sort_by_key(|s| s.0);
         let window = Arc::new(DayWindow {
             start: segments.first().expect("非空").0,
             end: segments.iter().map(|s| s.1).max().expect("非空"),
             segments,
+            night_known,
         });
         self.windows
             .lock()
@@ -213,10 +229,27 @@ impl SessionResolver {
                 search_from = first;
             }
         }
-        let mut day = cal.on_or_after(search_from)?;
+        let mut day = match cal.on_or_after(search_from) {
+            Ok(d) => d,
+            // 夜盘表在日历首日前一天的数据：落在首日的夜盘里，缺前一交易日无法判断
+            Err(_)
+                if schedule.has_night()
+                    && cal.first_day() == Some(local_date + Duration::days(1)) =>
+            {
+                return Err(CalendarError::NightNeedsPreviousDay {
+                    first: local_date + Duration::days(1),
+                });
+            }
+            Err(e) => return Err(e),
+        };
         for _ in 0..MAX_DAY_STEPS {
             if ts <= self.day_end(schedule, day)? {
-                return Ok((day, self.day_window(schedule, day)?));
+                let w = self.day_window(schedule, day)?;
+                // 首日窗口缺夜盘段：早于日盘首段的时间点可能属于未知的夜盘
+                if !w.night_known && ts < w.start {
+                    return Err(CalendarError::NightNeedsPreviousDay { first: day });
+                }
+                return Ok((day, w));
             }
             day = cal.after(day)?;
         }
@@ -266,10 +299,11 @@ impl SessionResolver {
         interval_start: Option<i64>,
         end: i64,
     ) -> Result<Resolution, CalendarError> {
-        let point = end - 1;
+        let point = end.saturating_sub(1);
         let start = match interval_start {
-            Some(s) if s < end => s,
-            _ => return self.resolve_instant(symbol, asset_type, point),
+            Some(s) if s >= end => return Err(CalendarError::InvalidInterval { start: s, end }),
+            Some(s) => s,
+            None => return self.resolve_instant(symbol, asset_type, point),
         };
         let schedule = self.schedule_for(symbol, asset_type);
         let (trading_day, _) = self.trading_day_of(&schedule, point)?;
@@ -625,6 +659,104 @@ mod tests {
             got,
             Resolution {
                 trading_day: d(2024, 1, 2),
+                session: TradingSession::Continuous
+            }
+        );
+    }
+
+    fn first_day_night_resolver() -> SessionResolver {
+        let cal = TradingCalendar::explicit([d(2024, 1, 2), d(2024, 1, 3), d(2024, 1, 4)]).unwrap();
+        resolver(vec![("rb", "CN_FUTURES_NIGHT_23")], Some(cal))
+    }
+
+    #[test]
+    fn night_schedule_first_day_daytime_resolves() {
+        let r = first_day_night_resolver();
+        let fut = Some(AssetType::Futures);
+        let got = r
+            .resolve_instant("rb2405", fut, at(2024, 1, 2, 10, 0, 0))
+            .unwrap();
+        assert_eq!(
+            got,
+            Resolution {
+                trading_day: d(2024, 1, 2),
+                session: TradingSession::Continuous
+            }
+        );
+        // 首日 day_bounds：只含日盘段（模板里第一个锚定当日的段起点 ~ 15:00）
+        let first_same_day = template("CN_FUTURES_NIGHT_23")
+            .unwrap()
+            .segments
+            .iter()
+            .filter(|s| s.anchor == Anchor::TradingDay)
+            .map(|s| s.start_sec)
+            .min()
+            .unwrap();
+        let (start, end) = r.day_bounds("rb2405", fut, d(2024, 1, 2)).unwrap();
+        assert_eq!(start, r.local_ns(d(2024, 1, 2), first_same_day));
+        assert_eq!(end, at(2024, 1, 2, 15, 0, 0));
+        // 第二天夜盘有前一交易日（首日），正常解析
+        let night = r
+            .resolve_instant("rb2405", fut, at(2024, 1, 2, 22, 0, 0))
+            .unwrap();
+        assert_eq!(night.trading_day, d(2024, 1, 3));
+    }
+
+    #[test]
+    fn night_schedule_first_day_night_needs_previous_day() {
+        let r = first_day_night_resolver();
+        let fut = Some(AssetType::Futures);
+        // 日历首日前一晚（属首日交易日的夜盘）：缺前一交易日
+        let err = r
+            .resolve_instant("rb2405", fut, at(2024, 1, 1, 22, 0, 0))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            CalendarError::NightNeedsPreviousDay {
+                first: d(2024, 1, 2)
+            }
+        );
+        assert!(err.to_string().contains("2024-01-01"), "{err}");
+        // 首日凌晨早于日盘首段，同样无法确定
+        let err = r
+            .resolve_instant("rb2405", fut, at(2024, 1, 2, 3, 0, 0))
+            .unwrap_err();
+        assert!(matches!(err, CalendarError::NightNeedsPreviousDay { .. }));
+    }
+
+    #[test]
+    fn resolve_bar_rejects_non_positive_interval() {
+        let r = resolver(vec![], None);
+        let end = at(2024, 1, 2, 10, 0, 0);
+        for s in [end, end + 1] {
+            assert_eq!(
+                r.resolve_bar("600000.SH", stock(), Some(s), end),
+                Err(CalendarError::InvalidInterval { start: s, end })
+            );
+        }
+        // i64::MIN 终点不得溢出 panic
+        let _ = r.resolve_bar("BTCUSDT", None, None, i64::MIN);
+    }
+
+    #[test]
+    fn always_open_midnight_belongs_to_previous_day() {
+        let r = resolver(vec![], None);
+        let got = |ts| r.resolve_instant("BTCUSDT", None, ts).unwrap();
+        // 0 点整 = 前一日的区间终点
+        let exact = got(at(2024, 1, 3, 0, 0, 0));
+        assert_eq!(
+            exact,
+            Resolution {
+                trading_day: d(2024, 1, 2),
+                session: TradingSession::Continuous
+            }
+        );
+        // 0 点后 1ns 起属于当日
+        let after = got(at(2024, 1, 3, 0, 0, 0) + 1);
+        assert_eq!(
+            after,
+            Resolution {
+                trading_day: d(2024, 1, 3),
                 session: TradingSession::Continuous
             }
         );
