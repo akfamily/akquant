@@ -387,12 +387,15 @@ impl ExecutionPolicyCore {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 /// 交易时段状态
 pub enum TradingSession {
-    PreOpen,     // 盘前 (如集合竞价)
-    Continuous,  // 连续竞价
-    CallAuction, // 集合竞价 (开盘或收盘)
-    Break,       // 休市 (如午休)
-    Closed,      // 闭市
-    PostClose,   // 盘后
+    PreOpen,        // 盘前 (如集合竞价)
+    Continuous,     // 连续竞价
+    CallAuction,    // 集合竞价 (开盘或收盘)
+    Break,          // 休市 (如午休)
+    Closed,         // 闭市
+    PostClose,      // 盘后
+    OpeningAuction, // 开盘集合竞价 (A 股 9:15-9:25)
+    AuctionHold,    // 竞价结束到开盘之间, 接单不撮合 (A 股 9:25-9:30)
+    ClosingAuction, // 收盘集合竞价 (A 股 14:57-15:00)
 }
 
 #[pymethods]

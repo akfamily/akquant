@@ -134,9 +134,15 @@ class TimeInForce:
     Day: typing.ClassVar["TimeInForce"]
 
 class TradingSession:
-    Normal: typing.ClassVar["TradingSession"]
-    PreMarket: typing.ClassVar["TradingSession"]
-    PostMarket: typing.ClassVar["TradingSession"]
+    PreOpen: typing.ClassVar["TradingSession"]
+    Continuous: typing.ClassVar["TradingSession"]
+    CallAuction: typing.ClassVar["TradingSession"]
+    Break: typing.ClassVar["TradingSession"]
+    Closed: typing.ClassVar["TradingSession"]
+    PostClose: typing.ClassVar["TradingSession"]
+    OpeningAuction: typing.ClassVar["TradingSession"]
+    AuctionHold: typing.ClassVar["TradingSession"]
+    ClosingAuction: typing.ClassVar["TradingSession"]
 
 class CorporateActionType:
     Split: typing.ClassVar["CorporateActionType"]
