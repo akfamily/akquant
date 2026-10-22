@@ -1,5 +1,6 @@
 from collections import deque
-from typing import Any, Dict, List, Optional, Tuple, cast
+from collections.abc import Iterable
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import pandas as pd
 
@@ -8,6 +9,37 @@ from .log import get_logger
 from .strategy_runtime_config import RUNTIME_CONFIG_DEFAULTS
 
 logger = get_logger("strategy")
+
+
+#: 会话的 tick/bar 双流声明: ``False`` 无, ``True`` 全部标的, 集合为这些标的。
+DualStream = Union[bool, frozenset[str]]
+
+
+def normalize_dual_stream_declaration(value: Any) -> DualStream:
+    """把网关元数据 / 回测入口给出的双流声明归一成 :data:`DualStream`.
+
+    ``None`` 与空集合都视为"无双流"(缺省保持旧行为: tick 照常推进基础指标)。
+    """
+    if value is None or value is False:
+        return False
+    if value is True:
+        return True
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        symbols = frozenset(str(item) for item in value)
+        return symbols if symbols else False
+    raise TypeError(
+        f"dual_stream 须为 bool 或标的集合, 收到 {type(value).__name__}: {value!r}"
+    )
+
+
+def is_dual_stream_symbol(strategy: Any, symbol: Optional[str]) -> bool:
+    """该标的在本会话里是否 tick/bar 双流(见 ``_framework_dual_stream``)."""
+    declared = getattr(strategy, "_framework_dual_stream", False)
+    if declared is True:
+        return True
+    if not declared or symbol is None:
+        return False
+    return str(symbol) in declared
 
 
 def _runtime_option(strategy: Any, name: str) -> Any:
@@ -845,6 +877,9 @@ def ensure_framework_state(strategy: Any) -> None:
         # 早于该字段的检查点恢复后没有它; 周期由本次运行的入口重新注入,
         # 不从存档取(续跑时数据源/周期可能已换)。
         strategy._framework_freq = None
+    if not hasattr(strategy, "_framework_dual_stream"):
+        # 同 _framework_freq: 由本次运行的入口注入, 早于该字段的存档按"无双流"。
+        strategy._framework_dual_stream = False
     if not hasattr(strategy, "_framework_use_previous_account_snapshot"):
         strategy._framework_use_previous_account_snapshot = False
     if not hasattr(strategy, "_framework_previous_account_details"):

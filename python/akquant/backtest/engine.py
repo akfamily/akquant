@@ -82,6 +82,7 @@ from ..strategy_framework_hooks import (
 )
 from ..strategy_framework_hooks import (
     collect_cross_section_timer_entries,
+    normalize_dual_stream_declaration,
 )
 from ..strategy_framework_hooks import (
     collect_pre_open_timer_entries as _collect_pre_open_timer_entries_impl,
@@ -3379,6 +3380,18 @@ def run_backtest(
                 aggregate_ticks_into_feed(
                     tick_feed, ticks_part, parse_freq_to_interval_min(freq)
                 )
+            # 既有 bar(含 freq 合成的)又有 tick 的标的是双流: 基础周期指标只由
+            # bar 推进, 否则 tick 与 bar 各推进一次, 值静默算错。只有 tick 的
+            # 标的(纯 tick)不算, tick 照旧推进。
+            tick_symbols = {str(one_tick.symbol) for one_tick in ticks_part}
+            dual_symbols = (
+                tick_symbols
+                if freq is not None
+                else tick_symbols & {str(one_bar.symbol) for one_bar in bars_part}
+            )
+            dual_stream = normalize_dual_stream_declaration(dual_symbols)
+            for current_strategy in all_strategy_instances:
+                setattr(current_strategy, "_framework_dual_stream", dual_stream)
             tick_feed.sort()
             data = tick_feed
         if isinstance(data, DataFeed):

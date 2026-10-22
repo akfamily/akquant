@@ -199,5 +199,10 @@ def build_replay_bundle(
             "broker": "replay",
             "bounded_event_total": total,
             "freq": freq,
+            # 同时回放了 bar 与 tick 的标的是双流(见 LiveRunner._inject_dual_stream)
+            "dual_stream": frozenset(
+                {str(e.symbol) for e in pending if isinstance(e, Bar)}
+                & {str(e.symbol) for e in pending if isinstance(e, Tick)}
+            ),
         },
     )

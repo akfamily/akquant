@@ -72,6 +72,7 @@ from .strategy_framework_hooks import (
 from .strategy_framework_hooks import (
     ensure_framework_state as _ensure_framework_state_impl,
 )
+from .strategy_framework_hooks import is_dual_stream_symbol
 from .strategy_framework_hooks import (
     register_pre_open_timers as _register_pre_open_timers_impl,
 )
@@ -425,6 +426,7 @@ class Strategy:
     _framework_phase: Optional[str]
     _framework_history_cutoff_ns: Optional[int]
     _framework_freq: Optional[str]
+    _framework_dual_stream: Union[bool, frozenset[str]]
     _framework_use_previous_account_snapshot: bool
     _framework_previous_account_details: Optional[Dict[str, float]]
     _framework_emit_previous_portfolio_snapshot: bool
@@ -692,6 +694,8 @@ class Strategy:
         instance._framework_phase = None
         instance._framework_history_cutoff_ns = None
         instance._framework_freq = None  # 数据周期 ("1min"/"1d" 等), 拿不到时 None
+        # tick/bar 双流的标的(True 为全部): 这些标的的 tick 不推进基础周期指标
+        instance._framework_dual_stream = False
         instance._framework_use_previous_account_snapshot = False
         instance._framework_previous_account_details = None
         instance._framework_emit_previous_portfolio_snapshot = False
@@ -1684,8 +1688,9 @@ class Strategy:
             告知当前 ``[0]`` 是否已确认; 流事件带 ``confirmed=false``。窗口周期
             指标(``freq=``)在每根基础 bar 上用未闭合窗口快照试算; 基础周期指标在
             每笔 tick 上用形成中的 bar 试算——此时 **tick 不再 update() 它**,
-            只有 bar 闭合才推进状态(默认 False 时 tick 照旧 update, 纯 tick 策略
-            依赖此行为)。
+            只有 bar 闭合才推进状态。默认 False 时: tick/bar 双流的标的上基础
+            周期指标只由 bar 推进(tick 不 update); 纯 tick 会话(无 bar)里 tick
+            照旧 update, 纯 tick 策略依赖此行为。
         :return: 可下标回溯的绑定代理
         """
         freq_label: Optional[str] = None
@@ -1958,6 +1963,15 @@ class Strategy:
                 # intrabar 的基础周期指标: tick 只试算不提交, bar 闭合才 update。
                 # 放在 H/L 跳过之前——形成中 bar 有真实 H/L, ATR 之类也能试算。
                 self._peek_base_intrabar(name, item, cast(Tick, bar), partial)
+                continue
+            if (
+                is_tick_payload
+                and item.freq is None
+                and is_dual_stream_symbol(self, bar_symbol)
+            ):
+                # 双流标的: 基础周期指标只由 bar 推进。tick 与基础 bar 的 freq
+                # 都是 None, 不在此拦下则两者各 update() 一次, 收盘值混进逐笔价。
+                # 纯 tick 会话(无 bar)不走这里, tick 照旧推进。
                 continue
             if is_tick_payload and item.input_mode in _TICK_UNSUPPORTED_INPUT_MODES:
                 # H/L 类指标要真实的最高/最低价, tick 的 OHLC 恒等无法提供。

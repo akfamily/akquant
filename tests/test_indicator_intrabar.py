@@ -776,7 +776,11 @@ def test_tick_intrabar_hl_input_mode_gets_real_running_high_low() -> None:
 
 
 def test_tick_intrabar_off_keeps_ticks_driving_base_indicator() -> None:
-    """默认 intrabar=False: tick 照旧 update() 基础指标(纯 tick 策略依赖), 不变."""
+    """默认 intrabar=False 的纯 tick 会话: tick 照旧 update() 基础指标.
+
+    纯 tick 策略依赖此行为。双流会话(有基础 bar)下 tick 不再推进基础指标,
+    见 test_indicator_dual_stream.py。
+    """
 
     class Legacy(Strategy):
         def __init__(self) -> None:
@@ -789,13 +793,9 @@ def test_tick_intrabar_off_keeps_ticks_driving_base_indicator() -> None:
         def on_tick(self, tick: Tick) -> None:
             self.seen.append((self.sma[0], self.sma.confirmed))
 
-        def on_bar(self, bar: Bar) -> None:
-            pass
-
     probe = run_backtest(
         strategy=Legacy,
         data=_half_minute_ticks(6),
-        freq="1min",
         symbols=[SYMBOL],
         initial_cash=1e5,
         show_progress=False,
