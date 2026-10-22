@@ -7,3 +7,4 @@
 
 pub(crate) mod clock;
 pub mod schedule;
+pub mod trading_calendar;
