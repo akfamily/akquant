@@ -89,6 +89,7 @@ impl RiskManager {
             risk_config: &self.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         match self.check_internal(order, &ctx) {
@@ -359,6 +360,7 @@ impl RiskManager {
             config: &self.config,
             timezone_name: ctx.timezone_name,
             timezone_offset: ctx.timezone_offset,
+            trading_day: ctx.trading_day,
         };
 
         // Check common rules
@@ -468,6 +470,7 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let err = manager
@@ -499,6 +502,7 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         manager
@@ -535,6 +539,7 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let err = manager
@@ -575,6 +580,7 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         assert!(!RiskManager::should_defer_available_position_check(

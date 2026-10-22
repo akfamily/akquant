@@ -1048,6 +1048,7 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1136,6 +1137,7 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1209,6 +1211,7 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1282,6 +1285,7 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1357,6 +1361,7 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1472,6 +1477,7 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1584,6 +1590,7 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1707,6 +1714,7 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let events = sim.on_event(&event, &ctx);

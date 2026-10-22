@@ -36,6 +36,7 @@ pub struct EngineContext<'a> {
     pub risk_config: &'a RiskConfig,
     pub timezone_name: Option<&'a str>,
     pub timezone_offset: i32,
+    pub trading_day: Option<chrono::NaiveDate>,
 }
 
 pub struct ContextInit {

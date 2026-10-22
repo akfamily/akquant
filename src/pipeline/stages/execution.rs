@@ -63,6 +63,7 @@ impl Processor for ExecutionProcessor {
                         risk_config: &engine.risk_manager.config,
                         timezone_name: engine.timezone_name.as_deref(),
                         timezone_offset: engine.timezone_offset,
+                        trading_day: engine.current_trading_day,
                     };
 
                     let reports = engine.execution_model.on_event(&event, &ctx);

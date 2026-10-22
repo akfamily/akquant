@@ -175,6 +175,7 @@ impl DataProcessor {
                 risk_config: &engine.risk_manager.config,
                 timezone_name: engine.timezone_name.as_deref(),
                 timezone_offset: engine.timezone_offset,
+                trading_day: engine.current_trading_day,
             };
             let reports = engine
                 .execution_model
@@ -595,7 +596,11 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
         bar_index: engine.bar_count,
         default_strategy_id: engine.default_strategy_id.clone(),
         exempt_day_orders: &exempt_day_orders,
-        accrual_days: 1,
+        accrual_days: engine
+            .last_settled_trading_day
+            .map(|p| (day - p).num_days())
+            .unwrap_or(1)
+            .max(1),
     };
     let settlement_outcome = engine.settlement_manager.process_daily_settlement(
         &mut engine.state.portfolio,

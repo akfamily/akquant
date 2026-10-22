@@ -694,3 +694,53 @@ def test_settlement_stream_events_carry_close_time() -> None:
         "2024-01-03": pd.Timestamp("2024-01-03 15:00", tz="Asia/Shanghai"),
         "2024-01-04": pd.Timestamp("2024-01-04 15:00", tz="Asia/Shanghai"),
     }
+
+
+class _AlwaysBuy(Strategy):
+    """每根 bar 市价买 30 股（写法同 tests/test_account_risk_rules.py）."""
+
+    def on_bar(self, bar: Bar) -> None:
+        """每根 bar 买入."""
+        self.buy(bar.symbol, 30)
+
+
+def _bars_at(times: List[str], prices: List[float], symbol: str) -> List[Bar]:
+    return [
+        Bar(
+            timestamp=pd.Timestamp(t, tz="Asia/Shanghai").value,
+            open=p,
+            high=p,
+            low=p,
+            close=p,
+            volume=10000.0,
+            symbol=symbol,
+        )
+        for t, p in zip(times, prices)
+    ]
+
+
+def test_daily_loss_rule_does_not_reset_at_midnight_within_night_session() -> None:
+    """夜盘：周一 23:30 触发日亏损后，周二 00:30 仍属同一交易日，继续拒单.
+
+    旧实现按本地自然日在 0 点重置起始权益，00:30 的单会被放行。
+    """
+    bars = _bars_at(
+        ["2024-01-08 21:30", "2024-01-08 23:30", "2024-01-09 00:30"],
+        [100.0, 50.0, 50.0],
+        "RISK",
+    )
+    result = run_backtest(
+        data=bars,
+        strategy=_AlwaysBuy,
+        symbols="RISK",
+        initial_cash=100000.0,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+        lot_size=1,
+        risk_config=aq.config.RiskConfig(max_daily_loss=0.01),
+        sessions={"RISK": "CN_FUTURES_NIGHT_0230"},
+    )
+    orders = result.orders_df
+    reasons = orders["reject_reason"].fillna("").astype(str)
+    rejected = orders[reasons.str.contains("Daily loss")]
+    assert len(rejected) == 2, orders[["created_at", "status", "reject_reason"]]

@@ -363,8 +363,10 @@ impl SettlementManager {
         let borrow_rate =
             Decimal::from_f64(ctx.risk_config.borrow_rate_annual).unwrap_or(Decimal::ZERO);
         let day_divisor = Decimal::from(365);
-        let financing_interest = borrowed_cash * financing_rate / day_divisor;
-        let borrow_interest = pre_interest_metrics.short_market_value * borrow_rate / day_divisor;
+        let days = Decimal::from(ctx.accrual_days.max(1));
+        let financing_interest = borrowed_cash * financing_rate * days / day_divisor;
+        let borrow_interest =
+            pre_interest_metrics.short_market_value * borrow_rate * days / day_divisor;
         let total_interest = (financing_interest + borrow_interest).max(Decimal::ZERO);
         if total_interest > Decimal::ZERO {
             portfolio.cash -= total_interest;
@@ -702,6 +704,46 @@ mod tests {
         assert_eq!(portfolio.cash, Decimal::from(-5500));
         assert_eq!(outcome.daily_interest, Decimal::from(500));
         assert!(!outcome.forced_liquidation);
+    }
+
+    #[test]
+    fn interest_scales_with_accrual_days() {
+        let run = |days: i64| {
+            let mut portfolio = Portfolio {
+                cash: Decimal::from(-5000),
+                positions: Arc::new(HashMap::new()),
+                available_positions: Arc::new(HashMap::new()),
+            };
+            let mut instruments = HashMap::new();
+            instruments.insert("AAA".to_string(), stock_instrument("AAA"));
+            let mut prices = HashMap::new();
+            prices.insert("AAA".to_string(), Decimal::from(100));
+            let mut risk = RiskConfig::new();
+            risk.account_mode = "margin".to_string();
+            risk.financing_rate_annual = 36.5;
+            risk.borrow_rate_annual = 0.0;
+            risk.allow_force_liquidation = false;
+            let market_manager = MarketManager::new();
+            let tracker = TradeTracker::new();
+            let ctx = SettlementContext {
+                date: NaiveDate::from_ymd_opt(2024, 1, 2).expect("valid date"),
+                instruments: &instruments,
+                last_prices: &prices,
+                market_manager: &market_manager,
+                trade_tracker: &tracker,
+                risk_config: &risk,
+                timestamp: 0,
+                bar_index: 0,
+                default_strategy_id: None,
+                exempt_day_orders: empty_pending(),
+                accrual_days: days,
+            };
+            SettlementManager::new()
+                .process_daily_settlement(&mut portfolio, &mut Vec::new(), &mut Vec::new(), &ctx)
+                .daily_interest
+        };
+        assert_eq!(run(1), Decimal::from(500));
+        assert_eq!(run(3), run(1) * Decimal::from(3));
     }
 
     #[test]

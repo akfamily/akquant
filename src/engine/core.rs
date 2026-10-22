@@ -477,7 +477,9 @@ impl Engine {
         if !self.risk_budget_reset_daily {
             return;
         }
-        let current_day = self.local_date_from_ns(current_time);
+        let current_day = self
+            .current_trading_day
+            .unwrap_or_else(|| self.local_date_from_ns(current_time));
         if self.risk_budget_usage_day == Some(current_day) {
             return;
         }
@@ -672,7 +674,9 @@ impl Engine {
             .strategy_max_daily_loss_limits
             .get(&strategy_id)
             .copied()?;
-        let current_day = self.local_date_from_ns(current_time);
+        let current_day = self
+            .current_trading_day
+            .unwrap_or_else(|| self.local_date_from_ns(current_time));
         let current_pnl = self.current_strategy_pnl(&strategy_id);
         let needs_reset = self
             .strategy_daily_loss_day

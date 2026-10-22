@@ -24,6 +24,7 @@ pub struct RiskCheckContext<'a> {
     pub config: &'a RiskConfig,
     pub timezone_name: Option<&'a str>,
     pub timezone_offset: i32,
+    pub trading_day: Option<chrono::NaiveDate>,
 }
 
 impl<'a> RiskCheckContext<'a> {
@@ -36,6 +37,9 @@ impl<'a> RiskCheckContext<'a> {
     }
 
     pub fn local_date(&self) -> NaiveDate {
+        if let Some(d) = self.trading_day {
+            return d;
+        }
         let utc_dt = Self::datetime_from_ns(self.current_time);
         if let Some(tz) = self.timezone_name.and_then(|name| name.parse::<Tz>().ok()) {
             return utc_dt.with_timezone(&tz).date_naive();

@@ -62,6 +62,7 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
             risk_config: &engine.risk_manager.config,
             timezone_name: engine.timezone_name.as_deref(),
             timezone_offset: engine.timezone_offset,
+            trading_day: engine.current_trading_day,
         };
         // 回测撮合器会在成交时点重跑可用持仓校验(execution/simulated.rs),
         // 因此这里允许把该规则延后;实盘由柜台在报单时校验,不能延后。
@@ -155,6 +156,7 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
         risk_config: &engine.risk_manager.config,
         timezone_name: engine.timezone_name.as_deref(),
         timezone_offset: engine.timezone_offset,
+        trading_day: engine.current_trading_day,
     };
 
     let reports = engine.execution_model.on_event(&event, &ctx);
