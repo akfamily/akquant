@@ -6,5 +6,6 @@
 #![allow(dead_code)]
 
 pub(crate) mod clock;
+pub mod resolver;
 pub mod schedule;
 pub mod trading_calendar;
