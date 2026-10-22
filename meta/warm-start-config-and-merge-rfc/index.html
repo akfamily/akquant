@@ -1,0 +1,1407 @@
+
+<!doctype html>
+<html lang="zh" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架">
+      
+      
+        <meta name="author" content="AKQuant contributors">
+      
+      
+        <link rel="canonical" href="https://akquant.akfamily.xyz/meta/warm-start-config-and-merge-rfc/">
+      
+      
+      
+      
+        
+          <link rel="alternate" href="./" hreflang="zh">
+        
+          <link rel="alternate" href="../../en/meta/warm-start-config-and-merge-rfc/" hreflang="en">
+        
+      
+      
+      <link rel="icon" href="../../assets/akquant-icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>设计草案:热启动配置继承 + 分阶段 result 合并(issue #282 二轮反馈) - AKQuant</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#result-issue-282" class="md-skip">
+          跳转至
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="页眉">
+    <a href="../.." title="AKQuant" class="md-header__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AKQuant
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              设计草案:热启动配置继承 + 分阶段 result 合并(issue #282 二轮反馈)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="选择当前语言">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="./" hreflang="zh" class="md-select__link">
+              中文
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="../../en/meta/warm-start-config-and-merge-rfc/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="查找">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="分享" aria-label="分享" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            正在初始化搜索引擎
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  首页
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../textbook/" class="md-tabs__link">
+          
+  
+  
+  量化教材
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../start/installation/" class="md-tabs__link">
+          
+  
+  
+  快速入门
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guide/python_basics/" class="md-tabs__link">
+          
+  
+  
+  核心指南
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../advanced/ml/" class="md-tabs__link">
+          
+  
+  
+  进阶专题
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../reference/api/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  API 参考
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  架构与原理
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AKQuant" class="md-nav__button md-logo" aria-label="AKQuant" data-md-component="logo">
+      
+  <img src="../../assets/akquant-icon.svg" alt="logo">
+
+    </a>
+    AKQuant
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/akfamily/akquant" title="前往仓库" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    akfamily/akquant
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    首页
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../textbook/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    量化教材
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../start/installation/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    快速入门
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../guide/python_basics/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    核心指南
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../advanced/ml/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    进阶专题
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 参考
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../architecture/" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    架构与原理
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. 结论先行
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 第 3 点根治:快照持久化回测配置
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. 第 3 点根治:快照持久化回测配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 现状缺陷链(已对照源码核实)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 目标与非目标
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13-backtest_config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 提案:快照增加 backtest_config 字段
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.4 落地顺序(已完成)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-4-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 第 4 点:分阶段 result 合并
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. 第 4 点:分阶段 result 合并">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 需求
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 可合并 / 需重算 / 需丢弃 三分
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 API 设计
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 关键难点
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 落地顺序(已完成)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-api-checkpoint-resume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. API 命名演进:热启动 → checkpoint / resume(破坏性更新)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. API 命名演进:热启动 → checkpoint / resume(破坏性更新)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 问题:一个名字扛了两种语义
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 提案:直接重命名(不保留别名)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 迁移面(已勘定)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 checkpoint 契约化(顺带根治"配置项漂移")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 落地顺序
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. 三部分关系
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 风险与开放问题
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="result-issue-282">设计草案:热启动配置继承 + 分阶段 result 合并(issue #282 二轮反馈)<a class="headerlink" href="#result-issue-282" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>状态</strong>:第 1 部分(配置持久化)<strong>已实现</strong> · 第 2 部分(result 合并)<strong>已实现</strong>(<code>merge_results</code> / <code>MergedResult</code>,metrics 为核心子集) · 第 3 部分(API 重命名,破坏性)<strong>已实现</strong> · <strong>日期</strong>:2026-07-20 · <strong>范围</strong>:<code>python/akquant/checkpoint.py</code>、<code>python/akquant/backtest/engine.py</code>、<code>python/akquant/backtest/result.py</code> + 示例/文档 · <strong>对应 issue</strong>:<a href="https://github.com/akfamily/akquant/issues/282">#282</a> 二轮反馈第 3、4 点 · <strong>性质</strong>:配置继承缺陷(已根治)+ 体验增强(result 合并)+ API 命名演进(热启动→checkpoint/resume)</p>
+</blockquote>
+<hr />
+<h2 id="0">0. 结论先行<a class="headerlink" href="#0" title="Permanent link">&para;</a></h2>
+<p>issue #282 二轮反馈实跑核实结果:</p>
+<table>
+<thead>
+<tr>
+<th>点</th>
+<th>内容</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>二阶段重放一阶段 <code>on_before_trading</code></td>
+<td><strong>不可复现</strong>。#329 已保证钩子去重;用户看到的是策略实例累加器随快照 pickle 保存的历史残留,非重新触发。建议文档提示在 <code>on_resume</code> 重置统计。</td>
+</tr>
+<tr>
+<td>2</td>
+<td>二阶段 <code>on_after_trading</code> 变每日首 bar 触发</td>
+<td><strong>不可复现</strong>。precise / 默认模式冷热启动钩子序列结构一致。同上,累加器残留误导。</td>
+</tr>
+<tr>
+<td>3</td>
+<td>滑点/佣金未在热启动继承</td>
+<td><strong>滑点真 bug</strong>,已在 <code>run_warm_start</code> 补 <code>set_slippage</code>/<code>set_volume_limit</code>(最小移植);佣金半通(走 <code>_resolve_stock_fee_rules</code>)。本 RFC 提出<strong>根治</strong>:快照持久化配置。</td>
+</tr>
+<tr>
+<td>4</td>
+<td>缺 result 合并函数</td>
+<td><strong>功能缺失</strong>,本 RFC 提出 <code>merge_results</code> / <code>ResultMerger</code>。</td>
+</tr>
+</tbody>
+</table>
+<p>本 RFC 只覆盖第 3 点的<strong>根治方案</strong>与第 4 点。第 3 点的最小热修已单独落地(不依赖本 RFC)。</p>
+<h2 id="1-3">1. 第 3 点根治:快照持久化回测配置<a class="headerlink" href="#1-3" title="Permanent link">&para;</a></h2>
+<h3 id="11">1.1 现状缺陷链(已对照源码核实)<a class="headerlink" href="#11" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>save_snapshot</code>(<code>checkpoint.py:86-97</code>)只存 <code>engine_state</code>(Rust 二进制)+ <code>strategy</code> + <code>strategy_topology</code> + <code>snapshot_features</code>,<strong>不含任何回测配置</strong>(滑点、量比、fill_policy、市场模型、费率)。</li>
+<li><code>EngineSnapshot</code>(<code>src/engine/python.rs:589-639</code>)序列化 portfolio/order_manager/instruments/risk_state 等,<strong>不含</strong> timers、slippage、fee rules、fill_policy——<code>load_state_bytes</code> 后这些全为引擎默认值。</li>
+<li>因此 <code>run_warm_start</code> 必须把每一项配置<strong>重新推导并 set 一遍</strong>。团队已重配费率(<code>engine.py:5451-5528</code>)、fill_policy(<code>5539-5555</code>),却<strong>漏了滑点/量比</strong>(已由最小热修补上)。</li>
+<li>根因:<strong>"热启动重配所有配置"这件事没有单一数据源</strong>,靠 <code>run_warm_start</code> 逐项手工补,漏一项就静默失效。滑点只是暴露出来的第一个;任何未来新增的引擎配置都可能重蹈覆辙。</li>
+</ul>
+<h3 id="12">1.2 目标与非目标<a class="headerlink" href="#12" title="Permanent link">&para;</a></h3>
+<p><strong>目标</strong></p>
+<ul>
+<li>让"分阶段回测继承完整回测配置"成为<strong>默认且自动</strong>的行为,用户只需关心真正变化的量:<code>data</code>(下阶段数据)、<code>symbols</code>(换月新代码)、<code>instruments</code>(资产属性)。</li>
+<li>消除逐项手工重配的<strong>遗漏面</strong>:配置有单一权威来源(快照),<code>run_warm_start</code> 从中恢复。</li>
+<li>显式传入的入参<strong>优先级最高</strong>,允许用户按阶段覆盖(如只改起止时间)。</li>
+</ul>
+<p><strong>非目标</strong></p>
+<ul>
+<li>不改 Rust <code>EngineSnapshot</code>(避免二进制格式版本迁移成本);配置存 Python 侧 pickle 层。</li>
+<li>不强制用户改现有代码——旧快照(无配置字段)必须能继续 warm start(降级到当前逐项推导逻辑)。</li>
+</ul>
+<h3 id="13-backtest_config">1.3 提案:快照增加 <code>backtest_config</code> 字段<a class="headerlink" href="#13-backtest_config" title="Permanent link">&para;</a></h3>
+<p><strong>A. <code>save_snapshot</code> 侧</strong></p>
+<p><code>save_snapshot(engine, strategy, filepath)</code> 目前签名不含 config。两个方案:</p>
+<ul>
+<li><strong>A1(推荐)</strong>:新增可选参 <code>save_snapshot(engine, strategy, filepath, *, config=None, resolved_runtime=None)</code>。当 <code>run_backtest</code> 结束把<strong>已解析的运行时配置</strong>(归一化后的 slippage policy、volume_limit_pct、fill_policy、fee rules、market model、timezone、history_depth 等)挂到 <code>result</code> 上,用户 <code>save_snapshot(result.engine, result.strategy, path, config=result.resolved_config)</code> 即可。</li>
+<li><strong>A2</strong>:<code>run_backtest</code> 在 <code>result</code> 上暴露 <code>result.resolved_config</code>(一个 dataclass/dict),<code>save_snapshot</code> 自动从 <code>engine</code>/<code>strategy</code> 反查——但引擎不留存原始 policy,反查不可靠。故取 A1。</li>
+</ul>
+<p>快照结构扩展(向后兼容,新增键):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">snapshot</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="s2">"engine_state"</span><span class="p">:</span> <span class="o">...</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="s2">"strategy"</span><span class="p">:</span> <span class="o">...</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="s2">"strategy_topology"</span><span class="p">:</span> <span class="p">{</span><span class="o">...</span><span class="p">},</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="s2">"snapshot_features"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"history_buffer_snapshot"</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="s2">"backtest_config"</span><span class="p">:</span> <span class="p">{</span>              <span class="c1"># 新增,可选</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        <span class="s2">"slippage"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"percent"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="mf">0.0001</span><span class="p">},</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        <span class="s2">"volume_limit_pct"</span><span class="p">:</span> <span class="mf">0.25</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        <span class="c1"># 内部序列化格式：仍以三元组落盘；公开入参 fill_policy 传 FillMode 对象</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        <span class="s2">"fill_policy"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"price_basis"</span><span class="p">:</span> <span class="s2">"open"</span><span class="p">,</span> <span class="s2">"temporal"</span><span class="p">:</span> <span class="s2">"next_event"</span><span class="p">,</span> <span class="s2">"bar_offset"</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        <span class="s2">"commission_policy"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"percent"</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="mf">0.0003</span><span class="p">},</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        <span class="s2">"stamp_tax_rate"</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        <span class="s2">"transfer_fee_rate"</span><span class="p">:</span> <span class="mf">0.0</span><span class="p">,</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        <span class="s2">"min_commission"</span><span class="p">:</span> <span class="mf">5.0</span><span class="p">,</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        <span class="s2">"t_plus_one"</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        <span class="s2">"market_model"</span><span class="p">:</span> <span class="s2">"simple"</span> <span class="o">|</span> <span class="s2">"china"</span><span class="p">,</span>
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        <span class="s2">"timezone"</span><span class="p">:</span> <span class="s2">"Asia/Shanghai"</span><span class="p">,</span>
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>        <span class="s2">"history_depth"</span><span class="p">:</span> <span class="mi">50</span><span class="p">,</span>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    <span class="p">},</span>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    <span class="s2">"version"</span><span class="p">:</span> <span class="n">_VERSION</span><span class="p">,</span>
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><strong>B. <code>run_warm_start</code> 侧 —— 配置解析优先级</strong></p>
+<p>统一成一条链,自上而下取第一个非 None:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>显式入参(slippage=, config.strategy_config.slippage, ...)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  &gt; 快照 backtest_config
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  &gt; 引擎/默认兜底
+</span></code></pre></div>
+<p>实现:在现有各配置解析点前,先从 <code>snapshot["backtest_config"]</code> 读默认值填充局部变量,再让现有"显式入参优先"逻辑覆盖。这样:</p>
+<ul>
+<li>用户<strong>什么都不传</strong> → 完全继承一阶段配置(修复根因)。</li>
+<li>用户<strong>只改起止时间</strong> → 其余继承,符合"注意力放在真正变化的量"。</li>
+<li>用户<strong>显式传 slippage</strong> → 覆盖快照值(保留逐阶段调参能力)。</li>
+</ul>
+<p><strong>C. 向后兼容</strong></p>
+<p><code>snapshot.get("backtest_config")</code> 为 None(旧快照)时,走当前逐项推导逻辑(已含滑点最小热修),行为不回退。</p>
+<h3 id="14">1.4 落地顺序(已完成)<a class="headerlink" href="#14" title="Permanent link">&para;</a></h3>
+<ol>
+<li>✅ <code>result.resolved_config</code> 暴露(<code>run_backtest</code> 收尾经 <code>_build_resolved_backtest_config</code> 填充 slippage/volume_limit/commission/stamp_tax/transfer_fee/min_commission/t_plus_one/timezone/history_depth/fill_policy)。</li>
+<li>✅ <code>save_snapshot(..., config=result|dict)</code> 经 <code>_extract_resolved_config</code> 写入快照 <code>backtest_config</code> 字段。</li>
+<li>✅ <code>warm_start</code> 把 <code>backtest_config</code> 挂到 <code>strategy._warm_start_backtest_config</code>;<code>run_warm_start</code> 建立 <code>显式入参 &gt; config.strategy_config &gt; 快照配置 &gt; 默认</code> 优先级链(slippage/volume_limit/fee/fill_policy/t_plus_one)。</li>
+<li>✅ 回归测试:<code>test_run_warm_start_inherits_config_from_snapshot</code>(零显式入参继承)、<code>test_run_warm_start_explicit_arg_overrides_snapshot_config</code>(显式覆盖)、<code>test_run_warm_start_without_snapshot_config_is_backward_compatible</code>(旧快照降级)。前两者经 <code>git stash</code> 验证在未实现时失败、实现后通过。</li>
+</ol>
+<p><strong>实现说明</strong>:配置存 Python pickle 层(快照 dict 的 <code>backtest_config</code> 键),未改 Rust <code>EngineSnapshot</code>,旧快照 <code>snapshot.get("backtest_config")</code> 为 None 时降级到逐项推导,完全向后兼容。</p>
+<h2 id="2-4-result">2. 第 4 点:分阶段 result 合并<a class="headerlink" href="#2-4-result" title="Permanent link">&para;</a></h2>
+<h3 id="21">2.1 需求<a class="headerlink" href="#21" title="Permanent link">&para;</a></h3>
+<p>完整回测 5 年 → 一条 5 年 equity_curve;按月分阶段 → 每段 result 只含当月曲线。用户需手动拼接。目标:官方 <code>merge_results</code> 自动处理曲线/交易/指标拼接,并防资产数量爆炸(清理已退市合约)。</p>
+<h3 id="22">2.2 可合并 / 需重算 / 需丢弃 三分<a class="headerlink" href="#22" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>字段</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>可直接拼接</strong>(时间序列)</td>
+<td><code>equity_curve</code>、<code>cash_curve</code>、<code>margin_curve</code>、<code>positions</code>(快照序列)、<code>orders</code>、<code>trades</code>、<code>executions</code>、<code>indicator_outputs</code></td>
+<td>按时间戳排序去重拼接;相邻阶段边界时间戳去重(热启动首 bar 可能与上阶段末 bar 语义重叠)</td>
+</tr>
+<tr>
+<td><strong>必须重算</strong>(不可简单相加)</td>
+<td><code>metrics</code>(total_return、max_drawdown、sharpe、win_rate...)</td>
+<td>由合并后的 <code>equity_curve</code> + <code>trades</code> 重新计算;<strong>不能</strong>按阶段平均或相加。<code>initial_cash</code> 取第一阶段的,<code>end_market_value</code> 取最后阶段的</td>
+</tr>
+<tr>
+<td><strong>需丢弃/裁剪</strong></td>
+<td>已退市合约的 position snapshot、instrument 元数据</td>
+<td>合并后清理配置了 <code>expiry_date</code> 且已过期的合约(用户明确要求防爆炸)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23-api">2.3 API 设计<a class="headerlink" href="#23-api" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">merge_results</span><span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="o">*</span><span class="n">results</span><span class="p">:</span> <span class="n">BacktestResult</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">drop_expired_instruments</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">dedupe_boundary</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">MergedResult</span><span class="p">:</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="sd">"""按时间顺序合并多段分阶段回测结果。</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="sd">    - 曲线/交易/订单/执行按时间戳拼接去重;</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="sd">    - metrics 由合并后曲线+交易重算核心子集(非阶段简单相加);</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="sd">    - drop_expired_instruments=True 时清理已退市合约快照,防资产爆炸;</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="sd">    - dedupe_boundary=True 时去除相邻阶段边界重叠时间戳。</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="sd">    """</span>
+</span></code></pre></div>
+<p><strong>已落地决策(与草案的差异)</strong>:</p>
+<ul>
+<li><strong>返回类型 = 新建 <code>MergedResult</code> 类</strong>,而非 <code>BacktestResult</code>。原因:<code>BacktestResult</code> 包装 Rust <code>_raw</code> 对象(被 16 种方式访问),无法在 raw 层重建;<code>MergedResult</code> 用纯 pandas 帧鸭子类型复刻只读视图(<code>equity_curve</code>/<code>*_df</code>/<code>daily_returns</code>/<code>to_quantstats</code>/<code>metrics</code>/<code>metrics_df</code>),不侵入 <code>BacktestResult</code> 的 Rust 契约。代价:<code>plot()</code>/<code>report_quantstats()</code> 等依赖 Rust 对象的方法在合并结果上不可用。</li>
+<li>配套链式便利:<code>merge_results(r1, r2)</code> 支持任意段数;单段 <code>merge_results(r)</code> 退化为恒等视图。</li>
+</ul>
+<h3 id="24">2.4 关键难点<a class="headerlink" href="#24" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>metrics 重算依赖</strong>:现在 metrics 在 Rust <code>generate_backtest_result</code>(<code>src/statistics/mod.rs:157</code>)里算。合并发生在 Python 侧,需要<strong>纯 Python 的 metrics 计算路径</strong>(或复用 <code>to_quantstats</code> + quantstats)。建议:合并 result 的 <code>metrics</code> 走 Python 重算(基于拼接 equity_curve/daily_returns),与 Rust 单段 metrics 语义对齐但独立实现,并加测试锁定两者在单段场景数值一致。</li>
+<li><strong>边界去重语义</strong>:热启动首个 bar 的 equity 点可能与上阶段快照点时间戳相同,<code>upsert_timestamped_value</code>(Rust 侧已有 upsert 语义)提示"同戳取后者"。Python 合并沿用"同戳保留后一阶段值"。</li>
+<li><strong>positions 连续性</strong>:分阶段的持仓快照本身连续(热启动恢复了 portfolio),拼接即可;去重同戳。</li>
+</ul>
+<h3 id="25">2.5 落地顺序(已完成)<a class="headerlink" href="#25" title="Permanent link">&para;</a></h3>
+<ol>
+<li>✅ <code>merge_results</code> + <code>MergedResult</code>(<code>python/akquant/backtest/merge.py</code>):曲线/orders/trades/executions/positions 拼接去重(纯 pandas)。</li>
+<li>✅ Python metrics <strong>核心子集</strong>重算(<code>_compute_core_metrics</code>)+ 与单段完整回测的 golden 一致性测试(<code>total_return_pct</code>/<code>end_market_value</code> <code>approx</code> 对齐)。</li>
+<li>✅ 退市合约清理(依据 instrument snapshot <code>expiry_date</code>)。</li>
+<li>✅ 时间重叠→<code>ValueError</code>;边界同戳去重(保留后段)。</li>
+<li>✅ 导出(<code>akquant.merge_results</code> / <code>akquant.MergedResult</code>)+ <code>.pyi</code> 存根。</li>
+<li>✅ 文档:热启动专题(zh+en)补"多阶段结果合并"小节 + <code>reference/api.md</code> 签名 + 测试 <code>tests/test_merge_results.py</code>(9 例)。</li>
+</ol>
+<p><strong>metrics 范围决策</strong>:全部 60 项指标由 Rust 引擎在完整回测中计算,无"从权益曲线算指标"的可复用 <code>#[pyfunction]</code> 入口。在 Python 全量复刻 60 项风险大(口径漂移)、收益低。故只重算能从合并曲线+交易明细<strong>无歧义推导</strong>的核心子集,口径对齐 <code>src/analysis/result.rs</code>(sharpe 用日收益算术均值×dpy、drawdown 用 cummax 峰值回撤、calmar=年化/最大回撤);其余字段访问时抛 <code>AttributeError</code> 并提示去单段 <code>BacktestResult</code> 读取。</p>
+<h2 id="3-api-checkpoint-resume">3. API 命名演进:热启动 → checkpoint / resume(破坏性更新)<a class="headerlink" href="#3-api-checkpoint-resume" title="Permanent link">&para;</a></h2>
+<h3 id="31">3.1 问题:一个名字扛了两种语义<a class="headerlink" href="#31" title="Permanent link">&para;</a></h3>
+<p>调研主流框架后确认,AKQuant 的"热启动"存在<strong>概念混淆</strong>——它借用了 warm-up 的词,做的却是 checkpoint-resume 的事:</p>
+<table>
+<thead>
+<tr>
+<th>语义</th>
+<th>做的事</th>
+<th>LEAN</th>
+<th>NautilusTrader</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A. 指标预热(warm-up)</strong></td>
+<td>开跑前喂历史数据填满滚动窗口/指标,让策略起手即 <code>IsReady</code></td>
+<td><code>SetWarmUp(period)</code> / <code>IsWarmingUp</code></td>
+<td>history bootstrap(catalog 喂数据)</td>
+</tr>
+<tr>
+<td><strong>B. 状态续跑(checkpoint/resume)</strong></td>
+<td>保存引擎+策略完整状态(持仓/现金/订单/风控),从断点继续跑下一段</td>
+<td>无内建(靠外部编排)</td>
+<td><strong>State Persistence &amp; Recovery</strong>(Cache + Event Sourcing)</td>
+</tr>
+</tbody>
+</table>
+<p><code>run_warm_start</code> 本质是 <strong>B</strong>,却叫了 <strong>A</strong> 的名,还顺带做了一点 A(<code>_bootstrap_incremental_indicators</code>)。一个函数扛两种语义,正是用户困惑与 #282 边角问题(滑点漏配、钩子累加器误判)的温床。</p>
+<p>参考出处:<a href="https://www.quantconnect.com/docs/v2/writing-algorithms/historical-data/warm-up-periods">LEAN Warm Up Periods</a>、<a href="https://deepwiki.com/nautechsystems/nautilus_trader/7.3-state-persistence-and-recovery">NautilusTrader State Persistence and Recovery</a>、<a href="https://github.com/nautechsystems/nautilus_trader/blob/3eb18933/docs/concepts/event_sourcing.md">NautilusTrader Event Sourcing</a>。</p>
+<h3 id="32">3.2 提案:直接重命名(不保留别名)<a class="headerlink" href="#32" title="Permanent link">&para;</a></h3>
+<p>业界 B 语义的标准词是 <strong>checkpoint / resume</strong>。本 RFC 采<strong>破坏性更新</strong>,不保留 deprecated 别名(避免长期双名维护与文档歧义):</p>
+<table>
+<thead>
+<tr>
+<th>现名</th>
+<th>新名</th>
+<th>语义归位</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>run_warm_start()</code></td>
+<td><strong><code>run_from_checkpoint()</code></strong></td>
+<td>B:从断点续跑</td>
+</tr>
+<tr>
+<td><code>save_snapshot()</code></td>
+<td><strong><code>save_checkpoint()</code></strong></td>
+<td>B:落盘断点(现实现就是 checkpoint,非只读 snapshot)</td>
+</tr>
+<tr>
+<td><code>checkpoint.warm_start()</code></td>
+<td><strong><code>checkpoint.load_checkpoint()</code></strong></td>
+<td>B:恢复引擎+策略</td>
+</tr>
+<tr>
+<td><code>warm_up</code> / <code>warmup_period</code> / <code>history_depth</code> / <code>infer_warmup_period</code></td>
+<td><strong>不变</strong></td>
+<td>A:指标预热,语义本就正确,保持独立</td>
+</tr>
+</tbody>
+</table>
+<p>命名优先级(B 场景):<code>resume</code> / <code>checkpoint restore</code> 优于 <code>warm start</code>——后者与 warm-up 天然混淆,新命名不再沿用。</p>
+<h3 id="33">3.3 迁移面(已勘定)<a class="headerlink" href="#33" title="Permanent link">&para;</a></h3>
+<p>去除 <code>__pycache__</code> 后的真实引用面:</p>
+<ul>
+<li><strong>代码</strong>:<code>python/akquant/__init__.py</code>(<code>__all__</code> 导出 4 处)、<code>backtest/engine.py</code>、<code>backtest/__init__.py</code> + <code>.pyi</code>、<code>checkpoint.py</code>、<code>backtest/result.py</code>;测试 <code>tests/test_strategy_extras.py</code>。</li>
+<li><strong>示例</strong>(4 个):<code>examples/21_warm_start_demo.py</code>、<code>22_strategy_runtime_config_demo.py</code>、<code>56_functional_warm_start_demo.py</code>、<code>57_functional_multi_slot_warm_start_demo.py</code>——仅改内部 API 符号,<strong>文件名保留</strong>(避免级联改动 <code>tests/test_examples_regression.py</code> 的硬编码路径与 <code>done_*</code> 哨兵、README、doc 链接);按约定逐个实跑 <code>exit 0</code>。</li>
+<li><strong>文档</strong>(zh+en):批量替换 API 符号;<code>warm_start.md</code> 专题页<strong>文件名保留</strong>(改名会级联 mkdocs nav 与全部内链),仅更新正文。<code>reference/api.md</code> 签名同步。</li>
+</ul>
+<h3 id="34-checkpoint">3.4 checkpoint 契约化(顺带根治"配置项漂移")<a class="headerlink" href="#34-checkpoint" title="Permanent link">&para;</a></h3>
+<p>第 1 部分把配置塞进散装 dict 的 <code>backtest_config</code> 键,长期仍靠 <code>snapshot.get(...)</code> 逐项取,易漏。建议把 checkpoint 定义成<strong>显式 dataclass</strong>作为单一契约:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nd">@dataclass</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">Checkpoint</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">engine_state</span><span class="p">:</span> <span class="nb">bytes</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">strategy</span><span class="p">:</span> <span class="n">Any</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">strategy_topology</span><span class="p">:</span> <span class="nb">dict</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">resolved_config</span><span class="p">:</span> <span class="nb">dict</span>        <span class="c1"># 第 1 部分的 backtest_config,契约化</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">snapshot_features</span><span class="p">:</span> <span class="nb">dict</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">version</span><span class="p">:</span> <span class="nb">str</span>
+</span></code></pre></div>
+<ul>
+<li><code>save_checkpoint</code> / <code>load_checkpoint</code> 都引用此 dataclass,新增引擎配置只在一处加字段,结构上杜绝遗漏。</li>
+<li><strong>版本校验</strong>:现有 <code>version</code> 字段仅记录、未校验。跨 AKQuant 版本恢复旧 checkpoint 时应显式告警/报错(schema 不兼容),而非静默行为漂移。</li>
+<li><strong>pickle 脆弱性</strong>:<code>save_snapshot</code> 直接 pickle 策略实例,遇不可 pickle 对象即抛(如 <code>cannot pickle Order</code>,调试时已撞到)。短期不上 Nautilus 式事件溯源,但应在 <code>__getstate__</code> 更主动剔除运行时瞬态,并对残留累加器在文档提示 <code>on_resume</code> 重置(#282 第 1、2 点误判来源)。</li>
+</ul>
+<h3 id="35">3.5 落地顺序<a class="headerlink" href="#35" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Rust 无关,纯 Python 重命名 + <code>.pyi</code> 同步 + <code>__all__</code> 更新。</li>
+<li>checkpoint dataclass 契约化 + 版本校验。</li>
+<li>示例/文档批量改名并实跑。</li>
+<li><code>__engine_rule_version__</code> 无需动(行为不变,仅 API 名变);发版说明标注<strong>破坏性变更</strong>。</li>
+</ol>
+<h2 id="4">4. 三部分关系<a class="headerlink" href="#4" title="Permanent link">&para;</a></h2>
+<p>第 1 部分(配置持久化,<strong>已实现</strong>)、第 2 部分(result 合并)、第 3 部分(API 重命名)<strong>互相正交</strong>,可独立发版。建议顺序:第 1(已完成)→ 第 3(破坏性,趁早合并进下一个 major)→ 第 2(体验增强,随时跟进)。滑点最小热修已落地,不阻塞任何一部分。</p>
+<h2 id="5">5. 风险与开放问题<a class="headerlink" href="#5" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>快照体积</strong>:<code>backtest_config</code> 是小 dict,可忽略。</li>
+<li><strong>配置项漂移</strong>:未来新增引擎配置需同步进 <code>backtest_config</code> 白名单——建议以 <code>resolved_config</code> dataclass 为单一定义点,<code>save_snapshot</code>/<code>run_warm_start</code> 都引用它,减少再次遗漏。</li>
+<li><strong>metrics 双实现</strong>:Python 重算与 Rust 单段实现的一致性需 golden 级测试守护,否则合并 metrics 与单段 metrics 口径漂移。</li>
+<li><strong>开放问题</strong>:<code>merge_results</code> 是否需要支持非连续时间段(跳空)?建议首版要求时间递增、允许 gap,不允许重叠段(重叠报错)。</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  回到页面顶部
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 AKQuant Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/akfamily/akquant" target="_blank" rel="noopener" title="AKQuant on GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.tracking", "navigation.path", "navigation.prune", "search.suggest", "search.highlight", "search.share", "content.code.copy", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="../../javascripts/search-lang-filter.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
