@@ -38,6 +38,7 @@ def plot_kline_review(
     initial_symbol: Optional[str] = None,
     show: bool = False,
     include_indicators: bool = True,
+    hide_price: bool = False,
 ) -> str:
     """生成离线自包含的 LWC 交互式 K 线买卖点复盘 HTML.
 
@@ -50,6 +51,8 @@ def plot_kline_review(
     :param initial_symbol: 初始展示的标的;缺省为首个.
     :param show: 是否在浏览器中打开.
     :param include_indicators: 是否把策略上报的指标按 pane 画成副图/主图叠加.
+    :param hide_price: 初始是否隐藏价格 K 线(买卖点照常显示); 只对带 candle 指标
+        (如平均 K 线)的标的生效, 页面上的「隐藏 K 线」按钮可随时切换.
     :return: 写出的 HTML 文件绝对路径.
     :raises ValueError: ``market_data`` 为空,或无有效行情可复盘.
     """
@@ -73,6 +76,7 @@ def plot_kline_review(
         initial_theme=initial_theme,
         intraday=intraday,
         initial_symbol_index=initial_index,
+        hide_price=hide_price,
     )
     out_path = Path(filename).resolve()
     out_path.write_text(html_text, encoding="utf-8")

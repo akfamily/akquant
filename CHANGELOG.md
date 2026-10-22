@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **复盘页可隐藏价格 K 线：`result.viz.review(hide_price=)` 与页面“隐藏 K 线”按钮**：当前标的带 candle 指标（如平均 K 线）时出现按钮，可随时切换，`hide_price=True` 指定初始隐藏；只隐藏价格 K 线，买卖点、成交量与其他指标照常显示，无 candle 指标的标的不受影响。
+
+## [0.3.69] - 2026-10-21
+
+### Added
 - **实盘自动预加载历史：`run_live(preload_bars=)` 与 `GatewayBundle.history_provider`**：行情 broker 可在 bundle 上提供历史拉取函数，不传 `preload_history` 时 `run_live` 默认按策略需要自动预加载——每标的 `min(10000, max(3 × 推断 warmup, 500, warmup_period, 历史深度))` 根，走与 `preload_history` 相同的路径（历史缓冲、窗口聚合、warmup 计数、`self.I` 回放带 `phase="preload"`）。`preload_bars=0` 关闭、`N` 指定根数；tick 驱动的行情源默认不开启（避免既有 tick 策略变成双流）；拉取失败告警后照常启动。行情/交易分开指定时 provider 随行情侧保留。不提供 provider 的 broker 行为不变。
 
 ### Fixed

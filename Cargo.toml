@@ -1,6 +1,6 @@
 [package]
 name = "akquant"
-version = "0.3.69"
+version = "0.3.70"
 edition = "2024"
 description = "High-performance quantitative trading framework based on Rust and Python"
 license = "MIT"

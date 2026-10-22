@@ -1093,7 +1093,7 @@ class DualMA(aq.Indicator, title="双均线", overlay=True, id="dual_ma"):
 *   `title`: 显示名，只用于展示，省略为类名。
 *   `overlay`: `True` 画主图，`False`（默认）画附图。`self.I` 默认画图：`overlay=True` 时默认 `pane=0`，否则默认 `pane=1`（pane 编号只在本脚本内有效）；`plot=False` 关闭。
 *   `id`: 机器标识（即指标点的 `owner_strategy_id`），省略为类名 snake_case。
-*   `replaces_price`: `True` 表示本脚本替代价格 K 线（如平均 K 线），只是给前端的提示，隐藏原 K 线由前端决定；必须同时写 `overlay=True`（否则 `ValueError`），值须为 `bool`（否则 `TypeError`），可被子类继承，默认 `False`。`X.resolve_replaces_price()` 返回生效值。`aq.Strategy` 上写报 `TypeError`。
+*   `replaces_price`: `True` 表示本脚本替代价格 K 线（如平均 K 线），只是给前端的提示，隐藏原 K 线由前端决定（内置复盘页另有 `result.viz.review(hide_price=)` 与页面按钮）；必须同时写 `overlay=True`（否则 `ValueError`），值须为 `bool`（否则 `TypeError`），可被子类继承，默认 `False`。`X.resolve_replaces_price()` 返回生效值。`aq.Strategy` 上写报 `TypeError`。
 *   全部交易 API（`buy` / `sell` / `submit_order` / `place_*` / `order_target*` / `rebalance_*` / `close_position` / `cancel_*`）抛 `akquant.IndicatorCannotTradeError`。
 *   详见[自定义指标指南](../guide/custom_indicator.md)。
 
