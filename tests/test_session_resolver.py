@@ -97,3 +97,12 @@ def test_resolve_bar_extreme_and_invalid_interval() -> None:
         pytest.fail(f"不应抛出 {type(exc).__name__}: {exc}")
     with pytest.raises(ValueError, match="起点"):
         r.resolve_bar("BTC", timestamp=5, interval_start=10)
+
+
+def test_resolver_rule_b_defaults_for_non_china_timezone() -> None:
+    """非中国时区未传 sessions：股票也按全天连续处理."""
+    r = aq.SessionResolver(timezone="America/New_York")
+    ns = int(pd.Timestamp("2024-01-06 12:00", tz="America/New_York").value)
+    day, session = r.resolve_instant("AAPL", ns, aq.AssetType.Stock)
+    assert day == dt.date(2024, 1, 6)
+    assert session == aq.TradingSession.Continuous

@@ -1,7 +1,7 @@
 //! `SessionResolver` 的 Python 绑定。
 
 use super::clock::LocalClock;
-use super::resolver::SessionResolver;
+use super::resolver::{SessionResolver, effective_sessions};
 use super::schedule::{TEMPLATE_NAMES, template};
 use super::trading_calendar::{CalendarError, TradingCalendar};
 use crate::model::{AssetType, TradingSession};
@@ -44,6 +44,7 @@ impl PySessionResolver {
                 "无法识别的时区 {timezone:?}，请使用 IANA 时区名，如 \"Asia/Shanghai\""
             )));
         }
+        let sessions_given = sessions.is_some();
         let mut pairs = Vec::new();
         for (key, name) in sessions.unwrap_or_default() {
             let schedule = template(&name).ok_or_else(|| {
@@ -54,6 +55,8 @@ impl PySessionResolver {
             })?;
             pairs.push((key, schedule));
         }
+        let user = if sessions_given { Some(pairs) } else { None };
+        let pairs = effective_sessions(user, Some(timezone), 0);
         let calendar = match trading_calendar {
             Some(days) => Some(TradingCalendar::explicit(days).map_err(calendar_err)?),
             None => None,

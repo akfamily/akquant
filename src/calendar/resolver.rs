@@ -31,6 +31,43 @@ const MAX_DAY_STEPS: usize = 8;
 /// 跨交易日的 bar（周线等）最多覆盖的交易日数。
 const MAX_SPAN_DAYS: usize = 400;
 
+/// 中国时区：按资产类型取默认时段表；其他时区默认全天连续（用户决定的规则 B）。
+const CHINA_TZ_NAMES: &[&str] = &[
+    "Asia/Shanghai",
+    "Asia/Chongqing",
+    "Asia/Chungking",
+    "Asia/Harbin",
+    "PRC",
+];
+
+pub fn is_china_timezone(tz_name: Option<&str>, offset_secs: i32) -> bool {
+    match tz_name {
+        Some(name) => CHINA_TZ_NAMES
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(name.trim())),
+        None => offset_secs == 8 * 3600,
+    }
+}
+
+/// 规则 B：非中国时区且未给 "default" 时补 `default = ALWAYS_OPEN`。
+pub fn effective_sessions(
+    user: Option<Vec<(String, SessionSchedule)>>,
+    tz_name: Option<&str>,
+    offset_secs: i32,
+) -> Vec<(String, SessionSchedule)> {
+    let mut sessions = user.unwrap_or_default();
+    let has_default = sessions
+        .iter()
+        .any(|(k, _)| k.trim().eq_ignore_ascii_case("default"));
+    if !has_default && !is_china_timezone(tz_name, offset_secs) {
+        sessions.push((
+            "default".to_string(),
+            template("ALWAYS_OPEN").expect("内置模板"),
+        ));
+    }
+    sessions
+}
+
 fn rank(s: TradingSession) -> u8 {
     match s {
         TradingSession::Continuous => 7,
@@ -58,6 +95,8 @@ pub struct SessionResolver {
     option_default: Arc<SessionSchedule>,
     always_open: Arc<SessionSchedule>,
     windows: Mutex<HashMap<(usize, NaiveDate), Arc<DayWindow>>>,
+    /// 在用时段表（按 Arc 指针去重）；空表示未调用 set_active。
+    active: Vec<Arc<SessionSchedule>>,
 }
 
 impl SessionResolver {
@@ -93,11 +132,85 @@ impl SessionResolver {
             option_default: builtin("CN_OPTION"),
             always_open: builtin("ALWAYS_OPEN"),
             windows: Mutex::new(HashMap::new()),
+            active: Vec::new(),
         })
     }
 
     pub fn uses_fallback_calendar(&self) -> bool {
         self.calendar.is_none()
+    }
+
+    pub fn set_active(&mut self, symbols: &[(String, Option<AssetType>)]) {
+        let mut active: Vec<Arc<SessionSchedule>> = Vec::new();
+        for (symbol, asset_type) in symbols {
+            let s = self.schedule_for(symbol, *asset_type);
+            if !active.iter().any(|a| Arc::ptr_eq(a, &s)) {
+                active.push(s);
+            }
+        }
+        self.active = active;
+    }
+
+    fn active_schedules(&self) -> Vec<Arc<SessionSchedule>> {
+        if !self.active.is_empty() {
+            return self.active.clone();
+        }
+        vec![
+            self.explicit_default
+                .clone()
+                .unwrap_or_else(|| self.stock_default.clone()),
+        ]
+    }
+
+    /// 会话日历：用户日历；否则在用表全为 AllDays 缺省时用 AllDays，否则 Weekdays。
+    fn session_calendar(&self) -> &TradingCalendar {
+        if let Some(c) = &self.calendar {
+            return c;
+        }
+        if self
+            .active_schedules()
+            .iter()
+            .all(|s| s.fallback_calendar == FallbackCalendar::AllDays)
+        {
+            &self.all_days
+        } else {
+            &self.weekdays
+        }
+    }
+
+    pub fn session_day_end(&self, day: NaiveDate) -> Result<i64, CalendarError> {
+        let mut end = i64::MIN;
+        for s in self.active_schedules() {
+            end = end.max(self.day_end(&s, day)?);
+        }
+        Ok(end)
+    }
+
+    pub fn session_day_span(&self, day: NaiveDate) -> Result<(i64, i64), CalendarError> {
+        let prev = self.session_calendar().before(day)?;
+        Ok((self.session_day_end(prev)?, self.session_day_end(day)?))
+    }
+
+    /// ts 所属的会话交易日：第一个满足 ts <= session_day_end(T) 的交易日。
+    pub fn session_trading_day(&self, ts: i64) -> Result<NaiveDate, CalendarError> {
+        let cal = self.session_calendar();
+        let local_date = self.clock.to_local(ts).date();
+        let mut search_from = local_date - Duration::days(1);
+        if let Some(first) = cal.first_day()
+            && search_from < first
+            && local_date >= first
+        {
+            search_from = first;
+        }
+        let mut day = cal.on_or_after(search_from)?;
+        // 不变量同 trading_day_of：最多 3~4 步。
+        for _ in 0..MAX_DAY_STEPS {
+            if ts <= self.session_day_end(day)? {
+                return Ok(day);
+            }
+            day = cal.after(day)?;
+        }
+        unreachable!("会话交易日查找超过 {MAX_DAY_STEPS} 步")
     }
 
     pub fn schedule_for(
@@ -771,5 +884,100 @@ mod tests {
             assert!(r.resolve_instant("600000.SH", stock(), ts).is_ok());
         }
         assert!(r.windows.lock().unwrap().len() <= 3);
+    }
+
+    #[test]
+    fn china_timezone_detection() {
+        assert!(is_china_timezone(Some("Asia/Shanghai"), 0));
+        assert!(is_china_timezone(Some("PRC"), 0));
+        assert!(is_china_timezone(None, 8 * 3600));
+        assert!(!is_china_timezone(Some("America/New_York"), 8 * 3600));
+        assert!(!is_china_timezone(None, 0));
+    }
+
+    #[test]
+    fn effective_sessions_rule_b() {
+        // 中国时区、未传：空（按资产类型取默认）
+        assert!(effective_sessions(None, Some("Asia/Shanghai"), 8 * 3600).is_empty());
+        // 非中国时区、未传：default = ALWAYS_OPEN
+        let ny = effective_sessions(None, Some("America/New_York"), 0);
+        assert_eq!(ny.len(), 1);
+        assert_eq!(ny[0].0, "default");
+        assert_eq!(ny[0].1.name, "ALWAYS_OPEN");
+        // 非中国时区、传了但没有 default：补 default
+        let user = vec![("rb".to_string(), template("CN_FUTURES_NIGHT_23").unwrap())];
+        let got = effective_sessions(Some(user), Some("Europe/London"), 0);
+        assert!(
+            got.iter()
+                .any(|(k, s)| k == "default" && s.name == "ALWAYS_OPEN")
+        );
+        assert!(got.iter().any(|(k, _)| k == "rb"));
+        // 非中国时区、传了 default（大小写不敏感）：不覆盖
+        let user = vec![("DEFAULT".to_string(), template("CN_STOCK").unwrap())];
+        let got = effective_sessions(Some(user), Some("Europe/London"), 0);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].1.name, "CN_STOCK");
+    }
+
+    #[test]
+    fn session_day_uses_latest_close_across_active_schedules() {
+        // 股票 15:00 收盘、国债期货 15:15 收盘：会话日结束取 15:15
+        let mut r = resolver(vec![("T", "CN_FUTURES_CFFEX_BOND_DAY")], None);
+        r.set_active(&[
+            ("600000.SH".to_string(), Some(AssetType::Stock)),
+            ("T2412".to_string(), Some(AssetType::Futures)),
+        ]);
+        assert_eq!(
+            r.session_day_end(d(2024, 1, 2)).unwrap(),
+            at(2024, 1, 2, 15, 15, 0)
+        );
+        // 15:10 的股票迟到 tick 仍属当日会话（单品种解析会归下一交易日）
+        assert_eq!(
+            r.session_trading_day(at(2024, 1, 2, 15, 10, 0)).unwrap(),
+            d(2024, 1, 2)
+        );
+        assert_eq!(
+            r.session_trading_day(at(2024, 1, 2, 15, 15, 1)).unwrap(),
+            d(2024, 1, 3)
+        );
+        let (prev_end, end) = r.session_day_span(d(2024, 1, 3)).unwrap();
+        assert_eq!(prev_end, at(2024, 1, 2, 15, 15, 0));
+        assert_eq!(end, at(2024, 1, 3, 15, 15, 0));
+    }
+
+    #[test]
+    fn session_day_with_night_futures_and_weekend() {
+        let mut r = resolver(vec![("rb", "CN_FUTURES_NIGHT_23")], None);
+        r.set_active(&[("rb2405".to_string(), Some(AssetType::Futures))]);
+        // 周五 21:30 → 下周一
+        assert_eq!(
+            r.session_trading_day(at(2024, 1, 5, 21, 30, 0)).unwrap(),
+            d(2024, 1, 8)
+        );
+        // 下周一的会话区间从上周五 15:00 开始
+        let (prev_end, end) = r.session_day_span(d(2024, 1, 8)).unwrap();
+        assert_eq!(prev_end, at(2024, 1, 5, 15, 0, 0));
+        assert_eq!(end, at(2024, 1, 8, 15, 0, 0));
+    }
+
+    #[test]
+    fn session_calendar_all_days_only_when_every_active_schedule_is_always_open() {
+        let mut r = resolver(vec![("default", "ALWAYS_OPEN")], None);
+        r.set_active(&[("BTCUSDT".to_string(), None)]);
+        // 周六 12:00 属于周六
+        assert_eq!(
+            r.session_trading_day(at(2024, 1, 6, 12, 0, 0)).unwrap(),
+            d(2024, 1, 6)
+        );
+        let mut mixed = resolver(vec![("BTC", "ALWAYS_OPEN")], None);
+        mixed.set_active(&[
+            ("BTCUSDT".to_string(), None),
+            ("600000.SH".to_string(), Some(AssetType::Stock)),
+        ]);
+        // 混合时会话日历为工作日：周六 12:00 归下周一
+        assert_eq!(
+            mixed.session_trading_day(at(2024, 1, 6, 12, 0, 0)).unwrap(),
+            d(2024, 1, 8)
+        );
     }
 }
