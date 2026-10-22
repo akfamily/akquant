@@ -54,7 +54,7 @@ pub struct SessionResolver {
     futures_default: Arc<SessionSchedule>,
     option_default: Arc<SessionSchedule>,
     always_open: Arc<SessionSchedule>,
-    windows: Mutex<HashMap<(String, NaiveDate), Arc<DayWindow>>>,
+    windows: Mutex<HashMap<(usize, NaiveDate), Arc<DayWindow>>>,
 }
 
 impl SessionResolver {
@@ -139,10 +139,11 @@ impl SessionResolver {
 
     fn day_window(
         &self,
-        schedule: &SessionSchedule,
+        schedule: &Arc<SessionSchedule>,
         day: NaiveDate,
     ) -> Result<Arc<DayWindow>, CalendarError> {
-        let key = (schedule.name.clone(), day);
+        // 按时段表实例（Arc 指针）缓存：name 由调用方指定，可能重名。
+        let key = (Arc::as_ptr(schedule) as usize, day);
         if let Some(w) = self.windows.lock().expect("缓存锁").get(&key) {
             return Ok(w.clone());
         }
@@ -181,7 +182,11 @@ impl SessionResolver {
     /// 交易日总以日盘收盘结束（夜盘段锚定前一交易日，结束得更早）。这样查找
     /// 时经过日历首日也不会因为“首日的前一交易日不在日历里”而报错。
     /// 全部时段都锚定前一交易日（不现实的自定义表）时退回完整窗口。
-    fn day_end(&self, schedule: &SessionSchedule, day: NaiveDate) -> Result<i64, CalendarError> {
+    fn day_end(
+        &self,
+        schedule: &Arc<SessionSchedule>,
+        day: NaiveDate,
+    ) -> Result<i64, CalendarError> {
         let same_day_end = schedule
             .segments
             .iter()
@@ -197,7 +202,7 @@ impl SessionResolver {
     /// 找出时间点 ts 所属交易日：第一个满足 ts <= day_end(T) 的交易日。
     fn trading_day_of(
         &self,
-        schedule: &SessionSchedule,
+        schedule: &Arc<SessionSchedule>,
         ts: i64,
     ) -> Result<(NaiveDate, Arc<DayWindow>), CalendarError> {
         let cal = self.calendar_for(schedule);
@@ -215,6 +220,9 @@ impl SessionResolver {
             }
             day = cal.after(day)?;
         }
+        // 不变量：搜索从 on_or_after(local_date - 1) 起；local_date 之后的任何交易日，
+        // 其 day_end 不小于当天本地 0 点，必大于 ts，故最多 3 步命中（全部时段都锚定
+        // 前一交易日时 4 步）。
         unreachable!(
             "交易日查找超过 {MAX_DAY_STEPS} 步：时段表 {}",
             schedule.name
@@ -265,7 +273,11 @@ impl SessionResolver {
         };
         let schedule = self.schedule_for(symbol, asset_type);
         let (trading_day, _) = self.trading_day_of(&schedule, point)?;
-        let (mut day, _) = self.trading_day_of(&schedule, start)?;
+        // 区间左开：从 start + 1 所属交易日扫起；它落在日历外时只扫 bar 自己的交易日。
+        let mut day = match self.trading_day_of(&schedule, start + 1) {
+            Ok((d, _)) => d,
+            Err(_) => trading_day,
+        };
         let cal = self.calendar_for(&schedule);
         let mut best = TradingSession::Closed;
         for _ in 0..MAX_SPAN_DAYS {
@@ -549,6 +561,70 @@ mod tests {
             got,
             Resolution {
                 trading_day: d(2024, 1, 6),
+                session: TradingSession::Continuous
+            }
+        );
+    }
+
+    #[test]
+    fn same_name_schedules_do_not_share_cache() {
+        let stock_segs = template("CN_STOCK").unwrap().segments;
+        let open_segs = template("ALWAYS_OPEN").unwrap().segments;
+        let a = SessionSchedule::new("X", stock_segs, FallbackCalendar::Weekdays).unwrap();
+        let b = SessionSchedule::new("X", open_segs, FallbackCalendar::AllDays).unwrap();
+        let r = SessionResolver::new(
+            sh(),
+            None,
+            vec![("aaa".to_string(), a), ("bbb".to_string(), b)],
+        )
+        .unwrap();
+        // 周一凌晨 3 点：两张表都归交易日 2024-01-08，缓存键只差表实例
+        let ts = at(2024, 1, 8, 3, 0, 0);
+        let ra = r.resolve_instant("aaa1", None, ts).unwrap();
+        let rb = r.resolve_instant("bbb1", None, ts).unwrap();
+        assert_eq!(ra.trading_day, d(2024, 1, 8));
+        assert_eq!(ra.session, TradingSession::Closed);
+        assert_eq!(rb.trading_day, d(2024, 1, 8));
+        assert_eq!(rb.session, TradingSession::Continuous);
+    }
+
+    #[test]
+    fn bar_interval_starting_before_calendar_night() {
+        let cal = TradingCalendar::explicit([d(2024, 1, 2), d(2024, 1, 3), d(2024, 1, 4)]).unwrap();
+        let r = resolver(vec![("rb", "CN_FUTURES_NIGHT_23")], Some(cal));
+        let got = r
+            .resolve_bar(
+                "rb2405",
+                Some(AssetType::Futures),
+                Some(at(2024, 1, 2, 15, 0, 0)),
+                at(2024, 1, 3, 15, 0, 0),
+            )
+            .unwrap();
+        assert_eq!(
+            got,
+            Resolution {
+                trading_day: d(2024, 1, 3),
+                session: TradingSession::Continuous
+            }
+        );
+    }
+
+    #[test]
+    fn bar_interval_starting_before_calendar_stock() {
+        let cal = TradingCalendar::explicit([d(2024, 1, 2), d(2024, 1, 3)]).unwrap();
+        let r = resolver(vec![], Some(cal));
+        let got = r
+            .resolve_bar(
+                "600000.SH",
+                stock(),
+                Some(at(2024, 1, 1, 15, 0, 0)),
+                at(2024, 1, 2, 15, 0, 0),
+            )
+            .unwrap();
+        assert_eq!(
+            got,
+            Resolution {
+                trading_day: d(2024, 1, 2),
                 session: TradingSession::Continuous
             }
         );
