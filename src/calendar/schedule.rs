@@ -113,6 +113,7 @@ pub fn parse_clock(s: &str) -> Result<u32, String> {
 }
 
 /// 解析时段类型名（不区分大小写，接受 snake_case）。
+#[allow(dead_code)] // 阶段 6 使用：sessions= 自定义时段元组 (start, end, 类型) 的类型解析
 pub fn parse_session(s: &str) -> Result<TradingSession, String> {
     let key: String = s.trim().to_ascii_lowercase().replace('_', "");
     Ok(match key.as_str() {

@@ -93,6 +93,7 @@ impl TradingCalendar {
         }
     }
 
+    #[allow(dead_code)] // 阶段 4 使用：定时调度按交易日判断是否触发
     pub fn is_trading_day(&self, d: NaiveDate) -> bool {
         match self {
             TradingCalendar::Weekdays => is_weekday(d),
