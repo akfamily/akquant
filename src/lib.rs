@@ -3,6 +3,7 @@ use pyo3_stub_gen::define_stub_info_gatherer;
 
 mod account;
 mod analysis;
+mod calendar;
 mod clock;
 mod context;
 mod data;

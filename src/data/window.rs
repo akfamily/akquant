@@ -5,12 +5,12 @@
 //! 语义: 分钟/小时窗口标签 = 本地时间 ceil 到周期; 日线标签 = 当日最后一根基础
 //! bar 的时间戳(不指向未来)。窗口 bar **不进 feed、不成为 Event**, 只写历史
 //! 缓冲并交给策略阶段派发。
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
-use chrono_tz::Tz;
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::calendar::clock::LocalClock;
 use crate::model::Bar;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,100 +122,6 @@ impl WindowSubscription {
             .is_some_and(|(_, e)| *e == local.time())
     }
 }
-
-/// 探测夏令时"跳变缺口"时, 向前步进的分钟数上限(6 小时足够覆盖现实世界的
-/// 任何春季跳变缺口, 通常缺口只有 1 小时, 极少数地区 30 分钟)。
-const MAX_DST_GAP_PROBE_MINUTES: i64 = 360;
-
-/// 引擎时区: 有 IANA 名称用名称(随 DST), 否则用固定偏移秒数。
-#[derive(Debug, Clone, Default)]
-struct LocalClock {
-    tz: Option<Tz>,
-    offset_secs: i32,
-}
-
-impl LocalClock {
-    fn new(tz_name: Option<&str>, offset_secs: i32) -> Self {
-        Self {
-            tz: tz_name.and_then(|n| n.parse::<Tz>().ok()),
-            offset_secs,
-        }
-    }
-
-    fn to_local(&self, ts_ns: i64) -> NaiveDateTime {
-        let secs = ts_ns.div_euclid(1_000_000_000);
-        let nanos = ts_ns.rem_euclid(1_000_000_000) as u32;
-        // `ts_ns` 总是来自一个已经存在的合法 `Bar.timestamp`(UTC 纳秒); UTC 本身
-        // 没有本地时间缺口/重叠这类问题, `single()` 只有在 `secs` 超出 chrono
-        // 可表示的范围(约公元前 26 万年~公元后 26 万年)时才会是 `None` —— 真实
-        // 行情时间戳不可能触发, 故此处 `expect` 视为不可达分支。
-        let utc: DateTime<Utc> = Utc
-            .timestamp_opt(secs, nanos)
-            .single()
-            .expect("invalid ts: secs out of chrono's representable range");
-        match &self.tz {
-            Some(tz) => utc.with_timezone(tz).naive_local(),
-            None => (utc + chrono::Duration::seconds(i64::from(self.offset_secs))).naive_utc(),
-        }
-    }
-
-    fn from_local(&self, local: NaiveDateTime) -> i64 {
-        match &self.tz {
-            Some(tz) => Self::nanos_or_clamp(&Self::resolve_local(tz, local)),
-            None => Self::nanos_or_clamp(
-                &(local - chrono::Duration::seconds(i64::from(self.offset_secs))).and_utc(),
-            ),
-        }
-    }
-
-    /// 把可能落入夏令时"春季跳变缺口"的本地时间解析成合法瞬间。
-    ///
-    /// 缺口内的本地时间不对应任何真实瞬间(例如美东 2024-03-10 当天 02:00-02:59
-    /// 因夏令时整体跳过而不存在); `from_local_datetime(..).earliest()` 对此返回
-    /// `None`。为了不让引擎因为一次窗口标签落在缺口里就 panic, 向前逐分钟探测,
-    /// 取缺口结束后第一个合法瞬间(与 pandas/pytz `nonexistent="shift_forward"`
-    /// 语义一致)。`Ambiguous`(秋季回拨的重叠时段)则已经由 `earliest()` 正确
-    /// 处理为取较早的那个瞬间, 无需特殊分支。
-    fn resolve_local(tz: &Tz, local: NaiveDateTime) -> DateTime<Tz> {
-        if let Some(dt) = tz.from_local_datetime(&local).earliest() {
-            return dt;
-        }
-        let mut probe = local;
-        for _ in 0..MAX_DST_GAP_PROBE_MINUTES {
-            probe += chrono::Duration::minutes(1);
-            if let Some(dt) = tz.from_local_datetime(&probe).earliest() {
-                return dt;
-            }
-        }
-        // 现实世界的夏令时缺口不会超过几个小时; 走到这里说明探测窗口给的不够
-        // (可能是异常时区配置), 而不是真的存在这么长的缺口——保留 panic 以便
-        // 第一时间暴露问题, 而不是悄悄返回一个误导性的时间。
-        panic!(
-            "no valid local time found after {local} within {MAX_DST_GAP_PROBE_MINUTES} minutes (tz={tz:?})"
-        );
-    }
-
-    /// `timestamp_nanos_opt()` 只有在瞬间超出 chrono 纳秒可表示范围(约
-    /// 1677~2262 年)时才会是 `None`, 真实行情时间戳不会触达; 但这里不用
-    /// `expect` panic, 而是 clamp 到边界值, 避免引擎因为一次离群配置崩溃。
-    fn nanos_or_clamp<T: TimeZone>(dt: &DateTime<T>) -> i64 {
-        dt.timestamp_nanos_opt().unwrap_or(if dt.timestamp() < 0 {
-            i64::MIN
-        } else {
-            i64::MAX
-        })
-    }
-
-    /// 本地时间 ceil 到周期(以本地零点为锚), 返回 UTC 纳秒标签。
-    fn ceil_label(&self, local: NaiveDateTime, period_secs: i64) -> i64 {
-        let secs_of_day = i64::from(local.num_seconds_from_midnight());
-        // `i64::div_ceil` (signed) is unstable on this toolchain; compute manually.
-        let ceiled = ((secs_of_day + period_secs - 1) / period_secs) * period_secs;
-        let midnight = local.date().and_hms_opt(0, 0, 0).expect("midnight");
-        self.from_local(midnight + chrono::Duration::seconds(ceiled))
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowStateSnapshot {
     pub symbol: String,
