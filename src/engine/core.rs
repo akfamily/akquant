@@ -34,6 +34,15 @@ use crate::statistics::StatisticsManager;
 
 use super::state::SharedState;
 
+/// 用户配置的交易时段表与交易日历（`configure_sessions` 写入）。
+// 字段由后续任务（会话级交易日与日终结算）消费，本阶段只写入。
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SessionConfig {
+    pub sessions: Option<Vec<(String, String)>>,
+    pub trading_calendar: Option<Vec<NaiveDate>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct StrategySlot {
     pub(crate) strategy_id: String,
@@ -178,6 +187,7 @@ pub struct Engine {
     pub(crate) stream_mode: String,
     pub(crate) stream_sampling_enabled: bool,
     pub(crate) stream_drop_non_critical: bool,
+    pub(crate) session_config: SessionConfig,
 }
 
 pub(crate) struct PendingStreamEvent {

@@ -723,6 +723,14 @@ class Engine:
         """
         ...
 
+    def configure_sessions(
+        self,
+        sessions: typing.Optional[dict[str, str]] = None,
+        trading_calendar: typing.Optional[list[datetime.date]] = None,
+    ) -> None:
+        r"""配置交易时段表与交易日历."""
+        ...
+
     def set_timezone_name(self, timezone: str) -> None:
         r"""
         设置时区名称.

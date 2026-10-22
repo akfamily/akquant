@@ -650,7 +650,9 @@ def test_order_level_current_close_daily_timer_sell_fills_same_day() -> None:
 
     sell_order = filled_sell_orders.iloc[0]
     sell_updated_at = pd.Timestamp(sell_order["updated_at"]).tz_convert("Asia/Shanghai")
-    assert sell_updated_at == pd.Timestamp("2026-04-02 14:56:00", tz="Asia/Shanghai")
+    # 只有日期的 bar 改写到 15:00 后, 04-01 买入要到 04-02 15:00 那根 bar 才解冻
+    # (本阶段 T+1 仍在"次日首根 bar"结算), 故首次可卖是 04-03 14:56。
+    assert sell_updated_at == pd.Timestamp("2026-04-03 14:56:00", tz="Asia/Shanghai")
     assert float(sell_order["avg_price"]) == pytest.approx(11.0)
 
     executions_df = result.executions_df
@@ -662,7 +664,7 @@ def test_order_level_current_close_daily_timer_sell_fills_same_day() -> None:
         filled_sell_executions.iloc[0]["timestamp"]
     ).tz_convert("Asia/Shanghai")
     assert sell_execution_time == pd.Timestamp(
-        "2026-04-02 14:56:00", tz="Asia/Shanghai"
+        "2026-04-03 14:56:00", tz="Asia/Shanghai"
     )
 
 

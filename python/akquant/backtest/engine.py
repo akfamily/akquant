@@ -9,8 +9,10 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Iterable,
     List,
     Literal,
+    Mapping,
     Optional,
     Sequence,
     Tuple,
@@ -31,6 +33,7 @@ from ..akquant import (
     Engine,
     Instrument,
     OptionMarginModel,
+    SessionResolver,
     SettlementType,
     Tick,
     TradingSession,
@@ -506,6 +509,239 @@ def _filter_datetime_index_frame_by_runtime_window(
         end_ts = _parse_runtime_boundary_timestamp(end_time, timezone)
         mask &= compare_index <= end_ts
     return cast(pd.DataFrame, frame.loc[mask.to_numpy()])
+
+
+def _normalize_trading_calendar(value: Any) -> Optional[List[dt_module.date]]:
+    """把 trading_calendar 归一为 date 列表；None 原样返回，空报错."""
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)):
+        raise TypeError(
+            "trading_calendar 须为交易日序列（date/字符串/Timestamp 的列表），"
+            "不能是单个字符串"
+        )
+    days = sorted({pd.Timestamp(item).date() for item in value})
+    if not days:
+        raise ValueError(
+            "trading_calendar 不能为空：传交易日列表（如 AKShare 的 "
+            "tool_trade_date_hist_sina()['trade_date']），或不传按工作日推算"
+        )
+    return days
+
+
+def _local_midnight_only(index: pd.DatetimeIndex) -> bool:
+    """全部时间戳都是本地 0 点（只有日期的数据）.
+
+    ``index`` 须已转到引擎时区；naive 索引按其字面值判断。含 NaT 时返回 False。
+    """
+    if len(index) == 0 or index.hasnans:
+        return False
+    return bool(((index - index.normalize()) == pd.Timedelta(0)).all())
+
+
+def _date_only_close_ns(
+    resolver: Any, symbol: str, day: dt_module.date, asset_type: Any, timezone: str
+) -> int:
+    """该交易日收盘时刻（UTC 纳秒）；落在次日 0 点时减 1ns，保证本地日期不变."""
+    _, end = resolver.day_bounds(symbol, day, asset_type)
+    next_midnight = int(
+        pd.Timestamp(day + dt_module.timedelta(days=1)).tz_localize(timezone).value
+    )
+    return int(end) - 1 if int(end) == next_midnight else int(end)
+
+
+def _rewrite_date_only_utc(
+    utc_times: pd.DatetimeIndex,
+    symbol: str,
+    resolver: Any,
+    asset_type: Any,
+    timezone: str,
+) -> Optional[pd.DatetimeIndex]:
+    """一组 UTC 时间若全为引擎时区本地 0 点，返回改写到收盘时刻的新时间，否则 None."""
+    local = utc_times.tz_convert(timezone)
+    if not _local_midnight_only(local):
+        return None
+    cache: Dict[dt_module.date, int] = {}
+    new_ns: List[int] = []
+    for day in local.date:
+        if day not in cache:
+            cache[day] = _date_only_close_ns(
+                resolver, symbol, day, asset_type, timezone
+            )
+        new_ns.append(cache[day])
+    return pd.DatetimeIndex(pd.to_datetime(new_ns, unit="ns", utc=True))
+
+
+def _frame_time_source(df: pd.DataFrame) -> Optional[Tuple[Optional[str], Any]]:
+    """取 ``dataframe_to_arrays`` 实际读取的时间来源：(列名或 None 表示索引, 原始值)."""
+    col = resolve_columns(df).get("timestamp")
+    if col is not None:
+        return col, df[col]
+    if isinstance(df.index, pd.DatetimeIndex):
+        return None, df.index
+    return None
+
+
+def _to_utc_index(raw: Any) -> pd.DatetimeIndex:
+    """按行情数据口径转 UTC：naive 视为 ``DEFAULT_INPUT_TIMEZONE``."""
+    idx = pd.DatetimeIndex(pd.to_datetime(raw, errors="coerce"))
+    if idx.tz is None:
+        idx = idx.tz_localize(
+            DEFAULT_INPUT_TIMEZONE, ambiguous="NaT", nonexistent="shift_forward"
+        )
+    return cast(pd.DatetimeIndex, idx.tz_convert("UTC").as_unit("ns"))
+
+
+def _replace_frame_times(
+    df: pd.DataFrame, source_col: Optional[str], new_utc: pd.DatetimeIndex
+) -> pd.DataFrame:
+    """把时间来源列、``timestamp`` 列与 DatetimeIndex 按行位置替换为 ``new_utc``."""
+    out = df.copy()
+    targets = {c for c in (source_col, "timestamp") if c is not None}
+    for col in targets:
+        if col not in out.columns:
+            continue
+        if col != source_col and not pd.api.types.is_datetime64_any_dtype(out[col]):
+            continue
+        out[col] = new_utc
+    if isinstance(out.index, pd.DatetimeIndex):
+        out.index = new_utc
+    return out
+
+
+def _rewrite_date_only_frame(
+    df: pd.DataFrame, symbol: str, resolver: Any, asset_type: Any, timezone: str
+) -> pd.DataFrame:
+    """单标的 DataFrame：全部时间为本地 0 点（只有日期）时改写到交易日收盘时刻."""
+    if df.empty:
+        return df
+    source = _frame_time_source(df)
+    if source is None:
+        return df
+    source_col, raw = source
+    new_utc = _rewrite_date_only_utc(
+        _to_utc_index(raw), symbol, resolver, asset_type, timezone
+    )
+    if new_utc is None:
+        return df
+    return _replace_frame_times(df, source_col, new_utc)
+
+
+def _rewrite_date_only_multi_symbol_frame(
+    df: pd.DataFrame,
+    resolver: Any,
+    asset_type_of: Callable[[str], Any],
+    timezone: str,
+) -> pd.DataFrame:
+    """带 ``symbol`` 列的多标的 DataFrame：逐标的判断并改写，行顺序不变."""
+    if df.empty or "symbol" not in df.columns:
+        return df
+    source = _frame_time_source(df)
+    if source is None:
+        return df
+    source_col, raw = source
+    utc = _to_utc_index(raw)
+    merged = utc.tz_localize(None).to_numpy(copy=True)
+    symbols_arr = df["symbol"].astype(str).to_numpy()
+    changed = False
+    for sym in pd.unique(symbols_arr):
+        positions = (symbols_arr == sym).nonzero()[0]
+        new_utc = _rewrite_date_only_utc(
+            utc[positions], str(sym), resolver, asset_type_of(str(sym)), timezone
+        )
+        if new_utc is None:
+            continue
+        merged[positions] = new_utc.tz_localize(None).to_numpy()
+        changed = True
+    if not changed:
+        return df
+    new_index = pd.DatetimeIndex(merged).tz_localize("UTC")
+    return _replace_frame_times(df, source_col, new_index)
+
+
+def _rewrite_date_only_bars(
+    bars: List[Bar],
+    resolver: Any,
+    asset_type_of: Callable[[str], Any],
+    timezone: str,
+) -> List[Bar]:
+    """Bar 列表按标的分组：某标的全部 bar 为本地 0 点时改写该标的的时间戳.
+
+    返回新列表；被改写的 bar 是新建的副本，不修改调用方传入的对象。
+    """
+    by_symbol: Dict[str, List[int]] = {}
+    for pos, bar in enumerate(bars):
+        by_symbol.setdefault(str(bar.symbol), []).append(pos)
+    out = list(bars)
+    for symbol, positions in by_symbol.items():
+        utc = pd.DatetimeIndex(
+            pd.to_datetime(
+                [int(bars[pos].timestamp) for pos in positions], unit="ns", utc=True
+            )
+        )
+        new_utc = _rewrite_date_only_utc(
+            utc, symbol, resolver, asset_type_of(symbol), timezone
+        )
+        if new_utc is None:
+            continue
+        for pos, new_stamp in zip(positions, new_utc):
+            old = bars[pos]
+            out[pos] = Bar(
+                int(new_stamp.value),
+                old.open,
+                old.high,
+                old.low,
+                old.close,
+                old.volume,
+                old.symbol,
+                dict(old.extra),
+                old.freq,
+                old.interval_start,
+            )
+    return out
+
+
+def _build_session_asset_type_of(
+    prebuilt_instruments: Dict[str, Any],
+    inst_conf_map: Dict[str, Any],
+    default_asset_type: Any,
+    futures_prefixes: Sequence[str],
+) -> Callable[[str], Any]:
+    """按与合约构建一致的优先级解析资产类型.
+
+    优先级：预构建合约 > 合约配置 > 期货品种模板 > 默认。
+    """
+
+    def to_asset_type(value: Any) -> Any:
+        if isinstance(value, AssetType):
+            return value
+        try:
+            name = _parse_asset_type_name(value)
+        except ValueError:
+            return None
+        return {
+            "stock": AssetType.Stock,
+            "futures": AssetType.Futures,
+            "fund": AssetType.Fund,
+            "option": AssetType.Option,
+        }[name]
+
+    prefixes = [p.strip().upper() for p in futures_prefixes if p and p.strip()]
+
+    def asset_type_of(symbol: str) -> Any:
+        if symbol in prebuilt_instruments:
+            return to_asset_type(
+                getattr(prebuilt_instruments[symbol], "asset_type", None)
+            )
+        conf = inst_conf_map.get(symbol)
+        if conf is not None:
+            return to_asset_type(conf.asset_type)
+        upper = symbol.upper()
+        if any(upper.startswith(p) for p in prefixes):
+            return AssetType.Futures
+        return to_asset_type(default_asset_type)
+
+    return asset_type_of
 
 
 def _build_trading_day_metadata(
@@ -2401,6 +2637,8 @@ def run_backtest(
     slippage: SlippageInput = None,
     volume_limit_pct: Optional[float] = None,
     timezone: Optional[str] = None,
+    sessions: Optional[Mapping[str, str]] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
     t_plus_one: bool = False,
     initialize: Optional[Callable[[Any], None]] = None,
     on_start: Optional[Callable[[Any], None]] = None,
@@ -2516,6 +2754,12 @@ def run_backtest(
                                    False 时保持兼容行为（忽略未知参数并在失败时
                                    回退无参构造）。
     :param timezone: 时区名称 (默认 "Asia/Shanghai")
+    :param sessions: 代码前缀 → 时段模板名（"default" 为全局默认）；
+                     不传时中国时区按资产类型取默认（股票 CN_STOCK、
+                     期货 CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。
+                     可选模板见 aq.SessionResolver.templates()
+    :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传按工作日
+                             推算，节假日前后的夜盘与日终结算会算错
     :param t_plus_one: 是否启用 T+1 交易规则 (默认 False)
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
     :param on_start: 启动回调函数 (仅当 strategy 为函数时使用)
@@ -2794,6 +3038,13 @@ def run_backtest(
             timezone = config.timezone
         else:
             timezone = DEFAULT_TIMEZONE
+
+    # 交易时段表与交易日历：在这里构造解析器即完成参数校验(未知模板名/空日历报错)
+    calendar_days = _normalize_trading_calendar(trading_calendar)
+    session_map = dict(sessions) if sessions is not None else None
+    session_resolver = SessionResolver(
+        sessions=session_map, trading_calendar=calendar_days, timezone=timezone
+    )
 
     # Resolve Show Progress
     if show_progress is None:
@@ -3293,6 +3544,21 @@ def run_backtest(
     for current_strategy in all_strategy_instances:
         setattr(current_strategy, "_active_start_time_ns", active_start_time_ns)
 
+    # 只有日期的数据改写到交易日收盘时刻时, 按与合约构建一致的优先级取资产类型
+    session_asset_type_of = _build_session_asset_type_of(
+        preliminary_prebuilt_instruments,
+        preliminary_inst_conf_map,
+        preliminary_default_asset_type,
+        [
+            tpl.symbol_prefix
+            for tpl in (
+                (config.china_futures.instrument_templates_by_symbol_prefix or [])
+                if config is not None and config.china_futures is not None
+                else []
+            )
+        ],
+    )
+
     # 3. 准备数据源和 Symbol
     feed = DataFeed()
     symbols = []
@@ -3419,7 +3685,13 @@ def run_backtest(
                     ", ".join(sorted(leaked_adapter_symbols)),
                 )
             for sym, df in adapter_data_map.items():
-                df_prep = to_indicator_frame(df)
+                df_prep = _rewrite_date_only_frame(
+                    to_indicator_frame(df),
+                    sym,
+                    session_resolver,
+                    session_asset_type_of(sym),
+                    timezone,
+                )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
@@ -3501,6 +3773,9 @@ def run_backtest(
                     df = df[df["symbol"].isin(symbols)]
                     filtered_out_symbols.update(pre_filter_symbols.difference(symbols))
                 if not df.empty:
+                    df = _rewrite_date_only_multi_symbol_frame(
+                        df, session_resolver, session_asset_type_of, timezone
+                    )
                     arrays = dataframe_to_arrays(df)
                     feed.add_arrays(*arrays)  # type: ignore
                     grouped = df.groupby("symbol", sort=False)
@@ -3531,6 +3806,13 @@ def run_backtest(
                         target_symbol,
                         ", ".join(COLUMN_ALIASES["symbol"]),
                     )
+                df = _rewrite_date_only_frame(
+                    df,
+                    target_symbol,
+                    session_resolver,
+                    session_asset_type_of(target_symbol),
+                    timezone,
+                )
                 data_map_for_indicators[target_symbol] = df
                 arrays = dataframe_to_arrays(df, symbol=target_symbol)
                 feed.add_arrays(*arrays)  # type: ignore
@@ -3573,7 +3855,13 @@ def run_backtest(
                         timezone,
                     )
 
-                df_prep = to_indicator_frame(df)
+                df_prep = _rewrite_date_only_frame(
+                    to_indicator_frame(df),
+                    sym,
+                    session_resolver,
+                    session_asset_type_of(sym),
+                    timezone,
+                )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
@@ -3605,6 +3893,12 @@ def run_backtest(
                         kept_bars.append(b)
                     data = kept_bars
 
+                data = _rewrite_date_only_bars(
+                    data,  # type: ignore[arg-type]
+                    session_resolver,
+                    session_asset_type_of,
+                    timezone,
+                )
                 data.sort(key=lambda b: b.timestamp)
                 feed.add_bars(data)  # type: ignore[arg-type]
 
@@ -3661,7 +3955,13 @@ def run_backtest(
                 continue
 
             if not df.empty:
-                df = to_indicator_frame(df)
+                df = _rewrite_date_only_frame(
+                    to_indicator_frame(df),
+                    sym,
+                    session_resolver,
+                    session_asset_type_of(sym),
+                    timezone,
+                )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
@@ -3728,6 +4028,7 @@ def run_backtest(
             raise ValueError(f"Invalid timezone: {timezone}")
         offset = int(offset_delta.total_seconds())
         engine.set_timezone(offset)
+    engine.configure_sessions(session_map, calendar_days)
     if hasattr(engine, "set_days_per_year"):
         cast(Any, engine).set_days_per_year(
             getattr(config, "days_per_year", 252.0) if config else 252.0
@@ -4993,6 +5294,8 @@ def run_from_checkpoint(
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
     config: Optional[BacktestConfig] = None,
+    sessions: Optional[Mapping[str, str]] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -5006,6 +5309,8 @@ def run_from_checkpoint(
     故障速查可参考 docs/zh/advanced/runtime_config.md，
     英文文档参考 docs/en/advanced/runtime_config.md
 
+    :param sessions: 同 :func:`run_backtest` 的 ``sessions``
+    :param trading_calendar: 同 :func:`run_backtest` 的 ``trading_calendar``
     :param kwargs: 其他引擎配置参数 (如 commission_rate, stamp_tax_rate, t_plus_one)
     """
     import os
@@ -5114,6 +5419,32 @@ def run_from_checkpoint(
         elif isinstance(fill_policy_override, dict):
             raise TypeError(_LEGACY_FILL_POLICY_DICT_MSG)
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
+    # 交易时段表与交易日历(同 run_backtest): 构造解析器即完成参数校验
+    calendar_days = _normalize_trading_calendar(trading_calendar)
+    session_map = dict(sessions) if sessions is not None else None
+    session_resolver = SessionResolver(
+        sessions=session_map, trading_calendar=calendar_days, timezone=timezone_name
+    )
+    session_prebuilt: Dict[str, Any] = {}
+    raw_session_instruments = kwargs.get("instruments")
+    if isinstance(raw_session_instruments, list):
+        session_prebuilt = {item.symbol: item for item in raw_session_instruments}
+    elif isinstance(raw_session_instruments, dict):
+        session_prebuilt = dict(raw_session_instruments)
+    session_conf_map: Dict[str, Any] = {}
+    if config and config.instruments_config:
+        if isinstance(config.instruments_config, list):
+            for conf_item in config.instruments_config:
+                session_conf_map.setdefault(conf_item.symbol, conf_item)
+        elif isinstance(config.instruments_config, dict):
+            for key, value in config.instruments_config.items():
+                session_conf_map.setdefault(key, value)
+    session_asset_type_of = _build_session_asset_type_of(
+        session_prebuilt,
+        session_conf_map,
+        kwargs.get("asset_type", AssetType.Stock),
+        [],
+    )
     symbols, effective_symbols, symbols_explicit = _resolve_effective_symbols(
         symbols=symbols,
         kwargs=kwargs,
@@ -5154,7 +5485,13 @@ def run_from_checkpoint(
         loaded_count = 0
         for sym, df in adapter_data_map.items():
             if not df.empty:
-                df_prep = to_indicator_frame(df)
+                df_prep = _rewrite_date_only_frame(
+                    to_indicator_frame(df),
+                    sym,
+                    session_resolver,
+                    session_asset_type_of(sym),
+                    timezone_name,
+                )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
@@ -5225,7 +5562,13 @@ def run_from_checkpoint(
         elif isinstance(data, list) and data and isinstance(data[0], Bar):
             # Convert List[Bar] to DataFrame for indicators
             # We assume all bars are for the same symbol (or single symbol context)
-            feed.add_bars(data)  # type: ignore
+            resume_bars: List[Any] = _rewrite_date_only_bars(
+                data,  # type: ignore[arg-type]
+                session_resolver,
+                session_asset_type_of,
+                timezone_name,
+            )
+            feed.add_bars(resume_bars)
 
             # Construct DataFrame for indicator calculation
             # Group by symbol just in case
@@ -5234,7 +5577,7 @@ def run_from_checkpoint(
             # tick 支持不在本任务范围内, 这里只是 mypy 静态类型跟着别名变宽而已,
             # 无逻辑改动)
             bars_by_sym: Dict[str, List[Dict[str, Any]]] = {}
-            for bar in data:
+            for bar in resume_bars:
                 if bar.symbol not in bars_by_sym:
                     bars_by_sym[bar.symbol] = []
                 bars_by_sym[bar.symbol].append(
@@ -5275,7 +5618,13 @@ def run_from_checkpoint(
         loaded_count = 0
         for sym, df in data_map.items():
             if not df.empty:
-                df = to_indicator_frame(df)
+                df = _rewrite_date_only_frame(
+                    to_indicator_frame(df),
+                    sym,
+                    session_resolver,
+                    session_asset_type_of(sym),
+                    timezone_name,
+                )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)
                 feed.add_arrays(*arrays)  # type: ignore
@@ -5286,6 +5635,7 @@ def run_from_checkpoint(
 
     logger.info(f"Resuming from checkpoint: {checkpoint_path}")
     engine, strategy_instance = load_checkpoint(checkpoint_path, feed)
+    engine.configure_sessions(session_map, calendar_days)
     # 快照持久化的运行时配置 (issue #282)；旧快照为 None，走逐项推导降级路径
     restored_backtest_config = getattr(
         strategy_instance, "_warm_start_backtest_config", None

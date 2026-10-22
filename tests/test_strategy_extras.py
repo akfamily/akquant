@@ -4882,9 +4882,11 @@ def test_day_boundary_hooks_hide_current_bar_from_history_and_current_bar(
     assert np.isnan(strategy.before_histories[0][0])
     assert before_values == [10.0, 10.5]
     assert strategy.before_current_bar_states == [True, True, True]
+    # 只有日期的 bar 由 run_backtest 改写到当日收盘 15:00（不修改传入的对象）
+    first_bar_ts = pd.Timestamp("2023-01-03 15:00", tz="Asia/Shanghai").value
     assert strategy.events[:2] == [
-        ("before", bars[0].timestamp),
-        ("bar", bars[0].timestamp),
+        ("before", first_bar_ts),
+        ("bar", first_bar_ts),
     ]
 
 
@@ -5003,9 +5005,11 @@ def test_cross_section_sees_current_day_history_and_runs_after_bar(
         10.8,
     ]
     assert strategy.after_bar_current_bar_states == [True, True, True]
+    # 只有日期的 bar 由 run_backtest 改写到当日收盘 15:00（不修改传入的对象）
+    first_bar_ts = pd.Timestamp("2023-01-03 15:00", tz="Asia/Shanghai").value
     assert strategy.events[:2] == [
-        ("bar", bars[0].timestamp),
-        ("after_bar", bars[0].timestamp),
+        ("bar", first_bar_ts),
+        ("after_bar", first_bar_ts),
     ]
 
 

@@ -620,6 +620,7 @@ impl Engine {
             stream_mode: "observability".to_string(),
             stream_sampling_enabled: true,
             stream_drop_non_critical: true,
+            session_config: crate::engine::core::SessionConfig::default(),
         }
     }
 
@@ -875,6 +876,43 @@ impl Engine {
             .write()
             .expect("window_aggregator 写锁被污染")
             .set_clock(self.timezone_name.as_deref(), self.timezone_offset);
+    }
+
+    /// 配置交易时段表与交易日历。
+    ///
+    /// :param sessions: 代码前缀 → 时段模板名；"default" 为全局默认。不传按规则 B
+    ///     （中国时区按资产类型取默认，其他时区全天连续）。
+    /// :param trading_calendar: 交易日列表；不传按工作日推算。
+    #[pyo3(signature = (sessions=None, trading_calendar=None))]
+    fn configure_sessions(
+        &mut self,
+        sessions: Option<HashMap<String, String>>,
+        trading_calendar: Option<Vec<NaiveDate>>,
+    ) -> PyResult<()> {
+        if let Some(map) = &sessions {
+            for (key, name) in map {
+                if crate::calendar::schedule::template(name).is_none() {
+                    return Err(PyValueError::new_err(format!(
+                        "未知时段模板 {name:?}（键 {key:?}），可选：{}",
+                        crate::calendar::schedule::TEMPLATE_NAMES.join(" / ")
+                    )));
+                }
+            }
+        }
+        if let Some(days) = &trading_calendar
+            && days.is_empty()
+        {
+            return Err(PyValueError::new_err("trading_calendar 不能为空"));
+        }
+        let mut pairs: Option<Vec<(String, String)>> = sessions.map(|m| m.into_iter().collect());
+        if let Some(p) = pairs.as_mut() {
+            p.sort();
+        }
+        self.session_config = crate::engine::core::SessionConfig {
+            sessions: pairs,
+            trading_calendar,
+        };
+        Ok(())
     }
 
     /// 设置时区名称.
