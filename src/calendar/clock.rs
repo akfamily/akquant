@@ -22,6 +22,27 @@ impl LocalClock {
         }
     }
 
+    /// 两个时钟是否表示同一时区：都有 IANA 名称时比名称，都没有时比固定偏移。
+    pub(crate) fn same_zone(&self, other: &LocalClock) -> bool {
+        match (&self.tz, &other.tz) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => self.offset_secs == other.offset_secs,
+            _ => false,
+        }
+    }
+
+    /// 时区描述（报错用）：IANA 名称，或 `UTC+HH:MM` 形式的固定偏移。
+    pub(crate) fn describe(&self) -> String {
+        match &self.tz {
+            Some(tz) => tz.name().to_string(),
+            None => {
+                let sign = if self.offset_secs < 0 { '-' } else { '+' };
+                let abs = self.offset_secs.unsigned_abs();
+                format!("UTC{sign}{:02}:{:02}", abs / 3600, abs % 3600 / 60)
+            }
+        }
+    }
+
     /// 时区名是否解析成功（`new` 对无法解析的名称静默退回固定偏移）。
     pub(crate) fn has_valid_tz(&self) -> bool {
         self.tz.is_some()

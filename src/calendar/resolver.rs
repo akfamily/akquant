@@ -144,6 +144,11 @@ impl Clone for SessionResolver {
 }
 
 impl SessionResolver {
+    /// 解析器使用的本地时钟（时区）。
+    pub(crate) fn clock(&self) -> &LocalClock {
+        &self.clock
+    }
+
     pub(crate) fn new(
         clock: LocalClock,
         calendar: Option<TradingCalendar>,

@@ -361,3 +361,20 @@ def test_out_of_block_bars_warn_once_per_symbol(
     # 同标签只出一根窗口
     labels = [b.timestamp for b in got if b.symbol == "rb2405"]
     assert len(labels) == len(set(labels)) == 6
+
+
+def test_window_aggregator_rejects_resolver_timezone_mismatch() -> None:
+    """Resolver 与 timezone 时区不一致时报错; 只传 resolver 时沿用其时区."""
+    from akquant import SessionResolver, WindowAggregator
+
+    utc = SessionResolver(timezone="UTC")
+    with pytest.raises(ValueError, match="时区"):
+        WindowAggregator("1d", resolver=utc, timezone="Asia/Shanghai")
+    # 时区一致: 不报错
+    WindowAggregator("1d", resolver=utc, timezone="UTC")
+    # 只传 resolver: 按 resolver 的 UTC 切分日线(北京 07:00 与 09:00 跨 UTC 日界)
+    agg = WindowAggregator("1d", resolver=utc, base_interval_min=60)
+    first = Bar(_ns("2024-01-02 07:00"), 1.0, 1.0, 1.0, 1.0, 1.0, "X")
+    second = Bar(_ns("2024-01-02 09:00"), 2.0, 2.0, 2.0, 2.0, 1.0, "X")
+    out = agg.update(first) + agg.update(second)
+    assert [b.close for b in out] == [1.0]

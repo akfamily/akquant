@@ -213,7 +213,8 @@ class WindowAggregator:
     :param session_windows: 手写本地交易时段，给定则覆盖时段表
     :param base_interval_min: 基础 bar 周期（分钟），给定时按 bar 区间即时闭合
     :param resolver: 会话解析器；不传时按 ``timezone`` 新建默认解析器
-    :param timezone: IANA 时区名
+    :param timezone: IANA 时区名；不传时有 ``resolver`` 用其时区，否则
+        ``"Asia/Shanghai"``；与 ``resolver`` 的时区不一致时报错
     :param asset_types: 品种 → 资产类型
     """
 
@@ -223,7 +224,7 @@ class WindowAggregator:
         session_windows: typing.Optional[list[tuple[str, str]]] = None,
         base_interval_min: typing.Optional[int] = None,
         resolver: typing.Optional[SessionResolver] = None,
-        timezone: str = "Asia/Shanghai",
+        timezone: typing.Optional[str] = None,
         asset_types: typing.Optional[dict[str, AssetType]] = None,
     ) -> "WindowAggregator": ...
     @property

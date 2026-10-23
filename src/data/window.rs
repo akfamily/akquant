@@ -323,6 +323,14 @@ impl WindowAggregator {
         }
     }
 
+    /// 用给定本地时钟新建(与会话解析器共用同一时区)。
+    pub(crate) fn with_local_clock(clock: LocalClock) -> Self {
+        Self {
+            clock,
+            ..Self::default()
+        }
+    }
+
     pub fn set_clock(&mut self, tz_name: Option<&str>, offset_secs: i32) {
         self.clock = LocalClock::new(tz_name, offset_secs);
         self.block_cache.clear();

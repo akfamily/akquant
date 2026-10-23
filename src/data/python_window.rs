@@ -25,8 +25,9 @@ use std::sync::Arc;
 /// :param base_interval_min: 基础 bar 周期(分钟)。给定(或 bar 带 ``interval_start``)
 ///     时, bar 区间终点到达窗口标签即闭合; 否则等下一根落入新窗口的 bar 才闭合。
 /// :param resolver: 会话解析器; 不传时按 ``timezone`` 新建默认解析器(中国时区按
-///     资产类型取时段表, 其他时区全天连续)。应与 ``timezone`` 用同一时区。
-/// :param timezone: IANA 时区名, 默认 ``"Asia/Shanghai"``。
+///     资产类型取时段表, 其他时区全天连续)。
+/// :param timezone: IANA 时区名。不传时: 有 ``resolver`` 用其时区, 否则
+///     ``"Asia/Shanghai"``。与 ``resolver`` 的时区不一致时报错。
 /// :param asset_types: 品种 → 资产类型; 未登记的品种按解析器的前缀/默认表取时段。
 #[gen_stub_pyclass]
 #[pyclass(name = "WindowAggregator", module = "akquant")]
@@ -44,7 +45,7 @@ impl PyWindowAggregator {
         session_windows=None,
         base_interval_min=None,
         resolver=None,
-        timezone="Asia/Shanghai",
+        timezone=None,
         asset_types=None
     ))]
     fn new(
@@ -52,15 +53,21 @@ impl PyWindowAggregator {
         session_windows: Option<Vec<(String, String)>>,
         base_interval_min: Option<u32>,
         resolver: Option<PyRef<'_, PySessionResolver>>,
-        timezone: &str,
+        timezone: Option<&str>,
         asset_types: Option<HashMap<String, AssetType>>,
     ) -> PyResult<Self> {
-        let clock = LocalClock::new(Some(timezone), 0);
-        if !clock.has_valid_tz() {
-            return Err(PyValueError::new_err(format!(
-                "无法识别的时区 {timezone:?}，请使用 IANA 时区名，如 \"Asia/Shanghai\""
-            )));
-        }
+        let named = match timezone {
+            Some(tz) => {
+                let clock = LocalClock::new(Some(tz), 0);
+                if !clock.has_valid_tz() {
+                    return Err(PyValueError::new_err(format!(
+                        "无法识别的时区 {tz:?}，请使用 IANA 时区名，如 \"Asia/Shanghai\""
+                    )));
+                }
+                Some(clock)
+            }
+            None => None,
+        };
         if base_interval_min == Some(0) {
             return Err(PyValueError::new_err(
                 "base_interval_min 必须为正整数（基础 bar 的分钟数），不知道时不传",
@@ -70,15 +77,29 @@ impl PyWindowAggregator {
             .map_err(PyValueError::new_err)?;
         let freq_label = sub.freq_label.clone();
         let resolver = match resolver {
-            Some(r) => r.arc(),
+            Some(r) => {
+                let r = r.arc();
+                if let Some(clock) = &named
+                    && !clock.same_zone(r.clock())
+                {
+                    return Err(PyValueError::new_err(format!(
+                        "resolver 的时区（{}）与 timezone={:?} 不一致，窗口会按两个时区错位切分；请让两者一致，或不传 timezone（沿用 resolver 的时区）",
+                        r.clock().describe(),
+                        timezone.unwrap_or_default()
+                    )));
+                }
+                r
+            }
             None => {
-                let sessions = effective_sessions(None, Some(timezone), 0);
+                let tz = timezone.unwrap_or("Asia/Shanghai");
+                let clock = named.unwrap_or_else(|| LocalClock::new(Some(tz), 0));
+                let sessions = effective_sessions(None, Some(tz), 0);
                 Arc::new(
                     SessionResolver::new(clock, None, sessions).map_err(PyValueError::new_err)?,
                 )
             }
         };
-        let mut inner = WindowAggregator::with_clock(Some(timezone), 0);
+        let mut inner = WindowAggregator::with_local_clock(resolver.clock().clone());
         inner
             .configure(vec![sub], base_interval_min)
             .map_err(PyValueError::new_err)?;
