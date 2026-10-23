@@ -622,20 +622,42 @@ def _date_only_close_ns(resolver: Any, day: dt_module.date, timezone: str) -> in
     return end - 1 if end == next_midnight else end
 
 
+class _DateOnlyRewriter:
+    """一次运行内只有日期数据的改写：会话级收盘时刻，遇非交易日日期告警一次."""
+
+    def __init__(self, resolver: Any, timezone: str, logger: Any) -> None:
+        """绑定解析器（须已 set_active）、引擎时区与告警用 logger."""
+        self.resolver = resolver
+        self.timezone = timezone
+        self._logger = logger
+        self._warned = False
+
+    def close_ns(self, day: dt_module.date) -> int:
+        """``day`` 的会话级收盘（UTC 纳秒）；``day`` 不是交易日时首次告警."""
+        if not self._warned and not self.resolver.is_session_day(day):
+            self._warned = True
+            self._logger.warning(
+                "只有日期的数据含非交易日 %s（按会话交易日历），该日数据改写到当日"
+                "收盘时刻后会归入下一交易日；请检查数据日期或 trading_calendar"
+                "（同类情况不再提示）",
+                day.isoformat(),
+            )
+        return _date_only_close_ns(self.resolver, day, self.timezone)
+
+
 def _rewrite_date_only_utc(
     utc_times: pd.DatetimeIndex,
-    resolver: Any,
-    timezone: str,
+    rewriter: _DateOnlyRewriter,
 ) -> Optional[pd.DatetimeIndex]:
     """一组 UTC 时间若全为引擎时区本地 0 点，返回改写到收盘时刻的新时间，否则 None."""
-    local = utc_times.tz_convert(timezone)
+    local = utc_times.tz_convert(rewriter.timezone)
     if not _local_midnight_only(local):
         return None
     cache: Dict[dt_module.date, int] = {}
     new_ns: List[int] = []
     for day in local.date:
         if day not in cache:
-            cache[day] = _date_only_close_ns(resolver, day, timezone)
+            cache[day] = rewriter.close_ns(day)
         new_ns.append(cache[day])
     return pd.DatetimeIndex(pd.to_datetime(new_ns, unit="ns", utc=True))
 
@@ -678,7 +700,7 @@ def _replace_frame_times(
 
 
 def _rewrite_date_only_frame(
-    df: pd.DataFrame, resolver: Any, timezone: str
+    df: pd.DataFrame, rewriter: _DateOnlyRewriter
 ) -> pd.DataFrame:
     """单标的 DataFrame：全部时间为本地 0 点（只有日期）时改写到交易日收盘时刻."""
     if df.empty:
@@ -687,7 +709,7 @@ def _rewrite_date_only_frame(
     if source is None:
         return df
     source_col, raw = source
-    new_utc = _rewrite_date_only_utc(_to_utc_index(raw), resolver, timezone)
+    new_utc = _rewrite_date_only_utc(_to_utc_index(raw), rewriter)
     if new_utc is None:
         return df
     return _replace_frame_times(df, source_col, new_utc)
@@ -695,8 +717,7 @@ def _rewrite_date_only_frame(
 
 def _rewrite_date_only_multi_symbol_frame(
     df: pd.DataFrame,
-    resolver: Any,
-    timezone: str,
+    rewriter: _DateOnlyRewriter,
 ) -> pd.DataFrame:
     """带 ``symbol`` 列的多标的 DataFrame：逐标的判断并改写，行顺序不变."""
     if df.empty or "symbol" not in df.columns:
@@ -711,7 +732,7 @@ def _rewrite_date_only_multi_symbol_frame(
     changed = False
     for sym in pd.unique(symbols_arr):
         positions = (symbols_arr == sym).nonzero()[0]
-        new_utc = _rewrite_date_only_utc(utc[positions], resolver, timezone)
+        new_utc = _rewrite_date_only_utc(utc[positions], rewriter)
         if new_utc is None:
             continue
         merged[positions] = new_utc.tz_localize(None).to_numpy()
@@ -724,8 +745,7 @@ def _rewrite_date_only_multi_symbol_frame(
 
 def _rewrite_date_only_bars(
     bars: List[Bar],
-    resolver: Any,
-    timezone: str,
+    rewriter: _DateOnlyRewriter,
 ) -> List[Bar]:
     """Bar 列表按标的分组：某标的全部 bar 为本地 0 点时改写该标的的时间戳.
 
@@ -741,7 +761,7 @@ def _rewrite_date_only_bars(
                 [int(bars[pos].timestamp) for pos in positions], unit="ns", utc=True
             )
         )
-        new_utc = _rewrite_date_only_utc(utc, resolver, timezone)
+        new_utc = _rewrite_date_only_utc(utc, rewriter)
         if new_utc is None:
             continue
         for pos, new_stamp in zip(positions, new_utc):
@@ -3148,6 +3168,7 @@ def run_backtest(
     if not has_configured_handler(logger.name, namespace_only=True):
         register_logger(console=True, level="INFO")
         logger = get_logger("backtest")
+    date_only_rewriter = _DateOnlyRewriter(session_resolver, timezone, logger)
     normalized_analyzers = _coerce_analyzer_plugins(analyzer_plugins)
 
     # 1.2 检查 PyCharm 环境下的进度条可见性
@@ -3774,7 +3795,7 @@ def run_backtest(
             )
             for sym, df in adapter_data_map.items():
                 df_prep = _rewrite_date_only_frame(
-                    to_indicator_frame(df), session_resolver, timezone
+                    to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
@@ -3866,9 +3887,7 @@ def run_backtest(
                         else [*symbols, *detected_symbols],
                         session_asset_type_of,
                     )
-                    df = _rewrite_date_only_multi_symbol_frame(
-                        df, session_resolver, timezone
-                    )
+                    df = _rewrite_date_only_multi_symbol_frame(df, date_only_rewriter)
                     arrays = dataframe_to_arrays(df)
                     feed.add_arrays(*arrays)  # type: ignore
                     grouped = df.groupby("symbol", sort=False)
@@ -3903,7 +3922,7 @@ def run_backtest(
                     symbols if target_symbol in symbols else [target_symbol],
                     session_asset_type_of,
                 )
-                df = _rewrite_date_only_frame(df, session_resolver, timezone)
+                df = _rewrite_date_only_frame(df, date_only_rewriter)
                 data_map_for_indicators[target_symbol] = df
                 arrays = dataframe_to_arrays(df, symbol=target_symbol)
                 feed.add_arrays(*arrays)  # type: ignore
@@ -3955,7 +3974,7 @@ def run_backtest(
                     )
 
                 df_prep = _rewrite_date_only_frame(
-                    to_indicator_frame(df), session_resolver, timezone
+                    to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
@@ -3994,8 +4013,7 @@ def run_backtest(
                 )
                 data = _rewrite_date_only_bars(
                     data,  # type: ignore[arg-type]
-                    session_resolver,
-                    timezone,
+                    date_only_rewriter,
                 )
                 data.sort(key=lambda b: b.timestamp)
                 feed.add_bars(data)  # type: ignore[arg-type]
@@ -4055,7 +4073,7 @@ def run_backtest(
 
             if not df.empty:
                 df = _rewrite_date_only_frame(
-                    to_indicator_frame(df), session_resolver, timezone
+                    to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)
@@ -5560,6 +5578,7 @@ def run_from_checkpoint(
     session_resolver = SessionResolver(
         sessions=session_map, trading_calendar=calendar_days, timezone=timezone_name
     )
+    date_only_rewriter = _DateOnlyRewriter(session_resolver, timezone_name, logger)
     saved_session_asset_types = _saved_session_asset_types(strategy_instance)
     resume_extra_symbols = [
         *session_prebuilt,
@@ -5612,7 +5631,7 @@ def run_from_checkpoint(
         for sym, df in adapter_data_map.items():
             if not df.empty:
                 df_prep = _rewrite_date_only_frame(
-                    to_indicator_frame(df), session_resolver, timezone_name
+                    to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
@@ -5690,8 +5709,7 @@ def run_from_checkpoint(
             )
             resume_bars: List[Any] = _rewrite_date_only_bars(
                 data,  # type: ignore[arg-type]
-                session_resolver,
-                timezone_name,
+                date_only_rewriter,
             )
             feed.add_bars(resume_bars)
 
@@ -5745,7 +5763,7 @@ def run_from_checkpoint(
         for sym, df in data_map.items():
             if not df.empty:
                 df = _rewrite_date_only_frame(
-                    to_indicator_frame(df), session_resolver, timezone_name
+                    to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)

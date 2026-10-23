@@ -247,8 +247,10 @@ impl Processor for DataProcessor {
                         if let Ok(day) = NaiveDate::parse_from_str(
                             &timer.payload[crate::model::timer::DAY_CLOSE_TIMER_PREFIX.len()..],
                             "%Y-%m-%d",
-                        ) && engine.last_settled_trading_day != Some(day)
+                        ) && engine.last_settled_trading_day.is_none_or(|s| s < day)
                         {
+                            // 只结算晚于已结算进度的交易日: 残留的旧交易日定时器不回头
+                            // 结算、不让进度回退。
                             // 结算时刻是会话收盘, 不是定时器时刻(实盘有宽限)。
                             let close_ts =
                                 match (engine.current_trading_day, engine.current_day_span) {

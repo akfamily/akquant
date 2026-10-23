@@ -123,6 +123,11 @@ impl PySessionResolver {
             .map_err(calendar_err)
     }
 
+    /// ``day`` 是否为会话交易日历上的交易日（用户日历；否则按在用时段表的缺省日历）。
+    fn is_session_day(&self, day: NaiveDate) -> bool {
+        self.inner.is_session_day(day)
+    }
+
     /// 是否在使用缺省日历（未传 ``trading_calendar``）。
     #[getter]
     fn uses_fallback_calendar(&self) -> bool {

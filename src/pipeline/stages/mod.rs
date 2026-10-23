@@ -597,6 +597,39 @@ mod tests {
     }
 
     #[test]
+    fn test_stale_day_close_timer_does_not_resettle_older_day() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            use chrono::NaiveDate;
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = resume_engine(&[(2024, 1, 9)]);
+            let mon = NaiveDate::from_ymd_opt(2024, 1, 8).unwrap();
+            engine.current_trading_day = Some(mon);
+            engine.last_settled_trading_day = Some(mon);
+            // 早于已结算交易日的残留收盘定时器(周五 15:00 + 1ns, +08:00 = UTC 07:00)
+            let fri_close = NaiveDate::from_ymd_opt(2024, 1, 5)
+                .unwrap()
+                .and_hms_opt(7, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_nanos_opt()
+                .unwrap();
+            engine.timers.push(crate::model::Timer {
+                timestamp: fri_close + 1,
+                payload: format!("{}2024-01-05", crate::model::timer::DAY_CLOSE_TIMER_PREFIX),
+            });
+            let mut processor = DataProcessor::new();
+            assert_eq!(
+                processor.process(&mut engine, py, &strategy).unwrap(),
+                crate::pipeline::processor::ProcessorResult::Loop
+            );
+            // 不回头结算更早的交易日, 已结算进度不回退
+            assert_eq!(engine.last_settled_trading_day, Some(mon));
+            assert!(engine.statistics_manager.snapshots.is_empty());
+        });
+    }
+
+    #[test]
     fn test_resume_catchup_settlement_uses_session_close() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {

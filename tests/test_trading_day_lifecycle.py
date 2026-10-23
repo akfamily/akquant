@@ -1438,3 +1438,46 @@ def test_resume_passed_calendar_overrides_saved_with_one_warning(
     warnings = [r for r in caplog.records if "与存档不一致" in r.getMessage()]
     assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
     assert "trading_calendar" in warnings[0].getMessage()
+
+
+@pytest.mark.parametrize(
+    "calendar",
+    [None, ["2024-01-05", "2024-01-08"]],
+    ids=["weekdays", "explicit"],
+)
+def test_date_only_non_trading_date_warns_once(
+    calendar: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """只有日期的数据含非交易日（周六）：改写时告警一次，多个标的也只告警一次."""
+    days = ["2024-01-05", "2024-01-06", "2024-01-08"]
+    df = pd.concat(
+        [_daily_frame(days, "600000.SH"), _daily_frame(days, "000001.SZ")]
+    ).sort_values("timestamp")
+    kwargs: Dict[str, Any] = {}
+    if calendar is not None:
+        kwargs["trading_calendar"] = calendar
+    with caplog.at_level("WARNING", logger="akquant"):
+        run_backtest(
+            data=df,
+            strategy=_Recorder,
+            symbols=["600000.SH", "000001.SZ"],
+            initial_cash=1e5,
+            show_progress=False,
+            **kwargs,
+        )
+    warnings = [r for r in caplog.records if "非交易日" in r.getMessage()]
+    assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+    assert "2024-01-06" in warnings[0].getMessage()
+
+
+def test_date_only_trading_dates_do_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """只有日期的数据全在交易日上：不告警."""
+    with caplog.at_level("WARNING", logger="akquant"):
+        run_backtest(
+            data=_daily_frame(["2024-01-05", "2024-01-08"]),
+            strategy=_Recorder,
+            symbols=["600000.SH"],
+            initial_cash=1e5,
+            show_progress=False,
+        )
+    assert not [r for r in caplog.records if "非交易日" in r.getMessage()]

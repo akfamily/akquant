@@ -186,6 +186,11 @@ impl SessionResolver {
         Ok(end)
     }
 
+    /// `day` 是否为会话日历上的交易日。
+    pub fn is_session_day(&self, day: NaiveDate) -> bool {
+        self.session_calendar().is_trading_day(day)
+    }
+
     /// 会话日历上 `day` 之后的下一个交易日。
     pub fn next_session_day(&self, day: NaiveDate) -> Result<NaiveDate, CalendarError> {
         self.session_calendar().after(day)
@@ -986,5 +991,18 @@ mod tests {
             mixed.session_trading_day(at(2024, 1, 6, 12, 0, 0)).unwrap(),
             d(2024, 1, 8)
         );
+        assert!(!mixed.is_session_day(d(2024, 1, 6)));
+        assert!(mixed.is_session_day(d(2024, 1, 8)));
+    }
+
+    #[test]
+    fn is_session_day_follows_session_calendar() {
+        let mut crypto = resolver(vec![("default", "ALWAYS_OPEN")], None);
+        crypto.set_active(&[("BTCUSDT".to_string(), None)]);
+        assert!(crypto.is_session_day(d(2024, 1, 6)));
+        let explicit = TradingCalendar::explicit([d(2024, 1, 5), d(2024, 1, 8)]).unwrap();
+        let r = resolver(vec![], Some(explicit));
+        assert!(r.is_session_day(d(2024, 1, 5)));
+        assert!(!r.is_session_day(d(2024, 1, 4)));
     }
 }
