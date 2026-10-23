@@ -346,11 +346,12 @@ class _AfterTradingProbe(Strategy):
         self.calls.append((str(trading_date), self.last_bar))
 
 
-def test_lazy_after_trading_not_triggered_by_closing_auction_bar() -> None:
-    """收盘竞价的 14:58、15:00 bar 不提前触发惰性日终钩子.
+def test_after_trading_not_triggered_by_closing_auction_bar() -> None:
+    """收盘竞价的 14:58、15:00 bar 不提前触发日终钩子.
 
-    与阶段 2（强制连续竞价）一致：01-02 的回调由收盘定时器在 15:00 那根 bar
-    之后触发，01-03 的回调在回测结束时补发；不会在 14:58 收盘竞价 bar 上提前触发。
+    01-02 的回调由日终结算后的生命周期事件在 15:00 那根 bar 之后触发；不会在
+    14:58 收盘竞价 bar 上提前触发。01-03 数据在盘中结束、当日未结算，不触发
+    （回测结束时不再补发）。
     """
     df = _minute_frame(
         [
@@ -370,10 +371,7 @@ def test_lazy_after_trading_not_triggered_by_closing_auction_bar() -> None:
     )
     strategy = r.strategy
     assert isinstance(strategy, _AfterTradingProbe)
-    assert strategy.calls == [
-        ("2024-01-02", "01-02 15:00"),
-        ("2024-01-03", "01-03 09:31"),
-    ]
+    assert strategy.calls == [("2024-01-02", "01-02 15:00")]
 
 
 class _TimerBuyCurrentClose(Strategy):

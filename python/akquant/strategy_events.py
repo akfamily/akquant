@@ -7,16 +7,13 @@ from .akquant import Bar, StrategyContext, Tick
 from .log import build_log_extra, get_logger
 from .strategy_framework_hooks import (
     call_user_callback,
-    dispatch_boundary_timer,
     dispatch_cross_section_timer,
+    dispatch_lifecycle_timer,
     dispatch_portfolio_update,
-    dispatch_pre_open_timer,
-    dispatch_time_hooks,
     ensure_framework_state,
+    is_lifecycle_payload,
     mark_portfolio_dirty,
-    register_boundary_timers,
     register_cross_section_timers,
-    register_pre_open_timers,
 )
 from .strategy_ml import (
     activate_pending_model,
@@ -103,9 +100,7 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     ensure_framework_state(strategy)
     strategy.ctx = ctx
     flush_pending_schedules(strategy)
-    register_boundary_timers(strategy)
     register_cross_section_timers(strategy)
-    register_pre_open_timers(strategy)
     strategy._last_event_type = "bar"
 
     strategy._check_order_events()
@@ -141,7 +136,6 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
 
     if current_pos != 0 and previous_price is not None and previous_price != bar.close:
         mark_portfolio_dirty(strategy)
-    dispatch_time_hooks(strategy)
     strategy.current_bar = bar
     _drive_local_stops(strategy, bar.symbol, bar.close, high=bar.high, low=bar.low)
     if hasattr(strategy, "_update_incremental_indicators"):
@@ -190,9 +184,7 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     ensure_framework_state(strategy)
     strategy.ctx = ctx
     flush_pending_schedules(strategy)
-    register_boundary_timers(strategy)
     register_cross_section_timers(strategy)
-    register_pre_open_timers(strategy)
     strategy._last_event_type = "tick"
     strategy._check_order_events()
     check_expiry_events(strategy)
@@ -206,7 +198,6 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     current_pos = ctx.get_position(tick.symbol)
     if current_pos != 0 and previous_price is not None and previous_price != tick.price:
         mark_portfolio_dirty(strategy)
-    dispatch_time_hooks(strategy)
     strategy.current_tick = tick
     _drive_local_stops(strategy, tick.symbol, tick.price)
     if hasattr(strategy, "_update_incremental_indicators"):
@@ -221,28 +212,25 @@ def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
     """引擎调用的 Timer 回调 (Internal)."""
     ensure_framework_state(strategy)
     strategy.ctx = ctx
-    flush_pending_schedules(strategy)
-    register_boundary_timers(strategy)
+    # 交易日生命周期事件(盘前/开始交易/收盘后)不刷出 on_start 里登记的定时任务:
+    # 首次登记仍在首个行情或用户定时器事件上进行, “跳过早于当前时刻的时点”以它为准
+    # (只有日期的日线改写到 15:00 后, 首日 09:35 等定时器不补登记)。
+    if not is_lifecycle_payload(payload):
+        flush_pending_schedules(strategy)
     register_cross_section_timers(strategy)
-    register_pre_open_timers(strategy)
     strategy._check_order_events()
 
     current_time = int(getattr(ctx, "current_time", 0))
     if _is_before_active_start(strategy, current_time):
         return
 
-    dispatch_time_hooks(strategy)
     dispatch_portfolio_update(strategy)
 
+    if dispatch_lifecycle_timer(strategy, payload):
+        _flush_indicator_snapshots(strategy)
+        return
+
     if dispatch_cross_section_timer(strategy, payload):
-        _flush_indicator_snapshots(strategy)
-        return
-
-    if dispatch_boundary_timer(strategy, payload):
-        _flush_indicator_snapshots(strategy)
-        return
-
-    if dispatch_pre_open_timer(strategy, payload):
         _flush_indicator_snapshots(strategy)
         return
 

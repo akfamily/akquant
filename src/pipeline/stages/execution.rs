@@ -24,6 +24,12 @@ impl Processor for ExecutionProcessor {
         _py: Python<'_>,
         _strategy: &Bound<'_, PyAny>,
     ) -> PyResult<ProcessorResult> {
+        // 交易日生命周期事件(盘前/开始交易/收盘后)不是行情, 不撮合任何订单。
+        if let Some(Event::Timer(timer)) = engine.current_event.as_ref()
+            && timer.is_lifecycle()
+        {
+            return Ok(ProcessorResult::Next);
+        }
         let active_orders = engine.state.order_manager.active_orders.clone();
         let event = engine.current_event.as_ref();
         let should_run = should_run_phase_for_engine_default(&self.phase, engine, event)

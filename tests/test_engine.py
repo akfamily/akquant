@@ -7352,9 +7352,9 @@ def test_after_trading_next_open_order_fills_next_trading_day() -> None:
     used to fire only once T+1's bar arrived, so the engine clock was already at
     T+1 and the order's created_at was stamped at T+1; the #307 next-open guard
     (`event_ts <= created_at`) then skipped the T+1 bar and pushed the fill to
-    T+2. The fix schedules the day-end boundary timer for on_after_trading in the
-    default mode too, so the callback fires at T's session close (created_at in
-    T) and the fill lands on T+1. Checked for both dispatch modes.
+    T+2. on_after_trading now fires from the engine's trading-day lifecycle event
+    right after T's settlement (session close + 1ns), so the order belongs to the
+    next trading day and the fill lands on T+1.
     """
     dates = pd.to_datetime(["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"])
 
@@ -7367,12 +7367,10 @@ def test_after_trading_next_open_order_fills_next_trading_day() -> None:
         df["symbol"] = "AAA"
         return df
 
-    def _run(precise: bool) -> tuple:
+    def _run() -> tuple:
         class AfterTradingStrategy(akquant.Strategy):
             def __init__(self) -> None:
                 super().__init__()
-                if precise:
-                    self.enable_precise_day_boundary_hooks = True
                 self.bar_ts: list[
                     int
                 ] = []  # per-trading-day bar timestamps (ns), in order
@@ -7411,16 +7409,14 @@ def test_after_trading_next_open_order_fills_next_trading_day() -> None:
 
     # Order is submitted in on_after_trading of the first trading day (bar_ts[0]);
     # with a next-open policy it must fill at the open of the next trading day
-    # (bar_ts[1]). The #324 regression fills at bar_ts[2] (T+2) in default mode.
-    for precise in (False, True):
-        bar_ts, fill_ts = _run(precise)
-        assert fill_ts is not None, f"precise={precise}: order never filled"
-        fill_index = bar_ts.index(fill_ts)
-        assert fill_index == 1, (
-            f"precise={precise}: on_after_trading(day 0) next-open order filled on "
-            f"trading day index {fill_index}, expected 1 (next trading day). "
-            f"index 2 is the #324 off-by-one."
-        )
+    # (bar_ts[1]). The #324 regression fills at bar_ts[2] (T+2).
+    bar_ts, fill_ts = _run()
+    assert fill_ts is not None, "order never filled"
+    fill_index = bar_ts.index(fill_ts)
+    assert fill_index == 1, (
+        f"on_after_trading(day 0) next-open order filled on trading day index "
+        f"{fill_index}, expected 1 (next trading day). index 2 is the #324 off-by-one."
+    )
 
 
 def test_pre_open_default_order_fills_same_day_open() -> None:
@@ -7751,24 +7747,22 @@ def _rebalance_hook_price_frames() -> dict[str, pd.DataFrame]:
     return frames
 
 
-def test_on_before_trading_no_lookahead_and_precise_hook_independent_fill() -> None:
-    """`on_before_trading` contract (#291): no lookahead, precise-independent.
-
-    The `enable_precise_day_boundary_hooks` toggle must not shift the fill bar.
+def test_on_before_trading_no_lookahead_and_same_day_open_fill() -> None:
+    """`on_before_trading` contract (#291): no lookahead, same-day open fill.
 
     * On day 1 ``get_history("a", "close")`` must NOT reveal the current-day
       close (10.11); on day 2 it reveals day 1's close, i.e. history lags by a
       trading day (the day-boundary "previous info visible" semantics).
-    * Buying on the first callback under next-open fill (``bar_offset=1``) fills
-      at day 2's open (10.20) regardless of the precise-hooks setting. Issue
-      #291 reported precise=True vs False diverging by a day here.
+    * on_before_trading fires at 09:30 (continuous-auction start), before the
+      date-only daily bar (rewritten to 15:00), so buying on the first callback
+      under next-open fill (``bar_offset=1``) fills at day 1's open (10.10)
+      — "decide before the open, fill on this open" (Ruling S4-3).
     """
 
     class RebalanceStrategy(akquant.Strategy):
-        def __init__(self, precise: bool) -> None:
+        def __init__(self) -> None:
             super().__init__()
             self.set_history_depth(1)
-            self.enable_precise_day_boundary_hooks = precise
             self._seen: set = set()
             self.hist_by_day: dict[int, float] = {}
             self._bought = False
@@ -7790,8 +7784,8 @@ def test_on_before_trading_no_lookahead_and_precise_hook_independent_fill() -> N
             if trade.symbol == "a" and trade.side == akquant.OrderSide.Buy:
                 self.buy_price = float(trade.price)
 
-    def _run(precise: bool) -> RebalanceStrategy:
-        strat = RebalanceStrategy(precise=precise)
+    def _run() -> RebalanceStrategy:
+        strat = RebalanceStrategy()
         akquant.run_backtest(
             data=_rebalance_hook_price_frames(),
             strategy=strat,
@@ -7804,18 +7798,14 @@ def test_on_before_trading_no_lookahead_and_precise_hook_independent_fill() -> N
         )
         return strat
 
-    precise_on = _run(True)
-    precise_off = _run(False)
+    strat = _run()
 
     # No lookahead: day 1 does not expose the current-day close (10.11).
-    assert np.isnan(precise_on.hist_by_day[1])
-    assert np.isnan(precise_off.hist_by_day[1])
+    assert np.isnan(strat.hist_by_day[1])
     # History lags by one trading day: day 2 sees day 1's close.
-    assert precise_on.hist_by_day[2] == pytest.approx(10.11)
-    assert precise_off.hist_by_day[2] == pytest.approx(10.11)
-    # Precise-hooks toggle must not move the fill: both land on day 2's open.
-    assert precise_on.buy_price == pytest.approx(10.20)
-    assert precise_off.buy_price == pytest.approx(10.20)
+    assert strat.hist_by_day[2] == pytest.approx(10.11)
+    # Decided before day 1's open, filled at day 1's open.
+    assert strat.buy_price == pytest.approx(10.10)
 
 
 def test_on_cross_section_sees_current_day_and_same_cycle_fill() -> None:

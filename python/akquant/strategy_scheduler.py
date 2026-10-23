@@ -54,13 +54,6 @@ def schedule(
             ts_ns = 0
 
     if ts_ns > 0:
-        current_time = int(getattr(strategy.ctx, "current_time", 0))
-        if (
-            payload.startswith("__framework_pre_open__|")
-            and current_time > 0
-            and ts_ns <= current_time
-        ):
-            return
         strategy.ctx.schedule(ts_ns, payload)
 
 

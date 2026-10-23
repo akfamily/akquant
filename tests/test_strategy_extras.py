@@ -14,6 +14,7 @@ from akquant import (
     BacktestConfig,
     InstrumentConfig,
     LogConfig,
+    SessionResolver,
     StrategyConfig,
     configure_logging,
     load_checkpoint,
@@ -33,11 +34,7 @@ from akquant.akquant import (
     TimeInForce,
 )
 from akquant.backtest import FunctionalStrategy
-from akquant.backtest.engine import (
-    _build_trading_day_metadata,
-    _prime_framework_boundary_timers,
-    _prime_framework_pre_open_timers,
-)
+from akquant.backtest.engine import _build_session_trading_days
 from akquant.backtest.fill_mode import (
     CurrentClose,
     FillMode,
@@ -47,11 +44,7 @@ from akquant.backtest.fill_mode import (
 from akquant.config import RiskConfig
 from akquant.gateway.order_receipt import OrderReceipt
 from akquant.strategy import Strategy, StrategyRuntimeConfig
-from akquant.strategy_framework_hooks import (
-    collect_boundary_timer_entries,
-    collect_pre_open_timer_entries,
-    dispatch_pre_open_timer,
-)
+from akquant.strategy_framework_hooks import dispatch_lifecycle_timer
 
 
 @pytest.fixture(autouse=True)
@@ -3791,7 +3784,7 @@ class FrameworkPreOpenStrategy(Strategy):
 
 
 def test_framework_hooks_session_day_reject_and_portfolio() -> None:
-    """Framework hooks should fire with expected transitions."""
+    """Reject/order/portfolio hooks fire on ticks; day hooks are not inferred."""
     strategy = FrameworkHooksStrategy()
     ctx = MagicMock(spec=StrategyContext)
     ctx.get_position.return_value = 0.0
@@ -3813,7 +3806,8 @@ def test_framework_hooks_session_day_reject_and_portfolio() -> None:
     tick1 = Tick(timestamp=ctx.current_time, price=100.0, volume=1.0, symbol="AAPL")
     strategy._on_tick_event(tick1, ctx)
 
-    assert any(e.startswith("before:") for e in strategy.events)
+    # 交易日钩子只由引擎生命周期事件触发，不再按 tick 的时段/日期推断
+    assert not any(e.startswith("before:") for e in strategy.events)
     assert "order:rej1" in strategy.events
     assert "reject:rej1" in strategy.events
     assert strategy.events.index("order:rej1") < strategy.events.index("reject:rej1")
@@ -3824,19 +3818,7 @@ def test_framework_hooks_session_day_reject_and_portfolio() -> None:
     ctx.session = "postclose"
     tick2 = Tick(timestamp=ctx.current_time, price=101.0, volume=1.0, symbol="AAPL")
     strategy._on_tick_event(tick2, ctx)
-    assert any(e.startswith("after:") for e in strategy.events)
-    same_day_before_count = len(
-        [e for e in strategy.events if e.startswith("before:2023-01-01")]
-    )
-    assert same_day_before_count == 1
-
-    before_count = len([e for e in strategy.events if e.startswith("before:")])
-    ctx.current_time = pd.Timestamp("2023-01-02 09:31:00", tz="Asia/Shanghai").value
-    ctx.session = "normal"
-    tick3 = Tick(timestamp=ctx.current_time, price=102.0, volume=1.0, symbol="AAPL")
-    strategy._on_tick_event(tick3, ctx)
-    after_count = len([e for e in strategy.events if e.startswith("before:")])
-    assert after_count == before_count + 1
+    assert not any(e.startswith("after:") for e in strategy.events)
 
 
 def test_framework_hooks_emits_reject_from_recent_rejected_orders() -> None:
@@ -3872,40 +3854,6 @@ def test_framework_hooks_emits_reject_from_recent_rejected_orders() -> None:
     assert strategy.events.index("reject:rej_from_snapshot") < strategy.events.index(
         "tick"
     )
-
-
-def test_before_trading_fallback_when_session_missing() -> None:
-    """When session is missing, on_before_trading still runs once per day."""
-    strategy = FrameworkHooksStrategy()
-    ctx = MagicMock(spec=StrategyContext)
-    ctx.get_position.return_value = 0.0
-    ctx.canceled_order_ids = []
-    ctx.active_orders = []
-    ctx.recent_trades = []
-    ctx.positions = {}
-    ctx.available_positions = {}
-    ctx.cash = 1000.0
-    ctx.session = None
-
-    ts1 = pd.Timestamp("2023-01-01 09:30:00", tz="Asia/Shanghai").value
-    ts2 = pd.Timestamp("2023-01-01 10:30:00", tz="Asia/Shanghai").value
-    ts3 = pd.Timestamp("2023-01-02 09:30:00", tz="Asia/Shanghai").value
-
-    tick1 = Tick(timestamp=ts1, price=100.0, volume=1.0, symbol="AAPL")
-    tick2 = Tick(timestamp=ts2, price=100.0, volume=1.0, symbol="AAPL")
-    tick3 = Tick(timestamp=ts3, price=100.0, volume=1.0, symbol="AAPL")
-
-    ctx.current_time = ts1
-    strategy._on_tick_event(tick1, ctx)
-    ctx.current_time = ts2
-    strategy._on_tick_event(tick2, ctx)
-    ctx.current_time = ts3
-    strategy._on_tick_event(tick3, ctx)
-
-    day1 = len([e for e in strategy.events if e.startswith("before:2023-01-01")])
-    day2 = len([e for e in strategy.events if e.startswith("before:2023-01-02")])
-    assert day1 == 1
-    assert day2 == 1
 
 
 def test_portfolio_update_skips_clean_tick_without_changes() -> None:
@@ -4089,13 +4037,11 @@ def test_runtime_config_reexported_from_every_path() -> None:
 def test_runtime_alias_properties_sync_to_runtime_config() -> None:
     """Legacy alias fields should update runtime_config."""
     strategy = ErrorHookStrategy()
-    strategy.enable_precise_day_boundary_hooks = True
     strategy.portfolio_update_eps = 1.5
     strategy.error_mode = "continue"
     strategy.re_raise_on_error = False
 
     cfg = strategy.runtime_config
-    assert cfg.enable_precise_day_boundary_hooks is True
     assert cfg.portfolio_update_eps == 1.5
     assert cfg.error_mode == "continue"
     assert cfg.re_raise_on_error is False
@@ -4105,13 +4051,11 @@ def test_runtime_config_assignment_syncs_alias_properties() -> None:
     """runtime_config assignment should reflect on alias property getters."""
     strategy = ErrorHookStrategy()
     strategy.runtime_config = StrategyRuntimeConfig(
-        enable_precise_day_boundary_hooks=True,
         portfolio_update_eps=2.0,
         error_mode="legacy",
         re_raise_on_error=False,
     )
 
-    assert strategy.enable_precise_day_boundary_hooks is True
     assert strategy.portfolio_update_eps == 2.0
     assert strategy.error_mode == "legacy"
     assert strategy.re_raise_on_error is False
@@ -4393,8 +4337,8 @@ def test_run_backtest_runtime_config_override_false_keeps_strategy_config(
     assert "runtime_config_override=False" in caplog.text
 
 
-def test_stop_internal_flushes_on_after_trading_hook() -> None:
-    """Stop phase should flush a pending on_after_trading."""
+def test_stop_internal_does_not_flush_on_after_trading_hook() -> None:
+    """交易日钩子只由引擎生命周期事件触发：tick 不推断、停止阶段不补发."""
     strategy = FrameworkHooksStrategy()
     ctx = MagicMock(spec=StrategyContext)
     ctx.get_position.return_value = 0.0
@@ -4405,26 +4349,23 @@ def test_stop_internal_flushes_on_after_trading_hook() -> None:
     ctx.positions = {}
     ctx.available_positions = {}
     ctx.session = "normal"
-    ctx.current_time = pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai").value
+    ctx.current_time = pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai").value
 
     tick = Tick(timestamp=ctx.current_time, price=100.0, volume=1.0, symbol="AAPL")
     strategy._on_tick_event(tick, ctx)
-    assert any(e.startswith("before:") for e in strategy.events)
-    assert not any(e.startswith("after:") for e in strategy.events)
+    assert not any(e.startswith("before:") for e in strategy.events)
 
     strategy._on_stop_internal()
 
-    assert any(e.startswith("after:") for e in strategy.events)
+    assert not any(e.startswith("after:") for e in strategy.events)
     assert strategy.events[-1] == "stop"
 
 
-def test_boundary_timers_register_and_drive_day_hooks() -> None:
-    """Boundary timers should register once and trigger day hooks precisely."""
+def test_lifecycle_timers_drive_day_hooks_once_per_trading_day() -> None:
+    """引擎生命周期定时器驱动 before/after 钩子，同一交易日重复的事件被去重."""
     strategy = FrameworkHooksStrategy()
-    strategy.enable_precise_day_boundary_hooks = True
-    start_ts = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value
-    end_ts = pd.Timestamp("2023-01-03 15:00:00", tz="Asia/Shanghai").value
-    strategy._trading_day_bounds = {"2023-01-03": (start_ts, end_ts)}
+    start_ts = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value + 1
+    end_ts = pd.Timestamp("2023-01-03 15:00:00", tz="Asia/Shanghai").value + 1
 
     ctx = MagicMock(spec=StrategyContext)
     ctx.get_position.return_value = 0.0
@@ -4437,50 +4378,25 @@ def test_boundary_timers_register_and_drive_day_hooks() -> None:
     ctx.session = "closed"
     ctx.current_time = start_ts
 
-    tick = Tick(timestamp=start_ts, price=100.0, volume=1.0, symbol="AAPL")
-    strategy._on_tick_event(tick, ctx)
+    for _ in range(2):
+        strategy._on_timer_event("__akq_lifecycle__|before_trading|2023-01-03", ctx)
+    assert strategy.events.count(f"before:2023-01-03:{start_ts}") == 1
 
-    scheduled = [call.args for call in ctx.schedule.call_args_list]
-    assert (start_ts, "__framework_boundary__|before|2023-01-03") in scheduled
-    assert (end_ts + 1, "__framework_boundary__|after|2023-01-03") in scheduled
-
-    strategy._on_timer_event("__framework_boundary__|before|2023-01-03", ctx)
-    assert any(e.startswith("before:2023-01-03") for e in strategy.events)
-
-    ctx.current_time = end_ts + 1
-    strategy._on_timer_event("__framework_boundary__|after|2023-01-03", ctx)
-    assert any(e.startswith("after:2023-01-03") for e in strategy.events)
+    ctx.current_time = end_ts
+    for _ in range(2):
+        strategy._on_timer_event("__akq_lifecycle__|after_trading|2023-01-03", ctx)
+    assert strategy.events.count(f"after:2023-01-03:{end_ts}") == 1
+    # 生命周期事件不转给用户 on_timer
+    assert not any("__akq_lifecycle__" in e for e in strategy.events)
 
 
-def test_collect_boundary_timers_and_prime_globally_once() -> None:
-    """Boundary timers should be deduplicated before the event loop starts."""
-    start_ts = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value
-    end_ts = pd.Timestamp("2023-01-03 15:00:00", tz="Asia/Shanghai").value
-    strategy_a = FrameworkHooksStrategy()
-    strategy_b = FrameworkHooksStrategy()
-    strategy_a.enable_precise_day_boundary_hooks = True
-    strategy_b.enable_precise_day_boundary_hooks = True
-    strategy_a._trading_day_bounds = {"2023-01-03": (start_ts, end_ts)}
-    strategy_b._trading_day_bounds = {"2023-01-03": (start_ts, end_ts)}
-
-    entries = collect_boundary_timer_entries(strategy_a)
-    assert entries == [
-        (start_ts, "__framework_boundary__|before|2023-01-03"),
-        (end_ts + 1, "__framework_boundary__|after|2023-01-03"),
-    ]
-
-    fake_engine = SimpleNamespace(add_timer=MagicMock())
-    _prime_framework_boundary_timers([strategy_a, strategy_b], fake_engine)
-
-    scheduled = [call.args for call in fake_engine.add_timer.call_args_list]
-    assert scheduled == [
-        (start_ts, "__framework_boundary__|before|2023-01-03"),
-        (end_ts + 1, "__framework_boundary__|after|2023-01-03"),
-    ]
+def _sh_resolver() -> Any:
+    """上海时区、默认股票时段表的会话解析器."""
+    return SessionResolver(timezone="Asia/Shanghai")
 
 
-def test_build_trading_day_metadata_merges_multi_symbol_day_bounds() -> None:
-    """Trading day metadata should merge per-day bounds across symbols."""
+def test_build_session_trading_days_merges_multi_symbol() -> None:
+    """多标的同一交易日合并为一个交易日，截面时刻取各标的首根 bar 的最大值."""
     data_map = {
         "AAA": pd.DataFrame(
             {"close": [10.0, 10.5]},
@@ -4502,17 +4418,11 @@ def test_build_trading_day_metadata_merges_multi_symbol_day_bounds() -> None:
         ),
     }
 
-    trading_days, day_bounds, day_rebalance_timestamps = _build_trading_day_metadata(
-        data_map, "Asia/Shanghai"
+    trading_days, day_rebalance_timestamps = _build_session_trading_days(
+        data_map, _sh_resolver(), "Asia/Shanghai"
     )
 
     assert trading_days == [pd.Timestamp("2023-01-03", tz="Asia/Shanghai")]
-    assert day_bounds == {
-        "2023-01-03": (
-            pd.Timestamp("2023-01-03 01:30:00", tz="UTC").value,
-            pd.Timestamp("2023-01-03 07:00:00", tz="UTC").value,
-        )
-    }
     assert day_rebalance_timestamps == {
         "2023-01-03": pd.Timestamp("2023-01-03 02:00:00", tz="UTC").value
     }
@@ -4520,8 +4430,11 @@ def test_build_trading_day_metadata_merges_multi_symbol_day_bounds() -> None:
 
 def _reference_build_trading_day_metadata(
     data_map: dict[str, pd.DataFrame], timezone: str
-) -> tuple[list, dict, dict]:
-    """原逐组迭代实现（对照用，与向量化替换前的生产实现一致）."""
+) -> tuple[list, dict]:
+    """按本地日期的逐组迭代实现（对照用）.
+
+    夹具全部落在工作日日盘收盘前，按本地日期与按会话交易日的分组一致。
+    """
     all_dates: set = set()
     day_bounds: dict = {}
     day_first_symbol_timestamps: dict = {}
@@ -4551,7 +4464,8 @@ def _reference_build_trading_day_metadata(
     for day_key, symbol_timestamps in day_first_symbol_timestamps.items():
         if symbol_timestamps:
             day_rebalance_timestamps[day_key] = max(symbol_timestamps.values())
-    return sorted(all_dates), day_bounds, day_rebalance_timestamps
+    del day_bounds
+    return sorted(all_dates), day_rebalance_timestamps
 
 
 def _metadata_fixture() -> dict[str, pd.DataFrame]:
@@ -4565,27 +4479,27 @@ def _metadata_fixture() -> dict[str, pd.DataFrame]:
     return data_map
 
 
-def test_build_trading_day_metadata_matches_reference_groupby() -> None:
-    """向量化实现与原逐组迭代实现在多标的多日数据上输出一致."""
+def test_build_session_trading_days_matches_reference_groupby() -> None:
+    """向量化实现与逐组迭代实现在多标的多日数据上输出一致."""
     data_map = _metadata_fixture()
     expected = _reference_build_trading_day_metadata(data_map, "Asia/Shanghai")
-    actual = _build_trading_day_metadata(data_map, "Asia/Shanghai")
+    actual = _build_session_trading_days(data_map, _sh_resolver(), "Asia/Shanghai")
     assert actual == expected
 
 
-def test_build_trading_day_metadata_us_unit_and_naive() -> None:
-    """微秒(us)单位 datetime64 与 tz-naive 索引口径与原实现一致."""
+def test_build_session_trading_days_us_unit_and_naive() -> None:
+    """微秒(us)单位 datetime64 与 tz-naive 索引口径与对照实现一致."""
     data_map = _metadata_fixture()
     for df in data_map.values():
         index = cast(pd.DatetimeIndex, df.index)
         df.index = index.as_unit("us").tz_localize(None)
     expected = _reference_build_trading_day_metadata(data_map, "Asia/Shanghai")
-    actual = _build_trading_day_metadata(data_map, "Asia/Shanghai")
+    actual = _build_session_trading_days(data_map, _sh_resolver(), "Asia/Shanghai")
     assert actual == expected
 
 
-def test_build_trading_day_metadata_skips_empty_and_non_datetime() -> None:
-    """空 frame 与非 DatetimeIndex 被跳过；全空时返回空三元组."""
+def test_build_session_trading_days_skips_empty_and_non_datetime() -> None:
+    """空 frame 与非 DatetimeIndex 被跳过；全空时返回空结果."""
     fixture = _metadata_fixture()
     data_map = {
         "EMPTY": pd.DataFrame({"close": []}),
@@ -4593,15 +4507,15 @@ def test_build_trading_day_metadata_skips_empty_and_non_datetime() -> None:
         "AAA": fixture["AAA"],
     }
     expected = _reference_build_trading_day_metadata(data_map, "Asia/Shanghai")
-    actual = _build_trading_day_metadata(data_map, "Asia/Shanghai")
+    actual = _build_session_trading_days(data_map, _sh_resolver(), "Asia/Shanghai")
     assert actual == expected
 
-    assert _build_trading_day_metadata(
-        {"X": pd.DataFrame({"close": []})}, "Asia/Shanghai"
-    ) == ([], {}, {})
+    assert _build_session_trading_days(
+        {"X": pd.DataFrame({"close": []})}, _sh_resolver(), "Asia/Shanghai"
+    ) == ([], {})
 
 
-def test_build_trading_day_metadata_rebalance_takes_max_of_symbol_first_bars() -> None:
+def test_build_session_trading_days_rebalance_takes_max_of_symbol_first_bars() -> None:
     """调仓时间戳应取「各标的当日首笔的最大值」，而非全局首笔.
 
     锁定 day_rebalance_timestamps 的双层 groupby 语义：先按 (day, sym) 取各
@@ -4636,8 +4550,8 @@ def test_build_trading_day_metadata_rebalance_takes_max_of_symbol_first_bars() -
         ),
     }
 
-    _, _, day_rebalance_timestamps = _build_trading_day_metadata(
-        data_map, "Asia/Shanghai"
+    _, day_rebalance_timestamps = _build_session_trading_days(
+        data_map, _sh_resolver(), "Asia/Shanghai"
     )
 
     assert day_rebalance_timestamps == {
@@ -4645,7 +4559,7 @@ def test_build_trading_day_metadata_rebalance_takes_max_of_symbol_first_bars() -
     }
 
 
-def test_build_trading_day_metadata_drops_nat_rows() -> None:
+def test_build_session_trading_days_drops_nat_rows() -> None:
     """含 NaT 的 bar 应被丢弃，不污染同一交易日其它标的的 bounds.
 
     NaT 经 asi8 会映射为 int64 哨兵最小值；向量化路径若不剔除，会把它折进当日
@@ -4675,25 +4589,27 @@ def test_build_trading_day_metadata_drops_nat_rows() -> None:
         ),
     }
 
-    assert _build_trading_day_metadata(
-        dirty, "Asia/Shanghai"
-    ) == _build_trading_day_metadata(clean, "Asia/Shanghai")
+    assert _build_session_trading_days(
+        dirty, _sh_resolver(), "Asia/Shanghai"
+    ) == _build_session_trading_days(clean, _sh_resolver(), "Asia/Shanghai")
 
-    # 全为 NaT 时退化为空三元组，与全空输入一致。
+    # 全为 NaT 时退化为空结果，与全空输入一致。
     all_nat = {
         "AAA": pd.DataFrame(
             {"close": [1.0]}, index=pd.DatetimeIndex([pd.NaT], dtype="datetime64[ns]")
         ),
     }
-    assert _build_trading_day_metadata(all_nat, "Asia/Shanghai") == ([], {}, {})
+    assert _build_session_trading_days(all_nat, _sh_resolver(), "Asia/Shanghai") == (
+        [],
+        {},
+    )
 
 
-def test_precise_boundary_hooks_delay_after_trading_until_day_end() -> None:
-    """Precise boundary hooks should not emit after_trading during same-day timers."""
+def test_day_hooks_delay_after_trading_until_day_end() -> None:
+    """on_after_trading 在交易日收盘结算后触发，不在当日中途触发."""
 
     class PreciseBoundaryRegressionStrategy(Strategy):
         def __init__(self) -> None:
-            self.enable_precise_day_boundary_hooks = True
             self.events: list[tuple[str, object, int]] = []
 
         def on_start(self) -> None:
@@ -4746,9 +4662,10 @@ def test_precise_boundary_hooks_delay_after_trading_until_day_end() -> None:
         fill_policy=CurrentClose(),
     )
 
-    day1_before = ("before", pd.Timestamp("2023-01-03").date(), day1_open)
+    # 开始交易在连续竞价开始 + 1ns、收盘后在会话收盘 + 1ns（日终结算之后）
+    day1_before = ("before", pd.Timestamp("2023-01-03").date(), day1_open + 1)
     day1_last_bar = ("bar", "HOOKS_DEMO", day1_close)
-    day1_after = ("after", pd.Timestamp("2023-01-03").date(), day1_close)
+    day1_after = ("after", pd.Timestamp("2023-01-03").date(), day1_close + 1)
 
     assert day1_before in strategy.events
     assert day1_last_bar in strategy.events
@@ -4757,12 +4674,11 @@ def test_precise_boundary_hooks_delay_after_trading_until_day_end() -> None:
     assert strategy.events.index(day1_before) < strategy.events.index(day1_after)
 
 
-def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> None:
-    """Default backtest path should emit day hooks even when session is Continuous."""
+def test_day_hooks_fire_at_lifecycle_times_in_backtest() -> None:
+    """回测按交易日生命周期触发 before/after 钩子（与首根 bar 时刻无关）."""
 
     class NonPreciseBoundaryRegressionStrategy(Strategy):
         def __init__(self) -> None:
-            self.enable_precise_day_boundary_hooks = False
             self.events: list[tuple[str, object, int]] = []
 
         def on_start(self) -> None:
@@ -4809,8 +4725,10 @@ def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> N
 
     day1 = pd.Timestamp("2023-01-03").date()
     day2 = pd.Timestamp("2023-01-04").date()
-    day1_before = ("before", day1, day1_open)
-    day2_before = ("before", day2, day2_open)
+    # 开始交易在 09:30 连续竞价开始 + 1ns，早于当日首根 10:00 bar
+    continuous_start = pd.Timedelta(minutes=30).value
+    day1_before = ("before", day1, day1_open - continuous_start + 1)
+    day2_before = ("before", day2, day2_open - continuous_start + 1)
 
     assert day1_before in strategy.events
     assert day2_before in strategy.events
@@ -4818,10 +4736,9 @@ def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> N
         ("bar", "HOOKS_DEMO", day1_open)
     )
 
-    # #324: in the default (non-precise) mode on_after_trading now fires at the
-    # day's session close (within day1, at/after its last bar), not lazily on the
-    # next day's bar. Firing at day1's close keeps a next-open order's created_at
-    # inside day1 so it fills on day2 (T+1) rather than T+2.
+    # #324: on_after_trading fires right after day1's settlement (session close +
+    # 1ns), not lazily on the next day's bar, so a next-open order placed in it
+    # fills on day2 (T+1) rather than T+2.
     after_day1 = [e for e in strategy.events if e[0] == "after" and e[1] == day1]
     assert len(after_day1) == 1, after_day1
     after_day1_ts = after_day1[0][2]
@@ -4829,15 +4746,11 @@ def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> N
     assert strategy.events.index(after_day1[0]) < strategy.events.index(day2_before)
 
 
-@pytest.mark.parametrize("precise_boundaries", [False, True])
-def test_day_boundary_hooks_hide_current_bar_from_history_and_current_bar(
-    precise_boundaries: bool,
-) -> None:
-    """Day-boundary hooks should only observe prior-day history in both modes."""
+def test_day_boundary_hooks_hide_current_bar_from_history_and_current_bar() -> None:
+    """Day-boundary hooks should only observe prior-day history."""
 
     class BoundaryHistoryVisibilityStrategy(Strategy):
         def __init__(self) -> None:
-            self.enable_precise_day_boundary_hooks = precise_boundaries
             self.before_histories: list[np.ndarray] = []
             self.rebalance_histories: list[np.ndarray] = []
             self.before_current_bar_states: list[bool] = []
@@ -4888,23 +4801,21 @@ def test_day_boundary_hooks_hide_current_bar_from_history_and_current_bar(
     assert np.isnan(strategy.before_histories[0][0])
     assert before_values == [10.0, 10.5]
     assert strategy.before_current_bar_states == [True, True, True]
-    # 只有日期的 bar 由 run_backtest 改写到当日收盘 15:00（不修改传入的对象）
+    # 只有日期的 bar 由 run_backtest 改写到当日收盘 15:00（不修改传入的对象）；
+    # on_before_trading 在 09:30 连续竞价开始 + 1ns 触发，早于日线 bar（Ruling S4-3）
     first_bar_ts = pd.Timestamp("2023-01-03 15:00", tz="Asia/Shanghai").value
+    before_ts = pd.Timestamp("2023-01-03 09:30", tz="Asia/Shanghai").value + 1
     assert strategy.events[:2] == [
-        ("before", first_bar_ts),
+        ("before", before_ts),
         ("bar", first_bar_ts),
     ]
 
 
-@pytest.mark.parametrize("precise_boundaries", [False, True])
-def test_day_boundary_hooks_use_previous_account_snapshot(
-    precise_boundaries: bool,
-) -> None:
-    """Day-boundary hooks should not see current-day account marking in either mode."""
+def test_day_boundary_hooks_use_previous_account_snapshot() -> None:
+    """Day-boundary hooks should not see current-day account marking."""
 
     class BoundaryAccountVisibilityStrategy(Strategy):
         def __init__(self) -> None:
-            self.enable_precise_day_boundary_hooks = precise_boundaries
             self.before_equities: list[float] = []
             self.before_portfolio_values: list[float] = []
             self.has_bought = False
@@ -4953,15 +4864,11 @@ def test_day_boundary_hooks_use_previous_account_snapshot(
     assert strategy.before_portfolio_values == [1000.0, 1000.0, 1001.0]
 
 
-@pytest.mark.parametrize("precise_boundaries", [False, True])
-def test_cross_section_sees_current_day_history_and_runs_after_bar(
-    precise_boundaries: bool,
-) -> None:
+def test_cross_section_sees_current_day_history_and_runs_after_bar() -> None:
     """After-bar rebalance should observe the current completed slice."""
 
     class AfterBarHistoryVisibilityStrategy(Strategy):
         def __init__(self) -> None:
-            self.enable_precise_day_boundary_hooks = precise_boundaries
             self.after_bar_histories: list[np.ndarray] = []
             self.after_bar_current_bar_states: list[bool] = []
             self.events: list[tuple[str, int]] = []
@@ -5019,15 +4926,11 @@ def test_cross_section_sees_current_day_history_and_runs_after_bar(
     ]
 
 
-@pytest.mark.parametrize("precise_boundaries", [False, True])
-def test_cross_section_uses_current_account_snapshot(
-    precise_boundaries: bool,
-) -> None:
+def test_cross_section_uses_current_account_snapshot() -> None:
     """After-bar rebalance should see the current-day marked account view."""
 
     class AfterBarAccountVisibilityStrategy(Strategy):
         def __init__(self) -> None:
-            self.enable_precise_day_boundary_hooks = precise_boundaries
             self.after_bar_equities: list[float] = []
             self.after_bar_portfolio_values: list[float] = []
             self.has_bought = False
@@ -5160,31 +5063,6 @@ def test_get_account_uses_cached_previous_account_details_when_enabled() -> None
     assert float(account["daily_interest"]) == 0.5
 
 
-def test_collect_pre_open_timers_and_prime_globally_once() -> None:
-    """Pre-open timers should be deduplicated before the event loop starts."""
-    start_ts = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value
-    strategy_a = FrameworkPreOpenStrategy()
-    strategy_b = FrameworkPreOpenStrategy()
-    strategy_a._trading_day_bounds = {"2023-01-03": (start_ts, start_ts + 1)}
-    strategy_b._trading_day_bounds = {"2023-01-03": (start_ts, start_ts + 1)}
-
-    # #324: the pre-open timer fires 1ns before the day's first bar so an order
-    # placed in on_pre_open fills on this day's open; the payload keeps start_ts
-    # as the expected_open_at / history-cutoff source timestamp.
-    entries = collect_pre_open_timer_entries(strategy_a)
-    assert entries == [(start_ts - 1, f"__framework_pre_open__|2023-01-03|{start_ts}")]
-
-    fake_engine = SimpleNamespace(add_timer=MagicMock())
-    _prime_framework_pre_open_timers([strategy_a, strategy_b], fake_engine)
-
-    scheduled = [call.args for call in fake_engine.add_timer.call_args_list]
-    assert scheduled == [
-        (start_ts - 1, f"__framework_pre_open__|2023-01-03|{start_ts}")
-    ]
-    assert strategy_a._framework_pre_open_timers_registered is True
-    assert strategy_b._framework_pre_open_timers_registered is True
-
-
 def test_pre_open_timer_dispatch_uses_next_open_fill_policy_by_default() -> None:
     """Pre-open callback should default market orders to next-open semantics."""
     strategy = FrameworkPreOpenStrategy()
@@ -5202,9 +5080,8 @@ def test_pre_open_timer_dispatch_uses_next_open_fill_policy_by_default() -> None
     ctx.current_time = start_ts
     strategy.ctx = ctx
 
-    consumed = dispatch_pre_open_timer(
-        strategy,
-        f"__framework_pre_open__|2023-01-03|{start_ts}",
+    consumed = dispatch_lifecycle_timer(
+        strategy, "__akq_lifecycle__|pre_open|2023-01-03"
     )
 
     assert consumed is True
@@ -5221,7 +5098,7 @@ def test_pre_open_timer_dispatch_uses_next_open_fill_policy_by_default() -> None
     assert args[9] == ExecutionMode.NextOpen
     assert args[10] == "same_cycle"
 
-    dispatch_pre_open_timer(strategy, f"__framework_pre_open__|2023-01-03|{start_ts}")
+    dispatch_lifecycle_timer(strategy, "__akq_lifecycle__|pre_open|2023-01-03")
     assert ctx.buy.call_count == 1
 
 

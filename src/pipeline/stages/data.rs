@@ -244,8 +244,8 @@ impl Processor for DataProcessor {
             }
             FeedAction::Timer(_timestamp) => {
                 if let Some(timer) = engine.timers.pop() {
-                    // 引擎内部的日终结算定时器: 不推进 clock、不设 current_event、
-                    // 不转给策略。
+                    // 引擎内部的日终结算定时器: 本身不转给策略; 真的结算了当日时, 发出
+                    // 收盘后生命周期事件(after_trading)交给策略。
                     if timer.is_day_close() {
                         if timer.timestamp > self.last_timestamp {
                             self.finalize_current_timestamp(engine, py);
@@ -282,8 +282,28 @@ impl Processor for DataProcessor {
                             ) {
                                 run_day_close_settlement(engine, py, day, close_ts);
                                 engine.last_settled_trading_day = Some(day);
+                                emit_after_trading(engine, day, timer.timestamp)?;
+                                // 回测: 按下一个行情事件所属交易日串联生命周期(数据耗尽
+                                // 则不排); 实盘在 before_trading 触发时排下一交易日。
+                                if !engine.state.feed.is_live()
+                                    && let Some(next_ts) = engine.state.feed.peek_timestamp()
+                                {
+                                    engine
+                                        .schedule_lifecycle_for_event(next_ts, timer.timestamp)?;
+                                }
+                                return Ok(ProcessorResult::Next);
                             }
                         }
+                        return Ok(ProcessorResult::Loop);
+                    }
+                    // 回测数据耗尽后不再触发盘前/开始交易(只为有数据的交易日、且在数据
+                    // 结束前触发; 收盘后事件只在当日真的结算时发出)。
+                    if !engine.state.feed.is_live()
+                        && engine.state.feed.peek_timestamp().is_none()
+                        && timer.lifecycle().is_some_and(|(kind, _)| {
+                            kind != crate::model::timer::LIFECYCLE_AFTER_TRADING
+                        })
+                    {
                         return Ok(ProcessorResult::Loop);
                     }
                     // Invariant: finalize the current timestamp before any timer
@@ -305,28 +325,36 @@ impl Processor for DataProcessor {
                     // 一致。其余定时器(用户 schedule 等)在本片之后, 清空本片后
                     // ctx.session 取定时器时刻的会话级时段, 撮合按订单品种在定时器时刻
                     // 解析(上一片已在上面 finalize)。
+                    //
+                    // 生命周期定时器(盘前/开始交易)不属于任何时间片, 同样清空后按时刻求。
                     let belongs = timer_belongs_to_slice(&timer, self.last_timestamp);
                     if !belongs {
                         std::sync::Arc::make_mut(&mut engine.slice_sessions).clear();
                     }
-                    let session = if engine.force_session_continuous {
-                        TradingSession::Continuous
-                    } else if let Some(best) = engine
-                        .slice_sessions
-                        .values()
-                        .copied()
-                        .max_by_key(|s| crate::calendar::resolver::rank(*s))
+                    let session = timer_session(engine, timer.timestamp)?;
+                    // 实盘按日历串联: before_trading(D) 触发时排下一交易日; D 没有连续
+                    // 竞价段(不排 before_trading)时改在 pre_open(D) 触发时排。
+                    if engine.state.feed.is_live()
+                        && let Some((kind, day)) = timer.lifecycle()
                     {
-                        best
-                    } else {
-                        engine.ensure_session_resolver()?;
-                        engine
-                            .session_resolver
-                            .as_ref()
-                            .map_or(TradingSession::Continuous, |r| {
-                                r.session_level_instant(timer.timestamp)
-                            })
-                    };
+                        let chain = match kind {
+                            crate::model::timer::LIFECYCLE_BEFORE_TRADING => true,
+                            crate::model::timer::LIFECYCLE_PRE_OPEN => {
+                                engine.session_resolver.as_ref().is_some_and(|r| {
+                                    matches!(r.session_day_first_continuous_start(day), Ok(None))
+                                })
+                            }
+                            _ => false,
+                        };
+                        if chain
+                            && let Some(next) = engine
+                                .session_resolver
+                                .as_ref()
+                                .and_then(|r| r.next_session_day(day).ok())
+                        {
+                            engine.schedule_lifecycle(next, timer.timestamp)?;
+                        }
+                    }
                     engine.clock.update(timer.timestamp, session);
                     engine.current_event = Some(Event::Timer(timer));
                 }
@@ -451,6 +479,15 @@ impl Processor for DataProcessor {
                             };
                             run_day_close_settlement(engine, py, prev, close);
                             engine.last_settled_trading_day = Some(prev);
+                            // 收盘后生命周期事件以本事件时刻压入, 在本事件处理之后触发
+                            // (比正常路径晚一个事件, Ruling S4-1)。
+                            engine.timers.push(crate::model::Timer {
+                                timestamp,
+                                payload: crate::model::timer::lifecycle_payload(
+                                    crate::model::timer::LIFECYCLE_AFTER_TRADING,
+                                    prev,
+                                ),
+                            });
                         }
                         // 公司行动(拆股/分红): 处理日期落在 (上次处理到的日期, day] 的全部
                         // 行动, 落在非交易日(周末、节假日)的顺延到其后第一个交易日开日。
@@ -585,6 +622,43 @@ impl Processor for DataProcessor {
             }
         }
     }
+}
+
+/// 定时器事件的会话时段: 本时间片有品种时段时取其中优先级最高者(与撮合先查本片
+/// 一致), 否则取定时器时刻的会话级时段; 强制连续竞价时为连续竞价。
+fn timer_session(engine: &mut Engine, ts: i64) -> PyResult<TradingSession> {
+    if engine.force_session_continuous {
+        return Ok(TradingSession::Continuous);
+    }
+    if let Some(best) = engine
+        .slice_sessions
+        .values()
+        .copied()
+        .max_by_key(|s| crate::calendar::resolver::rank(*s))
+    {
+        return Ok(best);
+    }
+    engine.ensure_session_resolver()?;
+    Ok(engine
+        .session_resolver
+        .as_ref()
+        .map_or(TradingSession::Continuous, |r| r.session_level_instant(ts)))
+}
+
+/// 日终结算完成后发出交易日 `day` 的收盘后生命周期事件(策略可见的定时器事件),
+/// 时刻为收盘定时器时刻 `ts`。它晚于本时间片, 清空本片时段后按时刻求。
+fn emit_after_trading(engine: &mut Engine, day: NaiveDate, ts: i64) -> PyResult<()> {
+    std::sync::Arc::make_mut(&mut engine.slice_sessions).clear();
+    let session = timer_session(engine, ts)?;
+    engine.clock.update(ts, session);
+    engine.current_event = Some(Event::Timer(crate::model::Timer {
+        timestamp: ts,
+        payload: crate::model::timer::lifecycle_payload(
+            crate::model::timer::LIFECYCLE_AFTER_TRADING,
+            day,
+        ),
+    }));
+    Ok(())
 }
 
 /// 定时器是否属于时间戳为 `slice_ts` 的时间片(撮合时沿用该片各品种的时段)。

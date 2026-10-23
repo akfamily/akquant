@@ -97,6 +97,9 @@ pub struct Engine {
     pub(crate) last_event_ts_in_day: Option<i64>,
     /// 已登记收盘定时器的交易日（避免重复登记）。
     pub(crate) scheduled_day_close: Option<NaiveDate>,
+    /// 已排程生命周期定时器（pre_open / before_trading）的最晚交易日（避免重复排程；
+    /// 不入存档，续跑时 `run()` 按存档时刻重新排程并跳过已过时刻）。
+    pub(crate) lifecycle_scheduled_for: Option<NaiveDate>,
     /// 公司行动已处理到的日期(含)。开日时处理 (该日期, 当日交易日] 内的全部行动。
     pub(crate) last_corp_action_date: Option<NaiveDate>,
     pub(crate) market_manager: MarketManager,
@@ -477,7 +480,7 @@ impl Engine {
         }
     }
 
-    fn effective_terminal_timestamp_for_timer(timer: &Timer) -> Option<i64> {
+    fn effective_terminal_timestamp_for_timer(&self, timer: &Timer) -> Option<i64> {
         if let Some(source_ts) = timer
             .payload
             .strip_prefix("__framework_cross_section__|")
@@ -486,11 +489,13 @@ impl Engine {
         {
             return Some(source_ts);
         }
-        if timer.payload.starts_with("__framework_boundary__|after|") {
-            return Some(timer.timestamp.saturating_sub(1));
-        }
-        if timer.payload.starts_with("__framework_boundary__|before|") {
-            return None;
+        // 收盘后生命周期事件不是行情：期末时刻仍取当日最后一个行情事件，不在收盘之后
+        // 多补一个权益点/持仓快照。
+        if let Some((crate::model::timer::LIFECYCLE_AFTER_TRADING, _)) = timer.lifecycle() {
+            return Some(
+                self.last_event_ts_in_day
+                    .unwrap_or_else(|| timer.timestamp.saturating_sub(1)),
+            );
         }
         Some(timer.timestamp)
     }
@@ -499,15 +504,131 @@ impl Engine {
         match self.current_event.as_ref() {
             Some(Event::Bar(bar)) => Some(bar.timestamp),
             Some(Event::Tick(tick)) => Some(tick.timestamp),
-            Some(Event::Timer(timer)) => Self::effective_terminal_timestamp_for_timer(timer),
+            Some(Event::Timer(timer)) => self.effective_terminal_timestamp_for_timer(timer),
             _ => self.clock.timestamp(),
         }
     }
 
+    /// 交给策略上下文、风控与撮合的“当前时刻”。生命周期事件取其触发时刻（收盘后
+    /// 事件在收盘之后，其中下的单属于下一交易日）。
     pub(crate) fn context_timestamp(&self) -> i64 {
+        if let Some(Event::Timer(timer)) = self.current_event.as_ref()
+            && timer.is_lifecycle()
+        {
+            return timer.timestamp;
+        }
         self.terminal_result_timestamp()
             .or_else(|| self.clock.timestamp())
             .unwrap_or(0)
+    }
+
+    /// 交易日 `day` 收盘定时器的触发时刻：回测为会话收盘 + 1ns，实盘为收盘 + 宽限。
+    pub(crate) fn close_timer_ts(&mut self, day: NaiveDate) -> PyResult<i64> {
+        self.ensure_session_resolver()?;
+        let end = self
+            .session_resolver
+            .as_ref()
+            .expect("已构造")
+            .session_day_end(day)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(crate::model::timer::day_close_timer_timestamp(
+            end,
+            self.state.feed.is_live(),
+        ))
+    }
+
+    /// 为交易日 `day` 排程盘前（pre_open）与开始交易（before_trading）生命周期定时器，
+    /// 时刻不晚于 `not_before` 的跳过；已为 `day` 或更晚的交易日排程过时不重复。
+    ///
+    /// - `pre_open(D) = max(D 最早时段起点 - 1, 上一交易日收盘定时器 + 1)`
+    /// - `before_trading(D) = max(D 最早连续竞价起点 + 1, pre_open(D) + 1)`；D 没有
+    ///   连续竞价段时不排。
+    ///
+    /// 日历首日的夜盘未展开（缺前一交易日）时最早时段只看锚定当日的时段。
+    pub(crate) fn schedule_lifecycle(&mut self, day: NaiveDate, not_before: i64) -> PyResult<()> {
+        use crate::model::timer::{
+            LIFECYCLE_BEFORE_TRADING, LIFECYCLE_PRE_OPEN, lifecycle_payload,
+        };
+        if self.lifecycle_scheduled_for.is_some_and(|d| d >= day) {
+            return Ok(());
+        }
+        self.ensure_session_resolver()?;
+        let resolver = self.session_resolver.clone().expect("已构造");
+        let err = |e: crate::calendar::trading_calendar::CalendarError| {
+            PyValueError::new_err(e.to_string())
+        };
+        let first = resolver.session_day_first_start(day).map_err(err)?;
+        let prev_close = match resolver.session_calendar_before(day) {
+            Ok(prev) => self.close_timer_ts(prev)?,
+            Err(_) => i64::MIN,
+        };
+        let pre_open = first.saturating_sub(1).max(prev_close.saturating_add(1));
+        let mut planned = vec![(pre_open, LIFECYCLE_PRE_OPEN)];
+        if let Some(cont) = resolver
+            .session_day_first_continuous_start(day)
+            .map_err(err)?
+        {
+            planned.push((
+                cont.saturating_add(1).max(pre_open.saturating_add(1)),
+                LIFECYCLE_BEFORE_TRADING,
+            ));
+        }
+        for (ts, kind) in planned {
+            if ts > not_before {
+                self.timers.push(Timer {
+                    timestamp: ts,
+                    payload: lifecycle_payload(kind, day),
+                });
+            }
+        }
+        self.lifecycle_scheduled_for = Some(day);
+        Ok(())
+    }
+
+    /// 回测：为时刻 `ts` 所属的交易日排程生命周期定时器。`ts` 不在交易日历内时
+    /// 不排（行情事件本身会在数据阶段报出日历错误）。
+    pub(crate) fn schedule_lifecycle_for_event(
+        &mut self,
+        ts: i64,
+        not_before: i64,
+    ) -> PyResult<()> {
+        self.ensure_session_resolver()?;
+        let day = self
+            .session_resolver
+            .as_ref()
+            .expect("已构造")
+            .session_trading_day(ts);
+        match day {
+            Ok(day) => self.schedule_lifecycle(day, not_before),
+            Err(_) => Ok(()),
+        }
+    }
+
+    /// 实盘：会话开始时按墙钟 `now` 排程——当日时刻已过的跳过；当日开始交易
+    /// （before_trading）已过时改排下一交易日。`now` 不在交易日历内时不排并告警。
+    pub(crate) fn schedule_live_lifecycle(&mut self, now: i64) -> PyResult<()> {
+        self.ensure_session_resolver()?;
+        let resolver = self.session_resolver.clone().expect("已构造");
+        let day = match resolver.session_trading_day(now) {
+            Ok(day) => day,
+            Err(e) => {
+                log::warn!(
+                    "实盘当前时刻不在交易日历内（{e}），本次会话不会触发 on_pre_open / on_before_trading；请检查 trading_calendar= 是否覆盖当前日期"
+                );
+                return Ok(());
+            }
+        };
+        self.schedule_lifecycle(day, now)?;
+        let has_before_trading = self.timers.iter().any(|t| {
+            matches!(
+                t.lifecycle(),
+                Some((crate::model::timer::LIFECYCLE_BEFORE_TRADING, d)) if d == day
+            )
+        });
+        if !has_before_trading && let Ok(next) = resolver.next_session_day(day) {
+            self.schedule_lifecycle(next, now)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn execution_policy_core(&self) -> ExecutionPolicyCore {
@@ -2129,5 +2250,137 @@ mod context_sessions_tests {
         );
         // 查询不开日
         assert!(engine.current_trading_day.is_none());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::Engine;
+    use crate::model::Timer;
+    use crate::model::timer::{LIFECYCLE_PRE_OPEN, LIFECYCLE_TIMER_PREFIX};
+    use chrono::NaiveDate;
+
+    fn d(m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2024, m, day).unwrap()
+    }
+
+    /// 上海本地时间 → UTC 纳秒。
+    fn sh(m: u32, day: u32, h: u32, mi: u32) -> i64 {
+        crate::calendar::clock::LocalClock::new(Some("Asia/Shanghai"), 8 * 3600)
+            .from_local(d(m, day).and_hms_opt(h, mi, 0).unwrap())
+    }
+
+    fn lifecycle_timers(engine: &Engine) -> Vec<(i64, String)> {
+        let mut out: Vec<(i64, String)> = engine
+            .timers
+            .iter()
+            .filter(|t| t.is_lifecycle())
+            .map(|t: &Timer| {
+                (
+                    t.timestamp,
+                    t.payload[LIFECYCLE_TIMER_PREFIX.len()..].to_string(),
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn always_open(engine: &mut Engine) {
+        engine.session_config.sessions =
+            Some(vec![("default".to_string(), "ALWAYS_OPEN".to_string())]);
+        engine.session_resolver = None;
+    }
+
+    #[test]
+    fn backtest_stock_schedule_follows_formula_and_dedupes() {
+        let mut engine = Engine::new();
+        engine.schedule_lifecycle(d(1, 3), i64::MIN).unwrap();
+        assert_eq!(
+            lifecycle_timers(&engine),
+            vec![
+                (sh(1, 3, 9, 15) - 1, "pre_open|2024-01-03".to_string()),
+                (sh(1, 3, 9, 30) + 1, "before_trading|2024-01-03".to_string()),
+            ]
+        );
+        // 同一交易日或更早的交易日不重复排程
+        engine.schedule_lifecycle(d(1, 3), i64::MIN).unwrap();
+        engine.schedule_lifecycle(d(1, 2), i64::MIN).unwrap();
+        assert_eq!(lifecycle_timers(&engine).len(), 2);
+        // 不晚于 not_before 的时刻跳过（续跑同日）
+        engine.schedule_lifecycle(d(1, 4), sh(1, 4, 9, 20)).unwrap();
+        let timers = lifecycle_timers(&engine);
+        assert_eq!(timers.len(), 3);
+        assert_eq!(
+            timers[2],
+            (sh(1, 4, 9, 30) + 1, "before_trading|2024-01-04".to_string())
+        );
+    }
+
+    #[test]
+    fn always_open_pre_open_waits_for_previous_close_timer() {
+        // 全天连续：D 的首段起点即 D-1 收盘；盘前取上一交易日收盘定时器 + 1ns
+        let mut backtest = Engine::new();
+        always_open(&mut backtest);
+        backtest.schedule_lifecycle(d(1, 3), i64::MIN).unwrap();
+        let midnight = sh(1, 3, 0, 0);
+        assert_eq!(
+            lifecycle_timers(&backtest),
+            vec![
+                (midnight + 2, "pre_open|2024-01-03".to_string()),
+                (midnight + 3, "before_trading|2024-01-03".to_string()),
+            ]
+        );
+        // 实盘收盘定时器有宽限：盘前在宽限之后
+        let mut live = Engine::new();
+        live.state.feed = crate::data::DataFeed::create_live();
+        always_open(&mut live);
+        live.schedule_lifecycle(d(1, 3), i64::MIN).unwrap();
+        let grace = crate::model::timer::LIVE_DAY_CLOSE_GRACE_NS;
+        assert_eq!(
+            lifecycle_timers(&live),
+            vec![
+                (midnight + grace + 1, "pre_open|2024-01-03".to_string()),
+                (
+                    midnight + grace + 2,
+                    "before_trading|2024-01-03".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn live_session_start_schedules_today_or_next_trading_day() {
+        // 09:20 开始：当日盘前已过，只排当日开始交易
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.schedule_live_lifecycle(sh(1, 2, 9, 20)).unwrap();
+        assert_eq!(
+            lifecycle_timers(&engine),
+            vec![(sh(1, 2, 9, 30) + 1, "before_trading|2024-01-02".to_string())]
+        );
+        // 10:00 开始：当日开始交易已过，改排下一交易日
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.schedule_live_lifecycle(sh(1, 2, 10, 0)).unwrap();
+        assert_eq!(
+            lifecycle_timers(&engine),
+            vec![
+                (sh(1, 3, 9, 15) - 1, "pre_open|2024-01-03".to_string()),
+                (sh(1, 3, 9, 30) + 1, "before_trading|2024-01-03".to_string()),
+            ]
+        );
+        // 周六：属下周一交易日
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.schedule_live_lifecycle(sh(1, 6, 12, 0)).unwrap();
+        let timers = lifecycle_timers(&engine);
+        assert_eq!(
+            timers[0],
+            (
+                sh(1, 8, 9, 15) - 1,
+                format!("{LIFECYCLE_PRE_OPEN}|2024-01-08")
+            )
+        );
     }
 }

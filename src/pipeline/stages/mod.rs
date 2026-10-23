@@ -258,6 +258,26 @@ mod tests {
         });
     }
 
+    /// 驱动数据阶段直到处理下一根 bar(跳过日终结算定时器与结算后发出的收盘后
+    /// 生命周期事件)。
+    fn process_until_bar(
+        processor: &mut DataProcessor,
+        engine: &mut Engine,
+        py: Python<'_>,
+        strategy: &Bound<'_, PyAny>,
+    ) {
+        use crate::pipeline::processor::ProcessorResult;
+        loop {
+            let result = processor.process(engine, py, strategy).unwrap();
+            assert_ne!(result, ProcessorResult::Break, "数据在下一根 bar 之前耗尽");
+            if result == ProcessorResult::Next
+                && matches!(engine.current_event, Some(crate::event::Event::Bar(_)))
+            {
+                return;
+            }
+        }
+    }
+
     #[test]
     fn weekend_corporate_actions_apply_at_next_trading_day_open() {
         pyo3::Python::initialize();
@@ -326,10 +346,8 @@ mod tests {
             );
             assert_eq!(engine.state.portfolio.cash, dec!(0));
 
-            // 跳过周五的日终结算定时器, 直到处理周一的 bar
-            while processor.process(&mut engine, py, &strategy).unwrap()
-                == crate::pipeline::processor::ProcessorResult::Loop
-            {}
+            // 跳过周五的日终结算与生命周期定时器, 直到处理周一的 bar
+            process_until_bar(&mut processor, &mut engine, py, &strategy);
             assert_eq!(
                 engine.current_trading_day,
                 Some(NaiveDate::from_ymd_opt(2024, 1, 8).unwrap())
@@ -473,10 +491,8 @@ mod tests {
             // So when T2 bar comes in, date changes to 2023-01-02.
             // process_date(2023-01-02) is called. Split happens.
 
-            // 跳过前一交易日的日终结算定时器(返回 Loop), 直到处理下一根 bar。
-            while processor.process(&mut engine, py, &strategy).unwrap()
-                == crate::pipeline::processor::ProcessorResult::Loop
-            {}
+            // 跳过前一交易日的日终结算与生命周期定时器, 直到处理下一根 bar。
+            process_until_bar(&mut processor, &mut engine, py, &strategy);
 
             // Verify T2 Split: 100 shares * 2 = 200 shares
             assert_eq!(
@@ -485,10 +501,8 @@ mod tests {
             );
 
             // Process T3 (Dividend)
-            // 跳过前一交易日的日终结算定时器(返回 Loop), 直到处理下一根 bar。
-            while processor.process(&mut engine, py, &strategy).unwrap()
-                == crate::pipeline::processor::ProcessorResult::Loop
-            {}
+            // 跳过前一交易日的日终结算与生命周期定时器, 直到处理下一根 bar。
+            process_until_bar(&mut processor, &mut engine, py, &strategy);
 
             // Verify T3 Dividend: 200 shares * 0.5 = 100 Cash
             assert_eq!(engine.state.portfolio.cash, dec!(100));

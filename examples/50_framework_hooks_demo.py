@@ -6,12 +6,9 @@ class FrameworkHooksDemoStrategy(Strategy):
     """Demonstrate framework-level hooks that wrap bar/timer callbacks."""
 
     def __init__(self) -> None:
-        """Initialize demo state and enable precise day-boundary hooks."""
+        """Initialize demo state."""
         self.submitted_reject_order = False
         self.event_log: list[str] = []
-
-        # Enable boundary timers so day hooks are fired at the exact session edges.
-        self.enable_precise_day_boundary_hooks = True
 
     def on_start(self) -> None:
         """Register the demo symbol and announce strategy startup."""

@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 class StrategyRuntimeConfig:
     """策略运行时行为配置."""
 
-    enable_precise_day_boundary_hooks: bool = False
     portfolio_update_eps: float = 0.0
     error_mode: Literal["raise", "continue", "legacy"] = "raise"
     re_raise_on_error: bool = True
@@ -41,9 +40,6 @@ class StrategyRuntimeConfig:
         if mode not in {"raise", "continue", "legacy"}:
             raise ValueError("error_mode must be one of: raise, continue, legacy")
         self.error_mode = cast(Literal["raise", "continue", "legacy"], mode)
-        self.enable_precise_day_boundary_hooks = bool(
-            self.enable_precise_day_boundary_hooks
-        )
         self.re_raise_on_error = bool(self.re_raise_on_error)
 
 
@@ -56,6 +52,15 @@ RUNTIME_CONFIG_DEFAULTS: Dict[str, Any] = {
 当时的 ``indicator_mode`` 字段, 新增字段时同样的漏项会再次发生。"""
 
 
+REMOVED_PRECISE_BOUNDARY_FIELD = "enable_precise_day_boundary_hooks"
+REMOVED_PRECISE_BOUNDARY_MESSAGE = (
+    "strategy_runtime_config 的 enable_precise_day_boundary_hooks 已删除：交易日钩子"
+    "现在由引擎按交易日生命周期触发（on_pre_open 在首个交易时段前、"
+    "on_before_trading 在连续竞价开始时、on_after_trading 在日终结算后），"
+    "不再需要开关，请删除该配置项"
+)
+
+
 def coerce_strategy_runtime_config(
     value: Union[StrategyRuntimeConfig, Dict[str, Any]],
 ) -> StrategyRuntimeConfig:
@@ -66,12 +71,13 @@ def coerce_strategy_runtime_config(
     """
     if isinstance(value, StrategyRuntimeConfig):
         return StrategyRuntimeConfig(
-            enable_precise_day_boundary_hooks=value.enable_precise_day_boundary_hooks,
             portfolio_update_eps=value.portfolio_update_eps,
             error_mode=value.error_mode,
             re_raise_on_error=value.re_raise_on_error,
         )
     if isinstance(value, dict):
+        if REMOVED_PRECISE_BOUNDARY_FIELD in value:
+            raise ValueError(REMOVED_PRECISE_BOUNDARY_MESSAGE)
         unknown_fields = sorted(set(value.keys()) - RUNTIME_CONFIG_FIELDS)
         if unknown_fields:
             allowed = ", ".join(sorted(RUNTIME_CONFIG_FIELDS))

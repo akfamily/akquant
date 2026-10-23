@@ -83,14 +83,8 @@ from ..strategy import (
     _legacy_init_arg_names as _legacy_init_arg_names_impl,
 )
 from ..strategy_framework_hooks import (
-    collect_boundary_timer_entries as _collect_boundary_timer_entries_impl,
-)
-from ..strategy_framework_hooks import (
     collect_cross_section_timer_entries,
     normalize_dual_stream_declaration,
-)
-from ..strategy_framework_hooks import (
-    collect_pre_open_timer_entries as _collect_pre_open_timer_entries_impl,
 )
 from ..strategy_loader import resolve_strategy_input
 from ..strategy_runtime_config import apply_strategy_runtime_config
@@ -244,52 +238,6 @@ def _build_backtest_log_extra(
         slot=slot,
         symbol=symbol,
     )
-
-
-def _prime_framework_pre_open_timers(
-    strategies: Sequence[Strategy], engine: Any
-) -> None:
-    """Prime global pre-open timers before the event loop starts."""
-    add_timer = getattr(engine, "add_timer", None)
-    if not callable(add_timer):
-        return
-
-    unique_timers: dict[str, int] = {}
-    for current_strategy in strategies:
-        entries = _collect_pre_open_timer_entries_impl(current_strategy)
-        if entries:
-            current_strategy._framework_pre_open_timers_registered = True
-        for timestamp_ns, payload in entries:
-            unique_timers[payload] = int(timestamp_ns)
-
-    for payload, timestamp_ns in sorted(
-        unique_timers.items(),
-        key=lambda item: (int(item[1]), item[0]),
-    ):
-        add_timer(timestamp_ns, payload)
-
-
-def _prime_framework_boundary_timers(
-    strategies: Sequence[Strategy], engine: Any
-) -> None:
-    """Prime global boundary timers before the event loop starts."""
-    add_timer = getattr(engine, "add_timer", None)
-    if not callable(add_timer):
-        return
-
-    unique_timers: dict[str, int] = {}
-    for current_strategy in strategies:
-        entries = _collect_boundary_timer_entries_impl(current_strategy)
-        if entries:
-            current_strategy._framework_boundary_timers_registered = True
-        for timestamp_ns, payload in entries:
-            unique_timers[payload] = int(timestamp_ns)
-
-    for payload, timestamp_ns in sorted(
-        unique_timers.items(),
-        key=lambda item: (int(item[1]), item[0]),
-    ):
-        add_timer(timestamp_ns, payload)
 
 
 def _prime_framework_cross_section_timers(
@@ -1137,61 +1085,89 @@ def _build_session_asset_type_of(
     return asset_type_of
 
 
-def _build_trading_day_metadata(
-    data_map_for_indicators: Dict[str, pd.DataFrame], timezone: str
-) -> Tuple[List[pd.Timestamp], Dict[str, Tuple[int, int]], Dict[str, int]]:
-    """Build sorted trading days, per-day bounds, and rebalance timestamps."""
+def _build_session_trading_days(
+    data_map: Dict[str, pd.DataFrame], resolver: Any, timezone: str
+) -> Tuple[List[pd.Timestamp], Dict[str, int]]:
+    """数据覆盖范围内的日历交易日，以及按交易日的截面时刻.
+
+    交易日取会话日历上首个到最后一个数据交易日之间的全部交易日（本地 0 点的
+    带时区 ``Timestamp``，含区间内无数据的交易日）；每根 bar 按会话交易日归属
+    （交易日 T 覆盖 ``(session_day_end(prev(T)), session_day_end(T)]``，夜盘归下一
+    交易日）。截面时刻为各品种在该交易日首根 bar 的最大时间戳，键为交易日 ISO
+    字符串。指标数据表的索引已带时区；无时区的按 UTC 纳秒解释（与 Bar 时间戳同
+    口径）。不在交易日历内的 bar 不参与。``timezone`` 为交易日列表的时区。
+    """
     frames = {
         str(symbol): df
-        for symbol, df in data_map_for_indicators.items()
+        for symbol, df in data_map.items()
         if not df.empty and isinstance(df.index, pd.DatetimeIndex)
     }
     if not frames:
-        return [], {}, {}
+        return [], {}
 
     big_index = pd.concat(frames, names=["symbol"]).index
-    dates = cast(pd.DatetimeIndex, big_index.get_level_values(-1))
-    if dates.tz is None:
-        dates = dates.tz_localize("UTC")
-    local_index = dates.tz_convert(timezone)
-    normalized_index = cast(pd.DatetimeIndex, local_index.normalize())
-
-    # pandas datetime64 may use a non-nanosecond unit (e.g. us from polars);
-    # normalize to ns so integer values match Timestamp.value semantics.
+    stamps = cast(pd.DatetimeIndex, big_index.get_level_values(-1))
+    if stamps.tz is None:
+        stamps = stamps.tz_localize("UTC")
+    # pandas datetime64 可能不是纳秒精度（如来自 polars 的 us），统一到 ns 再取整数。
     utc_index = cast(
-        pd.DatetimeIndex, local_index.tz_convert("UTC").astype("datetime64[ns, UTC]")
+        pd.DatetimeIndex, stamps.tz_convert("UTC").astype("datetime64[ns, UTC]")
     )
-    ns = pd.Series(utc_index, copy=False).astype("int64").to_numpy()
-    symbols = big_index.get_level_values(0).astype(str)
+    valid = ~np.asarray(utc_index.isna(), dtype=bool)
+    ns = pd.Series(utc_index[valid], copy=False).astype("int64").to_numpy()
+    symbols = big_index.get_level_values(0).astype(str)[valid]
+    if len(ns) == 0:
+        return [], {}
 
-    base = pd.DataFrame({"day": normalized_index, "sym": symbols, "ns": ns})
-    # Drop NaT-indexed rows before aggregating: `asi8` maps NaT to int64's
-    # sentinel min, which the vectorized path would otherwise fold into a
-    # day's min/max across *all* symbols (the per-symbol loop only tainted
-    # that symbol's own NaT bucket). Dropping keeps a stray NaT bar from
-    # silently corrupting every symbol's bounds on that slice.
-    if normalized_index.hasnans:
-        base = base[base["day"].notna()]
-        if base.empty:
-            return [], {}, {}
+    order = np.argsort(ns, kind="stable")
+    ns = ns[order]
+    symbols = symbols[order]
 
-    all_dates = sorted(set(base["day"].unique()))
+    def _trading_day(ts: int) -> Optional[dt_module.date]:
+        try:
+            return cast(dt_module.date, resolver.session_trading_day(int(ts)))
+        except ValueError:
+            return None
 
-    bounds = base.groupby("day", sort=False)["ns"].agg(["min", "max"])
-    day_bounds: Dict[str, Tuple[int, int]] = {
-        pd.Timestamp(day_ts).date().isoformat(): (int(start_ns), int(end_ns))
-        for day_ts, start_ns, end_ns in bounds.itertuples()
+    # 首尾可解析的 bar（交易日历未覆盖的 bar 不参与）。
+    lo = 0
+    first_day = _trading_day(int(ns[0]))
+    while first_day is None:
+        # 跳到下一个本地日期的首根 bar 再试，避免逐根重试。
+        next_idx = int(np.searchsorted(ns, int(ns[lo]) + 86_400_000_000_000))
+        if next_idx >= len(ns):
+            return [], {}
+        lo = next_idx
+        first_day = _trading_day(int(ns[lo]))
+    hi = len(ns) - 1
+    while hi > lo and _trading_day(int(ns[hi])) is None:
+        prev_idx = int(np.searchsorted(ns, int(ns[hi]) - 86_400_000_000_000)) - 1
+        hi = max(prev_idx, lo)
+    ns = ns[lo : hi + 1]
+    symbols = symbols[lo : hi + 1]
+
+    days: List[dt_module.date] = [first_day]
+    ends: List[int] = [int(resolver.session_day_end(first_day))]
+    last_ns = int(ns[-1])
+    while ends[-1] < last_ns:
+        try:
+            nxt = cast(dt_module.date, resolver.next_session_day(days[-1]))
+            end = int(resolver.session_day_end(nxt))
+        except ValueError:
+            break
+        days.append(nxt)
+        ends.append(end)
+
+    day_idx = np.searchsorted(np.asarray(ends, dtype=np.int64), ns, side="left")
+    keep = day_idx < len(days)
+    base = pd.DataFrame({"day": day_idx[keep], "sym": symbols[keep], "ns": ns[keep]})
+    cross = base.groupby(["day", "sym"], sort=False)["ns"].min().groupby("day").max()
+    cross_section: Dict[str, int] = {
+        days[int(k)].isoformat(): int(v)
+        for k, v in zip(cross.index.tolist(), cross.tolist())
     }
-
-    rebalance = (
-        base.groupby(["day", "sym"], sort=False)["ns"].min().groupby("day").max()
-    )
-    day_rebalance_timestamps: Dict[str, int] = {
-        cast(pd.Timestamp, day_ts).date().isoformat(): int(v)
-        for day_ts, v in rebalance.items()
-    }
-
-    return all_dates, day_bounds, day_rebalance_timestamps
+    trading_days = [pd.Timestamp(day).tz_localize(timezone) for day in days]
+    return trading_days, cross_section
 
 
 if TYPE_CHECKING:
@@ -4447,15 +4423,14 @@ def run_backtest(
     if data_map_for_indicators:
         (
             all_dates,
-            day_bounds,
             day_cross_section_timestamps,
-        ) = _build_trading_day_metadata(data_map_for_indicators, timezone)
+        ) = _build_session_trading_days(
+            data_map_for_indicators, session_resolver, timezone
+        )
 
         for current_strategy in all_strategy_instances:
             if hasattr(current_strategy, "_trading_days") and all_dates:
                 current_strategy._trading_days = all_dates
-            if hasattr(current_strategy, "_trading_day_bounds"):
-                current_strategy._trading_day_bounds = day_bounds
             if hasattr(current_strategy, "_trading_day_cross_section_timestamps"):
                 current_strategy._trading_day_cross_section_timestamps = (
                     day_cross_section_timestamps
@@ -4466,9 +4441,7 @@ def run_backtest(
     cast(Any, engine).active_start_time_ns = active_start_time_ns
     for current_strategy in all_strategy_instances:
         setattr(current_strategy, "_engine", engine)
-    _prime_framework_boundary_timers(all_strategy_instances, engine)
     _prime_framework_cross_section_timers(all_strategy_instances, engine)
-    _prime_framework_pre_open_timers(all_strategy_instances, engine)
     if analyzer_manager.plugins:
         try:
             analyzer_manager.on_start(
@@ -6589,15 +6562,14 @@ def run_from_checkpoint(
     if data_map_for_indicators:
         (
             all_dates,
-            day_bounds,
             day_cross_section_timestamps,
-        ) = _build_trading_day_metadata(data_map_for_indicators, timezone_name)
+        ) = _build_session_trading_days(
+            data_map_for_indicators, session_resolver, timezone_name
+        )
 
         for current_strategy in all_strategy_instances:
             if all_dates and hasattr(current_strategy, "_trading_days"):
                 current_strategy._trading_days = all_dates
-            if hasattr(current_strategy, "_trading_day_bounds"):
-                current_strategy._trading_day_bounds = day_bounds
             if hasattr(current_strategy, "_trading_day_cross_section_timestamps"):
                 current_strategy._trading_day_cross_section_timestamps = (
                     day_cross_section_timestamps
@@ -7211,9 +7183,7 @@ def run_from_checkpoint(
             stream_error_mode,
             stream_mode,
         )
-    _prime_framework_boundary_timers(all_strategy_instances, engine)
     _prime_framework_cross_section_timers(all_strategy_instances, engine)
-    _prime_framework_pre_open_timers(all_strategy_instances, engine)
 
     # symbols 白名单下发给策略实例(供 subscribe() 校验用): 必须在 on_start 之前,
     # 这样 on_start 里的 subscribe 才会被挡住。与下面(on_start 之后)的

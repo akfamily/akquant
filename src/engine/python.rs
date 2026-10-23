@@ -546,6 +546,7 @@ impl Engine {
             last_settled_trading_day: None,
             last_event_ts_in_day: None,
             scheduled_day_close: None,
+            lifecycle_scheduled_for: None,
             last_corp_action_date: None,
             market_manager: MarketManager::new(),
             corporate_action_manager: CorporateActionManager::new(),
@@ -767,6 +768,7 @@ impl Engine {
         self.session_config = snapshot.session_config;
         self.current_day_span = None;
         self.scheduled_day_close = None;
+        self.lifecycle_scheduled_for = None;
         // 当日最后一个已处理行情事件的时间：续跑后的首个事件若开新交易日，上一日结算的
         // Day 单过期豁免（NextOpen 单是否建于最后一个事件）依赖它，置空会让
         // 存档前的 Day 单一律被豁免而在新的一天成交。旧存档无此字段，退回 current_time。
@@ -1435,6 +1437,20 @@ impl Engine {
         unregistered.sort_by_key(|o| o.created_at);
         for order in unregistered {
             self.execution_model.on_order(order);
+        }
+
+        // 交易日生命周期（on_pre_open / on_before_trading）排程。回测：首个行情事件
+        // （有预热窗口时取不早于正式开始时刻）所属交易日，此后每个交易日结算后按下一个
+        // 行情事件串联；续跑时存档时刻及之前的已触发过，跳过。实盘：按墙钟排当日
+        // （或下一交易日），此后每次 before_trading 触发时排下一交易日。
+        if self.state.feed.is_live() {
+            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            self.schedule_live_lifecycle(now)?;
+        } else if let Some(first_ts) = self.state.feed.peek_timestamp() {
+            let anchor = self
+                .active_start_time_ns
+                .map_or(first_ts, |start| first_ts.max(start));
+            self.schedule_lifecycle_for_event(anchor, self.snapshot_time)?;
         }
 
         // Configure history buffer if strategy has _history_depth set

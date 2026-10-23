@@ -1,10 +1,10 @@
+import datetime as dt
 from collections import deque
 from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import pandas as pd
 
-from .akquant import TradingSession
 from .log import get_logger
 from .strategy_runtime_config import RUNTIME_CONFIG_DEFAULTS
 
@@ -64,62 +64,6 @@ def _runtime_option(strategy: Any, name: str) -> Any:
     return value
 
 
-def _use_precise_day_boundary_hooks(strategy: Any) -> bool:
-    """Return whether precise boundary timers should own daily hook dispatch."""
-    if not bool(_runtime_option(strategy, "enable_precise_day_boundary_hooks")):
-        return False
-    bounds = getattr(strategy, "_trading_day_bounds", None)
-    return bool(bounds)
-
-
-def _default_after_boundary_timer_active(strategy: Any) -> bool:
-    """Whether the day-end boundary timer for on_after_trading runs by default.
-
-    on_after_trading is a day-end hook. In the default (lazy) dispatch mode it is
-    flushed only once the next day's bar arrives, so the engine clock has already
-    advanced to T+1 and any order submitted inside it is stamped with a T+1
-    created_at; the next-open fill guard then pushes the fill to T+2 (issue #324).
-    Scheduling the day-end timer (fired at T's session close, created_at still in
-    T) makes those orders fill on T+1 as intended. Only needed when the strategy
-    actually overrides on_after_trading, and independent of the precise-boundary
-    opt-in. The _framework_after_trading_done_date guard dedupes against the lazy
-    path.
-    """
-    if not _strategy_overrides_callback(strategy, "on_after_trading"):
-        return False
-    return bool(getattr(strategy, "_trading_day_bounds", None))
-
-
-def _is_normal_session(session: Any) -> bool:
-    normal = getattr(TradingSession, "Normal", None)
-    continuous = getattr(TradingSession, "Continuous", None)
-    text = str(session).lower()
-    if (
-        text == "normal"
-        or text.endswith(".normal")
-        or text == "continuous"
-        or text.endswith(".continuous")
-    ):
-        return True
-    if normal is not None or continuous is not None:
-        return bool(session == normal or session == continuous)
-    return False
-
-
-def _is_closed_session(session: Any) -> bool:
-    """闭市或盘后（惰性日终钩子的触发条件；竞价、午休不算收盘）."""
-    text = str(session).lower()
-    return text.endswith("closed") or text.endswith("postclose")
-
-
-def _is_pre_open_session(session: Any) -> bool:
-    pre_open = getattr(TradingSession, "PreOpen", None)
-    if pre_open is not None:
-        return bool(session == pre_open)
-    text = str(session).lower()
-    return text == "preopen" or text.endswith(".preopen")
-
-
 def _functional_wrapper_method(cls: type, callback_name: str) -> Any:
     """取函数式包装器自身定义的该回调转发方法, 非函数式策略返回 None.
 
@@ -138,11 +82,11 @@ def _strategy_overrides_callback(strategy: Any, callback_name: str) -> bool:
     比较对象必须是 MRO 中**最基础**的那个定义, 即框架基类 ``Strategy`` 上的
     默认实现。若改为比较"MRO 中第一个定义该方法的基类", 用户把钩子写在一层
     公共基类里、具体策略只继承时会拿用户基类跟自己比, 得到 False, 钩子被
-    dispatch_time_hooks / collect_pre_open_timer_entries 整段跳过而静默失效。
+    dispatch_lifecycle_timer 等跳过而静默失效。
 
     函数式策略是例外: ``FunctionalStrategy`` 在类体里无条件定义了全部回调转发
     方法(未提供时空转), 按类比较恒为 True, 快路径整体失效——引擎会为每根 Bar
-    分发无人消费的 pre_open / cross_section / time-hooks / portfolio-update。
+    分发无人消费的 pre_open / cross_section / 交易日钩子 / portfolio-update。
     因此当该方法正是包装器自身那份时, 改看用户是否真的提供了对应回调函数;
     子类若二次重写, method 不再是包装器那份, 仍走下面的通用比较。
     """
@@ -159,30 +103,6 @@ def _strategy_overrides_callback(strategy: Any, callback_name: str) -> bool:
         if base_method is not None:
             return method is not base_method
     return False
-
-
-# dispatch_time_hooks 可能触发的全部用户回调. 一个都没重写时整段可跳过.
-_TIME_HOOK_CALLBACKS = (
-    "on_before_trading",
-    "on_after_trading",
-)
-
-
-def _needs_time_hooks(strategy: Any) -> bool:
-    """策略是否重写了任一会话/交易日钩子(按类判定, 结果缓存).
-
-    未重写则 dispatch_time_hooks 不会触发任何回调, 其内部维护的 session/date
-    状态也无人在本模块外读取, 因此整段可安全跳过——省掉逐 bar 的 pandas 时间
-    转换与大量 getattr.
-    """
-    cached = getattr(strategy, "_framework_needs_time_hooks", None)
-    if cached is None:
-        cached = any(
-            _strategy_overrides_callback(strategy, name)
-            for name in _TIME_HOOK_CALLBACKS
-        )
-        strategy._framework_needs_time_hooks = cached
-    return cached
 
 
 def _needs_portfolio_update(strategy: Any) -> bool:
@@ -215,62 +135,6 @@ def _build_pre_open_event(
         "expected_open_at": source_timestamp,
         "market": "default",
     }
-
-
-def collect_pre_open_timer_entries(strategy: Any) -> List[Tuple[int, str]]:
-    """Collect global framework pre-open timers for all trading days."""
-    if not _strategy_overrides_callback(strategy, "on_pre_open"):
-        return []
-
-    bounds = getattr(strategy, "_trading_day_bounds", None)
-    if not bounds:
-        return []
-
-    entries: List[Tuple[int, str]] = []
-    for day_key, day_bounds in bounds.items():
-        if not isinstance(day_bounds, (list, tuple)) or len(day_bounds) != 2:
-            continue
-        start_ns = int(day_bounds[0])
-        if start_ns <= 0:
-            continue
-        # Fire the pre-open timer strictly before the day's first bar so an order
-        # submitted in on_pre_open has created_at < that bar and fills on this
-        # day's open (the "decide before open, fill on this open" contract),
-        # rather than one bar late (#324). The payload keeps start_ns as the
-        # expected_open_at / history-cutoff source timestamp.
-        trigger_ns = start_ns - 1
-        entries.append((trigger_ns, f"__framework_pre_open__|{day_key}|{start_ns}"))
-    return entries
-
-
-def collect_boundary_timer_entries(strategy: Any) -> List[Tuple[int, str]]:
-    """Collect global framework boundary timers for all trading days.
-
-    "before" timers are scheduled only in precise mode. "after" timers are also
-    scheduled in the default mode when the strategy overrides on_after_trading,
-    so orders placed at day-end fill on the next trading day instead of one day
-    late (issue #324).
-    """
-    precise = _use_precise_day_boundary_hooks(strategy)
-    want_after = precise or _default_after_boundary_timer_active(strategy)
-    if not want_after:
-        return []
-
-    bounds = getattr(strategy, "_trading_day_bounds", None)
-    if not bounds:
-        return []
-
-    entries: List[Tuple[int, str]] = []
-    for day_key, day_bounds in bounds.items():
-        if not isinstance(day_bounds, (list, tuple)) or len(day_bounds) != 2:
-            continue
-        start_ns = int(day_bounds[0])
-        end_ns = int(day_bounds[1])
-        if precise and start_ns > 0:
-            entries.append((start_ns, f"__framework_boundary__|before|{day_key}"))
-        if want_after and end_ns > 0:
-            entries.append((end_ns + 1, f"__framework_boundary__|after|{day_key}"))
-    return entries
 
 
 def collect_cross_section_timer_entries(
@@ -442,158 +306,6 @@ def call_window_bar_callback(strategy: Any, callback: Any, bar: Any) -> Any:
         strategy._framework_current_callback = previous_callback
 
 
-def dispatch_time_hooks(strategy: Any) -> None:
-    """分发会话与交易日相关钩子."""
-    if strategy.ctx is None:
-        return
-
-    # 性能: 策略未重写任何会话/交易日钩子时, 本函数不会触发回调, 直接跳过.
-    if not _needs_time_hooks(strategy):
-        return
-
-    current_time = int(getattr(strategy.ctx, "current_time", 0))
-    if current_time <= 0:
-        return
-
-    # 性能: 逐 bar 的 pd.to_datetime(标量) 极慢(占回测总耗时约三成).
-    # 本地交易日在同一天内不变, 按 [当日 00:00, 次日 00:00) 的 ns 窗口缓存,
-    # 仅跨日时才走一次 pandas 转换. 语义与逐 bar 转换完全一致.
-    cache_lo = getattr(strategy, "_framework_local_date_lo_ns", None)
-    cache_hi = getattr(strategy, "_framework_local_date_hi_ns", None)
-    if (
-        cache_lo is not None
-        and cache_hi is not None
-        and cache_lo <= current_time < cache_hi
-    ):
-        current_date = strategy._framework_local_date_cache
-    else:
-        ts = pd.to_datetime(current_time, unit="ns", utc=True).tz_convert(
-            strategy.timezone
-        )
-        current_date = ts.date()
-        day_start = ts.normalize()
-        lo_ns = day_start.value
-        hi_ns = (day_start + pd.Timedelta(hours=24)).normalize().value
-        strategy._framework_local_date_cache = current_date
-        strategy._framework_local_date_lo_ns = lo_ns
-        # DST "回拨" 的 25h 日 hi<=lo, 令窗口为空以强制逐 bar 重算(仍正确).
-        strategy._framework_local_date_hi_ns = hi_ns if hi_ns > lo_ns else lo_ns
-    current_session = getattr(strategy.ctx, "session", None)
-    use_precise_boundaries = _use_precise_day_boundary_hooks(strategy)
-
-    last_date = getattr(strategy, "_framework_last_local_date", None)
-    before_done_date = getattr(strategy, "_framework_before_trading_done_date", None)
-    after_done_date = getattr(strategy, "_framework_after_trading_done_date", None)
-
-    if (
-        not use_precise_boundaries
-        and last_date is not None
-        and current_date != last_date
-        and before_done_date == last_date
-        and after_done_date != last_date
-    ):
-        call_user_callback(
-            strategy,
-            "on_after_trading",
-            last_date,
-            current_time,
-            payload={"trading_date": last_date, "timestamp": current_time},
-        )
-        strategy._framework_after_trading_done_date = last_date
-
-    if (
-        not use_precise_boundaries
-        and _is_normal_session(current_session)
-        and getattr(strategy, "_framework_before_trading_done_date", None)
-        != current_date
-    ):
-        _run_in_framework_phase(
-            strategy,
-            "before_trading",
-            current_time,
-            "on_before_trading",
-            current_date,
-            current_time,
-            payload={"trading_date": current_date, "timestamp": current_time},
-        )
-        strategy._framework_before_trading_done_date = current_date
-
-    if (
-        not use_precise_boundaries
-        and _is_closed_session(current_session)
-        and getattr(strategy, "_framework_before_trading_done_date", None)
-        == current_date
-        and getattr(strategy, "_framework_after_trading_done_date", None)
-        != current_date
-    ):
-        call_user_callback(
-            strategy,
-            "on_after_trading",
-            current_date,
-            current_time,
-            payload={"trading_date": current_date, "timestamp": current_time},
-        )
-        strategy._framework_after_trading_done_date = current_date
-
-    strategy._framework_last_local_date = current_date
-
-
-def register_pre_open_timers(strategy: Any) -> None:
-    """为实现 on_pre_open 的策略注册交易日开盘前框架定时器."""
-    if getattr(strategy, "_framework_pre_open_timers_registered", False):
-        return
-    if not _strategy_overrides_callback(strategy, "on_pre_open"):
-        strategy._framework_pre_open_timers_registered = True
-        return
-    if strategy.ctx is None:
-        return
-
-    entries = collect_pre_open_timer_entries(strategy)
-    if not entries:
-        # 实盘: pre-open 定时器依赖逐交易日的 _trading_day_bounds, 而该字段只由
-        # 回测引擎填充, 实盘恒为空 ⇒ on_pre_open 永不触发。此处必须告警并停止
-        # 重试: 否则每根 bar/tick 都会重跑一次注册并再次失败(既无声又白做功)。
-        # 回测下 bounds 可能只是"还没填", 保持原样按 bar 重试(不告警, 避免误报)。
-        if getattr(strategy, "_live_market_data_owner", False):
-            logger.warning(
-                "实盘下 on_pre_open 不会触发: 该回调依赖回测交易日历推导的盘前"
-                "时点, 实盘无此数据源。请改用 schedule_daily(...) 在盘前时点"
-                "触发 on_timer, 或把盘前逻辑放到 on_before_trading 中"
-            )
-            strategy._framework_pre_open_timers_registered = True
-        return
-
-    current_time = int(getattr(strategy.ctx, "current_time", 0))
-    for start_ns, payload in entries:
-        if current_time > 0 and start_ns <= current_time:
-            continue
-        strategy.ctx.schedule(start_ns, payload)
-
-    strategy._framework_pre_open_timers_registered = True
-
-
-def register_boundary_timers(strategy: Any) -> None:
-    """注册交易日边界定时器，用于触发 on_before/on_after_trading.
-
-    precise 模式注册 before+after 边界定时器;默认模式在策略重写 on_after_trading
-    时也注册 after 边界定时器(修复 #324)。
-    """
-    if strategy.ctx is None:
-        return
-    if not (
-        _use_precise_day_boundary_hooks(strategy)
-        or _default_after_boundary_timer_active(strategy)
-    ):
-        return
-    if getattr(strategy, "_framework_boundary_timers_registered", False):
-        return
-
-    for trigger_ts, payload in collect_boundary_timer_entries(strategy):
-        strategy.ctx.schedule(trigger_ts, payload)
-
-    strategy._framework_boundary_timers_registered = True
-
-
 def register_cross_section_timers(strategy: Any) -> None:
     """注册框架级 after-bar 调仓定时器，在完整时间片结束后触发."""
     if strategy.ctx is None:
@@ -615,94 +327,65 @@ def register_cross_section_timers(strategy: Any) -> None:
     strategy._framework_cross_section_timers_registered = True
 
 
-def dispatch_boundary_timer(strategy: Any, payload: str) -> bool:
-    """处理框架级边界定时器，返回是否已消费该 payload.
+#: 引擎生成的交易日生命周期事件 payload 前缀（与 Rust ``LIFECYCLE_TIMER_PREFIX`` 一致）.
+_LIFECYCLE_PREFIX = "__akq_lifecycle__|"
 
-    "after" 相位在默认与 precise 模式下都派发(修复 #324);"before" 相位仅在
-    precise 模式下派发(默认模式不注册 before 边界定时器)。
+
+def is_lifecycle_payload(payload: str) -> bool:
+    """定时器 payload 是否为引擎生成的交易日生命周期事件."""
+    return payload.startswith(_LIFECYCLE_PREFIX)
+
+
+def dispatch_lifecycle_timer(strategy: Any, payload: str) -> bool:
+    """处理引擎生成的交易日生命周期事件，返回是否已消费该 payload.
+
+    payload 形如 ``__akq_lifecycle__|<kind>|<YYYY-MM-DD>``，kind 为
+    ``pre_open`` / ``before_trading`` / ``after_trading``。每个钩子每个交易日
+    最多触发一次（按交易日去重）；未重写的钩子不调用。
     """
-    if strategy.ctx is None:
+    if not is_lifecycle_payload(payload):
         return False
-    if not payload.startswith("__framework_boundary__|"):
-        return False
-
-    parts = payload.split("|", 2)
-    if len(parts) != 3:
+    parts = payload[len(_LIFECYCLE_PREFIX) :].split("|")
+    if len(parts) != 2:
         return True
-
-    _, phase, day_text = parts
+    kind, day_text = parts
     try:
-        day = pd.Timestamp(day_text).date()
-    except Exception:
+        day = dt.date.fromisoformat(day_text)
+    except ValueError:
         return True
-
-    precise = bool(_runtime_option(strategy, "enable_precise_day_boundary_hooks"))
-    current_time = int(getattr(strategy.ctx, "current_time", 0))
-    if phase == "before":
-        if not precise:
-            return True
+    ts = int(getattr(strategy.ctx, "current_time", 0))
+    if kind == "pre_open":
+        if getattr(strategy, "_framework_pre_open_done_date", None) != day:
+            strategy._framework_pre_open_done_date = day
+            if _strategy_overrides_callback(strategy, "on_pre_open"):
+                event = _build_pre_open_event(strategy, day, ts)
+                _run_in_framework_phase(
+                    strategy, "pre_open", ts, "on_pre_open", event, payload=event
+                )
+    elif kind == "before_trading":
         if getattr(strategy, "_framework_before_trading_done_date", None) != day:
-            _run_in_framework_phase(
-                strategy,
-                "before_trading",
-                current_time,
-                "on_before_trading",
-                day,
-                current_time,
-                payload={"trading_date": day, "timestamp": current_time},
-            )
             strategy._framework_before_trading_done_date = day
-        return True
-
-    if phase == "after":
+            if _strategy_overrides_callback(strategy, "on_before_trading"):
+                _run_in_framework_phase(
+                    strategy,
+                    "before_trading",
+                    ts,
+                    "on_before_trading",
+                    day,
+                    ts,
+                    payload={"trading_date": day, "timestamp": ts},
+                )
+    elif kind == "after_trading":
         if getattr(strategy, "_framework_after_trading_done_date", None) != day:
-            call_user_callback(
-                strategy,
-                "on_after_trading",
-                day,
-                current_time,
-                payload={"trading_date": day, "timestamp": current_time},
-            )
             strategy._framework_after_trading_done_date = day
-        return True
-
-    return True
-
-
-def dispatch_pre_open_timer(strategy: Any, payload: str) -> bool:
-    """处理框架级 pre-open 定时器，返回是否已消费该 payload."""
-    if not payload.startswith("__framework_pre_open__|"):
-        return False
-
-    parts = payload.split("|", 2)
-    if len(parts) != 3:
-        return True
-
-    trading_date_text = parts[1]
-    trading_date: Any = trading_date_text
-    try:
-        trading_date = pd.to_datetime(trading_date_text).date()
-    except Exception:
-        pass
-    try:
-        source_timestamp = int(parts[2])
-    except Exception:
-        source_timestamp = int(getattr(strategy.ctx, "current_time", 0))
-
-    done_date = getattr(strategy, "_framework_pre_open_done_date", None)
-    if done_date == trading_date:
-        return True
-
-    event = _build_pre_open_event(strategy, trading_date, source_timestamp)
-    _run_in_framework_phase(
-        strategy,
-        "pre_open",
-        source_timestamp,
-        "on_pre_open",
-        event,
-        payload=event,
-    )
-    strategy._framework_pre_open_done_date = trading_date
+            if _strategy_overrides_callback(strategy, "on_after_trading"):
+                call_user_callback(
+                    strategy,
+                    "on_after_trading",
+                    day,
+                    ts,
+                    payload={"trading_date": day, "timestamp": ts},
+                )
     return True
 
 
@@ -831,29 +514,6 @@ def dispatch_portfolio_update(strategy: Any) -> None:
         strategy._framework_use_previous_account_snapshot = callback_override
 
 
-def dispatch_shutdown_hooks(strategy: Any) -> None:
-    """在停止阶段补发未完成的会话/交易日钩子."""
-    if strategy.ctx is None:
-        return
-    if getattr(strategy, "_framework_stop_flushed", False):
-        return
-
-    current_time = int(getattr(strategy.ctx, "current_time", 0))
-    before_done_date = getattr(strategy, "_framework_before_trading_done_date", None)
-    after_done_date = getattr(strategy, "_framework_after_trading_done_date", None)
-    if before_done_date is not None and after_done_date != before_done_date:
-        call_user_callback(
-            strategy,
-            "on_after_trading",
-            before_done_date,
-            current_time,
-            payload={"trading_date": before_done_date, "timestamp": current_time},
-        )
-        strategy._framework_after_trading_done_date = before_done_date
-
-    strategy._framework_stop_flushed = True
-
-
 def ensure_framework_state(strategy: Any) -> None:
     """确保框架级钩子状态字段存在."""
     # 性能: 本函数幂等且每 bar 被调用多次, 首次初始化后直接短路,
@@ -861,8 +521,6 @@ def ensure_framework_state(strategy: Any) -> None:
     # 此标志, 强制重新初始化被重置的字段.
     if getattr(strategy, "_framework_state_ready", False):
         return
-    if not hasattr(strategy, "_framework_last_local_date"):
-        strategy._framework_last_local_date = None
     if not hasattr(strategy, "_framework_before_trading_done_date"):
         strategy._framework_before_trading_done_date = None
     if not hasattr(strategy, "_framework_cross_section_done_date"):
@@ -871,8 +529,6 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._framework_after_trading_done_date = None
     if not hasattr(strategy, "_framework_pre_open_done_date"):
         strategy._framework_pre_open_done_date = None
-    if not hasattr(strategy, "_framework_pre_open_timers_registered"):
-        strategy._framework_pre_open_timers_registered = False
     if not hasattr(strategy, "_framework_in_pre_open_phase"):
         strategy._framework_in_pre_open_phase = False
     if not hasattr(strategy, "_framework_phase"):
@@ -904,14 +560,8 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._framework_order_event_key_order = deque()
     if not hasattr(strategy, "_framework_expiry_event_keys"):
         strategy._framework_expiry_event_keys = set()
-    if not hasattr(strategy, "_framework_stop_flushed"):
-        strategy._framework_stop_flushed = False
     if not hasattr(strategy, "_framework_live_stop_dispatched"):
         strategy._framework_live_stop_dispatched = False
-    if not hasattr(strategy, "_framework_boundary_timers_registered"):
-        strategy._framework_boundary_timers_registered = False
-    if not hasattr(strategy, "_trading_day_bounds"):
-        strategy._trading_day_bounds = {}
     if not hasattr(strategy, "_trading_day_cross_section_timestamps"):
         strategy._trading_day_cross_section_timestamps = {}
     if not hasattr(strategy, "_framework_cross_section_timers_registered"):
