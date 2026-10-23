@@ -2881,6 +2881,7 @@ class StrategyContext:
     trading_day: typing.Optional[datetime.date]
     recent_trades: list[Trade]
     recent_expired_orders: list[Order]
+    recent_finalized_orders: list[Order]
     recent_expiry_events: list[ExpiryEvent]
     risk_config: RiskConfig
     strategy_id: typing.Optional[str]

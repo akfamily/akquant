@@ -1177,6 +1177,11 @@ impl Engine {
                         .order_manager
                         .current_step_expired_orders
                         .clone(),
+                    recent_finalized_orders: self
+                        .state
+                        .order_manager
+                        .current_step_finalized_orders
+                        .clone(),
                     recent_expiry_events: self.recent_expiry_events.clone(),
                     account_equity: account_metrics.equity.to_f64().unwrap_or_default(),
                     account_market_value: account_metrics.market_value.to_f64().unwrap_or_default(),
@@ -1570,6 +1575,11 @@ impl Engine {
             recent_trades: step_trades,
             recent_rejected_orders: step_rejected_orders,
             recent_expired_orders: self.state.order_manager.current_step_expired_orders.clone(),
+            recent_finalized_orders: self
+                .state
+                .order_manager
+                .current_step_finalized_orders
+                .clone(),
             recent_expiry_events: self.recent_expiry_events.clone(),
             history_buffer: Some(self.history_buffer.clone()),
             window_aggregator: Some(self.window_aggregator.clone()),
@@ -2204,6 +2214,11 @@ impl Engine {
                 .order_manager
                 .current_step_expired_orders
                 .is_empty()
+            && self
+                .state
+                .order_manager
+                .current_step_finalized_orders
+                .is_empty()
         {
             return Ok(());
         }
@@ -2252,6 +2267,10 @@ impl Engine {
             .current_step_rejected_orders
             .clear();
         self.state.order_manager.current_step_expired_orders.clear();
+        self.state
+            .order_manager
+            .current_step_finalized_orders
+            .clear();
         Ok(())
     }
 

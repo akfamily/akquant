@@ -68,6 +68,13 @@ Checks:
 - multiple `owner_strategy_id` values appear
 - per-strategy order counts are expected
 
+Callback routing (all slots share one account; matching, risk and cash are not split per slot, only who receives callbacks follows ownership):
+
+- User timers (`schedule` / `schedule_daily` etc.) go only to the slot that registered them.
+- Order and trade callbacks (`on_order` / `on_trade` / `on_reject`, including cancels, expiries and bracket/OCO child orders) go only to the slot named by the order's `owner_strategy_id`; if another slot cancels your order, the `Cancelled` callback still goes to you.
+- Trading-day lifecycle hooks (`on_pre_open` / `on_before_trading` / `on_after_trading` etc.) and `on_expiry` go to all slots: expiry settlement concerns positions of the shared account, not a single strategy.
+- Orders without an `owner_strategy_id` (e.g. orders created on the broker side in live trading) go only to the default slot (the main strategy named by `strategy_id`).
+
 ### 4.3 Add Strategy-Level Risk Actions
 
 ```python

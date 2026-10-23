@@ -69,7 +69,7 @@ pub(crate) fn timer_target_slot(engine: &mut Engine, event: &Event) -> Option<us
         .unwrap_or(0);
     if engine.warned_orphan_timer_owners.insert(owner.to_string()) {
         log::warn!(
-            "定时器 {:?} 的所属策略 {:?} 不在任何策略槽位中, 已改派给默认槽位;              请确认该策略 id 已通过 strategies_by_slot 登记",
+            "定时器 {:?} 的所属策略 {:?} 不在任何策略槽位中, 已改派给默认槽位; 请确认该策略 id 已通过 strategies_by_slot 登记",
             timer.payload,
             owner
         );
@@ -189,6 +189,11 @@ impl Processor for StrategyProcessor {
                 .state
                 .order_manager
                 .current_step_expired_orders
+                .clear();
+            engine
+                .state
+                .order_manager
+                .current_step_finalized_orders
                 .clear();
         }
         Ok(ProcessorResult::Next)

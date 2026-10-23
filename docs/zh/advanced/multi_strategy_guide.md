@@ -79,6 +79,13 @@ config = BacktestConfig(
 - `owner_strategy_id` 出现多个策略值。
 - 各策略订单数量与预期一致。
 
+回调派发规则（各槽位共享同一个账户，撮合、风控、资金不分槽位，只有“谁收到回调”按归属区分）：
+
+- 用户定时器（`schedule` / `schedule_daily` 等）只派给登记它的槽位。
+- 订单与成交回调（`on_order` / `on_trade` / `on_reject`，含撤单、过期和 bracket/OCO 子单）按订单的 `owner_strategy_id` 只派给所属槽位；别的槽位撤掉你的单时，`Cancelled` 回调仍派给你。
+- 交易日生命周期钩子（`on_pre_open` / `on_before_trading` / `on_after_trading` 等）和 `on_expiry` 派给所有槽位：到期结算针对的是共享账户的持仓，不属于某个策略。
+- 没有 `owner_strategy_id` 的订单（如实盘柜台侧直接产生的订单）只派给默认槽位（`strategy_id` 指定的主策略）。
+
 ### 4.3 配置策略级风控动作
 
 ```python

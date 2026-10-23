@@ -200,3 +200,156 @@ def test_foreign_timer_flushes_order_events_without_on_timer() -> None:
     slot._on_foreign_timer_event_and_flush("t-main", ctx)
     assert timers == []
     assert slot.seen_trades == ["mine-b"]
+
+
+def _minute_px(times: List[str], prices: List[float]) -> pd.DataFrame:
+    idx = pd.to_datetime(times).tz_localize(TZ)
+    return pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "600000.SH",
+            "open": prices,
+            "high": prices,
+            "low": prices,
+            "close": prices,
+            "volume": 1e6,
+        }
+    )
+
+
+_CANCEL_TIMES = ["2024-01-02 10:00", "2024-01-02 10:01", "2024-01-02 10:02"]
+
+
+def _status_log(owner_log: List[str], order: Any) -> None:
+    owner_log.append(f"{order.id}:{str(order.status).split('.')[-1]}")
+
+
+def test_cross_slot_cancel_delivers_cancelled_to_owner_once() -> None:
+    """B 撤 A 的挂单: A 收到一次 on_order(Cancelled), B 什么都收不到."""
+    logs: Dict[str, List[str]] = {"a": [], "b": []}
+    shared: Dict[str, str] = {}
+
+    class _Owner(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            if "oid" not in shared:
+                receipt = self.buy(bar.symbol, 100, price=5.0)
+                shared["oid"] = str(getattr(receipt, "primary", receipt))
+
+        def on_order(self, order: Any) -> None:
+            _status_log(logs["a"], order)
+
+    class _Canceller(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.n = 0
+
+        def on_bar(self, bar: Bar) -> None:
+            self.n += 1
+            if self.n == 2:
+                self.cancel_order(shared["oid"])
+
+        def on_order(self, order: Any) -> None:
+            _status_log(logs["b"], order)
+
+    run_backtest(
+        strategy=_Owner,
+        strategies_by_slot={"b": _Canceller},
+        data=_minute_px(_CANCEL_TIMES, [10.0, 10.0, 10.0]),
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    oid = shared["oid"]
+    assert logs["a"].count(f"{oid}:Cancelled") == 1, logs
+    assert logs["b"] == []
+
+
+def test_same_slot_cancel_still_delivers_cancelled_once() -> None:
+    """本槽位自己撤单: 仍只回调一次 Cancelled(不因终态快照重复)."""
+    logs: Dict[str, List[str]] = {"a": [], "b": []}
+
+    class _Self(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.n = 0
+            self.oid = ""
+
+        def on_bar(self, bar: Bar) -> None:
+            self.n += 1
+            if self.n == 1:
+                receipt = self.buy(bar.symbol, 100, price=5.0)
+                self.oid = str(getattr(receipt, "primary", receipt))
+            elif self.n == 2:
+                self.cancel_order(self.oid)
+
+        def on_order(self, order: Any) -> None:
+            _status_log(logs["a"], order)
+
+    class _Idle(Strategy):
+        def on_order(self, order: Any) -> None:
+            _status_log(logs["b"], order)
+
+    run_backtest(
+        strategy=_Self,
+        strategies_by_slot={"b": _Idle},
+        data=_minute_px(_CANCEL_TIMES, [10.0, 10.0, 10.0]),
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert sum(1 for x in logs["a"] if x.endswith(":Cancelled")) == 1, logs
+    assert logs["b"] == []
+
+
+def test_bracket_child_callbacks_go_to_parent_slot_only() -> None:
+    """B 下的 bracket: 进场单、止损/止盈子单及 OCO 撤单回调都只派给 B."""
+    logs: Dict[str, List[str]] = {"a": [], "b": []}
+    trades: Dict[str, List[str]] = {"a": [], "b": []}
+
+    class _Idle(Strategy):
+        def on_order(self, order: Any) -> None:
+            _status_log(logs["a"], order)
+
+        def on_trade(self, trade: Any) -> None:
+            trades["a"].append(trade.order_id)
+
+    class _Bracket(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.placed = False
+
+        def on_bar(self, bar: Bar) -> None:
+            if not self.placed:
+                self.placed = True
+                self.place_bracket(
+                    bar.symbol, 100, stop_trigger_price=9.5, take_profit_price=11.0
+                )
+
+        def on_order(self, order: Any) -> None:
+            assert order.owner_strategy_id == "b"
+            _status_log(logs["b"], order)
+
+        def on_trade(self, trade: Any) -> None:
+            trades["b"].append(trade.order_id)
+
+    run_backtest(
+        strategy=_Idle,
+        strategies_by_slot={"b": _Bracket},
+        data=_minute_px(
+            [
+                "2024-01-02 10:00",
+                "2024-01-02 10:01",
+                "2024-01-02 10:02",
+                "2024-01-02 10:03",
+            ],
+            [10.0, 10.0, 10.5, 11.5],
+        ),
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert logs["a"] == [] and trades["a"] == []
+    ids = {x.split(":")[0] for x in logs["b"]}
+    assert len(ids) == 3, logs
+    assert sum(1 for x in logs["b"] if x.endswith(":Cancelled")) == 1, logs
+    assert len(trades["b"]) == 2, trades

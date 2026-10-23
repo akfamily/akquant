@@ -213,6 +213,13 @@ def check_order_events(strategy: Any) -> None:
     for t in recent_trades:
         recent_trade_order_ids.add(t.order_id)
 
+    # 本步移出在途账本、未成交终结的订单终态快照(撤单/过期/拒单)。别的槽位撤掉
+    # 本槽位的单时, 本槽位 ctx 的 canceled_order_ids 里没有它, 靠这里回调终态。
+    finalized_orders = {
+        getattr(o, "id", ""): o
+        for o in getattr(strategy.ctx, "recent_finalized_orders", ())
+    }
+
     for oid in list(strategy._known_orders.keys()):
         if oid not in current_active_ids:
             if oid in recent_trade_order_ids:
@@ -226,6 +233,12 @@ def check_order_events(strategy: Any) -> None:
                 del strategy._known_orders[oid]
             elif oid in pending_order_ids:
                 continue
+            elif oid in finalized_orders:
+                order = finalized_orders[oid]
+                strategy._known_orders[oid] = order
+                _emit_order_callback(strategy, order)
+                remember_finalized_order(strategy, order)
+                del strategy._known_orders[oid]
             else:
                 remember_finalized_order(strategy, strategy._known_orders[oid])
                 del strategy._known_orders[oid]

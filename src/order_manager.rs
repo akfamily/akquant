@@ -37,6 +37,11 @@ pub struct OrderManager {
     /// 且它只在结算到下一个策略事件之间非空, 存档时恒为空。
     #[serde(skip)]
     pub current_step_expired_orders: Vec<Order>,
+    /// 本步移出在途账本、未成交终结的订单(撤单/过期/拒单)的终态快照。
+    /// 多槽位下订单可能被别的槽位撤掉, 所属槽位的 ctx 里没有撤单 id, 靠它回调
+    /// on_order(Cancelled)。不入存档(同上, 存档时恒为空)。
+    #[serde(skip)]
+    pub current_step_finalized_orders: Vec<Order>,
     /// 交易追踪器 (用于计算 PnL 和统计)
     pub trade_tracker: TradeTracker,
     /// OCO 订单组映射: group_id -> {order_id}
@@ -68,6 +73,7 @@ impl OrderManager {
             current_step_trades: Vec::new(),
             current_step_rejected_orders: Vec::new(),
             current_step_expired_orders: Vec::new(),
+            current_step_finalized_orders: Vec::new(),
             trade_tracker: TradeTracker::new(),
             oco_groups: HashMap::new(),
             oco_order_to_group: HashMap::new(),
@@ -316,6 +322,7 @@ impl OrderManager {
             if order.status != OrderStatus::Filled {
                 self.handle_oco_terminal_without_fill(&order.id);
                 self.pending_bracket_plans.remove(&order.id);
+                self.current_step_finalized_orders.push(order.clone());
             }
         }
         self.orders.extend(finished);
