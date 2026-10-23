@@ -547,6 +547,7 @@ impl Engine {
             last_event_ts_in_day: None,
             scheduled_day_close: None,
             lifecycle_scheduled_for: None,
+            lifecycle_chain_warned: false,
             last_corp_action_date: None,
             market_manager: MarketManager::new(),
             corporate_action_manager: CorporateActionManager::new(),
@@ -1443,6 +1444,24 @@ impl Engine {
         // （有预热窗口时取不早于正式开始时刻）所属交易日，此后每个交易日结算后按下一个
         // 行情事件串联；续跑时存档时刻及之前的已触发过，跳过。实盘：按墙钟排当日
         // （或下一交易日），此后每次 before_trading 触发时排下一交易日。
+        //
+        // 续跑时存档所在交易日尚未结算(数据在盘中结束): 先补登记该日收盘定时器,
+        // 使它在续跑段的下一交易日盘前之前按收盘时刻结算并触发 on_after_trading,
+        // 与连续跑一致; 否则要等下一交易日首个事件开日时才补结算。续跑段仍在
+        // 该日内时, 首个事件不再重复登记(scheduled_day_close)。
+        if let Some(day) = self.current_trading_day
+            && self
+                .last_settled_trading_day
+                .is_none_or(|settled| settled < day)
+            && self.scheduled_day_close != Some(day)
+        {
+            let close_timer = self.close_timer_ts(day)?;
+            self.timers.push(Timer {
+                timestamp: close_timer,
+                payload: format!("{}{}", crate::model::timer::DAY_CLOSE_TIMER_PREFIX, day),
+            });
+            self.scheduled_day_close = Some(day);
+        }
         if self.state.feed.is_live() {
             let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
             self.schedule_live_lifecycle(now)?;

@@ -332,28 +332,8 @@ impl Processor for DataProcessor {
                         std::sync::Arc::make_mut(&mut engine.slice_sessions).clear();
                     }
                     let session = timer_session(engine, timer.timestamp)?;
-                    // 实盘按日历串联: before_trading(D) 触发时排下一交易日; D 没有连续
-                    // 竞价段(不排 before_trading)时改在 pre_open(D) 触发时排。
-                    if engine.state.feed.is_live()
-                        && let Some((kind, day)) = timer.lifecycle()
-                    {
-                        let chain = match kind {
-                            crate::model::timer::LIFECYCLE_BEFORE_TRADING => true,
-                            crate::model::timer::LIFECYCLE_PRE_OPEN => {
-                                engine.session_resolver.as_ref().is_some_and(|r| {
-                                    matches!(r.session_day_first_continuous_start(day), Ok(None))
-                                })
-                            }
-                            _ => false,
-                        };
-                        if chain
-                            && let Some(next) = engine
-                                .session_resolver
-                                .as_ref()
-                                .and_then(|r| r.next_session_day(day).ok())
-                        {
-                            engine.schedule_lifecycle(next, timer.timestamp)?;
-                        }
+                    if engine.state.feed.is_live() {
+                        engine.chain_live_lifecycle(&timer)?;
                     }
                     engine.clock.update(timer.timestamp, session);
                     engine.current_event = Some(Event::Timer(timer));

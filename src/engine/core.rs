@@ -100,6 +100,8 @@ pub struct Engine {
     /// 已排程生命周期定时器（pre_open / before_trading）的最晚交易日（避免重复排程；
     /// 不入存档，续跑时 `run()` 按存档时刻重新排程并跳过已过时刻）。
     pub(crate) lifecycle_scheduled_for: Option<NaiveDate>,
+    /// 实盘生命周期串联因交易日历到尽头失败时是否已告警（只告警一次）。
+    pub(crate) lifecycle_chain_warned: bool,
     /// 公司行动已处理到的日期(含)。开日时处理 (该日期, 当日交易日] 内的全部行动。
     pub(crate) last_corp_action_date: Option<NaiveDate>,
     pub(crate) market_manager: MarketManager,
@@ -625,10 +627,55 @@ impl Engine {
                 Some((crate::model::timer::LIFECYCLE_BEFORE_TRADING, d)) if d == day
             )
         });
-        if !has_before_trading && let Ok(next) = resolver.next_session_day(day) {
-            self.schedule_lifecycle(next, now)?;
+        if !has_before_trading {
+            self.schedule_next_session_lifecycle(day, now)?;
         }
         Ok(())
+    }
+
+    /// 实盘按日历串联：before_trading(D) 触发时排下一交易日；D 没有连续竞价段
+    /// （不排 before_trading）时改在 pre_open(D) 触发时排。
+    pub(crate) fn chain_live_lifecycle(&mut self, timer: &Timer) -> PyResult<()> {
+        use crate::model::timer::{LIFECYCLE_BEFORE_TRADING, LIFECYCLE_PRE_OPEN};
+        let Some((kind, day)) = timer.lifecycle() else {
+            return Ok(());
+        };
+        let chain = match kind {
+            LIFECYCLE_BEFORE_TRADING => true,
+            LIFECYCLE_PRE_OPEN => {
+                self.ensure_session_resolver()?;
+                self.session_resolver
+                    .as_ref()
+                    .is_some_and(|r| matches!(r.session_day_first_continuous_start(day), Ok(None)))
+            }
+            _ => false,
+        };
+        if chain {
+            self.schedule_next_session_lifecycle(day, timer.timestamp)?;
+        }
+        Ok(())
+    }
+
+    /// 为 `day` 的下一个会话交易日排程生命周期；交易日历已到尽头时告警一次。
+    fn schedule_next_session_lifecycle(&mut self, day: NaiveDate, not_before: i64) -> PyResult<()> {
+        self.ensure_session_resolver()?;
+        let next = self
+            .session_resolver
+            .as_ref()
+            .expect("已构造")
+            .next_session_day(day);
+        match next {
+            Ok(next) => self.schedule_lifecycle(next, not_before),
+            Err(e) => {
+                if !self.lifecycle_chain_warned {
+                    self.lifecycle_chain_warned = true;
+                    log::warn!(
+                        "实盘交易日历在 {day} 之后没有交易日（{e}），之后不会再触发 on_pre_open / on_before_trading；请检查 trading_calendar= 是否覆盖会话期间"
+                    );
+                }
+                Ok(())
+            }
+        }
     }
 
     pub(crate) fn execution_policy_core(&self) -> ExecutionPolicyCore {
@@ -2346,6 +2393,65 @@ mod lifecycle_tests {
                     "before_trading|2024-01-03".to_string()
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn live_chain_schedules_next_trading_day_on_before_trading() {
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.schedule_lifecycle(d(1, 5), i64::MIN).unwrap();
+        // 弹出周五的 before_trading 后，堆中出现下周一的 pre_open / before_trading
+        let timers = lifecycle_timers(&engine);
+        let before = Timer {
+            timestamp: timers[1].0,
+            payload: format!("{LIFECYCLE_TIMER_PREFIX}{}", timers[1].1),
+        };
+        engine.timers.clear();
+        engine.chain_live_lifecycle(&before).unwrap();
+        assert_eq!(
+            lifecycle_timers(&engine),
+            vec![
+                (sh(1, 8, 9, 15) - 1, "pre_open|2024-01-08".to_string()),
+                (sh(1, 8, 9, 30) + 1, "before_trading|2024-01-08".to_string()),
+            ]
+        );
+        // pre_open（当日有连续竞价段）不串联
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        let pre_open = Timer {
+            timestamp: sh(1, 5, 9, 15) - 1,
+            payload: format!("{LIFECYCLE_TIMER_PREFIX}pre_open|2024-01-05"),
+        };
+        engine.chain_live_lifecycle(&pre_open).unwrap();
+        assert!(lifecycle_timers(&engine).is_empty());
+    }
+
+    #[test]
+    fn live_chain_at_calendar_end_warns_instead_of_failing() {
+        // 显式交易日历到 01-04 为止：01-04 的 before_trading 串联不到下一交易日，
+        // 只告警（一次）不报错。内置时段表都有连续竞价段，pre_open 串联分支无法用
+        // 内置模板构造，由 before_trading 分支覆盖同一排程函数。
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.session_config.trading_calendar = Some(vec![d(1, 2), d(1, 3), d(1, 4)]);
+        engine.session_resolver = None;
+        let before = Timer {
+            timestamp: sh(1, 4, 9, 30) + 1,
+            payload: format!("{LIFECYCLE_TIMER_PREFIX}before_trading|2024-01-04"),
+        };
+        engine.chain_live_lifecycle(&before).unwrap();
+        assert!(lifecycle_timers(&engine).is_empty());
+        assert!(engine.lifecycle_chain_warned);
+        // 01-03 的 before_trading 串联到 01-04
+        let before = Timer {
+            timestamp: sh(1, 3, 9, 30) + 1,
+            payload: format!("{LIFECYCLE_TIMER_PREFIX}before_trading|2024-01-03"),
+        };
+        engine.chain_live_lifecycle(&before).unwrap();
+        assert_eq!(
+            lifecycle_timers(&engine)[0],
+            (sh(1, 4, 9, 15) - 1, "pre_open|2024-01-04".to_string())
         );
     }
 

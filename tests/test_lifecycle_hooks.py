@@ -346,3 +346,91 @@ def test_resume_mid_day_does_not_refire_pre_open_or_before(tmp_path: Any) -> Non
         ("pre_open", d3),
         ("before", d3),
     ]
+
+
+class _ResumeProbe(_HookLog):
+    """首根 bar 买入 100 股，记录 on_before_trading 时的可用数量."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bought = False
+        self.avail_before: List[Tuple[Any, float]] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        super().on_bar(bar)
+        if not self.bought:
+            self.bought = True
+            self.buy(bar.symbol, 100)
+
+    def on_before_trading(self, trading_date: dt.date, timestamp: int) -> None:
+        super().on_before_trading(trading_date, timestamp)
+        self.avail_before.append(
+            (trading_date, float(self.get_available_position("600000.SH")))
+        )
+
+
+def test_resume_across_unsettled_day_matches_continuous_run(tmp_path: Any) -> None:
+    """存档时当日未结算、续跑从下一交易日开始：钩子次序与连续跑一致.
+
+    上一交易日先在其收盘结算并触发 on_after_trading，然后才是下一交易日的盘前与
+    开始交易；开始交易时 T+1 已解冻。
+    """
+    from akquant import run_from_checkpoint, save_checkpoint
+
+    part1 = ["2024-01-02 09:31", "2024-01-02 10:00"]
+    part2 = ["2024-01-03 09:31", "2024-01-03 15:00"]
+    full = run_backtest(
+        strategy=_ResumeProbe,
+        data=_minute(part1 + part2),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        t_plus_one=True,
+    )
+    assert full.strategy is not None
+
+    r1 = run_backtest(
+        strategy=_ResumeProbe,
+        data=_minute(part1),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        t_plus_one=True,
+    )
+    assert r1.strategy is not None and r1.engine is not None
+    path = str(tmp_path / "unsettled.ckpt")
+    save_checkpoint(r1.engine, r1.strategy, path)
+    r2 = run_from_checkpoint(
+        path,
+        data=_minute(part2),
+        symbols=["600000.SH"],
+        show_progress=False,
+        t_plus_one=True,
+    )
+    assert r2.strategy is not None
+    assert r2.strategy.records == full.strategy.records
+    assert r2.strategy.avail_before == full.strategy.avail_before
+    assert r2.strategy.avail_before[-1] == (dt.date(2024, 1, 3), 100.0)
+
+
+def test_build_session_trading_days_includes_empty_days_and_night_bars() -> None:
+    """交易日列表含区间内无数据的交易日；夜盘 bar 的截面归下一交易日."""
+    from akquant.akquant import AssetType
+    from akquant.backtest.engine import _build_session_trading_days
+
+    resolver = aq.SessionResolver(sessions={"au": "CN_FUTURES_NIGHT_0230"}, timezone=TZ)
+    resolver.set_active([("au2406", AssetType.Futures)])
+    stamps = pd.to_datetime(["2024-01-02 10:00", "2024-01-04 21:30"]).tz_localize(TZ)
+    frame = pd.DataFrame({"close": [1.0, 2.0]}, index=pd.DatetimeIndex(stamps))
+    days, cross = _build_session_trading_days({"au2406": frame}, resolver, TZ)
+    assert [d.date() for d in days] == [
+        dt.date(2024, 1, 2),
+        dt.date(2024, 1, 3),  # 无数据的交易日
+        dt.date(2024, 1, 4),  # 无数据的交易日（当晚夜盘归 01-05）
+        dt.date(2024, 1, 5),
+    ]
+    assert all(str(d.tz) == TZ for d in days)
+    assert cross == {
+        "2024-01-02": int(stamps[0].value),
+        "2024-01-05": int(stamps[1].value),
+    }

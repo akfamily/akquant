@@ -66,7 +66,13 @@ def test_python_pre_open_timer_registration_is_gone() -> None:
 def test_live_replay_pre_open_no_longer_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """实盘 replay 跑完一段会话: 不再出现"on_pre_open 不会触发"告警."""
+    """实盘 replay 跑完一段会话: 不再出现旧的"实盘下 on_pre_open 不会触发"告警.
+
+    注意 replay 下 on_pre_open / on_before_trading 实际并不触发: 实盘生命周期按墙钟
+    排程(当前或下一交易日), 而 replay 推送的是历史 bar, 墙钟交易日的盘前时点在
+    会话内到不了。replay 按行情时间驱动生命周期留给阶段 7。这里只断言旧告警
+    (精确原文)已删除; 新的"墙钟不在交易日历内"告警措辞不同, 不影响本断言。
+    """
     from akquant import run_live
 
     inst = Instrument(
@@ -96,4 +102,4 @@ def test_live_replay_pre_open_no_longer_warns(
             duration="3s",
         )
     text = " ".join(record.getMessage() for record in caplog.records)
-    assert "不会触发" not in text, text
+    assert "实盘下 on_pre_open 不会触发" not in text, text
