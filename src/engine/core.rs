@@ -204,6 +204,8 @@ pub struct Engine {
     pub(crate) strategy_slots: Vec<StrategySlot>,
     pub(crate) active_strategy_slot: usize,
     pub(crate) default_strategy_id: Option<String>,
+    /// 已告警过的“所属策略不在任何槽位”的定时器 owner(每个 owner 只告警一次)。
+    pub(crate) warned_orphan_timer_owners: HashSet<String>,
     pub(crate) strategy_priorities: HashMap<String, i32>,
     pub(crate) strategy_risk_budget_limits: HashMap<String, Decimal>,
     pub(crate) portfolio_risk_budget_limit: Option<Decimal>,
@@ -630,6 +632,7 @@ impl Engine {
                 self.timers.push(Timer {
                     timestamp: ts,
                     payload: lifecycle_payload(kind, day),
+                    owner: None,
                 });
             }
         }
@@ -1755,6 +1758,7 @@ impl Engine {
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
         step_rejected_orders: Vec<Order>,
+        deliver_timer: bool,
     ) -> PyResult<(
         Vec<Order>,
         Vec<Timer>,
@@ -1886,9 +1890,15 @@ impl Engine {
                     previous_account_metrics,
                 )?;
 
+                // 属于别的槽位的定时器: 不调本槽位的 on_timer, 只刷本步的订单/成交
+                // 等回调(本步撮合产生的成交在 strategy 阶段末清空, 不刷就丢)。
+                let method = if deliver_timer {
+                    "_on_timer_event_and_flush"
+                } else {
+                    "_on_foreign_timer_event_and_flush"
+                };
                 let args = (timer.payload.as_str(), py_ctx.clone_ref(py));
-
-                let ret = strategy.call_method1("_on_timer_event_and_flush", args)?;
+                let ret = strategy.call_method1(method, args)?;
                 let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
                     None
                 } else {
@@ -2525,6 +2535,7 @@ mod lifecycle_tests {
         let before = Timer {
             timestamp: timers[1].0,
             payload: format!("{LIFECYCLE_TIMER_PREFIX}{}", timers[1].1),
+            owner: None,
         };
         engine.timers.clear();
         engine.chain_live_lifecycle(&before).unwrap();
@@ -2541,6 +2552,7 @@ mod lifecycle_tests {
         let pre_open = Timer {
             timestamp: sh(1, 5, 9, 15) - 1,
             payload: format!("{LIFECYCLE_TIMER_PREFIX}pre_open|2024-01-05"),
+            owner: None,
         };
         engine.chain_live_lifecycle(&pre_open).unwrap();
         assert!(lifecycle_timers(&engine).is_empty());
@@ -2558,6 +2570,7 @@ mod lifecycle_tests {
         let before = Timer {
             timestamp: sh(1, 4, 9, 30) + 1,
             payload: format!("{LIFECYCLE_TIMER_PREFIX}before_trading|2024-01-04"),
+            owner: None,
         };
         engine.chain_live_lifecycle(&before).unwrap();
         assert!(lifecycle_timers(&engine).is_empty());
@@ -2566,6 +2579,7 @@ mod lifecycle_tests {
         let before = Timer {
             timestamp: sh(1, 3, 9, 30) + 1,
             payload: format!("{LIFECYCLE_TIMER_PREFIX}before_trading|2024-01-03"),
+            owner: None,
         };
         engine.chain_live_lifecycle(&before).unwrap();
         assert_eq!(

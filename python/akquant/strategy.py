@@ -59,6 +59,9 @@ from .strategy_events import (
     on_bar_event as _on_bar_event_impl,
 )
 from .strategy_events import (
+    on_foreign_timer_event as _on_foreign_timer_event_impl,
+)
+from .strategy_events import (
     on_tick_event as _on_tick_event_impl,
 )
 from .strategy_events import (
@@ -2720,6 +2723,19 @@ class Strategy:
     ) -> Optional[Tuple[Any, Any]]:
         """引擎单次调用入口: Timer 回调 + 订单事件收尾 + 取待注册计划 (Internal)."""
         self._on_timer_event(payload, ctx)
+        self._check_order_events()
+        return self._take_pending_engine_plans()
+
+    def _on_foreign_timer_event_and_flush(
+        self, payload: str, ctx: StrategyContext
+    ) -> Optional[Tuple[Any, Any]]:
+        """引擎单次调用入口: 别的槽位的定时器事件 (Internal).
+
+        多槽位下带所属策略的定时器只调所属槽位的 on_timer; 其余槽位走这里, 不调
+        on_timer, 只刷本步的订单/成交/到期回调并取待注册计划——本步撮合产生的
+        成交在引擎 strategy 阶段末清空, 不刷就会丢。
+        """
+        _on_foreign_timer_event_impl(self, payload, ctx)
         self._check_order_events()
         return self._take_pending_engine_plans()
 

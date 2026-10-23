@@ -42,6 +42,41 @@ pub(crate) fn apply_pending_engine_plans(
     }
 }
 
+/// 带所属策略的定时器应派给哪个槽位。`owner` 为 `None`(引擎生成或
+/// `Engine.add_timer` 登记)时返回 `None`, 表示派给所有槽位; 所属策略不在任何
+/// 槽位时派给默认槽位, 并对每个 owner 告警一次。
+pub(crate) fn timer_target_slot(engine: &mut Engine, event: &Event) -> Option<usize> {
+    let Event::Timer(timer) = event else {
+        return None;
+    };
+    let owner = timer.owner.as_deref()?;
+    if let Some(index) = engine
+        .strategy_slots
+        .iter()
+        .position(|slot| slot.strategy_id == owner)
+    {
+        return Some(index);
+    }
+    let default_index = engine
+        .default_strategy_id
+        .as_deref()
+        .and_then(|id| {
+            engine
+                .strategy_slots
+                .iter()
+                .position(|slot| slot.strategy_id == id)
+        })
+        .unwrap_or(0);
+    if engine.warned_orphan_timer_owners.insert(owner.to_string()) {
+        log::warn!(
+            "定时器 {:?} 的所属策略 {:?} 不在任何策略槽位中, 已改派给默认槽位;              请确认该策略 id 已通过 strategies_by_slot 登记",
+            timer.payload,
+            owner
+        );
+    }
+    Some(default_index)
+}
+
 impl Processor for StrategyProcessor {
     fn process(
         &mut self,
@@ -66,7 +101,11 @@ impl Processor for StrategyProcessor {
                 .current_step_rejected_orders
                 .clone();
 
+            // 带所属策略的定时器只调所属槽位的 on_timer; 其余槽位只刷订单回调。
+            let timer_target = timer_target_slot(engine, &event);
+
             for slot_index in 0..slot_count {
+                let deliver_timer = timer_target.is_none_or(|target| target == slot_index);
                 let slot_strategy = engine
                     .strategy_slot_strategies
                     .get(slot_index)
@@ -83,6 +122,7 @@ impl Processor for StrategyProcessor {
                             active_orders.clone(),
                             step_trades.clone(),
                             step_rejected_orders.clone(),
+                            deliver_timer,
                         )?;
                         apply_pending_engine_plans(engine, plans);
                         (orders, timers, canceled)
@@ -95,6 +135,7 @@ impl Processor for StrategyProcessor {
                             active_orders.clone(),
                             step_trades.clone(),
                             step_rejected_orders.clone(),
+                            deliver_timer,
                         )?;
                         apply_pending_engine_plans(engine, plans);
                         (orders, timers, canceled)
@@ -151,5 +192,43 @@ impl Processor for StrategyProcessor {
                 .clear();
         }
         Ok(ProcessorResult::Next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::core::StrategySlot;
+    use crate::model::Timer;
+
+    fn timer(owner: Option<&str>) -> Event {
+        Event::Timer(Timer {
+            timestamp: 1,
+            payload: "t".to_string(),
+            owner: owner.map(ToOwned::to_owned),
+        })
+    }
+
+    #[test]
+    fn timer_target_slot_follows_owner() {
+        let mut engine = Engine::new();
+        engine.strategy_slots = ["main", "b"]
+            .iter()
+            .map(|id| StrategySlot {
+                strategy_id: id.to_string(),
+            })
+            .collect();
+        engine.default_strategy_id = Some("main".to_string());
+        // 无 owner(引擎生成/add_timer): 派给所有槽位
+        assert_eq!(timer_target_slot(&mut engine, &timer(None)), None);
+        assert_eq!(timer_target_slot(&mut engine, &timer(Some("b"))), Some(1));
+        assert_eq!(
+            timer_target_slot(&mut engine, &timer(Some("main"))),
+            Some(0)
+        );
+        // 不在任何槽位: 改派默认槽位, 只告警一次
+        assert_eq!(timer_target_slot(&mut engine, &timer(Some("zzz"))), Some(0));
+        assert_eq!(timer_target_slot(&mut engine, &timer(Some("zzz"))), Some(0));
+        assert_eq!(engine.warned_orphan_timer_owners.len(), 1);
     }
 }

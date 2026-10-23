@@ -232,6 +232,28 @@ def _flushes_schedules_on_timer(strategy: Any, payload: str) -> bool:
     return not is_lifecycle_payload(payload) or not strategy._trading_days
 
 
+def on_foreign_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
+    """别的槽位所属的定时器事件 (Internal).
+
+    与 :func:`on_timer_event` 的前半段相同(刷出延后登记的定时任务、刷订单与到期
+    回调、组合更新), 但不派发 on_timer / 截面 / 生命周期回调。
+    """
+    ensure_framework_state(strategy)
+    strategy.ctx = ctx
+    if _flushes_schedules_on_timer(strategy, payload):
+        flush_pending_schedules(strategy)
+    register_cross_section_timers(strategy)
+    strategy._check_order_events()
+    check_expiry_events(strategy)
+
+    current_time = int(getattr(ctx, "current_time", 0))
+    if _is_before_active_start(strategy, current_time):
+        return
+
+    dispatch_portfolio_update(strategy)
+    _flush_indicator_snapshots(strategy)
+
+
 def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
     """引擎调用的 Timer 回调 (Internal)."""
     ensure_framework_state(strategy)

@@ -3166,6 +3166,8 @@ class Tick:
 class Timer:
     timestamp: int
     payload: str
+    @property
+    def owner(self) -> typing.Optional[str]: ...
 
 class Trade:
     r"""

@@ -55,6 +55,8 @@ TZ = "Asia/Shanghai"
 #                         _on_tick_event_and_flush(Tick 分支)
 #                         _on_timer_event_and_flush(Timer 分支; 紧邻替换原
 #                           _on_timer_event + _flush_pending_order_events 配对)
+#                         _on_foreign_timer_event_and_flush(Timer 分支; 多槽位下
+#                           定时器属于别的槽位时调用, 只刷订单回调)
 #                         _flush_pending_order_events(仅 flush_terminal_
 #                           pending_order_events 的 finalize 路径调用,
 #                           与逐 bar 的 Timer 分支无关, 未合并、保留原样)
@@ -69,6 +71,7 @@ _WATCHED = (
     "_on_bar_event_and_flush",
     "_on_tick_event_and_flush",
     "_on_timer_event_and_flush",
+    "_on_foreign_timer_event_and_flush",
     "_flush_pending_order_events",
 )
 
@@ -108,6 +111,7 @@ _FLUSH_WRAPPER_METHODS = (
     "_on_bar_event_and_flush",
     "_on_tick_event_and_flush",
     "_on_timer_event_and_flush",
+    "_on_foreign_timer_event_and_flush",
 )
 
 # `_count_crossings()` 实际安装 `__getattribute__` 钩子监控的全部名字:

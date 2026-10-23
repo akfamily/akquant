@@ -631,6 +631,7 @@ mod tests {
             engine.timers.push(crate::model::Timer {
                 timestamp: fri_close + 1,
                 payload: format!("{}2024-01-05", crate::model::timer::DAY_CLOSE_TIMER_PREFIX),
+                owner: None,
             });
             let mut processor = DataProcessor::new();
             assert_eq!(

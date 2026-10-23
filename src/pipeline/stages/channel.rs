@@ -396,6 +396,7 @@ mod tests {
         engine.current_event = Some(Event::Timer(Timer {
             timestamp: close + 1,
             payload: "user".to_string(),
+            owner: None,
         }));
         record_creation_session(&mut engine, &order);
         assert_eq!(
@@ -408,6 +409,7 @@ mod tests {
         engine.current_event = Some(Event::Timer(Timer {
             timestamp: close + 1,
             payload: lifecycle_payload(LIFECYCLE_AFTER_TRADING, day),
+            owner: None,
         }));
         record_creation_session(&mut engine, &order);
         assert_eq!(

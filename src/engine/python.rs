@@ -113,7 +113,11 @@ impl Engine {
 
     fn add_timer(&mut self, timestamp: i64, payload: String) -> PyResult<()> {
         crate::model::timer::check_user_timer_payload(&payload)?;
-        self.timers.push(Timer { timestamp, payload });
+        self.timers.push(Timer {
+            timestamp,
+            payload,
+            owner: None,
+        });
         Ok(())
     }
 
@@ -593,6 +597,7 @@ impl Engine {
             }],
             active_strategy_slot: 0,
             default_strategy_id: Some("_default".to_string()),
+            warned_orphan_timer_owners: HashSet::new(),
             strategy_priorities: HashMap::new(),
             strategy_risk_budget_limits: HashMap::new(),
             portfolio_risk_budget_limit: None,
@@ -1490,6 +1495,7 @@ impl Engine {
             self.timers.push(Timer {
                 timestamp: close_timer,
                 payload: format!("{}{}", crate::model::timer::DAY_CLOSE_TIMER_PREFIX, day),
+                owner: None,
             });
             self.scheduled_day_close = Some(day);
         }

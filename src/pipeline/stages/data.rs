@@ -485,6 +485,7 @@ impl Processor for DataProcessor {
                                     crate::model::timer::LIFECYCLE_AFTER_TRADING,
                                     prev,
                                 ),
+                                owner: None,
                             });
                         }
                         // 公司行动(拆股/分红): 处理日期落在 (上次处理到的日期, day] 的全部
@@ -531,6 +532,7 @@ impl Processor for DataProcessor {
                                 crate::model::timer::DAY_CLOSE_TIMER_PREFIX,
                                 day
                             ),
+                            owner: None,
                         });
                         engine.scheduled_day_close = Some(day);
                     }
@@ -667,6 +669,7 @@ fn emit_after_trading(engine: &mut Engine, day: NaiveDate, ts: i64) -> PyResult<
             crate::model::timer::LIFECYCLE_AFTER_TRADING,
             day,
         ),
+        owner: None,
     }));
     Ok(())
 }

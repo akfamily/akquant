@@ -50,6 +50,7 @@ from ..strategy_framework_hooks import (
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
+from ..strategy_order_events import assign_slot_ownership
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
 from ..utils import format_metric_value
@@ -1214,6 +1215,10 @@ class LiveRunner:
         setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
         for slot_id, slot_strategy in slot_strategy_instances.items():
             setattr(slot_strategy, "_owner_strategy_id", slot_id)
+        assign_slot_ownership(
+            {effective_strategy_id: strategy_instance, **slot_strategy_instances},
+            effective_strategy_id,
+        )
 
         default_ready = getattr(self, "trading_mode", "paper") != "broker_live"
         for target in [strategy_instance, *slot_strategy_instances.values()]:

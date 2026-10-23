@@ -1138,6 +1138,7 @@ impl StrategyContext {
             timers.push(Timer {
                 timestamp: normalized,
                 payload,
+                owner: self.strategy_id.clone(),
             });
         }
         Ok(())

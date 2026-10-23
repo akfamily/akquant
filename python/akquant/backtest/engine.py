@@ -88,6 +88,7 @@ from ..strategy_framework_hooks import (
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
+from ..strategy_order_events import assign_slot_ownership
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import (
     configure_engine_window_subscriptions,
@@ -3583,6 +3584,10 @@ def run_backtest(
     setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
     for slot_key, slot_strategy in slot_strategy_instances.items():
         setattr(slot_strategy, "_owner_strategy_id", slot_key)
+    assign_slot_ownership(
+        {effective_strategy_id: strategy_instance, **slot_strategy_instances},
+        effective_strategy_id,
+    )
     # 数据周期注入 self.freq(只读)。freq 此前只用于 tick→bar 聚合、用完即弃,
     # 策略没有任何途径知道自己跑在什么周期上。纯 bar 数据不传 freq 时保持 None
     # (不从相邻 bar 时间戳差推断: 停牌/跨日/午休会让它给出错误答案)。
@@ -6257,6 +6262,10 @@ def run_from_checkpoint(
     setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
     for slot_key, slot_strategy in slot_strategy_instances.items():
         setattr(slot_strategy, "_owner_strategy_id", slot_key)
+    assign_slot_ownership(
+        {effective_strategy_id: strategy_instance, **slot_strategy_instances},
+        effective_strategy_id,
+    )
     indicator_recorder = _attach_indicator_recorder(
         stream_emitter=indicator_stream_emitter,
         strategy_instance=strategy_instance,

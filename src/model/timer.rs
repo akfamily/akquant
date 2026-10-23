@@ -48,13 +48,26 @@ pub(crate) fn check_user_timer_payload(payload: &str) -> pyo3::PyResult<()> {
 
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Timer {
     #[pyo3(get, set)]
     pub timestamp: i64,
     #[pyo3(get, set)]
     pub payload: String,
+    /// 所属策略 id。`ctx.schedule`/`schedule_*` 登记的定时器带登记它的槽位 id，
+    /// 只派给该槽位；引擎生成的生命周期/日终定时器与 `Engine.add_timer` 登记的
+    /// 定时器为 `None`，派给所有槽位。不参与相等与排序比较。
+    #[pyo3(get)]
+    pub owner: Option<String>,
 }
+
+impl PartialEq for Timer {
+    fn eq(&self, other: &Self) -> bool {
+        self.timestamp == other.timestamp && self.payload == other.payload
+    }
+}
+
+impl Eq for Timer {}
 
 impl Timer {
     pub(crate) fn is_day_close(&self) -> bool {
@@ -137,6 +150,7 @@ mod tests {
         let timer = Timer {
             timestamp: 1,
             payload: lifecycle_payload(LIFECYCLE_BEFORE_TRADING, day),
+            owner: None,
         };
         assert_eq!(timer.payload, "__akq_lifecycle__|before_trading|2024-01-02");
         assert!(timer.is_lifecycle());
@@ -144,6 +158,7 @@ mod tests {
         let user = Timer {
             timestamp: 1,
             payload: "rebalance".to_string(),
+            owner: None,
         };
         assert!(!user.is_lifecycle());
         assert_eq!(user.lifecycle(), None);
@@ -155,14 +170,17 @@ mod tests {
         heap.push(Timer {
             timestamp: 10,
             payload: format!("{DAY_CLOSE_TIMER_PREFIX}2024-01-02"),
+            owner: None,
         });
         heap.push(Timer {
             timestamp: 10,
             payload: "user".to_string(),
+            owner: None,
         });
         heap.push(Timer {
             timestamp: 5,
             payload: "early".to_string(),
+            owner: None,
         });
         let order: Vec<String> = std::iter::from_fn(|| heap.pop().map(|t| t.payload)).collect();
         assert_eq!(order[0], "early");
@@ -176,10 +194,12 @@ mod tests {
             let lifecycle = Timer {
                 timestamp: 10,
                 payload: "__akq_lifecycle__|before_trading|2024-01-02".to_string(),
+                owner: None,
             };
             let user = Timer {
                 timestamp: 10,
                 payload: "__framework_cross_section__|2024-01-02|9".to_string(),
+                owner: None,
             };
             let mut heap = std::collections::BinaryHeap::new();
             if lifecycle_first {
@@ -201,11 +221,13 @@ mod tests {
             let close = Timer {
                 timestamp: 10,
                 payload: format!("{DAY_CLOSE_TIMER_PREFIX}2024-01-02"),
+                owner: None,
             };
             let users: Vec<Timer> = (0..3)
                 .map(|i| Timer {
                     timestamp: 10,
                     payload: format!("user{i}"),
+                    owner: None,
                 })
                 .collect();
             let mut heap = std::collections::BinaryHeap::new();
