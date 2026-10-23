@@ -553,3 +553,27 @@ def test_removed_precise_switch_runtime_config_kwarg_raises_chinese_error() -> N
     assert _REMOVED_SWITCH in str(info.value)
     # 正常字段不受影响
     assert StrategyRuntimeConfig(error_mode="continue").error_mode == "continue"
+
+
+def test_schedule_bad_time_raises_chinese_value_error() -> None:
+    """定时任务时刻写错：回测、实盘、on_start（上下文未就绪）都抛中文 ValueError."""
+    import pytest
+
+    class P(Strategy):
+        pass
+
+    cases = []
+    pending = P()  # 上下文未就绪（on_start 中）
+    cases.append(pending)
+    live = P()
+    live.ctx = _live_ctx(False)
+    live._trading_days = []
+    cases.append(live)
+    backtest = P()
+    backtest.ctx = _live_ctx(False)
+    backtest._trading_days = [pd.Timestamp("2024-01-02", tz=TZ)]
+    cases.append(backtest)
+    for s in cases:
+        for register in (s.schedule_daily, s.schedule_weekly, s.schedule_monthly):
+            with pytest.raises(ValueError, match="无法解析定时器时刻"):
+                register("25:99", "x")

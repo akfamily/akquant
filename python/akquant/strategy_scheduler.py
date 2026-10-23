@@ -94,6 +94,16 @@ PERIODIC_TIMER_PREFIXES = {
 _MAX_CALENDAR_STEPS = 4000
 
 
+def _parse_time_of_day(time_str: str) -> dt.time:
+    """解析定时任务的本地时刻, 写错时抛中文 ``ValueError``."""
+    try:
+        return pd.to_datetime(time_str).time()
+    except Exception as exc:
+        raise ValueError(
+            f"无法解析定时器时刻 {time_str!r}，请写成 '14:55' 或 '14:55:00'"
+        ) from exc
+
+
 def next_occurrence(
     kind: str,
     time_str: str,
@@ -123,12 +133,7 @@ def next_occurrence(
     """
     if kind not in PERIODIC_TIMER_PREFIXES:
         raise ValueError(f"未知的定时器种类 {kind!r}，应为 daily/weekly/monthly")
-    try:
-        t = pd.to_datetime(time_str).time()
-    except Exception as exc:
-        raise ValueError(
-            f"无法解析定时器时刻 {time_str!r}，请写成 '14:55' 或 '14:55:00'"
-        ) from exc
+    t = _parse_time_of_day(time_str)
     now_ts = pd.Timestamp(now)
     now_ts = _localize(now_ts, tz) if now_ts.tzinfo is None else now_ts.tz_convert(tz)
 
@@ -259,8 +264,12 @@ def schedule_live_next(
 
 
 def schedule_daily(strategy: Any, time_str: str, payload: str) -> None:
-    """注册每日定时任务(交易日历上的每个交易日触发, 回测与实盘一致)."""
+    """注册每日定时任务(交易日历上的每个交易日触发, 回测与实盘一致).
+
+    时刻写错时立即抛中文 ``ValueError``(on_start 里登记也一样, 不等到首个事件)。
+    """
     _check_payload(payload)
+    _parse_time_of_day(time_str)
     if strategy.ctx is None:
         pending_daily = getattr(strategy, "_pending_daily_timers", None)
         if pending_daily is None:
@@ -270,10 +279,7 @@ def schedule_daily(strategy: Any, time_str: str, payload: str) -> None:
         return
 
     if not strategy._trading_days:
-        try:
-            schedule_live_next(strategy, "daily", time_str, payload)
-        except ValueError:
-            logger.warning("Error parsing time: %s", time_str)
+        schedule_live_next(strategy, "daily", time_str, payload)
         return
 
     wrapped_payload = f"__daily__|{time_str}|{payload}"
@@ -284,11 +290,7 @@ def _register_on_days(
     strategy: Any, days: list, time_str: str, wrapped_payload: str
 ) -> None:
     """在给定交易日子集的 ``time_str`` 时点逐日注册一枚 timer."""
-    try:
-        t = pd.to_datetime(time_str).time()
-    except Exception:
-        logger.warning("Error parsing time: %s", time_str)
-        return
+    t = _parse_time_of_day(time_str)
 
     # 首次登记发生在首根 bar 到达时(flush_pending_schedules)。早于当前引擎时刻的
     # 时点已经过去, 若照登会在当前事件后立刻补触发且时间戳倒退(例如只有日期的
@@ -330,6 +332,7 @@ def _nth_per_group(days: list, key: Any, n: int, from_end: bool) -> list:
 
 def _schedule_periodic(strategy: Any, kind: str, time_str: str, payload: str) -> None:
     _check_payload(payload)
+    _parse_time_of_day(time_str)
     if strategy.ctx is None:
         # on_start 时上下文尚未注入: 与 schedule_daily 一样延后到首个事件再登记
         pending = getattr(strategy, "_pending_periodic_timers", None)
@@ -339,10 +342,7 @@ def _schedule_periodic(strategy: Any, kind: str, time_str: str, payload: str) ->
         pending.append((kind, time_str, payload))
         return
     if not strategy._trading_days:
-        try:
-            schedule_live_next(strategy, kind, time_str, payload)
-        except ValueError:
-            logger.warning("Error parsing time: %s", time_str)
+        schedule_live_next(strategy, kind, time_str, payload)
         return
     if kind == "weekly":
         days = _first_trading_day_per_group(
