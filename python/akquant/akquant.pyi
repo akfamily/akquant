@@ -246,7 +246,9 @@ class WindowAggregator:
         批量喂入单品种基础 bar 列，返回 (窗口 bar 列表, 行→窗口下标).
 
         第二个返回值与输入等长，未闭合窗口里的行为 -1；``flush=True`` 时末尾闭合
-        全部在形成窗口并计入列表。
+        全部在形成窗口并计入列表。注意 flush 会闭合本聚合器里**所有品种**的在形成
+        窗口，与 ``update()`` 混用时请对本品种单独建聚合器。各数组须为 C 连续、
+        类型如签名所示；价格为 NaN/Inf 时按 0 处理，请先剔除这类行。
         """
     def flush(self) -> list[Bar]: ...
     def current(self, symbol: str) -> typing.Optional[Bar]: ...
