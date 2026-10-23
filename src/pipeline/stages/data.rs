@@ -299,10 +299,25 @@ impl Processor for DataProcessor {
                     if timer.timestamp > self.last_timestamp {
                         self.finalize_current_timestamp(engine, py);
                     }
-                    // 定时器不属于任何品种: ctx.session 取会话级时段(在用时段表中优先级
-                    // 最高者); 撮合按订单品种取时段(见 SessionView::session_for)。
+                    // 属于当前时间片的定时器(不晚于本片时间戳, 或框架截面定时器
+                    // source_ts + 1 且 source_ts 即本片)沿用本片各品种按 bar 区间求得的
+                    // 时段: ctx.session 取其中优先级最高者, 与撮合(SessionView 先查本片)
+                    // 一致。其余定时器(用户 schedule 等)在本片之后, 清空本片后
+                    // ctx.session 取定时器时刻的会话级时段, 撮合按订单品种在定时器时刻
+                    // 解析(上一片已在上面 finalize)。
+                    let belongs = timer_belongs_to_slice(&timer, self.last_timestamp);
+                    if !belongs {
+                        engine.slice_sessions.clear();
+                    }
                     let session = if engine.force_session_continuous {
                         TradingSession::Continuous
+                    } else if let Some(best) = engine
+                        .slice_sessions
+                        .values()
+                        .copied()
+                        .max_by_key(|s| crate::calendar::resolver::rank(*s))
+                    {
+                        best
                     } else {
                         engine.ensure_session_resolver()?;
                         engine
@@ -312,13 +327,6 @@ impl Processor for DataProcessor {
                                 r.session_level_instant(timer.timestamp)
                             })
                     };
-                    // 属于当前时间片的定时器(不晚于本片时间戳, 或框架截面定时器
-                    // source_ts + 1 且 source_ts 即本片)沿用本片各品种按 bar 区间求得的
-                    // 时段; 其余定时器(用户 schedule 等)在本片之后, 清空后各品种按定时器
-                    // 时刻解析(上一片已在上面 finalize)。
-                    if !timer_belongs_to_slice(&timer, self.last_timestamp) {
-                        engine.slice_sessions.clear();
-                    }
                     engine.clock.update(timer.timestamp, session);
                     engine.current_event = Some(Event::Timer(timer));
                 }

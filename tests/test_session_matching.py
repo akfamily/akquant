@@ -1055,3 +1055,75 @@ def test_all_zero_volume_auction_bars_uncross_without_volume_limit(
     assert list(r.orders_df["filled_quantity"]) == [100]
     hits = [m for m in caplog.messages if "竞价期行情成交量为 0" in m]
     assert len(hits) == 1 and "600000.SH" in hits[0]
+
+
+class _CrossSectionSessionProbe(Strategy):
+    """记录 on_bar 与 on_cross_section 看到的 ctx.session，并在截面里下一笔单."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bar_sessions: List[str] = []
+        self.cross_sessions: List[str] = []
+        self.done = False
+
+    def on_bar(self, bar: Bar) -> None:
+        assert self.ctx is not None
+        self.bar_sessions.append(str(self.ctx.session).split(".")[-1])
+
+    def on_cross_section(self, trading_date: Any, timestamp: int) -> None:
+        assert self.ctx is not None
+        self.cross_sessions.append(str(self.ctx.session).split(".")[-1])
+        if not self.done:
+            self.done = True
+            self.buy("600000.SH", 100)
+
+
+def _cross_probe(result: Any) -> _CrossSectionSessionProbe:
+    strategy = result.strategy
+    assert isinstance(strategy, _CrossSectionSessionProbe)
+    return strategy
+
+
+def test_daily_cross_section_session_matches_slice() -> None:
+    """只有日期的日线：截面定时器属于本时间片，ctx.session 与 on_bar 一致为连续竞价."""
+    idx = pd.to_datetime(["2024-01-02", "2024-01-03"]).tz_localize(TZ)
+    df = pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "600000.SH",
+            "open": [10.0, 11.0],
+            "high": [10.0, 11.0],
+            "low": [10.0, 11.0],
+            "close": [10.0, 11.0],
+            "volume": 1e6,
+        }
+    )
+    r = run_backtest(
+        strategy=_CrossSectionSessionProbe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    probe = _cross_probe(r)
+    assert probe.bar_sessions == ["Continuous", "Continuous"]
+    assert probe.cross_sessions == ["Continuous", "Continuous"]
+    # 截面里下的 NextOpen 单按连续竞价撮合：次日开盘价成交。
+    assert _fills(r) == [("01-03 15:00", 11.0)]
+
+
+def test_hourly_cross_section_session_matches_on_bar() -> None:
+    """freq='1h' 的 15:00 bar：截面看到的时段与 on_bar 相同（按 bar 区间求得）."""
+    # 每个交易日只有 15:00 一根，截面定时器挂在这根 bar 上。
+    df = _minute_frame(["2024-01-02 15:00", "2024-01-03 15:00"], [10.0, 10.0])
+    r = run_backtest(
+        strategy=_CrossSectionSessionProbe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        freq="1h",
+    )
+    probe = _cross_probe(r)
+    assert probe.bar_sessions == ["Continuous", "Continuous"]
+    assert probe.cross_sessions == probe.bar_sessions

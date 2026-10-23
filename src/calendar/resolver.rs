@@ -68,7 +68,8 @@ pub fn effective_sessions(
     sessions
 }
 
-fn rank(s: TradingSession) -> u8 {
+/// 时段优先级（多个时段并存时取最高者）。
+pub(crate) fn rank(s: TradingSession) -> u8 {
     match s {
         TradingSession::Continuous => 7,
         TradingSession::ClosingAuction => 6,
