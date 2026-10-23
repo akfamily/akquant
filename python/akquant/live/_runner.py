@@ -45,7 +45,10 @@ from ..strategy import (
     StrategyRuntimeConfig,
     reconcile_strategy_id,
 )
-from ..strategy_framework_hooks import normalize_dual_stream_declaration
+from ..strategy_framework_hooks import (
+    configure_engine_lifecycle_dispatch,
+    normalize_dual_stream_declaration,
+)
 from ..strategy_loader import resolve_strategy_input
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
@@ -820,6 +823,10 @@ class LiveRunner:
                 effective_strategy_id,
                 [strategy_instance, *slot_strategy_instances.values()],
             )
+
+        configure_engine_lifecycle_dispatch(
+            self.engine, [strategy_instance, *slot_strategy_instances.values()]
+        )
 
         logger.info(
             "Running live strategy loop",

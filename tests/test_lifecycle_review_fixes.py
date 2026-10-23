@@ -216,3 +216,152 @@ def test_after_trading_session_closed_night_futures() -> None:
     )
     # 01-05 收盘后下的单属于下一交易日（01-08），在当晚 21:30 夜盘成交
     _assert_after_trading_closed_and_order_fills_next_day(result, P, "2024-01-05")
+
+
+_LIFECYCLE_PREFIX = "__akq_lifecycle__|"
+
+
+def _count_lifecycle_dispatches(monkeypatch: Any) -> List[str]:
+    """把策略的定时器入口包一层，记录派发到 Python 的生命周期事件 payload."""
+    seen: List[str] = []
+    original = Strategy._on_timer_event_and_flush
+
+    def wrapped(self: Strategy, payload: str, ctx: Any) -> Any:
+        if payload.startswith(_LIFECYCLE_PREFIX):
+            seen.append(payload)
+        return original(self, payload, ctx)
+
+    monkeypatch.setattr(Strategy, "_on_timer_event_and_flush", wrapped)
+    return seen
+
+
+def _three_symbol_daily(days: int) -> pd.DataFrame:
+    idx = pd.bdate_range("2023-01-03", periods=days)
+    frames = [
+        pd.DataFrame(
+            {
+                "timestamp": idx,
+                "symbol": f"60000{i}.SH",
+                "open": 10.0,
+                "high": 10.0,
+                "low": 10.0,
+                "close": 10.0,
+                "volume": 1e6,
+            }
+        )
+        for i in range(3)
+    ]
+    return pd.concat(frames)
+
+
+_SYMBOLS = [f"60000{i}.SH" for i in range(3)]
+
+
+def test_on_bar_only_strategy_gets_no_lifecycle_dispatch(monkeypatch: Any) -> None:
+    """只写 on_bar 的策略（含槽位）不产生任何生命周期派发."""
+
+    class P(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            pass
+
+    seen = _count_lifecycle_dispatches(monkeypatch)
+    run_backtest(
+        strategy=P,
+        data=_three_symbol_daily(30),
+        symbols=_SYMBOLS,
+        initial_cash=1e6,
+        show_progress=False,
+        strategies_by_slot={"b": P},
+    )
+    assert seen == []
+
+
+def test_after_trading_override_dispatches_once_per_day(monkeypatch: Any) -> None:
+    """只重写 on_after_trading：每个交易日恰好一次收盘后派发，没有盘前/开始交易派发."""
+    days = 30
+
+    class P(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.after_days: List[dt.date] = []
+
+        def on_bar(self, bar: Bar) -> None:
+            pass
+
+        def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:
+            self.after_days.append(trading_date)
+
+    seen = _count_lifecycle_dispatches(monkeypatch)
+    result = run_backtest(
+        strategy=P,
+        data=_three_symbol_daily(days),
+        symbols=_SYMBOLS,
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert len(seen) == days, seen[:5]
+    assert all("|after_trading|" in p for p in seen), seen[:5]
+    assert result.strategy is not None
+    assert len(result.strategy.after_days) == days
+
+
+def test_expired_and_expiry_delivered_without_lifecycle_hooks(
+    monkeypatch: Any,
+) -> None:
+    """未重写生命周期钩子时，Expired 与 on_expiry 仍在日终结算后的收盘后事件上送达."""
+
+    class P(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.expired_at: List[str] = []
+            self.done = False
+
+        def on_bar(self, bar: Bar) -> None:
+            if not self.done:
+                self.done = True
+                self.buy(
+                    bar.symbol, 100, price=1.0, time_in_force=akquant.TimeInForce.Day
+                )
+
+        def on_order(self, order: Any) -> None:
+            if str(order.status).split(".")[-1] == "Expired":
+                ts = int(self.ctx.current_time) if self.ctx is not None else 0
+                self.expired_at.append(
+                    pd.Timestamp(ts, tz="UTC").tz_convert(TZ).strftime("%m-%d %H:%M")
+                )
+
+    seen = _count_lifecycle_dispatches(monkeypatch)
+    times = ["2024-01-02 10:00", "2024-01-02 15:00", "2024-01-03 10:00"]
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(times).tz_localize(TZ),
+            "symbol": "600000.SH",
+            "open": 10.0,
+            "high": 10.0,
+            "low": 10.0,
+            "close": 10.0,
+            "volume": 1e6,
+        }
+    )
+    result = run_backtest(
+        strategy=P,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert result.strategy is not None
+    # 收盘后事件（15:00 + 1ns）送达，而不是等到次日 10:00 的 bar
+    assert result.strategy.expired_at == ["01-02 15:00"]
+    assert seen == ["__akq_lifecycle__|after_trading|2024-01-02"]
+
+    class Q(_ExpiryProbe):
+        on_pre_open = Strategy.on_pre_open  # type: ignore[assignment]
+        on_after_trading = Strategy.on_after_trading  # type: ignore[assignment]
+
+    seen.clear()
+    _ExpiryProbe.events = []
+    _run_option_expiry(Q)
+    assert _ExpiryProbe.events == [("on_expiry", "OPT")]
+    # 只有到期结算那天（12-01）的收盘后事件派发
+    assert seen == ["__akq_lifecycle__|after_trading|2023-12-01"]

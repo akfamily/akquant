@@ -832,6 +832,22 @@ class Engine:
         """
         ...
 
+    def set_lifecycle_hooks_dispatch(
+        self, pre_open: bool, before_trading: bool, after_trading: bool
+    ) -> None:
+        r"""
+        设置各交易日生命周期事件是否派发给策略.
+
+        框架在 run 开始时按是否有策略重写了对应钩子设置，缺省全为 True。
+        为 False 的盘前/开始交易事件只在引擎内部消费；收盘后事件为 False 时只在有
+        过期单或到期事件要送达时派发。
+
+        :param pre_open: 是否派发盘前事件（on_pre_open）
+        :param before_trading: 是否派发开始交易事件（on_before_trading）
+        :param after_trading: 是否派发收盘后事件（on_after_trading）
+        """
+        ...
+
     def add_corporate_action(self, action: CorporateAction) -> None:
         r"""
         添加公司行为 (除权除息).

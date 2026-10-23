@@ -336,6 +336,29 @@ def is_lifecycle_payload(payload: str) -> bool:
     return payload.startswith(_LIFECYCLE_PREFIX)
 
 
+#: 由引擎生命周期事件驱动的交易日钩子.
+LIFECYCLE_HOOK_NAMES = ("on_pre_open", "on_before_trading", "on_after_trading")
+
+
+def configure_engine_lifecycle_dispatch(engine: Any, strategies: Iterable[Any]) -> None:
+    """按钩子告知引擎是否有策略（含槽位）重写了交易日生命周期钩子.
+
+    没人重写的钩子，引擎不把对应的盘前/开始交易事件派发给 Python；收盘后事件
+    没人重写时只在有过期单或到期事件要送达时派发——只写 ``on_bar`` 的策略不再为
+    每个交易日多付三次派发。必须在 ``engine.run()`` 之前调用。
+    """
+    setter = getattr(engine, "set_lifecycle_hooks_dispatch", None)
+    if setter is None:
+        return
+    strategy_list = list(strategies)
+    setter(
+        *(
+            any(_strategy_overrides_callback(s, name) for s in strategy_list)
+            for name in LIFECYCLE_HOOK_NAMES
+        )
+    )
+
+
 def dispatch_lifecycle_timer(strategy: Any, payload: str) -> bool:
     """处理引擎生成的交易日生命周期事件，返回是否已消费该 payload.
 

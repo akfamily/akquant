@@ -49,6 +49,25 @@ pub struct StrategySlot {
     pub(crate) strategy_id: String,
 }
 
+/// 各交易日生命周期钩子是否有策略重写（见 `Engine::lifecycle_hooks_dispatch`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LifecycleHooksDispatch {
+    pub(crate) pre_open: bool,
+    pub(crate) before_trading: bool,
+    pub(crate) after_trading: bool,
+}
+
+impl Default for LifecycleHooksDispatch {
+    /// 直接驱动引擎（不经框架入口）时全部派发。
+    fn default() -> Self {
+        Self {
+            pre_open: true,
+            before_trading: true,
+            after_trading: true,
+        }
+    }
+}
+
 /// 主回测引擎.
 ///
 /// :ivar feed: 数据源
@@ -106,6 +125,12 @@ pub struct Engine {
     pub(crate) lifecycle_scheduled_for: Option<NaiveDate>,
     /// 实盘生命周期串联因交易日历到尽头失败时是否已告警（只告警一次）。
     pub(crate) lifecycle_chain_warned: bool,
+    /// 各生命周期钩子（on_pre_open / on_before_trading / on_after_trading）是否有策略
+    /// （含槽位）重写，由 Python 在 run 开始时经 `set_lifecycle_hooks_dispatch` 告知
+    /// （直接驱动引擎时缺省全为真）。未重写的盘前/开始交易事件只在引擎内消费（实盘
+    /// 串联仍依赖开始交易），不派发给策略；收盘后事件未重写时只在有过期单或到期事件
+    /// 要送达时派发。
+    pub(crate) lifecycle_hooks_dispatch: LifecycleHooksDispatch,
     /// 公司行动已处理到的日期(含)。开日时处理 (该日期, 当日交易日] 内的全部行动。
     pub(crate) last_corp_action_date: Option<NaiveDate>,
     pub(crate) market_manager: MarketManager,
@@ -1613,6 +1638,29 @@ impl Engine {
         matches!(self.current_event.as_ref(), Some(Event::Timer(t)) if t.is_lifecycle())
     }
 
+    /// 生命周期事件 `kind` 是否要派发给策略：有策略重写了对应钩子时派发；收盘后
+    /// 事件未重写时，有待送达的过期单或到期事件也派发（它们在日终结算后送达，不必
+    /// 等到下一交易日的首个行情事件）。
+    pub(crate) fn should_dispatch_lifecycle(&self, kind: &str) -> bool {
+        use crate::model::timer::{
+            LIFECYCLE_AFTER_TRADING, LIFECYCLE_BEFORE_TRADING, LIFECYCLE_PRE_OPEN,
+        };
+        let hooks = self.lifecycle_hooks_dispatch;
+        match kind {
+            LIFECYCLE_PRE_OPEN => return hooks.pre_open,
+            LIFECYCLE_BEFORE_TRADING => return hooks.before_trading,
+            LIFECYCLE_AFTER_TRADING if hooks.after_trading => return true,
+            LIFECYCLE_AFTER_TRADING => {}
+            _ => return true,
+        }
+        !self
+            .state
+            .order_manager
+            .current_step_expired_orders
+            .is_empty()
+            || !self.recent_expiry_events.is_empty()
+    }
+
     pub(crate) fn datetime_from_ns(timestamp: i64) -> DateTime<Utc> {
         let secs = timestamp.div_euclid(1_000_000_000);
         let nanos = timestamp.rem_euclid(1_000_000_000) as u32;
@@ -2406,6 +2454,44 @@ mod lifecycle_tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn lifecycle_dispatch_gated_per_hook_and_by_pending_deliveries() {
+        use crate::model::timer::{
+            LIFECYCLE_AFTER_TRADING, LIFECYCLE_BEFORE_TRADING, LIFECYCLE_PRE_OPEN,
+        };
+        let mut engine = Engine::new();
+        // 缺省（直接驱动引擎）全部派发
+        for kind in [
+            LIFECYCLE_PRE_OPEN,
+            LIFECYCLE_BEFORE_TRADING,
+            LIFECYCLE_AFTER_TRADING,
+        ] {
+            assert!(engine.should_dispatch_lifecycle(kind));
+        }
+        engine.lifecycle_hooks_dispatch = super::LifecycleHooksDispatch {
+            pre_open: false,
+            before_trading: true,
+            after_trading: false,
+        };
+        assert!(!engine.should_dispatch_lifecycle(LIFECYCLE_PRE_OPEN));
+        assert!(engine.should_dispatch_lifecycle(LIFECYCLE_BEFORE_TRADING));
+        assert!(!engine.should_dispatch_lifecycle(LIFECYCLE_AFTER_TRADING));
+        // 有过期单要送达时收盘后事件照常派发
+        engine
+            .state
+            .order_manager
+            .current_step_expired_orders
+            .push(crate::model::Order::test_new(
+                "o1",
+                "600000.SH",
+                crate::model::OrderSide::Buy,
+                crate::model::OrderType::Market,
+                rust_decimal::Decimal::ONE,
+            ));
+        assert!(engine.should_dispatch_lifecycle(LIFECYCLE_AFTER_TRADING));
+        assert!(!engine.should_dispatch_lifecycle(LIFECYCLE_PRE_OPEN));
     }
 
     #[test]

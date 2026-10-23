@@ -84,6 +84,7 @@ from ..strategy import (
 )
 from ..strategy_framework_hooks import (
     collect_cross_section_timer_entries,
+    configure_engine_lifecycle_dispatch,
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
@@ -5528,6 +5529,7 @@ def run_backtest(
     # 多周期窗口订阅下发(无订阅时零开销)。必须在 engine.run() 之前; 放在白名单之后
     # 是为了与 run_from_checkpoint 的下发点对称。
     configure_engine_window_subscriptions(engine, all_strategy_instances, freq, logger)
+    configure_engine_lifecycle_dispatch(engine, all_strategy_instances)
 
     # 6. 添加数据
     engine.add_data(feed)
@@ -7282,6 +7284,7 @@ def run_from_checkpoint(
         getattr(strategy_instance, "_framework_freq", None),
         logger,
     )
+    configure_engine_lifecycle_dispatch(engine, all_strategy_instances)
 
     # 被前置过滤掉的标的只发一条汇总日志, 与 run_backtest 对称(见该函数同名
     # 注释, :4572 附近)——两条入口的可观测性不应该有差异。

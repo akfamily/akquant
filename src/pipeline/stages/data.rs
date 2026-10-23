@@ -282,7 +282,14 @@ impl Processor for DataProcessor {
                             ) {
                                 run_day_close_settlement(engine, py, day, close_ts);
                                 engine.last_settled_trading_day = Some(day);
-                                emit_after_trading(engine, day, timer.timestamp)?;
+                                // 没有策略要收盘后事件(未重写钩子且无过期单/到期事件
+                                // 要送达)时不发出, 省一次 Python 派发。
+                                let dispatch = engine.should_dispatch_lifecycle(
+                                    crate::model::timer::LIFECYCLE_AFTER_TRADING,
+                                );
+                                if dispatch {
+                                    emit_after_trading(engine, day, timer.timestamp)?;
+                                }
                                 // 回测: 按下一个行情事件所属交易日串联生命周期(数据耗尽
                                 // 则不排); 实盘在 before_trading 触发时排下一交易日。
                                 if !engine.state.feed.is_live()
@@ -291,7 +298,11 @@ impl Processor for DataProcessor {
                                     engine
                                         .schedule_lifecycle_for_event(next_ts, timer.timestamp)?;
                                 }
-                                return Ok(ProcessorResult::Next);
+                                return Ok(if dispatch {
+                                    ProcessorResult::Next
+                                } else {
+                                    ProcessorResult::Loop
+                                });
                             }
                         }
                         return Ok(ProcessorResult::Loop);
@@ -334,6 +345,13 @@ impl Processor for DataProcessor {
                     let session = timer_session(engine, timer.timestamp, timer.is_lifecycle())?;
                     if engine.state.feed.is_live() {
                         engine.chain_live_lifecycle(&timer)?;
+                    }
+                    // 生命周期事件只在有策略要它时派发(见 should_dispatch_lifecycle);
+                    // 否则在引擎内消费掉(上面已完成实盘串联), 不推进时钟。
+                    if let Some((kind, _)) = timer.lifecycle()
+                        && !engine.should_dispatch_lifecycle(kind)
+                    {
+                        return Ok(ProcessorResult::Loop);
                     }
                     engine.clock.update(timer.timestamp, session);
                     engine.current_event = Some(Event::Timer(timer));
