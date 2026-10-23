@@ -109,6 +109,20 @@ impl PySessionResolver {
             .map_err(calendar_err)
     }
 
+    /// 设置在用标的 ``[(symbol, asset_type), ...]``：会话级收盘取它们时段表收盘的最大值。
+    ///
+    /// 不调用（或传空列表）时按全局默认表（``"default"``，缺省 CN_STOCK）计算。
+    fn set_active(&mut self, symbols: Vec<(String, Option<AssetType>)>) {
+        self.inner.set_active(&symbols);
+    }
+
+    /// 会话级交易日收盘时刻（UTC 纳秒）：所有在用时段表收盘的最大值。
+    fn session_day_end(&self, trading_day: NaiveDate) -> PyResult<i64> {
+        self.inner
+            .session_day_end(trading_day)
+            .map_err(calendar_err)
+    }
+
     /// 是否在使用缺省日历（未传 ``trading_calendar``）。
     #[getter]
     fn uses_fallback_calendar(&self) -> bool {

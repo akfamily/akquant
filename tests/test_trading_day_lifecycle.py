@@ -1178,3 +1178,72 @@ def test_live_replay_next_day_event_inside_grace_window_settles_once(
     assert runner._stop_target_strategy.active_at["2024-01-02 14:00"] == 1
     # 01-02 只结算一次
     assert _snapshot_minutes(runner).count("2024-01-03 00:00") == 1
+
+
+class _BuyStockOnce(Strategy):
+    """记录每根 bar 的本地时间；首根 600000.SH bar 下一张 NextOpen 市价单."""
+
+    def __init__(self) -> None:
+        """初始化."""
+        super().__init__()
+        self.done = False
+        self.seen: List[tuple] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        """记录并下单."""
+        local = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert("Asia/Shanghai")
+        self.seen.append((bar.symbol, local.strftime("%Y-%m-%d %H:%M")))
+        if bar.symbol == "600000.SH" and not self.done:
+            self.done = True
+            self.buy("600000.SH", 100)
+
+
+def test_date_only_mixed_sessions_rewrite_to_session_close() -> None:
+    """股票 + 国债期货（15:15 收盘）的只有日期数据：同日两标的都改写到 15:15.
+
+    按标的收盘改写时股票在 15:00、国债期货在 15:15，同一天拆成两个切片；股票
+    首日下的 NextOpen 单在 15:15 的切片里找不到股票行情，被拒为
+    "Missing market data"。会话级收盘改写后同日只有一个切片，次日正常成交。
+    """
+    days = ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]
+    df = pd.concat(
+        [_daily_frame(days, "600000.SH"), _daily_frame(days, "T2403")]
+    ).sort_values("timestamp")
+    result = run_backtest(
+        data=df,
+        strategy=_BuyStockOnce,
+        symbols=["600000.SH", "T2403"],
+        initial_cash=1e6,
+        show_progress=False,
+        sessions={"T": "CN_FUTURES_CFFEX_BOND_DAY"},
+    )
+    seen = _seen(result)
+    assert {t for _, t in seen} == {f"{d} 15:15" for d in days}
+    assert sorted(seen) == sorted(
+        (s, f"{d} 15:15") for d in days for s in ("600000.SH", "T2403")
+    )
+    orders = result.orders_df
+    assert list(orders["status"].astype(str).str.lower()) == ["filled"], orders
+    reasons = orders["reject_reason"].fillna("").astype(str)
+    assert not reasons.str.contains("Missing market data").any()
+    fills = result.executions_df
+    assert len(fills) == 1
+    fill_local = pd.Timestamp(fills.iloc[0]["timestamp"])
+    if fill_local.tzinfo is None:
+        fill_local = fill_local.tz_localize("UTC")
+    assert fill_local.tz_convert("Asia/Shanghai").strftime("%Y-%m-%d") == "2024-01-03"
+
+
+def test_session_resolver_session_day_end_uses_active_symbols() -> None:
+    """SessionResolver.set_active 后 session_day_end 取在用时段表收盘的最大值."""
+    resolver = aq.SessionResolver(sessions={"T": "CN_FUTURES_CFFEX_BOND_DAY"})
+    day = dt.date(2024, 1, 2)
+    stock_close = pd.Timestamp("2024-01-02 15:00", tz="Asia/Shanghai").value
+    bond_close = pd.Timestamp("2024-01-02 15:15", tz="Asia/Shanghai").value
+    assert resolver.session_day_end(day) == stock_close
+    resolver.set_active(
+        [("600000.SH", aq.AssetType.Stock), ("T2403", aq.AssetType.Futures)]
+    )
+    assert resolver.session_day_end(day) == bond_close
+    resolver.set_active([("600000.SH", aq.AssetType.Stock)])
+    assert resolver.session_day_end(day) == stock_close

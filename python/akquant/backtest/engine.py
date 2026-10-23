@@ -539,22 +539,66 @@ def _local_midnight_only(index: pd.DatetimeIndex) -> bool:
     return bool(((index - index.normalize()) == pd.Timedelta(0)).all())
 
 
-def _date_only_close_ns(
-    resolver: Any, symbol: str, day: dt_module.date, asset_type: Any, timezone: str
-) -> int:
-    """该交易日收盘时刻（UTC 纳秒）；落在次日 0 点时减 1ns，保证本地日期不变."""
-    _, end = resolver.day_bounds(symbol, day, asset_type)
+def _activate_session_symbols(
+    resolver: Any,
+    symbols: Iterable[str],
+    asset_type_of: Callable[[str], Any],
+    known_asset_types: Optional[Dict[str, Any]] = None,
+) -> None:
+    """把将注册为合约的标的设为解析器的在用标的.
+
+    须与引擎 ``ensure_session_resolver`` 的在用集合（全部已登记合约）一致：只有日期
+    的数据改写到会话级收盘 ``session_day_end``，它取所有在用时段表收盘的最大值。
+    ``known_asset_types`` 给出已知资产类型的标的（如存档里已有的合约），其余按
+    ``asset_type_of`` 解析。
+    """
+    known = known_asset_types or {}
+    pairs: List[Tuple[str, Any]] = []
+    for sym in dict.fromkeys(str(s) for s in symbols):
+        pairs.append((sym, known[sym] if sym in known else asset_type_of(sym)))
+    resolver.set_active(pairs)
+
+
+def _saved_session_asset_types(strategy_instance: Any) -> Dict[str, Any]:
+    """存档策略里已登记合约的资产类型（取自 ``_instrument_snapshots``）.
+
+    无法识别的资产类型记为 None，解析器按全天连续处理，与引擎对非股票/基金/
+    期货/期权合约的处理一致。
+    """
+    names = {
+        "stock": AssetType.Stock,
+        "futures": AssetType.Futures,
+        "fund": AssetType.Fund,
+        "option": AssetType.Option,
+    }
+    out: Dict[str, Any] = {}
+    snapshots = getattr(strategy_instance, "_instrument_snapshots", None) or {}
+    for sym, snap in dict(snapshots).items():
+        try:
+            out[str(sym)] = names[
+                _parse_asset_type_name(getattr(snap, "asset_type", None))
+            ]
+        except (KeyError, ValueError, TypeError):
+            out[str(sym)] = None
+    return out
+
+
+def _date_only_close_ns(resolver: Any, day: dt_module.date, timezone: str) -> int:
+    """会话级收盘时刻（UTC 纳秒，同日所有标的相同）；落在次日 0 点时减 1ns.
+
+    同日所有标的改写到同一时刻，日线才在同一个切片里：按标的各自收盘改写时，
+    混合时段表（如股票 15:00 与国债期货 15:15）会把一天拆成两个切片。
+    """
+    end = int(resolver.session_day_end(day))
     next_midnight = int(
         pd.Timestamp(day + dt_module.timedelta(days=1)).tz_localize(timezone).value
     )
-    return int(end) - 1 if int(end) == next_midnight else int(end)
+    return end - 1 if end == next_midnight else end
 
 
 def _rewrite_date_only_utc(
     utc_times: pd.DatetimeIndex,
-    symbol: str,
     resolver: Any,
-    asset_type: Any,
     timezone: str,
 ) -> Optional[pd.DatetimeIndex]:
     """一组 UTC 时间若全为引擎时区本地 0 点，返回改写到收盘时刻的新时间，否则 None."""
@@ -565,9 +609,7 @@ def _rewrite_date_only_utc(
     new_ns: List[int] = []
     for day in local.date:
         if day not in cache:
-            cache[day] = _date_only_close_ns(
-                resolver, symbol, day, asset_type, timezone
-            )
+            cache[day] = _date_only_close_ns(resolver, day, timezone)
         new_ns.append(cache[day])
     return pd.DatetimeIndex(pd.to_datetime(new_ns, unit="ns", utc=True))
 
@@ -610,7 +652,7 @@ def _replace_frame_times(
 
 
 def _rewrite_date_only_frame(
-    df: pd.DataFrame, symbol: str, resolver: Any, asset_type: Any, timezone: str
+    df: pd.DataFrame, resolver: Any, timezone: str
 ) -> pd.DataFrame:
     """单标的 DataFrame：全部时间为本地 0 点（只有日期）时改写到交易日收盘时刻."""
     if df.empty:
@@ -619,9 +661,7 @@ def _rewrite_date_only_frame(
     if source is None:
         return df
     source_col, raw = source
-    new_utc = _rewrite_date_only_utc(
-        _to_utc_index(raw), symbol, resolver, asset_type, timezone
-    )
+    new_utc = _rewrite_date_only_utc(_to_utc_index(raw), resolver, timezone)
     if new_utc is None:
         return df
     return _replace_frame_times(df, source_col, new_utc)
@@ -630,7 +670,6 @@ def _rewrite_date_only_frame(
 def _rewrite_date_only_multi_symbol_frame(
     df: pd.DataFrame,
     resolver: Any,
-    asset_type_of: Callable[[str], Any],
     timezone: str,
 ) -> pd.DataFrame:
     """带 ``symbol`` 列的多标的 DataFrame：逐标的判断并改写，行顺序不变."""
@@ -646,9 +685,7 @@ def _rewrite_date_only_multi_symbol_frame(
     changed = False
     for sym in pd.unique(symbols_arr):
         positions = (symbols_arr == sym).nonzero()[0]
-        new_utc = _rewrite_date_only_utc(
-            utc[positions], str(sym), resolver, asset_type_of(str(sym)), timezone
-        )
+        new_utc = _rewrite_date_only_utc(utc[positions], resolver, timezone)
         if new_utc is None:
             continue
         merged[positions] = new_utc.tz_localize(None).to_numpy()
@@ -662,7 +699,6 @@ def _rewrite_date_only_multi_symbol_frame(
 def _rewrite_date_only_bars(
     bars: List[Bar],
     resolver: Any,
-    asset_type_of: Callable[[str], Any],
     timezone: str,
 ) -> List[Bar]:
     """Bar 列表按标的分组：某标的全部 bar 为本地 0 点时改写该标的的时间戳.
@@ -679,9 +715,7 @@ def _rewrite_date_only_bars(
                 [int(bars[pos].timestamp) for pos in positions], unit="ns", utc=True
             )
         )
-        new_utc = _rewrite_date_only_utc(
-            utc, symbol, resolver, asset_type_of(symbol), timezone
-        )
+        new_utc = _rewrite_date_only_utc(utc, resolver, timezone)
         if new_utc is None:
             continue
         for pos, new_stamp in zip(positions, new_utc):
@@ -3707,13 +3741,14 @@ def run_backtest(
                     len(leaked_adapter_symbols),
                     ", ".join(sorted(leaked_adapter_symbols)),
                 )
+            _activate_session_symbols(
+                session_resolver,
+                [*symbols, *adapter_data_map.keys()],
+                session_asset_type_of,
+            )
             for sym, df in adapter_data_map.items():
                 df_prep = _rewrite_date_only_frame(
-                    to_indicator_frame(df),
-                    sym,
-                    session_resolver,
-                    session_asset_type_of(sym),
-                    timezone,
+                    to_indicator_frame(df), session_resolver, timezone
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
@@ -3796,8 +3831,17 @@ def run_backtest(
                     df = df[df["symbol"].isin(symbols)]
                     filtered_out_symbols.update(pre_filter_symbols.difference(symbols))
                 if not df.empty:
+                    detected_symbols = [str(s) for s in df["symbol"].unique().tolist()]
+                    # 在用标的与下面最终登记为合约的 symbols 一致
+                    _activate_session_symbols(
+                        session_resolver,
+                        detected_symbols
+                        if not symbols or symbols == ["BENCHMARK"]
+                        else [*symbols, *detected_symbols],
+                        session_asset_type_of,
+                    )
                     df = _rewrite_date_only_multi_symbol_frame(
-                        df, session_resolver, session_asset_type_of, timezone
+                        df, session_resolver, timezone
                     )
                     arrays = dataframe_to_arrays(df)
                     feed.add_arrays(*arrays)  # type: ignore
@@ -3805,7 +3849,6 @@ def run_backtest(
                     for grouped_symbol, grouped_df in grouped:
                         sym = str(grouped_symbol)
                         data_map_for_indicators[sym] = grouped_df.copy()
-                    detected_symbols = [str(s) for s in df["symbol"].unique().tolist()]
                     if not symbols or symbols == ["BENCHMARK"]:
                         symbols = detected_symbols
                     else:
@@ -3829,13 +3872,12 @@ def run_backtest(
                         target_symbol,
                         ", ".join(COLUMN_ALIASES["symbol"]),
                     )
-                df = _rewrite_date_only_frame(
-                    df,
-                    target_symbol,
+                _activate_session_symbols(
                     session_resolver,
-                    session_asset_type_of(target_symbol),
-                    timezone,
+                    symbols if target_symbol in symbols else [target_symbol],
+                    session_asset_type_of,
                 )
+                df = _rewrite_date_only_frame(df, session_resolver, timezone)
                 data_map_for_indicators[target_symbol] = df
                 arrays = dataframe_to_arrays(df, symbol=target_symbol)
                 feed.add_arrays(*arrays)  # type: ignore
@@ -3846,6 +3888,14 @@ def run_backtest(
             # If explicit symbols are provided (i.e., not just the default "BENCHMARK"),
             # we filter the data dictionary to only include requested symbols.
             filter_symbols = "BENCHMARK" not in symbols
+            _activate_session_symbols(
+                session_resolver,
+                [
+                    *symbols,
+                    *(s for s in data if not (filter_symbols and s not in symbols)),
+                ],
+                session_asset_type_of,
+            )
 
             for sym, df in data.items():
                 if filter_symbols and sym not in symbols:
@@ -3879,11 +3929,7 @@ def run_backtest(
                     )
 
                 df_prep = _rewrite_date_only_frame(
-                    to_indicator_frame(df),
-                    sym,
-                    session_resolver,
-                    session_asset_type_of(sym),
-                    timezone,
+                    to_indicator_frame(df), session_resolver, timezone
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
@@ -3916,10 +3962,13 @@ def run_backtest(
                         kept_bars.append(b)
                     data = kept_bars
 
+                # Bar 列表分支不把数据里的标的并入 symbols, 合约只登记 symbols
+                _activate_session_symbols(
+                    session_resolver, symbols, session_asset_type_of
+                )
                 data = _rewrite_date_only_bars(
                     data,  # type: ignore[arg-type]
                     session_resolver,
-                    session_asset_type_of,
                     timezone,
                 )
                 data.sort(key=lambda b: b.timestamp)
@@ -3964,6 +4013,7 @@ def run_backtest(
         # start_time / end_time already resolved above
 
         loaded_count = 0
+        _activate_session_symbols(session_resolver, symbols, session_asset_type_of)
         for sym in symbols:
             # Try Catalog
             df = catalog.read(
@@ -3979,11 +4029,7 @@ def run_backtest(
 
             if not df.empty:
                 df = _rewrite_date_only_frame(
-                    to_indicator_frame(df),
-                    sym,
-                    session_resolver,
-                    session_asset_type_of(sym),
-                    timezone,
+                    to_indicator_frame(df), session_resolver, timezone
                 )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)
@@ -5477,6 +5523,26 @@ def run_from_checkpoint(
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
+    # 先载入存档、后接数据源: 只有日期数据的改写要用存档里已有的合约算会话级收盘
+    logger.info(f"Resuming from checkpoint: {checkpoint_path}")
+    engine, strategy_instance = load_checkpoint(checkpoint_path, None)
+    saved_session_asset_types = _saved_session_asset_types(strategy_instance)
+    resume_extra_symbols = [
+        *session_prebuilt,
+        *session_conf_map,
+        *(config.instruments if config and config.instruments else []),
+    ]
+
+    def activate_resume_symbols(data_symbols: Iterable[str]) -> None:
+        # 与续跑登记的合约一致: 存档已有合约 + 本次数据与配置里的标的
+        fresh = [*(str(s) for s in data_symbols), *resume_extra_symbols]
+        _activate_session_symbols(
+            session_resolver,
+            [*saved_session_asset_types, *fresh],
+            session_asset_type_of,
+            {k: v for k, v in saved_session_asset_types.items() if k not in set(fresh)},
+        )
+
     # 1. 准备数据源
     feed = None
     data_map_for_indicators: Dict[str, pd.DataFrame] = {}
@@ -5506,14 +5572,13 @@ def run_from_checkpoint(
                 ", ".join(sorted(leaked_adapter_symbols)),
             )
         loaded_count = 0
+        activate_resume_symbols(
+            sym for sym, df in adapter_data_map.items() if not df.empty
+        )
         for sym, df in adapter_data_map.items():
             if not df.empty:
                 df_prep = _rewrite_date_only_frame(
-                    to_indicator_frame(df),
-                    sym,
-                    session_resolver,
-                    session_asset_type_of(sym),
-                    timezone_name,
+                    to_indicator_frame(df), session_resolver, timezone_name
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
@@ -5585,10 +5650,13 @@ def run_from_checkpoint(
         elif isinstance(data, list) and data and isinstance(data[0], Bar):
             # Convert List[Bar] to DataFrame for indicators
             # We assume all bars are for the same symbol (or single symbol context)
+            activate_resume_symbols(
+                str(bar.symbol)
+                for bar in data  # type: ignore[union-attr]
+            )
             resume_bars: List[Any] = _rewrite_date_only_bars(
                 data,  # type: ignore[arg-type]
                 session_resolver,
-                session_asset_type_of,
                 timezone_name,
             )
             feed.add_bars(resume_bars)
@@ -5639,14 +5707,11 @@ def run_from_checkpoint(
             data_map = {}
 
         loaded_count = 0
+        activate_resume_symbols(sym for sym, df in data_map.items() if not df.empty)
         for sym, df in data_map.items():
             if not df.empty:
                 df = _rewrite_date_only_frame(
-                    to_indicator_frame(df),
-                    sym,
-                    session_resolver,
-                    session_asset_type_of(sym),
-                    timezone_name,
+                    to_indicator_frame(df), session_resolver, timezone_name
                 )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)
@@ -5656,8 +5721,8 @@ def run_from_checkpoint(
         if loaded_count > 0:
             feed.sort()
 
-    logger.info(f"Resuming from checkpoint: {checkpoint_path}")
-    engine, strategy_instance = load_checkpoint(checkpoint_path, feed)
+    if feed:
+        engine.add_data(feed)
     engine.configure_sessions(session_map, calendar_days)
     # 快照持久化的运行时配置 (issue #282)；旧快照为 None，走逐项推导降级路径
     restored_backtest_config = getattr(
