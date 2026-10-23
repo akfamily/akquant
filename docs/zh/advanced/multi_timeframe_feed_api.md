@@ -10,8 +10,8 @@ AKQuant 目前有三条独立的多周期路径，覆盖不同场景，互不替
 
 | 路径 | 适用 | 回测 | 实盘 | 高周期进历史与指标 | 日线时间戳口径 |
 | --- | --- | --- | --- | --- | --- |
-| `subscribe_bars`（推荐） | 策略内声明式订阅多周期 | 支持 | 支持 | 进 `get_history(freq=)` / `self.I(freq=)` | 当日最后一根基础 bar |
-| `BarGenerator` | 策略内手工聚合，不想动引擎配置 | 支持 | 支持 | 不进历史/指标，只有聚合后回调收到的那一根 | 次日零点（pandas `resample` 口径） |
+| `subscribe_bars`（推荐） | 策略内声明式订阅多周期 | 支持 | 支持 | 进 `get_history(freq=)` / `self.I(freq=)` | 交易日收盘时刻 |
+| `BarGenerator` | 策略内手工聚合，不想动引擎配置 | 支持 | 支持 | 不进历史/指标，只有聚合后回调收到的那一根 | 交易日收盘时刻（与 `subscribe_bars` 同一聚合器） |
 | `feed.resample` / `feed.replay` | 离线数据编排，喂给 `run_backtest` 之前就要多频率 feed | 仅回测 | 不支持 | 需要伪标的拼接，用户自己打时间戳 | 用户自定 |
 
 ## `subscribe_bars` 用法
@@ -174,14 +174,17 @@ replayed = feed.replay(
 
 `BarGenerator` 是**运行时**方案：聚合逻辑内嵌在策略里，逐 bar 流式喂入，不
 依赖任何离线数据编排。回测与实盘用的是**同一句** `update_bar` 调用——策略
-代码本身不需要区分当前是在回测还是实盘运行。两者在相同参数下遵循同一套
-时钟对齐语义（`label="right"`, `closed="right"`，与 pandas
-`resample(label="right", closed="right")` 一致），因此同参数产出结果一致。
+代码本身不需要区分当前是在回测还是实盘运行。
+
+`BarGenerator` 底层就是引擎 `subscribe_bars` 用的同一个 Rust 窗口聚合器
+（也可直接用 `akquant.WindowAggregator`），对同一数据、同一时段表产出相同的
+窗口：日内窗口按（交易日，交易块）切分，标签为本地时钟 ceil 到周期但不超过
+交易块结束（A 股 1h：10:00、11:00、11:30、14:00、15:00）；日线窗口按交易日
+切分（夜盘归下一交易日），标签为交易日收盘时刻。窗口 bar 带 `freq` 与
+`interval_start`。
 
 与 `subscribe_bars` 的关键差异：`BarGenerator` 聚合出的 bar **不会**进入
-`get_history`/增量指标体系，只有传给回调函数的那一根可用；日线的时间戳口径
-也不同（`BarGenerator` 用 pandas 的次日零点，`subscribe_bars` 用当日最后一根
-基础 bar）。
+`get_history`/增量指标体系，只有传给回调函数的那一根可用。
 
 最小用法：
 
@@ -209,11 +212,17 @@ class MyStrategy(Strategy):
 ```
 
 - `window`/`interval` 组合出目标周期（如 `BarGenerator(cb, 15, "minute")`、
-  `BarGenerator(cb, 1, "hour")`、`BarGenerator(cb, 1, "day")`）。
-- `session_windows` 用于按交易时段分段聚合，避免跨午休等段拼接出脏 bar，例如
-  `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`；不传则按纯时钟
-  对齐（跨会话边界不做特殊处理）。
-- `timezone` 指定时钟/session 对齐所在的市场时区（如 `"Asia/Shanghai"`）。
+  `BarGenerator(cb, 1, "hour")`、`BarGenerator(cb, 1, "day")`）；`"day"` 只支持
+  `window=1`。
+- `timezone`（默认 `"Asia/Shanghai"`）、`sessions`、`trading_calendar`、
+  `asset_type`（默认股票，也可传 `{symbol: asset_type}`）与 `run_backtest` 同义，
+  决定品种的时段表与交易日。
+- `base_interval_min` 是喂入 bar 的周期（分钟）。给定时 bar 区间终点到达窗口
+  标签即闭合回调（如 11:30 那根 1 分钟 bar 到达就闭合 11:30 的窗口）；不给时
+  等下一根落入新窗口的 bar 到达才闭合。
+- `session_windows` 手写交易时段，覆盖时段表，例如
+  `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`；终点早于起点表示
+  跨午夜。
 - `current(symbol)` 可查看某标的当前正在形成、尚未闭合的窗口快照，不会触发
   回调，适合盘中展示。
 - 多标的相互独立聚合，互不影响。

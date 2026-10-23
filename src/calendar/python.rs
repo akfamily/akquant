@@ -31,7 +31,6 @@ pub struct PySessionResolver {
 
 impl PySessionResolver {
     /// 供 Rust 侧（窗口聚合器等）共享同一解析器及其缓存。
-    #[allow(dead_code)]
     pub(crate) fn arc(&self) -> Arc<SessionResolver> {
         self.inner.clone()
     }

@@ -201,6 +201,38 @@ class SessionResolver:
     @staticmethod
     def templates() -> list[str]: ...
 
+class WindowAggregator:
+    r"""
+    单周期窗口聚合器：把基础 bar 流聚合成 ``freq`` 周期的窗口 bar.
+
+    规则与引擎 ``subscribe_bars`` 相同：日内窗口按交易日与交易块切分、标签不超过
+    块结束；日线窗口按交易日切分、标签为交易日收盘。
+
+    :param freq: 窗口周期，``"Nmin"`` / ``"Nh"`` / ``"1d"``
+    :param session_windows: 手写本地交易时段，给定则覆盖时段表
+    :param base_interval_min: 基础 bar 周期（分钟），给定时按 bar 区间即时闭合
+    :param resolver: 会话解析器；不传时按 ``timezone`` 新建默认解析器
+    :param timezone: IANA 时区名
+    :param asset_types: 品种 → 资产类型
+    """
+
+    def __new__(
+        cls,
+        freq: str,
+        session_windows: typing.Optional[list[tuple[str, str]]] = None,
+        base_interval_min: typing.Optional[int] = None,
+        resolver: typing.Optional[SessionResolver] = None,
+        timezone: str = "Asia/Shanghai",
+        asset_types: typing.Optional[dict[str, AssetType]] = None,
+    ) -> "WindowAggregator": ...
+    @property
+    def freq(self) -> str: ...
+    def set_asset_type(self, symbol: str, asset_type: AssetType) -> None: ...
+    def has_asset_type(self, symbol: str) -> bool: ...
+    def update(self, bar: Bar) -> list[Bar]: ...
+    def flush(self) -> list[Bar]: ...
+    def current(self, symbol: str) -> typing.Optional[Bar]: ...
+
 class CorporateActionType:
     Split: typing.ClassVar["CorporateActionType"]
     Dividend: typing.ClassVar["CorporateActionType"]

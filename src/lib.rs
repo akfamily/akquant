@@ -95,6 +95,7 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CorporateActionType>()?;
     m.add_class::<TradingSession>()?;
     m.add_class::<calendar::python::PySessionResolver>()?;
+    m.add_class::<data::python_window::PyWindowAggregator>()?;
     m.add_class::<Portfolio>()?;
     m.add_class::<PerformanceMetrics>()?;
     m.add_class::<BacktestResult>()?;

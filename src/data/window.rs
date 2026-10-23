@@ -336,6 +336,21 @@ impl WindowAggregator {
         self.day_cache.clear();
     }
 
+    /// 运行中补登记(或改写)单个品种的资产类型, 只作废该品种的区间缓存。
+    pub fn set_asset_type(&mut self, symbol: &str, asset_type: AssetType) {
+        if self.asset_types.get(symbol) == Some(&asset_type) {
+            return;
+        }
+        self.asset_types.insert(symbol.to_string(), asset_type);
+        self.block_cache.remove(symbol);
+        self.day_cache.remove(symbol);
+    }
+
+    /// 品种是否已登记资产类型。
+    pub fn has_asset_type(&self, symbol: &str) -> bool {
+        self.asset_types.contains_key(symbol)
+    }
+
     /// 替换订阅表。**不清空**仍被订阅的在形成窗口(checkpoint 恢复后再配置时要保留),
     /// 只丢掉不再订阅的周期。
     ///

@@ -341,3 +341,90 @@ def test_bar_list_without_symbols_uses_stock_blocks() -> None:
         "14:00",
         "15:00",
     ]
+
+
+def test_bar_generator_matches_engine_windows() -> None:
+    """BarGenerator 与引擎 subscribe_bars 对同一分钟数据产出相同的 1h 窗口."""
+    from akquant import BarGenerator
+
+    times = [
+        "2024-01-02 09:31",
+        "2024-01-02 10:00",
+        "2024-01-02 11:00",
+        "2024-01-02 11:01",
+        "2024-01-02 11:30",
+        "2024-01-02 13:01",
+        "2024-01-02 14:00",
+    ]
+    df = _minute(times)
+
+    class Eng(_WinLog):
+        freqs = ("1h",)
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed_at: List[str] = []
+
+        def on_window_bar(self, bar: Bar) -> None:
+            super().on_window_bar(bar)
+            now = self.now
+            assert now is not None
+            self.closed_at.append(now.tz_convert(TZ).strftime("%m-%d %H:%M"))
+
+    r = run_backtest(
+        strategy=Eng,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        freq="1min",
+    )
+    assert r.strategy is not None
+    engine_windows = [(w[1], w[3], w[4], w[5]) for w in r.strategy.windows]
+
+    got: List[Tuple[str, float, float, float]] = []
+    # 闭合时机: 窗口在喂入哪根基础 bar 时回调(收尾 flush 记为 "flush")
+    feeding = ["flush"]
+    closed_at: List[str] = []
+
+    def cb(bar: Bar) -> None:
+        closed_at.append(feeding[0])
+        got.append(
+            (
+                pd.Timestamp(bar.timestamp, tz="UTC")
+                .tz_convert(TZ)
+                .strftime("%m-%d %H:%M"),
+                float(bar.open),
+                float(bar.close),
+                float(bar.volume),
+            )
+        )
+
+    gen = BarGenerator(
+        cb,
+        window=1,
+        interval="hour",
+        timezone=TZ,
+        asset_type=aq.AssetType.Stock,
+        base_interval_min=1,
+    )
+    for row in df.to_dict("records"):
+        ts = pd.Timestamp(row["timestamp"])
+        feeding[0] = ts.strftime("%m-%d %H:%M")
+        gen.update_bar(
+            Bar(
+                timestamp=int(ts.value),
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                volume=float(row["volume"]),
+                symbol=str(row["symbol"]),
+            )
+        )
+    feeding[0] = "flush"
+    gen.flush()
+    assert got == engine_windows
+    # 即时闭合与引擎同一时机: 11:30 窗口在 11:30 那根到达时闭合, 不等 13:01
+    assert closed_at == r.strategy.closed_at
+    assert closed_at == ["01-02 10:00", "01-02 11:00", "01-02 11:30", "01-02 14:00"]

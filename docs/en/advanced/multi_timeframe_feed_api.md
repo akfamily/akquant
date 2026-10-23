@@ -14,8 +14,8 @@ different scenario and none replacing the others:
 
 | Path | Fits | Backtest | Live | Feeds `get_history`/indicators | Daily label convention |
 | --- | --- | --- | --- | --- | --- |
-| `subscribe_bars` (recommended) | Declarative in-strategy multi-timeframe subscription | Yes | Yes | Yes, via `get_history(freq=)` / `self.I(freq=)` | Last base bar of the trading day |
-| `BarGenerator` | In-strategy manual aggregation, no engine configuration needed | Yes | Yes | No — only the bar delivered to the callback is available | Next midnight (pandas `resample` convention) |
+| `subscribe_bars` (recommended) | Declarative in-strategy multi-timeframe subscription | Yes | Yes | Yes, via `get_history(freq=)` / `self.I(freq=)` | Trading-day close |
+| `BarGenerator` | In-strategy manual aggregation, no engine configuration needed | Yes | Yes | No — only the bar delivered to the callback is available | Trading-day close (same aggregator as `subscribe_bars`) |
 | `feed.resample` / `feed.replay` | Offline data orchestration before `run_backtest` | Backtest only | No | Requires a synthetic symbol; timestamps are user-defined | User-defined |
 
 ## `subscribe_bars` Usage
@@ -238,16 +238,20 @@ replayed = feed.replay(
 the strategy and is fed bar-by-bar as a stream, with no offline data
 orchestration involved. Backtest and live trading call the exact same
 `update_bar` — strategy code doesn't need to distinguish which mode it's
-running under. Both follow the same clock-alignment semantics under matching
-parameters (`label="right"`, `closed="right"`, consistent with pandas
-`resample(label="right", closed="right")`), so identical parameters produce
-identical results.
+running under.
+
+Under the hood `BarGenerator` wraps the same Rust window aggregator used by the
+engine's `subscribe_bars` (also available directly as
+`akquant.WindowAggregator`), so it produces identical windows for the same data
+and session table: intraday windows are split by (trading day, trading block),
+labelled by the local clock ceiled to the period but never past the block end
+(A-share 1h: 10:00, 11:00, 11:30, 14:00, 15:00); daily windows are split by
+trading day (night session belongs to the next trading day) and labelled with
+the trading-day close. Window bars carry `freq` and `interval_start`.
 
 The key difference from `subscribe_bars`: bars aggregated by `BarGenerator`
 **never** enter the `get_history`/incremental-indicator system — only the bar
-delivered to the callback is available. The daily timestamp convention also
-differs (`BarGenerator` uses pandas' next-midnight convention, while
-`subscribe_bars` uses the last base bar of the trading day).
+delivered to the callback is available.
 
 Minimal usage:
 
@@ -277,13 +281,18 @@ class MyStrategy(Strategy):
 
 - `window`/`interval` combine to form the target period (e.g.
   `BarGenerator(cb, 15, "minute")`, `BarGenerator(cb, 1, "hour")`,
-  `BarGenerator(cb, 1, "day")`).
-- `session_windows` segments aggregation by trading session, avoiding dirty
-  bars that splice across boundaries like the lunch break, e.g.
-  `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`; omit it for pure
-  clock alignment (no special handling of session boundaries).
-- `timezone` specifies the market timezone used for clock/session alignment
-  (e.g. `"Asia/Shanghai"`).
+  `BarGenerator(cb, 1, "day")`); `"day"` only supports `window=1`.
+- `timezone` (default `"Asia/Shanghai"`), `sessions`, `trading_calendar` and
+  `asset_type` (default stock; a `{symbol: asset_type}` mapping is also
+  accepted) mean the same as in `run_backtest` and decide each symbol's session
+  table and trading days.
+- `base_interval_min` is the period (minutes) of the bars you feed. When given,
+  a window closes as soon as a bar's interval end reaches the window label
+  (e.g. the 11:30 one-minute bar closes the 11:30 window); otherwise it closes
+  only when the next bar falling into a new window arrives.
+- `session_windows` hand-writes trading sessions that override the session
+  table, e.g. `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`; an end
+  earlier than its start means the session crosses midnight.
 - `current(symbol)` peeks at the in-progress, not-yet-closed window snapshot
   for a symbol without triggering a callback — useful for intraday display.
 - Multiple symbols aggregate independently of each other.
