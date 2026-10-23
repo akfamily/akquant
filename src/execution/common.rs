@@ -177,7 +177,7 @@ impl CommonMatcher {
                 }
 
                 // 1. Volume Check (Suspension)
-                if bar.volume <= Decimal::ZERO {
+                if !ctx.ignore_volume && bar.volume <= Decimal::ZERO {
                     return None;
                 }
 
@@ -347,8 +347,11 @@ impl CommonMatcher {
                     let final_price = Self::apply_slippage(order, price, ctx);
 
                     // Check Volume Limit
-                    let max_qty = if volume_limit_pct > Decimal::ZERO {
-                        bar.volume * volume_limit_pct
+                    // 乘法溢出(量极大或比例 > 1)按不限制处理, 不 panic
+                    let max_qty = if !ctx.ignore_volume && volume_limit_pct > Decimal::ZERO {
+                        bar.volume
+                            .checked_mul(volume_limit_pct)
+                            .unwrap_or(Decimal::MAX)
                     } else {
                         Decimal::MAX
                     };

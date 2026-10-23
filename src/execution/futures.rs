@@ -142,6 +142,7 @@ mod tests {
             execution_policy_core: ExecutionPolicyCore::default(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 0,
             last_price: None,
         }

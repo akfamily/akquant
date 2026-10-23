@@ -91,16 +91,14 @@ mod tests {
         ExecutionPolicyCore::default()
     }
 
-    fn tick_ctx<'a>(
-        event: &'a Event,
-        instr: &'a crate::model::Instrument,
-    ) -> MatchContext<'a> {
+    fn tick_ctx<'a>(event: &'a Event, instr: &'a crate::model::Instrument) -> MatchContext<'a> {
         MatchContext {
             event,
             instrument: instr,
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 0,
             last_price: None,
         }
@@ -167,6 +165,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 0,
             last_price: None,
         };
@@ -208,6 +207,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 0,
             last_price: None,
         };
@@ -242,6 +242,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 0,
             last_price: None,
         };
@@ -285,6 +286,7 @@ mod tests {
             },
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 0,
             last_price: None,
         };
@@ -324,6 +326,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 0,
             last_price: None,
         };
@@ -351,6 +354,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 1,
             last_price: None,
         };
@@ -383,6 +387,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 0,
             last_price: None,
         };
@@ -398,6 +403,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 1,
             last_price: None,
         };
@@ -413,6 +419,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 2,
             last_price: None,
         };

@@ -47,13 +47,10 @@ impl AuctionQuote {
         }
     }
 
-    /// 合成事件的成交量: 来自 tick 时不约束(成交量限制与停牌判断都不生效)。
-    fn synthetic_volume(&self) -> Decimal {
-        if self.from_tick {
-            Decimal::MAX
-        } else {
-            self.volume
-        }
+    /// 合成事件不做成交量检查: 竞价价来自 tick(tick 撮合本就不看成交量), 或
+    /// 竞价期行情成交量全为 0(否则合成事件按停牌处理, 统一撮合静默失效)。
+    fn ignores_volume(&self) -> bool {
+        self.from_tick || self.volume <= Decimal::ZERO
     }
 }
 
@@ -75,6 +72,8 @@ struct Uncross {
     event: Event,
     symbol: String,
     cutoff: i64,
+    /// 撮合时跳过成交量检查(见 [`AuctionQuote::ignores_volume`])。
+    ignore_volume: bool,
 }
 
 /// 模拟交易所执行器 (Simulated Execution Client)
@@ -97,6 +96,8 @@ pub struct SimulatedExecutionClient {
     deferred_same_cycle_order_ids: HashSet<String>,
     /// 品种 -> 当日集合竞价状态。
     auctions: HashMap<String, AuctionState>,
+    /// 已提示过"竞价期成交量为 0"的品种。
+    zero_volume_auction_warned: HashSet<String>,
 }
 
 impl SimulatedExecutionClient {
@@ -201,6 +202,7 @@ impl SimulatedExecutionClient {
             attempted_same_cycle_order_ids: HashSet::new(),
             deferred_same_cycle_order_ids: HashSet::new(),
             auctions: HashMap::new(),
+            zero_volume_auction_warned: HashSet::new(),
         }
     }
 
@@ -212,7 +214,7 @@ impl SimulatedExecutionClient {
             high: quote.price,
             low: quote.price,
             close: quote.price,
-            volume: quote.synthetic_volume(),
+            volume: quote.volume,
             symbol: symbol.to_string(),
             extra: HashMap::new(),
             freq: None,
@@ -223,7 +225,7 @@ impl SimulatedExecutionClient {
     /// 在 `ts` 按 `quote` 对 `symbol` 在 `cutoff` 之前下的订单统一撮合; 没有这样的
     /// 在途订单时返回 None(不必构造合成事件、不跑撮合)。
     fn build_uncross(
-        &self,
+        &mut self,
         symbol: &str,
         ts: i64,
         cutoff: i64,
@@ -232,10 +234,22 @@ impl SimulatedExecutionClient {
         let has_candidates = self.orders.values().any(|order| {
             Self::is_order_active(order) && order.symbol == symbol && order.created_at < cutoff
         });
-        has_candidates.then(|| Uncross {
+        if !has_candidates {
+            return None;
+        }
+        if !quote.from_tick
+            && quote.volume <= Decimal::ZERO
+            && self.zero_volume_auction_warned.insert(symbol.to_string())
+        {
+            log::warn!(
+                "标的 {symbol} 竞价期行情成交量为 0，按竞价价统一撮合且不受成交量限制（同一标的不再提示）"
+            );
+        }
+        Some(Uncross {
             event: Self::auction_event(symbol, ts, quote),
             symbol: symbol.to_string(),
             cutoff,
+            ignore_volume: quote.ignores_volume(),
         })
     }
 
@@ -606,6 +620,7 @@ impl SimulatedExecutionClient {
                             execution_policy_core: Self::effective_policy(order, ctx),
                             slippage: self.slippage_model.as_ref(),
                             volume_limit_pct: self.volume_limit_pct,
+                            ignore_volume: uncross.is_some_and(|u| u.ignore_volume),
                             bar_index: ctx.bar_index,
                             last_price: ctx.last_prices.get(&order.symbol).copied(),
                         };

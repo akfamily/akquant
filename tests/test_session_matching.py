@@ -1009,3 +1009,45 @@ def test_zero_volume_last_auction_bar_keeps_volume_and_uncrosses() -> None:
         show_progress=False,
     )
     assert _fills(r) == [("01-02 09:31", 10.0)]
+
+
+def test_tick_auction_with_volume_limit_above_one_does_not_overflow() -> None:
+    """volume_limit_pct > 1: tick 竞价统一撮合不做量检查, 不溢出, 按竞价价成交."""
+    r = run_backtest(
+        strategy=_TickBuyAt,
+        data=_opening_auction_ticks(),
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+        volume_limit_pct=1.5,
+    )
+    assert [(t, round(p, 4)) for t, p in _fills(r)] == [("01-02 09:30", 10.0)]
+
+
+def test_all_zero_volume_auction_bars_uncross_without_volume_limit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """分钟线竞价期 bar 成交量全为 0: 照常按竞价价统一撮合(不受量限制), 告警一次."""
+
+    class At0920(_BarBuyAt):
+        at = "09:20"
+
+    df = _bars(
+        ["2024-01-02 09:20", "2024-01-02 09:25", "2024-01-02 09:31"],
+        [9.8, 10.0, 10.5],
+        opens=[9.8, 10.0, 10.4],
+        volume=[0, 0, 1e6],
+    )
+    with caplog.at_level("WARNING", logger="akquant"):
+        r = run_backtest(
+            strategy=At0920,
+            data=df,
+            symbols=["600000.SH"],
+            initial_cash=1e6,
+            show_progress=False,
+            volume_limit_pct=0.1,
+        )
+    assert _fills(r) == [("01-02 09:31", 10.0)]
+    assert list(r.orders_df["filled_quantity"]) == [100]
+    hits = [m for m in caplog.messages if "竞价期行情成交量为 0" in m]
+    assert len(hits) == 1 and "600000.SH" in hits[0]
