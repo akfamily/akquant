@@ -559,6 +559,32 @@ def _activate_session_symbols(
     resolver.set_active(pairs)
 
 
+def _merge_saved_session_config(
+    engine: Any,
+    sessions: Optional[Dict[str, str]],
+    trading_calendar: Optional[List[dt_module.date]],
+    logger: Any,
+) -> Tuple[Optional[Dict[str, str]], Optional[List[dt_module.date]]]:
+    """续跑的时段配置：未传的一项沿用存档；传入且与存档不一致时以传入为准并告警一次."""
+    saved_sessions, saved_calendar = engine.session_config
+    differs: List[str] = []
+    if sessions is None:
+        sessions = saved_sessions
+    elif sessions != saved_sessions:
+        differs.append("sessions")
+    if trading_calendar is None:
+        trading_calendar = saved_calendar
+    elif list(trading_calendar) != list(saved_calendar or []):
+        differs.append("trading_calendar")
+    if differs:
+        logger.warning(
+            "run_from_checkpoint 传入的 %s 与存档不一致，以本次传入为准"
+            "（续跑段的交易日划分、收盘结算时刻可能与存档前不同）",
+            "、".join(differs),
+        )
+    return sessions, trading_calendar
+
+
 def _saved_session_asset_types(strategy_instance: Any) -> Dict[str, Any]:
     """存档策略里已登记合约的资产类型（取自 ``_instrument_snapshots``）.
 
@@ -5378,8 +5404,10 @@ def run_from_checkpoint(
     故障速查可参考 docs/zh/advanced/runtime_config.md，
     英文文档参考 docs/en/advanced/runtime_config.md
 
-    :param sessions: 同 :func:`run_backtest` 的 ``sessions``
-    :param trading_calendar: 同 :func:`run_backtest` 的 ``trading_calendar``
+    :param sessions: 同 :func:`run_backtest` 的 ``sessions``；不传时沿用存档里的
+        配置，传入且与存档不一致时以传入为准并告警
+    :param trading_calendar: 同 :func:`run_backtest` 的 ``trading_calendar``；
+        不传时沿用存档，规则同 ``sessions``
     :param kwargs: 其他引擎配置参数 (如 commission_rate, stamp_tax_rate, t_plus_one)
     """
     import os
@@ -5526,6 +5554,12 @@ def run_from_checkpoint(
     # 先载入存档、后接数据源: 只有日期数据的改写要用存档里已有的合约算会话级收盘
     logger.info(f"Resuming from checkpoint: {checkpoint_path}")
     engine, strategy_instance = load_checkpoint(checkpoint_path, None)
+    session_map, calendar_days = _merge_saved_session_config(
+        engine, session_map, calendar_days, logger
+    )
+    session_resolver = SessionResolver(
+        sessions=session_map, trading_calendar=calendar_days, timezone=timezone_name
+    )
     saved_session_asset_types = _saved_session_asset_types(strategy_instance)
     resume_extra_symbols = [
         *session_prebuilt,

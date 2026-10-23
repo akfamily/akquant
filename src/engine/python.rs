@@ -644,6 +644,20 @@ impl Engine {
         self.last_settled_trading_day
     }
 
+    /// 当前交易时段配置 ``(sessions, trading_calendar)``；未配置的一项为 None。
+    ///
+    /// 随存档保存，``run_from_checkpoint`` 未传对应参数时沿用。
+    #[getter]
+    fn session_config(&self) -> (Option<HashMap<String, String>>, Option<Vec<NaiveDate>>) {
+        (
+            self.session_config
+                .sessions
+                .as_ref()
+                .map(|pairs| pairs.iter().cloned().collect()),
+            self.session_config.trading_calendar.clone(),
+        )
+    }
+
     /// 导出当前状态为二进制数据
     pub(crate) fn get_state_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let history_state = Some(crate::history::HistoryBufferSnapshot::from(
@@ -704,6 +718,7 @@ impl Engine {
             current_trading_day: self.current_trading_day,
             last_settled_trading_day: self.last_settled_trading_day,
             last_corp_action_date: self.last_corp_action_date,
+            session_config: self.session_config.clone(),
         };
         let bytes =
             rmp_serde::to_vec(&snapshot).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -742,6 +757,7 @@ impl Engine {
         self.current_trading_day = snapshot.current_trading_day;
         self.last_settled_trading_day = snapshot.last_settled_trading_day;
         self.last_corp_action_date = snapshot.last_corp_action_date;
+        self.session_config = snapshot.session_config;
         self.current_day_span = None;
         self.scheduled_day_close = None;
         self.last_event_ts_in_day = None;

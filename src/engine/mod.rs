@@ -216,6 +216,13 @@ mod tests {
             current_trading_day: Some(NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()),
             last_settled_trading_day: None,
             last_corp_action_date: None,
+            session_config: crate::engine::core::SessionConfig {
+                sessions: Some(vec![(
+                    "au".to_string(),
+                    "CN_FUTURES_NIGHT_0230".to_string(),
+                )]),
+                trading_calendar: Some(vec![NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()]),
+            },
         };
 
         // 旧格式存档: msgpack 数组缺少末尾三个交易日进度字段, 读入时应为 None
@@ -238,6 +245,10 @@ mod tests {
         assert_eq!(old_decoded.current_trading_day, None);
         assert_eq!(old_decoded.last_settled_trading_day, None);
         assert_eq!(old_decoded.last_corp_action_date, None);
+        assert_eq!(
+            old_decoded.session_config,
+            crate::engine::core::SessionConfig::default()
+        );
 
         let encoded: Vec<u8> = rmp_serde::to_vec(&snapshot).unwrap();
         let decoded: EngineSnapshot = rmp_serde::from_slice(&encoded).unwrap();
@@ -248,6 +259,7 @@ mod tests {
             NaiveDate::from_ymd_opt(2024, 1, 5)
         );
         assert_eq!(decoded.last_settled_trading_day, None);
+        assert_eq!(decoded.session_config, snapshot.session_config);
         assert_eq!(decoded.portfolio.cash, Decimal::from(50000));
         assert_eq!(decoded.initial_cash, Some(Decimal::from(50000)));
         assert!(decoded.last_prices.is_empty());

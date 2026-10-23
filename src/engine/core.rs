@@ -34,9 +34,9 @@ use crate::statistics::StatisticsManager;
 
 use super::state::SharedState;
 
-/// 用户配置的交易时段表与交易日历（`configure_sessions` 写入）。
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SessionConfig {
+/// 用户配置的交易时段表与交易日历（`configure_sessions` 写入，随存档保存）。
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionConfig {
     pub sessions: Option<Vec<(String, String)>>,
     pub trading_calendar: Option<Vec<NaiveDate>>,
 }

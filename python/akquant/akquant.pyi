@@ -683,6 +683,12 @@ class Engine:
     def last_settled_trading_day(self) -> typing.Optional[datetime.date]:
         r"""已完成日终结算的最后交易日；尚未结算时为 None."""
         ...
+    @property
+    def session_config(
+        self,
+    ) -> tuple[typing.Optional[dict[str, str]], typing.Optional[list[datetime.date]]]:
+        r"""当前交易时段配置 (sessions, trading_calendar)；随存档保存."""
+        ...
 
     def get_state_bytes(self) -> bytes:
         r"""

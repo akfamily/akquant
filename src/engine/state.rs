@@ -61,6 +61,9 @@ pub struct EngineSnapshot {
     /// 公司行动已处理到的日期（旧存档无此字段）。
     #[serde(default)]
     pub last_corp_action_date: Option<NaiveDate>,
+    /// 交易时段表与交易日历配置（旧存档无此字段，按未配置处理）。
+    #[serde(default)]
+    pub session_config: crate::engine::core::SessionConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

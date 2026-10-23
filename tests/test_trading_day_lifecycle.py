@@ -1350,3 +1350,91 @@ def test_strategy_risk_resets_for_timer_order_before_first_bar_of_day(
     view = orders[["created_at", "status", "reject_reason"]]
     assert marker in by_time["2024-01-08 10:01"], view
     assert marker not in by_time["2024-01-09 09:35"], view
+
+
+_HOLIDAY_CALENDAR = ["2024-01-05", "2024-01-08", "2024-01-10", "2024-01-11"]
+
+
+def _save_part1(tmp_path: Path, bars: List[Bar], symbol: str, **kwargs: Any) -> str:
+    """跑第一段并存档，返回存档路径."""
+    part1 = run_backtest(
+        data=bars,
+        strategy=_Recorder,
+        symbols=[symbol],
+        initial_cash=1e6,
+        show_progress=False,
+        **kwargs,
+    )
+    assert part1.engine is not None
+    ckpt = tmp_path / "c.pkl"
+    save_checkpoint(part1.engine, part1.strategy, str(ckpt))
+    return str(ckpt)
+
+
+def test_resume_reuses_saved_sessions_and_calendar(tmp_path: Path) -> None:
+    """续跑未传 sessions/trading_calendar 时沿用存档：节前夜盘仍归节后交易日.
+
+    01-09 为假日：周一 21:30 的夜盘属 01-10。旧实现续跑不恢复配置，退回按工作日
+    推算，把它划进 01-09。
+    """
+    ckpt = _save_part1(
+        tmp_path,
+        _bars_at(["2024-01-08 10:00", "2024-01-08 15:00"], [100.0, 100.0], "au2406"),
+        "au2406",
+        sessions={"au": "CN_FUTURES_NIGHT_0230"},
+        trading_calendar=_HOLIDAY_CALENDAR,
+    )
+    part2 = run_from_checkpoint(
+        checkpoint_path=ckpt,
+        data=_bars_at(["2024-01-08 21:30"], [100.0], "au2406"),
+        symbols=["au2406"],
+        show_progress=False,
+    )
+    assert part2.engine is not None
+    assert part2.engine.last_settled_trading_day == dt.date(2024, 1, 8)
+    assert part2.engine.current_trading_day == dt.date(2024, 1, 10)
+
+
+def test_resume_reuses_saved_sessions_close_time(tmp_path: Path) -> None:
+    """存档的时段表（国债期货 15:15 收盘）续跑后仍生效：15:10 的 bar 属当日."""
+    ckpt = _save_part1(
+        tmp_path,
+        _bars_at(["2024-01-08 10:00", "2024-01-08 15:15"], [100.0, 100.0], "T2403"),
+        "T2403",
+        sessions={"T": "CN_FUTURES_CFFEX_BOND_DAY"},
+    )
+    part2 = run_from_checkpoint(
+        checkpoint_path=ckpt,
+        data=_bars_at(["2024-01-09 15:10"], [100.0], "T2403"),
+        symbols=["T2403"],
+        show_progress=False,
+    )
+    assert part2.engine is not None
+    assert part2.engine.last_settled_trading_day == dt.date(2024, 1, 8)
+    assert part2.engine.current_trading_day == dt.date(2024, 1, 9)
+
+
+def test_resume_passed_calendar_overrides_saved_with_one_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """续跑传入与存档不一致的 trading_calendar：以传入为准，告警一次."""
+    ckpt = _save_part1(
+        tmp_path,
+        _bars_at(["2024-01-08 10:00", "2024-01-08 15:00"], [100.0, 100.0], "au2406"),
+        "au2406",
+        sessions={"au": "CN_FUTURES_NIGHT_0230"},
+        trading_calendar=_HOLIDAY_CALENDAR,
+    )
+    with caplog.at_level("WARNING", logger="akquant"):
+        part2 = run_from_checkpoint(
+            checkpoint_path=ckpt,
+            data=_bars_at(["2024-01-08 21:30"], [100.0], "au2406"),
+            symbols=["au2406"],
+            show_progress=False,
+            trading_calendar=["2024-01-05", "2024-01-08", "2024-01-09", "2024-01-10"],
+        )
+    assert part2.engine is not None
+    assert part2.engine.current_trading_day == dt.date(2024, 1, 9)
+    warnings = [r for r in caplog.records if "与存档不一致" in r.getMessage()]
+    assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+    assert "trading_calendar" in warnings[0].getMessage()
