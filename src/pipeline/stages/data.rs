@@ -484,7 +484,16 @@ impl Processor for DataProcessor {
 
                 if let Event::Bar(ref b) = event {
                     self.seen_symbols.insert(b.symbol.clone());
-                    if b.volume > Decimal::ZERO {
+                    // 集合竞价时段的零量 bar(竞价期快照、09:25～09:30 静默期)不是停牌:
+                    // 本就不连续撮合, 不能据此把排队的单当作停牌拒掉。
+                    if b.volume > Decimal::ZERO
+                        || matches!(
+                            session,
+                            TradingSession::OpeningAuction
+                                | TradingSession::AuctionHold
+                                | TradingSession::ClosingAuction
+                        )
+                    {
                         self.tradable_symbols.insert(b.symbol.clone());
                     }
                     self.current_symbol_events

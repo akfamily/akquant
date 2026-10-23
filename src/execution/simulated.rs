@@ -14,22 +14,67 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+/// 竞价期内记录的一笔行情。
+#[derive(Debug, Clone, Copy)]
+struct AuctionQuote {
+    price: Decimal,
+    /// 最近一笔非零成交量(零量快照只更新价格, 不覆盖已记录的量)。
+    volume: Decimal,
+    /// 设定该价格的事件时间戳: 开盘统一撮合只纳入在它之前下的单。
+    ts: i64,
+    /// 价格来自 tick: tick 撮合不看成交量, 合成事件的量不约束成交。
+    from_tick: bool,
+}
+
+impl AuctionQuote {
+    fn updated(
+        prev: Option<Self>,
+        price: Decimal,
+        volume: Decimal,
+        ts: i64,
+        from_tick: bool,
+    ) -> Self {
+        let volume = if volume > Decimal::ZERO {
+            volume
+        } else {
+            prev.map_or(Decimal::ZERO, |q| q.volume)
+        };
+        Self {
+            price,
+            volume,
+            ts,
+            from_tick,
+        }
+    }
+
+    /// 合成事件的成交量: 来自 tick 时不约束(成交量限制与停牌判断都不生效)。
+    fn synthetic_volume(&self) -> Decimal {
+        if self.from_tick {
+            Decimal::MAX
+        } else {
+            self.volume
+        }
+    }
+}
+
 /// 单个品种当日的集合竞价状态。交易日变化时重置。
 #[derive(Debug, Clone, Default)]
 struct AuctionState {
     trading_day: Option<chrono::NaiveDate>,
-    /// 开盘竞价期内最后一笔行情的价格与成交量(竞价价来源 ①)。
-    opening: Option<(Decimal, Decimal)>,
+    /// 开盘竞价期内设定的竞价价(竞价价来源 ①)。
+    opening: Option<AuctionQuote>,
     opening_done: bool,
-    /// 收盘竞价期内最后一笔行情的价格与成交量。
-    closing: Option<(Decimal, Decimal)>,
+    /// 收盘竞价期内最后一笔行情。
+    closing: Option<AuctionQuote>,
     closing_done: bool,
 }
 
-/// `on_event` 中本事件触发的统一撮合: (竞价价, 成交量)。
-enum AuctionAction {
-    None,
-    Uncross(Decimal, Decimal),
+/// 一次集合竞价统一撮合: 价格全为竞价价的合成事件, 只纳入 `symbol` 在 `cutoff`
+/// 之前下的在途订单, 撮合时该品种视为连续竞价。
+struct Uncross {
+    event: Event,
+    symbol: String,
+    cutoff: i64,
 }
 
 /// 模拟交易所执行器 (Simulated Execution Client)
@@ -160,14 +205,14 @@ impl SimulatedExecutionClient {
     }
 
     /// 价格全为竞价价的合成 bar: 复用 match_order 的手续费、滑点、保证金、成交量限制。
-    fn auction_event(symbol: &str, ts: i64, price: Decimal, volume: Decimal) -> Event {
+    fn auction_event(symbol: &str, ts: i64, quote: &AuctionQuote) -> Event {
         Event::Bar(crate::model::Bar {
             timestamp: ts,
-            open: price,
-            high: price,
-            low: price,
-            close: price,
-            volume,
+            open: quote.price,
+            high: quote.price,
+            low: quote.price,
+            close: quote.price,
+            volume: quote.synthetic_volume(),
             symbol: symbol.to_string(),
             extra: HashMap::new(),
             freq: None,
@@ -175,31 +220,23 @@ impl SimulatedExecutionClient {
         })
     }
 
-    /// 对 `symbol` 在 `ts` 之前提交的活跃订单按 `price` 统一撮合(成交时间戳 = `ts`)。
-    /// 在 `ts` 当时下的单不参加(收盘竞价结束那一刻下的单属于下一交易日)。
-    fn uncross(
-        &mut self,
+    /// 在 `ts` 按 `quote` 对 `symbol` 在 `cutoff` 之前下的订单统一撮合; 没有这样的
+    /// 在途订单时返回 None(不必构造合成事件、不跑撮合)。
+    fn build_uncross(
+        &self,
         symbol: &str,
         ts: i64,
-        price: Decimal,
-        volume: Decimal,
-        ctx: &crate::context::EngineContext,
-    ) -> Vec<Event> {
-        let event = Self::auction_event(symbol, ts, price, volume);
-        // 统一撮合时把该品种视为连续竞价(合成事件只用于本次撮合)
-        let mut slice = ctx.sessions.slice.cloned().unwrap_or_default();
-        slice.insert(symbol.to_string(), TradingSession::Continuous);
-        let mut uctx = ctx.clone_with_sessions(crate::context::SessionView {
-            slice: Some(&slice),
-            ..ctx.sessions
+        cutoff: i64,
+        quote: &AuctionQuote,
+    ) -> Option<Uncross> {
+        let has_candidates = self.orders.values().any(|order| {
+            Self::is_order_active(order) && order.symbol == symbol && order.created_at < cutoff
         });
-        uctx.current_time = ts;
-        self.match_with_events(
-            std::slice::from_ref(&event),
-            &uctx,
-            |order, _| order.symbol == symbol && order.created_at < ts,
-            false,
-        )
+        has_candidates.then(|| Uncross {
+            event: Self::auction_event(symbol, ts, quote),
+            symbol: symbol.to_string(),
+            cutoff,
+        })
     }
 
     /// 记录本事件的竞价行情, 返回本事件要做的统一撮合。
@@ -209,8 +246,9 @@ impl SimulatedExecutionClient {
         ts: i64,
         price: Decimal,
         volume: Decimal,
+        from_tick: bool,
         ctx: &crate::context::EngineContext,
-    ) -> AuctionAction {
+    ) -> Option<Uncross> {
         let session = ctx.sessions.session_for(symbol, ts);
         if !matches!(
             session,
@@ -219,7 +257,7 @@ impl SimulatedExecutionClient {
                 | TradingSession::ClosingAuction
                 | TradingSession::Continuous
         ) {
-            return AuctionAction::None;
+            return None;
         }
         // 收盘竞价是否在本事件结束(15:00 bar / 15:00 tick): 终点戳事件取 ts - 1
         // 所在段, 本事件到达段终点即结束。
@@ -237,46 +275,56 @@ impl SimulatedExecutionClient {
                         .ok()
                 })
                 .is_some_and(|(_, end, _)| ts >= end);
-        if !self.auctions.contains_key(symbol) {
-            self.auctions
-                .insert(symbol.to_string(), AuctionState::default());
-        }
-        let Some(state) = self.auctions.get_mut(symbol) else {
-            return AuctionAction::None;
-        };
+        let state = self.auctions.entry(symbol.to_string()).or_default();
         if state.trading_day != ctx.trading_day {
             *state = AuctionState {
                 trading_day: ctx.trading_day,
                 ..Default::default()
             };
         }
-        match session {
-            TradingSession::OpeningAuction | TradingSession::AuctionHold => {
-                state.opening = Some((price, volume));
-                AuctionAction::None
+        // (报价, 只纳入此前下的单的截止时刻)
+        let pending: Option<(AuctionQuote, i64)> = match session {
+            TradingSession::OpeningAuction => {
+                state.opening = Some(AuctionQuote::updated(
+                    state.opening,
+                    price,
+                    volume,
+                    ts,
+                    from_tick,
+                ));
+                None
+            }
+            TradingSession::AuctionHold => {
+                // 09:25～09:30 不形成新价: 只在尚无竞价价时设定(Ruling S3-T3-3)
+                if state.opening.is_none() {
+                    state.opening = Some(AuctionQuote::updated(None, price, volume, ts, from_tick));
+                }
+                None
             }
             TradingSession::ClosingAuction => {
-                state.closing = Some((price, volume));
+                let quote = AuctionQuote::updated(state.closing, price, volume, ts, from_tick);
+                state.closing = Some(quote);
                 if closing_ends_here && !state.closing_done {
                     state.closing_done = true;
-                    AuctionAction::Uncross(price, volume)
+                    // 结束收盘竞价的事件上新下的单不参加(Ruling S3-5)
+                    Some((quote, ts))
                 } else {
-                    AuctionAction::None
+                    None
                 }
             }
             _ => {
                 // 连续竞价: 首个连续竞价事件结束开盘竞价。只在观察到竞价期行情时统一
                 // 撮合(Ruling S3-1); 没有竞价期行情时, 本事件上的常规撮合即来源 ②。
+                // 竞价价已知后下的单进入连续竞价(Ruling S3-T3-3)。
                 if state.opening_done {
-                    return AuctionAction::None;
-                }
-                state.opening_done = true;
-                match state.opening {
-                    Some((p, v)) => AuctionAction::Uncross(p, v),
-                    None => AuctionAction::None,
+                    None
+                } else {
+                    state.opening_done = true;
+                    state.opening.map(|q| (q, q.ts))
                 }
             }
-        }
+        };
+        pending.and_then(|(quote, cutoff)| self.build_uncross(symbol, ts, cutoff, &quote))
     }
 
     fn prepare_slice_tracking(&mut self, timestamp: i64) {
@@ -444,6 +492,7 @@ impl SimulatedExecutionClient {
         ctx: &crate::context::EngineContext,
         mut order_filter: F,
         defer_cross_symbol_increase: bool,
+        uncrosses: &[Uncross],
     ) -> Vec<Event>
     where
         F: FnMut(&Order, &Event) -> bool,
@@ -463,15 +512,26 @@ impl SimulatedExecutionClient {
             ctx.risk_config,
         );
 
-        for event in events {
+        // 集合竞价统一撮合的合成事件排在真实事件之前, 与之共享同一份资金推演
+        // (projected_portfolio / current_free_margin), 不会超额成交。
+        let passes = uncrosses
+            .iter()
+            .map(|u| (&u.event, Some(u)))
+            .chain(events.iter().map(|e| (e, None)));
+        for (event, uncross) in passes {
             let queue = self.sorted_queue();
             for order_id in &queue {
                 let mut synced_report: Option<Event> = None;
                 let Some(order_snapshot) = self.orders.get(order_id).cloned() else {
                     continue;
                 };
-                if !Self::is_order_active(&order_snapshot) || !order_filter(&order_snapshot, event)
-                {
+                let selected = match uncross {
+                    Some(u) => {
+                        order_snapshot.symbol == u.symbol && order_snapshot.created_at < u.cutoff
+                    }
+                    None => order_filter(&order_snapshot, event),
+                };
+                if !Self::is_order_active(&order_snapshot) || !selected {
                     continue;
                 }
 
@@ -493,8 +553,10 @@ impl SimulatedExecutionClient {
                 // 非连续竞价时段(竞价、午休、闭市、盘后): 订单排队, 等下一可成交时段
                 // (竞价时段的统一撮合见集合竞价撮合)。只对本品种的行情与定时器判断;
                 // 其他品种的行情撮合器本就不会让它成交, 不必查时段。
-                let own_event =
-                    Self::event_symbol(event).is_none_or(|symbol| symbol == order_snapshot.symbol);
+                // 统一撮合的合成事件上该品种视为连续竞价。
+                let own_event = uncross.is_none()
+                    && Self::event_symbol(event)
+                        .is_none_or(|symbol| symbol == order_snapshot.symbol);
                 if own_event {
                     let event_ts = Self::event_timestamp(event).unwrap_or(ctx.current_time);
                     if ctx.sessions.session_for(&order_snapshot.symbol, event_ts)
@@ -504,7 +566,8 @@ impl SimulatedExecutionClient {
                     }
                 }
 
-                let defer_current = defer_cross_symbol_increase
+                let defer_current = uncross.is_none()
+                    && defer_cross_symbol_increase
                     && self.should_defer_order_on_current_event(&order_snapshot, event, ctx);
                 let mark_attempted = order_snapshot.created_at == ctx.current_time
                     && self.is_same_cycle_close_order(&order_snapshot, ctx)
@@ -973,53 +1036,54 @@ impl ExecutionClient for SimulatedExecutionClient {
 
     fn on_event(&mut self, event: &Event, ctx: &crate::context::EngineContext) -> Vec<Event> {
         self.prepare_slice_tracking(ctx.current_time);
-        let mut reports = Vec::new();
         // 集合竞价: 竞价时段只记价; 开盘竞价在首个连续竞价事件上、收盘竞价在结束它的
-        // 事件上按竞价价统一撮合(在本事件的常规撮合之前)。
+        // 事件上按竞价价统一撮合(与本事件的常规撮合同一次调用, 排在它之前)。
         let quote = match event {
-            Event::Bar(b) => Some((b.symbol.as_str(), b.timestamp, b.close, b.volume)),
-            Event::Tick(t) => Some((t.symbol.as_str(), t.timestamp, t.price, t.volume)),
+            Event::Bar(b) => Some((b.symbol.as_str(), b.timestamp, b.close, b.volume, false)),
+            Event::Tick(t) => Some((t.symbol.as_str(), t.timestamp, t.price, t.volume, true)),
             _ => None,
         };
-        if let Some((symbol, ts, price, volume)) = quote
-            && let AuctionAction::Uncross(p, v) =
-                self.auction_action(symbol, ts, price, volume, ctx)
-        {
-            reports.extend(self.uncross(symbol, ts, p, v, ctx));
-        }
+        let uncross = quote.and_then(|(symbol, ts, price, volume, from_tick)| {
+            self.auction_action(symbol, ts, price, volume, from_tick, ctx)
+        });
         // 时段按订单品种在 match_with_events 里判断(非连续竞价时段排队), 统一撮合
         // 之后对本事件的常规撮合不会让竞价时段的订单重复成交;
         // Day 单只在日终结算过期, 不因闭市时段的行情作废。
-        reports.extend(self.match_with_events(
+        self.match_with_events(
             std::slice::from_ref(event),
             ctx,
             |_order, _event| true,
             true,
-        ));
-        reports
+            uncross.as_slice(),
+        )
     }
 
     fn finalize_closing_auctions(&mut self, ctx: &crate::context::EngineContext) -> Vec<Event> {
         // 当日收盘竞价有行情但没有结束它的事件(缺收盘时刻的 bar/tick):
         // 按最后一个收盘竞价事件的价格在收盘时刻(ctx.current_time)统一撮合。
-        let mut pending: Vec<(String, Decimal, Decimal)> = self
+        let mut pending: Vec<(String, AuctionQuote)> = self
             .auctions
             .iter_mut()
             .filter(|(_, s)| s.trading_day == ctx.trading_day && !s.closing_done)
             .filter_map(|(sym, s)| {
-                s.closing.map(|(p, v)| {
+                s.closing.map(|q| {
                     s.closing_done = true;
-                    (sym.clone(), p, v)
+                    (sym.clone(), q)
                 })
             })
             .collect();
         // HashMap 迭代无序: 按品种排序, 撮合顺序可复现
         pending.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut reports = Vec::new();
-        for (sym, p, v) in pending {
-            reports.extend(self.uncross(&sym, ctx.current_time, p, v, ctx));
+        let close_ts = ctx.current_time;
+        let uncrosses: Vec<Uncross> = pending
+            .iter()
+            .filter_map(|(sym, q)| self.build_uncross(sym, close_ts, close_ts, q))
+            .collect();
+        if uncrosses.is_empty() {
+            return Vec::new();
         }
-        reports
+        // 所有品种的合成事件一次撮合, 共享资金推演
+        self.match_with_events(&[], ctx, |_order, _event| false, false, &uncrosses)
     }
 
     fn finalize_timestamp(
@@ -1066,6 +1130,7 @@ impl ExecutionClient for SimulatedExecutionClient {
             ctx,
             |order, _event| finalize_ids.contains(&order.id),
             false,
+            &[],
         );
         self.clear_slice_tracking();
         reports
@@ -2213,6 +2278,127 @@ mod tests {
             false,
         );
         assert_eq!(fills(&events), vec![Decimal::from(100)]);
+    }
+
+    fn bar_with_volume(ts: i64, close: i64, volume: i64) -> Event {
+        let mut event = auction_bar(ts, close, close);
+        if let Event::Bar(ref mut b) = event {
+            b.volume = Decimal::from(volume);
+        }
+        event
+    }
+
+    #[test]
+    fn zero_volume_auction_event_keeps_recorded_volume() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.on_order(market_buy_at(500));
+        let session = TradingSession::OpeningAuction;
+        run_auction_step(
+            &mut sim,
+            &bar_with_volume(1000, 50, 1000),
+            session,
+            day(2),
+            false,
+        );
+        // 末笔零量快照: 价格更新为 51, 量沿用 1000(否则合成事件零量按停牌不成交)
+        run_auction_step(
+            &mut sim,
+            &bar_with_volume(1100, 51, 0),
+            session,
+            day(2),
+            false,
+        );
+        let quote = sim.auctions["AAPL"].opening.expect("已记录竞价价");
+        assert_eq!(
+            (quote.price, quote.volume, quote.ts),
+            (Decimal::from(51), Decimal::from(1000), 1100)
+        );
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(2000, 100, 101),
+            TradingSession::Continuous,
+            day(2),
+            false,
+        );
+        assert_eq!(fills(&events), vec![Decimal::from(51)]);
+    }
+
+    #[test]
+    fn auction_hold_sets_price_only_when_none_recorded() {
+        let mut sim = SimulatedExecutionClient::new();
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 50, 50),
+            TradingSession::OpeningAuction,
+            day(2),
+            false,
+        );
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1100, 55, 55),
+            TradingSession::AuctionHold,
+            day(2),
+            false,
+        );
+        let quote = sim.auctions["AAPL"].opening.expect("已记录竞价价");
+        assert_eq!((quote.price, quote.ts), (Decimal::from(50), 1000));
+        // 只见到 AuctionHold 行情时由它设定
+        let mut sim = SimulatedExecutionClient::new();
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1100, 55, 55),
+            TradingSession::AuctionHold,
+            day(2),
+            false,
+        );
+        let quote = sim.auctions["AAPL"].opening.expect("已记录竞价价");
+        assert_eq!((quote.price, quote.ts), (Decimal::from(55), 1100));
+    }
+
+    #[test]
+    fn opening_uncross_excludes_orders_placed_after_auction_price_known() {
+        let mut sim = SimulatedExecutionClient::new();
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 50, 50),
+            TradingSession::OpeningAuction,
+            day(2),
+            false,
+        );
+        // 竞价价(1000 时刻)已知后下的单: 进入连续竞价, 按首个连续事件开盘价 100 成交
+        sim.on_order(market_buy_at(1000));
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(2000, 100, 101),
+            TradingSession::Continuous,
+            day(2),
+            false,
+        );
+        assert_eq!(fills(&events), vec![Decimal::from(100)]);
+    }
+
+    #[test]
+    fn tick_fill_after_partial_fill_uses_weighted_average_price() {
+        let mut sim = SimulatedExecutionClient::new();
+        let mut order = market_buy_at(500);
+        order.status = OrderStatus::PartiallyFilled;
+        order.filled_quantity = Decimal::from(30);
+        order.average_filled_price = Some(Decimal::from(10));
+        let id = order.id.clone();
+        sim.on_order(order);
+        let tick = Event::Tick(crate::model::Tick {
+            timestamp: 1000,
+            price: Decimal::new(105, 1),
+            volume: Decimal::from(1000),
+            symbol: "AAPL".to_string(),
+        });
+        let events = run_auction_step(&mut sim, &tick, TradingSession::Continuous, day(2), false);
+        let avg = events.iter().find_map(|e| match e {
+            Event::ExecutionReport(o, Some(_)) if o.id == id => o.average_filled_price,
+            _ => None,
+        });
+        // (30 x 10.0 + 70 x 10.5) / 100
+        assert_eq!(avg, Some(Decimal::new(1035, 2)));
     }
 
     #[test]

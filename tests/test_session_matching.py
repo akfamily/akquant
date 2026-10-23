@@ -753,3 +753,259 @@ def test_closing_auction_on_ticks_ends_at_close_tick() -> None:
     assert [(t, round(p, 4)) for t, p in _fills(r)] == [("01-02 15:00", 10.2)]
     r = run_backtest(strategy=Probe, data=ticks[:3] + ticks[4:], **kw)
     assert [(t, round(p, 4)) for t, p in _fills(r)] == [("01-02 15:00", 10.1)]
+
+
+def _bars(
+    times: List[str],
+    closes: List[float],
+    opens: Any = None,
+    volume: Any = 1e6,
+    symbol: str = "600000.SH",
+) -> pd.DataFrame:
+    df = _minute_frame(times, closes, symbol=symbol)
+    if opens is not None:
+        df["open"] = opens
+    df["high"] = df[["open", "close"]].max(axis=1)
+    df["low"] = df[["open", "close"]].min(axis=1)
+    df["volume"] = volume
+    return df
+
+
+def test_opening_uncross_and_continuous_share_cash_projection() -> None:
+    """统一撮合与本事件的常规撮合共享资金推演: 第二笔资金不足被拒, 不透支."""
+    df = _bars(
+        [
+            "2024-01-02 09:20",
+            "2024-01-02 09:25",
+            "2024-01-02 09:31",
+            "2024-01-02 09:32",
+        ],
+        [9.8, 10.0, 10.5, 10.6],
+        opens=[9.8, 10.0, 9.9, 10.5],
+    )
+    df.loc[2, "low"] = 9.85
+
+    class Two(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.done = False
+
+        def on_bar(self, bar: Bar) -> None:
+            if not self.done:
+                self.done = True
+                self.buy(bar.symbol, 100)
+                self.buy(bar.symbol, 100, price=9.95)
+
+    r = run_backtest(
+        strategy=Two,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1500,
+        show_progress=False,
+    )
+    orders = r.orders_df
+    assert list(orders["status"].astype(str).str.lower()) == ["filled", "rejected"]
+    assert "Insufficient margin" in str(orders["reject_reason"].iloc[1])
+    assert _fills(r) == [("01-02 09:31", 10.0)]
+
+
+@pytest.mark.parametrize("with_close_bar", [False, True])
+def test_closing_uncross_across_symbols_shares_cash_projection(
+    with_close_bar: bool,
+) -> None:
+    """两个品种同时收盘统一撮合(含缺 15:00 bar 的日终收尾): 资金只够一笔."""
+    times = ["2024-01-02 14:58", "2024-01-02 14:59", "2024-01-03 09:31"]
+    if with_close_bar:
+        times = times[:2] + ["2024-01-02 15:00"] + times[2:]
+    prices = [10.0] * (len(times) - 1) + [11.0]
+    df = (
+        pd.concat([_bars(times, prices), _bars(times, prices, symbol="600001.SH")])
+        .sort_values("timestamp", kind="stable")
+        .reset_index(drop=True)
+    )
+
+    class Two(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.done = False
+
+        def on_bar(self, bar: Bar) -> None:
+            if not self.done:
+                self.done = True
+                self.buy("600000.SH", 100)
+                self.buy("600001.SH", 100)
+
+    r = run_backtest(
+        strategy=Two,
+        data=df,
+        symbols=["600000.SH", "600001.SH"],
+        initial_cash=1500,
+        show_progress=False,
+    )
+    orders = r.orders_df
+    assert sorted(orders["status"].astype(str).str.lower()) == ["filled", "rejected"]
+    assert _fills(r) == [("01-02 15:00", 10.0)]
+
+
+def test_zero_volume_last_auction_tick_still_uncrosses() -> None:
+    """竞价期末笔零量快照只更新价格, 统一撮合照常按 10.0 成交."""
+    ticks = [
+        _tick("2024-01-02 09:20:00", 9.8),
+        _tick("2024-01-02 09:24:00", 9.9),
+        # 开盘竞价期末笔零量快照(09:24:58)与静默期零量快照(09:29:57)
+        _tick("2024-01-02 09:24:58", 10.0, volume=0),
+        _tick("2024-01-02 09:29:57", 10.0, volume=0),
+        _tick("2024-01-02 09:30:03", 10.5),
+        _tick("2024-01-02 09:31:00", 10.6),
+    ]
+    r = run_backtest(
+        strategy=_TickBuyAt,
+        data=ticks,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert [(t, round(p, 4)) for t, p in _fills(r)] == [("01-02 09:30", 10.0)]
+
+
+def test_tick_auction_price_not_limited_by_auction_volume() -> None:
+    """竞价价来自 tick 时合成量不受 volume_limit_pct 约束, 全部按竞价价成交."""
+    ticks = [
+        _tick("2024-01-02 09:20:00", 9.8),
+        _tick("2024-01-02 09:25:00", 10.0, volume=300),
+        _tick("2024-01-02 09:30:03", 10.5),
+        _tick("2024-01-02 09:31:00", 10.6),
+    ]
+    r = run_backtest(
+        strategy=_TickBuyAt,
+        data=ticks,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+        volume_limit_pct=0.1,
+    )
+    assert [(t, round(p, 4)) for t, p in _fills(r)] == [("01-02 09:30", 10.0)]
+
+
+def test_order_placed_on_auction_price_tick_goes_to_continuous() -> None:
+    """09:25:00 竞价价 tick 上下的单: 价格已知后下单, 不参加统一撮合, 按连续竞价成交."""
+
+    class At0925(_TickBuyAt):
+        at = "09:25:00"
+
+    r = run_backtest(
+        strategy=At0925,
+        data=_opening_auction_ticks(),
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert [(t, round(p, 4)) for t, p in _fills(r)] == [("01-02 09:30", 10.5)]
+
+
+class _BarBuyAt(Strategy):
+    at = "09:25"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_bar(self, bar: Bar) -> None:
+        t = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert(TZ).strftime("%H:%M")
+        if not self.done and t == self.at:
+            self.done = True
+            self.buy(bar.symbol, 100)
+
+
+def test_order_on_opening_auction_bar_skips_uncross_despite_auction_hold_bar() -> None:
+    """09:25 竞价 bar 上下的单不参加统一撮合; 其后 09:30 静默期 bar 不形成新竞价价."""
+    df = _bars(
+        [
+            "2024-01-02 09:20",
+            "2024-01-02 09:25",
+            "2024-01-02 09:30",
+            "2024-01-02 09:31",
+        ],
+        [9.8, 10.0, 10.0, 10.5],
+        opens=[9.8, 10.0, 10.0, 10.4],
+    )
+    r = run_backtest(
+        strategy=_BarBuyAt,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert _fills(r) == [("01-02 09:31", 10.4)]
+
+
+def test_zero_volume_auction_hold_bar_is_not_suspension() -> None:
+    """09:30 静默期 bar 成交量为 0 不是停牌: 09:20 下的单不被拒, 照常统一撮合."""
+
+    class At0920(_BarBuyAt):
+        at = "09:20"
+
+    df = _bars(
+        [
+            "2024-01-02 09:20",
+            "2024-01-02 09:25",
+            "2024-01-02 09:30",
+            "2024-01-02 09:31",
+        ],
+        [9.8, 10.0, 10.0, 10.5],
+        opens=[9.8, 10.0, 10.0, 10.4],
+        volume=[1e6, 1e6, 0, 1e6],
+    )
+    r = run_backtest(
+        strategy=At0920,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert list(r.orders_df["status"].astype(str).str.lower()) == ["filled"]
+    assert _fills(r) == [("01-02 09:31", 10.0)]
+
+
+def test_current_close_order_on_close_tick_misses_todays_closing_auction() -> None:
+    """全局 CurrentClose: 15:00 收盘 tick 上下的单不参加当日收盘统一撮合."""
+
+    class At1500(_TickBuyAt):
+        at = "15:00:00"
+
+    ticks = [
+        _tick("2024-01-02 14:58:00", 10.0),
+        _tick("2024-01-02 15:00:00", 10.2),
+        _tick("2024-01-03 09:31:00", 11.0),
+    ]
+    r = run_backtest(
+        strategy=At1500,
+        data=ticks,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+    )
+    assert _fills(r) == [("01-03 09:31", 11.0)]
+
+
+def test_zero_volume_last_auction_bar_keeps_volume_and_uncrosses() -> None:
+    """分钟线: 开盘竞价末根 bar 零量只更新价格(沿用前一根的量), 照常按 10.0 统一撮合."""
+
+    class At0920(_BarBuyAt):
+        at = "09:20"
+
+    df = _bars(
+        ["2024-01-02 09:20", "2024-01-02 09:25", "2024-01-02 09:31"],
+        [9.8, 10.0, 10.5],
+        opens=[9.8, 10.0, 10.4],
+        volume=[1e6, 0, 1e6],
+    )
+    r = run_backtest(
+        strategy=At0920,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert _fills(r) == [("01-02 09:31", 10.0)]

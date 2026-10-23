@@ -458,8 +458,14 @@ impl CommonMatcher {
                     if trade_qty > Decimal::ZERO {
                         order.status = OrderStatus::Filled;
                         order.updated_at = tick.timestamp;
+                        // 按成交量加权(此前可能已有部分成交, 如集合竞价受量限制)
+                        let prev_filled = order.filled_quantity;
+                        let prev_avg = order.average_filled_price.unwrap_or(Decimal::ZERO);
                         order.filled_quantity += trade_qty;
-                        order.average_filled_price = Some(final_price);
+                        order.average_filled_price = Some(
+                            (prev_avg * prev_filled + final_price * trade_qty)
+                                / order.filled_quantity,
+                        );
                         let trade = Trade {
                             id: Uuid::new_v4().to_string(),
                             order_id: order.id.clone(),
