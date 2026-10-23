@@ -175,6 +175,18 @@ class SessionResolver:
         trading_day: datetime.date,
         asset_type: typing.Optional[AssetType] = None,
     ) -> tuple[int, int]: ...
+    def trading_blocks(
+        self,
+        symbol: str,
+        trading_day: datetime.date,
+        asset_type: typing.Optional[AssetType] = None,
+    ) -> list[tuple[int, int]]: ...
+    def block_at(
+        self,
+        symbol: str,
+        timestamp: int,
+        asset_type: typing.Optional[AssetType] = None,
+    ) -> typing.Optional[tuple[datetime.date, int, int, int]]: ...
     def set_active(
         self, symbols: list[tuple[str, typing.Optional[AssetType]]]
     ) -> None: ...

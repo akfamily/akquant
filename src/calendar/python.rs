@@ -10,6 +10,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 fn calendar_err(e: CalendarError) -> PyErr {
     PyValueError::new_err(e.to_string())
@@ -25,7 +26,15 @@ fn calendar_err(e: CalendarError) -> PyErr {
 #[gen_stub_pyclass]
 #[pyclass(name = "SessionResolver", module = "akquant")]
 pub struct PySessionResolver {
-    inner: SessionResolver,
+    inner: Arc<SessionResolver>,
+}
+
+impl PySessionResolver {
+    /// 供 Rust 侧（窗口聚合器等）共享同一解析器及其缓存。
+    #[allow(dead_code)]
+    pub(crate) fn arc(&self) -> Arc<SessionResolver> {
+        self.inner.clone()
+    }
 }
 
 #[gen_stub_pymethods]
@@ -62,7 +71,9 @@ impl PySessionResolver {
             None => None,
         };
         let inner = SessionResolver::new(clock, calendar, pairs).map_err(PyValueError::new_err)?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner: Arc::new(inner),
+        })
     }
 
     /// 解析时间点（tick）。
@@ -113,7 +124,10 @@ impl PySessionResolver {
     ///
     /// 不调用（或传空列表）时按全局默认表（``"default"``，缺省 CN_STOCK）计算。
     fn set_active(&mut self, symbols: Vec<(String, Option<AssetType>)>) {
-        self.inner.set_active(&symbols);
+        // 克隆一份新解析器替换 Arc：已通过 arc() 共享出去的持有者不受影响
+        let mut next = self.inner.as_ref().clone();
+        next.set_active(&symbols);
+        self.inner = Arc::new(next);
     }
 
     /// 会话级交易日收盘时刻（UTC 纳秒）：所有在用时段表收盘的最大值。
@@ -152,6 +166,40 @@ impl PySessionResolver {
     #[getter]
     fn uses_all_days_fallback(&self) -> bool {
         self.inner.uses_all_days_fallback()
+    }
+
+    /// 品种在交易日 ``trading_day`` 的交易块 ``[(起点, 终点), ...]``（UTC 纳秒，半开区间）。
+    ///
+    /// 交易块是首尾相接的非休市/非闭市时段合并成的连续交易区间，如 A 股为
+    /// 09:15-11:30 与 13:00-15:00 两块。
+    #[pyo3(signature = (symbol, trading_day, asset_type=None))]
+    fn trading_blocks(
+        &self,
+        symbol: &str,
+        trading_day: NaiveDate,
+        asset_type: Option<AssetType>,
+    ) -> PyResult<Vec<(i64, i64)>> {
+        let blocks = self
+            .inner
+            .trading_blocks(symbol, asset_type, trading_day)
+            .map_err(calendar_err)?;
+        Ok(blocks.iter().map(|b| (b.start, b.end)).collect())
+    }
+
+    /// 时刻 ``timestamp`` 所在的交易块 ``(交易日, 序号, 起点, 终点)``；落在块外
+    /// （午休、闭市）返回 None。块为半开区间，终点戳事件请传区间内一点（ts-1）。
+    #[pyo3(signature = (symbol, timestamp, asset_type=None))]
+    fn block_at(
+        &self,
+        symbol: &str,
+        timestamp: i64,
+        asset_type: Option<AssetType>,
+    ) -> PyResult<Option<(NaiveDate, usize, i64, i64)>> {
+        let b = self
+            .inner
+            .block_at(symbol, asset_type, timestamp)
+            .map_err(calendar_err)?;
+        Ok(b.map(|b| (b.trading_day, b.index, b.start, b.end)))
     }
 
     /// 内置时段模板名。

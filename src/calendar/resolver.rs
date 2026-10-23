@@ -15,6 +15,16 @@ pub struct Resolution {
     pub session: TradingSession,
 }
 
+/// 交易块：交易日内首尾相接的非 `Break`/`Closed` 段合并成的连续交易区间 `[start, end)`
+/// （UTC 纳秒）。`index` 为该交易日内按时间顺序的序号，从 0 起。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TradingBlock {
+    pub trading_day: NaiveDate,
+    pub index: usize,
+    pub start: i64,
+    pub end: i64,
+}
+
 /// 一个交易日展开成绝对时间（UTC 纳秒）后的时段。
 #[derive(Debug)]
 struct DayWindow {
@@ -96,6 +106,8 @@ pub struct SessionResolver {
     option_default: Arc<SessionSchedule>,
     always_open: Arc<SessionSchedule>,
     windows: Mutex<HashMap<(usize, NaiveDate), Arc<DayWindow>>>,
+    /// 交易块缓存，键同 `windows`。
+    blocks: Mutex<HashMap<(usize, NaiveDate), Arc<Vec<TradingBlock>>>>,
     /// 在用时段表（按 Arc 指针去重）；空表示未调用 set_active。
     active: Vec<Arc<SessionSchedule>>,
     /// 按时刻解析的缓存（见 [`Self::session_at_instant`]）：(时刻, [(时段表指针, 结果)])，
@@ -104,6 +116,31 @@ pub struct SessionResolver {
     /// 按时刻解析实际计算的次数（缓存未命中），供单测验证缓存。
     #[cfg(test)]
     instant_resolves: std::sync::atomic::AtomicUsize,
+}
+
+/// 复制配置与在用标的；缓存从空开始（缓存键含时段表指针，克隆体共享同一批 `Arc`
+/// 时段表，重新计算的结果与原值一致）。
+impl Clone for SessionResolver {
+    fn clone(&self) -> Self {
+        Self {
+            clock: self.clock.clone(),
+            calendar: self.calendar.clone(),
+            weekdays: self.weekdays.clone(),
+            all_days: self.all_days.clone(),
+            explicit_default: self.explicit_default.clone(),
+            by_prefix: self.by_prefix.clone(),
+            stock_default: self.stock_default.clone(),
+            futures_default: self.futures_default.clone(),
+            option_default: self.option_default.clone(),
+            always_open: self.always_open.clone(),
+            windows: Mutex::new(HashMap::new()),
+            blocks: Mutex::new(HashMap::new()),
+            active: self.active.clone(),
+            instant_cache: Mutex::new((i64::MIN, Vec::new())),
+            #[cfg(test)]
+            instant_resolves: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
 }
 
 impl SessionResolver {
@@ -139,6 +176,7 @@ impl SessionResolver {
             option_default: builtin("CN_OPTION"),
             always_open: builtin("ALWAYS_OPEN"),
             windows: Mutex::new(HashMap::new()),
+            blocks: Mutex::new(HashMap::new()),
             active: Vec::new(),
             instant_cache: Mutex::new((i64::MIN, Vec::new())),
             #[cfg(test)]
@@ -611,6 +649,71 @@ impl SessionResolver {
         best
     }
 
+    fn blocks_of(
+        &self,
+        schedule: &Arc<SessionSchedule>,
+        day: NaiveDate,
+    ) -> Result<Arc<Vec<TradingBlock>>, CalendarError> {
+        let key = (Arc::as_ptr(schedule) as usize, day);
+        if let Some(b) = self.blocks.lock().expect("缓存锁").get(&key) {
+            return Ok(b.clone());
+        }
+        let w = self.day_window(schedule, day)?;
+        let mut blocks: Vec<TradingBlock> = Vec::new();
+        // 当前块是否还能被下一段延长（上一段是非 Break/Closed 段）
+        let mut open = false;
+        for &(s, e, sess) in &w.segments {
+            if matches!(sess, TradingSession::Break | TradingSession::Closed) {
+                open = false;
+                continue;
+            }
+            match blocks.last_mut() {
+                Some(cur) if open && s == cur.end => cur.end = e,
+                _ => blocks.push(TradingBlock {
+                    trading_day: day,
+                    index: blocks.len(),
+                    start: s,
+                    end: e,
+                }),
+            }
+            open = true;
+        }
+        let blocks = Arc::new(blocks);
+        self.blocks
+            .lock()
+            .expect("缓存锁")
+            .insert(key, blocks.clone());
+        Ok(blocks)
+    }
+
+    /// 品种在交易日 `day` 的交易块，按时间顺序。
+    pub fn trading_blocks(
+        &self,
+        symbol: &str,
+        asset_type: Option<AssetType>,
+        day: NaiveDate,
+    ) -> Result<Vec<TradingBlock>, CalendarError> {
+        let schedule = self.schedule_for(symbol, asset_type);
+        Ok(self.blocks_of(&schedule, day)?.as_ref().clone())
+    }
+
+    /// `point` 所在的交易块（半开区间 `[start, end)`）；落在块外（午休、闭市）返回
+    /// `None`。终点戳事件（bar、收盘 tick）应传区间内一点（`ts - 1`）。
+    pub fn block_at(
+        &self,
+        symbol: &str,
+        asset_type: Option<AssetType>,
+        point: i64,
+    ) -> Result<Option<TradingBlock>, CalendarError> {
+        let schedule = self.schedule_for(symbol, asset_type);
+        let (day, _) = self.trading_day_of(&schedule, point)?;
+        let blocks = self.blocks_of(&schedule, day)?;
+        Ok(blocks
+            .iter()
+            .find(|b| b.start <= point && point < b.end)
+            .copied())
+    }
+
     pub fn day_bounds(
         &self,
         symbol: &str,
@@ -653,6 +756,55 @@ mod tests {
 
     fn stock() -> Option<AssetType> {
         Some(AssetType::Stock)
+    }
+
+    #[test]
+    fn trading_blocks_merge_adjacent_non_break_segments() {
+        let r = resolver(vec![], None);
+        let stock = Some(AssetType::Stock);
+        let blocks = r.trading_blocks("600000.SH", stock, d(2024, 1, 2)).unwrap();
+        let spans: Vec<(i64, i64)> = blocks.iter().map(|b| (b.start, b.end)).collect();
+        assert_eq!(
+            spans,
+            vec![
+                (at(2024, 1, 2, 9, 15, 0), at(2024, 1, 2, 11, 30, 0)),
+                (at(2024, 1, 2, 13, 0, 0), at(2024, 1, 2, 15, 0, 0)),
+            ]
+        );
+        assert_eq!(blocks[1].index, 1);
+    }
+
+    #[test]
+    fn trading_blocks_night_futures_first_block_starts_previous_evening() {
+        let r = resolver(vec![("au", "CN_FUTURES_NIGHT_0230")], None);
+        let fut = Some(AssetType::Futures);
+        // 周一交易日：夜盘从上周五 20:55 起
+        let blocks = r.trading_blocks("au2406", fut, d(2024, 1, 8)).unwrap();
+        assert_eq!(blocks[0].start, at(2024, 1, 5, 20, 55, 0));
+        assert_eq!(blocks[0].end, at(2024, 1, 6, 2, 30, 0));
+        assert_eq!(blocks.len(), 4);
+    }
+
+    #[test]
+    fn block_at_returns_none_in_lunch_break_and_block_otherwise() {
+        let r = resolver(vec![], None);
+        let stock = Some(AssetType::Stock);
+        assert!(
+            r.block_at("600000.SH", stock, at(2024, 1, 2, 12, 0, 0))
+                .unwrap()
+                .is_none()
+        );
+        let b = r
+            .block_at("600000.SH", stock, at(2024, 1, 2, 14, 58, 0))
+            .unwrap()
+            .unwrap();
+        assert_eq!((b.trading_day, b.index), (d(2024, 1, 2), 1));
+        // 收盘时刻那一刻（end 本身）不属于块：调用方按区间内一点（ts-1）查询
+        assert!(
+            r.block_at("600000.SH", stock, at(2024, 1, 2, 15, 0, 0))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
