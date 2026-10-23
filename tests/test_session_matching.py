@@ -323,7 +323,11 @@ def test_closed_session_data_warns_once(caplog: pytest.LogCaptureFixture) -> Non
         if "闭市时段" in r.getMessage() and "au2406" in r.getMessage()
     ]
     assert len(hits) == 1
-    assert "sessions=" in hits[0].getMessage()
+    message = hits[0].getMessage()
+    assert "sessions=" in message
+    # 时区口径：DataFrame 无时区时间按 Asia/Shanghai；Bar/整数时间戳是 UTC 纳秒。
+    assert "按 Asia/Shanghai 解释" in message
+    assert "UTC 纳秒" in message
 
 
 class _AfterTradingProbe(Strategy):

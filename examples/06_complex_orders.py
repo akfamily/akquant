@@ -29,8 +29,9 @@ class BracketStrategy(Strategy):
         if self.has_position or self.entry_order_id:
             return
 
-        stop_price = bar.close * (1 - self.params.stop_loss_pct)
-        take_profit_price = bar.close * (1 + self.params.take_profit_pct)
+        # 股票委托价须按最小变动价位 0.01 对齐，否则止损/止盈腿会被拒单。
+        stop_price = round(bar.close * (1 - self.params.stop_loss_pct), 2)
+        take_profit_price = round(bar.close * (1 + self.params.take_profit_pct), 2)
         print(
             f"[{bar.timestamp_iso}] 提交 Bracket 进场: {bar.symbol} @ {bar.close:.2f}, "
             f"stop={stop_price:.2f}, take={take_profit_price:.2f}"
@@ -71,7 +72,12 @@ class BracketStrategy(Strategy):
 
 def run_example() -> None:
     """运行示例."""
-    dates = pd.date_range("2024-01-01", periods=200, freq="1min")
+    # 分钟线时间戳落在 A 股连续竞价时段（上午 09:31～11:30、下午 13:01 起），
+    # 跳过午休；非交易时段的行情不会撮合。无时区的时间按 Asia/Shanghai 解释。
+    day = pd.Timestamp("2024-01-02")
+    morning = pd.date_range(day + pd.Timedelta("09:31:00"), periods=120, freq="1min")
+    afternoon = pd.date_range(day + pd.Timedelta("13:01:00"), periods=80, freq="1min")
+    dates = pd.DatetimeIndex(morning.append(afternoon))
     x = np.linspace(0, 10, 200)
     prices = 100 + 5 * np.sin(x) + np.random.normal(0, 0.2, 200)
 

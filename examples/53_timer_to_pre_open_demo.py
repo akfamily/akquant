@@ -89,6 +89,9 @@ def main() -> None:
         data=build_data(),
         strategy=TimerToPreOpenStrategy(),
         symbols=["TIMER_PREOPEN"],
+        # 日线 bar 打在 09:30（非 0 点）时须声明 freq="1d"，让每根 bar 覆盖整个
+        # 交易日；否则会按 09:30 所在的集合竞价时段撮合，盘前下的单当天不成交。
+        freq="1d",
         initial_cash=10000.0,
         lot_size=1,
         show_progress=False,

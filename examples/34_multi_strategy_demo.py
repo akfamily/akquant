@@ -7,7 +7,9 @@ from akquant import Bar, Strategy
 
 def make_bars() -> list[Bar]:
     """Build deterministic bars for multi-strategy demo."""
-    idx = pd.date_range(start="2024-02-01", periods=8, freq="D")
+    # 手工构造的 Bar 时间戳是 UTC 纳秒：用带时区的上海收盘时刻（15:00）
+    # 换算，并只取交易日，避免 bar 落在闭市时段而不撮合。
+    idx = pd.bdate_range(start="2024-03-01 15:00", periods=8, tz="Asia/Shanghai")
     prices = [100.0, 99.0, 98.0, 97.0, 96.0, 97.0, 98.0, 99.0]
     bars: list[Bar] = []
     for ts, price in zip(idx, prices):
