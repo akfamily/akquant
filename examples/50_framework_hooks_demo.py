@@ -70,11 +70,16 @@ class FrameworkHooksDemoStrategy(Strategy):
 
 
 def build_data() -> list[Bar]:
-    """Build a tiny deterministic bar series for boundary-hook playback."""
+    """Build a tiny deterministic bar series for boundary-hook playback.
+
+    The first bar of each day sits at 09:31 (the first continuous-session minute
+    bar). A bar stamped 09:30 covers 09:29-09:30, i.e. the pre-open auction hold,
+    so it would arrive before ``on_before_trading`` (which fires just after 09:30).
+    """
     rows = [
-        ("2023-01-03 09:30:00", 10.0),
+        ("2023-01-03 09:31:00", 10.0),
         ("2023-01-03 15:00:00", 10.5),
-        ("2023-01-04 09:30:00", 10.8),
+        ("2023-01-04 09:31:00", 10.8),
         ("2023-01-04 15:00:00", 10.6),
     ]
     bars: list[Bar] = []

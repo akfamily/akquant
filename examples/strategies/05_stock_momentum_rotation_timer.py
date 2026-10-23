@@ -62,10 +62,13 @@ def make_data() -> dict[str, pd.DataFrame]:
 def rebalance_to_best_symbol(
     strategy: Strategy, ranking: list[tuple[str, float]], symbols: list[str]
 ) -> str:
-    """调仓到排名第一的标的，其余标的清仓."""
+    """调仓到排名第一的标的，其余标的清仓.
+
+    目标仓位取 95%：满仓（100%）时佣金使所需资金超过可用资金，买单会被风控拒绝。
+    """
     best_symbol = ranking[0][0]
     for symbol in symbols:
-        target_percent = 1.0 if symbol == best_symbol else 0.0
+        target_percent = 0.95 if symbol == best_symbol else 0.0
         strategy.order_target_percent(target_percent=target_percent, symbol=symbol)
     return best_symbol
 

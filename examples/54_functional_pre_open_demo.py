@@ -96,6 +96,9 @@ def main() -> None:
         symbols="PREOPEN_FUNC",
         initial_cash=10000.0,
         lot_size=1,
+        # 日线 bar 打在 09:30（非 0 点）时须声明 freq="1d"，让每根 bar 覆盖整个
+        # 交易日；否则 09:30 落在开盘集合竞价后的 AuctionHold，盘前订单当日不成交。
+        freq="1d",
         show_progress=False,
     )
     strategy = result.strategy
