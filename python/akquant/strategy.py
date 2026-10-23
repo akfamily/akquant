@@ -102,7 +102,11 @@ from .strategy_order_events import (
 )
 from .strategy_position import Position
 from .strategy_preload import PHASE_RUN, replay_preload_history
-from .strategy_runtime_config import StrategyRuntimeConfig
+from .strategy_runtime_config import (
+    REMOVED_PRECISE_BOUNDARY_FIELD,
+    StrategyRuntimeConfig,
+    removed_precise_boundary_message,
+)
 from .strategy_scheduler import _nth_per_group as _nth_per_group_impl
 from .strategy_scheduler import schedule as _schedule_impl
 from .strategy_scheduler import schedule_daily as _schedule_daily_impl
@@ -490,6 +494,10 @@ class Strategy:
                 "(且须同时写 overlay=True)"
             )
         super().__init_subclass__(**kwargs)
+        if REMOVED_PRECISE_BOUNDARY_FIELD in vars(cls):
+            raise ValueError(
+                removed_precise_boundary_message(f"策略类 {cls.__name__} 类属性")
+            )
         cls._aq_title = _validate_script_label("title", title, cls.__name__)
         cls._aq_id = _validate_script_label("id", id, cls.__name__)
         # 记录当前类命名空间中直接声明的字段
@@ -945,6 +953,15 @@ class Strategy:
                 if not hasattr(self, name):
                     setattr(self, name, IndicatorBinding(self, name))
         _ensure_framework_state_impl(self)
+
+    @property
+    def enable_precise_day_boundary_hooks(self) -> bool:
+        """已删除的精确边界开关：读写都报中文错误（钩子现在总是精确触发）."""
+        raise AttributeError(removed_precise_boundary_message("策略实例属性"))
+
+    @enable_precise_day_boundary_hooks.setter
+    def enable_precise_day_boundary_hooks(self, value: Any) -> None:
+        raise ValueError(removed_precise_boundary_message("策略实例属性"))
 
     @property
     def runtime_config(self) -> StrategyRuntimeConfig:

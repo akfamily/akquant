@@ -511,3 +511,45 @@ def test_live_all_days_calendar_warns_once(caplog: Any) -> None:
             and "美股等请传 trading_calendar" in r.getMessage()
         ]
         assert len(hits) == expected, (all_days, [r.getMessage() for r in hits])
+
+
+_REMOVED_SWITCH = "enable_precise_day_boundary_hooks"
+
+
+def test_removed_precise_switch_class_attribute_raises_chinese_error() -> None:
+    """类属性写旧开关：定义类时报中文错误，说明开关已删除."""
+    import pytest
+
+    with pytest.raises(ValueError, match="已删除") as info:
+
+        class P(Strategy):
+            enable_precise_day_boundary_hooks = True
+
+    assert _REMOVED_SWITCH in str(info.value)
+
+
+def test_removed_precise_switch_instance_attribute_raises_chinese_error() -> None:
+    """实例属性写旧开关：赋值时报中文错误."""
+    import pytest
+
+    class P(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            setattr(self, _REMOVED_SWITCH, True)
+
+    with pytest.raises(ValueError, match="已删除") as info:
+        P()
+    assert _REMOVED_SWITCH in str(info.value)
+
+
+def test_removed_precise_switch_runtime_config_kwarg_raises_chinese_error() -> None:
+    """StrategyRuntimeConfig 构造传旧开关：与 dict 路径一致报中文 ValueError."""
+    import pytest
+    from akquant import StrategyRuntimeConfig
+
+    with pytest.raises(ValueError, match="已删除") as info:
+        kwargs: Any = {_REMOVED_SWITCH: True}
+        StrategyRuntimeConfig(**kwargs)
+    assert _REMOVED_SWITCH in str(info.value)
+    # 正常字段不受影响
+    assert StrategyRuntimeConfig(error_mode="continue").error_mode == "continue"
