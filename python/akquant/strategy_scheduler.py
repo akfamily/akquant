@@ -1,5 +1,5 @@
 import datetime as dt
-from typing import Any, Union
+from typing import Any, Callable, Optional, Union
 
 import pandas as pd
 
@@ -67,6 +67,12 @@ def flush_pending_schedules(strategy: Any) -> None:
         pending_daily.clear()
         for time_str, payload in queued_daily:
             schedule_daily(strategy, time_str, payload)
+    pending_periodic = getattr(strategy, "_pending_periodic_timers", None)
+    if pending_periodic:
+        queued_periodic = list(pending_periodic)
+        pending_periodic.clear()
+        for kind, time_str, payload in queued_periodic:
+            _schedule_periodic(strategy, kind, time_str, payload)
     pending = getattr(strategy, "_pending_schedules", None)
     if not pending:
         return
@@ -76,8 +82,149 @@ def flush_pending_schedules(strategy: Any) -> None:
         schedule(strategy, trigger_time, payload)
 
 
+# 周期定时器 payload 的种类前缀。回测预先逐日登记, 三种都用 ``__daily__|``
+# (触发时只解包、不重排); 实盘只登记下一次, 触发后按种类重排, 所以 weekly/monthly
+# 用各自的前缀。都不以引擎保留前缀 ``__akq_`` 开头。
+PERIODIC_TIMER_PREFIXES = {
+    "daily": "__daily__|",
+    "weekly": "__weekly__|",
+    "monthly": "__monthly__|",
+}
+
+_MAX_CALENDAR_STEPS = 4000
+
+
+def next_occurrence(
+    kind: str,
+    time_str: str,
+    now: pd.Timestamp,
+    is_trading_day: Callable[[dt.date], bool],
+    next_trading_day: Callable[[dt.date], Optional[dt.date]],
+    tz: str,
+) -> Optional[pd.Timestamp]:
+    """按交易日历求周期定时器晚于 ``now`` 的下一次触发时刻.
+
+    - ``daily``: 每个交易日的 ``time_str``;
+    - ``weekly``: 每个 ISO 周首个交易日的 ``time_str``;
+    - ``monthly``: 每个自然月首个交易日的 ``time_str``。
+
+    恰好等于 ``now`` 的时点视为已过。日历只经两个回调访问(实盘传
+    ``ctx.is_trading_day`` / ``ctx.next_trading_day``); 超出日历
+    (``next_trading_day`` 返回 None)时返回 None。
+
+    :param kind: ``"daily"`` / ``"weekly"`` / ``"monthly"``
+    :param time_str: 本地时刻, 如 ``"14:55"``
+    :param now: 当前时刻(不带时区时按 ``tz`` 解释)
+    :param is_trading_day: 判断某日是否为交易日
+    :param next_trading_day: 某日之后的下一个交易日(超出日历为 None)
+    :param tz: 本地时区
+    :return: 带 ``tz`` 时区的触发时刻, 或 None
+    :raises ValueError: ``kind`` 未知或 ``time_str`` 无法解析
+    """
+    if kind not in PERIODIC_TIMER_PREFIXES:
+        raise ValueError(f"未知的定时器种类 {kind!r}，应为 daily/weekly/monthly")
+    try:
+        t = pd.to_datetime(time_str).time()
+    except Exception as exc:
+        raise ValueError(
+            f"无法解析定时器时刻 {time_str!r}，请写成 '14:55' 或 '14:55:00'"
+        ) from exc
+    now_ts = pd.Timestamp(now)
+    now_ts = now_ts.tz_localize(tz) if now_ts.tzinfo is None else now_ts.tz_convert(tz)
+
+    def on_or_after(day: dt.date) -> Optional[dt.date]:
+        return day if is_trading_day(day) else next_trading_day(day)
+
+    def at(day: dt.date) -> pd.Timestamp:
+        return pd.Timestamp.combine(day, t).tz_localize(tz)
+
+    def group_start(day: dt.date) -> dt.date:
+        if kind == "weekly":
+            return day - dt.timedelta(days=day.weekday())
+        return day.replace(day=1)
+
+    def next_group_start(start: dt.date) -> dt.date:
+        if kind == "weekly":
+            return start + dt.timedelta(days=7)
+        if start.month == 12:
+            return dt.date(start.year + 1, 1, 1)
+        return dt.date(start.year, start.month + 1, 1)
+
+    if kind == "daily":
+        day = on_or_after(now_ts.date())
+        for _ in range(_MAX_CALENDAR_STEPS):
+            if day is None:
+                return None
+            target = at(day)
+            if target > now_ts:
+                return target
+            day = next_trading_day(day)
+        return None
+
+    start = group_start(now_ts.date())
+    for _ in range(_MAX_CALENDAR_STEPS):
+        first = on_or_after(start)
+        if first is None:
+            return None
+        if group_start(first) != start:
+            # 该周/月没有交易日: 改从首个交易日所在的周/月取首日
+            start = group_start(first)
+            continue
+        target = at(first)
+        if target > now_ts:
+            return target
+        start = next_group_start(start)
+    return None
+
+
+def live_now(strategy: Any) -> pd.Timestamp:
+    """实盘当前时刻: 墙钟与当前事件时刻取较晚者(定时器略早送达时不重排回原时点)."""
+    now = pd.Timestamp.now(tz=strategy.timezone)
+    try:
+        current = int(getattr(strategy.ctx, "current_time", 0) or 0)
+    except (TypeError, ValueError):
+        current = 0
+    if current > 0:
+        event_ts = pd.Timestamp(current, tz="UTC").tz_convert(strategy.timezone)
+        if event_ts > now:
+            return event_ts
+    return now
+
+
+def schedule_live_next(
+    strategy: Any, kind: str, time_str: str, user_payload: str
+) -> bool:
+    """实盘: 按会话交易日历登记周期定时器的下一次触发, 返回是否已登记.
+
+    日历来自 ``ctx.is_trading_day`` / ``ctx.next_trading_day``(实盘缺省为工作日
+    日历)。时刻无法解析时抛 ``ValueError``; 超出日历时告警并返回 False。
+    """
+    ctx = strategy.ctx
+    target = next_occurrence(
+        kind,
+        time_str,
+        live_now(strategy),
+        ctx.is_trading_day,
+        ctx.next_trading_day,
+        strategy.timezone,
+    )
+    if target is None:
+        logger.warning(
+            "定时任务 %r（%s %s）在交易日历中找不到下一次触发日，已停止登记；"
+            "请在 trading_calendar 中补充后续交易日",
+            user_payload,
+            kind,
+            time_str,
+        )
+        return False
+    schedule(
+        strategy, target, f"{PERIODIC_TIMER_PREFIXES[kind]}{time_str}|{user_payload}"
+    )
+    return True
+
+
 def schedule_daily(strategy: Any, time_str: str, payload: str) -> None:
-    """注册每日定时任务."""
+    """注册每日定时任务(交易日历上的每个交易日触发, 回测与实盘一致)."""
     _check_payload(payload)
     if strategy.ctx is None:
         pending_daily = getattr(strategy, "_pending_daily_timers", None)
@@ -86,23 +233,15 @@ def schedule_daily(strategy: Any, time_str: str, payload: str) -> None:
             strategy._pending_daily_timers = pending_daily
         pending_daily.append((time_str, payload))
         return
-    wrapped_payload = f"__daily__|{time_str}|{payload}"
 
     if not strategy._trading_days:
         try:
-            t = pd.to_datetime(time_str).time()
-        except Exception:
+            schedule_live_next(strategy, "daily", time_str, payload)
+        except ValueError:
             logger.warning("Error parsing time: %s", time_str)
-            return
-
-        now = pd.Timestamp.now(tz=strategy.timezone)
-        target = pd.Timestamp.combine(now.date(), t).tz_localize(strategy.timezone)
-        if target <= now:
-            target += pd.Timedelta(days=1)
-
-        schedule(strategy, target, wrapped_payload)
         return
 
+    wrapped_payload = f"__daily__|{time_str}|{payload}"
     _register_on_days(strategy, strategy._trading_days, time_str, wrapped_payload)
 
 
@@ -154,31 +293,40 @@ def _nth_per_group(days: list, key: Any, n: int, from_end: bool) -> list:
     return out
 
 
-def schedule_weekly(strategy: Any, time_str: str, payload: str) -> None:
-    """每周首个交易日在 ``time_str`` 触发(节假日/停牌自动顺延)."""
+def _schedule_periodic(strategy: Any, kind: str, time_str: str, payload: str) -> None:
     _check_payload(payload)
-    if strategy.ctx is None or not strategy._trading_days:
-        logger.warning(
-            "schedule_weekly requires trading days (backtest context); ignored"
-        )
+    if strategy.ctx is None:
+        # on_start 时上下文尚未注入: 与 schedule_daily 一样延后到首个事件再登记
+        pending = getattr(strategy, "_pending_periodic_timers", None)
+        if pending is None:
+            pending = []
+            strategy._pending_periodic_timers = pending
+        pending.append((kind, time_str, payload))
         return
-    wrapped_payload = f"__daily__|{time_str}|{payload}"
-    days = _first_trading_day_per_group(
-        strategy._trading_days, lambda d: (d.isocalendar()[0], d.isocalendar()[1])
-    )
-    _register_on_days(strategy, days, time_str, wrapped_payload)
+    if not strategy._trading_days:
+        try:
+            schedule_live_next(strategy, kind, time_str, payload)
+        except ValueError:
+            logger.warning("Error parsing time: %s", time_str)
+        return
+    if kind == "weekly":
+        days = _first_trading_day_per_group(
+            strategy._trading_days,
+            lambda d: (d.isocalendar()[0], d.isocalendar()[1]),
+        )
+    else:
+        days = _first_trading_day_per_group(
+            strategy._trading_days, lambda d: (d.year, d.month)
+        )
+    # 回测逐日预登记, 触发时只解包不重排, 沿用 __daily__ 前缀
+    _register_on_days(strategy, days, time_str, f"__daily__|{time_str}|{payload}")
+
+
+def schedule_weekly(strategy: Any, time_str: str, payload: str) -> None:
+    """每周首个交易日在 ``time_str`` 触发(节假日自动顺延; 回测与实盘一致)."""
+    _schedule_periodic(strategy, "weekly", time_str, payload)
 
 
 def schedule_monthly(strategy: Any, time_str: str, payload: str) -> None:
-    """每月首个交易日在 ``time_str`` 触发(节假日/停牌自动顺延)."""
-    _check_payload(payload)
-    if strategy.ctx is None or not strategy._trading_days:
-        logger.warning(
-            "schedule_monthly requires trading days (backtest context); ignored"
-        )
-        return
-    wrapped_payload = f"__daily__|{time_str}|{payload}"
-    days = _first_trading_day_per_group(
-        strategy._trading_days, lambda d: (d.year, d.month)
-    )
-    _register_on_days(strategy, days, time_str, wrapped_payload)
+    """每月首个交易日在 ``time_str`` 触发(节假日自动顺延; 回测与实盘一致)."""
+    _schedule_periodic(strategy, "monthly", time_str, payload)

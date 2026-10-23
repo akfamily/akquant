@@ -434,3 +434,261 @@ def test_build_session_trading_days_includes_empty_days_and_night_bars() -> None
         "2024-01-02": int(stamps[0].value),
         "2024-01-05": int(stamps[1].value),
     }
+
+
+def test_schedule_daily_fires_on_calendar_days_without_data() -> None:
+    """数据缺 01-03（但它是交易日）：schedule_daily 仍在 01-03 触发."""
+
+    class P(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fired: List[str] = []
+
+        def on_start(self) -> None:
+            self.schedule_daily("10:00", "tick")
+
+        def on_timer(self, payload: str) -> None:
+            assert self.ctx is not None
+            self.fired.append(
+                pd.Timestamp(self.ctx.current_time, tz="UTC")
+                .tz_convert(TZ)
+                .strftime("%m-%d %H:%M")
+            )
+
+    df = _minute(["2024-01-02 09:31", "2024-01-04 09:31", "2024-01-04 15:00"])
+    r = run_backtest(
+        strategy=P,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        trading_calendar=[
+            "2023-12-29",
+            "2024-01-02",
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-05",
+        ],
+    )
+    assert r.strategy is not None
+    assert r.strategy.fired == ["01-02 10:00", "01-03 10:00", "01-04 10:00"]
+
+
+def test_schedule_daily_skips_non_trading_day_in_calendar() -> None:
+    """日历上不是交易日的 01-03 不触发（即使夹在两个交易日之间）."""
+
+    class P(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fired: List[str] = []
+
+        def on_start(self) -> None:
+            self.schedule_daily("10:00", "tick")
+
+        def on_timer(self, payload: str) -> None:
+            assert self.ctx is not None
+            self.fired.append(
+                pd.Timestamp(self.ctx.current_time, tz="UTC")
+                .tz_convert(TZ)
+                .strftime("%m-%d")
+            )
+
+    df = _minute(["2024-01-02 09:31", "2024-01-04 15:00"])
+    r = run_backtest(
+        strategy=P,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        trading_calendar=["2023-12-29", "2024-01-02", "2024-01-04"],
+    )
+    assert r.strategy is not None
+    assert r.strategy.fired == ["01-02", "01-04"]
+
+
+def test_schedule_weekly_monthly_registered_in_on_start_fire_in_backtest() -> None:
+    """on_start 里登记的 weekly/monthly 延后到上下文就绪再登记（此前直接被忽略）."""
+
+    class P(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fired: List[Tuple[str, str]] = []
+
+        def on_start(self) -> None:
+            self.schedule_weekly("10:00", "wk")
+            self.schedule_monthly("10:30", "mo")
+
+        def on_timer(self, payload: str) -> None:
+            assert self.ctx is not None
+            self.fired.append(
+                (
+                    payload,
+                    pd.Timestamp(self.ctx.current_time, tz="UTC")
+                    .tz_convert(TZ)
+                    .strftime("%m-%d %H:%M"),
+                )
+            )
+
+    # 01-29 周一无数据但为交易日；02-01 为 2 月首个交易日
+    df = _minute(["2024-01-25 09:31", "2024-02-02 15:00"])
+    r = run_backtest(
+        strategy=P,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        trading_calendar=[
+            "2024-01-25",
+            "2024-01-26",
+            "2024-01-29",
+            "2024-01-30",
+            "2024-01-31",
+            "2024-02-01",
+            "2024-02-02",
+        ],
+    )
+    assert r.strategy is not None
+    assert r.strategy.fired == [
+        ("wk", "01-25 10:00"),
+        ("mo", "01-25 10:30"),
+        ("wk", "01-29 10:00"),
+        ("mo", "02-01 10:30"),
+    ]
+
+
+# 2024 年元旦：12-30/31 周末、01-01 休市；01-09～01-26 为日历空档；
+# 春节：02-09～02-18 休市
+_LIVE_DAYS = {
+    dt.date(2023, 12, 28),
+    dt.date(2023, 12, 29),
+    dt.date(2024, 1, 2),
+    dt.date(2024, 1, 3),
+    dt.date(2024, 1, 4),
+    dt.date(2024, 1, 5),
+    dt.date(2024, 1, 8),
+    dt.date(2024, 1, 29),
+    dt.date(2024, 1, 30),
+    dt.date(2024, 1, 31),
+    dt.date(2024, 2, 1),
+    dt.date(2024, 2, 2),
+    dt.date(2024, 2, 5),
+    dt.date(2024, 2, 8),
+    dt.date(2024, 2, 19),
+    dt.date(2024, 3, 1),
+}
+
+
+def _is_td(day: dt.date) -> bool:
+    return day in _LIVE_DAYS
+
+
+def _next_td(day: dt.date) -> Any:
+    later = sorted(d for d in _LIVE_DAYS if d > day)
+    return later[0] if later else None
+
+
+def _next(kind: str, time_str: str, now: str) -> str:
+    from akquant.strategy_scheduler import next_occurrence
+
+    out = next_occurrence(
+        kind, time_str, pd.Timestamp(now, tz=TZ), _is_td, _next_td, TZ
+    )
+    assert out is not None
+    assert str(out.tz) == TZ
+    return out.strftime("%Y-%m-%d %H:%M")
+
+
+def test_next_occurrence_daily() -> None:
+    """Daily：今天未到点取今天，否则取下一交易日；跳过周末与节假日."""
+    # 今天未到点 → 今天
+    assert _next("daily", "10:00", "2024-01-03 09:00") == "2024-01-03 10:00"
+    # 今天已过（含恰好等于）→ 下一交易日
+    assert _next("daily", "10:00", "2024-01-03 10:00") == "2024-01-04 10:00"
+    assert _next("daily", "10:00", "2024-01-03 11:00") == "2024-01-04 10:00"
+    # 周五 → 周一
+    assert _next("daily", "10:00", "2024-01-05 11:00") == "2024-01-08 10:00"
+    # 节假日跳过：12-29 已过 → 跳过周末与元旦到 01-02；元旦当天未到点也不触发
+    assert _next("daily", "10:00", "2023-12-29 11:00") == "2024-01-02 10:00"
+    assert _next("daily", "10:00", "2024-01-01 08:00") == "2024-01-02 10:00"
+
+
+def test_next_occurrence_weekly() -> None:
+    """Weekly：本周首个交易日已过则取下一个有交易日的周的首个交易日."""
+    # 本周首个交易日 01-02（周一元旦休市）尚未到点 → 01-02
+    assert _next("weekly", "10:00", "2024-01-01 08:00") == "2024-01-02 10:00"
+    # 本周首个交易日已过 → 下周首个交易日
+    assert _next("weekly", "10:00", "2024-01-02 10:00") == "2024-01-08 10:00"
+    assert _next("weekly", "10:00", "2024-01-04 09:00") == "2024-01-08 10:00"
+    # 之后两周无交易日（日历空档）→ 顺延到再下一个有交易日的周
+    assert _next("weekly", "10:00", "2024-01-08 11:00") == "2024-01-29 10:00"
+    # 春节周（02-12 起整周休市）跳过
+    assert _next("weekly", "10:00", "2024-02-08 11:00") == "2024-02-19 10:00"
+
+
+def test_next_occurrence_monthly() -> None:
+    """Monthly：本月首个交易日已过则取下月首个交易日."""
+    assert _next("monthly", "09:30", "2024-01-01 08:00") == "2024-01-02 09:30"
+    assert _next("monthly", "09:30", "2024-01-02 09:30") == "2024-02-01 09:30"
+    assert _next("monthly", "09:30", "2024-01-31 15:00") == "2024-02-01 09:30"
+    assert _next("monthly", "09:30", "2024-02-01 10:00") == "2024-03-01 09:30"
+
+
+def test_next_occurrence_out_of_calendar_returns_none() -> None:
+    """日历尽头之后找不到下一次触发日时返回 None."""
+    from akquant.strategy_scheduler import next_occurrence
+
+    now = pd.Timestamp("2024-03-01 11:00", tz=TZ)
+    for kind in ("daily", "weekly", "monthly"):
+        assert next_occurrence(kind, "10:00", now, _is_td, _next_td, TZ) is None
+
+
+def test_live_weekly_monthly_register_next_and_reschedule() -> None:
+    """实盘（无 _trading_days）weekly/monthly 不再直接返回：登记下一次，触发后重排."""
+    from unittest.mock import MagicMock
+
+    from akquant.akquant import StrategyContext
+
+    class P(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fired: List[str] = []
+
+        def on_timer(self, payload: str) -> None:
+            self.fired.append(payload)
+
+    s = P()
+    ctx = MagicMock(spec=StrategyContext)
+    ctx.canceled_order_ids = []
+    ctx.active_orders = []
+    ctx.recent_trades = []
+    ctx.current_time = 0
+    ctx.is_trading_day.side_effect = lambda d: d.weekday() < 5
+    ctx.next_trading_day.side_effect = lambda d: next(
+        d + dt.timedelta(days=k)
+        for k in range(1, 8)
+        if (d + dt.timedelta(days=k)).weekday() < 5
+    )
+    s.ctx = ctx
+    s._trading_days = []
+    now = pd.Timestamp.now(tz=s.timezone)
+
+    s.schedule_weekly("10:00", "wk")
+    s.schedule_monthly("10:00", "mo")
+    calls = ctx.schedule.call_args_list
+    assert [c.args[1] for c in calls] == [
+        "__weekly__|10:00|wk",
+        "__monthly__|10:00|mo",
+    ]
+    for c in calls:
+        target = pd.Timestamp(c.args[0], tz="UTC").tz_convert(s.timezone)
+        assert target > now
+        assert target.weekday() < 5 and target.strftime("%H:%M") == "10:00"
+
+    ctx.schedule.reset_mock()
+    s._on_timer_event("__weekly__|10:00|wk", ctx)
+    s._on_timer_event("__monthly__|10:00|mo", ctx)
+    assert s.fired == ["wk", "mo"]
+    assert [c.args[1] for c in ctx.schedule.call_args_list] == [
+        "__weekly__|10:00|wk",
+        "__monthly__|10:00|mo",
+    ]

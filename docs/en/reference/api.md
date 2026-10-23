@@ -983,9 +983,9 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
 *   `subscribe(instrument_id: str)`: Subscribe to market data. Must be called explicitly for multi-asset backtesting or live trading to receive `on_tick`/`on_bar` callbacks.
 *   `log(msg: str, level: int)`: Log with timestamp.
 *   `schedule(trigger_time, payload)`: Register a one-time timer task.
-*   `schedule_daily(time_str, payload)`: Register a daily timer task (fires every trading day).
-*   `schedule_weekly(time_str, payload)`: Fires on the first trading day of each week (rolls forward over holidays/suspensions).
-*   `schedule_monthly(time_str, payload)`: Fires on the first trading day of each month (rolls forward over holidays/suspensions).
+*   `schedule_daily(time_str, payload)`: Register a daily timer task (fires on every trading day of the trading calendar; same in backtest and live).
+*   `schedule_weekly(time_str, payload)`: Fires on the first trading day of each week (per the trading calendar, rolling over holidays; same in backtest and live).
+*   `schedule_monthly(time_str, payload)`: Fires on the first trading day of each month (per the trading calendar, rolling over holidays; same in backtest and live).
 *   `trading_days -> List[pd.Timestamp]`: Read-only trading-day sequence, for custom cadences via `schedule`.
 *   `nth_trading_day_of_month(n)` / `nth_last_trading_day_of_month(n)` / `nth_trading_day_of_week(n)`: Calendar helpers returning the n-th (or n-th-from-last) trading day of each month/week.
 

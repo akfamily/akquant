@@ -1,7 +1,6 @@
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
 from .akquant import Bar, StrategyContext, Tick
 from .log import build_log_extra, get_logger
@@ -24,9 +23,22 @@ from .strategy_ml import (
 )
 from .strategy_order_events import check_expiry_events
 from .strategy_preload import check_preload_overlap
-from .strategy_scheduler import flush_pending_schedules
+from .strategy_scheduler import (
+    PERIODIC_TIMER_PREFIXES,
+    flush_pending_schedules,
+    live_now,
+    next_occurrence,
+)
 
 logger = get_logger("strategy.events")
+
+
+def _periodic_timer_kind(payload: str) -> str | None:
+    """周期定时器 payload（``__daily__|``/``__weekly__|``/``__monthly__|``）的种类."""
+    for kind, prefix in PERIODIC_TIMER_PREFIXES.items():
+        if payload.startswith(prefix):
+            return kind
+    return None
 
 
 def _is_before_active_start(strategy: Any, timestamp: int) -> bool:
@@ -234,25 +246,35 @@ def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
         _flush_indicator_snapshots(strategy)
         return
 
-    if payload.startswith("__daily__|"):
+    periodic_kind = _periodic_timer_kind(payload)
+    if periodic_kind is not None:
         parts = payload.split("|", 2)
         if len(parts) == 3:
             _, time_str, user_payload = parts
 
             call_user_callback(strategy, "on_timer", user_payload, payload=user_payload)
 
+            # 回测已按交易日逐日预登记; 实盘(无 _trading_days)按交易日历重排下一次
             if not strategy._trading_days:
                 try:
-                    t = pd.to_datetime(time_str).time()
-                    now = pd.Timestamp.now(tz=strategy.timezone)
-                    target = pd.Timestamp.combine(now.date(), t).tz_localize(
-                        strategy.timezone
+                    target = next_occurrence(
+                        periodic_kind,
+                        time_str,
+                        live_now(strategy),
+                        ctx.is_trading_day,
+                        ctx.next_trading_day,
+                        strategy.timezone,
                     )
-
-                    if target <= now:
-                        target += pd.Timedelta(days=1)
-
-                    strategy.schedule(target, payload)
+                    if target is None:
+                        logger.warning(
+                            "定时任务 %r（%s %s）在交易日历中找不到下一次触发日，"
+                            "已停止重排；请在 trading_calendar 中补充后续交易日",
+                            user_payload,
+                            periodic_kind,
+                            time_str,
+                        )
+                    else:
+                        strategy.schedule(target, payload)
                 except Exception as exc:
                     owner_strategy_id = (
                         str(getattr(strategy, "_owner_strategy_id", "_default")).strip()

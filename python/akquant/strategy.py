@@ -446,6 +446,7 @@ class Strategy:
     _order_group_seq: int
     _pending_schedules: List[Tuple[Union[str, dt.datetime, pd.Timestamp], str]]
     _pending_daily_timers: List[Tuple[str, str]]
+    _pending_periodic_timers: List[Tuple[str, str, str]]
     _instrument_snapshots: Dict[str, InstrumentSnapshot]
     _indicator_recorder: Optional[IndicatorRecorder]
     _window_subscriptions: List["WindowSubscription"]
@@ -699,6 +700,7 @@ class Strategy:
         instance._order_group_lock = threading.RLock()
         instance._pending_schedules = []
         instance._pending_daily_timers = []
+        instance._pending_periodic_timers = []
         instance._instrument_snapshots = {}
         instance._indicator_recorder = None
 
@@ -899,6 +901,8 @@ class Strategy:
             self._pending_schedules = []
         if not hasattr(self, "_pending_daily_timers"):
             self._pending_daily_timers = []
+        if not hasattr(self, "_pending_periodic_timers"):
+            self._pending_periodic_timers = []
         if not hasattr(self, "_instrument_snapshots"):
             self._instrument_snapshots = {}
         self._indicator_recorder = None
@@ -1248,7 +1252,15 @@ class Strategy:
         """
         注册每日定时任务 (Daily Timer).
 
-        每个交易日在 ``time_str`` 时点触发一次 :meth:`on_timer` 回调。
+        交易日历上的每个交易日在 ``time_str`` 时点触发一次 :meth:`on_timer` 回调,
+        回测与实盘同一语义: 回测在数据覆盖范围内(首个～最后一个数据交易日)的
+        日历交易日逐日预登记, 区间内没有行情的交易日也触发, 非交易日不触发;
+        实盘只登记下一次, 触发后按会话交易日历(``ctx.next_trading_day``, 未配置
+        ``trading_calendar`` 时为工作日)重排。
+
+        首日规则: 在 :meth:`on_start` 里登记的任务延后到首个行情事件(或首个用户
+        定时器)才登记, 早于该时刻的时点跳过(盘前生命周期事件不算), 例如首根 bar
+        在 09:31 时首日 09:25 的任务不触发。
 
         提示: 若目的是横截面/定期调仓, 优先使用 :meth:`on_cross_section` ——
         它由框架托管、成交时序对齐; ``schedule_daily`` + :meth:`on_timer`
@@ -1263,9 +1275,9 @@ class Strategy:
         """
         注册每周定时任务 (Weekly Timer).
 
-        在每个 ISO 周的**首个交易日**的 ``time_str`` 时点触发一次
-        :meth:`on_timer`; 若该周首日休市/停牌, 自动顺延到该周首个有交易的日子。
-        仅在回测(交易日历已知)时有效。
+        在每个 ISO 周的**首个交易日**(按交易日历; 周一休市则顺延到该周首个
+        交易日)的 ``time_str`` 时点触发一次 :meth:`on_timer`。回测与实盘同一语义,
+        登记与首日规则同 :meth:`schedule_daily`; 实盘触发后重排到下周首个交易日。
 
         :param time_str: 时间字符串 (例如 "09:30:00")
         :param payload: 回调标识
@@ -1276,10 +1288,10 @@ class Strategy:
         """
         注册每月定时任务 (Monthly Timer).
 
-        在每个自然月的**首个交易日**的 ``time_str`` 时点触发一次
-        :meth:`on_timer`; 若该月首日休市/停牌, 自动顺延到该月首个有交易的日子。
-        仅在回测(交易日历已知)时有效。需要月末/偏移等非常规节奏时,
-        请改用 :meth:`schedule` + :attr:`trading_days` 自行枚举。
+        在每个自然月的**首个交易日**(按交易日历)的 ``time_str`` 时点触发一次
+        :meth:`on_timer`。回测与实盘同一语义, 登记与首日规则同
+        :meth:`schedule_daily`; 实盘触发后重排到下月首个交易日。需要月末/偏移等
+        非常规节奏时, 请在回测中改用 :meth:`schedule` + :attr:`trading_days` 自行枚举。
 
         :param time_str: 时间字符串 (例如 "09:30:00")
         :param payload: 回调标识
@@ -1288,11 +1300,20 @@ class Strategy:
 
     @property
     def trading_days(self) -> "List[pd.Timestamp]":
-        """引擎已知的交易日序列(只读). 回测下可用于在 :meth:`schedule` 上自定义节奏."""
+        """引擎已知的交易日序列(只读).
+
+        回测下为数据覆盖范围内(首个～最后一个数据交易日)的交易日历交易日,
+        含区间内无行情的交易日, 夜盘 bar 归下一交易日; 可用于在 :meth:`schedule`
+        上自定义节奏。实盘为空列表(交易日历按 ``ctx.is_trading_day`` /
+        ``ctx.next_trading_day`` 逐日查询)。
+        """
         return list(self._trading_days)
 
     def nth_trading_day_of_month(self, n: int) -> "List[pd.Timestamp]":
         """每个自然月的第 n 个交易日(n 从 1 开始; 该月不足 n 个则跳过).
+
+        基于 :attr:`trading_days`(交易日历交易日, 仅回测有值; 首尾月份只含数据
+        覆盖范围内的交易日)。
 
         便于在 :meth:`schedule` 上表达非常规节奏, 例如::
 

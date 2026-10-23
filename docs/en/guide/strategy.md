@@ -345,8 +345,10 @@ def on_bar(self, bar):
 
 In addition to the low-level `schedule` method, AKQuant provides more convenient ways to register timers:
 
-*   **`schedule_daily(time_str, payload)`**: Triggers daily at a specified time.
-    *   **Live Mode Supported**: Pre-generates triggers in Backtest mode; Automatically schedules the next trigger daily in Live mode.
+*   **`schedule_daily(time_str, payload)`**: Triggers at a specified time on every trading day of the trading calendar (not on non-trading days; in a backtest also on trading days without data inside the data range).
+    *   **Same semantics in backtest and live**: Backtests pre-generate all triggers over the calendar trading days covered by the data; live mode registers only the next trigger and reschedules it along the trading calendar (weekdays when no `trading_calendar` is configured).
+    *   **First-day rule**: Tasks registered in `on_start` take effect from the first market-data event; earlier times on the first day do not fire.
+*   **`schedule_weekly(time_str, payload)`** / **`schedule_monthly(time_str, payload)`**: Trigger on the **first trading day** of each week/month (per the trading calendar, rolling over holidays), in both backtest and live; live mode reschedules to the first trading day of the next week/month.
 *   **`schedule(trigger_time, payload)`**: Triggers once at a specified datetime.
 
 ```python

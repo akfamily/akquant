@@ -3418,6 +3418,16 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
     assert "on_resume" in strategy.events
 
 
+def _weekday_calendar(ctx: MagicMock) -> None:
+    """实盘周期定时器按 ctx 的交易日历重排：给 mock 上下文挂一份工作日日历."""
+    ctx.is_trading_day.side_effect = lambda d: d.weekday() < 5
+    ctx.next_trading_day.side_effect = lambda d: next(
+        d + dt.timedelta(days=k)
+        for k in range(1, 8)
+        if (d + dt.timedelta(days=k)).weekday() < 5
+    )
+
+
 class TimerIdempotencyStrategy(Strategy):
     """Strategy for timer registration idempotency tests."""
 
@@ -3485,6 +3495,7 @@ def test_live_mode_timer_registration_not_duplicated() -> None:
     strategy = TimerIdempotencyStrategy()
     strategy._is_restored = True
     ctx = MagicMock(spec=StrategyContext)
+    _weekday_calendar(ctx)
     strategy.ctx = ctx
     strategy._trading_days = []
 
@@ -3508,6 +3519,7 @@ def test_on_start_timer_registration_is_deferred_until_context_ready() -> None:
     assert len(strategy._pending_daily_timers) == 1
 
     ctx = MagicMock(spec=StrategyContext)
+    _weekday_calendar(ctx)
     ctx.get_position.return_value = 0.0
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -3536,6 +3548,7 @@ def test_live_mode_daily_timer_reschedules_once_per_trigger() -> None:
     """Live mode daily timer should reschedule once per single trigger."""
     strategy = TimerIdempotencyStrategy()
     ctx = MagicMock(spec=StrategyContext)
+    _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -3557,6 +3570,7 @@ def test_live_mode_daily_timer_logs_reschedule_failures(caplog: Any) -> None:
     """Live daily timer reschedule failures should be logged with strategy context."""
     strategy = TimerIdempotencyStrategy()
     ctx = MagicMock(spec=StrategyContext)
+    _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -3610,6 +3624,7 @@ def test_mixed_events_order_on_daily_timer_in_live_mode() -> None:
     """Daily timer should process order/trade first, then timer, and reschedule once."""
     strategy = TimerOrderTradeMixedStrategy()
     ctx = MagicMock(spec=StrategyContext)
+    _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = [
         SimpleNamespace(id="o1", status="Submitted", filled_quantity=0.0)
@@ -3634,6 +3649,7 @@ def test_mixed_events_partial_fill_then_cancel_sequence() -> None:
     """Partial fill and cancel should emit deterministic callbacks."""
     strategy = TimerOrderTradeMixedStrategy()
     ctx = MagicMock(spec=StrategyContext)
+    _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = [
         SimpleNamespace(id="o2", status="Submitted", filled_quantity=0.0)
@@ -3675,6 +3691,7 @@ def test_daily_timer_malformed_payload_falls_back_to_raw_timer() -> None:
     """Malformed daily payload should fallback to raw timer callback."""
     strategy = TimerOrderTradeMixedStrategy()
     ctx = MagicMock(spec=StrategyContext)
+    _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -3694,6 +3711,7 @@ def test_daily_timer_invalid_time_fires_once_without_raw_fallback() -> None:
     """Invalid daily time should not duplicate timer callback."""
     strategy = TimerOrderTradeMixedStrategy()
     ctx = MagicMock(spec=StrategyContext)
+    _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -5116,6 +5134,7 @@ def test_daily_timer_paths_parameterized(
     """Daily timer paths should produce stable callback and reschedule behavior."""
     strategy = TimerOrderTradeMixedStrategy()
     ctx = MagicMock(spec=StrategyContext)
+    _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []

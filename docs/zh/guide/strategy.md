@@ -505,9 +505,10 @@ broker（无行情通道）都属于这种情形。框架**不从数据推断**�
 
 除了底层的 `schedule` 方法，AKQuant 提供了更便捷的定时任务注册方式：
 
-*   **`schedule_daily(time_str, payload)`**: 每个交易日在指定时间触发。
-    *   **支持实盘**: 在回测模式下预生成所有触发时间；在实盘模式下，每日自动调度下一次触发。
-*   **`schedule_weekly(time_str, payload)`** / **`schedule_monthly(time_str, payload)`**: 在每周/每月的**首个交易日**触发（节假日或停牌自动顺延）。仅回测（交易日历已知）有效。
+*   **`schedule_daily(time_str, payload)`**: 交易日历上的每个交易日在指定时间触发（非交易日不触发；回测区间内没有行情的交易日也触发）。
+    *   **回测与实盘同一语义**: 回测按数据覆盖范围内的日历交易日预生成所有触发时间；实盘只登记下一次，触发后按交易日历（未配置 `trading_calendar` 时为工作日）调度下一次。
+    *   **首日规则**: 在 `on_start` 里登记的任务从首个行情事件起生效，首日早于该时刻的时点不触发。
+*   **`schedule_weekly(time_str, payload)`** / **`schedule_monthly(time_str, payload)`**: 在每周/每月的**首个交易日**（按交易日历，节假日自动顺延）触发，回测与实盘都可用；实盘触发后调度到下周/下月首个交易日。
 *   **`schedule(trigger_time, payload)`**: 在指定时间点（一次性）触发。月末、偏移、每两周等非常规节奏，可用 `self.trading_days` 与 `nth_trading_day_of_month/week` 等日历辅助自行枚举，再逐个调 `schedule`。
 
 > 提示：若目的是横截面/定期调仓，优先使用 `on_cross_section`（由框架托管、成交时序对齐）；`schedule_*` + `on_timer` 面向通用自定义时点任务。
