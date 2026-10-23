@@ -142,3 +142,164 @@ def test_day_order_pending_across_checkpoint_expires_next_day(tmp_path: Path) ->
     )
     assert (r2.orders_df["filled_quantity"] > 0).sum() == 0
     assert str(r2.orders_df.iloc[0]["status"]).lower() == "expired"
+
+
+class _DayLimitWithTimer(_DayLimit):
+    """同 _DayLimit，但 on_start 登记一个晚于最后一根 bar 的定时器（时钟会越过行情）."""
+
+    def on_start(self) -> None:
+        self.schedule("2024-01-02 14:00:00", "t")
+
+    def on_timer(self, payload: str) -> None:
+        pass
+
+    def on_bar(self, bar: Bar) -> None:
+        if (
+            not self.sent
+            and len(self.get_open_orders()) == 0
+            and self._bars_seen() >= 1
+        ):
+            self.sent = True
+            self.buy(bar.symbol, 100, price=9.0, time_in_force=aq.TimeInForce.Day)
+        self._n = getattr(self, "_n", 0) + 1
+
+    def _bars_seen(self) -> int:
+        return getattr(self, "_n", 0)
+
+
+def test_day_order_on_last_bar_with_later_timer_same_as_continuous(
+    tmp_path: Path,
+) -> None:
+    """最后一根 bar 上下的 Day 单 + 之后的定时器：续跑与连续回测结果一致（都成交）."""
+    d1 = _frame(["2024-01-02 10:00", "2024-01-02 10:01"])
+    d2 = _frame(["2024-01-03 10:00"])
+    d2["low"] = 8.5
+    full = run_backtest(
+        data=pd.concat([d1, d2], ignore_index=True),
+        strategy=_DayLimitWithTimer,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    r1 = run_backtest(
+        data=d1,
+        strategy=_DayLimitWithTimer,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert r1.engine is not None and r1.strategy is not None
+    ckpt = tmp_path / "t.pkl"
+    save_checkpoint(r1.engine, r1.strategy, str(ckpt))
+    r2 = run_from_checkpoint(
+        checkpoint_path=str(ckpt),
+        data=d2,
+        symbols=["600000.SH"],
+        show_progress=False,
+    )
+    for r in (full, r2):
+        filled = r.orders_df[r.orders_df["filled_quantity"] > 0]
+        assert len(filled) == 1 and float(filled.iloc[0]["avg_price"]) == 9.0
+
+
+def test_restore_functions_not_exported() -> None:
+    """还原函数不进 __all__，但 pickle 仍可用."""
+    assert not [n for n in aq.__all__ if n.startswith("_restore_")]
+    assert hasattr(aq.akquant, "_restore_order")
+    bar = Bar(timestamp=1, open=1, high=1, low=1, close=1, volume=1, symbol="A")
+    assert pickle.loads(pickle.dumps(bar)).symbol == "A"
+
+
+def test_order_roundtrip_all_fields() -> None:
+    """非默认字段的 Order 往返后逐属性一致."""
+    o = aq.Order(
+        id="o1",
+        symbol="X",
+        side=aq.OrderSide.Sell,
+        order_type=aq.OrderType.StopLimit,
+        quantity=300.0,
+        price=11.5,
+        time_in_force=aq.TimeInForce.GTC,
+        trigger_price=12.25,
+        tag="my-tag",
+        trail_offset=0.5,
+        trail_reference_price=12.0,
+        reduce_only=True,
+    )
+    o.status = aq.OrderStatus.PartiallyFilled
+    o.filled_quantity = 100.0
+    o.average_filled_price = 11.75
+    o2 = pickle.loads(pickle.dumps(o))
+    for attr in (
+        "id",
+        "symbol",
+        "side",
+        "order_type",
+        "quantity",
+        "price",
+        "time_in_force",
+        "trigger_price",
+        "tag",
+        "trail_offset",
+        "trail_reference_price",
+        "reduce_only",
+        "status",
+        "filled_quantity",
+        "average_filled_price",
+        "created_at",
+        "updated_at",
+        "position_effect",
+        "order_role",
+    ):
+        assert getattr(o2, attr) == getattr(o, attr), attr
+    assert o2.status == aq.OrderStatus.PartiallyFilled
+    assert o2.filled_quantity == 100.0 and o2.average_filled_price == 11.75
+
+
+def test_trade_roundtrip() -> None:
+    """Trade 往返后逐属性一致."""
+    t = aq.Trade(
+        id="t1",
+        order_id="o1",
+        symbol="X",
+        side=aq.OrderSide.Buy,
+        quantity=100.0,
+        price=9.5,
+        commission=1.25,
+        timestamp=123456789,
+        bar_index=7,
+        owner_strategy_id="s1",
+    )
+    t2 = pickle.loads(pickle.dumps(t))
+    for attr in (
+        "id",
+        "order_id",
+        "symbol",
+        "side",
+        "quantity",
+        "price",
+        "commission",
+        "timestamp",
+        "bar_index",
+        "owner_strategy_id",
+        "position_effect",
+    ):
+        assert getattr(t2, attr) == getattr(t, attr), attr
+
+
+def test_bar_roundtrip_with_extra_and_freq() -> None:
+    """带 extra 与 freq 的 Bar 往返."""
+    bar = Bar(
+        timestamp=2,
+        open=1.0,
+        high=2.0,
+        low=0.5,
+        close=1.5,
+        volume=10.0,
+        symbol="A",
+        extra={"pe": 12.5},
+        freq="5min",
+    )
+    b2 = pickle.loads(pickle.dumps(bar))
+    assert b2.extra == {"pe": 12.5} and b2.freq == "5min"
+    assert (b2.open, b2.high, b2.low, b2.volume) == (1.0, 2.0, 0.5, 10.0)

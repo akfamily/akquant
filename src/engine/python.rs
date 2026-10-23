@@ -724,6 +724,7 @@ impl Engine {
             last_settled_trading_day: self.last_settled_trading_day,
             last_corp_action_date: self.last_corp_action_date,
             session_config: self.session_config.clone(),
+            last_event_ts_in_day: self.last_event_ts_in_day,
         };
         let bytes =
             rmp_serde::to_vec(&snapshot).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -765,10 +766,12 @@ impl Engine {
         self.session_config = snapshot.session_config;
         self.current_day_span = None;
         self.scheduled_day_close = None;
-        // 当日最后一个已处理事件的时间：续跑后的首个事件若开新交易日，上一日结算的
+        // 当日最后一个已处理行情事件的时间：续跑后的首个事件若开新交易日，上一日结算的
         // Day 单过期豁免（NextOpen 单是否建于最后一个事件）依赖它，置空会让
-        // 存档前的 Day 单一律被豁免而在新的一天成交。
-        self.last_event_ts_in_day = (snapshot.current_time > 0).then_some(snapshot.current_time);
+        // 存档前的 Day 单一律被豁免而在新的一天成交。旧存档无此字段，退回 current_time。
+        self.last_event_ts_in_day = snapshot
+            .last_event_ts_in_day
+            .or((snapshot.current_time > 0).then_some(snapshot.current_time));
         self.default_strategy_id = snapshot.strategy_risk_state.default_strategy_id;
         self.strategy_slots = snapshot
             .strategy_risk_state

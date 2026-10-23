@@ -132,7 +132,8 @@ else:
 
 __doc__ = _akquant.__doc__
 if hasattr(_akquant, "__all__"):  # noqa: F405
-    __all__ = list(_akquant.__all__) + [  # noqa: F405
+    # `_restore_*` 是 pickle 还原函数，仍可经 `akquant.akquant` 访问，不对外导出
+    __all__ = [n for n in _akquant.__all__ if not n.startswith("_restore_")] + [  # noqa: F405
         "load_bar_from_df",
         "prepare_dataframe",
         "normalize",

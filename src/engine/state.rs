@@ -64,6 +64,10 @@ pub struct EngineSnapshot {
     /// 交易时段表与交易日历配置（旧存档无此字段，按未配置处理）。
     #[serde(default)]
     pub session_config: crate::engine::core::SessionConfig,
+    /// 当日最后一个已处理行情事件的时间（旧存档无此字段，续跑时退回 `current_time`）。
+    /// 定时器会把时钟推过最后一根行情，不能用 `current_time` 代替。
+    #[serde(default)]
+    pub last_event_ts_in_day: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

@@ -223,6 +223,7 @@ mod tests {
                 )]),
                 trading_calendar: Some(vec![NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()]),
             },
+            last_event_ts_in_day: Some(123456000),
         };
 
         // 旧格式存档: msgpack 数组缺少末尾三个交易日进度字段, 读入时应为 None
@@ -245,6 +246,7 @@ mod tests {
         assert_eq!(old_decoded.current_trading_day, None);
         assert_eq!(old_decoded.last_settled_trading_day, None);
         assert_eq!(old_decoded.last_corp_action_date, None);
+        assert_eq!(old_decoded.last_event_ts_in_day, None);
         assert_eq!(
             old_decoded.session_config,
             crate::engine::core::SessionConfig::default()
@@ -259,6 +261,7 @@ mod tests {
             NaiveDate::from_ymd_opt(2024, 1, 5)
         );
         assert_eq!(decoded.last_settled_trading_day, None);
+        assert_eq!(decoded.last_event_ts_in_day, Some(123456000));
         assert_eq!(decoded.session_config, snapshot.session_config);
         assert_eq!(decoded.portfolio.cash, Decimal::from(50000));
         assert_eq!(decoded.initial_cash, Some(Decimal::from(50000)));
