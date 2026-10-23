@@ -1127,3 +1127,41 @@ def test_hourly_cross_section_session_matches_on_bar() -> None:
     probe = _cross_probe(r)
     assert probe.bar_sessions == ["Continuous", "Continuous"]
     assert probe.cross_sessions == probe.bar_sessions
+
+
+class _OutOfCalendarTimerBuy(Strategy):
+    """在交易日历之外的时刻用定时器下单，记录 ctx.session."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sessions: List[str] = []
+
+    def on_start(self) -> None:
+        self.schedule(pd.Timestamp("2024-01-04 10:00", tz=TZ), "buy")
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+    def on_timer(self, payload: str) -> None:
+        assert self.ctx is not None
+        self.sessions.append(str(self.ctx.session).split(".")[-1])
+        self.buy("600000.SH", 100)
+
+
+def test_out_of_calendar_timer_session_matches_matching() -> None:
+    """定时器时刻超出交易日历：ctx.session 与撮合同样回退为连续竞价."""
+    df = _minute_frame(["2024-01-02 10:00", "2024-01-03 10:00"], [10.0, 11.0])
+    r = run_backtest(
+        strategy=_OutOfCalendarTimerBuy,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        trading_calendar=["2024-01-02", "2024-01-03"],
+        fill_policy=aq.CurrentClose(),
+    )
+    strategy = r.strategy
+    assert isinstance(strategy, _OutOfCalendarTimerBuy)
+    assert strategy.sessions == ["Continuous"]
+    # 撮合按连续竞价：定时器时刻按最新价成交。
+    assert _fills(r) == [("01-04 10:00", 11.0)]

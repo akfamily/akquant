@@ -513,9 +513,12 @@ impl SessionResolver {
         let point = ts.saturating_sub(1);
         let mut best = TradingSession::Closed;
         for s in self.active_schedules() {
+            // 解析出错（时刻超出交易日历等）按连续竞价，与撮合的回退
+            // （SessionView::session_for）一致：日历缺口不应阻断撮合，数据层的
+            // 闭市/日历告警已提示用户。
             let sess = match self.trading_day_of(&s, point) {
                 Ok((_, w)) => Self::session_at(&w, point),
-                Err(_) => TradingSession::Closed,
+                Err(_) => TradingSession::Continuous,
             };
             if rank(sess) > rank(best) {
                 best = sess;
@@ -1127,6 +1130,22 @@ mod tests {
         assert_eq!(
             r.session_level_instant(at(2024, 1, 2, 10, 20, 0)),
             TradingSession::Continuous
+        );
+    }
+
+    #[test]
+    fn session_level_instant_out_of_calendar_falls_back_to_continuous() {
+        let cal = TradingCalendar::explicit([d(2024, 1, 2), d(2024, 1, 3)]).unwrap();
+        let r = resolver(vec![], Some(cal));
+        // 01-04 超出日历：与撮合的回退一致，按连续竞价
+        assert_eq!(
+            r.session_level_instant(at(2024, 1, 4, 10, 0, 0)),
+            TradingSession::Continuous
+        );
+        // 日历内的闭市时刻照常是 Closed
+        assert_eq!(
+            r.session_level_instant(at(2024, 1, 2, 20, 0, 0)),
+            TradingSession::Closed
         );
     }
 
