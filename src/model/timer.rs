@@ -8,6 +8,20 @@ pub(crate) const RESERVED_TIMER_PREFIX: &str = "__akq_";
 /// 引擎内部日终结算定时器的 payload 前缀；不转发给策略。
 pub(crate) const DAY_CLOSE_TIMER_PREFIX: &str = "__akq_day_close__|";
 
+/// 引擎生成的交易日生命周期定时器 payload 前缀，转给策略触发交易日钩子：
+/// `__akq_lifecycle__|<pre_open|before_trading|after_trading>|<YYYY-MM-DD>`。
+pub(crate) const LIFECYCLE_TIMER_PREFIX: &str = "__akq_lifecycle__|";
+
+/// 生命周期事件种类。
+pub(crate) const LIFECYCLE_PRE_OPEN: &str = "pre_open";
+pub(crate) const LIFECYCLE_BEFORE_TRADING: &str = "before_trading";
+pub(crate) const LIFECYCLE_AFTER_TRADING: &str = "after_trading";
+
+/// 生命周期定时器的 payload。
+pub(crate) fn lifecycle_payload(kind: &str, day: chrono::NaiveDate) -> String {
+    format!("{LIFECYCLE_TIMER_PREFIX}{kind}|{day}")
+}
+
 /// 实盘日终结算相对会话收盘的宽限(纳秒)。行情源在收盘后才推送最后一根已收盘
 /// bar(如 klinedata 15:00 之后推 14:59~15:00 的 bar), 收盘即结算会让收盘快照用
 /// 旧价、且那根 bar 的 on_bar 里 T+1 已解冻。阶段 7 改为可配置。
@@ -46,15 +60,41 @@ impl Timer {
     pub(crate) fn is_day_close(&self) -> bool {
         self.payload.starts_with(DAY_CLOSE_TIMER_PREFIX)
     }
+
+    pub(crate) fn is_lifecycle(&self) -> bool {
+        self.payload.starts_with(LIFECYCLE_TIMER_PREFIX)
+    }
+
+    /// 生命周期定时器的（种类, 交易日）；不是生命周期定时器或格式不符时为 `None`。
+    pub(crate) fn lifecycle(&self) -> Option<(&str, chrono::NaiveDate)> {
+        let rest = self.payload.strip_prefix(LIFECYCLE_TIMER_PREFIX)?;
+        let (kind, day) = rest.split_once('|')?;
+        let day = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?;
+        Some((kind, day))
+    }
+}
+
+impl Timer {
+    /// 同时间戳定时器的出堆次序：生命周期事件（盘前/开始交易）最先，日终结算最后。
+    fn tie_rank(&self) -> u8 {
+        if self.is_lifecycle() {
+            0
+        } else if self.is_day_close() {
+            2
+        } else {
+            1
+        }
+    }
 }
 
 impl Ord for Timer {
     fn cmp(&self, other: &Self) -> Ordering {
-        // BinaryHeap 是大顶堆：反转后最小时间戳先出；同时间戳时日终结算最后出。
+        // BinaryHeap 是大顶堆：反转后最小时间戳先出；同时间戳时生命周期事件先出、
+        // 日终结算最后出。
         other
             .timestamp
             .cmp(&self.timestamp)
-            .then_with(|| other.is_day_close().cmp(&self.is_day_close()))
+            .then_with(|| other.tie_rank().cmp(&self.tie_rank()))
     }
 }
 
@@ -88,6 +128,25 @@ mod tests {
         assert!(check_user_timer_payload("__daily__|09:30|x").is_ok());
         assert!(check_user_timer_payload("__framework_cross_section__").is_ok());
         assert!(DAY_CLOSE_TIMER_PREFIX.starts_with(RESERVED_TIMER_PREFIX));
+        assert!(LIFECYCLE_TIMER_PREFIX.starts_with(RESERVED_TIMER_PREFIX));
+    }
+
+    #[test]
+    fn lifecycle_payload_roundtrips() {
+        let day = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let timer = Timer {
+            timestamp: 1,
+            payload: lifecycle_payload(LIFECYCLE_BEFORE_TRADING, day),
+        };
+        assert_eq!(timer.payload, "__akq_lifecycle__|before_trading|2024-01-02");
+        assert!(timer.is_lifecycle());
+        assert_eq!(timer.lifecycle(), Some((LIFECYCLE_BEFORE_TRADING, day)));
+        let user = Timer {
+            timestamp: 1,
+            payload: "rebalance".to_string(),
+        };
+        assert!(!user.is_lifecycle());
+        assert_eq!(user.lifecycle(), None);
     }
 
     #[test]
@@ -109,6 +168,30 @@ mod tests {
         assert_eq!(order[0], "early");
         assert_eq!(order[1], "user");
         assert!(order[2].starts_with(DAY_CLOSE_TIMER_PREFIX));
+    }
+
+    #[test]
+    fn lifecycle_timer_pops_first_among_equal_timestamps() {
+        for lifecycle_first in [true, false] {
+            let lifecycle = Timer {
+                timestamp: 10,
+                payload: "__akq_lifecycle__|before_trading|2024-01-02".to_string(),
+            };
+            let user = Timer {
+                timestamp: 10,
+                payload: "__framework_cross_section__|2024-01-02|9".to_string(),
+            };
+            let mut heap = std::collections::BinaryHeap::new();
+            if lifecycle_first {
+                heap.push(lifecycle.clone());
+                heap.push(user.clone());
+            } else {
+                heap.push(user.clone());
+                heap.push(lifecycle.clone());
+            }
+            assert_eq!(heap.pop(), Some(lifecycle));
+            assert_eq!(heap.pop(), Some(user));
+        }
     }
 
     #[test]

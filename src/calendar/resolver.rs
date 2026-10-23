@@ -211,6 +211,46 @@ impl SessionResolver {
         Ok((self.session_day_end(prev)?, self.session_day_end(day)?))
     }
 
+    /// 会话日历上 `day` 之前的上一个交易日。
+    pub fn session_calendar_before(&self, day: NaiveDate) -> Result<NaiveDate, CalendarError> {
+        self.session_calendar().before(day)
+    }
+
+    /// 交易日 `day` 在用时段表中的最早时段起点（UTC 纳秒，含已展开的夜盘段）。
+    ///
+    /// 日历首日的夜盘未展开（缺前一交易日）时只看锚定当日的时段。
+    pub fn session_day_first_start(&self, day: NaiveDate) -> Result<i64, CalendarError> {
+        let mut best = i64::MAX;
+        for s in self.active_schedules() {
+            let w = self.day_window(&s, day)?;
+            if let Some(start) = w.segments.iter().map(|x| x.0).min() {
+                best = best.min(start);
+            }
+        }
+        Ok(best)
+    }
+
+    /// 交易日 `day` 在用时段表中最早的连续竞价段起点；没有连续竞价段时为 `None`。
+    pub fn session_day_first_continuous_start(
+        &self,
+        day: NaiveDate,
+    ) -> Result<Option<i64>, CalendarError> {
+        let mut best: Option<i64> = None;
+        for s in self.active_schedules() {
+            let w = self.day_window(&s, day)?;
+            if let Some(start) = w
+                .segments
+                .iter()
+                .filter(|x| x.2 == TradingSession::Continuous)
+                .map(|x| x.0)
+                .min()
+            {
+                best = Some(best.map_or(start, |b| b.min(start)));
+            }
+        }
+        Ok(best)
+    }
+
     /// ts 所属的会话交易日：第一个满足 ts <= session_day_end(T) 的交易日。
     pub fn session_trading_day(&self, ts: i64) -> Result<NaiveDate, CalendarError> {
         let cal = self.session_calendar();
@@ -1079,6 +1119,50 @@ mod tests {
         assert_eq!(end, at(2024, 1, 8, 15, 0, 0));
         // 周五之后的下一会话交易日是下周一
         assert_eq!(r.next_session_day(d(2024, 1, 5)).unwrap(), d(2024, 1, 8));
+    }
+
+    #[test]
+    fn session_day_first_start_and_first_continuous_start() {
+        // 股票：首段 09:15 开盘集合竞价，首个连续竞价段 09:30
+        let mut stock = resolver(vec![], None);
+        stock.set_active(&[("600000.SH".to_string(), Some(AssetType::Stock))]);
+        assert_eq!(
+            stock.session_day_first_start(d(2024, 1, 2)).unwrap(),
+            at(2024, 1, 2, 9, 15, 0)
+        );
+        assert_eq!(
+            stock
+                .session_day_first_continuous_start(d(2024, 1, 2))
+                .unwrap(),
+            Some(at(2024, 1, 2, 9, 30, 0))
+        );
+        // 夜盘期货：周一交易日从上周五 20:55 夜盘集合竞价开始、21:00 连续竞价
+        let mut night = resolver(vec![("au", "CN_FUTURES_NIGHT_0230")], None);
+        night.set_active(&[("au2406".to_string(), Some(AssetType::Futures))]);
+        assert_eq!(
+            night.session_day_first_start(d(2024, 1, 8)).unwrap(),
+            at(2024, 1, 5, 20, 55, 0)
+        );
+        assert_eq!(
+            night
+                .session_day_first_continuous_start(d(2024, 1, 8))
+                .unwrap(),
+            Some(at(2024, 1, 5, 21, 0, 0))
+        );
+        // 混合在用表取最小值
+        let mut mixed = resolver(vec![("au", "CN_FUTURES_NIGHT_0230")], None);
+        mixed.set_active(&[
+            ("600000.SH".to_string(), Some(AssetType::Stock)),
+            ("au2406".to_string(), Some(AssetType::Futures)),
+        ]);
+        assert_eq!(
+            mixed.session_day_first_start(d(2024, 1, 8)).unwrap(),
+            at(2024, 1, 5, 20, 55, 0)
+        );
+        assert_eq!(
+            mixed.session_calendar_before(d(2024, 1, 8)).unwrap(),
+            d(2024, 1, 5)
+        );
     }
 
     #[test]
