@@ -351,5 +351,5 @@ In a strategy, you can fetch historical market data for the past N days at any t
 
 AKQuant internally uses UTC timestamps uniformly.
 If your data is in local time (e.g., Beijing Time), please specify `timezone="Asia/Shanghai"` in `run_backtest`.
-If you call `ParquetDataCatalog.read(start_time=..., end_time=...)` directly, naive boundary values follow the same `timezone` rule and default to `Asia/Shanghai` when not provided explicitly.
+If you call `ParquetDataCatalog.read(start_time=..., end_time=...)` directly, naive boundary values and a naive stored index both follow the same `timezone` rule and default to `Asia/Shanghai` when not provided explicitly.
 For more details, refer to the [Timezone Handling Guide](../advanced/timezone.md).

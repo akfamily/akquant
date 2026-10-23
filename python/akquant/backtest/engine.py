@@ -494,9 +494,8 @@ def _filter_datetime_index_frame_by_runtime_window(
 ) -> pd.DataFrame:
     """Filter a datetime-indexed frame using runtime boundaries.
 
-    Naive frame indices follow the same Shanghai-default market-data semantics as
-    the main DataFrame -> Bar conversion path, while naive runtime boundaries are
-    interpreted in the configured strategy timezone.
+    Naive frame indices and naive runtime boundaries are both interpreted in the
+    configured strategy timezone (default Asia/Shanghai).
     """
     if frame.empty or not isinstance(frame.index, pd.DatetimeIndex):
         return frame

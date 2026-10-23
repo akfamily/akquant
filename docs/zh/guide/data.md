@@ -354,5 +354,5 @@ data_map = {
 
 AKQuant 内部统一使用 UTC 时间戳。
 如果你的数据是本地时间（如北京时间），请在 `run_backtest` 中指定 `timezone="Asia/Shanghai"`。
-如果你直接调用 `ParquetDataCatalog.read(start_time=..., end_time=...)`，传入 naive 时间边界时也会按该 `timezone`（未显式传入时默认为 `Asia/Shanghai`）解释。
+如果你直接调用 `ParquetDataCatalog.read(start_time=..., end_time=...)`，传入的 naive 时间边界以及 Parquet 中存的 naive 索引，都会按该 `timezone`（未显式传入时默认为 `Asia/Shanghai`）解释。
 更多详情请参考 [时区处理指南](../advanced/timezone.md)。

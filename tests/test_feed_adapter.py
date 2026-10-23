@@ -322,3 +322,63 @@ def test_run_backtest_accepts_resampled_adapter() -> None:
 
     assert not result.orders_df.empty
     assert set(result.orders_df["symbol"].astype(str)) == {"RBK"}
+
+
+def test_replay_partition_keys_localize_naive_input_in_timezone() -> None:
+    """Partition helpers localize naive input in the given timezone."""
+    from akquant.feed_adapter import (
+        _calendar_partition_keys,
+        _session_partition_keys,
+        _session_window_partition_keys,
+    )
+
+    index = pd.DatetimeIndex(
+        pd.to_datetime(
+            [
+                "2024-01-02 10:00:00",
+                "2024-01-02 21:00:00",
+                "2024-01-03 02:00:00",
+            ]
+        )
+    )
+    ny = "America/New_York"
+    keys = _session_partition_keys(index, ny)
+    assert [k.day for k in keys] == [2, 2, 3]
+    assert str(keys.tz) == ny
+
+    windows = [("09:30", "12:00"), ("20:00", "23:59")]
+    wkeys, keep = _session_window_partition_keys(index, ny, windows)
+    assert keep == [True, True, False]
+    assert [(k.day, k.hour, k.minute) for k in wkeys[:2]] == [(2, 9, 30), (2, 20, 0)]
+
+    # calendar mode partitions by UTC day of the New York-localized instant.
+    ckeys = _calendar_partition_keys(index, ny)
+    assert [k.day for k in ckeys] == [2, 3, 3]
+
+
+def test_feed_replay_naive_input_follows_request_timezone() -> None:
+    """Replay by trading day groups naive data by New York local days."""
+    times = pd.to_datetime(
+        [
+            "2024-01-02 20:00:00",
+            "2024-01-02 23:00:00",
+            "2024-01-03 02:00:00",
+            "2024-01-03 03:00:00",
+        ]
+    )
+    frame = pd.DataFrame(
+        {
+            "timestamp": times,
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 1.0,
+            "symbol": "NY",
+        }
+    )
+    replay = InMemoryFeedAdapter(frame).replay(
+        freq="1D", align="day", emit_partial=True
+    )
+    out = replay.load(akquant.FeedSlice(symbol="NY", timezone="America/New_York"))
+    assert out["volume"].tolist() == [2.0, 2.0]

@@ -120,7 +120,8 @@ class ParquetDataCatalog:
         :param start_time: Filter start date/time.
         :param end_time: Filter end date/time.
         :param columns: Specific columns to read.
-        :param timezone: Timezone used to interpret naive start/end boundaries.
+        :param timezone: Timezone used to interpret naive start/end boundaries and
+            a naive stored index (default Asia/Shanghai).
         :return: DataFrame.
         """
         symbol_path = self.root / symbol

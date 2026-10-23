@@ -11,6 +11,7 @@ def load_bar_from_df(
     df: pd.DataFrame,
     symbol: Optional[str] = None,
     column_map: Optional[Dict[str, str]] = None,
+    tz: Optional[str] = None,
 ) -> List[Bar]:
     r"""
     Convert DataFrame to list of akquant.Bar.
@@ -24,10 +25,12 @@ def load_bar_from_df(
     :param column_map: Mapping from DataFrame columns to standard fields.
                        Defaults: date->timestamp, open->open, etc.
     :type column_map: Dict[str, str], optional
+    :param tz: Timezone for naive timestamps (default Asia/Shanghai)
+    :type tz: str, optional
     :return: List of Bar objects
     :rtype: List[Bar]
     """
-    return dataframe_to_bars(df, symbol, column_map)
+    return dataframe_to_bars(df, symbol, column_map, tz)
 
 
 def fetch_akshare_symbol(

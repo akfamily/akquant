@@ -16,6 +16,8 @@ class FeedSlice:
     symbol: str
     start_time: pd.Timestamp | None = None
     end_time: pd.Timestamp | None = None
+    # Timezone for the run: naive start/end bounds AND naive source index values
+    # are both interpreted in it (default Asia/Shanghai when None).
     timezone: str | None = None
 
 
