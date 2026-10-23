@@ -645,10 +645,14 @@ impl WindowAggregator {
             };
             let key = (bar.symbol.clone(), freq_label.clone());
             if let Some(st) = self.states.get(&key) {
+                // 日内窗口按 (交易日, 标签) 判断是否换窗: 块内标签不超出块且块互不重叠,
+                // 不同块的标签必然不同; 块外 bar(时段表与数据不符, 如期货用了股票表)
+                // 按时钟标签并入同标签的块内窗口, 不会出两根同标签窗口。
                 let changed = if daily {
                     st.local_date != place.date
                 } else {
-                    st.label_ns != place.label || st.session_key != place.session_key
+                    st.label_ns != place.label
+                        || st.session_key.map(|k| k.0) != place.session_key.map(|k| k.0)
                 };
                 if changed {
                     closed.push((
@@ -668,6 +672,16 @@ impl WindowAggregator {
                         // 日线标签与起点随交易日确定; 无解析器时标签跟随最后一根 bar。
                         s.label_ns = place.label;
                         s.interval_start = place.interval_start;
+                    } else {
+                        // 块外与块内 bar 合并时: 起点取两者较早者, 分组键取块内的。
+                        if let (Some(a), Some(b)) = (s.interval_start, place.interval_start) {
+                            s.interval_start = Some(a.min(b));
+                        }
+                        if s.session_key.is_some_and(|k| k.1 < 0)
+                            && place.session_key.is_some_and(|k| k.1 >= 0)
+                        {
+                            s.session_key = place.session_key;
+                        }
                     }
                 })
                 .or_insert_with(|| WindowState::open_from(bar, freq, &place));
@@ -1318,6 +1332,33 @@ mod tests {
         );
         assert_eq!(closed[0].interval_start, Some(ny(2, 0, 0) - 1));
         assert_eq!(closed[0].close, Decimal::from(11));
+    }
+
+    #[test]
+    fn out_of_block_bars_merge_with_same_label_in_block_window() {
+        // 期货 rb2405 误用股票时段表: 09:01～09:15 落在块外(块 0 = 09:15 起),
+        // 09:16～09:30 在块内, 两段时钟标签都是 09:30, 只能出一根 09:30 窗口。
+        let mut a = resolved_agg(&[("30min", None)], vec![], "rb2405", AssetType::Stock);
+        let mut out = Vec::new();
+        for m in 1..=30 {
+            out.extend(a.update(&bar(ns(2024, 1, 2, 9, m), 10, "rb2405")));
+        }
+        assert_eq!(out.len(), 1, "同标签不得出两根窗口: {out:?}");
+        assert_eq!(out[0].timestamp, ns(2024, 1, 2, 9, 30));
+        assert_eq!(out[0].volume, Decimal::from(300));
+        assert!(a.current("rb2405", "30min").is_none());
+        // 5min: 块外 09:05/09:10/09:15 与块内 09:20～09:30 各一根, 标签不重复
+        let mut a = resolved_agg(&[("5min", None)], vec![], "rb2405", AssetType::Stock);
+        let mut labels = Vec::new();
+        for m in 1..=30 {
+            labels.extend(
+                a.update(&bar(ns(2024, 1, 2, 9, m), 10, "rb2405"))
+                    .into_iter()
+                    .map(|b| b.timestamp),
+            );
+        }
+        let expected: Vec<i64> = (1..=6).map(|k| ns(2024, 1, 2, 9, 5 * k)).collect();
+        assert_eq!(labels, expected);
     }
 
     #[test]
