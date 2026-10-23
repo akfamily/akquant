@@ -38,6 +38,12 @@ pub trait ExecutionClient: Send + Sync {
         Vec::new()
     }
 
+    /// 日终结算前收尾当日未完成的收盘集合竞价(缺收盘时刻行情时按最后一个
+    /// 收盘竞价事件的价格统一撮合)。
+    fn finalize_closing_auctions(&mut self, _ctx: &EngineContext) -> Vec<Event> {
+        Vec::new()
+    }
+
     /// 设置滑点模型 (仅回测有效)
     fn set_slippage_model(&mut self, _model: Box<dyn SlippageModel>) {}
 

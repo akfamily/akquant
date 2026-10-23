@@ -560,3 +560,196 @@ def test_daily_current_close_day_order_expires_at_same_day_close() -> None:
     assert list(orders["status"].astype(str).str.lower()) == ["expired"]
     updated = pd.Timestamp(orders["updated_at"].iloc[0]).tz_convert(TZ)
     assert updated.strftime("%m-%d %H:%M") == "01-02 15:00"
+
+
+def _tick(ts: str, price: float, symbol: str = "600000.SH", volume: float = 1e5) -> Any:
+    return aq.Tick(timestamp=_ns(ts), price=price, volume=volume, symbol=symbol)
+
+
+class _TickBuyAt(Strategy):
+    """在指定本地时刻的 tick 上下单（市价或限价）."""
+
+    at = "09:20:00"
+    limit: Any = None
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_tick(self, tick: Any) -> None:
+        t = pd.Timestamp(tick.timestamp, tz="UTC").tz_convert(TZ).strftime("%H:%M:%S")
+        if not self.done and t == self.at:
+            self.done = True
+            self.buy(tick.symbol, 100, price=self.limit)
+
+
+def _opening_auction_ticks() -> List[Any]:
+    return [
+        _tick("2024-01-02 09:20:00", 9.8),
+        _tick("2024-01-02 09:25:00", 10.0),
+        _tick("2024-01-02 09:30:03", 10.5),
+        _tick("2024-01-02 09:31:00", 10.6),
+    ]
+
+
+def test_opening_auction_uncross_uses_auction_tick_price() -> None:
+    """09:20 下市价单, 09:25 竞价 10.0, 09:30:03 首笔连续 10.5 → 按 10.0 成交."""
+    r = run_backtest(
+        strategy=_TickBuyAt,
+        data=_opening_auction_ticks(),
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert [(t, round(p, 4)) for t, p in _fills(r)] == [("01-02 09:30", 10.0)]
+
+
+def test_opening_auction_limit_not_met_goes_to_continuous() -> None:
+    """限价 9.9 低于竞价价 10.0: 竞价不成交, 转连续竞价(10.5、10.6 也不成交)."""
+
+    class Limit(_TickBuyAt):
+        limit = 9.9
+
+    r = run_backtest(
+        strategy=Limit,
+        data=_opening_auction_ticks(),
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert _fills(r) == []
+
+
+class _BuyOnce(Strategy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done:
+            self.done = True
+            self.buy(bar.symbol, 100)
+
+
+def test_closing_auction_on_minute_bars_fills_at_close() -> None:
+    """14:57 下的 NextOpen 市价单: 14:58 收盘竞价 bar 不成交, 15:00 按收盘价成交."""
+    df = _minute_frame(
+        [
+            "2024-01-02 14:57",
+            "2024-01-02 14:58",
+            "2024-01-02 14:59",
+            "2024-01-02 15:00",
+        ],
+        [10.0, 10.1, 10.2, 10.3],
+    )
+    # 15:00 bar 开盘价与收盘价不同, 区分按开盘还是按收盘成交
+    df.loc[3, "open"] = 10.25
+    r = run_backtest(
+        strategy=_BuyOnce,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert _fills(r) == [("01-02 15:00", 10.3)]
+
+
+def test_order_placed_on_closing_auction_end_bar_misses_todays_auction() -> None:
+    """在 15:00(收盘竞价结束)bar 上下的单不参加当日收盘竞价, 属于下一交易日."""
+    df = _minute_frame(["2024-01-02 14:59", "2024-01-02 15:00"], [10.0, 10.1])
+
+    class Probe(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            t = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert(TZ).strftime("%H:%M")
+            if t == "15:00":
+                self.buy(bar.symbol, 100, fill_mode=aq.CurrentClose())
+
+    r = run_backtest(
+        strategy=Probe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    # 收盘时刻下的单属于下一交易日(Ruling S3-T2-6): 当日不成交、也不在 01-02 收盘过期
+    assert _fills(r) == []
+    assert not str(r.orders_df.iloc[0]["status"]).lower().endswith("expired")
+
+
+def test_closing_auction_settles_with_last_auction_price_when_close_bar_missing() -> (
+    None
+):
+    """数据缺 15:00 bar(14:59 后直接收盘): 日终结算前按最后一个收盘竞价事件价格成交."""
+    df = _minute_frame(
+        [
+            "2024-01-02 14:57",
+            "2024-01-02 14:58",
+            "2024-01-02 14:59",
+            "2024-01-03 09:31",
+        ],
+        [10.0, 10.1, 10.2, 11.0],
+    )
+    r = run_backtest(
+        strategy=_BuyOnce,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert _fills(r) == [("01-02 15:00", 10.2)]
+
+
+def test_daily_bar_fills_unchanged() -> None:
+    """日线: NextOpen 在次日开盘价、CurrentClose 在当日收盘价成交(与阶段 2 一致)."""
+    idx = pd.to_datetime(["2024-01-02", "2024-01-03"]).tz_localize(TZ)
+    df = pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "600000.SH",
+            "open": [10.0, 11.0],
+            "high": [10.5, 11.5],
+            "low": [9.5, 10.5],
+            "close": [10.2, 11.2],
+            "volume": 1e6,
+        }
+    )
+
+    class Probe(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.n = 0
+
+        def on_bar(self, bar: Bar) -> None:
+            self.n += 1
+            if self.n == 1:
+                self.buy(bar.symbol, 100)
+                self.buy(bar.symbol, 100, fill_mode=aq.CurrentClose())
+
+    r = run_backtest(
+        strategy=Probe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    assert sorted(_fills(r)) == [("01-02 15:00", 10.2), ("01-03 15:00", 11.0)]
+
+
+def test_closing_auction_on_ticks_ends_at_close_tick() -> None:
+    """tick: 15:00:00 那笔结束收盘竞价按其价成交; 缺它时日终按 14:59:59 的价成交."""
+
+    class Probe(_TickBuyAt):
+        at = "14:56:00"
+
+    ticks = [
+        _tick("2024-01-02 14:56:00", 9.8),
+        _tick("2024-01-02 14:58:00", 10.0),
+        _tick("2024-01-02 14:59:59", 10.1),
+        _tick("2024-01-02 15:00:00", 10.2),
+        _tick("2024-01-03 09:31:00", 11.0),
+    ]
+    kw: Any = dict(symbols=["600000.SH"], initial_cash=1e6, show_progress=False)
+    r = run_backtest(strategy=Probe, data=ticks, **kw)
+    assert [(t, round(p, 4)) for t, p in _fills(r)] == [("01-02 15:00", 10.2)]
+    r = run_backtest(strategy=Probe, data=ticks[:3] + ticks[4:], **kw)
+    assert [(t, round(p, 4)) for t, p in _fills(r)] == [("01-02 15:00", 10.1)]

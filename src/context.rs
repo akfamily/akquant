@@ -85,6 +85,30 @@ impl<'a> SessionView<'a> {
     }
 }
 
+impl<'a> EngineContext<'a> {
+    /// 复制一份上下文, 只换掉时段视图(集合竞价统一撮合把本品种视为连续竞价)。
+    #[must_use]
+    pub fn clone_with_sessions<'b>(&'b self, sessions: SessionView<'b>) -> EngineContext<'b> {
+        EngineContext {
+            instruments: self.instruments,
+            portfolio: self.portfolio,
+            last_prices: self.last_prices,
+            trade_tracker: self.trade_tracker,
+            market_model: self.market_model,
+            execution_policy_core: self.execution_policy_core,
+            bar_index: self.bar_index,
+            current_time: self.current_time,
+            session: self.session,
+            active_orders: self.active_orders,
+            risk_config: self.risk_config,
+            timezone_name: self.timezone_name,
+            timezone_offset: self.timezone_offset,
+            trading_day: self.trading_day,
+            sessions,
+        }
+    }
+}
+
 pub struct ContextInit {
     pub cash: Decimal,
     pub previous_cash: Decimal,

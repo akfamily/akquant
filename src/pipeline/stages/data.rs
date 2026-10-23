@@ -507,6 +507,12 @@ impl Processor for DataProcessor {
                 } else if let Event::Tick(ref t) = event {
                     self.current_symbol_events
                         .insert(t.symbol.clone(), Event::Tick(t.clone()));
+                    // tick 撮合不看成交量(execution/common.rs), 有 tick 即本片可成交:
+                    // 否则纯 tick 回测里跨片排队的 NextOpen 单(如竞价时段下的单)会在
+                    // reject_missing_symbol_orders 被当作停牌拒掉。
+                    if !self.tradable_symbols.contains(&t.symbol) {
+                        self.tradable_symbols.insert(t.symbol.clone());
+                    }
                     // tick 是本时间戳该 symbol 的真实行情, 必须登记为"已见"——否则
                     // fill_missing_bars 会把它当成缺失并合成一根退化 bar, 导致每个
                     // tick 被双写历史(一次 update_tick, 一次合成 bar)。
@@ -624,6 +630,9 @@ fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate,
 
 /// [`run_day_close_settlement`] 的结算步骤本体。
 fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_ts: i64) {
+    // 收盘竞价收尾(缺收盘时刻行情时按最后一个收盘竞价价统一撮合): 先于到期结算与
+    // Day 单过期, 成交就地落地, 使收盘快照包含竞价成交。
+    finalize_closing_auctions(engine, py, day, close_ts);
     // Settlement Manager (T+1, Option Expiry, Day Order Expiry)
     let mut expired_orders = Vec::new();
     // NextOpen(bar_offset == 1) 的 Day 单若创建于本交易日最后一个已处理行情事件
@@ -811,6 +820,56 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
         &engine.state.order_manager.trade_tracker,
         &engine.risk_manager.config,
     );
+}
+
+/// 日终结算前收尾 `day` 的收盘集合竞价, 撮合回报按强平成交的方式就地落地。
+fn finalize_closing_auctions(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_ts: i64) {
+    // 无解析器(构造失败)时 SessionView 按连续竞价; 配置错误已在 run() 开始时报出。
+    let _ = engine.ensure_session_resolver();
+    let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
+    let ctx = EngineContext {
+        instruments: &engine.instruments,
+        portfolio: &engine.state.portfolio,
+        last_prices: &prices,
+        trade_tracker: &engine.state.order_manager.trade_tracker,
+        market_model: engine.market_manager.model.as_ref(),
+        execution_policy_core: engine.execution_policy_core(),
+        bar_index: engine.bar_count,
+        current_time: close_ts,
+        session: engine.clock.session,
+        active_orders: &engine.state.order_manager.active_orders,
+        risk_config: &engine.risk_manager.config,
+        timezone_name: engine.timezone_name.as_deref(),
+        timezone_offset: engine.timezone_offset,
+        trading_day: Some(day),
+        sessions: SessionView {
+            force_continuous: engine.force_session_continuous,
+            slice: Some(&engine.slice_sessions),
+            resolver: engine.session_resolver.as_ref(),
+            instruments: Some(&engine.instruments),
+        },
+    };
+    let reports = engine.execution_model.finalize_closing_auctions(&ctx);
+    drop(ctx);
+    drop(prices);
+    if reports.is_empty() {
+        return;
+    }
+    let mut trades = Vec::new();
+    let mut oco_suppressed_fill_order_ids: HashSet<String> = HashSet::new();
+    for report in reports {
+        if let Event::ExecutionReport(order, trade) = report {
+            apply_execution_report(
+                engine,
+                py,
+                order,
+                trade,
+                &mut oco_suppressed_fill_order_ids,
+                &mut trades,
+            );
+        }
+    }
+    flush_accumulated_trades(engine, &mut trades);
 }
 
 /// 收盘定时器触发时交易日 `day` 是否真的走到了收盘。
