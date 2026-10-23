@@ -822,6 +822,17 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
             .order_manager
             .current_step_expired_orders
             .push(o.clone());
+        // 与拒单/撤单回报对称发 order 流事件, on_event 与指标流消费方也能看到 Expired。
+        let mut order_payload = HashMap::new();
+        order_payload.insert("order_id", o.id.clone());
+        order_payload.insert("status", format!("{:?}", o.status));
+        order_payload.insert("filled_qty", o.filled_quantity.to_string());
+        order_payload.insert("symbol", o.symbol.clone());
+        order_payload.insert(
+            "owner_strategy_id",
+            o.owner_strategy_id.clone().unwrap_or_default(),
+        );
+        engine.emit_stream_event(py, "order", Some(o.symbol.as_str()), "info", order_payload);
         engine.state.order_manager.orders.push(o);
     }
 

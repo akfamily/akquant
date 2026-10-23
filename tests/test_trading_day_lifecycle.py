@@ -1567,3 +1567,26 @@ def test_day_order_expiring_on_last_day_still_triggers_on_order() -> None:
     )
     assert r.strategy is not None
     assert [s for _, s in r.strategy.events][-1] == "Expired"
+
+
+def test_day_order_expiry_emits_order_stream_event() -> None:
+    """日终过期的 Day 单发 order 流事件（status=Expired），带收盘时刻."""
+    events: List[Any] = []
+    run_backtest(
+        strategy=_ExpiryProbe,
+        data=_daily_frame(["2024-01-02", "2024-01-03", "2024-01-04"]),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        on_event=events.append,
+    )
+    expired = [
+        e
+        for e in events
+        if e["event_type"] == "order" and e["payload"].get("status") == "Expired"
+    ]
+    assert len(expired) == 1, expired
+    assert expired[0]["symbol"] == "600000.SH"
+    assert expired[0]["payload"]["order_id"]
+    local = pd.Timestamp(int(expired[0]["ts"]), tz="UTC").tz_convert("Asia/Shanghai")
+    assert local == pd.Timestamp("2024-01-03 15:00", tz="Asia/Shanghai")
