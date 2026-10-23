@@ -1247,3 +1247,106 @@ def test_session_resolver_session_day_end_uses_active_symbols() -> None:
     assert resolver.session_day_end(day) == bond_close
     resolver.set_active([("600000.SH", aq.AssetType.Stock)])
     assert resolver.session_day_end(day) == stock_close
+
+
+class _PreOpenTimerBuyer(Strategy):
+    """每日 09:35 定时器以当前收盘价买 30 股，每根 bar 也买 30 股."""
+
+    def on_start(self) -> None:
+        """登记盘前定时器."""
+        self.schedule_daily("09:35", "pre")
+
+    def on_timer(self, payload: str) -> None:
+        """定时买入."""
+        self.buy("RISK", 30, fill_mode=aq.CurrentClose())
+
+    def on_bar(self, bar: Bar) -> None:
+        """每根 bar 买入."""
+        self.buy(bar.symbol, 30)
+
+
+def test_daily_loss_resets_for_timer_order_before_first_bar_of_day() -> None:
+    """01-08 触发日亏损；01-09 09:35（当日首根 bar 之前）的定时器单属新交易日.
+
+    当日尚未开日（首个行情事件 10:00 才开日），旧实现风控交易日仍取上一交易日
+    01-08，09:35 的单被按 01-08 的亏损拒绝。
+    """
+    result = run_backtest(
+        data=_bars_at(
+            [
+                "2024-01-08 09:31",
+                "2024-01-08 10:00",
+                "2024-01-08 10:01",
+                "2024-01-09 10:00",
+            ],
+            [100.0, 100.0, 50.0, 50.0],
+            "RISK",
+        ),
+        strategy=_PreOpenTimerBuyer,
+        symbols="RISK",
+        initial_cash=100000.0,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+        lot_size=1,
+        risk_config=aq.config.RiskConfig(max_daily_loss=0.01),
+    )
+    orders = result.orders_df
+    local = pd.to_datetime(orders["created_at"])
+    if local.dt.tz is None:
+        local = local.dt.tz_localize("UTC")
+    stamps = local.dt.tz_convert("Asia/Shanghai").dt.strftime("%Y-%m-%d %H:%M")
+    reasons = orders["reject_reason"].fillna("").astype(str)
+    by_time = dict(zip(stamps, reasons))
+    view = orders[["created_at", "status", "reject_reason"]]
+    # 01-08 10:01 的单在亏损当日被拒（规则本身仍生效）
+    assert "Daily loss" in by_time["2024-01-08 10:01"], view
+    # 01-09 09:35 的定时器单属 01-09，不因 01-08 的亏损被拒
+    assert "Daily loss" not in by_time["2024-01-09 09:35"], view
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "marker"),
+    [
+        (
+            {"strategy_id": "alpha", "strategy_max_daily_loss": {"alpha": 100.0}},
+            "daily loss",
+        ),
+        (
+            {"portfolio_risk_budget": 9000.0, "risk_budget_reset_daily": True},
+            "risk budget",
+        ),
+    ],
+    ids=["strategy_daily_loss", "risk_budget"],
+)
+def test_strategy_risk_resets_for_timer_order_before_first_bar_of_day(
+    kwargs: Dict[str, Any], marker: str
+) -> None:
+    """策略级日亏损与风险预算同样按 now 所属交易日重置（盘前定时器单不被拒）."""
+    result = run_backtest(
+        data=_bars_at(
+            [
+                "2024-01-08 09:31",
+                "2024-01-08 10:00",
+                "2024-01-08 10:01",
+                "2024-01-09 10:00",
+            ],
+            [100.0, 100.0, 50.0, 50.0],
+            "RISK",
+        ),
+        strategy=_PreOpenTimerBuyer,
+        symbols="RISK",
+        initial_cash=100000.0,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+        lot_size=1,
+        **kwargs,
+    )
+    orders = result.orders_df
+    local = pd.to_datetime(orders["created_at"])
+    if local.dt.tz is None:
+        local = local.dt.tz_localize("UTC")
+    stamps = local.dt.tz_convert("Asia/Shanghai").dt.strftime("%Y-%m-%d %H:%M")
+    by_time = dict(zip(stamps, orders["reject_reason"].fillna("").astype(str)))
+    view = orders[["created_at", "status", "reject_reason"]]
+    assert marker in by_time["2024-01-08 10:01"], view
+    assert marker not in by_time["2024-01-09 09:35"], view

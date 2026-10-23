@@ -47,6 +47,7 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
     let check_result = if let Some(err) = strategy_limit_err {
         Err(err)
     } else {
+        let trading_day = engine.risk_trading_day(current_time);
         let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
         let ctx = EngineContext {
             instruments: &engine.instruments,
@@ -62,7 +63,7 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
             risk_config: &engine.risk_manager.config,
             timezone_name: engine.timezone_name.as_deref(),
             timezone_offset: engine.timezone_offset,
-            trading_day: engine.current_trading_day,
+            trading_day,
         };
         // 回测撮合器会在成交时点重跑可用持仓校验(execution/simulated.rs),
         // 因此这里允许把该规则延后;实盘由柜台在报单时校验,不能延后。
@@ -141,6 +142,8 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
     // 详见 core.rs Engine.last_prices 字段上的锁纪律说明:写锁只有 3 处且都
     // 要求 &mut Engine,run() 期间该借用被占用,任何再入都会 PyBorrowMutError
     // 而非阻塞,不会与本处的读锁死锁。
+    let current_time = engine.context_timestamp();
+    let trading_day = engine.risk_trading_day(current_time);
     let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
     let ctx = EngineContext {
         instruments: &engine.instruments,
@@ -150,13 +153,13 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
         market_model: engine.market_manager.model.as_ref(),
         execution_policy_core: engine.execution_policy_core(),
         bar_index: engine.bar_count,
-        current_time: engine.context_timestamp(),
+        current_time,
         session: engine.clock.session,
         active_orders: &engine.state.order_manager.active_orders,
         risk_config: &engine.risk_manager.config,
         timezone_name: engine.timezone_name.as_deref(),
         timezone_offset: engine.timezone_offset,
-        trading_day: engine.current_trading_day,
+        trading_day,
     };
 
     let reports = engine.execution_model.on_event(&event, &ctx);

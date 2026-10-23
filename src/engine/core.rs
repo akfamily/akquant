@@ -370,6 +370,28 @@ impl Engine {
         Ok(day)
     }
 
+    /// 风控（每日亏损、风险预算）使用的交易日：`now` 所属的会话交易日。
+    ///
+    /// `now` 落在当前交易日区间内时直接返回；超出时（如次日开盘前的定时器，当日
+    /// 尚未开日）用解析器求，但不开日。尚未开过日（`current_trading_day` 为空）或
+    /// 解析失败时退回 `current_trading_day`，由调用方按本地日期兜底。
+    pub(crate) fn risk_trading_day(&mut self, now: i64) -> Option<NaiveDate> {
+        let current = self.current_trading_day?;
+        if let Some((prev_end, end)) = self.current_day_span
+            && prev_end < now
+            && now <= end
+        {
+            return Some(current);
+        }
+        if self.ensure_session_resolver().is_err() {
+            return Some(current);
+        }
+        self.session_resolver
+            .as_ref()
+            .and_then(|r| r.session_trading_day(now).ok())
+            .or(Some(current))
+    }
+
     pub(crate) fn is_active_timestamp(&self, timestamp: i64) -> bool {
         self.active_start_time_ns
             .is_none_or(|start_ns| timestamp >= start_ns)
@@ -478,7 +500,7 @@ impl Engine {
             return;
         }
         let current_day = self
-            .current_trading_day
+            .risk_trading_day(current_time)
             .unwrap_or_else(|| self.local_date_from_ns(current_time));
         if self.risk_budget_usage_day == Some(current_day) {
             return;
@@ -675,7 +697,7 @@ impl Engine {
             .get(&strategy_id)
             .copied()?;
         let current_day = self
-            .current_trading_day
+            .risk_trading_day(current_time)
             .unwrap_or_else(|| self.local_date_from_ns(current_time));
         let current_pnl = self.current_strategy_pnl(&strategy_id);
         let needs_reset = self
