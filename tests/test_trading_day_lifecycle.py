@@ -1605,30 +1605,30 @@ class _BorrowOnce(Strategy):
             self.buy(bar.symbol, 150)
 
 
-def test_resume_restores_risk_config_and_timezone(tmp_path: Any) -> None:
-    """融资账户 + 纽约时区：续跑不传 risk_config/timezone 时沿用存档值.
+_NY_DAYS = ["2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08", "2024-01-09"]
 
-    利息与连续跑一致。
-    """
+
+def _ny_frame(dates: List[str]) -> pd.DataFrame:
+    """纽约时区 10:00 的 AAPL 分钟级时刻数据（价格恒 100）."""
+    idx = pd.to_datetime([f"{d} 10:00" for d in dates]).tz_localize("America/New_York")
+    return pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "AAPL",
+            "open": 100.0,
+            "high": 100.0,
+            "low": 100.0,
+            "close": 100.0,
+            "volume": 1e6,
+        }
+    )
+
+
+def _margin_ny_kwargs() -> Dict[str, Any]:
+    """融资账户（高利率便于观察利息）+ 纽约时区的回测参数."""
     from akquant.config import RiskConfig
 
-    def frame(dates: List[str]) -> pd.DataFrame:
-        idx = pd.to_datetime([f"{d} 10:00" for d in dates]).tz_localize(
-            "America/New_York"
-        )
-        return pd.DataFrame(
-            {
-                "timestamp": idx,
-                "symbol": "AAPL",
-                "open": 100.0,
-                "high": 100.0,
-                "low": 100.0,
-                "close": 100.0,
-                "volume": 1e6,
-            }
-        )
-
-    kw: Dict[str, Any] = dict(
+    return dict(
         symbols="AAPL",
         show_progress=False,
         fill_policy=aq.CurrentClose(),
@@ -1640,21 +1640,49 @@ def test_resume_restores_risk_config_and_timezone(tmp_path: Any) -> None:
             financing_rate_annual=36.5,
             borrow_rate_annual=0.0,
             allow_force_liquidation=False,
+            max_position_size=1_000_000.0,
         ),
     )
-    days = ["2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08", "2024-01-09"]
+
+
+def _save_margin_ny_checkpoint(
+    tmp_path: Any, *, with_config: bool = True
+) -> Tuple[Any, str]:
+    """跑前三天并存档；返回（连续跑五天的结果，存档路径）."""
+    kw = _margin_ny_kwargs()
     full = run_backtest(
-        data=frame(days), strategy=_BorrowOnce, initial_cash=10000.0, **kw
+        data=_ny_frame(_NY_DAYS), strategy=_BorrowOnce, initial_cash=10000.0, **kw
     )
     part1 = run_backtest(
-        data=frame(days[:3]), strategy=_BorrowOnce, initial_cash=10000.0, **kw
+        data=_ny_frame(_NY_DAYS[:3]), strategy=_BorrowOnce, initial_cash=10000.0, **kw
     )
-    ckpt = tmp_path / "c.pkl"
+    ckpt = str(tmp_path / "c.pkl")
     assert part1.engine is not None
-    save_checkpoint(part1.engine, part1.strategy, str(ckpt), config=part1)
+    save_checkpoint(
+        part1.engine, part1.strategy, ckpt, config=part1 if with_config else None
+    )
+    return full, ckpt
+
+
+def _resume_warnings(caplog: pytest.LogCaptureFixture) -> List[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and r.getMessage().startswith("run_from_checkpoint 传入的")
+        and "不一致" in r.getMessage()
+    ]
+
+
+def test_resume_restores_risk_config_and_timezone(tmp_path: Any) -> None:
+    """融资账户 + 纽约时区：续跑不传 risk_config/timezone 时沿用存档值.
+
+    利息与连续跑一致。
+    """
+    full, ckpt = _save_margin_ny_checkpoint(tmp_path)
     part2 = run_from_checkpoint(
-        checkpoint_path=str(ckpt),
-        data=frame(days[3:]),
+        checkpoint_path=ckpt,
+        data=_ny_frame(_NY_DAYS[3:]),
         symbols="AAPL",
         show_progress=False,
     )
@@ -1663,3 +1691,117 @@ def test_resume_restores_risk_config_and_timezone(tmp_path: Any) -> None:
         float(full.engine.portfolio.cash), abs=1e-6
     )
     assert part2.engine.current_trading_day == dt.date(2024, 1, 9)
+
+
+def test_chained_resume_keeps_risk_config_and_timezone(tmp_path: Any) -> None:
+    """存档—续跑—再存档—再续跑：续跑结果携带已解析配置，期末现金与连续跑一致."""
+    kw = _margin_ny_kwargs()
+    full = run_backtest(
+        data=_ny_frame(_NY_DAYS), strategy=_BorrowOnce, initial_cash=10000.0, **kw
+    )
+    part1 = run_backtest(
+        data=_ny_frame(_NY_DAYS[:2]), strategy=_BorrowOnce, initial_cash=10000.0, **kw
+    )
+    ckpt1 = str(tmp_path / "c1.pkl")
+    assert part1.engine is not None
+    save_checkpoint(part1.engine, part1.strategy, ckpt1, config=part1)
+    part2 = run_from_checkpoint(
+        checkpoint_path=ckpt1,
+        data=_ny_frame(_NY_DAYS[2:4]),
+        symbols="AAPL",
+        show_progress=False,
+    )
+    resolved = part2.resolved_config
+    assert resolved is not None
+    assert resolved["timezone"] == "America/New_York"
+    assert resolved["risk_config"]["account_mode"] == "margin"
+    ckpt2 = str(tmp_path / "c2.pkl")
+    assert part2.engine is not None
+    save_checkpoint(part2.engine, part2.strategy, ckpt2, config=part2)
+    part3 = run_from_checkpoint(
+        checkpoint_path=ckpt2,
+        data=_ny_frame(_NY_DAYS[4:]),
+        symbols="AAPL",
+        show_progress=False,
+    )
+    assert part3.engine is not None and full.engine is not None
+    assert float(part3.engine.portfolio.cash) == pytest.approx(
+        float(full.engine.portfolio.cash), abs=1e-6
+    )
+    assert part3.engine.current_trading_day == dt.date(2024, 1, 9)
+
+
+def test_resume_old_archive_without_config_keeps_old_behavior(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """存档未传 config=：续跑不报错、不告警，退回默认时区与默认（现金）风控."""
+    _, ckpt = _save_margin_ny_checkpoint(tmp_path, with_config=False)
+    with caplog.at_level("WARNING", logger="akquant"):
+        part2 = run_from_checkpoint(
+            checkpoint_path=ckpt,
+            data=_ny_frame(_NY_DAYS[3:]),
+            symbols="AAPL",
+            show_progress=False,
+        )
+    assert _resume_warnings(caplog) == []
+    assert part2.engine is not None
+    assert part2.engine.risk_manager.config.account_mode == "cash"
+    assert part2.strategy is not None
+    assert part2.strategy.timezone == "Asia/Shanghai"
+
+
+def test_resume_explicit_differing_risk_and_timezone_warn_once_each(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """显式传入与存档不同的 RiskConfig/timezone：以传入为准，各告警一次.
+
+    RiskConfig 对象整体替换存档（未设的字段取默认值，不沿用存档）。
+    """
+    from akquant.config import RiskConfig
+
+    _, ckpt = _save_margin_ny_checkpoint(tmp_path)
+    with caplog.at_level("WARNING", logger="akquant"):
+        part2 = run_from_checkpoint(
+            checkpoint_path=ckpt,
+            data=_ny_frame(_NY_DAYS[3:]),
+            symbols="AAPL",
+            show_progress=False,
+            timezone="America/Chicago",
+            risk_config=RiskConfig(max_order_size=1000),
+        )
+    warnings = _resume_warnings(caplog)
+    assert len([m for m in warnings if "timezone" in m]) == 1
+    assert len([m for m in warnings if "风控配置" in m]) == 1
+    assert len(warnings) == 2
+    assert part2.engine is not None
+    rust_config = part2.engine.risk_manager.config
+    assert rust_config.account_mode == "cash"
+    assert rust_config.max_order_size == 1000
+    assert rust_config.max_position_size is None
+    assert part2.strategy is not None
+    assert part2.strategy.timezone == "America/Chicago"
+    assert part2.resolved_config is not None
+    assert part2.resolved_config["timezone"] == "America/Chicago"
+    assert part2.resolved_config["risk_config"]["account_mode"] == "cash"
+
+
+def test_resume_partial_risk_dict_overlays_archive(
+    tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """risk_config 传 dict 时按键叠加在存档上：未给的键（账户模式等）沿用存档."""
+    _, ckpt = _save_margin_ny_checkpoint(tmp_path)
+    with caplog.at_level("WARNING", logger="akquant"):
+        part2 = run_from_checkpoint(
+            checkpoint_path=ckpt,
+            data=_ny_frame(_NY_DAYS[3:]),
+            symbols="AAPL",
+            show_progress=False,
+            risk_config={"max_order_size": 5},
+        )
+    warnings = _resume_warnings(caplog)
+    assert len(warnings) == 1 and "风控配置" in warnings[0]
+    assert part2.engine is not None
+    rust_config = part2.engine.risk_manager.config
+    assert rust_config.account_mode == "margin"
+    assert rust_config.financing_rate_annual == pytest.approx(36.5)
+    assert rust_config.max_order_size == 5

@@ -662,15 +662,20 @@ def _resolve_resume_risk_config(
 ) -> Optional[RiskConfig]:
     """续跑的风控配置.
 
-    以 ``config.strategy_config.risk``（给了的话）或存档快照为底，再叠加
-    ``risk_config``，叠加规则同 :func:`run_backtest`。都没有时为 None（旧存档或
-    存档时未传 ``config=``，保持引擎默认）。结果与存档不一致时告警一次。
+    - 给了 ``config.strategy_config.risk`` 时以它为底，叠加规则同
+      :func:`run_backtest`；
+    - 否则 ``risk_config`` 为 ``RiskConfig`` 对象时整体替换存档（与存档无关）；
+    - 否则 ``risk_config`` 为 dict 时按键叠加在存档快照上（未给的键沿用存档）；
+    - 都没给时用存档快照；存档也没有（旧存档或存档时未传 ``config=``）时为
+      None，保持引擎默认。
+
+    结果与存档不一致时告警一次。
     """
     saved_dict = saved_config.get("risk_config")
     base: Optional[RiskConfig] = None
     if config and config.strategy_config and config.strategy_config.risk:
         base = config.strategy_config.risk
-    else:
+    elif not isinstance(risk_config, RiskConfig):
         base = _restore_risk_config(saved_dict)
     resolved = _merge_risk_config(base, risk_config, logger, log_extra)
     if (
@@ -1475,7 +1480,8 @@ def _build_resolved_backtest_config(
     """Snapshot-friendly resolved runtime config (issue #282).
 
     Single source of truth for what checkpoint resume must re-apply. Kept as a plain
-    JSON-able dict so it pickles cleanly and stays forward-compatible.
+    dict of builtin values (``risk_config`` may hold a tuple for
+    ``sector_concentration``) so it pickles cleanly and stays forward-compatible.
     """
     resolved: Dict[str, Any] = {
         "slippage": dict(slippage_policy),
@@ -5741,7 +5747,9 @@ def run_from_checkpoint(
         不传时沿用存档，规则同 ``sessions``
     :param kwargs: 其他引擎配置参数 (如 commission_rate, stamp_tax_rate, t_plus_one)。
         ``timezone`` 与 ``risk_config`` 不传时沿用存档（需存档时传了
-        ``config=result``），传入且与存档不一致时以传入为准并告警
+        ``config=result``），传入且与存档不一致时以传入为准并告警。``risk_config``
+        传 ``RiskConfig`` 对象时整体替换存档，传 dict 时按键叠加在存档上。返回结果的
+        ``resolved_config`` 为本段实际生效的配置，可再存档后链式续跑
     """
     import os
 
@@ -7418,4 +7426,29 @@ def run_from_checkpoint(
         owner_strategy_id=effective_strategy_id,
         resolved_policy=resolved_policy_warm_start,
     )
+    # 续跑结果同样挂已解析配置，供再次存档后链式续跑：以存档为底，覆盖本段
+    # 实际生效的值；本段没有生效值的项（无风控、未设成交策略）保留存档原值
+    segment_resolved = _build_resolved_backtest_config(
+        slippage_policy=normalized_global_slippage,
+        volume_limit_pct=(
+            0.25 if warm_start_volume_limit is None else warm_start_volume_limit
+        ),
+        commission_policy=resolved_commission_policy,
+        stamp_tax_rate=stamp_tax,
+        transfer_fee_rate=transfer_fee,
+        min_commission=min_commission,
+        t_plus_one=bool(t_plus_one),
+        timezone=timezone_name,
+        history_depth=int(
+            restored_backtest_config.get(
+                "history_depth", getattr(strategy_instance, "_history_depth", 0)
+            )
+            or 0
+        ),
+        resolved_policy=resolved_policy_warm_start,
+        risk_config=resume_risk_config,
+    )
+    if resume_risk_config is None:
+        segment_resolved.pop("risk_config", None)
+    result.resolved_config = {**restored_backtest_config, **segment_resolved}
     return result
