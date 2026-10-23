@@ -289,7 +289,12 @@ impl SimulatedExecutionClient {
                         .ok()
                 })
                 .is_some_and(|(_, end, _)| ts >= end);
-        let state = self.auctions.entry(symbol.to_string()).or_default();
+        // 每个事件都会走到这里: 命中时不为键分配 String, 只在首次出现时插入。
+        if !self.auctions.contains_key(symbol) {
+            self.auctions
+                .insert(symbol.to_string(), AuctionState::default());
+        }
+        let state = self.auctions.get_mut(symbol).expect("上面已插入");
         if state.trading_day != ctx.trading_day {
             *state = AuctionState {
                 trading_day: ctx.trading_day,
