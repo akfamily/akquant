@@ -180,8 +180,8 @@ impl DataProcessor {
                 trading_day: engine.current_trading_day,
                 sessions: SessionView {
                     force_continuous: engine.force_session_continuous,
-                    slice: Some(&engine.slice_sessions),
-                    resolver: engine.session_resolver.as_ref(),
+                    slice: Some(&*engine.slice_sessions),
+                    resolver: engine.session_resolver.as_deref(),
                     instruments: Some(&engine.instruments),
                 },
             };
@@ -307,7 +307,7 @@ impl Processor for DataProcessor {
                     // 解析(上一片已在上面 finalize)。
                     let belongs = timer_belongs_to_slice(&timer, self.last_timestamp);
                     if !belongs {
-                        engine.slice_sessions.clear();
+                        std::sync::Arc::make_mut(&mut engine.slice_sessions).clear();
                     }
                     let session = if engine.force_session_continuous {
                         TradingSession::Continuous
@@ -386,7 +386,7 @@ impl Processor for DataProcessor {
                 }
                 if timestamp > self.last_timestamp {
                     // 新时间片(上一片已 finalize): 上一片各品种的时段作废。
-                    engine.slice_sessions.clear();
+                    std::sync::Arc::make_mut(&mut engine.slice_sessions).clear();
                 }
                 self.last_timestamp = timestamp;
 
@@ -416,12 +416,11 @@ impl Processor for DataProcessor {
                         }
                     }
                 }
-                match engine.slice_sessions.get_mut(event_symbol) {
+                let slice = std::sync::Arc::make_mut(&mut engine.slice_sessions);
+                match slice.get_mut(event_symbol) {
                     Some(slot) => *slot = session,
                     None => {
-                        engine
-                            .slice_sessions
-                            .insert(event_symbol.to_string(), session);
+                        slice.insert(event_symbol.to_string(), session);
                     }
                 }
                 engine.clock.update(timestamp, session);
@@ -885,8 +884,8 @@ fn finalize_closing_auctions(engine: &mut Engine, py: Python<'_>, day: NaiveDate
         trading_day: Some(day),
         sessions: SessionView {
             force_continuous: engine.force_session_continuous,
-            slice: Some(&engine.slice_sessions),
-            resolver: engine.session_resolver.as_ref(),
+            slice: Some(&*engine.slice_sessions),
+            resolver: engine.session_resolver.as_deref(),
             instruments: Some(&engine.instruments),
         },
     };

@@ -32,6 +32,7 @@ from .akquant import (
     StrategyContext,
     Tick,
     TimeInForce,
+    TradingSession,
 )
 from .chart import CANDLE_ROLES
 from .gateway.order_receipt import OrderReceipt
@@ -1194,6 +1195,49 @@ class Strategy:
     def symbol(self) -> str:
         """获取当前正在处理的标的代码 (Proxy to current_bar/tick)."""
         return self._resolve_symbol(None)
+
+    @property
+    def trading_day(self) -> Optional[dt.date]:
+        """当前时刻所属交易日（夜盘属下一交易日）；尚无上下文或未开日时为 None."""
+        if self.ctx is None:
+            return None
+        return getattr(self.ctx, "trading_day", None)
+
+    def session_of(self, symbol: Optional[str] = None) -> TradingSession:
+        """品种此刻的交易时段.
+
+        与撮合同口径：本时间片已解析的优先，否则按当前时刻解析。``symbol`` 为空时即
+        当前事件的时段 ``ctx.session``。实盘目前强制连续竞价，恒为 ``Continuous``。
+
+        :param symbol: 标的代码；不传时取当前事件的时段
+        :return: 交易时段
+        """
+        if self.ctx is None:
+            raise RuntimeError(
+                "session_of 只能在回测/实盘运行期间调用（如 on_bar、on_timer 中）"
+            )
+        if symbol is None:
+            return self.ctx.session
+        return self.ctx.session_of(symbol)
+
+    def is_market_open(
+        self, symbol: Optional[str] = None, include_auction: bool = False
+    ) -> bool:
+        """品种此刻是否处于连续竞价.
+
+        :param symbol: 标的代码；不传时取当前事件的时段
+        :param include_auction: 为 True 时集合竞价（含竞价后等待开盘、收盘集合竞价）
+            也算开市
+        :return: 是否开市
+        """
+        session = self.session_of(symbol)
+        if session == TradingSession.Continuous:
+            return True
+        return include_auction and session in (
+            TradingSession.OpeningAuction,
+            TradingSession.AuctionHold,
+            TradingSession.ClosingAuction,
+        )
 
     @property
     def close(self) -> float:

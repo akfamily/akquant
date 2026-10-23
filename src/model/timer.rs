@@ -2,6 +2,9 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::cmp::Ordering;
 
+/// 引擎内部定时器的保留前缀：用户定时器 payload 不得以它开头。
+pub(crate) const RESERVED_TIMER_PREFIX: &str = "__akq_";
+
 /// 引擎内部日终结算定时器的 payload 前缀；不转发给策略。
 pub(crate) const DAY_CLOSE_TIMER_PREFIX: &str = "__akq_day_close__|";
 
@@ -19,11 +22,11 @@ pub(crate) fn day_close_timer_timestamp(session_day_end: i64, live: bool) -> i64
     }
 }
 
-/// 用户定时器 payload 不能占用引擎内部日终结算前缀。
+/// 用户定时器 payload 不能占用引擎内部保留前缀 `__akq_`。
 pub(crate) fn check_user_timer_payload(payload: &str) -> pyo3::PyResult<()> {
-    if payload.starts_with(DAY_CLOSE_TIMER_PREFIX) {
+    if payload.starts_with(RESERVED_TIMER_PREFIX) {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "定时器 payload 不能以 {DAY_CLOSE_TIMER_PREFIX:?} 开头（引擎内部日终结算专用前缀）"
+            "定时器 payload 不能以 {RESERVED_TIMER_PREFIX:?} 开头（引擎内部保留，如日终结算专用前缀 {DAY_CLOSE_TIMER_PREFIX:?}），请换一个 payload 名称"
         )));
     }
     Ok(())
@@ -80,6 +83,11 @@ mod tests {
     fn user_timer_payload_rejects_reserved_prefix() {
         assert!(check_user_timer_payload("rebalance").is_ok());
         assert!(check_user_timer_payload("__akq_day_close__|2024-01-02").is_err());
+        assert!(check_user_timer_payload("__akq_lifecycle__|x").is_err());
+        // 框架自用的定时器 payload 不受影响
+        assert!(check_user_timer_payload("__daily__|09:30|x").is_ok());
+        assert!(check_user_timer_payload("__framework_cross_section__").is_ok());
+        assert!(DAY_CLOSE_TIMER_PREFIX.starts_with(RESERVED_TIMER_PREFIX));
     }
 
     #[test]

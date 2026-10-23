@@ -554,7 +554,7 @@ impl Engine {
             clock: Clock::new(),
             timers: BinaryHeap::new(),
             force_session_continuous: false,
-            slice_sessions: HashMap::new(),
+            slice_sessions: Arc::default(),
             session_span_cache: HashMap::new(),
             last_interval_session: None,
             order_creation_sessions: HashMap::new(),

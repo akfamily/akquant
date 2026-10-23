@@ -67,8 +67,8 @@ impl Processor for ExecutionProcessor {
                         trading_day: engine.current_trading_day,
                         sessions: SessionView {
                             force_continuous: engine.force_session_continuous,
-                            slice: Some(&engine.slice_sessions),
-                            resolver: engine.session_resolver.as_ref(),
+                            slice: Some(&*engine.slice_sessions),
+                            resolver: engine.session_resolver.as_deref(),
                             instruments: Some(&engine.instruments),
                         },
                     };

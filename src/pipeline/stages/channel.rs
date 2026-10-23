@@ -68,8 +68,8 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
             trading_day,
             sessions: SessionView {
                 force_continuous: engine.force_session_continuous,
-                slice: Some(&engine.slice_sessions),
-                resolver: engine.session_resolver.as_ref(),
+                slice: Some(&*engine.slice_sessions),
+                resolver: engine.session_resolver.as_deref(),
                 instruments: Some(&engine.instruments),
             },
         };
@@ -137,8 +137,8 @@ fn record_creation_session(engine: &mut Engine, order: &Order) {
     let _ = engine.ensure_session_resolver();
     let session = SessionView {
         force_continuous: false,
-        slice: Some(&engine.slice_sessions),
-        resolver: engine.session_resolver.as_ref(),
+        slice: Some(&*engine.slice_sessions),
+        resolver: engine.session_resolver.as_deref(),
         instruments: Some(&engine.instruments),
     }
     .session_for(&order.symbol, order.created_at);
@@ -192,8 +192,8 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
         trading_day,
         sessions: SessionView {
             force_continuous: engine.force_session_continuous,
-            slice: Some(&engine.slice_sessions),
-            resolver: engine.session_resolver.as_ref(),
+            slice: Some(&*engine.slice_sessions),
+            resolver: engine.session_resolver.as_deref(),
             instruments: Some(&engine.instruments),
         },
     };

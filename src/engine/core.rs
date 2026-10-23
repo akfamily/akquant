@@ -85,7 +85,8 @@ pub struct Engine {
     pub(crate) instruments: HashMap<String, Instrument>,
     /// 会话级时段解析器；`run()` 开始时按 `session_config` 与时区构造（见
     /// [`Engine::ensure_session_resolver`]），配置或时区变化时置 `None` 以便重建。
-    pub(crate) session_resolver: Option<crate::calendar::resolver::SessionResolver>,
+    /// 包在 `Arc` 里供 `StrategyContext` 廉价共享（解析器内部缓存用 `Mutex`）。
+    pub(crate) session_resolver: Option<Arc<crate::calendar::resolver::SessionResolver>>,
     /// 当前所处的会话交易日（最近一个已开日的交易日）。
     pub(crate) current_trading_day: Option<NaiveDate>,
     /// `current_trading_day` 覆盖的时间区间 `(上一交易日收盘, 本交易日收盘]`（纳秒）。
@@ -106,7 +107,8 @@ pub struct Engine {
     pub(crate) timers: BinaryHeap<Timer>, // Min-Heap via Timer's Ord implementation
     pub(crate) force_session_continuous: bool,
     /// 当前时间片各品种的时段（行情事件按 bar 区间解析）；时间戳推进时清空。
-    pub(crate) slice_sessions: HashMap<String, crate::model::TradingSession>,
+    /// 修改走 `Arc::make_mut`；`StrategyContext` 只持 `Weak`，不会迫使逐事件复制整表。
+    pub(crate) slice_sessions: Arc<HashMap<String, crate::model::TradingSession>>,
     /// 各品种最近一次解析所在的时段区间 `[start, end)` 与时段（`event_session` 缓存）；
     /// 解析器重建时清空。
     pub(crate) session_span_cache: HashMap<String, (i64, i64, crate::model::TradingSession)>,
@@ -368,7 +370,7 @@ impl Engine {
             .map(|i| (i.symbol().to_string(), Some(i.asset_type)))
             .collect();
         resolver.set_active(&active);
-        self.session_resolver = Some(resolver);
+        self.session_resolver = Some(Arc::new(resolver));
         // 缓存的时段区间来自旧解析器（时区、时段表或标的变化后失效）。
         self.session_span_cache.clear();
         self.last_interval_session = None;
@@ -922,6 +924,7 @@ impl Engine {
         previous_account_metrics: AccountMetrics,
     ) -> PyResult<Py<StrategyContext>> {
         self.ensure_strategy_context_capacity();
+        let sessions = self.context_sessions();
         let account_metrics = self.current_account_metrics();
         let position_entry_prices = self.build_position_entry_prices();
         let frozen_cash = self
@@ -1004,6 +1007,7 @@ impl Engine {
                         .unwrap_or_default(),
                     margin_daily_interest: self.margin_daily_interest.to_f64().unwrap_or_default(),
                     last_prices: Arc::clone(&self.last_prices),
+                    sessions,
                 });
             }
             return Ok(py_ctx);
@@ -1020,6 +1024,7 @@ impl Engine {
             strategy_id,
             previous_cash,
             previous_account_metrics,
+            sessions,
         );
         let py_ctx = Py::new(py, ctx).unwrap();
         let persistent_ref = py_ctx.clone_ref(py);
@@ -1322,6 +1327,7 @@ impl Engine {
         strategy_id: Option<String>,
         previous_cash: Decimal,
         previous_account_metrics: AccountMetrics,
+        sessions: crate::context::ContextSessions,
     ) -> StrategyContext {
         let account_metrics = self.current_account_metrics();
         let position_entry_prices = self.build_position_entry_prices();
@@ -1388,7 +1394,22 @@ impl Engine {
             margin_daily_interest: self.margin_daily_interest.to_f64().unwrap_or_default(),
             instruments: Arc::new(self.instruments.clone()),
             last_prices: Arc::clone(&self.last_prices),
+            sessions,
         })
+    }
+
+    /// 交给策略上下文的交易日与时段状态：交易日按上下文时刻取风控口径（不开日），
+    /// 解析器与本时间片时段表与撮合共用同一份（`Arc` 克隆 / `Weak` 引用）。
+    pub(crate) fn context_sessions(&mut self) -> crate::context::ContextSessions {
+        // 解析器在 run() 开始时已构造；不在这里补建（无解析器时 session_of 按连续竞价，
+        // 与撮合 SessionView 一致）。
+        let trading_day = self.risk_trading_day(self.context_timestamp());
+        crate::context::ContextSessions {
+            trading_day,
+            session_resolver: self.session_resolver.clone(),
+            slice_sessions: Arc::downgrade(&self.slice_sessions),
+            force_session_continuous: self.force_session_continuous,
+        }
     }
 
     pub(crate) fn datetime_from_ns(timestamp: i64) -> DateTime<Utc> {

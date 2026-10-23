@@ -180,6 +180,8 @@ class SessionResolver:
     ) -> None: ...
     def session_day_end(self, trading_day: datetime.date) -> int: ...
     def is_session_day(self, day: datetime.date) -> bool: ...
+    def session_trading_day(self, timestamp: int) -> datetime.date: ...
+    def next_session_day(self, day: datetime.date) -> datetime.date: ...
     @property
     def uses_fallback_calendar(self) -> bool: ...
     @staticmethod
@@ -2792,6 +2794,7 @@ class StrategyContext:
     timers: list[Timer]
     session: akquant.TradingSession
     current_time: int
+    trading_day: typing.Optional[datetime.date]
     recent_trades: list[Trade]
     recent_expired_orders: list[Order]
     recent_expiry_events: list[ExpiryEvent]
@@ -2999,6 +3002,34 @@ class StrategyContext:
 
         :param symbol: 标的代码
         :return: 持仓均价
+        """
+        ...
+
+    def session_of(self, symbol: str) -> TradingSession:
+        r"""
+        品种此刻的交易时段.
+
+        与撮合同口径：本时间片已解析的优先（含 bar 区间信息），否则按当前时刻解析；
+        解析失败、无解析器或实盘强制连续竞价时为 Continuous。
+
+        :param symbol: 标的代码
+        :return: 交易时段
+        """
+        ...
+
+    def is_trading_day(self, day: datetime.date) -> bool:
+        r"""
+        是否为会话交易日历上的交易日（无解析器时为 False）.
+
+        :param day: 日期
+        """
+        ...
+
+    def next_trading_day(self, day: datetime.date) -> typing.Optional[datetime.date]:
+        r"""
+        会话交易日历上 ``day`` 之后的下一个交易日（超出日历或无解析器时为 None）.
+
+        :param day: 日期
         """
         ...
 

@@ -128,6 +128,19 @@ impl PySessionResolver {
         self.inner.is_session_day(day)
     }
 
+    /// 时刻 ``timestamp``（UTC 纳秒）所属的会话交易日：第一个收盘不早于它的交易日
+    /// （夜盘属下一交易日）。
+    fn session_trading_day(&self, timestamp: i64) -> PyResult<NaiveDate> {
+        self.inner
+            .session_trading_day(timestamp)
+            .map_err(calendar_err)
+    }
+
+    /// 会话交易日历上 ``day`` 之后的下一个交易日；超出日历范围时报 ValueError。
+    fn next_session_day(&self, day: NaiveDate) -> PyResult<NaiveDate> {
+        self.inner.next_session_day(day).map_err(calendar_err)
+    }
+
     /// 是否在使用缺省日历（未传 ``trading_calendar``）。
     #[getter]
     fn uses_fallback_calendar(&self) -> bool {

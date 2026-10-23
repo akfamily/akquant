@@ -8,15 +8,16 @@ from .log import get_logger
 logger = get_logger("scheduler")
 
 
-_RESERVED_TIMER_PREFIX = "__akq_day_close__|"
+_RESERVED_TIMER_PREFIX = "__akq_"
+_DAY_CLOSE_TIMER_PREFIX = "__akq_day_close__|"
 
 
 def _check_payload(payload: str) -> None:
-    """拒绝占用引擎内部日终结算前缀的 payload."""
+    """拒绝占用引擎内部保留前缀 ``__akq_`` 的 payload."""
     if str(payload).startswith(_RESERVED_TIMER_PREFIX):
         raise ValueError(
-            f"定时器 payload 不能以 {_RESERVED_TIMER_PREFIX!r} 开头"
-            "（引擎内部日终结算专用前缀）"
+            f"定时器 payload 不能以 {_RESERVED_TIMER_PREFIX!r} 开头（引擎内部保留，"
+            f"如日终结算专用前缀 {_DAY_CLOSE_TIMER_PREFIX!r}），请换一个 payload 名称"
         )
 
 
