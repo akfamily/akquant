@@ -174,6 +174,7 @@ impl StatisticsManager {
         timezone_offset: i32,
         days_per_year: f64,
         risk_free_rate: f64,
+        trading_day_ends: Vec<(chrono::NaiveDate, i64)>,
     ) -> BacktestResult {
         // Calculate final PnL
         let trade_pnl = order_manager
@@ -231,6 +232,7 @@ impl StatisticsManager {
             liquidation_audits: self.liquidation_audits.clone(),
             days_per_year,
             risk_free_rate,
+            trading_day_ends,
         })
     }
 

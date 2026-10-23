@@ -91,6 +91,10 @@ pub struct Engine {
     pub(crate) current_trading_day: Option<NaiveDate>,
     /// `current_trading_day` 覆盖的时间区间 `(上一交易日收盘, 本交易日收盘]`（纳秒）。
     pub(crate) current_day_span: Option<(i64, i64)>,
+    /// 本次运行实际开过的交易日及其收盘时刻 `(交易日, 收盘纳秒)`，按开日顺序追加。
+    /// 日收益/日权益按它把权益点归入交易日（夜盘点属下一交易日）；不入存档，
+    /// 续跑结果只覆盖续跑段开过（含续跑时重建跨度）的交易日。
+    pub(crate) trading_day_ends: Vec<(NaiveDate, i64)>,
     /// 最近一个已完成日终结算的交易日。
     pub(crate) last_settled_trading_day: Option<NaiveDate>,
     /// 当前交易日最后一个已处理行情事件的时间戳（Day 单豁免判据）。

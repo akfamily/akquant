@@ -8,6 +8,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Tuple,
     Union,
     cast,
 )
@@ -15,10 +16,13 @@ from typing import (
 if TYPE_CHECKING:
     from ._viz import VizNamespace
 
+import datetime as dt
+
 import pandas as pd
 
 from ..akquant import BacktestResult as RustBacktestResult
 from ..akquant import ClosedTrade, Order, Trade
+from ..analysis.benchmark import daily_last_by_trading_day
 from ..indicator_identity import identity_of
 
 _POSITION_EFFECT_TEXT = {
@@ -152,13 +156,26 @@ class BacktestResult:
             return pd.Series(dtype=float)
 
         # 口径对齐 Rust src/analysis/result.rs::calculate:
-        # 按本地自然日取每日最后一个权益点, 只保留真实存在行情的交易日
-        # (dropna 而非 ffill —— ffill 会给周末/节假日补出 0.0 伪收益,
-        #  稀释波动率并使 Sharpe 与 metrics.sharpe_ratio 对不上),
+        # 按交易日取每日最后一个权益点 (交易日 T 覆盖 (上一交易日收盘, T 收盘],
+        # 夜盘点归下一交易日; 边界取引擎实际开过的交易日 trading_day_ends),
+        # 只保留真实存在行情的交易日 (dropna 而非 ffill —— ffill 会给周末/节假日
+        # 补出 0.0 伪收益, 稀释波动率并使 Sharpe 与 metrics.sharpe_ratio 对不上),
         # 且首日不产生收益点 (Rust 侧循环从第二日开始)。
-        daily_equity = equity.resample("D").last().dropna()
+        daily_equity = self._to_daily_curve(equity)
         returns = daily_equity.pct_change().dropna()
         return cast(pd.Series, returns)
+
+    @property
+    def trading_day_ends(self) -> List[Tuple[dt.date, int]]:
+        """
+        引擎实际开过的交易日及其收盘时刻 ``[(交易日, 收盘纳秒)]``.
+
+        日收益/日权益按它把权益点归入交易日：交易日 T 覆盖
+        ``(上一交易日收盘, T 收盘]``，夜盘点属下一交易日。从存档续跑的结果只含
+        续跑段开过的交易日；不在任何已知区间内的点退回本地自然日。
+        """
+        ends = getattr(self._raw, "trading_day_ends", None)
+        return [(day, int(end)) for day, end in ends] if ends else []
 
     @property
     def cash_curve(self) -> pd.Series:
@@ -196,18 +213,18 @@ class BacktestResult:
         df.set_index("timestamp", inplace=True)
         return df["margin"]
 
-    @staticmethod
-    def _to_daily_curve(series: pd.Series) -> pd.Series:
+    def _to_daily_curve(self, series: pd.Series) -> pd.Series:
         """
         Convert a curve series to daily end-of-day values.
 
+        按交易日（``trading_day_ends``）取每日最后一个值，标签为交易日本地 0 点。
+
         :param series: Input curve series with DatetimeIndex.
-        :return: Daily curve using last value per day.
+        :return: Daily curve using last value per trading day.
         """
         if series.empty:
             return pd.Series(dtype=float)
-        daily_series = series.resample("D").last().dropna()
-        return cast(pd.Series, daily_series)
+        return daily_last_by_trading_day(series, self.trading_day_ends, self._timezone)
 
     @property
     def equity_curve_daily(self) -> pd.Series:

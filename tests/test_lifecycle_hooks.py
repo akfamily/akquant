@@ -778,3 +778,150 @@ def test_live_daily_timer_delivered_early_reschedules_to_next_trading_day(
     assert pd.Timestamp(ts_ns, tz="UTC").tz_convert(TZ) == pd.Timestamp(
         "2024-01-08 10:00", tz=TZ
     )
+
+
+def _night_cfg() -> Any:
+    return aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=1e6),
+        instruments_config=[
+            aq.InstrumentConfig(
+                symbol="au2406",
+                asset_type="FUTURES",
+                multiplier=1000.0,
+                margin_ratio=0.1,
+            )
+        ],
+    )
+
+
+def test_daily_equity_groups_night_session_into_next_trading_day() -> None:
+    """夜盘：周一 21:30 的权益点属于周二交易日、周二 21:30 的属于周三交易日.
+
+    按自然日只有 01-08、01-09 两天；按交易日是 01-08、01-09、01-10 三天。
+    """
+    df = _minute(
+        [
+            "2024-01-08 14:00",
+            "2024-01-08 21:30",
+            "2024-01-08 23:30",
+            "2024-01-09 10:00",
+            "2024-01-09 15:00",
+            "2024-01-09 21:30",
+        ],
+        symbol="au2406",
+        price=500.0,
+    )
+    r = run_backtest(
+        strategy=_HookLog,
+        data=df,
+        config=_night_cfg(),
+        show_progress=False,
+        sessions={"au": "CN_FUTURES_NIGHT_0230"},
+    )
+    daily = r.equity_curve_daily
+    days = ["2024-01-08", "2024-01-09", "2024-01-10"]
+    assert [d.strftime("%Y-%m-%d") for d in daily.index] == days
+    # 标签是交易日本地 0 点（带结果时区），与日盘口径一致
+    assert str(pd.DatetimeIndex(daily.index).tz) == TZ
+    assert all(d == d.normalize() for d in daily.index)
+    assert [d.strftime("%Y-%m-%d") for d in r.cash_curve_daily.index] == days
+    assert [d.strftime("%Y-%m-%d") for d in r.margin_curve_daily.index] == days
+    # 结果对象带上引擎实际开过的交易日与收盘时刻
+    ends = r.trading_day_ends
+    assert ends == r._raw.trading_day_ends
+    assert [d for d, _ in ends] == [
+        dt.date(2024, 1, 8),
+        dt.date(2024, 1, 9),
+        dt.date(2024, 1, 10),
+    ]
+    assert [_local(e) for _, e in ends] == [
+        "01-08 15:00:00.000000",
+        "01-09 15:00:00.000000",
+        "01-10 15:00:00.000000",
+    ]
+
+
+class _BuyFirstBar(Strategy):
+    def on_bar(self, bar: Bar) -> None:
+        if self.get_position(bar.symbol) == 0:
+            self.buy(bar.symbol, 1)
+
+
+def test_night_daily_returns_match_rust_metrics_and_merge() -> None:
+    """夜盘日收益：Python daily_returns、合并结果与 Rust 指标同按交易日分组."""
+    times = [
+        "2024-01-08 14:00",
+        "2024-01-08 21:30",
+        "2024-01-09 10:00",
+        "2024-01-09 21:30",
+        "2024-01-10 10:00",
+        "2024-01-10 21:30",
+        "2024-01-11 10:00",
+    ]
+    prices = [500.0, 510.0, 505.0, 520.0, 515.0, 500.0, 530.0]
+    df = _minute(times, symbol="au2406")
+    df["open"] = df["high"] = df["low"] = df["close"] = prices
+    r = run_backtest(
+        strategy=_BuyFirstBar,
+        data=df,
+        config=_night_cfg(),
+        show_progress=False,
+        sessions={"au": "CN_FUTURES_NIGHT_0230"},
+    )
+    rets = r.daily_returns
+    # 4 个交易日 → 3 个日收益（按自然日也是 4 天，但夜盘点记在前一天，日末权益不同）
+    assert [d.strftime("%Y-%m-%d") for d in rets.index] == [
+        "2024-01-09",
+        "2024-01-10",
+        "2024-01-11",
+    ]
+    # 周一 21:30 的权益属周二交易日：周二日末权益取周二 10:00 那一点
+    daily = r.equity_curve_daily
+    eq = r.equity_curve
+    assert daily.iloc[1] == eq[pd.Timestamp("2024-01-09 10:00", tz=TZ)]
+    std = float(rets.std(ddof=1))
+    expected_sharpe = float(rets.mean()) * 252 / (std * 252**0.5)
+    assert abs(r.metrics.sharpe_ratio - expected_sharpe) < 1e-9
+
+    from akquant.analysis import build_daily_returns_from_equity
+    from akquant.backtest.merge import merge_results
+
+    merged = merge_results(r)
+    pd.testing.assert_series_equal(merged.daily_returns, rets, check_freq=False)
+    pd.testing.assert_series_equal(merged.equity_curve_daily, daily, check_freq=False)
+    assert abs(merged.metrics.sharpe_ratio - expected_sharpe) < 1e-9
+    pd.testing.assert_series_equal(
+        build_daily_returns_from_equity(eq, r._raw.trading_day_ends, TZ),
+        rets,
+        check_freq=False,
+    )
+
+
+def test_day_session_daily_curve_unchanged_vs_natural_day() -> None:
+    """A 股日盘：按交易日分组与按自然日 resample 结果一致."""
+    df = _minute(
+        [
+            "2024-01-02 09:31",
+            "2024-01-02 14:59",
+            "2024-01-03 09:31",
+            "2024-01-03 15:00",
+            "2024-01-05 10:00",
+        ]
+    )
+    df["close"] = [10.0, 10.2, 10.1, 10.4, 10.3]
+    r = run_backtest(
+        strategy=_BuyFirstBar,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    eq = r.equity_curve
+    pd.testing.assert_series_equal(
+        r.equity_curve_daily, eq.resample("D").last().dropna(), check_freq=False
+    )
+    pd.testing.assert_series_equal(
+        r.daily_returns,
+        eq.resample("D").last().dropna().pct_change().dropna(),
+        check_freq=False,
+    )

@@ -367,6 +367,7 @@ class BacktestResult:
     :ivar snapshots: 每日持仓快照 [(timestamp, [snapshot])]
     :ivar orders: 订单列表
     :ivar executions: 成交列表
+    :ivar trading_day_ends: 引擎实际开过的交易日及收盘时刻 [(date, close_ns)]
     """
 
     equity_curve: list[tuple[int, float]]
@@ -378,6 +379,7 @@ class BacktestResult:
     snapshots: list[tuple[int, list[PositionSnapshot]]]
     orders: list[Order]
     executions: list[Trade]
+    trading_day_ends: list[tuple[datetime.date, int]]
     metrics_df: typing.Any
     orders_df: typing.Any
     resolved_execution_policy: typing.Optional[dict[str, typing.Any]]

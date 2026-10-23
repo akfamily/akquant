@@ -143,7 +143,8 @@ def _build_cross_utc_boundary_same_local_day_data(symbol: str = "TEST") -> list[
     data: list[Bar] = []
     timestamps = [
         pd.Timestamp("2024-01-02 01:00:00", tz="Asia/Shanghai").tz_convert("UTC"),
-        pd.Timestamp("2024-01-02 23:00:00", tz="Asia/Shanghai").tz_convert("UTC"),
+        # 留在当日收盘前: 收盘后的时刻属下一交易日 (日统计按交易日分组)
+        pd.Timestamp("2024-01-02 14:00:00", tz="Asia/Shanghai").tz_convert("UTC"),
     ]
     closes = [10.0, 10.5]
     for ts, close in zip(timestamps, closes):
@@ -435,8 +436,9 @@ def test_backtest_result_exposes_structured_benchmark_analysis() -> None:
     assert payload["benchmark"]["label"] == "CSI300"
     assert payload["summary"]["information_ratio"] is not None
     assert payload["meta"]["aligned_points"] > 0
-    # 首日不产生收益点 (口径对齐 Rust), 故对齐序列从第二个交易日 01-02 开始
-    assert payload["series"][0]["date"] == "2023-01-02"
+    # 日收益按交易日分组: 01-01 (周日) 的 bar 属交易日 01-02, 日权益从 01-02 起;
+    # 首日不产生收益点 (口径对齐 Rust), 故对齐序列从第二个交易日 01-03 开始
+    assert payload["series"][0]["date"] == "2023-01-03"
 
 
 def test_export_benchmark_analysis_keeps_cjk_label_readable(tmp_path: Path) -> None:

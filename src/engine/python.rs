@@ -543,6 +543,7 @@ impl Engine {
             session_resolver: None,
             current_trading_day: None,
             current_day_span: None,
+            trading_day_ends: Vec::new(),
             last_settled_trading_day: None,
             last_event_ts_in_day: None,
             scheduled_day_close: None,
@@ -1709,6 +1710,7 @@ impl Engine {
             self.timezone_offset,
             self.days_per_year,
             self.risk_free_rate,
+            self.trading_day_ends.clone(),
         )
     }
 }

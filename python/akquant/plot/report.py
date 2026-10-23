@@ -18,6 +18,12 @@ from ..analysis.benchmark import (
 from ..analysis.benchmark import (
     resolve_equity_curve as _resolve_equity_curve,
 )
+from ..analysis.benchmark import (
+    result_trading_day_ends as _result_trading_day_ends,
+)
+from ..analysis.benchmark import (
+    sum_by_trading_day as _sum_by_trading_day,
+)
 from ..utils import format_metric_value
 from ._market_data import (
     extract_symbol_market_data,
@@ -1042,7 +1048,8 @@ def _build_chart_html_sections(
             "</details>"
         )
 
-    returns_series = _build_daily_returns_from_equity(equity_curve)
+    day_ends, day_tz = _result_trading_day_ends(result)
+    returns_series = _build_daily_returns_from_equity(equity_curve, day_ends, day_tz)
     fig_rolling = plot_rolling_metrics(returns_series, theme="light")
     rolling_metrics_html = (
         fig_rolling.to_html(full_html=False, include_plotlyjs=False, config=config)
@@ -1434,8 +1441,9 @@ def _build_chart_html_sections(
             liq_df["liquidated_count"] = pd.to_numeric(
                 liq_df["liquidated_count"], errors="coerce"
             ).fillna(0.0)
-            daily_liq = (
-                liq_df.set_index("timestamp")["liquidated_count"].resample("D").sum()
+            liq_ends, liq_tz = _result_trading_day_ends(result)
+            daily_liq = _sum_by_trading_day(
+                liq_df.set_index("timestamp")["liquidated_count"], liq_ends, liq_tz
             ).reset_index()
             if not daily_liq.empty and float(daily_liq["liquidated_count"].sum()) > 0.0:
                 px = __import__("plotly.express", fromlist=["line"])
@@ -1465,8 +1473,9 @@ def _build_chart_html_sections(
             liq_df["daily_interest"] = pd.to_numeric(
                 liq_df["daily_interest"], errors="coerce"
             ).fillna(0.0)
-            daily_interest = (
-                liq_df.set_index("timestamp")["daily_interest"].resample("D").sum()
+            liq_ends, liq_tz = _result_trading_day_ends(result)
+            daily_interest = _sum_by_trading_day(
+                liq_df.set_index("timestamp")["daily_interest"], liq_ends, liq_tz
             ).reset_index()
             has_positive_interest = bool((daily_interest["daily_interest"] > 0.0).any())
             if not daily_interest.empty and has_positive_interest:

@@ -493,6 +493,12 @@ impl Processor for DataProcessor {
                         engine.current_day_span =
                             Some(session_day_span_for(engine, day, timestamp)?);
                     }
+                    // 记下开过的交易日与收盘时刻，供日收益/日权益按交易日分组
+                    if let Some((_, end)) = engine.current_day_span
+                        && engine.trading_day_ends.last().map(|(d, _)| *d) != Some(day)
+                    {
+                        engine.trading_day_ends.push((day, end));
+                    }
                     if engine.scheduled_day_close != Some(day)
                         && engine.last_settled_trading_day != Some(day)
                         && let Some((_, end)) = engine.current_day_span
