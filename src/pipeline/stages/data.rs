@@ -312,9 +312,13 @@ impl Processor for DataProcessor {
                                 r.session_level_instant(timer.timestamp)
                             })
                     };
-                    // 不清空 slice_sessions: 时间片内的定时器(如截面定时器 source_ts + 1)
-                    // 沿用本时间片各品种按 bar 区间求得的时段; 时间片之外没有行情的品种
-                    // 由 SessionView 按定时器时刻解析。下一个行情时间戳到来时才清空。
+                    // 属于当前时间片的定时器(不晚于本片时间戳, 或框架截面定时器
+                    // source_ts + 1 且 source_ts 即本片)沿用本片各品种按 bar 区间求得的
+                    // 时段; 其余定时器(用户 schedule 等)在本片之后, 清空后各品种按定时器
+                    // 时刻解析(上一片已在上面 finalize)。
+                    if !timer_belongs_to_slice(&timer, self.last_timestamp) {
+                        engine.slice_sessions.clear();
+                    }
                     engine.clock.update(timer.timestamp, session);
                     engine.current_event = Some(Event::Timer(timer));
                 }
@@ -392,7 +396,7 @@ impl Processor for DataProcessor {
                         .closed_session_warned
                         .insert(event_symbol.to_string());
                     log::warn!(
-                        "标的 {} 在 {} 的行情落在闭市时段，期间不会撮合成交；如为夜盘等时段，请用 sessions= 指定时段模板（如 {{\"au\": \"CN_FUTURES_NIGHT_0230\"}}）",
+                        "标的 {} 在 {} 的行情落在闭市时段，期间不会撮合成交。最常见的原因是时间戳未带时区（无时区的时间按 UTC 解释）：请先 tz_localize 到交易所时区，或用 timezone= 指定；如确为夜盘等时段，请用 sessions= 指定时段模板（如 {{\"au\": \"CN_FUTURES_NIGHT_0230\"}}）",
                         event_symbol,
                         engine.local_datetime_text(timestamp)
                     );
@@ -554,6 +558,21 @@ impl Processor for DataProcessor {
     }
 }
 
+/// 定时器是否属于时间戳为 `slice_ts` 的时间片(撮合时沿用该片各品种的时段)。
+fn timer_belongs_to_slice(timer: &crate::model::Timer, slice_ts: i64) -> bool {
+    if timer.timestamp <= slice_ts {
+        return true;
+    }
+    // 框架截面定时器: `__framework_cross_section__|<day>|<source_ts>`, 在 source_ts + 1
+    // 触发, 成交时刻按 source_ts 计(见 execution/common.rs)。
+    timer
+        .payload
+        .strip_prefix("__framework_cross_section__|")
+        .and_then(|rest| rest.rsplit('|').next())
+        .and_then(|v| v.parse::<i64>().ok())
+        == Some(slice_ts)
+}
+
 /// 事件所属的交易日。乱序到达(解析出的交易日早于当前交易日, 如实盘迟到的上一
 /// 交易日行情)时按当前交易日处理: 不让 `current_trading_day` 倒退, 也不触发结算。
 fn event_trading_day(current: Option<NaiveDate>, resolved: NaiveDate) -> NaiveDate {
@@ -610,6 +629,8 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
     // NextOpen(bar_offset == 1) 的 Day 单若创建于本交易日最后一个已处理行情事件
     // 当时或之后, 唯一的撮合机会是下一交易日的第一个事件, 本次结算不过期。
     // 同周期(bar_offset == 0)单在创建时的事件上已有撮合机会, 照常过期。
+    // 收盘时刻及之后下的 Day 单(如收盘竞价结束的 15:00 bar 上下的单)属于下一交易日,
+    // 不论成交模式都不在本次结算过期。
     let exempt_day_orders: HashSet<String> = engine
         .state
         .order_manager
@@ -617,10 +638,11 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
         .iter()
         .filter(|order| {
             order.time_in_force == crate::model::TimeInForce::Day
-                && effective_execution_policy_for_order(engine, order).bar_offset == 1
-                && engine
-                    .last_event_ts_in_day
-                    .is_none_or(|last| order.created_at >= last)
+                && (order.created_at >= close_ts
+                    || (effective_execution_policy_for_order(engine, order).bar_offset == 1
+                        && engine
+                            .last_event_ts_in_day
+                            .is_none_or(|last| order.created_at >= last)))
         })
         .map(|order| order.id.clone())
         .collect();

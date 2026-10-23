@@ -258,6 +258,7 @@ def test_order_queued_through_lunch_break_fills_at_afternoon_open() -> None:
         ["2024-01-02 11:30", "2024-01-02 12:00", "2024-01-02 13:01"],
         [10.0, 11.0, 12.0],
     )
+    df.loc[2, "open"] = 11.5  # 13:01 开盘价与收盘价不同，区分按开盘还是收盘成交
     r = run_backtest(
         strategy=_BuyOnFirstBar,
         data=df,
@@ -265,7 +266,7 @@ def test_order_queued_through_lunch_break_fills_at_afternoon_open() -> None:
         initial_cash=1e5,
         show_progress=False,
     )
-    assert _fills(r) == [("01-02 13:01", 12.0)]
+    assert _fills(r) == [("01-02 13:01", 11.5)]
 
 
 @pytest.mark.parametrize("tif", ["GTC", "Day"])
@@ -369,3 +370,154 @@ def test_lazy_after_trading_not_triggered_by_closing_auction_bar() -> None:
         ("2024-01-02", "01-02 15:00"),
         ("2024-01-03", "01-03 09:31"),
     ]
+
+
+class _TimerBuyCurrentClose(Strategy):
+    """在给定本地时刻的定时器里下一笔买单（成交模式由 run_backtest 给 CurrentClose）."""
+
+    at = "2024-01-02 12:00"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_start(self) -> None:
+        self.schedule(pd.Timestamp(self.at, tz=TZ), "buy")
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+    def on_timer(self, payload: str) -> None:
+        if payload == "buy" and not self.done:
+            self.done = True
+            self.buy("600000.SH", 100)
+
+
+@pytest.mark.parametrize("at", ["2024-01-02 12:00", "2024-01-02 20:00"])
+def test_timer_after_slice_resolves_session_at_timer_instant(at: str) -> None:
+    """午休/闭市的用户定时器下的 CurrentClose 单不沿用上一根 bar 的时段，当日不成交."""
+    df = _minute_frame(
+        ["2024-01-02 11:00", "2024-01-02 11:30", "2024-01-03 09:31"],
+        [10.0, 11.0, 12.0],
+    )
+    df.loc[2, "open"] = 11.8
+
+    class Probe(_TimerBuyCurrentClose):
+        pass
+
+    Probe.at = at
+    r = run_backtest(
+        strategy=Probe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+    )
+    fills = _fills(r)
+    assert all(not t.startswith("01-02") for t, _ in fills), fills
+
+
+def test_day_order_placed_at_close_belongs_to_next_trading_day() -> None:
+    """15:00（收盘竞价结束）bar 上的 Day 单属于下一交易日：当日不过期，次日成交."""
+    df = _minute_frame(
+        ["2024-01-02 14:30", "2024-01-02 15:00", "2024-01-03 09:31"],
+        [10.0, 11.0, 12.0],
+    )
+
+    class Probe(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.done = False
+
+        def on_bar(self, bar: Bar) -> None:
+            local = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert(TZ)
+            if not self.done and local.strftime("%H:%M") == "15:00":
+                self.done = True
+                self.buy(bar.symbol, 100, time_in_force=aq.TimeInForce.Day)
+
+    r = run_backtest(
+        strategy=Probe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+    )
+    orders = r.orders_df
+    assert list(orders["status"].astype(str).str.lower()) == ["filled"]
+    assert _fills(r) == [("01-03 09:31", 12.0)]
+
+
+def _fixed_time_daily(symbol: str) -> pd.DataFrame:
+    return _minute_frame(
+        ["2024-01-02 15:00", "2024-01-03 15:00", "2024-01-04 15:00"],
+        [10.0, 10.0, 10.0],
+        symbol=symbol,
+    )
+
+
+def _fixed_time_hits(caplog: pytest.LogCaptureFixture) -> List[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name.startswith("akquant") and 'freq="1d"' in r.getMessage()
+    ]
+
+
+def test_fixed_time_stock_daily_without_freq_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """打 15:00 戳的股票日线未传 freq：告警一次，提示 freq="1d"."""
+    with caplog.at_level("WARNING", logger="akquant"):
+        run_backtest(
+            strategy=_SessionProbe,
+            data=_fixed_time_daily("600000.SH"),
+            symbols=["600000.SH"],
+            initial_cash=1e5,
+            show_progress=False,
+        )
+    hits = _fixed_time_hits(caplog)
+    assert len(hits) == 1, hits
+    assert "15:00" in hits[0] and "600000.SH" in hits[0]
+
+
+def test_fixed_time_stock_daily_with_freq_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """传了 freq="1d" 不告警."""
+    with caplog.at_level("WARNING", logger="akquant"):
+        run_backtest(
+            strategy=_SessionProbe,
+            data=_fixed_time_daily("600000.SH"),
+            symbols=["600000.SH"],
+            initial_cash=1e5,
+            show_progress=False,
+            freq="1d",
+        )
+    assert _fixed_time_hits(caplog) == []
+
+
+def test_fixed_time_futures_daily_at_close_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """期货日盘 15:00 收盘前 1ns 仍是连续竞价，不告警."""
+    cfg = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=1e6),
+        instruments_config=[
+            aq.InstrumentConfig(
+                symbol="rb2405",
+                asset_type="FUTURES",
+                multiplier=10.0,
+                margin_ratio=0.1,
+            )
+        ],
+    )
+    with caplog.at_level("WARNING", logger="akquant"):
+        run_backtest(
+            strategy=_SessionProbe,
+            data=_fixed_time_daily("rb2405"),
+            config=cfg,
+            show_progress=False,
+        )
+    assert _fixed_time_hits(caplog) == []

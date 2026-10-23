@@ -350,12 +350,17 @@ impl SimulatedExecutionClient {
                 }
 
                 // 非连续竞价时段(竞价、午休、闭市、盘后): 订单排队, 等下一可成交时段
-                // (竞价时段的统一撮合见集合竞价撮合)。
-                let event_ts = Self::event_timestamp(event).unwrap_or(ctx.current_time);
-                if ctx.sessions.session_for(&order_snapshot.symbol, event_ts)
-                    != TradingSession::Continuous
-                {
-                    continue;
+                // (竞价时段的统一撮合见集合竞价撮合)。只对本品种的行情与定时器判断;
+                // 其他品种的行情撮合器本就不会让它成交, 不必查时段。
+                let own_event =
+                    Self::event_symbol(event).is_none_or(|symbol| symbol == order_snapshot.symbol);
+                if own_event {
+                    let event_ts = Self::event_timestamp(event).unwrap_or(ctx.current_time);
+                    if ctx.sessions.session_for(&order_snapshot.symbol, event_ts)
+                        != TradingSession::Continuous
+                    {
+                        continue;
+                    }
                 }
 
                 let defer_current = defer_cross_symbol_increase

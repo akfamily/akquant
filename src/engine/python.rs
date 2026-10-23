@@ -556,6 +556,7 @@ impl Engine {
             force_session_continuous: false,
             slice_sessions: HashMap::new(),
             session_span_cache: HashMap::new(),
+            last_interval_session: None,
             closed_session_warned: HashSet::new(),
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8

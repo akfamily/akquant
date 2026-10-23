@@ -283,15 +283,15 @@ def test_run_from_checkpoint_rewrites_and_validates(tmp_path: Path) -> None:
     ]
 
 
-class _DailyBuyAt0925(Strategy):
-    """每日 09:25 定时买 1 股，记录所有事件时刻."""
+class _DailyBuyAt0935(Strategy):
+    """每日 09:35（连续竞价时段内）定时买 1 股，记录所有事件时刻."""
 
     def __init__(self) -> None:
         super().__init__()
         self.events: List[tuple[str, int]] = []
 
     def on_start(self) -> None:
-        self.schedule_daily("09:25:00", "buy")
+        self.schedule_daily("09:35:00", "buy")
 
     def on_bar(self, bar: Bar) -> None:
         self.events.append(("bar", int(bar.timestamp)))
@@ -304,9 +304,9 @@ class _DailyBuyAt0925(Strategy):
 
 
 def test_first_day_intraday_timer_not_backfilled_before_first_bar() -> None:
-    """首根 bar 改写到 15:00 后，当日 09:25 定时器不再补触发（无前视、时间不倒退）."""
+    """首根 bar 改写到 15:00 后，当日 09:35 定时器不再补触发（无前视、时间不倒退）."""
     result = run_backtest(
-        strategy=_DailyBuyAt0925,
+        strategy=_DailyBuyAt0935,
         data=_daily_frame(["2024-04-01", "2024-04-02", "2024-04-03"]),
         symbols=["600000.SH"],
         initial_cash=1e5,
@@ -323,7 +323,7 @@ def test_first_day_intraday_timer_not_backfilled_before_first_bar() -> None:
     assert not (local.dt.date == dt.date(2024, 4, 1)).any()
     first = fills.iloc[local.argsort().iloc[0]]
     assert pd.Timestamp(first["timestamp"]).tz_convert("Asia/Shanghai") == (
-        pd.Timestamp("2024-04-02 09:25", tz="Asia/Shanghai")
+        pd.Timestamp("2024-04-02 09:35", tz="Asia/Shanghai")
     )
     assert float(first["price"]) == pytest.approx(10.2)  # 04-01 收盘
 
@@ -498,8 +498,8 @@ def test_t_plus_one_intraday_buy_not_sellable_on_same_day_close_bar() -> None:
     assert seen[dt.date(2024, 1, 4)] == 100.0  # 01-03 收盘结算后解冻
 
 
-class _BuyOnceAt0925SellAt1530(Strategy):
-    """01-03 09:25 按当前价买入一次；每日 15:30 记录可用并卖出全部可用."""
+class _BuyOnceAt0935SellAt1530(Strategy):
+    """01-03 09:35（连续竞价）按当前价买入一次；每日 15:30 记录可用并卖出全部可用."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -508,7 +508,7 @@ class _BuyOnceAt0925SellAt1530(Strategy):
         self.available_at_sell_timer: List[tuple] = []
 
     def on_start(self) -> None:
-        self.schedule_daily("09:25", "buy")
+        self.schedule_daily("09:35", "buy")
         self.schedule_daily("15:30", "sell")
 
     def _local_now(self) -> pd.Timestamp:
@@ -535,12 +535,12 @@ class _BuyOnceAt0925SellAt1530(Strategy):
 
 
 def test_t_plus_one_buy_then_after_close_timer_is_next_trading_day() -> None:
-    """09:25 立即成交的买入：当日 15:00 bar 不可卖；15:30 已属下一交易日.
+    """09:35 立即成交的买入：当日 15:00 bar 不可卖；15:30 已属下一交易日.
 
     当日收盘结算已解冻 T+1，15:30 下的卖单在下一交易日成交.
     """
     result = run_backtest(
-        strategy=_BuyOnceAt0925SellAt1530,
+        strategy=_BuyOnceAt0935SellAt1530,
         data=_daily_frame(["2024-01-02", "2024-01-03", "2024-01-04"]),
         symbols=["600000.SH"],
         initial_cash=1e5,
@@ -549,7 +549,7 @@ def test_t_plus_one_buy_then_after_close_timer_is_next_trading_day() -> None:
     )
     strategy = result.strategy
     assert strategy is not None
-    # 首个 09:25 是 01-03 的（01-02 的已早于首根 bar），按当前价立即成交
+    # 首个 09:35 是 01-03 的（01-02 的已早于首根 bar），按当前价立即成交
     on_bar = dict(strategy.available_on_bar)
     assert on_bar[dt.date(2024, 1, 3)] == 0.0  # 当日收盘 bar 仍冻结
     at_timer = dict(strategy.available_at_sell_timer)
@@ -562,7 +562,7 @@ def test_t_plus_one_buy_then_after_close_timer_is_next_trading_day() -> None:
     sides = fills["side"].astype(str).str.lower()
     buy_times = list(local[sides == "buy"])
     sell_times = list(local[sides == "sell"])
-    assert [t.strftime("%Y-%m-%d %H:%M") for t in buy_times] == ["2024-01-03 09:25"]
+    assert [t.strftime("%Y-%m-%d %H:%M") for t in buy_times] == ["2024-01-03 09:35"]
     # 卖出发生在买入所属交易日的收盘结算之后（不在买入当日盘中）
     assert sell_times
     assert all(

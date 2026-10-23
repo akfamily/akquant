@@ -649,6 +649,92 @@ class _DateOnlyRewriter:
 
 _INTERVAL_UNKNOWN = np.iinfo(np.int64).min
 _ONE_DAY_NS = 86_400_000_000_000
+# 相邻 bar 间隔不小于该值才视为“像日线”（容忍夏令时等 1h 级偏差）
+_DAILY_GAP_MIN_NS = 20 * 3_600_000_000_000
+
+
+class _FixedTimeDailyChecker:
+    """检测打在固定非 0 点时刻、未声明 freq 的日线（一次运行只告警一次）.
+
+    这类数据没有 bar 区间，按“时间戳前 1ns”判时段；时刻落在收盘集合竞价等非连续
+    竞价时段时，订单会排队到下一根 bar，成交整体后移。只告警，不推断不改写。
+    """
+
+    def __init__(
+        self,
+        resolver: Any,
+        timezone: str,
+        asset_type_of: Callable[[str], Any],
+        logger: Any,
+    ) -> None:
+        """绑定解析器（须已 set_active）、引擎时区、资产类型解析与 logger."""
+        self.resolver = resolver
+        self.timezone = timezone
+        self.asset_type_of = asset_type_of
+        self._logger = logger
+        self._warned = False
+
+    def check(self, symbol: str, ts_ns: Any) -> None:
+        """检查一个标的在一个数据单元内、区间未知的行（UTC 纳秒时间戳）."""
+        if self._warned:
+            return
+        ts = np.asarray(ts_ns, dtype=np.int64)
+        if len(ts) < 2:
+            return
+        ts = np.sort(ts)
+        if int(np.diff(ts).min()) < _DAILY_GAP_MIN_NS:
+            return
+        local = pd.DatetimeIndex(pd.to_datetime(ts, unit="ns", utc=True)).tz_convert(
+            self.timezone
+        )
+        tod = np.asarray(
+            (local - local.normalize()).to_numpy(dtype="timedelta64[ns]"),
+            dtype=np.int64,
+        )
+        first = int(tod[0])
+        if first == 0 or not bool((tod == first).all()):
+            return
+        try:
+            _, session = self.resolver.resolve_instant(
+                str(symbol), int(ts[0]) - 1, self.asset_type_of(str(symbol))
+            )
+        except Exception:
+            return
+        if session == TradingSession.Continuous:
+            return
+        self._warned = True
+        self._logger.warning(
+            "标的 %s 的数据看起来是打在 %s 的日线，但未传 freq：每根 bar 会按该时刻"
+            "所在时段（%s）撮合，订单要等到下一根 bar 才成交，成交整体后移。如为日线，"
+            '请传 freq="1d"，让每根 bar 覆盖整个交易日（同类情况不再提示）',
+            symbol,
+            local[0].strftime("%H:%M"),
+            str(session).split(".")[-1],
+        )
+
+    def check_rows(self, symbols: Any, ts_ns: Any, unknown: Any = None) -> None:
+        """多标的数据：按标的分组检查区间未知（``unknown`` 为真）的行."""
+        if self._warned:
+            return
+        frame = pd.DataFrame({"symbol": np.asarray(symbols, dtype=object), "ts": ts_ns})
+        if unknown is not None:
+            frame = frame[np.asarray(unknown, dtype=bool)]
+        for sym, group in frame.groupby("symbol", sort=False):
+            self.check(str(sym), group["ts"].to_numpy())
+            if self._warned:
+                return
+
+    def check_bars(self, bars: Sequence[Any]) -> None:
+        """Bar 列表：检查没有 ``interval_start`` 的 bar."""
+        if self._warned:
+            return
+        unknown = [b for b in bars if getattr(b, "interval_start", None) is None]
+        if len(unknown) < 2:
+            return
+        self.check_rows(
+            [str(b.symbol) for b in unknown],
+            np.asarray([int(b.timestamp) for b in unknown], dtype=np.int64),
+        )
 
 
 def _bar_interval_starts(
@@ -3759,6 +3845,9 @@ def run_backtest(
             )
         ],
     )
+    fixed_time_checker = _FixedTimeDailyChecker(
+        session_resolver, timezone, session_asset_type_of, logger
+    )
 
     # 3. 准备数据源和 Symbol
     feed = DataFeed()
@@ -3896,11 +3985,14 @@ def run_backtest(
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
                 feed.add_arrays(
                     *arrays,  # type: ignore[arg-type]
-                    interval_starts=_arrays_interval_starts(
-                        arrays, date_only=date_only, period_ns=bar_period_ns
-                    ),
+                    interval_starts=interval_starts,
                 )
                 if sym not in symbols:
                     symbols.append(sym)
@@ -3993,6 +4085,10 @@ def run_backtest(
                         df, date_only_rewriter
                     )
                     arrays = dataframe_to_arrays(df)
+                    if bar_period_ns is None:
+                        fixed_time_checker.check_rows(
+                            df["symbol"].to_numpy(), arrays[0], ~rewritten_rows
+                        )
                     feed.add_arrays(
                         *arrays,  # type: ignore[arg-type]
                         interval_starts=_masked_interval_starts(
@@ -4034,11 +4130,14 @@ def run_backtest(
                 df, date_only = _rewrite_date_only_frame(df, date_only_rewriter)
                 data_map_for_indicators[target_symbol] = df
                 arrays = dataframe_to_arrays(df, symbol=target_symbol)
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(target_symbol, arrays[0])
                 feed.add_arrays(
                     *arrays,  # type: ignore[arg-type]
-                    interval_starts=_arrays_interval_starts(
-                        arrays, date_only=date_only, period_ns=bar_period_ns
-                    ),
+                    interval_starts=interval_starts,
                 )
                 feed.sort()
                 if target_symbol not in symbols:
@@ -4092,11 +4191,14 @@ def run_backtest(
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
                 feed.add_arrays(
                     *arrays,  # type: ignore[arg-type]
-                    interval_starts=_arrays_interval_starts(
-                        arrays, date_only=date_only, period_ns=bar_period_ns
-                    ),
+                    interval_starts=interval_starts,
                 )
                 if sym not in symbols:
                     symbols.append(sym)
@@ -4135,6 +4237,7 @@ def run_backtest(
                     date_only_rewriter,
                     bar_period_ns,
                 )
+                fixed_time_checker.check_bars(data)
                 data.sort(key=lambda b: b.timestamp)
                 feed.add_bars(data)  # type: ignore[arg-type]
 
@@ -4197,11 +4300,14 @@ def run_backtest(
                 )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
                 feed.add_arrays(
                     *arrays,  # type: ignore[arg-type]
-                    interval_starts=_arrays_interval_starts(
-                        arrays, date_only=date_only, period_ns=bar_period_ns
-                    ),
+                    interval_starts=interval_starts,
                 )
                 loaded_count += 1
 
@@ -5702,6 +5808,9 @@ def run_from_checkpoint(
         sessions=session_map, trading_calendar=calendar_days, timezone=timezone_name
     )
     date_only_rewriter = _DateOnlyRewriter(session_resolver, timezone_name, logger)
+    fixed_time_checker = _FixedTimeDailyChecker(
+        session_resolver, timezone_name, session_asset_type_of, logger
+    )
     # 存档里的 self.freq 即 bar 周期(续跑不支持 tick 输入); 解析不了按未声明处理
     try:
         bar_period_ns = _freq_period_ns(
@@ -5765,11 +5874,14 @@ def run_from_checkpoint(
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
                 feed.add_arrays(
                     *arrays,  # type: ignore[arg-type]
-                    interval_starts=_arrays_interval_starts(
-                        arrays, date_only=date_only, period_ns=bar_period_ns
-                    ),
+                    interval_starts=interval_starts,
                 )
                 loaded_count += 1
         if loaded_count > 0:
@@ -5847,6 +5959,7 @@ def run_from_checkpoint(
                 date_only_rewriter,
                 bar_period_ns,
             )
+            fixed_time_checker.check_bars(resume_bars)
             feed.add_bars(resume_bars)
 
             # Construct DataFrame for indicator calculation
@@ -5903,11 +6016,14 @@ def run_from_checkpoint(
                 )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
                 feed.add_arrays(
                     *arrays,  # type: ignore[arg-type]
-                    interval_starts=_arrays_interval_starts(
-                        arrays, date_only=date_only, period_ns=bar_period_ns
-                    ),
+                    interval_starts=interval_starts,
                 )
                 loaded_count += 1
 

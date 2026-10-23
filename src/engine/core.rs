@@ -107,6 +107,10 @@ pub struct Engine {
     /// 各品种最近一次解析所在的时段区间 `[start, end)` 与时段（`event_session` 缓存）；
     /// 解析器重建时清空。
     pub(crate) session_span_cache: HashMap<String, (i64, i64, crate::model::TradingSession)>,
+    /// 跨多段区间的解析缓存：最近一次 ((时段表指针, interval_start, ts), 时段)；
+    /// 时段表指针来自当前解析器，解析器重建时清空。
+    pub(crate) last_interval_session:
+        Option<((usize, Option<i64>, i64), crate::model::TradingSession)>,
     /// 已告警过“行情落在闭市时段”的品种（每个品种只告警一次）。
     pub(crate) closed_session_warned: HashSet<String>,
     #[pyo3(get, set)]
@@ -358,6 +362,7 @@ impl Engine {
         self.session_resolver = Some(resolver);
         // 缓存的时段区间来自旧解析器（时区、时段表或标的变化后失效）。
         self.session_span_cache.clear();
+        self.last_interval_session = None;
         Ok(())
     }
 
@@ -382,17 +387,27 @@ impl Engine {
         }
         let resolver = self.session_resolver.as_ref().expect("已构造");
         let asset_type = self.instruments.get(symbol).map(|i| i.asset_type);
+        // 跨多段的区间（如只有日期的日线覆盖整个交易日）不落在单个时段区间内，上面的
+        // 品种缓存永不命中。解析结果只取决于（时段表, 区间），同一时间戳上同一时段表
+        // 的各品种共享：缓存最近一次的 (时段表指针, interval_start, ts) → 时段。
+        let schedule_key = Arc::as_ptr(&resolver.schedule_for(symbol, asset_type)) as usize;
+        let key = (schedule_key, interval_start, ts);
+        if let Some((k, session)) = self.last_interval_session
+            && k == key
+        {
+            return Ok(session);
+        }
         let session = resolver
             .resolve_bar(symbol, asset_type, interval_start, ts)
             .map_err(|e| PyValueError::new_err(e.to_string()))?
             .session;
-        // 只缓存与本次解析结果一致、且确实覆盖本事件的区间（多段 bar、恰在段结束的
-        // 时刻等情形不缓存，下次照常解析）。
-        if let Ok(span) = resolver.segment_span_at(symbol, asset_type, point)
-            && span.2 == session
-            && span_covers_event(span, interval_start, ts)
-        {
-            self.session_span_cache.insert(symbol.to_string(), span);
+        // 只缓存与本次解析结果一致、且确实覆盖本事件的区间；多段 bar、恰在段结束的
+        // 时刻等情形改记到按区间的缓存。
+        match resolver.segment_span_at(symbol, asset_type, point) {
+            Ok(span) if span.2 == session && span_covers_event(span, interval_start, ts) => {
+                self.session_span_cache.insert(symbol.to_string(), span);
+            }
+            _ => self.last_interval_session = Some((key, session)),
         }
         Ok(session)
     }
