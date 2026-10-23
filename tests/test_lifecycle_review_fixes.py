@@ -84,3 +84,135 @@ def test_on_expiry_delivered_by_after_trading_of_expiry_settlement_day() -> None
     expiry_idx = log.index(("on_expiry", "OPT"))
     assert expiry_idx < log.index(("after", "2023-12-01")), log
     assert expiry_idx < log.index(("pre_open", "2023-12-04")), log
+
+
+class _AfterTradingSessionProbe(Strategy):
+    symbol = "600000.SH"
+    quantity = 100
+    order_day = dt.date(2024, 1, 2)
+    seen: List[Tuple[str, Any, Any, bool, bool]] = []
+
+    def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:
+        self.seen.append(
+            (
+                str(trading_date),
+                self.session_of(),
+                self.session_of(self.symbol),
+                self.is_market_open(include_auction=True),
+                self.is_market_open(self.symbol, include_auction=True),
+            )
+        )
+        if trading_date == self.order_day:
+            self.buy(self.symbol, self.quantity)
+
+
+def _assert_after_trading_closed_and_order_fills_next_day(
+    result: Any, probe: type[_AfterTradingSessionProbe], next_day: str
+) -> None:
+    closed = akquant.TradingSession.Closed
+    assert probe.seen, "on_after_trading 未触发"
+    for day, own, other, open_any, open_sym in probe.seen:
+        assert (own, other, open_any, open_sym) == (closed, closed, False, False), (
+            day,
+            own,
+            other,
+            open_any,
+            open_sym,
+        )
+    orders = result.orders_df
+    assert len(orders) == 1, orders
+    row = orders.iloc[0]
+    assert str(row["status"]).lower() == "filled", orders
+    assert (
+        pd.Timestamp(row["updated_at"]).tz_convert(TZ).strftime("%Y-%m-%d") == next_day
+    ), orders
+
+
+def test_after_trading_session_closed_stock_minute() -> None:
+    """股票分钟线：on_after_trading（收盘 + 1ns）时段为闭市，其中下的单次日成交."""
+
+    class P(_AfterTradingSessionProbe):
+        seen: List[Tuple[str, Any, Any, bool, bool]] = []
+
+    times = [
+        "2024-01-02 09:31",
+        "2024-01-02 15:00",
+        "2024-01-03 09:31",
+        "2024-01-03 15:00",
+    ]
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(times).tz_localize(TZ),
+            "symbol": "600000.SH",
+            "open": 10.0,
+            "high": 10.0,
+            "low": 10.0,
+            "close": 10.0,
+            "volume": 1e6,
+        }
+    )
+    result = run_backtest(
+        strategy=P,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e6,
+        show_progress=False,
+    )
+    _assert_after_trading_closed_and_order_fills_next_day(result, P, "2024-01-03")
+
+
+def test_after_trading_session_closed_night_futures() -> None:
+    """夜盘期货（CN_FUTURES_NIGHT_0230）：收盘后时段为闭市，其中下的单当晚夜盘成交."""
+
+    class P(_AfterTradingSessionProbe):
+        symbol = "au2406"
+        quantity = 1
+        order_day = dt.date(2024, 1, 5)
+        seen: List[Tuple[str, Any, Any, bool, bool]] = []
+
+    times = [
+        "2024-01-04 21:30",
+        "2024-01-05 10:00",
+        "2024-01-05 14:59",
+        "2024-01-05 21:30",
+        "2024-01-08 10:00",
+        "2024-01-08 15:00",
+    ]
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(times).tz_localize(TZ),
+            "symbol": "au2406",
+            "open": 500.0,
+            "high": 500.0,
+            "low": 500.0,
+            "close": 500.0,
+            "volume": 1e3,
+        }
+    )
+    cfg = akquant.BacktestConfig(
+        strategy_config=akquant.StrategyConfig(initial_cash=1e6),
+        instruments_config=[
+            akquant.InstrumentConfig(
+                symbol="au2406",
+                asset_type="FUTURES",
+                multiplier=1000.0,
+                margin_ratio=0.1,
+            )
+        ],
+    )
+    result = run_backtest(
+        strategy=P,
+        data=df,
+        config=cfg,
+        show_progress=False,
+        sessions={"au": "CN_FUTURES_NIGHT_0230"},
+        trading_calendar=[
+            "2024-01-03",
+            "2024-01-04",
+            "2024-01-05",
+            "2024-01-08",
+            "2024-01-09",
+        ],
+    )
+    # 01-05 收盘后下的单属于下一交易日（01-08），在当晚 21:30 夜盘成交
+    _assert_after_trading_closed_and_order_fills_next_day(result, P, "2024-01-05")

@@ -103,6 +103,13 @@ impl<'a> SessionView<'a> {
             .session_at_instant(symbol, asset_type, ts.saturating_sub(1))
             .unwrap_or(TradingSession::Continuous)
     }
+
+    /// 品种恰在时刻 `point` 的时段（不取前 1ns）：本时间片表优先，否则解析器按该
+    /// 时刻求。用于交易日生命周期事件——它们本身就是一个时点，如收盘后事件
+    /// （收盘 + 1ns）应为闭市，而不是按收盘那一刻得收盘竞价/连续竞价。
+    pub fn session_at_point(&self, symbol: &str, point: i64) -> TradingSession {
+        self.session_for_interval(symbol, None, point.saturating_add(1))
+    }
 }
 
 pub struct ContextInit {
@@ -158,6 +165,9 @@ pub struct ContextSessions {
     /// 当前行情事件为 bar 时其区间起点（`session_of` 查其他品种时按同一区间解析）；
     /// tick、定时器等为空，按时刻解析。
     pub event_interval_start: Option<i64>,
+    /// 当前事件是交易日生命周期事件：`session_of` 按事件时刻本身解析（见
+    /// [`SessionView::session_at_point`]），而不是前 1ns。
+    pub event_at_instant: bool,
 }
 
 pub struct ContextUpdate {
@@ -1447,6 +1457,9 @@ impl StrategyContext {
     /// :return: 交易时段
     pub fn session_of(&self, symbol: &str) -> TradingSession {
         self.with_session_view(|view| {
+            if self.sessions.event_at_instant {
+                return view.session_at_point(symbol, self.current_time);
+            }
             view.session_for_interval(
                 symbol,
                 self.sessions.event_interval_start,
@@ -1581,6 +1594,7 @@ mod tests {
             slice_sessions: Arc::downgrade(&slice),
             force_session_continuous: false,
             event_interval_start: None,
+            event_at_instant: false,
         };
         let now = at(day(2024, 1, 2), 10, 20);
         let ctx = ctx_with(sessions.clone(), now);
@@ -1627,6 +1641,44 @@ mod tests {
         let bare = ctx_with(ContextSessions::default(), now);
         assert_eq!(bare.session_of("rb2410"), TradingSession::Continuous);
         assert_eq!(bare.trading_day, None);
+    }
+
+    #[test]
+    fn session_of_at_event_instant_for_lifecycle_events() {
+        let resolver = futures_resolver(None);
+        let slice = Arc::new(HashMap::new());
+        let sessions = ContextSessions {
+            session_resolver: Some(resolver),
+            slice_sessions: Arc::downgrade(&slice),
+            ..ContextSessions::default()
+        };
+        // 收盘后事件：收盘 15:00 + 1ns
+        let after_close = at(day(2024, 1, 2), 15, 0) + 1;
+        // 普通定时器口径（前 1ns）恰在收盘那一刻，仍属连续竞价
+        let timer_ctx = ctx_with(sessions.clone(), after_close);
+        assert_eq!(timer_ctx.session_of("rb2410"), TradingSession::Continuous);
+        // 生命周期事件按事件时刻本身：闭市
+        let lifecycle_ctx = ctx_with(
+            ContextSessions {
+                event_at_instant: true,
+                ..sessions.clone()
+            },
+            after_close,
+        );
+        assert_eq!(lifecycle_ctx.session_of("rb2410"), TradingSession::Closed);
+        // 开始交易事件（连续竞价开始 + 1ns）两种口径都是连续竞价
+        let before_trading = at(day(2024, 1, 2), 9, 0) + 1;
+        let lifecycle_open = ctx_with(
+            ContextSessions {
+                event_at_instant: true,
+                ..sessions
+            },
+            before_trading,
+        );
+        assert_eq!(
+            lifecycle_open.session_of("rb2410"),
+            TradingSession::Continuous
+        );
     }
 
     #[test]

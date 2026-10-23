@@ -1602,7 +1602,15 @@ impl Engine {
             slice_sessions: Arc::downgrade(&self.slice_sessions),
             force_session_continuous: self.force_session_continuous,
             event_interval_start,
+            event_at_instant: self.lifecycle_event_at_instant(),
         }
+    }
+
+    /// 当前事件是否为交易日生命周期事件（盘前/开始交易/收盘后）。它们本身就是一个
+    /// 时点，时段按事件时刻本身求（收盘后事件为闭市），而不是像行情与普通定时器那样
+    /// 取前 1ns（`ctx.session`、`session_of`、订单创建时段同此口径）。
+    pub(crate) fn lifecycle_event_at_instant(&self) -> bool {
+        matches!(self.current_event.as_ref(), Some(Event::Timer(t)) if t.is_lifecycle())
     }
 
     pub(crate) fn datetime_from_ns(timestamp: i64) -> DateTime<Utc> {

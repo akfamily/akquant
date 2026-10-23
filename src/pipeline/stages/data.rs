@@ -331,7 +331,7 @@ impl Processor for DataProcessor {
                     if !belongs {
                         std::sync::Arc::make_mut(&mut engine.slice_sessions).clear();
                     }
-                    let session = timer_session(engine, timer.timestamp)?;
+                    let session = timer_session(engine, timer.timestamp, timer.is_lifecycle())?;
                     if engine.state.feed.is_live() {
                         engine.chain_live_lifecycle(&timer)?;
                     }
@@ -612,7 +612,10 @@ impl Processor for DataProcessor {
 
 /// 定时器事件的会话时段: 本时间片有品种时段时取其中优先级最高者(与撮合先查本片
 /// 一致), 否则取定时器时刻的会话级时段; 强制连续竞价时为连续竞价。
-fn timer_session(engine: &mut Engine, ts: i64) -> PyResult<TradingSession> {
+///
+/// 普通定时器按时刻前 1ns 求(与行情同口径); 生命周期事件(`at_instant`)按事件时刻
+/// 本身求——收盘后事件在收盘 + 1ns, 应为闭市而不是收盘竞价/连续竞价。
+fn timer_session(engine: &mut Engine, ts: i64, at_instant: bool) -> PyResult<TradingSession> {
     if engine.force_session_continuous {
         return Ok(TradingSession::Continuous);
     }
@@ -628,14 +631,17 @@ fn timer_session(engine: &mut Engine, ts: i64) -> PyResult<TradingSession> {
     Ok(engine
         .session_resolver
         .as_ref()
-        .map_or(TradingSession::Continuous, |r| r.session_level_instant(ts)))
+        .map_or(TradingSession::Continuous, |r| {
+            // session_level_instant 取前 1ns, 按事件时刻本身求时传 ts + 1。
+            r.session_level_instant(if at_instant { ts.saturating_add(1) } else { ts })
+        }))
 }
 
 /// 日终结算完成后发出交易日 `day` 的收盘后生命周期事件(策略可见的定时器事件),
 /// 时刻为收盘定时器时刻 `ts`。它晚于本时间片, 清空本片时段后按时刻求。
 fn emit_after_trading(engine: &mut Engine, day: NaiveDate, ts: i64) -> PyResult<()> {
     std::sync::Arc::make_mut(&mut engine.slice_sessions).clear();
-    let session = timer_session(engine, ts)?;
+    let session = timer_session(engine, ts, true)?;
     engine.clock.update(ts, session);
     engine.current_event = Some(Event::Timer(crate::model::Timer {
         timestamp: ts,

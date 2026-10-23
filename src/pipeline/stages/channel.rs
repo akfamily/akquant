@@ -135,13 +135,19 @@ fn record_creation_session(engine: &mut Engine, order: &Order) {
         return;
     }
     let _ = engine.ensure_session_resolver();
-    let session = SessionView {
+    let view = SessionView {
         force_continuous: false,
         slice: Some(&*engine.slice_sessions),
         resolver: engine.session_resolver.as_deref(),
         instruments: Some(&engine.instruments),
-    }
-    .session_for(&order.symbol, order.created_at);
+    };
+    // 生命周期事件(如收盘后)里下的单按事件时刻本身求时段(收盘后为闭市), 与
+    // ctx.session 同口径。
+    let session = if engine.lifecycle_event_at_instant() {
+        view.session_at_point(&order.symbol, order.created_at)
+    } else {
+        view.session_for(&order.symbol, order.created_at)
+    };
     if session != crate::model::TradingSession::Continuous {
         engine
             .order_creation_sessions
@@ -341,5 +347,72 @@ impl Processor for ChannelProcessor {
         flush_accumulated_trades(engine, &mut trades_to_process);
 
         Ok(ProcessorResult::Next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_creation_session;
+    use crate::engine::Engine;
+    use crate::event::Event;
+    use crate::model::timer::{LIFECYCLE_AFTER_TRADING, lifecycle_payload};
+    use crate::model::{Order, OrderSide, OrderType, Timer, TradingSession};
+    use chrono::NaiveDate;
+    use rust_decimal_macros::dec;
+
+    fn stock_engine() -> Engine {
+        use crate::model::instrument::{Instrument, InstrumentEnum, StockInstrument};
+        use crate::model::types::AssetType;
+        let mut engine = Engine::new();
+        engine.add_instrument(Instrument {
+            asset_type: AssetType::Stock,
+            inner: InstrumentEnum::Stock(StockInstrument {
+                symbol: "600000.SH".to_string(),
+                lot_size: dec!(100),
+                tick_size: dec!(0.01),
+                expiry_date: None,
+                sellable_after_days: 1,
+            }),
+        });
+        engine
+    }
+
+    #[test]
+    fn creation_session_inside_after_trading_is_closed() {
+        let day = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let close = crate::calendar::clock::LocalClock::new(Some("Asia/Shanghai"), 8 * 3600)
+            .from_local(day.and_hms_opt(15, 0, 0).unwrap());
+        let mut order = Order::test_new(
+            "o1",
+            "600000.SH",
+            OrderSide::Buy,
+            OrderType::Market,
+            dec!(100),
+        );
+        order.created_at = close + 1;
+
+        // 普通定时器（收盘 + 1ns）：按前 1ns 得收盘集合竞价
+        let mut engine = stock_engine();
+        engine.current_event = Some(Event::Timer(Timer {
+            timestamp: close + 1,
+            payload: "user".to_string(),
+        }));
+        record_creation_session(&mut engine, &order);
+        assert_eq!(
+            engine.order_creation_sessions.get("o1"),
+            Some(&TradingSession::ClosingAuction)
+        );
+
+        // 收盘后生命周期事件里下的单：按事件时刻本身记为闭市
+        let mut engine = stock_engine();
+        engine.current_event = Some(Event::Timer(Timer {
+            timestamp: close + 1,
+            payload: lifecycle_payload(LIFECYCLE_AFTER_TRADING, day),
+        }));
+        record_creation_session(&mut engine, &order);
+        assert_eq!(
+            engine.order_creation_sessions.get("o1"),
+            Some(&TradingSession::Closed)
+        );
     }
 }
