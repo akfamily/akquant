@@ -1074,7 +1074,10 @@ class _LiveDayOrderProbe(Strategy):
 
 
 def _run_live_replay(
-    monkeypatch: pytest.MonkeyPatch, bars: List[Bar], **kwargs: Any
+    monkeypatch: pytest.MonkeyPatch,
+    bars: List[Bar],
+    strategy_cls: Any = None,
+    **kwargs: Any,
 ) -> Any:
     """run_live(broker="replay") 跑完后返回 runner，供读取引擎结果.
 
@@ -1100,7 +1103,7 @@ def _run_live_replay(
     _REPLAY_THREAD_JOINED.clear()
     _LIVE_ORDER_EVENTS.clear()
     run_live(
-        strategy_cls=_LiveDayOrderProbe,
+        strategy_cls=strategy_cls or _LiveDayOrderProbe,
         instruments=[_live_stock_instrument()],
         broker="replay",
         trading_mode="paper",
@@ -1805,3 +1808,47 @@ def test_resume_partial_risk_dict_overlays_archive(
     assert rust_config.account_mode == "margin"
     assert rust_config.financing_rate_annual == pytest.approx(36.5)
     assert rust_config.max_order_size == 5
+
+
+_LIVE_SESSION_PROBES: List[Any] = []
+
+
+class _LiveSessionProbe(_LiveDayOrderProbe):
+    """记录 session_of / is_market_open（实盘强制连续竞价）."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sessions: List[Tuple[str, str, str, bool]] = []
+        _LIVE_SESSION_PROBES.append(self)
+
+    def on_bar(self, bar: Bar) -> None:
+        self.sessions.append(
+            (
+                _local_minute(int(bar.timestamp)),
+                str(self.session_of()).split(".")[-1],
+                str(self.session_of("600000")).split(".")[-1],
+                self.is_market_open(),
+            )
+        )
+
+
+def test_live_replay_session_api_is_forced_continuous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """实盘（阶段 7 前强制连续竞价）：14:58 收盘集合竞价的 bar 上也是 Continuous."""
+    _LIVE_SESSION_PROBES.clear()
+    _run_live_replay(
+        monkeypatch,
+        _local_bars(["2024-01-02 10:00", "2024-01-02 14:58"]),
+        strategy_cls=_LiveSessionProbe,
+        trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
+    )
+    assert len(_LIVE_SESSION_PROBES) == 1
+    strategy = _LIVE_SESSION_PROBES[0]
+    assert [row[0] for row in strategy.sessions] == [
+        "2024-01-02 10:00",
+        "2024-01-02 14:58",
+    ]
+    assert all(
+        row[1:] == ("Continuous", "Continuous", True) for row in strategy.sessions
+    ), strategy.sessions

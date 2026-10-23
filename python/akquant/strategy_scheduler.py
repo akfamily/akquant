@@ -163,6 +163,7 @@ def _nth_per_group(days: list, key: Any, n: int, from_end: bool) -> list:
 
 def schedule_weekly(strategy: Any, time_str: str, payload: str) -> None:
     """每周首个交易日在 ``time_str`` 触发(节假日/停牌自动顺延)."""
+    _check_payload(payload)
     if strategy.ctx is None or not strategy._trading_days:
         logger.warning(
             "schedule_weekly requires trading days (backtest context); ignored"
@@ -177,6 +178,7 @@ def schedule_weekly(strategy: Any, time_str: str, payload: str) -> None:
 
 def schedule_monthly(strategy: Any, time_str: str, payload: str) -> None:
     """每月首个交易日在 ``time_str`` 触发(节假日/停牌自动顺延)."""
+    _check_payload(payload)
     if strategy.ctx is None or not strategy._trading_days:
         logger.warning(
             "schedule_monthly requires trading days (backtest context); ignored"

@@ -1401,14 +1401,35 @@ impl Engine {
     /// 交给策略上下文的交易日与时段状态：交易日按上下文时刻取风控口径（不开日），
     /// 解析器与本时间片时段表与撮合共用同一份（`Arc` 克隆 / `Weak` 引用）。
     pub(crate) fn context_sessions(&mut self) -> crate::context::ContextSessions {
-        // 解析器在 run() 开始时已构造；不在这里补建（无解析器时 session_of 按连续竞价，
-        // 与撮合 SessionView 一致）。
-        let trading_day = self.risk_trading_day(self.context_timestamp());
+        let now = self.context_timestamp();
+        let trading_day = if self.current_trading_day.is_some() {
+            // 已开过日：风控口径（收盘后至下一交易日开日前属下一交易日）。
+            self.risk_trading_day(now)
+        } else if self
+            .terminal_result_timestamp()
+            .or_else(|| self.clock.timestamp())
+            .is_some()
+        {
+            // 首个交易日开日前（首日盘前定时器等）：按解析器求当前时刻所属交易日。
+            // run() 开始时已构造解析器，这里只为直接驱动的调用方补建。
+            let _ = self.ensure_session_resolver();
+            self.session_resolver
+                .as_ref()
+                .and_then(|r| r.session_trading_day(now).ok())
+        } else {
+            None
+        };
+        let event_interval_start = match self.current_event.as_ref() {
+            Some(Event::Bar(bar)) => bar.interval_start,
+            _ => None,
+        };
+        // 无解析器时 session_of 按连续竞价，与撮合 SessionView 一致。
         crate::context::ContextSessions {
             trading_day,
             session_resolver: self.session_resolver.clone(),
             slice_sessions: Arc::downgrade(&self.slice_sessions),
             force_session_continuous: self.force_session_continuous,
+            event_interval_start,
         }
     }
 
@@ -2066,5 +2087,47 @@ mod span_cache_tests {
         assert!(span_covers_event(gap, None, 202));
         assert!(span_covers_event(gap, None, 300));
         assert!(!span_covers_event(gap, None, 301));
+    }
+}
+
+#[cfg(test)]
+mod context_sessions_tests {
+    use super::Engine;
+    use crate::model::TradingSession;
+    use chrono::NaiveDate;
+
+    fn local_ns(y: i32, m: u32, d: u32, h: u32, mi: u32) -> i64 {
+        crate::calendar::clock::LocalClock::new(Some("Asia/Shanghai"), 8 * 3600).from_local(
+            NaiveDate::from_ymd_opt(y, m, d)
+                .unwrap()
+                .and_hms_opt(h, mi, 0)
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn trading_day_before_first_open_resolves_instant_and_none_without_time() {
+        let mut engine = Engine::new();
+        // 无上下文时刻：None
+        assert_eq!(engine.context_sessions().trading_day, None);
+        // 首个交易日开日前（current_trading_day 为空）的 09:00：属当日
+        engine
+            .clock
+            .update(local_ns(2024, 1, 2, 9, 0), TradingSession::Closed);
+        assert!(engine.current_trading_day.is_none());
+        assert_eq!(
+            engine.context_sessions().trading_day,
+            NaiveDate::from_ymd_opt(2024, 1, 2)
+        );
+        // 首日收盘后 15:30（仍未开日）：属下一交易日
+        engine
+            .clock
+            .update(local_ns(2024, 1, 2, 15, 30), TradingSession::Closed);
+        assert_eq!(
+            engine.context_sessions().trading_day,
+            NaiveDate::from_ymd_opt(2024, 1, 3)
+        );
+        // 查询不开日
+        assert!(engine.current_trading_day.is_none());
     }
 }

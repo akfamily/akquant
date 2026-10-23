@@ -1198,7 +1198,15 @@ class Strategy:
 
     @property
     def trading_day(self) -> Optional[dt.date]:
-        """当前时刻所属交易日（夜盘属下一交易日）；尚无上下文或未开日时为 None."""
+        """当前时刻所属的交易日（``datetime.date``）.
+
+        - 盘中：本交易日；夜盘属下一交易日（如周五 21:30 属下周一）。
+        - 收盘后至下一交易日开盘前（如 15:30 的定时器、次日 09:00 的定时器）：
+          属下一交易日，与风控（每日亏损、风险预算）的交易日口径一致；查询本身
+          不会开日。
+        - 首个交易日开盘前（首日盘前定时器）：按交易日历求当前时刻所属交易日。
+        - 尚无上下文（如 ``on_start`` 中、运行开始之前）时为 None。
+        """
         if self.ctx is None:
             return None
         return getattr(self.ctx, "trading_day", None)
@@ -1206,8 +1214,10 @@ class Strategy:
     def session_of(self, symbol: Optional[str] = None) -> TradingSession:
         """品种此刻的交易时段.
 
-        与撮合同口径：本时间片已解析的优先，否则按当前时刻解析。``symbol`` 为空时即
-        当前事件的时段 ``ctx.session``。实盘目前强制连续竞价，恒为 ``Continuous``。
+        与撮合同口径：本时间片已解析的优先；否则在 bar 回调中按当前 bar 的区间解析
+        （假定同周期，如日线上查另一只股票得连续竞价），在定时器等其他回调中按当前
+        时刻解析。``symbol`` 为空时即当前事件的时段 ``ctx.session``。实盘目前强制
+        连续竞价，恒为 ``Continuous``。
 
         :param symbol: 标的代码；不传时取当前事件的时段
         :return: 交易时段

@@ -65,6 +65,19 @@ impl<'a> SessionView<'a> {
     /// 品种在时刻 `ts` 的时段：本时间片已解析的优先（含 bar 区间信息），
     /// 否则按时刻解析（定时器触发的撮合）；解析失败或无解析器时按连续竞价。
     pub fn session_for(&self, symbol: &str, ts: i64) -> TradingSession {
+        self.session_for_interval(symbol, None, ts)
+    }
+
+    /// 同 [`Self::session_for`]，但本时间片未命中时按区间 `(interval_start, ts]`
+    /// 解析（与 `Engine::event_session` 同口径，`resolve_bar`）；`interval_start`
+    /// 为空或不早于 `ts` 时按时刻。策略在 bar 回调里查询其他品种时用当前 bar 的区间
+    /// （假定同周期），否则只有日期的日线会按 15:00 前 1ns 得到收盘集合竞价。
+    pub fn session_for_interval(
+        &self,
+        symbol: &str,
+        interval_start: Option<i64>,
+        ts: i64,
+    ) -> TradingSession {
         if self.force_continuous {
             return TradingSession::Continuous;
         }
@@ -78,6 +91,12 @@ impl<'a> SessionView<'a> {
             .instruments
             .and_then(|m| m.get(symbol))
             .map(|i| i.asset_type);
+        if let Some(start) = interval_start.filter(|s| *s < ts) {
+            return resolver
+                .resolve_bar(symbol, asset_type, Some(start), ts)
+                .map(|r| r.session)
+                .unwrap_or(TradingSession::Continuous);
+        }
         // 解析出错（时刻超出交易日历等）按连续竞价：日历缺口不应阻断撮合，数据层的
         // 闭市/日历告警已提示用户；定时器的 ctx.session（session_level_instant）同此口径。
         resolver
@@ -136,6 +155,9 @@ pub struct ContextSessions {
     /// 每个行情事件都复制整表。回调期间引擎不改表，升级必然成功；失效时按空表处理。
     pub slice_sessions: Weak<HashMap<String, TradingSession>>,
     pub force_session_continuous: bool,
+    /// 当前行情事件为 bar 时其区间起点（`session_of` 查其他品种时按同一区间解析）；
+    /// tick、定时器等为空，按时刻解析。
+    pub event_interval_start: Option<i64>,
 }
 
 pub struct ContextUpdate {
@@ -507,7 +529,8 @@ pub struct StrategyContext {
     pub margin_accrued_interest: f64,
     #[pyo3(get)]
     pub margin_daily_interest: f64,
-    /// 当前时刻所属交易日（夜盘属下一交易日）；尚未开过交易日时为 None。
+    /// 当前时刻所属交易日（夜盘属下一交易日；收盘后至下一交易日开盘前属下一交易日，
+    /// 与风控口径一致；首个交易日开日前按解析器求）；无上下文时刻时为 None。
     #[pyo3(get)]
     pub trading_day: Option<chrono::NaiveDate>,
     pub(crate) sessions: ContextSessions,
@@ -1416,13 +1439,20 @@ impl StrategyContext {
             .unwrap_or_default()
     }
 
-    /// 品种此刻的交易时段，与撮合同口径：本时间片已解析的优先（含 bar 区间信息），
-    /// 否则按当前时刻解析；解析失败、无解析器或实盘强制连续竞价时为 Continuous。
+    /// 品种此刻的交易时段，与撮合同口径：本时间片已解析的优先（含 bar 区间信息）；
+    /// 否则当前事件为 bar 时按其区间解析（假定同周期），其他事件按当前时刻解析；
+    /// 解析失败、无解析器或实盘强制连续竞价时为 Continuous。
     ///
     /// :param symbol: 标的代码
     /// :return: 交易时段
     pub fn session_of(&self, symbol: &str) -> TradingSession {
-        self.with_session_view(|view| view.session_for(symbol, self.current_time))
+        self.with_session_view(|view| {
+            view.session_for_interval(
+                symbol,
+                self.sessions.event_interval_start,
+                self.current_time,
+            )
+        })
     }
 
     /// 是否为会话交易日历上的交易日（无解析器时为 False）。
@@ -1550,6 +1580,7 @@ mod tests {
             session_resolver: Some(resolver.clone()),
             slice_sessions: Arc::downgrade(&slice),
             force_session_continuous: false,
+            event_interval_start: None,
         };
         let now = at(day(2024, 1, 2), 10, 20);
         let ctx = ctx_with(sessions.clone(), now);
@@ -1561,6 +1592,25 @@ mod tests {
         // 按 current_time 前 1ns：恰在 10:15 时仍属上一段连续竞价
         let edge = ctx_with(sessions.clone(), at(day(2024, 1, 2), 10, 15));
         assert_eq!(edge.session_of("rb2410"), TradingSession::Continuous);
+        // 当前事件是 bar：未命中时按其区间解析（10:00～10:20 含连续竞价段）
+        let bar_ctx = ctx_with(
+            ContextSessions {
+                event_interval_start: Some(at(day(2024, 1, 2), 10, 0)),
+                ..sessions.clone()
+            },
+            now,
+        );
+        assert_eq!(bar_ctx.session_of("rb2410"), TradingSession::Continuous);
+        assert_eq!(bar_ctx.session_of("rb2405"), TradingSession::ClosingAuction);
+        // 区间整段落在休息内时仍是 Break
+        let in_break = ctx_with(
+            ContextSessions {
+                event_interval_start: Some(at(day(2024, 1, 2), 10, 16)),
+                ..sessions.clone()
+            },
+            now,
+        );
+        assert_eq!(in_break.session_of("rb2410"), TradingSession::Break);
         // 表被引擎替换（弱引用失效）后按空表处理
         drop(slice);
         assert_eq!(ctx.session_of("rb2405"), TradingSession::Break);
