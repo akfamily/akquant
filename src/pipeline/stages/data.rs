@@ -745,7 +745,24 @@ fn dispatch_day_close_windows(
     // 尚未派发的(同一时间步更早闭合的)在前
     let mut bars = std::mem::take(&mut engine.pending_window_bars);
     bars.extend(closed);
-    engine.dispatch_window_bars(py, strategy, bars)
+    // 派发期间时钟与当前事件置为收盘时刻(时段沿用最后事件的时段): 策略上下文的
+    // 当前时刻取自当前事件, 窗口回调里的 now 是窗口标签, 回调中下的单按收盘时刻计
+    // 创建时间, 与收盘 bar 存在时的行为一致。派发后还原(原因同
+    // run_day_close_settlement), 派发出错时也还原。
+    let previous_clock = (engine.clock.timestamp(), engine.clock.session);
+    let previous_event = engine.current_event.take();
+    engine.clock.update(close_ts, engine.clock.session);
+    engine.current_event = Some(Event::Timer(crate::model::Timer {
+        timestamp: close_ts,
+        payload: "__day_close_windows__".to_string(),
+        owner: None,
+    }));
+    let result = engine.dispatch_window_bars(py, strategy, bars);
+    engine.current_event = previous_event;
+    if let (Some(prev_ts), prev_session) = previous_clock {
+        engine.clock.update(prev_ts, prev_session);
+    }
+    result
 }
 
 /// 交易日 `day` 的日终结算：到期 → 利息与强平 → T+1 → Day 单过期 → 流事件 → 快照。

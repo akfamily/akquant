@@ -953,3 +953,56 @@ def test_day_close_dispatches_forming_windows_before_after_trading() -> None:
     assert ("5min", "01-02 15:00") not in later
     assert ("1d", "01-02 15:00") not in later
     assert ("5min", "01-03 09:35") in later
+
+
+def _close_clock_run(times: List[str]) -> Tuple[List[pd.Timestamp], List[str]]:
+    class S(_WinLog):
+        freqs = ("5min",)
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.nows: List[pd.Timestamp] = []
+            self.fills: List[str] = []
+            self.bought = False
+
+        def on_window_bar(self, bar: Bar) -> None:
+            super().on_window_bar(bar)
+            local = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert(TZ)
+            if local.strftime("%m-%d %H:%M") == "01-02 15:00" and not self.bought:
+                self.bought = True
+                now = self.now
+                assert now is not None
+                self.nows.append(pd.Timestamp(now).tz_convert(TZ))
+                self.buy("600000.SH", 100)
+
+        def on_trade(self, trade: Any) -> None:
+            local = pd.Timestamp(trade.timestamp, tz="UTC").tz_convert(TZ)
+            self.fills.append(local.strftime("%m-%d %H:%M"))
+
+    r = run_backtest(
+        strategy=S,
+        data=_minute(times),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        freq="1min",
+    )
+    strategy = r.strategy
+    assert isinstance(strategy, S)
+    return strategy.nows, strategy.fills
+
+
+def test_day_close_window_dispatch_runs_at_close_clock() -> None:
+    """收盘 bar 缺失时日终派发窗口: now 为窗口标签, 回调里的市价单次日开盘成交."""
+    nxt = [f"2024-01-03 09:{m:02d}" for m in range(31, 36)]
+    missing = [f"2024-01-02 14:{m:02d}" for m in range(51, 57)] + nxt
+    present = (
+        [f"2024-01-02 14:{m:02d}" for m in range(51, 57)] + ["2024-01-02 15:00"] + nxt
+    )
+    close = pd.Timestamp("2024-01-02 15:00", tz=TZ)
+    nows_missing, fills_missing = _close_clock_run(missing)
+    nows_present, fills_present = _close_clock_run(present)
+    assert nows_missing == [close]
+    assert nows_present == [close]
+    assert fills_missing == fills_present
+    assert fills_missing == ["01-03 09:31"]
