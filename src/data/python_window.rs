@@ -6,9 +6,12 @@ use crate::calendar::clock::LocalClock;
 use crate::calendar::python::PySessionResolver;
 use crate::calendar::resolver::{SessionResolver, effective_sessions};
 use crate::model::{AssetType, Bar};
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -101,6 +104,119 @@ impl PyWindowAggregator {
     /// 喂入一根基础 bar(时间戳非递减), 返回本步闭合的窗口 bar。
     fn update(&mut self, bar: PyRef<'_, Bar>) -> Vec<Bar> {
         self.inner.update(&bar)
+    }
+
+    /// 批量喂入单品种的基础 bar 列(时间戳非递减), 返回 ``(窗口 bar 列表, 行→窗口序号)``。
+    ///
+    /// 窗口按闭合顺序排列; 第二个返回值是与输入等长的 int64 数组, 第 i 行归属的
+    /// 窗口在列表中的下标, 未闭合(``flush=False`` 时的尾部窗口)为 -1。
+    /// ``flush=True`` 时最后闭合全部在形成窗口并计入列表。
+    ///
+    /// :param timestamps: UTC 纳秒时间戳(int64 数组)
+    /// :param opens: 开盘价(float64 数组), 其余价格/成交量列同
+    /// :param symbol: 品种代码
+    /// :param interval_starts: bar 区间起点(int64 数组, ``i64`` 最小值表示未知), 可选
+    /// :param flush: 是否在末尾闭合全部在形成窗口
+    #[pyo3(signature = (
+        timestamps, opens, highs, lows, closes, volumes, symbol, interval_starts=None, flush=true
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn update_arrays<'py>(
+        &mut self,
+        py: Python<'py>,
+        timestamps: &Bound<'py, PyAny>,
+        opens: &Bound<'py, PyAny>,
+        highs: &Bound<'py, PyAny>,
+        lows: &Bound<'py, PyAny>,
+        closes: &Bound<'py, PyAny>,
+        volumes: &Bound<'py, PyAny>,
+        symbol: &str,
+        interval_starts: Option<&Bound<'py, PyAny>>,
+        flush: bool,
+    ) -> PyResult<(Vec<Bar>, Bound<'py, PyArray1<i64>>)> {
+        let ts: PyReadonlyArray1<i64> = timestamps.extract()?;
+        let o: PyReadonlyArray1<f64> = opens.extract()?;
+        let h: PyReadonlyArray1<f64> = highs.extract()?;
+        let l: PyReadonlyArray1<f64> = lows.extract()?;
+        let c: PyReadonlyArray1<f64> = closes.extract()?;
+        let v: PyReadonlyArray1<f64> = volumes.extract()?;
+        let starts: Option<PyReadonlyArray1<i64>> =
+            interval_starts.map(|a| a.extract()).transpose()?;
+        let ts = ts.as_slice()?;
+        let (o, h, l, c, v) = (
+            o.as_slice()?,
+            h.as_slice()?,
+            l.as_slice()?,
+            c.as_slice()?,
+            v.as_slice()?,
+        );
+        let starts = match &starts {
+            Some(a) => Some(a.as_slice()?),
+            None => None,
+        };
+        let n = ts.len();
+        if [o.len(), h.len(), l.len(), c.len(), v.len()]
+            .iter()
+            .any(|&len| len != n)
+            || starts.is_some_and(|s| s.len() != n)
+        {
+            return Err(PyValueError::new_err(
+                "update_arrays 的各列长度必须相同，请检查传入的时间戳与 OHLCV 数组",
+            ));
+        }
+        let dec = |x: f64| Decimal::from_f64(x).unwrap_or(Decimal::ZERO);
+        let mut windows: Vec<Bar> = Vec::new();
+        let mut row_window: Vec<i64> = vec![-1; n];
+        // 尚未闭合窗口里的行(闭合时回填下标)
+        let mut pending: Vec<usize> = Vec::new();
+        for i in 0..n {
+            let bar = Bar {
+                timestamp: ts[i],
+                open: dec(o[i]),
+                high: dec(h[i]),
+                low: dec(l[i]),
+                close: dec(c[i]),
+                volume: dec(v[i]),
+                symbol: symbol.to_string(),
+                extra: HashMap::new(),
+                freq: None,
+                interval_start: starts.and_then(|s| (s[i] != i64::MIN).then_some(s[i])),
+            };
+            let closed = self.inner.update(&bar);
+            let forming = self.inner.is_forming(symbol, &self.freq_label);
+            // 单周期单品种: 至多两根, 先是被本行挤出的旧窗口(不含本行), 后是本行所在
+            // 且即时闭合的窗口; 本行仍在形成中的窗口里时留待闭合时回填。
+            let includes_row = !closed.is_empty() && !forming;
+            let evicted = closed.len() - usize::from(includes_row);
+            let base = windows.len();
+            windows.extend(closed);
+            if evicted > 0 {
+                for r in pending.drain(..) {
+                    row_window[r] = base as i64;
+                }
+            }
+            if includes_row {
+                let idx = (base + evicted) as i64;
+                for r in pending.drain(..) {
+                    row_window[r] = idx;
+                }
+                row_window[i] = idx;
+            } else if forming {
+                pending.push(i);
+            }
+        }
+        if flush {
+            let base = windows.len();
+            let flushed = self.inner.flush();
+            // flush 闭合全部品种; 回填只认本品种那一根
+            if let Some(pos) = flushed.iter().position(|b| b.symbol == symbol) {
+                for r in pending.drain(..) {
+                    row_window[r] = (base + pos) as i64;
+                }
+            }
+            windows.extend(flushed);
+        }
+        Ok((windows, PyArray1::from_vec(py, row_window)))
     }
 
     /// 闭合全部在形成窗口(数据结束/收尾), 按品种排序返回。

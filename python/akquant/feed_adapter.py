@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
 
-from .akquant import AssetType, Bar, SessionResolver, WindowAggregator, from_arrays
+from .akquant import AssetType, Bar, SessionResolver, WindowAggregator
+from .log import get_logger
 from .utils import load_bar_from_df
 
 
@@ -144,6 +145,12 @@ class BasePandasFeedAdapter:
             众数推断。
         :param emit_partial: ``False`` 时丢弃数据未到达标签的窗口中, 位于该交易日
             最后的那一个(即每个交易日的尾部未闭合窗口与数据末尾的窗口)。
+
+        注意: 默认 ``align="session"`` 在中国时区(``FeedSlice.timezone`` 缺省即
+        ``Asia/Shanghai``)下按 A 股交易块切分; 非中国市场或 24 小时数据须显式传
+        ``FeedSlice(timezone=...)``, 并按需传 ``sessions=`` / ``asset_type=``。
+        走聚合器时, open/high/low/close 任一为 NaN 的行在聚合前剔除, volume 的
+        NaN 按 0 计。
         """
         return ReplayFeedAdapter(
             source=self,
@@ -414,22 +421,11 @@ def _engine_windows_for_symbol(
     source_index = pd.DatetimeIndex(source.index)
     local_index = _localize_input_index(source_index, timezone)
     utc_naive = local_index.tz_convert("UTC").tz_localize(None).as_unit("ns")
-    ts_ns = utc_naive.to_numpy().view(np.int64)
+    ts_ns = np.ascontiguousarray(utc_naive.to_numpy().view(np.int64))
     volumes = (
         source["volume"].fillna(0.0).astype(float).to_numpy()
         if "volume" in source.columns
         else np.zeros(len(source))
-    )
-    bars = from_arrays(
-        ts_ns,
-        source["open"].astype(float).to_numpy(),
-        source["high"].astype(float).to_numpy(),
-        source["low"].astype(float).to_numpy(),
-        source["close"].astype(float).to_numpy(),
-        volumes,
-        symbol,
-        None,
-        None,
     )
     base = (
         base_interval_min
@@ -444,38 +440,45 @@ def _engine_windows_for_symbol(
         asset_types={symbol: asset_type},
     )
 
-    # 逐行喂入, 同时记录每行归属的窗口序号(窗口按闭合顺序编号)。单周期、单品种下
-    # update 至多返回两根: 被新 bar 挤出的旧窗口(不含本行)与本行即时闭合的窗口。
-    windows: list[Bar] = []
-    row_window = np.empty(len(bars), dtype=np.int64)
-    for i, bar in enumerate(bars):
-        closed_now = aggregator.update(bar)
-        count = len(closed_now)
-        if count == 0:
-            row_window[i] = len(windows)
-        elif count == 2:
-            row_window[i] = len(windows) + 1
-        elif aggregator.current(symbol) is None:
-            row_window[i] = len(windows)
-        else:
-            row_window[i] = len(windows) + 1
-        windows.extend(closed_now)
-    windows.extend(aggregator.flush())
+    # 整列喂入 Rust 聚合器(含收尾 flush), 拿回窗口与每行归属的窗口下标
+    windows, row_window = aggregator.update_arrays(
+        ts_ns,
+        np.ascontiguousarray(source["open"].to_numpy(dtype=np.float64)),
+        np.ascontiguousarray(source["high"].to_numpy(dtype=np.float64)),
+        np.ascontiguousarray(source["low"].to_numpy(dtype=np.float64)),
+        np.ascontiguousarray(source["close"].to_numpy(dtype=np.float64)),
+        np.ascontiguousarray(volumes, dtype=np.float64),
+        symbol,
+        flush=True,
+    )
     if not windows:
         return source.iloc[0:0]
+    assigned = row_window >= 0
 
     labels = np.fromiter((b.timestamp for b in windows), np.int64, len(windows))
     keep = np.ones(len(windows), dtype=bool)
     if not emit_partial:
         last_ts = np.full(len(windows), np.iinfo(np.int64).min, dtype=np.int64)
         first_ts = np.full(len(windows), np.iinfo(np.int64).max, dtype=np.int64)
-        np.maximum.at(last_ts, row_window, ts_ns)
-        np.minimum.at(first_ts, row_window, ts_ns)
+        np.maximum.at(last_ts, row_window[assigned], ts_ns[assigned])
+        np.minimum.at(first_ts, row_window[assigned], ts_ns[assigned])
+        warned = False
 
         def trading_day(ts: int) -> Any:
+            nonlocal warned
             try:
                 return resolver.resolve_instant(symbol, ts - 1, asset_type)[0]
-            except Exception:  # noqa: BLE001 - 解析失败时按本地日期
+            except ValueError as exc:
+                # 数据超出交易日历覆盖范围等: 按本地日期判断, 只告警一次
+                if not warned:
+                    warned = True
+                    get_logger("feed_adapter").warning(
+                        "replay：%s 的部分数据无法按交易日解析（%s），"
+                        "emit_partial=False 的尾部判断改按本地日期；"
+                        "请传入覆盖全部数据日期的 trading_calendar",
+                        symbol,
+                        exc,
+                    )
                 return pd.Timestamp(ts, tz="UTC").tz_convert(timezone).date()
 
         # 数据未到达标签的窗口, 若是该交易日的最后一个窗口(或数据末尾)即为未闭合尾部
@@ -495,8 +498,8 @@ def _engine_windows_for_symbol(
             extra_agg[col] = how
     if extra_agg:
         grouped = (
-            source[list(extra_agg)]
-            .groupby(row_window, sort=True)
+            source.loc[assigned, list(extra_agg)]
+            .groupby(row_window[assigned], sort=True)
             .agg(cast(Any, extra_agg))
             .reindex(range(len(windows)))
         )

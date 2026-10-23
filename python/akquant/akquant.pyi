@@ -230,6 +230,24 @@ class WindowAggregator:
     def set_asset_type(self, symbol: str, asset_type: AssetType) -> None: ...
     def has_asset_type(self, symbol: str) -> bool: ...
     def update(self, bar: Bar) -> list[Bar]: ...
+    def update_arrays(
+        self,
+        timestamps: numpy.typing.NDArray[numpy.int64],
+        opens: numpy.typing.NDArray[numpy.float64],
+        highs: numpy.typing.NDArray[numpy.float64],
+        lows: numpy.typing.NDArray[numpy.float64],
+        closes: numpy.typing.NDArray[numpy.float64],
+        volumes: numpy.typing.NDArray[numpy.float64],
+        symbol: str,
+        interval_starts: typing.Optional[numpy.typing.NDArray[numpy.int64]] = None,
+        flush: bool = True,
+    ) -> tuple[list[Bar], numpy.typing.NDArray[numpy.int64]]:
+        r"""
+        批量喂入单品种基础 bar 列，返回 (窗口 bar 列表, 行→窗口下标).
+
+        第二个返回值与输入等长，未闭合窗口里的行为 -1；``flush=True`` 时末尾闭合
+        全部在形成窗口并计入列表。
+        """
     def flush(self) -> list[Bar]: ...
     def current(self, symbol: str) -> typing.Optional[Bar]: ...
 

@@ -193,6 +193,8 @@ replayed = feed.replay(
   - `sessions`, `trading_calendar` and `asset_type` mean the same as in `run_backtest` (default: stock); `base_interval_min` is the source bar period in minutes, inferred from the modal timestamp spacing when omitted.
   - OHLCV comes from the aggregator; other `agg` columns (or columns whose default aggregation is overridden) are grouped by the window the aggregator assigned to each row.
   - With `emit_partial=False`, a window whose data does not reach its label is dropped when it is the last window of its trading day (or of the data).
+  - The default `align="session"` cuts by the A-share block table in China timezone (the request `timezone` defaults to `Asia/Shanghai`), so lunch-break and after-close rows are not merged into trading-hour windows. For non-China markets or 24h data, pass `FeedSlice(timezone=...)` explicitly, plus `sessions=` / `asset_type=` as needed (e.g. night futures: `sessions={"au": "CN_FUTURES_NIGHT_0230"}, asset_type="futures"`).
+  - Rows with NaN in any of open/high/low/close are dropped before aggregation; NaN volume counts as 0.
 - Block clamping only applies to the default `label="right", closed="right"` with `freq` of `Nmin`/`Nh`/`1D`; anything else keeps the previous pandas `resample` implementation (partitioned by local date).
 - `session_windows` hand-writes intraday sessions (for example, before/after lunch break); an end earlier than the start means the session crosses midnight (e.g. `("21:00", "02:30")`). Manual sessions use the previous implementation and are not aligned bar-for-bar with engine windows.
 - `align` currently supports:

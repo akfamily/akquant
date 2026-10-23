@@ -590,3 +590,239 @@ def test_replay_manual_session_windows_cross_midnight() -> None:
         "01-02 21:00",
         "01-02 21:00",
     ]
+
+
+class _OhlcvLog(Strategy):
+    """按品种记录窗口 (标签, OHLCV)."""
+
+    win_freq = "30min"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: List[Tuple[str, int, float, float, float, float, float]] = []
+        self.subscribe_bars(self.win_freq)
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+    def on_window_bar(self, bar: Bar) -> None:
+        self.rows.append(
+            (
+                str(bar.symbol),
+                int(bar.timestamp),
+                float(bar.open),
+                float(bar.high),
+                float(bar.low),
+                float(bar.close),
+                float(bar.volume),
+            )
+        )
+
+
+def _replay_rows(
+    out: pd.DataFrame, symbol: str
+) -> List[Tuple[str, int, float, float, float, float, float]]:
+    return [
+        (symbol, int(i.value), float(o), float(h), float(lo), float(c), float(v))
+        for i, o, h, lo, c, v in zip(
+            out.index, out["open"], out["high"], out["low"], out["close"], out["volume"]
+        )
+    ]
+
+
+def _block_minutes(symbol: str, days: List[str], asset_type: Any) -> pd.DataFrame:
+    """按解析器的交易块生成整段分钟线（右标签），价格与成交量逐根不同."""
+    r = aq.SessionResolver(sessions={"au": "CN_FUTURES_NIGHT_0230"}, timezone=TZ)
+    stamps: List[pd.Timestamp] = []
+    for d in days:
+        for start, end in r.trading_blocks(
+            symbol, dt.date.fromisoformat(d), asset_type
+        ):
+            stamps += list(
+                pd.date_range(
+                    pd.Timestamp(start + 60_000_000_000, tz="UTC"),
+                    pd.Timestamp(end, tz="UTC"),
+                    freq="min",
+                )
+            )
+    idx = pd.DatetimeIndex(stamps).tz_convert(TZ)
+    n = len(idx)
+    base = [400.0 + (i * 7 % 13) * 0.5 for i in range(n)]
+    return pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": symbol,
+            "open": base,
+            "high": [b + 1.0 for b in base],
+            "low": [b - 1.0 for b in base],
+            "close": [b + 0.5 for b in base],
+            "volume": [float(i % 7 + 1) for i in range(n)],
+        }
+    )
+
+
+def test_replay_night_futures_matches_engine_windows_bar_by_bar() -> None:
+    """夜盘期货 30min / 1h：replay 与引擎逐根相同（标签与 OHLCV，含跨午夜与周末）."""
+    df = _block_minutes(
+        "au2406",
+        ["2024-01-04", "2024-01-05", "2024-01-08"],
+        aq.AssetType.Futures,
+    )
+    for freq in ("30min", "1h"):
+
+        class Eng(_OhlcvLog):
+            win_freq = freq
+
+        r = run_backtest(
+            strategy=Eng,
+            data=df,
+            symbols=["au2406"],
+            config=_au_config(),
+            show_progress=False,
+            freq="1min",
+            sessions={"au": "CN_FUTURES_NIGHT_0230"},
+        )
+        assert r.strategy is not None
+        out = (
+            _MemAdapter(df.set_index("timestamp"))
+            .replay(
+                freq,
+                align="session",
+                emit_partial=True,
+                sessions={"au": "CN_FUTURES_NIGHT_0230"},
+                asset_type=aq.AssetType.Futures,
+            )
+            .load(aq.feed_adapter.FeedSlice(symbol="au2406", timezone=TZ))
+        )
+        assert len(r.strategy.rows) >= 30
+        assert _replay_rows(out, "au2406") == r.strategy.rows
+
+
+def test_replay_multi_symbol_frame_matches_engine_windows() -> None:
+    """带 symbol 列的多品种 frame：按品种各自切分，资产类型可按品种映射.
+
+    au2406 不传 sessions，靠 asset_type 取期货默认时段表（10:15 截断）。
+    """
+    stock = _minute(
+        ["2024-01-02 09:31", "2024-01-02 10:00", "2024-01-02 11:29", "2024-01-02 13:01"]
+    )
+    fut = _minute(
+        [
+            "2024-01-02 09:01",
+            "2024-01-02 10:00",
+            "2024-01-02 10:14",
+            "2024-01-02 10:31",
+            "2024-01-02 11:00",
+        ],
+        symbol="au2406",
+    )
+    df = pd.concat([stock, fut], ignore_index=True)
+
+    class Eng(_OhlcvLog):
+        win_freq = "1h"
+
+    r = run_backtest(
+        strategy=Eng,
+        data=df,
+        symbols=["600000.SH", "au2406"],
+        config=_au_config(),
+        show_progress=False,
+        freq="1min",
+    )
+    assert r.strategy is not None
+
+    class WholeFrame(aq.feed_adapter.BasePandasFeedAdapter):
+        def load(self, request: Any) -> pd.DataFrame:
+            return df.set_index("timestamp")
+
+    out = (
+        WholeFrame()
+        .replay(
+            "1h",
+            align="session",
+            emit_partial=True,
+            asset_type={"au2406": "futures"},
+        )
+        .load(aq.feed_adapter.FeedSlice(symbol="600000.SH", timezone=TZ))
+    )
+    assert set(out["symbol"]) == {"600000.SH", "au2406"}
+    fut_index = pd.DatetimeIndex(out[out["symbol"] == "au2406"].index)
+    fut_labels = fut_index.tz_convert(TZ)
+    assert list(fut_labels.strftime("%H:%M")) == ["10:00", "10:15", "11:00"]
+    for sym in ("600000.SH", "au2406"):
+        engine = [row for row in r.strategy.rows if row[0] == sym]
+        assert engine
+        assert _replay_rows(out[out["symbol"] == sym], sym) == engine
+
+
+def test_replay_without_inferable_base_uses_deferred_close() -> None:
+    """推断不出基础周期（2 行 / 间隔不规则）时与引擎不传 freq 的延迟闭合口径一致."""
+    cases = [
+        ["2024-01-02 09:31", "2024-01-02 11:30"],
+        [
+            "2024-01-02 09:31:00",
+            "2024-01-02 09:59:30",
+            "2024-01-02 10:00:00",
+            "2024-01-02 10:31:20",
+            "2024-01-02 11:30:00",
+            "2024-01-02 13:01:10",
+        ],
+        # 重复时间戳: 即时闭合会切出两根同标签 10:00 窗口, 延迟闭合合成一根
+        [
+            "2024-01-02 09:31:00",
+            "2024-01-02 09:45:30",
+            "2024-01-02 10:00:00",
+            "2024-01-02 10:00:00",
+            "2024-01-02 10:20:10",
+        ],
+    ]
+    for times in cases:
+        df = _minute(times)
+
+        class Eng(_OhlcvLog):
+            win_freq = "30min"
+
+        r = run_backtest(
+            strategy=Eng,
+            data=df,
+            symbols=["600000.SH"],
+            initial_cash=1e5,
+            show_progress=False,
+        )
+        assert r.strategy is not None
+        out = (
+            _MemAdapter(df.set_index("timestamp"))
+            .replay("30min", align="session", emit_partial=True)
+            .load(aq.feed_adapter.FeedSlice(symbol="600000.SH", timezone=TZ))
+        )
+        assert _replay_rows(out, "600000.SH") == r.strategy.rows
+
+
+def test_replay_outside_trading_calendar_warns_once(caplog: Any) -> None:
+    """数据超出 trading_calendar 时尾部判断改按本地日期，并只告警一次."""
+    df = _minute(
+        [
+            "2024-01-02 09:45",
+            "2024-01-02 10:00",
+            "2024-01-10 09:45",
+            "2024-01-10 10:10",
+            "2024-01-10 13:01",
+            "2024-01-10 13:10",
+        ]
+    )
+    adapter = _MemAdapter(df.set_index("timestamp")).replay(
+        "30min",
+        align="session",
+        emit_partial=False,
+        trading_calendar=["2024-01-02", "2024-01-03"],
+    )
+    with caplog.at_level("WARNING", logger="akquant"):
+        out = adapter.load(aq.feed_adapter.FeedSlice(symbol="600000.SH", timezone=TZ))
+    warnings = [r for r in caplog.records if "trading_calendar" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "600000.SH" in warnings[0].getMessage()
+    assert [i.tz_convert(TZ).strftime("%m-%d %H:%M") for i in out.index] == [
+        "01-02 10:00",
+        "01-10 10:00",
+        "01-10 10:30",
+    ]

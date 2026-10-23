@@ -131,6 +131,8 @@ replayed = feed.replay(
   - `sessions`、`trading_calendar`、`asset_type` 与 `run_backtest` 同义（默认股票）；`base_interval_min` 是源数据周期（分钟），不传时按相邻时间戳间隔的众数推断。
   - OHLCV 取聚合器结果；`agg` 里的其他列（或改写了默认聚合方式的列）按聚合器给每行分配的窗口分组计算。
   - `emit_partial=False` 时，数据未到达标签的窗口若是该交易日最后一个窗口（或数据末尾），视为未闭合尾部丢弃。
+  - 默认 `align="session"` 在中国时区（请求 `timezone` 缺省即 `Asia/Shanghai`）下按 A 股交易块切分，午休、收盘后的数据不会与交易时段混在一个窗口里。非中国市场或 24 小时数据须显式传 `FeedSlice(timezone=...)`，并按需传 `sessions=`、`asset_type=`（如期货夜盘 `sessions={"au": "CN_FUTURES_NIGHT_0230"}, asset_type="futures"`）。
+  - 聚合前会剔除 open/high/low/close 任一为 NaN 的行，volume 的 NaN 按 0 计。
 - 交易块截断只对默认 `label="right", closed="right"` 且 `freq` 为 `Nmin`/`Nh`/`1D` 时生效；其余情况沿用 pandas `resample` 的旧实现（按本地日期分区）。
 - 可通过 `session_windows` 手写日内交易时段分区（例如午休前后分段）；终点早于起点表示跨午夜（如 `("21:00", "02:30")`）。手写时段走旧实现，不与引擎窗口逐根对齐。
 - `align` 当前支持三种语义：

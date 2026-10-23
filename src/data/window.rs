@@ -703,6 +703,12 @@ impl WindowAggregator {
         out.into_iter().map(|(_, _, _, b)| b).collect()
     }
 
+    /// 品种在 `freq` 上是否有正在形成的窗口(不克隆快照)。
+    pub fn is_forming(&self, symbol: &str, freq: &str) -> bool {
+        self.states
+            .contains_key(&(symbol.to_string(), freq.trim().to_ascii_lowercase()))
+    }
+
     pub fn current(&self, symbol: &str, freq: &str) -> Option<Bar> {
         let label = freq.trim().to_ascii_lowercase();
         self.states
