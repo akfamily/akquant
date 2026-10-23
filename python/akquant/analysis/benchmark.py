@@ -27,8 +27,9 @@ def _trading_day_labels(
 
     交易日 T 覆盖 ``(上一交易日收盘, T 收盘]``：取第一个收盘时刻不早于该时刻的
     已开交易日（夜盘点归下一交易日），口径与 Rust
-    ``BacktestResult::trading_day_key`` 一致。``ends`` 为空，或时刻晚于全部
-    收盘时刻时，退回本地自然日（``index.normalize()``）。
+    ``BacktestResult::trading_day_key`` 一致。首个收盘之前的时刻（含首个交易日
+    开日前）都归首个交易日；只有 ``ends`` 为空，或时刻晚于最后一个收盘时刻时，
+    才退回本地自然日（``index.normalize()``）。
 
     带时区的索引返回 ``tz`` 下的带时区标签；不带时区的索引按 ``tz`` 本地时间
     解释，返回不带时区的标签。

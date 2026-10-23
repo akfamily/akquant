@@ -172,7 +172,8 @@ class BacktestResult:
 
         日收益/日权益按它把权益点归入交易日：交易日 T 覆盖
         ``(上一交易日收盘, T 收盘]``，夜盘点属下一交易日。从存档续跑的结果只含
-        续跑段开过的交易日；不在任何已知区间内的点退回本地自然日。
+        续跑段开过的交易日；首个收盘之前的点归首个交易日，最后一个收盘之后的点
+        退回本地自然日。
         """
         ends = getattr(self._raw, "trading_day_ends", None)
         return [(day, int(end)) for day, end in ends] if ends else []
