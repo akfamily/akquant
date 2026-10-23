@@ -302,6 +302,9 @@ pub struct WindowAggregator {
     warn_out_of_block: bool,
     /// 已告警过"落在时段表之外"的品种(每个品种只告警一次)。
     out_of_block_warned: HashSet<String>,
+    /// 基础周期未知且 bar 不带区间(只能延迟闭合)时是否告警一次(引擎打开)。
+    warn_deferred_close: bool,
+    deferred_close_warned: bool,
 }
 
 /// bar 区间终点: 回测 tick 合成的终点戳 bar 打在边界前 1ns(`ts + 1` 是整秒),
@@ -367,6 +370,11 @@ impl WindowAggregator {
     /// 已登记的品种资产类型。
     pub fn asset_types(&self) -> &HashMap<String, AssetType> {
         &self.asset_types
+    }
+
+    /// 打开"基础周期未知且 bar 不带 interval_start、窗口只能延迟闭合"告警(一次)。
+    pub fn set_warn_deferred_close(&mut self, enabled: bool) {
+        self.warn_deferred_close = enabled;
     }
 
     /// 打开"bar 落在时段表之外"告警(每个品种一次)。
@@ -669,6 +677,14 @@ impl WindowAggregator {
         let end = bar_end(bar);
         let base_known = self.base_interval_min.is_some() || bar.interval_start.is_some();
         self.check_out_of_block(&bar.symbol, point, bar.timestamp);
+        if !base_known && self.warn_deferred_close && !self.deferred_close_warned {
+            self.deferred_close_warned = true;
+            log::warn!(
+                "已订阅窗口周期 {:?} 但基础数据周期未知(self.freq=None)且 bar 不带 interval_start(标的 {}): 窗口将在下一根落入新窗口的 bar 到达时才闭合(晚一根基础 bar)。回测请传 run_backtest(freq=), 实盘请让行情网关声明 metadata['freq'] 或给 bar 带上 interval_start",
+                self.subscribed_freqs(),
+                bar.symbol
+            );
+        }
         // (总分钟数, freq_label, bar); label 作 tie-break, 保证 "1h" 与 "60min"
         // 这类分钟数相同但标签不同的周期有确定顺序(否则顺序依赖 HashMap 迭代,
         // 对 golden baseline 是隐患)。

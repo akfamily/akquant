@@ -921,11 +921,16 @@ impl Engine {
                     .map_err(PyValueError::new_err)?,
             );
         }
-        self.window_aggregator
+        let mut aggregator = self
+            .window_aggregator
             .write()
-            .expect("window_aggregator 写锁被污染")
+            .expect("window_aggregator 写锁被污染");
+        aggregator
             .configure(subs, base_interval_min)
             .map_err(PyValueError::new_err)?;
+        // 基础周期未知时, 第一根不带 interval_start 的 bar 到达才告警(带区间的 bar
+        // 照样即时闭合, 不该报)。
+        aggregator.set_warn_deferred_close(true);
         Ok(())
     }
 

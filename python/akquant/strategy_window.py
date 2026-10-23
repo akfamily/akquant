@@ -270,14 +270,9 @@ def configure_engine_window_subscriptions(
         return
     specs = _merge_scoped_specs(entries)
     base_min = base_interval_minutes(base_freq)
-    if base_min is None:
-        logger.warning(
-            "已订阅窗口周期 %s 但基础数据周期未知(self.freq=None): 窗口将在下一根落入"
-            "新窗口的 bar 到达时才闭合(晚一根基础 bar)。回测请传 run_backtest(freq=), "
-            "实盘请让行情网关声明 metadata['freq']",
-            sorted({s[1] for s in specs}),
-        )
-    else:
+    # 基础周期未知时不在这里告警: bar 带 interval_start(只有日期的日线改写、tick
+    # 合成 bar、网关给出区间)照样即时闭合; 由引擎在第一根不带区间的 bar 上告警。
+    if base_min is not None:
         for _, freq, _ in specs:
             if parse_window_freq(freq)[1] <= base_min:
                 raise ValueError(

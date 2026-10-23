@@ -432,3 +432,48 @@ def test_generic_and_symbol_specific_subscriptions_share_one_window() -> None:
     # 未发生双重聚合: 5 根基础 bar、每根 volume=100 → 窗口 volume 应为 500, 不是 1000
     assert generic_x[0].volume == pytest.approx(500.0)
     assert s.x_seen[0].volume == pytest.approx(500.0)
+
+
+class _FiveMinLog(Strategy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.subscribe_bars("5min")
+        self.closed_at: list[int] = []
+
+    def on_window_bar(self, bar: Bar) -> None:
+        now = self.now
+        assert now is not None
+        self.closed_at.append(int(now.value))
+
+
+@pytest.mark.parametrize("with_interval", [True, False])
+def test_unknown_base_warning_only_for_bars_without_interval(
+    caplog: pytest.LogCaptureFixture, with_interval: bool
+) -> None:
+    """Bar 带 interval_start 时不报“基础周期未知”且即时闭合; 不带时告警一次."""
+    bars = _minute_bars("X", "2024-01-02 09:31:00", 10)
+    if with_interval:
+        bars = [
+            Bar(
+                b.timestamp,
+                b.open,
+                b.high,
+                b.low,
+                b.close,
+                b.volume,
+                b.symbol,
+                interval_start=b.timestamp - 60_000_000_000,
+            )
+            for b in bars
+        ]
+    strategy = _FiveMinLog()
+    with caplog.at_level("WARNING", logger="akquant"):
+        run_backtest(data=bars, strategy=strategy, symbols="X", show_progress=False)
+    hits = [r for r in caplog.records if "基础数据周期未知" in r.getMessage()]
+    if with_interval:
+        assert hits == []
+        # 09:35 窗口在 09:35 那根即时闭合
+        assert strategy.closed_at[0] == bars[4].timestamp
+    else:
+        assert len(hits) == 1
+        assert strategy.closed_at[0] == bars[5].timestamp
