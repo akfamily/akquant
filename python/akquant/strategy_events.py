@@ -220,14 +220,23 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     _flush_indicator_snapshots(strategy)
 
 
+def _flushes_schedules_on_timer(strategy: Any, payload: str) -> bool:
+    """定时器事件上是否刷出 on_start 里登记的定时任务.
+
+    回测(有 ``_trading_days``)的生命周期事件(盘前/开始交易/收盘后)不刷: 首次登记
+    仍在首个行情或用户定时器事件上进行, "跳过早于当前时刻的时点"以它为准(只有
+    日期的日线改写到 15:00 后, 首日 09:35 等定时器不补登记)。实盘按墙钟登记下一次,
+    没有首日规则的顾虑, 生命周期事件上也刷——否则开盘前没有行情时, on_start 里
+    登记的任务要等首个行情才生效。
+    """
+    return not is_lifecycle_payload(payload) or not strategy._trading_days
+
+
 def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
     """引擎调用的 Timer 回调 (Internal)."""
     ensure_framework_state(strategy)
     strategy.ctx = ctx
-    # 交易日生命周期事件(盘前/开始交易/收盘后)不刷出 on_start 里登记的定时任务:
-    # 首次登记仍在首个行情或用户定时器事件上进行, “跳过早于当前时刻的时点”以它为准
-    # (只有日期的日线改写到 15:00 后, 首日 09:35 等定时器不补登记)。
-    if not is_lifecycle_payload(payload):
+    if _flushes_schedules_on_timer(strategy, payload):
         flush_pending_schedules(strategy)
     register_cross_section_timers(strategy)
     strategy._check_order_events()

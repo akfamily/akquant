@@ -577,3 +577,27 @@ def test_schedule_bad_time_raises_chinese_value_error() -> None:
         for register in (s.schedule_daily, s.schedule_weekly, s.schedule_monthly):
             with pytest.raises(ValueError, match="无法解析定时器时刻"):
                 register("25:99", "x")
+
+
+def test_live_lifecycle_event_flushes_pending_schedules() -> None:
+    """实盘：on_start 登记的定时任务在生命周期事件上也刷出；回测仍等首个行情事件."""
+
+    class P(Strategy):
+        pass
+
+    payload = "__akq_lifecycle__|pre_open|2024-01-05"
+
+    live = P()
+    live._trading_days = []
+    live.schedule_daily("10:00", "d")  # 上下文未就绪：暂存
+    ctx = _live_ctx(False)
+    live._on_timer_event(payload, ctx)
+    assert [c.args[1] for c in ctx.schedule.call_args_list] == ["__daily__|10:00|d"]
+
+    backtest = P()
+    backtest._trading_days = [pd.Timestamp("2024-01-05", tz=TZ)]
+    backtest.schedule_daily("10:00", "d")
+    ctx = _live_ctx(False)
+    backtest._on_timer_event(payload, ctx)
+    assert ctx.schedule.call_count == 0
+    assert backtest._pending_daily_timers == [("10:00", "d")]
