@@ -21,7 +21,8 @@ def _make_bars(
 ) -> list[Bar]:
     """Deterministic daily bars."""
     bars: list[Bar] = []
-    idx = pd.date_range(start=start, periods=periods, freq="D")
+    # UTC 02:00 = 北京时间 10:00（连续竞价时段内）
+    idx = pd.date_range(start=start, periods=periods, freq="D") + pd.Timedelta(hours=2)
     for i, ts in enumerate(idx):
         price = start_price + float(i)
         bars.append(

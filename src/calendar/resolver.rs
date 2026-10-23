@@ -100,7 +100,7 @@ pub struct SessionResolver {
 }
 
 impl SessionResolver {
-    pub fn new(
+    pub(crate) fn new(
         clock: LocalClock,
         calendar: Option<TradingCalendar>,
         sessions: Vec<(String, SessionSchedule)>,

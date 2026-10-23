@@ -37,6 +37,52 @@ pub struct EngineContext<'a> {
     pub timezone_name: Option<&'a str>,
     pub timezone_offset: i32,
     pub trading_day: Option<chrono::NaiveDate>,
+    /// 撮合按品种取时段（见 [`SessionView`]）。
+    pub sessions: SessionView<'a>,
+}
+
+/// 撮合按品种取时段的视图。`force_continuous` 为真（实盘阶段 7 前）时一律连续竞价。
+#[derive(Clone, Copy)]
+pub struct SessionView<'a> {
+    pub force_continuous: bool,
+    pub slice: Option<&'a HashMap<String, TradingSession>>,
+    pub resolver: Option<&'a crate::calendar::resolver::SessionResolver>,
+    pub instruments: Option<&'a HashMap<String, Instrument>>,
+}
+
+impl<'a> SessionView<'a> {
+    /// 一律连续竞价（无时段信息的调用方、单测）。
+    #[must_use]
+    pub fn continuous() -> Self {
+        Self {
+            force_continuous: true,
+            slice: None,
+            resolver: None,
+            instruments: None,
+        }
+    }
+
+    /// 品种在时刻 `ts` 的时段：本时间片已解析的优先（含 bar 区间信息），
+    /// 否则按时刻解析（定时器触发的撮合）；解析失败或无解析器时按连续竞价。
+    pub fn session_for(&self, symbol: &str, ts: i64) -> TradingSession {
+        if self.force_continuous {
+            return TradingSession::Continuous;
+        }
+        if let Some(s) = self.slice.and_then(|m| m.get(symbol)) {
+            return *s;
+        }
+        let Some(resolver) = self.resolver else {
+            return TradingSession::Continuous;
+        };
+        let asset_type = self
+            .instruments
+            .and_then(|m| m.get(symbol))
+            .map(|i| i.asset_type);
+        resolver
+            .resolve_instant(symbol, asset_type, ts.saturating_sub(1))
+            .map(|r| r.session)
+            .unwrap_or(TradingSession::Continuous)
+    }
 }
 
 pub struct ContextInit {
@@ -1324,5 +1370,34 @@ impl StrategyContext {
             .unwrap_or(&Decimal::ZERO)
             .to_f64()
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_view_prefers_slice_then_resolver_and_honours_force() {
+        let mut slice = HashMap::new();
+        slice.insert("A".to_string(), TradingSession::ClosingAuction);
+        let view = SessionView {
+            force_continuous: false,
+            slice: Some(&slice),
+            resolver: None,
+            instruments: None,
+        };
+        assert_eq!(view.session_for("A", 0), TradingSession::ClosingAuction);
+        // 无解析器、不在时间片表中：按连续竞价（兼容无时段信息的单测与旧路径）
+        assert_eq!(view.session_for("B", 0), TradingSession::Continuous);
+        let forced = SessionView {
+            force_continuous: true,
+            ..view
+        };
+        assert_eq!(forced.session_for("A", 0), TradingSession::Continuous);
+        assert_eq!(
+            SessionView::continuous().session_for("X", 0),
+            TradingSession::Continuous
+        );
     }
 }

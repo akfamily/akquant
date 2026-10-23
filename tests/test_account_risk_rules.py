@@ -56,8 +56,8 @@ def test_account_max_drawdown_rule_rejects_new_orders() -> None:
     """Reject new orders after drawdown breaches threshold."""
     bars = _build_bars(
         [
-            pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-01 11:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 11:00:00", tz="Asia/Shanghai"),
         ],
         [100.0, 50.0],
     )
@@ -79,8 +79,8 @@ def test_account_max_daily_loss_rule_rejects_new_orders_same_day() -> None:
     """Reject new orders after intraday daily-loss breach."""
     bars = _build_bars(
         [
-            pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-01 14:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 14:00:00", tz="Asia/Shanghai"),
         ],
         [100.0, 50.0],
     )
@@ -102,8 +102,8 @@ def test_account_stop_loss_threshold_rule_rejects_new_orders() -> None:
     """Reject new orders when equity falls below stop-loss threshold."""
     bars = _build_bars(
         [
-            pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-01 11:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 11:00:00", tz="Asia/Shanghai"),
         ],
         [100.0, 50.0],
     )
@@ -430,8 +430,8 @@ def test_margin_account_allows_short_sell_when_enabled() -> None:
 
     bars = _build_bars(
         [
-            pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-01 10:01:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 10:01:00", tz="Asia/Shanghai"),
         ],
         [10.0, 10.0],
         symbol="SHORTABLE",
@@ -473,8 +473,8 @@ def test_margin_account_stock_buy_uses_initial_margin_ratio() -> None:
 
     bars = _build_bars(
         [
-            pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai"),
-            pd.Timestamp("2023-01-01 10:01:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2023-01-03 10:01:00", tz="Asia/Shanghai"),
         ],
         [100.0, 100.0],
         symbol="MARGIN_BUY",
@@ -530,9 +530,9 @@ def test_margin_account_same_cycle_cover_then_reopen_short_releases_margin() -> 
             self.step += 1
 
     timestamps = [
-        pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai"),
-        pd.Timestamp("2023-01-01 10:01:00", tz="Asia/Shanghai"),
-        pd.Timestamp("2023-01-01 10:02:00", tz="Asia/Shanghai"),
+        pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai"),
+        pd.Timestamp("2023-01-03 10:01:00", tz="Asia/Shanghai"),
+        pd.Timestamp("2023-01-03 10:02:00", tz="Asia/Shanghai"),
     ]
     data = {
         "AAA": pd.DataFrame(
@@ -734,6 +734,8 @@ def test_futures_margin_account_snapshot_uses_margin_accounting() -> None:
         strategy=FuturesAccountProbeStrategy,
         symbols="RB2305",
         show_progress=False,
+        # 原 enforce_sessions=False（不按时段）：夜盘数据显式按全天连续
+        sessions={"RB": "ALWAYS_OPEN"},
         fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(
@@ -1056,6 +1058,8 @@ def test_futures_margin_portfolio_update_can_read_account_metrics() -> None:
         strategy=FuturesPortfolioUpdateProbeStrategy,
         symbols="RB2305",
         show_progress=False,
+        # 原 enforce_sessions=False（不按时段）：夜盘数据显式按全天连续
+        sessions={"RB": "ALWAYS_OPEN"},
         fill_policy=CurrentClose(),
         config=BacktestConfig(
             strategy_config=StrategyConfig(

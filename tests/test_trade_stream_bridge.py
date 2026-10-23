@@ -28,7 +28,9 @@ def _build_data() -> list[Bar]:
     for i, close in enumerate(closes):
         bars.append(
             Bar(
-                timestamp=pd.Timestamp(f"2024-01-0{i + 1} 10:00:00").value,
+                timestamp=pd.Timestamp(
+                    f"2024-01-0{i + 1} 10:00:00", tz="Asia/Shanghai"
+                ).value,
                 open=close - 0.1,
                 high=close + 0.2,
                 low=close - 0.2,

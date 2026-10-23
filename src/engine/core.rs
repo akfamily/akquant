@@ -102,6 +102,13 @@ pub struct Engine {
     pub(crate) clock: Clock,
     pub(crate) timers: BinaryHeap<Timer>, // Min-Heap via Timer's Ord implementation
     pub(crate) force_session_continuous: bool,
+    /// 当前时间片各品种的时段（行情事件按 bar 区间解析）；时间戳推进时清空。
+    pub(crate) slice_sessions: HashMap<String, crate::model::TradingSession>,
+    /// 各品种最近一次解析所在的时段区间 `[start, end)` 与时段（`event_session` 缓存）；
+    /// 解析器重建时清空。
+    pub(crate) session_span_cache: HashMap<String, (i64, i64, crate::model::TradingSession)>,
+    /// 已告警过“行情落在闭市时段”的品种（每个品种只告警一次）。
+    pub(crate) closed_session_warned: HashSet<String>,
     #[pyo3(get, set)]
     pub risk_manager: RiskManager,
     pub(crate) timezone_offset: i32,
@@ -349,7 +356,45 @@ impl Engine {
             .collect();
         resolver.set_active(&active);
         self.session_resolver = Some(resolver);
+        // 缓存的时段区间来自旧解析器（时区、时段表或标的变化后失效）。
+        self.session_span_cache.clear();
         Ok(())
+    }
+
+    /// 行情事件的时段：bar 区间 `(interval_start, ts]`（无区间按 `ts` 前 1ns）落在
+    /// 缓存的同一时段区间内时直接复用，否则查解析器并刷新缓存。
+    pub(crate) fn event_session(
+        &mut self,
+        symbol: &str,
+        interval_start: Option<i64>,
+        ts: i64,
+    ) -> PyResult<crate::model::TradingSession> {
+        use crate::model::TradingSession;
+        if self.force_session_continuous {
+            return Ok(TradingSession::Continuous);
+        }
+        self.ensure_session_resolver()?;
+        let point = ts.saturating_sub(1);
+        if let Some(&span) = self.session_span_cache.get(symbol)
+            && span_covers_event(span, interval_start, ts)
+        {
+            return Ok(span.2);
+        }
+        let resolver = self.session_resolver.as_ref().expect("已构造");
+        let asset_type = self.instruments.get(symbol).map(|i| i.asset_type);
+        let session = resolver
+            .resolve_bar(symbol, asset_type, interval_start, ts)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+            .session;
+        // 只缓存与本次解析结果一致、且确实覆盖本事件的区间（多段 bar、恰在段结束的
+        // 时刻等情形不缓存，下次照常解析）。
+        if let Ok(span) = resolver.segment_span_at(symbol, asset_type, point)
+            && span.2 == session
+            && span_covers_event(span, interval_start, ts)
+        {
+            self.session_span_cache.insert(symbol.to_string(), span);
+        }
+        Ok(session)
     }
 
     /// `ts` 所属的会话交易日。命中当前交易日区间时直接返回，否则交给解析器。
@@ -1330,12 +1375,28 @@ impl Engine {
             .and_then(|name| name.parse::<Tz>().ok())
     }
 
+    /// 引擎时区下的本地时刻(时段改由解析器求后只剩单测使用)。
+    #[cfg(test)]
     pub(crate) fn local_time_from_ns(&self, timestamp: i64) -> NaiveTime {
         let utc_dt = Self::datetime_from_ns(timestamp);
         if let Some(tz) = self.parsed_timezone() {
             return utc_dt.with_timezone(&tz).time();
         }
         Self::local_datetime_from_ns(timestamp, self.timezone_offset).time()
+    }
+
+    /// 引擎时区下的本地日期时间文本(告警文案用)。
+    pub(crate) fn local_datetime_text(&self, timestamp: i64) -> String {
+        let utc_dt = Self::datetime_from_ns(timestamp);
+        if let Some(tz) = self.parsed_timezone() {
+            return utc_dt
+                .with_timezone(&tz)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+        }
+        Self::local_datetime_from_ns(timestamp, self.timezone_offset)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string()
     }
 
     pub(crate) fn local_date_from_ns(&self, timestamp: i64) -> NaiveDate {
@@ -1892,5 +1953,59 @@ impl Engine {
         pipeline.add_processor(Box::new(CleanupProcessor));
 
         pipeline
+    }
+}
+
+/// 缓存的时段区间 `span = [start, end)` 是否覆盖行情事件：bar 区间 `(interval_start, ts]`
+/// 整个落在其中；无区间时按 `ts - 1` 这一时刻落在其中。间隙（`Closed`）区间的起点
+/// 恰是上一段的结束，`resolve_instant` 把该时刻归入上一段（收盘那一笔），不算覆盖。
+fn span_covers_event(
+    span: (i64, i64, crate::model::TradingSession),
+    interval_start: Option<i64>,
+    ts: i64,
+) -> bool {
+    let (start, end, session) = span;
+    match interval_start {
+        Some(lo) => lo < ts && start <= lo && ts <= end,
+        None => {
+            let point = ts.saturating_sub(1);
+            point < end
+                && (start < point
+                    || (start == point && session != crate::model::TradingSession::Closed))
+        }
+    }
+}
+
+#[cfg(test)]
+mod span_cache_tests {
+    use super::span_covers_event;
+    use crate::model::TradingSession;
+
+    #[test]
+    fn span_covers_whole_bar_interval_only() {
+        let seg = (100, 200, TradingSession::Continuous);
+        // (100, 200] 整个落在 [100, 200) 的时段内（终点戳 bar 的最后一笔在 199）
+        assert!(span_covers_event(seg, Some(100), 200));
+        assert!(span_covers_event(seg, Some(150), 160));
+        // 区间起点早于时段开始：与前一段有交集
+        assert!(!span_covers_event(seg, Some(99), 150));
+        // 区间终点越过时段结束
+        assert!(!span_covers_event(seg, Some(150), 201));
+        // 非法区间不命中缓存（交给解析器报错）
+        assert!(!span_covers_event(seg, Some(160), 160));
+    }
+
+    #[test]
+    fn span_covers_point_but_not_closing_print_of_gap() {
+        let seg = (100, 200, TradingSession::ClosingAuction);
+        assert!(span_covers_event(seg, None, 101));
+        assert!(span_covers_event(seg, None, 200));
+        assert!(!span_covers_event(seg, None, 201));
+        let gap = (200, 300, TradingSession::Closed);
+        // ts - 1 = 200 恰是上一段结束：解析器归入上一段，缓存的间隙不算覆盖
+        assert!(!span_covers_event(gap, None, 201));
+        assert!(span_covers_event(gap, None, 202));
+        assert!(span_covers_event(gap, None, 300));
+        assert!(!span_covers_event(gap, None, 301));
     }
 }

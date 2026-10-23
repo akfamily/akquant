@@ -90,6 +90,7 @@ impl RiskManager {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         match self.check_internal(order, &ctx) {
@@ -471,6 +472,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let err = manager
@@ -503,6 +505,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         manager
@@ -540,6 +543,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let err = manager
@@ -581,6 +585,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         assert!(!RiskManager::should_defer_available_position_check(

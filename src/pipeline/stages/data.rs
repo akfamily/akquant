@@ -2,7 +2,7 @@ use super::shared::{
     apply_execution_report, effective_execution_policy_for_order, flush_accumulated_trades,
 };
 use crate::calendar::trading_calendar::CalendarError;
-use crate::context::EngineContext;
+use crate::context::{EngineContext, SessionView};
 use crate::data::FeedAction;
 use crate::engine::Engine;
 use crate::event::Event;
@@ -160,6 +160,8 @@ impl DataProcessor {
             // 安全性同 core.rs Engine.last_prices 字段注释:写锁只有 3 处
             // 且都要求 &mut Engine,run() 期间该借用被占用,再入会
             // PyBorrowMutError 而非阻塞。
+            // 无解析器(构造失败)时 SessionView 按连续竞价; 配置错误已在 run() 开始时报出。
+            let _ = engine.ensure_session_resolver();
             let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
             let ctx = EngineContext {
                 instruments: &engine.instruments,
@@ -176,6 +178,12 @@ impl DataProcessor {
                 timezone_name: engine.timezone_name.as_deref(),
                 timezone_offset: engine.timezone_offset,
                 trading_day: engine.current_trading_day,
+                sessions: SessionView {
+                    force_continuous: engine.force_session_continuous,
+                    slice: Some(&engine.slice_sessions),
+                    resolver: engine.session_resolver.as_ref(),
+                    instruments: Some(&engine.instruments),
+                },
             };
             let reports = engine
                 .execution_model
@@ -291,12 +299,23 @@ impl Processor for DataProcessor {
                     if timer.timestamp > self.last_timestamp {
                         self.finalize_current_timestamp(engine, py);
                     }
-                    let local_time = engine.local_time_from_ns(timer.timestamp);
-                    let session = engine.market_manager.get_session_status(local_time);
+                    // 定时器不属于任何品种: ctx.session 取会话级时段(在用时段表中优先级
+                    // 最高者); 撮合按订单品种取时段(见 SessionView::session_for)。
+                    let session = if engine.force_session_continuous {
+                        TradingSession::Continuous
+                    } else {
+                        engine.ensure_session_resolver()?;
+                        engine
+                            .session_resolver
+                            .as_ref()
+                            .map_or(TradingSession::Continuous, |r| {
+                                r.session_level_instant(timer.timestamp)
+                            })
+                    };
+                    // 不清空 slice_sessions: 时间片内的定时器(如截面定时器 source_ts + 1)
+                    // 沿用本时间片各品种按 bar 区间求得的时段; 时间片之外没有行情的品种
+                    // 由 SessionView 按定时器时刻解析。下一个行情时间戳到来时才清空。
                     engine.clock.update(timer.timestamp, session);
-                    if engine.force_session_continuous {
-                        engine.clock.session = TradingSession::Continuous;
-                    }
                     engine.current_event = Some(Event::Timer(timer));
                 }
                 Ok(ProcessorResult::Next)
@@ -353,17 +372,40 @@ impl Processor for DataProcessor {
                         engine.emit_stream_event(py, "progress", None, "info", progress_payload);
                     }
                 }
+                if timestamp > self.last_timestamp {
+                    // 新时间片(上一片已 finalize): 上一片各品种的时段作废。
+                    engine.slice_sessions.clear();
+                }
                 self.last_timestamp = timestamp;
 
-                // Update Market Manager (Session)
-                let session = engine
-                    .market_manager
-                    .get_session_status(engine.local_time_from_ns(timestamp));
-
-                engine.clock.update(timestamp, session);
-                if engine.force_session_continuous {
-                    engine.clock.session = TradingSession::Continuous;
+                // 本事件品种的时段: 按 bar 区间 (interval_start, ts] 求(tick 按时刻)。
+                let (event_symbol, interval_start) = match &event {
+                    Event::Bar(b) => (b.symbol.as_str(), b.interval_start),
+                    Event::Tick(t) => (t.symbol.as_str(), None),
+                    _ => ("", None),
+                };
+                let session = engine.event_session(event_symbol, interval_start, timestamp)?;
+                if session == TradingSession::Closed
+                    && !engine.closed_session_warned.contains(event_symbol)
+                {
+                    engine
+                        .closed_session_warned
+                        .insert(event_symbol.to_string());
+                    log::warn!(
+                        "标的 {} 在 {} 的行情落在闭市时段，期间不会撮合成交；如为夜盘等时段，请用 sessions= 指定时段模板（如 {{\"au\": \"CN_FUTURES_NIGHT_0230\"}}）",
+                        event_symbol,
+                        engine.local_datetime_text(timestamp)
+                    );
                 }
+                match engine.slice_sessions.get_mut(event_symbol) {
+                    Some(slot) => *slot = session,
+                    None => {
+                        engine
+                            .slice_sessions
+                            .insert(event_symbol.to_string(), session);
+                    }
+                }
+                engine.clock.update(timestamp, session);
 
                 // 开日: 第一个属于新会话交易日的(活跃)事件。日终结算不在这里做,
                 // 而是挂在该交易日收盘后的内部定时器上(回测 +1ns, 实盘留宽限;

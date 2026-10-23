@@ -101,7 +101,9 @@ def _build_data(symbol: str = "TEST", n: int = 5) -> list[Bar]:
         close = 10.0 + i
         data.append(
             Bar(
-                timestamp=pd.Timestamp(f"2023-01-{i + 1:02d} 10:00:00").value,
+                timestamp=pd.Timestamp(
+                    f"2023-01-{i + 1:02d} 10:00:00", tz="Asia/Shanghai"
+                ).value,
                 open=close,
                 high=close + 0.2,
                 low=close - 0.2,
@@ -1028,7 +1030,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
     _skip_if_no_plotly()
     bars = [
         Bar(
-            timestamp=pd.Timestamp("2023-01-01 10:00:00").value,
+            timestamp=pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai").value,
             open=100.0,
             high=100.2,
             low=99.8,
@@ -1037,7 +1039,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
             symbol="LIQ",
         ),
         Bar(
-            timestamp=pd.Timestamp("2023-01-01 14:00:00").value,
+            timestamp=pd.Timestamp("2023-01-03 14:00:00", tz="Asia/Shanghai").value,
             open=20.0,
             high=20.2,
             low=19.8,
@@ -1046,7 +1048,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
             symbol="LIQ",
         ),
         Bar(
-            timestamp=pd.Timestamp("2023-01-02 10:00:00").value,
+            timestamp=pd.Timestamp("2023-01-04 10:00:00", tz="Asia/Shanghai").value,
             open=20.0,
             high=20.2,
             low=19.8,

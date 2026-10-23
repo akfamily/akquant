@@ -661,7 +661,9 @@ def test_get_trades_refreshes_during_backtest() -> None:
     """get_trades should reflect latest closed trades snapshot in strategy context."""
     bars = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=6, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=6, freq="B", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
             "high": [10.5, 11.5, 12.5, 13.5, 14.5, 15.5],
             "low": [9.5, 10.5, 11.5, 12.5, 13.5, 14.5],
@@ -1383,7 +1385,8 @@ def _make_bars(
 ) -> list[Bar]:
     """Create deterministic bar list."""
     bars: list[Bar] = []
-    idx = pd.date_range(start=start, periods=periods, freq="D")
+    # UTC 02:00 = 北京时间 10:00（连续竞价时段内）
+    idx = pd.date_range(start=start, periods=periods, freq="D") + pd.Timedelta(hours=2)
     for i, ts in enumerate(idx):
         price = start_price + float(i)
         bars.append(
@@ -2674,8 +2677,8 @@ def test_run_warm_start_explicit_compat_overrides_env_default(
 def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
     """Warm start should preserve strategy-level risk state across snapshots."""
     checkpoint = tmp_path / "snapshot_risk_state.pkl"
-    phase1 = _make_bars("2023-01-01", 1)
-    phase2 = _make_bars("2023-01-02", 1, start_price=101.0)
+    phase1 = _make_bars("2023-01-02", 1)
+    phase2 = _make_bars("2023-01-03", 1, start_price=101.0)
 
     result1 = run_backtest(
         data=phase1,
@@ -2714,7 +2717,7 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
     assert set(slot_getter()) == {"alpha", "beta"}
     orders_df = result2.orders_df
     phase2_rows = orders_df[
-        orders_df["created_at"].dt.strftime("%Y-%m-%d") == "2023-01-02"
+        orders_df["created_at"].dt.strftime("%Y-%m-%d") == "2023-01-03"
     ]
     reject_reasons = phase2_rows["reject_reason"].fillna("").astype(str).tolist()
     assert any("cooldown" in reason for reason in reject_reasons), reject_reasons
@@ -2723,8 +2726,8 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
 def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> None:
     """run_warm_start should apply slot risk maps with explicit topology args."""
     checkpoint = tmp_path / "snapshot_risk_override.pkl"
-    phase1 = _make_bars("2023-01-01", 1)
-    phase2 = _make_bars("2023-01-02", 1, start_price=101.0)
+    phase1 = _make_bars("2023-01-02", 1)
+    phase2 = _make_bars("2023-01-03", 1, start_price=101.0)
 
     result1 = run_backtest(
         data=phase1,
@@ -2749,7 +2752,7 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
         strategy_max_order_size={"alpha": 5.0, "beta": 20.0},
     )
     phase2_rows = result2.orders_df[
-        result2.orders_df["created_at"].dt.strftime("%Y-%m-%d") == "2023-01-02"
+        result2.orders_df["created_at"].dt.strftime("%Y-%m-%d") == "2023-01-03"
     ]
     alpha_rows = phase2_rows[phase2_rows["owner_strategy_id"].astype(str) == "alpha"]
     beta_rows = phase2_rows[phase2_rows["owner_strategy_id"].astype(str) == "beta"]
@@ -2762,8 +2765,8 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
 def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> None:
     """run_warm_start should accept strategy slot risk settings from config."""
     checkpoint = tmp_path / "snapshot_risk_from_config.pkl"
-    phase1 = _make_bars("2023-01-01", 1)
-    phase2 = _make_bars("2023-01-02", 1, start_price=101.0)
+    phase1 = _make_bars("2023-01-02", 1)
+    phase2 = _make_bars("2023-01-03", 1, start_price=101.0)
     config = BacktestConfig(
         strategy_config=StrategyConfig(
             initial_cash=100000.0,
@@ -2792,7 +2795,7 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
         config=config,
     )
     phase2_rows = result2.orders_df[
-        result2.orders_df["created_at"].dt.strftime("%Y-%m-%d") == "2023-01-02"
+        result2.orders_df["created_at"].dt.strftime("%Y-%m-%d") == "2023-01-03"
     ]
     alpha_rows = phase2_rows[phase2_rows["owner_strategy_id"].astype(str) == "alpha"]
     beta_rows = phase2_rows[phase2_rows["owner_strategy_id"].astype(str) == "beta"]
@@ -2805,8 +2808,8 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
 def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> None:
     """Explicit warm-start slot risk args should override config values."""
     checkpoint = tmp_path / "snapshot_risk_from_config_override.pkl"
-    phase1 = _make_bars("2023-01-01", 1)
-    phase2 = _make_bars("2023-01-02", 1, start_price=101.0)
+    phase1 = _make_bars("2023-01-02", 1)
+    phase2 = _make_bars("2023-01-03", 1, start_price=101.0)
     config = BacktestConfig(
         strategy_config=StrategyConfig(
             initial_cash=100000.0,
@@ -2836,7 +2839,7 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
         strategy_max_order_size={"alpha": 20.0, "beta": 5.0},
     )
     phase2_rows = result2.orders_df[
-        result2.orders_df["created_at"].dt.strftime("%Y-%m-%d") == "2023-01-02"
+        result2.orders_df["created_at"].dt.strftime("%Y-%m-%d") == "2023-01-03"
     ]
     alpha_rows = phase2_rows[phase2_rows["owner_strategy_id"].astype(str) == "alpha"]
     beta_rows = phase2_rows[phase2_rows["owner_strategy_id"].astype(str) == "beta"]
@@ -3154,7 +3157,10 @@ def _make_symbol_df(
     start_price: float,
 ) -> pd.DataFrame:
     """Create deterministic OHLCV dataframe for a symbol."""
-    ts = pd.date_range(start=start, periods=periods, freq="D", tz="UTC")
+    # UTC 02:00 = 北京时间 10:00（连续竞价时段内）
+    ts = pd.date_range(start=start, periods=periods, freq="D", tz="UTC") + pd.Timedelta(
+        hours=2
+    )
     prices = [start_price + float(i) for i in range(periods)]
     return pd.DataFrame(
         {
@@ -3386,12 +3392,12 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
     """Warm start should not duplicate order/trade callbacks."""
     checkpoint = tmp_path / "snapshot_event_idempotency.pkl"
     phase1 = {
-        "AAA": _make_symbol_df("AAA", "2023-01-01", 2, 100.0),
-        "BBB": _make_symbol_df("BBB", "2023-01-01", 2, 200.0),
+        "AAA": _make_symbol_df("AAA", "2023-01-02", 2, 100.0),
+        "BBB": _make_symbol_df("BBB", "2023-01-02", 2, 200.0),
     }
     phase2 = {
-        "AAA": _make_symbol_df("AAA", "2023-01-03", 2, 102.0),
-        "BBB": _make_symbol_df("BBB", "2023-01-03", 2, 202.0),
+        "AAA": _make_symbol_df("AAA", "2023-01-04", 2, 102.0),
+        "BBB": _make_symbol_df("BBB", "2023-01-04", 2, 202.0),
     }
 
     result1 = run_backtest(
@@ -3815,7 +3821,7 @@ def test_framework_hooks_session_day_reject_and_portfolio() -> None:
     assert strategy.portfolio_updates == 1
 
     ctx.current_time = pd.Timestamp("2023-01-01 15:10:00", tz="Asia/Shanghai").value
-    ctx.session = "postmarket"
+    ctx.session = "postclose"
     tick2 = Tick(timestamp=ctx.current_time, price=101.0, volume=1.0, symbol="AAPL")
     strategy._on_tick_event(tick2, ctx)
     assert any(e.startswith("after:") for e in strategy.events)
@@ -4771,9 +4777,9 @@ def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> N
         def on_bar(self, bar: Bar) -> None:
             self.events.append(("bar", bar.symbol, int(bar.timestamp)))
 
-    day1_open = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value
+    day1_open = pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai").value
     day1_close = pd.Timestamp("2023-01-03 15:00:00", tz="Asia/Shanghai").value
-    day2_open = pd.Timestamp("2023-01-04 09:30:00", tz="Asia/Shanghai").value
+    day2_open = pd.Timestamp("2023-01-04 10:00:00", tz="Asia/Shanghai").value
     bars = [
         Bar(
             timestamp=timestamp,
@@ -6077,7 +6083,9 @@ def test_order_level_fill_policy_overrides_engine_fill_policy() -> None:
     register_logger(console=False, level="INFO")
     data = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=3, freq="D", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 20.0, 30.0],
             "high": [11.0, 21.0, 31.0],
             "low": [9.0, 19.0, 29.0],
@@ -6122,7 +6130,9 @@ def test_strategy_level_fill_policy_applies_when_order_policy_missing() -> None:
     register_logger(console=False, level="INFO")
     data = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=3, freq="D", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 20.0, 30.0],
             "high": [11.0, 21.0, 31.0],
             "low": [9.0, 19.0, 29.0],
@@ -6187,7 +6197,9 @@ def test_order_level_slippage_overrides_engine_slippage() -> None:
     register_logger(console=False, level="INFO")
     data = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=3, freq="D", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 20.0, 30.0],
             "high": [11.0, 21.0, 31.0],
             "low": [9.0, 19.0, 29.0],
@@ -6234,7 +6246,9 @@ def test_strategy_level_slippage_applies_when_order_slippage_missing() -> None:
     register_logger(console=False, level="INFO")
     data = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=3, freq="D", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 20.0, 30.0],
             "high": [11.0, 21.0, 31.0],
             "low": [9.0, 19.0, 29.0],
@@ -6264,7 +6278,9 @@ def test_strategy_level_ticks_slippage_uses_symbol_tick_size() -> None:
     register_logger(console=False, level="INFO")
     data = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=3, freq="D", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 20.0, 30.0],
             "high": [11.0, 21.0, 31.0],
             "low": [9.0, 19.0, 29.0],
@@ -6297,7 +6313,9 @@ def test_global_ticks_slippage_resolves_to_fixed_from_shared_tick_size() -> None
     register_logger(console=False, level="INFO")
     data = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=3, freq="D", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 20.0, 30.0],
             "high": [11.0, 21.0, 31.0],
             "low": [9.0, 19.0, 29.0],
@@ -6364,7 +6382,9 @@ def test_order_level_commission_overrides_market_model() -> None:
     register_logger(console=False, level="INFO")
     data = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=3, freq="D", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 20.0, 30.0],
             "high": [11.0, 21.0, 31.0],
             "low": [9.0, 19.0, 29.0],
@@ -6407,7 +6427,9 @@ def test_strategy_level_commission_applies_when_order_commission_missing() -> No
     register_logger(console=False, level="INFO")
     data = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=3, freq="D", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 20.0, 30.0],
             "high": [11.0, 21.0, 31.0],
             "low": [9.0, 19.0, 29.0],
@@ -6441,7 +6463,9 @@ def test_strategy_level_per_unit_commission_applies_when_order_commission_missin
     register_logger(console=False, level="INFO")
     data = pd.DataFrame(
         {
-            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(
+                "2023-01-02", periods=3, freq="D", tz="Asia/Shanghai"
+            ),
             "open": [10.0, 20.0, 30.0],
             "high": [11.0, 21.0, 31.0],
             "low": [9.0, 19.0, 29.0],
@@ -6491,7 +6515,7 @@ class _CheckpointResiduePickleStrategy(Strategy):
 def _checkpoint_residue_phase_data(symbol: str, phase: int) -> pd.DataFrame:
     """Two very-distinguishable phases: open/close values never collide."""
     if phase == 1:
-        start = "2023-01-01"
+        start = "2023-01-02"
         opens = [10.0, 20.0, 30.0]
         closes = [100.0, 200.0, 300.0]
     else:
@@ -6500,7 +6524,7 @@ def _checkpoint_residue_phase_data(symbol: str, phase: int) -> pd.DataFrame:
         closes = [500.0, 600.0, 700.0]
     return pd.DataFrame(
         {
-            "timestamp": pd.date_range(start, periods=3, freq="D", tz="UTC"),
+            "timestamp": pd.date_range(start, periods=3, freq="D", tz="Asia/Shanghai"),
             "open": opens,
             "high": [o + 1.0 for o in opens],
             "low": [o - 1.0 for o in opens],

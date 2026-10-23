@@ -22,14 +22,18 @@ class _RecordingStrategy(aq.Strategy):
         self.hits[bar.symbol] = self.hits.get(bar.symbol, 0) + 1
 
 
+# 周一至周三（均早于 _later_bars 的 2025-01-05 起）
+_DAYS = ["2024-12-30", "2024-12-31", "2025-01-01"]
+
+
 def _bars() -> list[aq.Bar]:
-    """X 与 Y 各 3 根 bar."""
+    """X 与 Y 各 3 根 bar（工作日 UTC 02:00 = 北京时间 10:00，连续竞价时段内）."""
     out = []
     for i in range(3):
         for symbol, base in (("X", 10.0), ("Y", 100.0)):
             out.append(
                 aq.Bar(
-                    timestamp=f"2025-01-{2 + i:02d}",  # type: ignore[arg-type]
+                    timestamp=f"{_DAYS[i]} 02:00:00",  # type: ignore[arg-type]
                     symbol=symbol,
                     open=base + i,
                     high=base + i,
@@ -701,7 +705,8 @@ def test_tick_only_symbol_is_not_misreported_as_zero_data(caplog: Any) -> None:
     """
     ticks = [
         aq.Tick(
-            timestamp=f"2025-01-{2 + i:02d}",  # type: ignore[arg-type]
+            # 工作日 UTC 02:00 = 北京时间 10:00（连续竞价时段内）
+            timestamp=f"{_DAYS[i]} 02:00:00",  # type: ignore[arg-type]
             price=10.0 + i,
             volume=100.0,
             symbol="X",

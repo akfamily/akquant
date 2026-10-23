@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use crate::account::calculate_account_metrics;
@@ -554,6 +554,9 @@ impl Engine {
             clock: Clock::new(),
             timers: BinaryHeap::new(),
             force_session_continuous: false,
+            slice_sessions: HashMap::new(),
+            session_span_cache: HashMap::new(),
+            closed_session_warned: HashSet::new(),
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8
             timezone_name: Some("Asia/Shanghai".to_string()),

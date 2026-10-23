@@ -400,12 +400,14 @@ def _build_regression_bars(symbol: str) -> list[akquant.Bar]:
     """
     Build a deterministic 3-bar series for regression verification.
 
+    Bars are stamped 02:00 UTC (10:00 Asia/Shanghai, continuous session).
+
     :param symbol: Symbol for bars.
     :return: List of Bar objects.
     """
-    day1 = _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc))
-    day2 = _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc))
-    day3 = _ns(datetime(2023, 1, 4, 15, 0, tzinfo=timezone.utc))
+    day1 = _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc))
+    day2 = _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc))
+    day3 = _ns(datetime(2023, 1, 4, 2, 0, tzinfo=timezone.utc))
     return [
         akquant.Bar(day1, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
         akquant.Bar(day2, 12.0, 12.0, 12.0, 12.0, 1000.0, symbol),
@@ -415,9 +417,9 @@ def _build_regression_bars(symbol: str) -> list[akquant.Bar]:
 
 def _build_daily_loss_bars(symbol: str) -> list[akquant.Bar]:
     """Build bars where the second bar marks down unrealized PnL."""
-    day1 = _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc))
-    day2 = _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc))
-    day3 = _ns(datetime(2023, 1, 4, 15, 0, tzinfo=timezone.utc))
+    day1 = _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc))
+    day2 = _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc))
+    day3 = _ns(datetime(2023, 1, 4, 2, 0, tzinfo=timezone.utc))
     return [
         akquant.Bar(day1, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
         akquant.Bar(day2, 8.0, 8.0, 8.0, 8.0, 1000.0, symbol),
@@ -443,10 +445,10 @@ def _build_position_entry_price_bars(symbol: str) -> list[akquant.Bar]:
 
 def _build_reduce_only_bars(symbol: str) -> list[akquant.Bar]:
     """Build 4 bars used to validate reduce-only fallback behavior."""
-    day1 = _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc))
-    day2 = _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc))
-    day3 = _ns(datetime(2023, 1, 4, 15, 0, tzinfo=timezone.utc))
-    day4 = _ns(datetime(2023, 1, 5, 15, 0, tzinfo=timezone.utc))
+    day1 = _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc))
+    day2 = _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc))
+    day3 = _ns(datetime(2023, 1, 4, 2, 0, tzinfo=timezone.utc))
+    day4 = _ns(datetime(2023, 1, 5, 2, 0, tzinfo=timezone.utc))
     return [
         akquant.Bar(day1, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
         akquant.Bar(day2, 8.0, 8.0, 8.0, 8.0, 1000.0, symbol),
@@ -2038,7 +2040,7 @@ def test_run_backtest_engine_oco_avoids_same_batch_double_fill() -> None:
     symbol = "OCO_SAME_BAR"
     bars = [
         akquant.Bar(
-            _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc)),
             10.0,
             10.0,
             10.0,
@@ -2100,7 +2102,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders() -> None:
     symbol = "BRACKET_ENGINE"
     bars = [
         akquant.Bar(
-            _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc)),
             100.0,
             100.0,
             100.0,
@@ -2109,7 +2111,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders() -> None:
             symbol,
         ),
         akquant.Bar(
-            _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc)),
             110.0,
             111.0,
             100.0,
@@ -2161,7 +2163,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders_from_timer() -> None:
         def on_start(self) -> None:
             """注册一个落在 bar1/bar2 之间的一次性定时任务."""
             self.schedule(
-                pd.Timestamp("2023-01-02 15:00:01", tz="UTC"), "timer_bracket"
+                pd.Timestamp("2023-01-02 02:00:01", tz="UTC"), "timer_bracket"
             )
 
         def on_timer(self, payload: str) -> None:
@@ -2183,7 +2185,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders_from_timer() -> None:
     symbol = "BRACKET_TIMER"
     bars = [
         akquant.Bar(
-            _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc)),
             100.0,
             100.0,
             100.0,
@@ -2192,7 +2194,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders_from_timer() -> None:
             symbol,
         ),
         akquant.Bar(
-            _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc)),
             110.0,
             111.0,
             100.0,
@@ -5060,7 +5062,7 @@ def test_run_backtest_lot_size_rejection_bridges_rust_warning(caplog: Any) -> No
     )
     assert matching_record.phase == "execution"
     assert matching_record.symbol == "LOT_WARN"
-    assert matching_record.event_time_iso == "2023-01-02T15:00:00Z"
+    assert matching_record.event_time_iso == "2023-01-02T02:00:00Z"
     assert getattr(matching_record, "order_id", None)
 
     akquant.register_logger(console=False, level="INFO")
@@ -5128,7 +5130,7 @@ def test_run_backtest_futures_validation_rejection_bridges_rust_warning(
     )
     assert matching_record.phase == "execution"
     assert matching_record.symbol == "RB2310"
-    assert matching_record.event_time_iso == "2023-01-02T15:00:00Z"
+    assert matching_record.event_time_iso == "2023-01-02T02:00:00Z"
     assert getattr(matching_record, "order_id", None)
 
     akquant.register_logger(console=False, level="INFO")
@@ -5179,7 +5181,7 @@ def test_run_backtest_ioc_cancel_bridges_rust_warning(caplog: Any) -> None:
     )
     assert matching_record.phase == "execution"
     assert matching_record.symbol == "IOC_WARN"
-    assert matching_record.event_time_iso == "2023-01-02T15:00:00Z"
+    assert matching_record.event_time_iso == "2023-01-02T02:00:00Z"
     assert getattr(matching_record, "order_id", None)
 
     akquant.register_logger(console=False, level="INFO")
@@ -5371,7 +5373,7 @@ def test_run_backtest_stop_limit_deferred_bridges_rust_warning(caplog: Any) -> N
             )
             self._submitted = True
 
-    ts = _ns(datetime(2024, 1, 2, 15, 0, tzinfo=timezone.utc))
+    ts = _ns(datetime(2024, 1, 2, 2, 0, tzinfo=timezone.utc))
     bars = [
         akquant.Bar(
             ts,
@@ -5410,7 +5412,7 @@ def test_run_backtest_stop_limit_deferred_bridges_rust_warning(caplog: Any) -> N
     )
     assert matching_record.phase == "execution"
     assert matching_record.symbol == "STOP_LIMIT_WARN"
-    assert matching_record.event_time_iso == "2024-01-02T15:00:00Z"
+    assert matching_record.event_time_iso == "2024-01-02T02:00:00Z"
     assert getattr(matching_record, "order_id", None)
 
     akquant.register_logger(console=False, level="INFO")
@@ -6923,6 +6925,8 @@ def test_run_backtest_calls_on_expiry_after_settlement() -> None:
         symbols=[symbol],
         config=config,
         show_progress=False,
+        # 夹具为 23:00（UTC 15:00）且跨周末：显式全天连续
+        sessions={"default": "ALWAYS_OPEN"},
     )
 
     assert len(strategy.expiry_events) == 1
@@ -7005,6 +7009,8 @@ def test_run_backtest_on_event_emits_expiry_event() -> None:
         config=config,
         on_event=events.append,
         show_progress=False,
+        # 夹具为 23:00（UTC 15:00）且跨周末：显式全天连续
+        sessions={"default": "ALWAYS_OPEN"},
     )
 
     expiry_events = [event for event in events if event["event_type"] == "expiry"]
@@ -7727,7 +7733,8 @@ def _rebalance_hook_price_frames() -> dict[str, pd.DataFrame]:
     price alone identifies which bar an order landed on.
     """
     dates = pd.to_datetime(
-        ["2023-01-01", "2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"]
+        # 周一至周五（周日只有日期的 bar 落在闭市时段）
+        ["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06"]
     )
     frames: dict[str, pd.DataFrame] = {}
     for sym, base in (("a", 10.1), ("b", 20.1), ("c", 30.1)):

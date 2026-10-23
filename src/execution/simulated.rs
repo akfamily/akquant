@@ -8,8 +8,7 @@ use crate::execution::slippage::{SlippageModel, ZeroSlippage};
 use crate::execution::{ExecutionClient, crypto, forex, futures, option, stock};
 use crate::log_context::{AkqLogContext, execution_order_context, render_log_message};
 use crate::model::{
-    AssetType, ExecutionPolicyCore, Order, OrderStatus, PriceBasis, TemporalPolicy, TimeInForce,
-    TradingSession,
+    AssetType, ExecutionPolicyCore, Order, OrderStatus, PriceBasis, TemporalPolicy, TradingSession,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
@@ -51,13 +50,6 @@ impl SimulatedExecutionClient {
                 "Rejected order due to insufficient margin during execution. Required: {total_required}, Available: {current_free_margin}"
             ),
             Self::order_log_context(order, current_time),
-        )
-    }
-
-    fn expired_day_order_warning(order: &Order, event_time: i64) -> String {
-        render_log_message(
-            "Expired day order at session close",
-            Self::order_log_context(order, event_time),
         )
     }
 
@@ -353,6 +345,15 @@ impl SimulatedExecutionClient {
                     && Self::event_timestamp(event)
                         .map(|ts| ts <= order_snapshot.created_at)
                         .unwrap_or(false)
+                {
+                    continue;
+                }
+
+                // 非连续竞价时段(竞价、午休、闭市、盘后): 订单排队, 等下一可成交时段
+                // (竞价时段的统一撮合见集合竞价撮合)。
+                let event_ts = Self::event_timestamp(event).unwrap_or(ctx.current_time);
+                if ctx.sessions.session_for(&order_snapshot.symbol, event_ts)
+                    != TradingSession::Continuous
                 {
                     continue;
                 }
@@ -826,36 +827,8 @@ impl ExecutionClient for SimulatedExecutionClient {
 
     fn on_event(&mut self, event: &Event, ctx: &crate::context::EngineContext) -> Vec<Event> {
         self.prepare_slice_tracking(ctx.current_time);
-        let mut reports = Vec::new();
-
-        if ctx.session == TradingSession::Break
-            || ctx.session == TradingSession::Closed
-            || ctx.session == TradingSession::PreOpen
-            || ctx.session == TradingSession::PostClose
-        {
-            if ctx.session == TradingSession::Closed {
-                let timestamp = match event {
-                    Event::Bar(b) => b.timestamp,
-                    Event::Tick(t) => t.timestamp,
-                    _ => 0,
-                };
-
-                for order_id in &self.order_queue {
-                    if let Some(order) = self.orders.get_mut(order_id)
-                        && Self::is_order_active(order)
-                        && order.time_in_force == TimeInForce::Day
-                    {
-                        log::warn!("{}", Self::expired_day_order_warning(order, timestamp));
-                        order.status = OrderStatus::Expired;
-                        order.updated_at = timestamp;
-                        reports.push(Event::ExecutionReport(order.clone(), None));
-                    }
-                }
-                self.cleanup_finished_orders();
-            }
-            return reports;
-        }
-
+        // 时段按订单品种在 match_with_events 里判断(非连续竞价时段排队);
+        // Day 单只在日终结算过期, 不因闭市时段的行情作废。
         self.match_with_events(
             std::slice::from_ref(event),
             ctx,
@@ -1049,6 +1022,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1138,6 +1112,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1212,6 +1187,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1286,6 +1262,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1362,6 +1339,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1478,6 +1456,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1591,6 +1570,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1715,6 +1695,7 @@ mod tests {
             timezone_name: None,
             timezone_offset: 0,
             trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1764,26 +1745,111 @@ mod tests {
         assert!(rendered.contains("\"event_time_iso\":\"1970-01-01T00:00:01Z\""));
     }
 
+    /// 以给定的本时间片品种时段跑一次 `on_event`(AAPL 开盘 100 的 bar)。
+    fn on_event_in_session(
+        sim: &mut SimulatedExecutionClient,
+        session: Option<TradingSession>,
+    ) -> Vec<Event> {
+        let instruments = create_test_instruments();
+        let event = Event::Bar(create_test_bar(
+            "AAPL",
+            Decimal::from(100),
+            Decimal::from(105),
+            Decimal::from(95),
+            Decimal::from(102),
+        ));
+        let portfolio = crate::portfolio::Portfolio {
+            cash: Decimal::from(100000),
+            positions: HashMap::new().into(),
+            available_positions: HashMap::new().into(),
+        };
+        let last_prices = HashMap::new();
+        let risk_manager = crate::risk::RiskManager::new();
+        let trade_tracker = crate::analysis::TradeTracker::new();
+        let market_model = crate::market::MarketConfig::China(crate::market::ChinaMarketConfig {
+            stock: Some(crate::market::stock::StockConfig::default()),
+            ..Default::default()
+        })
+        .create_model();
+        let mut slice = HashMap::new();
+        if let Some(s) = session {
+            slice.insert("AAPL".to_string(), s);
+        }
+        let ctx = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &last_prices,
+            trade_tracker: &trade_tracker,
+            market_model: market_model.as_ref(),
+            execution_policy_core: ExecutionPolicyCore::default(),
+            bar_index: 0,
+            current_time: 1000,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+            risk_config: &risk_manager.config,
+            timezone_name: None,
+            timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView {
+                force_continuous: false,
+                slice: Some(&slice),
+                resolver: None,
+                instruments: Some(&instruments),
+            },
+        };
+        sim.on_event(&event, &ctx)
+    }
+
+    fn fills(events: &[Event]) -> Vec<Decimal> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ExecutionReport(_, Some(trade)) => Some(trade.price),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
-    fn test_expired_day_order_warning_includes_order_context() {
-        let mut order = create_test_order(
+    fn non_continuous_session_queues_order_until_continuous() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.on_order(create_test_order(
             "AAPL",
             crate::model::OrderSide::Buy,
-            crate::model::OrderType::Limit,
+            crate::model::OrderType::Market,
             Decimal::from(100),
-            Some(Decimal::from(10)),
+            None,
+        ));
+        for session in [
+            TradingSession::Break,
+            TradingSession::ClosingAuction,
+            TradingSession::OpeningAuction,
+            TradingSession::PostClose,
+        ] {
+            let events = on_event_in_session(&mut sim, Some(session));
+            assert!(events.is_empty(), "{session:?} 时段不应成交: {events:?}");
+        }
+        let events = on_event_in_session(&mut sim, Some(TradingSession::Continuous));
+        assert_eq!(fills(&events), vec![Decimal::from(100)]);
+    }
+
+    #[test]
+    fn closed_session_event_does_not_expire_day_order() {
+        let mut sim = SimulatedExecutionClient::new();
+        let order = create_test_order(
+            "AAPL",
+            crate::model::OrderSide::Buy,
+            crate::model::OrderType::Market,
+            Decimal::from(100),
+            None,
         );
-        order.owner_strategy_id = Some("beta".to_string());
-
-        let rendered = SimulatedExecutionClient::expired_day_order_warning(&order, 2_000_000_000);
-
-        assert!(rendered.contains("Expired day order at session close"));
-        assert!(rendered.contains("\"phase\":\"execution\""));
-        assert!(rendered.contains("\"symbol\":\"AAPL\""));
-        assert!(rendered.contains(&format!("\"order_id\":\"{}\"", order.id)));
-        assert!(rendered.contains("\"strategy_id\":\"beta\""));
-        assert!(rendered.contains("\"slot\":\"beta\""));
-        assert!(rendered.contains("\"event_time_iso\":\"1970-01-01T00:00:02Z\""));
+        assert_eq!(order.time_in_force, TimeInForce::Day);
+        sim.on_order(order);
+        let events = on_event_in_session(&mut sim, Some(TradingSession::Closed));
+        assert!(events.is_empty(), "闭市时段不作废 Day 单: {events:?}");
+        // 仍在队列中, 下一连续竞价事件成交
+        let events = on_event_in_session(&mut sim, None);
+        assert_eq!(fills(&events), vec![Decimal::from(100)]);
     }
 
     #[test]

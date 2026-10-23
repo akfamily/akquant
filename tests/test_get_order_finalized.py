@@ -20,7 +20,7 @@ def _bars(days: tuple[int, ...] = (3, 4, 5), close: float = 10.0) -> list[Bar]:
     return [
         Bar(
             timestamp=pd.Timestamp(
-                f"2023-01-{day:02d} 09:30:00", tz="Asia/Shanghai"
+                f"2023-01-{day:02d} 10:00:00", tz="Asia/Shanghai"
             ).value,
             open=close,
             high=close + 0.2,

@@ -1,7 +1,7 @@
 use super::shared::{
     ExecutionPhase, has_orders_matching_phase, should_run_phase_for_engine_default,
 };
-use crate::context::EngineContext;
+use crate::context::{EngineContext, SessionView};
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::pipeline::processor::{Processor, ProcessorResult};
@@ -48,6 +48,7 @@ impl Processor for ExecutionProcessor {
                     // 代码。安全性同 core.rs Engine.last_prices 字段注释:
                     // 写锁只有 3 处且都要求 &mut Engine,run() 期间该借用被
                     // 占用,再入会 PyBorrowMutError 而非阻塞。
+                    engine.ensure_session_resolver()?;
                     let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
                     let ctx = EngineContext {
                         instruments: &engine.instruments,
@@ -64,6 +65,12 @@ impl Processor for ExecutionProcessor {
                         timezone_name: engine.timezone_name.as_deref(),
                         timezone_offset: engine.timezone_offset,
                         trading_day: engine.current_trading_day,
+                        sessions: SessionView {
+                            force_continuous: engine.force_session_continuous,
+                            slice: Some(&engine.slice_sessions),
+                            resolver: engine.session_resolver.as_ref(),
+                            instruments: Some(&engine.instruments),
+                        },
                     };
 
                     let reports = engine.execution_model.on_event(&event, &ctx);

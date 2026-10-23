@@ -1,7 +1,7 @@
 use super::shared::{
     ExecutionPhase, apply_execution_report, flush_accumulated_trades, has_orders_matching_phase,
 };
-use crate::context::EngineContext;
+use crate::context::{EngineContext, SessionView};
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::model::{Order, OrderStatus};
@@ -48,6 +48,8 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
         Err(err)
     } else {
         let trading_day = engine.risk_trading_day(current_time);
+        // 无解析器(构造失败)时 SessionView 按连续竞价; 配置错误已在 run() 开始时报出。
+        let _ = engine.ensure_session_resolver();
         let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
         let ctx = EngineContext {
             instruments: &engine.instruments,
@@ -64,6 +66,12 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
             timezone_name: engine.timezone_name.as_deref(),
             timezone_offset: engine.timezone_offset,
             trading_day,
+            sessions: SessionView {
+                force_continuous: engine.force_session_continuous,
+                slice: Some(&engine.slice_sessions),
+                resolver: engine.session_resolver.as_ref(),
+                instruments: Some(&engine.instruments),
+            },
         };
         // 回测撮合器会在成交时点重跑可用持仓校验(execution/simulated.rs),
         // 因此这里允许把该规则延后;实盘由柜台在报单时校验,不能延后。
@@ -144,6 +152,7 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
     // 而非阻塞,不会与本处的读锁死锁。
     let current_time = engine.context_timestamp();
     let trading_day = engine.risk_trading_day(current_time);
+    let _ = engine.ensure_session_resolver();
     let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
     let ctx = EngineContext {
         instruments: &engine.instruments,
@@ -160,6 +169,12 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
         timezone_name: engine.timezone_name.as_deref(),
         timezone_offset: engine.timezone_offset,
         trading_day,
+        sessions: SessionView {
+            force_continuous: engine.force_session_continuous,
+            slice: Some(&engine.slice_sessions),
+            resolver: engine.session_resolver.as_ref(),
+            instruments: Some(&engine.instruments),
+        },
     };
 
     let reports = engine.execution_model.on_event(&event, &ctx);

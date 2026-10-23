@@ -77,9 +77,9 @@ def test_stop_orders_and_target() -> None:
 
     # 2. Setup Engine
     engine = akquant.Engine()
-    engine.use_simple_market(
-        0.0001
-    )  # Use SimpleMarket to allow 24/7 trading (avoids session checks)
+    engine.use_simple_market(0.0001)
+    # 全天连续交易：时段由时段表决定（SimpleMarket 不再影响撮合时段）
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
 
     # 注册默认标的，否则订单会被拒单
     instr = akquant.Instrument(

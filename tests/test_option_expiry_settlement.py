@@ -79,8 +79,9 @@ def _run(
         instruments_config=instruments,
         china_options=china_options or _zero_fee_options(),
     )
+    # 夹具是打 15:00 戳的日线：声明 freq="1d"，否则按 15:00 前 1ns 判为收盘竞价
     return akquant.run_backtest(
-        data=data, strategy=strategy, config=config, show_progress=False
+        data=data, strategy=strategy, config=config, show_progress=False, freq="1d"
     )
 
 

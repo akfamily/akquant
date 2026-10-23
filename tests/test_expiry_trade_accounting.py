@@ -15,7 +15,8 @@ def _daily(
     closes: list[float],
     opens: Optional[list[float]] = None,
 ) -> pd.DataFrame:
-    ts = pd.to_datetime([f"{d} 15:00" for d in days])
+    # 只给日期：引擎改写到收盘并带一整天区间（打 15:00 戳而无区间会被判为收盘竞价）
+    ts = pd.to_datetime(list(days))
     o = opens if opens is not None else closes
     return pd.DataFrame(
         {

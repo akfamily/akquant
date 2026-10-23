@@ -106,6 +106,12 @@ def _is_normal_session(session: Any) -> bool:
     return False
 
 
+def _is_closed_session(session: Any) -> bool:
+    """闭市或盘后（惰性日终钩子的触发条件；竞价、午休不算收盘）."""
+    text = str(session).lower()
+    return text.endswith("closed") or text.endswith("postclose")
+
+
 def _is_pre_open_session(session: Any) -> bool:
     pre_open = getattr(TradingSession, "PreOpen", None)
     if pre_open is not None:
@@ -514,7 +520,7 @@ def dispatch_time_hooks(strategy: Any) -> None:
 
     if (
         not use_precise_boundaries
-        and not _is_normal_session(current_session)
+        and _is_closed_session(current_session)
         and getattr(strategy, "_framework_before_trading_done_date", None)
         == current_date
         and getattr(strategy, "_framework_after_trading_done_date", None)

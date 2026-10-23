@@ -53,7 +53,9 @@ def test_trades_df() -> None:
     for i in range(5):
         data.append(
             Bar(
-                timestamp=pd.Timestamp(f"2023-01-{i + 1:02d} 10:00:00").value,
+                timestamp=pd.Timestamp(
+                    f"2023-01-{i + 1:02d} 10:00:00", tz="Asia/Shanghai"
+                ).value,
                 open=100.0 + i,
                 high=105.0 + i,
                 low=95.0 + i,
@@ -104,7 +106,7 @@ def test_futures_trades_df_respects_contract_multiplier() -> None:
     """Futures trades_df PnL should include the instrument multiplier."""
     bars = [
         Bar(
-            timestamp=pd.Timestamp("2023-01-01 09:00:00", tz="Asia/Shanghai").value,
+            timestamp=pd.Timestamp("2023-01-03 09:01:00", tz="Asia/Shanghai").value,
             open=4000.0,
             high=4000.0,
             low=4000.0,
@@ -113,7 +115,7 @@ def test_futures_trades_df_respects_contract_multiplier() -> None:
             symbol="RB2310",
         ),
         Bar(
-            timestamp=pd.Timestamp("2023-01-01 09:05:00", tz="Asia/Shanghai").value,
+            timestamp=pd.Timestamp("2023-01-03 09:05:00", tz="Asia/Shanghai").value,
             open=4010.0,
             high=4010.0,
             low=4010.0,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Tuple
 
+import akquant as aq
 import pandas as pd
 import pytest
 from akquant import Bar, Strategy, run_backtest
@@ -177,3 +178,194 @@ def test_freq_applies_to_catalog_input(tmp_path: Path) -> None:
     seen = _probe(r).seen
     assert [s[0] for s in seen] == ["01-02 14:00", "01-02 15:00"]
     assert seen[1][2] == _ns("2024-01-02 14:00")
+
+
+def test_ctx_session_reports_real_sessions_for_minute_bars() -> None:
+    """分钟线看到真实时段：14:58、15:00 两根落在收盘集合竞价."""
+    df = _minute_frame(
+        [
+            "2024-01-02 09:31",
+            "2024-01-02 11:30",
+            "2024-01-02 13:01",
+            "2024-01-02 14:58",
+            "2024-01-02 15:00",
+        ],
+        [10.0] * 5,
+    )
+    r = run_backtest(
+        strategy=_SessionProbe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert [s[1] for s in _probe(r).seen] == [
+        "Continuous",
+        "Continuous",
+        "Continuous",
+        "ClosingAuction",
+        "ClosingAuction",
+    ]
+
+
+def test_daily_bars_report_continuous() -> None:
+    """只有日期的日线区间覆盖整个交易日，按连续竞价."""
+    idx = pd.to_datetime(["2024-01-02", "2024-01-03"]).tz_localize(TZ)
+    df = pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "600000.SH",
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 1.0,
+        }
+    )
+    r = run_backtest(
+        strategy=_SessionProbe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert [s[1] for s in _probe(r).seen] == ["Continuous", "Continuous"]
+
+
+class _BuyOnFirstBar(Strategy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done:
+            self.done = True
+            self.buy(bar.symbol, 100)
+
+
+def _fills(result: Any) -> List[Tuple[str, float]]:
+    orders = result.orders_df
+    filled = orders[orders["filled_quantity"] > 0]
+    return [
+        (pd.Timestamp(t).tz_convert(TZ).strftime("%m-%d %H:%M"), float(p))
+        for t, p in zip(filled["updated_at"], filled["avg_price"])
+    ]
+
+
+def test_order_queued_through_lunch_break_fills_at_afternoon_open() -> None:
+    """11:30 下的 NextOpen 单遇到 12:00 的（脏）午休 bar 不成交，13:01 按开盘价成交."""
+    df = _minute_frame(
+        ["2024-01-02 11:30", "2024-01-02 12:00", "2024-01-02 13:01"],
+        [10.0, 11.0, 12.0],
+    )
+    r = run_backtest(
+        strategy=_BuyOnFirstBar,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert _fills(r) == [("01-02 13:01", 12.0)]
+
+
+@pytest.mark.parametrize("tif", ["GTC", "Day"])
+def test_day_order_not_expired_by_closed_session_event(tif: str) -> None:
+    """闭市时段的行情不再让 Day 单立即过期：20:00 的（脏）bar 后，次日开盘成交."""
+    df = _minute_frame(
+        ["2024-01-02 14:30", "2024-01-02 20:00", "2024-01-03 09:31"],
+        [10.0, 11.0, 12.0],
+    )
+
+    class Probe(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.done = False
+
+        def on_bar(self, bar: Bar) -> None:
+            if not self.done:
+                self.done = True
+                self.buy(bar.symbol, 100, time_in_force=getattr(aq.TimeInForce, tif))
+
+    r = run_backtest(
+        strategy=Probe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert _fills(r) == [("01-03 09:31", 12.0)]
+
+
+def test_closed_session_data_warns_once(caplog: pytest.LogCaptureFixture) -> None:
+    """期货默认日盘时段表下出现夜盘行情：每个品种告警一次，提示传 sessions=."""
+    df = _minute_frame(
+        ["2024-01-02 21:01", "2024-01-02 21:02", "2024-01-03 09:01"],
+        [500.0] * 3,
+        symbol="au2406",
+    )
+    cfg = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=1e6),
+        instruments_config=[
+            aq.InstrumentConfig(
+                symbol="au2406",
+                asset_type="FUTURES",
+                multiplier=1000.0,
+                margin_ratio=0.1,
+            )
+        ],
+    )
+    with caplog.at_level("WARNING", logger="akquant"):
+        run_backtest(strategy=_SessionProbe, data=df, config=cfg, show_progress=False)
+    hits = [
+        r
+        for r in caplog.records
+        if "闭市时段" in r.getMessage() and "au2406" in r.getMessage()
+    ]
+    assert len(hits) == 1
+    assert "sessions=" in hits[0].getMessage()
+
+
+class _AfterTradingProbe(Strategy):
+    """记录 on_after_trading 回调的交易日与触发时所处 bar."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: List[Tuple[str, str]] = []
+        self.last_bar = ""
+
+    def on_bar(self, bar: Bar) -> None:
+        local = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert(TZ)
+        self.last_bar = local.strftime("%m-%d %H:%M")
+
+    def on_after_trading(self, trading_date: Any, timestamp: int) -> None:
+        self.calls.append((str(trading_date), self.last_bar))
+
+
+def test_lazy_after_trading_not_triggered_by_closing_auction_bar() -> None:
+    """收盘竞价的 14:58、15:00 bar 不提前触发惰性日终钩子.
+
+    与阶段 2（强制连续竞价）一致：01-02 的回调由收盘定时器在 15:00 那根 bar
+    之后触发，01-03 的回调在回测结束时补发；不会在 14:58 收盘竞价 bar 上提前触发。
+    """
+    df = _minute_frame(
+        [
+            "2024-01-02 14:30",
+            "2024-01-02 14:58",
+            "2024-01-02 15:00",
+            "2024-01-03 09:31",
+        ],
+        [10.0] * 4,
+    )
+    r = run_backtest(
+        strategy=_AfterTradingProbe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    strategy = r.strategy
+    assert isinstance(strategy, _AfterTradingProbe)
+    assert strategy.calls == [
+        ("2024-01-02", "01-02 15:00"),
+        ("2024-01-03", "01-03 09:31"),
+    ]
