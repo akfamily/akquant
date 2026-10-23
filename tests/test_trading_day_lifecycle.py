@@ -125,6 +125,34 @@ def test_date_only_bars_non_china_timezone_keep_local_date() -> None:
     assert all(t.hour == 23 and t.minute == 59 for t in got)
 
 
+def test_always_open_date_only_last_day_is_settled() -> None:
+    """全天连续时段表下，只有日期数据改写为收盘前 1ns，最后交易日仍视同收盘并结算."""
+    idx = pd.to_datetime(["2024-01-03", "2024-01-04", "2024-01-05"]).tz_localize(
+        "America/New_York"
+    )
+    df = pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "AAPL",
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 1.0,
+        }
+    )
+    result = run_backtest(
+        strategy=_Recorder,
+        data=df,
+        symbols=["AAPL"],
+        initial_cash=1e5,
+        show_progress=False,
+        timezone="America/New_York",
+    )
+    assert result.engine is not None
+    assert result.engine.last_settled_trading_day == dt.date(2024, 1, 5)
+
+
 def test_sessions_and_trading_calendar_parameters_validate() -> None:
     """未知模板名、空日历报 ValueError."""
     df = _daily_frame(["2024-01-02"])
@@ -890,14 +918,14 @@ def test_resume_after_weekend_settles_each_day_once(tmp_path: Any) -> None:
     )
     # 周一续跑时持仓（周三买入的 100 股）跨周末仍在。
     # 续跑结果的 positions 只含续跑段的快照：周一、周二各一条日终快照（若重复
-    # 结算周五会多出一条）。最后交易日（周二）已在收盘结算，get_results 不再在
-    # 末根 bar（周二 10:00）补一条期末快照（类别 (b)）。
+    # 结算周五会多出一条）。最后交易日（周二）末根 bar 在 15:00，已在收盘结算，
+    # get_results 不再补期末快照（类别 (b)）。
     times = [t.strftime("%Y-%m-%d %H:%M") for t in _snapshot_times(part2)]
     assert times == ["2024-01-08 15:00", "2024-01-09 15:00"]
     assert (part2.positions["600000.SH"] == 100.0).all()
 
 
-def test_settled_last_day_has_no_terminal_snapshot_before_close() -> None:
+def test_settled_last_day_has_no_duplicate_terminal_snapshot() -> None:
     """最后交易日已在收盘结算：期末不再补快照，快照时间严格递增."""
     r = run_backtest(
         data=_intraday_frame(

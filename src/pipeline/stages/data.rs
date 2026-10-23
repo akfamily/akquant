@@ -747,7 +747,8 @@ fn day_close_reached(
     if !feed_exhausted || current_trading_day != Some(day) {
         return true;
     }
-    last_event_ts_in_day.is_some_and(|ts| ts >= close_ts)
+    // 只有日期的数据在全天连续时段表下改写为收盘前 1ns(保持本地日期), 视同已到收盘。
+    last_event_ts_in_day.is_some_and(|ts| ts.saturating_add(1) >= close_ts)
 }
 
 #[cfg(test)]
@@ -759,12 +760,14 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
         let close = 1_000;
         // 数据耗尽、末根事件在收盘前: 未收盘
-        assert!(!day_close_reached(true, Some(day), Some(999), day, close));
+        assert!(!day_close_reached(true, Some(day), Some(998), day, close));
         assert!(!day_close_reached(true, Some(day), None, day, close));
         // 末根事件恰在收盘或之后: 已收盘
         assert!(day_close_reached(true, Some(day), Some(1_000), day, close));
+        // 收盘前 1ns(ALWAYS_OPEN 日线改写口径): 已收盘
+        assert!(day_close_reached(true, Some(day), Some(999), day, close));
         // 后面还有数据(或实盘): 照常结算
-        assert!(day_close_reached(false, Some(day), Some(999), day, close));
+        assert!(day_close_reached(false, Some(day), Some(998), day, close));
         // 定时器不属于当前交易日: 照常结算
         let other = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
         assert!(day_close_reached(true, Some(day), Some(999), other, close));
