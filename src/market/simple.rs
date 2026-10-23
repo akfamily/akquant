@@ -106,11 +106,51 @@ impl MarketModel for SimpleMarket {
         }
     }
 
+    /// SimpleMarket 本身按 T+0 维护可用持仓, 这里只解冻已冻结的多头持仓
+    /// (可用 < 持仓): 例如 T+1 下存档、以 T+0 续跑时存档前当日买入的部分。
+    /// 冻结状态不依赖当前 T+1 开关, 否则这部分持仓永不可卖。
     fn on_day_close(
         &self,
-        _positions: &HashMap<String, Decimal>,
-        _available_positions: &mut HashMap<String, Decimal>,
+        positions: &HashMap<String, Decimal>,
+        available_positions: &mut HashMap<String, Decimal>,
         _instruments: &HashMap<String, Instrument>,
     ) {
+        for (symbol, quantity) in positions {
+            if *quantity <= Decimal::ZERO {
+                continue;
+            }
+            let available = available_positions
+                .get(symbol)
+                .copied()
+                .unwrap_or(Decimal::ZERO);
+            if available < *quantity {
+                available_positions.insert(symbol.clone(), *quantity);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn day_close_releases_frozen_long_positions_only() {
+        let market = SimpleMarket::from_config(SimpleMarketConfig::default());
+        let positions = HashMap::from([
+            ("FROZEN".to_string(), Decimal::from(100)),
+            ("PARTIAL".to_string(), Decimal::from(300)),
+            ("FREE".to_string(), Decimal::from(200)),
+            ("SHORT".to_string(), Decimal::from(-50)),
+        ]);
+        let mut available = HashMap::from([
+            ("PARTIAL".to_string(), Decimal::from(100)),
+            ("FREE".to_string(), Decimal::from(200)),
+        ]);
+        market.on_day_close(&positions, &mut available, &HashMap::new());
+        assert_eq!(available.get("FROZEN"), Some(&Decimal::from(100)));
+        assert_eq!(available.get("PARTIAL"), Some(&Decimal::from(300)));
+        assert_eq!(available.get("FREE"), Some(&Decimal::from(200)));
+        assert!(!available.contains_key("SHORT"));
     }
 }

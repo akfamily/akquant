@@ -1006,6 +1006,94 @@ def test_resume_same_day_does_not_reopen_or_resettle(tmp_path: Any) -> None:
     assert len(closes) == 1
 
 
+class _BuyFirstSellAvailableRebuy(_BuyFirstThenSellAvailable):
+    """在 _BuyFirstThenSellAvailable 基础上，于 2024-01-05 09:32 再买 100 股.
+
+    用来区分续跑段 T+1 是否仍开启：再买的 100 股当日应不可卖。
+    """
+
+    def on_bar(self, bar: Bar) -> None:
+        """先按父类处理，再在指定时刻再买一次."""
+        super().on_bar(bar)
+        if self.available[-1][0] == "2024-01-05 09:32":
+            self.buy(bar.symbol, 100)
+
+
+def _frozen_t_plus_one_checkpoint(tmp_path: Any) -> Path:
+    """T+1 下当日买入、数据盘中结束（当日未结算）时存档：100 股冻结."""
+    part1 = run_backtest(
+        data=_intraday_frame(
+            ["2024-01-04 09:31", "2024-01-04 09:32", "2024-01-04 10:00"]
+        ),
+        strategy=_BuyFirstSellAvailableRebuy,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        t_plus_one=True,
+    )
+    assert part1.engine is not None
+    portfolio = part1.engine.portfolio
+    assert portfolio.positions.get("600000.SH") == 100.0
+    assert portfolio.available_positions.get("600000.SH", 0.0) == 0.0
+    ckpt = tmp_path / "c.pkl"
+    save_checkpoint(part1.engine, part1.strategy, str(ckpt))
+    return Path(ckpt)
+
+
+def test_resume_without_t_plus_one_unfreezes_next_day(tmp_path: Any) -> None:
+    """续跑不传 t_plus_one、存档未带 config=：存档前冻结的持仓次日可卖.
+
+    旧实现续跑时退回 SimpleMarket，其日终结算不解冻，冻结持仓永不可卖。
+    现在按快照中的冻结持仓推断 T+1 仍开启：当日仍不可卖，次日解冻；
+    续跑段次日 09:32 再买的 100 股当日（10:00）不可卖。
+    """
+    ckpt = _frozen_t_plus_one_checkpoint(tmp_path)
+    part2 = run_from_checkpoint(
+        checkpoint_path=str(ckpt),
+        data=_intraday_frame(
+            [
+                "2024-01-04 13:00",
+                "2024-01-05 09:31",
+                "2024-01-05 09:32",
+                "2024-01-05 10:00",
+            ]
+        ),
+        symbols=["600000.SH"],
+        show_progress=False,
+    )
+    strategy = part2.strategy
+    assert strategy is not None
+    assert strategy.available[-4:] == [
+        ("2024-01-04 13:00", 0.0),
+        ("2024-01-05 09:31", 100.0),
+        ("2024-01-05 09:32", 0.0),
+        ("2024-01-05 10:00", 0.0),
+    ], strategy.available
+    sides = list(part2.executions_df["side"].astype(str).str.lower())
+    # 成交记录含存档前第一段的买入
+    assert sides == ["buy", "sell", "buy"], part2.executions_df
+
+
+def test_resume_with_t_plus_one_false_still_unfreezes(tmp_path: Any) -> None:
+    """续跑显式 t_plus_one=False：已冻结持仓不依赖当前开关，次日照样解冻."""
+    ckpt = _frozen_t_plus_one_checkpoint(tmp_path)
+    part2 = run_from_checkpoint(
+        checkpoint_path=str(ckpt),
+        data=_intraday_frame(["2024-01-05 09:31", "2024-01-05 09:32"]),
+        symbols=["600000.SH"],
+        show_progress=False,
+        t_plus_one=False,
+    )
+    strategy = part2.strategy
+    assert strategy is not None
+    assert strategy.available[-2:] == [
+        ("2024-01-05 09:31", 100.0),
+        ("2024-01-05 09:32", 0.0),
+    ], strategy.available
+    sides = list(part2.executions_df["side"].astype(str).str.lower())
+    assert sides == ["buy", "sell"], part2.executions_df
+
+
 def _live_stock_instrument() -> Any:
     from akquant.akquant import AssetType, Instrument
 

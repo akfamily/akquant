@@ -5679,6 +5679,19 @@ def run_backtest(
     return result
 
 
+def _snapshot_has_t_plus_one_frozen_positions(engine: Any) -> bool:
+    """存档恢复后的组合里是否有 T+1 冻结持仓（多头持仓大于可用持仓）."""
+    portfolio = getattr(engine, "portfolio", None)
+    if portfolio is None:
+        return False
+    positions = dict(getattr(portfolio, "positions", {}) or {})
+    available = dict(getattr(portfolio, "available_positions", {}) or {})
+    return any(
+        float(qty) > 0 and float(available.get(sym, 0.0)) < float(qty)
+        for sym, qty in positions.items()
+    )
+
+
 def run_from_checkpoint(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
@@ -5734,7 +5747,9 @@ def run_from_checkpoint(
         ``timezone`` 与 ``risk_config`` 不传时沿用存档（需存档时传了
         ``config=result``），传入且与存档不一致时以传入为准并告警。``risk_config``
         传 ``RiskConfig`` 对象时整体替换存档，传 dict 时按键叠加在存档上。返回结果的
-        ``resolved_config`` 为本段实际生效的配置，可再存档后链式续跑
+        ``resolved_config`` 为本段实际生效的配置，可再存档后链式续跑。
+        ``t_plus_one`` 不传时沿用存档的已解析配置；存档未带配置时，快照中有
+        T+1 冻结持仓即视为开启。已冻结的持仓无论本段开关如何都在日终解冻
     """
     import os
 
@@ -6994,9 +7009,18 @@ def run_from_checkpoint(
         broker_profile_values=broker_profile_values,
         strategy_config=strategy_config,
     )
+    # T+1 优先级：显式入参 > 存档已解析配置 > 按快照推断。存档没带 config= 时
+    # 不含已解析配置，若快照中有 T+1 冻结持仓（多头持仓大于可用持仓）即视为
+    # 原来开着 T+1；否则续跑会退回 SimpleMarket，次日也不再按 T+1 冻结新买入。
     t_plus_one = kwargs.get("t_plus_one", False)
-    if "t_plus_one" not in kwargs and "t_plus_one" in restored_backtest_config:
-        t_plus_one = bool(restored_backtest_config.get("t_plus_one"))
+    if "t_plus_one" not in kwargs:
+        if "t_plus_one" in restored_backtest_config:
+            t_plus_one = bool(restored_backtest_config.get("t_plus_one"))
+        elif _snapshot_has_t_plus_one_frozen_positions(engine):
+            t_plus_one = True
+            logger.info(
+                "存档中有 T+1 冻结持仓，续跑沿用 T+1；如需关闭请传 t_plus_one=False"
+            )
 
     # 市场选择与 run_backtest 对齐期权口径: 含期权(且未走期货市场)时由
     # _apply_option_market_rules 选 China/Simple。必须在 set_stock_fee_policy 之前,
