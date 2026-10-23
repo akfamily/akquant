@@ -280,8 +280,9 @@ def run_live(
                      不传时中国时区按资产类型取默认（股票 CN_STOCK、
                      期货 CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。
                      可选模板见 aq.SessionResolver.templates()
-    :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传按工作日
-                             推算，节假日前后的夜盘与日终结算会算错
+    :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
+                             中国市场按工作日推算（节假日前后的夜盘与日终
+                             结算会算错），ALWAYS_OPEN 每天都算
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")

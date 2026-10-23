@@ -205,15 +205,36 @@ def live_now(strategy: Any) -> pd.Timestamp:
     return now
 
 
+def _warn_all_days_calendar_once(strategy: Any) -> None:
+    """实盘全日历兜底(未传 trading_calendar 且全是 ALWAYS_OPEN)时告警一次."""
+    if getattr(strategy, "_all_days_calendar_warned", False):
+        return
+    check = getattr(strategy.ctx, "uses_all_days_calendar", None)
+    try:
+        all_days = bool(check()) if callable(check) else False
+    except Exception:
+        all_days = False
+    if not all_days:
+        return
+    strategy._all_days_calendar_warned = True
+    logger.warning(
+        "未传 trading_calendar 时 ALWAYS_OPEN 每天都算交易日，周末也会触发定时任务；"
+        "美股等请传 trading_calendar"
+    )
+
+
 def schedule_live_next(
     strategy: Any, kind: str, time_str: str, user_payload: str
 ) -> bool:
     """实盘: 按会话交易日历登记周期定时器的下一次触发, 返回是否已登记.
 
-    日历来自 ``ctx.is_trading_day`` / ``ctx.next_trading_day``(实盘缺省为工作日
-    日历)。时刻无法解析时抛 ``ValueError``; 超出日历时告警并返回 False。
+    日历来自 ``ctx.is_trading_day`` / ``ctx.next_trading_day``(未传
+    ``trading_calendar`` 时按在用时段表的缺省日历: 中国市场为工作日, ALWAYS_OPEN
+    为每天, 后者首次登记时告警一次)。时刻无法解析时抛 ``ValueError``; 超出日历时
+    告警并返回 False。
     """
     ctx = strategy.ctx
+    _warn_all_days_calendar_once(strategy)
     target = next_occurrence(
         kind,
         time_str,

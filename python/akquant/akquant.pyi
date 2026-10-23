@@ -149,7 +149,7 @@ class SessionResolver:
     交易时段解析器：把时间点或 bar 区间解析为 (交易日, 时段).
 
     :param sessions: 代码前缀 → 时段模板名；"default" 为全局默认
-    :param trading_calendar: 交易日列表；不传时按工作日推算（节假日会算错）
+    :param trading_calendar: 交易日列表；不传时中国市场按工作日推算（节假日会算错），ALWAYS_OPEN 每天都算
     :param timezone: IANA 时区名
     """
 
@@ -184,6 +184,8 @@ class SessionResolver:
     def next_session_day(self, day: datetime.date) -> datetime.date: ...
     @property
     def uses_fallback_calendar(self) -> bool: ...
+    @property
+    def uses_all_days_fallback(self) -> bool: ...
     @staticmethod
     def templates() -> list[str]: ...
 
@@ -3049,6 +3051,14 @@ class StrategyContext:
         会话交易日历上 ``day`` 之后的下一个交易日（超出日历或无解析器时为 None）.
 
         :param day: 日期
+        """
+        ...
+
+    def uses_all_days_calendar(self) -> bool:
+        r"""
+        会话日历是否为全日历兜底（周末也算交易日；无解析器时为 False）.
+
+        未传 ``trading_calendar`` 且在用时段表全是 ALWAYS_OPEN 这类每天都开的表时为 True。
         """
         ...
 

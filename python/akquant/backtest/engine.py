@@ -1092,7 +1092,10 @@ def _build_session_trading_days(
     """数据覆盖范围内的日历交易日，以及按交易日的截面时刻.
 
     交易日取会话日历上首个到最后一个数据交易日之间的全部交易日（本地 0 点的
-    带时区 ``Timestamp``，含区间内无数据的交易日）；每根 bar 按会话交易日归属
+    带时区 ``Timestamp``，含区间内无数据的交易日）。例外：会话日历是全日历兜底
+    （未传 ``trading_calendar``、在用时段表全是 ALWAYS_OPEN 这类每天都开的表，如
+    非中国时区的缺省）时每个自然日都算交易日，此时只取有数据的日子，免得美股等
+    周末无数据的市场在周六日触发定时任务。每根 bar 按会话交易日归属
     （交易日 T 覆盖 ``(session_day_end(prev(T)), session_day_end(T)]``，夜盘归下一
     交易日）。截面时刻为各品种在该交易日首根 bar 的最大时间戳，键为交易日 ISO
     字符串。指标数据表的索引已带时区；无时区的按 UTC 纳秒解释（与 Bar 时间戳同
@@ -1167,6 +1170,9 @@ def _build_session_trading_days(
         days[int(k)].isoformat(): int(v)
         for k, v in zip(cross.index.tolist(), cross.tolist())
     }
+    if bool(getattr(resolver, "uses_all_days_fallback", False)):
+        with_data = np.unique(day_idx[keep])
+        days = [days[int(i)] for i in with_data]
     trading_days = [pd.Timestamp(day).tz_localize(timezone) for day in days]
     return trading_days, cross_section
 
@@ -3131,8 +3137,9 @@ def run_backtest(
                      不传时中国时区按资产类型取默认（股票 CN_STOCK、
                      期货 CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。
                      可选模板见 aq.SessionResolver.templates()
-    :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传按工作日
-                             推算，节假日前后的夜盘与日终结算会算错
+    :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
+                             中国市场按工作日推算（节假日前后的夜盘与日终
+                             结算会算错），ALWAYS_OPEN 每天都算
     :param t_plus_one: 是否启用 T+1 交易规则 (默认 False)
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
     :param on_start: 启动回调函数 (仅当 strategy 为函数时使用)

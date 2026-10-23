@@ -1487,6 +1487,15 @@ impl StrategyContext {
             .as_deref()
             .and_then(|r| r.next_session_day(day).ok())
     }
+
+    /// 会话日历是否为全日历兜底（未传 ``trading_calendar`` 且在用时段表全是
+    /// ALWAYS_OPEN 这类每天都开的表，周末也算交易日）；无解析器时为 False。
+    pub fn uses_all_days_calendar(&self) -> bool {
+        self.sessions
+            .session_resolver
+            .as_deref()
+            .is_some_and(|r| r.uses_all_days_fallback())
+    }
 }
 
 #[cfg(test)]

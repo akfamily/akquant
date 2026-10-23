@@ -150,6 +150,16 @@ impl SessionResolver {
         self.calendar.is_none()
     }
 
+    /// 会话日历是否为全日历兜底：未传交易日历，且在用时段表的缺省日历全是 AllDays
+    /// （如非中国时区的 ALWAYS_OPEN）。此时每个自然日（含周末）都算交易日。
+    pub fn uses_all_days_fallback(&self) -> bool {
+        self.calendar.is_none()
+            && self
+                .active_schedules()
+                .iter()
+                .all(|s| s.fallback_calendar == FallbackCalendar::AllDays)
+    }
+
     pub fn set_active(&mut self, symbols: &[(String, Option<AssetType>)]) {
         let mut active: Vec<Arc<SessionSchedule>> = Vec::new();
         for (symbol, asset_type) in symbols {
@@ -177,11 +187,7 @@ impl SessionResolver {
         if let Some(c) = &self.calendar {
             return c;
         }
-        if self
-            .active_schedules()
-            .iter()
-            .all(|s| s.fallback_calendar == FallbackCalendar::AllDays)
-        {
+        if self.uses_all_days_fallback() {
             &self.all_days
         } else {
             &self.weekdays
@@ -1234,6 +1240,25 @@ mod tests {
         assert_eq!(sess, TradingSession::Closed);
         assert_eq!(s, at(2024, 1, 2, 15, 0, 0));
         assert_eq!(e, at(2024, 1, 3, 9, 15, 0));
+    }
+
+    #[test]
+    fn uses_all_days_fallback_only_without_calendar_and_all_always_open() {
+        let mut crypto = resolver(vec![("default", "ALWAYS_OPEN")], None);
+        crypto.set_active(&[("BTCUSDT".to_string(), None)]);
+        assert!(crypto.uses_all_days_fallback());
+        // 混有中国股票（工作日缺省日历）时不是全日历兜底
+        let mut mixed = resolver(vec![("BTC", "ALWAYS_OPEN")], None);
+        mixed.set_active(&[
+            ("BTCUSDT".to_string(), None),
+            ("600000.SH".to_string(), Some(AssetType::Stock)),
+        ]);
+        assert!(!mixed.uses_all_days_fallback());
+        // 显式交易日历：不是兜底
+        let cal = TradingCalendar::explicit([d(2024, 1, 2)]).unwrap();
+        let mut explicit = resolver(vec![("default", "ALWAYS_OPEN")], Some(cal));
+        explicit.set_active(&[("BTCUSDT".to_string(), None)]);
+        assert!(!explicit.uses_all_days_fallback());
     }
 
     #[test]

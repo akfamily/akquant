@@ -365,3 +365,149 @@ def test_expired_and_expiry_delivered_without_lifecycle_hooks(
     assert _ExpiryProbe.events == [("on_expiry", "OPT")]
     # 只有到期结算那天（12-01）的收盘后事件派发
     assert seen == ["__akq_lifecycle__|after_trading|2023-12-01"]
+
+
+_NY = "America/New_York"
+
+
+def _ny_weekday_bars() -> pd.DataFrame:
+    idx = pd.bdate_range("2024-05-29", "2024-06-05").tz_localize(_NY) + pd.Timedelta(
+        hours=10
+    )
+    return pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "AAPL",
+            "open": 10.0,
+            "high": 10.0,
+            "low": 10.0,
+            "close": 10.0,
+            "volume": 1e6,
+        }
+    )
+
+
+class _NyScheduleProbe(Strategy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.days: List[str] = []
+        self.fired: List[str] = []
+
+    def on_start(self) -> None:
+        self.schedule_daily("11:00", "d")
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.days:
+            self.days = [d.strftime("%a %m-%d") for d in self.trading_days]
+
+    def on_timer(self, payload: str) -> None:
+        ts = int(self.ctx.current_time) if self.ctx is not None else 0
+        self.fired.append(
+            pd.Timestamp(ts, tz="UTC").tz_convert(_NY).strftime("%a %m-%d")
+        )
+
+
+_NY_DATA_DAYS = [
+    "Wed 05-29",
+    "Thu 05-30",
+    "Fri 05-31",
+    "Mon 06-03",
+    "Tue 06-04",
+    "Wed 06-05",
+]
+
+
+def test_always_open_fallback_trading_days_only_days_with_data() -> None:
+    """非中国时区、未传 trading_calendar（全日历兜底）：周末无数据不算交易日."""
+    result = run_backtest(
+        strategy=_NyScheduleProbe,
+        data=_ny_weekday_bars(),
+        symbols=["AAPL"],
+        initial_cash=1e5,
+        show_progress=False,
+        timezone=_NY,
+    )
+    strategy = result.strategy
+    assert isinstance(strategy, _NyScheduleProbe)
+    assert strategy.days == _NY_DATA_DAYS
+    assert strategy.fired == _NY_DATA_DAYS
+
+
+def test_always_open_with_explicit_calendar_uses_calendar_days() -> None:
+    """显式传 trading_calendar 时按日历：区间内无数据的日历交易日也算（周六示例）."""
+    calendar = [
+        "2024-05-29",
+        "2024-05-30",
+        "2024-05-31",
+        "2024-06-01",
+        "2024-06-03",
+        "2024-06-04",
+        "2024-06-05",
+    ]
+    result = run_backtest(
+        strategy=_NyScheduleProbe,
+        data=_ny_weekday_bars(),
+        symbols=["AAPL"],
+        initial_cash=1e5,
+        show_progress=False,
+        timezone=_NY,
+        trading_calendar=calendar,
+    )
+    strategy = result.strategy
+    assert isinstance(strategy, _NyScheduleProbe)
+    expected = [
+        "Wed 05-29",
+        "Thu 05-30",
+        "Fri 05-31",
+        "Sat 06-01",
+        "Mon 06-03",
+        "Tue 06-04",
+        "Wed 06-05",
+    ]
+    assert strategy.days == expected
+    assert strategy.fired == expected
+
+
+def _live_ctx(all_days: bool) -> Any:
+    from unittest.mock import MagicMock
+
+    from akquant.akquant import StrategyContext
+
+    ctx = MagicMock(spec=StrategyContext)
+    ctx.canceled_order_ids = []
+    ctx.active_orders = []
+    ctx.recent_trades = []
+    ctx.current_time = 0
+    ctx.uses_all_days_calendar.return_value = all_days
+    ctx.is_trading_day.side_effect = lambda d: True if all_days else d.weekday() < 5
+    ctx.next_trading_day.side_effect = lambda d: next(
+        d + dt.timedelta(days=k)
+        for k in range(1, 8)
+        if all_days or (d + dt.timedelta(days=k)).weekday() < 5
+    )
+    return ctx
+
+
+def test_live_all_days_calendar_warns_once(caplog: Any) -> None:
+    """实盘未传 trading_calendar 且全是 ALWAYS_OPEN：首次登记定时任务时告警一次."""
+    import logging
+
+    class P(Strategy):
+        pass
+
+    for all_days, expected in ((True, 1), (False, 0)):
+        caplog.clear()
+        s = P()
+        s.ctx = _live_ctx(all_days)
+        s._trading_days = []
+        with caplog.at_level(logging.WARNING):
+            s.schedule_daily("10:00", "a")
+            s.schedule_weekly("10:00", "b")
+            s.schedule_daily("11:00", "c")
+        hits = [
+            r
+            for r in caplog.records
+            if "ALWAYS_OPEN 每天都算交易日" in r.getMessage()
+            and "美股等请传 trading_calendar" in r.getMessage()
+        ]
+        assert len(hits) == expected, (all_days, [r.getMessage() for r in hits])

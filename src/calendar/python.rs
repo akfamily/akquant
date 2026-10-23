@@ -20,7 +20,7 @@ fn calendar_err(e: CalendarError) -> PyErr {
 /// :param sessions: 代码前缀 → 时段模板名；``"default"`` 为全局默认。
 ///     未匹配时按资产类型取默认（股票/基金 CN_STOCK、期货 CN_FUTURES_DAY、
 ///     期权 CN_OPTION、其他 ALWAYS_OPEN）。
-/// :param trading_calendar: 交易日列表；不传时按工作日推算（节假日会算错）。
+/// :param trading_calendar: 交易日列表；不传时中国市场按工作日推算（节假日会算错），ALWAYS_OPEN 每天都算。
 /// :param timezone: IANA 时区名，默认 ``"Asia/Shanghai"``。
 #[gen_stub_pyclass]
 #[pyclass(name = "SessionResolver", module = "akquant")]
@@ -145,6 +145,13 @@ impl PySessionResolver {
     #[getter]
     fn uses_fallback_calendar(&self) -> bool {
         self.inner.uses_fallback_calendar()
+    }
+
+    /// 会话日历是否为全日历兜底（未传 ``trading_calendar``，且在用时段表全是
+    /// ALWAYS_OPEN 这类每天都开的表）：此时周末也算交易日。
+    #[getter]
+    fn uses_all_days_fallback(&self) -> bool {
+        self.inner.uses_all_days_fallback()
     }
 
     /// 内置时段模板名。
