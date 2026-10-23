@@ -458,6 +458,10 @@ impl SessionResolver {
 
     /// 包含时刻 `instant` 的时段区间 `[start, end)` 与其时段；落在两段之间
     /// （午休以外的间隙、收盘后到下一交易日开盘前）时返回间隙与 `Closed`。
+    ///
+    /// 区间按半开处理：`instant` 恰为某段结束时返回其后的间隙（与 `session_at`
+    /// 把收盘那一笔归入最后一段不同）。调用方须传严格落在所求区间内的时刻——
+    /// 终点戳事件（bar、收盘 tick）传 `ts - 1`。
     pub fn segment_span_at(
         &self,
         symbol: &str,
@@ -1122,6 +1126,64 @@ mod tests {
         assert_eq!(
             r.session_level_instant(at(2024, 1, 2, 10, 20, 0)),
             TradingSession::Continuous
+        );
+    }
+
+    #[test]
+    fn segment_span_at_weekend_gap() {
+        let r = resolver(vec![], None);
+        // 周五 20:00：间隙跨周末，[周五 15:00, 下周一 09:15)
+        let got = r
+            .segment_span_at("600000.SH", stock(), at(2024, 1, 5, 20, 0, 0))
+            .unwrap();
+        assert_eq!(
+            got,
+            (
+                at(2024, 1, 5, 15, 0, 0),
+                at(2024, 1, 8, 9, 15, 0),
+                TradingSession::Closed
+            )
+        );
+    }
+
+    #[test]
+    fn segment_span_at_night_futures_gap_ends_at_night_auction() {
+        let r = resolver(vec![("rb", "CN_FUTURES_NIGHT_23")], None);
+        // 周五 20:00：日盘收盘后、夜盘集合竞价前，右界为周五 20:55
+        let got = r
+            .segment_span_at("rb2405", Some(AssetType::Futures), at(2024, 1, 5, 20, 0, 0))
+            .unwrap();
+        assert_eq!(
+            got,
+            (
+                at(2024, 1, 5, 15, 0, 0),
+                at(2024, 1, 5, 20, 55, 0),
+                TradingSession::Closed
+            )
+        );
+    }
+
+    #[test]
+    fn segment_span_at_explicit_calendar_edges() {
+        let cal = TradingCalendar::explicit([d(2024, 1, 2), d(2024, 1, 3)]).unwrap();
+        let r = resolver(vec![], Some(cal));
+        // 日历首日开盘前：没有前一交易日，左界无界
+        let got = r
+            .segment_span_at("600000.SH", stock(), at(2024, 1, 2, 8, 0, 0))
+            .unwrap();
+        assert_eq!(
+            got,
+            (i64::MIN, at(2024, 1, 2, 9, 15, 0), TradingSession::Closed)
+        );
+        // 早于日历首日当天：与 resolve_instant 一致，超出日历范围报错
+        assert!(
+            r.segment_span_at("600000.SH", stock(), at(2024, 1, 1, 20, 0, 0))
+                .is_err()
+        );
+        // 日历末日收盘之后：找不到下一交易日，报错
+        assert!(
+            r.segment_span_at("600000.SH", stock(), at(2024, 1, 3, 20, 0, 0))
+                .is_err()
         );
     }
 }

@@ -1,6 +1,7 @@
 import datetime as dt_module
 import logging
 import os
+import re
 import sys
 import warnings
 from dataclasses import dataclass
@@ -686,11 +687,34 @@ def _arrays_interval_starts(
     )
 
 
+_BAR_FREQ_PATTERN = re.compile(r"^\s*(\d*)\s*(min|h|d|day)\s*$", re.IGNORECASE)
+_BAR_FREQ_UNIT_NS = {
+    "min": 60 * 10**9,
+    "h": 3600 * 10**9,
+    "d": _ONE_DAY_NS,
+    "day": _ONE_DAY_NS,
+}
+
+
 def _freq_period_ns(freq: Optional[str]) -> Optional[int]:
-    """``freq`` 声明的 bar 周期（纳秒）；未声明为 None."""
+    """``freq`` 声明的 bar 周期（纳秒）；未声明为 None.
+
+    与 tick 聚合用的 ``parse_freq_to_interval_min`` 不同，bar 周期可以是日：
+    接受 ``Nmin`` / ``Nh`` / ``Nd`` / ``Nday``（大小写不敏感，省略 N 视为 1，
+    如 ``"D"`` 即 1 天）。
+    """
     if freq is None:
         return None
-    return parse_freq_to_interval_min(freq) * 60 * 10**9
+    match = _BAR_FREQ_PATTERN.match(str(freq))
+    value = int(match.group(1) or 1) if match else 0
+    if match is None or value <= 0:
+        raise ValueError(
+            f"freq={freq!r} 无法解析为 bar 周期。bar 数据的 freq 写成“正整数 + 单位”，"
+            "单位为 min（分钟）、h（小时）、d 或 day（日），大小写不敏感，省略数字"
+            "视为 1，如 '1min'、'5min'、'1h'、'1d'、'D'；秒级或周/月周期请先用 "
+            "akquant.feed_adapter 的 resample() 重采样"
+        )
+    return value * _BAR_FREQ_UNIT_NS[match.group(2).lower()]
 
 
 def _rewrite_date_only_utc(
@@ -3769,17 +3793,17 @@ def run_backtest(
 
     # Determine Data Loading Strategy
     # bar 数据声明的周期(纳秒), 用于填 bar 区间起点; 见下方 freq 说明
+    # freq 对含 Tick 的列表是聚合周期(合成 bar 的区间由聚合器填);
+    # 对 bar 数据(含 data=None 时从 catalog 加载的)是声明的 bar 周期: 区间起点
+    # = 时间戳 - 周期。DataFeed 输入已由调用方建好, 只注入 self.freq。
     bar_period_ns: Optional[int] = None
+    if freq is not None and not (
+        isinstance(data, list) and any(isinstance(item, Tick) for item in data)
+    ):
+        bar_period_ns = _freq_period_ns(freq)
     if data is not None:
         # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
         data = coerce_to_pandas(data)
-        # freq 对含 Tick 的列表是聚合周期(合成 bar 的区间由聚合器填);
-        # 对 bar 数据是声明的 bar 周期: 区间起点 = 时间戳 - 周期。DataFeed 输入
-        # 已由调用方建好, 只注入 self.freq。
-        if freq is not None and not (
-            isinstance(data, list) and any(isinstance(item, Tick) for item in data)
-        ):
-            bar_period_ns = _freq_period_ns(freq)
 
         # 含 Tick(或需要校验)的列表先归一成 DataFeed, 交给下面既有的 DataFeed
         # 分支处理: 该路径已实测能正确投递 tick(feed.add_tick -> 引擎
