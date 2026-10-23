@@ -746,7 +746,7 @@ impl Engine {
         self.state.order_manager = snapshot.order_manager;
         *self.last_prices.write().expect("last_prices 写锁被污染") = snapshot.last_prices;
         self.instruments = snapshot.instruments;
-        self.session_resolver = None;
+        self.invalidate_session_resolver();
         self.initial_cash = snapshot.initial_cash.unwrap_or(self.state.portfolio.cash);
         self.margin_accrued_interest = snapshot.margin_accrued_interest;
         self.margin_daily_interest = snapshot.margin_daily_interest;
@@ -867,6 +867,13 @@ impl Engine {
     /// :param bars: 历史 K 线列表
     /// :return: 回放序列(基础 bar 与窗口 bar 交错)
     pub fn preload_history(&mut self, bars: Vec<Bar>) -> Vec<Bar> {
+        // 窗口按交易日/交易块切分需要会话解析器; 构造失败(配置错误)时只告警,
+        // 窗口退回本地时钟切分, 错误会在 run() 开始时报出。
+        if let Err(e) = self.ensure_session_resolver() {
+            log::warn!(
+                "预加载历史: 会话解析器构造失败({e}), 多周期窗口退回按本地时钟切分; 请检查 sessions / trading_calendar 配置"
+            );
+        }
         let mut buffer = self.history_buffer.write().unwrap();
         let mut aggregator = self
             .window_aggregator
@@ -937,7 +944,7 @@ impl Engine {
     pub fn set_timezone(&mut self, offset: i32) {
         self.timezone_offset = offset;
         self.timezone_name = None;
-        self.session_resolver = None;
+        self.invalidate_session_resolver();
         self.window_aggregator
             .write()
             .expect("window_aggregator 写锁被污染")
@@ -978,7 +985,7 @@ impl Engine {
             sessions: pairs,
             trading_calendar,
         };
-        self.session_resolver = None;
+        self.invalidate_session_resolver();
         Ok(())
     }
 
@@ -996,7 +1003,7 @@ impl Engine {
             .fix()
             .local_minus_utc();
         self.timezone_name = Some(tz_name.to_string());
-        self.session_resolver = None;
+        self.invalidate_session_resolver();
         self.window_aggregator
             .write()
             .expect("window_aggregator 写锁被污染")
@@ -1395,7 +1402,7 @@ impl Engine {
         self.instruments
             .insert(instrument.symbol().to_string(), instrument);
         // 在用时段表随标的集合变化，下次 run() 重建解析器。
-        self.session_resolver = None;
+        self.invalidate_session_resolver();
     }
 
     /// 设置初始资金

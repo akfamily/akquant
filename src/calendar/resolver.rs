@@ -714,6 +714,17 @@ impl SessionResolver {
             .copied())
     }
 
+    /// 品种所用交易日历上 `day` 的前一个交易日（日历首日之前没有时返回错误）。
+    pub fn previous_trading_day(
+        &self,
+        symbol: &str,
+        asset_type: Option<AssetType>,
+        day: NaiveDate,
+    ) -> Result<NaiveDate, CalendarError> {
+        let schedule = self.schedule_for(symbol, asset_type);
+        self.calendar_for(&schedule).before(day)
+    }
+
     pub fn day_bounds(
         &self,
         symbol: &str,

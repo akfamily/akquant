@@ -273,8 +273,9 @@ def test_subscribe_bars_validation_errors() -> None:
         s.subscribe_bars("2d")
     with pytest.raises(ValueError, match="1w"):
         s.subscribe_bars("1w")
+    # 终点早于起点是跨午夜时段(合法); 起止相同(长度为 0)才报错
     with pytest.raises(ValueError, match="session_windows"):
-        s.subscribe_bars("5min", session_windows=[("11:30", "09:30")])
+        s.subscribe_bars("5min", session_windows=[("09:30", "09:30")])
     s.subscribe_bars("5min")
     with pytest.raises(ValueError, match="subscribe_bars"):
         s.I(SMA(2), name="x", freq="15min")  # 未订阅

@@ -361,6 +361,16 @@ impl Engine {
         Arc::new(entry_prices)
     }
 
+    /// 作废会话解析器（时区、时段表、标的变化或载入存档后），窗口聚合器同步退回
+    /// 无解析器状态，直到下次 [`Self::ensure_session_resolver`] 重建。
+    pub(crate) fn invalidate_session_resolver(&mut self) {
+        self.session_resolver = None;
+        self.window_aggregator
+            .write()
+            .expect("window_aggregator 写锁被污染")
+            .set_resolver(None, HashMap::new());
+    }
+
     /// 首次调用时按 `session_config`、引擎时区与规则 B 构造会话解析器，并把全部
     /// 已登记标的设为在用。
     pub(crate) fn ensure_session_resolver(&mut self) -> PyResult<()> {
@@ -404,7 +414,18 @@ impl Engine {
             .map(|i| (i.symbol().to_string(), Some(i.asset_type)))
             .collect();
         resolver.set_active(&active);
-        self.session_resolver = Some(Arc::new(resolver));
+        let resolver = Arc::new(resolver);
+        // 多周期窗口按同一解析器切分交易日与交易块。
+        let asset_types = self
+            .instruments
+            .values()
+            .map(|i| (i.symbol().to_string(), i.asset_type))
+            .collect();
+        self.window_aggregator
+            .write()
+            .expect("window_aggregator 写锁被污染")
+            .set_resolver(Some(resolver.clone()), asset_types);
+        self.session_resolver = Some(resolver);
         // 缓存的时段区间来自旧解析器（时区、时段表或标的变化后失效）。
         self.session_span_cache.clear();
         self.last_interval_session = None;
