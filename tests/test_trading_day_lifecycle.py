@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import akquant as aq
 import pandas as pd
@@ -1036,6 +1036,8 @@ def _local_minute(ts_ns: int) -> str:
 _GATEWAY_THREADS: Dict[str, Any] = {}
 # 每次 on_start 是否找到并等到了 replay 推送线程（_run_live_replay 校验）。
 _REPLAY_THREAD_JOINED: List[bool] = []
+# _LiveDayOrderProbe.on_order 收到的（订单号, 状态名）序列。
+_LIVE_ORDER_EVENTS: List[Tuple[str, str]] = []
 
 
 class _LiveDayOrderProbe(Strategy):
@@ -1067,14 +1069,17 @@ class _LiveDayOrderProbe(Strategy):
             self.done = True
             self.buy("600000", 100, price=1.0, time_in_force=aq.TimeInForce.Day)
 
+    def on_order(self, order: Any) -> None:
+        _LIVE_ORDER_EVENTS.append((order.id, str(order.status).split(".")[-1]))
+
 
 def _run_live_replay(
     monkeypatch: pytest.MonkeyPatch, bars: List[Bar], **kwargs: Any
 ) -> Any:
     """run_live(broker="replay") 跑完后返回 runner，供读取引擎结果.
 
-    run_live 不返回结果，且日终过期不触发 on_order（订单离开在途账本时
-    只留档、不回调），只能从引擎结果里读订单终态。
+    run_live 不返回结果，订单终态从引擎结果里读；on_order 收到的状态序列记在
+    _LIVE_ORDER_EVENTS。
     """
     from akquant import run_live
     from akquant.live import _facade
@@ -1093,6 +1098,7 @@ def _run_live_replay(
     monkeypatch.setattr(_facade, "LiveRunner", _Recording)
     _GATEWAY_THREADS.clear()
     _REPLAY_THREAD_JOINED.clear()
+    _LIVE_ORDER_EVENTS.clear()
     run_live(
         strategy_cls=_LiveDayOrderProbe,
         instruments=[_live_stock_instrument()],
@@ -1142,6 +1148,10 @@ def test_live_replay_settles_at_trading_day_close(
     )
     # 10:00 下单（非当日最后切片，不豁免）→ 01-02 15:00 过期
     assert _expired_at(runner) == ["2024-01-02 15:00"]
+    # 日终过期同样回调 on_order（Expired），且只回调一次
+    statuses = [status for _, status in _LIVE_ORDER_EVENTS]
+    assert statuses[-1] == "Expired", _LIVE_ORDER_EVENTS
+    assert statuses.count("Expired") == 1, _LIVE_ORDER_EVENTS
 
 
 def test_live_replay_forwards_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1512,3 +1522,48 @@ def test_date_only_trading_dates_do_not_warn(caplog: pytest.LogCaptureFixture) -
             show_progress=False,
         )
     assert not [r for r in caplog.records if "非交易日" in r.getMessage()]
+
+
+class _ExpiryProbe(Strategy):
+    """首根 bar 下一张够不着的 Day 限价单，记录 on_order 收到的状态序列."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+        self.events: List[Tuple[str, str]] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done:
+            self.done = True
+            self.buy(bar.symbol, 100, price=1.0, time_in_force=aq.TimeInForce.Day)
+
+    def on_order(self, order: Any) -> None:
+        self.events.append((order.id, str(order.status).split(".")[-1]))
+
+
+def test_day_order_expiry_triggers_on_order() -> None:
+    """日终结算过期的 Day 单回调 on_order（Expired），只回调一次."""
+    r = run_backtest(
+        strategy=_ExpiryProbe,
+        data=_daily_frame(["2024-01-02", "2024-01-03", "2024-01-04"]),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert r.strategy is not None
+    statuses = [s for _, s in r.strategy.events]
+    assert statuses[-1] == "Expired"
+    assert statuses.count("Expired") == 1
+
+
+def test_day_order_expiring_on_last_day_still_triggers_on_order() -> None:
+    """最后一个交易日收盘过期（之后没有策略事件）也要回调."""
+    r = run_backtest(
+        strategy=_ExpiryProbe,
+        data=_daily_frame(["2024-01-02", "2024-01-03"]),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert r.strategy is not None
+    assert [s for _, s in r.strategy.events][-1] == "Expired"

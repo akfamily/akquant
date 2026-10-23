@@ -942,6 +942,11 @@ impl Engine {
                     closed_trades: self.state.order_manager.trade_tracker.closed_trades.clone(),
                     recent_trades: step_trades,
                     recent_rejected_orders: step_rejected_orders,
+                    recent_expired_orders: self
+                        .state
+                        .order_manager
+                        .current_step_expired_orders
+                        .clone(),
                     recent_expiry_events: self.recent_expiry_events.clone(),
                     account_equity: account_metrics.equity.to_f64().unwrap_or_default(),
                     account_market_value: account_metrics.market_value.to_f64().unwrap_or_default(),
@@ -1331,6 +1336,7 @@ impl Engine {
             closed_trades: self.state.order_manager.trade_tracker.closed_trades.clone(),
             recent_trades: step_trades,
             recent_rejected_orders: step_rejected_orders,
+            recent_expired_orders: self.state.order_manager.current_step_expired_orders.clone(),
             recent_expiry_events: self.recent_expiry_events.clone(),
             history_buffer: Some(self.history_buffer.clone()),
             window_aggregator: Some(self.window_aggregator.clone()),
@@ -1878,11 +1884,18 @@ impl Engine {
         py: Python<'_>,
         strategy: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
+        // 日终过期的 Day 单也在这里派发: 最后一个交易日收盘结算之后已没有下一个
+        // 策略事件来触发常规回调入口。
         if self.state.order_manager.current_step_trades.is_empty()
             && self
                 .state
                 .order_manager
                 .current_step_rejected_orders
+                .is_empty()
+            && self
+                .state
+                .order_manager
+                .current_step_expired_orders
                 .is_empty()
         {
             return Ok(());
@@ -1931,6 +1944,7 @@ impl Engine {
             .order_manager
             .current_step_rejected_orders
             .clear();
+        self.state.order_manager.current_step_expired_orders.clear();
         Ok(())
     }
 

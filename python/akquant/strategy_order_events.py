@@ -112,6 +112,18 @@ def check_order_events(strategy: Any) -> None:
             strategy._known_orders[oid] = order
             _emit_order_callback(strategy, order)
 
+    # 日终结算过期的 Day 单: 它已离开在途账本, 下面的兜底路径只会留档旧的
+    # New/Submitted 快照而不回调。这里按终态快照回调 on_order 并落档, 再从
+    # _known_orders 移除, 同一张单只回调一次 Expired。
+    for order in getattr(strategy.ctx, "recent_expired_orders", ()):
+        oid = getattr(order, "id", "")
+        if not oid:
+            continue
+        strategy._known_orders[oid] = order
+        _emit_order_callback(strategy, order)
+        remember_finalized_order(strategy, order)
+        del strategy._known_orders[oid]
+
     pending_order_ids: set[str] = set()
     if hasattr(strategy.ctx, "orders"):
         for order in strategy.ctx.orders:

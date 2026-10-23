@@ -32,6 +32,9 @@ pub struct OrderManager {
     /// 当前步收到的拒单回报 (用于通知策略 on_reject)
     #[serde(default)]
     pub current_step_rejected_orders: Vec<Order>,
+    /// 当前步日终结算置为 Expired 的 Day 单 (用于通知策略 on_order)
+    #[serde(default)]
+    pub current_step_expired_orders: Vec<Order>,
     /// 交易追踪器 (用于计算 PnL 和统计)
     pub trade_tracker: TradeTracker,
     /// OCO 订单组映射: group_id -> {order_id}
@@ -62,6 +65,7 @@ impl OrderManager {
             trades: Vec::new(),
             current_step_trades: Vec::new(),
             current_step_rejected_orders: Vec::new(),
+            current_step_expired_orders: Vec::new(),
             trade_tracker: TradeTracker::new(),
             oco_groups: HashMap::new(),
             oco_order_to_group: HashMap::new(),

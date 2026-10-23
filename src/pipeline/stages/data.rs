@@ -816,6 +816,12 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
         // long after it should have died (issue #329 hygiene item).
         // Mirrors the reject path above (reject_missing_symbol_orders).
         engine.execution_model.on_cancel(&o.id);
+        // 日终定时器不转给策略: 过期单留到下一个策略事件(或会话收尾)回调 on_order。
+        engine
+            .state
+            .order_manager
+            .current_step_expired_orders
+            .push(o.clone());
         engine.state.order_manager.orders.push(o);
     }
 

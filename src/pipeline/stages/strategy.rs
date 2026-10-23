@@ -144,6 +144,11 @@ impl Processor for StrategyProcessor {
                 .order_manager
                 .current_step_rejected_orders
                 .clear();
+            engine
+                .state
+                .order_manager
+                .current_step_expired_orders
+                .clear();
         }
         Ok(ProcessorResult::Next)
     }

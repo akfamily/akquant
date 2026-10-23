@@ -97,6 +97,7 @@ pub struct ContextInit {
     pub closed_trades: Arc<Vec<ClosedTrade>>,
     pub recent_trades: Vec<Trade>,
     pub recent_rejected_orders: Vec<Order>,
+    pub recent_expired_orders: Vec<Order>,
     pub recent_expiry_events: Vec<ExpiryEvent>,
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
     pub window_aggregator: Option<Arc<RwLock<crate::data::WindowAggregator>>>,
@@ -135,6 +136,7 @@ pub struct ContextUpdate {
     pub closed_trades: Arc<Vec<ClosedTrade>>,
     pub recent_trades: Vec<Trade>,
     pub recent_rejected_orders: Vec<Order>,
+    pub recent_expired_orders: Vec<Order>,
     pub recent_expiry_events: Vec<ExpiryEvent>,
     pub account_equity: f64,
     pub account_market_value: f64,
@@ -357,6 +359,7 @@ impl StrategyContext {
 
         self.recent_trades = update.recent_trades;
         self.recent_rejected_orders = update.recent_rejected_orders;
+        self.recent_expired_orders = update.recent_expired_orders;
         self.recent_expiry_events = update.recent_expiry_events;
         self.account_equity = update.account_equity;
         self.account_market_value = update.account_market_value;
@@ -439,6 +442,9 @@ pub struct StrategyContext {
     // Recent rejected orders generated in the last step
     #[pyo3(get)]
     pub recent_rejected_orders: Vec<Order>,
+    // Day orders expired by the latest day-close settlement (delivered as on_order Expired)
+    #[pyo3(get)]
+    pub recent_expired_orders: Vec<Order>,
     // Recent expiry events generated in the last step
     #[pyo3(get)]
     pub recent_expiry_events: Vec<ExpiryEvent>,
@@ -507,6 +513,7 @@ impl StrategyContext {
             closed_trades: init.closed_trades,
             recent_trades: init.recent_trades,
             recent_rejected_orders: init.recent_rejected_orders,
+            recent_expired_orders: init.recent_expired_orders,
             recent_expiry_events: init.recent_expiry_events,
             history_buffer: init.history_buffer,
             window_aggregator: init.window_aggregator,
@@ -723,6 +730,7 @@ impl StrategyContext {
             closed_trades: Arc::new(closed_trades.unwrap_or_default()),
             recent_trades: recent_trades.unwrap_or_default(),
             recent_rejected_orders: Vec::new(),
+            recent_expired_orders: Vec::new(),
             recent_expiry_events: recent_expiry_events.unwrap_or_default(),
             history_buffer: None,
             window_aggregator: None,
