@@ -218,7 +218,7 @@ impl Processor for DataProcessor {
         &mut self,
         engine: &mut Engine,
         py: Python<'_>,
-        _strategy: &Bound<'_, PyAny>,
+        strategy: &Bound<'_, PyAny>,
     ) -> PyResult<ProcessorResult> {
         // 墙钟兜底: 到点即结束, 不依赖行情事件到达。放在 feed 等待**之前**,
         // 因为等待本身可能长达 1 秒, 而行情停摆时 `Wait` 会无限循环下去。
@@ -280,6 +280,9 @@ impl Processor for DataProcessor {
                                 day,
                                 close_ts,
                             ) {
+                                // 收盘时刻的 bar 缺失时, 当日已结束的窗口在结算前闭合派发
+                                // (窗口 → 结算 → on_after_trading)。
+                                dispatch_day_close_windows(engine, py, strategy, day, close_ts)?;
                                 run_day_close_settlement(engine, py, day, close_ts);
                                 engine.last_settled_trading_day = Some(day);
                                 // 没有策略要收盘后事件(未重写钩子且无过期单/到期事件
@@ -475,6 +478,7 @@ impl Processor for DataProcessor {
                                     .session_day_end(prev)
                                     .map_err(|e| PyValueError::new_err(e.to_string()))?,
                             };
+                            dispatch_day_close_windows(engine, py, strategy, prev, close)?;
                             run_day_close_settlement(engine, py, prev, close);
                             engine.last_settled_trading_day = Some(prev);
                             // 收盘后生命周期事件以本事件时刻压入, 在本事件处理之后触发
@@ -712,6 +716,36 @@ fn session_day_span_for(engine: &Engine, day: NaiveDate, ts: i64) -> PyResult<(i
         Err(CalendarError::OutOfRange { .. }) => Ok((ts - 1, end)),
         Err(e) => Err(PyValueError::new_err(e.to_string())),
     }
+}
+
+/// 日终结算前闭合交易日 `day` 已结束的在形成窗口(日内窗口标签不晚于收盘、当日
+/// 日线窗口)并派发: 收盘时刻的 bar 缺失(如数据止于 14:56)时, 窗口不拖到下一交易日
+/// 第一根 bar 才派发。闭合的窗口从聚合器移除, 只派发一次; 写历史先于派发, 与数据
+/// 阶段同序。
+fn dispatch_day_close_windows(
+    engine: &mut Engine,
+    py: Python<'_>,
+    strategy: &Bound<'_, PyAny>,
+    day: NaiveDate,
+    close_ts: i64,
+) -> PyResult<()> {
+    let closed = engine
+        .window_aggregator
+        .write()
+        .expect("window_aggregator 写锁被污染")
+        .close_through_day(day, close_ts);
+    if closed.is_empty() && engine.pending_window_bars.is_empty() {
+        return Ok(());
+    }
+    if let Ok(mut buffer) = engine.history_buffer.write() {
+        for bar in &closed {
+            buffer.update_window(bar);
+        }
+    }
+    // 尚未派发的(同一时间步更早闭合的)在前
+    let mut bars = std::mem::take(&mut engine.pending_window_bars);
+    bars.extend(closed);
+    engine.dispatch_window_bars(py, strategy, bars)
 }
 
 /// 交易日 `day` 的日终结算：到期 → 利息与强平 → T+1 → Day 单过期 → 流事件 → 快照。

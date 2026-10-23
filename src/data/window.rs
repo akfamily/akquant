@@ -759,6 +759,31 @@ impl WindowAggregator {
         out.into_iter().map(|(_, _, _, b)| b).collect()
     }
 
+    /// 交易日 `day` 日终(收盘 `close_ts`)时闭合已结束的在形成窗口: 标签不晚于收盘的
+    /// 日内窗口(所在块已结束), 以及交易日不晚于 `day` 的日线窗口。收盘时刻的 bar
+    /// 缺失时, 这些窗口不必等到下一交易日第一根 bar 才闭合。排序同 [`Self::flush`]。
+    pub fn close_through_day(&mut self, day: NaiveDate, close_ts: i64) -> Vec<Bar> {
+        let ended: Vec<(String, String)> = self
+            .states
+            .iter()
+            .filter(|(_, st)| match st.freq {
+                WindowFreq::Day => st.trading_day.is_some_and(|d| d <= day),
+                _ => st.label_ns <= close_ts,
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        let mut out: Vec<(String, u32, String, Bar)> = Vec::with_capacity(ended.len());
+        for key in ended {
+            if let Some(st) = self.states.remove(&key) {
+                let (symbol, label) = key;
+                let bar = st.to_bar(&symbol, &label);
+                out.push((symbol, st.freq.total_minutes(), label, bar));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        out.into_iter().map(|(_, _, _, b)| b).collect()
+    }
+
     /// 品种在 `freq` 上是否有正在形成的窗口(不克隆快照)。
     pub fn is_forming(&self, symbol: &str, freq: &str) -> bool {
         self.states
@@ -1401,6 +1426,37 @@ mod tests {
         }
         let expected: Vec<i64> = (1..=6).map(|k| ns(2024, 1, 2, 9, 5 * k)).collect();
         assert_eq!(labels, expected);
+    }
+
+    #[test]
+    fn close_through_day_closes_only_ended_windows() {
+        let mut a = resolved_agg(
+            &[("5min", None), ("1d", None)],
+            vec![("au", "CN_FUTURES_NIGHT_0230")],
+            "au2406",
+            AssetType::Futures,
+        );
+        // 交易日 01-05 止于 14:56(收盘 bar 缺失)
+        a.update(&bar(ns(2024, 1, 5, 14, 56), 10, "au2406"));
+        let day = NaiveDate::from_ymd_opt(2024, 1, 5).unwrap();
+        let closed = a.close_through_day(day, ns(2024, 1, 5, 15, 0));
+        let got: Vec<(Option<&str>, i64)> = closed
+            .iter()
+            .map(|b| (b.freq.as_deref(), b.timestamp))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (Some("5min"), ns(2024, 1, 5, 15, 0)),
+                (Some("1d"), ns(2024, 1, 5, 15, 0)),
+            ]
+        );
+        assert!(a.flush().is_empty(), "已闭合的窗口不再由 flush 重复产出");
+        // 下一交易日(01-08)的夜盘窗口不受 01-05 日终影响
+        a.update(&bar(ns(2024, 1, 5, 21, 1), 11, "au2406"));
+        assert!(a.close_through_day(day, ns(2024, 1, 5, 15, 0)).is_empty());
+        assert!(a.current("au2406", "5min").is_some());
+        assert!(a.current("au2406", "1d").is_some());
     }
 
     #[test]

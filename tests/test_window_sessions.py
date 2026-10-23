@@ -906,3 +906,50 @@ def test_bar_generator_in_strategy_inherits_engine_sessions() -> None:
     ]
     assert strategy.gen_rows == engine_rows
     assert strategy.lambda_rows == engine_rows
+
+
+def test_day_close_dispatches_forming_windows_before_after_trading() -> None:
+    """收盘 bar 缺失（数据止于 14:56）时，日终结算前闭合并派发当日窗口.
+
+    顺序：窗口 bar → 结算 → on_after_trading；次日开盘不再重复派发。
+    """
+    times = [f"2024-01-02 14:{m:02d}" for m in range(51, 57)] + [
+        f"2024-01-03 09:{m:02d}" for m in range(31, 36)
+    ]
+
+    class S(_WinLog):
+        freqs = ("5min", "1d")
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: List[Tuple[str, str]] = []
+
+        def on_window_bar(self, bar: Bar) -> None:
+            super().on_window_bar(bar)
+            local = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert(TZ)
+            self.events.append((str(bar.freq), local.strftime("%m-%d %H:%M")))
+
+        def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:
+            self.events.append(("after", trading_date.strftime("%m-%d")))
+
+    r = run_backtest(
+        strategy=S,
+        data=_minute(times),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        freq="1min",
+    )
+    strategy = r.strategy
+    assert isinstance(strategy, S)
+    events = strategy.events
+    after = events.index(("after", "01-02"))
+    assert events[:after] == [
+        ("5min", "01-02 14:55"),
+        ("5min", "01-02 15:00"),
+        ("1d", "01-02 15:00"),
+    ]
+    later = events[after + 1 :]
+    assert ("5min", "01-02 15:00") not in later
+    assert ("1d", "01-02 15:00") not in later
+    assert ("5min", "01-03 09:35") in later
