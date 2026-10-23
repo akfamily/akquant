@@ -461,7 +461,10 @@ def test_night_session_settles_once_per_trading_day_not_at_midnight() -> None:
 
 
 class _BuyAtOpenProbe(Strategy):
-    """当日 09:25 定时器买入，记录同日收盘 bar 上的可用数量."""
+    """当日 09:25 定时器买入，记录同日收盘 bar 上的可用数量.
+
+    09:25 落在开盘集合竞价，订单排队到当日 15:00 日线 bar 成交（不在 09:25 成交）。
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -482,7 +485,7 @@ class _BuyAtOpenProbe(Strategy):
 
 
 def test_t_plus_one_intraday_buy_not_sellable_on_same_day_close_bar() -> None:
-    """日线改到 15:00 后：当日 09:25 买入，当日 15:00 bar 的 on_bar 里可用必须为 0."""
+    """日线改到 15:00：09:25 下单、15:00 bar 成交，该 bar 的 on_bar 里可用为 0."""
     result = run_backtest(
         strategy=_BuyAtOpenProbe,
         data=_daily_frame(["2024-01-02", "2024-01-03", "2024-01-04"]),
@@ -494,7 +497,7 @@ def test_t_plus_one_intraday_buy_not_sellable_on_same_day_close_bar() -> None:
     strategy = result.strategy
     assert strategy is not None
     seen = dict(strategy.available_on_bar)
-    assert seen[dt.date(2024, 1, 3)] == 0.0  # 01-03 09:25 买入，当日不可卖
+    assert seen[dt.date(2024, 1, 3)] == 0.0  # 01-03 15:00 bar 成交，当日不可卖
     assert seen[dt.date(2024, 1, 4)] == 100.0  # 01-03 收盘结算后解冻
 
 

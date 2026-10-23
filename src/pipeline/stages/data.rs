@@ -638,11 +638,15 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
         .iter()
         .filter(|order| {
             order.time_in_force == crate::model::TimeInForce::Day
-                && (order.created_at >= close_ts
-                    || (effective_execution_policy_for_order(engine, order).bar_offset == 1
-                        && engine
-                            .last_event_ts_in_day
-                            .is_none_or(|last| order.created_at >= last)))
+                && ((effective_execution_policy_for_order(engine, order).bar_offset == 1
+                    && engine
+                        .last_event_ts_in_day
+                        .is_none_or(|last| order.created_at >= last))
+                    // 收盘时刻及之后、在非连续竞价时段(如收盘竞价结束的 15:00 分钟 bar)
+                    // 下的单当日没有撮合机会, 属于下一交易日。日线(整日区间, 连续竞价)
+                    // 上下的单当日有撮合机会, 照常过期。
+                    || (order.created_at >= close_ts
+                        && engine.order_creation_sessions.contains_key(&order.id)))
         })
         .map(|order| order.id.clone())
         .collect();
@@ -703,6 +707,19 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
     );
     drop(settlement_ctx);
     drop(settlement_prices);
+    // 只保留仍在途订单的创建时段记录
+    if !engine.order_creation_sessions.is_empty() {
+        let active: HashSet<&str> = engine
+            .state
+            .order_manager
+            .active_orders
+            .iter()
+            .map(|o| o.id.as_str())
+            .collect();
+        engine
+            .order_creation_sessions
+            .retain(|id, _| active.contains(id.as_str()));
+    }
     engine.recent_expiry_events = expiry_settlement
         .events
         .iter()

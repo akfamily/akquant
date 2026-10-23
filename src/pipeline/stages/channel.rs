@@ -128,6 +128,27 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
         let _ = engine.event_manager.send(Event::OrderValidated(order));
     }
 }
+/// 记下订单品种在创建时间片的时段(只记非连续竞价), 供日终 Day 单豁免判断:
+/// 收盘时刻及之后、在非连续竞价时段下的单属于下一交易日。
+fn record_creation_session(engine: &mut Engine, order: &Order) {
+    if engine.force_session_continuous {
+        return;
+    }
+    let _ = engine.ensure_session_resolver();
+    let session = SessionView {
+        force_continuous: false,
+        slice: Some(&engine.slice_sessions),
+        resolver: engine.session_resolver.as_ref(),
+        instruments: Some(&engine.instruments),
+    }
+    .session_for(&order.symbol, order.created_at);
+    if session != crate::model::TradingSession::Continuous {
+        engine
+            .order_creation_sessions
+            .insert(order.id.clone(), session);
+    }
+}
+
 fn should_run_post_strategy_match_now(engine: &Engine, orders: &[Order]) -> bool {
     has_orders_matching_phase(engine, &ExecutionPhase::PostStrategy, orders)
 }
@@ -203,6 +224,7 @@ impl Processor for ChannelProcessor {
                 match event {
                     Event::OrderRequest(order) => pending_order_requests.push(order),
                     Event::OrderValidated(order) => {
+                        record_creation_session(engine, &order);
                         engine.execution_model.on_order(order.clone());
                         engine.state.order_manager.add_active_order(order);
                     }

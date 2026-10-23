@@ -111,6 +111,9 @@ pub struct Engine {
     /// 时段表指针来自当前解析器，解析器重建时清空。
     pub(crate) last_interval_session:
         Option<((usize, Option<i64>, i64), crate::model::TradingSession)>,
+    /// 在非连续竞价时段创建的在途订单 → 创建时间片的品种时段（日终 Day 单豁免用；
+    /// 日终结算后只保留仍在途的订单）。
+    pub(crate) order_creation_sessions: HashMap<String, crate::model::TradingSession>,
     /// 已告警过“行情落在闭市时段”的品种（每个品种只告警一次）。
     pub(crate) closed_session_warned: HashSet<String>,
     #[pyo3(get, set)]

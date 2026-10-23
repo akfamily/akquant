@@ -521,3 +521,42 @@ def test_fixed_time_futures_daily_at_close_does_not_warn(
             show_progress=False,
         )
     assert _fixed_time_hits(caplog) == []
+
+
+def test_daily_current_close_day_order_expires_at_same_day_close() -> None:
+    """日线（整日区间）上未成交的 CurrentClose 限价 Day 单：当日收盘过期（同阶段 2）."""
+    idx = pd.to_datetime(["2024-01-02", "2024-01-03"]).tz_localize(TZ)
+    df = pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "600000.SH",
+            "open": 10.0,
+            "high": 10.0,
+            "low": 10.0,
+            "close": 10.0,
+            "volume": 1e6,
+        }
+    )
+
+    class Probe(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.done = False
+
+        def on_bar(self, bar: Bar) -> None:
+            if not self.done:
+                self.done = True
+                self.buy(bar.symbol, 100, price=5.0, time_in_force=aq.TimeInForce.Day)
+
+    r = run_backtest(
+        strategy=Probe,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+    )
+    orders = r.orders_df
+    assert list(orders["status"].astype(str).str.lower()) == ["expired"]
+    updated = pd.Timestamp(orders["updated_at"].iloc[0]).tz_convert(TZ)
+    assert updated.strftime("%m-%d %H:%M") == "01-02 15:00"
