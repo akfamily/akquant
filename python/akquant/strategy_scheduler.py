@@ -130,13 +130,13 @@ def next_occurrence(
             f"无法解析定时器时刻 {time_str!r}，请写成 '14:55' 或 '14:55:00'"
         ) from exc
     now_ts = pd.Timestamp(now)
-    now_ts = now_ts.tz_localize(tz) if now_ts.tzinfo is None else now_ts.tz_convert(tz)
+    now_ts = _localize(now_ts, tz) if now_ts.tzinfo is None else now_ts.tz_convert(tz)
 
     def on_or_after(day: dt.date) -> Optional[dt.date]:
         return day if is_trading_day(day) else next_trading_day(day)
 
     def at(day: dt.date) -> pd.Timestamp:
-        return pd.Timestamp.combine(day, t).tz_localize(tz)
+        return _localize(pd.Timestamp.combine(day, t), tz)
 
     def group_start(day: dt.date) -> dt.date:
         if kind == "weekly":
@@ -177,9 +177,23 @@ def next_occurrence(
     return None
 
 
+def _localize(naive: pd.Timestamp, tz: str) -> pd.Timestamp:
+    """本地时刻转带时区时间戳, 夏令时安全.
+
+    落在夏令时跳变缺口里的时刻(如纽约 3 月 02:30)顺延到缺口结束(03:00);
+    回拨重叠里的时刻(如纽约 11 月 01:30)取第一次出现(夏令时)。
+    """
+    return naive.tz_localize(tz, nonexistent="shift_forward", ambiguous=True)
+
+
+def _wall_clock(tz: str) -> pd.Timestamp:
+    """墙钟当前时刻(单独成函数便于测试替换)."""
+    return pd.Timestamp.now(tz=tz)
+
+
 def live_now(strategy: Any) -> pd.Timestamp:
     """实盘当前时刻: 墙钟与当前事件时刻取较晚者(定时器略早送达时不重排回原时点)."""
-    now = pd.Timestamp.now(tz=strategy.timezone)
+    now = _wall_clock(strategy.timezone)
     try:
         current = int(getattr(strategy.ctx, "current_time", 0) or 0)
     except (TypeError, ValueError):
@@ -261,7 +275,7 @@ def _register_on_days(
     current_time = int(getattr(strategy.ctx, "current_time", 0) or 0)
     for day in days:
         naive_dt = pd.Timestamp.combine(day.date(), t)
-        dt_obj = naive_dt.tz_localize(strategy.timezone)
+        dt_obj = _localize(naive_dt, strategy.timezone)
         if current_time > 0 and int(dt_obj.value) < current_time:
             continue
         schedule(strategy, dt_obj, wrapped_payload)

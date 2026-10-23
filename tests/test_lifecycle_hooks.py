@@ -692,3 +692,89 @@ def test_live_weekly_monthly_register_next_and_reschedule() -> None:
         "__weekly__|10:00|wk",
         "__monthly__|10:00|mo",
     ]
+
+
+def _all_days(day: dt.date) -> bool:
+    return True
+
+
+def _following(day: dt.date) -> Any:
+    return day + dt.timedelta(days=1)
+
+
+def test_next_occurrence_dst_gap_and_overlap_do_not_raise() -> None:
+    """夏令时缺口里的时刻顺延到缺口结束，回拨重叠里的时刻取第一次出现."""
+    from akquant.strategy_scheduler import next_occurrence
+
+    ny = "America/New_York"
+    # 2024-03-10 02:00 拨快到 03:00：02:30 不存在 → 03:00 EDT
+    gap = next_occurrence(
+        "daily",
+        "02:30",
+        pd.Timestamp("2024-03-10 00:00", tz=ny),
+        _all_days,
+        _following,
+        ny,
+    )
+    assert gap is not None
+    assert gap == pd.Timestamp("2024-03-10 03:00", tz=ny)
+    assert gap.utcoffset() == dt.timedelta(hours=-4)
+    # 2024-11-03 02:00 回拨到 01:00：01:30 出现两次 → 取第一次（EDT，UTC-4）
+    overlap = next_occurrence(
+        "daily",
+        "01:30",
+        pd.Timestamp("2024-11-03 00:00", tz=ny),
+        _all_days,
+        _following,
+        ny,
+    )
+    assert overlap is not None
+    assert overlap.strftime("%Y-%m-%d %H:%M") == "2024-11-03 01:30"
+    assert overlap.utcoffset() == dt.timedelta(hours=-4)
+    # 重叠时刻的“下一次”是次日，而非同日第二次 01:30
+    nxt = next_occurrence("daily", "01:30", overlap, _all_days, _following, ny)
+    assert nxt is not None
+    assert nxt.strftime("%Y-%m-%d %H:%M") == "2024-11-04 01:30"
+
+
+def test_live_daily_timer_delivered_early_reschedules_to_next_trading_day(
+    monkeypatch: Any,
+) -> None:
+    """墙钟略早于目标、ctx.current_time 等于目标时，重排到下一交易日（不重复触发）."""
+    from unittest.mock import MagicMock
+
+    import akquant.strategy_scheduler as sched
+    from akquant.akquant import StrategyContext
+
+    class P(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fired: List[str] = []
+
+        def on_timer(self, payload: str) -> None:
+            self.fired.append(payload)
+
+    target = pd.Timestamp("2024-01-05 10:00", tz=TZ)  # 周五
+    monkeypatch.setattr(
+        sched, "_wall_clock", lambda tz: target - pd.Timedelta(milliseconds=5)
+    )
+    s = P()
+    ctx = MagicMock(spec=StrategyContext)
+    ctx.canceled_order_ids = []
+    ctx.active_orders = []
+    ctx.recent_trades = []
+    ctx.current_time = int(target.value)
+    ctx.is_trading_day.side_effect = _is_td
+    ctx.next_trading_day.side_effect = _next_td
+    s.ctx = ctx
+    s._trading_days = []
+
+    s._on_timer_event("__daily__|10:00|tick", ctx)
+
+    assert s.fired == ["tick"]
+    assert ctx.schedule.call_count == 1
+    ts_ns, payload = ctx.schedule.call_args.args
+    assert payload == "__daily__|10:00|tick"
+    assert pd.Timestamp(ts_ns, tz="UTC").tz_convert(TZ) == pd.Timestamp(
+        "2024-01-08 10:00", tz=TZ
+    )
