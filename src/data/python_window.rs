@@ -16,7 +16,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// 单周期窗口聚合器: 把基础 bar 流聚合成 ``freq`` 周期的窗口 bar, 规则与引擎
-/// ``subscribe_bars`` 相同。
+/// ``subscribe_bars`` 相同。bar 落在品种时段表全部交易块之外时(如期货误用股票时段表),
+/// 每个品种告警一次。
 ///
 /// :param freq: 窗口周期, ``"Nmin"`` / ``"Nh"`` / ``"1d"``。
 /// :param session_windows: 手写本地交易时段 ``[(start, end), ...]``(``"HH:MM"``),
@@ -82,6 +83,7 @@ impl PyWindowAggregator {
             .configure(vec![sub], base_interval_min)
             .map_err(PyValueError::new_err)?;
         inner.set_resolver(Some(resolver), asset_types.unwrap_or_default());
+        inner.set_warn_out_of_block(true);
         Ok(Self { inner, freq_label })
     }
 

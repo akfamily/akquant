@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import cast
 
 import pandas as pd
+import pytest
 from akquant import BarGenerator
 from akquant.akquant import Bar
 
@@ -338,3 +339,25 @@ def test_asset_type_picks_session_table() -> None:
         BarGenerator(lambda b: None, asset_type="bond")
     with pytest.raises(ValueError, match="window=1"):
         BarGenerator(lambda b: None, window=2, interval="day")
+
+
+def test_out_of_block_bars_warn_once_per_symbol(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bar 落在时段表全部交易块之外时每个标的告警一次; 块内数据不告警."""
+    got: list[Bar] = []
+    bg = BarGenerator(got.append, window=5, interval="minute", base_interval_min=1)
+    with caplog.at_level("WARNING", logger="akquant"):
+        for b in _bars_1min(30, symbol="rb2405", start="2024-01-02 09:01:00"):
+            bg.update_bar(b)
+        for b in _bars_1min(3, symbol="ag2406", start="2024-01-02 21:01:00"):
+            bg.update_bar(b)
+        for b in _bars_1min(5, symbol="600000.SH"):
+            bg.update_bar(b)
+    hits = [r.getMessage() for r in caplog.records if "时段表之外" in r.getMessage()]
+    assert len(hits) == 2, hits
+    assert "rb2405" in hits[0] and "asset_type=" in hits[0] and "sessions=" in hits[0]
+    assert "ag2406" in hits[1]
+    # 同标签只出一根窗口
+    labels = [b.timestamp for b in got if b.symbol == "rb2405"]
+    assert len(labels) == len(set(labels)) == 6

@@ -18,7 +18,7 @@
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::calendar::clock::LocalClock;
@@ -297,6 +297,11 @@ pub struct WindowAggregator {
     block_cache: HashMap<String, TradingBlock>,
     /// 按品种缓存上一次命中的交易日区间。
     day_cache: HashMap<String, DaySpan>,
+    /// bar 落在品种时段表全部交易块之外时是否告警(策略侧 `BarGenerator` 与离线
+    /// replay 打开; 引擎另有闭市时段告警, 不重复)。
+    warn_out_of_block: bool,
+    /// 已告警过"落在时段表之外"的品种(每个品种只告警一次)。
+    out_of_block_warned: HashSet<String>,
 }
 
 /// bar 区间终点: 回测 tick 合成的终点戳 bar 打在边界前 1ns(`ts + 1` 是整秒),
@@ -349,6 +354,29 @@ impl WindowAggregator {
     /// 品种是否已登记资产类型。
     pub fn has_asset_type(&self, symbol: &str) -> bool {
         self.asset_types.contains_key(symbol)
+    }
+
+    /// 打开"bar 落在时段表之外"告警(每个品种一次)。
+    pub fn set_warn_out_of_block(&mut self, enabled: bool) {
+        self.warn_out_of_block = enabled;
+    }
+
+    /// bar 落在品种时段表全部交易块之外(且有订阅按时段表切分)时告警一次。
+    fn check_out_of_block(&mut self, symbol: &str, point: i64, ts: i64) {
+        if !self.warn_out_of_block || self.out_of_block_warned.contains(symbol) {
+            return;
+        }
+        let uses_schedule = self
+            .subscriptions
+            .iter()
+            .any(|s| s.matches(symbol) && s.sessions.is_empty());
+        if uses_schedule && matches!(self.block_for(symbol, point), Some(None)) {
+            self.out_of_block_warned.insert(symbol.to_string());
+            log::warn!(
+                "标的 {symbol} 的 bar 落在时段表之外，窗口按时钟切分（首次：{}）；期货/期权请传 asset_type= 或 sessions=（如 {{\"rb\": \"CN_FUTURES_NIGHT_23\"}}），手写时段可用 session_windows=",
+                self.clock.to_local(ts).format("%Y-%m-%d %H:%M:%S")
+            );
+        }
     }
 
     /// 替换订阅表。**不清空**仍被订阅的在形成窗口(checkpoint 恢复后再配置时要保留),
@@ -627,6 +655,7 @@ impl WindowAggregator {
         let point = bar.timestamp.saturating_sub(1);
         let end = bar_end(bar);
         let base_known = self.base_interval_min.is_some() || bar.interval_start.is_some();
+        self.check_out_of_block(&bar.symbol, point, bar.timestamp);
         // (总分钟数, freq_label, bar); label 作 tie-break, 保证 "1h" 与 "60min"
         // 这类分钟数相同但标签不同的周期有确定顺序(否则顺序依赖 HashMap 迭代,
         // 对 golden baseline 是隐患)。
