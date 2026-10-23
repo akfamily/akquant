@@ -130,7 +130,8 @@ def subscribe_bars_impl(
         ):
             raise ValueError(
                 f"subscribe_bars({label!r}) 对同一标的集重复声明且 "
-                "session_windows 不一致"
+                "session_windows 不一致; 请让各次声明的 session_windows "
+                "逐项相同且顺序相同"
             )
     subs.append(WindowSubscription(label, callback, symbol_filter, sessions))
 

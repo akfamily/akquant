@@ -267,7 +267,11 @@ struct DaySpan {
     day: NaiveDate,
     lower: i64,
     close: i64,
-    prev_close: Option<i64>,
+    /// 日线窗口标签: 收盘时刻; 收盘恰为次日本地 0 点(如 ALWAYS_OPEN)时减 1ns,
+    /// 与只有日期的日线改写(`_date_only_close_ns`)同口径, 标签仍落在交易日当天。
+    label: i64,
+    /// 前一交易日的窗口标签(同上规则), 作本交易日窗口的 `interval_start`。
+    prev_label: Option<i64>,
 }
 
 /// 会话解析器句柄(`SessionResolver` 没有实现 `Debug`)。
@@ -376,8 +380,8 @@ impl WindowAggregator {
                 if Self::scopes_overlap(&existing.symbol, &sub.symbol) {
                     return Err(format!(
                         "订阅冲突: freq={:?} 的 symbol 范围重叠(已有 symbol={:?}, 新增 \
-                         symbol={:?})但配置不一致(sessions 或 symbol 范围不完全相同); \
-                         请让重叠的订阅保持完全一致, 或改成互斥的 symbol 范围",
+                         symbol={:?})但配置不一致(session_windows 或 symbol 范围不完全相同); \
+                         请让重叠的订阅保持完全一致(session_windows 须逐项相同且顺序相同), 或改成互斥的 symbol 范围",
                         sub.freq_label, existing.symbol, sub.symbol
                     ));
                 }
@@ -445,20 +449,37 @@ impl WindowAggregator {
             .ok()?
             .trading_day;
         let (open, close) = resolver.day_bounds(symbol, asset_type, day).ok()?;
-        let prev_close = resolver
+        let prev = resolver
             .previous_trading_day(symbol, asset_type, day)
             .ok()
-            .and_then(|prev| resolver.day_bounds(symbol, asset_type, prev).ok())
-            .map(|(_, c)| c);
+            .and_then(|prev| {
+                resolver
+                    .day_bounds(symbol, asset_type, prev)
+                    .ok()
+                    .map(|(_, c)| (prev, c))
+            });
         let span = DaySpan {
             day,
             // 前一交易日未知(日历首日)时只缓存开盘后的部分
-            lower: prev_close.unwrap_or(open - 1),
+            lower: prev.map_or(open - 1, |(_, c)| c),
             close,
-            prev_close,
+            label: self.day_label(day, close),
+            prev_label: prev.map(|(d, c)| self.day_label(d, c)),
         };
         self.day_cache.insert(symbol.to_string(), span);
         Some(span)
+    }
+
+    /// 交易日 `day` 的日线窗口标签: 收盘恰为次日本地 0 点时取前 1ns。
+    fn day_label(&self, day: NaiveDate, close: i64) -> i64 {
+        let next_midnight = (day + Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .map(|t| self.clock.from_local(t));
+        if next_midnight == Some(close) {
+            close - 1
+        } else {
+            close
+        }
     }
 
     /// 日内窗口(`period` 秒)的归属。
@@ -552,18 +573,22 @@ impl WindowAggregator {
         // 无解析器时按 bar 时间戳的本地日期分组(旧行为)。
         let date = span.map_or(local_ts.date(), |s| s.day);
         let sub = &self.subscriptions[sub_idx];
-        // 手写时段: 在"最后一段"结束时闭合(该段终点落在交易日 D 的日期上)。
-        let manual_close = sub
-            .last_session
-            .map(|i| self.clock.from_local(date.and_time(sub.sessions[i].1)));
+        // 手写时段: bar 落在"最后一段"内时, 在该段这一次的结束时刻闭合。段终点按段
+        // 起点所在日期换算(跨午夜段的终点在起点次日), 不按交易日 D 的日期。
+        let manual = sub.last_session.map(|last| {
+            sub.session_at(self.clock.to_local(point))
+                .filter(|(idx, _, _)| *idx as usize == last)
+                .map(|(_, _, end)| self.clock.from_local(end))
+        });
         match span {
             Some(s) => Placement {
-                label: s.close,
+                label: s.label,
                 session_key: None,
                 date,
                 trading_day: Some(s.day),
-                interval_start: s.prev_close,
-                close_at: Some(manual_close.unwrap_or(s.close)),
+                interval_start: s.prev_label,
+                // 闭合判据用收盘本身(不是减 1ns 的标签), 次日 0 点那根 bar 也能闭合。
+                close_at: manual.unwrap_or(Some(s.close)),
             },
             // 无解析器: 本地日期分组, 标签 = 当日最后一根基础 bar 的时间戳(旧行为)。
             None => Placement {
@@ -572,7 +597,7 @@ impl WindowAggregator {
                 date,
                 trading_day: None,
                 interval_start: None,
-                close_at: manual_close,
+                close_at: manual.flatten(),
             },
         }
     }
@@ -1215,6 +1240,63 @@ mod tests {
         );
         assert_eq!(snap.states[0].block_index, Some(0));
         assert_eq!(snap.states[0].interval_start, Some(ns(2024, 1, 2, 9, 30)));
+    }
+
+    #[test]
+    fn all_cross_midnight_manual_daily_closes_at_segment_end_after_start_date() {
+        // 只有夜盘一段: 交易日 01-08(周一)的夜盘从周五 21:00 到周六 02:30,
+        // 闭合时刻按段起点日期换算为周六 02:30, 而不是交易日 D(周一)的 02:30。
+        let night = Some(vec![("21:00".to_string(), "02:30".to_string())]);
+        let mut a = resolved_agg(
+            &[("1d", night)],
+            vec![("au", "CN_FUTURES_NIGHT_0230")],
+            "au2406",
+            AssetType::Futures,
+        );
+        assert!(
+            a.update(&bar(ns(2024, 1, 5, 21, 30), 10, "au2406"))
+                .is_empty()
+        );
+        let closed = a.update(&bar(ns(2024, 1, 6, 2, 30), 11, "au2406"));
+        assert_eq!(closed.len(), 1, "周六 02:30 夜盘结束即闭合");
+        assert_eq!(closed[0].timestamp, ns(2024, 1, 8, 15, 0));
+        assert_eq!(closed[0].close, Decimal::from(11));
+    }
+
+    #[test]
+    fn always_open_daily_label_is_one_ns_before_next_midnight() {
+        let mut a = WindowAggregator::with_clock(Some("America/New_York"), 0);
+        a.configure(
+            vec![WindowSubscription::parse(None, "1d", None).unwrap()],
+            Some(1),
+        )
+        .unwrap();
+        let clock = LocalClock::new(Some("America/New_York"), 0);
+        let ny = |d: u32, h: u32, m: u32| {
+            chrono_tz::America::New_York
+                .with_ymd_and_hms(2024, 1, d, h, m, 0)
+                .unwrap()
+                .timestamp_nanos_opt()
+                .unwrap()
+        };
+        let resolver = SessionResolver::new(
+            clock,
+            None,
+            crate::calendar::resolver::effective_sessions(None, Some("America/New_York"), 0),
+        )
+        .unwrap();
+        a.set_resolver(Some(Arc::new(resolver)), HashMap::new());
+        assert!(a.update(&bar(ny(2, 15, 0), 10, "AAPL")).is_empty());
+        // 00:00 那根 bar 的区间终点恰为收盘(次日 0 点): 按收盘判据即时闭合
+        let closed = a.update(&bar(ny(3, 0, 0), 11, "AAPL"));
+        assert_eq!(closed.len(), 1);
+        assert_eq!(
+            closed[0].timestamp,
+            ny(3, 0, 0) - 1,
+            "标签 = 01-02 23:59:59.999999999"
+        );
+        assert_eq!(closed[0].interval_start, Some(ny(2, 0, 0) - 1));
+        assert_eq!(closed[0].close, Decimal::from(11));
     }
 
     #[test]

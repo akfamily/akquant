@@ -2417,7 +2417,7 @@ mod lifecycle_tests {
     fn always_open(engine: &mut Engine) {
         engine.session_config.sessions =
             Some(vec![("default".to_string(), "ALWAYS_OPEN".to_string())]);
-        engine.session_resolver = None;
+        engine.invalidate_session_resolver();
     }
 
     #[test]
@@ -2554,7 +2554,7 @@ mod lifecycle_tests {
         let mut engine = Engine::new();
         engine.state.feed = crate::data::DataFeed::create_live();
         engine.session_config.trading_calendar = Some(vec![d(1, 2), d(1, 3), d(1, 4)]);
-        engine.session_resolver = None;
+        engine.invalidate_session_resolver();
         let before = Timer {
             timestamp: sh(1, 4, 9, 30) + 1,
             payload: format!("{LIFECYCLE_TIMER_PREFIX}before_trading|2024-01-04"),

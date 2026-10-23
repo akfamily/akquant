@@ -4330,7 +4330,12 @@ def run_backtest(
                         kept_bars.append(b)
                     data = kept_bars
 
-                # Bar 列表分支不把数据里的标的并入 symbols, 合约只登记 symbols
+                # 与 DataFrame/dict 分支一致: 数据里的标的并入 symbols 并登记合约,
+                # 资产类型决定时段表(窗口切分、只有日期的改写都按它)。白名单另用
+                # effective_symbols 下发, 不受此影响。
+                for b in data:
+                    if b.symbol not in symbols:  # type: ignore[union-attr]
+                        symbols.append(b.symbol)  # type: ignore[union-attr]
                 _activate_session_symbols(
                     session_resolver, symbols, session_asset_type_of
                 )

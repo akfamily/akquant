@@ -61,6 +61,7 @@ class _WinLog(Strategy):
     def __init__(self) -> None:
         super().__init__()
         self.windows: List[Tuple[str, str, Any, float, float, float]] = []
+        self.window_ts: List[int] = []
         for f in self.freqs:
             self.subscribe_bars(f)
 
@@ -68,6 +69,7 @@ class _WinLog(Strategy):
         pass
 
     def on_window_bar(self, bar: Bar) -> None:
+        self.window_ts.append(int(bar.timestamp))
         local = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert(TZ)
         start = (
             pd.Timestamp(bar.interval_start, tz="UTC")
@@ -265,3 +267,77 @@ def test_manual_session_windows_cross_midnight() -> None:
     )
     assert r.strategy is not None
     assert r.strategy.closed_at[0] == "01-08 15:00"
+
+
+def test_always_open_daily_label_stays_on_trading_day() -> None:
+    """ALWAYS_OPEN（非中国时区）1d 窗口标签取收盘前 1ns，本地日期仍是交易日."""
+
+    class P(_WinLog):
+        freqs = ("1d",)
+
+    ny = "America/New_York"
+    idx = pd.to_datetime(
+        ["2024-01-02 10:00", "2024-01-02 15:00", "2024-01-03 10:00"]
+    ).tz_localize(ny)
+    df = pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "AAPL",
+            "open": [1.0, 2.0, 3.0],
+            "high": [1.0, 2.0, 3.0],
+            "low": [1.0, 2.0, 3.0],
+            "close": [1.0, 2.0, 3.0],
+            "volume": 1.0,
+        }
+    )
+    r = run_backtest(
+        strategy=P,
+        data=df,
+        symbols=["AAPL"],
+        initial_cash=1e5,
+        show_progress=False,
+        freq="1min",
+        timezone=ny,
+    )
+    assert r.strategy is not None
+    labels = [w[1] for w in r.strategy.windows]
+    assert len(labels) == 2
+    first = r.strategy.windows[0]
+    assert first[3:5] == (1.0, 2.0)
+    # _WinLog 按上海时区格式化；这里按纽约时区重新取完整时刻
+    got = [pd.Timestamp(b, tz="UTC").tz_convert(ny) for b in r.strategy.window_ts]
+    assert [g.date() for g in got] == [dt.date(2024, 1, 2), dt.date(2024, 1, 3)]
+    assert all(
+        (g.hour, g.minute, g.second, g.nanosecond, g.microsecond)
+        == (23, 59, 59, 999, 999999)
+        for g in got
+    )
+
+
+def test_bar_list_without_symbols_uses_stock_blocks() -> None:
+    """Bar 列表不传 symbols：数据里的 A 股标的也按股票时段表切块（午休截断）."""
+
+    class P(_WinLog):
+        freqs = ("1h",)
+
+    times = [
+        "2024-01-02 09:31",
+        "2024-01-02 10:00",
+        "2024-01-02 10:01",
+        "2024-01-02 11:00",
+        "2024-01-02 11:30",
+        "2024-01-02 13:01",
+        "2024-01-02 14:00",
+        "2024-01-02 14:01",
+        "2024-01-02 15:00",
+    ]
+    bars = [Bar(_ns(t), 10.0, 10.0, 10.0, 10.0, 1.0, "600000.SH") for t in times]
+    r = run_backtest(strategy=P, data=bars, initial_cash=1e5, show_progress=False)
+    assert r.strategy is not None
+    assert [w[1][-5:] for w in r.strategy.windows] == [
+        "10:00",
+        "11:00",
+        "11:30",
+        "14:00",
+        "15:00",
+    ]
