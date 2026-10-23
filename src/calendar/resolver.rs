@@ -98,6 +98,12 @@ pub struct SessionResolver {
     windows: Mutex<HashMap<(usize, NaiveDate), Arc<DayWindow>>>,
     /// 在用时段表（按 Arc 指针去重）；空表示未调用 set_active。
     active: Vec<Arc<SessionSchedule>>,
+    /// 按时刻解析的缓存（见 [`Self::session_at_instant`]）：(时刻, [(时段表指针, 结果)])，
+    /// 时刻变化时整体作废。
+    instant_cache: Mutex<(i64, Vec<(usize, Option<TradingSession>)>)>,
+    /// 按时刻解析实际计算的次数（缓存未命中），供单测验证缓存。
+    #[cfg(test)]
+    instant_resolves: std::sync::atomic::AtomicUsize,
 }
 
 impl SessionResolver {
@@ -134,6 +140,9 @@ impl SessionResolver {
             always_open: builtin("ALWAYS_OPEN"),
             windows: Mutex::new(HashMap::new()),
             active: Vec::new(),
+            instant_cache: Mutex::new((i64::MIN, Vec::new())),
+            #[cfg(test)]
+            instant_resolves: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -414,6 +423,35 @@ impl SessionResolver {
             trading_day,
             session: Self::session_at(&w, ts),
         })
+    }
+
+    /// 品种在时间点 `ts` 的时段（同 [`Self::resolve_instant`]，只取时段），解析出错
+    /// 返回 `None`。结果只取决于（时段表, 时刻），按此缓存：定时器清空时间片后，
+    /// 同一时刻同一时段表上的多笔订单只解析一次。
+    pub fn session_at_instant(
+        &self,
+        symbol: &str,
+        asset_type: Option<AssetType>,
+        ts: i64,
+    ) -> Option<TradingSession> {
+        let schedule = self.schedule_for(symbol, asset_type);
+        let key = Arc::as_ptr(&schedule) as usize;
+        let mut cache = self.instant_cache.lock().expect("缓存锁");
+        if cache.0 != ts {
+            cache.0 = ts;
+            cache.1.clear();
+        } else if let Some((_, hit)) = cache.1.iter().find(|(k, _)| *k == key) {
+            return *hit;
+        }
+        #[cfg(test)]
+        self.instant_resolves
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let session = self
+            .trading_day_of(&schedule, ts)
+            .ok()
+            .map(|(_, w)| Self::session_at(&w, ts));
+        cache.1.push((key, session));
+        session
     }
 
     pub fn resolve_bar(
@@ -1147,6 +1185,47 @@ mod tests {
             r.session_level_instant(at(2024, 1, 2, 20, 0, 0)),
             TradingSession::Closed
         );
+    }
+
+    #[test]
+    fn session_at_instant_caches_per_schedule_and_instant() {
+        use std::sync::atomic::Ordering;
+        let r = resolver(vec![], None);
+        let ts = at(2024, 1, 2, 10, 0, 0);
+        // 两只股票共用 CN_STOCK 时段表：同一时刻只解析一次
+        let a = r.session_at_instant("600000.SH", stock(), ts);
+        let b = r.session_at_instant("000001.SZ", stock(), ts);
+        assert_eq!(a, Some(TradingSession::Continuous));
+        assert_eq!(b, a);
+        assert_eq!(r.instant_resolves.load(Ordering::Relaxed), 1);
+        // 不同时段表、不同时刻各解析一次；结果与 resolve_instant 一致
+        let fut = r.session_at_instant("rb2405", Some(AssetType::Futures), ts);
+        assert_eq!(r.instant_resolves.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            fut,
+            Some(
+                r.resolve_instant("rb2405", Some(AssetType::Futures), ts)
+                    .unwrap()
+                    .session
+            )
+        );
+        let noon = at(2024, 1, 2, 12, 0, 0);
+        assert_eq!(
+            r.session_at_instant("600000.SH", stock(), noon),
+            Some(TradingSession::Break)
+        );
+        assert_eq!(r.instant_resolves.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn session_at_instant_caches_errors_as_none() {
+        use std::sync::atomic::Ordering;
+        let cal = TradingCalendar::explicit([d(2024, 1, 2), d(2024, 1, 3)]).unwrap();
+        let r = resolver(vec![], Some(cal));
+        let ts = at(2024, 1, 4, 10, 0, 0);
+        assert_eq!(r.session_at_instant("600000.SH", stock(), ts), None);
+        assert_eq!(r.session_at_instant("000001.SZ", stock(), ts), None);
+        assert_eq!(r.instant_resolves.load(Ordering::Relaxed), 1);
     }
 
     #[test]

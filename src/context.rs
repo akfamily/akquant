@@ -78,9 +78,10 @@ impl<'a> SessionView<'a> {
             .instruments
             .and_then(|m| m.get(symbol))
             .map(|i| i.asset_type);
+        // 解析出错（时刻超出交易日历等）按连续竞价：日历缺口不应阻断撮合，数据层的
+        // 闭市/日历告警已提示用户；定时器的 ctx.session（session_level_instant）同此口径。
         resolver
-            .resolve_instant(symbol, asset_type, ts.saturating_sub(1))
-            .map(|r| r.session)
+            .session_at_instant(symbol, asset_type, ts.saturating_sub(1))
             .unwrap_or(TradingSession::Continuous)
     }
 }
