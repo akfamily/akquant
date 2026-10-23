@@ -364,6 +364,11 @@ impl WindowAggregator {
         self.asset_types.contains_key(symbol)
     }
 
+    /// 已登记的品种资产类型。
+    pub fn asset_types(&self) -> &HashMap<String, AssetType> {
+        &self.asset_types
+    }
+
     /// 打开"bar 落在时段表之外"告警(每个品种一次)。
     pub fn set_warn_out_of_block(&mut self, enabled: bool) {
         self.warn_out_of_block = enabled;

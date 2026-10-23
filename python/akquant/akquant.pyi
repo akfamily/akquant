@@ -3121,6 +3121,16 @@ class StrategyContext:
         """
         ...
 
+    def window_session_context(
+        self,
+    ) -> typing.Optional[tuple[SessionResolver, dict[str, AssetType]]]:
+        r"""
+        引擎切分多周期窗口用的会话解析器与各品种资产类型（无解析器时为 None）.
+
+        供策略内的 ``BarGenerator`` 沿用，与 ``subscribe_bars`` 同一时段表。
+        """
+        ...
+
     def uses_all_days_calendar(self) -> bool:
         r"""
         会话日历是否为全日历兜底（周末也算交易日；无解析器时为 False）.

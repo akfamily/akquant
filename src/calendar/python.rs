@@ -34,6 +34,11 @@ impl PySessionResolver {
     pub(crate) fn arc(&self) -> Arc<SessionResolver> {
         self.inner.clone()
     }
+
+    /// 包装已有解析器（如引擎的），共享其配置与缓存。
+    pub(crate) fn from_arc(inner: Arc<SessionResolver>) -> Self {
+        Self { inner }
+    }
 }
 
 #[gen_stub_pymethods]

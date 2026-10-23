@@ -1498,6 +1498,28 @@ impl StrategyContext {
             .and_then(|r| r.next_session_day(day).ok())
     }
 
+    /// 引擎切分多周期窗口用的会话解析器与各品种资产类型，供策略内的 ``BarGenerator``
+    /// 沿用（与 ``subscribe_bars`` 同一时段表）；无解析器时为 None。
+    ///
+    /// :return: ``(SessionResolver, {symbol: AssetType})`` 或 None
+    pub fn window_session_context(
+        &self,
+    ) -> Option<(
+        crate::calendar::python::PySessionResolver,
+        HashMap<String, AssetType>,
+    )> {
+        let resolver = self.sessions.session_resolver.clone()?;
+        let asset_types = self
+            .window_aggregator
+            .as_ref()
+            .and_then(|lock| lock.read().ok().map(|a| a.asset_types().clone()))
+            .unwrap_or_default();
+        Some((
+            crate::calendar::python::PySessionResolver::from_arc(resolver),
+            asset_types,
+        ))
+    }
+
     /// 会话日历是否为全日历兜底（未传 ``trading_calendar`` 且在用时段表全是
     /// ALWAYS_OPEN 这类每天都开的表，周末也算交易日）；无解析器时为 False。
     pub fn uses_all_days_calendar(&self) -> bool {

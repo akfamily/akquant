@@ -826,3 +826,83 @@ def test_replay_outside_trading_calendar_warns_once(caplog: Any) -> None:
         "01-10 10:00",
         "01-10 10:30",
     ]
+
+
+def test_bar_generator_in_strategy_inherits_engine_sessions() -> None:
+    """策略内不传 asset_type/sessions 的 BarGenerator 沿用引擎的时段表与资产类型.
+
+    rb2405 按 sessions 取 CN_FUTURES_DAY（10:15 收第一块）：继承后与引擎
+    subscribe_bars 窗口相同；若按默认股票表切分会出 10:30 标签。
+    """
+    from akquant import BarGenerator
+
+    times = [
+        f"2024-01-02 {h:02d}:{m:02d}"
+        for h, m in [(9, m) for m in range(1, 60)]
+        + [(10, m) for m in range(0, 16)]
+        + [(10, m) for m in range(31, 60)]
+        + [(11, 0)]
+    ]
+
+    def row(bar: Bar) -> Tuple[str, float, float, float]:
+        local = pd.Timestamp(bar.timestamp, tz="UTC").tz_convert(TZ)
+        return (
+            local.strftime("%m-%d %H:%M"),
+            float(bar.open),
+            float(bar.close),
+            float(bar.volume),
+        )
+
+    class S(_WinLog):
+        def __init__(self) -> None:
+            super().__init__()
+            self.gen: Any = None
+            self.gen_rows: List[Tuple[str, float, float, float]] = []
+            self.lambda_gen: Any = None
+            self.lambda_rows: List[Tuple[str, float, float, float]] = []
+
+        def on_bar(self, bar: Bar) -> None:
+            if self.gen is None:
+                self.gen = BarGenerator(self._on_gen, window=30, base_interval_min=1)
+                # 回调不是策略方法时, 按构造处的 self 找到所属策略
+                self.lambda_gen = BarGenerator(
+                    lambda b: self.lambda_rows.append(row(b)),
+                    window=30,
+                    base_interval_min=1,
+                )
+            self.gen.update_bar(bar)
+            self.lambda_gen.update_bar(bar)
+
+        def _on_gen(self, bar: Bar) -> None:
+            self.gen_rows.append(row(bar))
+
+    cfg = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=1e6),
+        instruments_config=[
+            aq.InstrumentConfig(
+                symbol="rb2405",
+                asset_type="FUTURES",
+                multiplier=10.0,
+                margin_ratio=0.1,
+            )
+        ],
+    )
+    r = run_backtest(
+        strategy=S,
+        data=_minute(times, symbol="rb2405"),
+        config=cfg,
+        show_progress=False,
+        freq="1min",
+        sessions={"rb": "CN_FUTURES_DAY"},
+    )
+    strategy = r.strategy
+    assert isinstance(strategy, S)
+    engine_rows = [(w[1], w[3], w[4], w[5]) for w in strategy.windows]
+    assert [e[0] for e in engine_rows] == [
+        "01-02 09:30",
+        "01-02 10:00",
+        "01-02 10:15",
+        "01-02 11:00",
+    ]
+    assert strategy.gen_rows == engine_rows
+    assert strategy.lambda_rows == engine_rows

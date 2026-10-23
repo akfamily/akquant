@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import sys
+import weakref
 from typing import Any, Callable, Iterable, Mapping, Optional, Union
 
 from .akquant import AssetType, Bar, SessionResolver, WindowAggregator
@@ -72,7 +74,10 @@ class BarGenerator:
             ``trading_calendar``。
         :param asset_type: 资产类型(决定默认时段表), 同 ``run_backtest`` 的
             ``asset_type``, 默认股票; 也可传 ``{symbol: asset_type}``, 未列出的
-            品种按股票。
+            品种按股票。在运行中的策略里创建(回调是策略方法, 或在策略方法内构造)
+            且 ``timezone``/``sessions``/``trading_calendar``/``asset_type`` 都
+            不传时, 沿用引擎的时区、时段表与合约资产类型, 与 ``subscribe_bars``
+            的窗口一致(在第一根 bar 到达时绑定)。
         :param base_interval_min: 喂入 bar 的周期(分钟)。给定(或 bar 带
             ``interval_start``)时, bar 区间终点到达窗口标签即闭合回调; 不给时等
             下一根落入新窗口的 bar 到达才闭合(收尾靠 :meth:`flush`)。
@@ -90,6 +95,18 @@ class BarGenerator:
 
         self._cb = on_window_bar
         self._freq = f"{window}{_INTERVAL_FREQ[interval]}"
+        self._session_windows = list(session_windows) if session_windows else None
+        self._base_interval_min = base_interval_min
+        # 未指定时区与时段配置时, 第一根 bar 到达时尝试沿用所属策略的引擎配置
+        self._owner: Optional[Callable[[], Any]] = None
+        if (
+            timezone is None
+            and sessions is None
+            and trading_calendar is None
+            and asset_type is None
+        ):
+            self._owner = _find_owner_strategy(on_window_bar)
+        self._fed = False
         tz = timezone or DEFAULT_TIMEZONE
         resolver = SessionResolver(
             sessions=dict(sessions) if sessions is not None else None,
@@ -97,6 +114,7 @@ class BarGenerator:
             timezone=tz,
         )
         self._symbol_types: dict[str, AssetType] = {}
+        self._default_type: Optional[AssetType]
         if isinstance(asset_type, Mapping):
             self._default_type = AssetType.Stock
             self._symbol_types = {
@@ -108,17 +126,41 @@ class BarGenerator:
             )
         self._agg = WindowAggregator(
             self._freq,
-            session_windows=list(session_windows) if session_windows else None,
+            session_windows=self._session_windows,
             base_interval_min=base_interval_min,
             resolver=resolver,
             timezone=tz,
             asset_types=self._symbol_types,
         )
 
+    def _bind_engine_sessions(self) -> None:
+        """首根 bar 时: 所属策略已绑定引擎则改用引擎的解析器与资产类型."""
+        owner_ref, self._owner = self._owner, None
+        strategy = owner_ref() if owner_ref is not None else None
+        ctx = getattr(strategy, "ctx", None)
+        getter = getattr(ctx, "window_session_context", None)
+        context = getter() if callable(getter) else None
+        if context is None:
+            return
+        resolver, asset_types = context
+        self._agg = WindowAggregator(
+            self._freq,
+            session_windows=self._session_windows,
+            base_interval_min=self._base_interval_min,
+            resolver=resolver,
+            asset_types=dict(asset_types),
+        )
+        # 引擎未登记的品种按解析器的前缀/默认表取时段(与 subscribe_bars 一致)
+        self._default_type = None
+
     def update_bar(self, bar: Bar) -> None:
         """喂入一根 bar(时间戳非递减); 本步闭合的窗口依次回调."""
+        if not self._fed:
+            self._fed = True
+            if self._owner is not None:
+                self._bind_engine_sessions()
         symbol = bar.symbol
-        if not self._agg.has_asset_type(symbol):
+        if self._default_type is not None and not self._agg.has_asset_type(symbol):
             self._agg.set_asset_type(symbol, self._default_type)
         for window_bar in self._agg.update(bar):
             self._cb(window_bar)
@@ -131,3 +173,19 @@ class BarGenerator:
     def current(self, symbol: str) -> Optional[Bar]:
         """返回 symbol 正在形成(未闭合)的窗口 bar 快照; 无则 None。不触发回调."""
         return self._agg.current(symbol)
+
+
+def _find_owner_strategy(callback: Any) -> Optional[Callable[[], Any]]:
+    """回调所属的策略(绑定方法的 ``__self__``, 否则构造处的 ``self``), 弱引用."""
+    from .strategy import Strategy
+
+    candidates = [getattr(callback, "__self__", None)]
+    try:
+        # 0 = 本函数, 1 = BarGenerator.__init__, 2 = 构造 BarGenerator 的调用处
+        candidates.append(sys._getframe(2).f_locals.get("self"))
+    except ValueError:
+        pass
+    for obj in candidates:
+        if isinstance(obj, Strategy):
+            return weakref.ref(obj)
+    return None
