@@ -22,6 +22,7 @@ from typing import (
     cast,
 )
 
+import numpy as np
 import pandas as pd
 from pydantic import ValidationError
 
@@ -645,6 +646,53 @@ class _DateOnlyRewriter:
         return _date_only_close_ns(self.resolver, day, self.timezone)
 
 
+_INTERVAL_UNKNOWN = np.iinfo(np.int64).min
+_ONE_DAY_NS = 86_400_000_000_000
+
+
+def _bar_interval_starts(
+    ts_ns: np.ndarray, *, date_only: bool, period_ns: Optional[int]
+) -> Optional[np.ndarray]:
+    """Bar 区间起点：只有日期的数据取 24h 前；声明了周期取 ts−周期；否则 None."""
+    if date_only:
+        return ts_ns.astype(np.int64) - _ONE_DAY_NS
+    if period_ns is not None:
+        return ts_ns.astype(np.int64) - int(period_ns)
+    return None
+
+
+def _masked_interval_starts(
+    ts_ns: np.ndarray, rewritten: np.ndarray, period_ns: Optional[int]
+) -> Optional[np.ndarray]:
+    """多标的数据：被只有日期改写的行按日线取起点，其余行按声明周期（未声明则未知）."""
+    ts_ns = np.asarray(ts_ns, dtype=np.int64)
+    rest = _bar_interval_starts(ts_ns, date_only=False, period_ns=period_ns)
+    if not rewritten.any():
+        return rest
+    daily = cast(
+        np.ndarray, _bar_interval_starts(ts_ns, date_only=True, period_ns=None)
+    )
+    if rest is None:
+        rest = np.full(len(ts_ns), _INTERVAL_UNKNOWN, dtype=np.int64)
+    return cast(np.ndarray, np.where(rewritten, daily, rest))
+
+
+def _arrays_interval_starts(
+    arrays: Tuple[Any, ...], *, date_only: bool, period_ns: Optional[int]
+) -> Optional[np.ndarray]:
+    """``dataframe_to_arrays`` 结果的区间起点列（时间戳在 ``arrays[0]``）."""
+    return _bar_interval_starts(
+        np.asarray(arrays[0], dtype=np.int64), date_only=date_only, period_ns=period_ns
+    )
+
+
+def _freq_period_ns(freq: Optional[str]) -> Optional[int]:
+    """``freq`` 声明的 bar 周期（纳秒）；未声明为 None."""
+    if freq is None:
+        return None
+    return parse_freq_to_interval_min(freq) * 60 * 10**9
+
+
 def _rewrite_date_only_utc(
     utc_times: pd.DatetimeIndex,
     rewriter: _DateOnlyRewriter,
@@ -701,55 +749,80 @@ def _replace_frame_times(
 
 def _rewrite_date_only_frame(
     df: pd.DataFrame, rewriter: _DateOnlyRewriter
-) -> pd.DataFrame:
-    """单标的 DataFrame：全部时间为本地 0 点（只有日期）时改写到交易日收盘时刻."""
+) -> Tuple[pd.DataFrame, bool]:
+    """单标的 DataFrame：全部时间为本地 0 点（只有日期）时改写到交易日收盘时刻.
+
+    返回 ``(新 DataFrame, 是否改写)``。
+    """
     if df.empty:
-        return df
+        return df, False
     source = _frame_time_source(df)
     if source is None:
-        return df
+        return df, False
     source_col, raw = source
     new_utc = _rewrite_date_only_utc(_to_utc_index(raw), rewriter)
     if new_utc is None:
-        return df
-    return _replace_frame_times(df, source_col, new_utc)
+        return df, False
+    return _replace_frame_times(df, source_col, new_utc), True
 
 
 def _rewrite_date_only_multi_symbol_frame(
     df: pd.DataFrame,
     rewriter: _DateOnlyRewriter,
-) -> pd.DataFrame:
-    """带 ``symbol`` 列的多标的 DataFrame：逐标的判断并改写，行顺序不变."""
+) -> Tuple[pd.DataFrame, np.ndarray]:
+    """带 ``symbol`` 列的多标的 DataFrame：逐标的判断并改写，行顺序不变.
+
+    返回 ``(新 DataFrame, 按行位置的“已改写”布尔掩码)``。
+    """
+    rewritten = np.zeros(len(df), dtype=bool)
     if df.empty or "symbol" not in df.columns:
-        return df
+        return df, rewritten
     source = _frame_time_source(df)
     if source is None:
-        return df
+        return df, rewritten
     source_col, raw = source
     utc = _to_utc_index(raw)
     merged = utc.tz_localize(None).to_numpy(copy=True)
     symbols_arr = df["symbol"].astype(str).to_numpy()
-    changed = False
     for sym in pd.unique(symbols_arr):
         positions = (symbols_arr == sym).nonzero()[0]
         new_utc = _rewrite_date_only_utc(utc[positions], rewriter)
         if new_utc is None:
             continue
         merged[positions] = new_utc.tz_localize(None).to_numpy()
-        changed = True
-    if not changed:
-        return df
+        rewritten[positions] = True
+    if not rewritten.any():
+        return df, rewritten
     new_index = pd.DatetimeIndex(merged).tz_localize("UTC")
-    return _replace_frame_times(df, source_col, new_index)
+    return _replace_frame_times(df, source_col, new_index), rewritten
+
+
+def _with_interval_start(old: Bar, timestamp: int, interval_start: int) -> Bar:
+    """复制 ``old``，换上新的时间戳与区间起点."""
+    return Bar(
+        timestamp,
+        old.open,
+        old.high,
+        old.low,
+        old.close,
+        old.volume,
+        old.symbol,
+        dict(old.extra),
+        old.freq,
+        interval_start,
+    )
 
 
 def _rewrite_date_only_bars(
     bars: List[Bar],
     rewriter: _DateOnlyRewriter,
+    period_ns: Optional[int] = None,
 ) -> List[Bar]:
     """Bar 列表按标的分组：某标的全部 bar 为本地 0 点时改写该标的的时间戳.
 
-    返回新列表；被改写的 bar 是新建的副本，不修改调用方传入的对象。
+    同时填区间起点（用户自带的 ``interval_start`` 原样保留）：被改写的 bar 取
+    改写后时间戳前 24h；未改写且声明了周期 ``period_ns`` 时取时间戳前一个周期。
+    返回新列表；改动的 bar 是新建的副本，不修改调用方传入的对象。
     """
     by_symbol: Dict[str, List[int]] = {}
     for pos, bar in enumerate(bars):
@@ -763,20 +836,20 @@ def _rewrite_date_only_bars(
         )
         new_utc = _rewrite_date_only_utc(utc, rewriter)
         if new_utc is None:
+            if period_ns is None:
+                continue
+            for pos in positions:
+                old = bars[pos]
+                if old.interval_start is None:
+                    ts = int(old.timestamp)
+                    out[pos] = _with_interval_start(old, ts, ts - int(period_ns))
             continue
         for pos, new_stamp in zip(positions, new_utc):
             old = bars[pos]
-            out[pos] = Bar(
-                int(new_stamp.value),
-                old.open,
-                old.high,
-                old.low,
-                old.close,
-                old.volume,
-                old.symbol,
-                dict(old.extra),
-                old.freq,
-                old.interval_start,
+            ts = int(new_stamp.value)
+            start = old.interval_start
+            out[pos] = _with_interval_start(
+                old, ts, ts - _ONE_DAY_NS if start is None else int(start)
             )
     return out
 
@@ -3695,18 +3768,18 @@ def run_backtest(
         setattr(current_strategy, "_analyzer_manager", analyzer_manager)
 
     # Determine Data Loading Strategy
+    # bar 数据声明的周期(纳秒), 用于填 bar 区间起点; 见下方 freq 说明
+    bar_period_ns: Optional[int] = None
     if data is not None:
         # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
         data = coerce_to_pandas(data)
-        # freq 只对含 Tick 的列表有意义。放在归一之前做校验, 使 DataFrame /
-        # DataFeed / 纯 bar 列表配 freq 时也能早失败, 而不是静默忽略这个参数。
+        # freq 对含 Tick 的列表是聚合周期(合成 bar 的区间由聚合器填);
+        # 对 bar 数据是声明的 bar 周期: 区间起点 = 时间戳 - 周期。DataFeed 输入
+        # 已由调用方建好, 只注入 self.freq。
         if freq is not None and not (
             isinstance(data, list) and any(isinstance(item, Tick) for item in data)
         ):
-            raise ValueError(
-                f"freq={freq!r} 只在 data 为含 Tick 的列表时有意义。"
-                "若要重采样 bar, 请用 akquant.feed_adapter 的 resample()"
-            )
+            bar_period_ns = _freq_period_ns(freq)
 
         # 含 Tick(或需要校验)的列表先归一成 DataFeed, 交给下面既有的 DataFeed
         # 分支处理: 该路径已实测能正确投递 tick(feed.add_tick -> 引擎
@@ -3794,12 +3867,17 @@ def run_backtest(
                 session_asset_type_of,
             )
             for sym, df in adapter_data_map.items():
-                df_prep = _rewrite_date_only_frame(
+                df_prep, date_only = _rewrite_date_only_frame(
                     to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=_arrays_interval_starts(
+                        arrays, date_only=date_only, period_ns=bar_period_ns
+                    ),
+                )
                 if sym not in symbols:
                     symbols.append(sym)
             feed.sort()
@@ -3887,9 +3965,16 @@ def run_backtest(
                         else [*symbols, *detected_symbols],
                         session_asset_type_of,
                     )
-                    df = _rewrite_date_only_multi_symbol_frame(df, date_only_rewriter)
+                    df, rewritten_rows = _rewrite_date_only_multi_symbol_frame(
+                        df, date_only_rewriter
+                    )
                     arrays = dataframe_to_arrays(df)
-                    feed.add_arrays(*arrays)  # type: ignore
+                    feed.add_arrays(
+                        *arrays,  # type: ignore[arg-type]
+                        interval_starts=_masked_interval_starts(
+                            arrays[0], rewritten_rows, bar_period_ns
+                        ),
+                    )
                     grouped = df.groupby("symbol", sort=False)
                     for grouped_symbol, grouped_df in grouped:
                         sym = str(grouped_symbol)
@@ -3922,10 +4007,15 @@ def run_backtest(
                     symbols if target_symbol in symbols else [target_symbol],
                     session_asset_type_of,
                 )
-                df = _rewrite_date_only_frame(df, date_only_rewriter)
+                df, date_only = _rewrite_date_only_frame(df, date_only_rewriter)
                 data_map_for_indicators[target_symbol] = df
                 arrays = dataframe_to_arrays(df, symbol=target_symbol)
-                feed.add_arrays(*arrays)  # type: ignore
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=_arrays_interval_starts(
+                        arrays, date_only=date_only, period_ns=bar_period_ns
+                    ),
+                )
                 feed.sort()
                 if target_symbol not in symbols:
                     symbols = [target_symbol]
@@ -3973,12 +4063,17 @@ def run_backtest(
                         timezone,
                     )
 
-                df_prep = _rewrite_date_only_frame(
+                df_prep, date_only = _rewrite_date_only_frame(
                     to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=_arrays_interval_starts(
+                        arrays, date_only=date_only, period_ns=bar_period_ns
+                    ),
+                )
                 if sym not in symbols:
                     symbols.append(sym)
             feed.sort()
@@ -4014,6 +4109,7 @@ def run_backtest(
                 data = _rewrite_date_only_bars(
                     data,  # type: ignore[arg-type]
                     date_only_rewriter,
+                    bar_period_ns,
                 )
                 data.sort(key=lambda b: b.timestamp)
                 feed.add_bars(data)  # type: ignore[arg-type]
@@ -4072,12 +4168,17 @@ def run_backtest(
                 continue
 
             if not df.empty:
-                df = _rewrite_date_only_frame(
+                df, date_only = _rewrite_date_only_frame(
                     to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=_arrays_interval_starts(
+                        arrays, date_only=date_only, period_ns=bar_period_ns
+                    ),
+                )
                 loaded_count += 1
 
         if loaded_count > 0:
@@ -5579,6 +5680,13 @@ def run_from_checkpoint(
         sessions=session_map, trading_calendar=calendar_days, timezone=timezone_name
     )
     date_only_rewriter = _DateOnlyRewriter(session_resolver, timezone_name, logger)
+    # 存档里的 self.freq 即 bar 周期(续跑不支持 tick 输入); 解析不了按未声明处理
+    try:
+        bar_period_ns = _freq_period_ns(
+            getattr(strategy_instance, "_framework_freq", None)
+        )
+    except ValueError:
+        bar_period_ns = None
     saved_session_asset_types = _saved_session_asset_types(strategy_instance)
     resume_extra_symbols = [
         *session_prebuilt,
@@ -5630,12 +5738,17 @@ def run_from_checkpoint(
         )
         for sym, df in adapter_data_map.items():
             if not df.empty:
-                df_prep = _rewrite_date_only_frame(
+                df_prep, date_only = _rewrite_date_only_frame(
                     to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df_prep
                 arrays = dataframe_to_arrays(df_prep, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=_arrays_interval_starts(
+                        arrays, date_only=date_only, period_ns=bar_period_ns
+                    ),
+                )
                 loaded_count += 1
         if loaded_count > 0:
             feed.sort()
@@ -5710,6 +5823,7 @@ def run_from_checkpoint(
             resume_bars: List[Any] = _rewrite_date_only_bars(
                 data,  # type: ignore[arg-type]
                 date_only_rewriter,
+                bar_period_ns,
             )
             feed.add_bars(resume_bars)
 
@@ -5762,12 +5876,17 @@ def run_from_checkpoint(
         activate_resume_symbols(sym for sym, df in data_map.items() if not df.empty)
         for sym, df in data_map.items():
             if not df.empty:
-                df = _rewrite_date_only_frame(
+                df, date_only = _rewrite_date_only_frame(
                     to_indicator_frame(df), date_only_rewriter
                 )
                 data_map_for_indicators[sym] = df
                 arrays = dataframe_to_arrays(df, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=_arrays_interval_starts(
+                        arrays, date_only=date_only, period_ns=bar_period_ns
+                    ),
+                )
                 loaded_count += 1
 
         if loaded_count > 0:

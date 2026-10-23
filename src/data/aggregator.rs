@@ -140,7 +140,10 @@ impl BarAggregator {
                     symbol: symbol.clone(),
                     extra: HashMap::new(),
                     freq: None,
-                    interval_start: None,
+                    // 终点戳(回测)时区间为 (起点 - 1, 终点]; 起点戳(实盘)不填
+                    interval_start: self
+                        .stamp_bar_at_interval_end
+                        .then(|| bar.timestamp_min * 60 * 1_000_000_000 * self.interval_min - 1),
                 };
                 self.feed.add_bar(finished_bar)?;
 
@@ -240,6 +243,25 @@ mod tests {
                 // 1ns, 晚于其最后贡献 tick(90s = 90_000_000_000ns)。
                 assert_eq!(bar.timestamp, ns(2, 0) - 1);
                 assert!(bar.timestamp >= ns(1, 30));
+                // 区间起点 - 1ns: (起点 - 1, 终点 - 1] 与终点戳同口径
+                assert_eq!(bar.interval_start, Some(ns(1, 0) - 1));
+            }
+            other => panic!("expected Event::Bar, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn start_stamped_bar_has_no_interval_start() {
+        // 起点戳(实盘默认): 时间戳不是区间终点, 不填 interval_start
+        let feed = DataFeed::new();
+        let readback = feed.clone();
+        let mut agg = BarAggregator::new(feed, Some(1), false, false);
+        agg.on_tick("X".to_string(), 10.0, 100.0, ns(1, 0)).unwrap();
+        agg.on_tick("X".to_string(), 11.0, 100.0, ns(2, 0)).unwrap();
+        match readback.next().expect("封闭的 bar 未写入 feed") {
+            crate::event::Event::Bar(bar) => {
+                assert_eq!(bar.timestamp, ns(1, 0));
+                assert_eq!(bar.interval_start, None);
             }
             other => panic!("expected Event::Bar, got {other:?}"),
         }

@@ -456,6 +456,69 @@ impl SessionResolver {
         })
     }
 
+    /// 包含时刻 `instant` 的时段区间 `[start, end)` 与其时段；落在两段之间
+    /// （午休以外的间隙、收盘后到下一交易日开盘前）时返回间隙与 `Closed`。
+    pub fn segment_span_at(
+        &self,
+        symbol: &str,
+        asset_type: Option<AssetType>,
+        instant: i64,
+    ) -> Result<(i64, i64, TradingSession), CalendarError> {
+        let schedule = self.schedule_for(symbol, asset_type);
+        let (day, w) = self.trading_day_of(&schedule, instant)?;
+        if let Some(&(s, e, sess)) = w.segments.iter().find(|s| s.0 <= instant && instant < s.1) {
+            return Ok((s, e, sess));
+        }
+        // 间隙：左界 = 不晚于 instant 的最近段结束（没有则取前一交易日结束），
+        // 右界 = 晚于 instant 的最近段开始（没有则取下一交易日的第一段开始）。
+        let cal = self.calendar_for(&schedule);
+        let left = match w
+            .segments
+            .iter()
+            .map(|s| s.1)
+            .filter(|&e| e <= instant)
+            .max()
+        {
+            Some(e) => e,
+            None => match cal.before(day) {
+                Ok(prev) => self.day_end(&schedule, prev)?,
+                // 日历首日之前没有交易日：间隙左界无界
+                Err(_) => i64::MIN,
+            },
+        };
+        let right = match w
+            .segments
+            .iter()
+            .map(|s| s.0)
+            .filter(|&s| s > instant)
+            .min()
+        {
+            Some(s) => s,
+            None => {
+                let next = cal.after(day)?;
+                self.day_window(&schedule, next)?.start
+            }
+        };
+        Ok((left, right, TradingSession::Closed))
+    }
+
+    /// 会话级时段：在用时段表中优先级最高者（见 `rank`），按“`ts` 前 1ns”判断。
+    /// 用于不属于任何品种的事件（定时器）；任一表解析出错按 `Closed` 计。
+    pub fn session_level_instant(&self, ts: i64) -> TradingSession {
+        let point = ts.saturating_sub(1);
+        let mut best = TradingSession::Closed;
+        for s in self.active_schedules() {
+            let sess = match self.trading_day_of(&s, point) {
+                Ok((_, w)) => Self::session_at(&w, point),
+                Err(_) => TradingSession::Closed,
+            };
+            if rank(sess) > rank(best) {
+                best = sess;
+            }
+        }
+        best
+    }
+
     pub fn day_bounds(
         &self,
         symbol: &str,
@@ -1004,5 +1067,61 @@ mod tests {
         let r = resolver(vec![], Some(explicit));
         assert!(r.is_session_day(d(2024, 1, 5)));
         assert!(!r.is_session_day(d(2024, 1, 4)));
+    }
+
+    #[test]
+    fn segment_span_at_returns_segment_and_gap() {
+        let r = resolver(vec![], None);
+        let stock = Some(AssetType::Stock);
+        // 10:00 在上午连续竞价 [09:30, 11:30)
+        let (s, e, sess) = r
+            .segment_span_at("600000.SH", stock, at(2024, 1, 2, 10, 0, 0))
+            .unwrap();
+        assert_eq!(
+            (s, e, sess),
+            (
+                at(2024, 1, 2, 9, 30, 0),
+                at(2024, 1, 2, 11, 30, 0),
+                TradingSession::Continuous
+            )
+        );
+        // 14:58 在收盘竞价 [14:57, 15:00)
+        let (s, e, sess) = r
+            .segment_span_at("600000.SH", stock, at(2024, 1, 2, 14, 58, 0))
+            .unwrap();
+        assert_eq!(
+            (s, e, sess),
+            (
+                at(2024, 1, 2, 14, 57, 0),
+                at(2024, 1, 2, 15, 0, 0),
+                TradingSession::ClosingAuction
+            )
+        );
+        // 20:00 在收盘后到次日开盘前的间隙：Closed，区间 [15:00, 次日 09:15)
+        let (s, e, sess) = r
+            .segment_span_at("600000.SH", stock, at(2024, 1, 2, 20, 0, 0))
+            .unwrap();
+        assert_eq!(sess, TradingSession::Closed);
+        assert_eq!(s, at(2024, 1, 2, 15, 0, 0));
+        assert_eq!(e, at(2024, 1, 3, 9, 15, 0));
+    }
+
+    #[test]
+    fn session_level_instant_takes_highest_rank_across_active_schedules() {
+        let mut r = resolver(vec![], None);
+        r.set_active(&[
+            ("600000.SH".to_string(), Some(AssetType::Stock)),
+            ("rb2405".to_string(), Some(AssetType::Futures)),
+        ]);
+        // 08:57：期货开盘竞价、股票闭市 → OpeningAuction
+        assert_eq!(
+            r.session_level_instant(at(2024, 1, 2, 8, 57, 0)),
+            TradingSession::OpeningAuction
+        );
+        // 10:20：期货小节休息、股票连续 → Continuous
+        assert_eq!(
+            r.session_level_instant(at(2024, 1, 2, 10, 20, 0)),
+            TradingSession::Continuous
+        );
     }
 }

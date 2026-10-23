@@ -164,7 +164,9 @@ impl DataFeed {
     /// :param symbol: 标的代码 (可选，单一标的)
     /// :param symbols: 标的代码数组 (可选，多标的，长度需与数据一致)
     /// :param extra: 额外数据字典 {name: array} (可选)
+    /// :param interval_starts: bar 区间起点数组 (int64 纳秒, 可选; int64 最小值表示该行未知)
     #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (timestamps, opens, highs, lows, closes, volumes, symbol=None, symbols=None, extra=None, interval_starts=None))]
     pub fn add_arrays(
         &mut self,
         timestamps: &Bound<'_, PyAny>,
@@ -176,10 +178,21 @@ impl DataFeed {
         symbol: Option<String>,
         symbols: Option<Vec<String>>,
         extra: Option<HashMap<String, Py<PyAny>>>,
+        interval_starts: Option<&Bound<'_, PyAny>>,
         py: Python<'_>,
     ) -> PyResult<()> {
         let columns = BarColumns::from_py_arrays(
-            timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra, py,
+            timestamps,
+            opens,
+            highs,
+            lows,
+            closes,
+            volumes,
+            symbol,
+            symbols,
+            extra,
+            interval_starts,
+            py,
         )?;
         if self.live_sender.is_some() {
             // 实时模式: 重构为 Bar 事件逐个发送

@@ -601,6 +601,7 @@ class DataFeed:
         symbol: typing.Optional[str] = ...,
         symbols: typing.Optional[typing.Sequence[str]] = ...,
         extra: typing.Optional[typing.Mapping[str, typing.Any]] = ...,
+        interval_starts: typing.Optional[numpy.ndarray] = ...,
     ) -> None: ...
     def __new__(
         cls,

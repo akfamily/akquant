@@ -121,8 +121,8 @@ def test_synthesized_bar_volume_sums_tick_volumes() -> None:
     )
 
 
-def test_freq_without_ticks_raises() -> None:
-    """Freq 给了但数据里没有 tick: 参数无意义, 早失败."""
+def test_freq_without_ticks_declares_bar_period() -> None:
+    """Freq 给了但数据里没有 tick: 作为 bar 周期声明, 区间起点 = 时间戳 - 周期."""
     bar = Bar(
         timestamp=_ns(1),
         open=10.0,
@@ -133,8 +133,9 @@ def test_freq_without_ticks_raises() -> None:
         symbol=SYMBOL,
     )
 
-    with pytest.raises(ValueError, match="freq"):
-        _run([bar], freq="1min")
+    strategy = _run([bar], freq="1min")
+
+    assert [b.interval_start for b in strategy.bars] == [_ns(1) - 60 * 10**9]
 
 
 def test_sub_minute_freq_raises() -> None:
