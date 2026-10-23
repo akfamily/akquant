@@ -215,8 +215,10 @@ class MyStrategy(Strategy):
   `BarGenerator(cb, 1, "hour")`、`BarGenerator(cb, 1, "day")`）；`"day"` 只支持
   `window=1`。
 - `timezone`（默认 `"Asia/Shanghai"`）、`sessions`、`trading_calendar`、
-  `asset_type`（默认股票，也可传 `{symbol: asset_type}`）与 `run_backtest` 同义，
-  决定品种的时段表与交易日。
+  `asset_type`（默认股票，也可传 `{symbol: asset_type}`，按完整代码匹配）与
+  `run_backtest` 同义，决定品种的时段表与交易日。非中国市场（美股、加密货币等）
+  必须显式传 `timezone`（如 `"America/New_York"`、`"UTC"`），否则会按 A 股时段表
+  切分窗口；非中国时区默认全天连续。
 - `base_interval_min` 是喂入 bar 的周期（分钟）。给定时 bar 区间终点到达窗口
   标签即闭合回调（如 11:30 那根 1 分钟 bar 到达就闭合 11:30 的窗口）；不给时
   等下一根落入新窗口的 bar 到达才闭合。

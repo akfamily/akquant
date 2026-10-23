@@ -283,9 +283,12 @@ class MyStrategy(Strategy):
   `BarGenerator(cb, 15, "minute")`, `BarGenerator(cb, 1, "hour")`,
   `BarGenerator(cb, 1, "day")`); `"day"` only supports `window=1`.
 - `timezone` (default `"Asia/Shanghai"`), `sessions`, `trading_calendar` and
-  `asset_type` (default stock; a `{symbol: asset_type}` mapping is also
-  accepted) mean the same as in `run_backtest` and decide each symbol's session
-  table and trading days.
+  `asset_type` (default stock; a `{symbol: asset_type}` mapping keyed by the
+  full symbol is also accepted) mean the same as in `run_backtest` and decide
+  each symbol's session table and trading days. For non-China markets (US
+  stocks, crypto, ...) pass `timezone` explicitly (e.g. `"America/New_York"`,
+  `"UTC"`); otherwise windows are cut by the A-share session table. Non-China
+  timezones default to all-day continuous trading.
 - `base_interval_min` is the period (minutes) of the bars you feed. When given,
   a window closes as soon as a bar's interval end reaches the window label
   (e.g. the 11:30 one-minute bar closes the 11:30 window); otherwise it closes
