@@ -96,14 +96,49 @@ def test_order_roundtrip_and_checkpoint_with_open_order(tmp_path: Path) -> None:
     ckpt = tmp_path / "c.pkl"
     save_checkpoint(r1.engine, strat, str(ckpt))  # 修复前 TypeError
     frame2 = _frame(["2024-01-02 10:02"])
+    frame2["low"] = 8.5  # 续跑段价格触及限价，在途单应成交
     r2 = run_from_checkpoint(
         checkpoint_path=str(ckpt),
         data=frame2,
         symbols=["600000.SH"],
         show_progress=False,
     )
-    # 在途单随存档还原，续跑段中仍为活跃状态。
-    # 注：续跑段价格触及限价时在途单目前不会成交，这是 checkpoint 恢复的另一个
-    # 现存问题（与 pickle 无关），见 task-5 报告；修复后应改为断言成交。
-    assert len(r2.orders_df) == 1
-    assert str(r2.orders_df.iloc[0]["status"]).lower() in {"new", "submitted"}
+    filled = r2.orders_df[r2.orders_df["filled_quantity"] > 0]
+    assert len(filled) == 1 and float(filled.iloc[0]["avg_price"]) == 9.0
+
+
+class _DayLimit(Strategy):
+    """首根 bar 挂一张够不着的 Day 限价单."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.sent:
+            self.sent = True
+            self.buy(bar.symbol, 100, price=9.0, time_in_force=aq.TimeInForce.Day)
+
+
+def test_day_order_pending_across_checkpoint_expires_next_day(tmp_path: Path) -> None:
+    """跨日续跑：前一日的 Day 单不再成交，按日终规则过期."""
+    r1 = run_backtest(
+        data=_frame(["2024-01-02 10:00", "2024-01-02 10:01"]),
+        strategy=_DayLimit,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    assert r1.engine is not None and r1.strategy is not None
+    ckpt = tmp_path / "d.pkl"
+    save_checkpoint(r1.engine, r1.strategy, str(ckpt))
+    frame2 = _frame(["2024-01-03 10:00"])
+    frame2["low"] = 8.5
+    r2 = run_from_checkpoint(
+        checkpoint_path=str(ckpt),
+        data=frame2,
+        symbols=["600000.SH"],
+        show_progress=False,
+    )
+    assert (r2.orders_df["filled_quantity"] > 0).sum() == 0
+    assert str(r2.orders_df.iloc[0]["status"]).lower() == "expired"

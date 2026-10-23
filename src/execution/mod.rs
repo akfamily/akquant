@@ -27,6 +27,12 @@ pub trait ExecutionClient: Send + Sync {
     /// 接收新订单
     fn on_order(&mut self, order: Order);
 
+    /// 撮合器是否已登记该订单。续跑时用它找出尚未登记的在途订单;
+    /// 不在本地撮合的客户端(实盘)默认视为已知, 不重复登记。
+    fn knows_order(&self, _order_id: &str) -> bool {
+        true
+    }
+
     /// 取消订单请求
     fn on_cancel(&mut self, order_id: &str);
 

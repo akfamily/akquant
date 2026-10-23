@@ -1031,6 +1031,10 @@ impl ExecutionClient for SimulatedExecutionClient {
         self.order_queue.push(id);
     }
 
+    fn knows_order(&self, order_id: &str) -> bool {
+        self.orders.contains_key(order_id)
+    }
+
     fn on_cancel(&mut self, order_id: &str) {
         match self.orders.get_mut(order_id) {
             Some(order)
