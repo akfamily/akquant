@@ -123,16 +123,22 @@ replayed = feed.replay(
 
 - `BasePandasFeedAdapter` 已支持：
   - `resample(freq, agg=None, label="right", closed="right", emit_partial=True)`
-  - `replay(freq, align="session", emit_partial=False, agg=None, label="right", closed="right")`
+  - `replay(freq, align="session", emit_partial=False, agg=None, label="right", closed="right", session_windows=None, sessions=None, trading_calendar=None, asset_type=None, base_interval_min=None)`
 - 两者均返回可直接传入 `run_backtest(data=...)` 的适配器对象。
-- 当前 `replay(align="session")` 已支持按交易日分区聚合，`emit_partial=False` 时按日丢弃尾部未闭合窗口。
-- 可通过 `session_windows` 进一步按日内交易时段分区（例如午休前后分段），减少跨时段混合聚合。
+- `replay(align="session")`（不传 `session_windows`）与 `replay(align="day", day_mode="trading")` 用引擎 `subscribe_bars` 同一个窗口聚合器切分，对同一数据、同一时段表与 `subscribe_bars`、`BarGenerator` 产出相同的窗口：
+  - 日内窗口（`Nmin`/`Nh`）按（交易日，交易块）切分，标签为本地时钟 ceil 到周期但不超过块结束（A 股 1h：10:00、11:00、11:30、14:00、15:00）。
+  - 日线窗口（`1D`）按交易日切分（夜盘归下一交易日），标签为交易日收盘时刻。
+  - `sessions`、`trading_calendar`、`asset_type` 与 `run_backtest` 同义（默认股票）；`base_interval_min` 是源数据周期（分钟），不传时按相邻时间戳间隔的众数推断。
+  - OHLCV 取聚合器结果；`agg` 里的其他列（或改写了默认聚合方式的列）按聚合器给每行分配的窗口分组计算。
+  - `emit_partial=False` 时，数据未到达标签的窗口若是该交易日最后一个窗口（或数据末尾），视为未闭合尾部丢弃。
+- 交易块截断只对默认 `label="right", closed="right"` 且 `freq` 为 `Nmin`/`Nh`/`1D` 时生效；其余情况沿用 pandas `resample` 的旧实现（按本地日期分区）。
+- 可通过 `session_windows` 手写日内交易时段分区（例如午休前后分段）；终点早于起点表示跨午夜（如 `("21:00", "02:30")`）。手写时段走旧实现，不与引擎窗口逐根对齐。
 - `align` 当前支持三种语义：
-  - `session`：按交易日分区，可叠加 `session_windows`。
+  - `session`：按交易日与交易块分区，或按手写 `session_windows` 分区。
   - `day`：按日分区，不接收 `session_windows`，并支持 `day_mode`。
   - `global`：按全局时间轴聚合，不按交易日切段。
 - `day_mode` 当前支持：
-  - `trading`：按请求时区下的本地交易日切分。
+  - `trading`：按品种时段表的交易日切分（夜盘归下一交易日）。
   - `calendar`：按 UTC 自然日切分。
 
 ### 语义锁定

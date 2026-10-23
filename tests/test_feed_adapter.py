@@ -253,10 +253,11 @@ def test_feed_replay_rejects_session_windows_when_align_not_session() -> None:
 
 def test_feed_replay_day_mode_calendar_vs_trading() -> None:
     """Day mode should support calendar-day and trading-day partitioning."""
+    # 日盘 14:00 与夜盘 21:30（北京时间）同属 UTC 1 月 2 日，但夜盘归下一交易日。
     timestamps = pd.DatetimeIndex(
         [
-            pd.Timestamp("2024-01-01 15:55:00", tz="UTC"),
-            pd.Timestamp("2024-01-01 16:05:00", tz="UTC"),
+            pd.Timestamp("2024-01-02 14:00:00", tz="Asia/Shanghai"),
+            pd.Timestamp("2024-01-02 21:30:00", tz="Asia/Shanghai"),
         ]
     )
     frame = pd.DataFrame(
@@ -277,6 +278,8 @@ def test_feed_replay_day_mode_calendar_vs_trading() -> None:
         align="day",
         day_mode="trading",
         emit_partial=True,
+        sessions={"DAY": "CN_FUTURES_NIGHT_0230"},
+        asset_type="futures",
     ).load(akquant.FeedSlice(symbol="DAY", timezone="Asia/Shanghai"))
     calendar_result = adapter.replay(
         freq="1D",

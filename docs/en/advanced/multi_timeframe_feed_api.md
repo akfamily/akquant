@@ -185,16 +185,22 @@ replayed = feed.replay(
 
 - `BasePandasFeedAdapter` supports:
   - `resample(freq, agg=None, label="right", closed="right", emit_partial=True)`
-  - `replay(freq, align="session", emit_partial=False, agg=None, label="right", closed="right")`
+  - `replay(freq, align="session", emit_partial=False, agg=None, label="right", closed="right", session_windows=None, sessions=None, trading_calendar=None, asset_type=None, base_interval_min=None)`
 - Both return adapter objects that can be passed directly to `run_backtest(data=...)`.
-- `replay(align="session")` supports per-trading-day partitioning, and drops each partition tail when `emit_partial=False`.
-- `session_windows` can further split intraday sessions (for example, before/after lunch break) to avoid cross-session aggregation.
+- `replay(align="session")` (without `session_windows`) and `replay(align="day", day_mode="trading")` use the same window aggregator as the engine's `subscribe_bars`, so for the same data and session table they produce the same windows as `subscribe_bars` and `BarGenerator`:
+  - Intraday windows (`Nmin`/`Nh`) are split by (trading day, trading block); the label is the local clock ceiling to the period, clamped to the block end (A-share 1h: 10:00, 11:00, 11:30, 14:00, 15:00).
+  - Daily windows (`1D`) are split by trading day (night session belongs to the next trading day) and labelled at the trading-day close.
+  - `sessions`, `trading_calendar` and `asset_type` mean the same as in `run_backtest` (default: stock); `base_interval_min` is the source bar period in minutes, inferred from the modal timestamp spacing when omitted.
+  - OHLCV comes from the aggregator; other `agg` columns (or columns whose default aggregation is overridden) are grouped by the window the aggregator assigned to each row.
+  - With `emit_partial=False`, a window whose data does not reach its label is dropped when it is the last window of its trading day (or of the data).
+- Block clamping only applies to the default `label="right", closed="right"` with `freq` of `Nmin`/`Nh`/`1D`; anything else keeps the previous pandas `resample` implementation (partitioned by local date).
+- `session_windows` hand-writes intraday sessions (for example, before/after lunch break); an end earlier than the start means the session crosses midnight (e.g. `("21:00", "02:30")`). Manual sessions use the previous implementation and are not aligned bar-for-bar with engine windows.
 - `align` currently supports:
-  - `session`: partition by trading day, with optional `session_windows`.
+  - `session`: partition by trading day and trading block, or by manual `session_windows`.
   - `day`: partition by day without `session_windows`, with configurable `day_mode`.
   - `global`: aggregate on the full timeline without day/session partitioning.
 - `day_mode` currently supports:
-  - `trading`: partition by local trading day under request timezone.
+  - `trading`: partition by the symbol's trading day (night session belongs to the next trading day).
   - `calendar`: partition by UTC calendar day.
 
 ### Semantics

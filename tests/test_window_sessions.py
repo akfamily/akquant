@@ -428,3 +428,165 @@ def test_bar_generator_matches_engine_windows() -> None:
     # 即时闭合与引擎同一时机: 11:30 窗口在 11:30 那根到达时闭合, 不等 13:01
     assert closed_at == r.strategy.closed_at
     assert closed_at == ["01-02 10:00", "01-02 11:00", "01-02 11:30", "01-02 14:00"]
+
+
+class _MemAdapter(aq.feed_adapter.BasePandasFeedAdapter):
+    """内存 DataFrame 适配器（同 test_feed_adapter.py 的 InMemoryFeedAdapter）."""
+
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+
+    def load(self, request: Any) -> pd.DataFrame:
+        out = self._frame
+        return out[out["symbol"] == request.symbol] if "symbol" in out.columns else out
+
+
+def test_replay_session_alignment_matches_engine_windows() -> None:
+    """离线 replay(align='session') 与引擎 subscribe_bars 产出相同的 1h 窗口.
+
+    含午休截断（11:30 标签）。
+    """
+    times = [
+        "2024-01-02 09:31",
+        "2024-01-02 10:00",
+        "2024-01-02 11:00",
+        "2024-01-02 11:01",
+        "2024-01-02 11:30",
+        "2024-01-02 13:01",
+        "2024-01-02 14:00",
+    ]
+    df = _minute(times)
+
+    class Eng(_WinLog):
+        freqs = ("1h",)
+
+    r = run_backtest(
+        strategy=Eng,
+        data=df,
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+        freq="1min",
+    )
+    assert r.strategy is not None
+    engine_windows = [(w[1], w[3], w[4], w[5]) for w in r.strategy.windows]
+
+    adapter = _MemAdapter(df.set_index("timestamp")).replay(
+        "1h", align="session", emit_partial=True, asset_type=aq.AssetType.Stock
+    )
+    out = adapter.load(aq.feed_adapter.FeedSlice(symbol="600000.SH", timezone=TZ))
+    got = [
+        (i.tz_convert(TZ).strftime("%m-%d %H:%M"), float(o), float(c), float(v))
+        for i, o, c, v in zip(out.index, out["open"], out["close"], out["volume"])
+    ]
+    assert got == engine_windows
+    assert [g[0] for g in got] == [
+        "01-02 10:00",
+        "01-02 11:00",
+        "01-02 11:30",
+        "01-02 14:00",
+    ]
+
+
+def test_replay_day_alignment_uses_trading_day_for_night_session() -> None:
+    """离线 replay(align='day') 按交易日切分：周五夜盘归下周一，标签为交易日收盘."""
+    df = _minute(
+        [
+            "2024-01-05 14:00",
+            "2024-01-05 15:00",
+            "2024-01-05 21:30",
+            "2024-01-08 10:00",
+            "2024-01-08 15:00",
+        ],
+        symbol="au2406",
+    )
+    adapter = _MemAdapter(df.set_index("timestamp")).replay(
+        "1D",
+        align="day",
+        emit_partial=True,
+        sessions={"au": "CN_FUTURES_NIGHT_0230"},
+        asset_type=aq.AssetType.Futures,
+    )
+    out = adapter.load(aq.feed_adapter.FeedSlice(symbol="au2406", timezone=TZ))
+    assert [i.tz_convert(TZ).strftime("%m-%d %H:%M") for i in out.index] == [
+        "01-05 15:00",
+        "01-08 15:00",
+    ]
+    assert list(out["open"]) == [10.0, 12.0]
+
+
+def test_replay_extra_agg_columns_follow_engine_windows() -> None:
+    """额外的 agg 列按聚合器给每行分配的窗口分组（午休截断后的窗口同样适用）.
+
+    11:30 那根同时挤出未满的 11:00 窗口并让 11:30 窗口即时闭合。
+    """
+    times = [
+        "2024-01-02 09:31",
+        "2024-01-02 10:00",
+        "2024-01-02 10:30",
+        "2024-01-02 11:30",
+        "2024-01-02 13:01",
+        "2024-01-02 14:00",
+    ]
+    df = _minute(times)
+    df["amount"] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    adapter = _MemAdapter(df.set_index("timestamp")).replay(
+        "1h", align="session", emit_partial=True, agg={"amount": "sum"}
+    )
+    out = adapter.load(aq.feed_adapter.FeedSlice(symbol="600000.SH", timezone=TZ))
+    assert list(out.columns) == [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+        "symbol",
+    ]
+    assert [i.tz_convert(TZ).strftime("%H:%M") for i in out.index] == [
+        "10:00",
+        "11:00",
+        "11:30",
+        "14:00",
+    ]
+    assert out["amount"].tolist() == [3.0, 3.0, 4.0, 11.0]
+    assert out["volume"].tolist() == [2.0, 1.0, 1.0, 2.0]
+
+
+def test_replay_emit_partial_false_drops_tail_of_each_trading_day() -> None:
+    """emit_partial=False 只丢每个交易日末尾数据未到达标签的窗口."""
+    df = _minute(
+        [
+            "2024-01-02 09:45",
+            "2024-01-02 10:00",
+            "2024-01-02 10:10",
+            "2024-01-03 09:45",
+            "2024-01-03 10:00",
+            "2024-01-03 10:10",
+            "2024-01-03 13:01",
+        ]
+    )
+    adapter = _MemAdapter(df.set_index("timestamp")).replay(
+        "30min", align="session", emit_partial=False
+    )
+    out = adapter.load(aq.feed_adapter.FeedSlice(symbol="600000.SH", timezone=TZ))
+    assert [i.tz_convert(TZ).strftime("%m-%d %H:%M") for i in out.index] == [
+        "01-02 10:00",
+        "01-03 10:00",
+        "01-03 10:30",
+    ]
+
+
+def test_replay_manual_session_windows_cross_midnight() -> None:
+    """手写时段终点早于起点表示跨午夜：午夜后的部分归前一天的段."""
+    from akquant.feed_adapter import _session_window_partition_keys
+
+    index = pd.DatetimeIndex(
+        pd.to_datetime(["2024-01-02 22:00", "2024-01-03 01:00", "2024-01-03 03:00"])
+    )
+    keys, keep = _session_window_partition_keys(index, TZ, [("21:00", "02:30")])
+    assert keep == [True, True, False]
+    assert [k.strftime("%m-%d %H:%M") for k in keys[:2]] == [
+        "01-02 21:00",
+        "01-02 21:00",
+    ]
