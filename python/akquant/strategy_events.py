@@ -231,6 +231,9 @@ def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
         flush_pending_schedules(strategy)
     register_cross_section_timers(strategy)
     strategy._check_order_events()
+    # 到期事件也在定时器上送达（按 key 去重）：日终结算后的 on_after_trading
+    # 应已看到当日的到期结果，不必等下一交易日首根 bar。
+    check_expiry_events(strategy)
 
     current_time = int(getattr(ctx, "current_time", 0))
     if _is_before_active_start(strategy, current_time):
