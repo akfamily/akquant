@@ -50,10 +50,11 @@ def _empty_arrays(symbol: Optional[str]) -> _LegacyArrays:
     )
 
 
-def _timestamps_to_utc_ns(dt_like: Any) -> np.ndarray:
+def _timestamps_to_utc_ns(dt_like: Any, tz: Optional[str] = None) -> np.ndarray:
     """将时间列/索引统一转为 UTC 纳秒 int64 数组.
 
-    naive 时间按 :data:`DEFAULT_INPUT_TIMEZONE` 本地化后转 UTC; NaT 填充为 Epoch 0.
+    naive 时间按 ``tz`` 本地化后转 UTC(缺省 :data:`DEFAULT_INPUT_TIMEZONE`);
+    NaT 填充为 Epoch 0.
     行为与旧 ``utils.df_to_arrays`` 时间戳处理保持一致.
     """
     dt_series: Any
@@ -80,7 +81,7 @@ def _timestamps_to_utc_ns(dt_like: Any) -> np.ndarray:
         dt_series_s = cast(pd.Series, dt_series)
 
     if dt_series_s.dt.tz is None:
-        dt_series_s = dt_series_s.dt.tz_localize(DEFAULT_INPUT_TIMEZONE)
+        dt_series_s = dt_series_s.dt.tz_localize(tz or DEFAULT_INPUT_TIMEZONE)
     dt_series_s = dt_series_s.dt.tz_convert("UTC")
 
     if not str(dt_series_s.dtype).startswith("datetime64[ns"):
@@ -115,12 +116,14 @@ def resolve_columns(df: pd.DataFrame) -> Dict[str, str]:
 
 
 def dataframe_to_arrays(
-    df: pd.DataFrame, symbol: Optional[str] = None
+    df: pd.DataFrame, symbol: Optional[str] = None, tz: Optional[str] = None
 ) -> _LegacyArrays:
     """DataFrame -> ``DataFeed.add_arrays`` 的 9 元组入参.
 
     与旧 ``utils.df_to_arrays`` 行为等价: 列名解析、时区归一、dtype 强转、
     extra 数值列透传均保持一致.
+
+    ``tz`` 为不带时区时间的本地化时区, 缺省 :data:`DEFAULT_INPUT_TIMEZONE`.
     """
     if df.empty:
         return _empty_arrays(symbol)
@@ -141,10 +144,10 @@ def dataframe_to_arrays(
 
     # 1. 时间戳
     if resolved.get("timestamp") == "__index__":
-        timestamps = _timestamps_to_utc_ns(df.index)
+        timestamps = _timestamps_to_utc_ns(df.index, tz)
     else:
         raw = pd.to_datetime(df[resolved["timestamp"]], errors="coerce")
-        timestamps = _timestamps_to_utc_ns(raw)
+        timestamps = _timestamps_to_utc_ns(raw, tz)
 
     # 2. OHLCV
     def get_col(name: str) -> np.ndarray:
@@ -197,6 +200,7 @@ def dataframe_to_bars(
     df: pd.DataFrame,
     symbol: Optional[str] = None,
     column_map: Optional[Dict[str, str]] = None,
+    tz: Optional[str] = None,
 ) -> List[Bar]:
     """DataFrame -> ``list[Bar]``.
 
@@ -238,7 +242,7 @@ def dataframe_to_bars(
         raise ValueError(f"DataFrame missing columns for fields: {missing_fields}")
 
     timestamps = _timestamps_to_utc_ns(
-        pd.to_datetime(df[field_to_col["timestamp"]], errors="coerce")
+        pd.to_datetime(df[field_to_col["timestamp"]], errors="coerce"), tz
     )
 
     opens = df[field_to_col["open"]].fillna(0.0).astype(float).values
@@ -326,7 +330,7 @@ def to_frame(source: Any) -> pd.DataFrame:
 def to_indicator_frame(
     df: pd.DataFrame,
     date_col: Optional[str] = None,
-    tz: str = DEFAULT_INPUT_TIMEZONE,
+    tz: Optional[str] = None,
 ) -> pd.DataFrame:
     """自动预处理 DataFrame, 处理时区并生成标准 ``timestamp`` 列(指标帧).
 
@@ -338,6 +342,7 @@ def to_indicator_frame(
     :param tz: 默认时区(数据为 naive 时假定为此时区)
     :return: 处理后的 DataFrame(含 ``timestamp`` 列)
     """
+    tz = tz or DEFAULT_INPUT_TIMEZONE
     df = df.copy()
 
     if date_col is None:

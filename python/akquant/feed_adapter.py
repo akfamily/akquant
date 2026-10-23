@@ -73,7 +73,7 @@ class BasePandasFeedAdapter:
         data = frame
         if data.empty or not isinstance(data.index, pd.DatetimeIndex):
             return data
-        compare_index = _localize_input_index(data.index)
+        compare_index = _localize_input_index(data.index, timezone)
         start_bound = _normalize_request_boundary(start_time, timezone)
         end_bound = _normalize_request_boundary(end_time, timezone)
         mask = pd.Series(True, index=data.index)
@@ -217,14 +217,16 @@ def _resample_ohlcv_frame(
     return cast(pd.DataFrame, resampled.dropna(how="all"))
 
 
-def _localize_input_index(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+def _localize_input_index(
+    index: pd.DatetimeIndex, timezone: str | None = None
+) -> pd.DatetimeIndex:
     """Normalize input index to a timezone-aware series.
 
-    AKQuant treats naive market data as Asia/Shanghai by default, matching the
-    main DataFrame -> Bar conversion path in ``load_bar_from_df``.
+    Naive market data is interpreted in ``timezone`` (the run's timezone),
+    defaulting to Asia/Shanghai, matching the main DataFrame -> Bar path.
     """
     if index.tz is None:
-        return index.tz_localize(DEFAULT_INPUT_TIMEZONE)
+        return index.tz_localize(timezone or DEFAULT_INPUT_TIMEZONE)
     return index
 
 
@@ -245,14 +247,16 @@ def _session_partition_keys(
     index: pd.DatetimeIndex,
     timezone: str | None,
 ) -> pd.DatetimeIndex:
-    localized = _localize_input_index(index)
+    localized = _localize_input_index(index, timezone)
     if timezone:
         localized = localized.tz_convert(timezone)
     return localized.normalize()
 
 
-def _calendar_partition_keys(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
-    localized = _localize_input_index(index).tz_convert("UTC")
+def _calendar_partition_keys(
+    index: pd.DatetimeIndex, timezone: str | None = None
+) -> pd.DatetimeIndex:
+    localized = _localize_input_index(index, timezone).tz_convert("UTC")
     return localized.normalize()
 
 
@@ -272,7 +276,7 @@ def _session_window_partition_keys(
     timezone: str | None,
     session_windows: list[SessionWindow],
 ) -> tuple[pd.DatetimeIndex, list[bool]]:
-    localized = _localize_input_index(index)
+    localized = _localize_input_index(index, timezone)
     if timezone:
         localized = localized.tz_convert(timezone)
 
@@ -338,7 +342,9 @@ def _replay_ohlcv_frame(
         used_agg = {k: v for k, v in agg_map.items() if k in source.columns}
         if align == "day":
             if day_mode == "calendar":
-                keys = _calendar_partition_keys(pd.DatetimeIndex(source.index))
+                keys = _calendar_partition_keys(
+                    pd.DatetimeIndex(source.index), timezone
+                )
             else:
                 keys = _session_partition_keys(pd.DatetimeIndex(source.index), timezone)
         elif session_windows:

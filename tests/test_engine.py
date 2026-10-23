@@ -1541,7 +1541,7 @@ def test_run_backtest_naive_dataframe_boundaries_follow_configured_timezone() ->
     frame = pd.DataFrame(
         {
             "timestamp": pd.to_datetime(
-                ["2024-01-02 20:00:00", "2024-01-02 21:00:00", "2024-01-02 22:00:00"]
+                ["2024-01-02 12:00:00", "2024-01-02 13:00:00", "2024-01-02 14:00:00"]
             ),
             "symbol": ["BOUNDARY_DF"] * 3,
             "open": [10.0, 11.0, 12.0],

@@ -73,7 +73,8 @@ class BracketStrategy(Strategy):
 def run_example() -> None:
     """运行示例."""
     # 分钟线时间戳落在 A 股连续竞价时段（上午 09:31～11:30、下午 13:01 起），
-    # 跳过午休；非交易时段的行情不会撮合。无时区的时间按 Asia/Shanghai 解释。
+    # 跳过午休；非交易时段的行情不会撮合。
+    # 无时区的时间按 timezone=（默认 Asia/Shanghai）解释。
     day = pd.Timestamp("2024-01-02")
     morning = pd.date_range(day + pd.Timedelta("09:31:00"), periods=120, freq="1min")
     afternoon = pd.date_range(day + pd.Timedelta("13:01:00"), periods=80, freq="1min")

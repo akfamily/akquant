@@ -409,7 +409,7 @@ impl Processor for DataProcessor {
                             <= crate::engine::core::CLOSED_SESSION_WARN_LIMIT
                         {
                             log::warn!(
-                                "标的 {} 在 {} 的行情落在闭市时段，期间不会撮合成交。请检查时间戳：DataFrame 中无时区的时间一律按 Asia/Shanghai 解释（不随 timezone= 改变），其他时区的数据请先 tz_localize 到交易所时区；手工构造的 Bar 与整数时间戳是 UTC 纳秒，请由带时区的时间换算（如 pd.Timestamp(\"2024-01-02 15:00\", tz=\"Asia/Shanghai\").value）；日期不在交易日历内、时刻落在夜间或午休也会如此。如确为夜盘等时段，请用 sessions= 指定时段模板（如 {{\"au\": \"CN_FUTURES_NIGHT_0230\"}}）",
+                                "标的 {} 在 {} 的行情落在闭市时段，期间不会撮合成交。请检查时间戳：DataFrame 中无时区的时间按 timezone= 指定的时区解释（默认 Asia/Shanghai），时区不符时请改 timezone= 或先 tz_localize 到交易所时区；手工构造的 Bar 与整数时间戳是 UTC 纳秒，请由带时区的时间换算（如 pd.Timestamp(\"2024-01-02 15:00\", tz=\"Asia/Shanghai\").value）；日期不在交易日历内、时刻落在夜间或午休也会如此。如确为夜盘等时段，请用 sessions= 指定时段模板（如 {{\"au\": \"CN_FUTURES_NIGHT_0230\"}}）",
                                 event_symbol,
                                 engine.local_datetime_text(timestamp)
                             );

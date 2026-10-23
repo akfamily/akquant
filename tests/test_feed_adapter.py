@@ -180,7 +180,7 @@ def test_feed_slice_time_range_respects_request_timezone_on_naive_input() -> Non
     frame = pd.DataFrame(
         {
             "timestamp": pd.to_datetime(
-                ["2024-01-02 20:00:00", "2024-01-02 21:00:00", "2024-01-02 22:00:00"]
+                ["2024-01-02 12:00:00", "2024-01-02 13:00:00", "2024-01-02 14:00:00"]
             ),
             "open": [10.0, 11.0, 12.0],
             "high": [10.5, 11.5, 12.5],
@@ -202,8 +202,8 @@ def test_feed_slice_time_range_respects_request_timezone_on_naive_input() -> Non
 
     assert len(result) == 2
     assert list(result.index) == [
-        pd.Timestamp("2024-01-02 21:00:00"),
-        pd.Timestamp("2024-01-02 22:00:00"),
+        pd.Timestamp("2024-01-02 13:00:00"),
+        pd.Timestamp("2024-01-02 14:00:00"),
     ]
 
 

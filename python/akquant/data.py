@@ -34,7 +34,7 @@ def _filter_catalog_frame_by_time_range(
         return df
     compare_index = df.index
     if compare_index.tz is None:
-        compare_index = compare_index.tz_localize(DEFAULT_INPUT_TIMEZONE)
+        compare_index = compare_index.tz_localize(timezone or DEFAULT_INPUT_TIMEZONE)
     mask = pd.Series(True, index=df.index)
     if start_time is not None:
         start_ts = _parse_catalog_boundary_timestamp(start_time, timezone)

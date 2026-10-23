@@ -502,7 +502,7 @@ def _filter_datetime_index_frame_by_runtime_window(
         return frame
     compare_index = frame.index
     if compare_index.tz is None:
-        compare_index = compare_index.tz_localize(DEFAULT_INPUT_TIMEZONE)
+        compare_index = compare_index.tz_localize(timezone or DEFAULT_INPUT_TIMEZONE)
     mask = pd.Series(True, index=frame.index)
     if start_time is not None:
         start_ts = _parse_runtime_boundary_timestamp(start_time, timezone)
@@ -936,12 +936,14 @@ def _frame_time_source(df: pd.DataFrame) -> Optional[Tuple[Optional[str], Any]]:
     return None
 
 
-def _to_utc_index(raw: Any) -> pd.DatetimeIndex:
-    """按行情数据口径转 UTC：naive 视为 ``DEFAULT_INPUT_TIMEZONE``."""
+def _to_utc_index(raw: Any, tz: Optional[str] = None) -> pd.DatetimeIndex:
+    """按行情数据口径转 UTC：naive 视为引擎时区 ``tz``（缺省上海）."""
     idx = pd.DatetimeIndex(pd.to_datetime(raw, errors="coerce"))
     if idx.tz is None:
         idx = idx.tz_localize(
-            DEFAULT_INPUT_TIMEZONE, ambiguous="NaT", nonexistent="shift_forward"
+            tz or DEFAULT_INPUT_TIMEZONE,
+            ambiguous="NaT",
+            nonexistent="shift_forward",
         )
     return cast(pd.DatetimeIndex, idx.tz_convert("UTC").as_unit("ns"))
 
@@ -976,7 +978,7 @@ def _rewrite_date_only_frame(
     if source is None:
         return df, False
     source_col, raw = source
-    new_utc = _rewrite_date_only_utc(_to_utc_index(raw), rewriter)
+    new_utc = _rewrite_date_only_utc(_to_utc_index(raw, rewriter.timezone), rewriter)
     if new_utc is None:
         return df, False
     return _replace_frame_times(df, source_col, new_utc), True
@@ -997,7 +999,7 @@ def _rewrite_date_only_multi_symbol_frame(
     if source is None:
         return df, rewritten
     source_col, raw = source
-    utc = _to_utc_index(raw)
+    utc = _to_utc_index(raw, rewriter.timezone)
     merged = utc.tz_localize(None).to_numpy(copy=True)
     symbols_arr = df["symbol"].astype(str).to_numpy()
     for sym in pd.unique(symbols_arr):
@@ -4090,10 +4092,13 @@ def run_backtest(
             )
             for sym, df in adapter_data_map.items():
                 df_prep, date_only = _rewrite_date_only_frame(
-                    to_indicator_frame(df), date_only_rewriter
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
                 )
                 data_map_for_indicators[sym] = df_prep
-                arrays = dataframe_to_arrays(df_prep, symbol=sym)
+                arrays = dataframe_to_arrays(
+                    df_prep, symbol=sym, tz=date_only_rewriter.timezone
+                )
                 interval_starts = _arrays_interval_starts(
                     arrays, date_only=date_only, period_ns=bar_period_ns
                 )
@@ -4159,7 +4164,7 @@ def run_backtest(
                         ts_end = _parse_runtime_boundary_timestamp(end_time, timezone)
                         df_input = df_input[df_input.index <= ts_end.date()]
 
-            df = to_indicator_frame(df_input)
+            df = to_indicator_frame(df_input, tz=date_only_rewriter.timezone)
             # 标的列判据对齐项目统一的别名表(schema.COLUMN_ALIASES)。原先只认英文
             # "symbol", 而 AKShare 的标准输出列名是 "股票代码" —— "从 AKShare 取多
             # 标的数据直接丢进 run_backtest" 这个最自然的用法会静默走进下方的单标的
@@ -4193,7 +4198,7 @@ def run_backtest(
                     df, rewritten_rows = _rewrite_date_only_multi_symbol_frame(
                         df, date_only_rewriter
                     )
-                    arrays = dataframe_to_arrays(df)
+                    arrays = dataframe_to_arrays(df, tz=date_only_rewriter.timezone)
                     if bar_period_ns is None:
                         fixed_time_checker.check_rows(
                             df["symbol"].to_numpy(), arrays[0], ~rewritten_rows
@@ -4238,7 +4243,9 @@ def run_backtest(
                 )
                 df, date_only = _rewrite_date_only_frame(df, date_only_rewriter)
                 data_map_for_indicators[target_symbol] = df
-                arrays = dataframe_to_arrays(df, symbol=target_symbol)
+                arrays = dataframe_to_arrays(
+                    df, symbol=target_symbol, tz=date_only_rewriter.timezone
+                )
                 interval_starts = _arrays_interval_starts(
                     arrays, date_only=date_only, period_ns=bar_period_ns
                 )
@@ -4296,10 +4303,13 @@ def run_backtest(
                     )
 
                 df_prep, date_only = _rewrite_date_only_frame(
-                    to_indicator_frame(df), date_only_rewriter
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
                 )
                 data_map_for_indicators[sym] = df_prep
-                arrays = dataframe_to_arrays(df_prep, symbol=sym)
+                arrays = dataframe_to_arrays(
+                    df_prep, symbol=sym, tz=date_only_rewriter.timezone
+                )
                 interval_starts = _arrays_interval_starts(
                     arrays, date_only=date_only, period_ns=bar_period_ns
                 )
@@ -4405,10 +4415,13 @@ def run_backtest(
 
             if not df.empty:
                 df, date_only = _rewrite_date_only_frame(
-                    to_indicator_frame(df), date_only_rewriter
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
                 )
                 data_map_for_indicators[sym] = df
-                arrays = dataframe_to_arrays(df, symbol=sym)
+                arrays = dataframe_to_arrays(
+                    df, symbol=sym, tz=date_only_rewriter.timezone
+                )
                 interval_starts = _arrays_interval_starts(
                     arrays, date_only=date_only, period_ns=bar_period_ns
                 )
@@ -5976,10 +5989,13 @@ def run_from_checkpoint(
         for sym, df in adapter_data_map.items():
             if not df.empty:
                 df_prep, date_only = _rewrite_date_only_frame(
-                    to_indicator_frame(df), date_only_rewriter
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
                 )
                 data_map_for_indicators[sym] = df_prep
-                arrays = dataframe_to_arrays(df_prep, symbol=sym)
+                arrays = dataframe_to_arrays(
+                    df_prep, symbol=sym, tz=date_only_rewriter.timezone
+                )
                 interval_starts = _arrays_interval_starts(
                     arrays, date_only=date_only, period_ns=bar_period_ns
                 )
@@ -6030,7 +6046,7 @@ def run_from_checkpoint(
                     timezone_name,
                 )
 
-            df_prepared = to_indicator_frame(df_input)
+            df_prepared = to_indicator_frame(df_input, tz=date_only_rewriter.timezone)
             if "symbol" in df_prepared.columns:
                 df_prepared = df_prepared.copy()
                 df_prepared["symbol"] = df_prepared["symbol"].astype(str)
@@ -6118,10 +6134,13 @@ def run_from_checkpoint(
         for sym, df in data_map.items():
             if not df.empty:
                 df, date_only = _rewrite_date_only_frame(
-                    to_indicator_frame(df), date_only_rewriter
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
                 )
                 data_map_for_indicators[sym] = df
-                arrays = dataframe_to_arrays(df, symbol=sym)
+                arrays = dataframe_to_arrays(
+                    df, symbol=sym, tz=date_only_rewriter.timezone
+                )
                 interval_starts = _arrays_interval_starts(
                     arrays, date_only=date_only, period_ns=bar_period_ns
                 )
