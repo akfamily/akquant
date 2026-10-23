@@ -34,6 +34,9 @@ use crate::statistics::StatisticsManager;
 
 use super::state::SharedState;
 
+/// “行情落在闭市时段”逐品种告警的全局上限；超出的品种在回测结束时汇总一条。
+pub(crate) const CLOSED_SESSION_WARN_LIMIT: usize = 20;
+
 /// 用户配置的交易时段表与交易日历（`configure_sessions` 写入，随存档保存）。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SessionConfig {
@@ -114,8 +117,11 @@ pub struct Engine {
     /// 在非连续竞价时段创建的在途订单 → 创建时间片的品种时段（日终 Day 单豁免用；
     /// 日终结算后只保留仍在途的订单）。
     pub(crate) order_creation_sessions: HashMap<String, crate::model::TradingSession>,
-    /// 已告警过“行情落在闭市时段”的品种（每个品种只告警一次）。
+    /// 出现过“行情落在闭市时段”的品种。每个品种最多告警一次，全局最多
+    /// [`CLOSED_SESSION_WARN_LIMIT`] 条，其余在回测结束时汇总一条。
     pub(crate) closed_session_warned: HashSet<String>,
+    /// 落在闭市时段的行情事件总数（回测结束汇总用）。
+    pub(crate) closed_session_event_count: u64,
     #[pyo3(get, set)]
     pub risk_manager: RiskManager,
     pub(crate) timezone_offset: i32,

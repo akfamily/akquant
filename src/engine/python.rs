@@ -559,6 +559,7 @@ impl Engine {
             last_interval_session: None,
             order_creation_sessions: HashMap::new(),
             closed_session_warned: HashSet::new(),
+            closed_session_event_count: 0,
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8
             timezone_name: Some("Asia/Shanghai".to_string()),
@@ -1630,6 +1631,18 @@ impl Engine {
                 target: "akquant::engine::symbol_whitelist",
                 "symbol_whitelist 已在引擎层丢弃 {} 个不在白名单内的行情事件",
                 self.whitelist_filtered_event_count
+            );
+        }
+
+        // 闭市时段告警全局限 CLOSED_SESSION_WARN_LIMIT 条(见 data.rs), 超出的在这里汇总。
+        let closed_symbols = self.closed_session_warned.len();
+        if closed_symbols > super::core::CLOSED_SESSION_WARN_LIMIT {
+            log::warn!(
+                "闭市时段行情汇总：本次回测共 {} 个标的、{} 条行情落在闭市时段，期间不会撮合成交；只逐一告警了前 {} 个标的，其余 {} 个未逐一告警。原因与改法见上面的闭市时段告警（检查时间戳时区，或用 sessions= 指定时段模板）",
+                closed_symbols,
+                self.closed_session_event_count,
+                super::core::CLOSED_SESSION_WARN_LIMIT,
+                closed_symbols - super::core::CLOSED_SESSION_WARN_LIMIT
             );
         }
 

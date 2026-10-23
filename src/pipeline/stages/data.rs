@@ -397,17 +397,24 @@ impl Processor for DataProcessor {
                     _ => ("", None),
                 };
                 let session = engine.event_session(event_symbol, interval_start, timestamp)?;
-                if session == TradingSession::Closed
-                    && !engine.closed_session_warned.contains(event_symbol)
-                {
-                    engine
-                        .closed_session_warned
-                        .insert(event_symbol.to_string());
-                    log::warn!(
-                        "标的 {} 在 {} 的行情落在闭市时段，期间不会撮合成交。请检查时间戳：DataFrame 中无时区的时间一律按 Asia/Shanghai 解释（不随 timezone= 改变），其他时区的数据请先 tz_localize 到交易所时区；手工构造的 Bar 与整数时间戳是 UTC 纳秒，请由带时区的时间换算（如 pd.Timestamp(\"2024-01-02 15:00\", tz=\"Asia/Shanghai\").value）；日期不在交易日历内、时刻落在夜间或午休也会如此。如确为夜盘等时段，请用 sessions= 指定时段模板（如 {{\"au\": \"CN_FUTURES_NIGHT_0230\"}}）",
-                        event_symbol,
-                        engine.local_datetime_text(timestamp)
-                    );
+                // 每个品种最多告警一次, 全局最多 CLOSED_SESSION_WARN_LIMIT 条; 其余品种
+                // 只记入集合, 由 Engine::run 结束时汇总一条(多品种回测不刷屏)。
+                if session == TradingSession::Closed {
+                    engine.closed_session_event_count += 1;
+                    if !engine.closed_session_warned.contains(event_symbol) {
+                        engine
+                            .closed_session_warned
+                            .insert(event_symbol.to_string());
+                        if engine.closed_session_warned.len()
+                            <= crate::engine::core::CLOSED_SESSION_WARN_LIMIT
+                        {
+                            log::warn!(
+                                "标的 {} 在 {} 的行情落在闭市时段，期间不会撮合成交。请检查时间戳：DataFrame 中无时区的时间一律按 Asia/Shanghai 解释（不随 timezone= 改变），其他时区的数据请先 tz_localize 到交易所时区；手工构造的 Bar 与整数时间戳是 UTC 纳秒，请由带时区的时间换算（如 pd.Timestamp(\"2024-01-02 15:00\", tz=\"Asia/Shanghai\").value）；日期不在交易日历内、时刻落在夜间或午休也会如此。如确为夜盘等时段，请用 sessions= 指定时段模板（如 {{\"au\": \"CN_FUTURES_NIGHT_0230\"}}）",
+                                event_symbol,
+                                engine.local_datetime_text(timestamp)
+                            );
+                        }
+                    }
                 }
                 match engine.slice_sessions.get_mut(event_symbol) {
                     Some(slot) => *slot = session,

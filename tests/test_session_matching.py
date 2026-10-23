@@ -1165,3 +1165,37 @@ def test_out_of_calendar_timer_session_matches_matching() -> None:
     assert strategy.sessions == ["Continuous"]
     # 撮合按连续竞价：定时器时刻按最新价成交。
     assert _fills(r) == [("01-04 10:00", 11.0)]
+
+
+def test_closed_session_warnings_capped_with_summary(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """闭市时段告警全局最多 20 条，超出的在回测结束时汇总一条（总条数与品种数）."""
+    symbols = [f"{600000 + i}.SH" for i in range(25)]
+    df = pd.concat(
+        [
+            _minute_frame(
+                ["2024-01-02 10:00", "2024-01-02 20:00", "2024-01-02 20:01"],
+                [10.0] * 3,
+                symbol=s,
+            )
+            for s in symbols
+        ],
+        ignore_index=True,
+    )
+    with caplog.at_level("WARNING", logger="akquant"):
+        run_backtest(
+            strategy=_SessionProbe,
+            data=df,
+            symbols=symbols,
+            initial_cash=1e5,
+            show_progress=False,
+        )
+    closed = [r.getMessage() for r in caplog.records if "闭市时段" in r.getMessage()]
+    per_symbol = [m for m in closed if "期间不会撮合成交。请检查时间戳" in m]
+    summaries = [m for m in closed if "汇总" in m]
+    assert len(per_symbol) == 20
+    assert len(summaries) == 1
+    # 25 个品种各 2 条闭市行情
+    assert "25 个标的" in summaries[0]
+    assert "50 条行情" in summaries[0]
