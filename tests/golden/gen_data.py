@@ -171,7 +171,9 @@ def gen_cancel_data() -> None:
     Flat prices with ample volume: fills are driven purely by the strategy's
     order/cancel sequence, not by price moves.
     """
-    dates = pd.date_range("2024-01-01", periods=6, freq="D", tz="Asia/Shanghai")
+    # 6 个连续交易日（01-02～01-09，跳过周末）：最后一根 bar 用于撮合第 5 根
+    # bar 上下的平仓单，不能落在周六（非交易日行情不撮合）。
+    dates = pd.bdate_range("2024-01-02", periods=6, tz="Asia/Shanghai")
 
     data = []
     for i in range(6):

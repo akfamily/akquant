@@ -35,3 +35,9 @@ golden 套件复跑结果为 `2 passed`，四个基线场景（`futures_margin`/
 ## 2026-09-29: `__engine_rule_version__` 1.7.0 → 1.7.1（期权/可转债一期遗留项）
 
 规则版本 1.7.0 → 1.7.1，golden 数值不变，未重新生成基线（`metrics.json` 中 `engine_rule_version` 仍为 1.7.0）。四个场景均不涉及按品种滑点、checkpoint 续跑、到期平仓或保证金账户期货到期，复跑 `pytest tests/golden/test_golden.py` 仍 `2 passed`。
+
+## 2026-10-23: 交易时段/交易日重构阶段 3（按真实时段撮合）
+
+`order_cancel` 的数据原为 2024-01-01～01-06 逐日（含周六 01-06）。阶段 3 起非交易日行情落在闭市时段不撮合，第 5 根 bar 上下的平仓卖单原本靠周六那根 bar 成交，现在保持 `new`（filled 3→2、new 0→1）。这是夹具日期落在非交易日（类别 (e)），不是引擎回归，因此改夹具而非接受弱化的基线：`gen_data.py::gen_cancel_data` 改为 `pd.bdate_range("2024-01-02", periods=6)`（01-02～01-09 六个交易日），只重新生成 `order_cancel.parquet` 及其 `.sha256`，只重新生成 `baselines/order_cancel/`。
+
+逐文件核对：把新旧日期按 bar 序号对应后，订单（方向、类型、数量、成交量、限价、均价、状态、TIF、下单/更新所在 bar）、权益曲线数值、两笔交易的开平仓 bar 全部一致；差异只有时间戳（旧基线由 0.3.64 生成，只有日期的时间戳尚未改写到 15:00）、订单 UUID 与行序、`metrics.json` 的版本字段（1.7.0/0.3.64 → 1.7.2/0.3.71）。阶段 2 末（`4910acc1`）的 release 构建在新夹具上与阶段 3 逐笔一致。其余三个场景未变，基线不动。
