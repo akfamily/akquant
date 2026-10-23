@@ -7,6 +7,24 @@ use chrono_tz::Tz;
 /// 任何春季跳变缺口, 通常缺口只有 1 小时, 极少数地区 30 分钟)。
 const MAX_DST_GAP_PROBE_MINUTES: i64 = 360;
 
+/// 两个 IANA 时区在 1990～2050 年每 15 天采样的 UTC 偏移是否全部相同(别名判等)。
+fn tz_equivalent(a: Tz, b: Tz) -> bool {
+    use chrono::Offset;
+    const STEP_SECS: i64 = 15 * 86_400;
+    let (start, end) = (631_152_000_i64, 2_524_608_000_i64);
+    let mut t = start;
+    while t < end {
+        let Some(utc) = Utc.timestamp_opt(t, 0).single() else {
+            return false;
+        };
+        if utc.with_timezone(&a).offset().fix() != utc.with_timezone(&b).offset().fix() {
+            return false;
+        }
+        t += STEP_SECS;
+    }
+    true
+}
+
 /// 引擎时区: 有 IANA 名称用名称(随 DST), 否则用固定偏移秒数。
 #[derive(Debug, Clone, Default)]
 pub(crate) struct LocalClock {
@@ -25,7 +43,9 @@ impl LocalClock {
     /// 两个时钟是否表示同一时区：都有 IANA 名称时比名称，都没有时比固定偏移。
     pub(crate) fn same_zone(&self, other: &LocalClock) -> bool {
         match (&self.tz, &other.tz) {
-            (Some(a), Some(b)) => a == b,
+            // 名称不同也可能是同一区域的 IANA 别名(Asia/Shanghai 与 Asia/Chongqing、PRC):
+            // chrono_tz 把它们解析为不同的 Tz 值, 这里再按偏移历史比较。
+            (Some(a), Some(b)) => a == b || tz_equivalent(*a, *b),
             (None, None) => self.offset_secs == other.offset_secs,
             _ => false,
         }
@@ -119,5 +139,21 @@ impl LocalClock {
         let ceiled = ((secs_of_day + period_secs - 1) / period_secs) * period_secs;
         let midnight = local.date().and_hms_opt(0, 0, 0).expect("midnight");
         self.from_local(midnight + chrono::Duration::seconds(ceiled))
+    }
+}
+
+#[cfg(test)]
+mod same_zone_tests {
+    use super::LocalClock;
+
+    #[test]
+    fn iana_aliases_of_same_zone_are_equal() {
+        let a = LocalClock::new(Some("Asia/Shanghai"), 0);
+        for alias in ["Asia/Chongqing", "PRC", "Asia/Shanghai"] {
+            assert!(a.same_zone(&LocalClock::new(Some(alias), 0)), "{alias}");
+        }
+        assert!(!a.same_zone(&LocalClock::new(Some("Asia/Tokyo"), 0)));
+        assert!(!a.same_zone(&LocalClock::new(Some("America/New_York"), 0)));
+        assert!(!a.same_zone(&LocalClock::new(None, 8 * 3600)));
     }
 }

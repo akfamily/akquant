@@ -1502,6 +1502,7 @@ impl StrategyContext {
     /// 沿用（与 ``subscribe_bars`` 同一时段表）；无解析器时为 None。
     ///
     /// :return: ``(SessionResolver, {symbol: AssetType})`` 或 None
+    #[pyo3(name = "_window_session_context")]
     pub fn window_session_context(
         &self,
     ) -> Option<(

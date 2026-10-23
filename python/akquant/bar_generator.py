@@ -77,7 +77,10 @@ class BarGenerator:
             品种按股票。在运行中的策略里创建(回调是策略方法, 或在策略方法内构造)
             且 ``timezone``/``sessions``/``trading_calendar``/``asset_type`` 都
             不传时, 沿用引擎的时区、时段表与合约资产类型, 与 ``subscribe_bars``
-            的窗口一致(在第一根 bar 到达时绑定)。
+            的窗口一致(在第一根 bar 到达时绑定)。沿用要求在策略方法内直接构造
+            ``BarGenerator``(回调是策略的绑定方法, 或构造处的调用帧里有策略 ``self``);
+            在子类里经 ``super().__init__`` 间接构造、且回调不是策略方法时找不到所属
+            策略, 不会沿用, 此时请显式传 ``timezone``/``sessions``/``asset_type``。
         :param base_interval_min: 喂入 bar 的周期(分钟)。给定(或 bar 带
             ``interval_start``)时, bar 区间终点到达窗口标签即闭合回调; 不给时等
             下一根落入新窗口的 bar 到达才闭合(收尾靠 :meth:`flush`)。
@@ -138,7 +141,7 @@ class BarGenerator:
         owner_ref, self._owner = self._owner, None
         strategy = owner_ref() if owner_ref is not None else None
         ctx = getattr(strategy, "ctx", None)
-        getter = getattr(ctx, "window_session_context", None)
+        getter = getattr(ctx, "_window_session_context", None)
         context = getter() if callable(getter) else None
         if context is None:
             return

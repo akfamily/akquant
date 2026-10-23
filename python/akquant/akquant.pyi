@@ -3121,7 +3121,7 @@ class StrategyContext:
         """
         ...
 
-    def window_session_context(
+    def _window_session_context(
         self,
     ) -> typing.Optional[tuple[SessionResolver, dict[str, AssetType]]]:
         r"""

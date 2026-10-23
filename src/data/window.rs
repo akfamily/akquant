@@ -27,6 +27,9 @@ use crate::model::{AssetType, Bar};
 
 const NS_PER_SEC: i64 = 1_000_000_000;
 
+/// "bar 落在时段表之外"告警全局最多逐条输出的品种数, 其余在 flush 时汇总。
+const OUT_OF_BLOCK_WARN_LIMIT: usize = 20;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowFreq {
     Minutes(u32),
@@ -302,6 +305,8 @@ pub struct WindowAggregator {
     warn_out_of_block: bool,
     /// 已告警过"落在时段表之外"的品种(每个品种只告警一次)。
     out_of_block_warned: HashSet<String>,
+    /// 上次 flush 汇总时的受影响品种数(同一批不重复汇总)。
+    out_of_block_summarized: usize,
     /// 基础周期未知且 bar 不带区间(只能延迟闭合)时是否告警一次(引擎打开)。
     warn_deferred_close: bool,
     deferred_close_warned: bool,
@@ -393,10 +398,14 @@ impl WindowAggregator {
             .any(|s| s.matches(symbol) && s.sessions.is_empty());
         if uses_schedule && matches!(self.block_for(symbol, point), Some(None)) {
             self.out_of_block_warned.insert(symbol.to_string());
-            log::warn!(
-                "标的 {symbol} 的 bar 落在时段表之外，窗口按时钟切分（首次：{}）；期货/期权请传 asset_type= 或 sessions=（如 {{\"rb\": \"CN_FUTURES_NIGHT_23\"}}），手写时段可用 session_windows=",
-                self.clock.to_local(ts).format("%Y-%m-%d %H:%M:%S")
-            );
+            // 全局最多逐条告警 OUT_OF_BLOCK_WARN_LIMIT 个品种, 其余只记入集合,
+            // 由 flush 汇总一条(多品种不刷屏)。
+            if self.out_of_block_warned.len() <= OUT_OF_BLOCK_WARN_LIMIT {
+                log::warn!(
+                    "标的 {symbol} 的 bar 落在时段表之外，窗口按时钟切分（首次：{}）；期货/期权请传 asset_type= 或 sessions=（如 {{\"rb\": \"CN_FUTURES_NIGHT_23\"}}），手写时段可用 session_windows=",
+                    self.clock.to_local(ts).format("%Y-%m-%d %H:%M:%S")
+                );
+            }
         }
     }
 
@@ -762,6 +771,14 @@ impl WindowAggregator {
     /// 闭合全部在形成窗口(会话结束)。按 (symbol, 周期, freq_label) 排序;
     /// freq_label 作 tie-break 原因同 [`Self::update`]。
     pub fn flush(&mut self) -> Vec<Bar> {
+        let affected = self.out_of_block_warned.len();
+        if affected > OUT_OF_BLOCK_WARN_LIMIT && affected != self.out_of_block_summarized {
+            self.out_of_block_summarized = affected;
+            log::warn!(
+                "时段表之外的 bar 汇总：共 {affected} 个标的的 bar 落在时段表之外，窗口按时钟切分；只逐一告警了前 {OUT_OF_BLOCK_WARN_LIMIT} 个标的，其余 {} 个未逐一告警。改法见上面的告警（传 asset_type= 或 sessions=，或用 session_windows= 手写时段）",
+                affected - OUT_OF_BLOCK_WARN_LIMIT
+            );
+        }
         let mut out: Vec<(String, u32, String, Bar)> = Vec::new();
         for ((symbol, label), st) in self.states.drain() {
             out.push((
