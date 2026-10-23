@@ -5,6 +5,7 @@ use super::types::{
 use chrono::{SecondsFormat, TimeZone, Utc};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
@@ -222,9 +223,27 @@ pub struct Order {
     pub reduce_only: bool,
 }
 
+/// pickle 还原函数: 由 `Order.__reduce__` 引用.
+#[pyfunction]
+pub fn _restore_order(data: &[u8]) -> PyResult<Order> {
+    rmp_serde::from_slice(data)
+        .map_err(|e| PyValueError::new_err(format!("Order 反序列化失败: {e}")))
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl Order {
+    /// pickle 支持: 以具名 MessagePack 编码还原.
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyBytes>,))> {
+        let data = rmp_serde::to_vec_named(self)
+            .map_err(|e| PyValueError::new_err(format!("Order 序列化失败: {e}")))?;
+        let restore = py
+            .import("akquant.akquant")?
+            .getattr("_restore_order")?
+            .unbind();
+        Ok((restore, (PyBytes::new(py, &data).unbind(),)))
+    }
+
     /// 创建订单.
     ///
     /// :param id: 订单ID
@@ -541,9 +560,27 @@ pub struct Trade {
     pub owner_strategy_id: Option<String>,
 }
 
+/// pickle 还原函数: 由 `Trade.__reduce__` 引用.
+#[pyfunction]
+pub fn _restore_trade(data: &[u8]) -> PyResult<Trade> {
+    rmp_serde::from_slice(data)
+        .map_err(|e| PyValueError::new_err(format!("Trade 反序列化失败: {e}")))
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl Trade {
+    /// pickle 支持: 以具名 MessagePack 编码还原.
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyBytes>,))> {
+        let data = rmp_serde::to_vec_named(self)
+            .map_err(|e| PyValueError::new_err(format!("Trade 序列化失败: {e}")))?;
+        let restore = py
+            .import("akquant.akquant")?
+            .getattr("_restore_trade")?
+            .unbind();
+        Ok((restore, (PyBytes::new(py, &data).unbind(),)))
+    }
+
     /// 创建成交记录.
     ///
     /// :param id: 成交ID
