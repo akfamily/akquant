@@ -1590,3 +1590,76 @@ def test_day_order_expiry_emits_order_stream_event() -> None:
     assert expired[0]["payload"]["order_id"]
     local = pd.Timestamp(int(expired[0]["ts"]), tz="UTC").tz_convert("Asia/Shanghai")
     assert local == pd.Timestamp("2024-01-03 15:00", tz="Asia/Shanghai")
+
+
+class _BorrowOnce(Strategy):
+    """首根 bar 融资买入 150 股（借入约 5000），之后不动。模块顶层定义以便 pickle."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ordered = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.ordered:
+            self.ordered = True
+            self.buy(bar.symbol, 150)
+
+
+def test_resume_restores_risk_config_and_timezone(tmp_path: Any) -> None:
+    """融资账户 + 纽约时区：续跑不传 risk_config/timezone 时沿用存档值.
+
+    利息与连续跑一致。
+    """
+    from akquant.config import RiskConfig
+
+    def frame(dates: List[str]) -> pd.DataFrame:
+        idx = pd.to_datetime([f"{d} 10:00" for d in dates]).tz_localize(
+            "America/New_York"
+        )
+        return pd.DataFrame(
+            {
+                "timestamp": idx,
+                "symbol": "AAPL",
+                "open": 100.0,
+                "high": 100.0,
+                "low": 100.0,
+                "close": 100.0,
+                "volume": 1e6,
+            }
+        )
+
+    kw: Dict[str, Any] = dict(
+        symbols="AAPL",
+        show_progress=False,
+        fill_policy=aq.CurrentClose(),
+        lot_size=1,
+        timezone="America/New_York",
+        risk_config=RiskConfig(
+            account_mode="margin",
+            initial_margin_ratio=0.5,
+            financing_rate_annual=36.5,
+            borrow_rate_annual=0.0,
+            allow_force_liquidation=False,
+        ),
+    )
+    days = ["2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08", "2024-01-09"]
+    full = run_backtest(
+        data=frame(days), strategy=_BorrowOnce, initial_cash=10000.0, **kw
+    )
+    part1 = run_backtest(
+        data=frame(days[:3]), strategy=_BorrowOnce, initial_cash=10000.0, **kw
+    )
+    ckpt = tmp_path / "c.pkl"
+    assert part1.engine is not None
+    save_checkpoint(part1.engine, part1.strategy, str(ckpt), config=part1)
+    part2 = run_from_checkpoint(
+        checkpoint_path=str(ckpt),
+        data=frame(days[3:]),
+        symbols="AAPL",
+        show_progress=False,
+    )
+    assert part2.engine is not None and full.engine is not None
+    assert float(part2.engine.portfolio.cash) == pytest.approx(
+        float(full.engine.portfolio.cash), abs=1e-6
+    )
+    assert part2.engine.current_trading_day == dt.date(2024, 1, 9)

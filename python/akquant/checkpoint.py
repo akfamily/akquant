@@ -65,7 +65,9 @@ def save_checkpoint(
     :param config: 可选。已解析运行时配置来源，用于热启动自动继承滑点/费率/
         fill_policy 等 (issue #282)。可传 BacktestResult (自动读取
         result.resolved_config) 或直接传配置 dict。为 None 时快照不含配置，
-        热启动降级到逐项推导 (向后兼容)。
+        热启动降级到逐项推导 (向后兼容)。续跑要继承风控配置 (RiskConfig) 与
+        时区，须传 ``config=result``：引擎状态本身不含这两项，不传时续跑落回
+        默认的现金账户与 Asia/Shanghai。
     """
     # 1. Get binary state from Rust Engine
     # Note: engine.get_state_bytes returns bytes directly in Python

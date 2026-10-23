@@ -4,7 +4,7 @@ import os
 import re
 import sys
 import warnings
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -585,6 +585,107 @@ def _merge_saved_session_config(
             "、".join(differs),
         )
     return sessions, trading_calendar
+
+
+def _merge_risk_config(
+    base: Optional[RiskConfig],
+    risk_config: Optional[Union[Dict[str, Any], RiskConfig]],
+    logger: Any,
+    log_extra: Dict[str, Any],
+) -> Optional[RiskConfig]:
+    """在 ``base`` 上叠加 ``risk_config``（对象取非 None 字段，dict 按键覆盖）.
+
+    ``base`` 会被原地修改（与历史行为一致）；``base`` 为 None 且有覆盖时从
+    ``RiskConfig()`` 起步。
+    """
+    current = base
+    if risk_config:
+        if current is None:
+            current = RiskConfig()
+        if isinstance(risk_config, RiskConfig):
+            for field in risk_config.__dataclass_fields__:
+                val = getattr(risk_config, field)
+                if val is not None:
+                    setattr(current, field, val)
+        elif isinstance(risk_config, dict):
+            for k, v in risk_config.items():
+                if hasattr(current, k):
+                    setattr(current, k, v)
+                else:
+                    logger.warning("Unknown risk config key: %s", k, extra=log_extra)
+    return current
+
+
+def _risk_config_snapshot(
+    risk_config: Optional[RiskConfig],
+) -> Optional[Dict[str, Any]]:
+    """已应用风控配置的可序列化快照；未配置风控时为 None."""
+    if risk_config is None:
+        return None
+    return asdict(risk_config)
+
+
+def _restore_risk_config(saved: Any) -> Optional[RiskConfig]:
+    """用存档快照重建 ``RiskConfig``；快照缺失或不是 dict 时为 None（旧存档）."""
+    if not isinstance(saved, dict):
+        return None
+    known = {f.name for f in fields(RiskConfig)}
+    return RiskConfig(**{k: v for k, v in saved.items() if k in known})
+
+
+def _resolve_resume_timezone(
+    explicit: Any, saved_config: Dict[str, Any], logger: Any
+) -> str:
+    """续跑的时区：未传沿用存档；传入且与存档不一致时以传入为准并告警一次."""
+    saved = saved_config.get("timezone")
+    saved_name = str(saved) if saved else None
+    if not explicit:
+        return saved_name or DEFAULT_TIMEZONE
+    name = str(explicit)
+    if saved_name is not None and name != saved_name:
+        logger.warning(
+            "run_from_checkpoint 传入的 timezone=%r 与存档的 %r 不一致，以本次传入为准"
+            "（续跑段的交易日划分、默认时段表与收盘结算时刻可能与存档前不同；"
+            "要沿用存档请不传 timezone）",
+            name,
+            saved_name,
+        )
+    return name
+
+
+def _resolve_resume_risk_config(
+    config: Optional[BacktestConfig],
+    risk_config: Optional[Union[Dict[str, Any], RiskConfig]],
+    saved_config: Dict[str, Any],
+    logger: Any,
+    log_extra: Dict[str, Any],
+) -> Optional[RiskConfig]:
+    """续跑的风控配置.
+
+    以 ``config.strategy_config.risk``（给了的话）或存档快照为底，再叠加
+    ``risk_config``，叠加规则同 :func:`run_backtest`。都没有时为 None（旧存档或
+    存档时未传 ``config=``，保持引擎默认）。结果与存档不一致时告警一次。
+    """
+    saved_dict = saved_config.get("risk_config")
+    base: Optional[RiskConfig] = None
+    if config and config.strategy_config and config.strategy_config.risk:
+        base = config.strategy_config.risk
+    else:
+        base = _restore_risk_config(saved_dict)
+    resolved = _merge_risk_config(base, risk_config, logger, log_extra)
+    if (
+        isinstance(saved_dict, dict)
+        and resolved is not None
+        and _risk_config_snapshot(resolved)
+        != _risk_config_snapshot(_restore_risk_config(saved_dict))
+    ):
+        logger.warning(
+            "run_from_checkpoint 传入的风控配置（risk_config/config）与存档不一致，"
+            "以本次传入为准（账户模式、融资融券利率、强平开关等可能与存档前不同；"
+            "要沿用存档请不传 risk_config）",
+            extra=log_extra,
+        )
+    return resolved
 
 
 def _saved_session_asset_types(strategy_instance: Any) -> Dict[str, Any]:
@@ -1369,6 +1470,7 @@ def _build_resolved_backtest_config(
     timezone: str,
     history_depth: int,
     resolved_policy: Optional[ResolvedExecutionPolicy],
+    risk_config: Optional[RiskConfig] = None,
 ) -> Dict[str, Any]:
     """Snapshot-friendly resolved runtime config (issue #282).
 
@@ -1385,6 +1487,7 @@ def _build_resolved_backtest_config(
         "t_plus_one": bool(t_plus_one),
         "timezone": str(timezone),
         "history_depth": int(history_depth),
+        "risk_config": _risk_config_snapshot(risk_config),
     }
     if resolved_policy is not None:
         resolved["fill_policy"] = {
@@ -4957,36 +5060,16 @@ def run_backtest(
         current_risk_config = config.strategy_config.risk
 
     # 2. If risk_config (dict or object) is provided, merge/override
-    if risk_config:
-        if current_risk_config is None:
-            current_risk_config = RiskConfig()
-
-        if isinstance(risk_config, RiskConfig):
-            # If explicit RiskConfig object provided, it takes precedence over
-            # partial fields?
-            # Or should we merge?
-            # Strategy: If it's a full object, use it as base, but this might discard
-            # config.risk
-            # Better strategy: Copy attributes from override to current
-            for field in risk_config.__dataclass_fields__:
-                val = getattr(risk_config, field)
-                if val is not None:
-                    setattr(current_risk_config, field, val)
-        elif isinstance(risk_config, dict):
-            # Update fields from dict
-            for k, v in risk_config.items():
-                if hasattr(current_risk_config, k):
-                    setattr(current_risk_config, k, v)
-                else:
-                    logger.warning(
-                        "Unknown risk config key: %s",
-                        k,
-                        extra=_build_backtest_log_extra(
-                            phase="risk",
-                            strategy_id=effective_strategy_id,
-                            slot=effective_strategy_id,
-                        ),
-                    )
+    current_risk_config = _merge_risk_config(
+        current_risk_config,
+        risk_config,
+        logger,
+        _build_backtest_log_extra(
+            phase="risk",
+            strategy_id=effective_strategy_id,
+            slot=effective_strategy_id,
+        ),
+    )
 
     # 3. Apply if exists
     if current_risk_config:
@@ -5582,6 +5665,7 @@ def run_backtest(
         timezone=timezone,
         history_depth=history_depth,
         resolved_policy=resolved_policy,
+        risk_config=current_risk_config,
     )
     analyzer_outputs: Dict[str, Dict[str, Any]] = {}
     if analyzer_manager.plugins:
@@ -5655,7 +5739,9 @@ def run_from_checkpoint(
         配置，传入且与存档不一致时以传入为准并告警
     :param trading_calendar: 同 :func:`run_backtest` 的 ``trading_calendar``；
         不传时沿用存档，规则同 ``sessions``
-    :param kwargs: 其他引擎配置参数 (如 commission_rate, stamp_tax_rate, t_plus_one)
+    :param kwargs: 其他引擎配置参数 (如 commission_rate, stamp_tax_rate, t_plus_one)。
+        ``timezone`` 与 ``risk_config`` 不传时沿用存档（需存档时传了
+        ``config=result``），传入且与存档不一致时以传入为准并告警
     """
     import os
 
@@ -5801,6 +5887,18 @@ def run_from_checkpoint(
     # 先载入存档、后接数据源: 只有日期数据的改写要用存档里已有的合约算会话级收盘
     logger.info(f"Resuming from checkpoint: {checkpoint_path}")
     engine, strategy_instance = load_checkpoint(checkpoint_path, None)
+    # 快照持久化的运行时配置 (issue #282)；旧快照为 None，走逐项推导降级路径
+    restored_backtest_config = getattr(
+        strategy_instance, "_warm_start_backtest_config", None
+    )
+    if not isinstance(restored_backtest_config, dict):
+        restored_backtest_config = {}
+    # 时区先于时段解析、日期数据改写与数据加载确定：未传沿用存档（引擎状态不含时区）
+    timezone_name = _resolve_resume_timezone(
+        kwargs.get("timezone"), restored_backtest_config, logger
+    )
+    if hasattr(engine, "set_timezone_name"):
+        cast(Any, engine).set_timezone_name(timezone_name)
     session_map, calendar_days = _merge_saved_session_config(
         engine, session_map, calendar_days, logger
     )
@@ -6033,12 +6131,6 @@ def run_from_checkpoint(
     if feed:
         engine.add_data(feed)
     engine.configure_sessions(session_map, calendar_days)
-    # 快照持久化的运行时配置 (issue #282)；旧快照为 None，走逐项推导降级路径
-    restored_backtest_config = getattr(
-        strategy_instance, "_warm_start_backtest_config", None
-    )
-    if not isinstance(restored_backtest_config, dict):
-        restored_backtest_config = {}
     restored_strategy_id = str(
         getattr(strategy_instance, "_owner_strategy_id", "") or ""
     ).strip()
@@ -6433,6 +6525,22 @@ def run_from_checkpoint(
         cast(Any, engine).set_strategy_risk_cooldown_bars(normalized_cooldown_bars)
 
     all_strategy_instances = [strategy_instance, *slot_strategy_instances.values()]
+    for current_strategy in all_strategy_instances:
+        current_strategy.timezone = timezone_name
+    # 风控配置：引擎状态不含风控，未传时用存档快照重建并按 run_backtest 方式应用
+    resume_risk_config = _resolve_resume_risk_config(
+        config,
+        cast(Optional[Union[Dict[str, Any], RiskConfig]], kwargs.get("risk_config")),
+        restored_backtest_config,
+        logger,
+        _build_backtest_log_extra(
+            phase="risk",
+            strategy_id=effective_strategy_id,
+            slot=effective_strategy_id,
+        ),
+    )
+    if resume_risk_config is not None:
+        apply_risk_config(engine, resume_risk_config)
     snapshot_features = getattr(strategy_instance, "_warm_start_snapshot_features", {})
     if not isinstance(snapshot_features, dict):
         snapshot_features = {}
