@@ -4,6 +4,44 @@ use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use std::collections::BTreeSet;
 use std::fmt;
 
+/// 缺省日历（未传 `trading_calendar`）的修正量：按行情源交易日补入的交易日与剔除的
+/// 推算交易日。随存档保存（`SessionConfig::calendar_overrides`）；用户显式日历不受影响。
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CalendarOverrides {
+    pub added: Vec<NaiveDate>,
+    pub removed: Vec<NaiveDate>,
+}
+
+impl CalendarOverrides {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty()
+    }
+
+    /// 补入交易日 `day`（同时从剔除集合中移除）。返回是否有变化。
+    pub fn add(&mut self, day: NaiveDate) -> bool {
+        let was_removed = self.removed.contains(&day);
+        self.removed.retain(|d| *d != day);
+        if self.added.contains(&day) {
+            return was_removed;
+        }
+        self.added.push(day);
+        self.added.sort();
+        true
+    }
+
+    /// 剔除交易日 `day`（同时从补入集合中移除）。返回是否有变化。
+    pub fn remove(&mut self, day: NaiveDate) -> bool {
+        let was_added = self.added.contains(&day);
+        self.added.retain(|d| *d != day);
+        if self.removed.contains(&day) {
+            return was_added;
+        }
+        self.removed.push(day);
+        self.removed.sort();
+        true
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TradingCalendar {
     /// 周一至周五为交易日（用户未传日历时的缺省，节假日会算错）。
@@ -12,6 +50,17 @@ pub enum TradingCalendar {
     AllDays,
     /// 用户传入的交易日集合。
     Explicit(ExplicitDays),
+    /// 缺省规则（工作日 / 每天）按行情源交易日修正后的日历。
+    Adjusted(AdjustedDays),
+}
+
+/// 缺省规则加修正量：`added` 中的日期是交易日，`removed` 中的不是，其余按 `base`。
+/// 只能经 [`TradingCalendar::with_overrides`] 构造（`base` 不会是显式日历或嵌套修正）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdjustedDays {
+    base: Box<TradingCalendar>,
+    added: BTreeSet<NaiveDate>,
+    removed: BTreeSet<NaiveDate>,
 }
 
 /// 非空的显式交易日集合。字段私有：只能经 `TradingCalendar::explicit()` 构造，
@@ -78,6 +127,31 @@ impl TradingCalendar {
         Ok(TradingCalendar::Explicit(ExplicitDays(set)))
     }
 
+    /// 缺省规则（`Weekdays` / `AllDays`）应用修正量；修正量为空或日历为显式日历时
+    /// 原样返回（显式日历以用户为准，不修正）。
+    pub fn with_overrides(self, overrides: &CalendarOverrides) -> Self {
+        if overrides.is_empty() {
+            return self;
+        }
+        match self {
+            TradingCalendar::Weekdays | TradingCalendar::AllDays => {
+                let added: BTreeSet<NaiveDate> = overrides.added.iter().copied().collect();
+                let removed: BTreeSet<NaiveDate> = overrides
+                    .removed
+                    .iter()
+                    .copied()
+                    .filter(|d| !added.contains(d))
+                    .collect();
+                TradingCalendar::Adjusted(AdjustedDays {
+                    base: Box::new(self),
+                    added,
+                    removed,
+                })
+            }
+            other => other,
+        }
+    }
+
     pub fn first_day(&self) -> Option<NaiveDate> {
         match self {
             TradingCalendar::Explicit(ExplicitDays(set)) => set.first().copied(),
@@ -98,6 +172,9 @@ impl TradingCalendar {
             TradingCalendar::Weekdays => is_weekday(d),
             TradingCalendar::AllDays => true,
             TradingCalendar::Explicit(ExplicitDays(set)) => set.contains(&d),
+            TradingCalendar::Adjusted(adj) => {
+                adj.added.contains(&d) || (!adj.removed.contains(&d) && adj.base.is_trading_day(d))
+            }
         }
     }
 
@@ -119,6 +196,14 @@ impl TradingCalendar {
                     .next()
                     .copied()
                     .ok_or_else(|| Self::bounds_error(set, d))
+            }
+            // 基础规则每周都有交易日，剔除集合有限，循环必然终止。
+            TradingCalendar::Adjusted(_) => {
+                let mut x = d;
+                while !self.is_trading_day(x) {
+                    x += Duration::days(1);
+                }
+                Ok(x)
             }
         }
     }
@@ -145,6 +230,13 @@ impl TradingCalendar {
                     .next_back()
                     .copied()
                     .ok_or_else(|| Self::bounds_error(set, d))
+            }
+            TradingCalendar::Adjusted(_) => {
+                let mut x = d - Duration::days(1);
+                while !self.is_trading_day(x) {
+                    x -= Duration::days(1);
+                }
+                Ok(x)
             }
         }
     }
@@ -206,6 +298,45 @@ mod tests {
         let c = TradingCalendar::explicit([d(2024, 1, 2)]).unwrap();
         let msg = c.after(d(2024, 1, 2)).unwrap_err().to_string();
         assert!(msg.contains("2024-01-02 ~ 2024-01-02"), "{msg}");
+    }
+
+    #[test]
+    fn weekdays_with_overrides_skip_removed_and_include_added() {
+        // 2024 国庆：10-01～10-07 的工作日剔除；10-12（周六）调休补班
+        let removed: Vec<NaiveDate> = (1..=7)
+            .map(|day| d(2024, 10, day))
+            .filter(|x| is_weekday(*x))
+            .collect();
+        let overrides = CalendarOverrides {
+            added: vec![d(2024, 10, 12)],
+            removed,
+        };
+        let c = TradingCalendar::Weekdays.with_overrides(&overrides);
+        assert_eq!(c.after(d(2024, 9, 30)).unwrap(), d(2024, 10, 8));
+        assert_eq!(c.before(d(2024, 10, 8)).unwrap(), d(2024, 9, 30));
+        assert_eq!(c.on_or_after(d(2024, 10, 3)).unwrap(), d(2024, 10, 8));
+        assert!(!c.is_trading_day(d(2024, 10, 1)));
+        assert!(c.is_trading_day(d(2024, 10, 12)));
+        assert_eq!(c.after(d(2024, 10, 11)).unwrap(), d(2024, 10, 12));
+        assert_eq!(c.before(d(2024, 10, 14)).unwrap(), d(2024, 10, 12));
+        // 显式日历不受修正量影响；空修正量原样返回
+        let explicit = TradingCalendar::explicit([d(2024, 10, 1)]).unwrap();
+        assert_eq!(explicit.clone().with_overrides(&overrides), explicit);
+        assert_eq!(
+            TradingCalendar::Weekdays.with_overrides(&CalendarOverrides::default()),
+            TradingCalendar::Weekdays
+        );
+    }
+
+    #[test]
+    fn calendar_overrides_add_and_remove_stay_disjoint() {
+        let mut o = CalendarOverrides::default();
+        assert!(o.remove(d(2024, 10, 1)));
+        assert!(!o.remove(d(2024, 10, 1)));
+        assert!(o.add(d(2024, 10, 1)));
+        assert_eq!(o.added, vec![d(2024, 10, 1)]);
+        assert!(o.removed.is_empty());
+        assert!(!o.add(d(2024, 10, 1)));
     }
 
     #[test]

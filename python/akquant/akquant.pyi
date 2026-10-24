@@ -710,6 +710,21 @@ class DataFeed:
     def add_bar(self, bar: Bar) -> None: ...
     def add_bars(self, bars: typing.Sequence[Bar]) -> None: ...
     def add_tick(self, tick: Tick) -> None: ...
+    def add_trading_day_hint(
+        self, timestamp_ns: int, trading_day: datetime.date, source: str
+    ) -> None:
+        r"""
+        推送行情源报告的交易日（仅实盘）.
+
+        与行情同序进入引擎：传了 ``trading_calendar=`` 时不一致只告警；未传时在所涉交易日
+        尚未开日前按它修正缺省（工作日）日历。
+
+        :param timestamp_ns: 报告时刻（UTC 纳秒）
+        :param trading_day: 行情源报告的交易日
+        :param source: 行情源名称（如 ``"ctp"``）
+        :raises RuntimeError: 在回测数据源上调用
+        """
+        ...
     def add_arrays(
         self,
         timestamps: numpy.ndarray,
@@ -881,6 +896,19 @@ class Engine:
         trading_calendar: typing.Optional[list[datetime.date]] = None,
     ) -> None:
         r"""配置交易时段表与交易日历."""
+        ...
+
+    def trading_day_at(self, timestamp_ns: int) -> datetime.date:
+        r"""
+        时刻所属的交易日.
+
+        按当前时段表与交易日历（含行情源对缺省日历的修正）求 ``timestamp_ns`` 所属的会话
+        交易日：收盘之后的时刻属于下一交易日。只读，可在 ``run()`` 之前或之后调用。
+
+        :param timestamp_ns: 时刻（UTC 纳秒）
+        :return: 所属交易日
+        :raises ValueError: 时段配置非法，或时刻超出 ``trading_calendar`` 覆盖范围
+        """
         ...
 
     def set_timezone_name(self, timezone: str) -> None:

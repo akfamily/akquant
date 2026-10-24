@@ -231,6 +231,13 @@ mod tests {
                         anchor: Some("prev".to_string()),
                     }],
                 )]),
+                calendar_overrides: crate::calendar::trading_calendar::CalendarOverrides {
+                    added: vec![NaiveDate::from_ymd_opt(2024, 10, 12).unwrap()],
+                    removed: vec![
+                        NaiveDate::from_ymd_opt(2024, 10, 1).unwrap(),
+                        NaiveDate::from_ymd_opt(2024, 10, 2).unwrap(),
+                    ],
+                },
             },
             last_event_ts_in_day: Some(123456000),
         };
@@ -272,6 +279,13 @@ mod tests {
         assert_eq!(decoded.last_settled_trading_day, None);
         assert_eq!(decoded.last_event_ts_in_day, Some(123456000));
         assert_eq!(decoded.session_config, snapshot.session_config);
+        assert_eq!(
+            decoded.session_config.calendar_overrides.removed,
+            vec![
+                NaiveDate::from_ymd_opt(2024, 10, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2024, 10, 2).unwrap(),
+            ]
+        );
         assert_eq!(decoded.portfolio.cash, Decimal::from(50000));
         assert_eq!(decoded.initial_cash, Some(Decimal::from(50000)));
         assert!(decoded.last_prices.is_empty());
@@ -297,6 +311,13 @@ mod tests {
         assert_eq!(decoded.sessions, templates);
         assert_eq!(decoded.trading_calendar, days);
         assert_eq!(decoded.custom_sessions, None);
+        assert!(decoded.calendar_overrides.is_empty());
+        // 阶段 7 之前的格式（有 custom_sessions、无 calendar_overrides）读入时修正量为空
+        let custom: Option<Vec<(String, Vec<crate::calendar::schedule::CustomSegment>)>> = None;
+        let before_overrides: Vec<u8> = rmp_serde::to_vec(&(&templates, &days, &custom)).unwrap();
+        let decoded: SessionConfig = rmp_serde::from_slice(&before_overrides).unwrap();
+        assert_eq!(decoded.sessions, templates);
+        assert!(decoded.calendar_overrides.is_empty());
         // 新格式往返
         let cfg = SessionConfig {
             sessions: Some(Vec::new()),
@@ -310,6 +331,10 @@ mod tests {
                     anchor: None,
                 }],
             )]),
+            calendar_overrides: crate::calendar::trading_calendar::CalendarOverrides {
+                added: vec![NaiveDate::from_ymd_opt(2024, 10, 12).unwrap()],
+                removed: vec![NaiveDate::from_ymd_opt(2024, 10, 1).unwrap()],
+            },
         };
         let back: SessionConfig = rmp_serde::from_slice(&rmp_serde::to_vec(&cfg).unwrap()).unwrap();
         assert_eq!(back, cfg);

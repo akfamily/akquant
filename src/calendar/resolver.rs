@@ -248,6 +248,19 @@ impl SessionResolver {
         })
     }
 
+    /// 缺省日历（未传交易日历时的工作日 / 每天规则）应用行情源修正量；显式日历不受影响。
+    /// 只在构造后、使用前调用（缓存随之清空）。
+    pub(crate) fn set_calendar_overrides(
+        &mut self,
+        overrides: &crate::calendar::trading_calendar::CalendarOverrides,
+    ) {
+        self.weekdays = TradingCalendar::Weekdays.with_overrides(overrides);
+        self.all_days = TradingCalendar::AllDays.with_overrides(overrides);
+        self.windows.lock().expect("windows 锁被污染").clear();
+        self.blocks.lock().expect("blocks 锁被污染").clear();
+        *self.instant_cache.lock().expect("instant_cache 锁被污染") = (i64::MIN, Vec::new());
+    }
+
     pub fn uses_fallback_calendar(&self) -> bool {
         self.calendar.is_none()
     }

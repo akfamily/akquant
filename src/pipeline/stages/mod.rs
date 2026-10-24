@@ -380,6 +380,7 @@ mod tests {
                     .map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap())
                     .collect(),
             ),
+            ..Default::default()
         };
         let symbol = "AAPL".to_string();
         engine

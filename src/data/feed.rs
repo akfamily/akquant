@@ -1,8 +1,9 @@
 use crate::event::Event;
 use crate::log_context::{AkqLogContext, format_event_time_nanos, render_log_message};
 use crate::model::{Bar, Tick};
+use chrono::NaiveDate;
 use chrono::Utc;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::{HashMap, HashSet};
@@ -224,6 +225,36 @@ impl DataFeed {
             provider.add(Event::Tick(tick))?;
             Ok(())
         }
+    }
+
+    /// 推送行情源报告的交易日（仅实盘）.
+    ///
+    /// 行情源（如 CTP 的 ``TradingDay``）报告时刻 ``timestamp_ns`` 属于交易日
+    /// ``trading_day``。该事件与行情同序进入引擎：用户传了 ``trading_calendar=`` 时
+    /// 不一致只告警；未传（按工作日推算）且所涉交易日尚未开日时，按它修正缺省日历。
+    ///
+    /// :param timestamp_ns: 报告时刻（UTC 纳秒，与行情时间戳同口径）
+    /// :param trading_day: 行情源报告的交易日
+    /// :param source: 行情源名称（出现在告警里，如 ``"ctp"``）
+    /// :raises RuntimeError: 在回测数据源上调用
+    pub fn add_trading_day_hint(
+        &mut self,
+        timestamp_ns: i64,
+        trading_day: NaiveDate,
+        source: String,
+    ) -> PyResult<()> {
+        let Some(sender) = &self.live_sender else {
+            return Err(PyRuntimeError::new_err(
+                "add_trading_day_hint 仅实盘数据源可用（DataFeed.create_live() 创建的 feed）；回测请用 trading_calendar= 指定交易日历",
+            ));
+        };
+        sender
+            .send(Event::TradingDayHint {
+                timestamp: timestamp_ns,
+                trading_day,
+                source,
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 }
 

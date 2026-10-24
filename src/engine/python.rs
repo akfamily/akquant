@@ -620,6 +620,7 @@ impl Engine {
             live_day_close_delay_ns: crate::model::timer::LIVE_DAY_CLOSE_GRACE_NS,
             live_lifecycle_anchor_ns: None,
             live_replay_close: None,
+            source_trading_day_warned: HashSet::new(),
             lifecycle_hooks_dispatch: Default::default(),
             last_corp_action_date: None,
             market_manager: MarketManager::new(),
@@ -1093,13 +1094,34 @@ impl Engine {
                 (Some(templates), (!custom.is_empty()).then_some(custom))
             }
         };
+        // 行情源对缺省日历的修正量保留（续跑时由存档载入后再次 configure_sessions）；
+        // 只作用于缺省日历，显式日历不受影响。
+        let calendar_overrides = std::mem::take(&mut self.session_config.calendar_overrides);
         self.session_config = crate::engine::core::SessionConfig {
             sessions: templates,
             trading_calendar,
             custom_sessions: custom,
+            calendar_overrides,
         };
         self.invalidate_session_resolver();
         Ok(())
+    }
+
+    /// 时刻所属的交易日.
+    ///
+    /// 按当前时段表与交易日历（含行情源对缺省日历的修正）求 ``timestamp_ns`` 所属的
+    /// 会话交易日：收盘之后的时刻属于下一交易日。只读，可在 ``run()`` 之前或之后调用。
+    ///
+    /// :param timestamp_ns: 时刻（UTC 纳秒）
+    /// :return: 所属交易日
+    /// :raises ValueError: 时段配置非法，或时刻超出 ``trading_calendar`` 覆盖范围
+    fn trading_day_at(&mut self, timestamp_ns: i64) -> PyResult<NaiveDate> {
+        self.ensure_session_resolver()?;
+        self.session_resolver
+            .as_ref()
+            .expect("已构造")
+            .session_trading_day(timestamp_ns)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     /// 设置时区名称.

@@ -429,6 +429,18 @@ impl Processor for DataProcessor {
             FeedAction::Event(event) => {
                 let event = *event;
 
+                // 行情源交易日: 与前后行情同序在此处理(校验/修正日历), 不是行情,
+                // 不进时间片、不派发给策略。
+                if let Event::TradingDayHint {
+                    timestamp,
+                    trading_day,
+                    source,
+                } = &event
+                {
+                    engine.apply_source_trading_day(*timestamp, *trading_day, source)?;
+                    return Ok(ProcessorResult::Loop);
+                }
+
                 // 标的白名单: 用户显式传了 symbols 时只放行白名单内的标的。
                 // 返回 Loop = 丢弃本事件、去取下一个, 与下面
                 // `timestamp <= engine.snapshot_time` 的处理方式一致。

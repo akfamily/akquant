@@ -300,3 +300,93 @@ def test_ctp_tick_volume_delta_does_not_affect_aggregator_cumulative_input() -> 
     gateway.OnRtnDepthMarketData(_md(volume=150.0))
     assert calls == [100.0, 150.0]
     assert [t.volume for t in fake_feed.ticks] == [0.0, 50.0]
+
+
+# ---------------------------------------------------------------------------
+# 行情源交易日: 登录回调与逐笔行情里的 TradingDay 经 feed.add_trading_day_hint
+# 送入引擎(交易时段重构阶段 7)。
+# ---------------------------------------------------------------------------
+
+
+class _HintFeed(FakeFeed):
+    """记录 tick 与交易日 hint 的推送顺序."""
+
+    def __init__(self) -> None:
+        """初始化收集列表."""
+        super().__init__()
+        self.hints: list[tuple[int, Any, str]] = []
+        self.calls: list[str] = []
+
+    def add_tick(self, tick: Any) -> None:
+        """记录被推入的 tick."""
+        self.calls.append("tick")
+        super().add_tick(tick)
+
+    def add_trading_day_hint(self, timestamp_ns: int, day: Any, source: str) -> None:
+        """记录被推入的交易日 hint."""
+        self.calls.append("hint")
+        self.hints.append((timestamp_ns, day, source))
+
+
+def _md_day(trading_day: str, symbol: str = "rb2401") -> Any:
+    class _MarketData:
+        InstrumentID = symbol
+        LastPrice = 100.0
+        Volume = 10.0
+        TradingDay = trading_day
+
+    return _MarketData()
+
+
+def _hint_gateway() -> tuple[CTPMarketGateway, _HintFeed]:
+    gateway = _gateway(emit_ticks=True, emit_bars=False)
+    feed = _HintFeed()
+    gateway.feed = feed  # type: ignore[assignment]
+    return gateway, feed
+
+
+def test_ctp_tick_trading_day_change_pushes_one_hint() -> None:
+    """TradingDay 由 20241008 变 20241009 时恰好多一个 hint, 同值不重复推."""
+    import datetime as dt
+
+    gateway, feed = _hint_gateway()
+    gateway.OnRtnDepthMarketData(_md_day("20241008"))
+    gateway.OnRtnDepthMarketData(_md_day("20241008"))
+    assert [(d, s) for _, d, s in feed.hints] == [(dt.date(2024, 10, 8), "ctp")]
+    gateway.OnRtnDepthMarketData(_md_day("20241009"))
+    gateway.OnRtnDepthMarketData(_md_day("20241009"))
+    assert [d for _, d, _ in feed.hints] == [
+        dt.date(2024, 10, 8),
+        dt.date(2024, 10, 9),
+    ]
+    # hint 先于同一笔 tick 入 feed, 时间戳与该 tick 相同(本地接收时刻)
+    assert feed.calls[:2] == ["hint", "tick"]
+    assert feed.hints[0][0] == int(feed.ticks[0].timestamp)
+
+
+def test_ctp_trading_day_tracked_per_symbol_and_bad_values_ignored() -> None:
+    """按品种记上次值; 空值或无法解析的 TradingDay 忽略(不推、不抛)."""
+    gateway, feed = _hint_gateway()
+    gateway.OnRtnDepthMarketData(_md_day("20241008", "rb2401"))
+    gateway.OnRtnDepthMarketData(_md_day("20241008", "au2412"))
+    gateway.OnRtnDepthMarketData(_md_day("", "rb2401"))
+    gateway.OnRtnDepthMarketData(_md_day("2024-13-xx", "rb2401"))
+    assert len(feed.hints) == 2
+    assert len(feed.ticks) == 4
+
+
+def test_ctp_login_trading_day_pushes_hint() -> None:
+    """行情登录回调的 TradingDay 推一个 hint; 之后同值的逐笔行情不重复推."""
+    import datetime as dt
+
+    gateway, feed = _hint_gateway()
+
+    class _Login:
+        TradingDay = "20241008"
+        BrokerID = "9999"
+        UserID = "u"
+
+    gateway.OnRspUserLogin(_Login(), None, 1, True)
+    assert [(d, s) for _, d, s in feed.hints] == [(dt.date(2024, 10, 8), "ctp")]
+    gateway.OnRtnDepthMarketData(_md_day("20241008"))
+    assert len(feed.hints) == 1

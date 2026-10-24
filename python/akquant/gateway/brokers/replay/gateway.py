@@ -15,13 +15,21 @@
 (``first_event_ns``)、按最后事件判定收尾(``last_event_ns``), 并在引擎开跑前
 等推送完成(``wait_until_pushed``), 使其与同数据回测一致。
 
+**行情源交易日**: ``gateway_options={"trading_day_hints": [...]}``,
+每项为 ``(ts_ns, date)`` 或 ``(ts_ns, date, source)``,
+经 ``DataFeed.add_trading_day_hint`` 按时间戳与行情合并推送
+(同一时间戳 hint 先于行情), 模拟真实行情源(如 CTP 的
+``TradingDay``)报告交易日。hint 不计入 ``bounded_event_total``,
+也不参与首个/最后事件的判定。
+
 **不模拟成交**: 本 broker 只提供行情, ``trader_gateway=None``。
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import threading
-from typing import Any, Callable, List, Mapping, Optional, Sequence, Union
+from typing import Any, Callable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from ....akquant import Bar, Tick
 from ....feed_adapter import DEFAULT_INPUT_TIMEZONE
@@ -31,6 +39,36 @@ from ...protocols import GatewayBundle
 logger = get_logger("gateway.replay")
 
 ReplayBars = Union[List[Bar], Any]  # list[Bar] 或 pandas.DataFrame
+TradingDayHint = Tuple[int, dt.date, str]
+
+
+def _coerce_hints(hints: Sequence[Any] | None) -> List[TradingDayHint]:
+    """把 ``trading_day_hints`` 归一成按时间戳升序的 ``(ts_ns, date, source)``.
+
+    每项为 ``(ts_ns, date)`` 或 ``(ts_ns, date, source)``; ``date`` 可为
+    ``datetime.date`` 或 ``"YYYY-MM-DD"``, ``source`` 缺省 ``"replay"``。
+    """
+    result: List[TradingDayHint] = []
+    for item in hints or []:
+        if not isinstance(item, (tuple, list)) or len(item) not in (2, 3):
+            raise ValueError(
+                "trading_day_hints 的每一项须为 (ts_ns, date) 或 "
+                f"(ts_ns, date, source), 收到 {item!r}"
+            )
+        ts, day = int(item[0]), item[1]
+        if isinstance(day, str):
+            day = dt.date.fromisoformat(day)
+        elif isinstance(day, dt.datetime):
+            day = day.date()
+        if not isinstance(day, dt.date):
+            raise ValueError(
+                "trading_day_hints 的交易日须为 datetime.date 或 'YYYY-MM-DD', "
+                f"收到 {day!r}"
+            )
+        source = str(item[2]) if len(item) == 3 else "replay"
+        result.append((ts, day, source))
+    result.sort(key=lambda hint: hint[0])
+    return result
 
 
 def _coerce_bars(
@@ -117,6 +155,7 @@ class ReplayMarketGateway:
         ticks: Sequence[Tick] | None = None,
         tz: str | None = None,
         session_context: Mapping[str, Any] | None = None,
+        trading_day_hints: Sequence[Any] | None = None,
     ) -> None:
         """按 ``symbols`` 过滤并预排序待推送事件."""
         self._feed = feed
@@ -124,6 +163,7 @@ class ReplayMarketGateway:
         self._all_events = _sorted_events(
             bars, ticks, self._symbols, tz, session_context
         )
+        self._hints = _coerce_hints(trading_day_hints)
         self.tick_callback: Callable[[dict[str, Any]], None] | None = None
         self.bar_callback: Callable[[dict[str, Any]], None] | None = None
         self._pushed = threading.Event()
@@ -196,10 +236,16 @@ class ReplayMarketGateway:
         由 runner 在 daemon 线程上调用。异常只记日志后退出: 线程内向上抛无人
         接收, 会让回放静默中断而不留痕迹; ``duration`` 兜底避免主循环挂死。
         结束(含中止)时置位 ``wait_until_pushed`` 等待的事件。
+
+        行情源交易日 hint 按时间戳合并: 时间戳不晚于某个行情事件的 hint 先于它推送,
+        晚于全部行情的 hint 最后推送。
         """
+        hints = list(self._hints)
         try:
             for event in self.pending_events:
                 try:
+                    while hints and hints[0][0] <= int(event.timestamp):
+                        self._feed.add_trading_day_hint(*hints.pop(0))
                     if isinstance(event, Tick):
                         self._feed.add_tick(event)
                     else:
@@ -207,6 +253,10 @@ class ReplayMarketGateway:
                 except Exception:
                     logger.exception("replay 推送事件失败, 回放中止")
                     return
+            for hint in hints:
+                self._feed.add_trading_day_hint(*hint)
+        except Exception:
+            logger.exception("replay 推送交易日 hint 失败, 回放中止")
         finally:
             self._pushed.set()
 
@@ -250,6 +300,7 @@ def build_replay_bundle(
         ticks=kwargs.get("ticks"),
         tz=kwargs.get("timezone"),
         session_context=kwargs.get("session_context"),
+        trading_day_hints=kwargs.get("trading_day_hints"),
     )
     pending = gateway.pending_events
     total = len(pending)
