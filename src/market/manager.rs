@@ -1,15 +1,13 @@
-use chrono::NaiveTime;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
 
-use crate::market::{
-    ChinaMarketConfig, MarketConfig, MarketModel, SessionRange, SimpleMarketConfig, fund, futures,
-    option, stock,
-};
 use crate::market::fee_override::FeeOverride;
 use crate::market::stock::CommissionMode;
-use crate::model::{Instrument, TradingSession};
+use crate::market::{
+    ChinaMarketConfig, MarketConfig, MarketModel, SimpleMarketConfig, fund, futures, option, stock,
+};
+use crate::model::Instrument;
 
 /// 从 Python 传入的 f64 构造期权费率配置, 非法值按 0 处理(与其它 setter 一致)。
 pub fn option_fee_config(
@@ -146,7 +144,6 @@ impl MarketManager {
     /// 启用中国期货市场默认配置
     /// - 切换到 ChinaMarket
     /// - 仅启用期货配置
-    /// - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
     pub fn use_china_futures_market(&mut self) {
         let fee_overrides = self.fee_overrides();
         let config = ChinaMarketConfig {
@@ -297,29 +294,6 @@ impl MarketManager {
             }
             self.model = self.config.create_model();
         }
-    }
-
-    /// 设置市场交易时段
-    ///
-    /// :param sessions: 交易时段列表，每个元素为 (开始时间, 结束时间, 时段类型)
-    pub fn set_market_sessions(&mut self, sessions: Vec<(NaiveTime, NaiveTime, TradingSession)>) {
-        let mut ranges = Vec::with_capacity(sessions.len());
-        for (start, end, session) in sessions {
-            ranges.push(SessionRange {
-                start,
-                end,
-                session,
-            });
-        }
-        if let MarketConfig::China(ref mut c) = self.config {
-            c.sessions = ranges;
-            self.model = self.config.create_model();
-        }
-    }
-
-    /// 获取当前交易时段状态
-    pub fn get_session_status(&self, time: NaiveTime) -> TradingSession {
-        self.model.get_session_status(time)
     }
 
     /// 处理日终逻辑 (T+1 等)

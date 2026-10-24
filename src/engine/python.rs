@@ -20,7 +20,7 @@ use crate::market::corporate_action::CorporateActionManager;
 use crate::market::manager::MarketManager;
 use crate::model::{
     Bar, ExecutionMode, ExecutionPolicyCore, Instrument, Order, PriceBasis, Timer, Trade,
-    TradingSession, corporate_action::CorporateAction,
+    corporate_action::CorporateAction,
 };
 use crate::portfolio::Portfolio;
 use crate::risk::{RiskConfig, RiskManager};
@@ -1152,7 +1152,6 @@ impl Engine {
     /// 启用中国期货市场默认配置
     /// - 切换到 ChinaMarket
     /// - 设置 T+0
-    /// - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
     fn use_china_futures_market(&mut self) {
         self.market_manager.use_china_futures_market();
     }
@@ -1375,33 +1374,6 @@ impl Engine {
     /// :param limit: 限制比例 (0.0-1.0), 0.0 为不限制
     fn set_volume_limit(&mut self, limit: f64) {
         self.execution_model.set_volume_limit(limit);
-    }
-
-    /// 设置市场交易时段
-    ///
-    /// :param sessions: 交易时段列表，每个元素为 (开始时间, 结束时间, 时段类型)
-    /// :type sessions: List[Tuple[str, str, TradingSession]]
-    ///
-    /// 示例::
-    ///
-    /// ```python
-    /// engine.set_market_sessions([
-    ///     ("09:30:00", "11:30:00", TradingSession.Normal),
-    ///     ("13:00:00", "15:00:00", TradingSession.Normal)
-    /// ])
-    /// ```
-    fn set_market_sessions(
-        &mut self,
-        sessions: Vec<(String, String, TradingSession)>,
-    ) -> PyResult<()> {
-        let mut ranges = Vec::with_capacity(sessions.len());
-        for (start, end, session) in sessions {
-            let start_time = Self::parse_time_string(&start)?;
-            let end_time = Self::parse_time_string(&end)?;
-            ranges.push((start_time, end_time, session));
-        }
-        self.market_manager.set_market_sessions(ranges);
-        Ok(())
     }
 
     /// 添加交易标的

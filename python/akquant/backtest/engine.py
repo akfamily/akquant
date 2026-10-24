@@ -2388,86 +2388,6 @@ def _settlement_type_to_upper_name(value: Any) -> Optional[InstrumentSettlementM
     raise ValueError(f"Unsupported settlement_type: {value}")
 
 
-def _parse_trading_session(value: Any) -> Any:
-    if isinstance(value, TradingSession):
-        return value
-    call_auction = getattr(
-        TradingSession, "CallAuction", getattr(TradingSession, "Normal", None)
-    )
-    pre_open = getattr(
-        TradingSession, "PreOpen", getattr(TradingSession, "PreMarket", None)
-    )
-    continuous = getattr(
-        TradingSession, "Continuous", getattr(TradingSession, "Normal", None)
-    )
-    break_session = getattr(
-        TradingSession, "Break", getattr(TradingSession, "Normal", None)
-    )
-    post_close = getattr(
-        TradingSession, "PostClose", getattr(TradingSession, "PostMarket", None)
-    )
-    closed = getattr(
-        TradingSession, "Closed", getattr(TradingSession, "PostMarket", None)
-    )
-    v_lower = str(value).strip().lower()
-    mapping = {
-        "call_auction": call_auction,
-        "callauction": call_auction,
-        "pre_open": pre_open,
-        "preopen": pre_open,
-        "continuous": continuous,
-        "break": break_session,
-        "post_close": post_close,
-        "postclose": post_close,
-        "closed": closed,
-    }
-    if v_lower in mapping and mapping[v_lower] is not None:
-        return mapping[v_lower]
-    raise ValueError(f"Unsupported trading session: {value}")
-
-
-def _china_futures_session_template(
-    profile: str,
-) -> List[Tuple[str, str, str]]:
-    normalized = str(profile).strip().upper()
-    commodity_day_template: List[Tuple[str, str, str]] = [
-        ("09:00", "10:15", "continuous"),
-        ("10:15", "10:30", "break"),
-        ("10:30", "11:30", "continuous"),
-        ("11:30", "13:30", "break"),
-        ("13:30", "15:00", "continuous"),
-    ]
-    cffex_stock_index_day_template: List[Tuple[str, str, str]] = [
-        ("09:30", "11:30", "continuous"),
-        ("11:30", "13:00", "break"),
-        ("13:00", "15:00", "continuous"),
-    ]
-    cffex_bond_day_template: List[Tuple[str, str, str]] = [
-        ("09:30", "11:30", "continuous"),
-        ("11:30", "13:00", "break"),
-        ("13:00", "15:15", "continuous"),
-    ]
-    if normalized in {"CN_FUTURES_DAY", "CN_FUTURES_COMMODITY_DAY"}:
-        return commodity_day_template
-    if normalized == "CN_FUTURES_CFFEX_STOCK_INDEX_DAY":
-        return cffex_stock_index_day_template
-    if normalized == "CN_FUTURES_CFFEX_BOND_DAY":
-        return cffex_bond_day_template
-    if normalized == "CN_FUTURES_NIGHT_23":
-        return [("21:00", "23:00", "continuous")] + commodity_day_template
-    if normalized == "CN_FUTURES_NIGHT_01":
-        return [
-            ("21:00", "23:59", "continuous"),
-            ("00:00", "01:00", "continuous"),
-        ] + commodity_day_template
-    if normalized == "CN_FUTURES_NIGHT_0230":
-        return [
-            ("21:00", "23:59", "continuous"),
-            ("00:00", "02:30", "continuous"),
-        ] + commodity_day_template
-    raise ValueError(f"Unsupported china futures session profile: {profile}")
-
-
 def _is_data_feed_adapter(value: Any) -> bool:
     return hasattr(value, "load") and callable(getattr(value, "load"))
 
@@ -5006,32 +4926,6 @@ def run_backtest(
                         "in current engine binary"
                     )
                     break
-        if china_futures_config.sessions:
-            session_ranges: List[Tuple[str, str, TradingSession]] = []
-            for session_rule in china_futures_config.sessions:
-                session_ranges.append(
-                    (
-                        session_rule.start,
-                        session_rule.end,
-                        _parse_trading_session(session_rule.session),
-                    )
-                )
-            if session_ranges:
-                engine.set_market_sessions(session_ranges)
-        elif china_futures_config.enforce_sessions:
-            session_ranges = []
-            for start, end, session_name in _china_futures_session_template(
-                china_futures_config.session_profile
-            ):
-                session_ranges.append(
-                    (
-                        start,
-                        end,
-                        _parse_trading_session(session_name),
-                    )
-                )
-            if session_ranges:
-                engine.set_market_sessions(session_ranges)
 
     if china_stock_config is not None:
         if hasattr(engine, "set_stock_validation_options"):
@@ -5042,24 +4936,6 @@ def run_backtest(
             logger.warning(
                 "set_stock_validation_options is not available in current engine binary"
             )
-
-    if china_options_config and has_options_instruments:
-        if china_options_config.sessions:
-            option_session_ranges: List[Tuple[str, str, TradingSession]] = []
-            for option_session_rule in china_options_config.sessions:
-                option_session_ranges.append(
-                    (
-                        option_session_rule.start,
-                        option_session_rule.end,
-                        _parse_trading_session(option_session_rule.session),
-                    )
-                )
-            if option_session_ranges and not (
-                china_futures_config
-                and has_futures_instruments
-                and china_futures_config.sessions
-            ):
-                engine.set_market_sessions(option_session_ranges)
 
     # Apply Risk Config
 

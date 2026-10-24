@@ -1,5 +1,7 @@
 use crate::account::{AccountMetrics, calculate_account_metrics};
-use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
+#[cfg(test)]
+use chrono::NaiveTime;
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 use indicatif::ProgressBar;
 use pyo3::exceptions::PyRuntimeError;
@@ -1744,19 +1746,6 @@ impl Engine {
     pub(crate) fn local_datetime_from_ns(timestamp: i64, offset_secs: i32) -> DateTime<Utc> {
         let offset_ns = i64::from(offset_secs) * 1_000_000_000;
         Self::datetime_from_ns(timestamp + offset_ns)
-    }
-
-    pub(crate) fn parse_time_string(value: &str) -> PyResult<NaiveTime> {
-        if let Ok(t) = NaiveTime::parse_from_str(value, "%H:%M:%S") {
-            return Ok(t);
-        }
-        if let Ok(t) = NaiveTime::parse_from_str(value, "%H:%M") {
-            return Ok(t);
-        }
-        Err(PyValueError::new_err(format!(
-            "Invalid time format: {}",
-            value
-        )))
     }
 
     pub(crate) fn call_strategy_for_slot<'py>(

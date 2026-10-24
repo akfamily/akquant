@@ -1220,7 +1220,6 @@ run_live(..., preload_history=history)
 *   `set_instrument_fee_override(symbol, commission_rate=None, min_commission=None, stamp_tax_rate=None, transfer_fee_rate=None)`: 设置单个标的的费用覆盖，未传的项沿用市场配置。
 *   `set_slippage(type, value)`: 设置滑点 (Fixed 或 Percent)。
 *   `set_volume_limit(limit)`: 设置成交量限制 (如 0.1 表示不超过 Bar 成交量的 10%)。
-*   `set_market_sessions(sessions)`: 设置交易时段。
 
 命名约定说明：
 

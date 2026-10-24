@@ -1,5 +1,4 @@
-use crate::model::{AssetType, Instrument, OrderSide, TradingSession};
-use chrono::NaiveTime;
+use crate::model::{AssetType, Instrument, OrderSide};
 use rust_decimal::Decimal;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -9,65 +8,15 @@ use super::fee_override::FeeOverride;
 use super::{fund, futures, option, stock};
 
 #[derive(Clone, Debug)]
-pub struct SessionRange {
-    pub start: NaiveTime,
-    pub end: NaiveTime,
-    pub session: TradingSession,
-}
-
-#[derive(Clone, Debug)]
 pub struct ChinaMarketConfig {
     pub stock: Option<stock::StockConfig>,
     pub futures: Option<futures::FuturesConfig>,
     pub fund: Option<fund::FundConfig>,
     pub option: Option<option::OptionConfig>,
-    pub sessions: Vec<SessionRange>,
     pub futures_fee_by_prefix: Vec<(String, futures::FuturesConfig)>,
     pub options_fee_by_prefix: Vec<(String, option::OptionConfig)>,
     /// 按品种费用覆盖(Stock/Fund 四项, Futures 仅佣金率), 键为归一化后的 symbol
     pub fee_overrides: HashMap<String, FeeOverride>,
-}
-
-fn default_sessions() -> Vec<SessionRange> {
-    let t_9_15 = NaiveTime::from_hms_opt(9, 15, 0).unwrap();
-    let t_9_25 = NaiveTime::from_hms_opt(9, 25, 0).unwrap();
-    let t_9_30 = NaiveTime::from_hms_opt(9, 30, 0).unwrap();
-    let t_11_30 = NaiveTime::from_hms_opt(11, 30, 0).unwrap();
-    let t_13_00 = NaiveTime::from_hms_opt(13, 0, 0).unwrap();
-    let t_14_57 = NaiveTime::from_hms_opt(14, 57, 0).unwrap();
-    let t_15_00 = NaiveTime::from_hms_opt(15, 0, 1).unwrap();
-    vec![
-        SessionRange {
-            start: t_9_15,
-            end: t_9_25,
-            session: TradingSession::CallAuction,
-        },
-        SessionRange {
-            start: t_9_25,
-            end: t_9_30,
-            session: TradingSession::PreOpen,
-        },
-        SessionRange {
-            start: t_9_30,
-            end: t_11_30,
-            session: TradingSession::Continuous,
-        },
-        SessionRange {
-            start: t_11_30,
-            end: t_13_00,
-            session: TradingSession::Break,
-        },
-        SessionRange {
-            start: t_13_00,
-            end: t_14_57,
-            session: TradingSession::Continuous,
-        },
-        SessionRange {
-            start: t_14_57,
-            end: t_15_00,
-            session: TradingSession::CallAuction,
-        },
-    ]
 }
 
 impl Default for ChinaMarketConfig {
@@ -77,7 +26,6 @@ impl Default for ChinaMarketConfig {
             futures: None,
             fund: None,
             option: None,
-            sessions: default_sessions(),
             futures_fee_by_prefix: Vec::new(),
             options_fee_by_prefix: Vec::new(),
             fee_overrides: HashMap::new(),
@@ -146,15 +94,6 @@ pub(crate) fn resolve_option_config<'a>(
 }
 
 impl MarketModel for ChinaMarket {
-    fn get_session_status(&self, time: NaiveTime) -> TradingSession {
-        for range in &self.config.sessions {
-            if time >= range.start && time < range.end {
-                return range.session;
-            }
-        }
-        TradingSession::Closed
-    }
-
     fn calculate_commission(
         &self,
         instrument: &Instrument,

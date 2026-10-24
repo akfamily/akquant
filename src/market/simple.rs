@@ -1,5 +1,4 @@
-use crate::model::{Instrument, OrderSide, TradingSession};
-use chrono::NaiveTime;
+use crate::model::{Instrument, OrderSide};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::borrow::Cow;
@@ -46,10 +45,6 @@ impl SimpleMarket {
 }
 
 impl MarketModel for SimpleMarket {
-    fn get_session_status(&self, _time: NaiveTime) -> TradingSession {
-        TradingSession::Continuous
-    }
-
     fn calculate_commission(
         &self,
         instrument: &Instrument,

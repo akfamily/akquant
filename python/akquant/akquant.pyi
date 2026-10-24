@@ -134,9 +134,7 @@ class TimeInForce:
     Day: typing.ClassVar["TimeInForce"]
 
 class TradingSession:
-    PreOpen: typing.ClassVar["TradingSession"]
     Continuous: typing.ClassVar["TradingSession"]
-    CallAuction: typing.ClassVar["TradingSession"]
     Break: typing.ClassVar["TradingSession"]
     Closed: typing.ClassVar["TradingSession"]
     PostClose: typing.ClassVar["TradingSession"]
@@ -930,7 +928,6 @@ class Engine:
 
         - 切换到 ChinaMarket
         - 设置 T+0
-        - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
         """
         ...
 
@@ -1097,26 +1094,6 @@ class Engine:
         设置成交量限制.
 
         :param limit: 限制比例 (0.0-1.0), 0.0 为不限制
-        """
-        ...
-
-    def set_market_sessions(
-        self, sessions: typing.Sequence[tuple[str, str, akquant.TradingSession]]
-    ) -> None:
-        r"""
-        设置市场交易时段.
-
-        :param sessions: 交易时段列表，每个元素为 (开始时间, 结束时间, 时段类型)
-        :type sessions: List[Tuple[str, str, TradingSession]]
-
-        示例::
-
-        ```python
-        engine.set_market_sessions([
-            ("09:30:00", "11:30:00", TradingSession.Normal),
-            ("13:00:00", "15:00:00", TradingSession.Normal)
-        ])
-        ```
         """
         ...
 

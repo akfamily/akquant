@@ -87,8 +87,6 @@ pub(crate) fn rank(s: TradingSession) -> u8 {
         TradingSession::AuctionHold => 4,
         TradingSession::Break => 3,
         TradingSession::PostClose => 2,
-        // 旧值阶段 6 删除；解析器不会产出它们
-        TradingSession::CallAuction | TradingSession::PreOpen => 1,
         TradingSession::Closed => 0,
     }
 }
