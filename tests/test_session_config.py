@@ -1025,3 +1025,69 @@ def test_run_live_rejects_invalid_timezone() -> None:
             duration="5s",
             timezone="Mars/Olympus",
         )
+
+
+def test_run_live_timezone_is_applied_to_slot_strategies() -> None:
+    """Slot 策略与主策略同步 run_live 的时区，本地时刻按纽约计算."""
+    from akquant import Bar, Strategy, run_live
+
+    ny = "America/New_York"
+    seen: List[Any] = []
+
+    class Main(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            pass
+
+    class Slot(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            # 策略自设的时区应被 run_live 覆盖
+            self.timezone = "Asia/Shanghai"
+
+        def on_bar(self, bar: Bar) -> None:
+            now = self.now
+            assert now is not None
+            seen.append((self.timezone, self.trading_day, now.date(), now.hour))
+
+    ts = pd.Timestamp("2024-01-02 23:30", tz=ny)
+    bars = [Bar(int(ts.value), 1.0, 1.0, 1.0, 1.0, 1.0, "AAPL")]
+    run_live(
+        strategy_cls=Main,
+        strategies_by_slot={"slot_a": Slot},
+        instruments=[_us_stock_instrument()],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars, "freq": "1min"},
+        cash=1e6,
+        show_progress=False,
+        duration="5s",
+        timezone=ny,
+    )
+    # 上海时区下该时刻为 01-03 12:30，本地日期与小时都可区分
+    assert seen == [(ny, dt.date(2024, 1, 2), dt.date(2024, 1, 2), 23)]
+
+
+def test_run_live_timezone_none_falls_back_to_shanghai() -> None:
+    """timezone=None 与 run_backtest 一致，回退默认 Asia/Shanghai."""
+    from akquant import Bar, Strategy, run_live
+
+    seen: List[Any] = []
+
+    class P(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            seen.append((self.timezone, self.trading_day))
+
+    ts = pd.Timestamp("2024-01-02 23:30", tz="America/New_York")
+    bars = [Bar(int(ts.value), 1.0, 1.0, 1.0, 1.0, 1.0, "AAPL")]
+    run_live(
+        strategy_cls=P,
+        instruments=[_us_stock_instrument()],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars, "freq": "1min"},
+        cash=1e6,
+        show_progress=False,
+        duration="5s",
+        timezone=None,
+    )
+    assert seen == [("Asia/Shanghai", dt.date(2024, 1, 3))]

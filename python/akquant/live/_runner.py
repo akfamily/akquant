@@ -412,7 +412,7 @@ class LiveRunner:
         preload_bars: Optional[int] = None,
         sessions: Optional[SessionsArg] = None,
         trading_calendar: Optional[Iterable[Any]] = None,
-        timezone: str = DEFAULT_INPUT_TIMEZONE,
+        timezone: Optional[str] = DEFAULT_INPUT_TIMEZONE,
     ):
         """
         Initialize the LiveRunner.
@@ -598,7 +598,8 @@ class LiveRunner:
         self.feed = DataFeed.create_live()  # type: ignore
         self.engine = Engine()
         # 会话时区, 由 run() 最先下发引擎(非法时区名在连网关之前报错)。
-        self.timezone = str(timezone).strip()
+        # None/空串回退默认 Asia/Shanghai, 与 run_backtest 一致。
+        self.timezone = str(timezone or DEFAULT_INPUT_TIMEZONE).strip()
 
         # 收尾派发的目标: run() 里策略创建成功后写入。预置 None/空是因为
         # run() 在创建策略之前就可能抛(网关工厂、broker_live 校验), 那时
