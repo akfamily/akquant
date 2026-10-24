@@ -239,6 +239,18 @@ impl DataFeed {
         provider.next()
     }
 
+    /// 测试读取口: 取出当前排队的全部事件, 只返回其中的 bar。
+    #[cfg(test)]
+    pub fn drain_bars_for_test(&self) -> Vec<Bar> {
+        let mut bars = Vec::new();
+        while let Some(event) = self.next() {
+            if let Event::Bar(bar) = event {
+                bars.push(bar);
+            }
+        }
+        bars
+    }
+
     pub fn len_hint(&self) -> Option<usize> {
         let provider = self.provider.lock().unwrap();
         provider.len_hint()

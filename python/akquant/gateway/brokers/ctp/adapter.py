@@ -58,8 +58,7 @@ class CTPMarketAdapter:
 
     def disconnect(self) -> None:
         """Disconnect market stream."""
-        if hasattr(self.gateway, "api") and self.gateway.api:
-            self.gateway.api.Release()
+        self.gateway.stop()
 
     def subscribe(self, symbols: Sequence[str]) -> None:
         """Update subscribed symbols."""

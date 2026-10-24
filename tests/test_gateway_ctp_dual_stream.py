@@ -74,7 +74,6 @@ def test_ctp_can_emit_both_tick_and_bar() -> None:
     assert gateway.emit_ticks is True
     assert gateway.emit_bars is True
     assert gateway.aggregator is not None
-    assert gateway.stamp_bar_at_interval_end is True
 
 
 def test_ctp_use_aggregator_false_defaults_to_tick_only() -> None:
@@ -83,7 +82,6 @@ def test_ctp_use_aggregator_false_defaults_to_tick_only() -> None:
     assert gateway.emit_ticks is True
     assert gateway.emit_bars is False
     assert gateway.aggregator is None
-    assert gateway.stamp_bar_at_interval_end is False
 
 
 def test_ctp_emit_ticks_alone_enables_dual_stream_without_disabling_bar() -> None:
@@ -96,7 +94,6 @@ def test_ctp_emit_ticks_alone_enables_dual_stream_without_disabling_bar() -> Non
     assert gateway.emit_ticks is True
     assert gateway.emit_bars is True
     assert gateway.aggregator is not None
-    assert gateway.stamp_bar_at_interval_end is True
 
 
 def test_ctp_emit_ticks_true_emit_bars_false_stays_tick_only() -> None:
@@ -105,7 +102,6 @@ def test_ctp_emit_ticks_true_emit_bars_false_stays_tick_only() -> None:
     assert gateway.emit_ticks is True
     assert gateway.emit_bars is False
     assert gateway.aggregator is None
-    assert gateway.stamp_bar_at_interval_end is False
 
 
 def test_ctp_emit_ticks_and_emit_bars_both_false_raises() -> None:
@@ -201,7 +197,6 @@ def test_build_ctp_forwards_emit_ticks_and_emit_bars() -> None:
     gateway = _build(emit_ticks=True, emit_bars=True)
     assert gateway.emit_ticks is True
     assert gateway.emit_bars is True
-    assert gateway.stamp_bar_at_interval_end is True
 
 
 def test_build_ctp_emit_ticks_alone_stays_dual_stream_via_builder() -> None:
@@ -209,7 +204,6 @@ def test_build_ctp_emit_ticks_alone_stays_dual_stream_via_builder() -> None:
     gateway = _build(emit_ticks=True)
     assert gateway.emit_ticks is True
     assert gateway.emit_bars is True
-    assert gateway.stamp_bar_at_interval_end is True
 
 
 def test_build_ctp_use_aggregator_false_forwards_to_tick_only() -> None:

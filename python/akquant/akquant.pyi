@@ -558,19 +558,56 @@ class BarAggregator:
         feed: "DataFeed",
         interval_min: int = ...,
         volume_is_cumulative: bool = ...,
-        stamp_bar_at_interval_end: bool = ...,
-    ) -> "BarAggregator": ...
+        stamp_bar_at_interval_end: typing.Optional[bool] = ...,
+    ) -> "BarAggregator":
+        r"""
+        创建 K 线合成器.
+
+        封闭的 bar 恒用区间终点戳(下一区间起点 - 1ns), 并带 ``interval_start``
+        (本区间起点 - 1ns), 实盘与回测同一口径。
+
+        :param feed: 数据源 (合成的 Bar 将添加到此数据源)
+        :param interval_min: K 线周期 (分钟, 默认 1 分钟)
+        :param volume_is_cumulative: ``on_tick`` 的 ``volume`` 是否为累计量
+            (默认 True, 对应 CTP 的日累计 Volume)。回测喂单笔量时传 False。
+        :param stamp_bar_at_interval_end: 已废弃, 仅为兼容旧调用保留。传 True
+            静默接受, 传 False 抛 ``ValueError``。
+        """
+        ...
     def on_tick(
         self, symbol: str, price: float, volume: float, timestamp_ns: int
     ) -> None:
         r"""
         处理新的 Tick 数据.
 
+        所属区间已被封闭推出(例如已由 ``flush_due`` 补发)的迟到 tick 不再计入
+        任何 bar: 累计口径下仍更新累计基数, 计入 ``late_tick_count``。
+
         :param symbol: 标的代码
         :param price: 最新价
         :param volume: 成交量。`volume_is_cumulative=True` 时为累计成交量
             (TotalVolume); 为 False 时为本笔成交量。
         :param timestamp_ns: 时间戳 (纳秒)
+        """
+        ...
+    def flush_due(self, now_ns: int, grace_ns: int = 2_000_000_000) -> int:
+        r"""
+        封闭已到期的在形成 bar 并推入数据源.
+
+        区间终点 + ``grace_ns`` ≤ ``now_ns`` 的 bar 被封闭推出。之后到达的
+        同区间 tick 视为迟到并丢弃。
+
+        :param now_ns: 当前时刻 (纳秒)
+        :param grace_ns: 区间结束后的宽限期 (纳秒, 默认 2 秒)
+        :return: 本次推出的 bar 根数
+        """
+        ...
+    def late_tick_count(self, symbol: str) -> int:
+        r"""
+        某品种因所属区间已封闭而丢弃的迟到 tick 数.
+
+        :param symbol: 标的代码
+        :return: 丢弃的 tick 数
         """
         ...
 

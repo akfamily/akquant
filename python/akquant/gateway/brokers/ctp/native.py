@@ -999,15 +999,18 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             )
         self.emit_ticks = emit_ticks
         self.emit_bars = emit_bars
-        # 双流下 bar 必须打区间结束戳, 否则与 tick 混推会时间戳倒退(实盘无
-        # sort 兜底, 见 OnRtnDepthMarketData 里的顺序注释)。
-        self.stamp_bar_at_interval_end = emit_ticks and emit_bars
 
+        # 实盘与回测统一终点戳: 合成 bar 的 timestamp 为区间终点(下一区间
+        # 起点 - 1ns)并带 interval_start, 只出 bar 与双流同一口径。双流下这
+        # 也保证 bar 与 tick 混推时间戳不倒退(实盘无 sort 兜底, 见
+        # OnRtnDepthMarketData 里的顺序注释)。
         self.aggregator: Optional[BarAggregator] = None
         if self.emit_bars:
-            self.aggregator = BarAggregator(
-                feed, stamp_bar_at_interval_end=self.stamp_bar_at_interval_end
-            )
+            self.aggregator = BarAggregator(feed)
+        # 到期补发线程: 某品种下一区间迟迟没有 tick 时, 由它按墙钟封闭本区间
+        # 的 bar(见 _start_bar_flush_thread)。
+        self._bar_flush_stop = threading.Event()
+        self._bar_flush_thread: Optional[threading.Thread] = None
 
         # CTP 的 pDepthMarketData.Volume 是当日累计成交量, 而回测里
         # Tick.volume 的语义是单笔成交量——同一个策略读 tick.volume, 回测拿
@@ -1033,6 +1036,7 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             self.api.RegisterFront(self.front_url)
             self.api.RegisterSpi(self)
             self.api.Init()
+            self._start_bar_flush_thread()
             logger.info(
                 "Native CTP market API initialized; joining event loop",
                 extra=self._log_extra(),
@@ -1043,6 +1047,59 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
                 "Failed to start native CTP market gateway",
                 extra=self._log_extra(),
             )
+        finally:
+            self._stop_bar_flush_thread()
+
+    def stop(self) -> None:
+        """Stop the bar flush thread and release the CTP market API."""
+        self._stop_bar_flush_thread()
+        api = self.api
+        if api:
+            api.Release()
+
+    def _start_bar_flush_thread(self) -> None:
+        """启动到期补发守护线程 ``ctp-bar-flush``(只出 bar 或双流时).
+
+        每 1 秒调用 ``aggregator.flush_due(time.time_ns())``: 区间终点 + 宽限
+        (默认 2 秒)已过而下一区间仍没有 tick 的品种, 也能按时收到本区间的
+        bar。已在运行时重复调用无副作用。
+        """
+        if self.aggregator is None:
+            return
+        thread = self._bar_flush_thread
+        if thread is not None and thread.is_alive():
+            return
+        self._bar_flush_stop.clear()
+        thread = threading.Thread(
+            target=self._bar_flush_loop, name="ctp-bar-flush", daemon=True
+        )
+        self._bar_flush_thread = thread
+        thread.start()
+
+    def _stop_bar_flush_thread(self) -> None:
+        """停止到期补发线程(重复调用安全)."""
+        self._bar_flush_stop.set()
+        thread = self._bar_flush_thread
+        self._bar_flush_thread = None
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread is not threading.current_thread()
+        ):
+            thread.join(timeout=2.0)
+
+    def _bar_flush_loop(self) -> None:
+        aggregator = self.aggregator
+        if aggregator is None:
+            return
+        while not self._bar_flush_stop.wait(1.0):
+            try:
+                aggregator.flush_due(time.time_ns())
+            except Exception:
+                logger.exception(
+                    "CTP bar flush failed",
+                    extra=self._log_extra(),
+                )
 
     def OnFrontConnected(self) -> None:
         """Handle front connection event."""
