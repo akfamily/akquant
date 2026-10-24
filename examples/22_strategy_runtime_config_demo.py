@@ -53,8 +53,12 @@ class RuntimeWarmConflictStrategy(Strategy):
 
 
 def make_bars(start: str, periods: int, symbol: str = "TEST") -> List[Bar]:
-    """Build synthetic daily bars."""
-    idx = pd.date_range(start=start, periods=periods, freq="D")
+    """Build synthetic daily bars on business days.
+
+    ``Bar.timestamp`` 是 UTC 纳秒, 须由带时区的时间换算: 本地 0 点(只有日期)
+    的日线由引擎改写到交易日收盘(15:00), 区间覆盖整个交易日。
+    """
+    idx = pd.bdate_range(start=start, periods=periods, tz="Asia/Shanghai")
     bars: list[Bar] = []
     for i, ts in enumerate(idx):
         price = 100.0 + i
@@ -74,7 +78,7 @@ def make_bars(start: str, periods: int, symbol: str = "TEST") -> List[Bar]:
 
 def scenario_backtest_override_true() -> None:
     """Run override=true scenario and warning dedup demo."""
-    bars = make_bars("2023-01-01", 2)
+    bars = make_bars("2023-01-03", 2)
     shared_strategy = RuntimeBacktestConflictStrategy()
     aq.run_backtest(
         data=bars,
