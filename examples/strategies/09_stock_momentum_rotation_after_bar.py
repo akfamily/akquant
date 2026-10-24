@@ -42,8 +42,10 @@ def make_data() -> dict[str, pd.DataFrame]:
             return 10.0 + (120 - index) * 0.02
         return 10.0 + (index - 120) * 0.035
 
+    # 只有日期(本地 0 点)的日线: 引擎改写到交易日收盘 15:00。不要把日线打在盘中时刻
+    # (如 10:00), 否则盘中的回调会提前看到当日收盘价(前视)。
     timestamps = list(
-        pd.date_range("2022-01-04 10:00:00", periods=240, freq="B", tz="Asia/Shanghai")
+        pd.date_range("2022-01-04", periods=240, freq="B", tz="Asia/Shanghai")
     )
     return {
         "AAA": _build_symbol_df(
