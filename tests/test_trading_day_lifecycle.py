@@ -1472,15 +1472,25 @@ def _daily_equity(runner: Any) -> Any:
     return stamps, ends, daily_last_by_trading_day(series, ends, "Asia/Shanghai")
 
 
+@pytest.mark.parametrize(
+    "next_day_bar", [True, False], ids=["next_day", "ends_in_grace"]
+)
 def test_live_replay_grace_ticks_do_not_change_daily_equity(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, next_day_bar: bool
 ) -> None:
-    """宽限期内的行情不产生权益点：日权益与去掉这些行情时相同."""
+    """宽限期内的行情不产生权益点：日权益与去掉这些行情时相同.
+
+    持仓在收盘前建立（14:56 下单、14:57 成交），宽限 tick 价 20 若计入当日会抬高
+    D 的日末值。``ends_in_grace``：最后一个事件就是宽限 tick（会话在 D 结算后、
+    D+1 首个行情前结束），期末点也不得按宽限价覆盖 D 的日末值。
+    """
     from akquant import Tick
 
-    bars = _local_bars(["2024-01-02 14:58", "2024-01-02 14:59", "2024-01-03 09:31"])
-    for bar, close in zip(bars, (10.0, 10.0, 11.0)):
-        bar.close = close
+    stamps_in = ["2024-01-02 14:56", "2024-01-02 14:57", "2024-01-02 14:58"]
+    stamps_in.append("2024-01-02 14:59")
+    if next_day_bar:
+        stamps_in.append("2024-01-03 09:31")
+    bars = _local_bars(stamps_in)
     tick_ts = int(pd.Timestamp("2024-01-02 15:00:20", tz="Asia/Shanghai").value)
     tick = Tick(timestamp=tick_ts, price=20.0, volume=100.0, symbol="600000")
     common: Dict[str, Any] = {
@@ -1493,12 +1503,20 @@ def test_live_replay_grace_ticks_do_not_change_daily_equity(
     stamps, ends, daily = _daily_equity(with_grace)
     _, ends_plain, daily_plain = _daily_equity(without)
     close_ns = int(pd.Timestamp("2024-01-02 15:00", tz="Asia/Shanghai").value)
+    raw = with_grace.engine.get_results()
+    # 持仓在宽限之前建立
+    assert len(raw.executions) == 1
+    assert int(raw.executions[0].timestamp) < close_ns
+    # D 只有一个日末值，等于去掉宽限行情的结果
+    pd.testing.assert_series_equal(daily, daily_plain)
     # 权益曲线在 (收盘, 收盘 + 宽限] 内无点；trading_day_ends 为收盘时刻
     assert not [t for t in stamps if close_ns < t <= close_ns + 60 * 10**9], stamps
     assert ends == ends_plain
     assert ends[0] == (dt.date(2024, 1, 2), close_ns)
-    assert len(with_grace.engine.get_results().executions) == 1
-    pd.testing.assert_series_equal(daily, daily_plain)
+    # D 的快照只有收盘那一条
+    assert [m for m in _snapshot_minutes(with_grace) if m.startswith("2024-01-02")] == [
+        "2024-01-02 15:00"
+    ]
 
 
 class _BuyStockOnce(Strategy):

@@ -912,10 +912,12 @@ fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate,
 
     // 实盘收盘宽限期内已有行情更新了最新价: 结算期间换回收盘时刻的最新价
     // (Ruling S8-1), 结算后再换回最新价。
-    let close_prices = match engine.day_close_prices.take() {
-        Some((d, prices)) if d == day => Some(prices),
-        _ => None,
-    };
+    // 快照保留(不 take): 会话在收盘后结束时, 结果期末点仍按它计价。
+    let close_prices = engine
+        .day_close_prices
+        .as_ref()
+        .filter(|(d, _)| *d == day)
+        .map(|(_, prices)| prices.clone());
     let latest_prices = close_prices.map(|prices| {
         std::mem::replace(
             &mut *engine.last_prices.write().expect("last_prices 写锁被污染"),

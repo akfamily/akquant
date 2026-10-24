@@ -1245,6 +1245,68 @@ mod tests {
         });
     }
 
+    /// 与 `Engine::get_results` 同口径生成结果(期末点取 `terminal_result_point`)。
+    fn live_results(engine: &Engine) -> crate::analysis::BacktestResult {
+        let (terminal, close_prices) = engine.terminal_result_point();
+        let latest = engine.last_prices.read().unwrap();
+        let prices = close_prices.as_ref().unwrap_or(&*latest);
+        engine.statistics_manager.generate_backtest_result(
+            &engine.state.portfolio,
+            &engine.instruments,
+            prices,
+            &engine.state.order_manager,
+            &engine.risk_manager.config,
+            engine.initial_cash,
+            terminal,
+            engine.timezone_name.clone(),
+            engine.timezone_offset,
+            engine.days_per_year,
+            engine.risk_free_rate,
+            engine.trading_day_ends.clone(),
+        )
+    }
+
+    #[test]
+    fn test_live_session_ending_inside_grace_prices_terminal_point_at_close() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            engine.live_day_close_delay_ns = 60_000_000_000;
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            Arc::make_mut(&mut engine.state.portfolio.positions)
+                .insert("600000.SH".to_string(), dec!(100));
+            let close = sh_ns(1, 2, 15, 0);
+            engine
+                .state
+                .feed
+                .add_bar(live_bar(sh_ns(1, 2, 14, 59)))
+                .unwrap();
+            engine
+                .state
+                .feed
+                .add_tick(live_tick(close + 30_000_000_000, dec!(12)))
+                .unwrap();
+            let mut processor = DataProcessor::new();
+            drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {
+                matches!(e.current_event, Some(crate::event::Event::Tick(_)))
+            });
+            // 会话在宽限 tick 之后、收盘定时器之前结束(D 未结算)
+            assert!(engine.current_day_unsettled());
+            let result = live_results(&engine);
+            let last = *result.equity_curve.last().unwrap();
+            assert_eq!(last.0, close, "期末点钳到收盘");
+            assert_eq!(
+                result.snapshots.iter().map(|(t, _)| *t).collect::<Vec<_>>(),
+                vec![close]
+            );
+            assert_eq!(result.snapshots[0].1[0].close, 10.0, "按收盘时刻的最新价");
+            // 同一时刻按宽限价(12)计价时权益更高: 钳制后与收盘价口径一致
+            let at_1459 = result.equity_curve[0].1;
+            assert_eq!(last.1, at_1459);
+        });
+    }
+
     #[test]
     fn test_live_grace_event_keeps_next_open_day_order_exempt_at_close() {
         pyo3::Python::initialize();

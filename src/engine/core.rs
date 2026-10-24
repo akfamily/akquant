@@ -217,7 +217,8 @@ pub struct Engine {
     pub(crate) live_day_close_delay_ns: i64,
     /// 实盘收盘宽限期内首个归当日的行情到达前的最新价 `(交易日, 价格表)`：该日结算
     /// （到期、日终、收盘快照）按它计价，结算价仍为收盘时刻（不晚于收盘）的最新价，
-    /// 不含宽限期内的行情（见 [`Engine::live_grace_day`]）。运行状态，不入存档。
+    /// 不含宽限期内的行情（见 [`Engine::live_grace_day`]）。结算后保留到下一交易日，
+    /// 供结果期末点计价（[`Engine::terminal_result_point`]）。运行状态，不入存档。
     pub(crate) day_close_prices: Option<(NaiveDate, HashMap<String, Decimal>)>,
     /// 实盘生命周期锚点（纳秒）：replay 回放历史行情时由 runner 按首个回放事件
     /// （首个事件 - 1ns）经 `_set_live_lifecycle_anchor` 下发；`run()` 用
@@ -710,6 +711,31 @@ impl Engine {
             Some(Event::Tick(tick)) => Some(tick.timestamp),
             Some(Event::Timer(timer)) => self.effective_terminal_timestamp_for_timer(timer),
             _ => self.clock.timestamp(),
+        }
+    }
+
+    /// 结果的期末点 `(时刻, 计价用的价格表)`。价格表为 `None` 时按 `last_prices` 计价。
+    ///
+    /// 实盘期末时刻晚于当前交易日 D 的收盘时（会话在收盘后、下一交易日首个行情前
+    /// 结束，含宽限期内与收盘定时器之后）：期末点钳到 D 的收盘，按收盘时刻的最新价
+    /// （结算价快照，宽限期内没有行情时即 `last_prices`）计价——D 的日末值与收盘
+    /// 结算快照一致，不含宽限期内的行情价。其余情形（含回测）取
+    /// [`Engine::terminal_result_timestamp`]。
+    pub(crate) fn terminal_result_point(&self) -> (Option<i64>, Option<HashMap<String, Decimal>>) {
+        let ts = self.terminal_result_timestamp();
+        if !self.state.feed.is_live() {
+            return (ts, None);
+        }
+        match (ts, self.current_trading_day, self.current_day_span) {
+            (Some(t), Some(day), Some((_, close))) if t > close => {
+                let prices = self
+                    .day_close_prices
+                    .as_ref()
+                    .filter(|(d, _)| *d == day)
+                    .map(|(_, p)| p.clone());
+                (Some(close), prices)
+            }
+            _ => (ts, None),
         }
     }
 

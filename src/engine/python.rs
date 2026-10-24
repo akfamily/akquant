@@ -1780,14 +1780,18 @@ impl Engine {
             self.flush_terminal_expiry_events(py, strategy)?;
         }
 
-        // 最终快照只在当前交易日未结算时记; 已结算则当日收盘快照已存在。
-        if current_day_unsettled && let Some(timestamp) = self.terminal_result_timestamp() {
-            let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+        // 最终快照只在当前交易日未结算时记; 已结算则当日收盘快照已存在。实盘在
+        // 收盘宽限期内结束时记在收盘、按收盘时刻的最新价(见 terminal_result_point)。
+        if current_day_unsettled
+            && let (Some(timestamp), close_prices) = self.terminal_result_point()
+        {
+            let latest = self.last_prices.read().expect("last_prices 读锁被污染");
+            let prices = close_prices.as_ref().unwrap_or(&*latest);
             self.statistics_manager.record_snapshot(
                 timestamp,
                 &self.state.portfolio,
                 &self.instruments,
-                &prices,
+                prices,
                 &self.state.order_manager.trade_tracker,
                 &self.risk_manager.config,
             );
@@ -1836,15 +1840,18 @@ impl Engine {
     ///
     /// :return: BacktestResult
     fn get_results(&self) -> BacktestResult {
-        let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+        // 实盘会话在收盘后结束时, 期末点钳到收盘并按收盘时刻的最新价计价。
+        let (terminal, close_prices) = self.terminal_result_point();
+        let latest = self.last_prices.read().expect("last_prices 读锁被污染");
+        let prices = close_prices.as_ref().unwrap_or(&*latest);
         self.statistics_manager.generate_backtest_result(
             &self.state.portfolio,
             &self.instruments,
-            &prices,
+            prices,
             &self.state.order_manager,
             &self.risk_manager.config,
             self.initial_cash,
-            self.terminal_result_timestamp(),
+            terminal,
             self.timezone_name.clone(),
             self.timezone_offset,
             self.days_per_year,
