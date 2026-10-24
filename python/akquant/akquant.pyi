@@ -193,6 +193,13 @@ class SessionResolver:
     def set_active(
         self, symbols: list[tuple[str, typing.Optional[AssetType]]]
     ) -> None: ...
+    def set_option_underlyings(self, mapping: dict[str, str]) -> None:
+        r"""
+        设置期权到标的的映射 ``{期权代码: 标的代码}``.
+
+        期权未命中 ``sessions`` 前缀、且标的在 :meth:`set_active` 中登记为期货时, 期权使用
+        标的的时段表; 否则仍用 ``CN_OPTION``(如 ETF 期权). 与 ``set_active`` 的调用先后无关.
+        """
     def session_day_end(self, trading_day: datetime.date) -> int: ...
     def is_session_day(self, day: datetime.date) -> bool: ...
     def session_trading_day(self, timestamp: int) -> datetime.date: ...

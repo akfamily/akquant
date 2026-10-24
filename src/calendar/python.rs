@@ -10,6 +10,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyMapping, PyString};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 fn calendar_err(e: CalendarError) -> PyErr {
@@ -200,6 +201,19 @@ impl PySessionResolver {
         // 克隆一份新解析器替换 Arc：已通过 arc() 共享出去的持有者不受影响
         let mut next = self.inner.as_ref().clone();
         next.set_active(&symbols);
+        self.inner = Arc::new(next);
+    }
+
+    /// 设置期权到标的的映射 ``{期权代码: 标的代码}``。
+    ///
+    /// 期权未命中 ``sessions`` 前缀、且标的在 :meth:`set_active` 中登记为期货时，期权使用
+    /// 标的的时段表（商品期权随期货的夜盘与日盘）；否则仍用 ``CN_OPTION``（如 ETF 期权）。
+    /// 与 :meth:`set_active` 的调用先后无关。
+    fn set_option_underlyings(&mut self, mapping: HashMap<String, String>) {
+        let mut pairs: Vec<(String, String)> = mapping.into_iter().collect();
+        pairs.sort();
+        let mut next = self.inner.as_ref().clone();
+        next.set_option_underlyings(&pairs);
         self.inner = Arc::new(next);
     }
 

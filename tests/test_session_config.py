@@ -368,3 +368,221 @@ def test_custom_sessions_through_run_backtest_and_checkpoint(tmp_path: Any) -> N
     )
     assert r2.strategy is not None
     assert r2.strategy.sessions[-2:] == ["Continuous", "Closed"]
+
+
+def test_commodity_option_follows_underlying_futures_schedule() -> None:
+    """标的为夜盘期货的期权：夜盘 21:30 的期权行情属连续竞价、归下一交易日."""
+    r = aq.SessionResolver(sessions={"au": "CN_FUTURES_NIGHT_0230"}, timezone=TZ)
+    r.set_active(
+        [("au2406", aq.AssetType.Futures), ("au2406C500", aq.AssetType.Option)]
+    )
+    r.set_option_underlyings({"au2406C500": "au2406"})
+    day, session = r.resolve_instant(
+        "au2406C500", _ns("2024-01-05 21:30"), aq.AssetType.Option
+    )
+    assert (day, session) == (dt.date(2024, 1, 8), aq.TradingSession.Continuous)
+
+
+def test_commodity_option_without_sessions_uses_futures_default() -> None:
+    """未配置 sessions：标的为已登记期货的期权用期货默认表（14:58 连续竞价）."""
+    r = aq.SessionResolver(timezone=TZ)
+    r.set_active(
+        [("au2406", aq.AssetType.Futures), ("au2406C500", aq.AssetType.Option)]
+    )
+    ts = _ns("2024-01-08 14:58")
+    _, before = r.resolve_instant("au2406C500", ts, aq.AssetType.Option)
+    assert before == aq.TradingSession.ClosingAuction
+    r.set_option_underlyings({"au2406C500": "au2406"})
+    _, after = r.resolve_instant("au2406C500", ts, aq.AssetType.Option)
+    assert after == aq.TradingSession.Continuous
+    # 标的未登记为期货（未出现在 set_active 中）：保持 CN_OPTION
+    r2 = aq.SessionResolver(timezone=TZ)
+    r2.set_active([("au2406C500", aq.AssetType.Option)])
+    r2.set_option_underlyings({"au2406C500": "au2406"})
+    _, s2 = r2.resolve_instant("au2406C500", ts, aq.AssetType.Option)
+    assert s2 == aq.TradingSession.ClosingAuction
+
+
+def test_option_underlyings_order_independent_and_prefix_wins() -> None:
+    """先给映射后 set_active 结果相同；期权自身命中 sessions 前缀时前缀优先."""
+    r = aq.SessionResolver(sessions={"au": "CN_FUTURES_NIGHT_0230"}, timezone=TZ)
+    r.set_option_underlyings({"m2405-C-3000": "au2406"})
+    r.set_active(
+        [("au2406", aq.AssetType.Futures), ("m2405-C-3000", aq.AssetType.Option)]
+    )
+    _, session = r.resolve_instant(
+        "m2405-C-3000", _ns("2024-01-05 21:30"), aq.AssetType.Option
+    )
+    assert session == aq.TradingSession.Continuous
+    # 期权代码自身命中前缀 "m"（日盘表）：不再跟随标的
+    r2 = aq.SessionResolver(
+        sessions={"au": "CN_FUTURES_NIGHT_0230", "m": "CN_FUTURES_DAY"}, timezone=TZ
+    )
+    r2.set_active(
+        [("au2406", aq.AssetType.Futures), ("m2405-C-3000", aq.AssetType.Option)]
+    )
+    r2.set_option_underlyings({"m2405-C-3000": "au2406"})
+    _, session = r2.resolve_instant(
+        "m2405-C-3000", _ns("2024-01-05 21:30"), aq.AssetType.Option
+    )
+    assert session == aq.TradingSession.Closed
+
+
+def test_etf_option_keeps_cn_option_default() -> None:
+    """标的不是已登记的期货（ETF）：期权仍用 CN_OPTION."""
+    r = aq.SessionResolver(timezone=TZ)
+    r.set_option_underlyings({"10007000": "510050.SH"})
+    _, session = r.resolve_instant(
+        "10007000", _ns("2024-01-02 21:30"), aq.AssetType.Option
+    )
+    assert session == aq.TradingSession.Closed
+    # 标的已登记但为基金：即使标的命中全天表也不跟随（跟随则 21:30 为连续竞价）
+    r2 = aq.SessionResolver(sessions={"510050": "ALWAYS_OPEN"}, timezone=TZ)
+    r2.set_active([("510050.SH", aq.AssetType.Fund), ("10007000", aq.AssetType.Option)])
+    r2.set_option_underlyings({"10007000": "510050.SH"})
+    _, session = r2.resolve_instant(
+        "10007000", _ns("2024-01-02 21:30"), aq.AssetType.Option
+    )
+    assert session == aq.TradingSession.Closed
+
+
+class _SymbolSessionProbe(aq.Strategy):
+    """记录每根 bar 的 (品种, 时段)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: List[tuple[str, str]] = []
+
+    def on_bar(self, bar: aq.Bar) -> None:
+        assert self.ctx is not None
+        self.seen.append(
+            (bar.symbol, str(self.ctx.session_of(bar.symbol)).split(".")[-1])
+        )
+
+
+def _commodity_option_frames() -> pd.DataFrame:
+    idx = pd.to_datetime(["2024-01-08 10:20", "2024-01-08 14:58"]).tz_localize(TZ)
+    rows = []
+    for sym, px in (("au2406", 500.0), ("au2406C500", 10.0)):
+        rows.append(
+            pd.DataFrame(
+                {
+                    "timestamp": idx,
+                    "symbol": sym,
+                    "open": px,
+                    "high": px,
+                    "low": px,
+                    "close": px,
+                    "volume": 1.0,
+                }
+            )
+        )
+    return pd.concat(rows, ignore_index=True)
+
+
+def test_run_backtest_commodity_option_follows_registered_futures() -> None:
+    """引擎从 instruments 收集期权→标的映射：商品期权用期货默认日盘表而非 CN_OPTION.
+
+    10:20 期货日盘为小节休息（CN_OPTION 为连续竞价），14:58 期货为连续竞价
+    （CN_OPTION 为收盘集合竞价）。
+    """
+    from akquant import run_backtest
+
+    instruments = [
+        aq.InstrumentConfig(
+            symbol="au2406", asset_type="FUTURES", multiplier=1000.0, margin_ratio=0.1
+        ),
+        aq.InstrumentConfig(
+            symbol="au2406C500",
+            asset_type="OPTION",
+            multiplier=1000.0,
+            option_type="CALL",
+            strike_price=500.0,
+            expiry_date=20240425,
+            underlying_symbol="au2406",
+        ),
+    ]
+    cfg = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=1e6),
+        instruments_config=instruments,
+    )
+    res = run_backtest(
+        strategy=_SymbolSessionProbe,
+        data=_commodity_option_frames(),
+        config=cfg,
+        show_progress=False,
+    )
+    assert res.strategy is not None
+    opt = [sess for sym, sess in res.strategy.seen if sym == "au2406C500"]
+    assert opt == ["Break", "Continuous"]
+
+
+def _futures_night_warnings(
+    caplog: Any, times: List[str], sessions: Any = None
+) -> List[str]:
+    from akquant import run_backtest
+
+    idx = pd.to_datetime(times).tz_localize(TZ)
+    df = pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "au2406",
+            "open": 500.0,
+            "high": 500.0,
+            "low": 500.0,
+            "close": 500.0,
+            "volume": 1.0,
+        }
+    )
+    cfg = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=1e6),
+        instruments_config=[
+            aq.InstrumentConfig(
+                symbol="au2406",
+                asset_type="FUTURES",
+                multiplier=1000.0,
+                margin_ratio=0.1,
+            )
+        ],
+    )
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="akquant"):
+        run_backtest(
+            strategy=_SessionProbe,
+            data=df,
+            config=cfg,
+            show_progress=False,
+            sessions=sessions,
+        )
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if "闭市时段" in r.getMessage() and "au2406" in r.getMessage()
+    ]
+
+
+def test_futures_night_data_without_night_template_warns_with_hint(
+    caplog: Any,
+) -> None:
+    """期货默认日盘表、夜盘时刻的行情：告警列出三个夜盘模板并给出 sessions 写法."""
+    msgs = _futures_night_warnings(caplog, ["2024-01-05 21:30", "2024-01-08 10:00"])
+    assert len(msgs) == 1
+    m = msgs[0]
+    for name in ("CN_FUTURES_NIGHT_23", "CN_FUTURES_NIGHT_01", "CN_FUTURES_NIGHT_0230"):
+        assert name in m
+    assert 'run_backtest(sessions={"au": "CN_FUTURES_NIGHT_' in m
+    assert "21:30" in m and "  " not in m
+
+
+def test_futures_closed_outside_night_window_has_no_night_hint(caplog: Any) -> None:
+    """20:00（夜盘窗口外）或所用表已含夜盘时，不附加夜盘模板提示."""
+    msgs = _futures_night_warnings(caplog, ["2024-01-05 20:00", "2024-01-08 10:00"])
+    assert len(msgs) == 1
+    assert "CN_FUTURES_NIGHT_01" not in msgs[0]
+    msgs = _futures_night_warnings(
+        caplog,
+        ["2024-01-05 23:30", "2024-01-08 10:00"],
+        sessions={"au": "CN_FUTURES_NIGHT_23"},
+    )
+    assert len(msgs) == 1
+    assert "CN_FUTURES_NIGHT_01" not in msgs[0]

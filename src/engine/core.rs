@@ -1,7 +1,7 @@
 use crate::account::{AccountMetrics, calculate_account_metrics};
 #[cfg(test)]
 use chrono::NaiveTime;
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 use indicatif::ProgressBar;
 use pyo3::exceptions::PyRuntimeError;
@@ -435,6 +435,19 @@ impl Engine {
             .values()
             .map(|i| (i.symbol().to_string(), Some(i.asset_type)))
             .collect();
+        // 期权 → 标的：标的为已登记期货的商品期权跟随期货时段表（由 instruments 推导，不入存档）。
+        let mut underlyings: Vec<(String, String)> = self
+            .instruments
+            .values()
+            .filter(|i| i.asset_type == crate::model::AssetType::Option)
+            .filter_map(|i| {
+                i.underlying_symbol()
+                    .filter(|u| !u.trim().is_empty())
+                    .map(|u| (i.symbol().to_string(), u.clone()))
+            })
+            .collect();
+        underlyings.sort();
+        resolver.set_option_underlyings(&underlyings);
         resolver.set_active(&active);
         let resolver = Arc::new(resolver);
         // 多周期窗口按同一解析器切分交易日与交易块。
@@ -1721,6 +1734,43 @@ impl Engine {
         Utc.timestamp_opt(secs, nanos)
             .single()
             .expect("Invalid timestamp")
+    }
+
+    /// 闭市告警的夜盘模板提示：仅当 `symbol` 是期货、所用时段表没有夜盘、且行情本地时刻
+    /// 落在 20:55～02:30（夜盘可能的时间）时返回提示文案。
+    pub(crate) fn futures_night_hint(&self, symbol: &str, timestamp: i64) -> Option<String> {
+        let instrument = self.instruments.get(symbol)?;
+        if instrument.asset_type != crate::model::AssetType::Futures {
+            return None;
+        }
+        let resolver = self.session_resolver.as_ref()?;
+        if resolver
+            .schedule_for(symbol, Some(crate::model::AssetType::Futures))
+            .has_night()
+        {
+            return None;
+        }
+        let local = resolver.clock().to_local(timestamp).time();
+        let secs = local.num_seconds_from_midnight();
+        let in_night = secs >= 20 * 3600 + 55 * 60 || secs <= 2 * 3600 + 30 * 60;
+        if !in_night {
+            return None;
+        }
+        // 键用品种代码（代码开头的字母，如 au2406 → au）；取不到时用完整代码。
+        let product: String = symbol
+            .trim()
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+        let key = if product.is_empty() {
+            symbol.trim().to_string()
+        } else {
+            product.to_ascii_lowercase()
+        };
+        Some(format!(
+            "该期货所用时段表没有夜盘，而这条行情的本地时刻 {} 在夜盘时间（20:55～02:30）内。如该品种有夜盘，请按夜盘收盘时刻选模板：CN_FUTURES_NIGHT_23（23:00 收）、CN_FUTURES_NIGHT_01（01:00 收）或CN_FUTURES_NIGHT_0230（02:30 收），例如 run_backtest(sessions={{\"{key}\": \"CN_FUTURES_NIGHT_0230\"}})（键是代码前缀，实盘 run_live 同名参数）",
+            local.format("%H:%M")
+        ))
     }
 
     fn parsed_timezone(&self) -> Option<Tz> {

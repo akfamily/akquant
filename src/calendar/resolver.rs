@@ -157,6 +157,12 @@ pub struct SessionResolver {
     blocks: Mutex<HashMap<(usize, NaiveDate), Arc<Vec<TradingBlock>>>>,
     /// 在用时段表（按 Arc 指针去重）；空表示未调用 set_active。
     active: Vec<Arc<SessionSchedule>>,
+    /// 最近一次 set_active 的标的列表（映射变化时据此重算 `active`）。
+    active_symbols: Vec<(String, Option<AssetType>)>,
+    /// 已登记标的的资产类型（键 `trim().lower()`），来自 set_active。
+    asset_types: HashMap<String, AssetType>,
+    /// 期权 → 标的代码（键与值均 `trim().lower()`）；标的登记为期货时期权跟随标的的时段表。
+    option_underlyings: HashMap<String, String>,
     /// 按时刻解析的缓存（见 [`Self::session_at_instant`]）：(时刻, [(时段表指针, 结果)])，
     /// 时刻变化时整体作废。
     instant_cache: Mutex<(i64, Vec<(usize, Option<TradingSession>)>)>,
@@ -183,6 +189,9 @@ impl Clone for SessionResolver {
             windows: Mutex::new(HashMap::new()),
             blocks: Mutex::new(HashMap::new()),
             active: self.active.clone(),
+            active_symbols: self.active_symbols.clone(),
+            asset_types: self.asset_types.clone(),
+            option_underlyings: self.option_underlyings.clone(),
             instant_cache: Mutex::new((i64::MIN, Vec::new())),
             #[cfg(test)]
             instant_resolves: std::sync::atomic::AtomicUsize::new(0),
@@ -230,6 +239,9 @@ impl SessionResolver {
             windows: Mutex::new(HashMap::new()),
             blocks: Mutex::new(HashMap::new()),
             active: Vec::new(),
+            active_symbols: Vec::new(),
+            asset_types: HashMap::new(),
+            option_underlyings: HashMap::new(),
             instant_cache: Mutex::new((i64::MIN, Vec::new())),
             #[cfg(test)]
             instant_resolves: std::sync::atomic::AtomicUsize::new(0),
@@ -251,8 +263,27 @@ impl SessionResolver {
     }
 
     pub fn set_active(&mut self, symbols: &[(String, Option<AssetType>)]) {
+        self.active_symbols = symbols.to_vec();
+        self.asset_types = symbols
+            .iter()
+            .filter_map(|(s, t)| t.map(|t| (s.trim().to_ascii_lowercase(), t)))
+            .collect();
+        self.recompute_active();
+    }
+
+    /// 设置期权 → 标的映射：期权未命中 sessions 前缀、且标的在 set_active 中登记为期货时，
+    /// 期权使用标的的时段表（否则仍用 CN_OPTION）。与 set_active 的调用先后无关。
+    pub fn set_option_underlyings(&mut self, mapping: &[(String, String)]) {
+        self.option_underlyings = mapping
+            .iter()
+            .map(|(o, u)| (o.trim().to_ascii_lowercase(), u.trim().to_ascii_lowercase()))
+            .collect();
+        self.recompute_active();
+    }
+
+    fn recompute_active(&mut self) {
         let mut active: Vec<Arc<SessionSchedule>> = Vec::new();
-        for (symbol, asset_type) in symbols {
+        for (symbol, asset_type) in &self.active_symbols {
             let s = self.schedule_for(symbol, *asset_type);
             if !active.iter().any(|a| Arc::ptr_eq(a, &s)) {
                 active.push(s);
@@ -381,6 +412,13 @@ impl SessionResolver {
             .find(|(p, _)| lower.starts_with(p.as_str()))
         {
             return s.clone();
+        }
+        // 商品期权：标的是已登记的期货时跟随标的（标的自己再按前缀/默认取表）。
+        if asset_type == Some(AssetType::Option)
+            && let Some(underlying) = self.option_underlyings.get(&lower)
+            && self.asset_types.get(underlying) == Some(&AssetType::Futures)
+        {
+            return self.schedule_for(underlying, Some(AssetType::Futures));
         }
         if let Some(s) = &self.explicit_default {
             return s.clone();
@@ -1689,5 +1727,57 @@ mod tests {
             .resolve_instant("xx2405", fut, at(2024, 1, 8, 10, 20, 0))
             .unwrap();
         assert_eq!(gap.session, TradingSession::Closed);
+    }
+
+    #[test]
+    fn option_follows_registered_futures_underlying() {
+        let opt = Some(AssetType::Option);
+        let fut = Some(AssetType::Futures);
+        let mut r = resolver(vec![("au", "CN_FUTURES_NIGHT_0230")], None);
+        // 14:58：CN_OPTION 为收盘集合竞价，期货日盘为连续竞价
+        let ts = at(2024, 1, 8, 14, 58, 0);
+        r.set_active(&[
+            ("ag2406".to_string(), fut),
+            ("10007000".to_string(), opt),
+            ("m2405-C-3000".to_string(), opt),
+        ]);
+        r.set_option_underlyings(&[
+            ("m2405-C-3000".to_string(), "AG2406".to_string()),
+            ("10007000".to_string(), "510050.SH".to_string()),
+        ]);
+        let s = r.resolve_instant("m2405-C-3000", opt, ts).unwrap();
+        assert_eq!(s.session, TradingSession::Continuous);
+        // ETF 期权：标的未登记为期货，保持 CN_OPTION
+        let s = r.resolve_instant("10007000", opt, ts).unwrap();
+        assert_eq!(s.session, TradingSession::ClosingAuction);
+        // 标的命中 sessions 前缀：期权随标的用夜盘表；在用表随映射重算
+        r.set_option_underlyings(&[("m2405-C-3000".to_string(), "au2406".to_string())]);
+        assert!(!r.active_schedules().iter().any(|s| s.has_night()));
+        r.set_active(&[
+            ("au2406".to_string(), fut),
+            ("m2405-C-3000".to_string(), opt),
+        ]);
+        let night = r
+            .resolve_instant("m2405-C-3000", opt, at(2024, 1, 5, 21, 30, 0))
+            .unwrap();
+        assert_eq!(night.session, TradingSession::Continuous);
+        assert_eq!(night.trading_day, d(2024, 1, 8));
+        // 克隆体保留映射
+        let c = r.clone();
+        let night = c
+            .resolve_instant("m2405-C-3000", opt, at(2024, 1, 5, 21, 30, 0))
+            .unwrap();
+        assert_eq!(night.session, TradingSession::Continuous);
+        // 期权自身命中前缀时前缀优先
+        let mut r2 = resolver(
+            vec![("au", "CN_FUTURES_NIGHT_0230"), ("m", "CN_FUTURES_DAY")],
+            None,
+        );
+        r2.set_active(&[("au2406".to_string(), fut)]);
+        r2.set_option_underlyings(&[("m2405-C-3000".to_string(), "au2406".to_string())]);
+        let s = r2
+            .resolve_instant("m2405-C-3000", opt, at(2024, 1, 5, 21, 30, 0))
+            .unwrap();
+        assert_eq!(s.session, TradingSession::Closed);
     }
 }
