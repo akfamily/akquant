@@ -52,6 +52,7 @@ python examples/textbook/ch07_futures_functional.py
 - 品种前缀模板（乘数、保证金、tick、手数）
 - 品种前缀费率覆盖
 - 品种前缀校验开关（tick 对齐、手数整数倍）
+
 交易时段不在 `china_futures` 中配置，改由 `run_backtest(sessions=...)` 指定（见下文）。
 
 示例：
