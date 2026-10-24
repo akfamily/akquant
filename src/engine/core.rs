@@ -1756,19 +1756,9 @@ impl Engine {
         if !in_night {
             return None;
         }
-        // 键用品种代码（代码开头的字母，如 au2406 → au）；取不到时用完整代码。
-        let product: String = symbol
-            .trim()
-            .chars()
-            .take_while(|c| c.is_ascii_alphabetic())
-            .collect();
-        let key = if product.is_empty() {
-            symbol.trim().to_string()
-        } else {
-            product.to_ascii_lowercase()
-        };
+        let key = futures_product_key(symbol);
         Some(format!(
-            "该期货所用时段表没有夜盘，而这条行情的本地时刻 {} 在夜盘时间（20:55～02:30）内。如该品种有夜盘，请按夜盘收盘时刻选模板：CN_FUTURES_NIGHT_23（23:00 收）、CN_FUTURES_NIGHT_01（01:00 收）或CN_FUTURES_NIGHT_0230（02:30 收），例如 run_backtest(sessions={{\"{key}\": \"CN_FUTURES_NIGHT_0230\"}})（键是代码前缀，实盘 run_live 同名参数）",
+            "该期货所用时段表没有夜盘，而这条行情的本地时刻 {} 在夜盘时间（20:55～02:30）内。如该品种有夜盘，请按夜盘收盘时刻选模板：CN_FUTURES_NIGHT_23（23:00 收）、CN_FUTURES_NIGHT_01（01:00 收）或 CN_FUTURES_NIGHT_0230（02:30 收），例如 run_backtest(sessions={{\"{key}\": \"CN_FUTURES_NIGHT_0230\"}})（键是代码前缀，实盘 run_live 同名参数）",
             local.format("%H:%M")
         ))
     }
@@ -2388,6 +2378,50 @@ fn span_covers_event(
                 && (start < point
                     || (start == point && session != crate::model::TradingSession::Closed))
         }
+    }
+}
+
+/// 夜盘提示里 `sessions` 示例键：覆盖该品种全部合约的代码前缀（小写）。
+///
+/// `sessions` 按完整代码前缀匹配，键取代码开头的字母（`au2406` → `au`、
+/// `au2406.SHFE` → `au`）；交易所在前的写法保留交易所再取品种字母
+/// （`SHFE.au2406` → `shfe.au`，只取 `shfe` 会覆盖整个交易所，只取 `au` 又匹配不上）。
+/// 取不到品种字母时用完整代码。
+fn futures_product_key(symbol: &str) -> String {
+    fn leading_alpha(s: &str) -> &str {
+        let end = s
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(s.len());
+        &s[..end]
+    }
+    let code = symbol.trim().to_ascii_lowercase();
+    let head = leading_alpha(&code);
+    if head.is_empty() {
+        return code;
+    }
+    if let Some(rest) = code[head.len()..].strip_prefix('.') {
+        let product = leading_alpha(rest);
+        return if product.is_empty() {
+            code.clone()
+        } else {
+            format!("{head}.{product}")
+        };
+    }
+    head.to_string()
+}
+
+#[cfg(test)]
+mod futures_product_key_tests {
+    use super::futures_product_key;
+
+    #[test]
+    fn product_key_skips_exchange_prefix_only_when_exchange_comes_first() {
+        assert_eq!(futures_product_key("au2406"), "au");
+        assert_eq!(futures_product_key(" AU2406 "), "au");
+        assert_eq!(futures_product_key("au2406.SHFE"), "au");
+        assert_eq!(futures_product_key("SHFE.au2406"), "shfe.au");
+        assert_eq!(futures_product_key("SHFE.2406"), "shfe.2406");
+        assert_eq!(futures_product_key("2406"), "2406");
     }
 }
 

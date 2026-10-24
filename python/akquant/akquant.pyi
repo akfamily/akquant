@@ -1238,6 +1238,7 @@ class Instrument:
     implied_volatility: typing.Optional[float]
     reference_volatility: typing.Optional[float]
     sellable_after_days: int
+    underlying_symbol: typing.Optional[str]
     def __new__(
         cls,
         symbol: str,

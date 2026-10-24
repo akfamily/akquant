@@ -487,18 +487,36 @@ def _activate_session_symbols(
     symbols: Iterable[str],
     asset_type_of: Callable[[str], Any],
     known_asset_types: Optional[Dict[str, Any]] = None,
+    *,
+    underlying_of: Callable[[str], Optional[str]],
+    known_underlyings: Optional[Dict[str, Optional[str]]] = None,
 ) -> None:
-    """把将注册为合约的标的设为解析器的在用标的.
+    """把将注册为合约的标的设为解析器的在用标的，并下发期权→标的映射.
 
     须与引擎 ``ensure_session_resolver`` 的在用集合（全部已登记合约）一致：只有日期
     的数据改写到会话级收盘 ``session_day_end``，它取所有在用时段表收盘的最大值。
     ``known_asset_types`` 给出已知资产类型的标的（如存档里已有的合约），其余按
     ``asset_type_of`` 解析。
+
+    期权→标的映射口径同引擎：在用标的中资产类型为期权、标的代码非空的合约。
+    ``known_underlyings`` 与 ``known_asset_types`` 对应（存档合约的标的），其余按
+    ``underlying_of`` 解析。商品期权据此跟随标的期货的时段表，否则预检（固定时刻
+    日线告警、只有日期数据的改写）会按 CN_OPTION 判断，与引擎不一致。
     """
     known = known_asset_types or {}
+    known_u = known_underlyings or {}
     pairs: List[Tuple[str, Any]] = []
+    underlyings: Dict[str, str] = {}
     for sym in dict.fromkeys(str(s) for s in symbols):
-        pairs.append((sym, known[sym] if sym in known else asset_type_of(sym)))
+        in_known = sym in known
+        asset_type = known[sym] if in_known else asset_type_of(sym)
+        pairs.append((sym, asset_type))
+        if asset_type != AssetType.Option:
+            continue
+        underlying = known_u.get(sym) if in_known else underlying_of(sym)
+        if underlying is not None and underlying.strip():
+            underlyings[sym] = underlying
+    resolver.set_option_underlyings(underlyings)
     resolver.set_active(pairs)
 
 
@@ -655,6 +673,16 @@ def _saved_session_asset_types(strategy_instance: Any) -> Dict[str, Any]:
             ]
         except (KeyError, ValueError, TypeError):
             out[str(sym)] = None
+    return out
+
+
+def _saved_session_underlyings(strategy_instance: Any) -> Dict[str, Optional[str]]:
+    """存档策略里已登记合约的标的代码（取自 ``_instrument_snapshots``，无则 None）."""
+    out: Dict[str, Optional[str]] = {}
+    snapshots = getattr(strategy_instance, "_instrument_snapshots", None) or {}
+    for sym, snap in dict(snapshots).items():
+        raw = getattr(snap, "underlying_symbol", None)
+        out[str(sym)] = None if raw is None else str(raw)
     return out
 
 
@@ -1011,6 +1039,26 @@ def _rewrite_date_only_bars(
                 old, ts, ts - _ONE_DAY_NS if start is None else int(start)
             )
     return out
+
+
+def _build_session_underlying_of(
+    prebuilt_instruments: Dict[str, Any],
+    inst_conf_map: Dict[str, Any],
+) -> Callable[[str], Optional[str]]:
+    """按与合约构建一致的来源解析标的代码：预构建合约 > 合约配置；都没有为 None.
+
+    走默认参数构建的合约不带标的代码（与引擎一致）。
+    """
+
+    def underlying_of(symbol: str) -> Optional[str]:
+        if symbol in prebuilt_instruments:
+            raw = getattr(prebuilt_instruments[symbol], "underlying_symbol", None)
+        else:
+            conf = inst_conf_map.get(symbol)
+            raw = None if conf is None else getattr(conf, "underlying_symbol", None)
+        return None if raw is None else str(raw)
+
+    return underlying_of
 
 
 def _build_session_asset_type_of(
@@ -3843,6 +3891,9 @@ def run_backtest(
             )
         ],
     )
+    session_underlying_of = _build_session_underlying_of(
+        preliminary_prebuilt_instruments, preliminary_inst_conf_map
+    )
     fixed_time_checker = _FixedTimeDailyChecker(
         session_resolver, timezone, session_asset_type_of, logger
     )
@@ -3976,6 +4027,7 @@ def run_backtest(
                 session_resolver,
                 [*symbols, *adapter_data_map.keys()],
                 session_asset_type_of,
+                underlying_of=session_underlying_of,
             )
             for sym, df in adapter_data_map.items():
                 df_prep, date_only = _rewrite_date_only_frame(
@@ -4081,6 +4133,7 @@ def run_backtest(
                         if not symbols or symbols == ["BENCHMARK"]
                         else [*symbols, *detected_symbols],
                         session_asset_type_of,
+                        underlying_of=session_underlying_of,
                     )
                     df, rewritten_rows = _rewrite_date_only_multi_symbol_frame(
                         df, date_only_rewriter
@@ -4127,6 +4180,7 @@ def run_backtest(
                     session_resolver,
                     symbols if target_symbol in symbols else [target_symbol],
                     session_asset_type_of,
+                    underlying_of=session_underlying_of,
                 )
                 df, date_only = _rewrite_date_only_frame(df, date_only_rewriter)
                 data_map_for_indicators[target_symbol] = df
@@ -4156,6 +4210,7 @@ def run_backtest(
                     *(s for s in data if not (filter_symbols and s not in symbols)),
                 ],
                 session_asset_type_of,
+                underlying_of=session_underlying_of,
             )
 
             for sym, df in data.items():
@@ -4241,7 +4296,10 @@ def run_backtest(
                     if b.symbol not in symbols:  # type: ignore[union-attr]
                         symbols.append(b.symbol)  # type: ignore[union-attr]
                 _activate_session_symbols(
-                    session_resolver, symbols, session_asset_type_of
+                    session_resolver,
+                    symbols,
+                    session_asset_type_of,
+                    underlying_of=session_underlying_of,
                 )
                 data = _rewrite_date_only_bars(
                     data,  # type: ignore[arg-type]
@@ -4291,7 +4349,12 @@ def run_backtest(
         # start_time / end_time already resolved above
 
         loaded_count = 0
-        _activate_session_symbols(session_resolver, symbols, session_asset_type_of)
+        _activate_session_symbols(
+            session_resolver,
+            symbols,
+            session_asset_type_of,
+            underlying_of=session_underlying_of,
+        )
         for sym in symbols:
             # Try Catalog
             df = catalog.read(
@@ -5756,6 +5819,9 @@ def run_from_checkpoint(
         kwargs.get("asset_type", AssetType.Stock),
         [],
     )
+    session_underlying_of = _build_session_underlying_of(
+        session_prebuilt, session_conf_map
+    )
     symbols, effective_symbols, symbols_explicit = _resolve_effective_symbols(
         symbols=symbols,
         kwargs=kwargs,
@@ -5798,6 +5864,7 @@ def run_from_checkpoint(
     except ValueError:
         bar_period_ns = None
     saved_session_asset_types = _saved_session_asset_types(strategy_instance)
+    saved_session_underlyings = _saved_session_underlyings(strategy_instance)
     resume_extra_symbols = [
         *session_prebuilt,
         *session_conf_map,
@@ -5807,11 +5874,16 @@ def run_from_checkpoint(
     def activate_resume_symbols(data_symbols: Iterable[str]) -> None:
         # 与续跑登记的合约一致: 存档已有合约 + 本次数据与配置里的标的
         fresh = [*(str(s) for s in data_symbols), *resume_extra_symbols]
+        fresh_set = set(fresh)
         _activate_session_symbols(
             session_resolver,
             [*saved_session_asset_types, *fresh],
             session_asset_type_of,
-            {k: v for k, v in saved_session_asset_types.items() if k not in set(fresh)},
+            {k: v for k, v in saved_session_asset_types.items() if k not in fresh_set},
+            underlying_of=session_underlying_of,
+            known_underlyings={
+                k: v for k, v in saved_session_underlyings.items() if k not in fresh_set
+            },
         )
 
     # 1. 准备数据源

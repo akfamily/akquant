@@ -373,6 +373,12 @@ impl Instrument {
     pub fn get_reference_volatility(&self) -> Option<f64> {
         self.reference_volatility().and_then(|v| v.to_f64())
     }
+
+    /// 期权的标的代码；非期权为 None。
+    #[getter]
+    pub fn get_underlying_symbol(&self) -> Option<String> {
+        self.underlying_symbol().cloned()
+    }
 }
 
 // Add public accessors for internal Rust usage to avoid breaking changes everywhere immediately
