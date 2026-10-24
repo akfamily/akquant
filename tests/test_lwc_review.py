@@ -17,6 +17,7 @@ import pytest
 from akquant.lwc._payload import (
     _bar_time,
     _is_intraday,
+    _snap_time,
     build_review_payload,
 )
 from akquant.lwc._template import _safe_json, render_review_html
@@ -315,3 +316,13 @@ def test_intraday_large_volume_payload() -> None:
     assert all(m["time"] in bar_set for m in series["markers"])
     # 向量化后 6 万根构建应远快于 iterrows;给宽松上限防 CI 抖动
     assert elapsed < 5.0, f"payload 构建过慢: {elapsed:.2f}s"
+
+
+def test_snap_time_accepts_ns_trade_time_against_coarser_bar_index() -> None:
+    """日线成交时刻带纳秒(如 23:59:59.999999999)时,秒精度索引也能对齐."""
+    idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03"]).as_unit("s")
+    ts = pd.Timestamp("2024-01-02 23:59:59.999999999")
+    assert _snap_time(ts, idx) == pd.Timestamp("2024-01-02")
+    assert _snap_time(pd.Timestamp("2024-01-03 00:00"), idx) == pd.Timestamp(
+        "2024-01-03"
+    )
