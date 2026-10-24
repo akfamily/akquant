@@ -445,8 +445,7 @@ class BacktestResult:
     :ivar snapshots: 每日持仓快照 [(timestamp, [snapshot])]
     :ivar orders: 订单列表
     :ivar executions: 成交列表
-    :ivar trading_day_ends: 引擎实际开过的交易日及收盘时刻 [(date, close_ns)]；
-        实盘收盘宽限期内有行情归当日时为其中最后一条的时刻
+    :ivar trading_day_ends: 引擎实际开过的交易日及收盘时刻 [(date, close_ns)]
     """
 
     equity_curve: list[tuple[int, float]]

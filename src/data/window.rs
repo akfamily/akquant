@@ -392,7 +392,11 @@ impl WindowAggregator {
 
     /// bar 落在品种时段表全部交易块之外(且有订阅按时段表切分)时告警一次。
     fn check_out_of_block(&mut self, symbol: &str, point: i64, ts: i64) {
-        if !self.warn_out_of_block || self.out_of_block_warned.contains(symbol) {
+        // 引擎指定归属交易日的 bar(实盘收盘宽限期内)本就在收盘后, 不告警。
+        if !self.warn_out_of_block
+            || self.forced_day.is_some()
+            || self.out_of_block_warned.contains(symbol)
+        {
             return;
         }
         let uses_schedule = self

@@ -1046,6 +1046,51 @@ mod tests {
         Some((label, ts, ctx_day, engine.current_trading_day))
     }
 
+    /// 数据阶段返回 Next 之后模拟策略阶段写最新价, 再跑统计阶段(记权益点)。
+    fn after_data_step(engine: &mut Engine, py: Python<'_>, strategy: &Bound<'_, PyAny>) {
+        let priced = match engine.current_event.as_ref() {
+            Some(crate::event::Event::Bar(b)) => Some((b.symbol.clone(), b.close)),
+            Some(crate::event::Event::Tick(t)) => Some((t.symbol.clone(), t.price)),
+            _ => None,
+        };
+        if let Some((symbol, p)) = priced {
+            engine.last_prices.write().unwrap().insert(symbol, p);
+        }
+        StatisticsProcessor.process(engine, py, strategy).unwrap();
+    }
+
+    /// 驱动数据阶段(每个 Next 之后跑 [`after_data_step`]) 直到 `stop` 为真。
+    fn drive_live_until(
+        processor: &mut DataProcessor,
+        engine: &mut Engine,
+        py: Python<'_>,
+        strategy: &Bound<'_, PyAny>,
+        mut stop: impl FnMut(&Engine) -> bool,
+    ) {
+        for _ in 0..1000 {
+            let result = processor.process(engine, py, strategy).unwrap();
+            assert_ne!(result, crate::pipeline::ProcessorResult::Break);
+            if result == crate::pipeline::ProcessorResult::Next {
+                after_data_step(engine, py, strategy);
+            }
+            if stop(engine) {
+                return;
+            }
+        }
+        panic!("1000 步内未达到停止条件");
+    }
+
+    fn snapshot_close(engine: &Engine) -> f64 {
+        let snap = &engine
+            .statistics_manager
+            .snapshots
+            .last()
+            .expect("应有快照")
+            .1;
+        assert_eq!(snap.len(), 1);
+        snap[0].close
+    }
+
     #[test]
     fn test_live_post_close_tick_inside_grace_belongs_to_same_day() {
         pyo3::Python::initialize();
@@ -1089,19 +1134,7 @@ mod tests {
                     continue;
                 }
                 let step = grace_step(&mut engine).expect("应有当前事件");
-                // 最新价由数据阶段之后的策略阶段写入: 这里模拟
-                let price = match engine.current_event.as_ref() {
-                    Some(crate::event::Event::Bar(b)) => Some(b.close),
-                    Some(crate::event::Event::Tick(t)) => Some(t.price),
-                    _ => None,
-                };
-                if let Some(p) = price {
-                    engine
-                        .last_prices
-                        .write()
-                        .unwrap()
-                        .insert(symbol.clone(), p);
-                }
+                after_data_step(&mut engine, py, &strategy);
                 if snapshot_seen_at.is_none() && !snapshot_stamps(&engine).is_empty() {
                     snapshot_seen_at = Some(step.clone());
                 }
@@ -1147,25 +1180,159 @@ mod tests {
             assert_eq!(corp_before_next_bar, Some(d2));
             assert_eq!(steps.last().unwrap().3, Some(d3));
             assert_eq!(engine.last_corp_action_date, Some(d3));
-            // 日收益分组: 宽限期内的权益点归 D
+            // 宽限期内不产生权益点; trading_day_ends 仍为收盘时刻
+            let equity_ts: Vec<i64> = engine
+                .statistics_manager
+                .equity_curve()
+                .iter()
+                .map(|(t, _)| *t)
+                .collect();
+            assert_eq!(equity_ts, vec![bar_ts, next_bar]);
             assert_eq!(
-                crate::analysis::BacktestResult::trading_day_key(
-                    grace2,
-                    &engine.trading_day_ends,
-                    Some("Asia/Shanghai"),
-                    28_800,
-                ),
-                d2
+                engine.trading_day_ends,
+                vec![(d2, close), (d3, sh_ns(1, 3, 15, 0))]
             );
+        });
+    }
+
+    #[test]
+    fn test_live_close_price_arriving_after_grace_tick_sets_settlement_price() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            engine.live_day_close_delay_ns = 60_000_000_000;
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            Arc::make_mut(&mut engine.state.portfolio.positions)
+                .insert("600000.SH".to_string(), dec!(100));
+            let sec = 1_000_000_000_i64;
+            let close = sh_ns(1, 2, 15, 0);
+            let mut late_close_bar = live_bar(close);
+            late_close_bar.close = dec!(13);
+            // 乱序: ts=15:00 的收盘 bar 晚于首条宽限 tick 到达
+            engine
+                .state
+                .feed
+                .add_bar(live_bar(sh_ns(1, 2, 14, 59)))
+                .unwrap();
+            engine
+                .state
+                .feed
+                .add_tick(live_tick(close + sec / 2, dec!(11)))
+                .unwrap();
+            let d2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2);
+            let mut processor = DataProcessor::new();
+            drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {
+                matches!(e.current_event, Some(crate::event::Event::Tick(_)))
+            });
+            engine.state.feed.add_bar(late_close_bar).unwrap();
+            engine
+                .state
+                .feed
+                .add_tick(live_tick(close + 30 * sec, dec!(12)))
+                .unwrap();
+            drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {
+                e.last_settled_trading_day == d2
+            });
+            // 结算价取不晚于收盘的最后价格(13), 不是快照建立时的 10, 也不是宽限价 12
+            assert_eq!(snapshot_stamps(&engine), vec![close]);
+            assert_eq!(snapshot_close(&engine), 13.0);
+            // 结算后最新价换回宽限期最新价
             assert_eq!(
-                crate::analysis::BacktestResult::trading_day_key(
-                    next_bar,
-                    &engine.trading_day_ends,
-                    Some("Asia/Shanghai"),
-                    28_800,
-                ),
-                d3
+                engine.last_prices.read().unwrap().get("600000.SH").copied(),
+                Some(dec!(12))
             );
+        });
+    }
+
+    #[test]
+    fn test_live_grace_event_keeps_next_open_day_order_exempt_at_close() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            engine.live_day_close_delay_ns = 60_000_000_000;
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            let bar_ts = sh_ns(1, 2, 14, 59);
+            engine.state.feed.add_bar(live_bar(bar_ts)).unwrap();
+            // 14:59 bar 上下的 NextOpen Day 单: 唯一撮合机会在下一交易日首个事件
+            let mut order = crate::model::Order::test_new(
+                "o-1459",
+                "600000.SH",
+                crate::model::OrderSide::Buy,
+                crate::model::OrderType::Limit,
+                dec!(100),
+            );
+            order.price = Some(dec!(1));
+            order.created_at = bar_ts;
+            engine.state.order_manager.active_orders.push(order);
+            engine
+                .state
+                .feed
+                .add_tick(live_tick(sh_ns(1, 2, 15, 0) + 30_000_000_000, dec!(10)))
+                .unwrap();
+            let d2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2);
+            let mut processor = DataProcessor::new();
+            drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {
+                e.last_settled_trading_day == d2
+            });
+            // 宽限 tick 不算当日最后一个行情事件: 订单仍豁免, 不在 D 收盘过期
+            assert_eq!(engine.last_event_ts_in_day, Some(bar_ts));
+            assert_eq!(engine.state.order_manager.active_orders.len(), 1);
+            assert!(
+                engine
+                    .state
+                    .order_manager
+                    .current_step_expired_orders
+                    .is_empty()
+            );
+        });
+    }
+
+    #[test]
+    fn test_live_grace_bar_joins_same_day_daily_window() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            engine.live_day_close_delay_ns = 60_000_000_000;
+            engine
+                .window_aggregator
+                .write()
+                .unwrap()
+                .configure(
+                    vec![crate::data::WindowSubscription::parse(None, "1d", None).unwrap()],
+                    Some(1),
+                )
+                .unwrap();
+            let close = sh_ns(1, 2, 15, 0);
+            let mut grace_bar = live_bar(close + 30_000_000_000);
+            grace_bar.close = dec!(12);
+            engine
+                .state
+                .feed
+                .add_bar(live_bar(sh_ns(1, 2, 14, 59)))
+                .unwrap();
+            engine.state.feed.add_bar(grace_bar).unwrap();
+            let mut processor = DataProcessor::new();
+            drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {
+                matches!(
+                    e.current_event,
+                    Some(crate::event::Event::Bar(ref b)) if b.timestamp > close
+                )
+            });
+            // 宽限 bar 并入 D 的日线(不在此处闭合 D 的日线、不开 D+1 的窗口)
+            assert!(engine.pending_window_bars.is_empty());
+            let d2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+            let mut agg = engine.window_aggregator.write().unwrap();
+            let daily = agg.current("600000.SH", "1d").expect("D 的日线仍在形成");
+            assert_eq!(daily.volume, dec!(200));
+            assert_eq!(daily.close, dec!(12));
+            // D 日终闭合
+            let closed = agg.close_through_day(d2, close);
+            assert_eq!(closed.len(), 1);
+            assert_eq!(closed[0].timestamp, close);
+            assert_eq!(closed[0].volume, dec!(200));
         });
     }
 

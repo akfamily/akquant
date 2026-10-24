@@ -1409,7 +1409,7 @@ class _LiveGraceProbe(_LiveDayOrderProbe):
 
 
 def test_live_replay_post_close_tick_inside_grace_belongs_to_same_day(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """收盘后 day_close_delay 内到达的行情仍归当日，不提前开下一交易日."""
     from akquant import Tick
@@ -1443,6 +1443,62 @@ def test_live_replay_post_close_tick_inside_grace_belongs_to_same_day(
     assert len(pre_open_0103) == 1 and pre_open_0103[0] < bar_0103, names
     # 结算快照记在收盘时刻、只一次
     assert _snapshot_minutes(runner).count("2024-01-02 15:00") == 1
+    # 宽限期内的行情不触发“闭市时段”告警
+    closed_warnings = [
+        r.getMessage() for r in caplog.records if "闭市时段" in r.getMessage()
+    ]
+    assert not closed_warnings, closed_warnings
+
+
+class _BuyFirstBarProbe(_LiveDayOrderProbe):
+    """首根 bar 下一张市价买单（下一根 bar 成交），使权益随价格变化."""
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done:
+            self.done = True
+            self.buy("600000", 100)
+
+
+def _daily_equity(runner: Any) -> Any:
+    from akquant.analysis.benchmark import daily_last_by_trading_day
+
+    raw = runner.engine.get_results()
+    stamps = [int(ts) for ts, _ in raw.equity_curve]
+    series = pd.Series(
+        [float(v) for _, v in raw.equity_curve],
+        index=pd.to_datetime(stamps, utc=True),
+    )
+    ends = [(day, int(end)) for day, end in raw.trading_day_ends]
+    return stamps, ends, daily_last_by_trading_day(series, ends, "Asia/Shanghai")
+
+
+def test_live_replay_grace_ticks_do_not_change_daily_equity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """宽限期内的行情不产生权益点：日权益与去掉这些行情时相同."""
+    from akquant import Tick
+
+    bars = _local_bars(["2024-01-02 14:58", "2024-01-02 14:59", "2024-01-03 09:31"])
+    for bar, close in zip(bars, (10.0, 10.0, 11.0)):
+        bar.close = close
+    tick_ts = int(pd.Timestamp("2024-01-02 15:00:20", tz="Asia/Shanghai").value)
+    tick = Tick(timestamp=tick_ts, price=20.0, volume=100.0, symbol="600000")
+    common: Dict[str, Any] = {
+        "strategy_cls": _BuyFirstBarProbe,
+        "trading_calendar": ["2024-01-02", "2024-01-03"],
+        "day_close_delay": 60,
+    }
+    with_grace = _run_live_replay(monkeypatch, bars, ticks=[tick], **common)
+    without = _run_live_replay(monkeypatch, bars, **common)
+    stamps, ends, daily = _daily_equity(with_grace)
+    _, ends_plain, daily_plain = _daily_equity(without)
+    close_ns = int(pd.Timestamp("2024-01-02 15:00", tz="Asia/Shanghai").value)
+    # 权益曲线在 (收盘, 收盘 + 宽限] 内无点；trading_day_ends 为收盘时刻
+    assert not [t for t in stamps if close_ns < t <= close_ns + 60 * 10**9], stamps
+    assert ends == ends_plain
+    assert ends[0] == (dt.date(2024, 1, 2), close_ns)
+    assert len(with_grace.engine.get_results().executions) == 1
+    pd.testing.assert_series_equal(daily, daily_plain)
 
 
 class _BuyStockOnce(Strategy):

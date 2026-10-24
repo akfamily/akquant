@@ -17,6 +17,9 @@ impl Processor for StatisticsProcessor {
         if let Some(Event::Bar(_) | Event::Tick(_)) = engine.current_event.clone()
             && let Some(timestamp) = engine.clock.timestamp()
             && engine.is_active_timestamp(timestamp)
+            // 实盘收盘宽限期内的行情不记权益点: 闭市不撮合, 当日权益以收盘结算为准,
+            // 日收益与没有这些行情时一致。
+            && !engine.event_in_live_grace(timestamp)
         {
             let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
             let equity = calculate_account_metrics(

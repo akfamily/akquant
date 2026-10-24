@@ -28,8 +28,6 @@ pub struct CalculatorInput {
     pub risk_free_rate: f64,
     /// 引擎实际开过的交易日及其收盘时刻 `(交易日, 收盘纳秒)`，按时间升序。
     /// 日收益按它把权益点归入交易日；为空或点落在全部区间之后时退回本地自然日。
-    /// 实盘收盘宽限期内有行情归当日时，该日的时刻顺延到其中最后一条（这些权益点
-    /// 归当日，与策略看到的交易日一致）。
     pub trading_day_ends: Vec<(NaiveDate, i64)>,
 }
 
@@ -48,8 +46,7 @@ pub struct CalculatorInput {
 /// :ivar orders: 订单列表
 /// :ivar executions: 成交列表
 /// :ivar liquidation_audits: 强平审计记录
-/// :ivar trading_day_ends: 引擎实际开过的交易日及收盘时刻 [(date, close_ns)]；
-///     实盘收盘宽限期内有行情归当日时为其中最后一条的时刻
+/// :ivar trading_day_ends: 引擎实际开过的交易日及收盘时刻 [(date, close_ns)]
 pub struct BacktestResult {
     #[pyo3(get)]
     pub equity_curve: Vec<(i64, f64)>,

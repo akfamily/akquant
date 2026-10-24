@@ -512,7 +512,8 @@ impl Processor for DataProcessor {
                 let session = engine.event_session(event_symbol, interval_start, timestamp)?;
                 // 每个品种最多告警一次, 全局最多 CLOSED_SESSION_WARN_LIMIT 条; 其余品种
                 // 只记入集合, 由 Engine::run 结束时汇总一条(多品种回测不刷屏)。
-                if session == TradingSession::Closed {
+                // 实盘收盘宽限期内的行情本就在收盘后、归当日, 不是时间戳问题, 不告警。
+                if session == TradingSession::Closed && engine.live_grace_day(timestamp).is_none() {
                     engine.closed_session_event_count += 1;
                     if !engine.closed_session_warned.contains(event_symbol) {
                         engine
@@ -581,11 +582,7 @@ impl Processor for DataProcessor {
                         engine.scheduled_day_close = Some(day);
                     }
                     // 归当日但晚于收盘: 只有实盘收盘宽限期内的行情如此。
-                    let in_grace = engine.state.feed.is_live()
-                        && engine
-                            .current_day_span
-                            .is_some_and(|(_, end)| timestamp > end);
-                    if in_grace {
+                    if engine.event_in_live_grace(timestamp) {
                         // 结算价仍取收盘时刻的最新价(Ruling S8-1): 首个宽限行情更新
                         // 最新价之前留一份, 结算时按它计价。
                         if engine.day_close_prices.as_ref().map(|(d, _)| *d) != Some(day) {
@@ -596,19 +593,30 @@ impl Processor for DataProcessor {
                                 .clone();
                             engine.day_close_prices = Some((day, prices));
                         }
-                        // 日收益按交易日分组时宽限期内的权益点也归当日: 归属截止
-                        // 时刻顺延到最后一个宽限行情。
-                        if let Some(last) = engine.trading_day_ends.last_mut()
-                            && last.0 == day
-                            && last.1 < timestamp
-                        {
-                            last.1 = timestamp;
-                        }
                         grace_day = Some(day);
                     } else {
                         // 宽限期内的行情处于闭市、不参与当日撮合: 不算"当日最后一个
                         // 行情事件"(NextOpen Day 单的过期豁免按它判)。
                         engine.last_event_ts_in_day = Some(timestamp);
+                        // 结算价快照建立后才到的收盘前行情(乱序到达): 它仍是收盘时刻
+                        // 之前的价格, 写进快照, 结算价取不晚于收盘的最后价格。
+                        if let Some((d, prices)) = engine.day_close_prices.as_mut()
+                            && *d == day
+                        {
+                            let priced = match &event {
+                                Event::Bar(b) => Some((b.symbol.as_str(), b.close)),
+                                Event::Tick(t) => Some((t.symbol.as_str(), t.price)),
+                                _ => None,
+                            };
+                            if let Some((symbol, price)) = priced {
+                                match prices.get_mut(symbol) {
+                                    Some(slot) => *slot = price,
+                                    None => {
+                                        prices.insert(symbol.to_string(), price);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 

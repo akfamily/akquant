@@ -661,6 +661,15 @@ impl Engine {
         in_close_grace(resolver, day, close, ts, self.live_day_close_delay_ns).then_some(day)
     }
 
+    /// 已归当前交易日、但晚于其收盘的事件时刻：只有实盘收盘宽限期内的行情如此
+    /// （数据阶段开日之后判断）。这些行情不撮合、不记权益点，也不进结算价。
+    pub(crate) fn event_in_live_grace(&self, ts: i64) -> bool {
+        self.state.feed.is_live()
+            && self.current_trading_day.is_some()
+            && self.last_settled_trading_day != self.current_trading_day
+            && self.current_day_span.is_some_and(|(_, end)| ts > end)
+    }
+
     pub(crate) fn is_active_timestamp(&self, timestamp: i64) -> bool {
         self.active_start_time_ns
             .is_none_or(|start_ns| timestamp >= start_ns)
