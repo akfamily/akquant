@@ -1772,7 +1772,7 @@ def test_engine_run_with_configured_slot_strategy() -> None:
 
     symbol = "SLOT_RUN"
     engine.use_simple_market(0.0)
-    engine._set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -1800,7 +1800,7 @@ def test_backtest_regression_baseline() -> None:
     symbol = "REGRESS"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine._set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -1860,7 +1860,7 @@ def test_metrics_df_exposes_display_friendly_trade_counts() -> None:
     symbol = "DISPLAY_COUNTS"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine._set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -1949,7 +1949,7 @@ def test_position_helper_exposes_runtime_entry_price() -> None:
     symbol = "POS_HELPER"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine._set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -5204,7 +5204,7 @@ def test_engine_tick_ioc_cancel_bridges_rust_warning(caplog: Any) -> None:
     symbol = "TICK_IOC_WARN"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine._set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -5296,7 +5296,7 @@ def test_pure_tick_backtest_mae_mfe_drawdown_use_tick_history() -> None:
     symbol = "TICK_MAE_MFE"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine._set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)

@@ -1288,11 +1288,9 @@ class _LiveTradingDayProbe(_LiveDayOrderProbe):
 def test_live_replay_forwards_custom_session_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """run_live 的自定义时段表下发到引擎：收盘时刻与交易日划分按自定义表.
+    """run_live 的自定义时段表下发到引擎：时段、收盘时刻与交易日划分按自定义表.
 
-    实盘阶段 7 前强制连续竞价（Ruling S6-1），ctx.session 恒为 Continuous；
-    自定义表在实盘的可观测效果是交易日划分与日终结算：10:00-11:00 一段时
-    交易日在 11:00 收盘，14:00 的 bar 属下一交易日。
+    10:00-11:00 一段时交易日在 11:00 收盘，14:00 的 bar 处于闭市、属下一交易日。
     """
     _LIVE_DAY_PROBES.clear()
     runner = _run_live_replay(
@@ -1306,7 +1304,7 @@ def test_live_replay_forwards_custom_session_table(
     assert _LIVE_DAY_PROBES[0].rows == [
         ("2024-01-02 10:15", dt.date(2024, 1, 2), "Continuous"),
         ("2024-01-02 10:30", dt.date(2024, 1, 2), "Continuous"),
-        ("2024-01-02 14:00", dt.date(2024, 1, 3), "Continuous"),
+        ("2024-01-02 14:00", dt.date(2024, 1, 3), "Closed"),
     ]
     # 10:15 下的 Day 单（非当日最后切片）在自定义收盘 11:00 过期（默认为 15:00）
     assert _expired_at(runner) == ["2024-01-02 11:00"]
@@ -1970,10 +1968,10 @@ class _LiveSessionProbe(_LiveDayOrderProbe):
         )
 
 
-def test_live_replay_session_api_is_forced_continuous(
+def test_live_replay_session_api_reports_real_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """实盘（阶段 7 前强制连续竞价）：14:58 收盘集合竞价的 bar 上也是 Continuous."""
+    """实盘：ctx.session 按真实时段，14:58 的 bar 处于收盘集合竞价."""
     _LIVE_SESSION_PROBES.clear()
     _run_live_replay(
         monkeypatch,
@@ -1987,6 +1985,34 @@ def test_live_replay_session_api_is_forced_continuous(
         "2024-01-02 10:00",
         "2024-01-02 14:58",
     ]
-    assert all(
-        row[1:] == ("Continuous", "Continuous", True) for row in strategy.sessions
-    ), strategy.sessions
+    assert [row[1:] for row in strategy.sessions] == [
+        ("Continuous", "Continuous", True),
+        ("ClosingAuction", "ClosingAuction", False),
+    ], strategy.sessions
+
+
+class _LiveMarketOrderProbe(_LiveDayOrderProbe):
+    """首根 bar 下一张市价单（on_start 等推送线程沿用父类）."""
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done:
+            self.done = True
+            self.buy("600000", 100)
+
+
+def test_live_replay_auction_order_waits_for_continuous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """实盘 paper：午休 bar 上下的市价单不在午休成交，等到 13:00 后首根连续竞价 bar."""
+    # 11:31、11:32 的 bar 区间 (11:30, 11:31]、(11:31, 11:32] 属午休；13:01 的
+    # bar 属连续竞价。市价单在下一根 bar 撮合：强制连续竞价时会在 11:32 成交。
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(["2024-01-02 11:31", "2024-01-02 11:32", "2024-01-02 13:01"]),
+        strategy_cls=_LiveMarketOrderProbe,
+        trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
+    )
+    orders = runner.engine.get_results().orders
+    filled = [o for o in orders if o.status == aq.OrderStatus.Filled]
+    assert len(filled) == 1, [(o.id, o.status) for o in orders]
+    assert _local_minute(int(filled[0].updated_at)) == "2024-01-02 13:01"

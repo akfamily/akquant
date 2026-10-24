@@ -89,6 +89,11 @@ from ._stream_sink import StreamingIndicatorSink
 
 logger = get_logger("gateway.live")
 
+# 中国交易所所在时区(IANA 名与别名); 真实行情源配其他时区时构造期告警。
+_CHINA_TIMEZONES = frozenset(
+    {"Asia/Shanghai", "Asia/Chongqing", "PRC", "Asia/Harbin", "Asia/Urumqi"}
+)
+
 #: 实盘引擎历史缓冲的默认容量, 对齐 ``Engine::new`` 里的 ``HistoryBuffer::new(10000)``。
 #: 预热扩容取 ``max(预热深度, 本值)``: 超大预热扩容而非截断(设计 §9.1)。
 _DEFAULT_HISTORY_CAPACITY = 10000
@@ -600,6 +605,7 @@ class LiveRunner:
         # 会话时区, 由 run() 最先下发引擎(非法时区名在连网关之前报错)。
         # None/空串回退默认 Asia/Shanghai, 与 run_backtest 一致。
         self.timezone = str(timezone or DEFAULT_INPUT_TIMEZONE).strip()
+        self._warn_non_china_timezone()
 
         # 收尾派发的目标: run() 里策略创建成功后写入。预置 None/空是因为
         # run() 在创建策略之前就可能抛(网关工厂、broker_live 校验), 那时
@@ -685,7 +691,6 @@ class LiveRunner:
             self.engine.use_china_futures_market()
         else:
             self.engine.use_china_market()
-        self.engine._set_force_session_continuous(True)
         # 交易日划分与日终结算时刻(按上面下发的引擎时区)
         self.engine.configure_sessions(self.sessions, self.trading_calendar)
 
@@ -1674,6 +1679,23 @@ class LiveRunner:
         **legacy_values: Any,
     ) -> Dict[str, Any]:
         return normalize_gateway_options(gateway_options, **legacy_values)
+
+    def _warn_non_china_timezone(self) -> None:
+        """真实行情源配了非中国时区时告警一次(replay 回放的数据可来自任意市场)."""
+        market_key = str(
+            getattr(self, "market_broker", None) or getattr(self, "broker", "") or ""
+        )
+        if market_key.strip().lower() == "replay":
+            return
+        timezone = self._session_timezone()
+        if timezone in _CHINA_TIMEZONES:
+            return
+        logger.warning(
+            "实盘行情源按中国交易所时间切交易日，timezone=%s 会让交易日、日终结算与 "
+            "Day 单过期按该时区划分；接中国市场请保持默认 Asia/Shanghai",
+            timezone,
+            extra=self._runner_log_extra(phase="live"),
+        )
 
     def _session_timezone(self) -> str:
         """会话时区(``run_live(timezone=)``); 未经构造器的实例取默认值."""

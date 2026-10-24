@@ -2065,7 +2065,6 @@ mod tests {
             timezone_offset: 0,
             trading_day: None,
             sessions: crate::context::SessionView {
-                force_continuous: false,
                 slice: Some(&slice),
                 resolver: None,
                 instruments: Some(&instruments),
@@ -2195,7 +2194,6 @@ mod tests {
             timezone_offset: 0,
             trading_day,
             sessions: crate::context::SessionView {
-                force_continuous: false,
                 slice: Some(&slice),
                 resolver: None,
                 instruments: Some(&instruments),

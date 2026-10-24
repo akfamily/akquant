@@ -24,7 +24,7 @@ pub(crate) fn lifecycle_payload(kind: &str, day: chrono::NaiveDate) -> String {
 
 /// 实盘日终结算相对会话收盘的宽限(纳秒)。行情源在收盘后才推送最后一根已收盘
 /// bar(如 klinedata 15:00 之后推 14:59~15:00 的 bar), 收盘即结算会让收盘快照用
-/// 旧价、且那根 bar 的 on_bar 里 T+1 已解冻。阶段 7 改为可配置。
+/// 旧价、且那根 bar 的 on_bar 里 T+1 已解冻。
 pub(crate) const LIVE_DAY_CLOSE_GRACE_NS: i64 = 60_000_000_000;
 
 /// 交易日收盘定时器的触发时刻: 回测为收盘 + 1ns, 实盘为收盘 + 宽限。

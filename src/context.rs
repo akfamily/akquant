@@ -41,10 +41,9 @@ pub struct EngineContext<'a> {
     pub sessions: SessionView<'a>,
 }
 
-/// 撮合按品种取时段的视图。`force_continuous` 为真（实盘阶段 7 前）时一律连续竞价。
+/// 撮合按品种取时段的视图（回测与实盘同口径）。
 #[derive(Clone, Copy)]
 pub struct SessionView<'a> {
-    pub force_continuous: bool,
     pub slice: Option<&'a HashMap<String, TradingSession>>,
     pub resolver: Option<&'a crate::calendar::resolver::SessionResolver>,
     pub instruments: Option<&'a HashMap<String, Instrument>>,
@@ -55,7 +54,6 @@ impl<'a> SessionView<'a> {
     #[must_use]
     pub fn continuous() -> Self {
         Self {
-            force_continuous: true,
             slice: None,
             resolver: None,
             instruments: None,
@@ -78,9 +76,6 @@ impl<'a> SessionView<'a> {
         interval_start: Option<i64>,
         ts: i64,
     ) -> TradingSession {
-        if self.force_continuous {
-            return TradingSession::Continuous;
-        }
         if let Some(s) = self.slice.and_then(|m| m.get(symbol)) {
             return *s;
         }
@@ -162,7 +157,6 @@ pub struct ContextSessions {
     /// 引擎本时间片时段表的弱引用：引擎修改它走 `Arc::make_mut`，持强引用会让
     /// 每个行情事件都复制整表。回调期间引擎不改表，升级必然成功；失效时按空表处理。
     pub slice_sessions: Weak<HashMap<String, TradingSession>>,
-    pub force_session_continuous: bool,
     /// 当前行情事件为 bar 时其区间起点（`session_of` 查其他品种时按同一区间解析）；
     /// tick、定时器等为空，按时刻解析。
     pub event_interval_start: Option<i64>,
@@ -609,7 +603,6 @@ impl StrategyContext {
     fn with_session_view<R>(&self, f: impl FnOnce(SessionView<'_>) -> R) -> R {
         let slice = self.sessions.slice_sessions.upgrade();
         f(SessionView {
-            force_continuous: self.sessions.force_session_continuous,
             slice: slice.as_deref(),
             resolver: self.sessions.session_resolver.as_deref(),
             instruments: Some(&self.instruments),
@@ -1461,7 +1454,7 @@ impl StrategyContext {
 
     /// 品种此刻的交易时段，与撮合同口径：本时间片已解析的优先（含 bar 区间信息）；
     /// 否则当前事件为 bar 时按其区间解析（假定同周期），其他事件按当前时刻解析；
-    /// 解析失败、无解析器或实盘强制连续竞价时为 Continuous。
+    /// 解析失败或无解析器时为 Continuous。
     ///
     /// :param symbol: 标的代码
     /// :return: 交易时段
@@ -1536,11 +1529,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_view_prefers_slice_then_resolver_and_honours_force() {
+    fn session_view_prefers_slice_then_resolver() {
         let mut slice = HashMap::new();
         slice.insert("A".to_string(), TradingSession::ClosingAuction);
         let view = SessionView {
-            force_continuous: false,
             slice: Some(&slice),
             resolver: None,
             instruments: None,
@@ -1548,11 +1540,6 @@ mod tests {
         assert_eq!(view.session_for("A", 0), TradingSession::ClosingAuction);
         // 无解析器、不在时间片表中：按连续竞价（兼容无时段信息的单测与旧路径）
         assert_eq!(view.session_for("B", 0), TradingSession::Continuous);
-        let forced = SessionView {
-            force_continuous: true,
-            ..view
-        };
-        assert_eq!(forced.session_for("A", 0), TradingSession::Continuous);
         assert_eq!(
             SessionView::continuous().session_for("X", 0),
             TradingSession::Continuous
@@ -1626,7 +1613,7 @@ mod tests {
     }
 
     #[test]
-    fn session_of_prefers_slice_then_resolver_before_now_and_honours_force() {
+    fn session_of_prefers_slice_then_resolver_before_now() {
         let resolver = futures_resolver(None);
         let mut slice = HashMap::new();
         slice.insert("rb2405".to_string(), TradingSession::ClosingAuction);
@@ -1635,7 +1622,6 @@ mod tests {
             trading_day: Some(day(2024, 1, 2)),
             session_resolver: Some(resolver.clone()),
             slice_sessions: Arc::downgrade(&slice),
-            force_session_continuous: false,
             event_interval_start: None,
             event_at_instant: false,
         };
@@ -1663,7 +1649,7 @@ mod tests {
         let in_break = ctx_with(
             ContextSessions {
                 event_interval_start: Some(at(day(2024, 1, 2), 10, 16)),
-                ..sessions.clone()
+                ..sessions
             },
             now,
         );
@@ -1671,15 +1657,6 @@ mod tests {
         // 表被引擎替换（弱引用失效）后按空表处理
         drop(slice);
         assert_eq!(ctx.session_of("rb2405"), TradingSession::Break);
-        // 实盘强制连续竞价
-        let forced = ctx_with(
-            ContextSessions {
-                force_session_continuous: true,
-                ..sessions
-            },
-            now,
-        );
-        assert_eq!(forced.session_of("rb2410"), TradingSession::Continuous);
         // 无解析器
         let bare = ctx_with(ContextSessions::default(), now);
         assert_eq!(bare.session_of("rb2410"), TradingSession::Continuous);

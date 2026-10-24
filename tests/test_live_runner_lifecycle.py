@@ -51,9 +51,6 @@ class _FakeEngine:
     def configure_sessions(self, *a: Any) -> None:
         pass
 
-    def _set_force_session_continuous(self, *a: Any) -> None:
-        pass
-
     def run(self, strategy: Any, show_progress: bool = False) -> None:
         if hasattr(strategy, "_on_start_internal"):
             strategy._on_start_internal()

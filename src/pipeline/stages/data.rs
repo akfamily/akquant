@@ -179,7 +179,6 @@ impl DataProcessor {
                 timezone_offset: engine.timezone_offset,
                 trading_day: engine.current_trading_day,
                 sessions: SessionView {
-                    force_continuous: engine.force_session_continuous,
                     slice: Some(&*engine.slice_sessions),
                     resolver: engine.session_resolver.as_deref(),
                     instruments: Some(&engine.instruments),
@@ -642,14 +641,11 @@ impl Processor for DataProcessor {
 }
 
 /// 定时器事件的会话时段: 本时间片有品种时段时取其中优先级最高者(与撮合先查本片
-/// 一致), 否则取定时器时刻的会话级时段; 强制连续竞价时为连续竞价。
+/// 一致), 否则取定时器时刻的会话级时段。
 ///
 /// 普通定时器按时刻前 1ns 求(与行情同口径); 生命周期事件(`at_instant`)按事件时刻
 /// 本身求——收盘后事件在收盘 + 1ns, 应为闭市而不是收盘竞价/连续竞价。
 fn timer_session(engine: &mut Engine, ts: i64, at_instant: bool) -> PyResult<TradingSession> {
-    if engine.force_session_continuous {
-        return Ok(TradingSession::Continuous);
-    }
     if let Some(best) = engine
         .slice_sessions
         .values()
@@ -1028,7 +1024,6 @@ fn finalize_closing_auctions(engine: &mut Engine, py: Python<'_>, day: NaiveDate
         timezone_offset: engine.timezone_offset,
         trading_day: Some(day),
         sessions: SessionView {
-            force_continuous: engine.force_session_continuous,
             slice: Some(&*engine.slice_sessions),
             resolver: engine.session_resolver.as_deref(),
             instruments: Some(&engine.instruments),

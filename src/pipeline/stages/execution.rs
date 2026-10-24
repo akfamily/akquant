@@ -72,7 +72,6 @@ impl Processor for ExecutionProcessor {
                         timezone_offset: engine.timezone_offset,
                         trading_day: engine.current_trading_day,
                         sessions: SessionView {
-                            force_continuous: engine.force_session_continuous,
                             slice: Some(&*engine.slice_sessions),
                             resolver: engine.session_resolver.as_deref(),
                             instruments: Some(&engine.instruments),

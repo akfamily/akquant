@@ -67,7 +67,6 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
             timezone_offset: engine.timezone_offset,
             trading_day,
             sessions: SessionView {
-                force_continuous: engine.force_session_continuous,
                 slice: Some(&*engine.slice_sessions),
                 resolver: engine.session_resolver.as_deref(),
                 instruments: Some(&engine.instruments),
@@ -131,12 +130,8 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
 /// 记下订单品种在创建时间片的时段(只记非连续竞价), 供日终 Day 单豁免判断:
 /// 收盘时刻及之后、在非连续竞价时段下的单属于下一交易日。
 fn record_creation_session(engine: &mut Engine, order: &Order) {
-    if engine.force_session_continuous {
-        return;
-    }
     let _ = engine.ensure_session_resolver();
     let view = SessionView {
-        force_continuous: false,
         slice: Some(&*engine.slice_sessions),
         resolver: engine.session_resolver.as_deref(),
         instruments: Some(&engine.instruments),
@@ -197,7 +192,6 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
         timezone_offset: engine.timezone_offset,
         trading_day,
         sessions: SessionView {
-            force_continuous: engine.force_session_continuous,
             slice: Some(&*engine.slice_sessions),
             resolver: engine.session_resolver.as_deref(),
             instruments: Some(&engine.instruments),

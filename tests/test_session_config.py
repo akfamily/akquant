@@ -87,11 +87,10 @@ def test_removed_session_config_classes_import_error(name: str) -> None:
         aq.NoSuchThingAtAll  # noqa: B018
 
 
-def test_force_session_continuous_is_private() -> None:
-    """强制连续开关只保留私有入口."""
-    engine = aq.Engine()
-    assert not hasattr(engine, "set_force_session_continuous")
-    engine._set_force_session_continuous(True)
+def test_force_session_continuous_removed() -> None:
+    """实盘强制连续竞价已删除，引擎不再提供开关."""
+    assert not hasattr(aq.Engine, "_set_force_session_continuous")
+    assert not hasattr(aq.Engine, "set_force_session_continuous")
 
 
 def test_custom_session_table_with_night_segment() -> None:

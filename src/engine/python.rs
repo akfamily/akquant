@@ -561,7 +561,6 @@ impl Engine {
             execution_policy_core_state: ExecutionPolicyCore::default(),
             clock: Clock::new(),
             timers: BinaryHeap::new(),
-            force_session_continuous: false,
             slice_sessions: Arc::default(),
             session_span_cache: HashMap::new(),
             last_interval_session: None,
@@ -1148,14 +1147,6 @@ impl Engine {
     /// :type enabled: bool
     fn set_t_plus_one(&mut self, enabled: bool) {
         self.market_manager.set_t_plus_one(enabled);
-    }
-
-    /// 强制连续交易时段
-    ///
-    /// :param enabled: 是否强制连续交易 (忽略午休等)
-    #[pyo3(name = "_set_force_session_continuous")]
-    fn set_force_session_continuous(&mut self, enabled: bool) {
-        self.force_session_continuous = enabled;
     }
 
     /// 各交易日生命周期事件是否派发给策略（框架在 run 开始时按是否有策略重写了

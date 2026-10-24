@@ -46,12 +46,17 @@ def _instrument() -> Instrument:
     )
 
 
+# 固定的工作日盘中时刻与覆盖它的交易日历: 实盘按真实时段撮合, 墙钟时刻在
+# 夜间/周末落在闭市, 信号单不会成交, 结果随运行时刻变化。
+_SESSION_START = pd.Timestamp("2024-01-02 10:00", tz="Asia/Shanghai")
+_TRADING_CALENDAR = ["2023-12-29", "2024-01-02", "2024-01-03"]
+
+
 def _bars(count: int = 6) -> List[Bar]:
-    """当前墙钟时间戳起的连续 bar."""
-    now = pd.Timestamp.now(tz="Asia/Shanghai")
+    """固定盘中时刻起的逐秒 bar."""
     return [
         Bar(
-            timestamp=int((now + pd.Timedelta(seconds=i)).value),
+            timestamp=int((_SESSION_START + pd.Timedelta(seconds=i)).value),
             open=BAR_CLOSE,
             high=BAR_CLOSE + 0.5,
             low=BAR_CLOSE - 0.5,
@@ -186,6 +191,7 @@ def _run(
             cash=1_000_000.0,
             show_progress=False,
             duration="15s",
+            trading_calendar=_TRADING_CALENDAR,
             signal_source=source,
             strategy_max_order_value=(
                 None if max_order_value is None else {"_default": max_order_value}

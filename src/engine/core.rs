@@ -165,7 +165,6 @@ pub struct Engine {
     pub(crate) execution_policy_core_state: ExecutionPolicyCore,
     pub(crate) clock: Clock,
     pub(crate) timers: BinaryHeap<Timer>, // Min-Heap via Timer's Ord implementation
-    pub(crate) force_session_continuous: bool,
     /// 当前时间片各品种的时段（行情事件按 bar 区间解析）；时间戳推进时清空。
     /// 修改走 `Arc::make_mut`；`StrategyContext` 只持 `Weak`，不会迫使逐事件复制整表。
     pub(crate) slice_sessions: Arc<HashMap<String, crate::model::TradingSession>>,
@@ -475,10 +474,6 @@ impl Engine {
         interval_start: Option<i64>,
         ts: i64,
     ) -> PyResult<crate::model::TradingSession> {
-        use crate::model::TradingSession;
-        if self.force_session_continuous {
-            return Ok(TradingSession::Continuous);
-        }
         self.ensure_session_resolver()?;
         let point = ts.saturating_sub(1);
         if let Some(&span) = self.session_span_cache.get(symbol)
@@ -1692,7 +1687,6 @@ impl Engine {
             trading_day,
             session_resolver: self.session_resolver.clone(),
             slice_sessions: Arc::downgrade(&self.slice_sessions),
-            force_session_continuous: self.force_session_continuous,
             event_interval_start,
             event_at_instant: self.lifecycle_event_at_instant(),
         }

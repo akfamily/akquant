@@ -949,14 +949,6 @@ class Engine:
         """
         ...
 
-    def _set_force_session_continuous(self, enabled: bool) -> None:
-        r"""
-        强制连续交易时段（私有，仅实盘 runner 使用，阶段 7 删除）.
-
-        :param enabled: 是否强制连续交易 (忽略午休等)
-        """
-        ...
-
     def set_lifecycle_hooks_dispatch(
         self, pre_open: bool, before_trading: bool, after_trading: bool
     ) -> None:
@@ -3134,8 +3126,8 @@ class StrategyContext:
         品种此刻的交易时段.
 
         与撮合同口径：本时间片已解析的优先（含 bar 区间信息）；否则当前事件为 bar 时
-        按其区间解析（假定同周期），其他事件按当前时刻解析；解析失败、无解析器或实盘
-        强制连续竞价时为 Continuous。
+        按其区间解析（假定同周期），其他事件按当前时刻解析；解析失败或无解析器时为
+        Continuous。
 
         :param symbol: 标的代码
         :return: 交易时段

@@ -584,3 +584,35 @@ def test_live_runner_logs_summary_with_structured_context(caplog: Any) -> None:
     assert record.slot == "beta"
     assert "Current Positions:" in record.getMessage()
     assert "IF2406: 2.0" in record.getMessage()
+
+
+_TZ_WARNING_FRAGMENT = "实盘行情源按中国交易所时间切交易日"
+
+
+def _timezone_warnings(caplog: Any) -> list:
+    return [r for r in caplog.records if _TZ_WARNING_FRAGMENT in r.getMessage()]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"broker": "ctp", "timezone": "UTC"}, 1),
+        ({"broker": "ctp", "timezone": "Asia/Shanghai"}, 0),
+        ({"broker": "ctp", "timezone": "PRC"}, 0),
+        ({"broker": "replay", "timezone": "UTC"}, 0),
+        ({"broker": "ctp", "market_broker": "replay", "timezone": "UTC"}, 0),
+        ({"broker": "replay", "market_broker": "klinedata", "timezone": "UTC"}, 1),
+    ],
+)
+def test_live_runner_warns_non_china_timezone_for_real_feed(
+    caplog: Any, kwargs: dict, expected: int
+) -> None:
+    """非 replay 行情源配了非中国时区：构造期告警一次."""
+    with caplog.at_level("WARNING", logger="akquant.gateway.live"):
+        LiveRunner(strategy_cls=None, instruments=[], **kwargs)
+    records = _timezone_warnings(caplog)
+    assert len(records) == expected, [r.getMessage() for r in caplog.records]
+    if expected:
+        message = records[0].getMessage()
+        assert f"timezone={kwargs['timezone']}" in message
+        assert "接中国市场请保持默认 Asia/Shanghai" in message

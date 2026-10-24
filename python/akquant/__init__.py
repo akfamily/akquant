@@ -378,40 +378,6 @@ def create_bar(
     return Bar(timestamp, open_px, high_px, low_px, close_px, volume, symbol)  # noqa: F405
 
 
-def _engine_set_timezone_name(self: Engine, tz_name: str) -> None:  # noqa: F405
-    """
-    通过时区名称设置引擎时区.
-
-    :param tz_name: 时区名称，例如 "Asia/Shanghai", "UTC", "US/Eastern"
-    """
-    import datetime
-
-    try:
-        import zoneinfo
-
-        tz: typing.Union[datetime.tzinfo, typing.Any] = zoneinfo.ZoneInfo(tz_name)
-    except ImportError:
-        import pytz
-
-        tz = pytz.timezone(tz_name)
-
-    # Get offset for current time (approximate is usually fine for constant
-    # offset zones, but for DST aware zones, we might want a specific date.
-    # For simplicity and standard market hours, we use current date or a fixed date)
-    now = datetime.datetime.now(tz)
-    utc_offset = now.utcoffset()
-    if utc_offset is None:
-        offset = 0
-    else:
-        offset = int(utc_offset.total_seconds())
-    self.set_timezone(offset)
-
-
-# Patch Engine class only when the native extension does not provide this API.
-if not hasattr(Engine, "set_timezone_name"):
-    Engine.set_timezone_name = _engine_set_timezone_name  # type: ignore
-
-
 def _engine_get_orders_dataframe(self: Engine) -> "pd.DataFrame":  # noqa: F405
     """
     Get all orders as a pandas DataFrame.
