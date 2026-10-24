@@ -25,7 +25,7 @@ from akquant import Bar, Strategy
 def generate_futures_data(length: int = 100) -> pd.DataFrame:
     """生成期货模拟数据."""
     np.random.seed(42)
-    dates = pd.date_range(start="2023-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2023-01-01", periods=length, freq="B")
 
     # 构造一个先涨后跌的趋势
     trend = np.concatenate(

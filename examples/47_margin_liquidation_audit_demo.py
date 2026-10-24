@@ -35,9 +35,9 @@ class MarginLiquidationAuditStrategy(Strategy):
 
 def _build_data() -> list[Bar]:
     rows = [
-        ("2023-01-01 10:00:00", 100.0),
-        ("2023-01-01 14:00:00", 20.0),
-        ("2023-01-02 10:00:00", 20.0),
+        ("2023-01-03 10:00:00", 100.0),
+        ("2023-01-03 14:00:00", 20.0),
+        ("2023-01-04 10:00:00", 20.0),
     ]
     bars: list[Bar] = []
     for dt_str, close in rows:
