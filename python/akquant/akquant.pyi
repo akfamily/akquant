@@ -611,6 +611,25 @@ class BarAggregator:
         :return: 迟到 tick 数
         """
         ...
+    def set_session_clamp(self, resolver: "SessionResolver", grace_ns: int) -> None:
+        r"""
+        开启收盘宽限钳制(实盘).
+
+        tick 时间戳落在其品种所属交易日 D 的 ``(收盘(D), 收盘(D) + grace_ns]`` 内、
+        且早于下一交易日首段起点时, 计入以收盘(D) 结尾的那根 bar(OHLC 与量都含
+        它); 该 bar 推迟到 ``收盘(D) + grace_ns`` 再加 ``flush_due`` 的补发宽限之后
+        才推出, 并在 ``extra["__akq_close_price"]`` 写入不晚于收盘的最后一笔价格
+        (引擎按它记当日结算价)。收盘按品种自己的时段表取; 午休不钳, ALWAYS_OPEN
+        不钳。默认关闭, 由实盘 runner 经行情网关的 ``configure_session_clamp`` 钩子
+        开启。
+
+        :param resolver: 与引擎同配置的时段解析器(须已 ``set_active`` 全部合约)
+        :param grace_ns: 收盘后宽限 (纳秒, 不能为负, 否则抛 ``ValueError``)
+        """
+        ...
+    def clear_session_clamp(self) -> None:
+        r"""关闭收盘宽限钳制."""
+        ...
 
 class BollingerBands:
     r"""布林带 (Bollinger Bands)."""

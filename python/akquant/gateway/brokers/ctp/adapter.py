@@ -83,6 +83,10 @@ class CTPMarketAdapter:
         """Start market adapter."""
         self.connect()
 
+    def configure_session_clamp(self, resolver: Any, grace_ns: int) -> None:
+        """收盘宽限钳制钩子, 转给底层网关的聚合器."""
+        self.gateway.configure_session_clamp(resolver, grace_ns)
+
 
 class CTPTraderAdapter:
     """CTP trader adapter implementing unified trader gateway protocol."""

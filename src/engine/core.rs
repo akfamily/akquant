@@ -719,15 +719,16 @@ impl Engine {
     /// 实盘期末时刻晚于当前交易日 D 的收盘时（会话在收盘后、下一交易日首个行情前
     /// 结束，含宽限期内与收盘定时器之后）：期末点钳到 D 的收盘，按收盘时刻的最新价
     /// （结算价快照，宽限期内没有行情时即 `last_prices`）计价——D 的日末值与收盘
-    /// 结算快照一致，不含宽限期内的行情价。其余情形（含回测）取
-    /// [`Engine::terminal_result_timestamp`]。
+    /// 结算快照一致，不含宽限期内的行情价。期末时刻恰为收盘（最后一个事件是聚合器
+    /// 收盘钳制的收盘 bar，其 close 含宽限价）时同样按结算价快照计价；没有快照时
+    /// 与原先相同。其余情形（含回测）取 [`Engine::terminal_result_timestamp`]。
     pub(crate) fn terminal_result_point(&self) -> (Option<i64>, Option<HashMap<String, Decimal>>) {
         let ts = self.terminal_result_timestamp();
         if !self.state.feed.is_live() {
             return (ts, None);
         }
         match (ts, self.current_trading_day, self.current_day_span) {
-            (Some(t), Some(day), Some((_, close))) if t > close => {
+            (Some(t), Some(day), Some((_, close))) if t >= close => {
                 let prices = self
                     .day_close_prices
                     .as_ref()

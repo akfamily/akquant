@@ -118,3 +118,33 @@ def test_ctp_bar_only_emits_end_stamped_bars(monkeypatch: pytest.MonkeyPatch) ->
     _Recorder.stamps = []
     run_backtest(strategy=_Recorder, data=feed, symbols=["rb2401"], initial_cash=1e5)
     assert _Recorder.stamps == [(t0 + minute, t0)]
+
+
+def test_session_clamp_rejects_negative_grace() -> None:
+    """收盘钳制宽限为负报中文 ValueError；0 合法，可关闭."""
+    from akquant import SessionResolver
+
+    agg = BarAggregator(DataFeed(), 1, volume_is_cumulative=False)
+    with pytest.raises(ValueError, match="不能为负"):
+        agg.set_session_clamp(SessionResolver(), -1)
+    agg.set_session_clamp(SessionResolver(), 0)
+    agg.clear_session_clamp()
+
+
+def test_session_clamp_defers_close_bucket_from_python() -> None:
+    """Python 侧开启钳制：15:00:20 的 tick 并入收盘桶，收盘 + 宽限 + 2s 才推出."""
+    import pandas as pd
+    from akquant import AssetType, SessionResolver
+
+    def at(text: str) -> int:
+        return int(pd.Timestamp(f"2024-01-02 {text}", tz="Asia/Shanghai").value)
+
+    resolver = SessionResolver()
+    resolver.set_active([("600000", AssetType.Stock)])
+    agg = BarAggregator(DataFeed(), 1, volume_is_cumulative=False)
+    agg.set_session_clamp(resolver, 57 * S)
+    agg.on_tick("600000", 10.0, 1.0, at("14:59:30"))
+    agg.on_tick("600000", 11.0, 1.0, at("15:00:20"))
+    assert agg.flush_due(at("15:00:59") - 1) == 0
+    assert agg.flush_due(at("15:00:59")) == 1
+    assert agg.late_tick_count("600000") == 0

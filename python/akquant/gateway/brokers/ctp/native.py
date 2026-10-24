@@ -1082,6 +1082,19 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         finally:
             self._stop_bar_flush_thread()
 
+    def configure_session_clamp(self, resolver: Any, grace_ns: int) -> None:
+        """开启聚合器的收盘宽限钳制(实盘 runner 在启动网关前调用).
+
+        收盘后 ``grace_ns`` 内到达的 tick 计入当日收盘 bar, 该 bar 推迟到收盘 +
+        ``grace_ns`` 之后由补发线程推出; 见 ``BarAggregator.set_session_clamp``。
+        只出 tick(没有聚合器)时什么也不做。
+
+        :param resolver: 与引擎同配置的 ``SessionResolver``
+        :param grace_ns: 收盘后宽限(纳秒)
+        """
+        if self.aggregator is not None:
+            self.aggregator.set_session_clamp(resolver, grace_ns)
+
     def stop(self) -> None:
         """Stop the bar flush thread and release the CTP market API."""
         self._stop_bar_flush_thread()

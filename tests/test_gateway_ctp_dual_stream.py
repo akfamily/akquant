@@ -419,3 +419,57 @@ def test_ctp_login_trading_day_pushes_hint() -> None:
     assert [(d, s) for _, d, s in feed.hints] == [(dt.date(2024, 10, 8), "ctp")]
     gateway.OnRtnDepthMarketData(_md_day("20241008"))
     assert len(feed.hints) == 1
+
+
+# ---------------------------------------------------------------------------
+# 收盘宽限钳制钩子: runner 经 bundle.market_gateway(适配器)下发
+# ---------------------------------------------------------------------------
+
+
+def test_ctp_configure_session_clamp_merges_grace_tick_into_close_bar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """适配器的 configure_session_clamp 转给聚合器: 15:00:20 的 tick 并入收盘 bar."""
+    import pandas as pd
+    from akquant import AssetType, Bar, SessionResolver, Strategy, run_backtest
+
+    def at(text: str) -> int:
+        return int(pd.Timestamp(f"2024-01-02 {text}", tz="Asia/Shanghai").value)
+
+    clock = iter([at("14:59:30"), at("15:00:20")])
+    monkeypatch.setattr(ctp_native.time, "time_ns", lambda: next(clock))
+    feed = DataFeed()
+    bundle = _build_ctp(
+        feed=feed, symbols=["rb2401"], use_aggregator=True, md_front="tcp://test"
+    )
+    adapter = bundle.market_gateway
+    assert isinstance(adapter, CTPMarketAdapter)
+    resolver = SessionResolver()
+    resolver.set_active([("rb2401", AssetType.Futures)])
+    adapter.configure_session_clamp(resolver, 57 * 10**9)
+
+    adapter.gateway.OnRtnDepthMarketData(_md(price=100.0, volume=10.0))
+    adapter.gateway.OnRtnDepthMarketData(_md(price=101.0, volume=15.0))
+    aggregator = adapter.gateway.aggregator
+    assert aggregator is not None
+    assert aggregator.flush_due(at("15:00:59") - 1) == 0
+    assert aggregator.flush_due(at("15:00:59")) == 1
+
+    class _Recorder(Strategy):
+        bars: list[tuple[int, float, dict[str, float]]] = []
+
+        def on_bar(self, bar: Bar) -> None:
+            type(self).bars.append((bar.timestamp, bar.close, dict(bar.extra)))
+
+    _Recorder.bars = []
+    run_backtest(strategy=_Recorder, data=feed, symbols=["rb2401"], initial_cash=1e5)
+    assert _Recorder.bars == [(at("15:00:00"), 101.0, {"__akq_close_price": 100.0})]
+
+
+def test_ctp_configure_session_clamp_without_aggregator_is_noop() -> None:
+    """只出 tick(无聚合器)时钩子什么也不做."""
+    from akquant import SessionResolver
+
+    gateway = _gateway(use_aggregator=False)
+    assert gateway.aggregator is None
+    gateway.configure_session_clamp(SessionResolver(), 0)

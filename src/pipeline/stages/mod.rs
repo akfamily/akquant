@@ -1308,6 +1308,63 @@ mod tests {
     }
 
     #[test]
+    fn test_live_clamped_close_bar_sets_settlement_price_to_marker() {
+        // 只出 bar: 宽限期内只有聚合器钳制的收盘 bar(close 12 含宽限价, 标记 10.5)。
+        // D 的结算价取标记值, 不取 close; 结算后最新价仍是 close。
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            engine.live_day_close_delay_ns = 60_000_000_000;
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            Arc::make_mut(&mut engine.state.portfolio.positions)
+                .insert("600000.SH".to_string(), dec!(100));
+            let close = sh_ns(1, 2, 15, 0);
+            engine
+                .state
+                .feed
+                .add_bar(live_bar(sh_ns(1, 2, 14, 59)))
+                .unwrap();
+            let mut clamped = live_bar(close);
+            clamped.close = dec!(12);
+            clamped.high = dec!(12);
+            clamped.extra.insert(
+                crate::data::aggregator::BAR_CLOSE_PRICE_KEY.to_string(),
+                10.5,
+            );
+            engine.state.feed.add_bar(clamped).unwrap();
+            let d2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2);
+            let mut processor = DataProcessor::new();
+            drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {
+                e.last_settled_trading_day == d2
+            });
+            let result = live_results(&engine);
+            let snaps: Vec<_> = result
+                .snapshots
+                .iter()
+                .filter(|(t, _)| *t == close)
+                .collect();
+            assert_eq!(snaps.len(), 1);
+            assert_eq!(snaps[0].1[0].close, 10.5, "结算价取钳制 bar 的标记价");
+            // 收盘那一刻的权益点按标记价计
+            let at_close = result
+                .equity_curve
+                .iter()
+                .rev()
+                .find(|(t, _)| *t == close)
+                .copied()
+                .unwrap();
+            let cash =
+                rust_decimal::prelude::ToPrimitive::to_f64(&engine.state.portfolio.cash).unwrap();
+            assert_eq!(at_close.1, cash + 100.0 * 10.5);
+            assert_eq!(
+                engine.last_prices.read().unwrap().get("600000.SH").copied(),
+                Some(dec!(12))
+            );
+        });
+    }
+
+    #[test]
     fn test_live_grace_event_keeps_next_open_day_order_exempt_at_close() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {

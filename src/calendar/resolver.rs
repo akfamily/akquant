@@ -828,6 +828,40 @@ impl SessionResolver {
         self.calendar_for(&schedule).before(day)
     }
 
+    /// `set_active` 登记的标的资产类型（键按 `trim().lower()` 匹配）；未登记为 `None`。
+    pub(crate) fn registered_asset_type(&self, symbol: &str) -> Option<AssetType> {
+        self.asset_types
+            .get(&symbol.trim().to_ascii_lowercase())
+            .copied()
+    }
+
+    /// 品种在 `ts` 所属交易日 D 的 `(前一交易日收盘, D 首段起点, D 收盘, 下一交易日
+    /// 首段起点)`（UTC 纳秒，按该品种自己的时段表）。前一/下一交易日不在日历内时
+    /// 对应项为 `None`。
+    ///
+    /// `ts` 落在 `(前一交易日收盘, D 收盘]` 内；`ts < D 首段起点` 即处于前一交易日
+    /// 收盘后的闭市间隙。
+    pub(crate) fn symbol_day_span(
+        &self,
+        symbol: &str,
+        asset_type: Option<AssetType>,
+        ts: i64,
+    ) -> Result<(Option<i64>, i64, i64, Option<i64>), CalendarError> {
+        let schedule = self.schedule_for(symbol, asset_type);
+        let (day, w) = self.trading_day_of(&schedule, ts)?;
+        let close = self.day_end(&schedule, day)?;
+        let cal = self.calendar_for(&schedule);
+        let prev_close = match cal.before(day) {
+            Ok(prev) => Some(self.day_end(&schedule, prev)?),
+            Err(_) => None,
+        };
+        let next_start = match cal.after(day) {
+            Ok(next) => self.day_window(&schedule, next).ok().map(|nw| nw.start),
+            Err(_) => None,
+        };
+        Ok((prev_close, w.start, close, next_start))
+    }
+
     pub fn day_bounds(
         &self,
         symbol: &str,

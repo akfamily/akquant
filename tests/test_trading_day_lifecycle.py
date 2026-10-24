@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import akquant as aq
 import pandas as pd
@@ -1517,6 +1517,133 @@ def test_live_replay_grace_ticks_do_not_change_daily_equity(
     assert [m for m in _snapshot_minutes(with_grace) if m.startswith("2024-01-02")] == [
         "2024-01-02 15:00"
     ]
+
+
+def _close_bar(close: float, marker: Optional[float]) -> Bar:
+    """15:00 收盘 bar；marker 为聚合器收盘钳制写入的“不晚于收盘的最后价格”."""
+    ts = int(pd.Timestamp("2024-01-02 15:00", tz="Asia/Shanghai").value)
+    extra = {"__akq_close_price": marker} if marker is not None else None
+    return Bar(ts, 10.0, max(close, 10.0), 10.0, close, 100.0, "600000", extra=extra)
+
+
+@pytest.mark.parametrize(
+    "next_day_bar", [True, False], ids=["next_day", "ends_at_close"]
+)
+def test_live_replay_clamped_close_bar_settles_at_marked_price(
+    monkeypatch: pytest.MonkeyPatch, next_day_bar: bool
+) -> None:
+    """只出 bar 模式下宽限期内只有一根钳制收盘 bar：结算价取其标记价，不取 close.
+
+    钳制 bar 的 close（20）含收盘后宽限期内的成交价，标记价 10.5 是不晚于收盘的
+    最后一笔价格。结果应与“收盘 bar 的 close 就是 10.5、没有宽限成交”相同。
+    """
+    before = _local_bars(
+        ["2024-01-02 14:56", "2024-01-02 14:57", "2024-01-02 14:58", "2024-01-02 14:59"]
+    )
+    after = _local_bars(["2024-01-03 09:31"]) if next_day_bar else []
+    common: Dict[str, Any] = {
+        "strategy_cls": _BuyFirstBarProbe,
+        "trading_calendar": ["2024-01-02", "2024-01-03"],
+        "day_close_delay": 60,
+    }
+    clamped = _run_live_replay(
+        monkeypatch, [*before, _close_bar(20.0, 10.5), *after], **common
+    )
+    plain = _run_live_replay(
+        monkeypatch, [*before, _close_bar(10.5, None), *after], **common
+    )
+    close_ns = int(pd.Timestamp("2024-01-02 15:00", tz="Asia/Shanghai").value)
+
+    def day_close_snapshot(runner: Any) -> List[Tuple[float, float]]:
+        snaps = [s for ts, s in runner.engine.get_results().snapshots if ts == close_ns]
+        assert len(snaps) == 1
+        return [(p.close, p.equity) for p in snaps[0] if p.symbol == "600000"]
+
+    assert day_close_snapshot(clamped) == day_close_snapshot(plain)
+    assert day_close_snapshot(clamped)[0][0] == pytest.approx(10.5)
+    _, _, daily = _daily_equity(clamped)
+    _, _, daily_plain = _daily_equity(plain)
+    pd.testing.assert_series_equal(daily, daily_plain)
+
+
+def _patch_clamp_hook(
+    monkeypatch: pytest.MonkeyPatch, calls: List[Tuple[Any, int]], fail: bool = False
+) -> None:
+    """给 replay 行情网关临时装上 configure_session_clamp 钩子并记录调用."""
+    from akquant.gateway.brokers.replay.gateway import ReplayMarketGateway
+
+    def hook(self: Any, resolver: Any, grace_ns: int) -> None:
+        calls.append((resolver, grace_ns))
+        if fail:
+            raise RuntimeError("钩子故障")
+
+    monkeypatch.setattr(
+        ReplayMarketGateway, "configure_session_clamp", hook, raising=False
+    )
+
+
+def test_live_runner_configures_session_clamp_on_market_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runner 用与引擎同配置的解析器调用行情网关的收盘钳制钩子一次.
+
+    钳制宽限 = day_close_delay − 3s，留出收盘 bar 推出到收盘定时器之间的余量。
+    解析器须带 sessions（国债期货前缀 15:15 收盘）、trading_calendar（01-03 不是
+    交易日）与在用合约（会话级收盘按在用合约的时段表取）。
+    """
+    from akquant import AssetType
+
+    calls: List[Tuple[Any, int]] = []
+    _patch_clamp_hook(monkeypatch, calls)
+    _run_live_replay(
+        monkeypatch,
+        _local_bars(["2024-01-02 14:58", "2024-01-02 14:59"]),
+        trading_calendar=["2024-01-02", "2024-01-04"],
+        sessions={"6": "CN_FUTURES_CFFEX_BOND_DAY"},
+        day_close_delay=60,
+    )
+    assert len(calls) == 1
+    resolver, grace_ns = calls[0]
+    assert grace_ns == 57 * 10**9
+    close_1515 = int(pd.Timestamp("2024-01-02 15:15", tz="Asia/Shanghai").value)
+    assert resolver.session_day_end(dt.date(2024, 1, 2)) == close_1515
+    assert resolver.next_session_day(dt.date(2024, 1, 2)) == dt.date(2024, 1, 4)
+    assert (
+        resolver.day_bounds("600000", dt.date(2024, 1, 2), AssetType.Stock)[1]
+        == close_1515
+    )
+
+
+def test_live_runner_skips_session_clamp_when_delay_too_short(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """day_close_delay 不足 3 秒时不开启钳制（收盘 bar 来不及在定时器之前推出）."""
+    calls: List[Tuple[Any, int]] = []
+    _patch_clamp_hook(monkeypatch, calls)
+    _run_live_replay(
+        monkeypatch,
+        _local_bars(["2024-01-02 14:58", "2024-01-02 14:59"]),
+        trading_calendar=["2024-01-02", "2024-01-03"],
+        day_close_delay=2.5,
+    )
+    assert calls == []
+
+
+def test_live_runner_session_clamp_hook_failure_only_warns(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """钩子抛错时告警并继续运行会话."""
+    calls: List[Tuple[Any, int]] = []
+    _patch_clamp_hook(monkeypatch, calls, fail=True)
+    with caplog.at_level("WARNING", logger="akquant"):
+        runner = _run_live_replay(
+            monkeypatch,
+            _local_bars(["2024-01-02 14:58", "2024-01-02 14:59"]),
+            trading_calendar=["2024-01-02", "2024-01-03"],
+        )
+    assert len(calls) == 1
+    assert any("收盘钳制" in r.getMessage() for r in caplog.records)
+    assert len(runner.engine.get_results().equity_curve) > 0
 
 
 class _BuyStockOnce(Strategy):

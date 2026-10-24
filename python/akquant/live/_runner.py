@@ -23,7 +23,7 @@ from typing import (
     cast,
 )
 
-from ..akquant import Bar, DataFeed, Engine, Instrument
+from ..akquant import AssetType, Bar, DataFeed, Engine, Instrument, SessionResolver
 from ..backtest import BacktestStreamEvent
 from ..gateway.broker_event_adapter import map_order_snapshot, map_trade
 from ..gateway.broker_runtime import BrokerRuntime
@@ -122,6 +122,12 @@ _SESSION_TAG_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9_]+$")
 #: 直接破坏前缀匹配, 见设计文档"风险"一节)。
 _SESSION_TAG_MAX_LEN = 32
 
+
+#: 收盘钳制宽限比 ``day_close_delay`` 少的余量(纳秒)。钳制的收盘 bar 在
+#: 收盘 + 钳制宽限 + 补发宽限(2 秒)推出, 须早于收盘定时器(收盘 +
+#: ``day_close_delay``)至少 1 秒, 否则推到时当日已结算。``day_close_delay``
+#: 不足它时不开启钳制。
+_SESSION_CLAMP_MARGIN_NS = 3_000_000_000
 
 #: ``day_close_delay`` 上界(秒): 一天。宽限再长就跨过下一交易日开盘, 当日改由
 #: 下一交易日首个行情开日时补结算, 日历定时器失去意义。
@@ -762,6 +768,9 @@ class LiveRunner:
         # replay: 生命周期锚定首个回放事件、按最后事件判定收尾(同回测), 须在
         # engine.run() 之前下发; 真实行情源不设, 生命周期仍按墙钟。
         replay_awaits_close = self._configure_replay_lifecycle(bundle)
+        # 收盘宽限钳制(行情网关的可选钩子): 收盘后宽限期内的 tick 计入当日收盘
+        # bar。须在网关线程启动、开始推行情之前下发。
+        self._configure_session_clamp(bundle)
 
         if bundle.market_gateway is not None:
             logger.info(
@@ -2924,6 +2933,59 @@ class LiveRunner:
             getattr(self, "market_broker", None) or getattr(self, "broker", "") or ""
         )
         return str(market_key).strip().lower() == "replay"
+
+    def _session_clamp_resolver(self) -> Any:
+        """与引擎同配置的时段解析器, 供行情网关的收盘钳制使用.
+
+        口径同引擎 ``ensure_session_resolver``: 同一 ``sessions`` /
+        ``trading_calendar`` / 时区, 在用合约为全部合约, 期权 → 标的映射取期权
+        合约的 ``underlying_symbol``。
+        """
+        resolver = SessionResolver(
+            sessions=self.sessions,
+            trading_calendar=self.trading_calendar,
+            timezone=self._session_timezone(),
+        )
+        instruments = list(getattr(self, "instruments", None) or [])
+        underlyings: Dict[str, str] = {}
+        for inst in instruments:
+            if inst.asset_type != AssetType.Option:
+                continue
+            underlying = getattr(inst, "underlying_symbol", None)
+            if underlying is not None and str(underlying).strip():
+                underlyings[str(inst.symbol)] = str(underlying)
+        resolver.set_option_underlyings(underlyings)
+        resolver.set_active(
+            [(str(inst.symbol), inst.asset_type) for inst in instruments]
+        )
+        return resolver
+
+    def _configure_session_clamp(self, bundle: Any) -> None:
+        """行情网关有 ``configure_session_clamp`` 钩子时开启收盘宽限钳制.
+
+        钳制宽限 = ``day_close_delay`` − 3 秒(见 ``_SESSION_CLAMP_MARGIN_NS``),
+        ``day_close_delay`` 不足 3 秒时不开启。钩子失败只告警, 会话照常运行
+        (收盘后宽限期内的 tick 进下一根 bar, 与未开启时相同)。
+        """
+        gateway = getattr(bundle, "market_gateway", None)
+        hook = getattr(gateway, "configure_session_clamp", None)
+        if not callable(hook):
+            return
+        grace_ns = (
+            int(getattr(self, "day_close_delay_ns", 0)) - _SESSION_CLAMP_MARGIN_NS
+        )
+        if grace_ns < 0:
+            return
+        try:
+            hook(self._session_clamp_resolver(), grace_ns)
+        except Exception as exc:
+            logger.warning(
+                "行情网关开启收盘钳制失败（%s），收盘后宽限期内的 tick 不计入当日"
+                "收盘 bar，会话继续运行；请检查 sessions/trading_calendar 配置，"
+                "或行情网关的 configure_session_clamp 实现",
+                exc,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
 
     def _configure_replay_lifecycle(self, bundle: Any) -> bool:
         """Replay 的交易日生命周期按回测语义, 返回数据结束时是否等末日结算.

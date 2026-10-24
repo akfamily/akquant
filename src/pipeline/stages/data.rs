@@ -598,13 +598,35 @@ impl Processor for DataProcessor {
                         // 宽限期内的行情处于闭市、不参与当日撮合: 不算"当日最后一个
                         // 行情事件"(NextOpen Day 单的过期豁免按它判)。
                         engine.last_event_ts_in_day = Some(timestamp);
+                        // 聚合器收盘钳制的 bar(实盘): 时间戳是收盘, close 却含收盘后
+                        // 宽限期内的价格; 它携带不晚于收盘的最后价格, 结算价取该值。
+                        // 宽限期内没有别的行情时快照还不存在: 先按当前最新价建立。
+                        let clamped_close = match &event {
+                            Event::Bar(b) if engine.state.feed.is_live() => b
+                                .extra
+                                .get(crate::data::aggregator::BAR_CLOSE_PRICE_KEY)
+                                .and_then(|p| Decimal::from_f64(*p)),
+                            _ => None,
+                        };
+                        if clamped_close.is_some()
+                            && engine.day_close_prices.as_ref().map(|(d, _)| *d) != Some(day)
+                        {
+                            let prices = engine
+                                .last_prices
+                                .read()
+                                .expect("last_prices 读锁被污染")
+                                .clone();
+                            engine.day_close_prices = Some((day, prices));
+                        }
                         // 结算价快照建立后才到的收盘前行情(乱序到达): 它仍是收盘时刻
                         // 之前的价格, 写进快照, 结算价取不晚于收盘的最后价格。
                         if let Some((d, prices)) = engine.day_close_prices.as_mut()
                             && *d == day
                         {
                             let priced = match &event {
-                                Event::Bar(b) => Some((b.symbol.as_str(), b.close)),
+                                Event::Bar(b) => {
+                                    Some((b.symbol.as_str(), clamped_close.unwrap_or(b.close)))
+                                }
                                 Event::Tick(t) => Some((t.symbol.as_str(), t.price)),
                                 _ => None,
                             };
