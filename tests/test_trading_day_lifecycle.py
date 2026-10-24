@@ -1166,6 +1166,7 @@ def _run_live_replay(
     bars: Any,
     strategy_cls: Any = None,
     freq: str = "1min",
+    ticks: Any = None,
     **kwargs: Any,
 ) -> Any:
     """run_live(broker="replay") 跑完后返回 runner，供读取引擎结果.
@@ -1191,12 +1192,15 @@ def _run_live_replay(
     _GATEWAY_THREADS.clear()
     _REPLAY_THREAD_JOINED.clear()
     _LIVE_ORDER_EVENTS.clear()
+    gateway_options: Dict[str, Any] = {"bars": bars, "freq": freq}
+    if ticks is not None:
+        gateway_options["ticks"] = ticks
     run_live(
         strategy_cls=strategy_cls or _LiveDayOrderProbe,
         instruments=[_live_stock_instrument()],
         broker="replay",
         trading_mode="paper",
-        gateway_options={"bars": bars, "freq": freq},
+        gateway_options=gateway_options,
         cash=1e6,
         show_progress=False,
         duration="30s",
@@ -1359,6 +1363,86 @@ def test_live_replay_next_day_event_inside_grace_window_settles_once(
     assert runner._stop_target_strategy.active_at["2024-01-02 14:00"] == 1
     # 01-02 只结算一次
     assert _snapshot_minutes(runner).count("2024-01-03 00:00") == 1
+
+
+_GRACE_PROBES: List[Any] = []
+
+
+class _LiveGraceProbe(_LiveDayOrderProbe):
+    """记录行情回调的（本地时刻到秒, 交易日, 时段）与生命周期钩子时刻."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: List[Tuple[str, Any, str]] = []
+        self.hooks: List[Tuple[str, str]] = []
+        _GRACE_PROBES.append(self)
+
+    def _row(self, ts_ns: int) -> None:
+        assert self.ctx is not None
+        local = pd.Timestamp(ts_ns, tz="UTC").tz_convert("Asia/Shanghai")
+        self.rows.append(
+            (
+                local.strftime("%Y-%m-%d %H:%M:%S"),
+                self.trading_day,
+                str(self.ctx.session).split(".")[-1],
+            )
+        )
+        self.hooks.append(("on_data", local.strftime("%Y-%m-%d %H:%M:%S")))
+
+    def _hook(self, name: str) -> None:
+        now = self.now
+        assert now is not None
+        self.hooks.append((name, now.strftime("%Y-%m-%d %H:%M:%S")))
+
+    def on_bar(self, bar: Bar) -> None:
+        self._row(int(bar.timestamp))
+        super().on_bar(bar)
+
+    def on_tick(self, tick: Any) -> None:
+        self._row(int(tick.timestamp))
+
+    def on_pre_open(self, event: Dict[str, Any]) -> None:
+        self._hook("on_pre_open")
+
+    def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:
+        self._hook("on_after_trading")
+
+
+def test_live_replay_post_close_tick_inside_grace_belongs_to_same_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """收盘后 day_close_delay 内到达的行情仍归当日，不提前开下一交易日."""
+    from akquant import Tick
+
+    _GRACE_PROBES.clear()
+    tick_ts = pd.Timestamp("2024-01-02 15:00:20", tz="Asia/Shanghai").value
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(["2024-01-02 14:59", "2024-01-03 09:31"]),
+        strategy_cls=_LiveGraceProbe,
+        ticks=[Tick(timestamp=int(tick_ts), price=10.0, volume=100.0, symbol="600000")],
+        trading_calendar=["2024-01-02", "2024-01-03"],
+        day_close_delay=60,
+    )
+    assert len(_GRACE_PROBES) == 1
+    probe = _GRACE_PROBES[0]
+    assert probe.rows == [
+        ("2024-01-02 14:59:00", dt.date(2024, 1, 2), "ClosingAuction"),
+        ("2024-01-02 15:00:20", dt.date(2024, 1, 2), "Closed"),
+        ("2024-01-03 09:31:00", dt.date(2024, 1, 3), "Continuous"),
+    ], probe.rows
+    after = [at for name, at in probe.hooks if name == "on_after_trading"]
+    assert after == ["2024-01-02 15:01:00"], probe.hooks
+    names = [name for name, _ in probe.hooks]
+    pre_open_0103 = [
+        i
+        for i, (name, at) in enumerate(probe.hooks)
+        if name == "on_pre_open" and at.startswith("2024-01-03")
+    ]
+    bar_0103 = probe.hooks.index(("on_data", "2024-01-03 09:31:00"))
+    assert len(pre_open_0103) == 1 and pre_open_0103[0] < bar_0103, names
+    # 结算快照记在收盘时刻、只一次
+    assert _snapshot_minutes(runner).count("2024-01-02 15:00") == 1
 
 
 class _BuyStockOnce(Strategy):

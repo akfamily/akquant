@@ -101,6 +101,28 @@ impl Default for LifecycleHooksDispatch {
     }
 }
 
+/// `ts` 是否在交易日 `day`（会话收盘 `close`）的收盘宽限内：`close < ts <= close +
+/// delay_ns`，且早于下一交易日的首段起点（全天连续时段表收盘即次日 0 点，其后的
+/// 时刻已属下一交易日）。下一交易日取不到（日历到尽头）时只看前一条件。
+pub(crate) fn in_close_grace(
+    resolver: &crate::calendar::resolver::SessionResolver,
+    day: NaiveDate,
+    close: i64,
+    ts: i64,
+    delay_ns: i64,
+) -> bool {
+    if ts <= close || ts > close.saturating_add(delay_ns) {
+        return false;
+    }
+    match resolver
+        .next_session_day(day)
+        .and_then(|next| resolver.session_day_first_start(next))
+    {
+        Ok(start) => ts < start,
+        Err(_) => true,
+    }
+}
+
 /// replay 数据结束收尾状态（见 `Engine::live_replay_close`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LiveReplayClose {
@@ -193,6 +215,10 @@ pub struct Engine {
     /// 运行参数：由 `run_live(day_close_delay=)` 在 `run()` 之前经
     /// `_set_live_day_close_delay_ns` 每次下发，不入存档；回测不用它（收盘 + 1ns）。
     pub(crate) live_day_close_delay_ns: i64,
+    /// 实盘收盘宽限期内首个归当日的行情到达前的最新价 `(交易日, 价格表)`：该日结算
+    /// （到期、日终、收盘快照）按它计价，结算价仍为收盘时刻（不晚于收盘）的最新价，
+    /// 不含宽限期内的行情（见 [`Engine::live_grace_day`]）。运行状态，不入存档。
+    pub(crate) day_close_prices: Option<(NaiveDate, HashMap<String, Decimal>)>,
     /// 实盘生命周期锚点（纳秒）：replay 回放历史行情时由 runner 按首个回放事件
     /// （首个事件 - 1ns）经 `_set_live_lifecycle_anchor` 下发；`run()` 用
     /// `min(墙钟, 锚点)` 代替墙钟排程生命周期，且锚点所属交易日早于锚点的时点照常
@@ -566,7 +592,8 @@ impl Engine {
         Ok(session)
     }
 
-    /// `ts` 所属的会话交易日。命中当前交易日区间时直接返回，否则交给解析器。
+    /// `ts` 所属的会话交易日。命中当前交易日区间时直接返回；实盘收盘宽限期内的
+    /// 时刻归当前交易日（[`Engine::live_grace_day`]）；否则交给解析器。
     pub(crate) fn trading_day_for(&mut self, ts: i64) -> PyResult<NaiveDate> {
         if let (Some(day), Some((prev_end, end))) =
             (self.current_trading_day, self.current_day_span)
@@ -577,6 +604,9 @@ impl Engine {
         }
         // run() 开始时已构造; 直接驱动 pipeline 的调用方(单测)在这里补建。
         self.ensure_session_resolver()?;
+        if let Some(day) = self.live_grace_day(ts) {
+            return Ok(day);
+        }
         let resolver = self.session_resolver.as_ref().expect("刚构造");
         let day = resolver
             .session_trading_day(ts)
@@ -586,9 +616,10 @@ impl Engine {
 
     /// 风控（每日亏损、风险预算）使用的交易日：`now` 所属的会话交易日。
     ///
-    /// `now` 落在当前交易日区间内时直接返回；超出时（如次日开盘前的定时器，当日
-    /// 尚未开日）用解析器求，但不开日。尚未开过日（`current_trading_day` 为空）或
-    /// 解析失败时退回 `current_trading_day`，由调用方按本地日期兜底。
+    /// `now` 落在当前交易日区间内、或在实盘收盘宽限期内（[`Engine::live_grace_day`]）
+    /// 时为当前交易日；超出时（如次日开盘前的定时器，当日尚未开日）用解析器求，但
+    /// 不开日。尚未开过日（`current_trading_day` 为空）或解析失败时退回
+    /// `current_trading_day`，由调用方按本地日期兜底。
     pub(crate) fn risk_trading_day(&mut self, now: i64) -> Option<NaiveDate> {
         let current = self.current_trading_day?;
         if let Some((prev_end, end)) = self.current_day_span
@@ -600,10 +631,34 @@ impl Engine {
         if self.ensure_session_resolver().is_err() {
             return Some(current);
         }
+        if let Some(day) = self.live_grace_day(now) {
+            return Some(day);
+        }
         self.session_resolver
             .as_ref()
             .and_then(|r| r.session_trading_day(now).ok())
             .or(Some(current))
+    }
+
+    /// 实盘收盘宽限：当前交易日 D 尚未结算，且 `ts` 在 D 的会话收盘之后、收盘定时器
+    /// （收盘 + `live_day_close_delay_ns`）之内（含），并早于 D 的下一交易日首段起点
+    /// 时返回 `Some(D)`——该时刻的事件仍归 D，不开下一交易日。回测（feed 非 live）、
+    /// 宽限为 0、D 已结算或解析器未构造时为 `None`。只改事件归属，不改结算时刻与
+    /// 结算价（Ruling S8-1）；`trading_day_at` 是纯日历查询，不经过这里。
+    pub(crate) fn live_grace_day(&self, ts: i64) -> Option<NaiveDate> {
+        if !self.state.feed.is_live() || self.live_day_close_delay_ns <= 0 {
+            return None;
+        }
+        let day = self.current_trading_day?;
+        if self.last_settled_trading_day.is_some_and(|s| s >= day) {
+            return None;
+        }
+        let resolver = self.session_resolver.as_ref()?;
+        let close = match self.current_day_span {
+            Some((_, end)) => end,
+            None => resolver.session_day_end(day).ok()?,
+        };
+        in_close_grace(resolver, day, close, ts, self.live_day_close_delay_ns).then_some(day)
     }
 
     pub(crate) fn is_active_timestamp(&self, timestamp: i64) -> bool {

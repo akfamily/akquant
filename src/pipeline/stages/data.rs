@@ -548,6 +548,10 @@ impl Processor for DataProcessor {
                 // 开日: 第一个属于新会话交易日的(活跃)事件。日终结算不在这里做,
                 // 而是挂在该交易日收盘后的内部定时器上(回测 +1ns, 实盘留宽限;
                 // 见 Timer 分支与 `day_close_timer_timestamp`)。
+                //
+                // 实盘收盘宽限期内到达的行情仍归当日(`Engine::live_grace_day`, 由
+                // `trading_day_for` 判定), 不开下一交易日; 记下归属的交易日供窗口聚合。
+                let mut grace_day = None;
                 if engine.is_active_timestamp(timestamp) {
                     let day = event_trading_day(
                         engine.current_trading_day,
@@ -576,7 +580,36 @@ impl Processor for DataProcessor {
                         engine.push_day_close_timer(day, close_timer);
                         engine.scheduled_day_close = Some(day);
                     }
-                    engine.last_event_ts_in_day = Some(timestamp);
+                    // 归当日但晚于收盘: 只有实盘收盘宽限期内的行情如此。
+                    let in_grace = engine.state.feed.is_live()
+                        && engine
+                            .current_day_span
+                            .is_some_and(|(_, end)| timestamp > end);
+                    if in_grace {
+                        // 结算价仍取收盘时刻的最新价(Ruling S8-1): 首个宽限行情更新
+                        // 最新价之前留一份, 结算时按它计价。
+                        if engine.day_close_prices.as_ref().map(|(d, _)| *d) != Some(day) {
+                            let prices = engine
+                                .last_prices
+                                .read()
+                                .expect("last_prices 读锁被污染")
+                                .clone();
+                            engine.day_close_prices = Some((day, prices));
+                        }
+                        // 日收益按交易日分组时宽限期内的权益点也归当日: 归属截止
+                        // 时刻顺延到最后一个宽限行情。
+                        if let Some(last) = engine.trading_day_ends.last_mut()
+                            && last.0 == day
+                            && last.1 < timestamp
+                        {
+                            last.1 = timestamp;
+                        }
+                        grace_day = Some(day);
+                    } else {
+                        // 宽限期内的行情处于闭市、不参与当日撮合: 不算"当日最后一个
+                        // 行情事件"(NextOpen Day 单的过期豁免按它判)。
+                        engine.last_event_ts_in_day = Some(timestamp);
+                    }
                 }
 
                 if let Event::Bar(ref b) = event {
@@ -603,7 +636,7 @@ impl Processor for DataProcessor {
                             .window_aggregator
                             .write()
                             .expect("window_aggregator 写锁被污染")
-                            .update(b);
+                            .update_in_day(b, grace_day);
                         for window_bar in &closed {
                             buffer.update_window(window_bar);
                         }
@@ -869,7 +902,24 @@ fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate,
     let session = engine.clock.session;
     engine.clock.update(close_ts, session);
 
+    // 实盘收盘宽限期内已有行情更新了最新价: 结算期间换回收盘时刻的最新价
+    // (Ruling S8-1), 结算后再换回最新价。
+    let close_prices = match engine.day_close_prices.take() {
+        Some((d, prices)) if d == day => Some(prices),
+        _ => None,
+    };
+    let latest_prices = close_prices.map(|prices| {
+        std::mem::replace(
+            &mut *engine.last_prices.write().expect("last_prices 写锁被污染"),
+            prices,
+        )
+    });
+
     settle_day_close(engine, py, day, close_ts);
+
+    if let Some(latest) = latest_prices {
+        *engine.last_prices.write().expect("last_prices 写锁被污染") = latest;
+    }
 
     engine.flush_stream_events(py);
     // 结算结束后还原 clock(而不是停在收盘时刻): clock 是"最后处理到的事件时刻",

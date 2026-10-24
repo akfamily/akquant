@@ -445,7 +445,8 @@ class BacktestResult:
     :ivar snapshots: 每日持仓快照 [(timestamp, [snapshot])]
     :ivar orders: 订单列表
     :ivar executions: 成交列表
-    :ivar trading_day_ends: 引擎实际开过的交易日及收盘时刻 [(date, close_ns)]
+    :ivar trading_day_ends: 引擎实际开过的交易日及收盘时刻 [(date, close_ns)]；
+        实盘收盘宽限期内有行情归当日时为其中最后一条的时刻
     """
 
     equity_curve: list[tuple[int, float]]
@@ -905,6 +906,8 @@ class Engine:
 
         按当前时段表与交易日历（含行情源对缺省日历的修正）求 ``timestamp_ns`` 所属的会话
         交易日：收盘之后的时刻属于下一交易日。只读，可在 ``run()`` 之前或之后调用。
+        纯日历查询：不考虑实盘收盘宽限（宽限期内的行情在运行中仍归当日，见
+        ``run_live(day_close_delay=)``；此处按日历属下一交易日）。
 
         :param timestamp_ns: 时刻（UTC 纳秒）
         :return: 所属交易日

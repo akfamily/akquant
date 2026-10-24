@@ -564,9 +564,23 @@ impl Engine {
         };
         self.ensure_session_resolver()?;
         let resolver = self.session_resolver.clone().expect("已构造");
-        let Ok(day) = resolver.session_trading_day(last) else {
+        let Ok(mut day) = resolver.session_trading_day(last) else {
             return Ok(false);
         };
+        // 最后事件在上一交易日的收盘宽限内时归上一交易日（与数据阶段一致）：等它的
+        // 收盘定时器结算后再结束，收尾判定不因宽限期内的行情提前。
+        if let Ok(prev) = resolver.session_calendar_before(day)
+            && let Ok(prev_close) = resolver.session_day_end(prev)
+            && super::core::in_close_grace(
+                &resolver,
+                prev,
+                prev_close,
+                last,
+                self.live_day_close_delay_ns,
+            )
+        {
+            day = prev;
+        }
         let Ok(end) = resolver.session_day_end(day) else {
             return Ok(false);
         };
@@ -618,6 +632,7 @@ impl Engine {
             lifecycle_scheduled_for: None,
             lifecycle_chain_warned: false,
             live_day_close_delay_ns: crate::model::timer::LIVE_DAY_CLOSE_GRACE_NS,
+            day_close_prices: None,
             live_lifecycle_anchor_ns: None,
             live_replay_close: None,
             source_trading_day_warned: HashSet::new(),
@@ -1111,6 +1126,8 @@ impl Engine {
     ///
     /// 按当前时段表与交易日历（含行情源对缺省日历的修正）求 ``timestamp_ns`` 所属的
     /// 会话交易日：收盘之后的时刻属于下一交易日。只读，可在 ``run()`` 之前或之后调用。
+    /// 纯日历查询：不考虑实盘收盘宽限（宽限期内的行情在运行中仍归当日，见
+    /// ``run_live(day_close_delay=)``；此处按日历属下一交易日）。
     ///
     /// :param timestamp_ns: 时刻（UTC 纳秒）
     /// :return: 所属交易日

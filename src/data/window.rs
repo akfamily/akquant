@@ -310,6 +310,8 @@ pub struct WindowAggregator {
     /// 基础周期未知且 bar 不带区间(只能延迟闭合)时是否告警一次(引擎打开)。
     warn_deferred_close: bool,
     deferred_close_warned: bool,
+    /// 本次 `update_in_day` 由引擎指定的归属交易日(只在该调用期间有值)。
+    forced_day: Option<NaiveDate>,
 }
 
 /// bar 区间终点: 旧口径的终点戳 bar 打在边界前 1ns(`ts + 1` 是整秒, 如旧存档),
@@ -509,8 +511,11 @@ impl WindowAggregator {
     }
 
     /// `point` 所属的交易日区间(按品种缓存); 无解析器或解析出错返回 `None`。
+    /// 引擎指定了归属交易日(实盘收盘宽限期内的 bar, 见 [`Self::update_in_day`])时
+    /// 取该交易日的区间, 不查也不写缓存。
     fn day_for(&mut self, symbol: &str, point: i64) -> Option<DaySpan> {
-        if let Some(s) = self.day_cache.get(symbol)
+        if self.forced_day.is_none()
+            && let Some(s) = self.day_cache.get(symbol)
             && s.lower < point
             && point <= s.close
         {
@@ -518,10 +523,15 @@ impl WindowAggregator {
         }
         let resolver = &self.resolver.as_ref()?.0;
         let asset_type = self.asset_types.get(symbol).copied();
-        let day = resolver
-            .resolve_instant(symbol, asset_type, point)
-            .ok()?
-            .trading_day;
+        let day = match self.forced_day {
+            Some(day) => day,
+            None => {
+                resolver
+                    .resolve_instant(symbol, asset_type, point)
+                    .ok()?
+                    .trading_day
+            }
+        };
         let (open, close) = resolver.day_bounds(symbol, asset_type, day).ok()?;
         let prev = resolver
             .previous_trading_day(symbol, asset_type, day)
@@ -540,7 +550,9 @@ impl WindowAggregator {
             label: self.day_label(day, close),
             prev_label: prev.map(|(d, c)| self.day_label(d, c)),
         };
-        self.day_cache.insert(symbol.to_string(), span);
+        if self.forced_day.is_none() {
+            self.day_cache.insert(symbol.to_string(), span);
+        }
         Some(span)
     }
 
@@ -676,6 +688,15 @@ impl WindowAggregator {
         }
     }
 
+    /// 喂入一根基础 bar, 归属交易日由引擎给定: `Some(D)` 时(实盘收盘宽限期内归
+    /// 当日的 bar)按交易日 D 分组, 否则同 [`Self::update`]。
+    pub fn update_in_day(&mut self, bar: &Bar, day: Option<NaiveDate>) -> Vec<Bar> {
+        self.forced_day = day;
+        let closed = self.update(bar);
+        self.forced_day = None;
+        closed
+    }
+
     /// 喂入一根基础 bar, 返回本步闭合的窗口 bar(按周期从小到大)。
     pub fn update(&mut self, bar: &Bar) -> Vec<Bar> {
         if self.subscriptions.is_empty() {
@@ -802,7 +823,8 @@ impl WindowAggregator {
             .iter()
             .filter(|(_, st)| match st.freq {
                 WindowFreq::Day => st.trading_day.is_some_and(|d| d <= day),
-                _ => st.label_ns <= close_ts,
+                // 标签晚于收盘、但归 `day` 的日内窗口(实盘收盘宽限期内的 bar)同样闭合。
+                _ => st.label_ns <= close_ts || st.trading_day.is_some_and(|d| d <= day),
             })
             .map(|(k, _)| k.clone())
             .collect();
@@ -1512,6 +1534,39 @@ mod tests {
         assert!(a.close_through_day(day, ns(2024, 1, 5, 15, 0)).is_empty());
         assert!(a.current("au2406", "5min").is_some());
         assert!(a.current("au2406", "1d").is_some());
+    }
+
+    #[test]
+    fn grace_bar_in_forced_day_joins_that_days_windows() {
+        let mut a = resolved_agg(
+            &[("5min", None), ("1d", None)],
+            vec![],
+            "S",
+            AssetType::Stock,
+        );
+        let day = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let close = ns(2024, 1, 2, 15, 0);
+        assert!(a.update(&bar(ns(2024, 1, 2, 14, 58), 10, "S")).is_empty());
+        // 实盘收盘宽限期内的 bar 由引擎指定归 01-02: 并入当日日线, 不开 01-03 的窗口
+        let grace = bar(close + 30 * NS_PER_SEC, 12, "S");
+        let closed = a.update_in_day(&grace, Some(day));
+        assert!(closed.iter().all(|b| b.freq.as_deref() != Some("1d")));
+        let daily = a.current("S", "1d").unwrap();
+        assert_eq!(daily.volume, Decimal::from(20));
+        assert_eq!(daily.close, Decimal::from(12));
+        // 当日日终闭合全部归当日的窗口(含标签晚于收盘的日内窗口)
+        let closed = a.close_through_day(day, close);
+        let got: Vec<Option<&str>> = closed.iter().map(|b| b.freq.as_deref()).collect();
+        assert_eq!(got, vec![Some("5min"), Some("1d")]);
+        assert_eq!(closed[1].timestamp, close);
+        assert_eq!(closed[1].volume, Decimal::from(20));
+        assert!(a.flush().is_empty());
+        // 不指定时按日历归下一交易日: 当日日线在这根 bar 处闭合
+        let mut b = resolved_agg(&[("1d", None)], vec![], "S", AssetType::Stock);
+        b.update(&bar(ns(2024, 1, 2, 14, 58), 10, "S"));
+        let closed = b.update(&grace);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].volume, Decimal::from(10));
     }
 
     #[test]
