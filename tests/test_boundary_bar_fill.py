@@ -200,3 +200,121 @@ def test_daily_before_trading_order_with_interval_bars_fills_same_day_open() -> 
         show_progress=False,
     )
     assert strategy.fills == [(_ns("2024-01-03 15:00:00"), 11.0)]
+
+
+# --- 双品种: 同刻顺序 tick(A) -> bar(A) -> tick(B) -> bar(B)(按标的排序) ---
+
+SYM_A = "000001.SZ"
+SYM_B = "600000.SH"
+# (时刻, A 价, B 价)
+TWO = [
+    ("2024-01-02 09:31:10", 9.0, 9.0),
+    ("2024-01-02 09:31:30", 10.0, 10.0),
+    ("2024-01-02 09:32:00", 11.0, 10.0),
+    ("2024-01-02 09:32:30", 12.0, 10.0),
+    ("2024-01-02 09:33:30", 12.0, 10.0),
+]
+E_TS = "2024-01-02 09:32:00"
+
+
+class _CrossOrder(Strategy):
+    """在 tick_symbol 的 E 时刻 tick 上给 order_symbol 下一张买单."""
+
+    def __init__(self, tick_symbol: str, order_symbol: str, price: Any) -> None:
+        super().__init__()
+        self.tick_symbol = tick_symbol
+        self.order_symbol = order_symbol
+        self.price = price
+        self.done = False
+        self.fills: List[Tuple[int, float]] = []
+
+    def on_tick(self, tick: Any) -> None:
+        if (
+            str(tick.symbol) == self.tick_symbol
+            and int(tick.timestamp) == _ns(E_TS)
+            and not self.done
+        ):
+            self.done = True
+            self.buy(self.order_symbol, 100, price=self.price)
+
+    def on_trade(self, trade: Any) -> None:
+        self.fills.append((int(trade.timestamp), float(trade.price)))
+
+
+def _run_two(strategy: Strategy) -> None:
+    ticks = []
+    for t, pa, pb in TWO:
+        ticks.append(Tick(timestamp=_ns(t), price=pa, volume=100.0, symbol=SYM_A))
+        ticks.append(Tick(timestamp=_ns(t), price=pb, volume=100.0, symbol=SYM_B))
+    run_backtest(
+        data=ticks,
+        strategy=strategy,
+        symbols=[SYM_A, SYM_B],
+        initial_cash=1e6,
+        show_progress=False,
+        fill_policy=CurrentClose(),
+        freq="1min",
+    )
+
+
+def test_order_after_same_time_bar_already_processed_is_not_skipped() -> None:
+    """在 tick(B, E) 上下 A 的单: bar(A, E) 已在之前处理, 不跳过, 本时间片成交.
+
+    A 在 E 的价格为 11.0(tick 与 bar 收盘相同); 误跳过会推迟到 09:32:30 以 12.0。
+    """
+    strategy = _CrossOrder(SYM_B, SYM_A, None)
+    _run_two(strategy)
+    assert strategy.fills == [(_ns(E_TS), 11.0)]
+
+
+def test_cross_symbol_order_before_its_same_time_bar_is_skipped() -> None:
+    """在 tick(A, E) 上下 B 的 9.5 限价买: bar(B, E) 之后才处理, 其低点 9.0 早于下单."""
+    strategy = _CrossOrder(SYM_A, SYM_B, 9.5)
+    _run_two(strategy)
+    assert strategy.fills == []
+
+
+def test_own_symbol_order_after_other_symbol_bar_is_skipped() -> None:
+    """在 tick(B, E) 上下 B 的 9.5 限价买: 已处理的是 bar(A, E), 不是 bar(B, E).
+
+    "同刻 bar 已撮合"须按订单品种判断, 否则 bar(B, E) 会按早于下单的低点 9.0 成交。
+    """
+    strategy = _CrossOrder(SYM_B, SYM_B, 9.5)
+    _run_two(strategy)
+    assert strategy.fills == []
+
+
+class _TimerOrder(Strategy):
+    """E 时刻的用户定时器里挂 9.5 限价买."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fills: List[Tuple[int, float]] = []
+        self.fired: List[int] = []
+
+    def on_start(self) -> None:
+        self.schedule(pd.Timestamp(E_TS, tz=TZ), "buy")
+
+    def on_timer(self, payload: str) -> None:
+        if payload == "buy":
+            self.fired.append(int(getattr(self.now, "value", 0)))
+            self.buy(SYM, 100, price=9.5)
+
+    def on_trade(self, trade: Any) -> None:
+        self.fills.append((int(trade.timestamp), float(trade.price)))
+
+
+def test_timer_order_at_boundary_not_filled_by_same_time_bar_history() -> None:
+    """E 时刻定时器下的限价单: 同刻 bar(E) 的低点 9.0 早于下单, 不得成交."""
+    strategy = _TimerOrder()
+    run_backtest(
+        data=_ticks(),
+        strategy=strategy,
+        symbols=[SYM],
+        initial_cash=1e6,
+        show_progress=False,
+        fill_policy=CurrentClose(),
+        freq="1min",
+    )
+    assert strategy.fired == [_ns(E_TS)]
+    assert strategy.fills == []

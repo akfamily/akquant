@@ -98,6 +98,9 @@ pub struct SimulatedExecutionClient {
     /// 同一时刻、同品种的带区间 bar 在它们之后处理, 其 OHLC 来自
     /// `(interval_start, timestamp]`, 早于下单时刻, 故不由这根 bar 撮合。
     created_off_bar_ids: HashSet<String>,
+    /// 品种 -> 最近一根已处理的带区间 bar 的时间戳。下单时该品种同刻 bar 已撮合过
+    /// (如同刻顺序 tick(A) -> bar(A) -> tick(B) 中在 tick(B) 上下 A 的单), 不再登记。
+    last_interval_bar_ts: HashMap<String, i64>,
     /// 品种 -> 当日集合竞价状态。
     auctions: HashMap<String, AuctionState>,
     /// 已提示过"竞价期成交量为 0"的品种。
@@ -205,6 +208,7 @@ impl SimulatedExecutionClient {
             slice_tracking_timestamp: None,
             attempted_same_cycle_order_ids: HashSet::new(),
             created_off_bar_ids: HashSet::new(),
+            last_interval_bar_ts: HashMap::new(),
             deferred_same_cycle_order_ids: HashSet::new(),
             auctions: HashMap::new(),
             zero_volume_auction_warned: HashSet::new(),
@@ -1064,9 +1068,14 @@ impl ExecutionClient for SimulatedExecutionClient {
     }
 
     fn mark_created_off_bar(&mut self, order_id: &str) {
-        if self.orders.contains_key(order_id) {
-            self.created_off_bar_ids.insert(order_id.to_string());
+        let Some(order) = self.orders.get(order_id) else {
+            return;
+        };
+        // 同品种同刻的 bar 已在下单前处理: 它之后不会再出现, 无需跳过
+        if self.last_interval_bar_ts.get(&order.symbol) == Some(&order.created_at) {
+            return;
         }
+        self.created_off_bar_ids.insert(order_id.to_string());
     }
 
     fn on_cancel(&mut self, order_id: &str) {
@@ -1089,6 +1098,12 @@ impl ExecutionClient for SimulatedExecutionClient {
 
     fn on_event(&mut self, event: &Event, ctx: &crate::context::EngineContext) -> Vec<Event> {
         self.prepare_slice_tracking(ctx.current_time);
+        if let Event::Bar(bar) = event
+            && bar.interval_start.is_some_and(|s| s < bar.timestamp)
+        {
+            self.last_interval_bar_ts
+                .insert(bar.symbol.clone(), bar.timestamp);
+        }
         // 集合竞价: 竞价时段只记价; 开盘竞价在首个连续竞价事件上、收盘竞价在结束它的
         // 事件上按竞价价统一撮合(与本事件的常规撮合同一次调用, 排在它之前)。
         let quote = match event {
