@@ -890,9 +890,9 @@ class Engine:
         """
         ...
 
-    def set_force_session_continuous(self, enabled: bool) -> None:
+    def _set_force_session_continuous(self, enabled: bool) -> None:
         r"""
-        强制连续交易时段.
+        强制连续交易时段（私有，仅实盘 runner 使用，阶段 7 删除）.
 
         :param enabled: 是否强制连续交易 (忽略午休等)
         """

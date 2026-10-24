@@ -145,7 +145,6 @@ def test_futures_trades_df_respects_contract_multiplier() -> None:
                 )
             ],
             china_futures=ChinaFuturesConfig(
-                enforce_sessions=False,
                 instrument_templates_by_symbol_prefix=[
                     ChinaFuturesInstrumentTemplateConfig(
                         symbol_prefix="RB",

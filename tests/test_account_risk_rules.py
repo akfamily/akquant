@@ -751,7 +751,6 @@ def test_futures_margin_account_snapshot_uses_margin_accounting() -> None:
                 ),
             ),
             china_futures=ChinaFuturesConfig(
-                enforce_sessions=False,
                 instrument_templates_by_symbol_prefix=[
                     ChinaFuturesInstrumentTemplateConfig(
                         symbol_prefix="RB",
@@ -849,7 +848,6 @@ def test_futures_short_overnight_avoids_spurious_liquidation() -> None:
                 ),
             ),
             china_futures=ChinaFuturesConfig(
-                enforce_sessions=False,
                 instrument_templates_by_symbol_prefix=[
                     ChinaFuturesInstrumentTemplateConfig(
                         symbol_prefix="RB",
@@ -962,7 +960,6 @@ def test_futures_force_liquidation_emits_callbacks_and_realizes_pnl_only() -> No
                 ),
             ),
             china_futures=ChinaFuturesConfig(
-                enforce_sessions=False,
                 instrument_templates_by_symbol_prefix=[
                     ChinaFuturesInstrumentTemplateConfig(
                         symbol_prefix="RB",
@@ -1075,7 +1072,6 @@ def test_futures_margin_portfolio_update_can_read_account_metrics() -> None:
                 ),
             ),
             china_futures=ChinaFuturesConfig(
-                enforce_sessions=False,
                 instrument_templates_by_symbol_prefix=[
                     ChinaFuturesInstrumentTemplateConfig(
                         symbol_prefix="RB",

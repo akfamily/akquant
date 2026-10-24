@@ -38,11 +38,9 @@ from .config import (
     ChinaFuturesConfig,
     ChinaFuturesFeeConfig,
     ChinaFuturesInstrumentTemplateConfig,
-    ChinaFuturesSessionConfig,
     ChinaFuturesValidationConfig,
     ChinaOptionsConfig,
     ChinaOptionsFeeConfig,
-    ChinaOptionsSessionConfig,
     ChinaStockConfig,
     InstrumentAssetTypeEnum,
     InstrumentConfig,
@@ -172,11 +170,9 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "ChinaFuturesConfig",
         "ChinaFuturesFeeConfig",
         "ChinaFuturesInstrumentTemplateConfig",
-        "ChinaFuturesSessionConfig",
         "ChinaFuturesValidationConfig",
         "ChinaOptionsConfig",
         "ChinaOptionsFeeConfig",
-        "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
         "PrecomputedIndicator",
         "IndicatorBinding",
@@ -282,7 +278,6 @@ else:
         "strategy_config",
         "ChinaOptionsConfig",
         "ChinaOptionsFeeConfig",
-        "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
         "PrecomputedIndicator",
         "IndicatorBinding",
@@ -349,6 +344,24 @@ else:
         "OrderReceipt",
         "talib",
     ]
+
+
+_REMOVED_SESSION_CONFIG_CLASSES = {
+    "ChinaFuturesSessionConfig": "ChinaFuturesConfig.sessions",
+    "ChinaOptionsSessionConfig": "ChinaOptionsConfig.sessions",
+}
+
+
+def __getattr__(name: str) -> object:
+    """已删除的时段配置类给出中文迁移提示，其余名字保持默认的属性错误."""
+    if name in _REMOVED_SESSION_CONFIG_CLASSES:
+        raise ImportError(
+            f"{name} 已删除（原用于 {_REMOVED_SESSION_CONFIG_CLASSES[name]}）："
+            "时段改由 run_backtest(sessions=...) 配置，例如 "
+            'sessions={"rb": "CN_FUTURES_NIGHT_23"}；'
+            '不受时段约束请用 sessions={"default": "ALWAYS_OPEN"}'
+        )
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def create_bar(

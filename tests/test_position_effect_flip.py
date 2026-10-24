@@ -56,7 +56,7 @@ def _run(strategy: type[Strategy], initial_cash: float = 500_000.0) -> BacktestR
                 margin_ratio=0.1,
             )
         ],
-        china_futures=ChinaFuturesConfig(enforce_sessions=False),
+        china_futures=ChinaFuturesConfig(),
     )
     return aq.run_backtest(
         strategy=strategy,
@@ -251,7 +251,7 @@ def test_pending_close_is_visible_across_strategy_slots() -> None:
                 margin_ratio=0.1,
             )
         ],
-        china_futures=ChinaFuturesConfig(enforce_sessions=False),
+        china_futures=ChinaFuturesConfig(),
     )
     result = aq.run_backtest(
         strategy=_SlotCloser,

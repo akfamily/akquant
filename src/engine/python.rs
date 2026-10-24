@@ -1116,6 +1116,7 @@ impl Engine {
     /// 强制连续交易时段
     ///
     /// :param enabled: 是否强制连续交易 (忽略午休等)
+    #[pyo3(name = "_set_force_session_continuous")]
     fn set_force_session_continuous(&mut self, enabled: bool) {
         self.force_session_continuous = enabled;
     }

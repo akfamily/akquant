@@ -140,7 +140,6 @@ if __name__ == "__main__":
         strategy_config=StrategyConfig(initial_cash=500_000, commission_rate=0.0001),
         instruments_config=[rb_config],
         china_futures=ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",

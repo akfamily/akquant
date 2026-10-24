@@ -1,7 +1,19 @@
+import functools
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Dict, FrozenSet, List, Literal, Optional, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    FrozenSet,
+    List,
+    Literal,
+    Optional,
+    TypeVar,
+    Union,
+    cast,
+)
 
 """
 AKQuant Configuration System.
@@ -330,15 +342,6 @@ class ChinaFuturesFeeConfig:
 
 
 @dataclass
-class ChinaFuturesSessionConfig:
-    """中国期货交易时段配置."""
-
-    start: str
-    end: str
-    session: str = "continuous"
-
-
-@dataclass
 class ChinaFuturesValidationConfig:
     """中国期货校验开关配置."""
 
@@ -388,13 +391,61 @@ class ChinaFuturesInstrumentTemplateConfig:
             raise ValueError("commission_rate must be >= 0")
 
 
+_ConfigT = TypeVar("_ConfigT", bound=type)
+
+_SESSION_MIGRATION_HINT = (
+    "时段改由 run_backtest(sessions=...) 配置，例如 "
+    'sessions={"rb": "CN_FUTURES_NIGHT_23"}（按品种前缀指定时段模板）；'
+    '不受时段约束请用 sessions={"default": "ALWAYS_OPEN"}'
+)
+
+
+def _reject_removed_fields(
+    removed: Dict[str, Callable[[Any], str]],
+) -> Callable[[_ConfigT], _ConfigT]:
+    """给 dataclass 的 ``__init__`` 加前置拦截：已删除字段给出中文迁移报错.
+
+    :param removed: 字段名到“迁移说明生成函数（入参为传入值）”的映射。
+    """
+
+    def decorator(cls: _ConfigT) -> _ConfigT:
+        original_init = cls.__init__  # type: ignore[misc]
+
+        @functools.wraps(original_init)
+        def __init__(self: Any, *args: Any, **kwargs: Any) -> None:
+            for name, hint in removed.items():
+                if name in kwargs:
+                    raise TypeError(
+                        f"{cls.__name__}.{name} 已删除：{hint(kwargs[name])}"
+                    )
+            original_init(self, *args, **kwargs)
+
+        cls.__init__ = __init__  # type: ignore[misc]
+        return cls
+
+    return decorator
+
+
+def _futures_session_profile_hint(value: Any) -> str:
+    template = str(value).strip().upper()
+    return (
+        f"{_SESSION_MIGRATION_HINT}；原 session_profile 的值对应 "
+        f'sessions={{"<品种前缀>": "{template}"}}'
+    )
+
+
+@_reject_removed_fields(
+    {
+        "enforce_sessions": lambda _v: _SESSION_MIGRATION_HINT,
+        "session_profile": _futures_session_profile_hint,
+        "sessions": lambda _v: _SESSION_MIGRATION_HINT,
+    }
+)
 @dataclass
 class ChinaFuturesConfig:
     """中国期货增强配置."""
 
-    enforce_sessions: bool = True
     use_china_futures_market: bool = True
-    session_profile: str = "CN_FUTURES_DAY"
     enforce_tick_size: bool = True
     enforce_lot_size: bool = True
     fee_by_symbol_prefix: Optional[List[ChinaFuturesFeeConfig]] = None
@@ -402,27 +453,9 @@ class ChinaFuturesConfig:
     instrument_templates_by_symbol_prefix: Optional[
         List[ChinaFuturesInstrumentTemplateConfig]
     ] = None
-    sessions: Optional[List[ChinaFuturesSessionConfig]] = None
 
     def __post_init__(self) -> None:
         """Validate duplicate prefixes across config lists."""
-        valid_session_profiles = {
-            "CN_FUTURES_DAY",
-            "CN_FUTURES_COMMODITY_DAY",
-            "CN_FUTURES_CFFEX_STOCK_INDEX_DAY",
-            "CN_FUTURES_CFFEX_BOND_DAY",
-            "CN_FUTURES_NIGHT_23",
-            "CN_FUTURES_NIGHT_01",
-            "CN_FUTURES_NIGHT_0230",
-        }
-        self.session_profile = self.session_profile.strip().upper()
-        if self.session_profile not in valid_session_profiles:
-            raise ValueError(
-                "session_profile must be one of "
-                "CN_FUTURES_DAY/CN_FUTURES_COMMODITY_DAY/"
-                "CN_FUTURES_CFFEX_STOCK_INDEX_DAY/CN_FUTURES_CFFEX_BOND_DAY/"
-                "CN_FUTURES_NIGHT_23/CN_FUTURES_NIGHT_01/CN_FUTURES_NIGHT_0230"
-            )
         if self.fee_by_symbol_prefix:
             seen_fee: Dict[str, int] = {}
             for idx, fee in enumerate(self.fee_by_symbol_prefix):
@@ -493,15 +526,7 @@ class ChinaOptionsFeeConfig:
         )
 
 
-@dataclass
-class ChinaOptionsSessionConfig:
-    """中国期权交易时段配置."""
-
-    start: str
-    end: str
-    session: str = "continuous"
-
-
+@_reject_removed_fields({"sessions": lambda _v: _SESSION_MIGRATION_HINT})
 @dataclass
 class ChinaOptionsConfig:
     """中国期权增强配置."""
@@ -518,7 +543,6 @@ class ChinaOptionsConfig:
     # 卖出开仓(含备兑)免收经手费与结算费; 交易所恢复收费时设为 False
     sell_open_exempt: bool = True
     fee_by_symbol_prefix: Optional[List[ChinaOptionsFeeConfig]] = None
-    sessions: Optional[List[ChinaOptionsSessionConfig]] = None
 
     def __post_init__(self) -> None:
         """Validate china options config fields."""

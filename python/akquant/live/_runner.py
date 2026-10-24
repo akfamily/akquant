@@ -672,7 +672,7 @@ class LiveRunner:
             self.engine.use_china_futures_market()
         else:
             self.engine.use_china_market()
-        self.engine.set_force_session_continuous(True)
+        self.engine._set_force_session_continuous(True)
         # 交易日划分与日终结算时刻(引擎时区沿用默认 Asia/Shanghai)
         self.engine.configure_sessions(self.sessions, self.trading_calendar)
 

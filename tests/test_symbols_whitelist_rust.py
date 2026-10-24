@@ -46,7 +46,7 @@ class _RecordingStrategy(akquant.Strategy):
 def _run(whitelist: list[str] | None) -> dict[str, int]:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine._set_force_session_continuous(True)
     engine.set_cash(100000.0)
     if whitelist is not None:
         engine.set_symbol_whitelist(whitelist)

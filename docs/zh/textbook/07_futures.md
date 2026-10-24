@@ -72,7 +72,6 @@ config = BacktestConfig(
         InstrumentConfig(symbol="RB2310", asset_type="FUTURES")
     ],
     china_futures=ChinaFuturesConfig(
-        enforce_sessions=False,
         instrument_templates_by_symbol_prefix=[
             ChinaFuturesInstrumentTemplateConfig(
                 symbol_prefix="RB",
@@ -101,7 +100,7 @@ config = BacktestConfig(
 - 模板和前缀规则里的 `commission_rate` 必须大于等于 0
 - `validation_by_symbol_prefix` 每条规则至少设置一个开关
 - 同一列表内前缀重复会报错，并定位到冲突项索引
-- `session_profile` 支持 `CN_FUTURES_DAY`(商品日盘) / `CN_FUTURES_CFFEX_STOCK_INDEX_DAY` / `CN_FUTURES_CFFEX_BOND_DAY` / `CN_FUTURES_NIGHT_23 / CN_FUTURES_NIGHT_01 / CN_FUTURES_NIGHT_0230`
+- 交易时段不再由 `ChinaFuturesConfig` 配置（`enforce_sessions` / `session_profile` / `sessions` 已删除，传入会报带迁移方法的 `TypeError`），改用 `run_backtest(sessions=...)`：按品种前缀指定时段模板，如 `sessions={"rb": "CN_FUTURES_NIGHT_23"}`；可选模板有 `CN_FUTURES_DAY`(商品日盘) / `CN_FUTURES_CFFEX_STOCK_INDEX_DAY` / `CN_FUTURES_CFFEX_BOND_DAY` / `CN_FUTURES_NIGHT_23 / CN_FUTURES_NIGHT_01 / CN_FUTURES_NIGHT_0230`；不受时段约束用 `sessions={"default": "ALWAYS_OPEN"}`
 
 配置优先级矩阵（从高到低）：
 

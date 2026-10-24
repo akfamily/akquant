@@ -18,7 +18,7 @@ This chapter is currently maintained in Chinese first.
 - Prefix template fields: `multiplier`, `margin_ratio`, `tick_size`, `lot_size`
 - Prefix commission override: `commission_rate`
 - Prefix validation switches: `enforce_tick_size`, `enforce_lot_size`
-- Session behavior switch: `enforce_sessions`
+- Trading sessions are no longer configured here (`enforce_sessions` / `session_profile` / `sessions` were removed and raise a migration `TypeError`); use `run_backtest(sessions=...)`, e.g. `sessions={"rb": "CN_FUTURES_NIGHT_23"}`, or `sessions={"default": "ALWAYS_OPEN"}` for no session constraint
 
 The config now validates early during object construction (fail-fast):
 

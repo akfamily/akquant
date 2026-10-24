@@ -636,8 +636,7 @@ BacktestConfig (回测场景)
 - `instrument_templates_by_symbol_prefix`: 品种模板（乘数/保证金/tick/手数/费率）
 - `fee_by_symbol_prefix`: 品种费率覆盖
 - `validation_by_symbol_prefix`: 品种撮合校验开关覆盖
-- `enforce_sessions`: 是否严格按交易时段控制成交
-- `session_profile`: 中国期货会话模板（`CN_FUTURES_DAY`=`CN_FUTURES_COMMODITY_DAY` / `CN_FUTURES_CFFEX_STOCK_INDEX_DAY` / `CN_FUTURES_CFFEX_BOND_DAY` / `CN_FUTURES_NIGHT_23` / `CN_FUTURES_NIGHT_01` / `CN_FUTURES_NIGHT_0230`）
+- 交易时段已不在 `ChinaFuturesConfig` 配置：`enforce_sessions` / `session_profile` / `sessions` 与 `ChinaFuturesSessionConfig`、`ChinaOptionsConfig.sessions`、`ChinaOptionsSessionConfig` 均已删除（传入会报带迁移方法的错误），改用 `run_backtest(sessions=...)`，如 `sessions={"rb": "CN_FUTURES_NIGHT_23"}`；不受时段约束用 `sessions={"default": "ALWAYS_OPEN"}`
 
 配置对象采用“构造即校验”：
 
@@ -667,7 +666,7 @@ BacktestConfig (回测场景)
 | 合约参数（乘数/保证金/tick/手数） | `InstrumentConfig` 显式字段 | `instrument_templates_by_symbol_prefix` | `run_backtest` 默认参数 |
 | 品种费率 | `fee_by_symbol_prefix` | 模板 `commission_rate` | `StrategyConfig.commission_policy` 或 `StrategyConfig.commission_rate` |
 | 品种校验开关 | `validation_by_symbol_prefix` | 模板 `enforce_tick_size / enforce_lot_size` | 全局 `ChinaFuturesConfig.enforce_*` |
-| 交易时段 | `china_futures.sessions` 显式配置 | `session_profile` 模板 | ChinaMarket 默认会话 |
+| 交易时段 | `run_backtest(sessions=...)` 按品种前缀指定 | 资产类型默认时段表 | `CN_STOCK` / `CN_FUTURES_DAY` / `CN_OPTION` / `ALWAYS_OPEN` |
 | 市场路由 | `use_china_futures_market=False` 或混合资产回落 | `use_china_futures_market=True` 且纯期货 | `use_simple_market` |
 
 中国股票扩展（`BacktestConfig.china_stock`）的委托校验开关：

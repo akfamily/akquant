@@ -4792,8 +4792,7 @@ def run_backtest(
         else:
             engine.use_simple_market(commission_rate)
 
-    # 回测按各品种真实交易时段撮合（引擎默认不强制连续竞价）；旧的
-    # ChinaFuturesConfig.enforce_sessions 已不再影响撮合。
+    # 回测按各品种真实交易时段撮合（引擎默认不强制连续竞价），时段表由 sessions= 决定。
     # 无论使用 SimpleMarket 还是 ChinaMarket，都尝试使用统一佣金策略接口。
     if hasattr(engine, "set_stock_fee_policy"):
         cast(Any, engine).set_stock_fee_policy(

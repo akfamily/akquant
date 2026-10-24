@@ -331,7 +331,7 @@ def _run_close_variant_events(
                 margin_ratio=0.1,
             )
         ],
-        china_futures=ChinaFuturesConfig(enforce_sessions=False),
+        china_futures=ChinaFuturesConfig(),
     )
     run_backtest(
         strategy=_ExplicitCloseStrategy,

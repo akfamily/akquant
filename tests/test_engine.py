@@ -1772,7 +1772,7 @@ def test_engine_run_with_configured_slot_strategy() -> None:
 
     symbol = "SLOT_RUN"
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine._set_force_session_continuous(True)
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -1800,7 +1800,7 @@ def test_backtest_regression_baseline() -> None:
     symbol = "REGRESS"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine._set_force_session_continuous(True)
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -1860,7 +1860,7 @@ def test_metrics_df_exposes_display_friendly_trade_counts() -> None:
     symbol = "DISPLAY_COUNTS"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine._set_force_session_continuous(True)
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -1949,7 +1949,7 @@ def test_position_helper_exposes_runtime_entry_price() -> None:
     symbol = "POS_HELPER"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine._set_force_session_continuous(True)
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -4290,7 +4290,6 @@ def test_run_backtest_china_futures_validation_prefix_override() -> None:
         china_futures=akquant.ChinaFuturesConfig(
             enforce_lot_size=True,
             enforce_tick_size=True,
-            enforce_sessions=False,
         ),
     )
     result_reject = akquant.run_backtest(
@@ -4320,7 +4319,6 @@ def test_run_backtest_china_futures_validation_prefix_override() -> None:
         china_futures=akquant.ChinaFuturesConfig(
             enforce_lot_size=True,
             enforce_tick_size=True,
-            enforce_sessions=False,
             validation_by_symbol_prefix=[
                 akquant.ChinaFuturesValidationConfig(
                     symbol_prefix="RB",
@@ -4369,7 +4367,6 @@ def test_run_backtest_china_futures_instrument_template_multiplier() -> None:
             transfer_fee_rate=0.0,
         ),
         china_futures=akquant.ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 akquant.ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",
@@ -4424,7 +4421,6 @@ def test_run_backtest_instrument_lot_size_explicit_one_overrides_template() -> N
             )
         ],
         china_futures=akquant.ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 akquant.ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",
@@ -4477,7 +4473,6 @@ def test_run_backtest_china_futures_template_commission_prefix() -> None:
             transfer_fee_rate=0.0,
         ),
         china_futures=akquant.ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 akquant.ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",
@@ -4499,7 +4494,6 @@ def test_run_backtest_china_futures_template_commission_prefix() -> None:
             transfer_fee_rate=0.0,
         ),
         china_futures=akquant.ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 akquant.ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",
@@ -4720,22 +4714,24 @@ def test_china_futures_validation_config_requires_at_least_one_switch() -> None:
         akquant.ChinaFuturesValidationConfig(symbol_prefix="RB")
 
 
-def test_china_futures_session_profile_rejects_invalid_value() -> None:
-    """China futures session profile should validate allowed presets."""
-    with pytest.raises(ValueError, match="session_profile must be one of"):
-        akquant.ChinaFuturesConfig(session_profile="CN_FUTURES_UNKNOWN")
+def test_china_futures_session_profile_removed_gives_migration_error() -> None:
+    """session_profile 已删除，任何取值都给出带 sessions= 的迁移报错."""
+    with pytest.raises(TypeError, match="sessions="):
+        akquant.ChinaFuturesConfig(
+            session_profile="CN_FUTURES_UNKNOWN"  # type: ignore[call-arg]
+        )
 
 
-def test_china_futures_session_profile_accepts_cffex_presets() -> None:
-    """China futures session profile should accept CFFEX day presets."""
-    config_stock = akquant.ChinaFuturesConfig(
-        session_profile="CN_FUTURES_CFFEX_STOCK_INDEX_DAY"
-    )
-    config_bond = akquant.ChinaFuturesConfig(
-        session_profile="CN_FUTURES_CFFEX_BOND_DAY"
-    )
-    assert config_stock.session_profile == "CN_FUTURES_CFFEX_STOCK_INDEX_DAY"
-    assert config_bond.session_profile == "CN_FUTURES_CFFEX_BOND_DAY"
+def test_china_futures_session_profile_error_keeps_cffex_preset_name() -> None:
+    """迁移报错带上原 session_profile 的模板名，便于直接改用 sessions=."""
+    with pytest.raises(TypeError, match="CN_FUTURES_CFFEX_STOCK_INDEX_DAY"):
+        akquant.ChinaFuturesConfig(
+            session_profile="CN_FUTURES_CFFEX_STOCK_INDEX_DAY"  # type: ignore[call-arg]
+        )
+    with pytest.raises(TypeError, match="CN_FUTURES_CFFEX_BOND_DAY"):
+        akquant.ChinaFuturesConfig(
+            session_profile="CN_FUTURES_CFFEX_BOND_DAY"  # type: ignore[call-arg]
+        )
 
 
 def test_run_grid_search_parallel_accepts_fill_policy() -> None:
@@ -5112,7 +5108,6 @@ def test_run_backtest_futures_validation_rejection_bridges_rust_warning(
                 china_futures=akquant.ChinaFuturesConfig(
                     enforce_lot_size=True,
                     enforce_tick_size=True,
-                    enforce_sessions=False,
                 ),
             ),
         )
@@ -5209,7 +5204,7 @@ def test_engine_tick_ioc_cancel_bridges_rust_warning(caplog: Any) -> None:
     symbol = "TICK_IOC_WARN"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine._set_force_session_continuous(True)
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -5301,7 +5296,7 @@ def test_pure_tick_backtest_mae_mfe_drawdown_use_tick_history() -> None:
     symbol = "TICK_MAE_MFE"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine._set_force_session_continuous(True)
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)

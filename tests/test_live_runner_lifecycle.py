@@ -51,7 +51,7 @@ class _FakeEngine:
     def configure_sessions(self, *a: Any) -> None:
         pass
 
-    def set_force_session_continuous(self, *a: Any) -> None:
+    def _set_force_session_continuous(self, *a: Any) -> None:
         pass
 
     def run(self, strategy: Any, show_progress: bool = False) -> None:

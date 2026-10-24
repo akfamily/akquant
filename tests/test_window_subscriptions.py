@@ -118,7 +118,7 @@ def test_window_dispatch_accumulates_orders_across_slots() -> None:
 
     symbol = "WINDOW_SLOT"
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine._set_force_session_continuous(True)
     engine.set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(1_000_000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
