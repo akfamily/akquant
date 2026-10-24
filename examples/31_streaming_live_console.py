@@ -8,7 +8,7 @@ from akquant import Bar, Strategy
 
 def build_data(n: int = 320) -> pd.DataFrame:
     """Build synthetic daily bars for live console rendering."""
-    ts = pd.date_range("2022-01-01", periods=n, freq="D")
+    ts = pd.bdate_range("2022-01-04", periods=n)
     close = [
         100.0 + 0.05 * i + 2.5 * math.sin(i / 8.2) + 1.3 * math.sin(i / 2.9)
         for i in range(n)

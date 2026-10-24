@@ -112,7 +112,7 @@ if __name__ == "__main__":
     # 生成模拟数据
     np.random.seed(1024)
 
-    dates = pd.date_range(start="2023-01-01", end="2023-12-31")
+    dates = pd.bdate_range(start="2023-01-03", end="2023-12-29")
     price = 100 + np.cumsum(np.random.randn(len(dates)))  # 随机游走价格
 
     df = pd.DataFrame(
@@ -169,7 +169,7 @@ if __name__ == "__main__":
 
     # 确保数据足够长
     # train=100, test=50 -> need 150+
-    # current len is 365
+    # current len is 259 (2023 business days)
 
     try:
         wfo_result = run_walk_forward(

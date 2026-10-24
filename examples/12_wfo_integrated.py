@@ -67,7 +67,7 @@ def param_constraint(params: Dict[str, Any]) -> bool:
 if __name__ == "__main__":
     # 1. 生成模拟数据 (随机游走)
     np.random.seed(42)
-    dates = pd.date_range(start="2020-01-01", end="2023-12-31", freq="D")
+    dates = pd.bdate_range(start="2020-01-02", end="2023-12-29")
     data_map: dict[str, pd.DataFrame] = {}
     for index, symbol in enumerate(["DEMO_A", "DEMO_B"]):
         returns = np.random.normal(0.0002 + index * 0.00005, 0.02, len(dates))
@@ -94,8 +94,8 @@ if __name__ == "__main__":
     }
 
     # 3. 运行 Walk-Forward Optimization
-    # 训练窗口: 250天 (约1年)
-    # 测试窗口: 60天 (约3个月)
+    # 训练窗口: 250 个交易日 (约1年)
+    # 测试窗口: 60 个交易日 (约3个月)
     # 这样每3个月重新优化一次参数
     print("\nRunning Walk-Forward Optimization...")
     # 注意：run_walk_forward 的 **kwargs 会同时透传给 run_grid_search（样本内网格

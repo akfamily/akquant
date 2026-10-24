@@ -19,7 +19,7 @@ class SimpleStrategy(Strategy):
 
 
 # Create synthetic data
-dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
+dates = pd.bdate_range(start="2023-01-03", periods=100)
 data = pd.DataFrame(
     {
         "date": dates,

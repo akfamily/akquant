@@ -26,7 +26,7 @@ from akquant import Bar, Strategy
 
 def build_data(n: int = 90) -> pd.DataFrame:
     """Build synthetic bars that generate visible indicator movement."""
-    ts = pd.date_range("2024-01-01", periods=n, freq="D")
+    ts = pd.bdate_range("2024-01-02", periods=n)
     rows = []
     for i, dt in enumerate(ts):
         close = 100.0 + 0.12 * i + 2.6 * __import__("math").sin(i / 6.0)

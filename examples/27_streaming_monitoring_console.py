@@ -10,7 +10,7 @@ from akquant import Bar, IntParam, Strategy
 
 def build_demo_data(n: int = 320) -> pd.DataFrame:
     """Build deterministic synthetic bars for stream-monitor demonstrations."""
-    ts = pd.date_range("2023-01-01", periods=n, freq="D")
+    ts = pd.bdate_range("2023-01-03", periods=n)
     base = 100.0
     close = [
         base + 0.05 * i + 3.0 * math.sin(i / 8.0) + 1.2 * math.sin(i / 3.0)

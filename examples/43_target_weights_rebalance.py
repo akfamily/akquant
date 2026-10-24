@@ -27,7 +27,7 @@ def _build_symbol_df(
 def make_data() -> dict[str, pd.DataFrame]:
     """Build deterministic multi-symbol demo data."""
     timestamps = list(
-        pd.date_range("2024-01-02 10:00:00", periods=6, freq="D", tz="Asia/Shanghai")
+        pd.date_range("2024-01-02 10:00:00", periods=6, freq="B", tz="Asia/Shanghai")
     )
     return {
         "AAA": _build_symbol_df(
