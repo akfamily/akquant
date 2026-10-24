@@ -258,6 +258,21 @@ impl Processor for DataProcessor {
                         {
                             // 只结算晚于已结算进度的交易日: 残留的旧交易日定时器不回头
                             // 结算、不让进度回退。
+                            //
+                            // 实盘按日历登记的收盘定时器所属交易日没有任何行情(未开日)时,
+                            // 先按行情开日的同一流程开日(推进当前交易日、记入已开交易日),
+                            // 再与有行情日一样结算: 结算了就算开过。
+                            if engine.state.feed.is_live()
+                                && engine.current_trading_day.is_none_or(|cur| cur < day)
+                            {
+                                open_trading_day(engine, py, strategy, day, timer.timestamp)?;
+                                if let Some((_, end)) = engine.current_day_span
+                                    && engine.trading_day_ends.last().map(|(d, _)| *d) != Some(day)
+                                {
+                                    engine.trading_day_ends.push((day, end));
+                                }
+                                engine.scheduled_day_close = Some(day);
+                            }
                             // 结算时刻是会话收盘, 不是定时器时刻(实盘有宽限)。
                             let close_ts =
                                 match (engine.current_trading_day, engine.current_day_span) {
@@ -469,54 +484,7 @@ impl Processor for DataProcessor {
                         engine.trading_day_for(timestamp)?,
                     );
                     if engine.current_trading_day != Some(day) {
-                        // 上一交易日未结算(实盘漏触发等): 先补结算。已结算进度晚于它
-                        // (实盘按日历结算了其后无行情的交易日)时不回头重复结算。
-                        if let Some(prev) = engine.current_trading_day
-                            && engine.last_settled_trading_day.is_none_or(|s| s < prev)
-                        {
-                            // 收盘时刻: 优先用已登记的跨度; 从存档恢复后跨度为空,
-                            // 取该交易日的会话收盘, 不退化为本事件时间戳。
-                            let close = match engine.current_day_span {
-                                Some((_, end)) => end,
-                                None => engine
-                                    .session_resolver
-                                    .as_ref()
-                                    .expect("run() 已构造")
-                                    .session_day_end(prev)
-                                    .map_err(|e| PyValueError::new_err(e.to_string()))?,
-                            };
-                            dispatch_day_close_windows(engine, py, strategy, prev, close)?;
-                            run_day_close_settlement(engine, py, prev, close);
-                            engine.last_settled_trading_day = Some(prev);
-                            // 收盘后生命周期事件以本事件时刻压入, 在本事件处理之后触发
-                            // (比正常路径晚一个事件, Ruling S4-1)。
-                            engine.timers.push(crate::model::Timer {
-                                timestamp,
-                                payload: crate::model::timer::lifecycle_payload(
-                                    crate::model::timer::LIFECYCLE_AFTER_TRADING,
-                                    prev,
-                                ),
-                                owner: None,
-                            });
-                        }
-                        // 公司行动(拆股/分红): 处理日期落在 (上次处理到的日期, day] 的全部
-                        // 行动, 落在非交易日(周末、节假日)的顺延到其后第一个交易日开日。
-                        // 首个交易日从首个事件的本地日期起算(不回溯数据开始前的行动)。
-                        let corp_from = match engine.last_corp_action_date {
-                            Some(last) => last.succ_opt().unwrap_or(last),
-                            None => engine.local_date_from_ns(timestamp).min(day),
-                        };
-                        engine.corporate_action_manager.process_range(
-                            corp_from,
-                            day,
-                            &mut engine.state.portfolio,
-                            &mut engine.state.order_manager.trade_tracker,
-                        );
-                        engine.last_corp_action_date = Some(day);
-                        engine.current_trading_day = Some(day);
-                        engine.current_day_span =
-                            Some(session_day_span_for(engine, day, timestamp)?);
-                        engine.last_event_ts_in_day = None;
+                        open_trading_day(engine, py, strategy, day, timestamp)?;
                     }
                     if engine.current_day_span.is_none() {
                         // 从存档恢复后同一交易日内续跑：重建当日跨度以登记收盘定时器
@@ -697,6 +665,66 @@ fn event_trading_day(current: Option<NaiveDate>, resolved: NaiveDate) -> NaiveDa
     }
 }
 
+/// 开交易日 `day`(时刻 `timestamp`): 上一交易日未结算时先补结算, 处理公司行动,
+/// 推进 `current_trading_day` 与当日跨度。行情事件开日与实盘按日历结算无行情日
+/// (见 Timer 分支)共用。
+fn open_trading_day(
+    engine: &mut Engine,
+    py: Python<'_>,
+    strategy: &Bound<'_, PyAny>,
+    day: NaiveDate,
+    timestamp: i64,
+) -> PyResult<()> {
+    // 上一交易日未结算(实盘漏触发等): 先补结算。已结算进度晚于它
+    // (实盘按日历结算了其后无行情的交易日)时不回头重复结算。
+    if let Some(prev) = engine.current_trading_day
+        && engine.last_settled_trading_day.is_none_or(|s| s < prev)
+    {
+        // 收盘时刻: 优先用已登记的跨度; 从存档恢复后跨度为空,
+        // 取该交易日的会话收盘, 不退化为本事件时间戳。
+        let close = match engine.current_day_span {
+            Some((_, end)) => end,
+            None => engine
+                .session_resolver
+                .as_ref()
+                .expect("run() 已构造")
+                .session_day_end(prev)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?,
+        };
+        dispatch_day_close_windows(engine, py, strategy, prev, close)?;
+        run_day_close_settlement(engine, py, prev, close);
+        engine.last_settled_trading_day = Some(prev);
+        // 收盘后生命周期事件以本事件时刻压入, 在本事件处理之后触发
+        // (比正常路径晚一个事件, Ruling S4-1)。
+        engine.timers.push(crate::model::Timer {
+            timestamp,
+            payload: crate::model::timer::lifecycle_payload(
+                crate::model::timer::LIFECYCLE_AFTER_TRADING,
+                prev,
+            ),
+            owner: None,
+        });
+    }
+    // 公司行动(拆股/分红): 处理日期落在 (上次处理到的日期, day] 的全部
+    // 行动, 落在非交易日(周末、节假日)的顺延到其后第一个交易日开日。
+    // 首个交易日从首个事件的本地日期起算(不回溯数据开始前的行动)。
+    let corp_from = match engine.last_corp_action_date {
+        Some(last) => last.succ_opt().unwrap_or(last),
+        None => engine.local_date_from_ns(timestamp).min(day),
+    };
+    engine.corporate_action_manager.process_range(
+        corp_from,
+        day,
+        &mut engine.state.portfolio,
+        &mut engine.state.order_manager.trade_tracker,
+    );
+    engine.last_corp_action_date = Some(day);
+    engine.current_trading_day = Some(day);
+    engine.current_day_span = Some(session_day_span_for(engine, day, timestamp)?);
+    engine.last_event_ts_in_day = None;
+    Ok(())
+}
+
 /// 交易日 `day` 的区间 `(上一交易日收盘, 本交易日收盘]`。本交易日收盘取不到(如日历
 /// 越界)时报错; 只有"上一交易日"不在用户日历里(日历恰从首个数据日开始)时, 下界
 /// 退化为本事件时间戳 - 1 —— 下界只用于 `trading_day_for` 的区间缓存, 时间单调前进,
@@ -792,7 +820,8 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
     // Settlement Manager (T+1, Option Expiry, Day Order Expiry)
     let mut expired_orders = Vec::new();
     // NextOpen(bar_offset == 1) 的 Day 单若创建于本交易日最后一个已处理行情事件
-    // 当时或之后, 唯一的撮合机会是下一交易日的第一个事件, 本次结算不过期。
+    // 当时或之后, 唯一的撮合机会是下一交易日的第一个事件, 本次结算不过期(当日没有
+    // 行情事件时不适用)。
     // 同周期(bar_offset == 0)单在创建时的事件上已有撮合机会, 照常过期。
     // 收盘时刻及之后下的 Day 单(如收盘竞价结束的 15:00 bar 上下的单)属于下一交易日,
     // 不论成交模式都不在本次结算过期。
@@ -804,9 +833,11 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
         .filter(|order| {
             order.time_in_force == crate::model::TimeInForce::Day
                 && ((effective_execution_policy_for_order(engine, order).bar_offset == 1
+                    // 当日没有任何行情(实盘按日历结算的无行情日)时 NextOpen 单在当日
+                    // 也没有撮合机会可等, 不豁免, 与有行情日一样在所属交易日收盘过期。
                     && engine
                         .last_event_ts_in_day
-                        .is_none_or(|last| order.created_at >= last))
+                        .is_some_and(|last| order.created_at >= last))
                     // 收盘时刻及之后、在非连续竞价时段(如收盘竞价结束的 15:00 分钟 bar)
                     // 下的单当日没有撮合机会, 属于下一交易日。日线(整日区间, 连续竞价)
                     // 上下的单当日有撮合机会, 照常过期。

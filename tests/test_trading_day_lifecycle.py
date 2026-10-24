@@ -2182,3 +2182,51 @@ def test_live_day_close_delay_rejects_negative() -> None:
             duration="1s",
             day_close_delay=-1,
         )
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (-1, ValueError),
+        (-0.5, ValueError),
+        (float("nan"), ValueError),
+        (float("inf"), ValueError),
+        (86_400.5, ValueError),
+        (True, TypeError),
+        ("60", TypeError),
+        (None, TypeError),
+    ],
+)
+def test_live_runner_validates_day_close_delay_before_engine(
+    value: Any, error: type
+) -> None:
+    """LiveRunner 构造时就校验 day_close_delay（不等到引擎 setter）."""
+    from akquant.live._runner import LiveRunner
+
+    with pytest.raises(error, match="day_close_delay 须为"):
+        LiveRunner(
+            strategy_cls=_LiveDayOrderProbe,
+            instruments=[_live_stock_instrument()],
+            broker="replay",
+            gateway_options={"bars": [], "freq": "1min"},
+            day_close_delay=value,
+        )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_ns"), [(0, 0), (5.0, 5_000_000_000), (86_400, 86_400 * 10**9)]
+)
+def test_live_runner_day_close_delay_converts_to_ns(
+    value: Any, expected_ns: int
+) -> None:
+    """合法的 day_close_delay 换算为纳秒（含边界 0 与 86400）."""
+    from akquant.live._runner import LiveRunner
+
+    runner = LiveRunner(
+        strategy_cls=_LiveDayOrderProbe,
+        instruments=[_live_stock_instrument()],
+        broker="replay",
+        gateway_options={"bars": [], "freq": "1min"},
+        day_close_delay=value,
+    )
+    assert runner.day_close_delay_ns == expected_ns

@@ -297,8 +297,9 @@ def run_live(
                             ``on_after_trading`` 在“会话收盘 + day_close_delay”
                             触发，收盘快照仍记在会话收盘时刻；留宽限是因为行情源
                             常在收盘后才推送最后一根已收盘 bar。按交易日历登记，
-                            当日没有任何行情也会结算。须 >= 0（0 即收盘后立即
-                            结算），负数或非有限值抛 ``ValueError``。回测不受影响
+                            当日没有任何行情也会结算。取值 0～86400（0 即收盘后
+                            立即结算），越界或非有限值抛 ``ValueError``，非数字抛
+                            ``TypeError``。回测不受影响
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")

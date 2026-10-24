@@ -763,6 +763,21 @@ mod tests {
                 chrono::NaiveDate::from_ymd_opt(2024, 1, 2)
             );
             assert_eq!(snapshot_stamps(&engine), vec![close]);
+            // 结算了就算开过: 当前交易日推进到 01-02 并记入已开交易日, 日收益按它分组
+            let day2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+            assert_eq!(engine.current_trading_day, Some(day2));
+            assert_eq!(engine.trading_day_ends, vec![(day2, close)]);
+            assert_eq!(
+                crate::analysis::BacktestResult::trading_day_key(
+                    close,
+                    &engine.trading_day_ends,
+                    Some("Asia/Shanghai"),
+                    28_800,
+                ),
+                day2
+            );
+            // 会话在此后、下一交易日开日前结束: 收尾不再判当日未结算(不多结算、不多记快照)
+            assert!(!engine.current_day_unsettled());
             // 收盘后事件(on_after_trading)在结算定时器时刻发出
             match engine.current_event.as_ref() {
                 Some(crate::event::Event::Timer(t)) => {
@@ -832,6 +847,67 @@ mod tests {
                 engine.last_settled_trading_day,
                 chrono::NaiveDate::from_ymd_opt(2024, 1, 3)
             );
+            // 无行情的 01-03 也记入已开交易日, 其收盘快照按 01-03 分组(不被 01-04 吞掉)
+            let d = |day| chrono::NaiveDate::from_ymd_opt(2024, 1, day).unwrap();
+            assert_eq!(
+                engine.trading_day_ends,
+                vec![
+                    (d(2), sh_ns(1, 2, 15, 0)),
+                    (d(3), sh_ns(1, 3, 15, 0)),
+                    (d(4), sh_ns(1, 4, 15, 0)),
+                ]
+            );
+            assert_eq!(
+                crate::analysis::BacktestResult::trading_day_key(
+                    sh_ns(1, 3, 15, 0),
+                    &engine.trading_day_ends,
+                    Some("Asia/Shanghai"),
+                    28_800,
+                ),
+                d(3)
+            );
+        });
+    }
+
+    #[test]
+    fn test_live_no_event_day_expires_next_open_day_order_at_its_close() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3), (1, 4)]);
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            engine
+                .state
+                .feed
+                .add_bar(live_bar(sh_ns(1, 2, 10, 0)))
+                .unwrap();
+            // 01-02 收盘后(on_after_trading 里)下的 NextOpen Day 单, 属交易日 01-03
+            let mut order = crate::model::Order::test_new(
+                "o-after-close",
+                "600000.SH",
+                crate::model::OrderSide::Buy,
+                crate::model::OrderType::Limit,
+                dec!(100),
+            );
+            order.price = Some(dec!(1));
+            order.created_at = sh_ns(1, 2, 15, 1);
+            engine.state.order_manager.active_orders.push(order);
+            let day = |d| chrono::NaiveDate::from_ymd_opt(2024, 1, d);
+            let mut processor = DataProcessor::new();
+            while engine.last_settled_trading_day != day(2) {
+                processor.process(&mut engine, py, &strategy).unwrap();
+            }
+            // 01-02 结算: 建于当日最后一个事件之后, 豁免
+            assert_eq!(engine.state.order_manager.active_orders.len(), 1);
+            while engine.last_settled_trading_day != day(3) {
+                processor.process(&mut engine, py, &strategy).unwrap();
+            }
+            // 01-03 无行情: 与有行情日一样在所属交易日收盘过期, 不活到 01-04
+            assert!(engine.state.order_manager.active_orders.is_empty());
+            let expired = &engine.state.order_manager.current_step_expired_orders;
+            assert_eq!(expired.len(), 1);
+            assert_eq!(expired[0].id, "o-after-close");
+            assert_eq!(expired[0].updated_at, sh_ns(1, 3, 15, 0));
         });
     }
 }

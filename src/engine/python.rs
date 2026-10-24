@@ -1510,16 +1510,7 @@ impl Engine {
         // 使它在续跑段的下一交易日盘前之前按收盘时刻结算并触发 on_after_trading,
         // 与连续跑一致; 否则要等下一交易日首个事件开日时才补结算。续跑段仍在
         // 该日内时, 首个事件不再重复登记(scheduled_day_close)。
-        if let Some(day) = self.current_trading_day
-            && self
-                .last_settled_trading_day
-                .is_none_or(|settled| settled < day)
-            && self.scheduled_day_close != Some(day)
-        {
-            let close_timer = self.close_timer_ts(day)?;
-            self.push_day_close_timer(day, close_timer);
-            self.scheduled_day_close = Some(day);
-        }
+        self.schedule_resumed_day_close()?;
         if self.state.feed.is_live() {
             let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
             self.schedule_live_lifecycle(now)?;
@@ -1644,8 +1635,7 @@ impl Engine {
         // 为 false, 会话结束时同样补结算(若在到期日当天停止, 用的是当时已知的最新价而非
         // 真正的到期日收盘价)。补结算与日常路径一致: 记合成成交、发 `expiry` 流事件、
         // 派发 on_expiry。
-        let current_day_unsettled = self.current_trading_day.is_some()
-            && self.last_settled_trading_day != self.current_trading_day;
+        let current_day_unsettled = self.current_day_unsettled();
         if current_day_unsettled
             && !self.execution_model.is_live()
             && let Some(last_date) = self.current_trading_day

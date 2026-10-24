@@ -631,6 +631,28 @@ impl Engine {
         )
     }
 
+    /// 续跑：存档所在交易日尚未结算时补登记它的收盘定时器（见 `run()` 中的说明）。
+    /// 与实盘日历登记、开日登记按定时器键去重。
+    pub(crate) fn schedule_resumed_day_close(&mut self) -> PyResult<()> {
+        if let Some(day) = self.current_trading_day
+            && self
+                .last_settled_trading_day
+                .is_none_or(|settled| settled < day)
+            && self.scheduled_day_close != Some(day)
+        {
+            let close_timer = self.close_timer_ts(day)?;
+            self.push_day_close_timer(day, close_timer);
+            self.scheduled_day_close = Some(day);
+        }
+        Ok(())
+    }
+
+    /// 当前交易日是否已开日但尚未结算（会话收尾据此补做到期结算与期末快照）。
+    pub(crate) fn current_day_unsettled(&self) -> bool {
+        self.current_trading_day.is_some()
+            && self.last_settled_trading_day != self.current_trading_day
+    }
+
     /// 堆中是否已有交易日 `day` 的收盘定时器（按定时器键 `__akq_day_close__|day`）。
     pub(crate) fn has_day_close_timer(&self, day: NaiveDate) -> bool {
         let key = format!("{}{day}", crate::model::timer::DAY_CLOSE_TIMER_PREFIX);
@@ -2828,6 +2850,21 @@ mod lifecycle_tests {
         engine.last_settled_trading_day = Some(d(1, 2));
         engine.schedule_live_lifecycle(sh(1, 2, 9, 0)).unwrap();
         assert!(day_closes(&engine).is_empty());
+        // 续跑补登记（存档日 01-02 未结算）与日历登记同键：只存一个
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.current_trading_day = Some(d(1, 2));
+        engine.last_settled_trading_day = Some(d(1, 1));
+        engine.schedule_resumed_day_close().unwrap();
+        engine.schedule_live_lifecycle(sh(1, 2, 10, 0)).unwrap();
+        let closes = day_closes(&engine);
+        assert_eq!(
+            closes
+                .iter()
+                .filter(|(_, p)| p == "__akq_day_close__|2024-01-02")
+                .count(),
+            1
+        );
         // 回测不按日历登记（schedule_lifecycle 只排盘前/开始交易）
         let mut backtest = Engine::new();
         backtest.schedule_lifecycle(d(1, 2), i64::MIN).unwrap();

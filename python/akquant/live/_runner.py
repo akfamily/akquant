@@ -121,6 +121,11 @@ _SESSION_TAG_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9_]+$")
 _SESSION_TAG_MAX_LEN = 32
 
 
+#: ``day_close_delay`` 上界(秒): 一天。宽限再长就跨过下一交易日开盘, 当日改由
+#: 下一交易日首个行情开日时补结算, 日历定时器失去意义。
+_DAY_CLOSE_DELAY_MAX_SECONDS = 86_400.0
+
+
 def _validate_day_close_delay(day_close_delay: object) -> int:
     """校验 ``day_close_delay``（秒）并换算为纳秒."""
     if isinstance(day_close_delay, bool) or not isinstance(
@@ -131,10 +136,11 @@ def _validate_day_close_delay(day_close_delay: object) -> int:
             f"收到 {type(day_close_delay).__name__}，如 day_close_delay=60.0"
         )
     seconds = float(day_close_delay)
-    if not math.isfinite(seconds) or seconds < 0:
+    if not math.isfinite(seconds) or not 0 <= seconds <= _DAY_CLOSE_DELAY_MAX_SECONDS:
         raise ValueError(
-            f"day_close_delay 须为 >= 0 的有限秒数（收到 {day_close_delay!r}），"
-            "它是实盘日终结算相对会话收盘的宽限，如 day_close_delay=60.0"
+            "day_close_delay 须为 0～86400 之间的有限秒数"
+            f"（收到 {day_close_delay!r}），它是实盘日终结算相对会话收盘的宽限，"
+            "如 day_close_delay=60.0"
         )
     return int(round(seconds * 1_000_000_000))
 
@@ -513,7 +519,7 @@ class LiveRunner:
         :param timezone: 时区名称（默认 "Asia/Shanghai"），与 ``run_backtest``
             同义。见 ``run_live``
         :param day_close_delay: 实盘日终结算相对会话收盘的宽限秒数（默认 60.0，
-            须 >= 0）。见 ``run_live``
+            取值 0～86400）。见 ``run_live``
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
