@@ -580,8 +580,8 @@ class BarAggregator:
         r"""
         处理新的 Tick 数据.
 
-        所属区间已被封闭推出(例如已由 ``flush_due`` 补发)的迟到 tick 不再计入
-        任何 bar: 累计口径下仍更新累计基数, 计入 ``late_tick_count``。
+        所属区间已被封闭推出(例如已由 ``flush_due`` 补发)的迟到 tick 不参与
+        OHLC, 其量计入下一根 bar(日累计量守恒), 并计入 ``late_tick_count``。
 
         :param symbol: 标的代码
         :param price: 最新价
@@ -595,7 +595,7 @@ class BarAggregator:
         封闭已到期的在形成 bar 并推入数据源.
 
         区间终点 + ``grace_ns`` ≤ ``now_ns`` 的 bar 被封闭推出。之后到达的
-        同区间 tick 视为迟到并丢弃。
+        同区间 tick 视为迟到: 不参与 OHLC, 量计入下一根。
 
         :param now_ns: 当前时刻 (纳秒)
         :param grace_ns: 区间结束后的宽限期 (纳秒, 默认 2 秒)
@@ -604,10 +604,10 @@ class BarAggregator:
         ...
     def late_tick_count(self, symbol: str) -> int:
         r"""
-        某品种因所属区间已封闭而丢弃的迟到 tick 数.
+        某品种的迟到 tick 数(所属区间已封闭推出, 量已计入下一根).
 
         :param symbol: 标的代码
-        :return: 丢弃的 tick 数
+        :return: 迟到 tick 数
         """
         ...
 

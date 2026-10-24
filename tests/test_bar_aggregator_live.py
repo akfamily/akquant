@@ -79,3 +79,41 @@ def test_ctp_gateway_never_requests_start_stamp_and_flushes(
     calls = agg.flush_calls
     time.sleep(1.2)
     assert agg.flush_calls == calls
+
+
+def test_ctp_bar_only_emits_end_stamped_bars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """只出 bar 的 CTP 网关经真实聚合器推出的 bar 为终点戳且带 interval_start."""
+    import pandas as pd
+    from akquant import Bar, Strategy, run_backtest
+    from akquant.gateway.brokers.ctp import native
+
+    t0 = pd.Timestamp("2024-01-02 09:31:00", tz="Asia/Shanghai").value
+    minute = 60 * S
+    clock = iter([t0, t0 + 30 * S, t0 + minute + 5 * S])
+    monkeypatch.setattr(native, "HAS_OPENCTP", True)
+    monkeypatch.setattr(native.time, "time_ns", lambda: next(clock))
+    feed = DataFeed()
+    gw = native.CTPMarketGateway(
+        feed=feed, symbols=["rb2401"], front_url="tcp://test", emit_bars=True
+    )
+    assert gw.emit_ticks is False
+
+    class _MD:
+        InstrumentID = "rb2401"
+
+        def __init__(self, price: float, volume: float) -> None:
+            self.LastPrice = price
+            self.Volume = volume
+
+    for price, volume in ((10.0, 100.0), (11.0, 130.0), (12.0, 160.0)):
+        gw.OnRtnDepthMarketData(_MD(price, volume))
+
+    class _Recorder(Strategy):
+        stamps: list[tuple[int, int | None]] = []
+
+        def on_bar(self, bar: Bar) -> None:
+            type(self).stamps.append((bar.timestamp, bar.interval_start))
+
+    _Recorder.stamps = []
+    run_backtest(strategy=_Recorder, data=feed, symbols=["rb2401"], initial_cash=1e5)
+    assert _Recorder.stamps == [(t0 + minute - 1, t0 - 1)]

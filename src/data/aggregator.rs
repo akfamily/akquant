@@ -39,10 +39,13 @@ pub struct BarAggregator {
     /// symbol 的首笔量被丢弃(首次差分恒为 0)。
     volume_is_cumulative: bool,
     /// 每个品种最近一次封闭推出的区间编号。之后到达、区间编号不大于它的 tick
-    /// 属于已推出的 bar, 只吸收累计量后丢弃(否则会重开旧区间、推出时间戳倒退的 bar)。
+    /// 属于已推出的 bar: 不参与 OHLC(否则会重开旧区间、推出时间戳倒退的 bar),
+    /// 其量计入下一根 bar(日累计量守恒)。
     last_emitted_key: HashMap<String, i64>,
-    /// 每个品种因所属区间已封闭而丢弃的迟到 tick 数。
+    /// 每个品种的迟到 tick 数(所属区间已封闭推出)。
     late_ticks: HashMap<String, usize>,
+    /// 迟到 tick 的量在该品种尚无在形成 bar 时暂存于此, 新建 bar 时并入。
+    pending_late_volume: HashMap<String, Decimal>,
 }
 
 impl BarAggregator {
@@ -56,6 +59,7 @@ impl BarAggregator {
             volume_is_cumulative,
             last_emitted_key: HashMap::new(),
             late_ticks: HashMap::new(),
+            pending_late_volume: HashMap::new(),
         }
     }
 
@@ -122,8 +126,8 @@ impl BarAggregator {
 
     /// 处理新的 Tick 数据
     ///
-    /// 所属区间已被封闭推出(例如已由 `flush_due` 补发)的迟到 tick 不再计入
-    /// 任何 bar: 累计口径下仍更新累计基数, 计入 `late_tick_count`。
+    /// 所属区间已被封闭推出(例如已由 `flush_due` 补发)的迟到 tick 不参与
+    /// OHLC, 其量计入下一根 bar(日累计量守恒), 并计入 `late_tick_count`。
     ///
     /// :param symbol: 标的代码
     /// :param price: 最新价
@@ -162,12 +166,21 @@ impl BarAggregator {
             volume
         };
 
-        // 迟到 tick: 所属区间已推出, 累计量已在上面吸收, 这里只计数后丢弃。
+        // 迟到 tick: 所属区间已推出。OHLC 不动, 量计入下一根 bar——已有在形成
+        // bar(区间必晚于已推出区间)就直接加上, 否则暂存到新建 bar 时并入。
         if self
             .last_emitted_key
             .get(&symbol)
             .is_some_and(|&emitted| current_key <= emitted)
         {
+            if let Some(bar) = self.active_bars.get_mut(&symbol) {
+                bar.volume_curr += volume_delta;
+            } else {
+                *self
+                    .pending_late_volume
+                    .entry(symbol.clone())
+                    .or_insert(Decimal::ZERO) += volume_delta;
+            }
             *self.late_ticks.entry(symbol).or_insert(0) += 1;
             return Ok(());
         }
@@ -195,7 +208,11 @@ impl BarAggregator {
             low: price,
             close: price,
             volume_base: volume,
-            volume_curr: volume_delta,
+            volume_curr: volume_delta
+                + self
+                    .pending_late_volume
+                    .remove(&symbol)
+                    .unwrap_or(Decimal::ZERO),
             timestamp_min: current_key,
         };
         self.active_bars.insert(symbol, new_bar);
@@ -207,7 +224,7 @@ impl BarAggregator {
     ///
     /// 区间终点 + `grace_ns` ≤ `now_ns` 的 bar 被封闭推出(时间戳同 `on_tick`
     /// 封闭的 bar)。用于实盘: 某品种下一区间迟迟没有 tick 时, 本区间的 bar
-    /// 也能按时发出。之后到达的同区间 tick 视为迟到并丢弃。
+    /// 也能按时发出。之后到达的同区间 tick 视为迟到: 不参与 OHLC, 量计入下一根。
     ///
     /// :param now_ns: 当前时刻 (纳秒)
     /// :param grace_ns: 区间结束后的宽限期 (纳秒, 默认 2 秒)
@@ -230,10 +247,10 @@ impl BarAggregator {
         Ok(due.len())
     }
 
-    /// 某品种因所属区间已封闭而丢弃的迟到 tick 数.
+    /// 某品种的迟到 tick 数(所属区间已封闭推出, 量已计入下一根).
     ///
     /// :param symbol: 标的代码
-    /// :return: 丢弃的 tick 数
+    /// :return: 迟到 tick 数
     pub fn late_tick_count(&self, symbol: &str) -> usize {
         self.late_ticks.get(symbol).copied().unwrap_or(0)
     }
@@ -327,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn flush_due_emits_after_grace_and_drops_late_ticks() {
+    fn flush_due_emits_after_grace_and_carries_late_volume() {
         let feed = DataFeed::new();
         let mut agg = BarAggregator::new(feed.clone(), Some(1), true);
         agg.on_tick("X".into(), 10.0, 100.0, ns(1, 0)).unwrap();
@@ -342,7 +359,7 @@ mod tests {
         );
         // 累计口径: 首笔 100 播种计 0, 130 差分计 30
         assert_eq!(bars[0].volume, dec!(30));
-        // 封闭后同一区间迟到的 tick: 丢弃, 但累计量被吸收
+        // 封闭后同一区间迟到的 tick: 不参与 OHLC, 量(150-130=20)暂存待并入下一根
         agg.on_tick("X".into(), 10.7, 150.0, ns(1, 59)).unwrap();
         assert_eq!(agg.late_tick_count("X"), 1);
         assert_eq!(agg.late_tick_count("Y"), 0);
@@ -353,9 +370,33 @@ mod tests {
         assert_eq!(bars.len(), 1);
         assert_eq!(bars[0].timestamp, ns(3, 0) - 1);
         assert_eq!((bars[0].open, bars[0].close), (dec!(10.8), dec!(10.8)));
-        // 第 2 分钟只有 2:10 那一笔: 160-150=10。迟到 tick 的 20 已被吸收进
-        // 累计基数, 不再计入任何一根; 3:00 那笔(170-160)属于第 3 分钟。
-        assert_eq!(bars[0].volume, dec!(10));
+        // 第 2 分钟: 迟到结转 20 + 2:10 那笔 160-150=10 = 30; OHLC 只来自 2:10,
+        // 3:00 那笔(170-160)属于第 3 分钟。
+        assert_eq!(bars[0].volume, dec!(30));
+        // 守恒: 两根 bar 合计 60 = 第 3 分钟前最后累计量 160 - 首笔播种 100
+    }
+
+    #[test]
+    fn late_tick_volume_goes_into_forming_bar() {
+        // 迟到时该品种已有在形成 bar: 量直接加到它上面, OHLC 不动
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(1), true);
+        agg.on_tick("X".into(), 10.0, 100.0, ns(1, 0)).unwrap();
+        agg.on_tick("X".into(), 10.5, 130.0, ns(1, 30)).unwrap();
+        assert_eq!(agg.flush_due(ns(2, 2), 2_000_000_000).unwrap(), 1);
+        agg.on_tick("X".into(), 10.8, 160.0, ns(2, 5)).unwrap(); // 第 2 分钟 30
+        agg.on_tick("X".into(), 99.0, 175.0, ns(1, 59)).unwrap(); // 迟到 15
+        assert_eq!(agg.late_tick_count("X"), 1);
+        agg.on_tick("X".into(), 10.9, 180.0, ns(3, 0)).unwrap(); // 第 3 分钟 5
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(bars.len(), 2);
+        let bar2 = &bars[1];
+        assert_eq!(bar2.timestamp, ns(3, 0) - 1);
+        assert_eq!(bar2.volume, dec!(45));
+        assert_eq!(
+            (bar2.open, bar2.high, bar2.low, bar2.close),
+            (dec!(10.8), dec!(10.8), dec!(10.8), dec!(10.8))
+        );
     }
 
     #[test]
