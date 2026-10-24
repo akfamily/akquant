@@ -446,14 +446,14 @@ def test_ctp_configure_session_clamp_merges_grace_tick_into_close_bar(
     assert isinstance(adapter, CTPMarketAdapter)
     resolver = SessionResolver()
     resolver.set_active([("rb2401", AssetType.Futures)])
-    adapter.configure_session_clamp(resolver, 57 * 10**9)
+    adapter.configure_session_clamp(resolver, 55 * 10**9)
 
     adapter.gateway.OnRtnDepthMarketData(_md(price=100.0, volume=10.0))
     adapter.gateway.OnRtnDepthMarketData(_md(price=101.0, volume=15.0))
     aggregator = adapter.gateway.aggregator
     assert aggregator is not None
-    assert aggregator.flush_due(at("15:00:59") - 1) == 0
-    assert aggregator.flush_due(at("15:00:59")) == 1
+    assert aggregator.flush_due(at("15:00:57") - 1) == 0
+    assert aggregator.flush_due(at("15:00:57")) == 1
 
     class _Recorder(Strategy):
         bars: list[tuple[int, float, dict[str, float]]] = []

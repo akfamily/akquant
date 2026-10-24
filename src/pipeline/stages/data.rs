@@ -553,11 +553,12 @@ impl Processor for DataProcessor {
                 // 实盘收盘宽限期内到达的行情仍归当日(`Engine::live_grace_day`, 由
                 // `trading_day_for` 判定), 不开下一交易日; 记下归属的交易日供窗口聚合。
                 let mut grace_day = None;
+                engine.trusted_close_marker = None;
+                engine.current_event_day_settled = false;
                 if engine.is_active_timestamp(timestamp) {
-                    let day = event_trading_day(
-                        engine.current_trading_day,
-                        engine.trading_day_for(timestamp)?,
-                    );
+                    // 事件自己解析出的交易日(含 Task 1 宽限归属), 乱序改判之前
+                    let resolved_day = engine.trading_day_for(timestamp)?;
+                    let day = event_trading_day(engine.current_trading_day, resolved_day);
                     if engine.current_trading_day != Some(day) {
                         open_trading_day(engine, py, strategy, day, timestamp)?;
                     }
@@ -581,6 +582,14 @@ impl Processor for DataProcessor {
                         engine.push_day_close_timer(day, close_timer);
                         engine.scheduled_day_close = Some(day);
                     }
+                    // 实盘: 当日已结算后才到的(收盘前)行情, 不再改动当日的结算价与权益
+                    engine.current_event_day_settled =
+                        engine.state.feed.is_live() && engine.last_settled_trading_day == Some(day);
+                    // 聚合器收盘钳制的收盘 bar: 结构校验通过才信任其收盘价标记
+                    if let Event::Bar(b) = &event {
+                        engine.trusted_close_marker =
+                            accept_close_marker(engine, b, Some((resolved_day, day)));
+                    }
                     // 归当日但晚于收盘: 只有实盘收盘宽限期内的行情如此。
                     if engine.event_in_live_grace(timestamp) {
                         // 结算价仍取收盘时刻的最新价(Ruling S8-1): 首个宽限行情更新
@@ -598,16 +607,11 @@ impl Processor for DataProcessor {
                         // 宽限期内的行情处于闭市、不参与当日撮合: 不算"当日最后一个
                         // 行情事件"(NextOpen Day 单的过期豁免按它判)。
                         engine.last_event_ts_in_day = Some(timestamp);
-                        // 聚合器收盘钳制的 bar(实盘): 时间戳是收盘, close 却含收盘后
-                        // 宽限期内的价格; 它携带不晚于收盘的最后价格, 结算价取该值。
-                        // 宽限期内没有别的行情时快照还不存在: 先按当前最新价建立。
-                        let clamped_close = match &event {
-                            Event::Bar(b) if engine.state.feed.is_live() => b
-                                .extra
-                                .get(crate::data::aggregator::BAR_CLOSE_PRICE_KEY)
-                                .and_then(|p| Decimal::from_f64(*p)),
-                            _ => None,
-                        };
+                        // 聚合器收盘钳制的 bar(实盘, 已通过结构校验): 时间戳是收盘,
+                        // close 却含收盘后宽限期内的价格; 它携带不晚于收盘的最后价格,
+                        // 结算价取该值。宽限期内没有别的行情时快照还不存在: 先按当前
+                        // 最新价建立。
+                        let clamped_close = engine.trusted_close_marker;
                         if clamped_close.is_some()
                             && engine.day_close_prices.as_ref().map(|(d, _)| *d) != Some(day)
                         {
@@ -619,8 +623,10 @@ impl Processor for DataProcessor {
                             engine.day_close_prices = Some((day, prices));
                         }
                         // 结算价快照建立后才到的收盘前行情(乱序到达): 它仍是收盘时刻
-                        // 之前的价格, 写进快照, 结算价取不晚于收盘的最后价格。
-                        if let Some((d, prices)) = engine.day_close_prices.as_mut()
+                        // 之前的价格, 写进快照, 结算价取不晚于收盘的最后价格。当日已
+                        // 结算后才到的不再写: 快照此后只用于期末点计价。
+                        if !engine.current_event_day_settled
+                            && let Some((d, prices)) = engine.day_close_prices.as_mut()
                             && *d == day
                         {
                             let priced = match &event {
@@ -640,6 +646,9 @@ impl Processor for DataProcessor {
                             }
                         }
                     }
+                } else if let Event::Bar(b) = &event {
+                    // 不在会话运行区间内的 bar: 标记无从生效, 带保留键时只告警
+                    accept_close_marker(engine, b, None);
                 }
 
                 if let Event::Bar(ref b) = event {
@@ -789,6 +798,80 @@ fn timer_belongs_to_slice(timer: &crate::model::Timer, slice_ts: i64) -> bool {
         == Some(slice_ts)
 }
 
+/// 收盘价标记被忽略的原因: 不是钳制的收盘 bar(用户数据同名列、第三方网关等)。
+const MARKER_NOT_CLAMPED: &str = "not_clamped";
+/// 收盘价标记被忽略的原因: 钳制 bar 在当日结算或下一交易日开始之后才到达。
+const MARKER_LATE: &str = "late";
+
+/// 校验 bar 携带的收盘价标记 `extra["__akq_close_price"]`, 通过时返回标记价。
+///
+/// 只有实盘 BarAggregator 收盘钳制的收盘 bar 才信任, 结构上须全部满足: 实盘行情;
+/// 标记为有限正数; 有 `interval_start` 且早于时间戳; 时间戳恰为该品种所属交易日的
+/// 收盘; 当前交易日就是这根 bar 自己解析出的交易日(未被乱序改判); 当日尚未结算。
+/// 不满足时忽略标记(bar 按普通行情处理), 每个(品种, 原因)告警一次。
+/// `days` 为 `(解析出的交易日, 归属的交易日)`; 不在会话运行区间内的 bar 传 `None`。
+fn accept_close_marker(
+    engine: &mut Engine,
+    bar: &Bar,
+    days: Option<(NaiveDate, NaiveDate)>,
+) -> Option<Decimal> {
+    use crate::data::aggregator::BAR_CLOSE_PRICE_KEY;
+    let raw = *bar.extra.get(BAR_CLOSE_PRICE_KEY)?;
+    let not_clamped = || {
+        format!(
+            "{} 的 bar（时间戳 {}）带有框架保留的 extra 键 {BAR_CLOSE_PRICE_KEY}（实盘 BarAggregator 收盘钳制专用），但它不是收盘钳制的收盘 bar（须为实盘行情、带 interval_start、时间戳恰为该品种交易日收盘），已忽略该键；如果是数据里的同名列，请改用其他列名",
+            bar.symbol, bar.timestamp
+        )
+    };
+    let symbol_close = engine.session_resolver.as_ref().and_then(|r| {
+        let asset_type = r.registered_asset_type(&bar.symbol);
+        r.symbol_day_span(&bar.symbol, asset_type, bar.timestamp)
+            .ok()
+            .map(|(_, _, close, _)| close)
+    });
+    let price = Decimal::from_f64(raw).filter(|p| raw.is_finite() && *p > Decimal::ZERO);
+    let verdict: Result<Decimal, (&'static str, String)> = match (days, price) {
+        (Some((resolved, day)), Some(price))
+            if engine.state.feed.is_live()
+                && bar.interval_start.is_some_and(|s| s < bar.timestamp)
+                && symbol_close == Some(bar.timestamp) =>
+        {
+            if engine.last_settled_trading_day == Some(day) {
+                Err((
+                    MARKER_LATE,
+                    format!(
+                        "{} 的收盘钳制 bar（交易日 {day}）在当日结算之后才到达，已忽略其收盘价标记，当日已按收盘时刻的价格结算；如经常出现，请调大 run_live(day_close_delay=)",
+                        bar.symbol
+                    ),
+                ))
+            } else if resolved != day || engine.current_trading_day != Some(day) {
+                Err((
+                    MARKER_LATE,
+                    format!(
+                        "{} 的收盘钳制 bar（交易日 {resolved}）在交易日 {day} 开始之后才到达，已忽略其收盘价标记；请调大 run_live(day_close_delay=)，或检查自定义时段表收盘后到下一交易日开盘的间隔",
+                        bar.symbol
+                    ),
+                ))
+            } else {
+                Ok(price)
+            }
+        }
+        _ => Err((MARKER_NOT_CLAMPED, not_clamped())),
+    };
+    match verdict {
+        Ok(price) => Some(price),
+        Err((reason, message)) => {
+            if engine
+                .close_marker_warned
+                .insert((bar.symbol.clone(), reason))
+            {
+                log::warn!("{message}");
+            }
+            None
+        }
+    }
+}
+
 /// 事件所属的交易日。乱序到达(解析出的交易日早于当前交易日, 如实盘迟到的上一
 /// 交易日行情)时按当前交易日处理: 不让 `current_trading_day` 倒退, 也不触发结算。
 fn event_trading_day(current: Option<NaiveDate>, resolved: NaiveDate) -> NaiveDate {
@@ -935,6 +1018,17 @@ fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate,
     // 实盘收盘宽限期内已有行情更新了最新价: 结算期间换回收盘时刻的最新价
     // (Ruling S8-1), 结算后再换回最新价。
     // 快照保留(不 take): 会话在收盘后结束时, 结果期末点仍按它计价。
+    // 实盘宽限期内没有行情(尚无快照)时, 以结算时的最新价补一份: 结算后才到的
+    // 当日行情(晚到的钳制 bar 等)会更新最新价, 期末点不能按它计价。
+    if engine.state.feed.is_live() && engine.day_close_prices.as_ref().map(|(d, _)| *d) != Some(day)
+    {
+        let prices = engine
+            .last_prices
+            .read()
+            .expect("last_prices 读锁被污染")
+            .clone();
+        engine.day_close_prices = Some((day, prices));
+    }
     let close_prices = engine
         .day_close_prices
         .as_ref()

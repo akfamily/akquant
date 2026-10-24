@@ -27,8 +27,8 @@ class MarketGateway(Protocol):
         自己用 ``BarAggregator`` 由 tick 合成 bar 的行情网关可实现它。实盘 runner
         在启动网关线程之前调用一次: ``resolver`` 是与引擎同配置的
         ``SessionResolver``(同一 ``sessions`` / ``trading_calendar`` / 时区, 已
-        ``set_active`` 全部合约), ``grace_ns`` 为 ``day_close_delay`` − 3 秒(不足
-        3 秒时不调用)。实现转给 ``BarAggregator.set_session_clamp``, 使收盘后宽限
+        ``set_active`` 全部合约), ``grace_ns`` 为 ``day_close_delay`` − 5 秒(不足
+        5 秒时不调用)。实现转给 ``BarAggregator.set_session_clamp``, 使收盘后宽限
         期内的 tick 计入当日收盘 bar。不实现则不钳制; 抛异常时 runner 只告警。
         bar 来自数据或服务端的网关(如 replay)不必实现。
     """

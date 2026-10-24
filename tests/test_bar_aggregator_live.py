@@ -142,9 +142,9 @@ def test_session_clamp_defers_close_bucket_from_python() -> None:
     resolver = SessionResolver()
     resolver.set_active([("600000", AssetType.Stock)])
     agg = BarAggregator(DataFeed(), 1, volume_is_cumulative=False)
-    agg.set_session_clamp(resolver, 57 * S)
+    agg.set_session_clamp(resolver, 55 * S)
     agg.on_tick("600000", 10.0, 1.0, at("14:59:30"))
     agg.on_tick("600000", 11.0, 1.0, at("15:00:20"))
-    assert agg.flush_due(at("15:00:59") - 1) == 0
-    assert agg.flush_due(at("15:00:59")) == 1
+    assert agg.flush_due(at("15:00:57") - 1) == 0
+    assert agg.flush_due(at("15:00:57")) == 1
     assert agg.late_tick_count("600000") == 0

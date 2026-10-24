@@ -124,10 +124,11 @@ _SESSION_TAG_MAX_LEN = 32
 
 
 #: 收盘钳制宽限比 ``day_close_delay`` 少的余量(纳秒)。钳制的收盘 bar 在
-#: 收盘 + 钳制宽限 + 补发宽限(2 秒)推出, 须早于收盘定时器(收盘 +
-#: ``day_close_delay``)至少 1 秒, 否则推到时当日已结算。``day_close_delay``
-#: 不足它时不开启钳制。
-_SESSION_CLAMP_MARGIN_NS = 3_000_000_000
+#: 收盘 + 钳制宽限 + 补发宽限(2 秒)之后、补发线程下一次轮询(≤1 秒)时推出, 须早于
+#: 收盘定时器(收盘 + ``day_close_delay``), 否则推到时当日已结算(引擎会忽略其收盘价
+#: 标记并告警)。余下约 2 秒留给线程调度与 GIL 等待。``day_close_delay`` 不足它时
+#: 不开启钳制。
+_SESSION_CLAMP_MARGIN_NS = 5_000_000_000
 
 #: ``day_close_delay`` 上界(秒): 一天。宽限再长就跨过下一交易日开盘, 当日改由
 #: 下一交易日首个行情开日时补结算, 日历定时器失去意义。
@@ -2940,6 +2941,11 @@ class LiveRunner:
         口径同引擎 ``ensure_session_resolver``: 同一 ``sessions`` /
         ``trading_calendar`` / 时区, 在用合约为全部合约, 期权 → 标的映射取期权
         合约的 ``underlying_symbol``。
+
+        不随行情源交易日提示对缺省日历的修正(``calendar_overrides``)更新: 聚合器
+        只用品种当日收盘与下一交易日首段起点, 修正只改变哪些日子是交易日, 不改变
+        当日收盘时刻, 而下一交易日首段起点(夜盘或次日开盘)远在钳制宽限之外, 不影响
+        钳制判定。
         """
         resolver = SessionResolver(
             sessions=self.sessions,
@@ -2963,8 +2969,8 @@ class LiveRunner:
     def _configure_session_clamp(self, bundle: Any) -> None:
         """行情网关有 ``configure_session_clamp`` 钩子时开启收盘宽限钳制.
 
-        钳制宽限 = ``day_close_delay`` − 3 秒(见 ``_SESSION_CLAMP_MARGIN_NS``),
-        ``day_close_delay`` 不足 3 秒时不开启。钩子失败只告警, 会话照常运行
+        钳制宽限 = ``day_close_delay`` − 5 秒(见 ``_SESSION_CLAMP_MARGIN_NS``),
+        ``day_close_delay`` 不足 5 秒时不开启。钩子失败只告警, 会话照常运行
         (收盘后宽限期内的 tick 进下一根 bar, 与未开启时相同)。
         """
         gateway = getattr(bundle, "market_gateway", None)

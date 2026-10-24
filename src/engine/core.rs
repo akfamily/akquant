@@ -217,8 +217,10 @@ pub struct Engine {
     pub(crate) live_day_close_delay_ns: i64,
     /// 实盘收盘宽限期内首个归当日的行情到达前的最新价 `(交易日, 价格表)`：该日结算
     /// （到期、日终、收盘快照）按它计价，结算价仍为收盘时刻（不晚于收盘）的最新价，
-    /// 不含宽限期内的行情（见 [`Engine::live_grace_day`]）。结算后保留到下一交易日，
-    /// 供结果期末点计价（[`Engine::terminal_result_point`]）。运行状态，不入存档。
+    /// 不含宽限期内的行情（见 [`Engine::live_grace_day`]）。通过校验的收盘钳制 bar
+    /// 到达时也会建立并写入其收盘价标记；宽限期内没有行情时由实盘结算按当时最新价
+    /// 补建。结算后保留到下一交易日，供结果期末点计价
+    /// （[`Engine::terminal_result_point`]）。运行状态，不入存档。
     pub(crate) day_close_prices: Option<(NaiveDate, HashMap<String, Decimal>)>,
     /// 实盘生命周期锚点（纳秒）：replay 回放历史行情时由 runner 按首个回放事件
     /// （首个事件 - 1ns）经 `_set_live_lifecycle_anchor` 下发；`run()` 用
@@ -234,6 +236,15 @@ pub struct Engine {
     /// 行情源交易日与引擎推算不一致时已告警过的 (推算 C, 行情源 H)，每对只告警一次。
     /// 运行状态，不入存档。
     pub(crate) source_trading_day_warned: HashSet<(NaiveDate, NaiveDate)>,
+    /// 当前行情事件是通过结构校验的聚合器收盘钳制 bar 时，其收盘价标记
+    /// （`extra["__akq_close_price"]`，见数据阶段 `check_close_marker`）；否则为 `None`。
+    /// 数据阶段每个行情事件重置，统计阶段据此按结算价快照记权益点。运行状态，不入存档。
+    pub(crate) trusted_close_marker: Option<Decimal>,
+    /// 当前行情事件（实盘）归属的交易日已经结算（晚到的收盘前行情）：不再写结算价
+    /// 快照、不记权益点。数据阶段每个行情事件重置。运行状态，不入存档。
+    pub(crate) current_event_day_settled: bool,
+    /// 收盘价标记被忽略时已告警过的 (品种, 原因)，每对只告警一次。运行状态，不入存档。
+    pub(crate) close_marker_warned: HashSet<(String, &'static str)>,
     /// 各生命周期钩子（on_pre_open / on_before_trading / on_after_trading）是否有策略
     /// （含槽位）重写，由 Python 在 run 开始时经 `set_lifecycle_hooks_dispatch` 告知
     /// （直接驱动引擎时缺省全为真）。未重写的盘前/开始交易事件只在引擎内消费（实盘

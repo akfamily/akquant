@@ -1307,6 +1307,152 @@ mod tests {
         });
     }
 
+    /// 聚合器收盘钳制的收盘 bar: 终点戳为收盘、带 interval_start 与收盘价标记。
+    fn clamped_close_bar(close: i64, close_price: rust_decimal::Decimal, marker: f64) -> Bar {
+        let mut bar = live_bar(close);
+        bar.close = close_price;
+        bar.high = close_price.max(bar.high);
+        bar.interval_start = Some(close - 60_000_000_000);
+        bar.extra.insert(
+            crate::data::aggregator::BAR_CLOSE_PRICE_KEY.to_string(),
+            marker,
+        );
+        bar
+    }
+
+    /// 统计阶段记下的权益曲线(不含结果期末点)。
+    fn recorded_equity(engine: &Engine) -> Vec<(i64, f64)> {
+        let prices = engine.last_prices.read().unwrap();
+        engine
+            .statistics_manager
+            .generate_backtest_result(
+                &engine.state.portfolio,
+                &engine.instruments,
+                &prices,
+                &engine.state.order_manager,
+                &engine.risk_manager.config,
+                engine.initial_cash,
+                None,
+                engine.timezone_name.clone(),
+                engine.timezone_offset,
+                engine.days_per_year,
+                engine.risk_free_rate,
+                engine.trading_day_ends.clone(),
+            )
+            .equity_curve
+    }
+
+    /// 结果中的 (权益曲线, 快照 [(时刻, 收盘价, 权益)])。
+    fn equity_and_snapshots(engine: &Engine) -> (Vec<(i64, f64)>, Vec<(i64, f64, f64)>) {
+        let result = live_results(engine);
+        let snaps = result
+            .snapshots
+            .iter()
+            .flat_map(|(t, s)| s.iter().map(move |p| (*t, p.close, p.equity)))
+            .collect();
+        (result.equity_curve.clone(), snaps)
+    }
+
+    #[test]
+    fn test_live_clamped_close_bar_after_settlement_is_ignored() {
+        // 钳制 bar 晚于收盘定时器到达(D 已结算): 忽略标记并告警, D 的结算快照、
+        // 权益曲线(含期末点)不变
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            engine.live_day_close_delay_ns = 60_000_000_000;
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            Arc::make_mut(&mut engine.state.portfolio.positions)
+                .insert("600000.SH".to_string(), dec!(100));
+            let close = sh_ns(1, 2, 15, 0);
+            engine
+                .state
+                .feed
+                .add_bar(live_bar(sh_ns(1, 2, 14, 59)))
+                .unwrap();
+            let d2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2);
+            let mut processor = DataProcessor::new();
+            drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {
+                e.last_settled_trading_day == d2
+            });
+            let before = equity_and_snapshots(&engine);
+            let recorded_before = recorded_equity(&engine);
+            engine
+                .state
+                .feed
+                .add_bar(clamped_close_bar(close, dec!(12), 10.5))
+                .unwrap();
+            drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {
+                matches!(
+                    e.current_event,
+                    Some(crate::event::Event::Bar(ref b)) if b.close == dec!(12)
+                )
+            });
+            assert_eq!(engine.trusted_close_marker, None);
+            assert!(engine.current_event_day_settled);
+            assert!(
+                engine
+                    .close_marker_warned
+                    .contains(&("600000.SH".to_string(), "late"))
+            );
+            // 结算快照不变; 权益曲线不补记点。结果期末点钳到收盘(Task 1 N-1), 按结算
+            // 时的价格(10, 不是晚到 bar 的 12)计, 等于结算快照的权益。
+            assert_eq!(recorded_equity(&engine), recorded_before);
+            let (equity_after, snaps_after) = equity_and_snapshots(&engine);
+            assert_eq!(snaps_after, before.1);
+            let settled_equity = before.1[0].2;
+            for point in &equity_after {
+                assert!(
+                    before.0.contains(point) || *point == (close, settled_equity),
+                    "多出的权益点 {point:?}"
+                );
+            }
+            assert_eq!(
+                engine
+                    .day_close_prices
+                    .as_ref()
+                    .and_then(|(_, p)| p.get("600000.SH").copied()),
+                Some(dec!(10))
+            );
+        });
+    }
+
+    #[test]
+    fn test_live_marker_on_non_close_bar_is_ignored() {
+        // 收盘前的 bar 带同名键(用户数据列、第三方网关): 不是钳制 bar, 结算价取 close
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            engine.live_day_close_delay_ns = 60_000_000_000;
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            Arc::make_mut(&mut engine.state.portfolio.positions)
+                .insert("600000.SH".to_string(), dec!(100));
+            let close = sh_ns(1, 2, 15, 0);
+            engine
+                .state
+                .feed
+                .add_bar(clamped_close_bar(sh_ns(1, 2, 14, 59), dec!(10), 5.0))
+                .unwrap();
+            let d2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2);
+            let mut processor = DataProcessor::new();
+            drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {
+                e.last_settled_trading_day == d2
+            });
+            assert!(
+                engine
+                    .close_marker_warned
+                    .contains(&("600000.SH".to_string(), "not_clamped"))
+            );
+            let (_, snaps) = equity_and_snapshots(&engine);
+            assert_eq!(
+                snaps.iter().map(|(t, c, _)| (*t, *c)).collect::<Vec<_>>(),
+                vec![(close, 10.0)]
+            );
+        });
+    }
+
     #[test]
     fn test_live_clamped_close_bar_sets_settlement_price_to_marker() {
         // 只出 bar: 宽限期内只有聚合器钳制的收盘 bar(close 12 含宽限价, 标记 10.5)。
@@ -1325,14 +1471,11 @@ mod tests {
                 .feed
                 .add_bar(live_bar(sh_ns(1, 2, 14, 59)))
                 .unwrap();
-            let mut clamped = live_bar(close);
-            clamped.close = dec!(12);
-            clamped.high = dec!(12);
-            clamped.extra.insert(
-                crate::data::aggregator::BAR_CLOSE_PRICE_KEY.to_string(),
-                10.5,
-            );
-            engine.state.feed.add_bar(clamped).unwrap();
+            engine
+                .state
+                .feed
+                .add_bar(clamped_close_bar(close, dec!(12), 10.5))
+                .unwrap();
             let d2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2);
             let mut processor = DataProcessor::new();
             drive_live_until(&mut processor, &mut engine, py, &strategy, |e| {

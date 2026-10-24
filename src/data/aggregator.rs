@@ -79,8 +79,10 @@ struct SessionClamp {
     resolver: Arc<SessionResolver>,
     grace_ns: i64,
     spans: HashMap<String, ClampSpan>,
-    /// 每个品种不晚于其所属交易日收盘的最后一笔 `(时间戳, 价格)`。
-    last_in_session: HashMap<String, (i64, Decimal)>,
+    /// 每个品种处于交易日时段内(`[首段起点, 收盘]`)的最后一笔 `(时间戳, 价格, 该交易日
+    /// 收盘)`。收盘后闭市间隙里的 tick(含钳制窗口之后、收盘 bar 补发之前到达的)
+    /// 不登记, 否则会冲掉收盘前的最后价格。
+    last_in_session: HashMap<String, (i64, Decimal, i64)>,
 }
 
 #[gen_stub_pyclass]
@@ -201,13 +203,15 @@ impl BarAggregator {
                 after_close: true,
             });
         }
-        match clamp.last_in_session.get_mut(symbol) {
-            Some(slot) if slot.0 > ts => {}
-            Some(slot) => *slot = (ts, price),
-            None => {
-                clamp
-                    .last_in_session
-                    .insert(symbol.to_string(), (ts, price));
+        if span.first_start <= ts {
+            match clamp.last_in_session.get_mut(symbol) {
+                Some(slot) if slot.0 > ts => {}
+                Some(slot) => *slot = (ts, price, span.close),
+                None => {
+                    clamp
+                        .last_in_session
+                        .insert(symbol.to_string(), (ts, price, span.close));
+                }
             }
         }
         let key = |t: i64| (t - 1).div_euclid(interval_ns);
@@ -249,13 +253,14 @@ impl BarAggregator {
         }
     }
 
-    /// 钳制 bar 的 `extra`: 写入不晚于收盘的最后一笔价格(没有时不写)。
+    /// 钳制 bar 的 `extra`: 写入该交易日时段内的最后一笔价格(当日没有时不写, 不取
+    /// 前一交易日的价格)。
     fn clamped_bar_extra(&self, symbol: &str, bar: &ActiveBar) -> HashMap<String, f64> {
         let mut extra = HashMap::new();
         if bar.has_after_close
             && let (Some(close), Some(clamp)) = (bar.session_close, self.session_clamp.as_ref())
-            && let Some(&(ts, price)) = clamp.last_in_session.get(symbol)
-            && ts <= close
+            && let Some(&(_, price, day_close)) = clamp.last_in_session.get(symbol)
+            && day_close == close
             && let Some(price) = price.to_f64()
         {
             extra.insert(BAR_CLOSE_PRICE_KEY.to_string(), price);
@@ -440,7 +445,9 @@ impl BarAggregator {
     /// 早于下一交易日首段起点时, 计入以收盘(D) 结尾的那根 bar(OHLC 与量都含它);
     /// 该 bar 推迟到 `收盘(D) + grace_ns` 再加 `flush_due` 的补发宽限之后才推出,
     /// 并在 `extra["__akq_close_price"]` 写入不晚于收盘的最后一笔价格(引擎按它
-    /// 记当日结算价)。收盘按品种自己的时段表取; 午休不钳, ALWAYS_OPEN 不钳。
+    /// 记当日结算价; 引擎只在结构上是钳制收盘 bar 时采用: 实盘、带 `interval_start`、
+    /// 时间戳恰为该品种交易日收盘、当日未结算)。收盘按品种自己的时段表取; 午休
+    /// 不钳, ALWAYS_OPEN 不钳。
     /// 默认关闭, 由实盘 runner 经行情网关的 `configure_session_clamp` 钩子开启。
     ///
     /// :param resolver: 与引擎同配置的时段解析器(须已 `set_active` 全部合约)
@@ -759,7 +766,7 @@ mod tests {
         clamp_resolver(vec![], vec![("600000", Some(AssetType::Stock))])
     }
 
-    const GRACE: i64 = 57 * SEC; // day_close_delay=60 → 钳制宽限 57s
+    const GRACE: i64 = 55 * SEC; // day_close_delay=60 → 钳制宽限 55s
     const FLUSH: i64 = 2 * SEC;
 
     #[test]
@@ -774,9 +781,9 @@ mod tests {
         agg.on_tick(s.clone(), 10.8, 8.0, sh(15, 0, 50)).unwrap();
         // 宽限 tick 没有封闭收盘 bar
         assert!(feed.drain_bars_for_test().is_empty());
-        // 收盘 bar 推迟到 收盘 + 钳制宽限 + flush 宽限 = 15:00:59
-        assert_eq!(agg.flush_due(sh(15, 0, 59) - 1, FLUSH).unwrap(), 0);
-        assert_eq!(agg.flush_due(sh(15, 0, 59), FLUSH).unwrap(), 1);
+        // 收盘 bar 推迟到 收盘 + 钳制宽限 + flush 宽限 = 15:00:57
+        assert_eq!(agg.flush_due(sh(15, 0, 57) - 1, FLUSH).unwrap(), 0);
+        assert_eq!(agg.flush_due(sh(15, 0, 57), FLUSH).unwrap(), 1);
         let bars = feed.drain_bars_for_test();
         assert_eq!(bars.len(), 1);
         let bar = &bars[0];
@@ -816,8 +823,8 @@ mod tests {
         assert_eq!(bars.len(), 1);
         assert_eq!(bars[0].timestamp, sh(14, 59, 0));
         assert!(bars[0].extra.is_empty());
-        assert_eq!(agg.flush_due(sh(15, 0, 58), FLUSH).unwrap(), 0);
-        assert_eq!(agg.flush_due(sh(15, 0, 59), FLUSH).unwrap(), 1);
+        assert_eq!(agg.flush_due(sh(15, 0, 56), FLUSH).unwrap(), 0);
+        assert_eq!(agg.flush_due(sh(15, 0, 57), FLUSH).unwrap(), 1);
         let bars = feed.drain_bars_for_test();
         assert_eq!(bars[0].timestamp, sh(15, 0, 0));
         assert_eq!(bars[0].close, dec!(11));
@@ -831,7 +838,7 @@ mod tests {
         agg.set_session_clamp_arc(stock_resolver(), GRACE).unwrap();
         agg.on_tick("600000".into(), 11.0, 2.0, sh(15, 0, 20))
             .unwrap();
-        assert_eq!(agg.flush_due(sh(15, 0, 59), FLUSH).unwrap(), 1);
+        assert_eq!(agg.flush_due(sh(15, 0, 57), FLUSH).unwrap(), 1);
         let bars = feed.drain_bars_for_test();
         assert_eq!(bars[0].timestamp, sh(15, 0, 0));
         assert!(bars[0].extra.is_empty());
@@ -946,7 +953,7 @@ mod tests {
             (bars[0].symbol.as_str(), bars[0].close),
             ("T2403", dec!(100))
         );
-        assert_eq!(agg.flush_due(sh(15, 0, 59), FLUSH).unwrap(), 1);
+        assert_eq!(agg.flush_due(sh(15, 0, 57), FLUSH).unwrap(), 1);
         let bars = feed.drain_bars_for_test();
         assert_eq!(
             (bars[0].symbol.as_str(), bars[0].close),
@@ -956,7 +963,7 @@ mod tests {
     }
 
     #[test]
-    fn session_clamp_uses_registered_futures_schedule_for_night_gap() {
+    fn session_clamp_uses_registered_futures_day_schedule() {
         // 期货(未写 sessions, 按资产类型取 CN_FUTURES_DAY): 资产类型来自 set_active
         let feed = DataFeed::new();
         let mut agg = BarAggregator::new(feed.clone(), Some(1), false);
@@ -967,9 +974,63 @@ mod tests {
         agg.on_tick("rb2405".into(), 11.0, 1.0, sh(15, 0, 20))
             .unwrap();
         assert!(feed.drain_bars_for_test().is_empty());
-        assert_eq!(agg.flush_due(sh(15, 0, 59), FLUSH).unwrap(), 1);
+        assert_eq!(agg.flush_due(sh(15, 0, 57), FLUSH).unwrap(), 1);
         let bars = feed.drain_bars_for_test();
         assert_eq!((bars[0].timestamp, bars[0].close), (sh(15, 0, 0), dec!(11)));
+    }
+
+    #[test]
+    fn tick_after_clamp_window_before_flush_keeps_close_marker() {
+        // 钳制窗口之后、收盘 bar 补发之前到达的 tick(15:00:58)封闭收盘 bar: 它在
+        // 闭市间隙里, 不得冲掉收盘前的最后价格
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(1), false);
+        agg.set_session_clamp_arc(stock_resolver(), GRACE).unwrap();
+        let s = "600000".to_string();
+        agg.on_tick(s.clone(), 10.5, 1.0, sh(14, 59, 50)).unwrap();
+        agg.on_tick(s.clone(), 11.0, 1.0, sh(15, 0, 20)).unwrap();
+        agg.on_tick(s.clone(), 12.0, 1.0, sh(15, 0, 58)).unwrap();
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(bars.len(), 1);
+        assert_eq!((bars[0].timestamp, bars[0].close), (sh(15, 0, 0), dec!(11)));
+        assert_eq!(bars[0].extra.get(BAR_CLOSE_PRICE_KEY), Some(&10.5));
+        // 15:00:58 那笔进 (15:00, 15:01]
+        assert_eq!(agg.flush_due(sh(15, 1, 2), FLUSH).unwrap(), 1);
+        let bars = feed.drain_bars_for_test();
+        assert_eq!((bars[0].timestamp, bars[0].close), (sh(15, 1, 0), dec!(12)));
+    }
+
+    #[test]
+    fn session_clamp_night_futures_friday_close_defers_until_grace() {
+        // 夜盘品种周五收盘: 下一交易日(周一)首段是周五 21:00 前的夜盘集合竞价,
+        // 远在钳制宽限之外, 照常钳制
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(1), false);
+        let r = clamp_resolver(
+            vec![("rb", "CN_FUTURES_NIGHT_23")],
+            vec![("rb2405", Some(AssetType::Futures))],
+        );
+        agg.set_session_clamp_arc(r, GRACE).unwrap();
+        agg.on_tick("rb2405".into(), 10.0, 1.0, sh_on(5, 14, 59, 30))
+            .unwrap();
+        agg.on_tick("rb2405".into(), 11.0, 1.0, sh_on(5, 15, 0, 20))
+            .unwrap();
+        assert!(feed.drain_bars_for_test().is_empty());
+        assert_eq!(agg.flush_due(sh_on(5, 15, 0, 56), FLUSH).unwrap(), 0);
+        assert_eq!(agg.flush_due(sh_on(5, 15, 0, 57), FLUSH).unwrap(), 1);
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(
+            (bars[0].timestamp, bars[0].close),
+            (sh_on(5, 15, 0, 0), dec!(11))
+        );
+        assert_eq!(bars[0].extra.get(BAR_CLOSE_PRICE_KEY), Some(&10.0));
+        // 夜盘 tick 不钳, 进自己的桶
+        agg.on_tick("rb2405".into(), 12.0, 1.0, sh_on(5, 21, 0, 10))
+            .unwrap();
+        assert_eq!(agg.flush_due(sh_on(5, 21, 1, 2), FLUSH).unwrap(), 1);
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(bars[0].timestamp, sh_on(5, 21, 1, 0));
+        assert!(bars[0].extra.is_empty());
     }
 
     #[test]

@@ -1523,7 +1523,81 @@ def _close_bar(close: float, marker: Optional[float]) -> Bar:
     """15:00 收盘 bar；marker 为聚合器收盘钳制写入的“不晚于收盘的最后价格”."""
     ts = int(pd.Timestamp("2024-01-02 15:00", tz="Asia/Shanghai").value)
     extra = {"__akq_close_price": marker} if marker is not None else None
-    return Bar(ts, 10.0, max(close, 10.0), 10.0, close, 100.0, "600000", extra=extra)
+    return Bar(
+        ts,
+        10.0,
+        max(close, 10.0),
+        10.0,
+        close,
+        100.0,
+        "600000",
+        extra=extra,
+        interval_start=ts - 60 * 10**9,
+    )
+
+
+def test_live_replay_user_bars_with_close_marker_key_are_ignored(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """用户自备的 bar 带框架保留键 ``__akq_close_price``：不当作结算价，告警一次.
+
+    replay 的 DataFrame 入口不透传额外列（``dataframe_to_bars``），用户数据只能经
+    ``list[Bar]`` 的 extra 带入。收盘那根没有 ``interval_start``，不是聚合器的钳制 bar。
+    """
+    stamps = ["2024-01-02 14:57", "2024-01-02 14:58", "2024-01-02 14:59"]
+    stamps.append("2024-01-02 15:00")
+    idx = pd.to_datetime(stamps).tz_localize("Asia/Shanghai")
+    bars = [
+        Bar(
+            int(t.value),
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            100.0,
+            "600000",
+            extra={"__akq_close_price": 5.0},
+        )
+        for t in idx
+    ]
+    with caplog.at_level("WARNING"):
+        runner = _run_live_replay(
+            monkeypatch,
+            bars,
+            strategy_cls=_BuyFirstBarProbe,
+            trading_calendar=["2024-01-02", "2024-01-03"],
+            day_close_delay=60,
+        )
+    close_ns = int(pd.Timestamp("2024-01-02 15:00", tz="Asia/Shanghai").value)
+    snaps = [s for ts, s in runner.engine.get_results().snapshots if ts == close_ns]
+    assert [p.close for p in snaps[0] if p.symbol == "600000"] == [10.0]
+    warned = [r for r in caplog.records if "__akq_close_price" in r.getMessage()]
+    assert len(warned) == 1, [r.getMessage() for r in warned]
+    assert "改用其他列名" in warned[0].getMessage()
+
+
+def test_backtest_dataframe_column_named_like_close_marker_warns_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """回测 DataFrame 的同名列透传进 bar.extra：回测从不读它，告警一次提示改名."""
+    frame = _intraday_frame(["2024-01-02 14:59", "2024-01-02 15:00"])
+    frame["__akq_close_price"] = 5.0
+
+    class _Idle(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            pass
+
+    with caplog.at_level("WARNING"):
+        run_backtest(
+            data=frame,
+            strategy=_Idle,
+            symbols=["600000.SH"],
+            initial_cash=1e6,
+            show_progress=False,
+            trading_calendar=["2024-01-02", "2024-01-03"],
+        )
+    warned = [r for r in caplog.records if "__akq_close_price" in r.getMessage()]
+    assert len(warned) == 1, [r.getMessage() for r in warned]
 
 
 @pytest.mark.parametrize(
@@ -1587,7 +1661,7 @@ def test_live_runner_configures_session_clamp_on_market_gateway(
 ) -> None:
     """Runner 用与引擎同配置的解析器调用行情网关的收盘钳制钩子一次.
 
-    钳制宽限 = day_close_delay − 3s，留出收盘 bar 推出到收盘定时器之间的余量。
+    钳制宽限 = day_close_delay − 5s，留出收盘 bar 推出到收盘定时器之间的余量。
     解析器须带 sessions（国债期货前缀 15:15 收盘）、trading_calendar（01-03 不是
     交易日）与在用合约（会话级收盘按在用合约的时段表取）。
     """
@@ -1604,7 +1678,7 @@ def test_live_runner_configures_session_clamp_on_market_gateway(
     )
     assert len(calls) == 1
     resolver, grace_ns = calls[0]
-    assert grace_ns == 57 * 10**9
+    assert grace_ns == 55 * 10**9
     close_1515 = int(pd.Timestamp("2024-01-02 15:15", tz="Asia/Shanghai").value)
     assert resolver.session_day_end(dt.date(2024, 1, 2)) == close_1515
     assert resolver.next_session_day(dt.date(2024, 1, 2)) == dt.date(2024, 1, 4)
@@ -1614,17 +1688,44 @@ def test_live_runner_configures_session_clamp_on_market_gateway(
     )
 
 
+def test_session_clamp_resolver_follows_option_underlying_futures() -> None:
+    """Runner 构造的解析器带期权 → 标的映射：商品期权按标的期货的时段表取收盘与开盘."""
+    from types import SimpleNamespace
+
+    from akquant import AssetType, Instrument
+    from akquant.live._runner import LiveRunner
+
+    future = Instrument("rb2405", AssetType.Futures, multiplier=10.0)
+    option = Instrument(
+        "XOPT2405C3500",
+        AssetType.Option,
+        multiplier=10.0,
+        underlying_symbol="rb2405",
+    )
+    fake = SimpleNamespace(
+        sessions=None,
+        trading_calendar=None,
+        instruments=[future, option],
+        _session_timezone=lambda: "Asia/Shanghai",
+    )
+    resolver = LiveRunner._session_clamp_resolver(fake)  # type: ignore[arg-type]
+    day = dt.date(2024, 1, 2)
+    expected = resolver.day_bounds("rb2405", day, AssetType.Futures)
+    # 未下发映射时期权按 CN_OPTION（09:15 起），下发后与期货同为 08:55 起
+    assert resolver.day_bounds("XOPT2405C3500", day, AssetType.Option) == expected
+
+
 def test_live_runner_skips_session_clamp_when_delay_too_short(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """day_close_delay 不足 3 秒时不开启钳制（收盘 bar 来不及在定时器之前推出）."""
+    """day_close_delay 不足 5 秒时不开启钳制（收盘 bar 来不及在定时器之前推出）."""
     calls: List[Tuple[Any, int]] = []
     _patch_clamp_hook(monkeypatch, calls)
     _run_live_replay(
         monkeypatch,
         _local_bars(["2024-01-02 14:58", "2024-01-02 14:59"]),
         trading_calendar=["2024-01-02", "2024-01-03"],
-        day_close_delay=2.5,
+        day_close_delay=4.5,
     )
     assert calls == []
 
