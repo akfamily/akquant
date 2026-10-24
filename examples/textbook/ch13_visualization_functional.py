@@ -36,7 +36,7 @@ from akquant import Bar
 def generate_mock_data(length: int = 500) -> pd.DataFrame:
     """生成模拟数据."""
     np.random.seed(42)
-    dates = pd.date_range(start="2022-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2022-01-04", periods=length, freq="B")
 
     # 构造一个有趋势的数据，让曲线好看一些
     trend = np.linspace(100, 150, length)

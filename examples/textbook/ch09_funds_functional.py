@@ -41,7 +41,7 @@ from akquant import Bar
 def generate_etf_data(length: int = 200) -> pd.DataFrame:
     """生成 ETF 模拟数据."""
     np.random.seed(42)
-    dates = pd.date_range(start="2023-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2023-01-03", periods=length, freq="B")
 
     # 构造正弦波震荡
     x = np.linspace(0, 4 * np.pi, length)

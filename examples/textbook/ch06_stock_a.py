@@ -22,7 +22,7 @@ from akquant import Bar, Strategy
 def generate_mock_data(length: int = 20) -> pd.DataFrame:
     """生成模拟数据."""
     np.random.seed(42)
-    dates = pd.date_range(start="2023-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2023-01-03", periods=length, freq="B")
 
     # 构造价格序列
     prices = np.full(length, 100.0)

@@ -39,7 +39,7 @@ except ImportError:
 def generate_mock_data(length: int = 1000) -> pd.DataFrame:
     """生成模拟数据."""
     np.random.seed(42)
-    dates = pd.date_range(start="2020-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2020-01-02", periods=length, freq="B")
 
     # 构造一些有规律的信号 (动量效应)
     # 如果前一天涨，今天大概率涨
