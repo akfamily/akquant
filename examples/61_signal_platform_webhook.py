@@ -32,7 +32,7 @@ TOKEN = os.environ.get("AKQUANT_SIGNAL_TOKEN", "demo-token-please-change")
 
 
 def build_bars(count: int = 6) -> List[Bar]:
-    """造当前墙钟时间戳起的连续 bar(实时引擎按墙钟判定时序)."""
+    """造当前墙钟时间戳起的连续 bar(按墙钟判定时序, 配合 ALWAYS_OPEN 全天可成交)."""
     now = pd.Timestamp.now(tz="Asia/Shanghai")
     return [
         Bar(
@@ -155,6 +155,9 @@ def main() -> None:
             cash=1_000_000.0,
             show_progress=False,
             duration="20s",
+            # 示例演示外部信号链路, 与交易时段无关, 故全天可交易;
+            # 真实接入 A 股时去掉该参数, 按默认时段表运行
+            sessions={"default": "ALWAYS_OPEN"},
             signal_source=source,
             # 策略级限额同样约束外部信号: 200 * 20 = 4000, 未超 10000
             strategy_max_order_value={"_default": 10_000.0},
