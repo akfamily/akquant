@@ -848,3 +848,180 @@ def test_commodity_option_saved_only_resume_date_only_rewrite_matches_engine(
     assert r2.strategy is not None
     tail = r2.strategy.seen[-2:]
     assert tail == [("au2406", "14:00"), ("au2406", "14:00")]
+
+
+# ---------------------------------------------------------------------------
+# Task 5：run_live 的 timezone=
+# ---------------------------------------------------------------------------
+
+
+def _us_stock_instrument() -> Any:
+    from akquant.akquant import AssetType, Instrument
+
+    return Instrument(
+        symbol="AAPL",
+        asset_type=AssetType.Stock,
+        multiplier=1.0,
+        margin_ratio=1.0,
+        tick_size=0.01,
+        lot_size=1,
+        option_type=None,
+        strike_price=None,
+        expiry_date=None,
+    )
+
+
+def _run_live_capture(
+    monkeypatch: pytest.MonkeyPatch, strategy_cls: Any, **kwargs: Any
+) -> Any:
+    """run_live(broker="replay") 跑完后返回 runner."""
+    from akquant import run_live
+    from akquant.live import _facade
+
+    captured: List[Any] = []
+
+    class _Recording(_facade.LiveRunner):  # type: ignore[misc,valid-type]
+        def __init__(self, *args: Any, **kw: Any) -> None:
+            super().__init__(*args, **kw)
+            captured.append(self)
+
+    monkeypatch.setattr(_facade, "LiveRunner", _Recording)
+    run_live(
+        strategy_cls=strategy_cls,
+        instruments=[_us_stock_instrument()],
+        broker="replay",
+        trading_mode="paper",
+        cash=1e6,
+        show_progress=False,
+        duration="5s",
+        **kwargs,
+    )
+    assert len(captured) == 1
+    return captured[0]
+
+
+def test_run_live_timezone_is_applied_to_engine_and_sessions() -> None:
+    """纽约时区 + ALWAYS_OPEN 规则 B：实盘 replay 中 trading_day 按纽约本地日期."""
+    from akquant import Bar, Strategy, run_live
+
+    days: List[Any] = []
+
+    class P(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            days.append(self.trading_day)
+
+    ts = pd.Timestamp("2024-01-02 23:30", tz="America/New_York")
+    bars = [Bar(int(ts.value), 1.0, 1.0, 1.0, 1.0, 1.0, "AAPL")]
+    run_live(
+        strategy_cls=P,
+        instruments=[_us_stock_instrument()],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars, "freq": "1min"},
+        cash=1e6,
+        show_progress=False,
+        duration="5s",
+        timezone="America/New_York",
+    )
+    # 上海时区下该时刻为 01-03 12:30（CN_STOCK 交易日 01-03），可区分
+    assert days == [dt.date(2024, 1, 2)]
+
+
+def test_run_live_default_timezone_keeps_shanghai() -> None:
+    """不传 timezone 时沿用 Asia/Shanghai：同一时刻的交易日为 01-03."""
+    from akquant import Bar, Strategy, run_live
+
+    days: List[Any] = []
+    zones: List[str] = []
+
+    class P(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            days.append(self.trading_day)
+            zones.append(self.timezone)
+
+    ts = pd.Timestamp("2024-01-02 23:30", tz="America/New_York")
+    bars = [Bar(int(ts.value), 1.0, 1.0, 1.0, 1.0, 1.0, "AAPL")]
+    run_live(
+        strategy_cls=P,
+        instruments=[_us_stock_instrument()],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars, "freq": "1min"},
+        cash=1e6,
+        show_progress=False,
+        duration="5s",
+    )
+    assert days == [dt.date(2024, 1, 3)]
+    assert zones == ["Asia/Shanghai"]
+
+
+def test_run_live_timezone_localizes_naive_frames_and_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """不带时区的 replay/预热 DataFrame 按 timezone 本地化，策略时区同步."""
+    from akquant import Bar, Strategy
+
+    seen: List[Any] = []
+
+    class P(Strategy):
+        def on_bar(self, bar: Bar) -> None:
+            seen.append((int(bar.timestamp), self.timezone, self.trading_day))
+
+    ny = "America/New_York"
+    live_df = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2024-01-02 23:30")],
+            "open": [1.0],
+            "high": [1.0],
+            "low": [1.0],
+            "close": [1.0],
+            "volume": [1.0],
+        }
+    )
+    preload_df = pd.DataFrame(
+        {
+            "date": [
+                pd.Timestamp("2024-01-02 09:30"),
+                pd.Timestamp("2024-01-02 09:31"),
+            ],
+            "open": [1.0, 1.0],
+            "high": [1.0, 1.0],
+            "low": [1.0, 1.0],
+            "close": [1.0, 1.0],
+            "volume": [1.0, 1.0],
+            "symbol": ["AAPL", "AAPL"],
+        }
+    )
+    runner = _run_live_capture(
+        monkeypatch,
+        P,
+        gateway_options={"bars": live_df, "freq": "1min"},
+        preload_history=preload_df,
+        timezone=ny,
+    )
+    live_ns = int(pd.Timestamp("2024-01-02 23:30", tz=ny).value)
+    assert seen == [(live_ns, ny, dt.date(2024, 1, 2))]
+    assert runner._preload_result is not None
+    assert runner._preload_result.last_timestamp_ns == {
+        "AAPL": int(pd.Timestamp("2024-01-02 09:31", tz=ny).value)
+    }
+
+
+def test_run_live_rejects_invalid_timezone() -> None:
+    """非法时区名在启动前报错."""
+    from akquant import Bar, Strategy, run_live
+
+    ts = pd.Timestamp("2024-01-02 10:00", tz=TZ)
+    with pytest.raises(ValueError):
+        run_live(
+            strategy_cls=Strategy,
+            instruments=[_us_stock_instrument()],
+            broker="replay",
+            trading_mode="paper",
+            gateway_options={
+                "bars": [Bar(int(ts.value), 1.0, 1.0, 1.0, 1.0, 1.0, "AAPL")]
+            },
+            show_progress=False,
+            duration="5s",
+            timezone="Mars/Olympus",
+        )

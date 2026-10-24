@@ -1262,6 +1262,56 @@ def test_live_replay_forwards_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _expired_at(runner) == ["2024-01-03 00:00"]
 
 
+_LIVE_DAY_PROBES: List[Any] = []
+
+
+class _LiveTradingDayProbe(_LiveDayOrderProbe):
+    """记录每根 bar 的（本地时刻, 交易日, 时段）."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: List[Tuple[str, Any, str]] = []
+        _LIVE_DAY_PROBES.append(self)
+
+    def on_bar(self, bar: Bar) -> None:
+        assert self.ctx is not None
+        self.rows.append(
+            (
+                _local_minute(int(bar.timestamp)),
+                self.trading_day,
+                str(self.ctx.session).split(".")[-1],
+            )
+        )
+        super().on_bar(bar)
+
+
+def test_live_replay_forwards_custom_session_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_live 的自定义时段表下发到引擎：收盘时刻与交易日划分按自定义表.
+
+    实盘阶段 7 前强制连续竞价（Ruling S6-1），ctx.session 恒为 Continuous；
+    自定义表在实盘的可观测效果是交易日划分与日终结算：10:00-11:00 一段时
+    交易日在 11:00 收盘，14:00 的 bar 属下一交易日。
+    """
+    _LIVE_DAY_PROBES.clear()
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(["2024-01-02 10:15", "2024-01-02 10:30", "2024-01-02 14:00"]),
+        strategy_cls=_LiveTradingDayProbe,
+        sessions={"default": [("10:00", "11:00", "continuous")]},
+        trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
+    )
+    assert len(_LIVE_DAY_PROBES) == 1
+    assert _LIVE_DAY_PROBES[0].rows == [
+        ("2024-01-02 10:15", dt.date(2024, 1, 2), "Continuous"),
+        ("2024-01-02 10:30", dt.date(2024, 1, 2), "Continuous"),
+        ("2024-01-02 14:00", dt.date(2024, 1, 3), "Continuous"),
+    ]
+    # 10:15 下的 Day 单（非当日最后切片）在自定义收盘 11:00 过期（默认为 15:00）
+    assert _expired_at(runner) == ["2024-01-02 11:00"]
+
+
 def test_live_replay_forwards_trading_calendar(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

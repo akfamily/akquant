@@ -9,7 +9,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence, Union
+from typing import Any, Mapping, Optional, Sequence, Union
 
 import pandas as pd
 
@@ -113,12 +113,16 @@ def _require_columns(frame: pd.DataFrame) -> None:
         )
 
 
-def _to_bars(preload: PreloadInput) -> list[Bar]:
-    """三种输入形态统一成 list[Bar](复用唯一的归一化实现)."""
+def _to_bars(preload: PreloadInput, tz: Optional[str] = None) -> list[Bar]:
+    """三种输入形态统一成 list[Bar](复用唯一的归一化实现).
+
+    ``tz`` 为 DataFrame 里 naive 时间的本地化时区(``run_live(timezone=)``),
+    缺省 Asia/Shanghai; 带时区的时间与 ``list[Bar]`` 不受影响。
+    """
     if isinstance(preload, pd.DataFrame):
         _require_columns(preload)
         ts, o, h, lo, c, v, symbol_val, symbols_list, extra = dataframe_to_arrays(
-            preload
+            preload, tz=tz
         )
         bars = from_arrays(ts, o, h, lo, c, v, symbol_val, symbols_list, extra)
         return bars
@@ -134,7 +138,7 @@ def _to_bars(preload: PreloadInput) -> list[Bar]:
                 continue
             _require_columns(frame)
             ts, o, h, lo, c, v, symbol_val, symbols_list, extra = dataframe_to_arrays(
-                frame
+                frame, tz=tz
             )
             # 帧内没有 per-row symbol 列时，用 dict 的 key
             if symbols_list is None:
@@ -220,19 +224,21 @@ def normalize_preload_history(
     preload: PreloadInput | None,
     allowed_symbols: set[str],
     session_start_ns: int,
+    tz: Optional[str] = None,
 ) -> PreloadResult | None:
     """把三种输入形态规范化成按 (symbol, timestamp) 升序的 bars.
 
     :param preload: 调用方传入的历史数据; ``None`` 表示不预热。
     :param allowed_symbols: 已归一化的挂载标的集合; 空集表示不做标的过滤。
     :param session_start_ns: 会话启动时刻(纳秒), 晚于它的行会被裁掉。
+    :param tz: DataFrame 里 naive 时间的本地化时区, 缺省 Asia/Shanghai。
     :return: 规范化结果; ``preload`` 为 ``None`` 时返回 ``None``。
     :raises ValueError: 必需列缺失, 或传了数据但一个标的都没匹配上。
     """
     if preload is None:
         return None
 
-    bars = _to_bars(preload)
+    bars = _to_bars(preload, tz)
     if not bars:
         logger.warning(
             "preload_history 传入了空数据, 跳过预热"

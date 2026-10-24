@@ -105,6 +105,7 @@ def run_live(
     preload_bars: Optional[int] = None,
     sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
+    timezone: str = "Asia/Shanghai",
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -284,6 +285,12 @@ def run_live(
     :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
                              中国市场按工作日推算（节假日前后的夜盘与日终
                              结算会算错），ALWAYS_OPEN 每天都算
+    :param timezone: 时区名称 (默认 "Asia/Shanghai")，与 ``run_backtest`` 同义：
+                     引擎按它划分交易日、计算日终结算时刻与默认时段表（非中国
+                     时区全天连续）；``preload_history`` / replay 的 DataFrame
+                     里不带时区的时间按它本地化；策略的 ``self.timezone`` 同步
+                     为该值（定时器与生命周期钩子按它算本地时刻）。非法时区名
+                     抛 ``ValueError``
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")
@@ -353,6 +360,7 @@ def run_live(
         preload_bars=preload_bars,
         sessions=sessions,
         trading_calendar=trading_calendar,
+        timezone=timezone,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event

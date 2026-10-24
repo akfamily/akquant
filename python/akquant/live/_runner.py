@@ -38,6 +38,7 @@ from ..gateway.symbol_match import normalize_symbol_for_match
 from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink, declare_plotted_indicators
 from ..log import build_log_extra, get_logger
+from ..schema import DEFAULT_INPUT_TIMEZONE
 from ..sessions_config import (
     SessionsArg,
     SessionsMap,
@@ -411,6 +412,7 @@ class LiveRunner:
         preload_bars: Optional[int] = None,
         sessions: Optional[SessionsArg] = None,
         trading_calendar: Optional[Iterable[Any]] = None,
+        timezone: str = DEFAULT_INPUT_TIMEZONE,
     ):
         """
         Initialize the LiveRunner.
@@ -483,6 +485,8 @@ class LiveRunner:
         :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
             中国市场按工作日推算（节假日前后的夜盘与日终
             结算会算错），ALWAYS_OPEN 每天都算
+        :param timezone: 时区名称（默认 "Asia/Shanghai"），与 ``run_backtest``
+            同义。见 ``run_live``
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
@@ -593,6 +597,8 @@ class LiveRunner:
 
         self.feed = DataFeed.create_live()  # type: ignore
         self.engine = Engine()
+        # 会话时区, 由 run() 最先下发引擎(非法时区名在连网关之前报错)。
+        self.timezone = str(timezone).strip()
 
         # 收尾派发的目标: run() 里策略创建成功后写入。预置 None/空是因为
         # run() 在创建策略之前就可能抛(网关工厂、broker_live 校验), 那时
@@ -655,6 +661,11 @@ class LiveRunner:
             "Configuring live engine",
             extra=self._runner_log_extra(phase="live"),
         )
+        # 引擎时区最先下发: 交易日划分、日终结算时刻、默认时段表(规则 B: 非中国
+        # 时区全天连续)都按它算; 非法时区名在此报 ValueError, 尚未连任何网关。
+        # 与 run_backtest 相同按 hasattr 判断(单测替身引擎不一定实现该方法)。
+        if hasattr(self.engine, "set_timezone_name"):
+            self.engine.set_timezone_name(self._session_timezone())
         self.engine.add_data(self.feed)
         self.engine.set_cash(cash)
 
@@ -674,7 +685,7 @@ class LiveRunner:
         else:
             self.engine.use_china_market()
         self.engine._set_force_session_continuous(True)
-        # 交易日划分与日终结算时刻(引擎时区沿用默认 Asia/Shanghai)
+        # 交易日划分与日终结算时刻(按上面下发的引擎时区)
         self.engine.configure_sessions(self.sessions, self.trading_calendar)
 
         symbols = [inst.symbol for inst in self.instruments]
@@ -731,6 +742,10 @@ class LiveRunner:
         # 那时局部名尚未绑定。
         self._stop_target_strategy = strategy_instance
         self._stop_target_slot_strategies = slot_strategy_instances
+        # 策略时区与引擎一致(与 run_backtest 相同, 覆盖策略自设的值): 定时器、
+        # 生命周期钩子与 naive 时间的本地化都读 strategy.timezone。
+        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
+            current_strategy.timezone = self._session_timezone()
         # 运行时配置下发放在最前: error_mode 等字段影响 on_start 自身的异常
         # 处理与指标声明(self.I 在 on_start 里调用) —— 主策略的 on_start 由
         # Rust 在 engine.run() 内触发, 槽位由 _dispatch_slot_strategy_start
@@ -1099,7 +1114,10 @@ class LiveRunner:
             return
         try:
             result = normalize_preload_history(
-                preload, self._subscribed_symbol_set(), time.time_ns()
+                preload,
+                self._subscribed_symbol_set(),
+                time.time_ns(),
+                tz=self._session_timezone(),
             )
         except ValueError as exc:
             if not auto:
@@ -1656,8 +1674,30 @@ class LiveRunner:
     ) -> Dict[str, Any]:
         return normalize_gateway_options(gateway_options, **legacy_values)
 
+    def _session_timezone(self) -> str:
+        """会话时区(``run_live(timezone=)``); 未经构造器的实例取默认值."""
+        return str(getattr(self, "timezone", DEFAULT_INPUT_TIMEZONE))
+
     def _build_gateway_kwargs(self) -> Dict[str, Any]:
-        return cast(Dict[str, Any], dict(self.gateway_options))
+        kwargs = cast(Dict[str, Any], dict(self.gateway_options))
+        # replay 把 naive DataFrame 转 Bar 时按会话时区本地化。只下发给 replay:
+        # 其他 broker 收到未识别的键会告警(klinedata)或透传给构造器。
+        market_key = (
+            getattr(self, "market_broker", None) or getattr(self, "broker", "") or ""
+        )
+        if str(market_key).strip().lower() == "replay":
+            timezone = self._session_timezone()
+            given = kwargs.get("timezone")
+            if given is not None and str(given).strip() != timezone:
+                logger.warning(
+                    "gateway_options['timezone']=%r 与 run_live(timezone=%r) 不一致，"
+                    "以 run_live 的 timezone 为准（请只在 run_live 传 timezone）",
+                    given,
+                    timezone,
+                    extra=self._runner_log_extra(phase="gateway"),
+                )
+            kwargs["timezone"] = timezone
+        return kwargs
 
     def _start_gateway_thread(self, target: Any, name: str) -> None:
         start_gateway_thread(target, name)

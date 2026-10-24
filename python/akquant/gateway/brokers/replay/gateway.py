@@ -28,7 +28,9 @@ logger = get_logger("gateway.replay")
 ReplayBars = Union[List[Bar], Any]  # list[Bar] 或 pandas.DataFrame
 
 
-def _coerce_bars(bars: ReplayBars | None, symbols: Sequence[str]) -> List[Bar]:
+def _coerce_bars(
+    bars: ReplayBars | None, symbols: Sequence[str], tz: str | None = None
+) -> List[Bar]:
     """把入参归一成 ``list[Bar]``.
 
     DataFrame 走 ``normalize.dataframe_to_bars``。该函数要求时间戳列名为
@@ -39,6 +41,9 @@ def _coerce_bars(bars: ReplayBars | None, symbols: Sequence[str]) -> List[Bar]:
     命名所有 bar——否则它们会带着 ``"UNKNOWN"`` 被 symbol 过滤器全部滤掉, 表现为
     "传了数据却一根都没推"。多品种 DataFrame 必须自带 ``股票代码`` 列, 或改用
     ``list[Bar]``。
+
+    DataFrame 里 naive 的时间按 ``tz`` 本地化(``run_live(timezone=)`` 经
+    runner 下发), 缺省 Asia/Shanghai。
     """
     if bars is None:
         return []
@@ -49,13 +54,14 @@ def _coerce_bars(bars: ReplayBars | None, symbols: Sequence[str]) -> List[Bar]:
     fallback_symbol: str | None = None
     if len(symbols) == 1 and "股票代码" not in list(getattr(bars, "columns", [])):
         fallback_symbol = str(symbols[0])
-    return dataframe_to_bars(bars, symbol=fallback_symbol)
+    return dataframe_to_bars(bars, symbol=fallback_symbol, tz=tz)
 
 
 def _sorted_events(
     bars: ReplayBars | None,
     ticks: Sequence[Tick] | None,
     symbols: Sequence[str],
+    tz: str | None = None,
 ) -> List[Union[Bar, Tick]]:
     """合并 bar/tick 并按时间戳升序排序.
 
@@ -63,7 +69,7 @@ def _sorted_events(
     保证同一份输入产生逐字节相同的事件序列。
     """
     events: List[Union[Bar, Tick]] = []
-    events.extend(_coerce_bars(bars, symbols))
+    events.extend(_coerce_bars(bars, symbols, tz))
     events.extend(list(ticks or []))
     events.sort(key=lambda event: int(event.timestamp))
     return events
@@ -78,11 +84,12 @@ class ReplayMarketGateway:
         symbols: Sequence[str],
         bars: ReplayBars | None = None,
         ticks: Sequence[Tick] | None = None,
+        tz: str | None = None,
     ) -> None:
         """按 ``symbols`` 过滤并预排序待推送事件."""
         self._feed = feed
         self._symbols: List[str] = [str(s) for s in symbols]
-        self._all_events = _sorted_events(bars, ticks, self._symbols)
+        self._all_events = _sorted_events(bars, ticks, self._symbols, tz)
         self.tick_callback: Callable[[dict[str, Any]], None] | None = None
         self.bar_callback: Callable[[dict[str, Any]], None] | None = None
 
@@ -162,6 +169,9 @@ def build_replay_bundle(
     ``gateway_options={"freq": "1min"}`` 可声明回放数据的周期, 经
     ``metadata["freq"]`` 注入策略的只读属性 ``self.freq``(不传则为 ``None``,
     回放数据的周期无从推断)。取值用回测侧口径, 与 ``run_backtest(freq=)`` 一致。
+
+    ``timezone`` 由 ``LiveRunner`` 按 ``run_live(timezone=)`` 写入, 用于 DataFrame
+    里 naive 时间的本地化; 不要在 ``gateway_options`` 里另传。
     """
     _ = use_aggregator
     gateway = ReplayMarketGateway(
@@ -169,6 +179,7 @@ def build_replay_bundle(
         symbols=symbols,
         bars=kwargs.get("bars"),
         ticks=kwargs.get("ticks"),
+        tz=kwargs.get("timezone"),
     )
     pending = gateway.pending_events
     total = len(pending)
