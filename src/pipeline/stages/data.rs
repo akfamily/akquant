@@ -228,6 +228,40 @@ impl Processor for DataProcessor {
             return Ok(ProcessorResult::Break);
         }
 
+        // replay 数据结束收尾(见 `Engine::live_replay_close`): 末日结算并派发
+        // on_after_trading 后的下一轮结束会话; 最后事件处理完、行情已取空后开始计时,
+        // 超时未结算则告警并结束。
+        if let Some(close) = engine.live_replay_close {
+            if close.settled {
+                engine.live_replay_close = None;
+                self.finalize_current_timestamp(engine, py);
+                return Ok(ProcessorResult::Break);
+            }
+            if close.last_event_seen {
+                let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                match close.deadline_ns {
+                    None if engine.state.feed.peek_timestamp().is_none() => {
+                        if let Some(state) = engine.live_replay_close.as_mut() {
+                            state.deadline_ns = Some(
+                                now.saturating_add(crate::engine::core::LiveReplayClose::WAIT_NS),
+                            );
+                        }
+                    }
+                    Some(deadline) if now >= deadline => {
+                        log::warn!(
+                            "回放数据已结束，但等待 {} 秒仍未完成交易日 {} 的日终结算，会话直接结束（该日不触发 on_after_trading）；请检查 trading_calendar= / sessions= 是否覆盖回放数据的最后一个交易日",
+                            crate::engine::core::LiveReplayClose::WAIT_NS / 1_000_000_000,
+                            close.day
+                        );
+                        engine.live_replay_close = None;
+                        self.finalize_current_timestamp(engine, py);
+                        return Ok(ProcessorResult::Break);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let next_timer_time = engine.timers.peek().map(|t| t.timestamp);
         // 把内部事件通道的接收端交给 feed 一起等: 外部线程注入的 OrderRequest
         // 可立刻打断行情等待(否则最坏要等满 1 秒 timeout)。ChannelProcessor 是
@@ -299,6 +333,12 @@ impl Processor for DataProcessor {
                                 dispatch_day_close_windows(engine, py, strategy, day, close_ts)?;
                                 run_day_close_settlement(engine, py, day, close_ts);
                                 engine.last_settled_trading_day = Some(day);
+                                // replay 收尾: 末日已结算, on_after_trading 派发后结束会话。
+                                if let Some(close) = engine.live_replay_close.as_mut()
+                                    && day >= close.day
+                                {
+                                    close.settled = true;
+                                }
                                 // 没有策略要收盘后事件(未重写钩子且无过期单/到期事件
                                 // 要送达)时不发出, 省一次 Python 派发。
                                 let dispatch = engine.should_dispatch_lifecycle(
@@ -408,6 +448,12 @@ impl Processor for DataProcessor {
 
                 if timestamp <= engine.snapshot_time {
                     return Ok(ProcessorResult::Loop);
+                }
+
+                if let Some(close) = engine.live_replay_close.as_mut()
+                    && timestamp >= close.last_event_ns
+                {
+                    close.last_event_seen = true;
                 }
 
                 if self.last_timestamp != 0 && timestamp > self.last_timestamp {

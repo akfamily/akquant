@@ -2230,3 +2230,136 @@ def test_live_runner_day_close_delay_converts_to_ns(
         day_close_delay=value,
     )
     assert runner.day_close_delay_ns == expected_ns
+
+
+class _LiveHookSequenceProbe(_LiveDayOrderProbe):
+    """记录（钩子名, 本地时刻到秒）序列；不下单（on_start 等推送线程沿用父类）."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hooks: List[Tuple[str, str]] = []
+
+    def _record(self, name: str) -> None:
+        now = self.now
+        assert now is not None
+        self.hooks.append((name, now.strftime("%Y-%m-%d %H:%M:%S")))
+
+    def on_pre_open(self, event: Dict[str, Any]) -> None:
+        self._record("on_pre_open")
+
+    def on_before_trading(self, trading_date: dt.date, timestamp: int) -> None:
+        self._record("on_before_trading")
+
+    def on_bar(self, bar: Bar) -> None:
+        self._record("on_bar")
+
+    def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:
+        self._record("on_after_trading")
+
+
+_HOOK_CALENDAR = ["2023-12-29", "2024-01-02", "2024-01-03", "2024-01-04"]
+
+
+def _backtest_hooks(stamps: List[str]) -> List[Tuple[str, str]]:
+    """同一份 bar 转 DataFrame 走 run_backtest(freq="1min")，返回钩子序列."""
+    bars = _local_bars(stamps)
+    df = pd.DataFrame(
+        {
+            "date": [pd.Timestamp(int(b.timestamp), tz="UTC") for b in bars],
+            "open": [b.open for b in bars],
+            "high": [b.high for b in bars],
+            "low": [b.low for b in bars],
+            "close": [b.close for b in bars],
+            "volume": [b.volume for b in bars],
+            "symbol": "600000",
+        }
+    )
+    result = run_backtest(
+        strategy=_LiveHookSequenceProbe,
+        data=df,
+        symbols=["600000"],
+        lot_size=100,
+        initial_cash=1e6,
+        show_progress=False,
+        freq="1min",
+        trading_calendar=_HOOK_CALENDAR,
+    )
+    strategy = result.strategy
+    assert isinstance(strategy, _LiveHookSequenceProbe)
+    return list(strategy.hooks)
+
+
+def _replay_hooks(
+    monkeypatch: pytest.MonkeyPatch, stamps: List[str]
+) -> List[Tuple[str, str]]:
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(stamps),
+        strategy_cls=_LiveHookSequenceProbe,
+        trading_calendar=_HOOK_CALENDAR,
+        day_close_delay=0,
+    )
+    strategy = runner._stop_target_strategy
+    assert isinstance(strategy, _LiveHookSequenceProbe)
+    return list(strategy.hooks)
+
+
+def _hook_names(hooks: List[Tuple[str, str]], name: str) -> List[str]:
+    return [at for hook, at in hooks if hook == name]
+
+
+def test_live_replay_lifecycle_matches_backtest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replay 两个交易日、末日数据到收盘：钩子序列与同数据回测一致."""
+    stamps = [
+        "2024-01-02 10:00",
+        "2024-01-02 15:00",
+        "2024-01-03 10:00",
+        "2024-01-03 15:00",
+    ]
+    backtest = _backtest_hooks(stamps)
+    replay = _replay_hooks(monkeypatch, stamps)
+    assert replay == backtest
+    assert [at[:10] for at in _hook_names(replay, "on_pre_open")] == [
+        "2024-01-02",
+        "2024-01-03",
+    ], replay
+    assert _hook_names(replay, "on_after_trading") == [
+        "2024-01-02 15:00:00",
+        "2024-01-03 15:00:00",
+    ], replay
+
+
+def test_live_replay_data_ending_intraday_does_not_settle_last_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replay 末日数据只到 10:00：与回测一样末日不结算，只有一次 on_after_trading."""
+    import time
+
+    stamps = ["2024-01-02 10:00", "2024-01-02 15:00", "2024-01-03 10:00"]
+    backtest = _backtest_hooks(stamps)
+    started = time.monotonic()
+    replay = _replay_hooks(monkeypatch, stamps)
+    elapsed = time.monotonic() - started
+    assert replay == backtest
+    assert _hook_names(replay, "on_after_trading") == ["2024-01-02 15:00:00"]
+    assert [at[:10] for at in _hook_names(replay, "on_pre_open")] == [
+        "2024-01-02",
+        "2024-01-03",
+    ], replay
+    # 未到收盘不等结算：不应吃满收尾等待（5 秒）
+    assert elapsed < 4.0, elapsed
+
+
+def test_replay_gateway_exposes_first_and_last_event_ns() -> None:
+    """ReplayMarketGateway 暴露当前订阅集下首个/最后事件时刻；无事件时为 None."""
+    from akquant.gateway.brokers.replay.gateway import ReplayMarketGateway
+
+    bars = _local_bars(["2024-01-02 10:00", "2024-01-02 09:31", "2024-01-02 14:00"])
+    gateway = ReplayMarketGateway(feed=None, symbols=["600000"], bars=bars)
+    assert gateway.first_event_ns() == min(int(b.timestamp) for b in bars)
+    assert gateway.last_event_ns() == max(int(b.timestamp) for b in bars)
+    gateway.unsubscribe(["600000"])
+    assert gateway.first_event_ns() is None
+    assert gateway.last_event_ns() is None

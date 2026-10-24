@@ -94,6 +94,36 @@ impl Default for LifecycleHooksDispatch {
     }
 }
 
+/// replay 数据结束收尾状态（见 `Engine::live_replay_close`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LiveReplayClose {
+    /// 最后一个回放事件所属交易日（需在结束前结算的交易日）。
+    pub(crate) day: NaiveDate,
+    /// 最后一个回放事件的时间戳（纳秒）。
+    pub(crate) last_event_ns: i64,
+    /// 是否已取到时间戳不早于 `last_event_ns` 的行情事件。
+    pub(crate) last_event_seen: bool,
+    /// 最后事件处理完、行情已取空后的墙钟等待截止时刻（纳秒）。
+    pub(crate) deadline_ns: Option<i64>,
+    /// `day` 已结算（含派发 on_after_trading），下一轮主循环结束会话。
+    pub(crate) settled: bool,
+}
+
+impl LiveReplayClose {
+    /// 最后事件处理完后等待该日结算的墙钟上限（5 秒）。
+    pub(crate) const WAIT_NS: i64 = 5_000_000_000;
+
+    pub(crate) fn new(day: NaiveDate, last_event_ns: i64) -> Self {
+        Self {
+            day,
+            last_event_ns,
+            last_event_seen: false,
+            deadline_ns: None,
+            settled: false,
+        }
+    }
+}
+
 /// 主回测引擎.
 ///
 /// :ivar feed: 数据源
@@ -156,6 +186,17 @@ pub struct Engine {
     /// 运行参数：由 `run_live(day_close_delay=)` 在 `run()` 之前经
     /// `_set_live_day_close_delay_ns` 每次下发，不入存档；回测不用它（收盘 + 1ns）。
     pub(crate) live_day_close_delay_ns: i64,
+    /// 实盘生命周期锚点（纳秒）：replay 回放历史行情时由 runner 按首个回放事件
+    /// （首个事件 - 1ns）经 `_set_live_lifecycle_anchor` 下发；`run()` 用
+    /// `min(墙钟, 锚点)` 代替墙钟排程生命周期，且锚点所属交易日早于锚点的时点照常
+    /// 登记（首个事件之前触发该日 pre_open / before_trading，同回测）。真实实盘不设。
+    /// 运行参数，不入存档。
+    pub(crate) live_lifecycle_anchor_ns: Option<i64>,
+    /// replay 数据结束时的收尾状态（`_set_live_replay_end` 判定最后事件已到所属
+    /// 交易日收盘时才设）：最后事件处理完后等该日收盘定时器结算并派发
+    /// on_after_trading 再结束会话；等待超过
+    /// [`LiveReplayClose::WAIT_NS`] 告警并结束。运行参数，不入存档。
+    pub(crate) live_replay_close: Option<LiveReplayClose>,
     /// 各生命周期钩子（on_pre_open / on_before_trading / on_after_trading）是否有策略
     /// （含槽位）重写，由 Python 在 run 开始时经 `set_lifecycle_hooks_dispatch` 告知
     /// （直接驱动引擎时缺省全为真）。未重写的盘前/开始交易事件只在引擎内消费（实盘
@@ -757,10 +798,27 @@ impl Engine {
     /// （before_trading）已过时改排下一交易日。`now` 不在交易日历内时不排并告警。
     /// 排到的每个交易日同时登记收盘定时器（已过的跳过），当日无行情也结算。
     pub(crate) fn schedule_live_lifecycle(&mut self, now: i64) -> PyResult<()> {
+        self.schedule_live_lifecycle_inner(now, false)
+    }
+
+    /// replay：按锚点 `anchor`（首个回放事件 - 1ns）所属交易日排程。与
+    /// [`Engine::schedule_live_lifecycle`] 的区别只在锚点当日早于锚点的 pre_open /
+    /// before_trading 照常登记（在首个事件之前触发，同回测），不按“已过”跳过。
+    pub(crate) fn schedule_live_lifecycle_anchored(&mut self, anchor: i64) -> PyResult<()> {
+        self.schedule_live_lifecycle_inner(anchor, true)
+    }
+
+    fn schedule_live_lifecycle_inner(&mut self, now: i64, anchored: bool) -> PyResult<()> {
         self.ensure_session_resolver()?;
         let resolver = self.session_resolver.clone().expect("已构造");
         let day = match resolver.session_trading_day(now) {
             Ok(day) => day,
+            Err(e) if anchored => {
+                log::warn!(
+                    "回放首个事件不在交易日历内（{e}），本次回放不会触发 on_pre_open / on_before_trading；请检查 trading_calendar= 是否覆盖回放数据的日期"
+                );
+                return Ok(());
+            }
             Err(e) => {
                 log::warn!(
                     "实盘当前时刻不在交易日历内（{e}），本次会话不会触发 on_pre_open / on_before_trading；请检查 trading_calendar= 是否覆盖当前日期"
@@ -768,7 +826,7 @@ impl Engine {
                 return Ok(());
             }
         };
-        self.schedule_lifecycle(day, now)?;
+        self.schedule_lifecycle(day, if anchored { i64::MIN } else { now })?;
         self.schedule_live_day_close(day, now)?;
         let has_before_trading = self.timers.iter().any(|t| {
             matches!(
@@ -2869,5 +2927,49 @@ mod lifecycle_tests {
         let mut backtest = Engine::new();
         backtest.schedule_lifecycle(d(1, 2), i64::MIN).unwrap();
         assert!(day_closes(&backtest).is_empty());
+    }
+    #[test]
+    fn live_anchor_registers_whole_anchor_day_lifecycle() {
+        // replay 锚点 10:00 - 1ns：锚点当日早于锚点的盘前/开始交易照常登记，
+        // 当日收盘定时器登记；下一交易日留给 before_trading 串联（不提前排）。
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.live_day_close_delay_ns = 0;
+        engine
+            .schedule_live_lifecycle_anchored(sh(1, 2, 10, 0) - 1)
+            .unwrap();
+        assert_eq!(
+            lifecycle_timers(&engine),
+            vec![
+                (sh(1, 2, 9, 15) - 1, "pre_open|2024-01-02".to_string()),
+                (sh(1, 2, 9, 30) + 1, "before_trading|2024-01-02".to_string()),
+            ]
+        );
+        let closes: Vec<String> = engine
+            .timers
+            .iter()
+            .filter(|t| t.is_day_close())
+            .map(|t| t.payload.clone())
+            .collect();
+        assert_eq!(closes, vec!["__akq_day_close__|2024-01-02".to_string()]);
+    }
+
+    #[test]
+    fn live_replay_end_awaits_close_only_when_last_event_reaches_close() {
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        // 末事件在收盘时刻：等末日结算
+        assert!(engine.set_live_replay_end(Some(sh(1, 3, 15, 0))).unwrap());
+        let close = engine.live_replay_close.expect("应设置收尾状态");
+        assert_eq!(close.day, d(1, 3));
+        assert_eq!(close.last_event_ns, sh(1, 3, 15, 0));
+        assert!(!close.last_event_seen && !close.settled && close.deadline_ns.is_none());
+        // 末事件在盘中：不等结算，并清除先前状态
+        assert!(!engine.set_live_replay_end(Some(sh(1, 3, 10, 0))).unwrap());
+        assert!(engine.live_replay_close.is_none());
+        // None 清除
+        assert!(engine.set_live_replay_end(Some(sh(1, 3, 15, 0))).unwrap());
+        assert!(!engine.set_live_replay_end(None).unwrap());
+        assert!(engine.live_replay_close.is_none());
     }
 }

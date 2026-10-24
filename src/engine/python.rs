@@ -531,6 +531,52 @@ impl Engine {
         Ok(())
     }
 
+    /// 设置实盘生命周期锚点(框架内部接口, replay 用)
+    ///
+    /// `run_live(broker="replay")` 在 `run()` 之前按首个回放事件下发(首个事件 - 1ns)。
+    /// 设置后 `run()` 用 `min(墙钟, 锚点)` 代替墙钟排程交易日生命周期, 且锚点所属
+    /// 交易日早于锚点的 pre_open / before_trading 照常登记(在首个事件之前触发,
+    /// 同回测)。真实实盘不设, 仍按墙钟。不入存档, 每次会话重新下发。
+    ///
+    /// :param ts_ns: 锚点(纳秒, UTC epoch); ``None`` 清除
+    #[pyo3(name = "_set_live_lifecycle_anchor")]
+    #[pyo3(signature = (ts_ns))]
+    fn set_live_lifecycle_anchor(&mut self, ts_ns: Option<i64>) {
+        self.live_lifecycle_anchor_ns = ts_ns;
+    }
+
+    /// 声明 replay 最后一个事件的时刻并判定数据结束时是否收尾结算(框架内部接口)
+    ///
+    /// 最后事件已到其所属交易日的会话收盘时返回 ``True``: 引擎在最后事件处理完后
+    /// 等该日收盘定时器结算并派发 on_after_trading, 然后自行结束会话(行情已取空后
+    /// 等待超过 5 秒则告警并结束); 调用方不应再在最后事件后中断会话。否则返回
+    /// ``False``, 不改变行为(与回测相同, 数据在盘中结束的末日不结算)。须在
+    /// `configure_sessions` 之后、`run()` 之前调用。
+    ///
+    /// :param last_event_ns: 最后一个回放事件的时间戳(纳秒); ``None`` 清除
+    /// :return: 是否等待末日结算后结束
+    #[pyo3(name = "_set_live_replay_end")]
+    #[pyo3(signature = (last_event_ns))]
+    pub(crate) fn set_live_replay_end(&mut self, last_event_ns: Option<i64>) -> PyResult<bool> {
+        self.live_replay_close = None;
+        let Some(last) = last_event_ns else {
+            return Ok(false);
+        };
+        self.ensure_session_resolver()?;
+        let resolver = self.session_resolver.clone().expect("已构造");
+        let Ok(day) = resolver.session_trading_day(last) else {
+            return Ok(false);
+        };
+        let Ok(end) = resolver.session_day_end(day) else {
+            return Ok(false);
+        };
+        if last >= end {
+            self.live_replay_close = Some(super::core::LiveReplayClose::new(day, last));
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     /// 取一个外部信号注入端口(paper 模式)
     ///
     /// **必须在 `run()` 之前调用**: 取到的是 channel sender 的克隆, 之后即与引擎
@@ -572,6 +618,8 @@ impl Engine {
             lifecycle_scheduled_for: None,
             lifecycle_chain_warned: false,
             live_day_close_delay_ns: crate::model::timer::LIVE_DAY_CLOSE_GRACE_NS,
+            live_lifecycle_anchor_ns: None,
+            live_replay_close: None,
             lifecycle_hooks_dispatch: Default::default(),
             last_corp_action_date: None,
             market_manager: MarketManager::new(),
@@ -1504,7 +1552,8 @@ impl Engine {
         // 交易日生命周期（on_pre_open / on_before_trading）排程。回测：首个行情事件
         // （有预热窗口时取不早于正式开始时刻）所属交易日，此后每个交易日结算后按下一个
         // 行情事件串联；续跑时存档时刻及之前的已触发过，跳过。实盘：按墙钟排当日
-        // （或下一交易日），此后每次 before_trading 触发时排下一交易日。
+        // （或下一交易日），此后每次 before_trading 触发时排下一交易日；replay 设了
+        // 锚点时按锚点（首个回放事件）所属交易日排，该日全部时点照常登记。
         //
         // 续跑时存档所在交易日尚未结算(数据在盘中结束): 先补登记该日收盘定时器,
         // 使它在续跑段的下一交易日盘前之前按收盘时刻结算并触发 on_after_trading,
@@ -1512,8 +1561,12 @@ impl Engine {
         // 该日内时, 首个事件不再重复登记(scheduled_day_close)。
         self.schedule_resumed_day_close()?;
         if self.state.feed.is_live() {
-            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-            self.schedule_live_lifecycle(now)?;
+            let wall = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            // replay 锚定首个回放事件(见 `_set_live_lifecycle_anchor`); 真实实盘按墙钟。
+            match self.live_lifecycle_anchor_ns {
+                Some(anchor) if anchor < wall => self.schedule_live_lifecycle_anchored(anchor)?,
+                _ => self.schedule_live_lifecycle(wall)?,
+            }
         } else if let Some(first_ts) = self.state.feed.peek_timestamp() {
             let anchor = self
                 .active_start_time_ns

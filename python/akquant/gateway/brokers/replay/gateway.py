@@ -8,16 +8,20 @@
 就是引擎看到的顺序。多品种必须交错推送。回测路径由 ``feed.sort()`` 兜底,
 实盘没有这层保护。
 
-**不覆盖 timer 语义**: live 引擎用墙钟判定 timer 是否到期
-(``src/data/feed.rs:311-325``), 而回放数据带的是历史时间戳, 两条时间线必然
-错位。``on_timer`` / ``schedule_daily`` 在回放会话中的行为不作保证。
+**不覆盖用户 timer 语义**: live 引擎用墙钟判定 timer 是否到期
+(``src/data/feed.rs`` 的 ``next_action``), 而回放数据带的是历史时间戳, 两条
+时间线必然错位。``on_timer`` / ``schedule_daily`` 在回放会话中的行为不作保证。
+交易日生命周期(盘前/开始交易/日终结算)例外: runner 按首个事件锚定
+(``first_event_ns``)、按最后事件判定收尾(``last_event_ns``), 并在引擎开跑前
+等推送完成(``wait_until_pushed``), 使其与同数据回测一致。
 
 **不模拟成交**: 本 broker 只提供行情, ``trader_gateway=None``。
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Mapping, Sequence, Union
+import threading
+from typing import Any, Callable, List, Mapping, Optional, Sequence, Union
 
 from ....akquant import Bar, Tick
 from ....feed_adapter import DEFAULT_INPUT_TIMEZONE
@@ -122,6 +126,7 @@ class ReplayMarketGateway:
         )
         self.tick_callback: Callable[[dict[str, Any]], None] | None = None
         self.bar_callback: Callable[[dict[str, Any]], None] | None = None
+        self._pushed = threading.Event()
 
     @property
     def pending_events(self) -> List[Union[Bar, Tick]]:
@@ -133,6 +138,34 @@ class ReplayMarketGateway:
         """
         allowed = set(self._symbols)
         return [e for e in self._all_events if str(e.symbol) in allowed]
+
+    def first_event_ns(self) -> Optional[int]:
+        """当前订阅集下首个待推送事件的时间戳(纳秒); 无事件时为 ``None``.
+
+        runner 据此锚定 replay 的交易日生命周期(首个事件所属交易日的盘前/开始交易
+        在它之前触发, 同回测)。
+        """
+        pending = self.pending_events
+        return int(pending[0].timestamp) if pending else None
+
+    def last_event_ns(self) -> Optional[int]:
+        """当前订阅集下最后一个待推送事件的时间戳(纳秒); 无事件时为 ``None``.
+
+        runner 据此判定数据结束时是否已到该交易日收盘(到了才结算并触发
+        on_after_trading 再结束会话, 同回测)。
+        """
+        pending = self.pending_events
+        return int(pending[-1].timestamp) if pending else None
+
+    def wait_until_pushed(self, timeout: float | None = None) -> bool:
+        """等待 ``start()`` 把事件全部推入 feed(或推送中止), 返回是否已结束.
+
+        replay 的生命周期定时器落在历史时刻, 按墙钟恒已到期: 推送线程尚未推完时
+        feed 暂空, 引擎会先触发这些定时器(如末日收盘结算跑到当日行情之前)。
+        runner 在 ``engine.run()`` 之前调用本方法, 使引擎取下一动作时全部事件已在
+        feed 中, 定时器与行情按时间戳排序。
+        """
+        return self._pushed.wait(timeout)
 
     def connect(self) -> None:
         """no-op: 无外部连接."""
@@ -162,16 +195,20 @@ class ReplayMarketGateway:
 
         由 runner 在 daemon 线程上调用。异常只记日志后退出: 线程内向上抛无人
         接收, 会让回放静默中断而不留痕迹; ``duration`` 兜底避免主循环挂死。
+        结束(含中止)时置位 ``wait_until_pushed`` 等待的事件。
         """
-        for event in self.pending_events:
-            try:
-                if isinstance(event, Tick):
-                    self._feed.add_tick(event)
-                else:
-                    self._feed.add_bar(event)
-            except Exception:
-                logger.exception("replay 推送事件失败, 回放中止")
-                return
+        try:
+            for event in self.pending_events:
+                try:
+                    if isinstance(event, Tick):
+                        self._feed.add_tick(event)
+                    else:
+                        self._feed.add_bar(event)
+                except Exception:
+                    logger.exception("replay 推送事件失败, 回放中止")
+                    return
+        finally:
+            self._pushed.set()
 
 
 def build_replay_bundle(

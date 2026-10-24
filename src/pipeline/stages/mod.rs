@@ -731,6 +731,91 @@ mod tests {
     }
 
     #[test]
+    fn test_live_replay_close_ends_session_right_after_last_day_settles() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3), (1, 4)]);
+            engine.live_day_close_delay_ns = 0;
+            // replay 锚定 01-02 10:00; 最后事件 01-02 15:00 已到收盘
+            engine
+                .schedule_live_lifecycle_anchored(sh_ns(1, 2, 10, 0) - 1)
+                .unwrap();
+            assert!(
+                engine
+                    .set_live_replay_end(Some(sh_ns(1, 2, 15, 0)))
+                    .unwrap()
+            );
+            if let Some(close) = engine.live_replay_close.as_mut() {
+                close.last_event_seen = true;
+            }
+            let day2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+            let mut processor = DataProcessor::new();
+            let mut results = Vec::new();
+            for _ in 0..10 {
+                let result = processor.process(&mut engine, py, &strategy).unwrap();
+                let stop = result == crate::pipeline::ProcessorResult::Break;
+                results.push(result);
+                if stop {
+                    break;
+                }
+            }
+            assert_eq!(
+                results.last(),
+                Some(&crate::pipeline::ProcessorResult::Break),
+                "{results:?}"
+            );
+            assert_eq!(engine.last_settled_trading_day, Some(day2));
+            assert!(engine.live_replay_close.is_none());
+            // 结束前最后发出的是 01-02 的收盘后事件, 下一交易日的盘前未触发
+            match engine.current_event.as_ref() {
+                Some(crate::event::Event::Timer(t)) => assert_eq!(
+                    t.lifecycle(),
+                    Some((crate::model::timer::LIFECYCLE_AFTER_TRADING, day2))
+                ),
+                other => panic!("未发出收盘后事件: {other:?}"),
+            }
+            assert!(engine.timers.iter().any(|t| {
+                t.lifecycle().is_some_and(|(kind, d)| {
+                    kind == crate::model::timer::LIFECYCLE_PRE_OPEN
+                        && d == chrono::NaiveDate::from_ymd_opt(2024, 1, 3).unwrap()
+                })
+            }));
+        });
+    }
+
+    #[test]
+    fn test_live_replay_close_wait_times_out_and_ends_session() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            let day2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+            let mut state = crate::engine::core::LiveReplayClose::new(day2, sh_ns(1, 2, 15, 0));
+            state.last_event_seen = true;
+            engine.live_replay_close = Some(state);
+            // 最后事件已处理、行情已取空: 开始计时(5 秒), 本轮不结束
+            let mut processor = DataProcessor::new();
+            let before = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+            let result = processor.process(&mut engine, py, &strategy).unwrap();
+            assert_ne!(result, crate::pipeline::ProcessorResult::Break);
+            let deadline = engine
+                .live_replay_close
+                .and_then(|c| c.deadline_ns)
+                .expect("应开始计时");
+            assert!(deadline >= before + crate::engine::core::LiveReplayClose::WAIT_NS);
+            // 超时未结算: 告警并结束, 不结算
+            if let Some(close) = engine.live_replay_close.as_mut() {
+                close.deadline_ns = Some(before);
+            }
+            let result = processor.process(&mut engine, py, &strategy).unwrap();
+            assert_eq!(result, crate::pipeline::ProcessorResult::Break);
+            assert!(engine.live_replay_close.is_none());
+            assert_eq!(engine.last_settled_trading_day, None);
+        });
+    }
+
+    #[test]
     fn test_live_no_event_day_settles_by_calendar_close_timer() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {

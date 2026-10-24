@@ -961,6 +961,31 @@ class Engine:
         """
         ...
 
+    def _set_live_lifecycle_anchor(self, ts_ns: typing.Optional[int]) -> None:
+        r"""
+        设置实盘生命周期锚点(框架内部接口, replay 用).
+
+        ``run_live(broker="replay")`` 在 ``run()`` 之前按首个回放事件下发(首个事件
+        - 1ns)。设置后 ``run()`` 用 ``min(墙钟, 锚点)`` 代替墙钟排程交易日生命周期,
+        且锚点所属交易日早于锚点的 pre_open / before_trading 照常登记。真实实盘不设。
+
+        :param ts_ns: 锚点(纳秒, UTC epoch); ``None`` 清除
+        """
+        ...
+
+    def _set_live_replay_end(self, last_event_ns: typing.Optional[int]) -> bool:
+        r"""
+        声明 replay 最后一个事件的时刻并判定数据结束时是否收尾结算(框架内部接口).
+
+        最后事件已到其所属交易日的会话收盘时返回 ``True``: 引擎在最后事件处理完后
+        等该日收盘定时器结算并派发 on_after_trading, 然后自行结束会话(行情已取空后
+        等待超过 5 秒则告警并结束)。否则返回 ``False``, 末日不结算(同回测)。
+
+        :param last_event_ns: 最后一个回放事件的时间戳(纳秒); ``None`` 清除
+        :return: 是否等待末日结算后结束
+        """
+        ...
+
     def set_lifecycle_hooks_dispatch(
         self, pre_open: bool, before_trading: bool, after_trading: bool
     ) -> None:

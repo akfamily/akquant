@@ -3,7 +3,8 @@
 此前 ``on_pre_open`` 的框架定时器依据只在回测填充的 ``_trading_day_bounds``
 生成, 实盘恒为空, 于是框架在实盘告警"on_pre_open 不会触发"。现在盘前事件由
 引擎按交易日历生成(``__akq_lifecycle__|pre_open|<交易日>``, 实盘按墙钟排程,
-排程公式见 Rust ``Engine::schedule_lifecycle`` 的单测), 回测与实盘同一路径。
+replay 锚定首个回放事件; 排程公式见 Rust ``Engine::schedule_lifecycle`` 的单测),
+回测与实盘同一路径。
 """
 
 import logging
@@ -15,6 +16,8 @@ import pytest
 from akquant import Strategy
 from akquant.akquant import AssetType, Bar, Instrument
 
+_PRE_OPEN_INSTANCES: List["_PreOpen"] = []
+
 
 class _PreOpen(Strategy):
     """重写 on_pre_open 的策略."""
@@ -23,6 +26,7 @@ class _PreOpen(Strategy):
         """初始化."""
         super().__init__()
         self.pre_open_events: List[Dict[str, Any]] = []
+        _PRE_OPEN_INSTANCES.append(self)
 
     def on_pre_open(self, event: Dict[str, Any]) -> None:
         """盘前决策."""
@@ -68,10 +72,8 @@ def test_live_replay_pre_open_no_longer_warns(
 ) -> None:
     """实盘 replay 跑完一段会话: 不再出现旧的"实盘下 on_pre_open 不会触发"告警.
 
-    注意 replay 下 on_pre_open / on_before_trading 实际并不触发: 实盘生命周期按墙钟
-    排程(当前或下一交易日), 而 replay 推送的是历史 bar, 墙钟交易日的盘前时点在
-    会话内到不了。replay 按行情时间驱动生命周期留给阶段 7。这里只断言旧告警
-    (精确原文)已删除; 新的"墙钟不在交易日历内"告警措辞不同, 不影响本断言。
+    replay 的生命周期锚定首个回放事件所属交易日(同回测): 01-02 的 on_pre_open
+    在首根 bar 之前触发一次。旧告警(精确原文)已删除。
     """
     from akquant import run_live
 
@@ -90,6 +92,7 @@ def test_live_replay_pre_open_no_longer_warns(
         "Asia/Shanghai"
     )
     bars = [Bar(int(t.value), 10.0, 10.0, 10.0, 10.0, 100.0, "600000") for t in idx]
+    _PRE_OPEN_INSTANCES.clear()
     with caplog.at_level(logging.WARNING):
         run_live(
             strategy_cls=_PreOpen,
@@ -103,3 +106,6 @@ def test_live_replay_pre_open_no_longer_warns(
         )
     text = " ".join(record.getMessage() for record in caplog.records)
     assert "实盘下 on_pre_open 不会触发" not in text, text
+    assert len(_PRE_OPEN_INSTANCES) == 1
+    dates = [str(e["trading_date"]) for e in _PRE_OPEN_INSTANCES[0].pre_open_events]
+    assert dates == ["2024-01-02"], dates

@@ -106,6 +106,8 @@ _LEGACY_GATEWAY_OPTION_KEYS = LEGACY_GATEWAY_OPTION_KEYS
 _DEFAULT_RECOVERY_TICK_SEC = 1.0
 _DEFAULT_RECOVERY_ACCOUNT_SEC = 5.0
 _DEFAULT_RECOVERY_SYNC_SEC = 30.0
+# replay: engine.run() 之前等推送线程推完全部行情的上限(秒), 见 _await_replay_pushed
+_REPLAY_PUSH_WAIT_SECONDS = 60.0
 
 #: `_closed_broker_order_ids` 会话级有界 FIFO 上限。它只需要覆盖"委托进终态
 #: 之后还会收到多久的后续回报"这个时间窗(内置 broker 是同一 payload 成对
@@ -743,6 +745,9 @@ class LiveRunner:
         # 建好, 但策略的 on_start(里面才调 subscribe)要等到 engine.run() 才触发,
         # 所以只能存下网关引用, 到 subscribe 发生的当刻再运行期下发。
         self._market_gateway = bundle.market_gateway
+        # replay: 生命周期锚定首个回放事件、按最后事件判定收尾(同回测), 须在
+        # engine.run() 之前下发; 真实行情源不设, 生命周期仍按墙钟。
+        replay_awaits_close = self._configure_replay_lifecycle(bundle)
 
         if bundle.market_gateway is not None:
             logger.info(
@@ -867,6 +872,7 @@ class LiveRunner:
                 strategy_instance,
                 bounded_total,
                 list(slot_strategy_instances.values()),
+                await_day_close=replay_awaits_close,
             )
 
         # 外部信号端口: 必须在 engine.run() 之前取。run() 会独占可变借用引擎对象,
@@ -884,6 +890,7 @@ class LiveRunner:
         configure_engine_lifecycle_dispatch(
             self.engine, [strategy_instance, *slot_strategy_instances.values()]
         )
+        self._await_replay_pushed(bundle)
 
         logger.info(
             "Running live strategy loop",
@@ -2848,11 +2855,67 @@ class LiveRunner:
                         ),
                     )
 
+    def _is_replay_market(self) -> bool:
+        market_key = (
+            getattr(self, "market_broker", None) or getattr(self, "broker", "") or ""
+        )
+        return str(market_key).strip().lower() == "replay"
+
+    def _configure_replay_lifecycle(self, bundle: Any) -> bool:
+        """Replay 的交易日生命周期按回测语义, 返回数据结束时是否等末日结算.
+
+        - 锚定首个回放事件(``first_event_ns() - 1``): 引擎按它所属交易日排程,
+          该日盘前/开始交易在首个事件之前触发; 墙钟当日不排。
+        - 最后事件已到其交易日收盘时, 引擎在最后事件后等该日收盘定时器结算、
+          派发 on_after_trading 再自行结束会话(返回 ``True``, 有界计数不再在
+          最后事件后中断); 否则末日不结算(同回测数据在盘中结束)。
+
+        真实行情源不调用, 生命周期仍按墙钟。引擎或网关缺对应接口(替身)时跳过。
+        """
+        if not self._is_replay_market():
+            return False
+        gateway = bundle.market_gateway
+        first_event_ns = getattr(gateway, "first_event_ns", None)
+        last_event_ns = getattr(gateway, "last_event_ns", None)
+        if not callable(first_event_ns) or not callable(last_event_ns):
+            return False
+        first = first_event_ns()
+        last = last_event_ns()
+        set_anchor = getattr(self.engine, "_set_live_lifecycle_anchor", None)
+        if first is not None and callable(set_anchor):
+            set_anchor(int(first) - 1)
+        set_end = getattr(self.engine, "_set_live_replay_end", None)
+        if last is not None and callable(set_end):
+            return bool(set_end(int(last)))
+        return False
+
+    def _await_replay_pushed(self, bundle: Any) -> None:
+        """replay: engine.run() 之前等推送线程把事件全部推入 feed.
+
+        replay 的生命周期定时器落在历史时刻, 按墙钟恒已到期; feed 暂空时引擎会
+        先触发它们(末日收盘结算可能跑到当日行情之前)。推送是内存操作, 正常很快;
+        超时只告警(会话照常开始, 生命周期可能与回测不一致)。
+        """
+        if not self._is_replay_market():
+            return
+        wait = getattr(bundle.market_gateway, "wait_until_pushed", None)
+        if not callable(wait):
+            return
+        if not wait(_REPLAY_PUSH_WAIT_SECONDS):
+            logger.warning(
+                "replay 推送线程 %s 秒内未把行情全部推入，会话照常开始；"
+                "交易日生命周期（盘前/日终结算）可能早于对应行情触发。"
+                "请减少单次回放的数据量",
+                _REPLAY_PUSH_WAIT_SECONDS,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+
     def _apply_bounded_event_limit(
         self,
         strategy: Any,
         total_events: int,
         slot_strategies: Sequence[Any] = (),
+        await_day_close: bool = False,
     ) -> None:
         """让有界 live 会话在收到 ``total_events`` 个行情事件后自行结束.
 
@@ -2882,7 +2945,13 @@ class LiveRunner:
         到它), 但中断要等**最后一个** slot 处理完第 N 个事件才抛——否则会话在
         主策略处理完最后一根 bar 时就结束, 后面的 slot 永远收不到它。
 
+        replay 数据结束时最后事件已到其交易日收盘(``await_day_close=True``, 见
+        ``_configure_replay_lifecycle``): 最后事件后不中断, 由引擎等该日收盘定时器
+        结算并派发 on_after_trading 后自行结束(超时 5 秒告警并结束), 与回测一样
+        触发末日日终。计数仍照常累计。
+
         :param slot_strategies: 按派发顺序排列的其余 slot 策略
+        :param await_day_close: 最后事件后是否交给引擎等末日结算再结束
         """
         if total_events <= 0:
             return
@@ -2902,7 +2971,7 @@ class LiveRunner:
             def wrapped(event: Any, ctx: Any) -> Any:
                 # 先处理完本事件再判断, 使第 N 个事件不被截断。
                 result = original(event, ctx)
-                if state["count"] >= total_events:
+                if state["count"] >= total_events and not await_day_close:
                     raise KeyboardInterrupt(
                         f"bounded live session complete: {total_events} events"
                     )
