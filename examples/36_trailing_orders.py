@@ -94,6 +94,9 @@ def run_example() -> None:
     up = np.linspace(100, 112, 140)
     down = np.linspace(112, 96, 80)
     prices = np.concatenate([up, down]) + np.random.normal(0, 0.15, 220)
+    # 价格按 tick_size(0.01) 取整: 跟踪止损触发价 = 参考价 - 偏移, 须对齐 tick,
+    # 否则股票撮合会拒单
+    prices = np.round(prices, 2)
     df = pd.DataFrame(
         {
             "open": prices,

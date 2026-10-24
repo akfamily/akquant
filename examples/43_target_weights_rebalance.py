@@ -25,9 +25,12 @@ def _build_symbol_df(
 
 
 def make_data() -> dict[str, pd.DataFrame]:
-    """Build deterministic multi-symbol demo data."""
+    """Build deterministic multi-symbol demo data.
+
+    只有日期(本地 0 点)的日线: 引擎改写到交易日收盘 15:00。
+    """
     timestamps = list(
-        pd.date_range("2024-01-02 10:00:00", periods=6, freq="B", tz="Asia/Shanghai")
+        pd.date_range("2024-01-02", periods=6, freq="B", tz="Asia/Shanghai")
     )
     return {
         "AAA": _build_symbol_df(

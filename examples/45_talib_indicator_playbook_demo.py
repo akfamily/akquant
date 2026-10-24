@@ -182,6 +182,8 @@ def run_example(
         print("playbook_data_source=akshare")
     else:
         df = build_demo_data(length=synthetic_length)
+        # 合成数据的标的名随 --symbol, 否则回测订阅的标的收不到任何行情
+        df["symbol"] = symbol
         print("playbook_data_source=synthetic")
 
     result = aq.run_backtest(

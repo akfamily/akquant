@@ -91,13 +91,10 @@ class OnTimerMomentumRotationStrategy(Strategy):
             scores[symbol] = (end - start) / start
         if not scores:
             return
-        selected = self.rebalance_to_topn(
-            scores=scores,
-            top_n=1,
-            weight_mode="score",
-            long_only=False,
-            liquidate_unmentioned=True,
-        )
+        # 目标仓位取 95%：满仓（100%）时佣金使所需资金超过可用资金，买单会被风控拒绝。
+        best_symbol = max(scores, key=lambda symbol: scores[symbol])
+        self.rebalance_weights({best_symbol: 0.95}, liquidate_unmentioned=True)
+        selected = [best_symbol]
         self.log(f"on_timer action=rebalance selected={selected}")
 
 
