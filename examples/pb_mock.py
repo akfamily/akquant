@@ -114,10 +114,27 @@ class WalkForwardStrategy(Strategy):
             pass
 
 
+def a_share_minute_index(start: str, periods: int) -> pd.DatetimeIndex:
+    """从 start 起逐个工作日生成 A 股连续竞价时段的 1 分钟 bar 时间戳.
+
+    时间戳是 bar 区间终点: 上午 09:31-11:30、下午 13:01-15:00, 每日 240 根。
+    """
+    days = pd.bdate_range(start, periods=periods // 240 + 1)
+    stamps = [
+        ts
+        for day in days
+        for begin, end in (("09:31", "11:30"), ("13:01", "15:00"))
+        for ts in pd.date_range(
+            f"{day.date()} {begin}", f"{day.date()} {end}", freq="1min"
+        )
+    ]
+    return pd.DatetimeIndex(stamps[:periods])
+
+
 if __name__ == "__main__":
     # 1. 生成合成数据
     print("生成测试数据...")
-    dates = pd.date_range(start="2023-01-01", periods=500, freq="1min")
+    dates = a_share_minute_index("2023-01-03", 500)
     # 随机漫步价格
     price = 100 + np.cumsum(np.random.randn(500))
     df = pd.DataFrame(
