@@ -3,6 +3,7 @@
 This chapter is currently maintained in Chinese first.
 
 - Chinese chapter: [第 8 章：期权定价与波动率策略](../../zh/textbook/08_options.md)
+- Expiry note: expiry is settled in the day-end settlement at the close of the expiry date (`on_expiry` arrives at the `on_after_trading` point); the end-of-session catch-up settlement only applies when data stops mid-day. `sessions` and `trading_calendar` are saved with checkpoints.
 - Textbook home: [Chinese textbook index](../../zh/textbook/index.md)
 - Practice links:
   - Primary example: [examples/textbook/ch08_options.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch08_options.py)

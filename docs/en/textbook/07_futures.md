@@ -3,6 +3,7 @@
 This chapter is currently maintained in Chinese first.
 
 - Chinese chapter: [第 7 章：期货市场与衍生品策略](../../zh/textbook/07_futures.md)
+- Session note: the primary example passes `sessions={"rb": "CN_FUTURES_NIGHT_23"}`. Night sessions belong to the next trading day (Friday night belongs to the following Monday) and settlement runs at the 15:00 close. In custom schedules `"prev"` anchors to the previous trading day (not calendar day), so a CME-style Sunday-evening open cannot be expressed; use `ALWAYS_OPEN` for round-the-clock trading.
 - Textbook home: [Chinese textbook index](../../zh/textbook/index.md)
 - Practice links:
   - Primary example: [examples/textbook/ch07_futures.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch07_futures.py)
@@ -21,7 +22,7 @@ This chapter is currently maintained in Chinese first.
 - Trading sessions are no longer configured here (`enforce_sessions` / `session_profile` / `sessions` were removed and raise a migration `TypeError`); use `run_backtest(sessions=...)`, e.g. `sessions={"rb": "CN_FUTURES_NIGHT_23"}`, or `sessions={"default": "ALWAYS_OPEN"}` for no session constraint
   - Keys match by symbol prefix (longest prefix wins; exchange-qualified keys such as `shfe.au` work), `"default"` is the global default; keys must be non-empty and unique after trimming and lower-casing (`"RB"` together with `"rb"` is rejected)
   - Besides a template name, a value can be a custom schedule: a sequence of `(start, end, session[, anchor])`, e.g. `sessions={"xx": [("21:00", "02:30", "continuous"), ("09:00", "11:30", "continuous"), ("13:30", "15:00", "continuous")]}`. `start` / `end` must be strict two-digit `HH:MM` (`"9:30"` is rejected, write `"09:30"`); `session` is one of `continuous` / `opening_auction` / `auction_hold` / `closing_auction` / `break` / `post_close`; anything outside the segments is closed, so never write `closed`
-  - Anchoring: without a 4th item, segments with `start >= "18:00"` are the previous trading day's night session and the rest belong to the trading day itself; override with `"prev"` / `"day"`. `end <= start` means crossing midnight and is only allowed for night segments; segments must not overlap within one anchor, nor once night segments are laid onto the trading day
+  - Anchoring: without a 4th item, segments with `start >= "18:00"` are the previous trading day's night session and the rest belong to the trading day itself; override with `"prev"` / `"day"`. `"prev"` means the previous trading day, not the previous calendar day; use `ALWAYS_OPEN` for round-the-clock trading. `end <= start` means crossing midnight and is only allowed for night segments; segments must not overlap within one anchor, nor once night segments are laid onto the trading day
   - Without `trading_calendar`, a custom schedule defaults to a weekday calendar (holidays are not known; pass a trading-day list when it matters)
   - An option not matched by any `sessions` prefix follows the schedule of its `underlying_symbol` when that is a registered future (a night template for `rb` also applies to RB options); otherwise it uses `CN_OPTION`
 

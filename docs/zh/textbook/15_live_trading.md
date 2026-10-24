@@ -164,7 +164,12 @@ run_live(
    `trading_mode="broker_live"`；撮合由 paper 模式的模拟执行后端负责。
 2. **不覆盖 timer 语义**。回放数据带历史时间戳，而实盘引擎按墙钟判定 timer 到期，
    两条时间线错位——`on_timer` / `schedule_daily` 在回放会话中的行为不作保证，
-   要验证定时任务请用回测。
+   要验证定时任务请用回测。交易日生命周期是例外：`on_pre_open`、`on_before_trading`、
+   日终结算与 `on_after_trading` 锚定首个回放事件所属的交易日排程，与同数据回测一致；
+   数据到达交易日收盘时，会话等该日结算、派发 `on_after_trading` 后再结束（数据在盘中
+   结束则末日不结算，同回测）。只有日期的数据同样改写到交易日收盘时刻。需要模拟行情
+   源报告的交易日（如 CTP 的 `TradingDay`）时，用 `gateway_options["trading_day_hints"]`
+   传入 `(ts_ns, date)` 列表。live_server 默认的 replay 会话会在 09:14:59 触发 `on_pre_open`。
 3. **非正时间戳会被引擎静默丢弃**，导致声明的事件总数永远达不到、会话挂死。常见
    诱因是日期列存在无法解析的值（产出 `NaT` 进而变成非正时间戳）。构建期已有校验，
    但数据源不完全受控时，仍建议显式传 `duration` 兜底。

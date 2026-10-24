@@ -31,7 +31,7 @@ python examples/textbook/ch07_futures_functional.py
 
 验收要点：
 
-1. 脚本能够完成期货回测并输出收益与风险指标。
+1. 脚本能够完成期货回测并输出收益与风险指标；示例通过 `sessions={"rb": "CN_FUTURES_NIGHT_23"}` 为螺纹钢指定夜盘时段，数据只有日期，会改写到交易日 15:00 收盘，所以结果与不传 `sessions` 时相同。
 2. 结果中可体现保证金与杠杆对权益波动的放大效应。
 3. 调整合约参数或杠杆后，策略波动率变化符合预期。
 4. 日志里能看到至少一次"趋势反转"，且 `MA=` 后是真实数值而非 `nan`。
@@ -104,7 +104,7 @@ config = BacktestConfig(
 - 交易时段不再由 `ChinaFuturesConfig` 配置（`enforce_sessions` / `session_profile` / `sessions` 已删除，传入会报带迁移方法的 `TypeError`），改用 `run_backtest(sessions=...)`：按品种前缀指定时段模板，如 `sessions={"rb": "CN_FUTURES_NIGHT_23"}`；可选模板有 `CN_FUTURES_DAY`(商品日盘) / `CN_FUTURES_CFFEX_STOCK_INDEX_DAY` / `CN_FUTURES_CFFEX_BOND_DAY` / `CN_FUTURES_NIGHT_23 / CN_FUTURES_NIGHT_01 / CN_FUTURES_NIGHT_0230`；不受时段约束用 `sessions={"default": "ALWAYS_OPEN"}`
   - `sessions` 的键按代码前缀匹配（更长前缀优先，可带交易所前缀如 `shfe.au`），`"default"` 为全局默认；键去空格、转小写后不得重复（如同时写 `"RB"` 与 `"rb"` 会报错），也不能为空
   - 值除模板名外，也可以写自定义时段表：段序列 `(start, end, session[, anchor])`，如 `sessions={"xx": [("21:00", "02:30", "continuous"), ("09:00", "11:30", "continuous"), ("13:30", "15:00", "continuous")]}`。`start` / `end` 须为严格两位的 `HH:MM`（`"9:30"` 会报错，应写 `"09:30"`）；`session` 取 `continuous` / `opening_auction` / `auction_hold` / `closing_auction` / `break` / `post_close`，段外即闭市，不要写 `closed`
-  - 锚定规则：未写第 4 项时，`start >= "18:00"` 的段视为前一交易日的夜盘，其余段属交易日当天；可用第 4 项 `"prev"` / `"day"` 显式指定。`end <= start` 表示跨午夜，只允许夜盘段；同一锚定内、夜盘展开后与当日段之间都不得重叠
+  - 锚定规则：未写第 4 项时，`start >= "18:00"` 的段视为前一交易日的夜盘，其余段属交易日当天；可用第 4 项 `"prev"` / `"day"` 显式指定。`"prev"` 锚定的是前一**交易日**而非前一自然日，所以周一交易日的夜盘段落在周五晚上；CME 式“周日晚开盘”这类按自然日锚定的时段写不出来。全天交易请直接用 `ALWAYS_OPEN`，不要手写 `00:00-24:00`。`end <= start` 表示跨午夜，只允许夜盘段；同一锚定内、夜盘展开后与当日段之间都不得重叠
   - 自定义时段表未配置 `trading_calendar` 时，缺省日历为工作日（节假日会算错，需要精确时传交易日列表）
   - 期权未被 `sessions` 前缀匹配时，若其 `underlying_symbol` 是已登记的期货，跟随该期货的时段表（如给 `rb` 配了夜盘模板，RB 期权也按夜盘）；否则用 `CN_OPTION`
 
@@ -145,7 +145,7 @@ $$ \text{Leverage} = \frac{1}{\text{Margin Ratio}} $$
 
 A 股股票是 T+1 交收，而期货实行**T+0 交易**和**每日无负债结算 (Daily Mark-to-Market)**。交易所每日根据**结算价 (Settlement Price)**（通常为当日成交量加权平均价）计算盈亏，并划转资金。
 
-在 `AKQuant` 回测引擎中，为了简化模型，通常采用**收盘价**近似结算价进行每日权益计算，但在实盘模块中必须严格对接交易所结算单。
+在 `AKQuant` 回测引擎中，为了简化模型，通常采用**收盘价**近似结算价进行每日权益计算，但在实盘模块中必须严格对接交易所结算单。日终结算发生在交易日收盘时刻（商品期货 15:00），结算价取收盘时刻的最新价；有夜盘的品种，15:00 结算之后、21:00 起的夜盘已属下一交易日。
 
 ## 7.2 期限结构与主力合约 (Term Structure)
 
@@ -298,6 +298,7 @@ $$ 1 \text{大豆} \approx 0.18 \text{豆油} + 0.8 \text{豆粕} $$
 1.  **夜盘交易 (Night Trading)**：
     *   大多数活跃品种（黄金、原油、螺纹钢）都有夜盘（21:00 - 23:00 或 02:30）。
     *   **策略启示**：外盘（如 COMEX 黄金、LME 铜）的波动主要发生在夜间，必须在夜盘时段保持策略在线。
+    *   **在 AKQuant 中**：用 `sessions={"rb": "CN_FUTURES_NIGHT_23"}` 这类模板为有夜盘的品种指定时段（本章主示例即如此）。夜盘归下一交易日：周一 21:00 的成交属周二，周五夜盘属下周一；`ctx.trading_day` 与日终结算都按这个口径。
 
 2.  **涨跌停板与扩板**：
     *   期货的涨跌停板通常比股票窄（如 4%-8%）。

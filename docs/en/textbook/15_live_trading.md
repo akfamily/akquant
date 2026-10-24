@@ -3,6 +3,7 @@
 This chapter is currently maintained in Chinese first.
 
 - Chinese chapter: [第 15 章：实盘交易系统与运维](../../zh/textbook/15_live_trading.md)
+- Replay note: `broker="replay"` does not cover timer semantics, except the trading-day lifecycle, which is anchored to the first replayed event (matching a backtest); when data reaches the close the session ends after that day's settlement. Use `gateway_options["trading_day_hints"]` to simulate feed-reported trading days. live_server's default replay session fires `on_pre_open` at 09:14:59.
 - Textbook home: [Chinese textbook index](../../zh/textbook/index.md)
 - Live execution semantics note:
   - CTP supports `execution_semantics_mode` with `strict` (default) and `compatible`.

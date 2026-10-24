@@ -186,8 +186,8 @@ result = aq.run_backtest(
 
 最重要的时序判断：
 
-*   不要把 `on_before_trading` 当成“稳定早于 `on_pre_open` 的同日准备阶段”。
-*   更稳妥的做法是：前一交易日用 `on_timer` 或 `on_after_trading` 先准备，下一交易日进入 `on_pre_open` 时再执行。
+*   同一交易日内，`on_pre_open` 一定先于 `on_before_trading`：前者在交易日首个时段开始前 1ns（A 股 09:15 前，即 09:14:59.999…），后者在连续竞价开始后 1ns（09:30:00 之后）。所以 `on_before_trading` 不能用来给同日的 `on_pre_open` 做准备。
+*   需要提前准备时：前一交易日用 `on_timer` 或 `on_after_trading` 先准备，下一交易日进入 `on_pre_open` 时再执行。
 
 教材建议直接记住下面这条经验法则：
 
@@ -353,7 +353,7 @@ risk_config = RiskConfig(
 - `borrowed_cash`: 融资负债
 - `short_market_value`: 空头市值
 - `maintenance_ratio`: 维持担保比例
-- `accrued_interest` / `daily_interest`: 累计与当日计息
+- `accrued_interest` / `daily_interest`: 累计计息与本次结算计息（按两次结算之间的自然日天数计提，周五到周一计 3 天）
 
 ```python
 snap = self.get_account()
@@ -858,9 +858,9 @@ def on_expiry(self, event):
 
 很多初学者会把盘前准备、日终归档、交易日调仓都写进 `on_bar`。这在简单脚本里能跑，但一旦进入多标的、多 session、live/backtest 复用的场景，就容易变得难维护。更稳妥的做法是把逻辑写在对应的框架边界回调里：
 
-*   `on_before_trading(trading_date, timestamp)`: 本地交易日首次进入 `Normal` 会话时触发，适合做盘前检查、生成交易日级候选池，以及基于前一交易日信息的横截面准备与统一调仓。
+*   `on_before_trading(trading_date, timestamp)`: 交易日最早的连续竞价开始后 1ns 触发（A 股 09:30；有夜盘的期货交易日从前一交易日夜盘开始，周一交易日在周五 21:00 触发），适合做盘前检查、生成交易日级候选池，以及基于前一交易日信息的横截面准备与统一调仓。
 *   `on_cross_section(trading_date, timestamp)`: 在框架见到当日首个“跨标的完整 bar 切片”后触发，适合依赖当日 bar 和当前账户快照做横截面同周期调仓。
-*   `on_after_trading(trading_date, timestamp)`: 离开 `Normal` 会话时触发，适合做日终归档、统计与报告。
+*   `on_after_trading(trading_date, timestamp)`: 交易日日终结算完成后触发（此时 T+1 已解冻、当日 Day 单已过期，其中下的单属下一交易日；回测数据在盘中结束、当日未结算时不触发），适合做日终归档、统计与报告。
 *   `on_portfolio_update(snapshot)`: 当账户权益、现金或持仓相关估值发生变化时增量触发，适合驱动监控面板。
 *   `on_reject(order)`: 当订单首次进入 `Rejected` 时触发，适合做拒单分类、重试和人工告警。
 *   `on_error(error, source, payload)`: 当用户回调抛异常时触发，可统一记录来源并决定是否继续。

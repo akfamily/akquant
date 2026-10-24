@@ -146,7 +146,14 @@ symbols. The session ends on its own once the data is exhausted.
   timestamps, while the live engine judges timer expiry against the wall
   clock, so the two timelines inevitably diverge. The behavior of `on_timer` /
   `schedule_daily` in a replay session is not guaranteed; use backtesting to
-  verify scheduled tasks.
+  verify scheduled tasks. The trading-day lifecycle is the exception: pre-open,
+  start of trading, day-end settlement and `on_after_trading` are anchored to the
+  trading day of the first replayed event, matching a backtest on the same data;
+  when the data reaches the session close, the session ends after that day's
+  settlement. Date-only data is rewritten to the trading-day close. Use
+  `gateway_options["trading_day_hints"]` (a list of `(ts_ns, date)`) to simulate
+  trading days reported by the feed. live_server's default replay session fires
+  `on_pre_open` at 09:14:59.
 - A multi-symbol DataFrame needs a `股票代码` column, otherwise it degrades to
   a single symbol. For multi-symbol scenarios, prefer `list[Bar]` directly.
 - Self-termination depends on every event's timestamp being positive:

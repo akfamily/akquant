@@ -493,7 +493,7 @@ result.viz.report(filename="report_margin.html", show=False)
 
 The generated report includes:
 
-*   Forced liquidation audit table (date, symbols, priority, daily interest)
+*   Forced liquidation audit table (date, symbols, priority, interest of this settlement, accrued over the calendar days between two settlements, e.g. 3 days from Friday to Monday)
 *   Daily liquidation charts in the risk chart area (shown when data exists)
 
 ## 5. Advanced Learning
