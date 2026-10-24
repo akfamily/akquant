@@ -563,8 +563,9 @@ class BarAggregator:
         r"""
         创建 K 线合成器.
 
-        封闭的 bar 恒用区间终点戳(下一区间起点 - 1ns), 并带 ``interval_start``
-        (本区间起点 - 1ns), 实盘与回测同一口径。
+        按右闭区间 ``(S, E]`` 分桶(恰在整分 ``E`` 的 tick 属于以 ``E`` 结尾的
+        bar), 封闭的 bar 恒用区间终点戳 ``timestamp = E``, 并带
+        ``interval_start = S``, 实盘与回测同一口径。
 
         :param feed: 数据源 (合成的 Bar 将添加到此数据源)
         :param interval_min: K 线周期 (分钟, 默认 1 分钟)
@@ -594,8 +595,8 @@ class BarAggregator:
         r"""
         封闭已到期的在形成 bar 并推入数据源.
 
-        区间终点 + ``grace_ns`` ≤ ``now_ns`` 的 bar 被封闭推出。之后到达的
-        同区间 tick 视为迟到: 不参与 OHLC, 量计入下一根。
+        区间终点 ``E`` + ``grace_ns`` ≤ ``now_ns`` 的 bar 被封闭推出。之后到达的
+        同区间 tick(含恰在 ``E`` 的)视为迟到: 不参与 OHLC, 量计入下一根。
 
         :param now_ns: 当前时刻 (纳秒)
         :param grace_ns: 区间结束后的宽限期 (纳秒, 默认 2 秒)

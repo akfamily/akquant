@@ -181,9 +181,11 @@ def timestamp_ms_from_ns(timestamp_ns: int) -> int:
 def bar_end_ns(timestamp_ns: int, interval_start_ns: Optional[int]) -> int:
     """返回 bar 的区间终点(UTC 纳秒), 与 Rust ``window.rs::bar_end`` 同规则.
 
-    tick 合成的 bar 用终点戳(下一区间起点 - 1ns)并带 ``interval_start``; 其
-    区间终点为 ``timestamp + 1``。仅当 ``interval_start`` 非空、早于时间戳且
-    ``timestamp + 1`` 是整秒时取 ``timestamp + 1``, 其余(含区间未知)原样返回,
+    ``BarAggregator`` 合成的 bar 按右闭区间 ``(S, E]`` 打终点戳 ``timestamp = E``
+    (整分)、``interval_start = S``, 走"原样返回"分支, 终点就是 ``timestamp``。
+    旧口径(下一区间起点 - 1ns、``interval_start`` 为起点 - 1ns, 如旧存档或外部
+    数据)的区间终点为 ``timestamp + 1``: 仅当 ``interval_start`` 非空、早于时间戳
+    且 ``timestamp + 1`` 是整秒时取 ``timestamp + 1``, 其余(含区间未知)原样返回,
     不做推断。
     """
     ts = int(timestamp_ns)

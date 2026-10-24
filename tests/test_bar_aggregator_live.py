@@ -20,7 +20,7 @@ def test_stamp_false_is_rejected_with_migration_hint() -> None:
 def test_flush_due_and_late_tick_count_exposed_to_python() -> None:
     """Python 侧可调用 flush_due 与 late_tick_count."""
     agg = BarAggregator(DataFeed(), 1, volume_is_cumulative=False)
-    agg.on_tick("X", 10.0, 1.0, 60 * S)
+    agg.on_tick("X", 10.0, 1.0, 61 * S)  # 右闭: (60s, 120s]
     assert agg.flush_due(122 * S) == 1
     agg.on_tick("X", 10.5, 1.0, 119 * S)
     assert agg.late_tick_count("X") == 1
@@ -89,7 +89,8 @@ def test_ctp_bar_only_emits_end_stamped_bars(monkeypatch: pytest.MonkeyPatch) ->
 
     t0 = pd.Timestamp("2024-01-02 09:31:00", tz="Asia/Shanghai").value
     minute = 60 * S
-    clock = iter([t0, t0 + 30 * S, t0 + minute + 5 * S])
+    # 右闭分桶: 09:31:01 与 09:31:30 属于 (09:31, 09:32], 09:32:05 封闭它
+    clock = iter([t0 + S, t0 + 30 * S, t0 + minute + 5 * S])
     monkeypatch.setattr(native, "HAS_OPENCTP", True)
     monkeypatch.setattr(native.time, "time_ns", lambda: next(clock))
     feed = DataFeed()
@@ -116,4 +117,4 @@ def test_ctp_bar_only_emits_end_stamped_bars(monkeypatch: pytest.MonkeyPatch) ->
 
     _Recorder.stamps = []
     run_backtest(strategy=_Recorder, data=feed, symbols=["rb2401"], initial_cash=1e5)
-    assert _Recorder.stamps == [(t0 + minute - 1, t0 - 1)]
+    assert _Recorder.stamps == [(t0 + minute, t0)]

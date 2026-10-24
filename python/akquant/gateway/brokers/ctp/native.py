@@ -1001,10 +1001,11 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         self.emit_ticks = emit_ticks
         self.emit_bars = emit_bars
 
-        # 实盘与回测统一终点戳: 合成 bar 的 timestamp 为区间终点(下一区间
-        # 起点 - 1ns)并带 interval_start, 只出 bar 与双流同一口径。双流下这
-        # 也保证 bar 与 tick 混推时间戳不倒退(实盘无 sort 兜底, 见
-        # OnRtnDepthMarketData 里的顺序注释)。
+        # 实盘与回测统一终点戳: 合成 bar 按右闭区间 (S, E] 分桶, timestamp 为
+        # 区间终点 E 并带 interval_start=S, 只出 bar 与双流同一口径。双流下这
+        # 也保证 bar 与 tick 混推时间戳不倒退: 恰在 E 的 tick 只并入在形成
+        # bar, bar 要等下一区间(> E)的 tick 到达或补发才推出, 故总在 E 处
+        # tick 之后(实盘无 sort 兜底, 见 OnRtnDepthMarketData 里的顺序注释)。
         self.aggregator: Optional[BarAggregator] = None
         if self.emit_bars:
             self.aggregator = BarAggregator(feed)

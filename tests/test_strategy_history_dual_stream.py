@@ -20,7 +20,8 @@ def _dual_stream_feed() -> DataFeed:
         feed, 1, volume_is_cumulative=False, stamp_bar_at_interval_end=True
     )
     for i in range(40):
-        timestamp = T0 + 15_000_000_000 * i
+        # 整分后 1 秒起: 右闭分桶 (S, E] 下每分钟 4 笔同属一根 bar
+        timestamp = T0 + 1_000_000_000 + 15_000_000_000 * i
         price = float((i // 4 + 1) * 10 + (i % 4))
         aggregator.on_tick("X", price, 10.0, timestamp)
         feed.add_tick(Tick(timestamp=timestamp, price=price, volume=10.0, symbol="X"))
@@ -306,7 +307,8 @@ def _dual_stream_feed_multi() -> DataFeed:
         feed, 1, volume_is_cumulative=False, stamp_bar_at_interval_end=True
     )
     for i in range(40):
-        timestamp = T0 + 15_000_000_000 * i
+        # 整分后 1 秒起: 右闭分桶 (S, E] 下每分钟 4 笔同属一根 bar
+        timestamp = T0 + 1_000_000_000 + 15_000_000_000 * i
         for symbol, mult in (("X", 10), ("Y", 100)):
             price = float((i // 4 + 1) * mult + (i % 4))
             aggregator.on_tick(symbol, price, 10.0, timestamp)

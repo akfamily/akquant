@@ -32,10 +32,13 @@ _MIN_NS = 60_000_000_000
 def _ticks(
     symbol: str, count: int, *, start: float = 10.0, step: float = 0.5
 ) -> List[Tick]:
-    """每 30 秒一笔 tick, 价格每笔 +step."""
+    """每 30 秒一笔 tick, 价格每笔 +step.
+
+    从整分后 1 秒起: 右闭分桶 ``(S, E]`` 下每分钟的两笔同属以下一整分结尾的 bar。
+    """
     return [
         Tick(
-            timestamp=_BASE_NS + i * _HALF_MIN_NS,
+            timestamp=_BASE_NS + 1_000_000_000 + i * _HALF_MIN_NS,
             price=start + step * i,
             volume=100.0,
             symbol=symbol,
@@ -282,8 +285,8 @@ def test_tick_synth_bar_indicator_point_uses_whole_minute_ms() -> None:
     assert points, "应记录指标点"
     for point in points:
         assert point["timestamp_ms"] % 60_000 == 0, point
-        # 原始纳秒戳保持终点戳 (下一区间起点 - 1ns), 不被改写
-        assert point["timestamp"] % 60_000_000_000 == 60_000_000_000 - 1, point
+        # 原始纳秒戳为右闭区间终点 (整分), 不被改写
+        assert point["timestamp"] % 60_000_000_000 == 0, point
 
 
 def test_streaming_sink_rounds_ms_to_bar_end_and_keeps_ns() -> None:

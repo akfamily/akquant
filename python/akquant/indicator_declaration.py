@@ -53,16 +53,17 @@ def peek_indicator(indicator: Any, args: Tuple[Any, ...]) -> Any:
 
 
 def end_stamp_label(timestamp_ns: int, interval_ns: int) -> int:
-    """形成中基础 bar 将来闭合时的时间戳(区间末 -1ns).
+    """形成中基础 bar 将来闭合时的时间戳(右闭区间 ``(S, E]`` 的终点 ``E``).
 
-    与 Rust ``BarAggregator`` 唯一的终点戳公式逐字一致
-    (``(min + 1) * interval - 1``, 实盘与回测同一口径), 所以凡是有 tick 可
+    与 Rust ``BarAggregator`` 唯一的分桶与终点戳公式逐字一致
+    (区间编号 ``floor((ts - 1) / interval)``, 时间戳 ``(编号 + 1) * interval``,
+    恰在整分的 tick 属于以它结尾的 bar; 实盘与回测同一口径), 所以凡是有 tick 可
     试算的会话, 这条公式就是闭合 bar 的真实时间戳; 跨午休/跨日也成立(按绝对
     时间取整, 不依赖相邻 bar 的间距)。运行期另有一道自校验: bar 真闭合时若与预测不符, 该
     symbol 停发临时点(见 ``Strategy._update_incremental_indicators``)。
     """
     step = int(interval_ns)
-    return (int(timestamp_ns) // step + 1) * step - 1
+    return ((int(timestamp_ns) - 1) // step + 1) * step
 
 
 @dataclass

@@ -24,9 +24,10 @@ struct ActiveBar {
 #[pyclass]
 /// K 线合成器.
 ///
-/// 用于将 Tick 数据合成为 K 线 (Bar) 数据。封闭的 bar 恒用区间**终点**戳:
-/// `timestamp = 下一区间起点 - 1ns`, `interval_start = 本区间起点 - 1ns`,
-/// 区间为 `(interval_start, timestamp]`。实盘与回测同一口径。
+/// 用于将 Tick 数据合成为 K 线 (Bar) 数据。按右闭区间 `(S, E]` 分桶(恰在整分
+/// `E` 的 tick 属于以 `E` 结尾的 bar, 与 bar 时间戳口径、qmf_market 服务端 M1
+/// 一致), 封闭的 bar 恒用区间**终点**戳: `timestamp = E`, `interval_start = S`。
+/// 实盘与回测同一口径。
 pub struct BarAggregator {
     feed: DataFeed,
     active_bars: HashMap<String, ActiveBar>,
@@ -67,13 +68,19 @@ impl BarAggregator {
         NS_PER_MIN * self.interval_min
     }
 
+    /// 右闭区间 `(key*I, (key+1)*I]` 的编号: `floor((ts - 1) / I)`。
+    fn interval_key(&self, timestamp_ns: i64) -> i64 {
+        (timestamp_ns - 1).div_euclid(self.interval_ns())
+    }
+
     /// 把在形成的 bar 封闭为终点戳 `Bar`(on_tick 与 flush_due 共用)。
     fn close_bar(&self, symbol: &str, bar: &ActiveBar) -> crate::model::Bar {
         let interval_ns = self.interval_ns();
         crate::model::Bar {
-            // 区间终点 = 下一区间起点 - 1ns, 保证 bar 排在本区间所有 tick 之后、
-            // 下一区间任何事件之前。
-            timestamp: (bar.timestamp_min + 1) * interval_ns - 1,
+            // 区间终点 E: 不早于本区间所有 tick(含恰在 E 的那笔), 早于下一区间
+            // 任何 tick(都 > E)。同刻 E 的 tick 与 bar: 回测靠 feed 稳定排序
+            // (tick 先入队), 实盘 bar 只在下一区间 tick 到达或补发时才推出。
+            timestamp: (bar.timestamp_min + 1) * interval_ns,
             open: bar.open,
             high: bar.high,
             low: bar.low,
@@ -82,8 +89,8 @@ impl BarAggregator {
             symbol: symbol.to_string(),
             extra: HashMap::new(),
             freq: None,
-            // 区间为 (起点 - 1ns, 终点]
-            interval_start: Some(bar.timestamp_min * interval_ns - 1),
+            // 区间为 (起点, 终点]
+            interval_start: Some(bar.timestamp_min * interval_ns),
         }
     }
 
@@ -144,8 +151,8 @@ impl BarAggregator {
         let price = Decimal::from_f64(price).unwrap_or(Decimal::ZERO);
         let volume = Decimal::from_f64(volume).unwrap_or(Decimal::ZERO);
 
-        // Calculate current interval key
-        let current_key = timestamp_ns / 1_000_000_000 / 60 / self.interval_min;
+        // 右闭区间编号: 恰在整分的 tick 属于以它结尾的那根 bar
+        let current_key = self.interval_key(timestamp_ns);
 
         let volume_delta = if self.volume_is_cumulative {
             // 累计口径(live/CTP): 首次播种为本次值, 之后算差分。
@@ -222,8 +229,8 @@ impl BarAggregator {
 
     /// 封闭已到期的在形成 bar 并推入数据源.
     ///
-    /// 区间终点 + `grace_ns` ≤ `now_ns` 的 bar 被封闭推出(时间戳同 `on_tick`
-    /// 封闭的 bar)。用于实盘: 某品种下一区间迟迟没有 tick 时, 本区间的 bar
+    /// 区间终点 `E` + `grace_ns` ≤ `now_ns` 的 bar 被封闭推出(时间戳同 `on_tick`
+    /// 封闭的 bar, 即 `E`)。恰在 `E` 的 tick 属于本区间, 补发后才到同样算迟到。用于实盘: 某品种下一区间迟迟没有 tick 时, 本区间的 bar
     /// 也能按时发出。之后到达的同区间 tick 视为迟到: 不参与 OHLC, 量计入下一根。
     ///
     /// :param now_ns: 当前时刻 (纳秒)
@@ -273,7 +280,7 @@ mod tests {
         let feed = DataFeed::new();
         let mut agg = BarAggregator::new(feed, Some(1), false);
 
-        agg.on_tick("X".to_string(), 10.0, 100.0, ns(1, 0)).unwrap();
+        agg.on_tick("X".to_string(), 10.0, 100.0, ns(1, 1)).unwrap();
         agg.on_tick("X".to_string(), 10.6, 200.0, ns(1, 15))
             .unwrap();
         agg.on_tick("X".to_string(), 9.8, 150.0, ns(1, 30)).unwrap();
@@ -289,7 +296,7 @@ mod tests {
         let feed = DataFeed::new();
         let mut agg = BarAggregator::new(feed, Some(1), true);
 
-        agg.on_tick("X".to_string(), 10.0, 50_000.0, ns(1, 0))
+        agg.on_tick("X".to_string(), 10.0, 50_000.0, ns(1, 1))
             .unwrap();
         agg.on_tick("X".to_string(), 10.1, 50_120.0, ns(1, 15))
             .unwrap();
@@ -311,21 +318,21 @@ mod tests {
         let readback = feed.clone();
         let mut agg = BarAggregator::new(feed, Some(1), false);
 
-        agg.on_tick("X".to_string(), 10.0, 100.0, ns(1, 0)).unwrap();
+        agg.on_tick("X".to_string(), 10.0, 100.0, ns(1, 1)).unwrap();
         agg.on_tick("X".to_string(), 20.0, 100.0, ns(1, 30))
             .unwrap();
         // 跨区间, 封闭第 1 分钟的 bar。
-        agg.on_tick("X".to_string(), 11.0, 100.0, ns(2, 0)).unwrap();
+        agg.on_tick("X".to_string(), 11.0, 100.0, ns(2, 1)).unwrap();
 
         let event = readback.next().expect("封闭的 bar 未写入 feed");
         match event {
             crate::event::Event::Bar(bar) => {
-                // 第 1 分钟的 bar 应打在 119_999_999_999ns, 即第 2 分钟起点前
-                // 1ns, 晚于其最后贡献 tick(90s = 90_000_000_000ns)。
-                assert_eq!(bar.timestamp, ns(2, 0) - 1);
+                // (1:00, 2:00] 的 bar 应打在区间终点 120_000_000_000ns, 晚于其
+                // 最后贡献 tick(90s = 90_000_000_000ns)。
+                assert_eq!(bar.timestamp, ns(2, 0));
                 assert!(bar.timestamp >= ns(1, 30));
-                // 区间起点 - 1ns: (起点 - 1, 终点 - 1] 与终点戳同口径
-                assert_eq!(bar.interval_start, Some(ns(1, 0) - 1));
+                // 右闭区间 (起点, 终点]
+                assert_eq!(bar.interval_start, Some(ns(1, 0)));
             }
             other => panic!("expected Event::Bar, got {other:?}"),
         }
@@ -335,28 +342,25 @@ mod tests {
     fn bars_are_always_end_stamped_with_interval_start() {
         let feed = DataFeed::new();
         let mut agg = BarAggregator::new(feed.clone(), Some(1), false);
-        agg.on_tick("X".into(), 10.0, 1.0, ns(1, 0)).unwrap();
-        agg.on_tick("X".into(), 11.0, 1.0, ns(2, 0)).unwrap();
+        agg.on_tick("X".into(), 10.0, 1.0, ns(1, 1)).unwrap();
+        agg.on_tick("X".into(), 11.0, 1.0, ns(2, 1)).unwrap();
         let bars = feed.drain_bars_for_test();
         assert_eq!(bars.len(), 1);
-        assert_eq!(bars[0].timestamp, ns(2, 0) - 1);
-        assert_eq!(bars[0].interval_start, Some(ns(1, 0) - 1));
+        assert_eq!(bars[0].timestamp, ns(2, 0));
+        assert_eq!(bars[0].interval_start, Some(ns(1, 0)));
     }
 
     #[test]
     fn flush_due_emits_after_grace_and_carries_late_volume() {
         let feed = DataFeed::new();
         let mut agg = BarAggregator::new(feed.clone(), Some(1), true);
-        agg.on_tick("X".into(), 10.0, 100.0, ns(1, 0)).unwrap();
+        agg.on_tick("X".into(), 10.0, 100.0, ns(1, 1)).unwrap();
         agg.on_tick("X".into(), 10.5, 130.0, ns(1, 30)).unwrap();
         assert_eq!(agg.flush_due(ns(2, 1), 2_000_000_000).unwrap(), 0); // 未过宽限
         assert_eq!(agg.flush_due(ns(2, 2), 2_000_000_000).unwrap(), 1);
         let bars = feed.drain_bars_for_test();
         assert_eq!(bars.len(), 1);
-        assert_eq!(
-            (bars[0].timestamp, bars[0].close),
-            (ns(2, 0) - 1, dec!(10.5))
-        );
+        assert_eq!((bars[0].timestamp, bars[0].close), (ns(2, 0), dec!(10.5)));
         // 累计口径: 首笔 100 播种计 0, 130 差分计 30
         assert_eq!(bars[0].volume, dec!(30));
         // 封闭后同一区间迟到的 tick: 不参与 OHLC, 量(150-130=20)暂存待并入下一根
@@ -365,13 +369,13 @@ mod tests {
         assert_eq!(agg.late_tick_count("Y"), 0);
         assert!(feed.drain_bars_for_test().is_empty());
         agg.on_tick("X".into(), 10.8, 160.0, ns(2, 10)).unwrap();
-        agg.on_tick("X".into(), 10.9, 170.0, ns(3, 0)).unwrap();
+        agg.on_tick("X".into(), 10.9, 170.0, ns(3, 1)).unwrap();
         let bars = feed.drain_bars_for_test();
         assert_eq!(bars.len(), 1);
-        assert_eq!(bars[0].timestamp, ns(3, 0) - 1);
+        assert_eq!(bars[0].timestamp, ns(3, 0));
         assert_eq!((bars[0].open, bars[0].close), (dec!(10.8), dec!(10.8)));
         // 第 2 分钟: 迟到结转 20 + 2:10 那笔 160-150=10 = 30; OHLC 只来自 2:10,
-        // 3:00 那笔(170-160)属于第 3 分钟。
+        // 3:01 那笔(170-160)属于第 3 分钟。
         assert_eq!(bars[0].volume, dec!(30));
         // 守恒: 两根 bar 合计 60 = 第 3 分钟前最后累计量 160 - 首笔播种 100
     }
@@ -381,17 +385,17 @@ mod tests {
         // 迟到时该品种已有在形成 bar: 量直接加到它上面, OHLC 不动
         let feed = DataFeed::new();
         let mut agg = BarAggregator::new(feed.clone(), Some(1), true);
-        agg.on_tick("X".into(), 10.0, 100.0, ns(1, 0)).unwrap();
+        agg.on_tick("X".into(), 10.0, 100.0, ns(1, 1)).unwrap();
         agg.on_tick("X".into(), 10.5, 130.0, ns(1, 30)).unwrap();
         assert_eq!(agg.flush_due(ns(2, 2), 2_000_000_000).unwrap(), 1);
         agg.on_tick("X".into(), 10.8, 160.0, ns(2, 5)).unwrap(); // 第 2 分钟 30
         agg.on_tick("X".into(), 99.0, 175.0, ns(1, 59)).unwrap(); // 迟到 15
         assert_eq!(agg.late_tick_count("X"), 1);
-        agg.on_tick("X".into(), 10.9, 180.0, ns(3, 0)).unwrap(); // 第 3 分钟 5
+        agg.on_tick("X".into(), 10.9, 180.0, ns(3, 1)).unwrap(); // 第 3 分钟 5
         let bars = feed.drain_bars_for_test();
         assert_eq!(bars.len(), 2);
         let bar2 = &bars[1];
-        assert_eq!(bar2.timestamp, ns(3, 0) - 1);
+        assert_eq!(bar2.timestamp, ns(3, 0));
         assert_eq!(bar2.volume, dec!(45));
         assert_eq!(
             (bar2.open, bar2.high, bar2.low, bar2.close),
@@ -404,13 +408,75 @@ mod tests {
         // 多品种: 只封闭已到期的区间, 仍在形成的不动
         let feed = DataFeed::new();
         let mut agg = BarAggregator::new(feed.clone(), Some(1), false);
-        agg.on_tick("X".into(), 10.0, 1.0, ns(1, 0)).unwrap();
-        agg.on_tick("Y".into(), 20.0, 1.0, ns(2, 0)).unwrap();
+        agg.on_tick("X".into(), 10.0, 1.0, ns(1, 1)).unwrap();
+        agg.on_tick("Y".into(), 20.0, 1.0, ns(2, 1)).unwrap();
         assert_eq!(agg.flush_due(ns(2, 2), 2_000_000_000).unwrap(), 1);
         let bars = feed.drain_bars_for_test();
         assert_eq!(bars.len(), 1);
         assert_eq!(bars[0].symbol, "X");
         assert!(agg.active_bars.contains_key("Y"));
         assert!(!agg.active_bars.contains_key("X"));
+    }
+
+    #[test]
+    fn tick_exactly_on_boundary_belongs_to_bar_ending_there() {
+        // 右闭区间 (S, E]: 恰在整分 E 的 tick 归入以 E 结尾的 bar
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(1), false);
+        agg.on_tick("X".into(), 10.0, 1.0, ns(1, 30)).unwrap();
+        agg.on_tick("X".into(), 12.0, 2.0, ns(2, 0)).unwrap();
+        agg.on_tick("X".into(), 9.0, 4.0, ns(2, 30)).unwrap();
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(bars.len(), 1);
+        let bar = &bars[0];
+        assert_eq!(bar.timestamp, ns(2, 0));
+        assert_eq!(bar.interval_start, Some(ns(1, 0)));
+        assert_eq!(
+            (bar.open, bar.high, bar.low, bar.close, bar.volume),
+            (dec!(10), dec!(12), dec!(10), dec!(12), dec!(3))
+        );
+        // bar 不早于本区间最后一笔 tick(恰在 E), 早于下一区间的 tick
+        assert!(bar.timestamp >= ns(2, 0) && bar.timestamp < ns(2, 30));
+    }
+
+    #[test]
+    fn close_tick_at_1500_goes_into_1459_1500_bar() {
+        // 15:00:00 那笔收盘价与成交量属于 (14:59, 15:00] 的 bar, 不得落进
+        // (15:00, 15:01] 而被归到下一交易日
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(1), true);
+        let m1459 = 14 * 60 + 59;
+        let m1500 = 15 * 60;
+        agg.on_tick("X".into(), 100.0, 1_000.0, ns(m1459, 1))
+            .unwrap();
+        agg.on_tick("X".into(), 101.0, 1_010.0, ns(m1459, 30))
+            .unwrap();
+        agg.on_tick("X".into(), 102.0, 1_050.0, ns(m1500, 0))
+            .unwrap();
+        // 夜盘/次日首笔 tick 封闭 15:00 那根
+        agg.on_tick("X".into(), 103.0, 5.0, ns(21 * 60, 1)).unwrap();
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(bars.len(), 1);
+        let bar = &bars[0];
+        assert_eq!(bar.timestamp, ns(m1500, 0));
+        assert_eq!(bar.interval_start, Some(ns(m1459, 0)));
+        assert_eq!(bar.close, dec!(102));
+        // 10 + 40: 15:00:00 那笔的 40 计入本根
+        assert_eq!(bar.volume, dec!(50));
+    }
+
+    #[test]
+    fn flush_due_counts_tick_on_boundary_as_part_of_flushed_bar() {
+        // 补发后再来恰在 E 的 tick: 属于已推出的 (S, E], 记为迟到
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(1), false);
+        agg.on_tick("X".into(), 10.0, 1.0, ns(1, 30)).unwrap();
+        assert_eq!(agg.flush_due(ns(2, 1), 2_000_000_000).unwrap(), 0);
+        assert_eq!(agg.flush_due(ns(2, 2), 2_000_000_000).unwrap(), 1);
+        agg.on_tick("X".into(), 11.0, 1.0, ns(2, 0)).unwrap();
+        assert_eq!(agg.late_tick_count("X"), 1);
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].timestamp, ns(2, 0));
     }
 }

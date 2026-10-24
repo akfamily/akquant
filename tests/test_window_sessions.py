@@ -172,7 +172,7 @@ def test_daily_window_groups_night_session_into_next_trading_day() -> None:
 
 
 def test_tick_synthesized_bars_close_window_immediately() -> None:
-    """Tick 合成的终点戳 bar（比边界早 1ns）也能让 5min 窗口在边界即时闭合."""
+    """Tick 合成的终点戳 bar（右闭区间, 时间戳恰为边界）让 5min 窗口在边界即时闭合."""
 
     class P(Strategy):
         def __init__(self) -> None:
@@ -214,7 +214,7 @@ def test_tick_synthesized_bars_close_window_immediately() -> None:
     assert r.strategy is not None
     i = r.strategy.order.index("win 09:35")
     # 09:34～09:35 合成 bar 之后立即闭合
-    assert r.strategy.order[i - 1] == "bar 09:34:59"
+    assert r.strategy.order[i - 1] == "bar 09:35:00"
 
 
 def test_manual_session_windows_cross_midnight() -> None:

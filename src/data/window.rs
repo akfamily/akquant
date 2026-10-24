@@ -312,8 +312,9 @@ pub struct WindowAggregator {
     deferred_close_warned: bool,
 }
 
-/// bar 区间终点: 回测 tick 合成的终点戳 bar 打在边界前 1ns(`ts + 1` 是整秒),
-/// 其区间终点为 `ts + 1`; 其余 bar(含区间未知的)为 `ts`。
+/// bar 区间终点: 旧口径的终点戳 bar 打在边界前 1ns(`ts + 1` 是整秒, 如旧存档),
+/// 其区间终点为 `ts + 1`; 其余 bar(含 `BarAggregator` 按右闭区间合成、
+/// `ts` 恰为边界的 bar, 以及区间未知的)为 `ts`。
 fn bar_end(bar: &Bar) -> i64 {
     match bar.interval_start {
         Some(start) if start < bar.timestamp && (bar.timestamp + 1).rem_euclid(NS_PER_SEC) == 0 => {
