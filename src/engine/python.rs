@@ -3,7 +3,7 @@ use chrono_tz::Tz;
 use indicatif::{ProgressBar, ProgressStyle};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -661,16 +661,35 @@ impl Engine {
 
     /// 当前交易时段配置 ``(sessions, trading_calendar)``；未配置的一项为 None。
     ///
+    /// ``sessions`` 的值为模板名，或自定义段列表 ``[(start, end, session[, anchor]), ...]``。
     /// 随存档保存，``run_from_checkpoint`` 未传对应参数时沿用。
     #[getter]
-    fn session_config(&self) -> (Option<HashMap<String, String>>, Option<Vec<NaiveDate>>) {
-        (
-            self.session_config
-                .sessions
-                .as_ref()
-                .map(|pairs| pairs.iter().cloned().collect()),
-            self.session_config.trading_calendar.clone(),
-        )
+    fn session_config<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<(Option<Bound<'py, PyDict>>, Option<Vec<NaiveDate>>)> {
+        let cfg = &self.session_config;
+        let sessions = if cfg.sessions.is_none() && cfg.custom_sessions.is_none() {
+            None
+        } else {
+            let dict = PyDict::new(py);
+            for (k, name) in cfg.sessions.iter().flatten() {
+                dict.set_item(k, name)?;
+            }
+            for (k, segs) in cfg.custom_sessions.iter().flatten() {
+                let list = PyList::empty(py);
+                for seg in segs {
+                    let item = match &seg.anchor {
+                        Some(a) => PyTuple::new(py, [&seg.start, &seg.end, &seg.session, a])?,
+                        None => PyTuple::new(py, [&seg.start, &seg.end, &seg.session])?,
+                    };
+                    list.append(item)?;
+                }
+                dict.set_item(k, list)?;
+            }
+            Some(dict)
+        };
+        Ok((sessions, cfg.trading_calendar.clone()))
     }
 
     /// 导出当前状态为二进制数据
@@ -963,37 +982,55 @@ impl Engine {
 
     /// 配置交易时段表与交易日历。
     ///
-    /// :param sessions: 代码前缀 → 时段模板名；"default" 为全局默认。不传按规则 B
+    /// :param sessions: 代码前缀 → 时段模板名或自定义段列表
+    ///     ``[(start, end, session[, anchor]), ...]``；"default" 为全局默认。不传按规则 B
     ///     （中国时区按资产类型取默认，其他时区全天连续）。
     /// :param trading_calendar: 交易日列表；不传按工作日推算。
     #[pyo3(signature = (sessions=None, trading_calendar=None))]
     fn configure_sessions(
         &mut self,
-        sessions: Option<HashMap<String, String>>,
+        sessions: Option<Bound<'_, PyAny>>,
         trading_calendar: Option<Vec<NaiveDate>>,
     ) -> PyResult<()> {
-        if let Some(map) = &sessions {
-            for (key, name) in map {
-                if crate::calendar::schedule::template(name).is_none() {
-                    return Err(PyValueError::new_err(format!(
-                        "未知时段模板 {name:?}（键 {key:?}），可选：{}",
-                        crate::calendar::schedule::TEMPLATE_NAMES.join(" / ")
-                    )));
-                }
-            }
+        let specs = match sessions.as_ref().filter(|s| !s.is_none()) {
+            Some(obj) => Some(crate::calendar::python::extract_session_specs(obj)?),
+            None => None,
+        };
+        if let Some(specs) = &specs {
+            // 只做校验（未知模板名、非法自定义段、重复键）；解析器在 run() 时构造。
+            crate::calendar::resolver::build_sessions(specs.clone())
+                .map_err(PyValueError::new_err)?;
         }
         if let Some(days) = &trading_calendar
             && days.is_empty()
         {
             return Err(PyValueError::new_err("trading_calendar 不能为空"));
         }
-        let mut pairs: Option<Vec<(String, String)>> = sessions.map(|m| m.into_iter().collect());
-        if let Some(p) = pairs.as_mut() {
-            p.sort();
-        }
+        let (templates, custom) = match specs {
+            None => (None, None),
+            Some(specs) => {
+                let mut templates = Vec::new();
+                let mut custom = Vec::new();
+                for (key, spec) in specs {
+                    match spec {
+                        crate::calendar::resolver::SessionSpec::Template(name) => {
+                            templates.push((key, name))
+                        }
+                        crate::calendar::resolver::SessionSpec::Custom(segs) => {
+                            custom.push((key, segs))
+                        }
+                    }
+                }
+                templates.sort();
+                custom.sort_by(|a, b| a.0.cmp(&b.0));
+                // 只有自定义项时模板项仍记为 Some(空)，表示用户给了 sessions。
+                (Some(templates), (!custom.is_empty()).then_some(custom))
+            }
+        };
         self.session_config = crate::engine::core::SessionConfig {
-            sessions: pairs,
+            sessions: templates,
             trading_calendar,
+            custom_sessions: custom,
         };
         self.invalidate_session_resolver();
         Ok(())

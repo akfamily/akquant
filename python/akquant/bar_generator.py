@@ -15,6 +15,12 @@ import weakref
 from typing import Any, Callable, Iterable, Mapping, Optional, Union
 
 from .akquant import AssetType, Bar, SessionResolver, WindowAggregator
+from .sessions_config import (
+    SessionsArg,
+    normalize_sessions,
+    normalize_trading_calendar,
+    parse_asset_type_name,
+)
 
 _INTERVAL_FREQ = {"minute": "min", "hour": "h", "day": "d"}
 
@@ -24,12 +30,10 @@ AssetTypeLike = Union[AssetType, str]
 
 
 def _to_asset_type(value: AssetTypeLike) -> AssetType:
-    from .backtest.engine import _parse_asset_type_name
-
     if isinstance(value, AssetType):
         return value
     try:
-        name = _parse_asset_type_name(value)
+        name = parse_asset_type_name(value)
     except ValueError:
         raise ValueError(
             f"asset_type={value!r} 无法识别，请传 AssetType 或 "
@@ -54,7 +58,7 @@ class BarGenerator:
         *,
         session_windows: Optional[list[tuple[str, str]]] = None,
         timezone: Optional[str] = None,
-        sessions: Optional[Mapping[str, str]] = None,
+        sessions: Optional[SessionsArg] = None,
         trading_calendar: Optional[Iterable[Any]] = None,
         asset_type: Union[AssetTypeLike, Mapping[str, AssetTypeLike], None] = None,
         base_interval_min: Optional[int] = None,
@@ -69,7 +73,8 @@ class BarGenerator:
             覆盖时段表、窗口不跨段; ``end`` 早于 ``start`` 表示跨午夜。
         :param timezone: 市场时区, 默认 ``"Asia/Shanghai"``(与 ``run_backtest``
             一致)。bar 时间戳是 UTC 纳秒, 时钟对齐与交易时段都按该时区换算。
-        :param sessions: 代码前缀 → 时段模板名, 同 ``run_backtest`` 的 ``sessions``。
+        :param sessions: 代码前缀 → 时段模板名或自定义时段表, 同 ``run_backtest``
+            的 ``sessions``。
         :param trading_calendar: 交易日列表, 同 ``run_backtest`` 的
             ``trading_calendar``。
         :param asset_type: 资产类型(决定默认时段表), 同 ``run_backtest`` 的
@@ -94,8 +99,6 @@ class BarGenerator:
                 "interval='day' 只支持 window=1；多日聚合请用 "
                 "akquant.feed_adapter 的 resample()"
             )
-        from .backtest.engine import _normalize_trading_calendar
-
         self._cb = on_window_bar
         self._freq = f"{window}{_INTERVAL_FREQ[interval]}"
         self._session_windows = list(session_windows) if session_windows else None
@@ -112,8 +115,8 @@ class BarGenerator:
         self._fed = False
         tz = timezone or DEFAULT_TIMEZONE
         resolver = SessionResolver(
-            sessions=dict(sessions) if sessions is not None else None,
-            trading_calendar=_normalize_trading_calendar(trading_calendar),
+            sessions=normalize_sessions(sessions),
+            trading_calendar=normalize_trading_calendar(trading_calendar),
             timezone=tz,
         )
         self._symbol_types: dict[str, AssetType] = {}

@@ -42,8 +42,32 @@ pub(crate) const CLOSED_SESSION_WARN_LIMIT: usize = 20;
 /// 用户配置的交易时段表与交易日历（`configure_sessions` 写入，随存档保存）。
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SessionConfig {
+    /// 模板项：(键, 模板名)。
     pub sessions: Option<Vec<(String, String)>>,
     pub trading_calendar: Option<Vec<NaiveDate>>,
+    /// 自定义时段表项：(键, 段序列)。存档字段只能追加在末尾：旧存档缺此项时为 None。
+    #[serde(default)]
+    pub custom_sessions: Option<Vec<(String, Vec<crate::calendar::schedule::CustomSegment>)>>,
+}
+
+impl SessionConfig {
+    /// 合并模板项与自定义项；两者都未配置时为 None。
+    pub(crate) fn session_specs(
+        &self,
+    ) -> Option<Vec<(String, crate::calendar::resolver::SessionSpec)>> {
+        use crate::calendar::resolver::SessionSpec;
+        if self.sessions.is_none() && self.custom_sessions.is_none() {
+            return None;
+        }
+        let mut specs: Vec<(String, SessionSpec)> = Vec::new();
+        for (k, name) in self.sessions.iter().flatten() {
+            specs.push((k.clone(), SessionSpec::Template(name.clone())));
+        }
+        for (k, segs) in self.custom_sessions.iter().flatten() {
+            specs.push((k.clone(), SessionSpec::Custom(segs.clone())));
+        }
+        Some(specs)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -385,18 +409,12 @@ impl Engine {
             self.timezone_name.as_deref(),
             self.timezone_offset,
         );
-        let user = self.session_config.sessions.as_ref().map(|pairs| {
-            pairs
-                .iter()
-                .map(|(k, name)| {
-                    (
-                        k.clone(),
-                        crate::calendar::schedule::template(name)
-                            .expect("configure_sessions 已校验"),
-                    )
-                })
-                .collect::<Vec<_>>()
-        });
+        let user = match self.session_config.session_specs() {
+            Some(specs) => Some(
+                crate::calendar::resolver::build_sessions(specs).map_err(PyValueError::new_err)?,
+            ),
+            None => None,
+        };
         let sessions = crate::calendar::resolver::effective_sessions(
             user,
             self.timezone_name.as_deref(),

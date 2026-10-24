@@ -1,7 +1,10 @@
 //! 把时间点或 bar 区间解析为 (交易日, 时段)。
 
 use super::clock::LocalClock;
-use super::schedule::{Anchor, FallbackCalendar, SessionSchedule, template};
+use super::schedule::{
+    Anchor, CustomSegment, FallbackCalendar, SessionSchedule, TEMPLATE_NAMES, schedule_from_custom,
+    template,
+};
 use super::trading_calendar::{CalendarError, TradingCalendar};
 use crate::model::{AssetType, TradingSession};
 use chrono::{Duration, NaiveDate};
@@ -76,6 +79,52 @@ pub fn effective_sessions(
         ));
     }
     sessions
+}
+
+/// `sessions` 的一项取值：内置模板名或自定义段序列。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionSpec {
+    Template(String),
+    Custom(Vec<CustomSegment>),
+}
+
+/// 把用户的 `sessions` 配置构造成时段表：键 `trim().lower()` 后不得为空或重复，
+/// 模板名须为内置模板，自定义段序列按 [`schedule_from_custom`] 校验。
+///
+/// 返回的键已规范化；顺序按规范化键排序（结果与输入顺序无关）。
+pub fn build_sessions(
+    specs: Vec<(String, SessionSpec)>,
+) -> Result<Vec<(String, SessionSchedule)>, String> {
+    let mut specs = specs;
+    specs.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut seen: HashMap<String, String> = HashMap::new();
+    let mut out = Vec::with_capacity(specs.len());
+    for (raw_key, spec) in specs {
+        let key = raw_key.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            return Err(format!(
+                "sessions 的键不能为空（收到 {raw_key:?}）：键是代码前缀，如 \"rb\"、\"600\"，\
+                 或 \"default\" 表示全局默认"
+            ));
+        }
+        if let Some(prev) = seen.get(&key) {
+            return Err(format!(
+                "sessions 的键 {prev:?} 与 {raw_key:?} 去空格、转小写后重复，请只保留一个"
+            ));
+        }
+        seen.insert(key.clone(), raw_key.clone());
+        let schedule = match spec {
+            SessionSpec::Template(name) => template(&name).ok_or_else(|| {
+                format!(
+                    "未知时段模板 {name:?}（键 {raw_key:?}），可选：{}",
+                    TEMPLATE_NAMES.join(" / ")
+                )
+            })?,
+            SessionSpec::Custom(segs) => schedule_from_custom(raw_key.trim(), &segs)?,
+        };
+        out.push((key, schedule));
+    }
+    Ok(out)
 }
 
 /// 时段优先级（多个时段并存时取最高者）。
@@ -1559,5 +1608,86 @@ mod tests {
             r.segment_span_at("600000.SH", stock(), at(2024, 1, 3, 20, 0, 0))
                 .is_err()
         );
+    }
+
+    fn custom(segs: &[(&str, &str, &str)]) -> SessionSpec {
+        SessionSpec::Custom(
+            segs.iter()
+                .map(|(a, b, c)| CustomSegment {
+                    start: a.to_string(),
+                    end: b.to_string(),
+                    session: c.to_string(),
+                    anchor: None,
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn build_sessions_normalizes_keys_and_rejects_duplicates() {
+        let built = build_sessions(vec![
+            (
+                " RB ".to_string(),
+                SessionSpec::Template("cn_futures_night_23".to_string()),
+            ),
+            (
+                "xx".to_string(),
+                custom(&[("21:00", "02:30", "continuous")]),
+            ),
+        ])
+        .unwrap();
+        let keys: Vec<&str> = built.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, vec!["rb", "xx"]);
+        assert_eq!(built[1].1.fallback_calendar, FallbackCalendar::Weekdays);
+
+        let dup = build_sessions(vec![
+            (
+                "default".to_string(),
+                SessionSpec::Template("CN_STOCK".to_string()),
+            ),
+            (
+                " DEFAULT ".to_string(),
+                SessionSpec::Template("ALWAYS_OPEN".to_string()),
+            ),
+        ])
+        .unwrap_err();
+        assert!(dup.contains("重复"), "{dup}");
+        let empty = build_sessions(vec![(
+            "  ".to_string(),
+            SessionSpec::Template("CN_STOCK".to_string()),
+        )])
+        .unwrap_err();
+        assert!(empty.contains("不能为空"), "{empty}");
+        let unknown = build_sessions(vec![(
+            "rb".to_string(),
+            SessionSpec::Template("NOPE".to_string()),
+        )])
+        .unwrap_err();
+        assert!(unknown.contains("未知时段模板"), "{unknown}");
+    }
+
+    #[test]
+    fn custom_night_schedule_resolves_to_next_trading_day() {
+        let sessions = build_sessions(vec![(
+            "xx".to_string(),
+            custom(&[
+                ("21:00", "02:30", "continuous"),
+                ("09:00", "10:15", "continuous"),
+                ("10:30", "11:30", "continuous"),
+            ]),
+        )])
+        .unwrap();
+        let r = SessionResolver::new(sh(), None, sessions).unwrap();
+        let fut = Some(AssetType::Futures);
+        // 周五 21:30 属下周一交易日
+        let got = r
+            .resolve_instant("xx2405", fut, at(2024, 1, 5, 21, 30, 0))
+            .unwrap();
+        assert_eq!(got.trading_day, d(2024, 1, 8));
+        assert_eq!(got.session, TradingSession::Continuous);
+        let gap = r
+            .resolve_instant("xx2405", fut, at(2024, 1, 8, 10, 20, 0))
+            .unwrap();
+        assert_eq!(gap.session, TradingSession::Closed);
     }
 }

@@ -15,7 +15,6 @@ from typing import (
     Iterable,
     Iterator,
     List,
-    Mapping,
     Optional,
     Sequence,
     Type,
@@ -39,6 +38,12 @@ from ..gateway.symbol_match import normalize_symbol_for_match
 from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink, declare_plotted_indicators
 from ..log import build_log_extra, get_logger
+from ..sessions_config import (
+    SessionsArg,
+    SessionsMap,
+    normalize_sessions,
+    normalize_trading_calendar,
+)
 from ..strategy import (
     InstrumentSnapshot,
     Strategy,
@@ -404,7 +409,7 @@ class LiveRunner:
         session_tag: Optional[str] = None,
         preload_history: Any = None,
         preload_bars: Optional[int] = None,
-        sessions: Optional[Mapping[str, str]] = None,
+        sessions: Optional[SessionsArg] = None,
         trading_calendar: Optional[Iterable[Any]] = None,
     ):
         """
@@ -471,10 +476,10 @@ class LiveRunner:
             unless tick-driven), ``0`` = off, ``N > 0`` = fetch N bars per symbol
             (clamped to 10000; also applies to tick-driven sessions). Ignored when
             ``preload_history`` is given. See ``run_live``.
-        :param sessions: 代码前缀 → 时段模板名（"default" 为全局默认）；
-            不传时中国时区按资产类型取默认（股票 CN_STOCK、期货 CN_FUTURES_DAY、
-            期权 CN_OPTION），其他时区全天连续。可选模板见
-            aq.SessionResolver.templates()
+        :param sessions: 代码前缀 → 时段模板名或自定义时段表（"default" 为全局
+            默认）；不传时中国时区按资产类型取默认（股票 CN_STOCK、期货
+            CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。可选模板见
+            aq.SessionResolver.templates()；自定义时段表写法同 ``run_backtest``
         :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
             中国市场按工作日推算（节假日前后的夜盘与日终
             结算会算错），ALWAYS_OPEN 每天都算
@@ -575,14 +580,10 @@ class LiveRunner:
         self.session_tag = session_tag
         self.preload_history = preload_history
         self.preload_bars = validate_preload_bars(preload_bars)
-        # 交易时段表与交易日历: 日历在构造时归一(空/类型错立即报错), 时段模板名
-        # 由 run() 里 engine.configure_sessions 校验。
-        from ..backtest.engine import _normalize_trading_calendar
-
-        self.sessions: Optional[Dict[str, str]] = (
-            dict(sessions) if sessions is not None else None
-        )
-        self.trading_calendar = _normalize_trading_calendar(trading_calendar)
+        # 交易时段表与交易日历: 构造时归一(类型错、空日历立即报错), 模板名与
+        # 自定义段的取值由 run() 里 engine.configure_sessions 校验。
+        self.sessions: Optional[SessionsMap] = normalize_sessions(sessions)
+        self.trading_calendar = normalize_trading_calendar(trading_calendar)
         self._preload_result: Optional[PreloadResult] = None
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).

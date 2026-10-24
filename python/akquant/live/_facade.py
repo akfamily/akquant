@@ -13,7 +13,6 @@ from typing import (
     Dict,
     Iterable,
     List,
-    Mapping,
     Optional,
     Sequence,
     Type,
@@ -26,6 +25,7 @@ from ..akquant import Bar, Instrument
 from ..backtest import BacktestStreamEvent
 from ..indicator_recording import IndicatorSink
 from ..indicator_script import Indicator, merge_indicators_into_slots
+from ..sessions_config import SessionsArg
 from ..strategy import Strategy, StrategyRuntimeConfig, reconcile_strategy_id
 from ._runner import LiveRunner
 
@@ -103,7 +103,7 @@ def run_live(
         Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]
     ] = None,
     preload_bars: Optional[int] = None,
-    sessions: Optional[Mapping[str, str]] = None,
+    sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
@@ -276,10 +276,11 @@ def run_live(
         logged as INFO. Only depth set before session start (class attribute or
         ``__init__``) is seen; ``set_history_depth`` called in ``on_start`` is
         covered by the 500 floor or needs an explicit ``preload_bars``.
-    :param sessions: 代码前缀 → 时段模板名（"default" 为全局默认）；
+    :param sessions: 代码前缀 → 时段模板名或自定义时段表（"default" 为全局默认）；
                      不传时中国时区按资产类型取默认（股票 CN_STOCK、
                      期货 CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。
-                     可选模板见 aq.SessionResolver.templates()
+                     可选模板见 aq.SessionResolver.templates()；自定义时段表
+                     写法同 ``run_backtest``
     :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
                              中国市场按工作日推算（节假日前后的夜盘与日终
                              结算会算错），ALWAYS_OPEN 每天都算

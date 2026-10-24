@@ -1,24 +1,98 @@
 //! `SessionResolver` 的 Python 绑定。
 
 use super::clock::LocalClock;
-use super::resolver::{SessionResolver, effective_sessions};
-use super::schedule::{TEMPLATE_NAMES, template};
+use super::resolver::{SessionResolver, SessionSpec, build_sessions, effective_sessions};
+use super::schedule::{CustomSegment, TEMPLATE_NAMES};
 use super::trading_calendar::{CalendarError, TradingCalendar};
 use crate::model::{AssetType, TradingSession};
 use chrono::NaiveDate;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyMapping, PyString};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 fn calendar_err(e: CalendarError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
+/// 自定义段的写法提示。
+const CUSTOM_HINT: &str = "每段写 (start, end, session) 或 (start, end, session, anchor)，     如 (\"21:00\", \"02:30\", \"continuous\")";
+
+/// 把 Python 的 `sessions`（`dict[str, str | Sequence[tuple]]`）提取为时段配置。
+///
+/// 值为字符串时是模板名，否则是自定义段序列。只做类型与形状检查，取值校验见
+/// [`build_sessions`]。
+pub(crate) fn extract_session_specs(
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<Vec<(String, SessionSpec)>> {
+    let mapping = obj.cast::<PyMapping>().map_err(|_| {
+        PyTypeError::new_err(format!(
+            "sessions 须为字典：代码前缀 → 时段模板名或自定义段列表，如              {{\"rb\": \"CN_FUTURES_NIGHT_23\"}}；收到 {}",
+            type_name(obj)
+        ))
+    })?;
+    let items: Vec<(Bound<'_, PyAny>, Bound<'_, PyAny>)> = mapping.items()?.extract()?;
+    let mut out = Vec::with_capacity(items.len());
+    for (k, v) in items {
+        let key: String = k.extract().map_err(|_| {
+            PyTypeError::new_err(format!("sessions 的键须为字符串，收到 {}", type_name(&k)))
+        })?;
+        if v.is_instance_of::<PyString>() {
+            out.push((key, SessionSpec::Template(v.extract()?)));
+            continue;
+        }
+        let items: Vec<Bound<'_, PyAny>> = v.extract().map_err(|_| {
+            PyTypeError::new_err(format!(
+                "sessions[{key:?}] 须为时段模板名（字符串）或自定义段列表（{CUSTOM_HINT}），                 收到 {}",
+                type_name(&v)
+            ))
+        })?;
+        let mut segs = Vec::with_capacity(items.len());
+        for (i, item) in items.iter().enumerate() {
+            let parts: Vec<String> = if item.is_instance_of::<PyString>() {
+                Err(())
+            } else {
+                item.extract().map_err(|_| ())
+            }
+            .map_err(|_| {
+                PyTypeError::new_err(format!(
+                    "sessions[{key:?}] 第 {} 段须为字符串元组：{CUSTOM_HINT}；收到 {}",
+                    i + 1,
+                    item.repr().map(|r| r.to_string()).unwrap_or_default()
+                ))
+            })?;
+            if !(3..=4).contains(&parts.len()) {
+                return Err(PyValueError::new_err(format!(
+                    "sessions[{key:?}] 第 {} 段应有 3 或 4 项：{CUSTOM_HINT}；收到 {} 项",
+                    i + 1,
+                    parts.len()
+                )));
+            }
+            let mut it = parts.into_iter();
+            segs.push(CustomSegment {
+                start: it.next().unwrap_or_default(),
+                end: it.next().unwrap_or_default(),
+                session: it.next().unwrap_or_default(),
+                anchor: it.next(),
+            });
+        }
+        out.push((key, SessionSpec::Custom(segs)));
+    }
+    Ok(out)
+}
+
+fn type_name(obj: &Bound<'_, PyAny>) -> String {
+    obj.get_type()
+        .name()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|_| "?".to_string())
+}
+
 /// 交易时段解析器：把时间点或 bar 区间解析为 (交易日, 时段)。
 ///
-/// :param sessions: 代码前缀 → 时段模板名；``"default"`` 为全局默认。
+/// :param sessions: 代码前缀 → 时段模板名或自定义段列表；``"default"`` 为全局默认。
+///     自定义段写 ``(start, end, session)``，可选第 4 项锚定 ``"prev"``/``"day"``；
 ///     未匹配时按资产类型取默认（股票/基金 CN_STOCK、期货 CN_FUTURES_DAY、
 ///     期权 CN_OPTION、其他 ALWAYS_OPEN）。
 /// :param trading_calendar: 交易日列表；不传时中国市场按工作日推算（节假日会算错），ALWAYS_OPEN 每天都算。
@@ -47,7 +121,7 @@ impl PySessionResolver {
     #[new]
     #[pyo3(signature = (sessions=None, trading_calendar=None, timezone="Asia/Shanghai"))]
     fn new(
-        sessions: Option<HashMap<String, String>>,
+        sessions: Option<Bound<'_, PyAny>>,
         trading_calendar: Option<Vec<NaiveDate>>,
         timezone: &str,
     ) -> PyResult<Self> {
@@ -57,18 +131,13 @@ impl PySessionResolver {
                 "无法识别的时区 {timezone:?}，请使用 IANA 时区名，如 \"Asia/Shanghai\""
             )));
         }
-        let sessions_given = sessions.is_some();
-        let mut pairs = Vec::new();
-        for (key, name) in sessions.unwrap_or_default() {
-            let schedule = template(&name).ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "未知时段模板 {name:?}（键 {key:?}），可选：{}",
-                    TEMPLATE_NAMES.join(" / ")
-                ))
-            })?;
-            pairs.push((key, schedule));
-        }
-        let user = if sessions_given { Some(pairs) } else { None };
+        let user = match sessions.as_ref().filter(|s| !s.is_none()) {
+            Some(obj) => {
+                let specs = extract_session_specs(obj)?;
+                Some(build_sessions(specs).map_err(PyValueError::new_err)?)
+            }
+            None => None,
+        };
         let pairs = effective_sessions(user, Some(timezone), 0);
         let calendar = match trading_calendar {
             Some(days) => Some(TradingCalendar::explicit(days).map_err(calendar_err)?),

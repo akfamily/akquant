@@ -13,7 +13,6 @@ from typing import (
     Iterable,
     List,
     Literal,
-    Mapping,
     Optional,
     Sequence,
     Tuple,
@@ -68,6 +67,13 @@ from ..normalize import (
 from ..params import unknown_param_message
 from ..risk import apply_risk_config
 from ..schema import COLUMN_ALIASES
+from ..sessions_config import (
+    SessionsArg,
+    SessionsMap,
+    normalize_sessions,
+    normalize_trading_calendar,
+    parse_asset_type_name,
+)
 from ..strategy import (
     InstrumentAssetTypeName,
     InstrumentOptionMarginModelName,
@@ -462,22 +468,8 @@ def _filter_datetime_index_frame_by_runtime_window(
     return cast(pd.DataFrame, frame.loc[mask.to_numpy()])
 
 
-def _normalize_trading_calendar(value: Any) -> Optional[List[dt_module.date]]:
-    """把 trading_calendar 归一为 date 列表；None 原样返回，空报错."""
-    if value is None:
-        return None
-    if isinstance(value, (str, bytes)):
-        raise TypeError(
-            "trading_calendar 须为交易日序列（date/字符串/Timestamp 的列表），"
-            "不能是单个字符串"
-        )
-    days = sorted({pd.Timestamp(item).date() for item in value})
-    if not days:
-        raise ValueError(
-            "trading_calendar 不能为空：传交易日列表（如 AKShare 的 "
-            "tool_trade_date_hist_sina()['trade_date']），或不传按工作日推算"
-        )
-    return days
+# 已搬入 akquant.sessions_config；保留旧私有名供本模块与既有调用方使用。
+_normalize_trading_calendar = normalize_trading_calendar
 
 
 def _local_midnight_only(index: pd.DatetimeIndex) -> bool:
@@ -512,10 +504,10 @@ def _activate_session_symbols(
 
 def _merge_saved_session_config(
     engine: Any,
-    sessions: Optional[Dict[str, str]],
+    sessions: Optional[SessionsMap],
     trading_calendar: Optional[List[dt_module.date]],
     logger: Any,
-) -> Tuple[Optional[Dict[str, str]], Optional[List[dt_module.date]]]:
+) -> Tuple[Optional[SessionsMap], Optional[List[dt_module.date]]]:
     """续跑的时段配置：未传的一项沿用存档；传入且与存档不一致时以传入为准并告警一次."""
     saved_sessions, saved_calendar = engine.session_config
     differs: List[str] = []
@@ -2262,28 +2254,7 @@ def _normalize_strategy_commission_map(
     return normalized
 
 
-def _parse_asset_type_name(value: Any) -> Literal["futures", "stock", "fund", "option"]:
-    if isinstance(value, AssetType):
-        if value == AssetType.Futures:
-            return "futures"
-        if value == AssetType.Stock:
-            return "stock"
-        if value == AssetType.Fund:
-            return "fund"
-        if value == AssetType.Option:
-            return "option"
-        raise ValueError(f"Unsupported asset_type: {value}")
-    if isinstance(value, str):
-        v_lower = value.lower()
-        if v_lower in {"future", "futures"}:
-            return "futures"
-        if v_lower == "stock":
-            return "stock"
-        if v_lower == "fund":
-            return "fund"
-        if v_lower == "option":
-            return "option"
-    raise ValueError(f"Unsupported asset_type: {value}")
+_parse_asset_type_name = parse_asset_type_name
 
 
 def _normalize_expiry_date_yyyymmdd(value: Any) -> Optional[int]:
@@ -2937,7 +2908,7 @@ def run_backtest(
     slippage: SlippageInput = None,
     volume_limit_pct: Optional[float] = None,
     timezone: Optional[str] = None,
-    sessions: Optional[Mapping[str, str]] = None,
+    sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
     t_plus_one: bool = False,
     initialize: Optional[Callable[[Any], None]] = None,
@@ -3054,10 +3025,18 @@ def run_backtest(
                                    False 时保持兼容行为（忽略未知参数并在失败时
                                    回退无参构造）。
     :param timezone: 时区名称 (默认 "Asia/Shanghai")
-    :param sessions: 代码前缀 → 时段模板名（"default" 为全局默认）；
+    :param sessions: 代码前缀 → 时段模板名或自定义时段表（"default" 为全局默认）；
                      不传时中国时区按资产类型取默认（股票 CN_STOCK、
                      期货 CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。
-                     可选模板见 aq.SessionResolver.templates()
+                     可选模板见 aq.SessionResolver.templates()。自定义时段表写
+                     段列表 ``[(start, end, session), ...]``，如
+                     ``{"xx": [("21:00", "02:30", "continuous"),
+                     ("09:00", "11:30", "continuous")]}``：时刻为 "HH:MM"，
+                     session 取 continuous / opening_auction / auction_hold /
+                     closing_auction / break / post_close（段外即闭市，不写
+                     closed）；开始不早于 18:00 的段算前一交易日的夜盘，结束早于
+                     开始表示跨午夜；可选第 4 项 "prev"/"day" 显式指定锚定。
+                     自定义表不传 trading_calendar 时按工作日推算
     :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
                              中国市场按工作日推算（节假日前后的夜盘与日终
                              结算会算错），ALWAYS_OPEN 每天都算
@@ -3342,7 +3321,7 @@ def run_backtest(
 
     # 交易时段表与交易日历：在这里构造解析器即完成参数校验(未知模板名/空日历报错)
     calendar_days = _normalize_trading_calendar(trading_calendar)
-    session_map = dict(sessions) if sessions is not None else None
+    session_map = normalize_sessions(sessions)
     session_resolver = SessionResolver(
         sessions=session_map, trading_calendar=calendar_days, timezone=timezone
     )
@@ -5618,7 +5597,7 @@ def run_from_checkpoint(
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
     config: Optional[BacktestConfig] = None,
-    sessions: Optional[Mapping[str, str]] = None,
+    sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult:
@@ -5753,7 +5732,7 @@ def run_from_checkpoint(
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
     # 交易时段表与交易日历(同 run_backtest): 构造解析器即完成参数校验
     calendar_days = _normalize_trading_calendar(trading_calendar)
-    session_map = dict(sessions) if sessions is not None else None
+    session_map = normalize_sessions(sessions)
     session_resolver = SessionResolver(
         sessions=session_map, trading_calendar=calendar_days, timezone=timezone_name
     )

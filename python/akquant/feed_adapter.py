@@ -8,6 +8,11 @@ from pandas.tseries.frequencies import to_offset
 
 from .akquant import AssetType, Bar, SessionResolver, WindowAggregator
 from .log import get_logger
+from .sessions_config import (
+    SessionsArg,
+    normalize_sessions,
+    normalize_trading_calendar,
+)
 from .utils import load_bar_from_df
 
 
@@ -117,7 +122,7 @@ class BasePandasFeedAdapter:
         label: LabelKind = "right",
         closed: LabelKind = "right",
         session_windows: list[SessionWindow] | None = None,
-        sessions: Mapping[str, str] | None = None,
+        sessions: SessionsArg | None = None,
         trading_calendar: Iterable[Any] | None = None,
         asset_type: AssetTypeArg = None,
         base_interval_min: int | None = None,
@@ -136,7 +141,8 @@ class BasePandasFeedAdapter:
         ``day_mode="calendar"``、手写 ``session_windows``)沿用 pandas ``resample``
         按本地日期(或手写时段)分区的旧实现。
 
-        :param sessions: 代码前缀 → 时段模板名, 同 ``run_backtest`` 的 ``sessions``。
+        :param sessions: 代码前缀 → 时段模板名或自定义时段表, 同 ``run_backtest``
+            的 ``sessions``。
         :param trading_calendar: 交易日列表, 同 ``run_backtest`` 的
             ``trading_calendar``。
         :param asset_type: 资产类型(决定默认时段表), 同 ``run_backtest``, 默认股票;
@@ -524,18 +530,16 @@ def _replay_engine_frame(
     agg: Mapping[str, str] | None,
     emit_partial: bool,
     timezone: str | None,
-    sessions: Mapping[str, str] | None,
+    sessions: SessionsArg | None,
     trading_calendar: Iterable[Any] | None,
     asset_type: AssetTypeArg,
     base_interval_min: int | None,
     symbol: str,
 ) -> pd.DataFrame:
-    from .backtest.engine import _normalize_trading_calendar
-
     tz = timezone or DEFAULT_INPUT_TIMEZONE
     resolver = SessionResolver(
-        sessions=dict(sessions) if sessions is not None else None,
-        trading_calendar=_normalize_trading_calendar(trading_calendar),
+        sessions=normalize_sessions(sessions),
+        trading_calendar=normalize_trading_calendar(trading_calendar),
         timezone=tz,
     )
     agg_map = dict(_default_agg_mapping())
@@ -590,7 +594,7 @@ def _replay_ohlcv_frame(
     timezone: str | None = None,
     session_windows: list[SessionWindow] | None = None,
     day_mode: DayModeKind = "trading",
-    sessions: Mapping[str, str] | None = None,
+    sessions: SessionsArg | None = None,
     trading_calendar: Iterable[Any] | None = None,
     asset_type: AssetTypeArg = None,
     base_interval_min: int | None = None,
@@ -748,7 +752,7 @@ class ReplayFeedAdapter(ResampledFeedAdapter):
         label: LabelKind = "right",
         closed: LabelKind = "right",
         session_windows: list[SessionWindow] | None = None,
-        sessions: Mapping[str, str] | None = None,
+        sessions: SessionsArg | None = None,
         trading_calendar: Iterable[Any] | None = None,
         asset_type: AssetTypeArg = None,
         base_interval_min: int | None = None,
@@ -769,7 +773,7 @@ class ReplayFeedAdapter(ResampledFeedAdapter):
             raise ValueError(
                 "base_interval_min 必须为正整数（源数据 bar 的分钟数），不知道时不传"
             )
-        self.sessions = dict(sessions) if sessions is not None else None
+        self.sessions = normalize_sessions(sessions)
         self.trading_calendar = (
             list(trading_calendar) if trading_calendar is not None else None
         )

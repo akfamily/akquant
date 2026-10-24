@@ -222,6 +222,15 @@ mod tests {
                     "CN_FUTURES_NIGHT_0230".to_string(),
                 )]),
                 trading_calendar: Some(vec![NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()]),
+                custom_sessions: Some(vec![(
+                    "xx".to_string(),
+                    vec![crate::calendar::schedule::CustomSegment {
+                        start: "21:00".to_string(),
+                        end: "02:30".to_string(),
+                        session: "continuous".to_string(),
+                        anchor: Some("prev".to_string()),
+                    }],
+                )]),
             },
             last_event_ts_in_day: Some(123456000),
         };
@@ -274,5 +283,40 @@ mod tests {
                 .map(|snapshot| snapshot.default_capacity),
             Some(3)
         );
+    }
+
+    #[test]
+    fn test_session_config_custom_sessions_compat() {
+        use crate::engine::core::SessionConfig;
+        use chrono::NaiveDate;
+        let days = Some(vec![NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()]);
+        let templates = Some(vec![("rb".to_string(), "CN_FUTURES_NIGHT_23".to_string())]);
+        // 旧格式（无 custom_sessions）读入时为 None
+        let old: Vec<u8> = rmp_serde::to_vec(&(&templates, &days)).unwrap();
+        let decoded: SessionConfig = rmp_serde::from_slice(&old).unwrap();
+        assert_eq!(decoded.sessions, templates);
+        assert_eq!(decoded.trading_calendar, days);
+        assert_eq!(decoded.custom_sessions, None);
+        // 新格式往返
+        let cfg = SessionConfig {
+            sessions: Some(Vec::new()),
+            trading_calendar: None,
+            custom_sessions: Some(vec![(
+                "600000".to_string(),
+                vec![crate::calendar::schedule::CustomSegment {
+                    start: "10:00".to_string(),
+                    end: "11:00".to_string(),
+                    session: "continuous".to_string(),
+                    anchor: None,
+                }],
+            )]),
+        };
+        let back: SessionConfig = rmp_serde::from_slice(&rmp_serde::to_vec(&cfg).unwrap()).unwrap();
+        assert_eq!(back, cfg);
+        // 合并后的规格能构造出时段表
+        let built =
+            crate::calendar::resolver::build_sessions(cfg.session_specs().unwrap()).unwrap();
+        assert_eq!(built.len(), 1);
+        assert_eq!(built[0].0, "600000");
     }
 }

@@ -146,14 +146,19 @@ class SessionResolver:
     r"""
     交易时段解析器：把时间点或 bar 区间解析为 (交易日, 时段).
 
-    :param sessions: 代码前缀 → 时段模板名；"default" 为全局默认
+    :param sessions: 代码前缀 → 时段模板名或自定义段列表；"default" 为全局默认。
+        自定义段写 (start, end, session)，可选第 4 项锚定 "prev"/"day"
     :param trading_calendar: 交易日列表；不传时中国市场按工作日推算（节假日会算错），ALWAYS_OPEN 每天都算
     :param timezone: IANA 时区名
     """
 
     def __new__(
         cls,
-        sessions: typing.Optional[dict[str, str]] = None,
+        sessions: typing.Optional[
+            typing.Mapping[
+                str, typing.Union[str, typing.Sequence[typing.Sequence[str]]]
+            ]
+        ] = None,
         trading_calendar: typing.Optional[list[datetime.date]] = None,
         timezone: str = "Asia/Shanghai",
     ) -> "SessionResolver": ...
@@ -759,8 +764,14 @@ class Engine:
     @property
     def session_config(
         self,
-    ) -> tuple[typing.Optional[dict[str, str]], typing.Optional[list[datetime.date]]]:
-        r"""当前交易时段配置 (sessions, trading_calendar)；随存档保存."""
+    ) -> tuple[
+        typing.Optional[dict[str, typing.Union[str, list[tuple[str, ...]]]]],
+        typing.Optional[list[datetime.date]],
+    ]:
+        r"""当前交易时段配置 (sessions, trading_calendar)；随存档保存.
+
+        sessions 的值为模板名，或自定义段列表 [(start, end, session[, anchor]), ...]。
+        """
         ...
 
     def get_state_bytes(self) -> bytes:
@@ -818,7 +829,11 @@ class Engine:
 
     def configure_sessions(
         self,
-        sessions: typing.Optional[dict[str, str]] = None,
+        sessions: typing.Optional[
+            typing.Mapping[
+                str, typing.Union[str, typing.Sequence[typing.Sequence[str]]]
+            ]
+        ] = None,
         trading_calendar: typing.Optional[list[datetime.date]] = None,
     ) -> None:
         r"""配置交易时段表与交易日历."""

@@ -73,6 +73,26 @@ impl SessionSchedule {
                 ));
             }
         }
+        // 跨锚定：夜盘段平移到交易日坐标（相对交易日 0 点减 24 小时）后不得与当日段相交。
+        for night in segments
+            .iter()
+            .filter(|s| s.anchor == Anchor::PrevTradingDay)
+        {
+            let ns = i64::from(night.start_sec) - i64::from(DAY_SECS);
+            let ne = i64::from(night.end_sec) - i64::from(DAY_SECS);
+            for day in segments.iter().filter(|s| s.anchor == Anchor::TradingDay) {
+                if ns < i64::from(day.end_sec) && i64::from(day.start_sec) < ne {
+                    return Err(format!(
+                        "时段表 {name:?} 的夜盘时段 {}-{}（锚定前一交易日）与当日时段 {}-{} \
+                         重叠：夜盘跨午夜后不得与交易日当天的时段重叠，请调整其中一段的起止",
+                        fmt_clock(night.start_sec),
+                        fmt_clock(night.end_sec % DAY_SECS),
+                        fmt_clock(day.start_sec),
+                        fmt_clock(day.end_sec)
+                    ));
+                }
+            }
+        }
         Ok(Self {
             name,
             segments,
@@ -112,8 +132,108 @@ pub fn parse_clock(s: &str) -> Result<u32, String> {
     Ok(h * 3600 + m * 60 + sec)
 }
 
+/// 自定义时段表的一段：`(start, end, session[, anchor])`，原样保存用户写法（随存档保存）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CustomSegment {
+    pub start: String,
+    pub end: String,
+    pub session: String,
+    /// `"prev"`（前一交易日，夜盘）或 `"day"`（交易日当天）；None 按开始时刻推断。
+    pub anchor: Option<String>,
+}
+
+/// 不写锚定时，开始时刻不早于它的段视为夜盘（锚定前一交易日）。
+const NIGHT_START_SECS: u32 = 18 * 3600;
+
+/// 自定义时段表里的时刻：严格 `HH:MM`（可带 `:SS`），小时 0～24，24 只允许 `24:00`。
+fn parse_custom_clock(name: &str, idx: usize, field: &str, s: &str) -> Result<u32, String> {
+    let bad = || {
+        format!(
+            "sessions[{name:?}] 第 {idx} 段的{field} {s:?} 无效：须为 HH:MM 格式的 00:00～24:00，\
+             跨午夜的夜盘请写成 (\"21:00\", \"02:30\", ...)"
+        )
+    };
+    let secs = parse_clock(s).map_err(|_| bad())?;
+    if secs > DAY_SECS {
+        return Err(bad());
+    }
+    Ok(secs)
+}
+
+/// 由用户写的段序列构造自定义时段表（缺省日历为工作日）。
+///
+/// `name` 为 `sessions` 的键，用于报错与时段表名。规则：`closed` 不允许写（段外即闭市）；
+/// 未给锚定时 `start >= 18:00` 的段锚定前一交易日（夜盘）；`end <= start` 表示跨午夜，
+/// 只允许夜盘段。
+pub fn schedule_from_custom(name: &str, segs: &[CustomSegment]) -> Result<SessionSchedule, String> {
+    if segs.is_empty() {
+        return Err(format!(
+            "sessions[{name:?}] 至少需要一个时段，如 [(\"09:30\", \"11:30\", \"continuous\")]"
+        ));
+    }
+    let mut segments = Vec::with_capacity(segs.len());
+    for (i, seg) in segs.iter().enumerate() {
+        let idx = i + 1;
+        let start = parse_custom_clock(name, idx, "开始时刻", &seg.start)?;
+        if start >= DAY_SECS {
+            return Err(format!(
+                "sessions[{name:?}] 第 {idx} 段的开始时刻 {:?} 无效：须为 HH:MM 格式且早于 24:00",
+                seg.start
+            ));
+        }
+        let mut end = parse_custom_clock(name, idx, "结束时刻", &seg.end)?;
+        let session = parse_session(&seg.session)
+            .map_err(|e| format!("sessions[{name:?}] 第 {idx} 段：{e}"))?;
+        if session == TradingSession::Closed {
+            return Err(format!(
+                "sessions[{name:?}] 第 {idx} 段的时段类型不能是 closed：段外即闭市，不要写 closed"
+            ));
+        }
+        let anchor = match seg.anchor.as_deref().map(|a| a.trim().to_ascii_lowercase()) {
+            None => {
+                if start >= NIGHT_START_SECS {
+                    Anchor::PrevTradingDay
+                } else {
+                    Anchor::TradingDay
+                }
+            }
+            Some(a) if a == "prev" => Anchor::PrevTradingDay,
+            Some(a) if a == "day" => Anchor::TradingDay,
+            Some(_) => {
+                return Err(format!(
+                    "sessions[{name:?}] 第 {idx} 段的锚定 {:?} 无效：只能写 \"prev\"（前一交易日，\
+                     夜盘）或 \"day\"（交易日当天），也可不写（开始不早于 18:00 视为夜盘）",
+                    seg.anchor.as_deref().unwrap_or_default()
+                ));
+            }
+        };
+        if end == start {
+            return Err(format!(
+                "sessions[{name:?}] 第 {idx} 段 {}-{} 长度为 0：结束时刻须晚于开始时刻",
+                seg.start, seg.end
+            ));
+        }
+        if end < start {
+            if anchor != Anchor::PrevTradingDay {
+                return Err(format!(
+                    "sessions[{name:?}] 第 {idx} 段 {}-{} 长度无效：结束早于开始表示跨午夜，\
+                     只允许夜盘段（开始不早于 18:00，或第 4 项写 \"prev\"）；日盘段请让结束晚于开始",
+                    seg.start, seg.end
+                ));
+            }
+            end += DAY_SECS;
+        }
+        segments.push(SessionSegment {
+            anchor,
+            start_sec: start,
+            end_sec: end,
+            session,
+        });
+    }
+    SessionSchedule::new(name, segments, FallbackCalendar::Weekdays)
+}
+
 /// 解析时段类型名（不区分大小写，接受 snake_case）。
-#[allow(dead_code)] // 阶段 6 使用：sessions= 自定义时段元组 (start, end, 类型) 的类型解析
 pub fn parse_session(s: &str) -> Result<TradingSession, String> {
     let key: String = s.trim().to_ascii_lowercase().replace('_', "");
     Ok(match key.as_str() {
@@ -311,5 +431,105 @@ mod tests {
             TradingSession::Continuous
         );
         assert!(parse_session("normal").is_err());
+    }
+
+    fn cs(start: &str, end: &str, session: &str, anchor: Option<&str>) -> CustomSegment {
+        CustomSegment {
+            start: start.to_string(),
+            end: end.to_string(),
+            session: session.to_string(),
+            anchor: anchor.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn custom_schedule_anchors_night_and_wraps_midnight() {
+        let s = schedule_from_custom(
+            "xx",
+            &[
+                cs("21:00", "02:30", "continuous", None),
+                cs("09:00", "11:30", "Continuous", None),
+                cs("19:00", "20:00", "post_close", Some("DAY")),
+            ],
+        )
+        .unwrap();
+        assert_eq!(s.fallback_calendar, FallbackCalendar::Weekdays);
+        assert!(s.has_night());
+        let night = s
+            .segments
+            .iter()
+            .find(|x| x.anchor == Anchor::PrevTradingDay)
+            .unwrap();
+        assert_eq!(night.start_sec, 21 * 3600);
+        assert_eq!(night.end_sec, 26 * 3600 + 30 * 60);
+        assert!(
+            s.segments
+                .iter()
+                .any(|x| x.anchor == Anchor::TradingDay && x.start_sec == 19 * 3600)
+        );
+    }
+
+    #[test]
+    fn custom_schedule_rejects_invalid() {
+        let err = |segs: &[CustomSegment]| schedule_from_custom("xx", segs).unwrap_err();
+        assert!(err(&[]).contains("至少"));
+        assert!(err(&[cs("09:30", "09:30", "continuous", None)]).contains("长度"));
+        assert!(err(&[cs("11:30", "09:30", "continuous", None)]).contains("跨午夜"));
+        assert!(err(&[cs("25:00", "26:00", "continuous", None)]).contains("HH:MM"));
+        assert!(err(&[cs("24:00", "01:00", "continuous", None)]).contains("HH:MM"));
+        assert!(err(&[cs("09:30", "11:30", "closed", None)]).contains("closed"));
+        assert!(err(&[cs("09:30", "11:30", "normal", None)]).contains("未知时段类型"));
+        assert!(err(&[cs("09:30", "11:30", "continuous", Some("-1d"))]).contains("锚定"));
+        assert!(
+            err(&[
+                cs("21:00", "09:45", "continuous", None),
+                cs("09:30", "11:30", "continuous", None),
+            ])
+            .contains("重叠")
+        );
+        // 显式锚定当天的跨午夜段不允许
+        assert!(err(&[cs("21:00", "02:30", "continuous", Some("day"))]).contains("跨午夜"));
+        // 00:00-24:00 合法
+        assert!(schedule_from_custom("xx", &[cs("00:00", "24:00", "continuous", None)]).is_ok());
+    }
+
+    #[test]
+    fn new_rejects_cross_anchor_overlap() {
+        let night = SessionSegment {
+            anchor: Anchor::PrevTradingDay,
+            start_sec: 21 * 3600,
+            end_sec: 33 * 3600 + 45 * 60,
+            session: TradingSession::Continuous,
+        };
+        let day = SessionSegment {
+            anchor: Anchor::TradingDay,
+            start_sec: 9 * 3600 + 30 * 60,
+            end_sec: 11 * 3600 + 30 * 60,
+            session: TradingSession::Continuous,
+        };
+        let e =
+            SessionSchedule::new("x", vec![night, day], FallbackCalendar::Weekdays).unwrap_err();
+        assert!(e.contains("重叠"), "{e}");
+        let short_night = SessionSegment {
+            end_sec: 26 * 3600 + 30 * 60,
+            ..night
+        };
+        assert!(
+            SessionSchedule::new("x", vec![short_night, day], FallbackCalendar::Weekdays).is_ok()
+        );
+    }
+
+    #[test]
+    fn custom_segment_roundtrips_msgpack() {
+        let v = vec![(
+            "xx".to_string(),
+            vec![
+                cs("21:00", "02:30", "continuous", None),
+                cs("09:00", "10:00", "continuous", Some("day")),
+            ],
+        )];
+        let bytes = rmp_serde::to_vec(&v).unwrap();
+        let back: Vec<(String, Vec<CustomSegment>)> = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(back, v);
     }
 }

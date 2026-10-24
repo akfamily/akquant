@@ -373,6 +373,7 @@ mod tests {
         // 会归入下一交易日(01-02), 拆股提前到 T1 发生; 本测试把三天都声明为交易日。
         engine.session_config = crate::engine::core::SessionConfig {
             sessions: None,
+            custom_sessions: None,
             trading_calendar: Some(
                 ["2022-12-30", "2023-01-01", "2023-01-02", "2023-01-03"]
                     .iter()
