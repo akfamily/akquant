@@ -33,6 +33,11 @@ pub trait ExecutionClient: Send + Sync {
         true
     }
 
+    /// 登记: 该订单是在 tick/定时器回调里下的(不是在 bar 回调里)。同一时刻、
+    /// 同品种的带区间 bar 不撮合它(区间 OHLC 早于下单时刻)。须在 `on_order` 之后调用;
+    /// 不在本地撮合的客户端(实盘)无需处理。
+    fn mark_created_off_bar(&mut self, _order_id: &str) {}
+
     /// 取消订单请求
     fn on_cancel(&mut self, order_id: &str);
 

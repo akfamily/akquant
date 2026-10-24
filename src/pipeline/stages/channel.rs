@@ -226,6 +226,13 @@ impl Processor for ChannelProcessor {
                     Event::OrderValidated(order) => {
                         record_creation_session(engine, &order);
                         engine.execution_model.on_order(order.clone());
+                        // tick/定时器回调里下的单: 同刻、同品种的带区间 bar 不撮合它
+                        if matches!(
+                            engine.current_event,
+                            Some(Event::Tick(_)) | Some(Event::Timer(_))
+                        ) {
+                            engine.execution_model.mark_created_off_bar(&order.id);
+                        }
                         engine.state.order_manager.add_active_order(order);
                     }
                     Event::ExecutionReport(order, trade) => {

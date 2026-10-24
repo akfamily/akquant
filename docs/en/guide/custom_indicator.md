@@ -380,8 +380,9 @@ Three limits:
 - **Base-period indicators (no `freq=`) peek on every tick**: the framework builds the forming
   bar from the ticks itself (real open/high/low/close, so ATR-style H/L indicators work too);
   ticks **no longer `update()`** such an indicator - only the bar close commits state. The
-  provisional timestamp is predicted with the aggregator's end-of-interval stamp
-  (`(ts // interval + 1) * interval - 1ns`); if a closing bar disagrees (a source stamping at
+  provisional timestamp is predicted with the aggregator's right-closed `(S, E]` end stamp
+  (`((ts - 1) // interval + 1) * interval`, i.e. the interval end `E`; a tick exactly on a
+  minute boundary belongs to the bar ending there); if a closing bar disagrees (a source stamping at
   interval start), streaming stops for that symbol with one warning while `[0]` keeps working.
   **With the default `intrabar=False` ticks still `update()` base indicators** - pure-tick
   strategies rely on that and it is unchanged.

@@ -230,8 +230,9 @@ impl BarAggregator {
     /// 封闭已到期的在形成 bar 并推入数据源.
     ///
     /// 区间终点 `E` + `grace_ns` ≤ `now_ns` 的 bar 被封闭推出(时间戳同 `on_tick`
-    /// 封闭的 bar, 即 `E`)。恰在 `E` 的 tick 属于本区间, 补发后才到同样算迟到。用于实盘: 某品种下一区间迟迟没有 tick 时, 本区间的 bar
-    /// 也能按时发出。之后到达的同区间 tick 视为迟到: 不参与 OHLC, 量计入下一根。
+    /// 封闭的 bar, 即 `E`)。用于实盘: 某品种下一区间迟迟没有 tick 时, 本区间的
+    /// bar 也能按时发出。之后到达的同区间 tick(含恰在 `E` 的)视为迟到: 不参与
+    /// OHLC, 量计入下一根。
     ///
     /// :param now_ns: 当前时刻 (纳秒)
     /// :param grace_ns: 区间结束后的宽限期 (纳秒, 默认 2 秒)
@@ -463,6 +464,28 @@ mod tests {
         assert_eq!(bar.close, dec!(102));
         // 10 + 40: 15:00:00 那笔的 40 计入本根
         assert_eq!(bar.volume, dec!(50));
+    }
+
+    #[test]
+    fn zero_and_negative_timestamps_use_floor_buckets() {
+        // 右闭区间按 floor 取编号: ts=0 属于 (-I, 0], ts=1 属于 (0, I]; 截断除法
+        // 会把 ts=0 与 ts=1 并进同一桶
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(1), false);
+        agg.on_tick("X".into(), 1.0, 1.0, -ns(0, 30)).unwrap();
+        agg.on_tick("X".into(), 2.0, 1.0, 0).unwrap();
+        agg.on_tick("X".into(), 3.0, 1.0, 1).unwrap();
+        agg.on_tick("X".into(), 4.0, 1.0, ns(1, 1)).unwrap();
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(bars.len(), 2);
+        assert_eq!(
+            (bars[0].timestamp, bars[0].interval_start, bars[0].close),
+            (0, Some(-ns(1, 0)), dec!(2))
+        );
+        assert_eq!(
+            (bars[1].timestamp, bars[1].interval_start, bars[1].close),
+            (ns(1, 0), Some(0), dec!(3))
+        );
     }
 
     #[test]

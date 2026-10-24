@@ -1270,8 +1270,8 @@ mod tests {
 
     #[test]
     fn tick_synthesized_bar_closes_window_at_boundary() {
-        // 回测 tick 合成的终点戳 bar: ts = 边界 - 1ns, interval_start = 起点 - 1ns;
-        // 基础周期未配置时也按 bar 区间即时闭合。
+        // 旧口径（旧存档/外部数据）的终点戳 bar: ts = 边界 - 1ns, interval_start =
+        // 起点 - 1ns; 基础周期未配置时也按 bar 区间即时闭合。
         let mut a = agg(&[("5min", None)], None);
         let mut synth = |m: u32| {
             let mut b = bar(ns(2024, 1, 2, 9, m) - 1, 10, "X");
@@ -1286,6 +1286,27 @@ mod tests {
         assert_eq!(closed.len(), 1);
         assert_eq!(closed[0].timestamp, ns(2024, 1, 2, 9, 35));
         assert_eq!(closed[0].volume, Decimal::from(50));
+    }
+
+    #[test]
+    fn right_closed_aggregator_bar_closes_window_at_boundary() {
+        // BarAggregator 现行口径: 右闭区间 (S, E], ts = E(整分), interval_start = S;
+        // bar_end 取 ts 本身, 窗口在边界即时闭合且不把 E 那根归入下一窗口。
+        let mut a = agg(&[("5min", None)], None);
+        let mut synth = |m: u32| {
+            let mut b = bar(ns(2024, 1, 2, 9, m), 10, "X");
+            b.interval_start = Some(ns(2024, 1, 2, 9, m - 1));
+            a.update(&b)
+        };
+        for m in 31..=34 {
+            assert!(synth(m).is_empty(), "minute {m} must not close");
+        }
+        let closed = synth(35);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].timestamp, ns(2024, 1, 2, 9, 35));
+        assert_eq!(closed[0].interval_start, Some(ns(2024, 1, 2, 9, 30)));
+        assert_eq!(closed[0].volume, Decimal::from(50));
+        assert!(synth(36).is_empty(), "09:36 属于下一窗口");
     }
 
     #[test]

@@ -94,6 +94,10 @@ pub struct SimulatedExecutionClient {
     slice_tracking_timestamp: Option<i64>,
     attempted_same_cycle_order_ids: HashSet<String>,
     deferred_same_cycle_order_ids: HashSet<String>,
+    /// 在 tick/定时器回调里下的订单(见 [`ExecutionClient::mark_created_off_bar`])。
+    /// 同一时刻、同品种的带区间 bar 在它们之后处理, 其 OHLC 来自
+    /// `(interval_start, timestamp]`, 早于下单时刻, 故不由这根 bar 撮合。
+    created_off_bar_ids: HashSet<String>,
     /// 品种 -> 当日集合竞价状态。
     auctions: HashMap<String, AuctionState>,
     /// 已提示过"竞价期成交量为 0"的品种。
@@ -200,6 +204,7 @@ impl SimulatedExecutionClient {
             futures_validation_by_prefix: Vec::new(),
             slice_tracking_timestamp: None,
             attempted_same_cycle_order_ids: HashSet::new(),
+            created_off_bar_ids: HashSet::new(),
             deferred_same_cycle_order_ids: HashSet::new(),
             auctions: HashMap::new(),
             zero_volume_auction_warned: HashSet::new(),
@@ -369,6 +374,19 @@ impl SimulatedExecutionClient {
         }
     }
 
+    /// 同刻带区间 bar 不得撮合该单: bar 的 `interval_start < timestamp`、与订单
+    /// 同品种、`timestamp == created_at`, 且订单是在 tick/定时器回调里下的(在这根
+    /// bar 之前处理)。`on_bar` 里下的单不受影响; 留给后续事件(含本时间片的 tick)。
+    fn skips_same_time_interval_bar(&self, order: &Order, event: &Event) -> bool {
+        matches!(
+            event,
+            Event::Bar(bar)
+                if bar.symbol == order.symbol
+                    && bar.timestamp == order.created_at
+                    && bar.interval_start.is_some_and(|s| s < bar.timestamp)
+        ) && self.created_off_bar_ids.contains(&order.id)
+    }
+
     fn event_timestamp(event: &Event) -> Option<i64> {
         match event {
             Event::Bar(bar) => Some(bar.timestamp),
@@ -501,6 +519,7 @@ impl SimulatedExecutionClient {
         }
         for id in finished_ids {
             self.orders.remove(&id);
+            self.created_off_bar_ids.remove(&id);
         }
         self.order_queue.retain(|id| self.orders.contains_key(id));
     }
@@ -551,6 +570,10 @@ impl SimulatedExecutionClient {
                     None => order_filter(&order_snapshot, event),
                 };
                 if !Self::is_order_active(&order_snapshot) || !selected {
+                    continue;
+                }
+
+                if uncross.is_none() && self.skips_same_time_interval_bar(&order_snapshot, event) {
                     continue;
                 }
 
@@ -1038,6 +1061,12 @@ impl ExecutionClient for SimulatedExecutionClient {
 
     fn knows_order(&self, order_id: &str) -> bool {
         self.orders.contains_key(order_id)
+    }
+
+    fn mark_created_off_bar(&mut self, order_id: &str) {
+        if self.orders.contains_key(order_id) {
+            self.created_off_bar_ids.insert(order_id.to_string());
+        }
     }
 
     fn on_cancel(&mut self, order_id: &str) {
