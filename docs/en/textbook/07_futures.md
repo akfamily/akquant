@@ -19,6 +19,11 @@ This chapter is currently maintained in Chinese first.
 - Prefix commission override: `commission_rate`
 - Prefix validation switches: `enforce_tick_size`, `enforce_lot_size`
 - Trading sessions are no longer configured here (`enforce_sessions` / `session_profile` / `sessions` were removed and raise a migration `TypeError`); use `run_backtest(sessions=...)`, e.g. `sessions={"rb": "CN_FUTURES_NIGHT_23"}`, or `sessions={"default": "ALWAYS_OPEN"}` for no session constraint
+  - Keys match by symbol prefix (longest prefix wins; exchange-qualified keys such as `shfe.au` work), `"default"` is the global default; keys must be non-empty and unique after trimming and lower-casing (`"RB"` together with `"rb"` is rejected)
+  - Besides a template name, a value can be a custom schedule: a sequence of `(start, end, session[, anchor])`, e.g. `sessions={"xx": [("21:00", "02:30", "continuous"), ("09:00", "11:30", "continuous"), ("13:30", "15:00", "continuous")]}`. `start` / `end` must be strict two-digit `HH:MM` (`"9:30"` is rejected, write `"09:30"`); `session` is one of `continuous` / `opening_auction` / `auction_hold` / `closing_auction` / `break` / `post_close`; anything outside the segments is closed, so never write `closed`
+  - Anchoring: without a 4th item, segments with `start >= "18:00"` are the previous trading day's night session and the rest belong to the trading day itself; override with `"prev"` / `"day"`. `end <= start` means crossing midnight and is only allowed for night segments; segments must not overlap within one anchor, nor once night segments are laid onto the trading day
+  - Without `trading_calendar`, a custom schedule defaults to a weekday calendar (holidays are not known; pass a trading-day list when it matters)
+  - An option not matched by any `sessions` prefix follows the schedule of its `underlying_symbol` when that is a registered future (a night template for `rb` also applies to RB options); otherwise it uses `CN_OPTION`
 
 The config now validates early during object construction (fail-fast):
 

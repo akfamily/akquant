@@ -558,7 +558,7 @@ class InstrumentConfig:
     defaulted_fields: FrozenSet[str]   # 由缺省值填充的字段名
 ```
 
-`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` 在 `run_backtest` 与 `run_from_checkpoint` 中按标的覆盖市场费率（ChinaMarket 下股票/基金四项全部生效、期货只认 `commission_rate`；SimpleMarket 下四项对所有资产生效）。ChinaMarket 下期权按张计费不受这些字段影响；但显式 `use_china_market=False` 走 SimpleMarket 时，覆盖同样作用于期权。`slippage` 字段已接入撮合，优先级：订单级 `slippage=` > 品种级 `InstrumentConfig.slippage` > 策略级 `strategy_slippage` > 全局 `StrategyConfig.slippage`；`run_from_checkpoint` 续跑同样按此优先级生效。`run_from_checkpoint` 续跑段现在会补齐期权市场规则（`china_options` 配置下发、行权结算费）与按品种费用 / 滑点覆盖；已知限制：若第二阶段调用完全不传 `instruments`，第一阶段仅由数据键重新登记的期权会被判定为 STOCK；期货市场规则（`ChinaFuturesConfig`、交易时段、期货前缀费率规则）续跑时仍不会重新下发；识别出第一阶段的期权可能使续跑切换到 ChinaMarket。
+`commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` 在 `run_backtest` 与 `run_from_checkpoint` 中按标的覆盖市场费率（ChinaMarket 下股票/基金四项全部生效、期货只认 `commission_rate`；SimpleMarket 下四项对所有资产生效）。ChinaMarket 下期权按张计费不受这些字段影响；但显式 `use_china_market=False` 走 SimpleMarket 时，覆盖同样作用于期权。`slippage` 字段已接入撮合，优先级：订单级 `slippage=` > 品种级 `InstrumentConfig.slippage` > 策略级 `strategy_slippage` > 全局 `StrategyConfig.slippage`；`run_from_checkpoint` 续跑同样按此优先级生效。`run_from_checkpoint` 续跑段现在会补齐期权市场规则（`china_options` 配置下发、行权结算费）与按品种费用 / 滑点覆盖；已知限制：若第二阶段调用完全不传 `instruments`，第一阶段仅由数据键重新登记的期权会被判定为 STOCK；期货市场规则（`ChinaFuturesConfig`、期货前缀费率规则）续跑时仍不会重新下发（交易时段 `sessions` / `trading_calendar` 随存档保存，续跑不传时沿用）；识别出第一阶段的期权可能使续跑切换到 ChinaMarket。
 
 常用枚举（均可在 `akquant` 顶层直接访问）：
 
@@ -637,6 +637,8 @@ BacktestConfig (回测场景)
 - `fee_by_symbol_prefix`: 品种费率覆盖
 - `validation_by_symbol_prefix`: 品种撮合校验开关覆盖
 - 交易时段已不在 `ChinaFuturesConfig` 配置：`enforce_sessions` / `session_profile` / `sessions` 与 `ChinaFuturesSessionConfig`、`ChinaOptionsConfig.sessions`、`ChinaOptionsSessionConfig` 均已删除（传入会报带迁移方法的错误），改用 `run_backtest(sessions=...)`，如 `sessions={"rb": "CN_FUTURES_NIGHT_23"}`；不受时段约束用 `sessions={"default": "ALWAYS_OPEN"}`
+  - `sessions` 的值可以是模板名，也可以是自定义时段表（段序列 `(start, end, session[, anchor])`，如 `[("21:00", "02:30", "continuous"), ("09:00", "15:00", "continuous")]`）。规则：段外即闭市，不写 `closed`；未写第 4 项时 `start >= "18:00"` 的段锚定前一交易日（夜盘），可用 `"prev"` / `"day"` 显式指定；`end <= start` 表示跨午夜，只允许夜盘段；时刻须为严格两位的 `HH:MM`；同一锚定内及夜盘展开后与当日段之间不得重叠；键按代码前缀匹配（更长前缀优先，如 `shfe.au`），去空格、转小写后不得重复；自定义表未配 `trading_calendar` 时缺省日历为工作日。详见[第 7 章「AKQuant 中国期货配置速览」](../textbook/07_futures.md)
+  - 期权未被 `sessions` 前缀匹配时，若其 `underlying_symbol` 是已登记的期货，跟随该期货的时段表；否则用 `CN_OPTION`
 
 配置对象采用“构造即校验”：
 
@@ -702,7 +704,6 @@ config = BacktestConfig(
 | `sell_open_exempt` | `True` | 卖出开仓（含备兑开仓）免收经手费与结算费；交易所恢复收费时设为 `False` |
 | `fee_by_symbol_prefix` | `None` | `ChinaOptionsFeeConfig` 列表，按品种前缀覆盖上面五项（字段同名同缺省，`commission_per_contract` 必填） |
 | `use_china_market` | `True` | 是否使用 ChinaMarket；只有显式设为 `False` 才走 SimpleMarket（此时期权按成交额百分比计费，行权结算费为 0） |
-| `sessions` | `None` | 可选时段覆盖（不与期货会话配置冲突时生效） |
 
 以上缺省值只适用于沪深 ETF 期权；商品期货期权 / 股指期权（如 RB、MO、IO 等）费率与减免规则不同，请用 `fee_by_symbol_prefix` 显式设置费率与 `sell_open_exempt`。
 
@@ -756,7 +757,7 @@ cb = InstrumentConfig(symbol="113050.SH", asset_type="CONVERTIBLE_BOND")
 | 前缀费率覆盖 | `fee_by_symbol_prefix` | `fee_by_symbol_prefix` |
 | 合约参数模板 | 支持（乘数/保证金/tick/手数） | 不支持 |
 | 撮合校验开关 | 支持（tick/手数，含前缀覆盖） | 不支持 |
-| 会话覆盖 | 支持（`sessions`） | 支持（`sessions`） |
+| 交易时段 | `run_backtest(sessions=...)` 按前缀指定 | `run_backtest(sessions=...)` 按前缀指定；未匹配时跟随已登记的期货标的，否则 `CN_OPTION` |
 | 前缀匹配策略 | 更长前缀优先 | 更长前缀优先 |
 
 股票配置推荐使用以下优先级口径：
@@ -1185,6 +1186,16 @@ run_live(..., preload_history=history)
 *   `preload_bars`：`int` / `None`（默认）。行情 broker 在 `GatewayBundle.history_provider` 上提供了历史拉取函数（如 `klinedata`）且未传 `preload_history` 时生效，拉到的历史走与 `preload_history` 相同的路径。`None` 自动：每标的取 `min(10000, max(3 × 推断 warmup, 500, warmup_period, 历史深度))` 根（各项对主策略与全部 slot 取最大值），tick 驱动的行情源不开启；`0` 关闭；`N > 0` 取 N 根（截到 10000，tick 驱动也生效）；负数或非整数抛 `ValueError`。显式 `preload_history` 优先，此时不调用行情源。拉取抛异常告警后照常启动，返回空记 INFO。
 *   `GatewayBundle.history_provider`：`Callable[[Sequence[str], int], list[Bar]] | None`（默认 `None`）。broker 插件可选实现：给各标的拉最近 count 根已收盘 bar，按 `(timestamp, symbol)` 升序返回，周期由行情源自身决定；建议逐标的拉取，单标的失败只跳过它并告警。
 *   详见[自定义指标指南](../guide/custom_indicator.md)「实盘历史预热」一节。
+
+### `akquant.run_live(timezone=..., sessions=...)`（实盘时区与交易时段） {: #live-timezone-sessions }
+
+```python
+run_live(..., timezone="Asia/Shanghai", sessions={"rb": "CN_FUTURES_NIGHT_23"})
+```
+
+*   `timezone`：IANA 时区名，默认 `"Asia/Shanghai"`，传 `None` 等同默认值，非法时区名抛 `ValueError`。与 `run_backtest(timezone=)` 同义：引擎按它划分交易日、计算日终结算时刻与 Day 单过期、选默认时段表（非中国时区全天连续）；`preload_history` / replay 的 DataFrame 里不带时区的时间按它本地化；策略的 `self.timezone` 同步为该值。
+*   **须与交易所时区一致**：接中国市场（如 `klinedata` 行情、`middleware` 交易）时保持默认，不要改成本机或服务器所在时区，否则交易日、日终结算与 Day 单过期会按该时区划分，与交易所实际不符。
+*   `sessions` / `trading_calendar`：与 `run_backtest` 同义（模板名或自定义时段表），写法见上文 `BacktestConfig.china_futures` 一节的时段说明与[第 7 章](../textbook/07_futures.md)。
 
 ## 3. 核心引擎 (Core)
 

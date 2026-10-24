@@ -102,6 +102,11 @@ config = BacktestConfig(
 - `validation_by_symbol_prefix` 每条规则至少设置一个开关
 - 同一列表内前缀重复会报错，并定位到冲突项索引
 - 交易时段不再由 `ChinaFuturesConfig` 配置（`enforce_sessions` / `session_profile` / `sessions` 已删除，传入会报带迁移方法的 `TypeError`），改用 `run_backtest(sessions=...)`：按品种前缀指定时段模板，如 `sessions={"rb": "CN_FUTURES_NIGHT_23"}`；可选模板有 `CN_FUTURES_DAY`(商品日盘) / `CN_FUTURES_CFFEX_STOCK_INDEX_DAY` / `CN_FUTURES_CFFEX_BOND_DAY` / `CN_FUTURES_NIGHT_23 / CN_FUTURES_NIGHT_01 / CN_FUTURES_NIGHT_0230`；不受时段约束用 `sessions={"default": "ALWAYS_OPEN"}`
+  - `sessions` 的键按代码前缀匹配（更长前缀优先，可带交易所前缀如 `shfe.au`），`"default"` 为全局默认；键去空格、转小写后不得重复（如同时写 `"RB"` 与 `"rb"` 会报错），也不能为空
+  - 值除模板名外，也可以写自定义时段表：段序列 `(start, end, session[, anchor])`，如 `sessions={"xx": [("21:00", "02:30", "continuous"), ("09:00", "11:30", "continuous"), ("13:30", "15:00", "continuous")]}`。`start` / `end` 须为严格两位的 `HH:MM`（`"9:30"` 会报错，应写 `"09:30"`）；`session` 取 `continuous` / `opening_auction` / `auction_hold` / `closing_auction` / `break` / `post_close`，段外即闭市，不要写 `closed`
+  - 锚定规则：未写第 4 项时，`start >= "18:00"` 的段视为前一交易日的夜盘，其余段属交易日当天；可用第 4 项 `"prev"` / `"day"` 显式指定。`end <= start` 表示跨午夜，只允许夜盘段；同一锚定内、夜盘展开后与当日段之间都不得重叠
+  - 自定义时段表未配置 `trading_calendar` 时，缺省日历为工作日（节假日会算错，需要精确时传交易日列表）
+  - 期权未被 `sessions` 前缀匹配时，若其 `underlying_symbol` 是已登记的期货，跟随该期货的时段表（如给 `rb` 配了夜盘模板，RB 期权也按夜盘）；否则用 `CN_OPTION`
 
 配置优先级矩阵（从高到低）：
 
