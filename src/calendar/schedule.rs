@@ -64,16 +64,22 @@ impl SessionSchedule {
         for pair in segments.windows(2) {
             let (a, b) = (pair[0], pair[1]);
             if a.anchor == b.anchor && a.end_sec > b.start_sec {
+                let scope = match a.anchor {
+                    Anchor::PrevTradingDay => "夜盘（锚定前一交易日）",
+                    Anchor::TradingDay => "交易日当天",
+                };
                 return Err(format!(
-                    "时段表 {name:?} 的时段 {}-{} 与 {}-{} 重叠",
+                    "时段表 {name:?} 的时段 {}-{} 与 {}-{} 重叠：同属{scope}的时段不得重叠，\
+                     请调整其中一段的起止使其不重叠（如前一段的结束不晚于后一段的开始）",
                     fmt_clock(a.start_sec),
-                    fmt_clock(a.end_sec),
+                    fmt_end_clock(a.end_sec),
                     fmt_clock(b.start_sec),
-                    fmt_clock(b.end_sec)
+                    fmt_end_clock(b.end_sec)
                 ));
             }
         }
-        // 跨锚定：夜盘段平移到交易日坐标（相对交易日 0 点减 24 小时）后不得与当日段相交。
+        // 跨锚定：夜盘段平移到交易日坐标（相对交易日 0 点减 24 小时）后不得与当日段相交；
+        // 夜盘段本身位于前一交易日的日历日上，不平移时也不得与（前一交易日的）日盘段相交。
         for night in segments
             .iter()
             .filter(|s| s.anchor == Anchor::PrevTradingDay)
@@ -86,9 +92,20 @@ impl SessionSchedule {
                         "时段表 {name:?} 的夜盘时段 {}-{}（锚定前一交易日）与当日时段 {}-{} \
                          重叠：夜盘跨午夜后不得与交易日当天的时段重叠，请调整其中一段的起止",
                         fmt_clock(night.start_sec),
-                        fmt_clock(night.end_sec % DAY_SECS),
+                        fmt_end_clock(night.end_sec),
                         fmt_clock(day.start_sec),
-                        fmt_clock(day.end_sec)
+                        fmt_end_clock(day.end_sec)
+                    ));
+                }
+                if night.start_sec < day.end_sec && day.start_sec < night.end_sec {
+                    return Err(format!(
+                        "时段表 {name:?} 的夜盘时段 {}-{}（锚定前一交易日）与前一交易日的日盘时段 \
+                         {}-{} 重叠：夜盘段位于前一交易日的日历日上，不得与该日的日盘时段重叠，\
+                         请调整其中一段的起止使其不重叠",
+                        fmt_clock(night.start_sec),
+                        fmt_end_clock(night.end_sec),
+                        fmt_clock(day.start_sec),
+                        fmt_end_clock(day.end_sec)
                     ));
                 }
             }
@@ -110,6 +127,15 @@ impl SessionSchedule {
 
 fn fmt_clock(secs: u32) -> String {
     format!("{:02}:{:02}", secs / 3600, (secs % 3600) / 60)
+}
+
+/// 结束时刻按用户写法显示：跨午夜的 26:30 显示为 02:30，24:00 保持 24:00。
+fn fmt_end_clock(secs: u32) -> String {
+    fmt_clock(if secs > DAY_SECS {
+        secs - DAY_SECS
+    } else {
+        secs
+    })
 }
 
 /// 解析 `HH:MM` 或 `HH:MM:SS`；小时允许到 47（跨午夜写 25:00、26:30）。
@@ -145,16 +171,25 @@ pub struct CustomSegment {
 /// 不写锚定时，开始时刻不早于它的段视为夜盘（锚定前一交易日）。
 const NIGHT_START_SECS: u32 = 18 * 3600;
 
-/// 自定义时段表里的时刻：严格 `HH:MM`（可带 `:SS`），小时 0～24，24 只允许 `24:00`。
+/// 自定义时段表里的时刻：严格两位 `HH:MM`（不带秒、不留空格），取值 00:00～24:00。
 fn parse_custom_clock(name: &str, idx: usize, field: &str, s: &str) -> Result<u32, String> {
     let bad = || {
         format!(
-            "sessions[{name:?}] 第 {idx} 段的{field} {s:?} 无效：须为 HH:MM 格式的 00:00～24:00，\
-             跨午夜的夜盘请写成 (\"21:00\", \"02:30\", ...)"
+            "sessions[{name:?}] 第 {idx} 段的{field} {s:?} 无效：须为两位小时、两位分钟的 HH:MM \
+             格式（如 \"09:30\"，不带秒、不留空格），取值 00:00～24:00；跨午夜的夜盘请写成 \
+             (\"21:00\", \"02:30\", ...)"
         )
     };
-    let secs = parse_clock(s).map_err(|_| bad())?;
-    if secs > DAY_SECS {
+    let b = s.as_bytes();
+    let well_formed =
+        b.len() == 5 && b[2] == b':' && [0, 1, 3, 4].iter().all(|&i| b[i].is_ascii_digit());
+    if !well_formed {
+        return Err(bad());
+    }
+    let num = |i: usize| u32::from(b[i] - b'0') * 10 + u32::from(b[i + 1] - b'0');
+    let (h, m) = (num(0), num(3));
+    let secs = h * 3600 + m * 60;
+    if m >= 60 || secs > DAY_SECS {
         return Err(bad());
     }
     Ok(secs)
@@ -489,6 +524,50 @@ mod tests {
         );
         // 显式锚定当天的跨午夜段不允许
         assert!(err(&[cs("21:00", "02:30", "continuous", Some("day"))]).contains("跨午夜"));
+        // 夜盘段与前一交易日自身的日盘段重叠（夜盘落在前一交易日的日历日上）
+        let e = err(&[
+            cs("13:00", "19:00", "continuous", None),
+            cs("18:30", "02:30", "continuous", None),
+        ]);
+        assert!(
+            e.contains("前一交易日的日盘") && e.contains("18:30-02:30") && !e.contains("  "),
+            "{e}"
+        );
+        let e = err(&[
+            cs("09:30", "11:30", "continuous", None),
+            cs("10:00", "11:00", "continuous", Some("prev")),
+        ]);
+        assert!(e.contains("前一交易日的日盘"), "{e}");
+        // 同锚定重叠：指明两段，跨午夜结束按用户写法显示，并说明怎么改
+        let e = err(&[
+            cs("21:00", "23:00", "continuous", None),
+            cs("22:00", "01:00", "continuous", None),
+        ]);
+        assert!(
+            e.contains("21:00-23:00") && e.contains("22:00-01:00") && e.contains("调整"),
+            "{e}"
+        );
+        assert!(!e.contains("25:00") && !e.contains("  "), "{e}");
+        // 时刻须严格两位 HH:MM
+        for bad in [
+            "9:30", " 09:30", "09:30 ", "09:30:00", "0930", "09:60", "24:30", "+9:30",
+        ] {
+            assert!(
+                err(&[cs(bad, "11:30", "continuous", None)]).contains("HH:MM"),
+                "{bad:?}"
+            );
+        }
+        // 夜盘紧接前一交易日日盘之后（不相交）合法
+        assert!(
+            schedule_from_custom(
+                "xx",
+                &[
+                    cs("13:00", "18:30", "continuous", None),
+                    cs("18:30", "02:30", "continuous", None),
+                ]
+            )
+            .is_ok()
+        );
         // 00:00-24:00 合法
         assert!(schedule_from_custom("xx", &[cs("00:00", "24:00", "continuous", None)]).is_ok());
     }

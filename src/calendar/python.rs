@@ -17,7 +17,7 @@ fn calendar_err(e: CalendarError) -> PyErr {
 }
 
 /// 自定义段的写法提示。
-const CUSTOM_HINT: &str = "每段写 (start, end, session) 或 (start, end, session, anchor)，     如 (\"21:00\", \"02:30\", \"continuous\")";
+const CUSTOM_HINT: &str = "每段写 (start, end, session) 或 (start, end, session, anchor)，如 (\"21:00\", \"02:30\", \"continuous\")";
 
 /// 把 Python 的 `sessions`（`dict[str, str | Sequence[tuple]]`）提取为时段配置。
 ///
@@ -28,7 +28,7 @@ pub(crate) fn extract_session_specs(
 ) -> PyResult<Vec<(String, SessionSpec)>> {
     let mapping = obj.cast::<PyMapping>().map_err(|_| {
         PyTypeError::new_err(format!(
-            "sessions 须为字典：代码前缀 → 时段模板名或自定义段列表，如              {{\"rb\": \"CN_FUTURES_NIGHT_23\"}}；收到 {}",
+            "sessions 须为字典：代码前缀 → 时段模板名或自定义段列表，如 {{\"rb\": \"CN_FUTURES_NIGHT_23\"}}；收到 {}",
             type_name(obj)
         ))
     })?;
@@ -44,7 +44,7 @@ pub(crate) fn extract_session_specs(
         }
         let items: Vec<Bound<'_, PyAny>> = v.extract().map_err(|_| {
             PyTypeError::new_err(format!(
-                "sessions[{key:?}] 须为时段模板名（字符串）或自定义段列表（{CUSTOM_HINT}），                 收到 {}",
+                "sessions[{key:?}] 须为时段模板名（字符串）或自定义段列表（{CUSTOM_HINT}），收到 {}",
                 type_name(&v)
             ))
         })?;

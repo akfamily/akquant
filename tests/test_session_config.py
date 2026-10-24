@@ -129,12 +129,182 @@ def test_custom_session_table_with_night_segment() -> None:
         ),
         ([("09:30", "11:30", "closed")], "closed"),
         ([], "至少"),
+        # 夜盘段落在前一交易日的日历日上，与前一交易日自身的日盘段重叠
+        (
+            [("13:00", "19:00", "continuous"), ("18:30", "02:30", "continuous")],
+            "重叠",
+        ),
+        (
+            [
+                ("09:30", "11:30", "continuous"),
+                ("10:00", "11:00", "continuous", "prev"),
+            ],
+            "重叠",
+        ),
+        # 日盘段结束早于开始：无锚定与显式 "day" 都拒绝
+        ([("11:30", "09:30", "continuous")], "跨午夜"),
+        ([("11:30", "09:30", "continuous", "day")], "跨午夜"),
+        # 时刻须严格两位 HH:MM
+        ([("9:30", "11:30", "continuous")], "HH:MM"),
+        ([(" 09:30", "11:30", "continuous")], "HH:MM"),
+        ([("09:30:00", "11:30", "continuous")], "HH:MM"),
+        ([("09:30", "11:30:00", "continuous")], "HH:MM"),
     ],
 )
 def test_custom_session_validation(bad: list, pattern: str) -> None:
     """自定义时段表的非法写法报中文 ValueError."""
     with pytest.raises(ValueError, match=pattern):
         aq.SessionResolver(sessions={"xx": bad}, timezone=TZ)
+
+
+def test_same_anchor_overlap_message_names_segments_and_fix() -> None:
+    """同锚定重叠：按用户写法指明两段（跨午夜结束取模显示），并说明怎么改."""
+    with pytest.raises(ValueError) as ei:
+        aq.SessionResolver(
+            sessions={
+                "xx": [
+                    ("21:00", "23:00", "continuous"),
+                    ("22:00", "01:00", "continuous"),
+                ]
+            },
+            timezone=TZ,
+        )
+    msg = str(ei.value)
+    assert "21:00-23:00" in msg and "22:00-01:00" in msg, msg
+    assert "25:00" not in msg, msg
+    assert "调整" in msg, msg
+    assert "  " not in msg, msg
+
+
+def test_cross_anchor_overlap_with_prev_day_message() -> None:
+    """夜盘段与前一交易日日盘段重叠时说明是“前一交易日”的日盘段."""
+    with pytest.raises(ValueError, match="前一交易日的日盘") as ei:
+        aq.SessionResolver(
+            sessions={
+                "xx": [
+                    ("13:00", "19:00", "continuous"),
+                    ("18:30", "02:30", "continuous"),
+                ]
+            },
+            timezone=TZ,
+        )
+    assert "13:00-19:00" in str(ei.value) and "  " not in str(ei.value)
+
+
+def test_custom_session_error_messages_have_no_stray_spaces() -> None:
+    """绑定层报错文案里没有续行合并留下的连续空格."""
+    with pytest.raises(TypeError) as e1:
+        aq.SessionResolver(sessions=["CN_STOCK"], timezone=TZ)  # type: ignore[arg-type]
+    with pytest.raises(TypeError) as e2:
+        aq.SessionResolver(sessions={"xx": 1}, timezone=TZ)  # type: ignore[dict-item]
+    for e in (e1, e2):
+        assert "  " not in str(e.value), str(e.value)
+
+
+def test_engine_configure_sessions_rejects_invalid_custom_segments() -> None:
+    """Engine.configure_sessions 自身校验自定义段（实盘 runner 依赖这一处）."""
+    engine = aq.Engine()
+    engine.configure_sessions({"xx": [("09:30", "11:30", "continuous")]})
+    with pytest.raises(ValueError, match="跨午夜"):
+        engine.configure_sessions({"xx": [("11:30", "09:30", "continuous")]})
+    with pytest.raises(ValueError, match="重叠"):
+        engine.configure_sessions(
+            {
+                "xx": [
+                    ("13:00", "19:00", "continuous"),
+                    ("18:30", "02:30", "continuous"),
+                ]
+            }
+        )
+    with pytest.raises(ValueError, match="closed"):
+        engine.configure_sessions({"xx": [("09:30", "11:30", "closed")]})
+
+
+_CUSTOM_NIGHT = {
+    "xx": [("21:00", "23:00", "continuous"), ("09:00", "11:00", "continuous")]
+}
+
+
+def _custom_night_minutes() -> pd.DataFrame:
+    """周五夜盘 21:01～23:00 与周一日盘 09:01～11:00 的 1 分钟 bar."""
+    night = pd.date_range("2024-01-05 21:01", "2024-01-05 23:00", freq="1min")
+    day = pd.date_range("2024-01-08 09:01", "2024-01-08 11:00", freq="1min")
+    idx = pd.DatetimeIndex(night.append(day)).tz_localize(TZ)
+    return pd.DataFrame(
+        {
+            "timestamp": idx,
+            "symbol": "xx2405",
+            "open": 1.0,
+            "high": 1.0,
+            "low": 1.0,
+            "close": 1.0,
+            "volume": 1.0,
+        }
+    )
+
+
+class _CustomMemAdapter(aq.feed_adapter.BasePandasFeedAdapter):
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+
+    def load(self, request: Any) -> pd.DataFrame:
+        return self._frame
+
+
+def test_custom_sessions_bar_generator_and_replay_agree() -> None:
+    """同一份自定义夜盘表：replay 60min 与 BarGenerator 相同，1d 夜盘归下一交易日."""
+    df = _custom_night_minutes()
+    got: List[str] = []
+    gen = aq.BarGenerator(
+        lambda b: got.append(
+            pd.Timestamp(b.timestamp, tz="UTC").tz_convert(TZ).strftime("%m-%d %H:%M")
+        ),
+        window=60,
+        interval="minute",
+        timezone=TZ,
+        sessions=_CUSTOM_NIGHT,
+        asset_type=aq.AssetType.Futures,
+        base_interval_min=1,
+    )
+    for row in df.to_dict("records"):
+        ts = pd.Timestamp(row["timestamp"])
+        gen.update_bar(
+            aq.Bar(
+                timestamp=int(ts.value),
+                open=1.0,
+                high=1.0,
+                low=1.0,
+                close=1.0,
+                volume=1.0,
+                symbol="xx2405",
+            )
+        )
+    gen.flush()
+    expected = ["01-05 22:00", "01-05 23:00", "01-08 10:00", "01-08 11:00"]
+    assert got == expected
+
+    src = _CustomMemAdapter(df.set_index("timestamp"))
+    request = aq.feed_adapter.FeedSlice(symbol="xx2405", timezone=TZ)
+    hourly = src.replay(
+        "60min",
+        align="session",
+        emit_partial=True,
+        sessions=_CUSTOM_NIGHT,
+        asset_type=aq.AssetType.Futures,
+    ).load(request)
+    assert [i.tz_convert(TZ).strftime("%m-%d %H:%M") for i in hourly.index] == (
+        expected
+    )
+    daily = src.replay(
+        "1D",
+        align="day",
+        emit_partial=True,
+        sessions=_CUSTOM_NIGHT,
+        asset_type=aq.AssetType.Futures,
+    ).load(request)
+    assert len(daily) == 1
+    assert daily.index[0].tz_convert(TZ).date() == dt.date(2024, 1, 8)
+    assert float(daily["volume"].iloc[0]) == 240.0
 
 
 def test_session_keys_duplicate_after_normalization() -> None:
