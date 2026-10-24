@@ -320,53 +320,67 @@ def _instruments_to_snapshots(
 
 
 class _StrategyCallbackFanout:
-    def __init__(self, strategies: List[Strategy]):
-        self._strategies = strategies
+    """多槽位 broker_live 的柜台回调路由器.
+
+    与回测/paper 的槽位语义一致(``strategy_order_events._slot_filter``):
+    订单、成交、执行回报与 OCO/Bracket 协调(``_process_order_groups``)按
+    ``owner_strategy_id`` 只派给所属槽位, owner 为空或不在任何槽位的归默认
+    槽位; 账户回调 ``on_portfolio_update`` 是全账户的, 广播给全部槽位。
+
+    owner 由 runner 的 ``_resolve_owner_strategy_id`` 解析: 先读 payload 的
+    ``owner_strategy_id``(适配后的订单/成交已带), 取不到时按
+    ``client_order_id``/``broker_order_id`` 查下单时登记的归属表(执行回报是
+    原始 payload, 走这条)。每个槽位的回调经 runner 的
+    ``_safe_strategy_callback`` 调用: 异常按该槽位记日志并转给它的 on_error,
+    不影响其余槽位。
+
+    单策略会话不经过本类, 回调目标就是主策略本身。
+    """
+
+    def __init__(
+        self,
+        strategies_by_slot: Dict[str, Strategy],
+        default_slot_id: str,
+        resolve_owner: Callable[[Any], str],
+        safe_callback: Callable[[Strategy, str, Any], None],
+    ):
+        if default_slot_id not in strategies_by_slot:
+            raise ValueError(
+                f"默认槽位 {default_slot_id!r} 不在槽位表 "
+                f"{sorted(strategies_by_slot)} 中; 请检查 strategy_id 与 "
+                "strategies_by_slot 的配置"
+            )
+        self._strategies_by_slot = dict(strategies_by_slot)
+        self._default_slot_id = default_slot_id
+        self._resolve_owner = resolve_owner
+        self._safe_callback = safe_callback
+
+    def _owner_strategy(self, payload: Any) -> Strategy:
+        owner = str(self._resolve_owner(payload) or "").strip()
+        strategy = self._strategies_by_slot.get(owner)
+        if strategy is None:
+            return self._strategies_by_slot[self._default_slot_id]
+        return strategy
+
+    def _route(self, callback_name: str, payload: Any) -> None:
+        self._safe_callback(self._owner_strategy(payload), callback_name, payload)
 
     def on_order(self, order: Any) -> None:
-        for strategy in self._strategies:
-            callback = getattr(strategy, "on_order", None)
-            if callback is None:
-                continue
-            try:
-                callback(order)
-            except Exception as exc:
-                on_error = getattr(strategy, "on_error", None)
-                if on_error is not None:
-                    try:
-                        on_error(exc, "on_order", order)
-                    except Exception:
-                        pass
+        self._route("on_order", order)
 
     def on_trade(self, trade: Any) -> None:
-        for strategy in self._strategies:
-            callback = getattr(strategy, "on_trade", None)
-            if callback is None:
-                continue
-            try:
-                callback(trade)
-            except Exception as exc:
-                on_error = getattr(strategy, "on_error", None)
-                if on_error is not None:
-                    try:
-                        on_error(exc, "on_trade", trade)
-                    except Exception:
-                        pass
+        self._route("on_trade", trade)
 
     def on_execution_report(self, report: Any) -> None:
-        for strategy in self._strategies:
-            callback = getattr(strategy, "on_execution_report", None)
-            if callback is None:
-                continue
-            try:
-                callback(report)
-            except Exception as exc:
-                on_error = getattr(strategy, "on_error", None)
-                if on_error is not None:
-                    try:
-                        on_error(exc, "on_execution_report", report)
-                    except Exception:
-                        pass
+        self._route("on_execution_report", report)
+
+    def _process_order_groups(self, trade: Any) -> None:
+        # OCO/Bracket 组登记在下单的槽位上, 只有它能撤对手腿/激活子单。
+        self._route("_process_order_groups", trade)
+
+    def on_portfolio_update(self, snapshot: Any) -> None:
+        for strategy in self._strategies_by_slot.values():
+            self._safe_callback(strategy, "on_portfolio_update", snapshot)
 
 
 class LiveRunner:
@@ -826,7 +840,15 @@ class LiveRunner:
         if self.trading_mode == "broker_live" and bundle.trader_gateway is not None:
             strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
             callback_target: Any = (
-                _StrategyCallbackFanout(strategy_targets)
+                _StrategyCallbackFanout(
+                    {
+                        effective_strategy_id: strategy_instance,
+                        **slot_strategy_instances,
+                    },
+                    effective_strategy_id,
+                    resolve_owner=self._resolve_owner_strategy_id,
+                    safe_callback=self._safe_strategy_callback,
+                )
                 if len(strategy_targets) > 1
                 else strategy_instance
             )
