@@ -364,15 +364,44 @@ def test_ctp_tick_trading_day_change_pushes_one_hint() -> None:
     assert feed.hints[0][0] == int(feed.ticks[0].timestamp)
 
 
-def test_ctp_trading_day_tracked_per_symbol_and_bad_values_ignored() -> None:
-    """按品种记上次值; 空值或无法解析的 TradingDay 忽略(不推、不抛)."""
+def test_ctp_trading_day_deduped_and_bad_values_logged_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """同一交易日跨品种只推一次; 空值/非法值忽略, 原始值不变时不重复记 debug."""
     gateway, feed = _hint_gateway()
     gateway.OnRtnDepthMarketData(_md_day("20241008", "rb2401"))
     gateway.OnRtnDepthMarketData(_md_day("20241008", "au2412"))
-    gateway.OnRtnDepthMarketData(_md_day("", "rb2401"))
-    gateway.OnRtnDepthMarketData(_md_day("2024-13-xx", "rb2401"))
-    assert len(feed.hints) == 2
-    assert len(feed.ticks) == 4
+    assert len(feed.hints) == 1
+    with caplog.at_level("DEBUG", logger="akquant"):
+        for _ in range(3):
+            gateway.OnRtnDepthMarketData(_md_day("", "rb2401"))
+        for _ in range(3):
+            gateway.OnRtnDepthMarketData(_md_day("2024-13-xx", "rb2401"))
+    assert len(feed.hints) == 1
+    assert len(feed.ticks) == 8
+    debug = [r for r in caplog.records if "TradingDay" in r.getMessage()]
+    assert len(debug) == 2, [r.getMessage() for r in debug]
+    # 恢复为合法的新交易日时照常推
+    gateway.OnRtnDepthMarketData(_md_day("20241009", "rb2401"))
+    assert [d.day for _, d, _ in feed.hints] == [8, 9]
+
+
+def test_ctp_relogin_same_trading_day_does_not_push_again() -> None:
+    """重新登录后 TradingDay 变化只推一次: 登录推, 之后各品种首笔同值不再推."""
+    gateway, feed = _hint_gateway()
+
+    class _Login:
+        TradingDay = "20241008"
+        BrokerID = "9999"
+        UserID = "u"
+
+    gateway.OnRspUserLogin(_Login(), None, 1, True)
+    gateway.OnRtnDepthMarketData(_md_day("20241008", "rb2401"))
+    _Login.TradingDay = "20241009"
+    gateway.OnRspUserLogin(_Login(), None, 2, True)
+    gateway.OnRtnDepthMarketData(_md_day("20241009", "rb2401"))
+    gateway.OnRtnDepthMarketData(_md_day("20241009", "au2412"))
+    assert [d.day for _, d, _ in feed.hints] == [8, 9]
 
 
 def test_ctp_login_trading_day_pushes_hint() -> None:

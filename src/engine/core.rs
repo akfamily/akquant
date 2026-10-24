@@ -929,18 +929,29 @@ impl Engine {
         if computed == hinted {
             return Ok(());
         }
-        if hinted < computed
-            && resolver.is_session_day(hinted)
-            && resolver.session_day_end(hinted).is_ok_and(|end| ts > end)
-        {
-            return Ok(());
-        }
         let at = self.local_datetime_text(ts);
         let explicit = self
             .session_config
             .trading_calendar
             .as_ref()
             .is_some_and(|days| !days.is_empty());
+        // 报告时刻已过 H 的收盘：行情源报告的是已结束的交易日。H 在日历内时与日历
+        // 不矛盾（收盘到下一交易日开始之间仍报告刚结束的交易日），不告警；H 不在日历
+        // 内时只告警，不回溯补入（已过去的日子不会再开日或结算；显式日历走下面的
+        // “以 trading_calendar 为准”告警）。
+        if hinted < computed && resolver.session_day_end(hinted).is_ok_and(|end| ts > end) {
+            if resolver.is_session_day(hinted) {
+                return Ok(());
+            }
+            if !explicit {
+                if self.source_trading_day_warned.insert((computed, hinted)) {
+                    log::warn!(
+                        "行情源 {source} 报告 {at} 属交易日 {hinted}，按工作日推算为 {computed}；{hinted} 不在缺省日历内且已收盘，不回溯修正日历。请用 trading_calendar= 传入交易所日历"
+                    );
+                }
+                return Ok(());
+            }
+        }
         if explicit {
             if self.source_trading_day_warned.insert((computed, hinted)) {
                 log::warn!(
@@ -985,14 +996,22 @@ impl Engine {
         self.session_config.calendar_overrides = overrides;
         self.invalidate_session_resolver();
         self.ensure_session_resolver()?;
-        // 被剔除日的生命周期与收盘定时器作废。
+        // 被剔除日的收盘定时器作废；最早受影响日及其后的生命周期定时器全部作废，
+        // 由下面的重排按新日历重新串联（补入的 H 早于已排程日时也补排 H 的盘前/开始
+        // 交易；后续交易日的盘前时刻依赖上一交易日收盘，一并重排）。
+        let earliest = added
+            .iter()
+            .chain(removed.iter())
+            .min()
+            .copied()
+            .expect("至少一项修正");
         let removed_set: HashSet<NaiveDate> = removed.iter().copied().collect();
         let close_keys: HashSet<String> = removed
             .iter()
             .map(|d| format!("{}{d}", crate::model::timer::DAY_CLOSE_TIMER_PREFIX))
             .collect();
         self.timers.retain(|t| {
-            if t.lifecycle().is_some_and(|(_, d)| removed_set.contains(&d)) {
+            if t.lifecycle().is_some_and(|(_, d)| d >= earliest) {
                 return false;
             }
             !close_keys.contains(&t.payload)
@@ -1003,10 +1022,7 @@ impl Engine {
         {
             self.scheduled_day_close = None;
         }
-        if self
-            .lifecycle_scheduled_for
-            .is_some_and(|d| removed_set.contains(&d))
-        {
+        if self.lifecycle_scheduled_for.is_some_and(|d| d >= earliest) {
             self.lifecycle_scheduled_for = self
                 .timers
                 .iter()
@@ -3138,23 +3154,28 @@ mod lifecycle_tests {
         keys
     }
 
-    /// replay 锚定 09-30，before_trading(09-30) 已串联排好 10-01 的生命周期与收盘定时器。
-    fn holiday_engine() -> Engine {
+    /// replay 锚定 `m-day` 10:00，before_trading 已串联排好下一交易日的生命周期与
+    /// 收盘定时器；当日已开日，当日盘前/开始交易已触发。
+    fn chained_engine(m: u32, day: u32) -> Engine {
         let mut engine = Engine::new();
         engine.state.feed = crate::data::DataFeed::create_live();
         engine.live_day_close_delay_ns = 0;
-        let anchor = sh(9, 30, 10, 0) - 1;
+        let anchor = sh(m, day, 10, 0) - 1;
         engine.live_lifecycle_anchor_ns = Some(anchor);
         engine.schedule_live_lifecycle_anchored(anchor).unwrap();
         engine
-            .schedule_next_session_lifecycle(d(9, 30), sh(9, 30, 9, 30) + 1)
+            .schedule_next_session_lifecycle(d(m, day), sh(m, day, 9, 30) + 1)
             .unwrap();
-        engine.current_trading_day = Some(d(9, 30));
-        // 09-30 的盘前/开始交易已触发
+        engine.current_trading_day = Some(d(m, day));
         engine
             .timers
-            .retain(|t| !t.lifecycle().is_some_and(|(_, day)| day == d(9, 30)));
+            .retain(|t| !t.lifecycle().is_some_and(|(_, x)| x == d(m, day)));
         engine
+    }
+
+    /// 09-30（国庆前最后一个交易日）已串联排好 10-01。
+    fn holiday_engine() -> Engine {
+        chained_engine(9, 30)
     }
 
     #[test]
@@ -3208,10 +3229,15 @@ mod lifecycle_tests {
 
     #[test]
     fn source_trading_day_adds_non_weekday_trading_day() {
-        // 周五夜间行情源报告属周六（调休补班）：周六补入，不剔除任何日
-        let mut engine = Engine::new();
-        engine.state.feed = crate::data::DataFeed::create_live();
-        engine.current_trading_day = Some(d(10, 11));
+        // 周五 before_trading 已串联排好周一 10-14；周五夜间行情源报告属周六（调休
+        // 补班）：周六补入，不剔除任何日；已排的 10-14 生命周期作废，按新日历补排
+        // 周六的盘前/开始交易（周一留给周六 before_trading 串联）。
+        let mut engine = chained_engine(10, 11);
+        assert!(
+            lifecycle_timers(&engine)
+                .iter()
+                .any(|(_, p)| p == "pre_open|2024-10-14")
+        );
         engine
             .apply_source_trading_day(sh(10, 11, 20, 0), d(10, 12), "test")
             .unwrap();
@@ -3222,6 +3248,51 @@ mod lifecycle_tests {
         assert!(engine.session_config.calendar_overrides.removed.is_empty());
         let resolver = engine.session_resolver.clone().expect("已重建");
         assert!(resolver.is_session_day(d(10, 12)));
+        assert_eq!(
+            lifecycle_timers(&engine),
+            vec![
+                (sh(10, 12, 9, 15) - 1, "pre_open|2024-10-12".to_string()),
+                (
+                    sh(10, 12, 9, 30) + 1,
+                    "before_trading|2024-10-12".to_string()
+                ),
+            ]
+        );
+        assert!(day_close_keys(&engine).contains(&"__akq_day_close__|2024-10-12".to_string()));
+    }
+
+    #[test]
+    fn source_trading_day_reporting_ended_off_calendar_day_only_warns() {
+        // 周六收盘后才报告属周六（已结束、不在缺省日历内）：不回溯补入，只告警
+        let mut engine = chained_engine(10, 11);
+        let before = lifecycle_timers(&engine);
+        engine
+            .apply_source_trading_day(sh(10, 12, 20, 0), d(10, 12), "test")
+            .unwrap();
+        assert!(engine.session_config.calendar_overrides.is_empty());
+        assert_eq!(lifecycle_timers(&engine), before);
+        assert!(
+            engine
+                .source_trading_day_warned
+                .contains(&(d(10, 14), d(10, 12)))
+        );
+    }
+
+    #[test]
+    fn source_trading_day_after_close_report_is_consistent_with_explicit_calendar() {
+        // 显式日历下收盘后仍报告刚结束的 09-30：与日历不矛盾，不告警
+        let mut engine = holiday_engine();
+        engine.session_config.trading_calendar = Some(vec![d(9, 27), d(9, 30), d(10, 8)]);
+        engine.invalidate_session_resolver();
+        engine
+            .apply_source_trading_day(sh(9, 30, 16, 0), d(9, 30), "test")
+            .unwrap();
+        assert!(engine.source_trading_day_warned.is_empty());
+        // 真不一致仍告警
+        engine
+            .apply_source_trading_day(sh(9, 30, 16, 0), d(10, 9), "test")
+            .unwrap();
+        assert_eq!(engine.source_trading_day_warned.len(), 1);
     }
 
     #[test]

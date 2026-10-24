@@ -254,6 +254,57 @@ def test_hint_after_day_opened_only_warns(
     assert not _warnings(caplog, "修正缺省交易日历")
 
 
+# 2024-10-11 周五、10-12 周六（假设补班）、10-14 周一。
+_MAKEUP_STAMPS = [
+    "2024-10-11 10:00",
+    "2024-10-11 15:00",
+    "2024-10-12 10:00",
+    "2024-10-12 15:00",
+    "2024-10-14 10:00",
+    "2024-10-14 15:00",
+]
+
+
+def test_hint_adds_makeup_day_after_next_day_was_chained(
+    monkeypatch: pytest.MonkeyPatch, caplog: Any
+) -> None:
+    """补入的交易日早于已串联的下一交易日时补排其生命周期.
+
+    周五 before_trading 已排周一；周五夜间行情源报告属周六：周六补入日历，
+    并有 pre_open / before_trading（不只是结算与 after_trading）。
+    """
+    hint = (_ns("2024-10-11 20:00"), dt.date(2024, 10, 12), "test")
+    with caplog.at_level("WARNING", logger="akquant"):
+        _, strategy = _run_replay(monkeypatch, _MAKEUP_STAMPS, [hint])
+    hooks = strategy.hooks
+    days = ["2024-10-11", "2024-10-12", "2024-10-14"]
+    assert _days(hooks, "on_pre_open") == days, hooks
+    assert _days(hooks, "on_before_trading") == days, hooks
+    assert _days(hooks, "on_after_trading") == days, hooks
+    assert strategy.bar_days["2024-10-12 10:00"] == "2024-10-12"
+    corrected = _warnings(caplog, "修正缺省交易日历")
+    assert len(corrected) == 1 and "2024-10-12" in corrected[0], corrected
+
+
+def test_hint_for_ended_off_calendar_day_only_warns(
+    monkeypatch: pytest.MonkeyPatch, caplog: Any
+) -> None:
+    """行情源报告的交易日已收盘且不在缺省日历内：只告警，不回溯补入."""
+    stamps = [s for s in _MAKEUP_STAMPS if not s.startswith("2024-10-12")]
+    hint = (_ns("2024-10-12 20:00"), dt.date(2024, 10, 12), "test")
+    with caplog.at_level("WARNING", logger="akquant"):
+        runner, strategy = _run_replay(monkeypatch, stamps, [hint])
+    hooks = strategy.hooks
+    assert _days(hooks, "on_pre_open") == ["2024-10-11", "2024-10-14"], hooks
+    assert _days(hooks, "on_after_trading") == ["2024-10-11", "2024-10-14"], hooks
+    assert runner.engine.trading_day_at(_ns("2024-10-12 10:00")) == dt.date(
+        2024, 10, 14
+    )
+    warned = _warnings(caplog, "不回溯修正")
+    assert len(warned) == 1 and "2024-10-12" in warned[0], warned
+    assert not _warnings(caplog, "修正缺省交易日历")
+
+
 def test_add_trading_day_hint_rejected_on_backtest_feed() -> None:
     """回测 feed 上调用 add_trading_day_hint 抛中文 RuntimeError."""
     from akquant import DataFeed

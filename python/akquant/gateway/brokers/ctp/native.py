@@ -1022,10 +1022,12 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         # 说明, 两者是有意的不同分工, 不要合并。
         self._last_cum_volume: Dict[str, float] = {}
 
-        # 行情源交易日(TradingDay): 登录回调报告的值与按品种记的上次值。变化时经
+        # 行情源交易日(TradingDay): 按品种记上次见到的原始值(含空值/非法值, 只在
+        # 变化时才解析, 避免逐笔解析与刷 debug), 以及最近推入 feed 的交易日(登录与
+        # 各品种共用, 同一交易日只推一次, 重新登录后不重复推)。变化时经
         # feed.add_trading_day_hint 送入引擎, 由引擎校验/修正交易日历。
-        self._login_trading_day: Optional[str] = None
-        self._last_trading_day: Dict[str, str] = {}
+        self._last_raw_trading_day: Dict[str, str] = {}
+        self._last_hint_day: Optional[datetime.date] = None
 
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
@@ -1033,7 +1035,8 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
     def _push_trading_day_hint(self, raw: Any, now_ns: int) -> bool:
         """把 CTP 的 ``TradingDay``(``YYYYMMDD``)作为行情源交易日推入 feed.
 
-        空值或无法解析时忽略并记 debug 日志, 返回 False。
+        空值或无法解析时忽略并记 debug 日志; 与最近推入的交易日相同时不重复推。
+        返回是否推入。
         """
         text = str(raw or "").strip()
         if not text:
@@ -1046,7 +1049,10 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
                 "CTP TradingDay 无法解析: %r, 忽略", text, extra=self._log_extra()
             )
             return False
+        if day == self._last_hint_day:
+            return False
         self.feed.add_trading_day_hint(now_ns, day, "ctp")
+        self._last_hint_day = day
         return True
 
     def start(self) -> None:
@@ -1174,9 +1180,9 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             pRspUserLogin.UserID,
             extra=self._log_extra(),
         )
-        login_day = str(getattr(pRspUserLogin, "TradingDay", "") or "").strip()
-        if self._push_trading_day_hint(login_day, time.time_ns()):
-            self._login_trading_day = login_day
+        self._push_trading_day_hint(
+            getattr(pRspUserLogin, "TradingDay", ""), time.time_ns()
+        )
 
         logger.info(
             "Subscribing CTP market data for symbols=%s",
@@ -1267,12 +1273,12 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         if self.aggregator is not None:
             self.aggregator.on_tick(symbol, price, float(volume), now_ns)
 
-        # 行情源交易日: 按品种记上次值(首笔与登录报告的值比较), 变化时先于本笔
-        # tick 推入, 使引擎在这笔行情开日之前按它校验/修正日历。
-        trading_day = str(getattr(pDepthMarketData, "TradingDay", "") or "").strip()
-        previous = self._last_trading_day.get(symbol, self._login_trading_day)
-        if trading_day != previous and self._push_trading_day_hint(trading_day, now_ns):
-            self._last_trading_day[symbol] = trading_day
+        # 行情源交易日: 本品种原始值变化时才解析, 交易日变化时先于本笔 tick 推入,
+        # 使引擎在这笔行情开日之前按它校验/修正日历。
+        raw_day = str(getattr(pDepthMarketData, "TradingDay", "") or "").strip()
+        if raw_day != self._last_raw_trading_day.get(symbol):
+            self._last_raw_trading_day[symbol] = raw_day
+            self._push_trading_day_hint(raw_day, now_ns)
 
         # 引入真 add_tick 之前, use_aggregator=False 下曾把每笔 tick 包装成
         # 退化 bar(open=high=low=close=price)推入 feed, 作为 on_bar 的替代品

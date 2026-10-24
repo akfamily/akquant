@@ -430,7 +430,8 @@ impl Processor for DataProcessor {
                 let event = *event;
 
                 // 行情源交易日: 与前后行情同序在此处理(校验/修正日历), 不是行情,
-                // 不进时间片、不派发给策略。
+                // 不进时间片、不派发给策略。修正只发生在所涉交易日尚未开日时, 被改动
+                // 的日子都晚于当前时间片, 故本片 slice_sessions 不受影响、无需清空。
                 if let Event::TradingDayHint {
                     timestamp,
                     trading_day,
