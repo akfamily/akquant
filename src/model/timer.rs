@@ -22,15 +22,21 @@ pub(crate) fn lifecycle_payload(kind: &str, day: chrono::NaiveDate) -> String {
     format!("{LIFECYCLE_TIMER_PREFIX}{kind}|{day}")
 }
 
-/// 实盘日终结算相对会话收盘的宽限(纳秒)。行情源在收盘后才推送最后一根已收盘
-/// bar(如 klinedata 15:00 之后推 14:59~15:00 的 bar), 收盘即结算会让收盘快照用
-/// 旧价、且那根 bar 的 on_bar 里 T+1 已解冻。
+/// 实盘日终结算相对会话收盘的默认宽限(纳秒), 即引擎字段 `live_day_close_delay_ns`
+/// 的初值(`run_live(day_close_delay=)` 每次会话下发)。行情源在收盘后才推送最后一根
+/// 已收盘 bar(如 klinedata 15:00 之后推 14:59~15:00 的 bar), 收盘即结算会让收盘
+/// 快照用旧价、且那根 bar 的 on_bar 里 T+1 已解冻。
 pub(crate) const LIVE_DAY_CLOSE_GRACE_NS: i64 = 60_000_000_000;
 
-/// 交易日收盘定时器的触发时刻: 回测为收盘 + 1ns, 实盘为收盘 + 宽限。
-pub(crate) fn day_close_timer_timestamp(session_day_end: i64, live: bool) -> i64 {
+/// 交易日收盘定时器的触发时刻: 回测为收盘 + 1ns, 实盘为收盘 + 宽限 `live_delay_ns`
+/// (至少 1ns: 宽限为 0 时与回测同口径, 收盘时刻的行情仍先于结算处理)。
+pub(crate) fn day_close_timer_timestamp(
+    session_day_end: i64,
+    live: bool,
+    live_delay_ns: i64,
+) -> i64 {
     if live {
-        session_day_end + LIVE_DAY_CLOSE_GRACE_NS
+        session_day_end.saturating_add(live_delay_ns.max(1))
     } else {
         session_day_end + 1
     }
@@ -124,11 +130,24 @@ mod tests {
     #[test]
     fn day_close_timer_grace_applies_only_in_live_mode() {
         let close = 1_000_000_000_000;
-        assert_eq!(day_close_timer_timestamp(close, false), close + 1);
         assert_eq!(
-            day_close_timer_timestamp(close, true),
+            day_close_timer_timestamp(close, false, LIVE_DAY_CLOSE_GRACE_NS),
+            close + 1
+        );
+        assert_eq!(
+            day_close_timer_timestamp(close, true, LIVE_DAY_CLOSE_GRACE_NS),
             close + LIVE_DAY_CLOSE_GRACE_NS
         );
+        // 实盘宽限可配置(回测不受影响)
+        assert_eq!(
+            day_close_timer_timestamp(close, true, 5_000_000_000),
+            close + 5_000_000_000
+        );
+        assert_eq!(
+            day_close_timer_timestamp(close, false, 5_000_000_000),
+            close + 1
+        );
+        assert_eq!(day_close_timer_timestamp(close, true, 0), close + 1);
         assert_eq!(LIVE_DAY_CLOSE_GRACE_NS, 60_000_000_000);
     }
 

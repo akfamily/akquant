@@ -151,6 +151,11 @@ pub struct Engine {
     pub(crate) lifecycle_scheduled_for: Option<NaiveDate>,
     /// 实盘生命周期串联因交易日历到尽头失败时是否已告警（只告警一次）。
     pub(crate) lifecycle_chain_warned: bool,
+    /// 实盘日终结算定时器相对会话收盘的宽限（纳秒），默认
+    /// [`LIVE_DAY_CLOSE_GRACE_NS`](crate::model::timer::LIVE_DAY_CLOSE_GRACE_NS)。
+    /// 运行参数：由 `run_live(day_close_delay=)` 在 `run()` 之前经
+    /// `_set_live_day_close_delay_ns` 每次下发，不入存档；回测不用它（收盘 + 1ns）。
+    pub(crate) live_day_close_delay_ns: i64,
     /// 各生命周期钩子（on_pre_open / on_before_trading / on_after_trading）是否有策略
     /// （含槽位）重写，由 Python 在 run 开始时经 `set_lifecycle_hooks_dispatch` 告知
     /// （直接驱动引擎时缺省全为真）。未重写的盘前/开始交易事件只在引擎内消费（实盘
@@ -613,10 +618,49 @@ impl Engine {
             .expect("已构造")
             .session_day_end(day)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(crate::model::timer::day_close_timer_timestamp(
-            end,
+        Ok(self.day_close_timer_timestamp(end))
+    }
+
+    /// 会话收盘时刻 `session_day_end` 对应的收盘定时器触发时刻（回测 + 1ns，
+    /// 实盘 + `live_day_close_delay_ns`）。
+    pub(crate) fn day_close_timer_timestamp(&self, session_day_end: i64) -> i64 {
+        crate::model::timer::day_close_timer_timestamp(
+            session_day_end,
             self.state.feed.is_live(),
-        ))
+            self.live_day_close_delay_ns,
+        )
+    }
+
+    /// 堆中是否已有交易日 `day` 的收盘定时器（按定时器键 `__akq_day_close__|day`）。
+    pub(crate) fn has_day_close_timer(&self, day: NaiveDate) -> bool {
+        let key = format!("{}{day}", crate::model::timer::DAY_CLOSE_TIMER_PREFIX);
+        self.timers.iter().any(|t| t.payload == key)
+    }
+
+    /// 登记交易日 `day` 的收盘定时器（触发时刻 `timestamp`）。`day` 已结算或堆中已有
+    /// 同键定时器时不重复登记；返回是否新登记。
+    pub(crate) fn push_day_close_timer(&mut self, day: NaiveDate, timestamp: i64) -> bool {
+        if self.last_settled_trading_day.is_some_and(|s| s >= day) || self.has_day_close_timer(day)
+        {
+            return false;
+        }
+        self.timers.push(Timer {
+            timestamp,
+            payload: format!("{}{day}", crate::model::timer::DAY_CLOSE_TIMER_PREFIX),
+            owner: None,
+        });
+        true
+    }
+
+    /// 实盘按交易日历登记 `day` 的收盘定时器（会话收盘 + 宽限），使当日没有任何行情
+    /// 也会结算并触发 on_after_trading；触发时刻不晚于 `not_before`（已过）时不登记。
+    /// 与开日路径按定时器键去重。
+    fn schedule_live_day_close(&mut self, day: NaiveDate, not_before: i64) -> PyResult<()> {
+        let ts = self.close_timer_ts(day)?;
+        if ts > not_before {
+            self.push_day_close_timer(day, ts);
+        }
+        Ok(())
     }
 
     /// 为交易日 `day` 排程盘前（pre_open）与开始交易（before_trading）生命周期定时器，
@@ -689,6 +733,7 @@ impl Engine {
 
     /// 实盘：会话开始时按墙钟 `now` 排程——当日时刻已过的跳过；当日开始交易
     /// （before_trading）已过时改排下一交易日。`now` 不在交易日历内时不排并告警。
+    /// 排到的每个交易日同时登记收盘定时器（已过的跳过），当日无行情也结算。
     pub(crate) fn schedule_live_lifecycle(&mut self, now: i64) -> PyResult<()> {
         self.ensure_session_resolver()?;
         let resolver = self.session_resolver.clone().expect("已构造");
@@ -702,6 +747,7 @@ impl Engine {
             }
         };
         self.schedule_lifecycle(day, now)?;
+        self.schedule_live_day_close(day, now)?;
         let has_before_trading = self.timers.iter().any(|t| {
             matches!(
                 t.lifecycle(),
@@ -737,7 +783,8 @@ impl Engine {
         Ok(())
     }
 
-    /// 为 `day` 的下一个会话交易日排程生命周期；交易日历已到尽头时告警一次。
+    /// 实盘：为 `day` 的下一个会话交易日排程生命周期并登记其收盘定时器；交易日历
+    /// 已到尽头时告警一次。
     fn schedule_next_session_lifecycle(&mut self, day: NaiveDate, not_before: i64) -> PyResult<()> {
         self.ensure_session_resolver()?;
         let next = self
@@ -746,7 +793,10 @@ impl Engine {
             .expect("已构造")
             .next_session_day(day);
         match next {
-            Ok(next) => self.schedule_lifecycle(next, not_before),
+            Ok(next) => {
+                self.schedule_lifecycle(next, not_before)?;
+                self.schedule_live_day_close(next, not_before)
+            }
             Err(e) => {
                 if !self.lifecycle_chain_warned {
                     self.lifecycle_chain_warned = true;
@@ -2578,7 +2628,7 @@ mod lifecycle_tests {
         live.state.feed = crate::data::DataFeed::create_live();
         always_open(&mut live);
         live.schedule_lifecycle(d(1, 3), i64::MIN).unwrap();
-        let grace = crate::model::timer::LIVE_DAY_CLOSE_GRACE_NS;
+        let grace = live.live_day_close_delay_ns;
         assert_eq!(
             lifecycle_timers(&live),
             vec![
@@ -2725,5 +2775,62 @@ mod lifecycle_tests {
                 format!("{LIFECYCLE_PRE_OPEN}|2024-01-08")
             )
         );
+    }
+
+    #[test]
+    fn live_session_start_registers_day_close_timers_by_calendar() {
+        let day_closes = |engine: &Engine| {
+            let mut v: Vec<(i64, String)> = engine
+                .timers
+                .iter()
+                .filter(|t| t.is_day_close())
+                .map(|t| (t.timestamp, t.payload.clone()))
+                .collect();
+            v.sort();
+            v
+        };
+        let grace = crate::model::timer::LIVE_DAY_CLOSE_GRACE_NS;
+        // 10:00 开始：当日开始交易已过、改排下一交易日；两日的收盘定时器都登记
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.schedule_live_lifecycle(sh(1, 2, 10, 0)).unwrap();
+        assert_eq!(
+            day_closes(&engine),
+            vec![
+                (
+                    sh(1, 2, 15, 0) + grace,
+                    "__akq_day_close__|2024-01-02".to_string()
+                ),
+                (
+                    sh(1, 3, 15, 0) + grace,
+                    "__akq_day_close__|2024-01-03".to_string()
+                ),
+            ]
+        );
+        // 重复排程（如续跑补登记后再排）按键去重
+        engine.schedule_live_lifecycle(sh(1, 2, 10, 0)).unwrap();
+        assert_eq!(day_closes(&engine).len(), 2);
+        // 宽限可配置：收盘定时器与下一交易日盘前同步后移
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.live_day_close_delay_ns = 5_000_000_000;
+        engine.schedule_live_lifecycle(sh(1, 2, 9, 0)).unwrap();
+        assert_eq!(
+            day_closes(&engine),
+            vec![(
+                sh(1, 2, 15, 0) + 5_000_000_000,
+                "__akq_day_close__|2024-01-02".to_string()
+            )]
+        );
+        // 已结算的交易日不再登记
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        engine.last_settled_trading_day = Some(d(1, 2));
+        engine.schedule_live_lifecycle(sh(1, 2, 9, 0)).unwrap();
+        assert!(day_closes(&engine).is_empty());
+        // 回测不按日历登记（schedule_lifecycle 只排盘前/开始交易）
+        let mut backtest = Engine::new();
+        backtest.schedule_lifecycle(d(1, 2), i64::MIN).unwrap();
+        assert!(day_closes(&backtest).is_empty());
     }
 }

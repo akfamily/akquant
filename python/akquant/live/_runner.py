@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import math
+import numbers
 import random
 import re
 import signal
@@ -118,6 +119,24 @@ _SESSION_TAG_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9_]+$")
 #: ``client_order_id`` 要发给柜台, 柜台字段有长度上限, 过长会被截断(截断
 #: 直接破坏前缀匹配, 见设计文档"风险"一节)。
 _SESSION_TAG_MAX_LEN = 32
+
+
+def _validate_day_close_delay(day_close_delay: object) -> int:
+    """校验 ``day_close_delay``（秒）并换算为纳秒."""
+    if isinstance(day_close_delay, bool) or not isinstance(
+        day_close_delay, numbers.Real
+    ):
+        raise TypeError(
+            "day_close_delay 须为秒数（int/float），"
+            f"收到 {type(day_close_delay).__name__}，如 day_close_delay=60.0"
+        )
+    seconds = float(day_close_delay)
+    if not math.isfinite(seconds) or seconds < 0:
+        raise ValueError(
+            f"day_close_delay 须为 >= 0 的有限秒数（收到 {day_close_delay!r}），"
+            "它是实盘日终结算相对会话收盘的宽限，如 day_close_delay=60.0"
+        )
+    return int(round(seconds * 1_000_000_000))
 
 
 def _validate_session_tag(session_tag: str) -> None:
@@ -418,6 +437,7 @@ class LiveRunner:
         sessions: Optional[SessionsArg] = None,
         trading_calendar: Optional[Iterable[Any]] = None,
         timezone: Optional[str] = DEFAULT_INPUT_TIMEZONE,
+        day_close_delay: float = 60.0,
     ):
         """
         Initialize the LiveRunner.
@@ -492,6 +512,8 @@ class LiveRunner:
             结算会算错），ALWAYS_OPEN 每天都算
         :param timezone: 时区名称（默认 "Asia/Shanghai"），与 ``run_backtest``
             同义。见 ``run_live``
+        :param day_close_delay: 实盘日终结算相对会话收盘的宽限秒数（默认 60.0，
+            须 >= 0）。见 ``run_live``
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
@@ -593,6 +615,7 @@ class LiveRunner:
         # 自定义段的取值由 run() 里 engine.configure_sessions 校验。
         self.sessions: Optional[SessionsMap] = normalize_sessions(sessions)
         self.trading_calendar = normalize_trading_calendar(trading_calendar)
+        self.day_close_delay_ns = _validate_day_close_delay(day_close_delay)
         self._preload_result: Optional[PreloadResult] = None
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
@@ -693,6 +716,10 @@ class LiveRunner:
             self.engine.use_china_market()
         # 交易日划分与日终结算时刻(按上面下发的引擎时区)
         self.engine.configure_sessions(self.sessions, self.trading_calendar)
+        # 实盘日终结算宽限(收盘 + day_close_delay 秒), 运行参数不入存档, 每次下发
+        set_day_close_delay = getattr(self.engine, "_set_live_day_close_delay_ns", None)
+        if set_day_close_delay is not None:
+            set_day_close_delay(self.day_close_delay_ns)
 
         symbols = [inst.symbol for inst in self.instruments]
         gateway_kwargs = self._build_gateway_kwargs()

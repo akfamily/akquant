@@ -671,4 +671,167 @@ mod tests {
             assert_eq!(stamps, vec![fri_close]);
         });
     }
+
+    /// 本地(+08:00) 时刻的 UTC 纳秒。
+    fn sh_ns(m: u32, d: u32, h: u32, min: u32) -> i64 {
+        chrono::NaiveDate::from_ymd_opt(2024, m, d)
+            .unwrap()
+            .and_hms_opt(h, min, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_nanos_opt()
+            .unwrap()
+            - 8 * 3_600_000_000_000
+    }
+
+    /// 实盘引擎: 600000.SH, 显式交易日历, 堆中只有引擎按墙钟排的生命周期。
+    fn live_calendar_engine(days: &[(u32, u32)]) -> Engine {
+        let mut engine = Engine::new();
+        engine.state.feed = crate::data::DataFeed::create_live();
+        let symbol = "600000.SH".to_string();
+        engine
+            .instruments
+            .insert(symbol.clone(), create_instrument(&symbol));
+        engine.session_config.trading_calendar = Some(
+            days.iter()
+                .map(|&(m, d)| chrono::NaiveDate::from_ymd_opt(2024, m, d).unwrap())
+                .collect(),
+        );
+        engine.invalidate_session_resolver();
+        engine
+    }
+
+    fn live_bar(ts: i64) -> Bar {
+        Bar {
+            timestamp: ts,
+            symbol: "600000.SH".to_string(),
+            open: dec!(10),
+            high: dec!(10),
+            low: dec!(10),
+            close: dec!(10),
+            volume: dec!(100),
+            extra: HashMap::new(),
+            freq: None,
+            interval_start: None,
+        }
+    }
+
+    fn day_close_timer_count(engine: &Engine, day: &str) -> usize {
+        let key = format!("{}{day}", crate::model::timer::DAY_CLOSE_TIMER_PREFIX);
+        engine.timers.iter().filter(|t| t.payload == key).count()
+    }
+
+    fn snapshot_stamps(engine: &Engine) -> Vec<i64> {
+        engine
+            .statistics_manager
+            .snapshots
+            .iter()
+            .map(|(t, _)| *t)
+            .collect()
+    }
+
+    #[test]
+    fn test_live_no_event_day_settles_by_calendar_close_timer() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            // 墙钟在 01-02 盘前: 排当日生命周期时同时登记当日收盘定时器(只一个)
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            assert_eq!(day_close_timer_count(&engine, "2024-01-02"), 1);
+            let close = sh_ns(1, 2, 15, 0);
+            let grace = engine.live_day_close_delay_ns;
+            assert!(
+                engine
+                    .timers
+                    .iter()
+                    .any(|t| t.is_day_close() && t.timestamp == close + grace)
+            );
+            // 当日无任何行情: 墙钟(2024 年的时刻均已过)推进过收盘 + 宽限
+            let mut processor = DataProcessor::new();
+            while engine.last_settled_trading_day.is_none()
+                && engine
+                    .timers
+                    .peek()
+                    .is_some_and(|t| t.timestamp <= close + grace)
+            {
+                processor.process(&mut engine, py, &strategy).unwrap();
+            }
+            assert_eq!(day_close_timer_count(&engine, "2024-01-02"), 0);
+            assert_eq!(
+                engine.last_settled_trading_day,
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 2)
+            );
+            assert_eq!(snapshot_stamps(&engine), vec![close]);
+            // 收盘后事件(on_after_trading)在结算定时器时刻发出
+            match engine.current_event.as_ref() {
+                Some(crate::event::Event::Timer(t)) => {
+                    assert_eq!(
+                        t.lifecycle(),
+                        Some((
+                            crate::model::timer::LIFECYCLE_AFTER_TRADING,
+                            chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+                        ))
+                    );
+                    assert_eq!(t.timestamp, close + grace);
+                }
+                other => panic!("未发出收盘后事件: {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn test_live_open_day_does_not_duplicate_calendar_close_timer() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            engine
+                .state
+                .feed
+                .add_bar(live_bar(sh_ns(1, 2, 10, 0)))
+                .unwrap();
+            let mut processor = DataProcessor::new();
+            while engine.current_trading_day.is_none() {
+                processor.process(&mut engine, py, &strategy).unwrap();
+            }
+            // 开日路径按键去重: 01-02 收盘定时器仍只有一个
+            assert_eq!(day_close_timer_count(&engine, "2024-01-02"), 1);
+        });
+    }
+
+    #[test]
+    fn test_live_no_event_day_between_event_days_settles_each_day_once() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3), (1, 4)]);
+            engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
+            engine
+                .state
+                .feed
+                .add_bar(live_bar(sh_ns(1, 2, 10, 0)))
+                .unwrap();
+            engine
+                .state
+                .feed
+                .add_bar(live_bar(sh_ns(1, 4, 10, 0)))
+                .unwrap();
+            let day4 = chrono::NaiveDate::from_ymd_opt(2024, 1, 4);
+            let mut processor = DataProcessor::new();
+            while engine.current_trading_day != day4 {
+                processor.process(&mut engine, py, &strategy).unwrap();
+            }
+            // 01-03 无行情也按日历结算; 01-04 开日不回头重复结算 01-02
+            assert_eq!(
+                snapshot_stamps(&engine),
+                vec![sh_ns(1, 2, 15, 0), sh_ns(1, 3, 15, 0)]
+            );
+            assert_eq!(
+                engine.last_settled_trading_day,
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 3)
+            );
+        });
+    }
 }

@@ -469,9 +469,10 @@ impl Processor for DataProcessor {
                         engine.trading_day_for(timestamp)?,
                     );
                     if engine.current_trading_day != Some(day) {
-                        // 上一交易日未结算(实盘漏触发等): 先补结算
+                        // 上一交易日未结算(实盘漏触发等): 先补结算。已结算进度晚于它
+                        // (实盘按日历结算了其后无行情的交易日)时不回头重复结算。
                         if let Some(prev) = engine.current_trading_day
-                            && engine.last_settled_trading_day != Some(prev)
+                            && engine.last_settled_trading_day.is_none_or(|s| s < prev)
                         {
                             // 收盘时刻: 优先用已登记的跨度; 从存档恢复后跨度为空,
                             // 取该交易日的会话收盘, 不退化为本事件时间戳。
@@ -528,22 +529,13 @@ impl Processor for DataProcessor {
                     {
                         engine.trading_day_ends.push((day, end));
                     }
+                    // 实盘已按交易日历为当日登记过收盘定时器时按键去重, 不重复登记。
                     if engine.scheduled_day_close != Some(day)
                         && engine.last_settled_trading_day != Some(day)
                         && let Some((_, end)) = engine.current_day_span
                     {
-                        engine.timers.push(crate::model::Timer {
-                            timestamp: crate::model::timer::day_close_timer_timestamp(
-                                end,
-                                engine.state.feed.is_live(),
-                            ),
-                            payload: format!(
-                                "{}{}",
-                                crate::model::timer::DAY_CLOSE_TIMER_PREFIX,
-                                day
-                            ),
-                            owner: None,
-                        });
+                        let close_timer = engine.day_close_timer_timestamp(end);
+                        engine.push_day_close_timer(day, close_timer);
                         engine.scheduled_day_close = Some(day);
                     }
                     engine.last_event_ts_in_day = Some(timestamp);

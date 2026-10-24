@@ -949,6 +949,18 @@ class Engine:
         """
         ...
 
+    def _set_live_day_close_delay_ns(self, delay_ns: int) -> None:
+        r"""
+        设置实盘日终结算定时器相对会话收盘的宽限(纳秒, 默认 60 秒).
+
+        框架内部接口: ``run_live(day_close_delay=)`` 在 ``run()`` 之前下发。只影响实盘
+        (live feed); 回测的收盘定时器恒为收盘 + 1ns。不入存档, 每次会话重新下发。
+
+        :param delay_ns: 宽限纳秒数, 须 >= 0
+        :raises ValueError: 宽限为负
+        """
+        ...
+
     def set_lifecycle_hooks_dispatch(
         self, pre_open: bool, before_trading: bool, after_trading: bool
     ) -> None:

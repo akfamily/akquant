@@ -513,6 +513,24 @@ impl Engine {
         self.session_deadline_ns = deadline_ns.filter(|value| *value > 0);
     }
 
+    /// 设置实盘日终结算定时器相对会话收盘的宽限(纳秒, 默认 60 秒)
+    ///
+    /// 框架内部接口: `run_live(day_close_delay=)` 在 `run()` 之前下发。只影响实盘
+    /// (live feed); 回测的收盘定时器恒为收盘 + 1ns。不入存档, 每次会话重新下发。
+    ///
+    /// :param delay_ns: 宽限纳秒数, 须 >= 0
+    /// :raises ValueError: 宽限为负
+    #[pyo3(name = "_set_live_day_close_delay_ns")]
+    fn set_live_day_close_delay_ns(&mut self, delay_ns: i64) -> PyResult<()> {
+        if delay_ns < 0 {
+            return Err(PyValueError::new_err(format!(
+                "实盘日终结算宽限 day_close_delay 不能为负（收到 {delay_ns} 纳秒），请传入 >= 0 的秒数，如 day_close_delay=60.0"
+            )));
+        }
+        self.live_day_close_delay_ns = delay_ns;
+        Ok(())
+    }
+
     /// 取一个外部信号注入端口(paper 模式)
     ///
     /// **必须在 `run()` 之前调用**: 取到的是 channel sender 的克隆, 之后即与引擎
@@ -553,6 +571,7 @@ impl Engine {
             scheduled_day_close: None,
             lifecycle_scheduled_for: None,
             lifecycle_chain_warned: false,
+            live_day_close_delay_ns: crate::model::timer::LIVE_DAY_CLOSE_GRACE_NS,
             lifecycle_hooks_dispatch: Default::default(),
             last_corp_action_date: None,
             market_manager: MarketManager::new(),
@@ -1498,11 +1517,7 @@ impl Engine {
             && self.scheduled_day_close != Some(day)
         {
             let close_timer = self.close_timer_ts(day)?;
-            self.timers.push(Timer {
-                timestamp: close_timer,
-                payload: format!("{}{}", crate::model::timer::DAY_CLOSE_TIMER_PREFIX, day),
-                owner: None,
-            });
+            self.push_day_close_timer(day, close_timer);
             self.scheduled_day_close = Some(day);
         }
         if self.state.feed.is_live() {

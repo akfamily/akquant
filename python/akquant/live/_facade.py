@@ -106,6 +106,7 @@ def run_live(
     sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
     timezone: Optional[str] = "Asia/Shanghai",
+    day_close_delay: float = 60.0,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -291,6 +292,13 @@ def run_live(
                      里不带时区的时间按它本地化；策略的 ``self.timezone`` 同步
                      为该值（定时器与生命周期钩子按它算本地时刻）。传 None 等同
                      默认值；非法时区名抛 ``ValueError``
+    :param day_close_delay: 实盘日终结算相对会话收盘的宽限秒数（默认 60.0）。
+                            日终结算（Day 单过期、T+1 解冻、收盘快照）与
+                            ``on_after_trading`` 在“会话收盘 + day_close_delay”
+                            触发，收盘快照仍记在会话收盘时刻；留宽限是因为行情源
+                            常在收盘后才推送最后一根已收盘 bar。按交易日历登记，
+                            当日没有任何行情也会结算。须 >= 0（0 即收盘后立即
+                            结算），负数或非有限值抛 ``ValueError``。回测不受影响
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")
@@ -361,6 +369,7 @@ def run_live(
         sessions=sessions,
         trading_calendar=trading_calendar,
         timezone=timezone,
+        day_close_delay=day_close_delay,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event

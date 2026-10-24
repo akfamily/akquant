@@ -2117,3 +2117,68 @@ def test_live_replay_timer_reports_real_session(
         trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
     )
     assert _LIVE_TIMER_SESSIONS == [("lunch", "Break", False)]
+
+
+class _LiveAfterTradingProbe(_LiveDayOrderProbe):
+    """记录每次 on_after_trading 时 self.now 的本地时刻（精确到秒）."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.after_trading_at: List[str] = []
+
+    def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:
+        now = self.now
+        assert now is not None
+        self.after_trading_at.append(now.strftime("%Y-%m-%d %H:%M:%S"))
+
+
+def _after_trading_times(runner: Any) -> List[str]:
+    strategy = runner._stop_target_strategy
+    assert isinstance(strategy, _LiveAfterTradingProbe)
+    return list(strategy.after_trading_at)
+
+
+def test_live_day_close_delay_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_live(day_close_delay=) 决定实盘日终结算时刻 = 会话收盘 + 宽限."""
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(["2024-01-02 10:00", "2024-01-02 14:00", "2024-01-03 10:00"]),
+        strategy_cls=_LiveAfterTradingProbe,
+        trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
+        day_close_delay=5.0,
+    )
+    after = [ts for ts in _after_trading_times(runner)]
+    assert after == ["2024-01-02 15:00:05"]
+    # 结算快照仍记在会话收盘时刻，且只结算一次
+    assert _snapshot_minutes(runner).count("2024-01-02 15:00") == 1
+
+
+def test_live_day_close_delay_defaults_to_sixty_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """不传 day_close_delay 时实盘日终结算在会话收盘后 60 秒."""
+    runner = _run_live_replay(
+        monkeypatch,
+        _local_bars(["2024-01-02 10:00", "2024-01-02 14:00", "2024-01-03 10:00"]),
+        strategy_cls=_LiveAfterTradingProbe,
+        trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
+    )
+    assert _after_trading_times(runner) == ["2024-01-02 15:01:00"]
+
+
+def test_live_day_close_delay_rejects_negative() -> None:
+    """负的 day_close_delay 在连网关之前报中文 ValueError."""
+    from akquant import run_live
+
+    with pytest.raises(ValueError, match="day_close_delay"):
+        run_live(
+            strategy_cls=_LiveDayOrderProbe,
+            instruments=[_live_stock_instrument()],
+            broker="replay",
+            trading_mode="paper",
+            gateway_options={"bars": [], "freq": "1min"},
+            cash=1e6,
+            show_progress=False,
+            duration="1s",
+            day_close_delay=-1,
+        )
