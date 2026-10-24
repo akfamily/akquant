@@ -17,9 +17,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Sequence, Union
+from typing import Any, Callable, List, Mapping, Sequence, Union
 
 from ....akquant import Bar, Tick
+from ....feed_adapter import DEFAULT_INPUT_TIMEZONE
 from ....log import get_logger
 from ...protocols import GatewayBundle
 
@@ -57,11 +58,35 @@ def _coerce_bars(
     return dataframe_to_bars(bars, symbol=fallback_symbol, tz=tz)
 
 
+def _rewrite_date_only(
+    bars: List[Bar], session_context: Mapping[str, Any] | None, tz: str | None
+) -> List[Bar]:
+    """只有日期(本地 0 点)的 bar 改写到会话收盘时刻, 与 ``run_backtest`` 同一实现.
+
+    不改写时这类 bar 落在闭市, 订单永不成交。``session_context`` 由
+    ``LiveRunner`` 按下发给引擎的同一配置写入(``sessions`` / ``trading_calendar``
+    / ``instruments``); 缺省(直接构造网关)时不改写。
+    """
+    if session_context is None or not bars:
+        return bars
+    from ....backtest.engine import rewrite_date_only_bars_for_session
+
+    return rewrite_date_only_bars_for_session(
+        bars,
+        instruments=list(session_context.get("instruments") or []),
+        sessions=session_context.get("sessions"),
+        trading_calendar=session_context.get("trading_calendar"),
+        timezone=tz or DEFAULT_INPUT_TIMEZONE,
+        logger=logger,
+    )
+
+
 def _sorted_events(
     bars: ReplayBars | None,
     ticks: Sequence[Tick] | None,
     symbols: Sequence[str],
     tz: str | None = None,
+    session_context: Mapping[str, Any] | None = None,
 ) -> List[Union[Bar, Tick]]:
     """合并 bar/tick 并按时间戳升序排序.
 
@@ -69,7 +94,9 @@ def _sorted_events(
     保证同一份输入产生逐字节相同的事件序列。
     """
     events: List[Union[Bar, Tick]] = []
-    events.extend(_coerce_bars(bars, symbols, tz))
+    events.extend(
+        _rewrite_date_only(_coerce_bars(bars, symbols, tz), session_context, tz)
+    )
     events.extend(list(ticks or []))
     events.sort(key=lambda event: int(event.timestamp))
     return events
@@ -85,11 +112,14 @@ class ReplayMarketGateway:
         bars: ReplayBars | None = None,
         ticks: Sequence[Tick] | None = None,
         tz: str | None = None,
+        session_context: Mapping[str, Any] | None = None,
     ) -> None:
         """按 ``symbols`` 过滤并预排序待推送事件."""
         self._feed = feed
         self._symbols: List[str] = [str(s) for s in symbols]
-        self._all_events = _sorted_events(bars, ticks, self._symbols, tz)
+        self._all_events = _sorted_events(
+            bars, ticks, self._symbols, tz, session_context
+        )
         self.tick_callback: Callable[[dict[str, Any]], None] | None = None
         self.bar_callback: Callable[[dict[str, Any]], None] | None = None
 
@@ -171,7 +201,9 @@ def build_replay_bundle(
     回放数据的周期无从推断)。取值用回测侧口径, 与 ``run_backtest(freq=)`` 一致。
 
     ``timezone`` 由 ``LiveRunner`` 按 ``run_live(timezone=)`` 写入, 用于 DataFrame
-    里 naive 时间的本地化; 不要在 ``gateway_options`` 里另传。
+    里 naive 时间的本地化; 不要在 ``gateway_options`` 里另传。``session_context``
+    同由 ``LiveRunner`` 写入(引擎的时段表、交易日历与合约), 用于把只有日期的 bar
+    改写到会话收盘时刻(与 ``run_backtest`` 一致)。
     """
     _ = use_aggregator
     gateway = ReplayMarketGateway(
@@ -180,6 +212,7 @@ def build_replay_bundle(
         bars=kwargs.get("bars"),
         ticks=kwargs.get("ticks"),
         tz=kwargs.get("timezone"),
+        session_context=kwargs.get("session_context"),
     )
     pending = gateway.pending_events
     total = len(pending)

@@ -1720,6 +1720,12 @@ class LiveRunner:
                     extra=self._runner_log_extra(phase="gateway"),
                 )
             kwargs["timezone"] = timezone
+            # 只有日期的 bar 按与引擎相同的时段配置改写到收盘时刻(同 run_backtest)
+            kwargs["session_context"] = {
+                "sessions": getattr(self, "sessions", None),
+                "trading_calendar": getattr(self, "trading_calendar", None),
+                "instruments": list(getattr(self, "instruments", None) or []),
+            }
         return kwargs
 
     def _start_gateway_thread(self, target: Any, name: str) -> None:

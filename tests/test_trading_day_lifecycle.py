@@ -1163,8 +1163,9 @@ class _LiveDayOrderProbe(Strategy):
 
 def _run_live_replay(
     monkeypatch: pytest.MonkeyPatch,
-    bars: List[Bar],
+    bars: Any,
     strategy_cls: Any = None,
+    freq: str = "1min",
     **kwargs: Any,
 ) -> Any:
     """run_live(broker="replay") 跑完后返回 runner，供读取引擎结果.
@@ -1195,7 +1196,7 @@ def _run_live_replay(
         instruments=[_live_stock_instrument()],
         broker="replay",
         trading_mode="paper",
-        gateway_options={"bars": bars, "freq": "1min"},
+        gateway_options={"bars": bars, "freq": freq},
         cash=1e6,
         show_progress=False,
         duration="30s",
@@ -1950,7 +1951,7 @@ _LIVE_SESSION_PROBES: List[Any] = []
 
 
 class _LiveSessionProbe(_LiveDayOrderProbe):
-    """记录 session_of / is_market_open（实盘强制连续竞价）."""
+    """记录 session_of / is_market_open（实盘按真实时段）."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -2016,3 +2017,103 @@ def test_live_replay_auction_order_waits_for_continuous(
     filled = [o for o in orders if o.status == aq.OrderStatus.Filled]
     assert len(filled) == 1, [(o.id, o.status) for o in orders]
     assert _local_minute(int(filled[0].updated_at)) == "2024-01-02 13:01"
+
+
+_LIVE_FILLS: List[Tuple[str, float]] = []
+
+
+class _LiveFirstBarBuyProbe(_LiveDayOrderProbe):
+    """首根 bar 下一张市价单与一张 Day 限价单，记录成交（本地日期, 价格）."""
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done:
+            self.done = True
+            self.buy(bar.symbol, 100)
+            self.buy(bar.symbol, 100, price=100.0, time_in_force=aq.TimeInForce.Day)
+
+    def on_trade(self, trade: Any) -> None:
+        local = pd.Timestamp(int(trade.timestamp), tz="UTC").tz_convert("Asia/Shanghai")
+        _LIVE_FILLS.append((local.strftime("%Y-%m-%d"), float(trade.price)))
+
+
+def test_live_replay_date_only_daily_matches_backtest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replay 只有日期的日线 DataFrame：与同数据 run_backtest 成交日、成交价一致.
+
+    只有日期的 bar 停在本地 0 点会被判为闭市、订单永不成交；replay 须与回测一样
+    把它改写到会话收盘时刻并补区间起点。
+    """
+    dates = ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]
+    n = len(dates)
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(dates),
+            "open": [10.0 + i for i in range(n)],
+            "high": [10.5 + i for i in range(n)],
+            "low": [9.5 + i for i in range(n)],
+            "close": [10.2 + i for i in range(n)],
+            "volume": [1e6] * n,
+        }
+    )
+    calendar = ["2023-12-29", *dates, "2024-01-08"]
+
+    _LIVE_FILLS.clear()
+    run_backtest(
+        strategy=_LiveFirstBarBuyProbe,
+        data=df.assign(symbol="600000"),
+        symbols=["600000"],
+        lot_size=100,
+        initial_cash=1e6,
+        show_progress=False,
+        freq="1d",
+        trading_calendar=calendar,
+    )
+    backtest_fills = sorted(_LIVE_FILLS)
+    assert len(backtest_fills) == 2, backtest_fills
+
+    _LIVE_FILLS.clear()
+    _run_live_replay(
+        monkeypatch,
+        df,
+        strategy_cls=_LiveFirstBarBuyProbe,
+        freq="1d",
+        trading_calendar=calendar,
+    )
+    assert sorted(_LIVE_FILLS) == backtest_fills
+
+
+_LIVE_TIMER_SESSIONS: List[Tuple[str, str, bool]] = []
+
+
+class _LiveTimerSessionProbe(_LiveDayOrderProbe):
+    """首根 bar 登记午休时刻的定时器，记录 on_timer 里的时段."""
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done:
+            self.done = True
+            self.schedule("2024-01-02 12:00", "lunch")
+
+    def on_timer(self, payload: str) -> None:
+        assert self.ctx is not None
+        _LIVE_TIMER_SESSIONS.append(
+            (
+                payload,
+                str(self.ctx.session).split(".")[-1],
+                self.is_market_open(),
+            )
+        )
+
+
+def test_live_replay_timer_reports_real_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """实盘 on_timer 的 ctx.session 按真实时段：午休时刻的定时器为 Break."""
+    _LIVE_TIMER_SESSIONS.clear()
+    _run_live_replay(
+        monkeypatch,
+        _local_bars(["2024-01-02 10:00", "2024-01-02 13:30"]),
+        strategy_cls=_LiveTimerSessionProbe,
+        trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
+    )
+    assert _LIVE_TIMER_SESSIONS == [("lunch", "Break", False)]

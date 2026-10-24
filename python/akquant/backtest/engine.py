@@ -1041,6 +1041,43 @@ def _rewrite_date_only_bars(
     return out
 
 
+def rewrite_date_only_bars_for_session(
+    bars: List[Bar],
+    *,
+    instruments: Sequence[Any],
+    sessions: Optional[SessionsMap],
+    trading_calendar: Optional[List[dt_module.date]],
+    timezone: str,
+    logger: Any,
+) -> List[Bar]:
+    """按会话配置改写只有日期的 bar（实盘 replay 用，与回测同一实现）.
+
+    解析器按与引擎相同的配置构造（``sessions``、``trading_calendar``、
+    ``timezone``），在用标的为全部 ``instruments``（与引擎“全部已登记合约”一致）。
+    某标的全部 bar 为本地 0 点时改写到会话级收盘时刻、区间起点取 24h 前；其余
+    bar 原样返回。
+    """
+    if not bars:
+        return list(bars)
+    resolver = SessionResolver(
+        sessions=sessions, trading_calendar=trading_calendar, timezone=timezone
+    )
+    asset_types = {str(inst.symbol): inst.asset_type for inst in instruments}
+    underlyings = {
+        str(inst.symbol): getattr(inst, "underlying_symbol", None)
+        for inst in instruments
+    }
+    _activate_session_symbols(
+        resolver,
+        asset_types,
+        lambda sym: asset_types.get(sym),
+        underlying_of=lambda sym: underlyings.get(sym),
+    )
+    return _rewrite_date_only_bars(
+        bars, _DateOnlyRewriter(resolver, timezone, logger), None
+    )
+
+
 def _build_session_underlying_of(
     prebuilt_instruments: Dict[str, Any],
     inst_conf_map: Dict[str, Any],
@@ -4834,7 +4871,7 @@ def run_backtest(
         else:
             engine.use_simple_market(commission_rate)
 
-    # 回测按各品种真实交易时段撮合（引擎默认不强制连续竞价），时段表由 sessions= 决定。
+    # 回测与实盘都按各品种真实交易时段撮合，时段表由 sessions= 决定。
     # 无论使用 SimpleMarket 还是 ChinaMarket，都尝试使用统一佣金策略接口。
     if hasattr(engine, "set_stock_fee_policy"):
         cast(Any, engine).set_stock_fee_policy(
