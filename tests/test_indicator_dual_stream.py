@@ -258,3 +258,52 @@ def test_is_dual_stream_symbol_reads_session_flag() -> None:
     holder._framework_dual_stream = frozenset({"A"})
     assert is_dual_stream_symbol(holder, "A") is True
     assert is_dual_stream_symbol(holder, "B") is False
+
+
+def test_tick_synth_bar_indicator_point_uses_whole_minute_ms() -> None:
+    """Tick 合成 bar 上的指标点 timestamp_ms 为整分钟(前端按结束标签对齐)."""
+
+    class Plotted(Strategy):
+        def on_start(self) -> None:
+            self.sma = self.I(aq.SMA(2), name="sma", plot=True)
+
+        def on_bar(self, bar: Bar) -> None:
+            pass
+
+    result = run_backtest(
+        strategy=Plotted,
+        data=_ticks("X", 12),
+        symbols=["X"],
+        freq="1min",
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    points = result.indicator_outputs["points"]
+    assert points, "应记录指标点"
+    for point in points:
+        assert point["timestamp_ms"] % 60_000 == 0, point
+        # 原始纳秒戳保持终点戳 (下一区间起点 - 1ns), 不被改写
+        assert point["timestamp"] % 60_000_000_000 == 60_000_000_000 - 1, point
+
+
+def test_streaming_sink_rounds_ms_to_bar_end_and_keeps_ns() -> None:
+    """实盘流 sink: 点与快照的 timestamp_ms 取整到区间终点, 纳秒戳不变."""
+    from akquant.live._stream_sink import StreamingIndicatorSink
+
+    end = _BASE_NS + _MIN_NS
+    events: List[Any] = []
+    sink = StreamingIndicatorSink(events.append)
+    sink.record(
+        name="x",
+        value=1.0,
+        symbol="X",
+        timestamp=end - 1,
+        owner_strategy_id="_default",
+        interval_start=end - _MIN_NS - 1,
+    )
+    sink.flush_stream_snapshot()
+    assert events
+    for event in events:
+        payload = event["payload"]
+        assert payload["timestamp"] == str(end - 1)
+        assert payload["timestamp_ms"] == str(end // 1_000_000)

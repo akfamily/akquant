@@ -192,3 +192,19 @@ def test_normalize_scale_group_strips_and_defaults() -> None:
     assert normalize_scale_group("  percent ") == "percent"
     assert normalize_scale_group(None) == ""
     assert normalize_scale_group("") == ""
+
+
+def test_bar_end_ns_matches_rust_rule() -> None:
+    """与 Rust window.rs::bar_end 同规则: 终点戳 bar 的区间终点为 ts+1."""
+    from akquant.chart import bar_end_ns
+
+    end = 1_704_164_460_000_000_000  # 整分钟
+    assert bar_end_ns(end - 1, end - 60_000_000_000 - 1) == end
+    assert bar_end_ns(end, end - 60_000_000_000) == end
+    assert bar_end_ns(end - 1, None) == end - 1  # 区间未知: 不推断
+    # 起点不早于时间戳(零宽 bar 等): 不取整
+    assert bar_end_ns(end - 1, end - 1) == end - 1
+    assert bar_end_ns(end - 1, end) == end - 1
+    # ts+1 不是整秒: 不取整
+    mid = end - 500_000_000
+    assert bar_end_ns(mid, mid - 60_000_000_000) == mid

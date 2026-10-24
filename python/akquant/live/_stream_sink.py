@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..backtest import BacktestStreamEvent
 from ..chart import (
+    bar_end_ns,
     normalize_group_role,
     normalize_meta_json,
     normalize_pane_index,
@@ -44,7 +45,7 @@ class StreamingIndicatorSink:
         self._on_event = on_event
         self._run_id = str(run_id)
         self._seq = 0
-        self._pending: Dict[Tuple[str, str, int], List[Dict[str, Any]]] = {}
+        self._pending: Dict[Tuple[str, str, int, int], List[Dict[str, Any]]] = {}
         # 只存 (owner, key) 登记表, 规模与声明数同阶, 不随点数增长
         self._series_registry = SeriesKeyRegistry()
 
@@ -89,6 +90,7 @@ class StreamingIndicatorSink:
         phase: str = "run",
         group: str = "",
         role: str = "",
+        interval_start: Optional[int] = None,
     ) -> None:
         """Emit one ``indicator_point`` and buffer it for the next snapshot."""
         indicator_key = str(name or "").strip()
@@ -103,7 +105,7 @@ class StreamingIndicatorSink:
         meta_json = normalize_meta_json(meta)
         scale_group_norm = normalize_scale_group(scale_group)
         _, timestamp_ns = timestamp_to_ms_and_ns(timestamp)
-        timestamp_ms = timestamp_ms_from_ns(timestamp_ns)
+        timestamp_ms = timestamp_ms_from_ns(bar_end_ns(timestamp_ns, interval_start))
         phase_text = str(phase or "").strip() or "run"
         try:
             numeric_value = float(value)
@@ -137,7 +139,7 @@ class StreamingIndicatorSink:
             },
             timestamp_ns,
         )
-        key = (strategy_id, symbol_text, timestamp_ns)
+        key = (strategy_id, symbol_text, timestamp_ns, timestamp_ms)
         self._pending.setdefault(key, []).append(
             {
                 "indicator_key": indicator_key,
@@ -158,7 +160,7 @@ class StreamingIndicatorSink:
         """Emit an ``indicator_snapshot`` per buffered callback cycle."""
         if not self._pending:
             return
-        for (strategy_id, symbol_text, timestamp_ns), items in list(
+        for (strategy_id, symbol_text, timestamp_ns, timestamp_ms), items in list(
             self._pending.items()
         ):
             stamp_snapshot_items(self._series_registry, strategy_id, items)
@@ -169,7 +171,7 @@ class StreamingIndicatorSink:
                     "owner_strategy_id": strategy_id,
                     "symbol": symbol_text,
                     "timestamp": str(timestamp_ns),
-                    "timestamp_ms": str(timestamp_ms_from_ns(timestamp_ns)),
+                    "timestamp_ms": str(timestamp_ms),
                     "indicator_count": str(len(items)),
                     "confirmed": all_items_confirmed(items),
                     "phase": snapshot_phase(items),

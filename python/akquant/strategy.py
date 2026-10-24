@@ -2070,6 +2070,7 @@ class Strategy:
                     resolved_symbol,
                     value,
                     timestamp=int(getattr(bar, "timestamp")),
+                    interval_start=getattr(bar, "interval_start", None),
                 )
         if isinstance(bar, Bar) and bar.freq is None:
             self._peek_intrabar_indicators(bar)
@@ -2240,6 +2241,7 @@ class Strategy:
         *,
         timestamp: Optional[int] = None,
         confirmed: bool = True,
+        interval_start: Optional[int] = None,
     ) -> None:
         """把一次指标更新自动上报为绘图点.
 
@@ -2266,6 +2268,7 @@ class Strategy:
                 scale_group=declaration.scale_group,
                 timestamp=timestamp,
                 confirmed=confirmed,
+                interval_start=interval_start,
             )
 
     def _check_symbol_data_coverage(self) -> None:
@@ -2905,6 +2908,7 @@ class Strategy:
         confirmed: bool = True,
         group: str = "",
         role: str = "",
+        interval_start: Optional[int] = None,
     ) -> None:
         """``record_indicator`` 的实现, 另收 candle 分量的 ``group``/``role``.
 
@@ -2952,6 +2956,20 @@ class Strategy:
             if timestamp is None
             else int(pd.Timestamp(timestamp).value)
         )
+        # 点由 bar 触发时带上该 bar 的区间起点, 让 sink 把毫秒时间取整到区间终点;
+        # 显式传入的优先(自动上报用事件自身的 bar), 未显式给 timestamp 时取
+        # 当前 bar 的; tick 驱动的点没有区间, 保持原样。
+        if (
+            interval_start is None
+            and timestamp is None
+            and self.current_bar is not None
+        ):
+            interval_start = getattr(self.current_bar, "interval_start", None)
+        interval_start_kw: Dict[str, int] = {}
+        if interval_start is not None and self._sink_accepts(
+            recorder, "interval_start"
+        ):
+            interval_start_kw = {"interval_start": int(interval_start)}
         owner_strategy_id = str(
             getattr(self, "_owner_strategy_id", "_default") or "_default"
         )
@@ -2979,6 +2997,7 @@ class Strategy:
                 else {}
             ),
             **group_role,
+            **interval_start_kw,
         )
 
     def _sink_accepts(self, recorder: Any, keyword: str) -> bool:
