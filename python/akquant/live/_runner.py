@@ -842,6 +842,10 @@ class LiveRunner:
         # 再计时"。
         self._dispatch_slot_strategy_start(slot_strategy_instances)
 
+        # replay: 等推送线程把行情全部推入 feed 再开跑(见 _await_replay_pushed)。
+        # 放在 duration 计时之前: 等待时间不计入 duration。
+        self._await_replay_pushed(bundle)
+
         # Apply duration limit if specified
         if duration:
             logger.info(
@@ -890,7 +894,6 @@ class LiveRunner:
         configure_engine_lifecycle_dispatch(
             self.engine, [strategy_instance, *slot_strategy_instances.values()]
         )
-        self._await_replay_pushed(bundle)
 
         logger.info(
             "Running live strategy loop",
@@ -2881,6 +2884,16 @@ class LiveRunner:
             return False
         first = first_event_ns()
         last = last_event_ns()
+        if first is not None and int(first) - 1 >= time.time_ns():
+            # 引擎按 min(墙钟, 锚点) 排程: 锚点晚于墙钟时退回墙钟排程(已知限制),
+            # 末日收盘定时器在未来、会话内到不了, 不设收尾以免空等。
+            logger.warning(
+                "replay 首个事件晚于当前时刻（回放的是未来时间的数据），交易日生命周期"
+                "退回按墙钟排程，盘前/开始交易/日终结算与同数据回测不一致，数据结束时"
+                "也不等待末日结算；如需与回测一致，请回放早于当前时刻的数据",
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+            return False
         set_anchor = getattr(self.engine, "_set_live_lifecycle_anchor", None)
         if first is not None and callable(set_anchor):
             set_anchor(int(first) - 1)

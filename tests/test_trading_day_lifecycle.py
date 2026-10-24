@@ -2363,3 +2363,87 @@ def test_replay_gateway_exposes_first_and_last_event_ns() -> None:
     gateway.unsubscribe(["600000"])
     assert gateway.first_event_ns() is None
     assert gateway.last_event_ns() is None
+
+
+class _NoJoinHookSequenceProbe(_LiveHookSequenceProbe):
+    """不在 on_start 里等推送线程：顺序完全靠 runner 的推送等待保证."""
+
+    def on_start(self) -> None:
+        pass
+
+
+def test_live_replay_waits_for_push_before_engine_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """推送线程变慢时 replay 仍等全部行情入 feed 再开跑，钩子序列与回测一致.
+
+    生命周期定时器在历史时刻、按墙钟恒已到期；不等推送时 feed 起初为空，
+    引擎会先触发 01-02 收盘结算（无行情日结算），序列与回测不同。
+    """
+    import time
+
+    from akquant import run_live
+    from akquant.gateway.brokers.replay.gateway import ReplayMarketGateway
+    from akquant.live import _facade
+
+    original_start = ReplayMarketGateway.start
+
+    def _slow_start(self: Any) -> None:
+        time.sleep(0.5)
+        original_start(self)
+
+    monkeypatch.setattr(ReplayMarketGateway, "start", _slow_start)
+    captured: List[Any] = []
+
+    class _Recording(_facade.LiveRunner):  # type: ignore[misc,valid-type]
+        def __init__(self, *args: Any, **kw: Any) -> None:
+            super().__init__(*args, **kw)
+            captured.append(self)
+
+    monkeypatch.setattr(_facade, "LiveRunner", _Recording)
+    stamps = [
+        "2024-01-02 10:00",
+        "2024-01-02 15:00",
+        "2024-01-03 10:00",
+        "2024-01-03 15:00",
+    ]
+    run_live(
+        strategy_cls=_NoJoinHookSequenceProbe,
+        instruments=[_live_stock_instrument()],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": _local_bars(stamps), "freq": "1min"},
+        cash=1e6,
+        show_progress=False,
+        duration="30s",
+        trading_calendar=_HOOK_CALENDAR,
+        day_close_delay=0,
+    )
+    assert len(captured) == 1
+    strategy = captured[0]._stop_target_strategy
+    assert isinstance(strategy, _NoJoinHookSequenceProbe)
+    assert list(strategy.hooks) == _backtest_hooks(stamps)
+
+
+def test_live_replay_future_data_skips_close_wait_with_clear_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """回放晚于当前时刻的数据：告警说明生命周期退回墙钟排程，且不空等末日结算."""
+    import logging
+    import time
+
+    day = (pd.Timestamp.now(tz="Asia/Shanghai") + pd.Timedelta(days=400)).normalize()
+    while day.weekday() >= 5:
+        day += pd.Timedelta(days=1)
+    stamps = [
+        (day + pd.Timedelta(hours=10)).strftime("%Y-%m-%d %H:%M"),
+        (day + pd.Timedelta(hours=15)).strftime("%Y-%m-%d %H:%M"),
+    ]
+    started = time.monotonic()
+    with caplog.at_level(logging.WARNING):
+        _run_live_replay(monkeypatch, _local_bars(stamps), day_close_delay=0)
+    elapsed = time.monotonic() - started
+    text = " ".join(record.getMessage() for record in caplog.records)
+    assert "replay 首个事件晚于当前时刻" in text, text
+    assert "回放数据已结束" not in text, text
+    assert elapsed < 4.0, elapsed

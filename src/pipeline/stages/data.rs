@@ -241,6 +241,17 @@ impl Processor for DataProcessor {
                 let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
                 match close.deadline_ns {
                     None if engine.state.feed.peek_timestamp().is_none() => {
+                        // 末日没有待触发的收盘定时器(该日未开日、不在交易日历内等)时
+                        // 等不到结算, 直接结束, 不空等。
+                        if !engine.has_day_close_timer(close.day) {
+                            log::warn!(
+                                "回放数据已结束，但最后一个交易日 {} 没有待触发的日终结算（该日未开日或不在交易日历内），不等待结算，会话直接结束（该日不触发 on_after_trading）；请检查 trading_calendar= 是否覆盖回放数据的日期",
+                                close.day
+                            );
+                            engine.live_replay_close = None;
+                            self.finalize_current_timestamp(engine, py);
+                            return Ok(ProcessorResult::Break);
+                        }
                         if let Some(state) = engine.live_replay_close.as_mut() {
                             state.deadline_ns = Some(
                                 now.saturating_add(crate::engine::core::LiveReplayClose::WAIT_NS),

@@ -785,6 +785,25 @@ mod tests {
     }
 
     #[test]
+    fn test_live_replay_close_without_day_close_timer_ends_without_waiting() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
+            let day2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+            let mut state = crate::engine::core::LiveReplayClose::new(day2, sh_ns(1, 2, 15, 0));
+            state.last_event_seen = true;
+            engine.live_replay_close = Some(state);
+            // 末日没有收盘定时器: 等不到结算, 本轮直接结束, 不开始计时
+            let mut processor = DataProcessor::new();
+            let result = processor.process(&mut engine, py, &strategy).unwrap();
+            assert_eq!(result, crate::pipeline::ProcessorResult::Break);
+            assert!(engine.live_replay_close.is_none());
+            assert_eq!(engine.last_settled_trading_day, None);
+        });
+    }
+
+    #[test]
     fn test_live_replay_close_wait_times_out_and_ends_session() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
@@ -794,6 +813,8 @@ mod tests {
             let mut state = crate::engine::core::LiveReplayClose::new(day2, sh_ns(1, 2, 15, 0));
             state.last_event_seen = true;
             engine.live_replay_close = Some(state);
+            // 末日收盘定时器已登记但(墙钟上)迟迟不到期
+            assert!(engine.push_day_close_timer(day2, i64::MAX / 2));
             // 最后事件已处理、行情已取空: 开始计时(5 秒), 本轮不结束
             let mut processor = DataProcessor::new();
             let before = chrono::Utc::now().timestamp_nanos_opt().unwrap();
