@@ -2999,6 +2999,7 @@ class StrategyContext:
     current_time: int
     trading_day: typing.Optional[datetime.date]
     recent_trades: list[Trade]
+    recent_rejected_orders: list[Order]
     recent_expired_orders: list[Order]
     recent_finalized_orders: list[Order]
     recent_expiry_events: list[ExpiryEvent]
