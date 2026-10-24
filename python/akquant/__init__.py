@@ -359,7 +359,8 @@ def __getattr__(name: str) -> object:
             f"{name} 已删除（原用于 {_REMOVED_SESSION_CONFIG_CLASSES[name]}）："
             "时段改由 run_backtest(sessions=...) 配置，例如 "
             'sessions={"rb": "CN_FUTURES_NIGHT_23"}；'
-            '不受时段约束请用 sessions={"default": "ALWAYS_OPEN"}'
+            '不受时段约束请用 sessions={"default": "ALWAYS_OPEN"}；'
+            "期权默认用 CN_OPTION，商品期权未单独配置时跟随其标的期货的时段表"
         )
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

@@ -282,7 +282,7 @@ pub fn parse_session(s: &str) -> Result<TradingSession, String> {
         _ => {
             return Err(format!(
                 "未知时段类型 {s:?}，可选：continuous / opening_auction / auction_hold / \
-                 closing_auction / break / closed / post_close"
+                 closing_auction / break / post_close（段外即闭市，不要写 closed）"
             ));
         }
     })

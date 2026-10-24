@@ -396,7 +396,8 @@ _ConfigT = TypeVar("_ConfigT", bound=type)
 _SESSION_MIGRATION_HINT = (
     "时段改由 run_backtest(sessions=...) 配置，例如 "
     'sessions={"rb": "CN_FUTURES_NIGHT_23"}（按品种前缀指定时段模板）；'
-    '不受时段约束请用 sessions={"default": "ALWAYS_OPEN"}'
+    '不受时段约束请用 sessions={"default": "ALWAYS_OPEN"}；'
+    "期权默认用 CN_OPTION，商品期权未单独配置时跟随其标的期货的时段表"
 )
 
 
