@@ -303,3 +303,60 @@ def test_broker_live_single_strategy_receives_all_callbacks(
     assert main.report_ids == ["r-x"]
     assert main.portfolio_updates == [account]
     assert gateway.canceled == ["b-2"]
+
+
+def test_broker_live_terminal_and_late_reports_stay_with_owner_slot(
+    gateway: _FakeTraderGateway,
+) -> None:
+    """终态回报与迟到成交仍只到所属槽位.
+
+    订单/执行回报进终态时 runner 会清掉活动归属表(``_close_order_mapping``);
+    执行回报不经适配、迟到成交在清表之后才解析 owner, 二者都要能找回 beta,
+    不能回落默认槽位。OCO 一腿以终态回报先到、成交后到, 对手腿仍要由 beta 撤。
+    """
+
+    class _OcoSlot(_Recorder):
+        def on_start(self) -> None:
+            self._oco_groups = {"g": {"b-1", "b-2"}}
+            self._oco_order_to_group = {"b-1": "g", "b-2": "g"}
+
+    main, beta = _Recorder(), _OcoSlot()
+
+    def filled(cid: str, bid: str) -> Dict[str, Any]:
+        return {**_order(cid, bid), "status": "Filled", "filled_quantity": 1.0}
+
+    def scenario(runner: LiveRunner) -> None:
+        # 停掉派发线程后手动 drain, 批次边界确定。
+        target = runner._broker_dispatch_thread._args[0]  # type: ignore[union-attr]
+        runner._stop_broker_dispatcher()
+        runner._bind_order_owner("c-b", "b-b", "beta")
+        runner._bind_order_owner("c-1", "b-1", "beta")
+        runner._bind_order_owner("c-2", "b-2", "beta")
+        # 同一批: order(Filled) → execution_report(Filled) → trade
+        gateway.emit("order", filled("c-b", "b-b"))
+        gateway.emit(
+            "execution_report",
+            {
+                "id": "r-b",
+                "broker_order_id": "b-b",
+                "client_order_id": "c-b",
+                "status": "Filled",
+                "filled_quantity": 1.0,
+            },
+        )
+        gateway.emit("trade", _trade("t-b", "c-b", "b-b"))
+        # OCO 一腿: 终态回报先单独派发完, 成交在下一批迟到(只带柜台单号)。
+        gateway.emit("order", filled("c-1", "b-1"))
+        runner._drain_broker_events(target)
+        gateway.emit("trade", _trade("t-1", "", "b-1"))
+        runner._drain_broker_events(target)
+
+    _run(main, {"beta": beta}, scenario)
+
+    assert set(beta.order_cids) == {"c-b", "c-1"}
+    assert beta.report_ids == ["r-b"]
+    assert set(beta.trade_ids) == {"t-b", "t-1"}
+    assert gateway.canceled == ["b-2"]
+    assert main.order_cids == []
+    assert main.report_ids == []
+    assert main.trade_ids == []

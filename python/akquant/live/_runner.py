@@ -1850,6 +1850,11 @@ class LiveRunner:
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
         self._closed_order_id_fifo: deque[str] = deque()
+        # 已终结订单的归属: 终态时活动归属表被清, 但同批的执行回报(不经适配、
+        # 派发时才解析 owner)与迟到成交仍要路由回下单槽位。键带前缀区分
+        # client_order_id("c:")与 broker_order_id("b:"), 有界 FIFO。
+        self._closed_order_owners: dict[str, str] = {}
+        self._closed_order_owner_fifo: deque[str] = deque()
         self._broker_dispatch_stop: threading.Event | None = None
         self._broker_dispatch_thread: threading.Thread | None = None
         self._broker_recovery_stop: threading.Event | None = None
@@ -2681,7 +2686,30 @@ class LiveRunner:
             mapped = self._broker_to_strategy_ids.get(broker_order_id, "").strip()
             if mapped:
                 return mapped
+        # 活动表查不到时查已终结订单: 终态回报之后到达的执行回报/成交。
+        # getattr 兜底: 部分测试替身绕开 _init_broker_bridge_state。
+        closed = getattr(self, "_closed_order_owners", None) or {}
+        for key in (f"c:{client_order_id}", f"b:{broker_order_id}"):
+            mapped = closed.get(key, "") if key[2:] else ""
+            if mapped:
+                return mapped
         return "_default"
+
+    def _remember_closed_order_owner(
+        self, client_order_id: str, broker_order_id: str, owner_strategy_id: str
+    ) -> None:
+        """终态清表前把订单归属移入有界留档, 供迟到回报路由(见上)."""
+        if not owner_strategy_id:
+            return
+        for key in (f"c:{client_order_id}", f"b:{broker_order_id}"):
+            if not key[2:]:
+                continue
+            if key not in self._closed_order_owners:
+                self._closed_order_owner_fifo.append(key)
+            self._closed_order_owners[key] = owner_strategy_id
+        while len(self._closed_order_owner_fifo) > 2 * _CLOSED_ORDER_ID_LIMIT:
+            stale = self._closed_order_owner_fifo.popleft()
+            self._closed_order_owners.pop(stale, None)
 
     def _payload_to_dict(self, payload: Any) -> Dict[str, Any]:
         return payload_to_dict(payload)
@@ -2693,6 +2721,17 @@ class LiveRunner:
         return self._client_to_broker_order_ids.get(client_order_id, "")
 
     def _close_order_mapping(self, client_order_id: str, broker_order_id: str) -> None:
+        owner = (
+            self._client_to_strategy_ids.get(client_order_id, "")
+            if client_order_id
+            else ""
+        ) or (
+            self._broker_to_strategy_ids.get(broker_order_id, "")
+            if broker_order_id
+            else ""
+        )
+        if owner and hasattr(self, "_closed_order_owners"):
+            self._remember_closed_order_owner(client_order_id, broker_order_id, owner)
         if client_order_id:
             self._client_to_broker_order_ids.pop(client_order_id, None)
             self._client_to_strategy_ids.pop(client_order_id, None)
