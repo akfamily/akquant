@@ -353,7 +353,7 @@ liquidation_audit = result.liquidation_audit_df
 
 当启用信用账户并触发强平后，`result.viz.report(...)` 的 HTML 报告会自动包含：
 
-- 强平审计明细表（日期、当日计息、强平标的、强平顺序）
+- 强平审计明细表：日期、当日利息（字段 `daily_interest`，本次结算计提，按两次结算间自然日天数计）、强平标的、强平顺序
 - 风险图表区中的按日强平统计图（有数据时展示）
 
 或者使用 `viz.dashboard` 方法快速预览交互式面板：

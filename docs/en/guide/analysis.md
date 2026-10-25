@@ -383,5 +383,5 @@ Note: Despite the `_pct` suffix, all three percentage fields in `attribution_df`
 
 When margin mode is enabled and forced liquidation occurs, `result.viz.report(...)` automatically includes:
 
-- a forced liquidation audit table (date, daily interest, symbols, priority)
+- a forced liquidation audit table: date, daily interest (field `daily_interest`, accrued at this settlement over the calendar days since the previous one), symbols, priority
 - daily liquidation charts in the risk chart section (shown when data exists)

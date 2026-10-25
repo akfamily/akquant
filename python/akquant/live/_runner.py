@@ -542,7 +542,8 @@ class LiveRunner:
         :param timezone: 时区名称（默认 "Asia/Shanghai"），与 ``run_backtest``
             同义。见 ``run_live``
         :param day_close_delay: 实盘日终结算相对会话收盘的宽限秒数（默认 60.0，
-            取值 0～86400）。见 ``run_live``
+            取值 0～86400）。收盘后该时长内到达的行情仍归当日（不撮合、
+            不产生权益点），结算在“收盘 + day_close_delay”。见 ``run_live``
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
