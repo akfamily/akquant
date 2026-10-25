@@ -35,7 +35,7 @@ def save_parquet_with_hash(df: pd.DataFrame, filename: str) -> None:
 
 def gen_stock_data() -> None:
     """Generate Stock Data for T+1 and Limit Up/Down tests."""
-    dates = pd.date_range("2024-01-01", periods=5, freq="D", tz="Asia/Shanghai")
+    dates = pd.bdate_range("2024-01-02", periods=5, tz="Asia/Shanghai")
     # Day 0: Normal
     # Day 1: Limit Up (+10%)
     # Day 2: Limit Down (-10%)
@@ -118,7 +118,7 @@ def gen_stock_data() -> None:
 
 def gen_future_data() -> None:
     """Generate Futures Data for Margin tests."""
-    dates = pd.date_range("2024-01-01", periods=5, freq="D", tz="Asia/Shanghai")
+    dates = pd.bdate_range("2024-01-02", periods=5, tz="Asia/Shanghai")
 
     data = []
     prices = [3500.0, 3450.0, 3400.0, 3550.0, 3600.0]
@@ -142,7 +142,7 @@ def gen_future_data() -> None:
 
 def gen_option_data() -> None:
     """Generate Option Data for basic trading."""
-    dates = pd.date_range("2024-01-01", periods=5, freq="D", tz="Asia/Shanghai")
+    dates = pd.bdate_range("2024-01-02", periods=5, tz="Asia/Shanghai")
 
     data = []
     # Call Option prices
@@ -193,8 +193,102 @@ def gen_cancel_data() -> None:
     save_parquet_with_hash(df, "order_cancel.parquet")
 
 
+def _a_share_minute_times(day: str) -> list[pd.Timestamp]:
+    """一个 A 股交易日的 1 分钟 bar 时间戳（区间右端点）.
+
+    09:25 一根（区间 (09:24, 09:25] 属开盘集合竞价）、09:31～11:30、
+    13:01～15:00（14:58～15:00 三根区间落在收盘集合竞价 14:57～15:00 内）。
+    """
+    morning = pd.date_range(f"{day} 09:31", f"{day} 11:30", freq="1min")
+    afternoon = pd.date_range(f"{day} 13:01", f"{day} 15:00", freq="1min")
+    return [pd.Timestamp(f"{day} 09:25"), *morning, *afternoon]
+
+
+def gen_stock_minute_auction_data() -> None:
+    """Generate A-share 1-minute data with opening/closing auction bars.
+
+    两个交易日（2024-01-02 周二、01-03 周三）。价格刻意分档，便于从成交价
+    认出撮合来源：开盘竞价 bar（09:25）= base；连续竞价 bar 的开盘价在
+    base+0.05～base+0.11；收盘竞价末根（15:00）= base+0.30，14:58/14:59
+    两根零量、价格持平。
+    """
+    data = []
+    for day_index, day in enumerate(["2024-01-02", "2024-01-03"]):
+        base = 10.0 + 0.5 * day_index
+        times = _a_share_minute_times(day)
+        continuous = 0
+        last_close = base
+        for ts in times:
+            hhmm = ts.strftime("%H:%M")
+            if hhmm == "09:25":
+                o = h = low = c = base
+                volume = 20000.0
+            elif hhmm in ("14:58", "14:59"):
+                o = h = low = c = last_close
+                volume = 0.0
+            elif hhmm == "15:00":
+                o = h = low = c = round(base + 0.30, 2)
+                volume = 30000.0
+            else:
+                o = round(base + 0.05 + 0.01 * (continuous % 7), 2)
+                c = round(o + 0.01, 2)
+                h = round(c + 0.01, 2)
+                low = round(o - 0.01, 2)
+                volume = 1000.0
+                continuous += 1
+                last_close = c
+            data.append(
+                {
+                    "timestamp": ts,
+                    "open": o,
+                    "high": h,
+                    "low": low,
+                    "close": c,
+                    "volume": volume,
+                    "symbol": "600000.SH",
+                }
+            )
+
+    df = pd.DataFrame(data)
+    save_parquet_with_hash(df, "stock_minute_auction.parquet")
+
+
+def gen_futures_night_weekend_data() -> None:
+    """Generate sparse rb 1-minute data: Fri day + Fri night + Mon day.
+
+    2024-01-05 周五日盘、周五夜盘 21:01～23:00、2024-01-08 周一日盘，每段
+    取几根。时段表 CN_FUTURES_NIGHT_23 下周五夜盘属下周一交易日。
+    """
+    segments = [
+        ("2024-01-05", ["09:01", "09:02", "10:00", "14:59", "15:00"], 3500.0),
+        ("2024-01-05", ["21:01", "21:02", "21:30", "22:59", "23:00"], 3520.0),
+        ("2024-01-08", ["09:01", "09:02", "10:00", "14:59", "15:00"], 3540.0),
+    ]
+    data = []
+    for day, clock, base in segments:
+        for i, hhmm in enumerate(clock):
+            o = base + 2.0 * i
+            c = o + 1.0
+            data.append(
+                {
+                    "timestamp": pd.Timestamp(f"{day} {hhmm}"),
+                    "open": o,
+                    "high": c + 1.0,
+                    "low": o - 1.0,
+                    "close": c,
+                    "volume": 500.0,
+                    "symbol": "rb2405",
+                }
+            )
+
+    df = pd.DataFrame(data)
+    save_parquet_with_hash(df, "futures_night_weekend.parquet")
+
+
 if __name__ == "__main__":
     gen_stock_data()
     gen_future_data()
     gen_option_data()
     gen_cancel_data()
+    gen_stock_minute_auction_data()
+    gen_futures_night_weekend_data()

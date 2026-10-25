@@ -5,6 +5,6 @@
   "total_commission": 6.6,
   "net_pnl": -6.6,
   "end_market_value": 12993.4,
-  "engine_rule_version": "1.7.0",
-  "akquant_version": "0.3.64"
+  "engine_rule_version": "2.0.0",
+  "akquant_version": "0.3.72"
 }
