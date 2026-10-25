@@ -25,6 +25,12 @@ pub struct DataProcessor {
     // bar — present in `seen_symbols` but absent here — so it must not look
     // tradable to the terminal-state path (issue #334).
     tradable_symbols: HashSet<String>,
+    // 本时间片是否有 bar 事件。"本片无该品种可成交行情就拒单"是 bar 的停牌语义
+    // (#329/#334): 纯 tick 时间片不据此拒单。
+    slice_has_bar: bool,
+    // 本次运行收到过 tick 的品种(tick 驱动标的)。tick 互不同刻, 同刻没有该品种的
+    // tick 不代表停牌, 其订单留待该品种下一个事件撮合, 不走停牌拒单。
+    tick_symbols: HashSet<String>,
     current_symbol_events: HashMap<String, Event>,
 }
 
@@ -42,6 +48,8 @@ impl DataProcessor {
             finalized_timestamp: 0,
             seen_symbols: HashSet::new(),
             tradable_symbols: HashSet::new(),
+            slice_has_bar: false,
+            tick_symbols: HashSet::new(),
             current_symbol_events: HashMap::new(),
         }
     }
@@ -88,7 +96,9 @@ impl DataProcessor {
     }
 
     fn reject_missing_symbol_orders(&self, engine: &mut Engine) {
-        if self.last_timestamp == 0 {
+        // 停牌拒单只对 bar 时间片生效: 纯 tick 时间片(多品种 tick 互不同刻)里
+        // "本片没有该品种的 tick"不代表停牌。
+        if self.last_timestamp == 0 || !self.slice_has_bar {
             return;
         }
 
@@ -115,6 +125,9 @@ impl DataProcessor {
                     // Keying off tradability aligns this terminal-state path with
                     // the matcher and generalizes the #329 "no bar at all" case.
                     && !self.tradable_symbols.contains(&order.symbol)
+                    // tick 驱动标的(本次运行收到过它的 tick)不按 bar 停牌语义拒单:
+                    // 留待该品种下一个事件撮合(与 GTC 挂单一致)。
+                    && !self.tick_symbols.contains(&order.symbol)
                     && effective_execution_policy_for_order(engine, order).bar_offset == 1
             })
             .cloned()
@@ -484,6 +497,7 @@ impl Processor for DataProcessor {
                     self.finalize_current_timestamp(engine, py);
                     self.seen_symbols.clear();
                     self.tradable_symbols.clear();
+                    self.slice_has_bar = false;
                     self.current_symbol_events.clear();
 
                     if engine.is_active_timestamp(timestamp) {
@@ -652,6 +666,7 @@ impl Processor for DataProcessor {
                 }
 
                 if let Event::Bar(ref b) = event {
+                    self.slice_has_bar = true;
                     self.seen_symbols.insert(b.symbol.clone());
                     // 集合竞价时段的零量 bar(竞价期快照、09:25～09:30 静默期)不是停牌:
                     // 本就不连续撮合, 不能据此把排队的单当作停牌拒掉。
@@ -690,6 +705,9 @@ impl Processor for DataProcessor {
                     // reject_missing_symbol_orders 被当作停牌拒掉。
                     if !self.tradable_symbols.contains(&t.symbol) {
                         self.tradable_symbols.insert(t.symbol.clone());
+                    }
+                    if !self.tick_symbols.contains(&t.symbol) {
+                        self.tick_symbols.insert(t.symbol.clone());
                     }
                     // tick 是本时间戳该 symbol 的真实行情, 必须登记为"已见"——否则
                     // fill_missing_bars 会把它当成缺失并合成一根退化 bar, 导致每个

@@ -1167,6 +1167,7 @@ def _run_live_replay(
     strategy_cls: Any = None,
     freq: str = "1min",
     ticks: Any = None,
+    instruments: Any = None,
     **kwargs: Any,
 ) -> Any:
     """run_live(broker="replay") 跑完后返回 runner，供读取引擎结果.
@@ -1197,7 +1198,7 @@ def _run_live_replay(
         gateway_options["ticks"] = ticks
     run_live(
         strategy_cls=strategy_cls or _LiveDayOrderProbe,
-        instruments=[_live_stock_instrument()],
+        instruments=instruments or [_live_stock_instrument()],
         broker="replay",
         trading_mode="paper",
         gateway_options=gateway_options,
@@ -1464,6 +1465,67 @@ class _BuyFirstBarAfterTradingProbe(_BuyFirstBarProbe):
 
     def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:
         pass
+
+
+class _TickBuyFirstPerSymbolProbe(_LiveDayOrderProbe):
+    """每个品种的首个 tick 上下一手 NextOpen 市价单."""
+
+    def on_tick(self, tick: Any) -> None:
+        if tick.symbol not in self.active_at:
+            self.active_at[tick.symbol] = 1
+            self.buy(tick.symbol, 1)
+
+
+def test_live_replay_multi_symbol_staggered_ticks_market_orders_fill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """多品种 tick 驱动、tick 互不同刻：市价单不因同刻无该品种 tick 被拒.
+
+    两个期货 tick 错开 1 秒；改前两单都以 Missing market data 拒单（停牌拒单是 bar
+    语义）。现在各在本品种下一笔 tick 成交。
+    """
+    from akquant import AssetType, Instrument, Tick
+
+    symbols = ("AA2701", "BB2701")
+    ticks = [
+        Tick(
+            timestamp=int(
+                pd.Timestamp(
+                    f"2024-01-02 10:00:{sec + (1 if sym == 'BB2701' else 0):02d}",
+                    tz="Asia/Shanghai",
+                ).value
+            ),
+            price=100.0 + sec,
+            volume=1.0,
+            symbol=sym,
+        )
+        for sec in range(0, 20, 5)
+        for sym in symbols
+    ]
+    instruments = [
+        Instrument(
+            symbol=sym,
+            asset_type=AssetType.Futures,
+            multiplier=10.0,
+            margin_ratio=0.1,
+            tick_size=0.1,
+        )
+        for sym in symbols
+    ]
+    runner = _run_live_replay(
+        monkeypatch,
+        [],
+        strategy_cls=_TickBuyFirstPerSymbolProbe,
+        ticks=ticks,
+        instruments=instruments,
+        sessions={"AA": [("09:00", "15:00", "continuous")], "BB": "CN_FUTURES_DAY"},
+        trading_calendar=["2023-12-29", "2024-01-02", "2024-01-03"],
+    )
+    raw = runner.engine.get_results()
+    reasons = [o.reject_reason for o in raw.orders if o.reject_reason]
+    assert not reasons, reasons
+    fills = sorted((e.symbol, float(e.price)) for e in raw.executions)
+    assert fills == [("AA2701", 105.0), ("BB2701", 105.0)], fills
 
 
 def _daily_equity(runner: Any) -> Any:

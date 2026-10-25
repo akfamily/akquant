@@ -585,6 +585,51 @@ class _TickBuyAt(Strategy):
             self.buy(tick.symbol, 100, price=self.limit)
 
 
+class _TickBuyFirstPerSymbol(Strategy):
+    """每个品种的首个 tick 上下一张 NextOpen 市价单."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bought: set = set()
+
+    def on_tick(self, tick: Any) -> None:
+        if tick.symbol not in self.bought:
+            self.bought.add(tick.symbol)
+            self.buy(tick.symbol, 100)
+
+
+def test_multi_symbol_staggered_ticks_next_open_orders_fill() -> None:
+    """两品种 tick 交错、互不同刻：各自的 NextOpen 市价单都在本品种下一笔 tick 成交.
+
+    “本时间片没有该品种可成交行情就拒单”是 bar 的停牌语义（#329/#334）；tick 驱动下
+    同刻没有该品种 tick 不代表停牌，不能以 Missing market data 拒单。
+    """
+    ticks = []
+    for sec in range(0, 20, 5):
+        ticks.append(_tick(f"2024-01-02 10:00:{sec:02d}", 10.0 + sec / 100))
+        ticks.append(
+            _tick(f"2024-01-02 10:00:{sec + 1:02d}", 20.0 + sec / 100, "000001.SZ")
+        )
+    r = run_backtest(
+        strategy=_TickBuyFirstPerSymbol,
+        data=ticks,
+        symbols=["600000.SH", "000001.SZ"],
+        initial_cash=1e6,
+        show_progress=False,
+        trading_calendar=["2024-01-02"],
+    )
+    orders = r.orders_df
+    assert sorted(orders["symbol"]) == ["000001.SZ", "600000.SH"]
+    assert list(orders["status"].astype(str).str.lower()) == ["filled", "filled"], (
+        orders[["symbol", "status", "reject_reason"]]
+    )
+    fills = {
+        sym: round(float(p), 4) for sym, p in zip(orders["symbol"], orders["avg_price"])
+    }
+    # 各在本品种的下一笔 tick 成交
+    assert fills == {"600000.SH": 10.05, "000001.SZ": 20.05}
+
+
 def _opening_auction_ticks() -> List[Any]:
     return [
         _tick("2024-01-02 09:20:00", 9.8),
