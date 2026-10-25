@@ -1229,7 +1229,7 @@ run_live(
 *   **长期运行的实盘必须传 `trading_calendar=`**：不传时按工作日推算，节假日也会开日与结算（启动时告警一次）；行情源报告交易日（如 CTP 的 `TradingDay`）时，只能在所涉交易日开日前修正缺省日历。live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历传入（行情服务以 jwt 模式部署时需要 `X-QMF-Session`，live_server 不带，取不到日历，退回工作日推算并告警）。
 *   `day_close_delay`：`float`，默认 `60.0`（秒），取值 0～86400，越界或非有限值抛 `ValueError`，非数字抛 `TypeError`。实盘日终结算（Day 单过期、T+1 解冻、收盘快照）与 `on_after_trading` 在“会话收盘 + `day_close_delay`”触发，收盘快照仍记在收盘时刻；按交易日历登记，当日没有任何行情也会结算。回测不受影响（收盘时刻结算）。
 *   **收盘宽限**：实盘（含 replay）在收盘后 `day_close_delay` 秒内、且早于下一交易日首个时段开始时到达的行情仍归当日（宽限不越过下一交易日开盘，因此 `ALWAYS_OPEN` 这类收盘即次日开盘的时段表实际没有宽限，除非显式日历有空档；`day_close_delay=0` 时也没有宽限）——`ctx.trading_day` 为当日，时段为 `Closed`（自定义表有盘后段时为 `PostClose`），不撮合、不产生权益点，也不提前开下一交易日；宽限期内下的 Day 单仍属下一交易日。结算时刻不变，结算价为收盘时刻的最新价（只认时间戳不晚于收盘的原始行情）。网关由 tick 合成 bar 时，收盘后 `day_close_delay − 5` 秒内的 tick 并入收盘那根 bar，该 bar 在这段钳制宽限结束后 2 秒补发（`day_close_delay` 不足 5 秒时不并入）。`Engine.trading_day_at` 是纯日历查询，不考虑宽限。
-    *   已知限制：宽限期内存档后续跑，当日结算价按存档时的最新价；某品种收盘前没有 tick、只有宽限期 tick 时，结算价等于宽限价；结算之后才到的收盘 bar 仍派发给 `on_bar`。
+    *   已知限制：宽限期内存档后续跑，当日结算价按存档时的最新价；某品种收盘前没有 tick、只有宽限期 tick 时，结算价等于宽限价；结算之后才到的收盘 bar 仍派发给 `on_bar`；双流下同品种的宽限 tick 先于收盘 bar 推出，时间戳会倒退一次；多张时段表时宽限按会话级收盘（取最晚）判，早收盘品种在其自身收盘后、会话收盘前的行情不属宽限，照常计入当日与结算价，并报一次“闭市时段”告警。
 *   `akquant.live.StreamingIndicatorSink(on_event, *, run_id="live")`：实盘用的流式指标录制器，每个指标点即时发给 `on_event`、不在内存累积。`run_live` 传了 `on_event` 而未传 `indicator_recorder` 时默认使用它；需要自行组合时可从 `akquant.live` 导入。
 
 ## 3. 核心引擎 (Core)

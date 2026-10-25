@@ -294,7 +294,7 @@ result = aq.run_backtest(
 *   词汇与 `feed_adapter.resample(freq=...)` 一致，但 tick 聚合**只支持整数分钟**（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 等非整分周期会抛 `ValueError` 并指向 `feed_adapter.resample`，不会静默取整。（bar 数据传 `freq` 是声明周期，还支持 `"1d"`，见本页 1.1 节。）
 *   适配层按**单笔口径**声明 `volume`（即每个 `Tick.volume` 就是这一笔的成交量，不是累计量），聚合器把区间内所有 tick 的 volume 直接求和写入合成 bar 的 `volume`。
 *   分桶右闭：区间为 `(S, E]`，恰在整分 `E` 的 tick 归以它结尾的 bar（09:31:00 的 tick 属于 09:30～09:31 这根）。合成 bar 的时间戳打在**区间终点 E**，并带 `interval_start = S`，而非区间起点：回测把合成 bar 与源 tick 放进同一个 feed 再按时间戳排序，若用区间起点，bar 会排到形成它的 tick **之前**，策略读到的 high/low/close 会是尚未发生的未来数据；打在区间终点保证 bar 不早于其所有源 tick。
-*   回测里数据在区间中途结束时，末尾未满一个周期的 tick 不会产生 bar（回测不做收尾 flush）。实盘网关迟迟没有下一区间的 tick 时，在区间终点后宽限 2 秒补发；收盘那根 bar 例外，会并入收盘后 `day_close_delay − 5` 秒内的 tick，在这段宽限结束后 2 秒补发（见 [API 参考](../reference/api.md#live-timezone-sessions)）。
+*   回测里数据在区间中途结束时，末尾未满一个周期的 tick 不会产生 bar（回测不做收尾 flush）。实盘网关迟迟没有下一区间的 tick 时，在区间终点后宽限 2 秒补发；收盘那根 bar 例外，会并入收盘后 `day_close_delay − 5` 秒内的 tick，在这段宽限结束后 2 秒补发（见 [API 参考](../reference/api.md#live-timezone-sessions)）。tick 与 bar 双流下，同品种的宽限 tick 先于这根收盘 bar 推给策略，于是收盘 bar（时间戳为收盘）晚于时间戳更大的宽限 tick 到达，回调里看到的时间戳会倒退一次。
 
 ---
 
