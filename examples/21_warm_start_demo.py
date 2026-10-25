@@ -31,6 +31,11 @@ def _make_sma(window: int) -> ind.SMA:
     return ind.SMA(window)
 
 
+def _bar_time(bar: Bar) -> pd.Timestamp:
+    """把 bar 的 UTC 纳秒时间戳转成北京时间, 便于打印."""
+    return pd.Timestamp(bar.timestamp, unit="ns", tz="Asia/Shanghai")
+
+
 # 1. 定义一个简单的均线策略
 class MovingAverageStrategy(Strategy):
     """Simple moving average strategy for testing warm start."""
@@ -97,7 +102,7 @@ class MovingAverageStrategy(Strategy):
             # 增加 Debug 数量以覆盖 Warm Start 启动初期
             if self._debug_count < 20:
                 print(
-                    f"Debug: {pd.Timestamp(bar.timestamp, unit='ns')} "
+                    f"Debug: {_bar_time(bar)} "
                     f"Close={bar.close:.2f} Fast={fast} Slow={slow}"
                 )
 
@@ -111,7 +116,7 @@ class MovingAverageStrategy(Strategy):
             self.buy(bar.symbol, 100)  # 买入 100 股
             self.buy_count += 1
             print(
-                f"[{pd.Timestamp(bar.timestamp, unit='ns')}] BUY  100 "
+                f"[{_bar_time(bar)}] BUY  100 "
                 f"@ {bar.close:.2f} | Count: {self.buy_count}"
             )
 
@@ -120,7 +125,7 @@ class MovingAverageStrategy(Strategy):
             self.sell(bar.symbol, pos)
             self.sell_count += 1
             print(
-                f"[{pd.Timestamp(bar.timestamp, unit='ns')}] SELL {pos} "
+                f"[{_bar_time(bar)}] SELL {pos} "
                 f"@ {bar.close:.2f} | Count: {self.sell_count}"
             )
 
@@ -157,7 +162,10 @@ def get_real_data(symbol: str, start_date: str, end_date: str) -> List[Bar]:
     for _, row in df.iterrows():
         # akshare date is already datetime.date or string
         # stock_zh_a_daily returns 'date' column as object (string) or datetime
-        ts = pd.Timestamp(row["date"])
+        # Bar 的时间戳是 UTC 纳秒: 日期须先按交易所时区本地化, 否则本地 0 点
+        # 会被当作 UTC 0 点(北京时间 08:00, 闭市)。只有日期的 bar 由
+        # run_backtest 改写到该交易日收盘(15:00)。
+        ts = pd.Timestamp(row["date"]).tz_localize("Asia/Shanghai")
         bar = Bar(
             timestamp=int(ts.value),
             symbol=symbol,

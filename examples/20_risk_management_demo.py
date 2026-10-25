@@ -15,7 +15,7 @@ We will:
 """
 
 import akquant  # Import main package
-from akquant import AssetType, Bar, DataFeed, Instrument, Strategy
+from akquant import AssetType, Bar, Instrument, Strategy
 from akquant.utils import fetch_akshare_symbol, load_bar_from_df
 
 
@@ -28,15 +28,16 @@ class AggressiveBuyerStrategy(Strategy):
 
         :param bar: Bar data
         """
-        # Try to buy 50% of total cash on every bar for every symbol
-        # This should quickly trigger position limits and sector limits
+        # Buy about 3% of initial cash on every bar for every symbol.
+        # The first few buys fill; repeated buys soon hit the position limit
+        # (10% per symbol). The sector limit (Consumer 15%) is checked too.
 
         price = bar.close
         if price <= 0:
             return
 
-        # Target: Buy 10000 shares (100 lots)
-        qty = 10000
+        # Round down to board lots (100 shares), at least one lot
+        qty = max(100, int(30_000 / price / 100) * 100)
 
         # Log attempt
         self.log(f"Attempting to buy {qty} shares of {bar.symbol} at {price:.2f}...")
@@ -57,7 +58,11 @@ def main() -> None:
     sector_map = {"600519": "Consumer", "000858": "Consumer", "601318": "Financial"}
 
     # 3. Add Instruments and Data
-    feed = DataFeed()
+    # Date-only daily bars are passed as a list of Bars (not a DataFeed), so
+    # run_backtest moves them to the session close (15:00) of each trading day
+    # and orders can fill. A DataFeed is used as-is: its bars would stay at
+    # 00:00, which is outside trading hours.
+    all_bars: list[Bar] = []
     instruments = []
 
     for symbol in symbols:
@@ -74,11 +79,11 @@ def main() -> None:
         try:
             df = fetch_akshare_symbol(symbol, start_date, end_date)
 
-            # Convert to Bars and add to Feed
+            # Convert to Bars
             # load_bar_from_df now automatically fixes timestamp scaling issues
             bars = load_bar_from_df(df, symbol=symbol)
 
-            feed.add_bars(bars)
+            all_bars.extend(bars)
         except Exception as e:
             print(f"Skipping {symbol}: {e}")
 
@@ -88,7 +93,7 @@ def main() -> None:
     # Run backtest directly with risk parameters
     result = akquant.run_backtest(
         strategy=AggressiveBuyerStrategy(),
-        data=feed,
+        data=all_bars,
         symbols=symbols,
         instruments=instruments,
         initial_cash=initial_cash,
@@ -113,7 +118,10 @@ def main() -> None:
         # Note: OrderStatus string representation is lowercase "rejected"
         rejected = orders_df[orders_df["status"].astype(str).str.lower() == "rejected"]
 
+        filled = orders_df[orders_df["status"].astype(str).str.lower() == "filled"]
+
         print(f"Total Orders: {len(orders_df)}")
+        print(f"Filled Orders: {len(filled)}")
         print(f"Rejected Orders: {len(rejected)}")
 
         if not rejected.empty:

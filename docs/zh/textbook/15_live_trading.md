@@ -46,6 +46,7 @@ python examples/61_signal_platform_webhook.py
 3. 调整风控参数后，策略行为变化符合预期。
 4. `66_logging_audit_demo.py` 能看到：敏感字段被脱敏、订单审计单独落 JSON 文件、`language="zh"` 只改控制台审计行而文件恒英文。
 5. `38_live_functional_strategy_demo.py` 与 `39_live_mixed_broker_demo.py` **无需任何柜台或可选依赖即可实跑**：前者用 `broker="replay"` 验证函数式回调链路，后者演示行情源与交易源分开指定。两者都应打印出 4 根 bar 后自行结束（不必等到 `duration` 超时）。
+6. `ch15_strategy_loader.py` 与 `ch15_strategy_loader_functional.py` 依次打印 `chapter15_plain_calls=3`、`chapter15_encrypted_calls=2`、`done_ch15_strategy_loader`。两者的合成 1 分钟线从北京时间 2024-01-02 09:31 起、落在 A 股连续竞价时段内，日志中不应出现“闭市时段”告警（只有未传 `trading_calendar` 的一次性提示）。
 
 ## 15.1 实盘架构与接口
 

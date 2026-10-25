@@ -27,8 +27,15 @@ class BrokerProfileDemoStrategy(Strategy):
 def _build_data() -> list[Bar]:
     closes = [10.0, 10.2, 10.1, 10.4, 10.3]
     rows: list[Bar] = []
-    for i, close in enumerate(closes):
-        ts = pd.Timestamp(f"2024-01-0{i + 1} 15:00:00", tz="UTC").value
+    # 交易日收盘 15:00(北京时间)的日线, 起点避开元旦
+    days = pd.bdate_range(
+        "2024-01-02 15:00",
+        periods=len(closes),
+        tz="Asia/Shanghai",
+        normalize=False,
+    )
+    for day, close in zip(days, closes):
+        ts = day.value
         rows.append(
             Bar(
                 timestamp=ts,
@@ -49,6 +56,7 @@ def run_example() -> None:
         data=_build_data(),
         strategy=BrokerProfileDemoStrategy,
         symbols="PROFILE",
+        freq="1d",
         fill_policy=CurrentClose(),
         broker_profile="cn_stock_t1_low_fee",
         show_progress=False,

@@ -20,10 +20,12 @@ def make_demo_bars() -> list[Bar]:
     """Build deterministic bars for websocket bridge demo."""
     closes = [10.0, 10.3, 10.8, 10.6]
     bars: list[Bar] = []
-    for i, close in enumerate(closes):
+    # 只有日期的日线（北京时间交易日 0 点），run_backtest 会改写到当日收盘 15:00
+    days = pd.bdate_range("2024-04-08", periods=len(closes), tz="Asia/Shanghai")
+    for i, (day, close) in enumerate(zip(days, closes)):
         bars.append(
             Bar(
-                timestamp=pd.Timestamp(f"2024-04-0{i + 1} 10:00:00").value,
+                timestamp=day.value,
                 open=close - 0.1,
                 high=close + 0.2,
                 low=close - 0.2,

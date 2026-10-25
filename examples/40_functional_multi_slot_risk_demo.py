@@ -8,7 +8,7 @@
 - 通过策略级风险限制让 alpha 被拒单、beta 正常下单
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, List
 
 import akquant as aq
@@ -19,10 +19,11 @@ def _ns(dt: datetime) -> int:
 
 
 def make_bars(symbol: str = "FUNC_SLOT_DEMO") -> List[aq.Bar]:
-    """构造用于多策略风控验证的三根 bar."""
-    t1 = _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc))
-    t2 = _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc))
-    t3 = _ns(datetime(2023, 1, 4, 15, 0, tzinfo=timezone.utc))
+    """构造用于多策略风控验证的三根日线 bar(打在北京时间收盘 15:00)."""
+    tz = timezone(timedelta(hours=8))  # 北京时间
+    t1 = _ns(datetime(2024, 1, 2, 15, 0, tzinfo=tz))
+    t2 = _ns(datetime(2024, 1, 3, 15, 0, tzinfo=tz))
+    t3 = _ns(datetime(2024, 1, 4, 15, 0, tzinfo=tz))
     return [
         aq.Bar(t1, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
         aq.Bar(t2, 12.0, 12.0, 12.0, 12.0, 1000.0, symbol),
@@ -53,6 +54,7 @@ def main() -> None:
         data=make_bars(),
         strategy=alpha_on_bar,
         symbols="FUNC_SLOT_DEMO",
+        freq="1d",
         initial_cash=100000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
