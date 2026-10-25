@@ -748,28 +748,37 @@ impl Engine {
 
     /// 结果的期末点 `(时刻, 计价用的价格表)`。价格表为 `None` 时按 `last_prices` 计价。
     ///
-    /// 实盘期末时刻晚于当前交易日 D 的收盘时（会话在收盘后、下一交易日首个行情前
-    /// 结束，含宽限期内与收盘定时器之后）：期末点钳到 D 的收盘，按收盘时刻的最新价
-    /// （结算价快照，宽限期内没有行情时即 `last_prices`）计价——D 的日末值与收盘
-    /// 结算快照一致，不含宽限期内的行情价。期末时刻恰为收盘（最后一个事件是聚合器
-    /// 收盘钳制的收盘 bar，其 close 含宽限价）时同样按结算价快照计价；没有快照时
-    /// 与原先相同。其余情形（含回测）取 [`Engine::terminal_result_timestamp`]。
+    /// 实盘会话在当前交易日 D 收盘后、下一交易日首个行情前结束（含宽限期内与收盘
+    /// 定时器之后）：期末点按收盘时刻的最新价（结算价快照，宽限期内没有行情时即
+    /// `last_prices`）计价——D 的日末值与收盘结算快照一致，不含宽限期内的行情价。
+    /// “已过收盘”指期末时刻不早于收盘、D 已结算或时钟已过收盘，三者任一即可：最后
+    /// 一个事件是 `on_after_trading` 生命周期定时器时，期末时刻取收盘前最后一个行情
+    /// 事件，但最新价可能已含宽限价，仍须按快照计价。期末时刻晚于收盘时钳到收盘，
+    /// 早于收盘时保持不变。期末时刻恰为收盘（最后一个事件是聚合器收盘钳制的收盘
+    /// bar，其 close 含宽限价）时同样按结算价快照计价；没有快照时与原先相同。其余
+    /// 情形（含回测）取 [`Engine::terminal_result_timestamp`]。
     pub(crate) fn terminal_result_point(&self) -> (Option<i64>, Option<HashMap<String, Decimal>>) {
         let ts = self.terminal_result_timestamp();
         if !self.state.feed.is_live() {
             return (ts, None);
         }
-        match (ts, self.current_trading_day, self.current_day_span) {
-            (Some(t), Some(day), Some((_, close))) if t >= close => {
-                let prices = self
-                    .day_close_prices
-                    .as_ref()
-                    .filter(|(d, _)| *d == day)
-                    .map(|(_, p)| p.clone());
-                (Some(close), prices)
-            }
-            _ => (ts, None),
+        let (Some(t), Some(day), Some((_, close))) =
+            (ts, self.current_trading_day, self.current_day_span)
+        else {
+            return (ts, None);
+        };
+        let past_close = t >= close
+            || self.last_settled_trading_day.is_some_and(|s| s >= day)
+            || self.clock.timestamp().is_some_and(|now| now > close);
+        if !past_close {
+            return (ts, None);
         }
+        let prices = self
+            .day_close_prices
+            .as_ref()
+            .filter(|(d, _)| *d == day)
+            .map(|(_, p)| p.clone());
+        (Some(t.min(close)), prices)
     }
 
     /// 交给策略上下文、风控与撮合的“当前时刻”。生命周期事件取其触发时刻（收盘后

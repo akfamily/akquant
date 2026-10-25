@@ -1459,6 +1459,13 @@ class _BuyFirstBarProbe(_LiveDayOrderProbe):
             self.buy("600000", 100)
 
 
+class _BuyFirstBarAfterTradingProbe(_BuyFirstBarProbe):
+    """同上，另重写 ``on_after_trading``：会话最后一个事件是该生命周期定时器."""
+
+    def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:
+        pass
+
+
 def _daily_equity(runner: Any) -> Any:
     from akquant.analysis.benchmark import daily_last_by_trading_day
 
@@ -1473,16 +1480,23 @@ def _daily_equity(runner: Any) -> Any:
 
 
 @pytest.mark.parametrize(
+    "strategy_cls",
+    [_BuyFirstBarProbe, _BuyFirstBarAfterTradingProbe],
+    ids=["plain", "after_trading"],
+)
+@pytest.mark.parametrize(
     "next_day_bar", [True, False], ids=["next_day", "ends_in_grace"]
 )
 def test_live_replay_grace_ticks_do_not_change_daily_equity(
-    monkeypatch: pytest.MonkeyPatch, next_day_bar: bool
+    monkeypatch: pytest.MonkeyPatch, next_day_bar: bool, strategy_cls: type
 ) -> None:
     """宽限期内的行情不产生权益点：日权益与去掉这些行情时相同.
 
     持仓在收盘前建立（14:56 下单、14:57 成交），宽限 tick 价 20 若计入当日会抬高
     D 的日末值。``ends_in_grace``：最后一个事件就是宽限 tick（会话在 D 结算后、
-    D+1 首个行情前结束），期末点也不得按宽限价覆盖 D 的日末值。
+    D+1 首个行情前结束），期末点也不得按宽限价覆盖 D 的日末值。``after_trading``：
+    策略重写了 ``on_after_trading``，最后一个事件是该生命周期定时器，期末时刻取收盘
+    前最后一根 bar，仍须按结算价计价。
     """
     from akquant import Tick
 
@@ -1494,7 +1508,7 @@ def test_live_replay_grace_ticks_do_not_change_daily_equity(
     tick_ts = int(pd.Timestamp("2024-01-02 15:00:20", tz="Asia/Shanghai").value)
     tick = Tick(timestamp=tick_ts, price=20.0, volume=100.0, symbol="600000")
     common: Dict[str, Any] = {
-        "strategy_cls": _BuyFirstBarProbe,
+        "strategy_cls": strategy_cls,
         "trading_calendar": ["2024-01-02", "2024-01-03"],
         "day_close_delay": 60,
     }
