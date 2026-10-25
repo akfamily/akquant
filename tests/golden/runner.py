@@ -138,6 +138,7 @@ def save_result(result: BacktestResult, out_dir: Path) -> None:
     ]
     with open(out_dir / "trading_day_ends.json", "w") as f:
         json.dump(trading_day_ends, f, indent=2)
+        f.write("\n")  # 末尾换行: 与 pre-commit end-of-file-fixer 一致
 
     # Add metadata
     metrics["engine_rule_version"] = getattr(aq, "__engine_rule_version__", "unknown")
@@ -145,6 +146,7 @@ def save_result(result: BacktestResult, out_dir: Path) -> None:
 
     with open(out_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
+        f.write("\n")  # 末尾换行: 与 pre-commit end-of-file-fixer 一致
 
 
 def compare_results(baseline_dir: Path, current_dir: Path) -> List[str]:
