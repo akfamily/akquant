@@ -108,14 +108,14 @@ results = run_backtest(
 
 | `timezone` | 未传 `sessions` 时的默认时段表 | 未传 `trading_calendar` 时的交易日 |
 | :--- | :--- | :--- |
-| 中国时区（`Asia/Shanghai` 等） | 按资产类型：股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION` | 按工作日推算（不含节假日） |
+| 中国时区（`Asia/Shanghai` 等） | 按资产类型：股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`，其他资产 `ALWAYS_OPEN` | 按工作日推算：周一至周五都算交易日，节假日也被当作交易日（告警一次） |
 | 其他时区（如 `US/Eastern`、`UTC`） | `ALWAYS_OPEN`（全天连续竞价） | 每天都算交易日 |
 
 非中国市场需要真实交易时段时，用 `sessions=` 传自定义时段表（写法见 [API 参考](../reference/api.md#akquantrun_backtest)）。
 
 ### 交易日历 `trading_calendar`
 
-`run_backtest`、`run_live` 都接受 `trading_calendar=`（交易日列表，`date` / 字符串 / `Timestamp`）。不传时中国市场按工作日推算，节假日前后的夜盘与日终结算会算错。长期运行的实盘必须传；live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历。
+`run_backtest`、`run_live` 都接受 `trading_calendar=`（交易日列表，`date` / 字符串 / `Timestamp`）。不传时中国市场按工作日推算，节假日也被当作交易日，节假日前后的夜盘与日终结算会算错，引擎每次运行告警一次。长期运行的实盘必须传；live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历。
 
 ### 实盘时区
 

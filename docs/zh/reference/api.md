@@ -233,8 +233,8 @@ def run_from_checkpoint(
     *   当传入策略不接受的参数时会立即抛错；
     *   推荐保持默认值，避免参数错配被静默忽略导致回测结果偏差。
 *   `freq`: 数据周期，默认 `None`。`data` 为含 `Tick` 的列表时是 tick 聚合周期（只支持整数分钟，如 `"1min"`），把 tick 合成 bar 并同时触发 `on_bar`；bar 数据（DataFrame、`List[Bar]`、catalog）也可传，用来声明 bar 周期并填 bar 的区间起点（`interval_start = 时间戳 − 周期`），写法为“正整数 + 单位”，单位 `min` / `h` / `d`（或 `day`），如 `"1min"`、`"5min"`、`"1h"`、`"1d"`。只有日期（本地 0 点）的日线不需要传，会自动改写到交易日收盘时刻；打在 15:00 等固定非 0 点时刻的日线要传 `freq="1d"`，否则每根 bar 按该时刻所在时段撮合（15:00 按“时间戳前 1ns”即 14:59:59.999… 判为收盘集合竞价），订单排到下一根 bar，并告警一次。策略的 `self.freq` 即该值。
-*   `sessions`: 代码前缀 → 时段模板名或自定义时段表（`"default"` 为全局默认），默认 `None`。不传时中国时区按资产类型取默认（股票 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`），其他时区全天连续（`ALWAYS_OPEN`）。可选模板见 `aq.SessionResolver.templates()`；自定义时段表写法见下文 `BacktestConfig.china_futures` 一节的时段说明。
-*   `trading_calendar`: 交易日列表（`date` / 字符串 / `Timestamp`），默认 `None`。不传时中国市场按工作日推算（节假日前后的夜盘与日终结算会算错），`ALWAYS_OPEN` 每天都算。数据时刻超出所传日历覆盖范围时报 `ValueError`。
+*   `sessions`: 代码前缀 → 时段模板名或自定义时段表（`"default"` 为全局默认），默认 `None`。不传时中国时区按资产类型取默认（股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`，其他资产 `ALWAYS_OPEN`），其他时区全天连续（`ALWAYS_OPEN`）。可选模板见 `aq.SessionResolver.templates()`；自定义时段表写法见下文 `BacktestConfig.china_futures` 一节的时段说明。
+*   `trading_calendar`: 交易日列表（`date` / 字符串 / `Timestamp`），默认 `None`。不传时中国市场按工作日推算（节假日也被当作交易日，节假日前后的夜盘与日终结算会算错），并告警一次；`ALWAYS_OPEN` 每天都算，不告警。数据时刻超出所传日历覆盖范围时报 `ValueError`。
 *   `t_plus_one`: 是否启用 T+1 交易规则 (默认 False)。如果启用，将强制使用中国市场模型。
 *   `slippage`: 全局滑点 (默认 0.0)。例如 0.0001 代表 1bp (0.01%) 的滑点，采用百分比模型。
 *   `volume_limit_pct`: 成交量限制比例 (默认 0.25)。限制单笔成交不超过该 Bar 总成交量的百分比。
@@ -950,7 +950,7 @@ def set_log_level(level: Union[str, int]) -> None
     `order_target_*` **不抛异常**；若因超时/断连导致订单状态不可知，则改走
     `on_error(error, "order_submit", request)`，不会伪造拒单。
 *   `on_expiry(event: Dict[str, Any])`: 到期结算回调。仅当引擎实际执行 `expiry_date` 驱动的到期结算/移除后触发；回调时账户状态已更新。示例见：`examples/49_on_expiry_demo.py`。
-*   `on_before_trading(trading_date, timestamp)`: 交易日最早的连续竞价开始后 1ns 触发，每个交易日一次（A 股 09:30:00 之后；有夜盘的期货交易日从前一交易日夜盘开始，周一交易日在周五 21:00 触发；交易日没有连续竞价段时不触发）。该回调按“前一交易日/前一时点信息可见”的语义工作。
+*   `on_before_trading(trading_date, timestamp)`: 交易日最早的连续竞价开始后 1ns 触发，每个交易日至多一次（回测只为有行情的交易日触发，实盘按交易日历逐日触发；A 股 09:30:00 之后；有夜盘的期货交易日从前一交易日夜盘开始，周一交易日在周五 21:00 触发；交易日没有连续竞价段时不触发）。该回调按“前一交易日/前一时点信息可见”的语义工作。
 *   `on_pre_open(event: Dict[str, Any])`: 交易日首个时段开始前 1ns 触发，每个交易日一次（A 股 09:15 前，即 09:14:59.999…；有夜盘的期货为前一交易日 20:55 夜盘集合竞价前），不早于上一交易日的日终结算；回测与实盘一致。同一交易日它一定先于 `on_before_trading`。适合“盘前决策，本次 open 成交”；默认下单语义等价于 `NextOpen()`，这类单参加开盘集合竞价统一撮合（撮合在连续竞价开始时进行，成交价为竞价价，成交时间记在首个连续竞价事件上）。`event["expected_open_at"]` 是本次触发时刻，不是开盘时刻。示例见：`examples/52_pre_open_demo.py`。
 *   `on_cross_section(trading_date, timestamp)`: 横截面同周期调仓钩子。在框架看到当日首个“跨标的完整 bar 切片”后触发，每个交易日最多一次；与 `on_before_trading` 不同，它可以看到当日历史和当前账户快照，适合收盘价同周期调仓。调仓频率（日/周/月）在回调内用日历判断。
 *   `on_after_trading(trading_date, timestamp)`: 日终结算完成后触发，每个交易日一次。此时 T+1 已解冻、当日 Day 单已过期，其中下的单属于下一交易日。回测在收盘时刻；实盘在收盘 + `day_close_delay`（见 [run_live 实盘时区与交易时段](#live-timezone-sessions)）。回测数据在盘中结束、当日未结算时不触发，停止时也不补发。
@@ -1225,10 +1225,10 @@ run_live(
 *   `timezone`：IANA 时区名，默认 `"Asia/Shanghai"`，传 `None` 等同默认值，非法时区名抛 `ValueError`。与 `run_backtest(timezone=)` 同义：引擎按它划分交易日、计算日终结算时刻与 Day 单过期、选默认时段表（非中国时区全天连续）；`preload_history` / replay 的 DataFrame 里不带时区的时间按它本地化；策略的 `self.timezone` 同步为该值。
 *   **须与交易所时区一致**：接中国市场（如 `klinedata` 行情、`middleware` 交易）时保持默认，不要改成本机或服务器所在时区，否则交易日、日终结算与 Day 单过期会按该时区划分，与交易所实际不符。
 *   `sessions` / `trading_calendar`：与 `run_backtest` 同义（模板名或自定义时段表），写法见上文 `BacktestConfig.china_futures` 一节的时段说明与[第 7 章](../textbook/07_futures.md)。
-*   **实盘按真实时段撮合**：时段为闭市、休市或集合竞价时订单排队，不按连续竞价成交。期货实盘（含 paper）不传 `sessions` 时按 `CN_FUTURES_DAY` 日盘时段，有夜盘的品种必须传 `sessions=`（如 `{"rb": "CN_FUTURES_NIGHT_23"}`），否则夜盘行情按闭市处理。
-*   **长期运行的实盘必须传 `trading_calendar=`**：不传时按工作日推算，节假日也会开日与结算；行情源报告交易日（如 CTP 的 `TradingDay`）时，只能在所涉交易日开日前修正缺省日历。live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历传入（jwt 模式部署时取不到，退回工作日推算并告警）。
+*   **按时段撮合只在 paper/replay**：模拟撮合下，时段为闭市、休市或集合竞价时订单排队，不按连续竞价成交。`broker_live` 下订单直接报到柜台、不按时段排队，时段表只决定 `ctx.session`、`is_market_open()`、交易日划分与日终结算、交易日钩子的时刻。期货不传 `sessions` 时按 `CN_FUTURES_DAY` 日盘时段，夜盘行情的时段判为闭市（paper 下订单排到日盘才撮合），有夜盘的品种必须传 `sessions=`（如 `{"rb": "CN_FUTURES_NIGHT_23"}`）。
+*   **长期运行的实盘必须传 `trading_calendar=`**：不传时按工作日推算，节假日也会开日与结算（启动时告警一次）；行情源报告交易日（如 CTP 的 `TradingDay`）时，只能在所涉交易日开日前修正缺省日历。live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历传入（行情服务以 jwt 模式部署时需要 `X-QMF-Session`，live_server 不带，取不到日历，退回工作日推算并告警）。
 *   `day_close_delay`：`float`，默认 `60.0`（秒），取值 0～86400，越界或非有限值抛 `ValueError`，非数字抛 `TypeError`。实盘日终结算（Day 单过期、T+1 解冻、收盘快照）与 `on_after_trading` 在“会话收盘 + `day_close_delay`”触发，收盘快照仍记在收盘时刻；按交易日历登记，当日没有任何行情也会结算。回测不受影响（收盘时刻结算）。
-*   **收盘宽限**：实盘（含 replay）在收盘后 `day_close_delay` 秒内到达的行情仍归当日——`ctx.trading_day` 为当日，时段为 `Closed`（自定义表有盘后段时为 `PostClose`），不撮合、不产生权益点，也不提前开下一交易日；宽限期内下的 Day 单仍属下一交易日。结算时刻不变，结算价为收盘时刻的最新价（只认时间戳不晚于收盘的原始行情）。网关由 tick 合成 bar 时，收盘后 `day_close_delay − 5` 秒内的 tick 并入收盘那根 bar，该 bar 在这段钳制宽限结束后 2 秒补发（`day_close_delay` 不足 5 秒时不并入）。`Engine.trading_day_at` 是纯日历查询，不考虑宽限。
+*   **收盘宽限**：实盘（含 replay）在收盘后 `day_close_delay` 秒内、且早于下一交易日首个时段开始时到达的行情仍归当日（宽限不越过下一交易日开盘，因此 `ALWAYS_OPEN` 这类收盘即次日开盘的时段表实际没有宽限，除非显式日历有空档；`day_close_delay=0` 时也没有宽限）——`ctx.trading_day` 为当日，时段为 `Closed`（自定义表有盘后段时为 `PostClose`），不撮合、不产生权益点，也不提前开下一交易日；宽限期内下的 Day 单仍属下一交易日。结算时刻不变，结算价为收盘时刻的最新价（只认时间戳不晚于收盘的原始行情）。网关由 tick 合成 bar 时，收盘后 `day_close_delay − 5` 秒内的 tick 并入收盘那根 bar，该 bar 在这段钳制宽限结束后 2 秒补发（`day_close_delay` 不足 5 秒时不并入）。`Engine.trading_day_at` 是纯日历查询，不考虑宽限。
     *   已知限制：宽限期内存档后续跑，当日结算价按存档时的最新价；某品种收盘前没有 tick、只有宽限期 tick 时，结算价等于宽限价；结算之后才到的收盘 bar 仍派发给 `on_bar`。
 *   `akquant.live.StreamingIndicatorSink(on_event, *, run_id="live")`：实盘用的流式指标录制器，每个指标点即时发给 `on_event`、不在内存累积。`run_live` 传了 `on_event` 而未传 `indicator_recorder` 时默认使用它；需要自行组合时可从 `akquant.live` 导入。
 
@@ -1319,7 +1319,7 @@ SessionResolver(
 *   `trading_blocks(symbol, trading_day, asset_type=None)`：交易块 `[(起点, 终点), ...]`（首尾相接的非休市、非闭市时段合并成的连续区间，如 A 股为 09:15～11:30 与 13:00～15:00）；`block_at(symbol, timestamp, asset_type=None)` 返回时刻所在交易块。
 *   `set_active([(symbol, asset_type), ...])`：登记在用标的，会话级收盘取它们时段表收盘的最大值；`set_option_underlyings({期权: 标的})`：标的为已登记期货的期权跟随期货时段表。
 *   `session_day_end(trading_day)`、`session_trading_day(timestamp)`、`is_session_day(day)`、`next_session_day(day)`：会话级收盘时刻、时刻所属交易日（夜盘属下一交易日）、是否交易日、下一交易日。
-*   `templates()`（静态方法）：内置模板名；`uses_fallback_calendar`：是否在用缺省日历（未传 `trading_calendar`）。
+*   `templates()`（静态方法）：内置模板名；`uses_fallback_calendar`：是否在用缺省日历（未传 `trading_calendar`）；`uses_all_days_fallback`：未传日历且在用时段表全为每天交易的表（如 `ALWAYS_OPEN`），此时周末也算交易日。
 *   时刻一律为 UTC 纳秒。
 
 ```python
