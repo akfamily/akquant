@@ -204,7 +204,7 @@ def run_from_checkpoint(
 
 **通用行为说明（主要对应 `run_backtest`，`run_from_checkpoint` 共享其中的成交/风控/策略映射规则）:**
 
-*   `data`: 回测数据。支持单个 DataFrame，`{symbol: DataFrame}` 字典，`List[Bar]`，`DataFeed`，或实现 `DataFeedAdapter.load(request)` 的对象。
+*   `data`: 回测数据。支持单个 DataFrame，`{symbol: DataFrame}` 字典，`List[Bar]`，`DataFeed`，或实现 `DataFeedAdapter.load(request)` 的对象。只有日期（本地 0 点）的数据改写到交易日收盘时刻只针对 DataFrame 与 Bar 列表输入；`DataFeed` 输入按原样使用，只有日期的数据请改用 DataFrame/Bar 列表，或把时间戳打在交易日收盘并传 `freq="1d"`。
 *   `strategy`: 策略类、策略实例，或 `on_bar` 函数（函数式编程风格）。
 *   `strategy_source` / `strategy_loader` / `strategy_loader_options`: 动态策略加载入口。`strategy=None` 时可直接从源码、路径或自定义加载器构造策略。
 *   `initialize` / `on_start` / `on_resume` / `on_stop`: 函数式策略生命周期回调；其中 `on_resume(ctx)` 仅在 checkpoint 恢复后的热启动阶段触发，且先于 `on_start(ctx)`。

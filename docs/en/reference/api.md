@@ -96,7 +96,7 @@ def run_backtest(
 
 **Key Parameters:**
 
-*   `data`: Backtest data. Supports a single DataFrame, a `{symbol: DataFrame}` dictionary, `List[Bar]`, `DataFeed`, or any object implementing `DataFeedAdapter.load(request)`.
+*   `data`: Backtest data. Supports a single DataFrame, a `{symbol: DataFrame}` dictionary, `List[Bar]`, `DataFeed`, or any object implementing `DataFeedAdapter.load(request)`. Date-only data (local midnight) is rewritten to the trading day's close only for DataFrame and Bar-list input; a `DataFeed` is used as-is, so for date-only data pass a DataFrame or a list of Bars instead, or stamp each bar at the trading day's close and pass `freq="1d"`.
 *   `strategy`: Strategy class or instance. Also supports passing an `on_bar` function (functional style).
 *   `strategy_source` / `strategy_loader` / `strategy_loader_options`: Dynamic strategy loading entry points. When `strategy=None`, the framework can build the strategy from source, a path, or a custom loader.
 *   `initialize` / `on_start` / `on_resume` / `on_stop`: Functional-strategy lifecycle callbacks for initialization, start, resume, and stop stages.
