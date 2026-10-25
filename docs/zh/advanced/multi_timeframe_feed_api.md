@@ -27,9 +27,8 @@ class FiveMinuteTrend(Strategy):
 
     def __init__(self) -> None:
         super().__init__()
-        self.subscribe_bars(
-            "5min", session_windows=[("09:30", "11:30"), ("13:00", "15:00")]
-        )
+        # 不传 session_windows：按品种时段表的交易块切分
+        self.subscribe_bars("5min")
         self.count = 0
 
     def on_start(self) -> None:
@@ -54,7 +53,7 @@ class FiveMinuteTrend(Strategy):
 
 关键 API：
 
-- `subscribe_bars(freq, callback=None, symbols=None, *, session_windows=None)`：声明订阅。`freq` 支持整数分钟 `"Nmin"`、整数小时 `"Nh"`、日线 `"1d"`。`symbols=None` 表示全部标的。
+- `subscribe_bars(freq, callback=None, symbols=None, *, session_windows=None)`：声明订阅。`freq` 支持整数分钟 `"Nmin"`、整数小时 `"Nh"`、日线 `"1d"`。`symbols=None` 表示全部标的。不传 `session_windows`（推荐）时按品种时段表的交易块切分：开盘集合竞价并入上午块（A 股 09:15～11:30），收盘集合竞价与下午连续竞价同块（13:00～15:00）；日内窗口标签不超过块结束（A 股 1h 为 10:00、11:00、11:30、14:00、15:00）；日线窗口按交易日切分（夜盘归下一交易日），标签为交易日收盘时刻。`session_windows` 只在需要覆盖时段表时手写。
 - `callback`：省略时闭合的窗口 bar 会回调策略的 `on_window_bar(bar)`；传入具体函数（如示例 14 的 `on_daily`）则改由该函数接收，`on_window_bar` 不再触发该条订阅。
 - `on_window_bar(bar)`：默认窗口回调，`bar.freq` 是该 bar 所属的周期标签（如 `"5min"`、`"1d"`）。
 - `current_window(symbol, freq)`：查看某标的当前正在形成、尚未闭合的窗口快照（只能在行情回调内调用），不会触发回调。
@@ -65,7 +64,7 @@ class FiveMinuteTrend(Strategy):
 窗口何时闭合取决于**基础数据周期**（`self.freq`）是否已知：
 
 - **基础周期已知**（回测传 `run_backtest(freq=...)`，或实盘/replay 行情网关声明 `metadata["freq"]`，见示例 71）：窗口在归属它的最后一根基础 bar 的 `on_bar` 之后**同一步**闭合并派发（零延迟）。
-- **基础周期未知**（例如回测直接传一个纯 bar 的 `DataFrame`，没有走 `freq=` 或 `list[Tick]` 输入）：引擎无法判断"下一根基础 bar 是否已经跨入新窗口"，因此窗口要等**下一根落入新窗口的基础 bar 到达时**才闭合（晚一根），并在配置阶段打印一次性 `WARNING`。示例 14 就是这种情况：日线窗口在次日第一根 09:31 分钟 bar 到达后才闭合。`session_windows` 只负责正确切分交易时段边界，不能让窗口提前到即时闭合——即时闭合只看基础周期是否已知。
+- **基础周期未知**（例如回测直接传一个纯 bar 的 `DataFrame`，没有传 `freq=`，也不是 `list[Tick]` 输入）：引擎无法判断"下一根基础 bar 是否已经跨入新窗口"，因此窗口要等**下一根落入新窗口的基础 bar 到达时**才闭合（晚一根），并在配置阶段打印一次性 `WARNING`。交易日的最后一批窗口（日线窗口、收盘所在块的日内窗口）不必等到次日：日终结算前闭合，并在 `on_after_trading` 之前派发。时段切分只负责正确的交易块边界，不能让窗口提前到即时闭合——即时闭合只看基础周期是否已知。示例 14 传了 `run_backtest(freq="1min")`，属于即时闭合。
 
 ## 限制
 
@@ -74,7 +73,9 @@ class FiveMinuteTrend(Strategy):
 - 同一周期、标的范围有重叠的多条订阅，`session_windows` 必须完全一致，否则报 `ValueError`（同周期+同 `session_windows`，一条全标的通用回调 + 一条特定标的专属回调是允许的，两个回调都会触发）。
 - `extra` 字段不参与窗口聚合。
 - 窗口 bar **不会**被撮合引擎用于成交判断——它只是信息，策略仍需在 `on_bar`（或其他基础行情回调）里正常下单。
-- CTP 网关合成 bar 默认打的是区间起点戳；只有同时开启 `emit_ticks` 与 `emit_bars` 才会得到区间结束戳。若不同时开启，多周期聚合会因为时间戳口径不一致而错位一根，因此接入 CTP 做多周期时请同时打开 `emit_ticks` 与 `emit_bars`。
+- 封闭的 bar 一律打区间终点戳 E 并带 `interval_start = S`，按右闭区间 `(S, E]` 分桶（回测 tick 聚合、CTP/klinedata 网关合成 bar 同一口径），多周期聚合不会因时间戳口径错位。
+- replay 的 `gateway_options={"freq": ...}` 只声明基础周期（`self.freq` 与窗口即时闭合），不给回放的 bar 填 `interval_start`；需要区间起点时请在 `Bar(..., interval_start=...)` 里自带。
+- 同一标的在同一时刻同时喂入两种周期的外部 bar（如 1min 与 5min）时，1min bar 上下的单可能被同刻的 5min bar 按更早的区间撮合。请只喂一种基础周期，高周期用 `subscribe_bars` 聚合。
 - 会话结束（回测结束、实盘/replay 会话终止）时，引擎会 flush 尚未闭合的尾部窗口并触发一次回调；此时下的单在回测里不会再有机会成交。若之后 `save_checkpoint()` 再从该快照 `run_from_checkpoint()` 续跑，尾部区间会重新形成一根同标签的窗口 bar（历史序列里会出现两根标签相同的 bar，这是已知且刻意保留的行为，不是 bug）。
 
 ## 从伪标的迁移
@@ -82,11 +83,7 @@ class FiveMinuteTrend(Strategy):
 引擎原生多周期上线前，[examples/14_multi_frequency.py](https://github.com/akfamily/akquant/blob/main/examples/14_multi_frequency.py) 靠「伪标的」拼日线：把同一份分钟数据手工 `resample` 成日线，起一个 `000001.SZ_1D` 的假代码喂给引擎，策略里再按 `bar.symbol` 分流处理两条序列，还需要手工把时间戳往后打 15 小时来避免与分钟数据的时间戳冲突。现在改为：
 
 ```python
-self.subscribe_bars(
-    "1d",
-    callback=self.on_daily,
-    session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
-)
+self.subscribe_bars("1d", callback=self.on_daily)
 self.daily_sma = self.I(
     aq.SMA(self.ma_window), name="daily_sma", source="close", freq="1d"
 )
@@ -115,9 +112,10 @@ replayed = feed.replay(
     align="session",
     day_mode="trading",
     emit_partial=False,
-    session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
 )
 ```
+
+推荐不传 `session_windows`：按品种时段表的交易块切分，与 `subscribe_bars` 逐根一致；手写 `session_windows` 会走旧实现，不与引擎窗口对齐。
 
 ### 当前落地（最小可用）
 
@@ -230,7 +228,7 @@ class MyStrategy(Strategy):
 - `base_interval_min` 是喂入 bar 的周期（分钟）。给定时 bar 区间终点到达窗口
   标签即闭合回调（如 11:30 那根 1 分钟 bar 到达就闭合 11:30 的窗口）；不给时
   等下一根落入新窗口的 bar 到达才闭合。
-- `session_windows` 手写交易时段，覆盖时段表，例如
+- `session_windows` 手写交易时段，覆盖时段表；一般不需要传，默认按品种时段表的交易块切分。例如
   `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`；终点早于起点表示
   跨午夜。
 - `current(symbol)` 可查看某标的当前正在形成、尚未闭合的窗口快照，不会触发

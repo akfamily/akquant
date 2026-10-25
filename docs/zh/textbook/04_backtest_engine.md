@@ -745,7 +745,7 @@ $$ \text{Total Equity} = \text{Cash} + \sum (\text{Market Value of Positions}) $
 
 | | 实盘 | 回测 |
 | --- | --- | --- |
-| bar 何时被消费 | 下一区间首个 tick 到达时发出；迟迟没有新 tick 时，到期补发（`flush_due`，区间终点后宽限 2 秒） | tick 与合成 bar 进同一 feed，再按时间戳**排序** |
+| bar 何时被消费 | 下一区间首个 tick 到达时发出；迟迟没有新 tick 时，到期补发（`flush_due`，区间终点后宽限 2 秒）。收盘那根 bar 例外：收盘后 `day_close_delay − 5` 秒内到达的 tick 也计入它，在这段宽限结束后 2 秒补发 | tick 与合成 bar 进同一 feed，再按时间戳**排序** |
 | 时间戳 | 区间终点 E | 区间终点 E |
 | 若改用区间起点 | 与回测、日线口径不一致 | bar 排到形成它的 tick **之前** |
 
@@ -775,8 +775,8 @@ def on_bar(self, bar):
 
 ### 4.16.4 其余边界
 
-*   `freq` 只支持整数分钟（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 会报错并指向 `feed_adapter.resample`，不静默取整。词汇与 pandas `to_offset` 对齐。
-*   回测里，数据在区间中途结束时，末尾未满一个周期的 tick 不产生 bar（回测聚合器不做收尾 flush）。实盘没有“数据结束”，迟迟没有下一区间的 tick 时，由 `flush_due` 在区间终点后宽限 2 秒补发。
+*   tick 聚合的 `freq` 只支持整数分钟（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 会报错并指向 `feed_adapter.resample`，不静默取整。词汇与 pandas `to_offset` 对齐。
+*   回测里，数据在区间中途结束时，末尾未满一个周期的 tick 不产生 bar（回测聚合器不做收尾 flush）。实盘没有“数据结束”，迟迟没有下一区间的 tick 时，由 `flush_due` 在区间终点后宽限 2 秒补发；收盘那根 bar 例外，收盘后 `day_close_delay − 5` 秒内的 tick 计入收盘 bar，在这段宽限结束后 2 秒补发（`day_close_delay` 默认 60 秒，即 15:00:55 及之前的 tick 计入、15:00:57 补发）。
 *   向量化预计算指标（`self.I(PrecomputedIndicator(...))`）不支持含 tick 的输入，请改用增量指标 `self.I(aq.SMA(20), ...)` 或 `freq` 聚合。
 *   构造 `Bar` / `Tick` 时**时间戳必须是真实纳秒**：构造器会把小于 `1e10` 的值乘 `1e9`，传 `100` 之类的小整数会被静默改写。
 

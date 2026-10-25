@@ -62,12 +62,12 @@ schedule_monthly(time_str, payload)  # 每月首个交易日(新增,可选)
 ```
 
 - 同动词 `schedule_*`,成体系;`daily` 此刻是"相对单次的重复",语义自洽而非伪家族。
-- `schedule_weekly/_monthly` **内部纯 Python**:在引擎已知的交易日序列上算出目标日期,逐个调 `schedule` 埋普通 timer 事件——**零引擎改动、零新增事件刻度**。全部回调仍汇进 `on_timer`。
-- 每个非日频方法**只认「首个交易日」**:遇周初/月初停牌自动顺延到该周/月首个有交易的日子(直接在真实交易日集合上枚举,天然不踩停牌/节假日)。**不提供 offset 参数**。
+- `schedule_weekly/_monthly` 按**交易日历**调度:回测在数据覆盖范围内的日历交易日上算出目标日期并预登记 timer 事件(区间内没有行情的交易日也触发,非交易日不触发);实盘由引擎只登记下一次,触发后按会话交易日历重排。全部回调仍汇进 `on_timer`。(2026-10 交易时段重构后的口径;最初设计为“纯 Python、零引擎改动”。)
+- 每个非日频方法**只认「首个交易日」**:周初/月初逢节假日顺延到该周/月首个日历交易日。停牌按交易日历看仍是交易日,照常在该日触发,不因个股无行情顺延。**不提供 offset 参数**。
 
 ### 4.2 暴露交易日历(自由层的关键)
 
-`add_daily_timer` 内部已依赖 `strategy._trading_days`。将其以只读属性暴露(如 `self.trading_days`),让"非常规节奏"能优雅落在 `schedule` 上:
+`add_daily_timer` 内部已依赖 `strategy._trading_days`(现为数据覆盖范围内的日历交易日,含区间内无行情的交易日)。将其以只读属性暴露(如 `self.trading_days`),让"非常规节奏"能优雅落在 `schedule` 上:
 
 ```python
 def on_start(self):
@@ -104,6 +104,6 @@ def on_start(self):
 ## 7. 验收 / 测试
 
 - `schedule_daily` 改名后,原 `add_daily_timer` 用例全部迁移并通过;旧名调用应报错(无兼容别名)。
-- `schedule_weekly/_monthly`:构造周初/月初停牌数据,断言触发落在该周/月**首个有交易的日子**,且回调进入 `on_timer` 携带正确 payload。
+- `schedule_weekly/_monthly`:构造周初/月初逢节假日的数据,断言触发落在该周/月**首个日历交易日**(停牌日按日历照常触发),且回调进入 `on_timer` 携带正确 payload。
 - `trading_days` 属性:断言与引擎内部交易日序列一致、只读。
 - 示例:定时器相关 `examples/` 更新为可实跑(`exit 0`),ruff check/format 通过。

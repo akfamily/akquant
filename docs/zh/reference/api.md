@@ -6,6 +6,8 @@
 
 *   [run_live broker_live 执行语义](#live-broker-semantics)
 *   [run_live 实盘历史预热](#live-preload-history)
+*   [run_live 实盘时区、交易时段与收盘宽限](#live-timezone-sessions)
+*   [SessionResolver 交易时段解析器](#akquant-session-resolver)
 
 ## 1. 高级入口 (High-Level API)
 
@@ -16,6 +18,7 @@
 ```python
 def run_backtest(
     data: Optional[BacktestDataInput] = None,
+    freq: Optional[str] = None,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
@@ -30,6 +33,8 @@ def run_backtest(
     slippage: SlippageInput = None,
     volume_limit_pct: Optional[float] = None,
     timezone: Optional[str] = None,
+    sessions: Optional[SessionsArg] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
     t_plus_one: bool = False,
     initialize: Optional[Callable[[Any], None]] = None,
     on_start: Optional[Callable[[Any], None]] = None,
@@ -81,6 +86,7 @@ def run_backtest(
     risk_budget_reset_daily: bool = False,
     analyzer_plugins: Optional[Sequence[AnalyzerPlugin]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    indicator_recorder: Optional[IndicatorSink] = None,
     broker_profile: Optional[str] = None,
     fill_policy: Optional[FillMode] = None,
     strict_strategy_params: bool = True,
@@ -183,7 +189,10 @@ def run_from_checkpoint(
     risk_budget_mode: str = "order_notional",
     risk_budget_reset_daily: bool = False,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    indicator_recorder: Optional[IndicatorSink] = None,
     config: Optional[BacktestConfig] = None,
+    sessions: Optional[SessionsArg] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult
 ```
@@ -191,13 +200,15 @@ def run_from_checkpoint(
 `run_from_checkpoint` 使用与 `run_backtest` 相同的策略 slot、策略级风控与成交默认项；
 对这些字段，优先级为：显式函数参数 > `config.strategy_config` > checkpoint 恢复值 / 默认值。
 
+`sessions` / `trading_calendar` 与 `run_backtest` 同义。存档保存这两项，续跑不传就沿用存档里的配置；传入且与存档不一致时以传入为准并告警。
+
 **通用行为说明（主要对应 `run_backtest`，`run_from_checkpoint` 共享其中的成交/风控/策略映射规则）:**
 
 *   `data`: 回测数据。支持单个 DataFrame，`{symbol: DataFrame}` 字典，`List[Bar]`，`DataFeed`，或实现 `DataFeedAdapter.load(request)` 的对象。
 *   `strategy`: 策略类、策略实例，或 `on_bar` 函数（函数式编程风格）。
 *   `strategy_source` / `strategy_loader` / `strategy_loader_options`: 动态策略加载入口。`strategy=None` 时可直接从源码、路径或自定义加载器构造策略。
 *   `initialize` / `on_start` / `on_resume` / `on_stop`: 函数式策略生命周期回调；其中 `on_resume(ctx)` 仅在 checkpoint 恢复后的热启动阶段触发，且先于 `on_start(ctx)`。
-*   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: 函数式策略事件回调；其中 `on_expiry(ctx, event)` 在引擎实际执行到期结算后触发，`on_pre_open(ctx, event)` 在每个交易日首个常规行情事件前触发，适合“盘前决策，本次 open 成交”；`on_error(ctx, error, source, payload)` 会在其他用户回调抛出异常时触发；`on_train_signal(ctx)` 仅在 ML 滚动训练窗口触发。
+*   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: 函数式策略事件回调；其中 `on_expiry(ctx, event)` 在引擎实际执行到期结算后触发，`on_pre_open(ctx, event)` 在交易日首个时段开始前 1ns 触发（A 股 09:15 开盘集合竞价前），适合“盘前决策，本次 open 成交”，交易日钩子的完整时点见下文 [`akquant.Strategy`](#akquantstrategy)；`on_error(ctx, error, source, payload)` 会在其他用户回调抛出异常时触发；`on_train_signal(ctx)` 仅在 ML 滚动训练窗口触发。
 *   `symbols`: 标的代码或代码列表。默认 `None`（**未显式传入**）：数据里出现的标的即视为要跑的标的（“数据即订阅”），行为与传入前完全一致。**显式传入**（哪怕传的是当前数据里已有的标的）后语义变为「只跑这些标的」：白名单外的标的会被前置过滤掉，不进入引擎、不参与撮合与统计（多标的输入下，回测结果可能因此变化）；显式传入空集合会报错，而不是退化为不过滤。白名单实际由 `symbols` ∪ `config.instruments` ∪（`__init__` 阶段）`self.subscribe()` 已订阅的标的三者合并而成；显式传了 `symbols` 后，`on_start` 里再 `subscribe()` 白名单外的标的会抛 `ValueError`（详见[策略指南](../guide/strategy.md)「策略生命周期」一节 `on_start` 的说明）。此校验仅作用于回测：实盘 `run_live` 从不下发白名单，`subscribe()` 不受约束。
     *   **`run_from_checkpoint` 的特例**：白名单合并的第三项不只是本次调用 `__init__` 阶段的 `subscribe()`——热启动恢复出来的策略实例带着**从存档 pickle 恢复的** `_subscriptions`（即上一段运行期间、含 `on_start` 里新增的全部订阅），这些也会并入白名单。也就是说，若阶段一的策略订阅过某个标的，阶段二哪怕不再显式 `subscribe()` 它，只要阶段二传了 `symbols`，该标的仍会留在合并后的白名单里——这是热启动「延续上一段状态」的整体语义的一部分，与「`__init__` 阶段订阅」并入 `run_backtest` 白名单的规则并非完全对称，请勿照搬 `run_backtest` 的白名单范围去推断 `run_from_checkpoint` 的实际过滤结果。
     *   **迁移提示（旧版 `symbols="BENCHMARK"` 写法）**：改动前，`symbol`/`symbols` 的签名默认值就是字面量 `"BENCHMARK"`（仓库内部分热启动示例也这么显式写过）。升级后，显式传入的值一律被当作真实过滤条件，不再等价于「未传」，且不同数据形态下会向**相反方向**出错：`List[Bar]` / `DataFeed` 形态因为数据里没有任何标的字面量等于 `"BENCHMARK"`，白名单谁都不放行，回测直接空跑（只有一条 WARNING，其余悄无声息）；`DataFrame` / `Dict[str, DataFrame]` 形态则因为 `"BENCHMARK"` 触发了既有前置过滤判据的短路，反而完全不过滤。升级方式很简单：把显式的 `symbols="BENCHMARK"` **删掉（省略该参数）**，不要迁移成其他字面量。
@@ -221,6 +232,9 @@ def run_from_checkpoint(
 *   `strict_strategy_params`: 是否严格校验策略构造参数（默认 `True`）。
     *   当传入策略不接受的参数时会立即抛错；
     *   推荐保持默认值，避免参数错配被静默忽略导致回测结果偏差。
+*   `freq`: 数据周期，默认 `None`。`data` 为含 `Tick` 的列表时是 tick 聚合周期（只支持整数分钟，如 `"1min"`），把 tick 合成 bar 并同时触发 `on_bar`；bar 数据（DataFrame、`List[Bar]`、catalog）也可传，用来声明 bar 周期并填 bar 的区间起点（`interval_start = 时间戳 − 周期`），写法为“正整数 + 单位”，单位 `min` / `h` / `d`（或 `day`），如 `"1min"`、`"5min"`、`"1h"`、`"1d"`。只有日期（本地 0 点）的日线不需要传，会自动改写到交易日收盘时刻；打在 15:00 等固定非 0 点时刻的日线要传 `freq="1d"`，否则每根 bar 按该时刻所在时段撮合（15:00 按“时间戳前 1ns”即 14:59:59.999… 判为收盘集合竞价），订单排到下一根 bar，并告警一次。策略的 `self.freq` 即该值。
+*   `sessions`: 代码前缀 → 时段模板名或自定义时段表（`"default"` 为全局默认），默认 `None`。不传时中国时区按资产类型取默认（股票 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`），其他时区全天连续（`ALWAYS_OPEN`）。可选模板见 `aq.SessionResolver.templates()`；自定义时段表写法见下文 `BacktestConfig.china_futures` 一节的时段说明。
+*   `trading_calendar`: 交易日列表（`date` / 字符串 / `Timestamp`），默认 `None`。不传时中国市场按工作日推算（节假日前后的夜盘与日终结算会算错），`ALWAYS_OPEN` 每天都算。数据时刻超出所传日历覆盖范围时报 `ValueError`。
 *   `t_plus_one`: 是否启用 T+1 交易规则 (默认 False)。如果启用，将强制使用中国市场模型。
 *   `slippage`: 全局滑点 (默认 0.0)。例如 0.0001 代表 1bp (0.01%) 的滑点，采用百分比模型。
 *   `volume_limit_pct`: 成交量限制比例 (默认 0.25)。限制单笔成交不超过该 Bar 总成交量的百分比。
@@ -936,10 +950,10 @@ def set_log_level(level: Union[str, int]) -> None
     `order_target_*` **不抛异常**；若因超时/断连导致订单状态不可知，则改走
     `on_error(error, "order_submit", request)`，不会伪造拒单。
 *   `on_expiry(event: Dict[str, Any])`: 到期结算回调。仅当引擎实际执行 `expiry_date` 驱动的到期结算/移除后触发；回调时账户状态已更新。示例见：`examples/49_on_expiry_demo.py`。
-*   `on_before_trading(trading_date, timestamp)`: 每个本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。该回调按“前一交易日/前一时点信息可见”的语义工作。
-*   `on_pre_open(event: Dict[str, Any])`: 每个交易日首个常规行情事件前触发一次。适合“盘前决策，本次 open 成交”；默认下单语义等价于 `NextOpen()`（下一根 open 成交）。示例见：`examples/52_pre_open_demo.py`。
+*   `on_before_trading(trading_date, timestamp)`: 交易日最早的连续竞价开始后 1ns 触发，每个交易日一次（A 股 09:30:00 之后；有夜盘的期货交易日从前一交易日夜盘开始，周一交易日在周五 21:00 触发；交易日没有连续竞价段时不触发）。该回调按“前一交易日/前一时点信息可见”的语义工作。
+*   `on_pre_open(event: Dict[str, Any])`: 交易日首个时段开始前 1ns 触发，每个交易日一次（A 股 09:15 前，即 09:14:59.999…；有夜盘的期货为前一交易日 20:55 夜盘集合竞价前），不早于上一交易日的日终结算；回测与实盘一致。同一交易日它一定先于 `on_before_trading`。适合“盘前决策，本次 open 成交”；默认下单语义等价于 `NextOpen()`，这类单参加开盘集合竞价统一撮合（撮合在连续竞价开始时进行，成交价为竞价价，成交时间记在首个连续竞价事件上）。`event["expected_open_at"]` 是本次触发时刻，不是开盘时刻。示例见：`examples/52_pre_open_demo.py`。
 *   `on_cross_section(trading_date, timestamp)`: 横截面同周期调仓钩子。在框架看到当日首个“跨标的完整 bar 切片”后触发，每个交易日最多一次；与 `on_before_trading` 不同，它可以看到当日历史和当前账户快照，适合收盘价同周期调仓。调仓频率（日/周/月）在回调内用日历判断。
-*   `on_after_trading(trading_date, timestamp)`: 离开常规交易会话时触发；若先跨日则在下一事件补发。
+*   `on_after_trading(trading_date, timestamp)`: 日终结算完成后触发，每个交易日一次。此时 T+1 已解冻、当日 Day 单已过期，其中下的单属于下一交易日。回测在收盘时刻；实盘在收盘 + `day_close_delay`（见 [run_live 实盘时区与交易时段](#live-timezone-sessions)）。回测数据在盘中结束、当日未结算时不触发，停止时也不补发。
 *   `on_portfolio_update(snapshot)`: 账户快照变化时触发。
 *   `on_error(error, source, payload=None)`: 用户回调抛异常时触发。是否在触发 `on_error`
     后继续向上抛出，取决于 `error_mode`/`re_raise_on_error`（默认继续抛出）——这条规则适用于
@@ -973,14 +987,21 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `self.position`: 当前标的持仓辅助对象 (`Position`)，包含 `size` 和 `available` 属性。
 *   `self.now`: 当前回测时间 (`pd.Timestamp`)。
 *   `self.runtime_config`: 运行时行为配置对象 (`StrategyRuntimeConfig`)。
-*   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` 中 `get_history()`、`get_account()`、`equity` 等接口的可见数据窗口。
+*   `self.trading_day -> Optional[datetime.date]`: 当前时刻所属交易日。盘中属本交易日，夜盘属下一交易日（周五 21:30 属下周一）；收盘后至下一交易日开盘前属下一交易日；实盘收盘宽限期内到达的行情仍归当日；尚无上下文（如 `on_start` 中）时为 `None`。
+*   `self.session_of(symbol=None) -> TradingSession`: 品种此刻的交易时段，与撮合同口径；不传 `symbol` 即当前事件的时段 `ctx.session`。只能在运行期间调用。
+*   `self.is_market_open(symbol=None, include_auction=False) -> bool`: 品种此刻是否处于连续竞价；`include_auction=True` 时 `OpeningAuction` / `AuctionHold` / `ClosingAuction` 也算开市。
 *   `self.portfolio_update_eps`: 账户快照更新阈值，低于该变化量不触发 `on_portfolio_update`（默认 `0.0`）。
 *   `self.error_mode`: 错误处理模式，`"raise"` 或 `"continue"`（默认 `"raise"`）。
 *   `self.re_raise_on_error`: 用户回调异常后是否继续抛出（默认 `True`）；仅对经框架调度的普通
     回调异常生效（见上文 `on_error` 的范围说明）。`broker_live` 下由柜台通信失败触发的
     `on_error`（`order_submit`/`stop_trigger`/`order_cancel`/`order_cancel_all` 等）不受此项
     控制，恒不重抛。
-*   `self.ctx`: 策略上下文 (`StrategyContext`)，提供底层 API 访问。
+*   `self.ctx`: 策略上下文 (`StrategyContext`)，提供底层 API 访问。与交易时段、订单终态相关的只读字段：
+    *   `ctx.session`: 当前事件的交易时段（`TradingSession`，7 个值：`Closed`、`OpeningAuction`、`AuctionHold`、`Continuous`、`Break`、`ClosingAuction`、`PostClose`）。
+    *   `ctx.trading_day`: 当前时刻所属交易日（同 `self.trading_day`）。
+    *   `ctx.recent_rejected_orders`: 本步被拒的订单（框架据此补发 `on_reject`）。
+    *   `ctx.recent_expired_orders`: 最近一次日终结算置为 `Expired` 的 Day 单。
+    *   `ctx.recent_finalized_orders`: 本步未成交就离开在途账本的订单（撤单、过期、拒单）的终态快照。
 
 **交易方法:**
 
@@ -1023,7 +1044,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `freq` 参数（`get_history` / `get_history_map` / `get_history_multi` / `get_history_df` / `get_rolling_data` 均支持）：取值 `'tick'` / `'bar'` / `None`。
     *   `None`（默认）：该 symbol 只有 bar 序列时取 bar，只有 tick 序列时取 tick（单流下行为不变）。**双流下（该 symbol 同时存在 bar 与 tick 两条序列）按当前所处的回调自动定档**：`on_bar` 里等价于 `freq='bar'`，`on_tick` 里等价于 `freq='tick'`。注意 tick 序列由引擎无条件写入，**与策略是否覆写 `on_tick` 无关**——只要订阅了 tick 流，只写 `on_bar` 的策略也处于双流之中，靠的就是这条推断。**行情回调之外**（`on_timer`、`on_before_trading`、用户自建线程等）无从推断意图，双流下仍报 `ValueError`，要求显式传 `freq='bar'` 或 `freq='tick'`——不会静默选一条。未识别的取值同样报错，不会兜底成 `'bar'`。
     *   `freq='tick'` 时 `field` 只支持 `price`/`close`/`volume`：tick 没有 open/high/low，传这些字段会抛 `ValueError`（此前会静默返回退化 OHLC，`price` 冒充 `high`，破坏性变更）。`get_history_df` / `get_rolling_data` 固定取 OHLCV 五字段，因此在 `freq='tick'` 下必然报错，请改用 `get_history(freq='tick', field='price')`。
-    *   回测中让 `on_bar` 与 `on_tick` 同时触发：`run_backtest(data=[Tick, ...], freq="1min")`（**`freq` 只在 `data` 为含 `Tick` 的列表时生效，DataFrame 不支持**，传了会报错而非静默忽略）。实盘中的等价开关是 `gateway_options={"emit_ticks": True, "emit_bars": True}`（klinedata、CTP 网关均支持，`use_aggregator` 保留为兼容别名）：两个网关对 `emit_ticks`/`emit_bars` 本身的处理规则一致——按参数逐个回退（只显式传其一不会静默关掉另一路），若回退后 `emit_ticks` 与 `emit_bars` 都为 `False` 则报错而非静默不推送任何数据。`broker="ctp"` 走的是 `run_live(..., gateway_options=...)` → builder 转发这条链路，此前该链路会把这两个键静默丢弃（`on_tick` 永不触发且无任何报错），现已修复为原样转发到底层 `CTPMarketGateway`。**klinedata 有一个前置条件 CTP 没有**：klinedata 多一个 `drive` 参数，缺省为 `drive="bar"`，而 `drive="bar"` 只订阅 K 线频道、逐笔帧根本不会到达。因此 `drive="bar"` 配**显式** `emit_ticks=True` 会直接**报错**并给出可照抄的双流配方（此前是静默压成 `emit_ticks=False`，表现为「`on_tick` 永不触发且不知道为什么」）——要让 `on_tick` 真正触发，必须显式传 `"drive": "tick"`，仅传 `emit_ticks=True` 不够。经 `use_aggregator` 别名回退推导出的值仍按 `drive` 处理以保持兼容。CTP 没有 `drive` 这一层，`emit_ticks=True` 会直接生效。
+    *   回测中让 `on_bar` 与 `on_tick` 同时触发：`run_backtest(data=[Tick, ...], freq="1min")`（含 `Tick` 的列表下 `freq` 是聚合周期；bar 数据也可传 `freq` 声明周期，含 `"1d"`，只用来填 bar 区间起点，不产生 tick）。实盘中的等价开关是 `gateway_options={"emit_ticks": True, "emit_bars": True}`（klinedata、CTP 网关均支持，`use_aggregator` 保留为兼容别名）：两个网关对 `emit_ticks`/`emit_bars` 本身的处理规则一致——按参数逐个回退（只显式传其一不会静默关掉另一路），若回退后 `emit_ticks` 与 `emit_bars` 都为 `False` 则报错而非静默不推送任何数据。`broker="ctp"` 走的是 `run_live(..., gateway_options=...)` → builder 转发这条链路，此前该链路会把这两个键静默丢弃（`on_tick` 永不触发且无任何报错），现已修复为原样转发到底层 `CTPMarketGateway`。**klinedata 有一个前置条件 CTP 没有**：klinedata 多一个 `drive` 参数，缺省为 `drive="bar"`，而 `drive="bar"` 只订阅 K 线频道、逐笔帧根本不会到达。因此 `drive="bar"` 配**显式** `emit_ticks=True` 会直接**报错**并给出可照抄的双流配方（此前是静默压成 `emit_ticks=False`，表现为「`on_tick` 永不触发且不知道为什么」）——要让 `on_tick` 真正触发，必须显式传 `"drive": "tick"`，仅传 `emit_ticks=True` 不够。经 `use_aggregator` 别名回退推导出的值仍按 `drive` 处理以保持兼容。CTP 没有 `drive` 这一层，`emit_ticks=True` 会直接生效。
 *   `get_position(symbol) -> float`: 获取当前持仓量。返回值仍为数量，不返回对象。
 *   `get_available_position(symbol) -> float`: 获取可用持仓量。
 *   `positions -> Dict[str, float]`: 获取所有标的持仓（只读属性）。
@@ -1034,8 +1055,8 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `get_holding_bars(symbol) -> int`: 获取当前持仓持有的 Bar 数量。
 *   `cash -> float`: 获取当前可用资金（只读属性）。
 *   `freq -> Optional[str]`: 数据周期（只读属性），取值为回测侧口径 `"1min"` / `"5min"` / `"1d"` 等。
-    *   回测侧由 `run_backtest(freq=)` 注入；实盘侧由行情网关声明（klinedata 把自己的 `period="M1"` 转换成 `"1min"`，`broker="replay"` 支持 `gateway_options={"freq": "1min"}`）。两侧统一到回测口径，故同一个策略在回测与实盘读到同一个值，无需按 broker 写兼容分支。
-    *   **拿不到周期时为 `None`**：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only broker（无行情通道）、klinedata 周线（回测侧 `freq` 只认整数分钟，周线无对应写法）。框架**不从数据推断**周期——相邻 bar 的时间戳差会被停牌、跨日、午休误导，错误的周期比未知的周期更危险。请显式处理 `None`。
+    *   回测侧由 `run_backtest(freq=)` 注入（tick 聚合周期，或 bar 数据声明的周期）；实盘侧由行情网关声明（klinedata 把自己的 `period="M1"` 转换成 `"1min"`，`broker="replay"` 支持 `gateway_options={"freq": "1min"}`）。两侧统一到回测口径，故同一个策略在回测与实盘读到同一个值，无需按 broker 写兼容分支。
+    *   **拿不到周期时为 `None`**：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only broker（无行情通道）、klinedata 周线（回测侧 `freq` 只认分钟、小时与日，周线无对应写法）。框架**不从数据推断**周期——相邻 bar 的时间戳差会被停牌、跨日、午休误导，错误的周期比未知的周期更危险。请显式处理 `None`。
     *   只读，写入抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会真的改变粒度。
 *   `get_account() -> Dict[str, float]`: 获取账户详情快照。常见字段包括 `cash`、`equity`、`market_value`、`notional_value`、`frozen_cash`、`margin`、`used_margin`、`free_margin`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
@@ -1126,10 +1147,12 @@ def inspect_strategy(source: Union[str, os.PathLike[str]]) -> InspectResult
 
 K 线数据对象。
 
-*   `timestamp`: Unix 时间戳 (纳秒)。
+*   `timestamp`: Unix 时间戳 (纳秒)，为 bar 的**区间终点**（右闭区间 `(interval_start, timestamp]`）。只有日期的日线改写到交易日收盘时刻。
+*   `interval_start`: 区间起点 (UTC 纳秒，不含)，`None` 表示未知。tick 合成的 bar、声明了 `freq` 的 bar 数据、只有日期的日线、引擎聚合的窗口 bar 都带它；未知时引擎按“时间戳前 1ns”判时段。构造时可传 `Bar(..., interval_start=...)`。
 *   `open`, `high`, `low`, `close`, `volume`: OHLCV 数据。
 *   `symbol`: 标的代码。
 *   `extra`: 扩展数据字典 (`Dict[str, float]`)。
+*   `freq`: 周期标签，基础 bar 为 `None`，引擎聚合出的窗口 bar 带 `"5min"` 等。
 *   `timestamp_iso`: UTC ISO 8601 时间字符串。
 
 ### `akquant.Tick`
@@ -1190,12 +1213,24 @@ run_live(..., preload_history=history)
 ### `akquant.run_live(timezone=..., sessions=...)`（实盘时区与交易时段） {: #live-timezone-sessions }
 
 ```python
-run_live(..., timezone="Asia/Shanghai", sessions={"rb": "CN_FUTURES_NIGHT_23"})
+run_live(
+    ...,
+    timezone="Asia/Shanghai",
+    sessions={"rb": "CN_FUTURES_NIGHT_23"},
+    trading_calendar=trading_days,  # 交易所交易日列表
+    day_close_delay=60.0,
+)
 ```
 
 *   `timezone`：IANA 时区名，默认 `"Asia/Shanghai"`，传 `None` 等同默认值，非法时区名抛 `ValueError`。与 `run_backtest(timezone=)` 同义：引擎按它划分交易日、计算日终结算时刻与 Day 单过期、选默认时段表（非中国时区全天连续）；`preload_history` / replay 的 DataFrame 里不带时区的时间按它本地化；策略的 `self.timezone` 同步为该值。
 *   **须与交易所时区一致**：接中国市场（如 `klinedata` 行情、`middleware` 交易）时保持默认，不要改成本机或服务器所在时区，否则交易日、日终结算与 Day 单过期会按该时区划分，与交易所实际不符。
 *   `sessions` / `trading_calendar`：与 `run_backtest` 同义（模板名或自定义时段表），写法见上文 `BacktestConfig.china_futures` 一节的时段说明与[第 7 章](../textbook/07_futures.md)。
+*   **实盘按真实时段撮合**：时段为闭市、休市或集合竞价时订单排队，不按连续竞价成交。期货实盘（含 paper）不传 `sessions` 时按 `CN_FUTURES_DAY` 日盘时段，有夜盘的品种必须传 `sessions=`（如 `{"rb": "CN_FUTURES_NIGHT_23"}`），否则夜盘行情按闭市处理。
+*   **长期运行的实盘必须传 `trading_calendar=`**：不传时按工作日推算，节假日也会开日与结算；行情源报告交易日（如 CTP 的 `TradingDay`）时，只能在所涉交易日开日前修正缺省日历。live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历传入（jwt 模式部署时取不到，退回工作日推算并告警）。
+*   `day_close_delay`：`float`，默认 `60.0`（秒），取值 0～86400，越界或非有限值抛 `ValueError`，非数字抛 `TypeError`。实盘日终结算（Day 单过期、T+1 解冻、收盘快照）与 `on_after_trading` 在“会话收盘 + `day_close_delay`”触发，收盘快照仍记在收盘时刻；按交易日历登记，当日没有任何行情也会结算。回测不受影响（收盘时刻结算）。
+*   **收盘宽限**：实盘（含 replay）在收盘后 `day_close_delay` 秒内到达的行情仍归当日——`ctx.trading_day` 为当日，时段为 `Closed`（自定义表有盘后段时为 `PostClose`），不撮合、不产生权益点，也不提前开下一交易日；宽限期内下的 Day 单仍属下一交易日。结算时刻不变，结算价为收盘时刻的最新价（只认时间戳不晚于收盘的原始行情）。网关由 tick 合成 bar 时，收盘后 `day_close_delay − 5` 秒内的 tick 并入收盘那根 bar，该 bar 在这段钳制宽限结束后 2 秒补发（`day_close_delay` 不足 5 秒时不并入）。`Engine.trading_day_at` 是纯日历查询，不考虑宽限。
+    *   已知限制：宽限期内存档后续跑，当日结算价按存档时的最新价；某品种收盘前没有 tick、只有宽限期 tick 时，结算价等于宽限价；结算之后才到的收盘 bar 仍派发给 `on_bar`。
+*   `akquant.live.StreamingIndicatorSink(on_event, *, run_id="live")`：实盘用的流式指标录制器，每个指标点即时发给 `on_event`、不在内存累积。`run_live` 传了 `on_event` 而未传 `indicator_recorder` 时默认使用它；需要自行组合时可从 `akquant.live` 导入。
 
 ## 3. 核心引擎 (Core)
 
@@ -1211,6 +1246,10 @@ run_live(..., timezone="Asia/Shanghai", sessions={"rb": "CN_FUTURES_NIGHT_23"})
 *   `set_fill_mode(mode: ExecutionMode, timer_timing: str)`: 设置运行级默认执行模式。`mode` 取 `ExecutionMode` 枚举（`NextOpen`/`NextClose`/`NextAverage`/`NextHighLowMid`/`CurrentClose`），`timer_timing` 取 `"same_cycle"`/`"next_event"`（仅对 `CurrentClose` 有意义）。日常使用推荐通过 `run_backtest(..., fill_policy=NextOpen())` 传入 `FillMode` 对象，由框架翻译到该底层方法。
 *   `get_fill_policy()`: 获取当前执行模式对应的核心三元组 `(price_basis, bar_offset, temporal)`（内部表示）。
 *   `set_history_depth(depth)`: 设置历史数据缓存长度。
+*   `configure_sessions(sessions=None, trading_calendar=None)`: 配置交易时段表与交易日历，写法同 `run_backtest(sessions=, trading_calendar=)`。低层 `Engine`（含 `use_simple_market()`）同样按时段表撮合，不再隐含全天可交易：不调用时中国时区按资产类型取默认时段表；不受时段约束请传 `sessions={"default": "ALWAYS_OPEN"}`。
+*   `session_config`: 当前生效的 `(sessions, trading_calendar)`，随存档保存。
+*   `trading_day_at(timestamp_ns) -> datetime.date`: 时刻所属交易日（收盘之后属下一交易日）。纯日历查询，不考虑实盘收盘宽限；只读，`run()` 前后都可调用；时刻超出 `trading_calendar` 覆盖范围时报 `ValueError`。
+*   `current_trading_day` / `last_settled_trading_day`: 当前交易日 / 已完成日终结算的最后交易日，尚无时为 `None`。
 
 **市场与费率配置:**
 
@@ -1251,7 +1290,8 @@ run_live(..., timezone="Asia/Shanghai", sessions={"rb": "CN_FUTURES_NIGHT_23"})
 *   `add_bar(bar)`: 向数据源追加单个 `Bar`。
 *   `add_bars(bars)`: 向数据源批量追加 `Bar` 列表。
 *   `add_tick(tick)`: 向实时数据源追加单个 `Tick`。
-*   `add_arrays(timestamps, opens, highs, lows, closes, volumes, symbol)`: 通过数组快速批量构建 `Bar` 并注入数据源。
+*   `add_arrays(timestamps, opens, highs, lows, closes, volumes, symbol)`: 通过数组快速批量构建 `Bar` 并注入数据源；可选 `interval_starts=` 传区间起点列。
+*   `add_trading_day_hint(timestamp_ns, trading_day, source)`: 推送行情源报告的交易日（仅实盘数据源，回测数据源上调用抛 `RuntimeError`），与行情同序进入引擎。传了 `trading_calendar=` 时不一致只告警；未传时在所涉交易日开日前按它修正缺省（工作日）日历。replay 回放可用 `gateway_options={"trading_day_hints": [(ts_ns, date), ...]}` 模拟。
 *   `sort()`: 对当前历史数据源按事件时间排序。
 
 **使用边界:**
@@ -1259,6 +1299,63 @@ run_live(..., timezone="Asia/Shanghai", sessions={"rb": "CN_FUTURES_NIGHT_23"})
 *   若你只是做普通回测，优先使用 `run_backtest(data=...)`，直接传 `DataFrame`、`List[Bar]` 或 `DataFeedAdapter` 即可。
 *   若你需要复用同一数据源对象、显式切换历史/实时模式，或直接接入 `Engine.add_data(feed)`，则使用 `DataFeed` 更合适。
 *   `from_csv(...)` / `add_arrays(...)` 中如果遇到非法浮点值，Rust 侧会记录 warning，并通过 AKQuant 的 Python `logging` 体系输出，例如 `akquant.data.client`、`akquant.data.batch`。
+
+### `akquant.SessionResolver` {: #akquant-session-resolver }
+
+交易时段解析器，与引擎同一套规则：把时间点或 bar 区间解析为 `(交易日, 时段)`。适合在策略外做时段、交易日计算（如自建数据预处理）。
+
+```python
+SessionResolver(
+    sessions: Optional[Mapping[str, Union[str, Sequence[Sequence[str]]]]] = None,
+    trading_calendar: Optional[List[datetime.date]] = None,
+    timezone: str = "Asia/Shanghai",
+)
+```
+
+*   `sessions` / `trading_calendar`：同 `run_backtest`；未匹配前缀时按资产类型取默认（股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`、其他 `ALWAYS_OPEN`）。
+*   `resolve_instant(symbol, timestamp, asset_type=None) -> (date, TradingSession)`：解析时间点（tick）。
+*   `resolve_bar(symbol, timestamp, interval_start=None, asset_type=None) -> (date, TradingSession)`：解析 bar 区间 `(interval_start, timestamp]`；`interval_start` 为 `None` 时按时间戳前 1ns。
+*   `day_bounds(symbol, trading_day, asset_type=None) -> (start_ns, end_ns)`：交易日窗口（第一个时段开始、最后一个时段结束）。
+*   `trading_blocks(symbol, trading_day, asset_type=None)`：交易块 `[(起点, 终点), ...]`（首尾相接的非休市、非闭市时段合并成的连续区间，如 A 股为 09:15～11:30 与 13:00～15:00）；`block_at(symbol, timestamp, asset_type=None)` 返回时刻所在交易块。
+*   `set_active([(symbol, asset_type), ...])`：登记在用标的，会话级收盘取它们时段表收盘的最大值；`set_option_underlyings({期权: 标的})`：标的为已登记期货的期权跟随期货时段表。
+*   `session_day_end(trading_day)`、`session_trading_day(timestamp)`、`is_session_day(day)`、`next_session_day(day)`：会话级收盘时刻、时刻所属交易日（夜盘属下一交易日）、是否交易日、下一交易日。
+*   `templates()`（静态方法）：内置模板名；`uses_fallback_calendar`：是否在用缺省日历（未传 `trading_calendar`）。
+*   时刻一律为 UTC 纳秒。
+
+```python
+import pandas as pd
+
+import akquant as aq
+
+resolver = aq.SessionResolver(sessions={"rb": "CN_FUTURES_NIGHT_23"})
+ts = pd.Timestamp("2024-01-05 21:30", tz="Asia/Shanghai").value  # 周五夜盘
+day, session = resolver.resolve_instant("rb2405", ts, aq.AssetType.Futures)
+print(day, session)  # 2024-01-08 TradingSession.Continuous（属下周一）
+```
+
+### `akquant.WindowAggregator` {: #akquant-window-aggregator }
+
+单周期窗口聚合器：把基础 bar 流聚合成 `freq` 周期的窗口 bar，规则与引擎 `subscribe_bars` 相同（日内窗口按交易日与交易块切分、标签不超过块结束；日线窗口按交易日切分、标签为交易日收盘）。适合在引擎之外复用同一套聚合口径。
+
+```python
+WindowAggregator(
+    freq: str,
+    session_windows: Optional[List[Tuple[str, str]]] = None,
+    base_interval_min: Optional[int] = None,
+    resolver: Optional[SessionResolver] = None,
+    timezone: Optional[str] = None,
+    asset_types: Optional[Dict[str, AssetType]] = None,
+)
+```
+
+*   `freq`：窗口周期，`"Nmin"` / `"Nh"` / `"1d"`。
+*   `session_windows`：手写本地交易时段，给定则覆盖时段表；一般不需要传。
+*   `base_interval_min`：基础 bar 周期（分钟），给定时按 bar 区间即时闭合。
+*   `resolver` / `timezone`：不传 `resolver` 时按 `timezone`（缺省 `"Asia/Shanghai"`）新建默认解析器；两者时区不一致时报错。
+*   `asset_types`：品种 → 资产类型；也可用 `set_asset_type(symbol, asset_type)` 逐个设置。
+*   `update(bar) -> List[Bar]`：喂入一根基础 bar，返回本次闭合的窗口 bar；`flush()` 闭合全部在形成窗口；`current(symbol)` 查看在形成窗口。
+*   `update_arrays(...)`：批量喂入单品种基础 bar 列，返回 `(窗口 bar 列表, 行→窗口下标)`；`flush=True` 时会闭合本聚合器里所有品种的在形成窗口，与 `update()` 混用时请对本品种单独建聚合器。
+*   bar 落在品种时段表全部交易块之外时（如期货误用股票时段表），每个品种告警一次。
 
 ### `akquant.gateway` 自定义 Broker 注册
 

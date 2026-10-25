@@ -8,7 +8,6 @@
 
 - 错误处理模式（`error_mode`）
 - 账户更新阈值（`portfolio_update_eps`）
-- 精确交易日边界钩子（`enable_precise_day_boundary_hooks`）
 - 兼容模式开关（`re_raise_on_error`）
 
 该能力同时支持：
@@ -48,7 +47,6 @@ result = run_backtest(
 |---|---|---|---|---|
 | `error_mode` | `"raise" \| "continue" \| "legacy"` | `"raise"` | 控制用户回调异常处理策略 | 抛出 `ValueError` |
 | `portfolio_update_eps` | `float`（`>= 0`） | `0.0` | 过滤微小资产波动噪声 | 抛出 `ValueError` |
-| `enable_precise_day_boundary_hooks` | `bool` | `False` | 启用基于边界定时器的精确日内钩子 | 按 `bool` 规则转换 |
 | `re_raise_on_error` | `bool` | `True` | 在 `error_mode="legacy"` 下作为兼容兜底 | 按 `bool` 规则转换 |
 
 ## 4. 冲突优先级

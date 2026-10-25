@@ -1,5 +1,7 @@
 # RFC:策略生命周期钩子体系重构
 
+> **状态更新(2026-10)**:交易时段重构后,交易日钩子改由引擎的交易日生命周期事件触发(见交易时段设计文档 §4.4),不再依赖行情事件与惰性补触发:`on_pre_open` 在交易日首个时段开始前 1ns,`on_before_trading` 在最早的连续竞价开始后 1ns,`on_after_trading` 在日终结算完成后;精确边界开关已删除。现行口径以[策略指南](../guide/strategy.md)「回调触发契约」为准,本文以下内容作为历史记录保留。
+>
 > **状态**:草案(Draft) · **日期**:2026-07-19 · **范围**:Python 策略层生命周期回调(`Strategy.on_*`);**允许破坏性变更(硬改名 / 移除,不保留兼容别名)**,与既往 `before_trading → on_before_trading` 的处理方式一致。
 >
 > 对标:**聚宽 JoinQuant**(`before_trading_start` / `after_trading_end` / `handle_data`)、**米筐 RQAlpha**(`before_trading` / `after_trading` / `handle_bar` / `open_auction`)、**Zipline**(`before_trading_start` / `handle_data`)、**backtrader**(`next` + `add_timer`,自行判跨日)、**nautilus_trader**(事件驱动 `on_*`)。
