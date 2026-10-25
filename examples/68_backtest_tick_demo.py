@@ -31,7 +31,7 @@ def _make_ticks() -> List[Tick]:
     """构造第 1 分钟 (09:30, 09:31] 内的 4 笔成交, 外加第 2 分钟 1 笔.
 
     分桶右闭: 恰在 09:31:00 的那笔仍属第 1 分钟。第 2 分钟那笔用来封闭
-    第 1 分钟的合成 bar: 聚合器不提供 flush, 末尾未满一个周期的 tick
+    第 1 分钟的合成 bar: 回测不做收尾 flush, 末尾未满一个周期的 tick
     不会产生 bar。
     """
     plan = [
@@ -172,7 +172,7 @@ def demo_freq_aggregation() -> None:
         )
         print()
     print("  要点四(末尾不封闭): 第 2 分钟只有 1 笔且未跨到第 3 分钟,")
-    print("        聚合器不提供 flush, 故它不产生 bar —— 只合成了 1 根。")
+    print("        回测不做收尾 flush, 故它不产生 bar —— 只合成了 1 根。")
     print()
 
 

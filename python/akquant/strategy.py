@@ -3195,7 +3195,7 @@ class Strategy:
                 - maintenance_ratio: 维持担保比例
                 - account_mode: 账户模式 ("cash" / "margin")
                 - accrued_interest: 累计计提利息
-                - daily_interest: 当日计提利息
+                - daily_interest: 本次结算计提利息 (按两次结算间的自然日天数计提)
         """
         return _get_account_impl(self)
 
