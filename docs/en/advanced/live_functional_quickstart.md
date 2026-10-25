@@ -153,7 +153,9 @@ symbols. The session ends on its own once the data is exhausted.
   settlement. Date-only data is rewritten to the trading-day close. Use
   `gateway_options["trading_day_hints"]` (a list of `(ts_ns, date)`) to simulate
   trading days reported by the feed. live_server's default replay session fires
-  `on_pre_open` at 09:14:59.
+  `on_pre_open` at 09:14:59. Replay also applies the live post-close grace: events
+  within `day_close_delay` seconds after the close still belong to that day (see the
+  [API Reference](../reference/api.md#live-timezone-sessions)).
 - A multi-symbol DataFrame needs a `股票代码` column, otherwise it degrades to
   a single symbol. For multi-symbol scenarios, prefer `list[Bar]` directly.
 - Self-termination depends on every event's timestamp being positive:

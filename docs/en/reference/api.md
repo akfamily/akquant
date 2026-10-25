@@ -6,6 +6,8 @@ Quick links:
 
 *   [run_live broker-live semantics](#live-broker-semantics)
 *   [run_live live history preload](#live-preload-history)
+*   [run_live live timezone, sessions and post-close grace](#live-timezone-sessions)
+*   [SessionResolver trading-session resolver](#akquant-session-resolver)
 
 ## 1. High-Level API
 
@@ -16,6 +18,7 @@ The most commonly used backtest entry function, encapsulating the initialization
 ```python
 def run_backtest(
     data: Optional[BacktestDataInput] = None,
+    freq: Optional[str] = None,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
@@ -30,6 +33,8 @@ def run_backtest(
     slippage: SlippageInput = None,
     volume_limit_pct: Optional[float] = None,
     timezone: Optional[str] = None,
+    sessions: Optional[SessionsArg] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
     t_plus_one: bool = False,
     initialize: Optional[Callable[[Any], None]] = None,
     on_start: Optional[Callable[[Any], None]] = None,
@@ -81,6 +86,7 @@ def run_backtest(
     risk_budget_reset_daily: bool = False,
     analyzer_plugins: Optional[Sequence[AnalyzerPlugin]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    indicator_recorder: Optional[IndicatorSink] = None,
     broker_profile: Optional[str] = None,
     fill_policy: Optional[FillMode] = None,
     strict_strategy_params: bool = True,
@@ -94,7 +100,7 @@ def run_backtest(
 *   `strategy`: Strategy class or instance. Also supports passing an `on_bar` function (functional style).
 *   `strategy_source` / `strategy_loader` / `strategy_loader_options`: Dynamic strategy loading entry points. When `strategy=None`, the framework can build the strategy from source, a path, or a custom loader.
 *   `initialize` / `on_start` / `on_resume` / `on_stop`: Functional-strategy lifecycle callbacks for initialization, start, resume, and stop stages.
-*   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: Functional event callbacks. `on_expiry(ctx, event)` fires only after the engine actually executes expiry settlement/removal.
+*   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: Functional event callbacks. `on_expiry(ctx, event)` fires only after the engine actually executes expiry settlement/removal; `on_pre_open(ctx, event)` fires 1ns before the trading day's first session segment starts (before the 09:15 opening call auction for A-shares) and suits "pre-open decision, current open fill". For the full timing of the trading-day hooks see [`akquant.Strategy`](#akquantstrategy) below.
 *   `symbols`: Symbol or list of symbols. Defaults to `None` (**not passed explicitly**): whatever symbols show up in the data are treated as the ones to run ("data is subscription"), and behavior is identical to before this parameter existed. **Passing it explicitly** — even a value that only lists symbols already present in the data — changes the semantics to "run only these symbols": symbols outside the whitelist are filtered out up front, never enter the engine, and never participate in matching or statistics (backtest results on multi-symbol input can therefore change). Passing an explicit empty collection raises an error rather than degrading to "no filtering". The whitelist is actually the union of `symbols` ∪ `config.instruments` ∪ the symbols already subscribed via `self.subscribe()` during `__init__`; once `symbols` is passed explicitly, calling `subscribe()` on a symbol outside the whitelist inside `on_start` raises `ValueError` (see the `on_start` notes in the "Strategy Lifecycle" section of the [Strategy Guide](../guide/strategy.md)). This validation only applies to backtests: live trading (`run_live`) never ships a whitelist, so `subscribe()` is unconstrained there.
     *   **Special case for `run_from_checkpoint`**: the third term of the whitelist union isn't limited to the `subscribe()` calls made during this call's own `__init__` — a warm-started strategy instance carries `_subscriptions` **restored from the pickled snapshot** (i.e. every subscription accumulated during the previous run, including ones added inside `on_start`), and those are folded into the whitelist too. In other words, if stage one's strategy subscribed to a symbol, stage two's whitelist still includes that symbol as long as stage two passes `symbols` — even if stage two never calls `subscribe()` on it again. This is part of the warm start's overall "carry over previous state" semantics, and is **not** fully symmetric with the "`__init__`-stage subscriptions" rule that feeds `run_backtest`'s whitelist; don't assume `run_from_checkpoint`'s effective filtering matches what `run_backtest`'s whitelist rule would predict.
     *   **Migration note (legacy `symbols="BENCHMARK"` usage)**: before this change, the signature default for `symbol`/`symbols` was literally the string `"BENCHMARK"` (some warm-start examples in this repo used to pass it explicitly, too). After the upgrade, any explicitly passed value is always treated as a real filter — it is no longer equivalent to "not passed" — and different data shapes now fail in **opposite** directions: with `List[Bar]` / `DataFeed` input, since no symbol in the data literally equals `"BENCHMARK"`, the whitelist admits nothing and the backtest runs empty (with just one WARNING and otherwise silent); with `DataFrame` / `Dict[str, DataFrame]` input, `"BENCHMARK"` instead short-circuits the existing pre-filter check and disables filtering entirely. The fix is simple: **remove** the explicit `symbols="BENCHMARK"` (omit the parameter) rather than migrating it to some other literal.
@@ -118,6 +124,9 @@ def run_backtest(
 *   `strict_strategy_params`: Whether to strictly validate strategy constructor parameters (default `True`).
     *   Raises immediately if unsupported constructor parameters are provided.
     *   Recommended to keep enabled to avoid silent parameter mismatch and distorted backtest results.
+*   `freq`: Data frequency, default `None`. When `data` is a list containing `Tick`, it is the tick aggregation period (whole minutes only, e.g. `"1min"`): ticks are aggregated into bars and `on_bar` fires as well. Bar data (DataFrame, `List[Bar]`, catalog) may pass it too, to declare the bar period and fill each bar's interval start (`interval_start = timestamp − period`); write it as "positive integer + unit" with unit `min` / `h` / `d` (or `day`), e.g. `"1min"`, `"5min"`, `"1h"`, `"1d"`. Date-only daily bars (local midnight) need no `freq`: they are rewritten to the trading day's close automatically. Daily bars stamped at a fixed non-midnight time such as 15:00 need `freq="1d"`; otherwise each bar is matched in the session of that time (15:00 is classified by "1ns before the timestamp", i.e. 14:59:59.999…, as the closing call auction), orders are queued to the next bar, and a warning is logged once. The strategy's `self.freq` is this value.
+*   `sessions`: Symbol prefix → session template name or custom session table (`"default"` is the global default), default `None`. When omitted, China time zones use per-asset defaults (stocks/funds `CN_STOCK`, futures `CN_FUTURES_DAY`, options `CN_OPTION`, other assets `ALWAYS_OPEN`); other time zones trade continuously all day (`ALWAYS_OPEN`). List the templates with `aq.SessionResolver.templates()`. A custom table is a sequence of `(start, end, session[, anchor])` segments, e.g. `[("21:00", "02:30", "continuous"), ("09:00", "15:00", "continuous")]`; anything outside the segments is closed, segments with `start >= "18:00"` anchor to the previous trading day (night session) unless a 4th item `"prev"` / `"day"` says otherwise, and keys match by the longest symbol prefix. Full rules in [Chapter 7](../textbook/07_futures.md).
+*   `trading_calendar`: List of trading days (`date` / string / `Timestamp`), default `None`. When omitted, China markets infer trading days from weekdays (holidays are treated as trading days, so night sessions and end-of-day settlement around holidays are wrong) and a warning is logged once; `ALWAYS_OPEN` counts every day and does not warn. Data timestamps outside the range covered by the given calendar raise `ValueError`.
 *   `t_plus_one`: Enable T+1 trading rule (Default False). If enabled, it forces usage of China Market Model.
 *   `slippage`: Global slippage (Default 0.0). E.g., 0.0001 means 1bp (0.01%) slippage, using percent model.
 *   `volume_limit_pct`: Volume limit percentage (Default 0.25). Limits single trade to not exceed this percentage of the bar's total volume.
@@ -291,7 +300,10 @@ def run_from_checkpoint(
     risk_budget_mode: str = "order_notional",
     risk_budget_reset_daily: bool = False,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    indicator_recorder: Optional[IndicatorSink] = None,
     config: Optional[BacktestConfig] = None,
+    sessions: Optional[SessionsArg] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult
 ```
@@ -302,6 +314,8 @@ For these fields, priority is:
 1. explicit function arguments
 2. `config.strategy_config`
 3. restored/default values
+
+`sessions` / `trading_calendar` mean the same as in `run_backtest`. The checkpoint stores both, so a resumed run that omits them keeps the stored configuration; values that are passed and differ from the checkpoint win, with a warning.
 
 **DataFeedAdapter Usage (Multi-Timeframe):**
 
@@ -588,7 +602,7 @@ Product presets (explicitly passed fields always win):
 
 `commission_rate` / `min_commission` / `stamp_tax_rate` / `transfer_fee_rate` override market rates per symbol in `run_backtest` and `run_from_checkpoint` (ChinaMarket: all four for stocks/funds, only `commission_rate` for futures; SimpleMarket: all four for every asset). Under ChinaMarket, options are charged per contract and unaffected by these fields; but with an explicit `use_china_market=False` (SimpleMarket), the overrides apply to options too, same as any other asset. `slippage` is honored during matching; resolution order: order-level `slippage=` > per-instrument `InstrumentConfig.slippage` > strategy-level `strategy_slippage` > global `StrategyConfig.slippage`; `run_from_checkpoint` resolves it the same way. `run_from_checkpoint` now forwards option market rules (`china_options`, exercise fee) and per-instrument fee / slippage overrides to the resumed segment. Known limitations: if the second phase call passes no `instruments` at all, an option re-registered from stage-one data keys is misclassified as STOCK; futures market rules (`ChinaFuturesConfig`, futures prefix fee rules) are still not re-applied on resume (`sessions` / `trading_calendar` are saved in the checkpoint and reused when not passed); detecting a stage-one option may switch the resumed run to ChinaMarket.
 
-Option fees (`ChinaOptionsConfig`, CNY per contract): `commission_per_contract=5.0` (renamed from `fee_per_contract`), `exchange_fee_per_contract=1.3`, `clearing_fee_per_contract=0.3`, `exercise_fee_per_contract=0.6` (ITM long only, reported in `ExpiryEvent.fee` and included in `total_commission`), `sell_open_exempt=True` (sell-to-open pays commission only). These defaults are the SSE/SZSE ETF-option schedule only; commodity futures options / index options (e.g. RB, MO, IO) use different rates — set them explicitly via `fee_by_symbol_prefix`. Any option instrument in a backtest selects ChinaMarket unless `ChinaOptionsConfig(use_china_market=False)`; in the same backtest, futures keep the user's percent commission rate (a non-percent commission policy cannot be applied to ChinaMarket futures and falls back to the futures default rate, with a warning logged). Expiry settles at the start of the first trading day after `expiry_date` using the expiry-day close; see the Chinese API reference and textbook chapter 8 for details.
+Option fees (`ChinaOptionsConfig`, CNY per contract): `commission_per_contract=5.0` (renamed from `fee_per_contract`), `exchange_fee_per_contract=1.3`, `clearing_fee_per_contract=0.3`, `exercise_fee_per_contract=0.6` (ITM long only, reported in `ExpiryEvent.fee` and included in `total_commission`), `sell_open_exempt=True` (sell-to-open pays commission only). These defaults are the SSE/SZSE ETF-option schedule only; commodity futures options / index options (e.g. RB, MO, IO) use different rates — set them explicitly via `fee_by_symbol_prefix`. Any option instrument in a backtest selects ChinaMarket unless `ChinaOptionsConfig(use_china_market=False)`; in the same backtest, futures keep the user's percent commission rate (a non-percent commission policy cannot be applied to ChinaMarket futures and falls back to the futures default rate, with a warning logged). Expiry settles in the end-of-day settlement at the close of the expiry day, using the expiry-day close; see the Chinese API reference and textbook chapter 8 for details.
 
 Expiry settlement is recorded as a synthetic closing trade in `trades_df` (`order_tag="__expiry__"`, `order_id="expiry:<symbol>:<trading_date>"`); fill price is per-unit intrinsic value for options and the settlement price otherwise, and the fee is the exercise fee. Win rate and other trade metrics therefore include expiry closes, but that row's `mae`/`mfe` are always `0` (no price history is replayed for it). The synthetic trade does **not** appear in `orders_df` / `executions` — it isn't an order. For margin-account futures, `ExpiryEvent.cash_flow` is the realized close-out P&L (matching what is actually booked); cash-account futures, stocks, and options still book the gross expiry cash flow (`cash_flow - fee`).
 
@@ -869,10 +883,10 @@ Strategy base class. Users should inherit from this class and override callback 
 *   `on_trade(trade)`: Triggered when trade report arrives.
 *   `on_reject(order)`: Triggered once when an order becomes `Rejected`. In live trading (`broker_live`), orders explicitly rejected by the broker are also reported through this callback — `buy()`/`sell()`/`order_target_*` **do not raise**. If the order's outcome is unknown because of a timeout or disconnect, the framework instead calls `on_error(error, "order_submit", request)` rather than faking a rejection.
 *   `on_expiry(event: Dict[str, Any])`: Triggered after an `expiry_date` driven settlement/removal is actually executed. Portfolio state is already updated when the callback runs. See `examples/49_on_expiry_demo.py` for a runnable example.
-*   `on_before_trading(trading_date, timestamp)`: Triggered once when the regular trading session starts each local day; on the default backtest path this session is usually exposed as `Continuous`. This callback follows a "previous trading day / previous snapshot only" visibility model.
-*   `on_pre_open(event: Dict[str, Any])`: Triggered once before the first regular event of each trading day. Use it for "pre-open decision, current open fill" workflows; default order semantics resolve to `NextOpen()`. See `examples/52_pre_open_demo.py`.
+*   `on_before_trading(trading_date, timestamp)`: Fires 1ns after the trading day's earliest continuous-auction segment starts, at most once per trading day (backtests fire it only for trading days with market data, live sessions for every day in the trading calendar; just after 09:30:00 for A-shares; for futures with a night session the trading day starts with the previous trading day's night session, so Monday's trading day fires on Friday at 21:00; a trading day without a continuous-auction segment does not fire it). This callback follows a "previous trading day / previous snapshot only" visibility model.
+*   `on_pre_open(event: Dict[str, Any])`: Fires 1ns before the trading day's first session segment starts, once per trading day (before 09:15 for A-shares, i.e. 09:14:59.999…; for futures with a night session, before the previous trading day's 20:55 night auction), never earlier than the previous trading day's end-of-day settlement; same in backtest and live. Within one trading day it always precedes `on_before_trading`. Use it for "pre-open decision, current open fill" workflows; default order semantics resolve to `NextOpen()`, and such orders join the opening call-auction match (matching happens when continuous trading starts, the fill price is the auction price, and the fill time is the first continuous-trading event). `event["expected_open_at"]` is the trigger time of this call, not the opening time. See `examples/52_pre_open_demo.py`.
 *   `on_cross_section(trading_date, timestamp)`: Cross-sectional same-cycle rebalance hook that runs after the first complete cross-symbol bar slice of the trading day, at most once per trading day. Unlike `on_before_trading`, it can see the current day's bar history and current account snapshot, and is intended for same-cycle close-style rebalances. Rebalance cadence (daily/weekly/monthly) is decided with a calendar check inside the hook.
-*   `on_after_trading(trading_date, timestamp)`: Triggered when leaving the regular trading session, or replayed on next event after day rollover.
+*   `on_after_trading(trading_date, timestamp)`: Fires after end-of-day settlement completes, once per trading day. T+1 positions are unlocked and the day's Day orders have expired by then; orders submitted inside it belong to the next trading day. Backtests fire it at the close; live sessions at close + `day_close_delay` (see [run_live live timezone and sessions](#live-timezone-sessions)). If backtest data ends intraday and the day is not settled, it does not fire, and stopping does not flush it.
 *   `on_portfolio_update(snapshot)`: Triggered when cash/equity/position snapshot changes.
 *   `on_error(error, source, payload=None)`: Triggered when a user callback raises. Whether the
     original exception is re-raised after `on_error` depends on `error_mode`/`re_raise_on_error`
@@ -909,7 +923,9 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
 *   `self.position`: Position object for current symbol, with `size` and `available` properties.
 *   `self.now`: Current backtest time (`pd.Timestamp`).
 *   `self.runtime_config`: Runtime behavior config object (`StrategyRuntimeConfig`).
-*   `self.enable_precise_day_boundary_hooks`: Enable boundary timer based precise day hooks (default `False`). This switch changes trigger precision only; it does not change the visibility window of `get_history()`, `get_account()`, or `equity` inside `on_before_trading`.
+*   `self.trading_day -> Optional[datetime.date]`: Trading day of the current moment. Intraday belongs to the current trading day, night sessions to the next one (Friday 21:30 belongs to the following Monday); from the close until the next trading day's open belongs to the next trading day; market data arriving within the live post-close grace window still belongs to the current day; `None` when there is no context yet (e.g. in `on_start`).
+*   `self.session_of(symbol=None) -> TradingSession`: Session of the symbol at this moment, consistent with matching; without `symbol` it is the current event's session `ctx.session`. Only callable while running.
+*   `self.is_market_open(symbol=None, include_auction=False) -> bool`: Whether the symbol is in continuous trading right now; with `include_auction=True`, `OpeningAuction` / `AuctionHold` / `ClosingAuction` also count as open.
 *   `self.portfolio_update_eps`: Snapshot threshold; changes below it skip `on_portfolio_update` (default `0.0`).
 *   `self.error_mode`: Error handling mode, `"raise"` or `"continue"` (default `"raise"`).
 *   `self.re_raise_on_error`: Whether to re-raise a user callback exception after `on_error`
@@ -917,6 +933,12 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
     framework (see the scoping note under `on_error` above). `on_error` calls triggered by a
     broker communication failure under `broker_live` (`order_submit`/`stop_trigger`/
     `order_cancel`/`order_cancel_all`, etc.) ignore this setting and are never re-raised.
+*   `self.ctx`: Strategy context (`StrategyContext`) giving low-level API access. Read-only fields related to sessions and terminal order states:
+    *   `ctx.session`: Session of the current event (`TradingSession`, 7 values: `Closed`, `OpeningAuction`, `AuctionHold`, `Continuous`, `Break`, `ClosingAuction`, `PostClose`).
+    *   `ctx.trading_day`: Trading day of the current moment (same as `self.trading_day`).
+    *   `ctx.recent_rejected_orders`: Orders rejected in this step (the framework uses them to deliver `on_reject`).
+    *   `ctx.recent_expired_orders`: Day orders set to `Expired` by the most recent end-of-day settlement.
+    *   `ctx.recent_finalized_orders`: Terminal snapshots of orders that left the in-flight book in this step without filling (cancelled, expired, rejected).
 
 **Trading Methods:**
 
@@ -960,7 +982,7 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
 *   The `freq` parameter (supported by `get_history` / `get_history_multi` / `get_history_df` / `get_rolling_data`): takes `'tick'` / `'bar'` / `None`.
     *   `None` (default): if the symbol only has a bar series, you get bars; if it only has a tick series, you get ticks (single-stream behavior is unchanged). **In a dual-stream session (the symbol has both a bar and a tick series at once), `None` resolves by the callback you are currently in**: inside `on_bar` it is equivalent to `freq='bar'`, inside `on_tick` to `freq='tick'`. Note that the tick series is written unconditionally by the engine, **whether or not your strategy overrides `on_tick`** — so a strategy with only `on_bar` is still in a dual-stream session once ticks are subscribed, and it relies on exactly this inference. **Outside the market-data callbacks** (`on_timer`, `on_before_trading`, your own threads), there is nothing to infer from, so a dual-stream session still raises `ValueError` and requires you to pass `freq='bar'` or `freq='tick'` explicitly — it will not silently pick one for you. An unrecognized value also raises rather than falling back to `'bar'`.
     *   With `freq='tick'`, `field` only supports `price`/`close`/`volume`: a tick has no open/high/low, so requesting those raises `ValueError` (previously this silently returned a degenerate OHLC with `price` standing in for `high` — this is a breaking change). `get_history_df` / `get_rolling_data` always pull the full OHLCV set, so they necessarily raise under `freq='tick'`; use `get_history(freq='tick', field='price')` instead.
-    *   To make `on_bar` and `on_tick` both fire in a backtest: `run_backtest(data=[Tick, ...], freq="1min")` (**`freq` only takes effect when `data` is a list containing `Tick`; DataFrame input doesn't support it** — passing it there raises rather than being silently ignored). The live-trading equivalent is `gateway_options={"emit_ticks": True, "emit_bars": True}` (supported by both the klinedata and CTP gateways; `use_aggregator` is kept as a compatibility alias). Both gateways handle `emit_ticks`/`emit_bars` the same way — falling back per-parameter (passing only one explicitly does not silently turn off the other), and raising rather than silently emitting nothing if both end up `False` after fallback. `broker="ctp"` goes through `run_live(..., gateway_options=...)` → builder forwarding; this path used to silently drop both keys (`on_tick` never fired, with no error at all) and has since been fixed to forward them as-is to the underlying `CTPMarketGateway`. **klinedata has a prerequisite that CTP does not**: klinedata has an extra `drive` parameter, defaulting to `drive="bar"`, and `drive="bar"` only subscribes to the K-line channel — tick frames never arrive at all. So `drive="bar"` combined with an **explicit** `emit_ticks=True` now **raises**, with an error message spelling out the dual-stream recipe you can copy (it used to be silently coerced to `emit_ticks=False`, which surfaced as "`on_tick` never fires and I have no idea why"). To actually get `on_tick` to fire you must pass `"drive": "tick"` explicitly; setting `emit_ticks=True` alone is not enough. Values derived from the `use_aggregator` alias fallback are still resolved against `drive` for backward compatibility. CTP has no `drive` layer, so `emit_ticks=True` takes effect directly there.
+    *   To make `on_bar` and `on_tick` both fire in a backtest: `run_backtest(data=[Tick, ...], freq="1min")` (with a list containing `Tick`, `freq` is the aggregation period; bar data may also pass `freq`, including `"1d"`, to declare its period — it only fills the bar interval start and produces no ticks). The live-trading equivalent is `gateway_options={"emit_ticks": True, "emit_bars": True}` (supported by both the klinedata and CTP gateways; `use_aggregator` is kept as a compatibility alias). Both gateways handle `emit_ticks`/`emit_bars` the same way — falling back per-parameter (passing only one explicitly does not silently turn off the other), and raising rather than silently emitting nothing if both end up `False` after fallback. `broker="ctp"` goes through `run_live(..., gateway_options=...)` → builder forwarding; this path used to silently drop both keys (`on_tick` never fired, with no error at all) and has since been fixed to forward them as-is to the underlying `CTPMarketGateway`. **klinedata has a prerequisite that CTP does not**: klinedata has an extra `drive` parameter, defaulting to `drive="bar"`, and `drive="bar"` only subscribes to the K-line channel — tick frames never arrive at all. So `drive="bar"` combined with an **explicit** `emit_ticks=True` now **raises**, with an error message spelling out the dual-stream recipe you can copy (it used to be silently coerced to `emit_ticks=False`, which surfaced as "`on_tick` never fires and I have no idea why"). To actually get `on_tick` to fire you must pass `"drive": "tick"` explicitly; setting `emit_ticks=True` alone is not enough. Values derived from the `use_aggregator` alias fallback are still resolved against `drive` for backward compatibility. CTP has no `drive` layer, so `emit_ticks=True` takes effect directly there.
 *   `get_position(symbol) -> float`: Get current position size. This still returns a numeric quantity, not an object.
 *   `get_available_position(symbol) -> float`: Get available position size.
 *   `positions -> Dict[str, float]`: Get all positions by symbol (read-only property).
@@ -970,8 +992,8 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
 *   `ctx.get_position_entry_prices() -> Dict[str, float]`: Get current average entry prices for all symbols.
 *   `cash -> float`: Get current available cash (read-only property).
 *   `freq -> Optional[str]`: The data frequency (read-only property), expressed in backtest vocabulary — `"1min"` / `"5min"` / `"1d"`, etc.
-    *   Injected from `run_backtest(freq=)` for backtests, and declared by the market-data gateway for live trading (klinedata converts its own `period="M1"` into `"1min"`; `broker="replay"` accepts `gateway_options={"freq": "1min"}`). Both sides use the backtest vocabulary, so the same strategy reads the same value in a backtest and live, with no broker-specific branching.
-    *   **`None` when the frequency is unknown**: a bar-only backtest that did not pass `freq`, tick-only gateways such as CTP, trader-only brokers (no market-data channel), and klinedata's weekly period (backtest `freq` only accepts whole minutes, so weekly has no equivalent). The framework deliberately **does not infer** the frequency from the data — timestamp deltas between adjacent bars are misled by suspensions, day rollovers and lunch breaks, and a wrong frequency is more dangerous than an unknown one. Handle `None` explicitly.
+    *   Injected from `run_backtest(freq=)` for backtests (the tick aggregation period, or the period declared for bar data), and declared by the market-data gateway for live trading (klinedata converts its own `period="M1"` into `"1min"`; `broker="replay"` accepts `gateway_options={"freq": "1min"}`). Both sides use the backtest vocabulary, so the same strategy reads the same value in a backtest and live, with no broker-specific branching.
+    *   **`None` when the frequency is unknown**: a bar-only backtest that did not pass `freq`, tick-only gateways such as CTP, trader-only brokers (no market-data channel), and klinedata's weekly period (backtest `freq` only accepts minutes, hours and days, so weekly has no equivalent). The framework deliberately **does not infer** the frequency from the data — timestamp deltas between adjacent bars are misled by suspensions, day rollovers and lunch breaks, and a wrong frequency is more dangerous than an unknown one. Handle `None` explicitly.
     *   Read-only; assigning to it raises `AttributeError`, since the data granularity is decided by the data source and writing this attribute would not actually change it.
 *   `get_account() -> Dict[str, float]`: Get an account snapshot. Common fields include `cash`, `equity`, `market_value`, `notional_value`, `frozen_cash`, `margin`, `used_margin`, `free_margin`, `unrealized_pnl`, `borrowed_cash`, `short_market_value`, `maintenance_ratio`, `account_mode`, `accrued_interest`, and `daily_interest`.
     *   In cash / spot-style accounts, `market_value` usually represents marked position value.
@@ -1058,9 +1080,13 @@ Static inspection of a strategy / indicator-script file or source string: parsed
 
 Bar data object.
 
-*   `timestamp`: Unix timestamp (nanoseconds).
+*   `timestamp`: Unix timestamp (nanoseconds), the bar's **interval end** (right-closed interval `(interval_start, timestamp]`). Date-only daily bars are rewritten to the trading day's close.
+*   `interval_start`: Interval start (UTC nanoseconds, exclusive); `None` means unknown. Bars aggregated from ticks, bar data with a declared `freq`, date-only daily bars and engine-aggregated window bars all carry it; when unknown, the engine classifies the session by "1ns before the timestamp". It can be passed at construction: `Bar(..., interval_start=...)`.
 *   `open`, `high`, `low`, `close`, `volume`: OHLCV data.
 *   `symbol`: Instrument symbol.
+*   `extra`: Extra data dict (`Dict[str, float]`).
+*   `freq`: Period label; `None` for base bars, `"5min"` etc. for window bars aggregated by the engine.
+*   `timestamp_iso`: UTC ISO 8601 time string.
 
 ### `akquant.Tick`
 
@@ -1120,12 +1146,24 @@ run_live(..., preload_history=history)
 ### `akquant.run_live(timezone=..., sessions=...)` (live timezone and sessions) {: #live-timezone-sessions }
 
 ```python
-run_live(..., timezone="Asia/Shanghai", sessions={"rb": "CN_FUTURES_NIGHT_23"})
+run_live(
+    ...,
+    timezone="Asia/Shanghai",
+    sessions={"rb": "CN_FUTURES_NIGHT_23"},
+    trading_calendar=trading_days,  # exchange trading-day list
+    day_close_delay=60.0,
+)
 ```
 
 *   `timezone`: IANA timezone name, default `"Asia/Shanghai"`; `None` means the default, an invalid name raises `ValueError`. Same meaning as `run_backtest(timezone=)`: the engine uses it to split trading days, time the end-of-day settlement and Day-order expiry, and pick the default session tables (continuous all day outside Chinese time zones); naive timestamps in `preload_history` / replay DataFrames are localized to it; the strategy's `self.timezone` is set to it.
 *   **Must match the exchange timezone**: for Chinese markets (e.g. `klinedata` market data, `middleware` trading) keep the default rather than the local machine's or server's timezone; otherwise trading days, end-of-day settlement and Day-order expiry are split by the wrong timezone.
 *   `sessions` / `trading_calendar`: same as in `run_backtest` (template names or custom schedules); see the session notes in [Chapter 7](../textbook/07_futures.md).
+*   **Session-aware matching only in paper/replay**: under simulated matching, orders submitted while the session is closed, on break or in a call auction are queued and not filled as continuous trading. Under `broker_live` orders go straight to the broker counter without session queueing; the session table only determines `ctx.session`, `is_market_open()`, the trading-day split, and the timing of end-of-day settlement and the trading-day hooks. Futures without `sessions` use the `CN_FUTURES_DAY` day-session table, so night-session data is classified as closed (under paper, orders are queued until the day session); symbols with a night session must pass `sessions=` (e.g. `{"rb": "CN_FUTURES_NIGHT_23"}`).
+*   **Long-running live sessions must pass `trading_calendar=`**: without it trading days are inferred from weekdays, so holidays are opened and settled too (a warning is logged once at startup). When the market-data source reports the trading day (e.g. CTP's `TradingDay`), it can only correct the default calendar before the affected trading day is opened. Since live_server 0.12.0, klinedata sessions fetch the SSE/SZSE trading calendar from the market-data service and pass it in automatically (when that service is deployed in jwt mode it requires `X-QMF-Session`, which live_server does not send, so the calendar cannot be fetched and it falls back to weekday inference with a warning).
+*   `day_close_delay`: `float`, default `60.0` (seconds), range 0–86400; out-of-range or non-finite values raise `ValueError`, non-numbers raise `TypeError`. Live end-of-day settlement (Day-order expiry, T+1 unlock, closing snapshot) and `on_after_trading` run at "session close + `day_close_delay`", while the closing snapshot is still stamped at the close; settlement is scheduled from the trading calendar, so it happens even on days without any market data. Backtests are unaffected (they settle at the close).
+*   **Post-close grace**: in live trading (including replay), market data arriving within `day_close_delay` seconds after the close and before the next trading day's first session segment still belongs to the current day. The grace never crosses the next trading day's open, so session tables such as `ALWAYS_OPEN`, where the close is immediately followed by the next open, effectively have no grace unless an explicit calendar leaves a gap; `day_close_delay=0` also disables it. In the grace window `ctx.trading_day` is the current day and the session is `Closed` (`PostClose` if the custom table has a post-close segment); nothing is matched, no equity point is produced, and the next trading day is not opened early; Day orders submitted in the grace window still belong to the next trading day. The settlement time does not change, and the settlement price is the latest price at the close (only raw market data stamped no later than the close counts). When the gateway aggregates bars from ticks, ticks within `day_close_delay − 5` seconds after the close are merged into the closing bar, which is emitted 2 seconds after that clamping window ends (with `day_close_delay` under 5 seconds nothing is merged). `Engine.trading_day_at` is a pure calendar query and ignores the grace.
+    *   Known limitations: when a checkpoint is taken during the grace window and resumed, that day's settlement price is the latest price at checkpoint time; if a symbol has no tick before the close and only grace-window ticks, its settlement price equals the grace price; a closing bar that arrives after settlement is still dispatched to `on_bar`.
+*   `akquant.live.StreamingIndicatorSink(on_event, *, run_id="live")`: Streaming indicator recorder for live sessions; each indicator point is sent to `on_event` immediately and nothing accumulates in memory. `run_live` uses it by default when `on_event` is passed without `indicator_recorder`; import it from `akquant.live` to compose your own.
 
 ## 3. Core Engine
 
@@ -1141,6 +1179,10 @@ The main entry point for the backtesting engine (usually used implicitly via `ru
 *   `set_fill_mode(mode, timer_timing)`: Set the execution fill mode, where `mode` is an `akquant.ExecutionMode` value (`CurrentClose`, `NextOpen`, `NextClose`, `NextAverage`, `NextHighLowMid`) and `timer_timing` is `"same_cycle"` or `"next_event"` (recommended).
 *   `get_fill_policy()`: Get the current execution policy as an internal `(price_basis, bar_offset, temporal)` triple.
 *   `set_history_depth(depth)`: Set history data cache length.
+*   `configure_sessions(sessions=None, trading_calendar=None)`: Configure session tables and the trading calendar, same format as `run_backtest(sessions=, trading_calendar=)`. A low-level `Engine` (including `use_simple_market()`) also matches by session table and no longer implies round-the-clock trading: without this call, China time zones use the per-asset default tables; pass `sessions={"default": "ALWAYS_OPEN"}` for no session constraint.
+*   `session_config`: The effective `(sessions, trading_calendar)`, stored in checkpoints.
+*   `trading_day_at(timestamp_ns) -> datetime.date`: Trading day of a moment (after the close belongs to the next trading day). A pure calendar query that ignores the live post-close grace; read-only and callable before or after `run()`; moments outside the `trading_calendar` range raise `ValueError`.
+*   `current_trading_day` / `last_settled_trading_day`: The current trading day / the last trading day whose end-of-day settlement has completed; `None` when not yet available.
 
 **Market & Fee Configuration:**
 
@@ -1165,7 +1207,8 @@ The main entry point for the backtesting engine (usually used implicitly via `ru
 *   `add_bar(bar)`: Append one `Bar` to the feed.
 *   `add_bars(bars)`: Append a batch of `Bar` objects.
 *   `add_tick(tick)`: Append one `Tick` to a live feed.
-*   `add_arrays(timestamps, opens, highs, lows, closes, volumes, symbol)`: Build bars from arrays and inject them into the feed efficiently.
+*   `add_arrays(timestamps, opens, highs, lows, closes, volumes, symbol)`: Build bars from arrays and inject them into the feed efficiently; optional `interval_starts=` passes an interval-start column.
+*   `add_trading_day_hint(timestamp_ns, trading_day, source)`: Push the trading day reported by the market-data source (live feeds only; calling it on a backtest feed raises `RuntimeError`); it enters the engine in order with the market data. With `trading_calendar=` a mismatch only warns; without it the hint corrects the default (weekday) calendar before the affected trading day is opened. Replay can simulate it with `gateway_options={"trading_day_hints": [(ts_ns, date), ...]}`.
 *   `sort()`: Sort the current historical feed by event time.
 
 **When to use it:**
@@ -1173,6 +1216,63 @@ The main entry point for the backtesting engine (usually used implicitly via `ru
 *   For normal backtests, prefer `run_backtest(data=...)` with a `DataFrame`, `List[Bar]`, or `DataFeedAdapter`.
 *   Use `DataFeed` when you want to reuse the same feed object, switch explicitly between historical and live modes, or wire data into `Engine.add_data(feed)` yourself.
 *   If `from_csv(...)` or `add_arrays(...)` encounters invalid floating-point values, Rust emits warnings that flow into AKQuant's Python `logging` pipeline, such as `akquant.data.client` and `akquant.data.batch`.
+
+### `akquant.SessionResolver` {: #akquant-session-resolver }
+
+Trading-session resolver using the same rules as the engine: resolves a moment or a bar interval into `(trading day, session)`. Useful for session and trading-day calculations outside a strategy (e.g. your own data preprocessing).
+
+```python
+SessionResolver(
+    sessions: Optional[Mapping[str, Union[str, Sequence[Sequence[str]]]]] = None,
+    trading_calendar: Optional[List[datetime.date]] = None,
+    timezone: str = "Asia/Shanghai",
+)
+```
+
+*   `sessions` / `trading_calendar`: same as in `run_backtest`; unmatched prefixes use the per-asset defaults (stocks/funds `CN_STOCK`, futures `CN_FUTURES_DAY`, options `CN_OPTION`, others `ALWAYS_OPEN`).
+*   `resolve_instant(symbol, timestamp, asset_type=None) -> (date, TradingSession)`: Resolve a moment (tick).
+*   `resolve_bar(symbol, timestamp, interval_start=None, asset_type=None) -> (date, TradingSession)`: Resolve a bar interval `(interval_start, timestamp]`; with `interval_start=None` it uses 1ns before the timestamp.
+*   `day_bounds(symbol, trading_day, asset_type=None) -> (start_ns, end_ns)`: Trading-day window (start of the first segment, end of the last segment).
+*   `trading_blocks(symbol, trading_day, asset_type=None)`: Trading blocks `[(start, end), ...]` (contiguous runs of adjoining segments that are neither break nor closed, e.g. 09:15–11:30 and 13:00–15:00 for A-shares); `block_at(symbol, timestamp, asset_type=None)` returns the block containing a moment.
+*   `set_active([(symbol, asset_type), ...])`: Register the symbols in use; the session-level close is the latest close among their tables. `set_option_underlyings({option: underlying})`: options whose underlying is a registered future follow that future's table.
+*   `session_day_end(trading_day)`, `session_trading_day(timestamp)`, `is_session_day(day)`, `next_session_day(day)`: Session-level close time, trading day of a moment (night sessions belong to the next trading day), whether a day is a trading day, and the next trading day.
+*   `templates()` (static method): Built-in template names. `uses_fallback_calendar`: whether the default calendar is in use (no `trading_calendar` given). `uses_all_days_fallback`: no calendar given and every table in use trades daily (e.g. `ALWAYS_OPEN`), so weekends count as trading days too.
+*   All moments are UTC nanoseconds.
+
+```python
+import pandas as pd
+
+import akquant as aq
+
+resolver = aq.SessionResolver(sessions={"rb": "CN_FUTURES_NIGHT_23"})
+ts = pd.Timestamp("2024-01-05 21:30", tz="Asia/Shanghai").value  # Friday night session
+day, session = resolver.resolve_instant("rb2405", ts, aq.AssetType.Futures)
+print(day, session)  # 2024-01-08 TradingSession.Continuous (belongs to Monday)
+```
+
+### `akquant.WindowAggregator` {: #akquant-window-aggregator }
+
+Single-frequency window aggregator: aggregates a base bar stream into `freq` window bars with the same rules as the engine's `subscribe_bars` (intraday windows split by trading day and trading block, labels never past the block end; daily windows split by trading day and labelled with the trading day's close). Useful for reusing the same aggregation rules outside the engine.
+
+```python
+WindowAggregator(
+    freq: str,
+    session_windows: Optional[List[Tuple[str, str]]] = None,
+    base_interval_min: Optional[int] = None,
+    resolver: Optional[SessionResolver] = None,
+    timezone: Optional[str] = None,
+    asset_types: Optional[Dict[str, AssetType]] = None,
+)
+```
+
+*   `freq`: Window period, `"Nmin"` / `"Nh"` / `"1d"`.
+*   `session_windows`: Hand-written local trading windows; overrides the session table when given. Usually not needed.
+*   `base_interval_min`: Base bar period (minutes); when given, windows close immediately by bar interval.
+*   `resolver` / `timezone`: without `resolver`, a default resolver is created for `timezone` (default `"Asia/Shanghai"`); mismatched time zones between the two raise an error.
+*   `asset_types`: Symbol → asset type; can also be set one by one with `set_asset_type(symbol, asset_type)`.
+*   `update(bar) -> List[Bar]`: Feed one base bar and return the window bars closed by it; `flush()` closes all forming windows; `current(symbol)` shows the forming window.
+*   `update_arrays(...)`: Feed a batch of base-bar columns for one symbol and return `(window bars, row → window index)`; `flush=True` closes the forming windows of every symbol in this aggregator, so use a separate aggregator per symbol when mixing it with `update()`.
+*   When a bar falls outside every trading block of its symbol's table (e.g. futures with the stock table), a warning is logged once per symbol.
 
 ### `akquant.gateway` Custom Broker Registry
 

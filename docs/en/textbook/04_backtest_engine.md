@@ -12,7 +12,7 @@ This chapter is currently maintained in Chinese first.
   - Structured fields such as `event_time_iso`, `bar.timestamp_iso`, and `trade.timestamp_iso` are intentionally UTC ISO 8601 strings.
   - Local timezone conversion is a display concern, handled by helpers like `self.now`, `self.to_local_time(...)`, and `self.format_time(...)`.
   - In short: UTC keeps the engine correct; local time keeps the output readable.
-- Bar timestamp note: a bar is stamped at the end of its interval and carries `interval_start`; ticks aggregated with `freq=` are bucketed right-closed `(S, E]` and stamped at `E` (a tick at exactly 09:31:00 belongs to the 09:30-09:31 bar). Live aggregation also uses end stamps and `flush_due` emits an overdue bar 2 seconds after its end; a backtest whose data stops mid-interval does not flush the last partial bar.
+- Bar timestamp note: a bar is stamped at the end of its interval and carries `interval_start`; ticks aggregated with `freq=` are bucketed right-closed `(S, E]` and stamped at `E` (a tick at exactly 09:31:00 belongs to the 09:30-09:31 bar). Live aggregation also uses end stamps and `flush_due` emits an overdue bar 2 seconds after its end, except the closing bar: ticks within `day_close_delay − 5` seconds after the close are merged into it and it is emitted 2 seconds after that window ends (with the default 60 seconds, ticks up to 15:00:55 count and the bar is emitted at 15:00:57); a backtest whose data stops mid-interval does not flush the last partial bar.
 - Textbook home: [Chinese textbook index](../../zh/textbook/index.md)
 - Practice links:
   - Primary example: [examples/textbook/ch04_comparison.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch04_comparison.py)

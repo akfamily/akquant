@@ -32,9 +32,8 @@ class FiveMinuteTrend(Strategy):
 
     def __init__(self) -> None:
         super().__init__()
-        self.subscribe_bars(
-            "5min", session_windows=[("09:30", "11:30"), ("13:00", "15:00")]
-        )
+        # No session_windows: split by the symbol's session-table trading blocks
+        self.subscribe_bars("5min")
         self.count = 0
 
     def on_start(self) -> None:
@@ -63,7 +62,15 @@ Key API:
 
 - `subscribe_bars(freq, callback=None, symbols=None, *, session_windows=None)`:
   declares a subscription. `freq` accepts integer minutes (`"Nmin"`), integer
-  hours (`"Nh"`), or daily (`"1d"`). `symbols=None` means all symbols.
+  hours (`"Nh"`), or daily (`"1d"`). `symbols=None` means all symbols. Without
+  `session_windows` (recommended), windows are split by the trading blocks of
+  the symbol's session table: the opening call auction joins the morning block
+  (A-shares 09:15–11:30) and the closing call auction shares the afternoon
+  continuous block (13:00–15:00); intraday window labels never pass the block
+  end (A-share 1h labels are 10:00, 11:00, 11:30, 14:00, 15:00); daily windows
+  are split by trading day (night sessions belong to the next trading day) and
+  labelled with the trading day's close. Hand-write `session_windows` only to
+  override the session table.
 - `callback`: when omitted, closed window bars are routed to the strategy's
   `on_window_bar(bar)`; passing a specific function (as in example 14's
   `on_daily`) routes that subscription there instead and `on_window_bar` is
@@ -89,15 +96,17 @@ When a window closes depends on whether the **base data frequency**
   window closes and dispatches in the **same step**, right after the `on_bar`
   call of the base bar that closes it (zero delay).
 - **Base frequency unknown** (e.g. a backtest fed a plain bar `DataFrame`
-  without `freq=`, or without `list[Tick]` input): the engine cannot tell
+  without `freq=` and not a `list[Tick]` input): the engine cannot tell
   whether the next base bar has already crossed into a new window, so the
   window only closes once the **next base bar that falls into a new window**
   arrives (one bar late), and a one-time `WARNING` is logged at configuration
-  time. Example 14 is exactly this case: the daily window only closes once the
-  next day's first 09:31 minute bar arrives. `session_windows` only splits
-  trading-session boundaries correctly — it does not make a window close
-  immediately; immediate closing depends solely on whether the base frequency
-  is known.
+  time. The trading day's last windows (the daily window and the intraday
+  windows of the block containing the close) do not wait for the next day:
+  they close before end-of-day settlement and are dispatched before
+  `on_after_trading`. Session splitting only gets trading-block boundaries
+  right — it does not make a window close immediately; immediate closing
+  depends solely on whether the base frequency is known. Example 14 passes
+  `run_backtest(freq="1min")`, so its windows close immediately.
 
 ## Limits
 
@@ -114,11 +123,19 @@ When a window closes depends on whether the **base data frequency**
 - Window bars are **never** used by the matching engine for fills — they are
   informational only; the strategy still needs to place orders from
   `on_bar` (or other base market data callbacks).
-- The CTP gateway's synthesized bars are stamped at the interval's start by
-  default; only enabling both `emit_ticks` and `emit_bars` yields an
-  end-of-interval stamp. Without both enabled, multi-timeframe aggregation
-  will be off by one bar due to the timestamp convention mismatch — enable
-  both `emit_ticks` and `emit_bars` when doing multi-timeframe with CTP.
+- Closed bars are always stamped at the interval end E and carry
+  `interval_start = S`, bucketed right-closed `(S, E]` (backtest tick
+  aggregation and bars synthesized by the CTP/klinedata gateways follow the
+  same rule), so multi-timeframe aggregation is never misaligned by the
+  timestamp convention.
+- Replay's `gateway_options={"freq": ...}` only declares the base frequency
+  (`self.freq` and immediate window closing); it does not fill
+  `interval_start` on replayed bars. Supply it yourself via
+  `Bar(..., interval_start=...)` if you need the interval start.
+- When one symbol is fed external bars of two periods at the same moment
+  (e.g. 1min and 5min), an order submitted on the 1min bar may be matched by
+  the same-moment 5min bar against its earlier interval. Feed only one base
+  period and aggregate higher periods with `subscribe_bars`.
 - At session end (backtest completion, or live/replay session termination),
   the engine flushes any still-open tail window and fires one callback for
   it; orders placed there have no further chance to fill in a backtest. If a
@@ -138,11 +155,7 @@ two series — plus a manual +15 hour timestamp shift to avoid colliding with
 the minute data's timestamps. Now:
 
 ```python
-self.subscribe_bars(
-    "1d",
-    callback=self.on_daily,
-    session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
-)
+self.subscribe_bars("1d", callback=self.on_daily)
 self.daily_sma = self.I(
     aq.SMA(self.ma_window), name="daily_sma", source="close", freq="1d"
 )
@@ -177,9 +190,10 @@ replayed = feed.replay(
     align="session",
     day_mode="trading",
     emit_partial=False,
-    session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
 )
 ```
+
+Prefer omitting `session_windows`: windows are then split by the symbol's session-table trading blocks, matching `subscribe_bars` bar for bar; hand-written `session_windows` use the previous implementation and are not aligned with engine windows.
 
 ### Current Minimal Delivery
 
@@ -302,7 +316,8 @@ class MyStrategy(Strategy):
   (e.g. the 11:30 one-minute bar closes the 11:30 window); otherwise it closes
   only when the next bar falling into a new window arrives.
 - `session_windows` hand-writes trading sessions that override the session
-  table, e.g. `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`; an end
+  table; usually not needed, since the default splits by the symbol's
+  session-table trading blocks. For example `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`; an end
   earlier than its start means the session crosses midnight.
 - `current(symbol)` peeks at the in-progress, not-yet-closed window snapshot
   for a symbol without triggering a callback — useful for intraday display.
