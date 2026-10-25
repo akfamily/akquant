@@ -19,14 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **破坏性：低层 `Engine` + `SimpleMarket` 不再隐含全天可交易**：中国时区按资产类型取默认时段表，需要全天可交易时调用 `engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})`；非中国时区默认仍是 `ALWAYS_OPEN`。
 - **破坏性：不带时区的 DataFrame 时间按 `timezone=` 本地化（原固定按上海）**：`catalog.read` 与 `FeedSlice.timezone` 同样生效；非中国时区回测若数据其实是北京时间，先 `tz_localize("Asia/Shanghai")`。
 - **破坏性：`BarAggregator` 封闭 bar 一律打区间终点戳并带 `interval_start`，分桶改为右闭 `(S, E]`**：`stamp_bar_at_interval_end=False` 报错（传 `True` 静默接受）；恰在整分的 tick 归以它结尾的那根，tick 输入回测的分钟 bar 可能因此变化。
-- **破坏性：`BarGenerator` 改为包装 Rust 窗口聚合器**：`interval="day"` 只支持 `window=1`（多日聚合用 `akquant.feed_adapter` 的 `resample()`）；“基础周期未知”告警改由 logger `akquant.data.window` 发出。
-- **日终结算从“次日首根 bar”挪到交易日收盘**：快照时间戳为收盘时刻，顺序为到期→利息/强平→T+1 解冻→Day 单过期→快照；夜盘归下一交易日，周一 15:00 结算后 21:00 起属周二。
-- **只有日期的数据（全部为本地 0 点）改写到该交易日收盘时刻**，区间为整个交易日；首日不再触发盘中定时器。
-- **数据在盘中结束时最后一天不结算**，权益曲线止于末根 bar，`on_after_trading` 也不触发。
+- **破坏性：`BarGenerator` 改为包装 Rust 窗口聚合器**：`interval="day"` 只支持 `window=1`（多日聚合改用数据适配器的 `.resample()` 预先聚合）；“基础周期未知”告警改由 logger `akquant.data.window` 发出。
+- **破坏性：回测与实盘都按真实时段撮合**（原回测默认全天按连续竞价撮合，只有传 `ChinaFuturesConfig` 时才按时段）：任何时段都接单，闭市、午休排队到下一可成交时段，集合竞价按竞价价统一撮合；期货不传 `sessions=` 默认 `CN_FUTURES_DAY`，夜盘 bar 判为闭市；日期落在非交易日的 bar 也判为闭市。恢复旧行为传 `sessions={"default": "ALWAYS_OPEN"}`。
+- **日终结算从“次日首根 bar”挪到交易日收盘**：快照时间戳为收盘时刻，顺序为收盘竞价收尾→到期→利息/强平→T+1 解冻→Day 单过期→快照；夜盘归下一交易日，周一 15:00 结算后 21:00 起属周二。
+- **只有日期的数据（全部为本地 0 点）改写到该交易日收盘时刻**（会话级收盘，多张时段表取最晚），区间为整个交易日；首日不再触发盘中定时器。
+- **数据在盘中结束时最后一天不结算**，权益曲线止于末根 bar，`on_after_trading` 也不触发（到期合约仍在收尾时补结算）。
 - **利息按两次结算之间的自然日天数计提（周五到周一记 3 天）**，`daily_interest` 字段含义改为“本次结算计提”。
 - **公司行动在除权日开日时处理**；落在非交易日的行动顺延到下一交易日。
 - **风控每日预算、日收益、Sharpe 等按交易日分组**（夜盘归下一交易日），不再按自然日。
-- **按真实时段撮合**：任何时段都接单，闭市、午休排队到下一可成交时段；开盘、收盘集合竞价按竞价价统一撮合；日期落在非交易日的 bar 判为闭市，其上的单顺延成交。
 - **开盘竞价单的成交时间记在首个连续竞价事件上**：成交价为竞价价（如 09:25 bar 的价格），成交时间为首根连续竞价 bar（A 股分钟线为 09:31）。
 - **Day 单在所属交易日收盘过期**：收盘后在非连续竞价时段（收盘竞价结束的 15:00 bar、`on_after_trading`、实盘收盘宽限期）下的单属下一交易日，不在当日过期。
 - **带区间的 bar 不撮合同一时刻、先于它处理的同品种单**（同刻 tick 或定时器下的单），留给下一事件，避免用到下单前的区间高低价；恰在整分的定时器单因此晚一根成交。
@@ -43,12 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **约 50 个示例与教材示例的数据改到交易日与交易时段**：原 25、33 号与 `pb_mock` 等示例的订单因落在闭市而永不成交，现已恢复；`strategies/07`、`strategies/09` 改为 0.95 仓位（满仓加佣金被拒）。
 
 ### Added
-- **`sessions=` / `trading_calendar=`**（`run_backtest`、`run_live`、`run_from_checkpoint`）：值为内置模板名（`aq.SessionResolver.templates()`）或自定义时段表 `[(start, end, session[, anchor]), ...]`，键按代码前缀最长匹配；期权跟随标的期货的时段表。
-- **策略接口**：`ctx.session` 报真实时段；`self.is_market_open()`、`self.session_of(symbol)`、`self.trading_day`；`ctx.recent_finalized_orders`；`Bar.interval_start`；`aq.SessionResolver`、`aq.WindowAggregator`；`Instrument.underlying_symbol` 只读属性。
+- **`sessions=` / `trading_calendar=`**（`run_backtest`、`run_live`、`run_from_checkpoint`）：值为内置模板名（`aq.SessionResolver.templates()`）或自定义时段表 `[(start, end, session[, anchor]), ...]`，键按代码前缀最长匹配；商品期权（`underlying_symbol` 为已登记期货、自身未配置前缀）跟随标的期货的时段表，其余期权用 `CN_OPTION`。
+- **策略接口**：`ctx.session` 报真实时段；`self.is_market_open()`、`self.session_of(symbol)`、`self.trading_day`；`ctx.is_trading_day()`、`ctx.next_trading_day()`、`ctx.recent_finalized_orders`；`Bar.interval_start`；`Engine.trading_day_at()`、`current_trading_day()`、`last_settled_trading_day()`；`BacktestResult.trading_day_ends`；`aq.SessionResolver`、`aq.WindowAggregator`；`Instrument.underlying_symbol` 只读属性。
 - **`run_backtest(freq=)` 可声明 bar 周期（含 `"1d"`）**：区间为 `(ts − 周期, ts]`；固定在非 0 点的日线未传 `freq` 时告警一次。
 - **`run_live(day_close_delay=60, timezone=)`**：实盘按交易日历登记日终结算，当日无行情也结算；`day_close_delay` 取 0～86400 秒。
 - **replay 生命周期**：锚定首个事件、数据到收盘时结算后收尾；`gateway_options["trading_day_hints"]`、`DataFeed.add_trading_day_hint()` 上报行情源交易日；CTP 上报 `TradingDay`。
-- **`BarAggregator.set_session_clamp(resolver, grace_ns)` / `clear_session_clamp()`**：开启或关闭收盘宽限钳制，默认关闭。
+- **`BarAggregator.flush_due(now_ns, grace_ns=2s)`、`late_tick_count()`、`set_session_clamp(resolver, grace_ns)` / `clear_session_clamp()`**：区间结束加宽限后仍无新 tick 时补发 bar、统计迟到 tick；开启或关闭收盘宽限钳制（默认关闭）。
 - **行情网关可选钩子 `configure_session_clamp(resolver, grace_ns)`**：自己用 `BarAggregator` 合成 bar 的第三方网关实现它即可让收盘后宽限内的 tick 计入当日收盘 bar，不实现则不钳制。
 - **未传 `trading_calendar` 时每次运行告警一次**：中国市场表与自定义表按工作日推算交易日，节假日会被当作交易日；全是 `ALWAYS_OPEN` 时不告警。
 - **`akquant.live` 公开导出 `StreamingIndicatorSink`**；`akquant.pyi` 补齐 `StrategyContext.recent_rejected_orders`。
@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **示例 06 止损价未按最小变动价位对齐**；示例 36 跟踪止损触发价、45 默认标的与合成数据不一致。
 
 ### Known Issues
-- **期货实盘 paper 不传 `sessions=` 时按 `CN_FUTURES_DAY`，夜盘行情判为闭市、订单排到日盘才撮合**：有夜盘的品种必须传 `sessions=`。
+- **期货不传 `sessions=` 时按 `CN_FUTURES_DAY`（回测与实盘 paper 都是），夜盘行情判为闭市、订单排到日盘才撮合**：有夜盘的品种必须传 `sessions=`（回测会对闭市时段行情告警一次）。
 - **长期运行的实盘必须传 `trading_calendar=`**：缺省工作日历会把节假日当交易日开日、结算，行情源修正只对尚未开日的日子有效；live_server 0.12.0 起 klinedata 会话自动下发沪深日历。
 - **期货交易日历不在本版范围**：qmf_market 只提供沪深日历，期货会话仍需自行传入。
 - **实盘收盘宽限期内下的 Day 单挂到下一交易日**（即使此时 `ctx.trading_day` 仍为当日）；`day_close_delay` 建议不小于 5 秒，否则不钳制、收盘 bar 可能晚于结算。
@@ -84,23 +84,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | 旧写法 | 新写法 |
 |---|---|
-| `TradingSession.CallAuction` | `OpeningAuction` / `ClosingAuction`（09:25～09:30 为 `AuctionHold`） |
-| `TradingSession.PreOpen` | `Closed`（开盘前）或 `OpeningAuction` |
-| `ChinaFuturesConfig(session_profile="CN_FUTURES_NIGHT_23")` | `run_backtest(sessions={"rb": "CN_FUTURES_NIGHT_23"})` |
-| `ChinaFuturesConfig(sessions=[ChinaFuturesSessionConfig(...)])` / `ChinaOptionsConfig(sessions=...)` | `sessions={"<前缀>": [("21:00", "23:00", "continuous"), ...]}` |
+| `TradingSession.CallAuction` | `OpeningAuction`（A 股 09:15～09:25）/ `ClosingAuction`（14:57～15:00） |
+| `TradingSession.PreOpen` | `AuctionHold`（A 股 09:25～09:30，接单不撮合）；开盘前的时刻仍为 `Closed` |
+| `ChinaFuturesConfig(session_profile="CN_FUTURES_NIGHT_23")` | `run_backtest(sessions={"<品种前缀>": "CN_FUTURES_NIGHT_23"})`（如 `"rb"`，每个夜盘品种一项） |
+| `ChinaFuturesConfig(sessions=[ChinaFuturesSessionConfig(...)])` / `ChinaOptionsConfig(sessions=...)` | `sessions={"<前缀>": [("21:00", "23:00", "continuous"), ...]}`：时刻为 HH:MM，时段名 `call_auction` 改写 `opening_auction`/`closing_auction`，`pre_open` 改写 `auction_hold` |
 | `ChinaFuturesConfig(enforce_sessions=False)` / `engine.set_force_session_continuous(True)` | `sessions={"default": "ALWAYS_OPEN"}` |
-| `engine.set_market_sessions(...)` | `engine.configure_sessions(sessions=..., trading_calendar=...)` |
+| `engine.set_market_sessions([("09:30:00", "11:30:00", TradingSession.Continuous), ...])` | `engine.configure_sessions(sessions={"default": [("09:30", "11:30", "continuous"), ...]})`：时刻写 HH:MM（不带秒），时段写字符串名 |
 | 低层 `Engine` + `SimpleMarket` 默认全天可交易 | `engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})` |
-| `enable_precise_day_boundary_hooks = True` | 删除（钩子总是精确触发） |
+| `enable_precise_day_boundary_hooks = ...`（True/False） | 删除（钩子总是精确触发） |
 | 非中国 `timezone=` 下 naive 时间按上海解释 | naive 时间按 `timezone=` 解释；北京时间数据先 `tz_localize("Asia/Shanghai")` |
 | `BarAggregator(..., stamp_bar_at_interval_end=False)` | 去掉该参数；bar 起点读 `bar.interval_start` |
-| `BarGenerator(interval="day", window=N)`（N>1） | `akquant.feed_adapter` 的 `resample()` |
+| `BarGenerator(interval="day", window=N)`（N>1） | 用数据适配器的 `.resample("2D")` 预先聚合（`akquant.feed_adapter`，离线预聚合，非流式） |
 | 日终快照在次日首根 bar、`on_after_trading` 在次日首 bar 前 | 快照在当日收盘；`on_after_trading` 在结算后（实盘收盘 + `day_close_delay`），其中下的单属下一交易日 |
-| 闭市/午休/集合竞价期间的单按连续竞价成交 | 排队到下一可成交时段；集合竞价期内按竞价价统一撮合 |
+| 回测默认全天按连续竞价撮合（闭市/午休/集合竞价期间也成交） | 排队到下一可成交时段，集合竞价期内按竞价价统一撮合；要恢复旧行为传 `sessions={"default": "ALWAYS_OPEN"}` |
 | `on_pre_open` 实盘不触发、`on_after_trading` 次日首 bar 前 | `on_pre_open` 首个时段前 1ns（实盘可触发）；`on_before_trading` 连续竞价开始 |
 | 实盘一律按连续竞价撮合 | 按真实时段；收盘后 `day_close_delay` 内的行情仍归当日 |
-| 期货实盘 paper 不传 `sessions`（夜盘照常撮合） | 夜盘品种传 `sessions={"rb": "CN_FUTURES_NIGHT_23"}` |
-| 实盘不传 `trading_calendar` | `run_live(trading_calendar=ak.tool_trade_date_hist_sina()["trade_date"])`；live_server 0.12.0 的 klinedata 会话自动下发 |
+| 期货回测/实盘 paper 不传 `sessions`（夜盘照常撮合） | 夜盘品种传 `sessions={"rb": "CN_FUTURES_NIGHT_23"}` |
+| 实盘不传 `trading_calendar` | `run_live(trading_calendar=ak.tool_trade_date_hist_sina()["trade_date"])`（`import akshare as ak`）；live_server 0.12.0 的 klinedata 会话自动下发 |
 
 ### 发版顺序
 
