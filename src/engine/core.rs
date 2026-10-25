@@ -562,6 +562,27 @@ impl Engine {
         Ok(())
     }
 
+    /// 缺省日历告警（每次运行一次，由 `run()` 开头在解析器构造后调用）：未传
+    /// `trading_calendar`、且在用时段表中有按工作日推算交易日的表（中国市场表或
+    /// 自定义表）时告警；全是 ALWAYS_OPEN 这类每天都开的表时不告警。行情源修正过的
+    /// 缺省日历（`calendar_overrides` 非空，含续跑恢复的）仍是缺省日历，照样告警。
+    /// 与闭市时段告警走同一 logger。
+    pub(crate) fn warn_if_default_calendar(&self) {
+        let Some(resolver) = self.session_resolver.as_ref() else {
+            return;
+        };
+        if self.session_config.trading_calendar.is_some()
+            || !resolver.uses_fallback_calendar()
+            || resolver.uses_all_days_fallback()
+        {
+            return;
+        }
+        log::warn!(
+            target: "akquant::pipeline::stages::data",
+            "未传 trading_calendar，按工作日推算交易日：节假日会被当作交易日（照常开日、结算并触发 on_pre_open / on_before_trading / on_after_trading 等钩子）。请传入交易所日历，如 trading_calendar=ak.tool_trade_date_hist_sina()[\"trade_date\"]（AKShare）；实盘经 live_server 0.12.0 起的 klinedata 会话会自动下发沪深交易日历"
+        );
+    }
+
     /// 行情事件的时段：bar 区间 `(interval_start, ts]`（无区间按 `ts` 前 1ns）落在
     /// 缓存的同一时段区间内时直接复用，否则查解析器并刷新缓存。
     pub(crate) fn event_session(

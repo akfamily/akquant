@@ -2833,3 +2833,152 @@ def test_live_replay_future_data_skips_close_wait_with_clear_warning(
     assert "replay 首个事件晚于当前时刻" in text, text
     assert "回放数据已结束" not in text, text
     assert elapsed < 4.0, elapsed
+
+
+# ---- 缺省交易日历告警（spec D3：按工作日推算时每次运行告警一次） ----
+
+_DEFAULT_CALENDAR_HINT = "未传 trading_calendar"
+
+
+def _default_calendar_warnings(caplog: pytest.LogCaptureFixture) -> List[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelname == "WARNING" and _DEFAULT_CALENDAR_HINT in r.getMessage()
+    ]
+
+
+def test_default_calendar_warns_once_per_backtest(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 股未传日历：多个交易日也只告警一次，文案说明后果并给出写法."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        run_backtest(
+            strategy=_Recorder,
+            data=_daily_frame(["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]),
+            symbols=["600000.SH"],
+            initial_cash=1e5,
+            show_progress=False,
+        )
+    msgs = _default_calendar_warnings(caplog)
+    assert len(msgs) == 1, msgs
+    m = msgs[0]
+    assert "按工作日推算交易日" in m and "节假日" in m, m
+    assert 'trading_calendar=ak.tool_trade_date_hist_sina()["trade_date"]' in m, m
+    assert "live_server" in m, m
+    # 与闭市告警同一通道（同一 logger）
+    names = {r.name for r in caplog.records if _DEFAULT_CALENDAR_HINT in r.getMessage()}
+    assert names == {"akquant.pipeline.stages.data"}, names
+
+
+def test_explicit_calendar_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """传了 trading_calendar：不告警."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        run_backtest(
+            strategy=_Recorder,
+            data=_daily_frame(["2024-01-02", "2024-01-03"]),
+            symbols=["600000.SH"],
+            initial_cash=1e5,
+            show_progress=False,
+            trading_calendar=["2024-01-02", "2024-01-03"],
+        )
+    assert _default_calendar_warnings(caplog) == []
+
+
+def test_always_open_timezone_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """非中国时区默认 ALWAYS_OPEN（每天都是交易日）：不告警."""
+    import logging
+
+    df = _daily_frame(["2024-01-02", "2024-01-03"], symbol="AAPL")
+    df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+    with caplog.at_level(logging.WARNING):
+        run_backtest(
+            strategy=_Recorder,
+            data=df,
+            symbols=["AAPL"],
+            initial_cash=1e5,
+            show_progress=False,
+            timezone="America/New_York",
+        )
+    assert _default_calendar_warnings(caplog) == []
+
+
+def test_custom_session_table_without_calendar_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """自定义时段表（按工作日推算）未传日历：告警一次."""
+    import logging
+
+    df = _daily_frame(["2024-01-02", "2024-01-03"], symbol="AAPL")
+    df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+    with caplog.at_level(logging.WARNING):
+        run_backtest(
+            strategy=_Recorder,
+            data=df,
+            symbols=["AAPL"],
+            initial_cash=1e5,
+            show_progress=False,
+            timezone="America/New_York",
+            sessions={"default": [("09:30", "16:00", "continuous")]},
+        )
+    assert len(_default_calendar_warnings(caplog)) == 1
+
+
+def test_resumed_run_with_calendar_overrides_still_warns_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """续跑（存档里有行情源修正量、无显式日历）：仍是缺省日历，告警一次."""
+    import logging
+
+    first = run_backtest(
+        strategy=_Recorder,
+        data=_daily_frame(["2024-01-02", "2024-01-03"]),
+        symbols=["600000.SH"],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    ckpt = tmp_path / "c.pkl"
+    save_checkpoint(first.engine, first.strategy, str(ckpt))  # type: ignore[arg-type]
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        run_from_checkpoint(
+            checkpoint_path=str(ckpt),
+            data=_daily_frame(["2024-01-04", "2024-01-05"]),
+            show_progress=False,
+        )
+    assert len(_default_calendar_warnings(caplog)) == 1
+
+
+def test_live_replay_default_calendar_warns_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Replay 实盘未传日历：告警一次."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        _run_live_replay(
+            monkeypatch,
+            _local_bars(["2024-01-02 10:00", "2024-01-03 10:00", "2024-01-04 10:00"]),
+            day_close_delay=0,
+        )
+    assert len(_default_calendar_warnings(caplog)) == 1
+
+
+def test_live_replay_explicit_calendar_does_not_warn(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Replay 实盘传了日历：不告警."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        _run_live_replay(
+            monkeypatch,
+            _local_bars(["2024-01-02 10:00", "2024-01-03 10:00"]),
+            trading_calendar=["2024-01-02", "2024-01-03"],
+            day_close_delay=0,
+        )
+    assert _default_calendar_warnings(caplog) == []
