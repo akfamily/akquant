@@ -68,7 +68,7 @@ rng = pd.date_range(
 Daily bars can be written in two ways:
 
 *   **Date only (local midnight)**: the recommended form. The engine rewrites it to the trading day's close (15:00 for A-shares), the bar interval covers the whole trading day, and no `freq` is needed. If the dates include non-trading days, a warning is logged once and those rows are assigned to the next trading day.
-*   **Fixed non-midnight time (e.g. 15:00)**: pass `freq="1d"`. Without it the engine does not know these are daily bars and classifies the session by "1ns before the timestamp" — 15:00 becomes 14:59:59.999…, so the bar is classified as the closing call auction (`ctx.session` and `is_market_open()` change accordingly) and the engine logs a warning once. Under the default fill policy (fill on the next bar) orders fill at the same time as with `freq`.
+*   **Fixed non-midnight time (e.g. 15:00)**: pass `freq="1d"`. Without it the engine does not know these are daily bars and classifies the session by "1ns before the timestamp" — 15:00 becomes 14:59:59.999…, so the bar is classified as the closing call auction (`ctx.session` and `is_market_open()` change accordingly) and the engine logs a warning once. Under the default fill policy (fill on the next bar) orders fill at the same time as with `freq`, but through the closing call auction: a market order fills at that bar's close instead of its open.
 
 ```python
 import pandas as pd
