@@ -732,7 +732,9 @@ class _FixedTimeDailyChecker:
     """检测打在固定非 0 点时刻、未声明 freq 的日线（一次运行只告警一次）.
 
     这类数据没有 bar 区间，按“时间戳前 1ns”判时段；时刻落在收盘集合竞价等非连续
-    竞价时段时，订单会排队到下一根 bar，成交整体后移。只告警，不推断不改写。
+    竞价时段时，这根 bar 被判为该时段（``ctx.session``、``is_market_open()`` 随之
+    变化），按该时段撮合：默认撮合下成交时点与传 ``freq="1d"`` 相同，但按收盘集合
+    竞价成交，市价单成交价为这根 bar 的收盘价而非开盘价。只告警，不推断不改写。
     """
 
     def __init__(
@@ -779,8 +781,9 @@ class _FixedTimeDailyChecker:
             return
         self._warned = True
         self._logger.warning(
-            "标的 %s 的数据看起来是打在 %s 的日线，但未传 freq：每根 bar 会按该时刻"
-            "所在时段（%s）撮合，订单要等到下一根 bar 才成交，成交整体后移。如为日线，"
+            "标的 %s 的数据看起来是打在 %s 的日线，但未传 freq：每根 bar 会被判为该时刻"
+            "所在时段（%s），ctx.session 与 is_market_open() 随之变化，并按该时段撮合"
+            "（收盘集合竞价时市价单按这根 bar 的收盘价成交，而非开盘价）。如为日线，"
             '请传 freq="1d"，让每根 bar 覆盖整个交易日（同类情况不再提示）',
             symbol,
             local[0].strftime("%H:%M"),
