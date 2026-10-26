@@ -29,7 +29,8 @@ pub struct DataProcessor {
     // (#329/#334): 纯 tick 时间片不据此拒单。
     slice_has_bar: bool,
     // 本次运行收到过 tick 的品种(tick 驱动标的)。tick 互不同刻, 同刻没有该品种的
-    // tick 不代表停牌, 其订单留待该品种下一个事件撮合, 不走停牌拒单。
+    // tick 不代表停牌: 本片没有它的任何 bar 时, 其订单留待该品种下一个事件撮合,
+    // 不走停牌拒单; 本片有它的零量 bar 时仍按 #334 拒单。
     tick_symbols: HashSet<String>,
     current_symbol_events: HashMap<String, Event>,
 }
@@ -125,9 +126,13 @@ impl DataProcessor {
                     // Keying off tradability aligns this terminal-state path with
                     // the matcher and generalizes the #329 "no bar at all" case.
                     && !self.tradable_symbols.contains(&order.symbol)
-                    // tick 驱动标的(本次运行收到过它的 tick)不按 bar 停牌语义拒单:
-                    // 留待该品种下一个事件撮合(与 GTC 挂单一致)。
-                    && !self.tick_symbols.contains(&order.symbol)
+                    // tick 驱动标的(本次运行收到过它的 tick)在本片**完全没有它的 bar**
+                    // 时不按 bar 停牌语义拒单: 留待该品种下一个事件撮合(与 GTC 挂单
+                    // 一致)。本片有它的零量 bar 是明确的停牌信号, 仍按 #334 拒单。
+                    // 走到这里说明本片没有它的 tick(tick 会登记 tradable_symbols),
+                    // 所以 seen_symbols 里有它只可能是因为本片有它的 bar。
+                    && !(self.tick_symbols.contains(&order.symbol)
+                        && !self.seen_symbols.contains(&order.symbol))
                     && effective_execution_policy_for_order(engine, order).bar_offset == 1
             })
             .cloned()

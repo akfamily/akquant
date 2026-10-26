@@ -630,6 +630,91 @@ def test_multi_symbol_staggered_ticks_next_open_orders_fill() -> None:
     assert fills == {"600000.SH": 10.05, "000001.SZ": 20.05}
 
 
+def _bar(ts: str, price: float, symbol: str, volume: float) -> Any:
+    return Bar(_ns(ts), price, price, price, price, volume, symbol)
+
+
+class _BuyOnZeroVolumeBar(Strategy):
+    """在指定品种的首根零量 bar（停牌占位）上下一张 NextOpen 市价单."""
+
+    target = "600000.SH"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done and bar.symbol == self.target and float(bar.volume) == 0:
+            self.done = True
+            self.buy(bar.symbol, 100)
+
+
+def test_dual_stream_symbol_zero_volume_bar_still_rejected_as_suspension() -> None:
+    """双流品种收到过 tick 后, 停牌日只有零量 bar: NextOpen 单仍按 #334 拒单.
+
+    tick 驱动豁免只针对“本时间片完全没有该品种 bar”; 本片有它的零量 bar
+    是明确的停牌信号, 不能因为该品种此前收到过 tick 就让订单一直挂着。
+    """
+    data: List[Any] = [
+        _tick("2024-01-02 10:00:30", 10.0),
+        _bar("2024-01-02 10:01", 10.0, "600000.SH", 1e5),
+        _bar("2024-01-02 10:01", 20.0, "000001.SZ", 1e5),
+    ]
+    for minute in ("10:01", "10:02", "10:03"):
+        data.append(_bar(f"2024-01-03 {minute}", 10.0, "600000.SH", 0.0))
+        data.append(_bar(f"2024-01-03 {minute}", 20.0, "000001.SZ", 1e5))
+    r = run_backtest(
+        strategy=_BuyOnZeroVolumeBar,
+        data=data,
+        symbols=["600000.SH", "000001.SZ"],
+        initial_cash=1e6,
+        show_progress=False,
+        trading_calendar=["2024-01-02", "2024-01-03"],
+    )
+    orders = r.orders_df
+    assert list(orders["status"].astype(str).str.lower()) == ["rejected"], orders[
+        ["symbol", "status", "reject_reason"]
+    ]
+    reason = str(orders["reject_reason"].iloc[0])
+    assert "not tradable (zero volume, suspension)" in reason, reason
+
+
+class _BuyTickSymbolOnOtherBar(Strategy):
+    """在另一品种的 bar 上给只走 tick 的品种下一张 NextOpen 市价单."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.done = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.done and bar.symbol == "000001.SZ":
+            self.done = True
+            self.buy("600000.SH", 100)
+
+
+def test_tick_symbol_without_bar_in_slice_not_rejected() -> None:
+    """只走 tick 的品种在本片没有任何 bar 时仍豁免: 留待其下一笔 tick 成交."""
+    data: List[Any] = [
+        _tick("2024-01-02 10:00:30", 10.0),
+        _bar("2024-01-02 10:01", 20.0, "000001.SZ", 1e5),
+        _bar("2024-01-02 10:02", 20.0, "000001.SZ", 1e5),
+        _tick("2024-01-02 10:02:30", 10.5),
+    ]
+    r = run_backtest(
+        strategy=_BuyTickSymbolOnOtherBar,
+        data=data,
+        symbols=["600000.SH", "000001.SZ"],
+        initial_cash=1e6,
+        show_progress=False,
+        trading_calendar=["2024-01-02"],
+    )
+    orders = r.orders_df
+    assert list(orders["status"].astype(str).str.lower()) == ["filled"], orders[
+        ["symbol", "status", "reject_reason"]
+    ]
+    assert round(float(orders["avg_price"].iloc[0]), 4) == 10.5
+
+
 def _opening_auction_ticks() -> List[Any]:
     return [
         _tick("2024-01-02 09:20:00", 9.8),
