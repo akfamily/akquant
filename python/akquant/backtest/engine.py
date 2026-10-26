@@ -472,14 +472,59 @@ def _filter_datetime_index_frame_by_runtime_window(
 _normalize_trading_calendar = normalize_trading_calendar
 
 
+_EPOCH_DATE = dt_module.date(1970, 1, 1)
+_UNITS_PER_DAY = {
+    "s": 86_400,
+    "ms": 86_400_000,
+    "us": 86_400_000_000,
+    "ns": 86_400_000_000_000,
+}
+
+
+def _local_wall_units(index: pd.DatetimeIndex) -> Tuple[np.ndarray, int]:
+    """本地挂钟时间的整数值与每日单位数：带时区的索引去掉时区，naive 按字面值."""
+    if index.tz is not None:
+        index = index.tz_localize(None)
+    values = np.asarray(index.to_numpy())
+    unit = np.datetime_data(values.dtype)[0]
+    return values.view(np.int64), _UNITS_PER_DAY[unit]
+
+
+def _is_local_midnight(ts: Any) -> bool:
+    """单个时间戳是否为其所在时区的本地 0 点；NaT 为 False."""
+    if ts is pd.NaT or ts is None:
+        return False
+    wall = ts.tz_localize(None) if ts.tzinfo is not None else ts
+    return bool(wall == wall.normalize())
+
+
 def _local_midnight_only(index: pd.DatetimeIndex) -> bool:
     """全部时间戳都是本地 0 点（只有日期的数据）.
 
     ``index`` 须已转到引擎时区；naive 索引按其字面值判断。含 NaT 时返回 False。
+    首元素不是 0 点即返回（日内与 15:00 日线的常见情形）；按本地挂钟整数取模判断，
+    不调用 ``normalize``（当日 0 点因夏令时不存在时它会报错）。
     """
-    if len(index) == 0 or index.hasnans:
+    if len(index) == 0 or not _is_local_midnight(index[0]) or index.hasnans:
         return False
-    return bool(((index - index.normalize()) == pd.Timedelta(0)).all())
+    wall, per_day = _local_wall_units(index)
+    return bool((wall % per_day == 0).all())
+
+
+def _aware_first_not_local_midnight(raw: Any, timezone: str) -> bool:
+    """已带时区的时间来源：首元素为 NaT 或不是引擎时区本地 0 点时为真.
+
+    为真时 ``_local_midnight_only`` 必为 False，可跳过整列转换。naive 与非 datetime
+    来源返回 False（交给原路径：naive 按引擎时区本地化，夏令时跳变点会前移）。
+    """
+    if not isinstance(getattr(raw, "dtype", None), pd.DatetimeTZDtype):
+        return False
+    if len(raw) == 0:
+        return False
+    first = raw.iloc[0] if isinstance(raw, pd.Series) else raw[0]
+    if first is pd.NaT:
+        return True
+    return not _is_local_midnight(pd.Timestamp(first).tz_convert(timezone))
 
 
 def _activate_session_symbols(
@@ -490,7 +535,7 @@ def _activate_session_symbols(
     *,
     underlying_of: Callable[[str], Optional[str]],
     known_underlyings: Optional[Dict[str, Optional[str]]] = None,
-) -> None:
+) -> Tuple[Any, ...]:
     """把将注册为合约的标的设为解析器的在用标的，并下发期权→标的映射.
 
     须与引擎 ``ensure_session_resolver`` 的在用集合（全部已登记合约）一致：只有日期
@@ -502,6 +547,8 @@ def _activate_session_symbols(
     ``known_underlyings`` 与 ``known_asset_types`` 对应（存档合约的标的），其余按
     ``underlying_of`` 解析。商品期权据此跟随标的期货的时段表，否则预检（固定时刻
     日线告警、只有日期数据的改写）会按 CN_OPTION 判断，与引擎不一致。
+
+    返回本次在用配置的签名（标的、资产类型与期权→标的映射），供收盘缓存作键。
     """
     known = known_asset_types or {}
     known_u = known_underlyings or {}
@@ -518,6 +565,10 @@ def _activate_session_symbols(
             underlyings[sym] = underlying
     resolver.set_option_underlyings(underlyings)
     resolver.set_active(pairs)
+    return (
+        tuple((sym, str(asset_type)) for sym, asset_type in pairs),
+        tuple(sorted(underlyings.items())),
+    )
 
 
 def _merge_saved_session_config(
@@ -700,17 +751,63 @@ def _date_only_close_ns(resolver: Any, day: dt_module.date, timezone: str) -> in
 
 
 class _DateOnlyRewriter:
-    """一次运行内只有日期数据的改写：会话级收盘时刻，遇非交易日日期告警一次."""
+    """一次运行内只有日期数据的改写：会话级收盘时刻，遇非交易日日期告警一次.
+
+    收盘时刻跨标的共享缓存：会话级收盘只取决于日期与解析器的在用配置（在用标的及
+    其时段表、期权→标的映射），缓存按 ``在用配置编号 → {日序号: 收盘}`` 存放。在用
+    配置须经 :meth:`activate` 设置：签名不同的配置分到不同编号，改了在用标的不会
+    命中旧值（签名可能含上千个标的，只在设置时哈希一次，查缓存用整数编号）。
+    """
 
     def __init__(self, resolver: Any, timezone: str, logger: Any) -> None:
-        """绑定解析器（须已 set_active）、引擎时区与告警用 logger."""
+        """绑定解析器、引擎时区与告警用 logger；在用标的经 :meth:`activate` 设置."""
         self.resolver = resolver
         self.timezone = timezone
         self._logger = logger
         self._warned = False
+        self._active_ids: Dict[Any, int] = {}
+        self._active_id = -1  # 未经 activate：解析器按构造时的在用配置
+        self._close_cache: Dict[int, Dict[int, int]] = {}
+
+    def activate(
+        self,
+        symbols: Iterable[str],
+        asset_type_of: Callable[[str], Any],
+        known_asset_types: Optional[Dict[str, Any]] = None,
+        *,
+        underlying_of: Callable[[str], Optional[str]],
+        known_underlyings: Optional[Dict[str, Optional[str]]] = None,
+    ) -> None:
+        """设置解析器在用标的（同 ``_activate_session_symbols``）并更新缓存键."""
+        signature = _activate_session_symbols(
+            self.resolver,
+            symbols,
+            asset_type_of,
+            known_asset_types,
+            underlying_of=underlying_of,
+            known_underlyings=known_underlyings,
+        )
+        self._active_id = self._active_ids.setdefault(signature, len(self._active_ids))
 
     def close_ns(self, day: dt_module.date) -> int:
         """``day`` 的会话级收盘（UTC 纳秒）；``day`` 不是交易日时首次告警."""
+        return self._close_by_day_number((day - _EPOCH_DATE).days, day)
+
+    def close_ns_for_day_numbers(self, day_numbers: Sequence[int]) -> np.ndarray:
+        """按日序号（距 1970-01-01 的天数）批量求会话级收盘，顺序即求值顺序."""
+        return np.array(
+            [self._close_by_day_number(int(n)) for n in day_numbers], dtype=np.int64
+        )
+
+    def _close_by_day_number(
+        self, number: int, day: Optional[dt_module.date] = None
+    ) -> int:
+        cache = self._close_cache.setdefault(self._active_id, {})
+        cached = cache.get(number)
+        if cached is not None:
+            return cached
+        if day is None:
+            day = _EPOCH_DATE + dt_module.timedelta(days=number)
         if not self._warned and not self.resolver.is_session_day(day):
             self._warned = True
             self._logger.warning(
@@ -719,7 +816,9 @@ class _DateOnlyRewriter:
                 "（同类情况不再提示）",
                 day.isoformat(),
             )
-        return _date_only_close_ns(self.resolver, day, self.timezone)
+        value = _date_only_close_ns(self.resolver, day, self.timezone)
+        cache[number] = value
+        return value
 
 
 _INTERVAL_UNKNOWN = np.iinfo(np.int64).min
@@ -889,13 +988,11 @@ def _rewrite_date_only_utc(
     local = utc_times.tz_convert(rewriter.timezone)
     if not _local_midnight_only(local):
         return None
-    cache: Dict[dt_module.date, int] = {}
-    new_ns: List[int] = []
-    for day in local.date:
-        if day not in cache:
-            cache[day] = rewriter.close_ns(day)
-        new_ns.append(cache[day])
-    return pd.DatetimeIndex(pd.to_datetime(new_ns, unit="ns", utc=True))
+    wall, per_day = _local_wall_units(local)
+    # 按首次出现顺序去重求值（非交易日告警的日期与逐行求值时相同），再按行回填
+    codes, day_numbers = pd.factorize(wall // per_day, sort=False)
+    closes = rewriter.close_ns_for_day_numbers(day_numbers.tolist())
+    return pd.DatetimeIndex(pd.to_datetime(closes[codes], unit="ns", utc=True))
 
 
 def _frame_time_source(df: pd.DataFrame) -> Optional[Tuple[Optional[str], Any]]:
@@ -950,6 +1047,8 @@ def _rewrite_date_only_frame(
     if source is None:
         return df, False
     source_col, raw = source
+    if _aware_first_not_local_midnight(raw, rewriter.timezone):
+        return df, False
     new_utc = _rewrite_date_only_utc(_to_utc_index(raw, rewriter.timezone), rewriter)
     if new_utc is None:
         return df, False
@@ -973,9 +1072,12 @@ def _rewrite_date_only_multi_symbol_frame(
     source_col, raw = source
     utc = _to_utc_index(raw, rewriter.timezone)
     merged = utc.tz_localize(None).to_numpy(copy=True)
-    symbols_arr = df["symbol"].astype(str).to_numpy()
-    for sym in pd.unique(symbols_arr):
-        positions = (symbols_arr == sym).nonzero()[0]
+    # 按标的分组的行位置（首次出现顺序、组内升序）；逐标的整列比较是 O(行数×标的数)
+    codes, uniques = pd.factorize(df["symbol"].astype(str).to_numpy(), sort=False)
+    order = np.argsort(codes, kind="stable")
+    ends = np.cumsum(np.bincount(codes, minlength=len(uniques)))
+    for k in range(len(uniques)):
+        positions = order[(ends[k - 1] if k else 0) : ends[k]]
         new_utc = _rewrite_date_only_utc(utc[positions], rewriter)
         if new_utc is None:
             continue
@@ -1070,15 +1172,13 @@ def rewrite_date_only_bars_for_session(
         str(inst.symbol): getattr(inst, "underlying_symbol", None)
         for inst in instruments
     }
-    _activate_session_symbols(
-        resolver,
+    rewriter = _DateOnlyRewriter(resolver, timezone, logger)
+    rewriter.activate(
         asset_types,
         lambda sym: asset_types.get(sym),
         underlying_of=lambda sym: underlyings.get(sym),
     )
-    return _rewrite_date_only_bars(
-        bars, _DateOnlyRewriter(resolver, timezone, logger), None
-    )
+    return _rewrite_date_only_bars(bars, rewriter, None)
 
 
 def _build_session_underlying_of(
@@ -4063,8 +4163,7 @@ def run_backtest(
                     len(leaked_adapter_symbols),
                     ", ".join(sorted(leaked_adapter_symbols)),
                 )
-            _activate_session_symbols(
-                session_resolver,
+            date_only_rewriter.activate(
                 [*symbols, *adapter_data_map.keys()],
                 session_asset_type_of,
                 underlying_of=session_underlying_of,
@@ -4167,8 +4266,7 @@ def run_backtest(
                 if not df.empty:
                     detected_symbols = [str(s) for s in df["symbol"].unique().tolist()]
                     # 在用标的与下面最终登记为合约的 symbols 一致
-                    _activate_session_symbols(
-                        session_resolver,
+                    date_only_rewriter.activate(
                         detected_symbols
                         if not symbols or symbols == ["BENCHMARK"]
                         else [*symbols, *detected_symbols],
@@ -4216,8 +4314,7 @@ def run_backtest(
                         target_symbol,
                         ", ".join(COLUMN_ALIASES["symbol"]),
                     )
-                _activate_session_symbols(
-                    session_resolver,
+                date_only_rewriter.activate(
                     symbols if target_symbol in symbols else [target_symbol],
                     session_asset_type_of,
                     underlying_of=session_underlying_of,
@@ -4243,8 +4340,7 @@ def run_backtest(
             # If explicit symbols are provided (i.e., not just the default "BENCHMARK"),
             # we filter the data dictionary to only include requested symbols.
             filter_symbols = "BENCHMARK" not in symbols
-            _activate_session_symbols(
-                session_resolver,
+            date_only_rewriter.activate(
                 [
                     *symbols,
                     *(s for s in data if not (filter_symbols and s not in symbols)),
@@ -4335,8 +4431,7 @@ def run_backtest(
                 for b in data:
                     if b.symbol not in symbols:  # type: ignore[union-attr]
                         symbols.append(b.symbol)  # type: ignore[union-attr]
-                _activate_session_symbols(
-                    session_resolver,
+                date_only_rewriter.activate(
                     symbols,
                     session_asset_type_of,
                     underlying_of=session_underlying_of,
@@ -4389,8 +4484,7 @@ def run_backtest(
         # start_time / end_time already resolved above
 
         loaded_count = 0
-        _activate_session_symbols(
-            session_resolver,
+        date_only_rewriter.activate(
             symbols,
             session_asset_type_of,
             underlying_of=session_underlying_of,
@@ -5915,8 +6009,7 @@ def run_from_checkpoint(
         # 与续跑登记的合约一致: 存档已有合约 + 本次数据与配置里的标的
         fresh = [*(str(s) for s in data_symbols), *resume_extra_symbols]
         fresh_set = set(fresh)
-        _activate_session_symbols(
-            session_resolver,
+        date_only_rewriter.activate(
             [*saved_session_asset_types, *fresh],
             session_asset_type_of,
             {k: v for k, v in saved_session_asset_types.items() if k not in fresh_set},
