@@ -26,8 +26,8 @@ jobs:
   check-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
       - name: Verify release metadata
@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     if: "!(startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -56,13 +56,13 @@ jobs:
       matrix:
         target: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
       # 缓存 cargo registry 到宿主机，后面挂载进 Docker 容器
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index/
@@ -86,7 +86,7 @@ jobs:
           docker-options: -v /home/runner/.cargo/registry:/root/.cargo/registry -v /home/runner/.cargo/git:/root/.cargo/git
       - name: Upload wheels
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-${{ matrix.target }}
           path: dist
@@ -96,12 +96,12 @@ jobs:
     needs: check-release
     if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index/
@@ -124,7 +124,7 @@ jobs:
           docker-options: -v /home/runner/.cargo/registry:/root/.cargo/registry -v /home/runner/.cargo/git:/root/.cargo/git
       - name: Upload wheels
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-musllinux-aarch64
           path: dist
@@ -136,8 +136,8 @@ jobs:
       matrix:
         target: [x64]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         with:
           python-version: '3.13'
@@ -158,7 +158,7 @@ jobs:
           sccache: 'true'
       - name: Upload wheels
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-${{ matrix.target }}
           path: dist
@@ -170,8 +170,8 @@ jobs:
       matrix:
         target: [aarch64]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         with:
           python-version: '3.13'
@@ -191,7 +191,7 @@ jobs:
           sccache: 'true'
       - name: Upload wheels
         if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-macos-${{ matrix.target }}
           path: dist
@@ -201,14 +201,14 @@ jobs:
     needs: check-release
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
       - name: Upload sdist
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-sdist
           path: dist
@@ -226,11 +226,11 @@ jobs:
       id-token: write  # 向 PyPI 换取临时上传令牌（OIDC）
       contents: write  # 创建 GitHub Release
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheels-*
           path: dist
@@ -258,7 +258,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Fast-forward dev to main
