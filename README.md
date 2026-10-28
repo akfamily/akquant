@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="AKQuant" width="400">
+  <img src="https://raw.githubusercontent.com/akfamily/akquant/main/assets/logo.svg" alt="AKQuant" width="400">
 </p>
 
 <p align="center">
@@ -269,19 +269,19 @@ executions_by_strategy = result.executions_by_strategy() # 按策略归属聚合
 ```
 
 <p align="center">
-  <img src="assets/dashboard_preview.png" alt="Strategy Dashboard" width="800">
+  <img src="https://raw.githubusercontent.com/akfamily/akquant/main/assets/dashboard_preview.png" alt="Strategy Dashboard" width="800">
   <br>
   👉 <a href="https://akquant.akfamily.xyz/report_demo/">点击查看交互式报表示例 (Interactive Demo)</a>
 </p>
 
 ## 文档索引
 
-*   📖 **[核心特性与架构](docs/zh/index.md#核心特性)**: 了解 AKQuant 的设计理念与性能优势。
-*   🛠️ **[安装指南](docs/zh/start/installation.md)**: 详细的安装步骤（含源码编译）。
-*   🚀 **[快速入门](docs/zh/start/quickstart.md)**: 更多示例与基础用法。
-*   🤖 **[机器学习指南](docs/zh/advanced/ml.md)**: 如何使用内置的 ML 框架进行滚动训练。
-*   📚 **[API 参考](docs/zh/reference/api.md)**: 详细的类与函数文档。
-*   💻 **[贡献指南](CONTRIBUTING.md)**: 如何参与项目开发。
+*   📖 **[核心特性与架构](https://akquant.akfamily.xyz/)**: 了解 AKQuant 的设计理念与性能优势。
+*   🛠️ **[安装指南](https://akquant.akfamily.xyz/start/installation/)**: 详细的安装步骤（含源码编译）。
+*   🚀 **[快速入门](https://akquant.akfamily.xyz/start/quickstart/)**: 更多示例与基础用法。
+*   🤖 **[机器学习指南](https://akquant.akfamily.xyz/advanced/ml/)**: 如何使用内置的 ML 框架进行滚动训练。
+*   📚 **[API 参考](https://akquant.akfamily.xyz/reference/api/)**: 详细的类与函数文档。
+*   💻 **[贡献指南](https://github.com/akfamily/akquant/blob/main/CONTRIBUTING.md)**: 如何参与项目开发。
 
 ## 🧪 测试与质量保证
 
