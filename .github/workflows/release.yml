@@ -248,3 +248,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file release-notes.md
+
+  # 发版 PR 用合并提交合入 main 后，把 dev 快进到 main，保持两条长期分支同源。
+  # 只快进不强推：合入后 dev 又有新提交时跳过并告警，不会覆盖。
+  # GITHUB_TOKEN 的推送不会再触发工作流，不会循环。
+  sync-dev:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fast-forward dev to main
+        run: |
+          git fetch origin dev
+          if git merge-base --is-ancestor origin/dev HEAD; then
+            git push origin HEAD:refs/heads/dev
+          else
+            echo "::warning::dev 上有 main 之外的新提交，无法快进，请手动 git merge origin/main"
+          fi
