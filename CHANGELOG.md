@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.73] - 2026-10-28
+
+仅文档与发布流程变更，无代码改动，行为与 0.3.72 完全一致；下游无需为此升级。
+
+### Fixed
+- **PyPI 项目页的 logo、报表截图与文档链接失效**：README 用的是仓库内相对路径，PyPI 无法解析；改为绝对地址（图片指向 GitHub 原始文件，文档链接指向文档站）。
+
+### Changed
+- 发布流程：构建前校验 tag、`pyproject.toml`、`Cargo.toml`、`Cargo.lock`、`CHANGELOG.md` 版本一致，发布后自动创建 GitHub Release（正文取自本文件）；发布 job 绑定 `pypi` 环境走 Trusted Publishing；预热 main 编译缓存，发布耗时约减半。
+
 ## [0.3.72] - 2026-10-25
 
 > **规则版本 2.0.0：交易时段、交易日与 bar 区间重构，含破坏性变更，升级前请对照下方迁移表**。
