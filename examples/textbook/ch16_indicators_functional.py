@@ -46,7 +46,7 @@ from akquant import talib as ta
 def generate_mock_data(length: int = 500) -> pd.DataFrame:
     """生成带趋势的模拟 OHLCV 数据，用于无网络环境下的本地演示."""
     np.random.seed(42)
-    dates = pd.date_range(start="2024-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2024-01-02", periods=length, freq="B")
 
     trend = np.linspace(100, 150, length)
     noise = np.cumsum(np.random.randn(length) * 0.5)

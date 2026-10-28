@@ -3,13 +3,14 @@
 This chapter is currently maintained in Chinese first.
 
 - Chinese chapter: [第 15 章：实盘交易系统与运维](../../zh/textbook/15_live_trading.md)
+- Replay note: `broker="replay"` does not cover timer semantics, except the trading-day lifecycle, which is anchored to the first replayed event (matching a backtest); when data reaches the close the session ends after that day's settlement. Use `gateway_options["trading_day_hints"]` to simulate feed-reported trading days. live_server's default replay session fires `on_pre_open` at 09:14:59.
 - Textbook home: [Chinese textbook index](../../zh/textbook/index.md)
 - Live execution semantics note:
   - CTP supports `execution_semantics_mode` with `strict` (default) and `compatible`.
   - In `strict`, terminal order states are confirmed by `OnRtnOrder` callbacks.
 - Practice links:
   - Primary example: [examples/textbook/ch15_live_trading.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading.py)
-  - Extended example: [examples/textbook/ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py)
+  - Extended example: [examples/textbook/ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py) (its synthetic 1-minute bars start at 09:31 Beijing time on 2024-01-02, inside A-share continuous trading, so no closed-session warnings)
   - Supplementary example: [examples/44_strategy_source_loader_demo.py](https://github.com/akfamily/akquant/blob/main/examples/44_strategy_source_loader_demo.py)
   - Functional twin examples: [examples/textbook/ch15_live_trading_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading_functional.py), [examples/textbook/ch15_strategy_loader_functional.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader_functional.py)
   - Guide: [Live Functional Quickstart Guide](../advanced/live_functional_quickstart.md)

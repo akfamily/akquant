@@ -16,7 +16,7 @@ from akquant import Bar, Strategy
 
 def build_data(n: int = 520) -> pd.DataFrame:
     """Build synthetic data for visible live web animation."""
-    ts = pd.date_range("2021-01-01", periods=n, freq="D")
+    ts = pd.bdate_range("2021-01-04", periods=n)
     close = [
         100.0 + 0.03 * i + 3.2 * math.sin(i / 10.0) + 1.8 * math.sin(i / 3.4)
         for i in range(n)

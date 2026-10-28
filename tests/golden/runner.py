@@ -26,8 +26,10 @@ from akquant.backtest.result import BacktestResult
 sys.path.append(str(Path(__file__).parent / "strategies"))
 
 from futures_margin import FutureMarginStrategy  # noqa: E402
+from futures_night_weekend import FuturesNightWeekendStrategy  # noqa: E402
 from option_basic import OptionBasicStrategy  # noqa: E402
 from order_cancel import OrderCancelStrategy  # noqa: E402
+from stock_minute_auction import StockMinuteAuctionStrategy  # noqa: E402
 from stock_t1 import StockT1Strategy  # noqa: E402
 
 BASE_DIR = Path(__file__).parent
@@ -44,6 +46,35 @@ TOLERANCE = {
     "metrics_abs_diff": 1e-4,  # Generic tolerance
     "metrics_pct_diff": 0.01,  # 1% relative
 }
+
+
+# 规则 2.0.0 新增的两个分钟线时段场景(数据见 gen_data.py 同名函数)。
+STOCK_MINUTE_AUCTION_CONFIG: Dict[str, Any] = {
+    "t_plus_one": True,
+    "lot_size": 100,
+    "commission_rate": 0.0003,
+    "min_commission": 5.0,
+    "stamp_tax_rate": 0.001,
+    "transfer_fee_rate": 0.00002,
+    "run_kwargs": {"freq": "1min"},
+}
+
+
+def futures_night_weekend_config() -> Dict[str, Any]:
+    """Config for the rb night-session weekend scenario."""
+    rb_config = InstrumentConfig(
+        symbol="rb2405",
+        asset_type="FUTURES",
+        multiplier=10.0,
+        margin_ratio=0.1,
+        tick_size=1.0,
+    )
+    return {
+        "initial_cash": 100000.0,
+        "instruments_config": [rb_config],
+        "commission_rate": 0.0001,
+        "run_kwargs": {"freq": "1min", "sessions": {"rb": "CN_FUTURES_NIGHT_23"}},
+    }
 
 
 def get_file_hash(path: Path) -> str:
@@ -96,12 +127,26 @@ def save_result(result: BacktestResult, out_dir: Path) -> None:
         "end_market_value": result.metrics.end_market_value,
     }
 
+    # 交易日与收盘（日终结算）时刻: 锁住夜盘归属与结算时点。
+    trading_day_ends = [
+        {
+            "trading_day": day.isoformat(),
+            "close_ns": end_ns,
+            "close_local": pd.Timestamp(end_ns, tz="Asia/Shanghai").isoformat(),
+        }
+        for day, end_ns in result.trading_day_ends
+    ]
+    with open(out_dir / "trading_day_ends.json", "w") as f:
+        json.dump(trading_day_ends, f, indent=2)
+        f.write("\n")  # 末尾换行: 与 pre-commit end-of-file-fixer 一致
+
     # Add metadata
     metrics["engine_rule_version"] = getattr(aq, "__engine_rule_version__", "unknown")
     metrics["akquant_version"] = aq.__version__
 
     with open(out_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
+        f.write("\n")  # 末尾换行: 与 pre-commit end-of-file-fixer 一致
 
 
 def compare_results(baseline_dir: Path, current_dir: Path) -> List[str]:
@@ -207,7 +252,91 @@ def compare_results(baseline_dir: Path, current_dir: Path) -> List[str]:
     # This is what pins cancel/reject semantics — aggregates alone cannot.
     errors.extend(_compare_order_statuses(baseline_dir, current_dir))
 
+    # 5. Compare Order Details (fill price / fill time / TIF)
+    # 净值余弦与汇总指标对"同一笔单换了撮合时点"不敏感(如收盘竞价成交改成午休后
+    # 13:01 连续竞价成交, 价差只有几分钱); 逐笔比对下单/成交时刻与成交均价才能
+    # 锁住集合竞价、Day 单过期、夜盘归属这类时段语义。
+    errors.extend(_compare_order_details(baseline_dir, current_dir))
+
+    # 6. Compare Trading Day Ends (trading days and their close/settlement time)
+    errors.extend(_compare_trading_day_ends(baseline_dir, current_dir))
+
     return errors
+
+
+# 逐笔比对的订单列; 订单 UUID 每次随机, 按下单时刻等确定性字段排序后比对。
+ORDER_DETAIL_COLUMNS = [
+    "created_at",
+    "updated_at",
+    "side",
+    "order_type",
+    "quantity",
+    "filled_quantity",
+    "limit_price",
+    "avg_price",
+    "commission",
+    "status",
+    "time_in_force",
+]
+ORDER_SORT_COLUMNS = ["created_at", "side", "order_type", "quantity", "limit_price"]
+
+
+def _order_details(orders_path: Path) -> List[Dict[str, Any]]:
+    """Return deterministic order rows for one results dir (empty if absent)."""
+    if not orders_path.exists():
+        return []
+    orders = pd.read_parquet(orders_path)
+    columns = [c for c in ORDER_DETAIL_COLUMNS if c in orders.columns]
+    sort_columns = [c for c in ORDER_SORT_COLUMNS if c in orders.columns]
+    orders = orders.sort_values(sort_columns, na_position="last", kind="stable")
+    return [
+        {key: row[key] for key in columns}
+        for row in orders[columns].to_dict(orient="records")
+    ]
+
+
+def _detail_value_equal(base: Any, curr: Any) -> bool:
+    """Compare one order field: floats within 1e-9 (NaN equals NaN)."""
+    if isinstance(base, float) and isinstance(curr, float):
+        if np.isnan(base) and np.isnan(curr):
+            return True
+        return bool(abs(base - curr) <= 1e-9)
+    return str(base) == str(curr)
+
+
+def _compare_order_details(baseline_dir: Path, current_dir: Path) -> List[str]:
+    """Compare per-order fields (times, prices, status) between runs."""
+    base_rows = _order_details(baseline_dir / "orders.parquet")
+    curr_rows = _order_details(current_dir / "orders.parquet")
+    if len(base_rows) != len(curr_rows):
+        return [f"Order Count Mismatch: Base {len(base_rows)} vs Curr {len(curr_rows)}"]
+    errors: List[str] = []
+    for index, (base_row, curr_row) in enumerate(zip(base_rows, curr_rows)):
+        for key, base_value in base_row.items():
+            curr_value = curr_row.get(key)
+            if not _detail_value_equal(base_value, curr_value):
+                errors.append(
+                    f"Order[{index}] {key} Mismatch: Base {base_value} "
+                    f"vs Curr {curr_value}"
+                )
+    return errors
+
+
+def _compare_trading_day_ends(baseline_dir: Path, current_dir: Path) -> List[str]:
+    """Compare trading days and close times (skipped if baseline lacks the file)."""
+    base_path = baseline_dir / "trading_day_ends.json"
+    curr_path = current_dir / "trading_day_ends.json"
+    if not base_path.exists():
+        return []
+    if not curr_path.exists():
+        return ["Trading Day Ends Missing In Current"]
+    with open(base_path) as f:
+        base_ends = [(e["trading_day"], e["close_ns"]) for e in json.load(f)]
+    with open(curr_path) as f:
+        curr_ends = [(e["trading_day"], e["close_ns"]) for e in json.load(f)]
+    if base_ends == curr_ends:
+        return []
+    return [f"Trading Day Ends Mismatch: Base {base_ends} vs Curr {curr_ends}"]
 
 
 def _order_status_counts(orders_path: Path) -> Dict[str, int]:
@@ -288,6 +417,7 @@ def run_test(
             min_commission=config.get("min_commission", 0.0),
             stamp_tax_rate=config.get("stamp_tax_rate", 0.0),
             transfer_fee_rate=config.get("transfer_fee_rate", 0.0),
+            **config.get("run_kwargs", {}),
         )
     except Exception as e:
         print(f"Backtest Failed: {e}")
@@ -352,6 +482,7 @@ def run_stream_consistency_test(
         "stamp_tax_rate": config.get("stamp_tax_rate", 0.0),
         "transfer_fee_rate": config.get("transfer_fee_rate", 0.0),
         "show_progress": False,
+        **config.get("run_kwargs", {}),
     }
 
     normal_result = run_backtest(**run_kwargs)
@@ -485,6 +616,23 @@ def run_stream_consistency_suite() -> List[str]:
     )
     failures.extend(cancel_errors)
 
+    failures.extend(
+        run_stream_consistency_test(
+            "stock_minute_auction",
+            StockMinuteAuctionStrategy,
+            "stock_minute_auction.parquet",
+            STOCK_MINUTE_AUCTION_CONFIG,
+        )
+    )
+    failures.extend(
+        run_stream_consistency_test(
+            "futures_night_weekend",
+            FuturesNightWeekendStrategy,
+            "futures_night_weekend.parquet",
+            futures_night_weekend_config(),
+        )
+    )
+
     return failures
 
 
@@ -593,6 +741,34 @@ def main(generate_baseline: bool = False) -> None:
     )
     if errs:
         failures.append("order_cancel")
+
+    # 5. A-share 1-minute auction test (rule 2.0.0)
+    # 600000.SH two days: day-1 continuous buy + Day limit order expiring at the
+    # close; day-2 09:20 timer buy filled at the 09:25 opening-auction price and
+    # 14:58 sell filled at the 15:00 closing-auction price.
+    errs = run_test(
+        "stock_minute_auction",
+        StockMinuteAuctionStrategy,
+        "stock_minute_auction.parquet",
+        STOCK_MINUTE_AUCTION_CONFIG,
+        generate_baseline,
+    )
+    if errs:
+        failures.append("stock_minute_auction")
+
+    # 6. Futures night session across the weekend (rule 2.0.0)
+    # rb with CN_FUTURES_NIGHT_23: Friday night belongs to Monday; open on the
+    # Friday night session, close on the Monday day session; settlements at
+    # Friday 15:00 and Monday 15:00.
+    errs = run_test(
+        "futures_night_weekend",
+        FuturesNightWeekendStrategy,
+        "futures_night_weekend.parquet",
+        futures_night_weekend_config(),
+        generate_baseline,
+    )
+    if errs:
+        failures.append("futures_night_weekend")
 
     if failures:
         print(f"\nGolden Suite FAILED: {failures}")

@@ -129,7 +129,7 @@ Many users are confused the first time they see a local market timestamp in a lo
    - `self.to_local_time(...)`
    - `self.format_time(...)`
    - Readable log prefixes and strategy-facing helpers convert UTC into the configured local timezone when needed.
-   - The same `timezone` also defines the "daily" boundary used by performance statistics such as `daily_returns`, volatility, Sharpe / Sortino / VaR / CVaR, so those metrics follow the configured local calendar day rather than hard-cutting on UTC midnight.
+   - The same `timezone` also defines the "daily" boundary used by performance statistics such as `daily_returns`, volatility, Sharpe / Sortino / VaR / CVaR, so those metrics are aggregated by **trading day** in that timezone (night sessions belong to the next trading day) rather than hard-cutting on UTC midnight.
 
 For example, a Beijing market time of `2023-01-01 09:31:00+08:00` is the same instant as `2023-01-01T01:31:00Z` in UTC. So in practice:
 

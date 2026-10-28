@@ -142,6 +142,7 @@ mod tests {
             execution_policy_core: ExecutionPolicyCore::default(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            ignore_volume: false,
             bar_index: 0,
             last_price: None,
         }
@@ -163,6 +164,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
@@ -208,6 +210,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
@@ -274,6 +277,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
@@ -315,6 +319,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);
@@ -343,6 +348,7 @@ mod tests {
             volume: dec!(1000),
             extra: Default::default(),
             freq: None,
+            interval_start: None,
         };
         let event = Event::Bar(bar);
         let ctx = create_context(&event, &instrument);

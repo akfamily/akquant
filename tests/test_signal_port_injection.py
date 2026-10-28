@@ -13,9 +13,9 @@
    过程可能只有几十毫秒, 任何 `time.sleep` 都赶不上。这里用
    `threading.Event` 让注入线程等 `on_bar` 放行, 与会话快慢无关。
 
-2. **bar 用当前墙钟时间戳, 不用历史日期**。live 引擎按墙钟判定 timer 是否到期,
-   若 bar 落在历史(如 2024-01), 框架 timer 全部"早已到期", 时序语义错乱
-   (`replay` 网关文档亦声明其 timer 行为不作保证)。
+2. **bar 用固定的工作日盘中时刻, 不用墙钟当前时刻**。实盘与回测按真实时段撮合,
+   墙钟时刻在夜间/周末落在闭市, 注入的委托不会成交, 结果随运行时刻变化。
+   会话同时传入覆盖该日的 ``trading_calendar``。
 
 已实测确认**不是**问题的方向(留档以免重复排查): daemon 线程在 live 会话期间
 不存在 GIL 饥饿 —— 探针线程以 0.05s 周期运行 2 秒, 最大间隔 0.063s。
@@ -64,10 +64,17 @@ def _bar(ts: int, close: float = BAR_CLOSE) -> Bar:
     )
 
 
+# 固定的工作日盘中时刻与覆盖它的交易日历(见模块 docstring 第 2 条)。
+_SESSION_START = pd.Timestamp("2024-01-02 10:00", tz="Asia/Shanghai")
+_TRADING_CALENDAR = ["2023-12-29", "2024-01-02", "2024-01-03"]
+
+
 def _bars(count: int = 6) -> List[Bar]:
-    """当前墙钟时间戳起的连续 bar(见模块 docstring 第 2 条)."""
-    now = pd.Timestamp.now(tz="Asia/Shanghai")
-    return [_bar(int((now + pd.Timedelta(seconds=i)).value)) for i in range(count)]
+    """固定盘中时刻起的逐秒 bar(见模块 docstring 第 2 条)."""
+    return [
+        _bar(int((_SESSION_START + pd.Timedelta(seconds=i)).value))
+        for i in range(count)
+    ]
 
 
 class _PacedMarketGateway:
@@ -219,6 +226,7 @@ def _run(
             cash=1_000_000.0,
             show_progress=False,
             duration="15s",
+            trading_calendar=_TRADING_CALENDAR,
             signal_port_ready=bind,
             strategy_max_order_value=(
                 None if max_order_value is None else {"_default": max_order_value}

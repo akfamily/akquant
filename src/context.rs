@@ -17,7 +17,7 @@ use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Weak};
 use uuid::Uuid;
 
 /// 引擎上下文 (Engine Context)
@@ -36,6 +36,75 @@ pub struct EngineContext<'a> {
     pub risk_config: &'a RiskConfig,
     pub timezone_name: Option<&'a str>,
     pub timezone_offset: i32,
+    pub trading_day: Option<chrono::NaiveDate>,
+    /// 撮合按品种取时段（见 [`SessionView`]）。
+    pub sessions: SessionView<'a>,
+}
+
+/// 撮合按品种取时段的视图（回测与实盘同口径）。
+#[derive(Clone, Copy)]
+pub struct SessionView<'a> {
+    pub slice: Option<&'a HashMap<String, TradingSession>>,
+    pub resolver: Option<&'a crate::calendar::resolver::SessionResolver>,
+    pub instruments: Option<&'a HashMap<String, Instrument>>,
+}
+
+impl<'a> SessionView<'a> {
+    /// 一律连续竞价（无时段信息的调用方、单测）。
+    #[must_use]
+    pub fn continuous() -> Self {
+        Self {
+            slice: None,
+            resolver: None,
+            instruments: None,
+        }
+    }
+
+    /// 品种在时刻 `ts` 的时段：本时间片已解析的优先（含 bar 区间信息），
+    /// 否则按时刻解析（定时器触发的撮合）；解析失败或无解析器时按连续竞价。
+    pub fn session_for(&self, symbol: &str, ts: i64) -> TradingSession {
+        self.session_for_interval(symbol, None, ts)
+    }
+
+    /// 同 [`Self::session_for`]，但本时间片未命中时按区间 `(interval_start, ts]`
+    /// 解析（与 `Engine::event_session` 同口径，`resolve_bar`）；`interval_start`
+    /// 为空或不早于 `ts` 时按时刻。策略在 bar 回调里查询其他品种时用当前 bar 的区间
+    /// （假定同周期），否则只有日期的日线会按 15:00 前 1ns 得到收盘集合竞价。
+    pub fn session_for_interval(
+        &self,
+        symbol: &str,
+        interval_start: Option<i64>,
+        ts: i64,
+    ) -> TradingSession {
+        if let Some(s) = self.slice.and_then(|m| m.get(symbol)) {
+            return *s;
+        }
+        let Some(resolver) = self.resolver else {
+            return TradingSession::Continuous;
+        };
+        let asset_type = self
+            .instruments
+            .and_then(|m| m.get(symbol))
+            .map(|i| i.asset_type);
+        if let Some(start) = interval_start.filter(|s| *s < ts) {
+            return resolver
+                .resolve_bar(symbol, asset_type, Some(start), ts)
+                .map(|r| r.session)
+                .unwrap_or(TradingSession::Continuous);
+        }
+        // 解析出错（时刻超出交易日历等）按连续竞价：日历缺口不应阻断撮合，数据层的
+        // 闭市/日历告警已提示用户；定时器的 ctx.session（session_level_instant）同此口径。
+        resolver
+            .session_at_instant(symbol, asset_type, ts.saturating_sub(1))
+            .unwrap_or(TradingSession::Continuous)
+    }
+
+    /// 品种恰在时刻 `point` 的时段（不取前 1ns）：本时间片表优先，否则解析器按该
+    /// 时刻求。用于交易日生命周期事件——它们本身就是一个时点，如收盘后事件
+    /// （收盘 + 1ns）应为闭市，而不是按收盘那一刻得收盘竞价/连续竞价。
+    pub fn session_at_point(&self, symbol: &str, point: i64) -> TradingSession {
+        self.session_for_interval(symbol, None, point.saturating_add(1))
+    }
 }
 
 pub struct ContextInit {
@@ -50,6 +119,8 @@ pub struct ContextInit {
     pub closed_trades: Arc<Vec<ClosedTrade>>,
     pub recent_trades: Vec<Trade>,
     pub recent_rejected_orders: Vec<Order>,
+    pub recent_expired_orders: Vec<Order>,
+    pub recent_finalized_orders: Vec<Order>,
     pub recent_expiry_events: Vec<ExpiryEvent>,
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
     pub window_aggregator: Option<Arc<RwLock<crate::data::WindowAggregator>>>,
@@ -74,6 +145,24 @@ pub struct ContextInit {
     pub margin_daily_interest: f64,
     pub instruments: Arc<HashMap<String, Instrument>>,
     pub last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
+    pub sessions: ContextSessions,
+}
+
+/// 策略查询交易日与时段所需的状态（见 [`StrategyContext::session_of`]）。
+#[derive(Clone, Default)]
+pub struct ContextSessions {
+    /// 当前时刻所属交易日（风控口径 `Engine::risk_trading_day`，不开日）。
+    pub trading_day: Option<chrono::NaiveDate>,
+    pub session_resolver: Option<Arc<crate::calendar::resolver::SessionResolver>>,
+    /// 引擎本时间片时段表的弱引用：引擎修改它走 `Arc::make_mut`，持强引用会让
+    /// 每个行情事件都复制整表。回调期间引擎不改表，升级必然成功；失效时按空表处理。
+    pub slice_sessions: Weak<HashMap<String, TradingSession>>,
+    /// 当前行情事件为 bar 时其区间起点（`session_of` 查其他品种时按同一区间解析）；
+    /// tick、定时器等为空，按时刻解析。
+    pub event_interval_start: Option<i64>,
+    /// 当前事件是交易日生命周期事件：`session_of` 按事件时刻本身解析（见
+    /// [`SessionView::session_at_point`]），而不是前 1ns。
+    pub event_at_instant: bool,
 }
 
 pub struct ContextUpdate {
@@ -88,6 +177,8 @@ pub struct ContextUpdate {
     pub closed_trades: Arc<Vec<ClosedTrade>>,
     pub recent_trades: Vec<Trade>,
     pub recent_rejected_orders: Vec<Order>,
+    pub recent_expired_orders: Vec<Order>,
+    pub recent_finalized_orders: Vec<Order>,
     pub recent_expiry_events: Vec<ExpiryEvent>,
     pub account_equity: f64,
     pub account_market_value: f64,
@@ -106,6 +197,7 @@ pub struct ContextUpdate {
     pub margin_accrued_interest: f64,
     pub margin_daily_interest: f64,
     pub last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
+    pub sessions: ContextSessions,
 }
 
 #[gen_stub_pyclass]
@@ -310,6 +402,8 @@ impl StrategyContext {
 
         self.recent_trades = update.recent_trades;
         self.recent_rejected_orders = update.recent_rejected_orders;
+        self.recent_expired_orders = update.recent_expired_orders;
+        self.recent_finalized_orders = update.recent_finalized_orders;
         self.recent_expiry_events = update.recent_expiry_events;
         self.account_equity = update.account_equity;
         self.account_market_value = update.account_market_value;
@@ -327,6 +421,8 @@ impl StrategyContext {
         self.previous_account_maintenance_ratio = update.previous_account_maintenance_ratio;
         self.margin_accrued_interest = update.margin_accrued_interest;
         self.margin_daily_interest = update.margin_daily_interest;
+        self.trading_day = update.sessions.trading_day;
+        self.sessions = update.sessions;
 
         // Reset accumulators
         self.orders.clear();
@@ -392,6 +488,13 @@ pub struct StrategyContext {
     // Recent rejected orders generated in the last step
     #[pyo3(get)]
     pub recent_rejected_orders: Vec<Order>,
+    // Day orders expired by the latest day-close settlement (delivered as on_order Expired)
+    #[pyo3(get)]
+    pub recent_expired_orders: Vec<Order>,
+    // Orders that left the active book in the last step without a fill
+    // (cancelled/expired/rejected), terminal snapshots
+    #[pyo3(get)]
+    pub recent_finalized_orders: Vec<Order>,
     // Recent expiry events generated in the last step
     #[pyo3(get)]
     pub recent_expiry_events: Vec<ExpiryEvent>,
@@ -437,6 +540,11 @@ pub struct StrategyContext {
     pub margin_accrued_interest: f64,
     #[pyo3(get)]
     pub margin_daily_interest: f64,
+    /// 当前时刻所属交易日（夜盘属下一交易日；收盘后至下一交易日开盘前属下一交易日，
+    /// 与风控口径一致；首个交易日开日前按解析器求）；无上下文时刻时为 None。
+    #[pyo3(get)]
+    pub trading_day: Option<chrono::NaiveDate>,
+    pub(crate) sessions: ContextSessions,
 }
 
 impl StrategyContext {
@@ -460,6 +568,8 @@ impl StrategyContext {
             closed_trades: init.closed_trades,
             recent_trades: init.recent_trades,
             recent_rejected_orders: init.recent_rejected_orders,
+            recent_expired_orders: init.recent_expired_orders,
+            recent_finalized_orders: init.recent_finalized_orders,
             recent_expiry_events: init.recent_expiry_events,
             history_buffer: init.history_buffer,
             window_aggregator: init.window_aggregator,
@@ -484,7 +594,19 @@ impl StrategyContext {
             margin_daily_interest: init.margin_daily_interest,
             instruments: init.instruments,
             last_prices: init.last_prices,
+            trading_day: init.sessions.trading_day,
+            sessions: init.sessions,
         }
+    }
+
+    /// 撮合同口径的时段视图（本时间片表 → 解析器按时刻），供 `session_of` 使用。
+    fn with_session_view<R>(&self, f: impl FnOnce(SessionView<'_>) -> R) -> R {
+        let slice = self.sessions.slice_sessions.upgrade();
+        f(SessionView {
+            slice: slice.as_deref(),
+            resolver: self.sessions.session_resolver.as_deref(),
+            instruments: Some(&self.instruments),
+        })
     }
 
     /// 把在途订单投影进持仓,返回预期持仓。
@@ -676,6 +798,8 @@ impl StrategyContext {
             closed_trades: Arc::new(closed_trades.unwrap_or_default()),
             recent_trades: recent_trades.unwrap_or_default(),
             recent_rejected_orders: Vec::new(),
+            recent_expired_orders: Vec::new(),
+            recent_finalized_orders: Vec::new(),
             recent_expiry_events: recent_expiry_events.unwrap_or_default(),
             history_buffer: None,
             window_aggregator: None,
@@ -700,6 +824,8 @@ impl StrategyContext {
             margin_daily_interest: margin_daily_interest.unwrap_or(0.0),
             instruments: Arc::new(HashMap::new()),
             last_prices: Arc::new(RwLock::new(HashMap::new())),
+            trading_day: None,
+            sessions: ContextSessions::default(),
         })
     }
 
@@ -1003,7 +1129,8 @@ impl StrategyContext {
     ///
     /// :param timestamp: 触发时间戳 (纳秒)
     /// :param payload: 携带的数据 (如回调函数名)
-    fn schedule(&mut self, timestamp: i64, payload: String) {
+    fn schedule(&mut self, timestamp: i64, payload: String) -> PyResult<()> {
+        crate::model::timer::check_user_timer_payload(&payload)?;
         let normalized = if timestamp.abs() < 1_000_000_000_000 {
             timestamp * 1_000_000_000
         } else {
@@ -1013,8 +1140,10 @@ impl StrategyContext {
             timers.push(Timer {
                 timestamp: normalized,
                 payload,
+                owner: self.strategy_id.clone(),
             });
         }
+        Ok(())
     }
 
     /// 取消订单.
@@ -1321,5 +1450,279 @@ impl StrategyContext {
             .unwrap_or(&Decimal::ZERO)
             .to_f64()
             .unwrap_or_default()
+    }
+
+    /// 品种此刻的交易时段，与撮合同口径：本时间片已解析的优先（含 bar 区间信息）；
+    /// 否则当前事件为 bar 时按其区间解析（假定同周期），其他事件按当前时刻解析；
+    /// 解析失败或无解析器时为 Continuous。
+    ///
+    /// :param symbol: 标的代码
+    /// :return: 交易时段
+    pub fn session_of(&self, symbol: &str) -> TradingSession {
+        self.with_session_view(|view| {
+            if self.sessions.event_at_instant {
+                return view.session_at_point(symbol, self.current_time);
+            }
+            view.session_for_interval(
+                symbol,
+                self.sessions.event_interval_start,
+                self.current_time,
+            )
+        })
+    }
+
+    /// 是否为会话交易日历上的交易日（无解析器时为 False）。
+    ///
+    /// :param day: 日期
+    pub fn is_trading_day(&self, day: chrono::NaiveDate) -> bool {
+        self.sessions
+            .session_resolver
+            .as_deref()
+            .is_some_and(|r| r.is_session_day(day))
+    }
+
+    /// 会话交易日历上 ``day`` 之后的下一个交易日；超出日历范围或无解析器时为 None。
+    ///
+    /// :param day: 日期
+    pub fn next_trading_day(&self, day: chrono::NaiveDate) -> Option<chrono::NaiveDate> {
+        self.sessions
+            .session_resolver
+            .as_deref()
+            .and_then(|r| r.next_session_day(day).ok())
+    }
+
+    /// 引擎切分多周期窗口用的会话解析器与各品种资产类型，供策略内的 ``BarGenerator``
+    /// 沿用（与 ``subscribe_bars`` 同一时段表）；无解析器时为 None。
+    ///
+    /// :return: ``(SessionResolver, {symbol: AssetType})`` 或 None
+    #[pyo3(name = "_window_session_context")]
+    pub fn window_session_context(
+        &self,
+    ) -> Option<(
+        crate::calendar::python::PySessionResolver,
+        HashMap<String, AssetType>,
+    )> {
+        let resolver = self.sessions.session_resolver.clone()?;
+        let asset_types = self
+            .window_aggregator
+            .as_ref()
+            .and_then(|lock| lock.read().ok().map(|a| a.asset_types().clone()))
+            .unwrap_or_default();
+        Some((
+            crate::calendar::python::PySessionResolver::from_arc(resolver),
+            asset_types,
+        ))
+    }
+
+    /// 会话日历是否为全日历兜底（未传 ``trading_calendar`` 且在用时段表全是
+    /// ALWAYS_OPEN 这类每天都开的表，周末也算交易日）；无解析器时为 False。
+    pub fn uses_all_days_calendar(&self) -> bool {
+        self.sessions
+            .session_resolver
+            .as_deref()
+            .is_some_and(|r| r.uses_all_days_fallback())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_view_prefers_slice_then_resolver() {
+        let mut slice = HashMap::new();
+        slice.insert("A".to_string(), TradingSession::ClosingAuction);
+        let view = SessionView {
+            slice: Some(&slice),
+            resolver: None,
+            instruments: None,
+        };
+        assert_eq!(view.session_for("A", 0), TradingSession::ClosingAuction);
+        // 无解析器、不在时间片表中：按连续竞价（兼容无时段信息的单测与旧路径）
+        assert_eq!(view.session_for("B", 0), TradingSession::Continuous);
+        assert_eq!(
+            SessionView::continuous().session_for("X", 0),
+            TradingSession::Continuous
+        );
+    }
+
+    fn ctx_with(sessions: ContextSessions, current_time: i64) -> StrategyContext {
+        StrategyContext::new(ContextInit {
+            cash: Decimal::ZERO,
+            previous_cash: Decimal::ZERO,
+            positions: Arc::default(),
+            available_positions: Arc::default(),
+            position_entry_prices: Arc::default(),
+            session: TradingSession::Continuous,
+            current_time,
+            active_orders: Arc::default(),
+            closed_trades: Arc::default(),
+            recent_trades: Vec::new(),
+            recent_rejected_orders: Vec::new(),
+            recent_expired_orders: Vec::new(),
+            recent_finalized_orders: Vec::new(),
+            recent_expiry_events: Vec::new(),
+            history_buffer: None,
+            window_aggregator: None,
+            event_tx: None,
+            risk_config: RiskConfig::default(),
+            strategy_id: None,
+            account_equity: 0.0,
+            account_market_value: 0.0,
+            account_notional_value: 0.0,
+            account_used_margin: 0.0,
+            account_unrealized_pnl: 0.0,
+            account_maintenance_ratio: 0.0,
+            account_short_market_value: 0.0,
+            account_frozen_cash: 0.0,
+            previous_account_equity: 0.0,
+            previous_account_market_value: 0.0,
+            previous_account_notional_value: 0.0,
+            previous_account_used_margin: 0.0,
+            previous_account_unrealized_pnl: 0.0,
+            previous_account_maintenance_ratio: 0.0,
+            margin_accrued_interest: 0.0,
+            margin_daily_interest: 0.0,
+            instruments: Arc::default(),
+            last_prices: Arc::default(),
+            sessions,
+        })
+    }
+
+    fn day(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    fn sh() -> crate::calendar::clock::LocalClock {
+        crate::calendar::clock::LocalClock::new(Some("Asia/Shanghai"), 8 * 3600)
+    }
+
+    /// 上海本地时间 → UTC 纳秒。
+    fn at(d: chrono::NaiveDate, h: u32, mi: u32) -> i64 {
+        sh().from_local(d.and_hms_opt(h, mi, 0).unwrap())
+    }
+
+    fn futures_resolver(
+        calendar: Option<crate::calendar::trading_calendar::TradingCalendar>,
+    ) -> Arc<crate::calendar::resolver::SessionResolver> {
+        let sessions = vec![(
+            "rb".to_string(),
+            crate::calendar::schedule::template("CN_FUTURES_DAY").unwrap(),
+        )];
+        Arc::new(crate::calendar::resolver::SessionResolver::new(sh(), calendar, sessions).unwrap())
+    }
+
+    #[test]
+    fn session_of_prefers_slice_then_resolver_before_now() {
+        let resolver = futures_resolver(None);
+        let mut slice = HashMap::new();
+        slice.insert("rb2405".to_string(), TradingSession::ClosingAuction);
+        let slice = Arc::new(slice);
+        let sessions = ContextSessions {
+            trading_day: Some(day(2024, 1, 2)),
+            session_resolver: Some(resolver.clone()),
+            slice_sessions: Arc::downgrade(&slice),
+            event_interval_start: None,
+            event_at_instant: false,
+        };
+        let now = at(day(2024, 1, 2), 10, 20);
+        let ctx = ctx_with(sessions.clone(), now);
+        // 本时间片表优先
+        assert_eq!(ctx.session_of("rb2405"), TradingSession::ClosingAuction);
+        // 不在表中：解析器按当前时刻（10:15～10:30 休息）
+        assert_eq!(ctx.session_of("rb2410"), TradingSession::Break);
+        assert_eq!(ctx.trading_day, Some(day(2024, 1, 2)));
+        // 按 current_time 前 1ns：恰在 10:15 时仍属上一段连续竞价
+        let edge = ctx_with(sessions.clone(), at(day(2024, 1, 2), 10, 15));
+        assert_eq!(edge.session_of("rb2410"), TradingSession::Continuous);
+        // 当前事件是 bar：未命中时按其区间解析（10:00～10:20 含连续竞价段）
+        let bar_ctx = ctx_with(
+            ContextSessions {
+                event_interval_start: Some(at(day(2024, 1, 2), 10, 0)),
+                ..sessions.clone()
+            },
+            now,
+        );
+        assert_eq!(bar_ctx.session_of("rb2410"), TradingSession::Continuous);
+        assert_eq!(bar_ctx.session_of("rb2405"), TradingSession::ClosingAuction);
+        // 区间整段落在休息内时仍是 Break
+        let in_break = ctx_with(
+            ContextSessions {
+                event_interval_start: Some(at(day(2024, 1, 2), 10, 16)),
+                ..sessions
+            },
+            now,
+        );
+        assert_eq!(in_break.session_of("rb2410"), TradingSession::Break);
+        // 表被引擎替换（弱引用失效）后按空表处理
+        drop(slice);
+        assert_eq!(ctx.session_of("rb2405"), TradingSession::Break);
+        // 无解析器
+        let bare = ctx_with(ContextSessions::default(), now);
+        assert_eq!(bare.session_of("rb2410"), TradingSession::Continuous);
+        assert_eq!(bare.trading_day, None);
+    }
+
+    #[test]
+    fn session_of_at_event_instant_for_lifecycle_events() {
+        let resolver = futures_resolver(None);
+        let slice = Arc::new(HashMap::new());
+        let sessions = ContextSessions {
+            session_resolver: Some(resolver),
+            slice_sessions: Arc::downgrade(&slice),
+            ..ContextSessions::default()
+        };
+        // 收盘后事件：收盘 15:00 + 1ns
+        let after_close = at(day(2024, 1, 2), 15, 0) + 1;
+        // 普通定时器口径（前 1ns）恰在收盘那一刻，仍属连续竞价
+        let timer_ctx = ctx_with(sessions.clone(), after_close);
+        assert_eq!(timer_ctx.session_of("rb2410"), TradingSession::Continuous);
+        // 生命周期事件按事件时刻本身：闭市
+        let lifecycle_ctx = ctx_with(
+            ContextSessions {
+                event_at_instant: true,
+                ..sessions.clone()
+            },
+            after_close,
+        );
+        assert_eq!(lifecycle_ctx.session_of("rb2410"), TradingSession::Closed);
+        // 开始交易事件（连续竞价开始 + 1ns）两种口径都是连续竞价
+        let before_trading = at(day(2024, 1, 2), 9, 0) + 1;
+        let lifecycle_open = ctx_with(
+            ContextSessions {
+                event_at_instant: true,
+                ..sessions
+            },
+            before_trading,
+        );
+        assert_eq!(
+            lifecycle_open.session_of("rb2410"),
+            TradingSession::Continuous
+        );
+    }
+
+    #[test]
+    fn trading_day_queries_use_session_calendar() {
+        let cal = crate::calendar::trading_calendar::TradingCalendar::explicit([
+            day(2024, 1, 2),
+            day(2024, 1, 3),
+            day(2024, 1, 5),
+        ])
+        .unwrap();
+        let ctx = ctx_with(
+            ContextSessions {
+                session_resolver: Some(futures_resolver(Some(cal))),
+                ..ContextSessions::default()
+            },
+            0,
+        );
+        assert!(ctx.is_trading_day(day(2024, 1, 3)));
+        assert!(!ctx.is_trading_day(day(2024, 1, 4)));
+        assert_eq!(ctx.next_trading_day(day(2024, 1, 3)), Some(day(2024, 1, 5)));
+        assert_eq!(ctx.next_trading_day(day(2024, 1, 4)), Some(day(2024, 1, 5)));
+        assert_eq!(ctx.next_trading_day(day(2024, 1, 5)), None);
+        let bare = ctx_with(ContextSessions::default(), 0);
+        assert!(!bare.is_trading_day(day(2024, 1, 3)));
+        assert_eq!(bare.next_trading_day(day(2024, 1, 3)), None);
     }
 }

@@ -3,6 +3,7 @@
 This chapter is currently maintained in Chinese first.
 
 - Chinese chapter: [第 5 章：策略开发实战 (Strategy Implementation)](../../zh/textbook/05_strategy.md)
+- Lifecycle note: within a trading day `on_pre_open` (1ns before the first session, 09:14:59.999… for A-shares) always precedes `on_before_trading` (1ns after continuous trading starts); `on_after_trading` fires after the day-end settlement. `daily_interest` is the interest of this settlement, accrued over the calendar days since the previous settlement (3 days from Friday to Monday).
 - Textbook home: [Chinese textbook index](../../zh/textbook/index.md)
 - Practice links:
   - Primary example: [examples/textbook/ch05_strategy.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch05_strategy.py)

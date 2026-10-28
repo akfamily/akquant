@@ -229,6 +229,7 @@ fn test_max_drawdown_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        trading_day_ends: vec![],
         days_per_year: 252.0,
         risk_free_rate: 0.0,
     });
@@ -254,6 +255,7 @@ fn test_max_drawdown_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        trading_day_ends: vec![],
         days_per_year: 252.0,
         risk_free_rate: 0.0,
     });
@@ -279,6 +281,7 @@ fn test_max_drawdown_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        trading_day_ends: vec![],
         days_per_year: 252.0,
         risk_free_rate: 0.0,
     });
@@ -307,6 +310,7 @@ fn test_max_drawdown_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        trading_day_ends: vec![],
         days_per_year: 252.0,
         risk_free_rate: 0.0,
     });
@@ -345,6 +349,7 @@ fn test_ulcer_index_logic() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        trading_day_ends: vec![],
         days_per_year: 252.0,
         risk_free_rate: 0.0,
     });
@@ -374,6 +379,7 @@ fn test_calmar_uses_raw_drawdown_ratio_not_pct() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        trading_day_ends: vec![],
         days_per_year: 252.0,
         risk_free_rate: 0.0,
     });
@@ -421,6 +427,7 @@ fn test_daily_metrics_resample_by_local_timezone_day() {
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        trading_day_ends: vec![],
         days_per_year: 252.0,
         risk_free_rate: 0.0,
     });
@@ -460,6 +467,7 @@ fn build_sharpe_fixture(days_per_year: f64, risk_free_rate: f64) -> BacktestResu
         orders: vec![],
         executions: vec![],
         liquidation_audits: vec![],
+        trading_day_ends: vec![],
         days_per_year,
         risk_free_rate,
     })
@@ -515,4 +523,71 @@ fn test_risk_free_rate_lowers_sharpe() {
     assert!(
         (base.metrics.sharpe_ratio - with_rf.metrics.sharpe_ratio - expected_drop).abs() < 1e-9
     );
+}
+
+fn shanghai_ns(y: i32, m: u32, d: u32, hh: u32, mm: u32) -> i64 {
+    let tz: Tz = "Asia/Shanghai".parse().unwrap();
+    tz.with_ymd_and_hms(y, m, d, hh, mm, 0)
+        .single()
+        .unwrap()
+        .timestamp_nanos_opt()
+        .unwrap()
+}
+
+fn night_session_result(ends: Vec<(chrono::NaiveDate, i64)>) -> BacktestResult {
+    let empty_pnl = TradeTracker::new().calculate_pnl(None);
+    // 夜盘：周一 21:30 的点属周二交易日、周二 21:30 的点属周三交易日。
+    // 按交易日日末权益 [100, 110, 121] → 日收益恒为 10%，波动率为 0；
+    // 按自然日日末权益 [200, 300, 121] → 波动率不为 0。
+    let equity_curve = vec![
+        (shanghai_ns(2024, 1, 8, 14, 0), Decimal::from(100)),
+        (shanghai_ns(2024, 1, 8, 21, 30), Decimal::from(200)),
+        (shanghai_ns(2024, 1, 9, 10, 0), Decimal::from(110)),
+        (shanghai_ns(2024, 1, 9, 21, 30), Decimal::from(300)),
+        (shanghai_ns(2024, 1, 10, 10, 0), Decimal::from(121)),
+    ];
+    BacktestResult::calculate(crate::analysis::CalculatorInput {
+        equity_curve_decimal: equity_curve,
+        cash_curve_decimal: vec![],
+        margin_curve_decimal: vec![],
+        snapshots: vec![],
+        timezone_name: Some("Asia/Shanghai".to_string()),
+        timezone_offset: 0,
+        trade_pnl: empty_pnl,
+        trades: vec![],
+        initial_cash: Decimal::from(100),
+        orders: vec![],
+        executions: vec![],
+        liquidation_audits: vec![],
+        trading_day_ends: ends,
+        days_per_year: 252.0,
+        risk_free_rate: 0.0,
+    })
+}
+
+#[test]
+fn test_daily_returns_group_night_points_into_next_trading_day() {
+    let d = |day: u32| chrono::NaiveDate::from_ymd_opt(2024, 1, day).unwrap();
+    let ends = vec![
+        (d(8), shanghai_ns(2024, 1, 8, 15, 0)),
+        (d(9), shanghai_ns(2024, 1, 9, 15, 0)),
+        (d(10), shanghai_ns(2024, 1, 10, 15, 0)),
+    ];
+    let key = |ts: i64| BacktestResult::trading_day_key(ts, &ends, Some("Asia/Shanghai"), 0);
+    assert_eq!(key(shanghai_ns(2024, 1, 8, 21, 30)), d(9));
+    // 收盘时刻本身属当日（区间右闭）
+    assert_eq!(key(shanghai_ns(2024, 1, 9, 15, 0)), d(9));
+    // 晚于全部已开交易日：退回本地自然日
+    assert_eq!(key(shanghai_ns(2024, 1, 10, 21, 30)), d(10));
+    assert_eq!(key(shanghai_ns(2024, 1, 11, 9, 0)), d(11));
+
+    let result = night_session_result(ends.clone());
+    assert_eq!(result.trading_day_ends, ends);
+    assert!(result.metrics.volatility.abs() < 1e-12);
+}
+
+#[test]
+fn test_daily_returns_without_trading_day_ends_fall_back_to_local_date() {
+    let result = night_session_result(vec![]);
+    assert!(result.metrics.volatility > 0.1);
 }

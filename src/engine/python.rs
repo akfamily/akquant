@@ -3,10 +3,10 @@ use chrono_tz::Tz;
 use indicatif::{ProgressBar, ProgressStyle};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use crate::account::calculate_account_metrics;
@@ -20,7 +20,7 @@ use crate::market::corporate_action::CorporateActionManager;
 use crate::market::manager::MarketManager;
 use crate::model::{
     Bar, ExecutionMode, ExecutionPolicyCore, Instrument, Order, PriceBasis, Timer, Trade,
-    TradingSession, corporate_action::CorporateAction,
+    corporate_action::CorporateAction,
 };
 use crate::portfolio::Portfolio;
 use crate::risk::{RiskConfig, RiskManager};
@@ -111,8 +111,14 @@ impl Engine {
         super::core::Engine::emit_stream_event_owned(self, py, event_type, symbol, level, payload);
     }
 
-    fn add_timer(&mut self, timestamp: i64, payload: String) {
-        self.timers.push(Timer { timestamp, payload });
+    fn add_timer(&mut self, timestamp: i64, payload: String) -> PyResult<()> {
+        crate::model::timer::check_user_timer_payload(&payload)?;
+        self.timers.push(Timer {
+            timestamp,
+            payload,
+            owner: None,
+        });
+        Ok(())
     }
 
     fn set_stream_options(
@@ -507,6 +513,84 @@ impl Engine {
         self.session_deadline_ns = deadline_ns.filter(|value| *value > 0);
     }
 
+    /// 设置实盘日终结算定时器相对会话收盘的宽限(纳秒, 默认 60 秒)
+    ///
+    /// 框架内部接口: `run_live(day_close_delay=)` 在 `run()` 之前下发。只影响实盘
+    /// (live feed); 回测的收盘定时器恒为收盘 + 1ns。不入存档, 每次会话重新下发。
+    ///
+    /// :param delay_ns: 宽限纳秒数, 须 >= 0
+    /// :raises ValueError: 宽限为负
+    #[pyo3(name = "_set_live_day_close_delay_ns")]
+    fn set_live_day_close_delay_ns(&mut self, delay_ns: i64) -> PyResult<()> {
+        if delay_ns < 0 {
+            return Err(PyValueError::new_err(format!(
+                "实盘日终结算宽限 day_close_delay 不能为负（收到 {delay_ns} 纳秒），请传入 >= 0 的秒数，如 day_close_delay=60.0"
+            )));
+        }
+        self.live_day_close_delay_ns = delay_ns;
+        Ok(())
+    }
+
+    /// 设置实盘生命周期锚点(框架内部接口, replay 用)
+    ///
+    /// `run_live(broker="replay")` 在 `run()` 之前按首个回放事件下发(首个事件 - 1ns)。
+    /// 设置后 `run()` 用 `min(墙钟, 锚点)` 代替墙钟排程交易日生命周期, 且锚点所属
+    /// 交易日早于锚点的 pre_open / before_trading 照常登记(在首个事件之前触发,
+    /// 同回测)。真实实盘不设, 仍按墙钟。不入存档, 每次会话重新下发。
+    ///
+    /// :param ts_ns: 锚点(纳秒, UTC epoch); ``None`` 清除
+    #[pyo3(name = "_set_live_lifecycle_anchor")]
+    #[pyo3(signature = (ts_ns))]
+    fn set_live_lifecycle_anchor(&mut self, ts_ns: Option<i64>) {
+        self.live_lifecycle_anchor_ns = ts_ns;
+    }
+
+    /// 声明 replay 最后一个事件的时刻并判定数据结束时是否收尾结算(框架内部接口)
+    ///
+    /// 最后事件已到其所属交易日的会话收盘时返回 ``True``: 引擎在最后事件处理完后
+    /// 等该日收盘定时器结算并派发 on_after_trading, 然后自行结束会话(行情已取空后
+    /// 等待超过 5 秒则告警并结束); 调用方不应再在最后事件后中断会话。否则返回
+    /// ``False``, 不改变行为(与回测相同, 数据在盘中结束的末日不结算)。须在
+    /// `configure_sessions` 之后、`run()` 之前调用。
+    ///
+    /// :param last_event_ns: 最后一个回放事件的时间戳(纳秒); ``None`` 清除
+    /// :return: 是否等待末日结算后结束
+    #[pyo3(name = "_set_live_replay_end")]
+    #[pyo3(signature = (last_event_ns))]
+    pub(crate) fn set_live_replay_end(&mut self, last_event_ns: Option<i64>) -> PyResult<bool> {
+        self.live_replay_close = None;
+        let Some(last) = last_event_ns else {
+            return Ok(false);
+        };
+        self.ensure_session_resolver()?;
+        let resolver = self.session_resolver.clone().expect("已构造");
+        let Ok(mut day) = resolver.session_trading_day(last) else {
+            return Ok(false);
+        };
+        // 最后事件在上一交易日的收盘宽限内时归上一交易日（与数据阶段一致）：等它的
+        // 收盘定时器结算后再结束，收尾判定不因宽限期内的行情提前。
+        if let Ok(prev) = resolver.session_calendar_before(day)
+            && let Ok(prev_close) = resolver.session_day_end(prev)
+            && super::core::in_close_grace(
+                &resolver,
+                prev,
+                prev_close,
+                last,
+                self.live_day_close_delay_ns,
+            )
+        {
+            day = prev;
+        }
+        let Ok(end) = resolver.session_day_end(day) else {
+            return Ok(false);
+        };
+        if last >= end {
+            self.live_replay_close = Some(super::core::LiveReplayClose::new(day, last));
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     /// 取一个外部信号注入端口(paper 模式)
     ///
     /// **必须在 `run()` 之前调用**: 取到的是 channel sender 的克隆, 之后即与引擎
@@ -538,14 +622,37 @@ impl Engine {
             state: SharedState::new(initial_cash),
             last_prices: Arc::new(RwLock::new(HashMap::new())),
             instruments: HashMap::new(),
-            current_date: None,
+            session_resolver: None,
+            current_trading_day: None,
+            current_day_span: None,
+            trading_day_ends: Vec::new(),
+            last_settled_trading_day: None,
+            last_event_ts_in_day: None,
+            scheduled_day_close: None,
+            lifecycle_scheduled_for: None,
+            lifecycle_chain_warned: false,
+            live_day_close_delay_ns: crate::model::timer::LIVE_DAY_CLOSE_GRACE_NS,
+            day_close_prices: None,
+            live_lifecycle_anchor_ns: None,
+            live_replay_close: None,
+            source_trading_day_warned: HashSet::new(),
+            trusted_close_marker: None,
+            current_event_day_settled: false,
+            close_marker_warned: HashSet::new(),
+            lifecycle_hooks_dispatch: Default::default(),
+            last_corp_action_date: None,
             market_manager: MarketManager::new(),
             corporate_action_manager: CorporateActionManager::new(),
             execution_model: Box::new(SimulatedExecutionClient::new()),
             execution_policy_core_state: ExecutionPolicyCore::default(),
             clock: Clock::new(),
             timers: BinaryHeap::new(),
-            force_session_continuous: false,
+            slice_sessions: Arc::default(),
+            session_span_cache: HashMap::new(),
+            last_interval_session: None,
+            order_creation_sessions: HashMap::new(),
+            closed_session_warned: HashSet::new(),
+            closed_session_event_count: 0,
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8
             timezone_name: Some("Asia/Shanghai".to_string()),
@@ -575,6 +682,7 @@ impl Engine {
             }],
             active_strategy_slot: 0,
             default_strategy_id: Some("_default".to_string()),
+            warned_orphan_timer_owners: HashSet::new(),
             strategy_priorities: HashMap::new(),
             strategy_risk_budget_limits: HashMap::new(),
             portfolio_risk_budget_limit: None,
@@ -620,11 +728,57 @@ impl Engine {
             stream_mode: "observability".to_string(),
             stream_sampling_enabled: true,
             stream_drop_non_critical: true,
+            session_config: crate::engine::core::SessionConfig::default(),
         }
     }
 
+    /// 当前交易日（会话级）；尚未开日时为 None。
+    #[getter]
+    fn current_trading_day(&self) -> Option<NaiveDate> {
+        self.current_trading_day
+    }
+
+    /// 已完成日终结算的最后交易日；尚未结算时为 None。
+    #[getter]
+    fn last_settled_trading_day(&self) -> Option<NaiveDate> {
+        self.last_settled_trading_day
+    }
+
+    /// 当前交易时段配置 ``(sessions, trading_calendar)``；未配置的一项为 None。
+    ///
+    /// ``sessions`` 的值为模板名，或自定义段列表 ``[(start, end, session[, anchor]), ...]``。
+    /// 随存档保存，``run_from_checkpoint`` 未传对应参数时沿用。
+    #[getter]
+    fn session_config<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<(Option<Bound<'py, PyDict>>, Option<Vec<NaiveDate>>)> {
+        let cfg = &self.session_config;
+        let sessions = if cfg.sessions.is_none() && cfg.custom_sessions.is_none() {
+            None
+        } else {
+            let dict = PyDict::new(py);
+            for (k, name) in cfg.sessions.iter().flatten() {
+                dict.set_item(k, name)?;
+            }
+            for (k, segs) in cfg.custom_sessions.iter().flatten() {
+                let list = PyList::empty(py);
+                for seg in segs {
+                    let item = match &seg.anchor {
+                        Some(a) => PyTuple::new(py, [&seg.start, &seg.end, &seg.session, a])?,
+                        None => PyTuple::new(py, [&seg.start, &seg.end, &seg.session])?,
+                    };
+                    list.append(item)?;
+                }
+                dict.set_item(k, list)?;
+            }
+            Some(dict)
+        };
+        Ok((sessions, cfg.trading_calendar.clone()))
+    }
+
     /// 导出当前状态为二进制数据
-    fn get_state_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+    pub(crate) fn get_state_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let history_state = Some(crate::history::HistoryBufferSnapshot::from(
             &*self.history_buffer.read().unwrap(),
         ));
@@ -680,6 +834,11 @@ impl Engine {
                 strategy_peak_pnl: self.strategy_peak_pnl.clone(),
                 strategy_reduce_only_active: self.strategy_reduce_only_active.clone(),
             },
+            current_trading_day: self.current_trading_day,
+            last_settled_trading_day: self.last_settled_trading_day,
+            last_corp_action_date: self.last_corp_action_date,
+            session_config: self.session_config.clone(),
+            last_event_ts_in_day: self.last_event_ts_in_day,
         };
         let bytes =
             rmp_serde::to_vec(&snapshot).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -687,7 +846,7 @@ impl Engine {
     }
 
     /// 从二进制数据加载状态
-    fn load_state_bytes(&mut self, data: &Bound<'_, PyBytes>) -> PyResult<()> {
+    pub(crate) fn load_state_bytes(&mut self, data: &Bound<'_, PyBytes>) -> PyResult<()> {
         let bytes = data.as_bytes();
         let snapshot: crate::engine::state::EngineSnapshot =
             rmp_serde::from_slice(bytes).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -696,6 +855,7 @@ impl Engine {
         self.state.order_manager = snapshot.order_manager;
         *self.last_prices.write().expect("last_prices 写锁被污染") = snapshot.last_prices;
         self.instruments = snapshot.instruments;
+        self.invalidate_session_resolver();
         self.initial_cash = snapshot.initial_cash.unwrap_or(self.state.portfolio.cash);
         self.margin_accrued_interest = snapshot.margin_accrued_interest;
         self.margin_daily_interest = snapshot.margin_daily_interest;
@@ -712,6 +872,21 @@ impl Engine {
                 .restore(window_state);
         }
         self.snapshot_time = snapshot.current_time;
+        // 交易日进度：续跑时首个事件若仍在 current_trading_day 内则不再开日；
+        // 收盘定时器与跨度由首个事件按当日重新登记。
+        self.current_trading_day = snapshot.current_trading_day;
+        self.last_settled_trading_day = snapshot.last_settled_trading_day;
+        self.last_corp_action_date = snapshot.last_corp_action_date;
+        self.session_config = snapshot.session_config;
+        self.current_day_span = None;
+        self.scheduled_day_close = None;
+        self.lifecycle_scheduled_for = None;
+        // 当日最后一个已处理行情事件的时间：续跑后的首个事件若开新交易日，上一日结算的
+        // Day 单过期豁免（NextOpen 单是否建于最后一个事件）依赖它，置空会让
+        // 存档前的 Day 单一律被豁免而在新的一天成交。旧存档无此字段，退回 current_time。
+        self.last_event_ts_in_day = snapshot
+            .last_event_ts_in_day
+            .or((snapshot.current_time > 0).then_some(snapshot.current_time));
         self.default_strategy_id = snapshot.strategy_risk_state.default_strategy_id;
         self.strategy_slots = snapshot
             .strategy_risk_state
@@ -801,6 +976,13 @@ impl Engine {
     /// :param bars: 历史 K 线列表
     /// :return: 回放序列(基础 bar 与窗口 bar 交错)
     pub fn preload_history(&mut self, bars: Vec<Bar>) -> Vec<Bar> {
+        // 窗口按交易日/交易块切分需要会话解析器; 构造失败(配置错误)时只告警,
+        // 窗口退回本地时钟切分, 错误会在 run() 开始时报出。
+        if let Err(e) = self.ensure_session_resolver() {
+            log::warn!(
+                "预加载历史: 会话解析器构造失败({e}), 多周期窗口退回按本地时钟切分; 请检查 sessions / trading_calendar 配置"
+            );
+        }
         let mut buffer = self.history_buffer.write().unwrap();
         let mut aggregator = self
             .window_aggregator
@@ -843,11 +1025,16 @@ impl Engine {
                     .map_err(PyValueError::new_err)?,
             );
         }
-        self.window_aggregator
+        let mut aggregator = self
+            .window_aggregator
             .write()
-            .expect("window_aggregator 写锁被污染")
+            .expect("window_aggregator 写锁被污染");
+        aggregator
             .configure(subs, base_interval_min)
             .map_err(PyValueError::new_err)?;
+        // 基础周期未知时, 第一根不带 interval_start 的 bar 到达才告警(带区间的 bar
+        // 照样即时闭合, 不该报)。
+        aggregator.set_warn_deferred_close(true);
         Ok(())
     }
 
@@ -871,10 +1058,90 @@ impl Engine {
     pub fn set_timezone(&mut self, offset: i32) {
         self.timezone_offset = offset;
         self.timezone_name = None;
+        self.invalidate_session_resolver();
         self.window_aggregator
             .write()
             .expect("window_aggregator 写锁被污染")
             .set_clock(self.timezone_name.as_deref(), self.timezone_offset);
+    }
+
+    /// 配置交易时段表与交易日历。
+    ///
+    /// :param sessions: 代码前缀 → 时段模板名或自定义段列表
+    ///     ``[(start, end, session[, anchor]), ...]``；"default" 为全局默认。不传按规则 B
+    ///     （中国时区按资产类型取默认，其他时区全天连续）。
+    /// :param trading_calendar: 交易日列表；不传按工作日推算。
+    #[pyo3(signature = (sessions=None, trading_calendar=None))]
+    fn configure_sessions(
+        &mut self,
+        sessions: Option<Bound<'_, PyAny>>,
+        trading_calendar: Option<Vec<NaiveDate>>,
+    ) -> PyResult<()> {
+        let specs = match sessions.as_ref().filter(|s| !s.is_none()) {
+            Some(obj) => Some(crate::calendar::python::extract_session_specs(obj)?),
+            None => None,
+        };
+        if let Some(specs) = &specs {
+            // 只做校验（未知模板名、非法自定义段、重复键）；解析器在 run() 时构造。
+            crate::calendar::resolver::build_sessions(specs.clone())
+                .map_err(PyValueError::new_err)?;
+        }
+        if let Some(days) = &trading_calendar
+            && days.is_empty()
+        {
+            return Err(PyValueError::new_err("trading_calendar 不能为空"));
+        }
+        let (templates, custom) = match specs {
+            None => (None, None),
+            Some(specs) => {
+                let mut templates = Vec::new();
+                let mut custom = Vec::new();
+                for (key, spec) in specs {
+                    match spec {
+                        crate::calendar::resolver::SessionSpec::Template(name) => {
+                            templates.push((key, name))
+                        }
+                        crate::calendar::resolver::SessionSpec::Custom(segs) => {
+                            custom.push((key, segs))
+                        }
+                    }
+                }
+                templates.sort();
+                custom.sort_by(|a, b| a.0.cmp(&b.0));
+                // 只有自定义项时模板项仍记为 Some(空)，表示用户给了 sessions。
+                (Some(templates), (!custom.is_empty()).then_some(custom))
+            }
+        };
+        // 行情源对缺省日历的修正量保留（续跑时由存档载入后再次 configure_sessions）；
+        // 只作用于缺省日历，显式日历不受影响。
+        let calendar_overrides = std::mem::take(&mut self.session_config.calendar_overrides);
+        self.session_config = crate::engine::core::SessionConfig {
+            sessions: templates,
+            trading_calendar,
+            custom_sessions: custom,
+            calendar_overrides,
+        };
+        self.invalidate_session_resolver();
+        Ok(())
+    }
+
+    /// 时刻所属的交易日.
+    ///
+    /// 按当前时段表与交易日历（含行情源对缺省日历的修正）求 ``timestamp_ns`` 所属的
+    /// 会话交易日：收盘之后的时刻属于下一交易日。只读，可在 ``run()`` 之前或之后调用。
+    /// 纯日历查询：不考虑实盘收盘宽限（宽限期内的行情在运行中仍归当日，见
+    /// ``run_live(day_close_delay=)``；此处按日历属下一交易日）。
+    ///
+    /// :param timestamp_ns: 时刻（UTC 纳秒）
+    /// :return: 所属交易日
+    /// :raises ValueError: 时段配置非法，或时刻超出 ``trading_calendar`` 覆盖范围
+    fn trading_day_at(&mut self, timestamp_ns: i64) -> PyResult<NaiveDate> {
+        self.ensure_session_resolver()?;
+        self.session_resolver
+            .as_ref()
+            .expect("已构造")
+            .session_trading_day(timestamp_ns)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     /// 设置时区名称.
@@ -891,6 +1158,7 @@ impl Engine {
             .fix()
             .local_minus_utc();
         self.timezone_name = Some(tz_name.to_string());
+        self.invalidate_session_resolver();
         self.window_aggregator
             .write()
             .expect("window_aggregator 写锁被污染")
@@ -990,11 +1258,26 @@ impl Engine {
         self.market_manager.set_t_plus_one(enabled);
     }
 
-    /// 强制连续交易时段
+    /// 各交易日生命周期事件是否派发给策略（框架在 run 开始时按是否有策略重写了
+    /// 对应钩子设置，缺省全为 True）。
     ///
-    /// :param enabled: 是否强制连续交易 (忽略午休等)
-    fn set_force_session_continuous(&mut self, enabled: bool) {
-        self.force_session_continuous = enabled;
+    /// 为 False 的盘前/开始交易事件只在引擎内部消费；收盘后事件为 False 时只在有
+    /// 过期单或到期事件要送达时派发。
+    ///
+    /// :param pre_open: 是否派发盘前事件（on_pre_open）
+    /// :param before_trading: 是否派发开始交易事件（on_before_trading）
+    /// :param after_trading: 是否派发收盘后事件（on_after_trading）
+    fn set_lifecycle_hooks_dispatch(
+        &mut self,
+        pre_open: bool,
+        before_trading: bool,
+        after_trading: bool,
+    ) {
+        self.lifecycle_hooks_dispatch = super::core::LifecycleHooksDispatch {
+            pre_open,
+            before_trading,
+            after_trading,
+        };
     }
 
     /// 添加公司行为 (除权除息)
@@ -1007,7 +1290,6 @@ impl Engine {
     /// 启用中国期货市场默认配置
     /// - 切换到 ChinaMarket
     /// - 设置 T+0
-    /// - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
     fn use_china_futures_market(&mut self) {
         self.market_manager.use_china_futures_market();
     }
@@ -1232,33 +1514,6 @@ impl Engine {
         self.execution_model.set_volume_limit(limit);
     }
 
-    /// 设置市场交易时段
-    ///
-    /// :param sessions: 交易时段列表，每个元素为 (开始时间, 结束时间, 时段类型)
-    /// :type sessions: List[Tuple[str, str, TradingSession]]
-    ///
-    /// 示例::
-    ///
-    /// ```python
-    /// engine.set_market_sessions([
-    ///     ("09:30:00", "11:30:00", TradingSession.Normal),
-    ///     ("13:00:00", "15:00:00", TradingSession.Normal)
-    /// ])
-    /// ```
-    fn set_market_sessions(
-        &mut self,
-        sessions: Vec<(String, String, TradingSession)>,
-    ) -> PyResult<()> {
-        let mut ranges = Vec::with_capacity(sessions.len());
-        for (start, end, session) in sessions {
-            let start_time = Self::parse_time_string(&start)?;
-            let end_time = Self::parse_time_string(&end)?;
-            ranges.push((start_time, end_time, session));
-        }
-        self.market_manager.set_market_sessions(ranges);
-        Ok(())
-    }
-
     /// 添加交易标的
     ///
     /// :param instrument: 交易标的对象
@@ -1266,6 +1521,8 @@ impl Engine {
     pub fn add_instrument(&mut self, instrument: Instrument) {
         self.instruments
             .insert(instrument.symbol().to_string(), instrument);
+        // 在用时段表随标的集合变化，下次 run() 重建解析器。
+        self.invalidate_session_resolver();
     }
 
     /// 设置初始资金
@@ -1315,6 +1572,52 @@ impl Engine {
         strategy: &Bound<'_, PyAny>,
         show_progress: bool,
     ) -> PyResult<String> {
+        // 会话解析器（交易日归属、收盘时刻）在数据循环前构造，配置错误在这里报出。
+        self.ensure_session_resolver()?;
+        // 每次运行一次：未传交易日历、按工作日推算时告警（节假日会被当作交易日）。
+        self.warn_if_default_calendar();
+
+        // 续跑：存档里的在途订单只恢复进了订单管理器，撮合器是新建的、没有它们，
+        // 这里按提交顺序补登记，否则这些订单续跑后永远不会成交。
+        // 普通回测开始时 active_orders 为空，这里什么也不做。
+        let mut unregistered: Vec<crate::model::Order> = self
+            .state
+            .order_manager
+            .active_orders
+            .iter()
+            .filter(|o| !self.execution_model.knows_order(&o.id))
+            .cloned()
+            .collect();
+        unregistered.sort_by_key(|o| o.created_at);
+        for order in unregistered {
+            self.execution_model.on_order(order);
+        }
+
+        // 交易日生命周期（on_pre_open / on_before_trading）排程。回测：首个行情事件
+        // （有预热窗口时取不早于正式开始时刻）所属交易日，此后每个交易日结算后按下一个
+        // 行情事件串联；续跑时存档时刻及之前的已触发过，跳过。实盘：按墙钟排当日
+        // （或下一交易日），此后每次 before_trading 触发时排下一交易日；replay 设了
+        // 锚点时按锚点（首个回放事件）所属交易日排，该日全部时点照常登记。
+        //
+        // 续跑时存档所在交易日尚未结算(数据在盘中结束): 先补登记该日收盘定时器,
+        // 使它在续跑段的下一交易日盘前之前按收盘时刻结算并触发 on_after_trading,
+        // 与连续跑一致; 否则要等下一交易日首个事件开日时才补结算。续跑段仍在
+        // 该日内时, 首个事件不再重复登记(scheduled_day_close)。
+        self.schedule_resumed_day_close()?;
+        if self.state.feed.is_live() {
+            let wall = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            // replay 锚定首个回放事件(见 `_set_live_lifecycle_anchor`); 真实实盘按墙钟。
+            match self.live_lifecycle_anchor_ns {
+                Some(anchor) if anchor < wall => self.schedule_live_lifecycle_anchored(anchor)?,
+                _ => self.schedule_live_lifecycle(wall)?,
+            }
+        } else if let Some(first_ts) = self.state.feed.peek_timestamp() {
+            let anchor = self
+                .active_start_time_ns
+                .map_or(first_ts, |start| first_ts.max(start));
+            self.schedule_lifecycle_for_event(anchor, self.snapshot_time)?;
+        }
+
         // Configure history buffer if strategy has _history_depth set
         if let Ok(depth_attr) = strategy.getattr("_history_depth")
             && let Ok(depth) = depth_attr.extract::<usize>()
@@ -1416,15 +1719,23 @@ impl Engine {
         // Final cleanup
         self.state.order_manager.cleanup_finished_orders();
 
-        // 会话收尾补做到期结算: 结算平时在"进入新交易日"时触发, 数据恰好在到期日
-        // (或之后再无交易日)结束时就永远等不到那一刻。判据是 execution_model.is_live()
+        // 会话收尾。日终结算(含到期)挂在交易日收盘定时器上: 回测里最后一个交易日的
+        // 数据走到收盘时, 收盘定时器在数据耗尽后照常触发, 结算已完成, 这里只需把那次
+        // 结算产生的到期事件派发给策略(收尾时已没有下一个回调入口; Python 侧按事件键去重)。
+        //
+        // 当前交易日尚未结算(回测数据在盘中结束、实盘/paper 在收盘前停止)时保持原收尾
+        // 逻辑: 补做到期结算 ——
+        // 结算平时在交易日收盘时触发, 会话在收盘前结束就等不到那一刻。
+        // 判据是 execution_model.is_live()
         // (仅 RealtimeExecutionClient 对接 broker 时为 true): broker 实盘不做——实盘到期
         // 由柜台处理; run_live 的 paper/replay 走 SimulatedExecutionClient, is_live()
         // 为 false, 会话结束时同样补结算(若在到期日当天停止, 用的是当时已知的最新价而非
         // 真正的到期日收盘价)。补结算与日常路径一致: 记合成成交、发 `expiry` 流事件、
         // 派发 on_expiry。
-        if !self.execution_model.is_live()
-            && let Some(last_date) = self.current_date
+        let current_day_unsettled = self.current_day_unsettled();
+        if current_day_unsettled
+            && !self.execution_model.is_live()
+            && let Some(last_date) = self.current_trading_day
             && let Some(next_date) = last_date.succ_opt()
         {
             let prices = self
@@ -1470,18 +1781,22 @@ impl Engine {
                 .collect();
             self.emit_expiry_stream_events(py);
             self.flush_terminal_expiry_events(py, strategy)?;
+        } else {
+            self.flush_terminal_expiry_events(py, strategy)?;
         }
 
-        // Record final snapshot if we have data
-        if self.current_date.is_some()
-            && let Some(timestamp) = self.terminal_result_timestamp()
+        // 最终快照只在当前交易日未结算时记; 已结算则当日收盘快照已存在。实盘在
+        // 收盘宽限期内结束时记在收盘、按收盘时刻的最新价(见 terminal_result_point)。
+        if current_day_unsettled
+            && let (Some(timestamp), close_prices) = self.terminal_result_point()
         {
-            let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+            let latest = self.last_prices.read().expect("last_prices 读锁被污染");
+            let prices = close_prices.as_ref().unwrap_or(&*latest);
             self.statistics_manager.record_snapshot(
                 timestamp,
                 &self.state.portfolio,
                 &self.instruments,
-                &prices,
+                prices,
                 &self.state.order_manager.trade_tracker,
                 &self.risk_manager.config,
             );
@@ -1503,6 +1818,18 @@ impl Engine {
             );
         }
 
+        // 闭市时段告警全局限 CLOSED_SESSION_WARN_LIMIT 条(见 data.rs), 超出的在这里汇总。
+        let closed_symbols = self.closed_session_warned.len();
+        if closed_symbols > super::core::CLOSED_SESSION_WARN_LIMIT {
+            log::warn!(
+                "闭市时段行情汇总：本次回测共 {} 个标的、{} 条行情落在闭市时段，期间不会撮合成交；只逐一告警了前 {} 个标的，其余 {} 个未逐一告警。原因与改法见上面的闭市时段告警（检查时间戳时区，或用 sessions= 指定时段模板）",
+                closed_symbols,
+                self.closed_session_event_count,
+                super::core::CLOSED_SESSION_WARN_LIMIT,
+                closed_symbols - super::core::CLOSED_SESSION_WARN_LIMIT
+            );
+        }
+
         let count = self.bar_count;
         self.finish_stream_run(py, "completed", None);
         self.progress_bar = None;
@@ -1518,19 +1845,23 @@ impl Engine {
     ///
     /// :return: BacktestResult
     fn get_results(&self) -> BacktestResult {
-        let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+        // 实盘会话在收盘后结束时, 期末点钳到收盘并按收盘时刻的最新价计价。
+        let (terminal, close_prices) = self.terminal_result_point();
+        let latest = self.last_prices.read().expect("last_prices 读锁被污染");
+        let prices = close_prices.as_ref().unwrap_or(&*latest);
         self.statistics_manager.generate_backtest_result(
             &self.state.portfolio,
             &self.instruments,
-            &prices,
+            prices,
             &self.state.order_manager,
             &self.risk_manager.config,
             self.initial_cash,
-            self.terminal_result_timestamp(),
+            terminal,
             self.timezone_name.clone(),
             self.timezone_offset,
             self.days_per_year,
             self.risk_free_rate,
+            self.trading_day_ends.clone(),
         )
     }
 }

@@ -98,15 +98,15 @@ def aggregate_ticks_into_feed(
     显式传 ``volume_is_cumulative=False``, 让 ``BarAggregator`` 把 volume 当
     单笔量直接计入, 不做差分（详见 ``src/data/aggregator.rs``）。
 
-    **时间戳必须打在区间结束（因果顺序，不能用 live 默认口径）**:
-    ``BarAggregator`` 默认给封闭 bar 打区间**起点**时间戳——这在 live 下无害,
-    bar 是在下一区间首个 tick 到达时才发出的, 墙钟顺序即因果顺序。但本函数把
-    合成 bar 与源 tick 写进**同一个** ``feed``, 而 ``run_backtest`` 随后会对
-    这个 feed 调用 ``sort()``：按起点时间戳排序会让 bar 落到形成它的 tick
-    **之前**, 策略的 ``on_bar`` 就会读到尚未发生的 high/low/close。因此这里
-    显式传 ``stamp_bar_at_interval_end=True``, 让封闭 bar 打在区间结束
-    （下一区间起点前 1ns), 保证排在其源 tick 之后（详见
-    ``src/data/aggregator.rs``）。
+    **右闭区间、时间戳打在区间终点**: ``BarAggregator`` 按 ``(S, E]`` 分桶（恰在
+    整分 ``E`` 的 tick, 如 15:00:00 那笔收盘价, 属于以 ``E`` 结尾的 bar）, 封闭
+    bar 的 ``timestamp = E``、``interval_start = S``（实盘与回测同一口径）。本函数
+    把合成 bar 与源 tick 写进**同一个** ``feed``, ``run_backtest`` 随后对它
+    ``sort()``: 不同时刻按时间戳, 同一时刻 ``E`` 的 tick 与 bar 时间戳和标的都
+    相同, 靠排序的稳定性保持入队顺序——源 tick 先于本函数推入的 bar, 故 bar 排在
+    其最后一笔 tick 之后, 策略的 ``on_bar`` 不会读到尚未发生的 OHLC（详见
+    ``src/data/aggregator.rs``、``src/data/client.rs`` 的 ``sort``）。调用方必须
+    先推 tick 再调用本函数。
 
     **末尾未满周期不发出**: ``BarAggregator`` 不提供 ``flush``, 最后一个未封闭
     的周期不会产生 bar。这是既有行为, 调用方需知悉。
@@ -121,7 +121,6 @@ def aggregate_ticks_into_feed(
         feed,
         interval_min,
         volume_is_cumulative=False,
-        stamp_bar_at_interval_end=True,
     )
     for tick in ticks:
         aggregator.on_tick(

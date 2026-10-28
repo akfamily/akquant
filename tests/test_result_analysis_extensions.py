@@ -85,7 +85,9 @@ def _build_single_symbol_data() -> list[Bar]:
     for i, close in enumerate(closes):
         data.append(
             Bar(
-                timestamp=pd.Timestamp(f"2023-01-{i + 1:02d} 10:00:00").value,
+                timestamp=pd.Timestamp(
+                    f"2023-01-{i + 1:02d} 10:00:00", tz="Asia/Shanghai"
+                ).value,
                 open=close,
                 high=close + 0.2,
                 low=close - 0.2,

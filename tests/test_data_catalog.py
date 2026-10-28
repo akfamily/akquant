@@ -33,7 +33,7 @@ def test_parquet_catalog_read_naive_boundaries_follow_timezone(
             "volume": [1000.0, 1000.0, 1000.0],
         },
         index=pd.to_datetime(
-            ["2024-01-02 20:00:00", "2024-01-02 21:00:00", "2024-01-02 22:00:00"]
+            ["2024-01-02 12:00:00", "2024-01-02 13:00:00", "2024-01-02 14:00:00"]
         ),
     )
     catalog.write(symbol, frame)
@@ -46,8 +46,8 @@ def test_parquet_catalog_read_naive_boundaries_follow_timezone(
     )
 
     assert list(result.index) == [
-        pd.Timestamp("2024-01-02 21:00:00"),
-        pd.Timestamp("2024-01-02 22:00:00"),
+        pd.Timestamp("2024-01-02 13:00:00"),
+        pd.Timestamp("2024-01-02 14:00:00"),
     ]
 
 
@@ -66,7 +66,7 @@ def test_run_backtest_catalog_path_naive_boundaries_follow_timezone(
             "volume": [1000.0, 1000.0, 1000.0],
         },
         index=pd.to_datetime(
-            ["2024-01-02 20:00:00", "2024-01-02 21:00:00", "2024-01-02 22:00:00"]
+            ["2024-01-02 12:00:00", "2024-01-02 13:00:00", "2024-01-02 14:00:00"]
         ),
     )
     catalog.write(symbol, frame)

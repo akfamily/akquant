@@ -400,12 +400,14 @@ def _build_regression_bars(symbol: str) -> list[akquant.Bar]:
     """
     Build a deterministic 3-bar series for regression verification.
 
+    Bars are stamped 02:00 UTC (10:00 Asia/Shanghai, continuous session).
+
     :param symbol: Symbol for bars.
     :return: List of Bar objects.
     """
-    day1 = _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc))
-    day2 = _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc))
-    day3 = _ns(datetime(2023, 1, 4, 15, 0, tzinfo=timezone.utc))
+    day1 = _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc))
+    day2 = _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc))
+    day3 = _ns(datetime(2023, 1, 4, 2, 0, tzinfo=timezone.utc))
     return [
         akquant.Bar(day1, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
         akquant.Bar(day2, 12.0, 12.0, 12.0, 12.0, 1000.0, symbol),
@@ -415,9 +417,9 @@ def _build_regression_bars(symbol: str) -> list[akquant.Bar]:
 
 def _build_daily_loss_bars(symbol: str) -> list[akquant.Bar]:
     """Build bars where the second bar marks down unrealized PnL."""
-    day1 = _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc))
-    day2 = _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc))
-    day3 = _ns(datetime(2023, 1, 4, 15, 0, tzinfo=timezone.utc))
+    day1 = _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc))
+    day2 = _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc))
+    day3 = _ns(datetime(2023, 1, 4, 2, 0, tzinfo=timezone.utc))
     return [
         akquant.Bar(day1, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
         akquant.Bar(day2, 8.0, 8.0, 8.0, 8.0, 1000.0, symbol),
@@ -443,10 +445,10 @@ def _build_position_entry_price_bars(symbol: str) -> list[akquant.Bar]:
 
 def _build_reduce_only_bars(symbol: str) -> list[akquant.Bar]:
     """Build 4 bars used to validate reduce-only fallback behavior."""
-    day1 = _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc))
-    day2 = _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc))
-    day3 = _ns(datetime(2023, 1, 4, 15, 0, tzinfo=timezone.utc))
-    day4 = _ns(datetime(2023, 1, 5, 15, 0, tzinfo=timezone.utc))
+    day1 = _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc))
+    day2 = _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc))
+    day3 = _ns(datetime(2023, 1, 4, 2, 0, tzinfo=timezone.utc))
+    day4 = _ns(datetime(2023, 1, 5, 2, 0, tzinfo=timezone.utc))
     return [
         akquant.Bar(day1, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
         akquant.Bar(day2, 8.0, 8.0, 8.0, 8.0, 1000.0, symbol),
@@ -650,8 +652,14 @@ def test_order_level_current_close_daily_timer_sell_fills_same_day() -> None:
 
     sell_order = filled_sell_orders.iloc[0]
     sell_updated_at = pd.Timestamp(sell_order["updated_at"]).tz_convert("Asia/Shanghai")
-    assert sell_updated_at == pd.Timestamp("2026-04-02 14:56:00", tz="Asia/Shanghai")
+    # 只有日期的日线改写到当日 15:00, 首根 bar(04-01 15:00) 之前的 04-01
+    # 09:25/14:56 定时器不补登记, 首笔买入是 04-02 09:25(按 04-01 收盘 10.0);
+    # 04-02 14:56 时该笔仍受 T+1 冻结, 04-02 收盘(15:00)日终结算解冻, 首次可卖
+    # 是 04-03 14:56(按 04-02 收盘 11.0)。"同日"指卖单在下单的交易日内按
+    # CurrentClose 于定时器时刻成交, 不是买卖同日。
+    assert sell_updated_at == pd.Timestamp("2026-04-03 14:56:00", tz="Asia/Shanghai")
     assert float(sell_order["avg_price"]) == pytest.approx(11.0)
+    assert float(sell_order["filled_quantity"]) == pytest.approx(1.0)
 
     executions_df = result.executions_df
     filled_sell_executions = executions_df[
@@ -662,7 +670,7 @@ def test_order_level_current_close_daily_timer_sell_fills_same_day() -> None:
         filled_sell_executions.iloc[0]["timestamp"]
     ).tz_convert("Asia/Shanghai")
     assert sell_execution_time == pd.Timestamp(
-        "2026-04-02 14:56:00", tz="Asia/Shanghai"
+        "2026-04-03 14:56:00", tz="Asia/Shanghai"
     )
 
 
@@ -1533,7 +1541,7 @@ def test_run_backtest_naive_dataframe_boundaries_follow_configured_timezone() ->
     frame = pd.DataFrame(
         {
             "timestamp": pd.to_datetime(
-                ["2024-01-02 20:00:00", "2024-01-02 21:00:00", "2024-01-02 22:00:00"]
+                ["2024-01-02 12:00:00", "2024-01-02 13:00:00", "2024-01-02 14:00:00"]
             ),
             "symbol": ["BOUNDARY_DF"] * 3,
             "open": [10.0, 11.0, 12.0],
@@ -1764,7 +1772,7 @@ def test_engine_run_with_configured_slot_strategy() -> None:
 
     symbol = "SLOT_RUN"
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -1792,7 +1800,7 @@ def test_backtest_regression_baseline() -> None:
     symbol = "REGRESS"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -1852,7 +1860,7 @@ def test_metrics_df_exposes_display_friendly_trade_counts() -> None:
     symbol = "DISPLAY_COUNTS"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -1941,7 +1949,7 @@ def test_position_helper_exposes_runtime_entry_price() -> None:
     symbol = "POS_HELPER"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -2032,7 +2040,7 @@ def test_run_backtest_engine_oco_avoids_same_batch_double_fill() -> None:
     symbol = "OCO_SAME_BAR"
     bars = [
         akquant.Bar(
-            _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc)),
             10.0,
             10.0,
             10.0,
@@ -2094,7 +2102,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders() -> None:
     symbol = "BRACKET_ENGINE"
     bars = [
         akquant.Bar(
-            _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc)),
             100.0,
             100.0,
             100.0,
@@ -2103,7 +2111,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders() -> None:
             symbol,
         ),
         akquant.Bar(
-            _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc)),
             110.0,
             111.0,
             100.0,
@@ -2155,7 +2163,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders_from_timer() -> None:
         def on_start(self) -> None:
             """注册一个落在 bar1/bar2 之间的一次性定时任务."""
             self.schedule(
-                pd.Timestamp("2023-01-02 15:00:01", tz="UTC"), "timer_bracket"
+                pd.Timestamp("2023-01-02 02:00:01", tz="UTC"), "timer_bracket"
             )
 
         def on_timer(self, payload: str) -> None:
@@ -2177,7 +2185,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders_from_timer() -> None:
     symbol = "BRACKET_TIMER"
     bars = [
         akquant.Bar(
-            _ns(datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 2, 2, 0, tzinfo=timezone.utc)),
             100.0,
             100.0,
             100.0,
@@ -2186,7 +2194,7 @@ def test_run_backtest_engine_bracket_activates_exit_orders_from_timer() -> None:
             symbol,
         ),
         akquant.Bar(
-            _ns(datetime(2023, 1, 3, 15, 0, tzinfo=timezone.utc)),
+            _ns(datetime(2023, 1, 3, 2, 0, tzinfo=timezone.utc)),
             110.0,
             111.0,
             100.0,
@@ -4282,7 +4290,6 @@ def test_run_backtest_china_futures_validation_prefix_override() -> None:
         china_futures=akquant.ChinaFuturesConfig(
             enforce_lot_size=True,
             enforce_tick_size=True,
-            enforce_sessions=False,
         ),
     )
     result_reject = akquant.run_backtest(
@@ -4312,7 +4319,6 @@ def test_run_backtest_china_futures_validation_prefix_override() -> None:
         china_futures=akquant.ChinaFuturesConfig(
             enforce_lot_size=True,
             enforce_tick_size=True,
-            enforce_sessions=False,
             validation_by_symbol_prefix=[
                 akquant.ChinaFuturesValidationConfig(
                     symbol_prefix="RB",
@@ -4361,7 +4367,6 @@ def test_run_backtest_china_futures_instrument_template_multiplier() -> None:
             transfer_fee_rate=0.0,
         ),
         china_futures=akquant.ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 akquant.ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",
@@ -4416,7 +4421,6 @@ def test_run_backtest_instrument_lot_size_explicit_one_overrides_template() -> N
             )
         ],
         china_futures=akquant.ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 akquant.ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",
@@ -4469,7 +4473,6 @@ def test_run_backtest_china_futures_template_commission_prefix() -> None:
             transfer_fee_rate=0.0,
         ),
         china_futures=akquant.ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 akquant.ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",
@@ -4491,7 +4494,6 @@ def test_run_backtest_china_futures_template_commission_prefix() -> None:
             transfer_fee_rate=0.0,
         ),
         china_futures=akquant.ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 akquant.ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",
@@ -4712,22 +4714,24 @@ def test_china_futures_validation_config_requires_at_least_one_switch() -> None:
         akquant.ChinaFuturesValidationConfig(symbol_prefix="RB")
 
 
-def test_china_futures_session_profile_rejects_invalid_value() -> None:
-    """China futures session profile should validate allowed presets."""
-    with pytest.raises(ValueError, match="session_profile must be one of"):
-        akquant.ChinaFuturesConfig(session_profile="CN_FUTURES_UNKNOWN")
+def test_china_futures_session_profile_removed_gives_migration_error() -> None:
+    """session_profile 已删除，任何取值都给出带 sessions= 的迁移报错."""
+    with pytest.raises(TypeError, match="sessions="):
+        akquant.ChinaFuturesConfig(
+            session_profile="CN_FUTURES_UNKNOWN"  # type: ignore[call-arg]
+        )
 
 
-def test_china_futures_session_profile_accepts_cffex_presets() -> None:
-    """China futures session profile should accept CFFEX day presets."""
-    config_stock = akquant.ChinaFuturesConfig(
-        session_profile="CN_FUTURES_CFFEX_STOCK_INDEX_DAY"
-    )
-    config_bond = akquant.ChinaFuturesConfig(
-        session_profile="CN_FUTURES_CFFEX_BOND_DAY"
-    )
-    assert config_stock.session_profile == "CN_FUTURES_CFFEX_STOCK_INDEX_DAY"
-    assert config_bond.session_profile == "CN_FUTURES_CFFEX_BOND_DAY"
+def test_china_futures_session_profile_error_keeps_cffex_preset_name() -> None:
+    """迁移报错带上原 session_profile 的模板名，便于直接改用 sessions=."""
+    with pytest.raises(TypeError, match="CN_FUTURES_CFFEX_STOCK_INDEX_DAY"):
+        akquant.ChinaFuturesConfig(
+            session_profile="CN_FUTURES_CFFEX_STOCK_INDEX_DAY"  # type: ignore[call-arg]
+        )
+    with pytest.raises(TypeError, match="CN_FUTURES_CFFEX_BOND_DAY"):
+        akquant.ChinaFuturesConfig(
+            session_profile="CN_FUTURES_CFFEX_BOND_DAY"  # type: ignore[call-arg]
+        )
 
 
 def test_run_grid_search_parallel_accepts_fill_policy() -> None:
@@ -5054,7 +5058,7 @@ def test_run_backtest_lot_size_rejection_bridges_rust_warning(caplog: Any) -> No
     )
     assert matching_record.phase == "execution"
     assert matching_record.symbol == "LOT_WARN"
-    assert matching_record.event_time_iso == "2023-01-02T15:00:00Z"
+    assert matching_record.event_time_iso == "2023-01-02T02:00:00Z"
     assert getattr(matching_record, "order_id", None)
 
     akquant.register_logger(console=False, level="INFO")
@@ -5104,7 +5108,6 @@ def test_run_backtest_futures_validation_rejection_bridges_rust_warning(
                 china_futures=akquant.ChinaFuturesConfig(
                     enforce_lot_size=True,
                     enforce_tick_size=True,
-                    enforce_sessions=False,
                 ),
             ),
         )
@@ -5122,7 +5125,7 @@ def test_run_backtest_futures_validation_rejection_bridges_rust_warning(
     )
     assert matching_record.phase == "execution"
     assert matching_record.symbol == "RB2310"
-    assert matching_record.event_time_iso == "2023-01-02T15:00:00Z"
+    assert matching_record.event_time_iso == "2023-01-02T02:00:00Z"
     assert getattr(matching_record, "order_id", None)
 
     akquant.register_logger(console=False, level="INFO")
@@ -5173,7 +5176,7 @@ def test_run_backtest_ioc_cancel_bridges_rust_warning(caplog: Any) -> None:
     )
     assert matching_record.phase == "execution"
     assert matching_record.symbol == "IOC_WARN"
-    assert matching_record.event_time_iso == "2023-01-02T15:00:00Z"
+    assert matching_record.event_time_iso == "2023-01-02T02:00:00Z"
     assert getattr(matching_record, "order_id", None)
 
     akquant.register_logger(console=False, level="INFO")
@@ -5201,7 +5204,7 @@ def test_engine_tick_ioc_cancel_bridges_rust_warning(caplog: Any) -> None:
     symbol = "TICK_IOC_WARN"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -5293,7 +5296,7 @@ def test_pure_tick_backtest_mae_mfe_drawdown_use_tick_history() -> None:
     symbol = "TICK_MAE_MFE"
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
-    engine.set_force_session_continuous(True)
+    engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})
     cast(Any, engine).set_fill_mode(akquant.ExecutionMode.CurrentClose, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
@@ -5365,7 +5368,7 @@ def test_run_backtest_stop_limit_deferred_bridges_rust_warning(caplog: Any) -> N
             )
             self._submitted = True
 
-    ts = _ns(datetime(2024, 1, 2, 15, 0, tzinfo=timezone.utc))
+    ts = _ns(datetime(2024, 1, 2, 2, 0, tzinfo=timezone.utc))
     bars = [
         akquant.Bar(
             ts,
@@ -5404,7 +5407,7 @@ def test_run_backtest_stop_limit_deferred_bridges_rust_warning(caplog: Any) -> N
     )
     assert matching_record.phase == "execution"
     assert matching_record.symbol == "STOP_LIMIT_WARN"
-    assert matching_record.event_time_iso == "2024-01-02T15:00:00Z"
+    assert matching_record.event_time_iso == "2024-01-02T02:00:00Z"
     assert getattr(matching_record, "order_id", None)
 
     akquant.register_logger(console=False, level="INFO")
@@ -6917,6 +6920,8 @@ def test_run_backtest_calls_on_expiry_after_settlement() -> None:
         symbols=[symbol],
         config=config,
         show_progress=False,
+        # 夹具为 23:00（UTC 15:00）且跨周末：显式全天连续
+        sessions={"default": "ALWAYS_OPEN"},
     )
 
     assert len(strategy.expiry_events) == 1
@@ -6999,6 +7004,8 @@ def test_run_backtest_on_event_emits_expiry_event() -> None:
         config=config,
         on_event=events.append,
         show_progress=False,
+        # 夹具为 23:00（UTC 15:00）且跨周末：显式全天连续
+        sessions={"default": "ALWAYS_OPEN"},
     )
 
     expiry_events = [event for event in events if event["event_type"] == "expiry"]
@@ -7340,9 +7347,9 @@ def test_after_trading_next_open_order_fills_next_trading_day() -> None:
     used to fire only once T+1's bar arrived, so the engine clock was already at
     T+1 and the order's created_at was stamped at T+1; the #307 next-open guard
     (`event_ts <= created_at`) then skipped the T+1 bar and pushed the fill to
-    T+2. The fix schedules the day-end boundary timer for on_after_trading in the
-    default mode too, so the callback fires at T's session close (created_at in
-    T) and the fill lands on T+1. Checked for both dispatch modes.
+    T+2. on_after_trading now fires from the engine's trading-day lifecycle event
+    right after T's settlement (session close + 1ns), so the order belongs to the
+    next trading day and the fill lands on T+1.
     """
     dates = pd.to_datetime(["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"])
 
@@ -7355,12 +7362,10 @@ def test_after_trading_next_open_order_fills_next_trading_day() -> None:
         df["symbol"] = "AAA"
         return df
 
-    def _run(precise: bool) -> tuple:
+    def _run() -> tuple:
         class AfterTradingStrategy(akquant.Strategy):
             def __init__(self) -> None:
                 super().__init__()
-                if precise:
-                    self.enable_precise_day_boundary_hooks = True
                 self.bar_ts: list[
                     int
                 ] = []  # per-trading-day bar timestamps (ns), in order
@@ -7399,16 +7404,14 @@ def test_after_trading_next_open_order_fills_next_trading_day() -> None:
 
     # Order is submitted in on_after_trading of the first trading day (bar_ts[0]);
     # with a next-open policy it must fill at the open of the next trading day
-    # (bar_ts[1]). The #324 regression fills at bar_ts[2] (T+2) in default mode.
-    for precise in (False, True):
-        bar_ts, fill_ts = _run(precise)
-        assert fill_ts is not None, f"precise={precise}: order never filled"
-        fill_index = bar_ts.index(fill_ts)
-        assert fill_index == 1, (
-            f"precise={precise}: on_after_trading(day 0) next-open order filled on "
-            f"trading day index {fill_index}, expected 1 (next trading day). "
-            f"index 2 is the #324 off-by-one."
-        )
+    # (bar_ts[1]). The #324 regression fills at bar_ts[2] (T+2).
+    bar_ts, fill_ts = _run()
+    assert fill_ts is not None, "order never filled"
+    fill_index = bar_ts.index(fill_ts)
+    assert fill_index == 1, (
+        f"on_after_trading(day 0) next-open order filled on trading day index "
+        f"{fill_index}, expected 1 (next trading day). index 2 is the #324 off-by-one."
+    )
 
 
 def test_pre_open_default_order_fills_same_day_open() -> None:
@@ -7721,7 +7724,8 @@ def _rebalance_hook_price_frames() -> dict[str, pd.DataFrame]:
     price alone identifies which bar an order landed on.
     """
     dates = pd.to_datetime(
-        ["2023-01-01", "2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"]
+        # 周一至周五（周日只有日期的 bar 落在闭市时段）
+        ["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06"]
     )
     frames: dict[str, pd.DataFrame] = {}
     for sym, base in (("a", 10.1), ("b", 20.1), ("c", 30.1)):
@@ -7738,24 +7742,22 @@ def _rebalance_hook_price_frames() -> dict[str, pd.DataFrame]:
     return frames
 
 
-def test_on_before_trading_no_lookahead_and_precise_hook_independent_fill() -> None:
-    """`on_before_trading` contract (#291): no lookahead, precise-independent.
-
-    The `enable_precise_day_boundary_hooks` toggle must not shift the fill bar.
+def test_on_before_trading_no_lookahead_and_same_day_open_fill() -> None:
+    """`on_before_trading` contract (#291): no lookahead, same-day open fill.
 
     * On day 1 ``get_history("a", "close")`` must NOT reveal the current-day
       close (10.11); on day 2 it reveals day 1's close, i.e. history lags by a
       trading day (the day-boundary "previous info visible" semantics).
-    * Buying on the first callback under next-open fill (``bar_offset=1``) fills
-      at day 2's open (10.20) regardless of the precise-hooks setting. Issue
-      #291 reported precise=True vs False diverging by a day here.
+    * on_before_trading fires at 09:30 (continuous-auction start), before the
+      date-only daily bar (rewritten to 15:00), so buying on the first callback
+      under next-open fill (``bar_offset=1``) fills at day 1's open (10.10)
+      — "decide before the open, fill on this open" (Ruling S4-3).
     """
 
     class RebalanceStrategy(akquant.Strategy):
-        def __init__(self, precise: bool) -> None:
+        def __init__(self) -> None:
             super().__init__()
             self.set_history_depth(1)
-            self.enable_precise_day_boundary_hooks = precise
             self._seen: set = set()
             self.hist_by_day: dict[int, float] = {}
             self._bought = False
@@ -7777,8 +7779,8 @@ def test_on_before_trading_no_lookahead_and_precise_hook_independent_fill() -> N
             if trade.symbol == "a" and trade.side == akquant.OrderSide.Buy:
                 self.buy_price = float(trade.price)
 
-    def _run(precise: bool) -> RebalanceStrategy:
-        strat = RebalanceStrategy(precise=precise)
+    def _run() -> RebalanceStrategy:
+        strat = RebalanceStrategy()
         akquant.run_backtest(
             data=_rebalance_hook_price_frames(),
             strategy=strat,
@@ -7791,18 +7793,14 @@ def test_on_before_trading_no_lookahead_and_precise_hook_independent_fill() -> N
         )
         return strat
 
-    precise_on = _run(True)
-    precise_off = _run(False)
+    strat = _run()
 
     # No lookahead: day 1 does not expose the current-day close (10.11).
-    assert np.isnan(precise_on.hist_by_day[1])
-    assert np.isnan(precise_off.hist_by_day[1])
+    assert np.isnan(strat.hist_by_day[1])
     # History lags by one trading day: day 2 sees day 1's close.
-    assert precise_on.hist_by_day[2] == pytest.approx(10.11)
-    assert precise_off.hist_by_day[2] == pytest.approx(10.11)
-    # Precise-hooks toggle must not move the fill: both land on day 2's open.
-    assert precise_on.buy_price == pytest.approx(10.20)
-    assert precise_off.buy_price == pytest.approx(10.20)
+    assert strat.hist_by_day[2] == pytest.approx(10.11)
+    # Decided before day 1's open, filled at day 1's open.
+    assert strat.buy_price == pytest.approx(10.10)
 
 
 def test_on_cross_section_sees_current_day_and_same_cycle_fill() -> None:

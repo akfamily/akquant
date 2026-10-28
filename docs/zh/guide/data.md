@@ -22,7 +22,7 @@ result = run_backtest(data=pldf, strategy=MyStrategy, symbols="000001.SZ")
 
 | 列名 (Column) | 类型 (Type) | 说明 |
 | :--- | :--- | :--- |
-| `date` / `time` / `datetime` | `datetime64[ns]` | 时间戳索引。必须是 Pandas 的 datetime 类型。 |
+| `date` / `time` / `datetime` | `datetime64[ns]` | 时间戳索引。必须是 Pandas 的 datetime 类型。时间戳是 bar 的**区间终点**（如 09:31 的分钟 bar 覆盖 (09:30, 09:31]）。 |
 | `open` | `float` | 开盘价 |
 | `high` | `float` | 最高价 |
 | `low` | `float` | 最低价 |
@@ -33,7 +33,9 @@ result = run_backtest(data=pldf, strategy=MyStrategy, symbols="000001.SZ")
 **注意：**
 
 1.  **列名标准化**：建议在传入前将列名统一重命名为英文小写（如 `open`, `close`）。
-2.  **Symbol 列**：**多标的数据必须带标的列**，否则所有标的的 bar 会被压进一条时间序列（指标与撮合结果都不正确）。列名可以是 `symbol`、`股票代码`、`code`、`ticker` 之一（AKShare 原生的 `股票代码` 直接可用，无需重命名）；推荐统一用 `symbol`。识别不到标的列、却检测到同一时间戳存在多行时，回测会打 `WARNING` 提示已退化为单标的。单标的数据可以省略该列（此时引擎按单一标的处理，不会告警）。
+2.  **日线时间戳**：只有日期（本地 0 点）的日线会自动改写到该交易日的收盘时刻（A 股 15:00），bar 区间覆盖整个交易日，无需传 `freq`；日期里含非交易日（如周末）时告警一次，该行改写后归入下一交易日，且时段为闭市、不撮合，挂单顺延到下一交易日的 bar 成交。这一改写只针对 DataFrame 与 Bar 列表输入；`DataFeed` 输入按原样使用，只有日期的数据请改用 DataFrame/Bar 列表，或把时间戳打在交易日收盘并传 `freq="1d"`。打在 15:00 等固定非 0 点时刻的日线须传 `run_backtest(freq="1d")`，否则按“时间戳前 1ns”判为收盘集合竞价（引擎告警一次）：成交时点不变，但市价单按 bar 的收盘价而非开盘价成交。
+3.  **分钟线等其他周期**：可传 `run_backtest(freq="1min")` 等声明周期，引擎据此填 bar 的区间起点 `interval_start`，`subscribe_bars` 窗口也能即时闭合。
+4.  **Symbol 列**：**多标的数据必须带标的列**，否则所有标的的 bar 会被压进一条时间序列（指标与撮合结果都不正确）。列名可以是 `symbol`、`股票代码`、`code`、`ticker` 之一（AKShare 原生的 `股票代码` 直接可用，无需重命名）；推荐统一用 `symbol`。识别不到标的列、却检测到同一时间戳存在多行时，回测会打 `WARNING` 提示已退化为单标的。单标的数据可以省略该列（此时引擎按单一标的处理，不会告警）。
 
 ### 1.2 索引 (Index)
 
@@ -144,7 +146,7 @@ feed_1h = base.replay(
     align="session",            # session | day | global
     day_mode="trading",         # 仅 align='day' 时生效: trading | calendar
     emit_partial=False,
-    session_windows=[("09:30", "11:30"), ("13:00", "15:00")],  # 仅 align='session'
+    # 不传 session_windows：按品种时段表的交易块切分，与 subscribe_bars 一致
 )
 
 result = aq.run_backtest(
@@ -157,7 +159,7 @@ result = aq.run_backtest(
 
 参数语义：
 
-*   `align="session"`：按交易日分区，可叠加 `session_windows`。
+*   `align="session"`：按交易日与交易块分区（默认按品种时段表）；也可手写 `session_windows` 覆盖，但手写时段不与引擎窗口逐根对齐。
 *   `align="day"`：按日分区，不接收 `session_windows`；`day_mode` 支持 `trading/calendar`。
 *   `align="global"`：按全局时间轴聚合，不按交易日切段。
 
@@ -289,11 +291,10 @@ result = aq.run_backtest(
 
 传入 `freq` 后，原始 tick 仍照常投递给 `on_tick`，同时把 tick 聚合成 bar 投递给 `on_bar`，从而拿到完整 OHLC 语义与全部指标（含 ATR 等 H/L 类）。要点：
 
-*   词汇与 `feed_adapter.resample(freq=...)` 一致，但**只支持整数分钟**（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 等非整分周期会抛 `ValueError` 并指向 `feed_adapter.resample`，不会静默取整。
+*   词汇与 `feed_adapter.resample(freq=...)` 一致，但 tick 聚合**只支持整数分钟**（`"1min"` / `"5min"` / `"1h"`）；`"30s"` 等非整分周期会抛 `ValueError` 并指向 `feed_adapter.resample`，不会静默取整。（bar 数据传 `freq` 是声明周期，还支持 `"1d"`，见本页 1.1 节。）
 *   适配层按**单笔口径**声明 `volume`（即每个 `Tick.volume` 就是这一笔的成交量，不是累计量），聚合器把区间内所有 tick 的 volume 直接求和写入合成 bar 的 `volume`。
-*   合成 bar 的时间戳打在**区间结束**（下一区间起点前 1 纳秒），而非区间起点：回测把合成 bar 与源 tick 放进同一个 feed 再按时间戳排序，若用区间起点，bar 会排到形成它的 tick **之前**，策略读到的 high/low/close 会是尚未发生的未来数据；打在区间结束保证 bar 严格晚于其所有源 tick。
-*   末尾未满一个周期的 tick 不会产生 bar（聚合器不提供 flush）。
-*   `data` 中不含任何 `Tick` 时传 `freq` 会抛 `ValueError`（参数无意义）。
+*   分桶右闭：区间为 `(S, E]`，恰在整分 `E` 的 tick 归以它结尾的 bar（09:31:00 的 tick 属于 09:30～09:31 这根）。合成 bar 的时间戳打在**区间终点 E**，并带 `interval_start = S`，而非区间起点：回测把合成 bar 与源 tick 放进同一个 feed 再按时间戳排序，若用区间起点，bar 会排到形成它的 tick **之前**，策略读到的 high/low/close 会是尚未发生的未来数据；打在区间终点保证 bar 不早于其所有源 tick。
+*   回测里数据在区间中途结束时，末尾未满一个周期的 tick 不会产生 bar（回测不做收尾 flush）。实盘网关迟迟没有下一区间的 tick 时，在区间终点后宽限 2 秒补发；收盘那根 bar 例外，会并入收盘后 `day_close_delay − 5` 秒内的 tick，在这段宽限结束后 2 秒补发（见 [API 参考](../reference/api.md#live-timezone-sessions)）。tick 与 bar 双流下，同品种的宽限 tick 先于这根收盘 bar 推给策略，于是收盘 bar（时间戳为收盘）晚于时间戳更大的宽限 tick 到达，回调里看到的时间戳会倒退一次。
 
 ---
 
@@ -354,5 +355,5 @@ data_map = {
 
 AKQuant 内部统一使用 UTC 时间戳。
 如果你的数据是本地时间（如北京时间），请在 `run_backtest` 中指定 `timezone="Asia/Shanghai"`。
-如果你直接调用 `ParquetDataCatalog.read(start_time=..., end_time=...)`，传入 naive 时间边界时也会按该 `timezone`（未显式传入时默认为 `Asia/Shanghai`）解释。
+如果你直接调用 `ParquetDataCatalog.read(start_time=..., end_time=...)`，传入的 naive 时间边界以及 Parquet 中存的 naive 索引，都会按该 `timezone`（未显式传入时默认为 `Asia/Shanghai`）解释。
 更多详情请参考 [时区处理指南](../advanced/timezone.md)。

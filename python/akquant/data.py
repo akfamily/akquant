@@ -34,7 +34,7 @@ def _filter_catalog_frame_by_time_range(
         return df
     compare_index = df.index
     if compare_index.tz is None:
-        compare_index = compare_index.tz_localize(DEFAULT_INPUT_TIMEZONE)
+        compare_index = compare_index.tz_localize(timezone or DEFAULT_INPUT_TIMEZONE)
     mask = pd.Series(True, index=df.index)
     if start_time is not None:
         start_ts = _parse_catalog_boundary_timestamp(start_time, timezone)
@@ -120,7 +120,8 @@ class ParquetDataCatalog:
         :param start_time: Filter start date/time.
         :param end_time: Filter end date/time.
         :param columns: Specific columns to read.
-        :param timezone: Timezone used to interpret naive start/end boundaries.
+        :param timezone: Timezone used to interpret naive start/end boundaries and
+            a naive stored index (default Asia/Shanghai).
         :return: DataFrame.
         """
         symbol_path = self.root / symbol

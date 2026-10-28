@@ -9,43 +9,16 @@ pub mod option;
 pub mod simple;
 pub mod stock;
 
-pub use china::{ChinaMarket, ChinaMarketConfig, SessionRange};
+pub use china::{ChinaMarket, ChinaMarketConfig};
 pub use core::{MarketConfig, MarketModel};
 pub use simple::{SimpleMarket, SimpleMarketConfig};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AssetType, Instrument, OrderSide, TradingSession};
-    use chrono::NaiveTime;
+    use crate::model::{AssetType, Instrument, OrderSide};
     use rust_decimal::Decimal;
     use rust_decimal::prelude::*;
-
-    #[test]
-    fn test_china_market_session() {
-        let market = ChinaMarket::new();
-
-        // 9:15 -> CallAuction
-        assert_eq!(
-            market.get_session_status(NaiveTime::from_hms_opt(9, 15, 0).unwrap()),
-            TradingSession::CallAuction
-        );
-        // 9:30 -> Continuous
-        assert_eq!(
-            market.get_session_status(NaiveTime::from_hms_opt(9, 30, 0).unwrap()),
-            TradingSession::Continuous
-        );
-        // 12:00 -> Break
-        assert_eq!(
-            market.get_session_status(NaiveTime::from_hms_opt(12, 0, 0).unwrap()),
-            TradingSession::Break
-        );
-        // 18:00 -> Closed
-        assert_eq!(
-            market.get_session_status(NaiveTime::from_hms_opt(18, 0, 0).unwrap()),
-            TradingSession::Closed
-        );
-    }
 
     #[test]
     #[should_panic(expected = "Futures market configuration not found")]

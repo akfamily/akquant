@@ -3,6 +3,7 @@ use pyo3_stub_gen::define_stub_info_gatherer;
 
 mod account;
 mod analysis;
+mod calendar;
 mod clock;
 mod context;
 mod data;
@@ -47,6 +48,10 @@ use risk::{RiskConfig, RiskManager};
 fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = pyo3_log::init();
     m.add_class::<Bar>()?;
+    m.add_function(wrap_pyfunction!(model::_restore_order, m)?)?;
+    m.add_function(wrap_pyfunction!(model::_restore_trade, m)?)?;
+    m.add_function(wrap_pyfunction!(model::_restore_bar, m)?)?;
+    m.add_function(wrap_pyfunction!(model::_restore_tick, m)?)?;
     m.add_function(wrap_pyfunction!(from_arrays, m)?)?;
     // broker_live 报单前的策略级限额前置风控(见 docs/zh/meta/signal-ingestion-rfc.md 3.3)
     m.add_function(wrap_pyfunction!(
@@ -89,6 +94,8 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CorporateAction>()?;
     m.add_class::<CorporateActionType>()?;
     m.add_class::<TradingSession>()?;
+    m.add_class::<calendar::python::PySessionResolver>()?;
+    m.add_class::<data::python_window::PyWindowAggregator>()?;
     m.add_class::<Portfolio>()?;
     m.add_class::<PerformanceMetrics>()?;
     m.add_class::<BacktestResult>()?;

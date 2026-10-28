@@ -48,7 +48,7 @@ class _FakeEngine:
     def use_china_futures_market(self) -> None:
         pass
 
-    def set_force_session_continuous(self, *a: Any) -> None:
+    def configure_sessions(self, *a: Any) -> None:
         pass
 
     def run(self, strategy: Any, show_progress: bool = False) -> None:
@@ -148,11 +148,7 @@ def test_on_stop_live_internal_skips_backtest_only_coverage_checks() -> None:
 
 
 def test_on_stop_live_internal_is_idempotent() -> None:
-    """重复派发实盘收尾不应重复执行用户 on_stop.
-
-    ``_framework_stop_flushed`` 只护住 ``on_after_trading`` 的补发,
-    护不住 ``on_stop`` 本身, 所以需要独立标志。
-    """
+    """重复派发实盘收尾不应重复执行用户 on_stop(由独立的幂等标志保护)."""
     calls: list[int] = []
 
     class Strat(Strategy):

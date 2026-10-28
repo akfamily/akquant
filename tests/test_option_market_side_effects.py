@@ -103,7 +103,6 @@ def test_futures_fee_unchanged_when_option_instrument_added() -> None:
 def test_futures_per_instrument_override_beats_global_and_prefix_rule() -> None:
     """按品种覆盖(InstrumentConfig.commission_rate)同时压过全局费率和前缀规则."""
     china_futures = akquant.ChinaFuturesConfig(
-        enforce_sessions=False,
         fee_by_symbol_prefix=[
             akquant.ChinaFuturesFeeConfig(symbol_prefix="RB", commission_rate=0.0005)
         ],

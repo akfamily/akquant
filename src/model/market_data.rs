@@ -1,6 +1,7 @@
 use chrono::{NaiveDate, NaiveDateTime, SecondsFormat, TimeZone, Utc};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
@@ -47,11 +48,33 @@ pub struct Bar {
     #[pyo3(get, set)]
     #[serde(default)]
     pub freq: Option<String>,
+    /// 区间起点（UTC 纳秒，不含）：bar 覆盖 `(interval_start, timestamp]`。
+    /// `None` 表示未知，按“时间戳前 1ns”判断时段。由数据入口填写。
+    #[pyo3(get, set)]
+    #[serde(default)]
+    pub interval_start: Option<i64>,
+}
+
+/// pickle 还原函数: 由 `Bar.__reduce__` 引用.
+#[pyfunction]
+pub fn _restore_bar(data: &[u8]) -> PyResult<Bar> {
+    rmp_serde::from_slice(data).map_err(|e| PyValueError::new_err(format!("Bar 反序列化失败: {e}")))
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl Bar {
+    /// pickle 支持: 以具名 MessagePack 编码还原.
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyBytes>,))> {
+        let data = rmp_serde::to_vec_named(self)
+            .map_err(|e| PyValueError::new_err(format!("Bar 序列化失败: {e}")))?;
+        let restore = py
+            .import("akquant.akquant")?
+            .getattr("_restore_bar")?
+            .unbind();
+        Ok((restore, (PyBytes::new(py, &data).unbind(),)))
+    }
+
     /// 创建 Bar 对象.
     ///
     /// :param timestamp: Unix 时间戳 (纳秒)
@@ -63,8 +86,9 @@ impl Bar {
     /// :param symbol: 标的代码
     /// :param extra: 自定义字段 (可选)
     /// :param freq: 周期标签 (可选, 引擎聚合出的窗口 bar 才带)
+    /// :param interval_start: 区间起点 (UTC 纳秒, 可选)
     #[new]
-    #[pyo3(signature = (timestamp, open, high, low, close, volume, symbol, extra=None, freq=None))]
+    #[pyo3(signature = (timestamp, open, high, low, close, volume, symbol, extra=None, freq=None, interval_start=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         timestamp: &Bound<'_, PyAny>,
@@ -76,6 +100,7 @@ impl Bar {
         symbol: String,
         extra: Option<HashMap<String, f64>>,
         freq: Option<String>,
+        interval_start: Option<i64>,
     ) -> PyResult<Self> {
         let ts_val = extract_timestamp(timestamp)?;
         let open_val = extract_decimal(open)?;
@@ -94,6 +119,7 @@ impl Bar {
             symbol,
             extra: extra.unwrap_or_default(),
             freq,
+            interval_start,
         })
     }
 
@@ -190,9 +216,27 @@ pub struct Tick {
     pub symbol: String,
 }
 
+/// pickle 还原函数: 由 `Tick.__reduce__` 引用.
+#[pyfunction]
+pub fn _restore_tick(data: &[u8]) -> PyResult<Tick> {
+    rmp_serde::from_slice(data)
+        .map_err(|e| PyValueError::new_err(format!("Tick 反序列化失败: {e}")))
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl Tick {
+    /// pickle 支持: 以具名 MessagePack 编码还原.
+    fn __reduce__(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, (Py<PyBytes>,))> {
+        let data = rmp_serde::to_vec_named(self)
+            .map_err(|e| PyValueError::new_err(format!("Tick 序列化失败: {e}")))?;
+        let restore = py
+            .import("akquant.akquant")?
+            .getattr("_restore_tick")?
+            .unbind();
+        Ok((restore, (PyBytes::new(py, &data).unbind(),)))
+    }
+
     /// 创建 Tick 对象.
     ///
     /// :param timestamp: Unix 时间戳 (纳秒, int) 或 日期字符串 (str, "YYYY-MM-DD" / "YYYY-MM-DD HH:MM:SS")

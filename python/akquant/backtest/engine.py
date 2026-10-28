@@ -1,14 +1,16 @@
 import datetime as dt_module
 import logging
 import os
+import re
 import sys
 import warnings
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
     Dict,
+    Iterable,
     List,
     Literal,
     Optional,
@@ -20,6 +22,7 @@ from typing import (
     cast,
 )
 
+import numpy as np
 import pandas as pd
 from pydantic import ValidationError
 
@@ -31,6 +34,7 @@ from ..akquant import (
     Engine,
     Instrument,
     OptionMarginModel,
+    SessionResolver,
     SettlementType,
     Tick,
     TradingSession,
@@ -63,6 +67,13 @@ from ..normalize import (
 from ..params import unknown_param_message
 from ..risk import apply_risk_config
 from ..schema import COLUMN_ALIASES
+from ..sessions_config import (
+    SessionsArg,
+    SessionsMap,
+    normalize_sessions,
+    normalize_trading_calendar,
+    parse_asset_type_name,
+)
 from ..strategy import (
     InstrumentAssetTypeName,
     InstrumentOptionMarginModelName,
@@ -78,16 +89,12 @@ from ..strategy import (
     _legacy_init_arg_names as _legacy_init_arg_names_impl,
 )
 from ..strategy_framework_hooks import (
-    collect_boundary_timer_entries as _collect_boundary_timer_entries_impl,
-)
-from ..strategy_framework_hooks import (
     collect_cross_section_timer_entries,
+    configure_engine_lifecycle_dispatch,
     normalize_dual_stream_declaration,
 )
-from ..strategy_framework_hooks import (
-    collect_pre_open_timer_entries as _collect_pre_open_timer_entries_impl,
-)
 from ..strategy_loader import resolve_strategy_input
+from ..strategy_order_events import assign_slot_ownership
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import (
     configure_engine_window_subscriptions,
@@ -239,52 +246,6 @@ def _build_backtest_log_extra(
         slot=slot,
         symbol=symbol,
     )
-
-
-def _prime_framework_pre_open_timers(
-    strategies: Sequence[Strategy], engine: Any
-) -> None:
-    """Prime global pre-open timers before the event loop starts."""
-    add_timer = getattr(engine, "add_timer", None)
-    if not callable(add_timer):
-        return
-
-    unique_timers: dict[str, int] = {}
-    for current_strategy in strategies:
-        entries = _collect_pre_open_timer_entries_impl(current_strategy)
-        if entries:
-            current_strategy._framework_pre_open_timers_registered = True
-        for timestamp_ns, payload in entries:
-            unique_timers[payload] = int(timestamp_ns)
-
-    for payload, timestamp_ns in sorted(
-        unique_timers.items(),
-        key=lambda item: (int(item[1]), item[0]),
-    ):
-        add_timer(timestamp_ns, payload)
-
-
-def _prime_framework_boundary_timers(
-    strategies: Sequence[Strategy], engine: Any
-) -> None:
-    """Prime global boundary timers before the event loop starts."""
-    add_timer = getattr(engine, "add_timer", None)
-    if not callable(add_timer):
-        return
-
-    unique_timers: dict[str, int] = {}
-    for current_strategy in strategies:
-        entries = _collect_boundary_timer_entries_impl(current_strategy)
-        if entries:
-            current_strategy._framework_boundary_timers_registered = True
-        for timestamp_ns, payload in entries:
-            unique_timers[payload] = int(timestamp_ns)
-
-    for payload, timestamp_ns in sorted(
-        unique_timers.items(),
-        key=lambda item: (int(item[1]), item[0]),
-    ):
-        add_timer(timestamp_ns, payload)
 
 
 def _prime_framework_cross_section_timers(
@@ -489,15 +450,14 @@ def _filter_datetime_index_frame_by_runtime_window(
 ) -> pd.DataFrame:
     """Filter a datetime-indexed frame using runtime boundaries.
 
-    Naive frame indices follow the same Shanghai-default market-data semantics as
-    the main DataFrame -> Bar conversion path, while naive runtime boundaries are
-    interpreted in the configured strategy timezone.
+    Naive frame indices and naive runtime boundaries are both interpreted in the
+    configured strategy timezone (default Asia/Shanghai).
     """
     if frame.empty or not isinstance(frame.index, pd.DatetimeIndex):
         return frame
     compare_index = frame.index
     if compare_index.tz is None:
-        compare_index = compare_index.tz_localize(DEFAULT_INPUT_TIMEZONE)
+        compare_index = compare_index.tz_localize(timezone or DEFAULT_INPUT_TIMEZONE)
     mask = pd.Series(True, index=frame.index)
     if start_time is not None:
         start_ts = _parse_runtime_boundary_timestamp(start_time, timezone)
@@ -508,61 +468,894 @@ def _filter_datetime_index_frame_by_runtime_window(
     return cast(pd.DataFrame, frame.loc[mask.to_numpy()])
 
 
-def _build_trading_day_metadata(
-    data_map_for_indicators: Dict[str, pd.DataFrame], timezone: str
-) -> Tuple[List[pd.Timestamp], Dict[str, Tuple[int, int]], Dict[str, int]]:
-    """Build sorted trading days, per-day bounds, and rebalance timestamps."""
+# 已搬入 akquant.sessions_config；保留旧私有名供本模块与既有调用方使用。
+_normalize_trading_calendar = normalize_trading_calendar
+
+
+_EPOCH_DATE = dt_module.date(1970, 1, 1)
+_UNITS_PER_DAY = {
+    "s": 86_400,
+    "ms": 86_400_000,
+    "us": 86_400_000_000,
+    "ns": 86_400_000_000_000,
+}
+
+
+def _local_wall_units(index: pd.DatetimeIndex) -> Tuple[np.ndarray, int]:
+    """本地挂钟时间的整数值与每日单位数：带时区的索引去掉时区，naive 按字面值."""
+    if index.tz is not None:
+        index = index.tz_localize(None)
+    values = np.asarray(index.to_numpy())
+    unit = np.datetime_data(values.dtype)[0]
+    return values.view(np.int64), _UNITS_PER_DAY[unit]
+
+
+def _is_local_midnight(ts: Any) -> bool:
+    """单个时间戳是否为其所在时区的本地 0 点；NaT 为 False."""
+    if ts is pd.NaT or ts is None:
+        return False
+    wall = ts.tz_localize(None) if ts.tzinfo is not None else ts
+    return bool(wall == wall.normalize())
+
+
+def _local_midnight_only(index: pd.DatetimeIndex) -> bool:
+    """全部时间戳都是本地 0 点（只有日期的数据）.
+
+    ``index`` 须已转到引擎时区；naive 索引按其字面值判断。含 NaT 时返回 False。
+    首元素不是 0 点即返回（日内与 15:00 日线的常见情形）；按本地挂钟整数取模判断，
+    不调用 ``normalize``（当日 0 点因夏令时不存在时它会报错）。
+    """
+    if len(index) == 0 or not _is_local_midnight(index[0]) or index.hasnans:
+        return False
+    wall, per_day = _local_wall_units(index)
+    return bool((wall % per_day == 0).all())
+
+
+def _aware_first_not_local_midnight(raw: Any, timezone: str) -> bool:
+    """已带时区的时间来源：首元素为 NaT 或不是引擎时区本地 0 点时为真.
+
+    为真时 ``_local_midnight_only`` 必为 False，可跳过整列转换。naive 与非 datetime
+    来源返回 False（交给原路径：naive 按引擎时区本地化，夏令时跳变点会前移）。
+    """
+    if not isinstance(getattr(raw, "dtype", None), pd.DatetimeTZDtype):
+        return False
+    if len(raw) == 0:
+        return False
+    first = raw.iloc[0] if isinstance(raw, pd.Series) else raw[0]
+    if first is pd.NaT:
+        return True
+    return not _is_local_midnight(pd.Timestamp(first).tz_convert(timezone))
+
+
+def _activate_session_symbols(
+    resolver: Any,
+    symbols: Iterable[str],
+    asset_type_of: Callable[[str], Any],
+    known_asset_types: Optional[Dict[str, Any]] = None,
+    *,
+    underlying_of: Callable[[str], Optional[str]],
+    known_underlyings: Optional[Dict[str, Optional[str]]] = None,
+) -> Tuple[Any, ...]:
+    """把将注册为合约的标的设为解析器的在用标的，并下发期权→标的映射.
+
+    须与引擎 ``ensure_session_resolver`` 的在用集合（全部已登记合约）一致：只有日期
+    的数据改写到会话级收盘 ``session_day_end``，它取所有在用时段表收盘的最大值。
+    ``known_asset_types`` 给出已知资产类型的标的（如存档里已有的合约），其余按
+    ``asset_type_of`` 解析。
+
+    期权→标的映射口径同引擎：在用标的中资产类型为期权、标的代码非空的合约。
+    ``known_underlyings`` 与 ``known_asset_types`` 对应（存档合约的标的），其余按
+    ``underlying_of`` 解析。商品期权据此跟随标的期货的时段表，否则预检（固定时刻
+    日线告警、只有日期数据的改写）会按 CN_OPTION 判断，与引擎不一致。
+
+    返回本次在用配置的签名（标的、资产类型与期权→标的映射），供收盘缓存作键。
+    """
+    known = known_asset_types or {}
+    known_u = known_underlyings or {}
+    pairs: List[Tuple[str, Any]] = []
+    underlyings: Dict[str, str] = {}
+    for sym in dict.fromkeys(str(s) for s in symbols):
+        in_known = sym in known
+        asset_type = known[sym] if in_known else asset_type_of(sym)
+        pairs.append((sym, asset_type))
+        if asset_type != AssetType.Option:
+            continue
+        underlying = known_u.get(sym) if in_known else underlying_of(sym)
+        if underlying is not None and underlying.strip():
+            underlyings[sym] = underlying
+    resolver.set_option_underlyings(underlyings)
+    resolver.set_active(pairs)
+    return (
+        tuple((sym, str(asset_type)) for sym, asset_type in pairs),
+        tuple(sorted(underlyings.items())),
+    )
+
+
+def _merge_saved_session_config(
+    engine: Any,
+    sessions: Optional[SessionsMap],
+    trading_calendar: Optional[List[dt_module.date]],
+    logger: Any,
+) -> Tuple[Optional[SessionsMap], Optional[List[dt_module.date]]]:
+    """续跑的时段配置：未传的一项沿用存档；传入且与存档不一致时以传入为准并告警一次."""
+    saved_sessions, saved_calendar = engine.session_config
+    differs: List[str] = []
+    if sessions is None:
+        sessions = saved_sessions
+    elif sessions != saved_sessions:
+        differs.append("sessions")
+    if trading_calendar is None:
+        trading_calendar = saved_calendar
+    elif list(trading_calendar) != list(saved_calendar or []):
+        differs.append("trading_calendar")
+    if differs:
+        logger.warning(
+            "run_from_checkpoint 传入的 %s 与存档不一致，以本次传入为准"
+            "（续跑段的交易日划分、收盘结算时刻可能与存档前不同）",
+            "、".join(differs),
+        )
+    return sessions, trading_calendar
+
+
+def _merge_risk_config(
+    base: Optional[RiskConfig],
+    risk_config: Optional[Union[Dict[str, Any], RiskConfig]],
+    logger: Any,
+    log_extra: Dict[str, Any],
+) -> Optional[RiskConfig]:
+    """在 ``base`` 上叠加 ``risk_config``（对象取非 None 字段，dict 按键覆盖）.
+
+    ``base`` 会被原地修改（与历史行为一致）；``base`` 为 None 且有覆盖时从
+    ``RiskConfig()`` 起步。
+    """
+    current = base
+    if risk_config:
+        if current is None:
+            current = RiskConfig()
+        if isinstance(risk_config, RiskConfig):
+            for field in risk_config.__dataclass_fields__:
+                val = getattr(risk_config, field)
+                if val is not None:
+                    setattr(current, field, val)
+        elif isinstance(risk_config, dict):
+            for k, v in risk_config.items():
+                if hasattr(current, k):
+                    setattr(current, k, v)
+                else:
+                    logger.warning("Unknown risk config key: %s", k, extra=log_extra)
+    return current
+
+
+def _risk_config_snapshot(
+    risk_config: Optional[RiskConfig],
+) -> Optional[Dict[str, Any]]:
+    """已应用风控配置的可序列化快照；未配置风控时为 None."""
+    if risk_config is None:
+        return None
+    return asdict(risk_config)
+
+
+def _restore_risk_config(saved: Any) -> Optional[RiskConfig]:
+    """用存档快照重建 ``RiskConfig``；快照缺失或不是 dict 时为 None（旧存档）."""
+    if not isinstance(saved, dict):
+        return None
+    known = {f.name for f in fields(RiskConfig)}
+    return RiskConfig(**{k: v for k, v in saved.items() if k in known})
+
+
+def _resolve_resume_timezone(
+    explicit: Any, saved_config: Dict[str, Any], logger: Any
+) -> str:
+    """续跑的时区：未传沿用存档；传入且与存档不一致时以传入为准并告警一次."""
+    saved = saved_config.get("timezone")
+    saved_name = str(saved) if saved else None
+    if not explicit:
+        return saved_name or DEFAULT_TIMEZONE
+    name = str(explicit)
+    if saved_name is not None and name != saved_name:
+        logger.warning(
+            "run_from_checkpoint 传入的 timezone=%r 与存档的 %r 不一致，以本次传入为准"
+            "（续跑段的交易日划分、默认时段表与收盘结算时刻可能与存档前不同；"
+            "要沿用存档请不传 timezone）",
+            name,
+            saved_name,
+        )
+    return name
+
+
+def _resolve_resume_risk_config(
+    config: Optional[BacktestConfig],
+    risk_config: Optional[Union[Dict[str, Any], RiskConfig]],
+    saved_config: Dict[str, Any],
+    logger: Any,
+    log_extra: Dict[str, Any],
+) -> Optional[RiskConfig]:
+    """续跑的风控配置.
+
+    - 给了 ``config.strategy_config.risk`` 时以它为底，叠加规则同
+      :func:`run_backtest`；
+    - 否则 ``risk_config`` 为 ``RiskConfig`` 对象时整体替换存档（与存档无关）；
+    - 否则 ``risk_config`` 为 dict 时按键叠加在存档快照上（未给的键沿用存档）；
+    - 都没给时用存档快照；存档也没有（旧存档或存档时未传 ``config=``）时为
+      None，保持引擎默认。
+
+    结果与存档不一致时告警一次。
+    """
+    saved_dict = saved_config.get("risk_config")
+    base: Optional[RiskConfig] = None
+    if config and config.strategy_config and config.strategy_config.risk:
+        base = config.strategy_config.risk
+    elif not isinstance(risk_config, RiskConfig):
+        base = _restore_risk_config(saved_dict)
+    resolved = _merge_risk_config(base, risk_config, logger, log_extra)
+    if (
+        isinstance(saved_dict, dict)
+        and resolved is not None
+        and _risk_config_snapshot(resolved)
+        != _risk_config_snapshot(_restore_risk_config(saved_dict))
+    ):
+        logger.warning(
+            "run_from_checkpoint 传入的风控配置（risk_config/config）与存档不一致，"
+            "以本次传入为准（账户模式、融资融券利率、强平开关等可能与存档前不同；"
+            "要沿用存档请不传 risk_config）",
+            extra=log_extra,
+        )
+    return resolved
+
+
+def _saved_session_asset_types(strategy_instance: Any) -> Dict[str, Any]:
+    """存档策略里已登记合约的资产类型（取自 ``_instrument_snapshots``）.
+
+    无法识别的资产类型记为 None，解析器按全天连续处理，与引擎对非股票/基金/
+    期货/期权合约的处理一致。
+    """
+    names = {
+        "stock": AssetType.Stock,
+        "futures": AssetType.Futures,
+        "fund": AssetType.Fund,
+        "option": AssetType.Option,
+    }
+    out: Dict[str, Any] = {}
+    snapshots = getattr(strategy_instance, "_instrument_snapshots", None) or {}
+    for sym, snap in dict(snapshots).items():
+        try:
+            out[str(sym)] = names[
+                _parse_asset_type_name(getattr(snap, "asset_type", None))
+            ]
+        except (KeyError, ValueError, TypeError):
+            out[str(sym)] = None
+    return out
+
+
+def _saved_session_underlyings(strategy_instance: Any) -> Dict[str, Optional[str]]:
+    """存档策略里已登记合约的标的代码（取自 ``_instrument_snapshots``，无则 None）."""
+    out: Dict[str, Optional[str]] = {}
+    snapshots = getattr(strategy_instance, "_instrument_snapshots", None) or {}
+    for sym, snap in dict(snapshots).items():
+        raw = getattr(snap, "underlying_symbol", None)
+        out[str(sym)] = None if raw is None else str(raw)
+    return out
+
+
+def _date_only_close_ns(resolver: Any, day: dt_module.date, timezone: str) -> int:
+    """会话级收盘时刻（UTC 纳秒，同日所有标的相同）；落在次日 0 点时减 1ns.
+
+    同日所有标的改写到同一时刻，日线才在同一个切片里：按标的各自收盘改写时，
+    混合时段表（如股票 15:00 与国债期货 15:15）会把一天拆成两个切片。
+    """
+    end = int(resolver.session_day_end(day))
+    next_midnight = int(
+        pd.Timestamp(day + dt_module.timedelta(days=1)).tz_localize(timezone).value
+    )
+    return end - 1 if end == next_midnight else end
+
+
+class _DateOnlyRewriter:
+    """一次运行内只有日期数据的改写：会话级收盘时刻，遇非交易日日期告警一次.
+
+    收盘时刻跨标的共享缓存：会话级收盘只取决于日期与解析器的在用配置（在用标的及
+    其时段表、期权→标的映射），缓存按 ``在用配置编号 → {日序号: 收盘}`` 存放。在用
+    配置须经 :meth:`activate` 设置：签名不同的配置分到不同编号，改了在用标的不会
+    命中旧值（签名可能含上千个标的，只在设置时哈希一次，查缓存用整数编号）。
+    """
+
+    def __init__(self, resolver: Any, timezone: str, logger: Any) -> None:
+        """绑定解析器、引擎时区与告警用 logger；在用标的经 :meth:`activate` 设置."""
+        self.resolver = resolver
+        self.timezone = timezone
+        self._logger = logger
+        self._warned = False
+        self._active_ids: Dict[Any, int] = {}
+        self._active_id = -1  # 未经 activate：解析器按构造时的在用配置
+        self._close_cache: Dict[int, Dict[int, int]] = {}
+
+    def activate(
+        self,
+        symbols: Iterable[str],
+        asset_type_of: Callable[[str], Any],
+        known_asset_types: Optional[Dict[str, Any]] = None,
+        *,
+        underlying_of: Callable[[str], Optional[str]],
+        known_underlyings: Optional[Dict[str, Optional[str]]] = None,
+    ) -> None:
+        """设置解析器在用标的（同 ``_activate_session_symbols``）并更新缓存键."""
+        signature = _activate_session_symbols(
+            self.resolver,
+            symbols,
+            asset_type_of,
+            known_asset_types,
+            underlying_of=underlying_of,
+            known_underlyings=known_underlyings,
+        )
+        self._active_id = self._active_ids.setdefault(signature, len(self._active_ids))
+
+    def close_ns(self, day: dt_module.date) -> int:
+        """``day`` 的会话级收盘（UTC 纳秒）；``day`` 不是交易日时首次告警."""
+        return self._close_by_day_number((day - _EPOCH_DATE).days, day)
+
+    def close_ns_for_day_numbers(self, day_numbers: Sequence[int]) -> np.ndarray:
+        """按日序号（距 1970-01-01 的天数）批量求会话级收盘，顺序即求值顺序."""
+        return np.array(
+            [self._close_by_day_number(int(n)) for n in day_numbers], dtype=np.int64
+        )
+
+    def _close_by_day_number(
+        self, number: int, day: Optional[dt_module.date] = None
+    ) -> int:
+        cache = self._close_cache.setdefault(self._active_id, {})
+        cached = cache.get(number)
+        if cached is not None:
+            return cached
+        if day is None:
+            day = _EPOCH_DATE + dt_module.timedelta(days=number)
+        if not self._warned and not self.resolver.is_session_day(day):
+            self._warned = True
+            self._logger.warning(
+                "只有日期的数据含非交易日 %s（按会话交易日历），该日数据改写到当日"
+                "收盘时刻后会归入下一交易日；请检查数据日期或 trading_calendar"
+                "（同类情况不再提示）",
+                day.isoformat(),
+            )
+        value = _date_only_close_ns(self.resolver, day, self.timezone)
+        cache[number] = value
+        return value
+
+
+_INTERVAL_UNKNOWN = np.iinfo(np.int64).min
+_ONE_DAY_NS = 86_400_000_000_000
+# 相邻 bar 间隔不小于该值才视为“像日线”（容忍夏令时等 1h 级偏差）
+_DAILY_GAP_MIN_NS = 20 * 3_600_000_000_000
+
+
+class _FixedTimeDailyChecker:
+    """检测打在固定非 0 点时刻、未声明 freq 的日线（一次运行只告警一次）.
+
+    这类数据没有 bar 区间，按“时间戳前 1ns”判时段；时刻落在收盘集合竞价等非连续
+    竞价时段时，这根 bar 被判为该时段（``ctx.session``、``is_market_open()`` 随之
+    变化），按该时段撮合：默认撮合下成交时点与传 ``freq="1d"`` 相同，但按收盘集合
+    竞价成交，市价单成交价为这根 bar 的收盘价而非开盘价。只告警，不推断不改写。
+    """
+
+    def __init__(
+        self,
+        resolver: Any,
+        timezone: str,
+        asset_type_of: Callable[[str], Any],
+        logger: Any,
+    ) -> None:
+        """绑定解析器（须已 set_active）、引擎时区、资产类型解析与 logger."""
+        self.resolver = resolver
+        self.timezone = timezone
+        self.asset_type_of = asset_type_of
+        self._logger = logger
+        self._warned = False
+
+    def check(self, symbol: str, ts_ns: Any) -> None:
+        """检查一个标的在一个数据单元内、区间未知的行（UTC 纳秒时间戳）."""
+        if self._warned:
+            return
+        ts = np.asarray(ts_ns, dtype=np.int64)
+        if len(ts) < 2:
+            return
+        ts = np.sort(ts)
+        if int(np.diff(ts).min()) < _DAILY_GAP_MIN_NS:
+            return
+        local = pd.DatetimeIndex(pd.to_datetime(ts, unit="ns", utc=True)).tz_convert(
+            self.timezone
+        )
+        tod = np.asarray(
+            (local - local.normalize()).to_numpy(dtype="timedelta64[ns]"),
+            dtype=np.int64,
+        )
+        first = int(tod[0])
+        if first == 0 or not bool((tod == first).all()):
+            return
+        try:
+            _, session = self.resolver.resolve_instant(
+                str(symbol), int(ts[0]) - 1, self.asset_type_of(str(symbol))
+            )
+        except Exception:
+            return
+        if session == TradingSession.Continuous:
+            return
+        self._warned = True
+        self._logger.warning(
+            "标的 %s 的数据看起来是打在 %s 的日线，但未传 freq：每根 bar 会被判为该时刻"
+            "所在时段（%s），ctx.session 与 is_market_open() 随之变化，并按该时段撮合"
+            "（收盘集合竞价时市价单按这根 bar 的收盘价成交，而非开盘价）。如为日线，"
+            '请传 freq="1d"，让每根 bar 覆盖整个交易日（同类情况不再提示）',
+            symbol,
+            local[0].strftime("%H:%M"),
+            str(session).split(".")[-1],
+        )
+
+    def check_rows(self, symbols: Any, ts_ns: Any, unknown: Any = None) -> None:
+        """多标的数据：按标的分组检查区间未知（``unknown`` 为真）的行."""
+        if self._warned:
+            return
+        frame = pd.DataFrame({"symbol": np.asarray(symbols, dtype=object), "ts": ts_ns})
+        if unknown is not None:
+            frame = frame[np.asarray(unknown, dtype=bool)]
+        for sym, group in frame.groupby("symbol", sort=False):
+            self.check(str(sym), group["ts"].to_numpy())
+            if self._warned:
+                return
+
+    def check_bars(self, bars: Sequence[Any]) -> None:
+        """Bar 列表：检查没有 ``interval_start`` 的 bar."""
+        if self._warned:
+            return
+        unknown = [b for b in bars if getattr(b, "interval_start", None) is None]
+        if len(unknown) < 2:
+            return
+        self.check_rows(
+            [str(b.symbol) for b in unknown],
+            np.asarray([int(b.timestamp) for b in unknown], dtype=np.int64),
+        )
+
+
+def _bar_interval_starts(
+    ts_ns: np.ndarray, *, date_only: bool, period_ns: Optional[int]
+) -> Optional[np.ndarray]:
+    """Bar 区间起点：只有日期的数据取 24h 前；声明了周期取 ts−周期；否则 None."""
+    if date_only:
+        return ts_ns.astype(np.int64) - _ONE_DAY_NS
+    if period_ns is not None:
+        return ts_ns.astype(np.int64) - int(period_ns)
+    return None
+
+
+def _masked_interval_starts(
+    ts_ns: np.ndarray, rewritten: np.ndarray, period_ns: Optional[int]
+) -> Optional[np.ndarray]:
+    """多标的数据：被只有日期改写的行按日线取起点，其余行按声明周期（未声明则未知）."""
+    ts_ns = np.asarray(ts_ns, dtype=np.int64)
+    rest = _bar_interval_starts(ts_ns, date_only=False, period_ns=period_ns)
+    if not rewritten.any():
+        return rest
+    daily = cast(
+        np.ndarray, _bar_interval_starts(ts_ns, date_only=True, period_ns=None)
+    )
+    if rest is None:
+        rest = np.full(len(ts_ns), _INTERVAL_UNKNOWN, dtype=np.int64)
+    return cast(np.ndarray, np.where(rewritten, daily, rest))
+
+
+def _arrays_interval_starts(
+    arrays: Tuple[Any, ...], *, date_only: bool, period_ns: Optional[int]
+) -> Optional[np.ndarray]:
+    """``dataframe_to_arrays`` 结果的区间起点列（时间戳在 ``arrays[0]``）."""
+    return _bar_interval_starts(
+        np.asarray(arrays[0], dtype=np.int64), date_only=date_only, period_ns=period_ns
+    )
+
+
+_BAR_FREQ_PATTERN = re.compile(r"^\s*(\d*)\s*(min|h|d|day)\s*$", re.IGNORECASE)
+_BAR_FREQ_UNIT_NS = {
+    "min": 60 * 10**9,
+    "h": 3600 * 10**9,
+    "d": _ONE_DAY_NS,
+    "day": _ONE_DAY_NS,
+}
+
+
+def _freq_period_ns(freq: Optional[str]) -> Optional[int]:
+    """``freq`` 声明的 bar 周期（纳秒）；未声明为 None.
+
+    与 tick 聚合用的 ``parse_freq_to_interval_min`` 不同，bar 周期可以是日：
+    接受 ``Nmin`` / ``Nh`` / ``Nd`` / ``Nday``（大小写不敏感，省略 N 视为 1，
+    如 ``"D"`` 即 1 天）。
+    """
+    if freq is None:
+        return None
+    match = _BAR_FREQ_PATTERN.match(str(freq))
+    value = int(match.group(1) or 1) if match else 0
+    if match is None or value <= 0:
+        raise ValueError(
+            f"freq={freq!r} 无法解析为 bar 周期。bar 数据的 freq 写成“正整数 + 单位”，"
+            "单位为 min（分钟）、h（小时）、d 或 day（日），大小写不敏感，省略数字"
+            "视为 1，如 '1min'、'5min'、'1h'、'1d'、'D'；秒级或周/月周期请先用 "
+            "akquant.feed_adapter 的 resample() 重采样"
+        )
+    return value * _BAR_FREQ_UNIT_NS[match.group(2).lower()]
+
+
+def _rewrite_date_only_utc(
+    utc_times: pd.DatetimeIndex,
+    rewriter: _DateOnlyRewriter,
+) -> Optional[pd.DatetimeIndex]:
+    """一组 UTC 时间若全为引擎时区本地 0 点，返回改写到收盘时刻的新时间，否则 None."""
+    local = utc_times.tz_convert(rewriter.timezone)
+    if not _local_midnight_only(local):
+        return None
+    wall, per_day = _local_wall_units(local)
+    # 按首次出现顺序去重求值（非交易日告警的日期与逐行求值时相同），再按行回填
+    codes, day_numbers = pd.factorize(wall // per_day, sort=False)
+    closes = rewriter.close_ns_for_day_numbers(day_numbers.tolist())
+    return pd.DatetimeIndex(pd.to_datetime(closes[codes], unit="ns", utc=True))
+
+
+def _frame_time_source(df: pd.DataFrame) -> Optional[Tuple[Optional[str], Any]]:
+    """取 ``dataframe_to_arrays`` 实际读取的时间来源：(列名或 None 表示索引, 原始值)."""
+    col = resolve_columns(df).get("timestamp")
+    if col is not None:
+        return col, df[col]
+    if isinstance(df.index, pd.DatetimeIndex):
+        return None, df.index
+    return None
+
+
+def _to_utc_index(raw: Any, tz: Optional[str] = None) -> pd.DatetimeIndex:
+    """按行情数据口径转 UTC：naive 视为引擎时区 ``tz``（缺省上海）."""
+    idx = pd.DatetimeIndex(pd.to_datetime(raw, errors="coerce"))
+    if idx.tz is None:
+        idx = idx.tz_localize(
+            tz or DEFAULT_INPUT_TIMEZONE,
+            ambiguous="NaT",
+            nonexistent="shift_forward",
+        )
+    return cast(pd.DatetimeIndex, idx.tz_convert("UTC").as_unit("ns"))
+
+
+def _replace_frame_times(
+    df: pd.DataFrame, source_col: Optional[str], new_utc: pd.DatetimeIndex
+) -> pd.DataFrame:
+    """把时间来源列、``timestamp`` 列与 DatetimeIndex 按行位置替换为 ``new_utc``."""
+    out = df.copy()
+    targets = {c for c in (source_col, "timestamp") if c is not None}
+    for col in targets:
+        if col not in out.columns:
+            continue
+        if col != source_col and not pd.api.types.is_datetime64_any_dtype(out[col]):
+            continue
+        out[col] = new_utc
+    if isinstance(out.index, pd.DatetimeIndex):
+        out.index = new_utc
+    return out
+
+
+def _rewrite_date_only_frame(
+    df: pd.DataFrame, rewriter: _DateOnlyRewriter
+) -> Tuple[pd.DataFrame, bool]:
+    """单标的 DataFrame：全部时间为本地 0 点（只有日期）时改写到交易日收盘时刻.
+
+    返回 ``(新 DataFrame, 是否改写)``。
+    """
+    if df.empty:
+        return df, False
+    source = _frame_time_source(df)
+    if source is None:
+        return df, False
+    source_col, raw = source
+    if _aware_first_not_local_midnight(raw, rewriter.timezone):
+        return df, False
+    new_utc = _rewrite_date_only_utc(_to_utc_index(raw, rewriter.timezone), rewriter)
+    if new_utc is None:
+        return df, False
+    return _replace_frame_times(df, source_col, new_utc), True
+
+
+def _rewrite_date_only_multi_symbol_frame(
+    df: pd.DataFrame,
+    rewriter: _DateOnlyRewriter,
+) -> Tuple[pd.DataFrame, np.ndarray]:
+    """带 ``symbol`` 列的多标的 DataFrame：逐标的判断并改写，行顺序不变.
+
+    返回 ``(新 DataFrame, 按行位置的“已改写”布尔掩码)``。
+    """
+    rewritten = np.zeros(len(df), dtype=bool)
+    if df.empty or "symbol" not in df.columns:
+        return df, rewritten
+    source = _frame_time_source(df)
+    if source is None:
+        return df, rewritten
+    source_col, raw = source
+    utc = _to_utc_index(raw, rewriter.timezone)
+    merged = utc.tz_localize(None).to_numpy(copy=True)
+    # 按标的分组的行位置（首次出现顺序、组内升序）；逐标的整列比较是 O(行数×标的数)
+    codes, uniques = pd.factorize(df["symbol"].astype(str).to_numpy(), sort=False)
+    order = np.argsort(codes, kind="stable")
+    ends = np.cumsum(np.bincount(codes, minlength=len(uniques)))
+    for k in range(len(uniques)):
+        positions = order[(ends[k - 1] if k else 0) : ends[k]]
+        new_utc = _rewrite_date_only_utc(utc[positions], rewriter)
+        if new_utc is None:
+            continue
+        merged[positions] = new_utc.tz_localize(None).to_numpy()
+        rewritten[positions] = True
+    if not rewritten.any():
+        return df, rewritten
+    new_index = pd.DatetimeIndex(merged).tz_localize("UTC")
+    return _replace_frame_times(df, source_col, new_index), rewritten
+
+
+def _with_interval_start(old: Bar, timestamp: int, interval_start: int) -> Bar:
+    """复制 ``old``，换上新的时间戳与区间起点."""
+    return Bar(
+        timestamp,
+        old.open,
+        old.high,
+        old.low,
+        old.close,
+        old.volume,
+        old.symbol,
+        dict(old.extra),
+        old.freq,
+        interval_start,
+    )
+
+
+def _rewrite_date_only_bars(
+    bars: List[Bar],
+    rewriter: _DateOnlyRewriter,
+    period_ns: Optional[int] = None,
+) -> List[Bar]:
+    """Bar 列表按标的分组：某标的全部 bar 为本地 0 点时改写该标的的时间戳.
+
+    同时填区间起点（用户自带的 ``interval_start`` 原样保留）：被改写的 bar 取
+    改写后时间戳前 24h；未改写且声明了周期 ``period_ns`` 时取时间戳前一个周期。
+    返回新列表；改动的 bar 是新建的副本，不修改调用方传入的对象。
+    """
+    by_symbol: Dict[str, List[int]] = {}
+    for pos, bar in enumerate(bars):
+        by_symbol.setdefault(str(bar.symbol), []).append(pos)
+    out = list(bars)
+    for symbol, positions in by_symbol.items():
+        utc = pd.DatetimeIndex(
+            pd.to_datetime(
+                [int(bars[pos].timestamp) for pos in positions], unit="ns", utc=True
+            )
+        )
+        new_utc = _rewrite_date_only_utc(utc, rewriter)
+        if new_utc is None:
+            if period_ns is None:
+                continue
+            for pos in positions:
+                old = bars[pos]
+                if old.interval_start is None:
+                    ts = int(old.timestamp)
+                    out[pos] = _with_interval_start(old, ts, ts - int(period_ns))
+            continue
+        for pos, new_stamp in zip(positions, new_utc):
+            old = bars[pos]
+            ts = int(new_stamp.value)
+            start = old.interval_start
+            out[pos] = _with_interval_start(
+                old, ts, ts - _ONE_DAY_NS if start is None else int(start)
+            )
+    return out
+
+
+def rewrite_date_only_bars_for_session(
+    bars: List[Bar],
+    *,
+    instruments: Sequence[Any],
+    sessions: Optional[SessionsMap],
+    trading_calendar: Optional[List[dt_module.date]],
+    timezone: str,
+    logger: Any,
+) -> List[Bar]:
+    """按会话配置改写只有日期的 bar（实盘 replay 用，与回测同一实现）.
+
+    解析器按与引擎相同的配置构造（``sessions``、``trading_calendar``、
+    ``timezone``），在用标的为全部 ``instruments``（与引擎“全部已登记合约”一致）。
+    某标的全部 bar 为本地 0 点时改写到会话级收盘时刻、区间起点取 24h 前；其余
+    bar 原样返回。
+    """
+    if not bars:
+        return list(bars)
+    resolver = SessionResolver(
+        sessions=sessions, trading_calendar=trading_calendar, timezone=timezone
+    )
+    asset_types = {str(inst.symbol): inst.asset_type for inst in instruments}
+    underlyings = {
+        str(inst.symbol): getattr(inst, "underlying_symbol", None)
+        for inst in instruments
+    }
+    rewriter = _DateOnlyRewriter(resolver, timezone, logger)
+    rewriter.activate(
+        asset_types,
+        lambda sym: asset_types.get(sym),
+        underlying_of=lambda sym: underlyings.get(sym),
+    )
+    return _rewrite_date_only_bars(bars, rewriter, None)
+
+
+def _build_session_underlying_of(
+    prebuilt_instruments: Dict[str, Any],
+    inst_conf_map: Dict[str, Any],
+) -> Callable[[str], Optional[str]]:
+    """按与合约构建一致的来源解析标的代码：预构建合约 > 合约配置；都没有为 None.
+
+    走默认参数构建的合约不带标的代码（与引擎一致）。
+    """
+
+    def underlying_of(symbol: str) -> Optional[str]:
+        if symbol in prebuilt_instruments:
+            raw = getattr(prebuilt_instruments[symbol], "underlying_symbol", None)
+        else:
+            conf = inst_conf_map.get(symbol)
+            raw = None if conf is None else getattr(conf, "underlying_symbol", None)
+        return None if raw is None else str(raw)
+
+    return underlying_of
+
+
+def _build_session_asset_type_of(
+    prebuilt_instruments: Dict[str, Any],
+    inst_conf_map: Dict[str, Any],
+    default_asset_type: Any,
+    futures_prefixes: Sequence[str],
+) -> Callable[[str], Any]:
+    """按与合约构建一致的优先级解析资产类型.
+
+    优先级：预构建合约 > 合约配置 > 期货品种模板 > 默认。无法识别的资产类型回退
+    到默认资产类型(默认本身无法识别时回退股票), 只告警一次——静默返回 None
+    会让解析器按"全天连续"取收盘时刻, 把日线改写到 23:59:59.999999999。
+    """
+    names = {
+        "stock": AssetType.Stock,
+        "futures": AssetType.Futures,
+        "fund": AssetType.Fund,
+        "option": AssetType.Option,
+    }
+    warned = False
+
+    def parse(value: Any) -> Optional[Any]:
+        if isinstance(value, AssetType):
+            return value
+        try:
+            return names[_parse_asset_type_name(value)]
+        except ValueError:
+            return None
+
+    fallback = parse(default_asset_type)
+    if fallback is None:
+        fallback = AssetType.Stock
+
+    def to_asset_type(value: Any, symbol: str) -> Any:
+        nonlocal warned
+        parsed = parse(value)
+        if parsed is not None:
+            return parsed
+        if not warned:
+            warned = True
+            get_logger("backtest").warning(
+                "标的 %s 的资产类型 %r 无法识别, 改写只有日期的数据时按 %s "
+                "取交易时段(后续同类情况不再提示)",
+                symbol,
+                value,
+                fallback,
+            )
+        return fallback
+
+    prefixes = [p.strip().upper() for p in futures_prefixes if p and p.strip()]
+
+    def asset_type_of(symbol: str) -> Any:
+        if symbol in prebuilt_instruments:
+            return to_asset_type(
+                getattr(prebuilt_instruments[symbol], "asset_type", None), symbol
+            )
+        conf = inst_conf_map.get(symbol)
+        if conf is not None:
+            return to_asset_type(conf.asset_type, symbol)
+        upper = symbol.upper()
+        if any(upper.startswith(p) for p in prefixes):
+            return AssetType.Futures
+        return to_asset_type(default_asset_type, symbol)
+
+    return asset_type_of
+
+
+def _build_session_trading_days(
+    data_map: Dict[str, pd.DataFrame], resolver: Any, timezone: str
+) -> Tuple[List[pd.Timestamp], Dict[str, int]]:
+    """数据覆盖范围内的日历交易日，以及按交易日的截面时刻.
+
+    交易日取会话日历上首个到最后一个数据交易日之间的全部交易日（本地 0 点的
+    带时区 ``Timestamp``，含区间内无数据的交易日）。例外：会话日历是全日历兜底
+    （未传 ``trading_calendar``、在用时段表全是 ALWAYS_OPEN 这类每天都开的表，如
+    非中国时区的缺省）时每个自然日都算交易日，此时只取有数据的日子，免得美股等
+    周末无数据的市场在周六日触发定时任务。每根 bar 按会话交易日归属
+    （交易日 T 覆盖 ``(session_day_end(prev(T)), session_day_end(T)]``，夜盘归下一
+    交易日）。截面时刻为各品种在该交易日首根 bar 的最大时间戳，键为交易日 ISO
+    字符串。指标数据表的索引已带时区；无时区的按 UTC 纳秒解释（与 Bar 时间戳同
+    口径）。不在交易日历内的 bar 不参与。``timezone`` 为交易日列表的时区。
+    """
     frames = {
         str(symbol): df
-        for symbol, df in data_map_for_indicators.items()
+        for symbol, df in data_map.items()
         if not df.empty and isinstance(df.index, pd.DatetimeIndex)
     }
     if not frames:
-        return [], {}, {}
+        return [], {}
 
     big_index = pd.concat(frames, names=["symbol"]).index
-    dates = cast(pd.DatetimeIndex, big_index.get_level_values(-1))
-    if dates.tz is None:
-        dates = dates.tz_localize("UTC")
-    local_index = dates.tz_convert(timezone)
-    normalized_index = cast(pd.DatetimeIndex, local_index.normalize())
-
-    # pandas datetime64 may use a non-nanosecond unit (e.g. us from polars);
-    # normalize to ns so integer values match Timestamp.value semantics.
+    stamps = cast(pd.DatetimeIndex, big_index.get_level_values(-1))
+    if stamps.tz is None:
+        stamps = stamps.tz_localize("UTC")
+    # pandas datetime64 可能不是纳秒精度（如来自 polars 的 us），统一到 ns 再取整数。
     utc_index = cast(
-        pd.DatetimeIndex, local_index.tz_convert("UTC").astype("datetime64[ns, UTC]")
+        pd.DatetimeIndex, stamps.tz_convert("UTC").astype("datetime64[ns, UTC]")
     )
-    ns = pd.Series(utc_index, copy=False).astype("int64").to_numpy()
-    symbols = big_index.get_level_values(0).astype(str)
+    valid = ~np.asarray(utc_index.isna(), dtype=bool)
+    ns = pd.Series(utc_index[valid], copy=False).astype("int64").to_numpy()
+    symbols = big_index.get_level_values(0).astype(str)[valid]
+    if len(ns) == 0:
+        return [], {}
 
-    base = pd.DataFrame({"day": normalized_index, "sym": symbols, "ns": ns})
-    # Drop NaT-indexed rows before aggregating: `asi8` maps NaT to int64's
-    # sentinel min, which the vectorized path would otherwise fold into a
-    # day's min/max across *all* symbols (the per-symbol loop only tainted
-    # that symbol's own NaT bucket). Dropping keeps a stray NaT bar from
-    # silently corrupting every symbol's bounds on that slice.
-    if normalized_index.hasnans:
-        base = base[base["day"].notna()]
-        if base.empty:
-            return [], {}, {}
+    order = np.argsort(ns, kind="stable")
+    ns = ns[order]
+    symbols = symbols[order]
 
-    all_dates = sorted(set(base["day"].unique()))
+    def _trading_day(ts: int) -> Optional[dt_module.date]:
+        try:
+            return cast(dt_module.date, resolver.session_trading_day(int(ts)))
+        except ValueError:
+            return None
 
-    bounds = base.groupby("day", sort=False)["ns"].agg(["min", "max"])
-    day_bounds: Dict[str, Tuple[int, int]] = {
-        pd.Timestamp(day_ts).date().isoformat(): (int(start_ns), int(end_ns))
-        for day_ts, start_ns, end_ns in bounds.itertuples()
+    # 首尾可解析的 bar（交易日历未覆盖的 bar 不参与）。
+    lo = 0
+    first_day = _trading_day(int(ns[0]))
+    while first_day is None:
+        # 跳到下一个本地日期的首根 bar 再试，避免逐根重试。
+        next_idx = int(np.searchsorted(ns, int(ns[lo]) + 86_400_000_000_000))
+        if next_idx >= len(ns):
+            return [], {}
+        lo = next_idx
+        first_day = _trading_day(int(ns[lo]))
+    hi = len(ns) - 1
+    while hi > lo and _trading_day(int(ns[hi])) is None:
+        prev_idx = int(np.searchsorted(ns, int(ns[hi]) - 86_400_000_000_000)) - 1
+        hi = max(prev_idx, lo)
+    ns = ns[lo : hi + 1]
+    symbols = symbols[lo : hi + 1]
+
+    days: List[dt_module.date] = [first_day]
+    ends: List[int] = [int(resolver.session_day_end(first_day))]
+    last_ns = int(ns[-1])
+    while ends[-1] < last_ns:
+        try:
+            nxt = cast(dt_module.date, resolver.next_session_day(days[-1]))
+            end = int(resolver.session_day_end(nxt))
+        except ValueError:
+            break
+        days.append(nxt)
+        ends.append(end)
+
+    day_idx = np.searchsorted(np.asarray(ends, dtype=np.int64), ns, side="left")
+    keep = day_idx < len(days)
+    base = pd.DataFrame({"day": day_idx[keep], "sym": symbols[keep], "ns": ns[keep]})
+    cross = base.groupby(["day", "sym"], sort=False)["ns"].min().groupby("day").max()
+    cross_section: Dict[str, int] = {
+        days[int(k)].isoformat(): int(v)
+        for k, v in zip(cross.index.tolist(), cross.tolist())
     }
-
-    rebalance = (
-        base.groupby(["day", "sym"], sort=False)["ns"].min().groupby("day").max()
-    )
-    day_rebalance_timestamps: Dict[str, int] = {
-        cast(pd.Timestamp, day_ts).date().isoformat(): int(v)
-        for day_ts, v in rebalance.items()
-    }
-
-    return all_dates, day_bounds, day_rebalance_timestamps
+    if bool(getattr(resolver, "uses_all_days_fallback", False)):
+        with_data = np.unique(day_idx[keep])
+        days = [days[int(i)] for i in with_data]
+    trading_days = [pd.Timestamp(day).tz_localize(timezone) for day in days]
+    return trading_days, cross_section
 
 
 if TYPE_CHECKING:
@@ -847,11 +1640,13 @@ def _build_resolved_backtest_config(
     timezone: str,
     history_depth: int,
     resolved_policy: Optional[ResolvedExecutionPolicy],
+    risk_config: Optional[RiskConfig] = None,
 ) -> Dict[str, Any]:
     """Snapshot-friendly resolved runtime config (issue #282).
 
     Single source of truth for what checkpoint resume must re-apply. Kept as a plain
-    JSON-able dict so it pickles cleanly and stays forward-compatible.
+    dict of builtin values (``risk_config`` may hold a tuple for
+    ``sector_concentration``) so it pickles cleanly and stays forward-compatible.
     """
     resolved: Dict[str, Any] = {
         "slippage": dict(slippage_policy),
@@ -863,6 +1658,7 @@ def _build_resolved_backtest_config(
         "t_plus_one": bool(t_plus_one),
         "timezone": str(timezone),
         "history_depth": int(history_depth),
+        "risk_config": _risk_config_snapshot(risk_config),
     }
     if resolved_policy is not None:
         resolved["fill_policy"] = {
@@ -1646,28 +2442,7 @@ def _normalize_strategy_commission_map(
     return normalized
 
 
-def _parse_asset_type_name(value: Any) -> Literal["futures", "stock", "fund", "option"]:
-    if isinstance(value, AssetType):
-        if value == AssetType.Futures:
-            return "futures"
-        if value == AssetType.Stock:
-            return "stock"
-        if value == AssetType.Fund:
-            return "fund"
-        if value == AssetType.Option:
-            return "option"
-        raise ValueError(f"Unsupported asset_type: {value}")
-    if isinstance(value, str):
-        v_lower = value.lower()
-        if v_lower in {"future", "futures"}:
-            return "futures"
-        if v_lower == "stock":
-            return "stock"
-        if v_lower == "fund":
-            return "fund"
-        if v_lower == "option":
-            return "option"
-    raise ValueError(f"Unsupported asset_type: {value}")
+_parse_asset_type_name = parse_asset_type_name
 
 
 def _normalize_expiry_date_yyyymmdd(value: Any) -> Optional[int]:
@@ -1770,86 +2545,6 @@ def _settlement_type_to_upper_name(value: Any) -> Optional[InstrumentSettlementM
     if "CASH" in text:
         return "CASH"
     raise ValueError(f"Unsupported settlement_type: {value}")
-
-
-def _parse_trading_session(value: Any) -> Any:
-    if isinstance(value, TradingSession):
-        return value
-    call_auction = getattr(
-        TradingSession, "CallAuction", getattr(TradingSession, "Normal", None)
-    )
-    pre_open = getattr(
-        TradingSession, "PreOpen", getattr(TradingSession, "PreMarket", None)
-    )
-    continuous = getattr(
-        TradingSession, "Continuous", getattr(TradingSession, "Normal", None)
-    )
-    break_session = getattr(
-        TradingSession, "Break", getattr(TradingSession, "Normal", None)
-    )
-    post_close = getattr(
-        TradingSession, "PostClose", getattr(TradingSession, "PostMarket", None)
-    )
-    closed = getattr(
-        TradingSession, "Closed", getattr(TradingSession, "PostMarket", None)
-    )
-    v_lower = str(value).strip().lower()
-    mapping = {
-        "call_auction": call_auction,
-        "callauction": call_auction,
-        "pre_open": pre_open,
-        "preopen": pre_open,
-        "continuous": continuous,
-        "break": break_session,
-        "post_close": post_close,
-        "postclose": post_close,
-        "closed": closed,
-    }
-    if v_lower in mapping and mapping[v_lower] is not None:
-        return mapping[v_lower]
-    raise ValueError(f"Unsupported trading session: {value}")
-
-
-def _china_futures_session_template(
-    profile: str,
-) -> List[Tuple[str, str, str]]:
-    normalized = str(profile).strip().upper()
-    commodity_day_template: List[Tuple[str, str, str]] = [
-        ("09:00", "10:15", "continuous"),
-        ("10:15", "10:30", "break"),
-        ("10:30", "11:30", "continuous"),
-        ("11:30", "13:30", "break"),
-        ("13:30", "15:00", "continuous"),
-    ]
-    cffex_stock_index_day_template: List[Tuple[str, str, str]] = [
-        ("09:30", "11:30", "continuous"),
-        ("11:30", "13:00", "break"),
-        ("13:00", "15:00", "continuous"),
-    ]
-    cffex_bond_day_template: List[Tuple[str, str, str]] = [
-        ("09:30", "11:30", "continuous"),
-        ("11:30", "13:00", "break"),
-        ("13:00", "15:15", "continuous"),
-    ]
-    if normalized in {"CN_FUTURES_DAY", "CN_FUTURES_COMMODITY_DAY"}:
-        return commodity_day_template
-    if normalized == "CN_FUTURES_CFFEX_STOCK_INDEX_DAY":
-        return cffex_stock_index_day_template
-    if normalized == "CN_FUTURES_CFFEX_BOND_DAY":
-        return cffex_bond_day_template
-    if normalized == "CN_FUTURES_NIGHT_23":
-        return [("21:00", "23:00", "continuous")] + commodity_day_template
-    if normalized == "CN_FUTURES_NIGHT_01":
-        return [
-            ("21:00", "23:59", "continuous"),
-            ("00:00", "01:00", "continuous"),
-        ] + commodity_day_template
-    if normalized == "CN_FUTURES_NIGHT_0230":
-        return [
-            ("21:00", "23:59", "continuous"),
-            ("00:00", "02:30", "continuous"),
-        ] + commodity_day_template
-    raise ValueError(f"Unsupported china futures session profile: {profile}")
 
 
 def _is_data_feed_adapter(value: Any) -> bool:
@@ -2401,6 +3096,8 @@ def run_backtest(
     slippage: SlippageInput = None,
     volume_limit_pct: Optional[float] = None,
     timezone: Optional[str] = None,
+    sessions: Optional[SessionsArg] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
     t_plus_one: bool = False,
     initialize: Optional[Callable[[Any], None]] = None,
     on_start: Optional[Callable[[Any], None]] = None,
@@ -2516,6 +3213,21 @@ def run_backtest(
                                    False 时保持兼容行为（忽略未知参数并在失败时
                                    回退无参构造）。
     :param timezone: 时区名称 (默认 "Asia/Shanghai")
+    :param sessions: 代码前缀 → 时段模板名或自定义时段表（"default" 为全局默认）；
+                     不传时中国时区按资产类型取默认（股票 CN_STOCK、
+                     期货 CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。
+                     可选模板见 aq.SessionResolver.templates()。自定义时段表写
+                     段列表 ``[(start, end, session), ...]``，如
+                     ``{"xx": [("21:00", "02:30", "continuous"),
+                     ("09:00", "11:30", "continuous")]}``：时刻为 "HH:MM"，
+                     session 取 continuous / opening_auction / auction_hold /
+                     closing_auction / break / post_close（段外即闭市，不写
+                     closed）；开始不早于 18:00 的段算前一交易日的夜盘，结束早于
+                     开始表示跨午夜；可选第 4 项 "prev"/"day" 显式指定锚定。
+                     自定义表不传 trading_calendar 时按工作日推算
+    :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
+                             中国市场按工作日推算（节假日前后的夜盘与日终
+                             结算会算错），ALWAYS_OPEN 每天都算
     :param t_plus_one: 是否启用 T+1 交易规则 (默认 False)
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
     :param on_start: 启动回调函数 (仅当 strategy 为函数时使用)
@@ -2795,6 +3507,13 @@ def run_backtest(
         else:
             timezone = DEFAULT_TIMEZONE
 
+    # 交易时段表与交易日历：在这里构造解析器即完成参数校验(未知模板名/空日历报错)
+    calendar_days = _normalize_trading_calendar(trading_calendar)
+    session_map = normalize_sessions(sessions)
+    session_resolver = SessionResolver(
+        sessions=session_map, trading_calendar=calendar_days, timezone=timezone
+    )
+
     # Resolve Show Progress
     if show_progress is None:
         if config and config.show_progress is not None:
@@ -2814,6 +3533,7 @@ def run_backtest(
     if not has_configured_handler(logger.name, namespace_only=True):
         register_logger(console=True, level="INFO")
         logger = get_logger("backtest")
+    date_only_rewriter = _DateOnlyRewriter(session_resolver, timezone, logger)
     normalized_analyzers = _coerce_analyzer_plugins(analyzer_plugins)
 
     # 1.2 检查 PyCharm 环境下的进度条可见性
@@ -2951,6 +3671,10 @@ def run_backtest(
     setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
     for slot_key, slot_strategy in slot_strategy_instances.items():
         setattr(slot_strategy, "_owner_strategy_id", slot_key)
+    assign_slot_ownership(
+        {effective_strategy_id: strategy_instance, **slot_strategy_instances},
+        effective_strategy_id,
+    )
     # 数据周期注入 self.freq(只读)。freq 此前只用于 tick→bar 聚合、用完即弃,
     # 策略没有任何途径知道自己跑在什么周期上。纯 bar 数据不传 freq 时保持 None
     # (不从相邻 bar 时间戳差推断: 停牌/跨日/午休会让它给出错误答案)。
@@ -3293,6 +4017,27 @@ def run_backtest(
     for current_strategy in all_strategy_instances:
         setattr(current_strategy, "_active_start_time_ns", active_start_time_ns)
 
+    # 只有日期的数据改写到交易日收盘时刻时, 按与合约构建一致的优先级取资产类型
+    session_asset_type_of = _build_session_asset_type_of(
+        preliminary_prebuilt_instruments,
+        preliminary_inst_conf_map,
+        preliminary_default_asset_type,
+        [
+            tpl.symbol_prefix
+            for tpl in (
+                (config.china_futures.instrument_templates_by_symbol_prefix or [])
+                if config is not None and config.china_futures is not None
+                else []
+            )
+        ],
+    )
+    session_underlying_of = _build_session_underlying_of(
+        preliminary_prebuilt_instruments, preliminary_inst_conf_map
+    )
+    fixed_time_checker = _FixedTimeDailyChecker(
+        session_resolver, timezone, session_asset_type_of, logger
+    )
+
     # 3. 准备数据源和 Symbol
     feed = DataFeed()
     symbols = []
@@ -3325,18 +4070,18 @@ def run_backtest(
         setattr(current_strategy, "_analyzer_manager", analyzer_manager)
 
     # Determine Data Loading Strategy
+    # bar 数据声明的周期(纳秒), 用于填 bar 区间起点; 见下方 freq 说明
+    # freq 对含 Tick 的列表是聚合周期(合成 bar 的区间由聚合器填);
+    # 对 bar 数据(含 data=None 时从 catalog 加载的)是声明的 bar 周期: 区间起点
+    # = 时间戳 - 周期。DataFeed 输入已由调用方建好, 只注入 self.freq。
+    bar_period_ns: Optional[int] = None
+    if freq is not None and not (
+        isinstance(data, list) and any(isinstance(item, Tick) for item in data)
+    ):
+        bar_period_ns = _freq_period_ns(freq)
     if data is not None:
         # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
         data = coerce_to_pandas(data)
-        # freq 只对含 Tick 的列表有意义。放在归一之前做校验, 使 DataFrame /
-        # DataFeed / 纯 bar 列表配 freq 时也能早失败, 而不是静默忽略这个参数。
-        if freq is not None and not (
-            isinstance(data, list) and any(isinstance(item, Tick) for item in data)
-        ):
-            raise ValueError(
-                f"freq={freq!r} 只在 data 为含 Tick 的列表时有意义。"
-                "若要重采样 bar, 请用 akquant.feed_adapter 的 resample()"
-            )
 
         # 含 Tick(或需要校验)的列表先归一成 DataFeed, 交给下面既有的 DataFeed
         # 分支处理: 该路径已实测能正确投递 tick(feed.add_tick -> 引擎
@@ -3418,11 +4163,29 @@ def run_backtest(
                     len(leaked_adapter_symbols),
                     ", ".join(sorted(leaked_adapter_symbols)),
                 )
+            date_only_rewriter.activate(
+                [*symbols, *adapter_data_map.keys()],
+                session_asset_type_of,
+                underlying_of=session_underlying_of,
+            )
             for sym, df in adapter_data_map.items():
-                df_prep = to_indicator_frame(df)
+                df_prep, date_only = _rewrite_date_only_frame(
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
+                )
                 data_map_for_indicators[sym] = df_prep
-                arrays = dataframe_to_arrays(df_prep, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                arrays = dataframe_to_arrays(
+                    df_prep, symbol=sym, tz=date_only_rewriter.timezone
+                )
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=interval_starts,
+                )
                 if sym not in symbols:
                     symbols.append(sym)
             feed.sort()
@@ -3479,7 +4242,7 @@ def run_backtest(
                         ts_end = _parse_runtime_boundary_timestamp(end_time, timezone)
                         df_input = df_input[df_input.index <= ts_end.date()]
 
-            df = to_indicator_frame(df_input)
+            df = to_indicator_frame(df_input, tz=date_only_rewriter.timezone)
             # 标的列判据对齐项目统一的别名表(schema.COLUMN_ALIASES)。原先只认英文
             # "symbol", 而 AKShare 的标准输出列名是 "股票代码" —— "从 AKShare 取多
             # 标的数据直接丢进 run_backtest" 这个最自然的用法会静默走进下方的单标的
@@ -3501,13 +4264,33 @@ def run_backtest(
                     df = df[df["symbol"].isin(symbols)]
                     filtered_out_symbols.update(pre_filter_symbols.difference(symbols))
                 if not df.empty:
-                    arrays = dataframe_to_arrays(df)
-                    feed.add_arrays(*arrays)  # type: ignore
+                    detected_symbols = [str(s) for s in df["symbol"].unique().tolist()]
+                    # 在用标的与下面最终登记为合约的 symbols 一致
+                    date_only_rewriter.activate(
+                        detected_symbols
+                        if not symbols or symbols == ["BENCHMARK"]
+                        else [*symbols, *detected_symbols],
+                        session_asset_type_of,
+                        underlying_of=session_underlying_of,
+                    )
+                    df, rewritten_rows = _rewrite_date_only_multi_symbol_frame(
+                        df, date_only_rewriter
+                    )
+                    arrays = dataframe_to_arrays(df, tz=date_only_rewriter.timezone)
+                    if bar_period_ns is None:
+                        fixed_time_checker.check_rows(
+                            df["symbol"].to_numpy(), arrays[0], ~rewritten_rows
+                        )
+                    feed.add_arrays(
+                        *arrays,  # type: ignore[arg-type]
+                        interval_starts=_masked_interval_starts(
+                            arrays[0], rewritten_rows, bar_period_ns
+                        ),
+                    )
                     grouped = df.groupby("symbol", sort=False)
                     for grouped_symbol, grouped_df in grouped:
                         sym = str(grouped_symbol)
                         data_map_for_indicators[sym] = grouped_df.copy()
-                    detected_symbols = [str(s) for s in df["symbol"].unique().tolist()]
                     if not symbols or symbols == ["BENCHMARK"]:
                         symbols = detected_symbols
                     else:
@@ -3531,9 +4314,25 @@ def run_backtest(
                         target_symbol,
                         ", ".join(COLUMN_ALIASES["symbol"]),
                     )
+                date_only_rewriter.activate(
+                    symbols if target_symbol in symbols else [target_symbol],
+                    session_asset_type_of,
+                    underlying_of=session_underlying_of,
+                )
+                df, date_only = _rewrite_date_only_frame(df, date_only_rewriter)
                 data_map_for_indicators[target_symbol] = df
-                arrays = dataframe_to_arrays(df, symbol=target_symbol)
-                feed.add_arrays(*arrays)  # type: ignore
+                arrays = dataframe_to_arrays(
+                    df, symbol=target_symbol, tz=date_only_rewriter.timezone
+                )
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(target_symbol, arrays[0])
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=interval_starts,
+                )
                 feed.sort()
                 if target_symbol not in symbols:
                     symbols = [target_symbol]
@@ -3541,6 +4340,14 @@ def run_backtest(
             # If explicit symbols are provided (i.e., not just the default "BENCHMARK"),
             # we filter the data dictionary to only include requested symbols.
             filter_symbols = "BENCHMARK" not in symbols
+            date_only_rewriter.activate(
+                [
+                    *symbols,
+                    *(s for s in data if not (filter_symbols and s not in symbols)),
+                ],
+                session_asset_type_of,
+                underlying_of=session_underlying_of,
+            )
 
             for sym, df in data.items():
                 if filter_symbols and sym not in symbols:
@@ -3573,10 +4380,23 @@ def run_backtest(
                         timezone,
                     )
 
-                df_prep = to_indicator_frame(df)
+                df_prep, date_only = _rewrite_date_only_frame(
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
+                )
                 data_map_for_indicators[sym] = df_prep
-                arrays = dataframe_to_arrays(df_prep, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                arrays = dataframe_to_arrays(
+                    df_prep, symbol=sym, tz=date_only_rewriter.timezone
+                )
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=interval_starts,
+                )
                 if sym not in symbols:
                     symbols.append(sym)
             feed.sort()
@@ -3605,6 +4425,23 @@ def run_backtest(
                         kept_bars.append(b)
                     data = kept_bars
 
+                # 与 DataFrame/dict 分支一致: 数据里的标的并入 symbols 并登记合约,
+                # 资产类型决定时段表(窗口切分、只有日期的改写都按它)。白名单另用
+                # effective_symbols 下发, 不受此影响。
+                for b in data:
+                    if b.symbol not in symbols:  # type: ignore[union-attr]
+                        symbols.append(b.symbol)  # type: ignore[union-attr]
+                date_only_rewriter.activate(
+                    symbols,
+                    session_asset_type_of,
+                    underlying_of=session_underlying_of,
+                )
+                data = _rewrite_date_only_bars(
+                    data,  # type: ignore[arg-type]
+                    date_only_rewriter,
+                    bar_period_ns,
+                )
+                fixed_time_checker.check_bars(data)
                 data.sort(key=lambda b: b.timestamp)
                 feed.add_bars(data)  # type: ignore[arg-type]
 
@@ -3647,6 +4484,11 @@ def run_backtest(
         # start_time / end_time already resolved above
 
         loaded_count = 0
+        date_only_rewriter.activate(
+            symbols,
+            session_asset_type_of,
+            underlying_of=session_underlying_of,
+        )
         for sym in symbols:
             # Try Catalog
             df = catalog.read(
@@ -3661,10 +4503,23 @@ def run_backtest(
                 continue
 
             if not df.empty:
-                df = to_indicator_frame(df)
+                df, date_only = _rewrite_date_only_frame(
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
+                )
                 data_map_for_indicators[sym] = df
-                arrays = dataframe_to_arrays(df, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                arrays = dataframe_to_arrays(
+                    df, symbol=sym, tz=date_only_rewriter.timezone
+                )
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=interval_starts,
+                )
                 loaded_count += 1
 
         if loaded_count > 0:
@@ -3682,15 +4537,14 @@ def run_backtest(
     if data_map_for_indicators:
         (
             all_dates,
-            day_bounds,
             day_cross_section_timestamps,
-        ) = _build_trading_day_metadata(data_map_for_indicators, timezone)
+        ) = _build_session_trading_days(
+            data_map_for_indicators, session_resolver, timezone
+        )
 
         for current_strategy in all_strategy_instances:
             if hasattr(current_strategy, "_trading_days") and all_dates:
                 current_strategy._trading_days = all_dates
-            if hasattr(current_strategy, "_trading_day_bounds"):
-                current_strategy._trading_day_bounds = day_bounds
             if hasattr(current_strategy, "_trading_day_cross_section_timestamps"):
                 current_strategy._trading_day_cross_section_timestamps = (
                     day_cross_section_timestamps
@@ -3701,9 +4555,7 @@ def run_backtest(
     cast(Any, engine).active_start_time_ns = active_start_time_ns
     for current_strategy in all_strategy_instances:
         setattr(current_strategy, "_engine", engine)
-    _prime_framework_boundary_timers(all_strategy_instances, engine)
     _prime_framework_cross_section_timers(all_strategy_instances, engine)
-    _prime_framework_pre_open_timers(all_strategy_instances, engine)
     if analyzer_manager.plugins:
         try:
             analyzer_manager.on_start(
@@ -3728,6 +4580,7 @@ def run_backtest(
             raise ValueError(f"Invalid timezone: {timezone}")
         offset = int(offset_delta.total_seconds())
         engine.set_timezone(offset)
+    engine.configure_sessions(session_map, calendar_days)
     if hasattr(engine, "set_days_per_year"):
         cast(Any, engine).set_days_per_year(
             getattr(config, "days_per_year", 252.0) if config else 252.0
@@ -4115,10 +4968,7 @@ def run_backtest(
         else:
             engine.use_simple_market(commission_rate)
 
-    force_session_continuous = True
-    if china_futures_config and has_futures_instruments:
-        force_session_continuous = not china_futures_config.enforce_sessions
-    engine.set_force_session_continuous(force_session_continuous)
+    # 回测与实盘都按各品种真实交易时段撮合，时段表由 sessions= 决定。
     # 无论使用 SimpleMarket 还是 ChinaMarket，都尝试使用统一佣金策略接口。
     if hasattr(engine, "set_stock_fee_policy"):
         cast(Any, engine).set_stock_fee_policy(
@@ -4251,32 +5101,6 @@ def run_backtest(
                         "in current engine binary"
                     )
                     break
-        if china_futures_config.sessions:
-            session_ranges: List[Tuple[str, str, TradingSession]] = []
-            for session_rule in china_futures_config.sessions:
-                session_ranges.append(
-                    (
-                        session_rule.start,
-                        session_rule.end,
-                        _parse_trading_session(session_rule.session),
-                    )
-                )
-            if session_ranges:
-                engine.set_market_sessions(session_ranges)
-        elif china_futures_config.enforce_sessions:
-            session_ranges = []
-            for start, end, session_name in _china_futures_session_template(
-                china_futures_config.session_profile
-            ):
-                session_ranges.append(
-                    (
-                        start,
-                        end,
-                        _parse_trading_session(session_name),
-                    )
-                )
-            if session_ranges:
-                engine.set_market_sessions(session_ranges)
 
     if china_stock_config is not None:
         if hasattr(engine, "set_stock_validation_options"):
@@ -4288,24 +5112,6 @@ def run_backtest(
                 "set_stock_validation_options is not available in current engine binary"
             )
 
-    if china_options_config and has_options_instruments:
-        if china_options_config.sessions:
-            option_session_ranges: List[Tuple[str, str, TradingSession]] = []
-            for option_session_rule in china_options_config.sessions:
-                option_session_ranges.append(
-                    (
-                        option_session_rule.start,
-                        option_session_rule.end,
-                        _parse_trading_session(option_session_rule.session),
-                    )
-                )
-            if option_session_ranges and not (
-                china_futures_config
-                and has_futures_instruments
-                and china_futures_config.sessions
-            ):
-                engine.set_market_sessions(option_session_ranges)
-
     # Apply Risk Config
 
     # 1. Start with config from BacktestConfig
@@ -4314,36 +5120,16 @@ def run_backtest(
         current_risk_config = config.strategy_config.risk
 
     # 2. If risk_config (dict or object) is provided, merge/override
-    if risk_config:
-        if current_risk_config is None:
-            current_risk_config = RiskConfig()
-
-        if isinstance(risk_config, RiskConfig):
-            # If explicit RiskConfig object provided, it takes precedence over
-            # partial fields?
-            # Or should we merge?
-            # Strategy: If it's a full object, use it as base, but this might discard
-            # config.risk
-            # Better strategy: Copy attributes from override to current
-            for field in risk_config.__dataclass_fields__:
-                val = getattr(risk_config, field)
-                if val is not None:
-                    setattr(current_risk_config, field, val)
-        elif isinstance(risk_config, dict):
-            # Update fields from dict
-            for k, v in risk_config.items():
-                if hasattr(current_risk_config, k):
-                    setattr(current_risk_config, k, v)
-                else:
-                    logger.warning(
-                        "Unknown risk config key: %s",
-                        k,
-                        extra=_build_backtest_log_extra(
-                            phase="risk",
-                            strategy_id=effective_strategy_id,
-                            slot=effective_strategy_id,
-                        ),
-                    )
+    current_risk_config = _merge_risk_config(
+        current_risk_config,
+        risk_config,
+        logger,
+        _build_backtest_log_extra(
+            phase="risk",
+            strategy_id=effective_strategy_id,
+            slot=effective_strategy_id,
+        ),
+    )
 
     # 3. Apply if exists
     if current_risk_config:
@@ -4811,6 +5597,7 @@ def run_backtest(
     # 多周期窗口订阅下发(无订阅时零开销)。必须在 engine.run() 之前; 放在白名单之后
     # 是为了与 run_from_checkpoint 的下发点对称。
     configure_engine_window_subscriptions(engine, all_strategy_instances, freq, logger)
+    configure_engine_lifecycle_dispatch(engine, all_strategy_instances)
 
     # 6. 添加数据
     engine.add_data(feed)
@@ -4939,6 +5726,7 @@ def run_backtest(
         timezone=timezone,
         history_depth=history_depth,
         resolved_policy=resolved_policy,
+        risk_config=current_risk_config,
     )
     analyzer_outputs: Dict[str, Dict[str, Any]] = {}
     if analyzer_manager.plugins:
@@ -4959,6 +5747,19 @@ def run_backtest(
             logger.error(f"Analyzer on_finish error: {e}")
     result.analyzer_outputs = analyzer_outputs
     return result
+
+
+def _snapshot_has_t_plus_one_frozen_positions(engine: Any) -> bool:
+    """存档恢复后的组合里是否有 T+1 冻结持仓（多头持仓大于可用持仓）."""
+    portfolio = getattr(engine, "portfolio", None)
+    if portfolio is None:
+        return False
+    positions = dict(getattr(portfolio, "positions", {}) or {})
+    available = dict(getattr(portfolio, "available_positions", {}) or {})
+    return any(
+        float(qty) > 0 and float(available.get(sym, 0.0)) < float(qty)
+        for sym, qty in positions.items()
+    )
 
 
 def run_from_checkpoint(
@@ -4993,6 +5794,8 @@ def run_from_checkpoint(
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
     config: Optional[BacktestConfig] = None,
+    sessions: Optional[SessionsArg] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -5006,7 +5809,17 @@ def run_from_checkpoint(
     故障速查可参考 docs/zh/advanced/runtime_config.md，
     英文文档参考 docs/en/advanced/runtime_config.md
 
-    :param kwargs: 其他引擎配置参数 (如 commission_rate, stamp_tax_rate, t_plus_one)
+    :param sessions: 同 :func:`run_backtest` 的 ``sessions``；不传时沿用存档里的
+        配置，传入且与存档不一致时以传入为准并告警
+    :param trading_calendar: 同 :func:`run_backtest` 的 ``trading_calendar``；
+        不传时沿用存档，规则同 ``sessions``
+    :param kwargs: 其他引擎配置参数 (如 commission_rate, stamp_tax_rate, t_plus_one)。
+        ``timezone`` 与 ``risk_config`` 不传时沿用存档（需存档时传了
+        ``config=result``），传入且与存档不一致时以传入为准并告警。``risk_config``
+        传 ``RiskConfig`` 对象时整体替换存档，传 dict 时按键叠加在存档上。返回结果的
+        ``resolved_config`` 为本段实际生效的配置，可再存档后链式续跑。
+        ``t_plus_one`` 不传时沿用存档的已解析配置；存档未带配置时，快照中有
+        T+1 冻结持仓即视为开启。已冻结的持仓无论本段开关如何都在日终解冻
     """
     import os
 
@@ -5114,6 +5927,35 @@ def run_from_checkpoint(
         elif isinstance(fill_policy_override, dict):
             raise TypeError(_LEGACY_FILL_POLICY_DICT_MSG)
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
+    # 交易时段表与交易日历(同 run_backtest): 构造解析器即完成参数校验
+    calendar_days = _normalize_trading_calendar(trading_calendar)
+    session_map = normalize_sessions(sessions)
+    session_resolver = SessionResolver(
+        sessions=session_map, trading_calendar=calendar_days, timezone=timezone_name
+    )
+    session_prebuilt: Dict[str, Any] = {}
+    raw_session_instruments = kwargs.get("instruments")
+    if isinstance(raw_session_instruments, list):
+        session_prebuilt = {item.symbol: item for item in raw_session_instruments}
+    elif isinstance(raw_session_instruments, dict):
+        session_prebuilt = dict(raw_session_instruments)
+    session_conf_map: Dict[str, Any] = {}
+    if config and config.instruments_config:
+        if isinstance(config.instruments_config, list):
+            for conf_item in config.instruments_config:
+                session_conf_map.setdefault(conf_item.symbol, conf_item)
+        elif isinstance(config.instruments_config, dict):
+            for key, value in config.instruments_config.items():
+                session_conf_map.setdefault(key, value)
+    session_asset_type_of = _build_session_asset_type_of(
+        session_prebuilt,
+        session_conf_map,
+        kwargs.get("asset_type", AssetType.Stock),
+        [],
+    )
+    session_underlying_of = _build_session_underlying_of(
+        session_prebuilt, session_conf_map
+    )
     symbols, effective_symbols, symbols_explicit = _resolve_effective_symbols(
         symbols=symbols,
         kwargs=kwargs,
@@ -5122,6 +5964,60 @@ def run_from_checkpoint(
 
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    # 先载入存档、后接数据源: 只有日期数据的改写要用存档里已有的合约算会话级收盘
+    logger.info(f"Resuming from checkpoint: {checkpoint_path}")
+    engine, strategy_instance = load_checkpoint(checkpoint_path, None)
+    # 快照持久化的运行时配置 (issue #282)；旧快照为 None，走逐项推导降级路径
+    restored_backtest_config = getattr(
+        strategy_instance, "_warm_start_backtest_config", None
+    )
+    if not isinstance(restored_backtest_config, dict):
+        restored_backtest_config = {}
+    # 时区先于时段解析、日期数据改写与数据加载确定：未传沿用存档（引擎状态不含时区）
+    timezone_name = _resolve_resume_timezone(
+        kwargs.get("timezone"), restored_backtest_config, logger
+    )
+    if hasattr(engine, "set_timezone_name"):
+        cast(Any, engine).set_timezone_name(timezone_name)
+    session_map, calendar_days = _merge_saved_session_config(
+        engine, session_map, calendar_days, logger
+    )
+    session_resolver = SessionResolver(
+        sessions=session_map, trading_calendar=calendar_days, timezone=timezone_name
+    )
+    date_only_rewriter = _DateOnlyRewriter(session_resolver, timezone_name, logger)
+    fixed_time_checker = _FixedTimeDailyChecker(
+        session_resolver, timezone_name, session_asset_type_of, logger
+    )
+    # 存档里的 self.freq 即 bar 周期(续跑不支持 tick 输入); 解析不了按未声明处理
+    try:
+        bar_period_ns = _freq_period_ns(
+            getattr(strategy_instance, "_framework_freq", None)
+        )
+    except ValueError:
+        bar_period_ns = None
+    saved_session_asset_types = _saved_session_asset_types(strategy_instance)
+    saved_session_underlyings = _saved_session_underlyings(strategy_instance)
+    resume_extra_symbols = [
+        *session_prebuilt,
+        *session_conf_map,
+        *(config.instruments if config and config.instruments else []),
+    ]
+
+    def activate_resume_symbols(data_symbols: Iterable[str]) -> None:
+        # 与续跑登记的合约一致: 存档已有合约 + 本次数据与配置里的标的
+        fresh = [*(str(s) for s in data_symbols), *resume_extra_symbols]
+        fresh_set = set(fresh)
+        date_only_rewriter.activate(
+            [*saved_session_asset_types, *fresh],
+            session_asset_type_of,
+            {k: v for k, v in saved_session_asset_types.items() if k not in fresh_set},
+            underlying_of=session_underlying_of,
+            known_underlyings={
+                k: v for k, v in saved_session_underlyings.items() if k not in fresh_set
+            },
+        )
 
     # 1. 准备数据源
     feed = None
@@ -5152,12 +6048,28 @@ def run_from_checkpoint(
                 ", ".join(sorted(leaked_adapter_symbols)),
             )
         loaded_count = 0
+        activate_resume_symbols(
+            sym for sym, df in adapter_data_map.items() if not df.empty
+        )
         for sym, df in adapter_data_map.items():
             if not df.empty:
-                df_prep = to_indicator_frame(df)
+                df_prep, date_only = _rewrite_date_only_frame(
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
+                )
                 data_map_for_indicators[sym] = df_prep
-                arrays = dataframe_to_arrays(df_prep, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                arrays = dataframe_to_arrays(
+                    df_prep, symbol=sym, tz=date_only_rewriter.timezone
+                )
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=interval_starts,
+                )
                 loaded_count += 1
         if loaded_count > 0:
             feed.sort()
@@ -5199,7 +6111,7 @@ def run_from_checkpoint(
                     timezone_name,
                 )
 
-            df_prepared = to_indicator_frame(df_input)
+            df_prepared = to_indicator_frame(df_input, tz=date_only_rewriter.timezone)
             if "symbol" in df_prepared.columns:
                 df_prepared = df_prepared.copy()
                 df_prepared["symbol"] = df_prepared["symbol"].astype(str)
@@ -5225,7 +6137,17 @@ def run_from_checkpoint(
         elif isinstance(data, list) and data and isinstance(data[0], Bar):
             # Convert List[Bar] to DataFrame for indicators
             # We assume all bars are for the same symbol (or single symbol context)
-            feed.add_bars(data)  # type: ignore
+            activate_resume_symbols(
+                str(bar.symbol)
+                for bar in data  # type: ignore[union-attr]
+            )
+            resume_bars: List[Any] = _rewrite_date_only_bars(
+                data,  # type: ignore[arg-type]
+                date_only_rewriter,
+                bar_period_ns,
+            )
+            fixed_time_checker.check_bars(resume_bars)
+            feed.add_bars(resume_bars)
 
             # Construct DataFrame for indicator calculation
             # Group by symbol just in case
@@ -5234,7 +6156,7 @@ def run_from_checkpoint(
             # tick 支持不在本任务范围内, 这里只是 mypy 静态类型跟着别名变宽而已,
             # 无逻辑改动)
             bars_by_sym: Dict[str, List[Dict[str, Any]]] = {}
-            for bar in data:
+            for bar in resume_bars:
                 if bar.symbol not in bars_by_sym:
                     bars_by_sym[bar.symbol] = []
                 bars_by_sym[bar.symbol].append(
@@ -5273,25 +6195,34 @@ def run_from_checkpoint(
             data_map = {}
 
         loaded_count = 0
+        activate_resume_symbols(sym for sym, df in data_map.items() if not df.empty)
         for sym, df in data_map.items():
             if not df.empty:
-                df = to_indicator_frame(df)
+                df, date_only = _rewrite_date_only_frame(
+                    to_indicator_frame(df, tz=date_only_rewriter.timezone),
+                    date_only_rewriter,
+                )
                 data_map_for_indicators[sym] = df
-                arrays = dataframe_to_arrays(df, symbol=sym)
-                feed.add_arrays(*arrays)  # type: ignore
+                arrays = dataframe_to_arrays(
+                    df, symbol=sym, tz=date_only_rewriter.timezone
+                )
+                interval_starts = _arrays_interval_starts(
+                    arrays, date_only=date_only, period_ns=bar_period_ns
+                )
+                if interval_starts is None:
+                    fixed_time_checker.check(sym, arrays[0])
+                feed.add_arrays(
+                    *arrays,  # type: ignore[arg-type]
+                    interval_starts=interval_starts,
+                )
                 loaded_count += 1
 
         if loaded_count > 0:
             feed.sort()
 
-    logger.info(f"Resuming from checkpoint: {checkpoint_path}")
-    engine, strategy_instance = load_checkpoint(checkpoint_path, feed)
-    # 快照持久化的运行时配置 (issue #282)；旧快照为 None，走逐项推导降级路径
-    restored_backtest_config = getattr(
-        strategy_instance, "_warm_start_backtest_config", None
-    )
-    if not isinstance(restored_backtest_config, dict):
-        restored_backtest_config = {}
+    if feed:
+        engine.add_data(feed)
+    engine.configure_sessions(session_map, calendar_days)
     restored_strategy_id = str(
         getattr(strategy_instance, "_owner_strategy_id", "") or ""
     ).strip()
@@ -5390,6 +6321,10 @@ def run_from_checkpoint(
     setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
     for slot_key, slot_strategy in slot_strategy_instances.items():
         setattr(slot_strategy, "_owner_strategy_id", slot_key)
+    assign_slot_ownership(
+        {effective_strategy_id: strategy_instance, **slot_strategy_instances},
+        effective_strategy_id,
+    )
     indicator_recorder = _attach_indicator_recorder(
         stream_emitter=indicator_stream_emitter,
         strategy_instance=strategy_instance,
@@ -5686,6 +6621,22 @@ def run_from_checkpoint(
         cast(Any, engine).set_strategy_risk_cooldown_bars(normalized_cooldown_bars)
 
     all_strategy_instances = [strategy_instance, *slot_strategy_instances.values()]
+    for current_strategy in all_strategy_instances:
+        current_strategy.timezone = timezone_name
+    # 风控配置：引擎状态不含风控，未传时用存档快照重建并按 run_backtest 方式应用
+    resume_risk_config = _resolve_resume_risk_config(
+        config,
+        cast(Optional[Union[Dict[str, Any], RiskConfig]], kwargs.get("risk_config")),
+        restored_backtest_config,
+        logger,
+        _build_backtest_log_extra(
+            phase="risk",
+            strategy_id=effective_strategy_id,
+            slot=effective_strategy_id,
+        ),
+    )
+    if resume_risk_config is not None:
+        apply_risk_config(engine, resume_risk_config)
     snapshot_features = getattr(strategy_instance, "_warm_start_snapshot_features", {})
     if not isinstance(snapshot_features, dict):
         snapshot_features = {}
@@ -5708,15 +6659,14 @@ def run_from_checkpoint(
     if data_map_for_indicators:
         (
             all_dates,
-            day_bounds,
             day_cross_section_timestamps,
-        ) = _build_trading_day_metadata(data_map_for_indicators, timezone_name)
+        ) = _build_session_trading_days(
+            data_map_for_indicators, session_resolver, timezone_name
+        )
 
         for current_strategy in all_strategy_instances:
             if all_dates and hasattr(current_strategy, "_trading_days"):
                 current_strategy._trading_days = all_dates
-            if hasattr(current_strategy, "_trading_day_bounds"):
-                current_strategy._trading_day_bounds = day_bounds
             if hasattr(current_strategy, "_trading_day_cross_section_timestamps"):
                 current_strategy._trading_day_cross_section_timestamps = (
                     day_cross_section_timestamps
@@ -6141,9 +7091,18 @@ def run_from_checkpoint(
         broker_profile_values=broker_profile_values,
         strategy_config=strategy_config,
     )
+    # T+1 优先级：显式入参 > 存档已解析配置 > 按快照推断。存档没带 config= 时
+    # 不含已解析配置，若快照中有 T+1 冻结持仓（多头持仓大于可用持仓）即视为
+    # 原来开着 T+1；否则续跑会退回 SimpleMarket，次日也不再按 T+1 冻结新买入。
     t_plus_one = kwargs.get("t_plus_one", False)
-    if "t_plus_one" not in kwargs and "t_plus_one" in restored_backtest_config:
-        t_plus_one = bool(restored_backtest_config.get("t_plus_one"))
+    if "t_plus_one" not in kwargs:
+        if "t_plus_one" in restored_backtest_config:
+            t_plus_one = bool(restored_backtest_config.get("t_plus_one"))
+        elif _snapshot_has_t_plus_one_frozen_positions(engine):
+            t_plus_one = True
+            logger.info(
+                "存档中有 T+1 冻结持仓，续跑沿用 T+1；如需关闭请传 t_plus_one=False"
+            )
 
     # 市场选择与 run_backtest 对齐期权口径: 含期权(且未走期货市场)时由
     # _apply_option_market_rules 选 China/Simple。必须在 set_stock_fee_policy 之前,
@@ -6330,9 +7289,7 @@ def run_from_checkpoint(
             stream_error_mode,
             stream_mode,
         )
-    _prime_framework_boundary_timers(all_strategy_instances, engine)
     _prime_framework_cross_section_timers(all_strategy_instances, engine)
-    _prime_framework_pre_open_timers(all_strategy_instances, engine)
 
     # symbols 白名单下发给策略实例(供 subscribe() 校验用): 必须在 on_start 之前,
     # 这样 on_start 里的 subscribe 才会被挡住。与下面(on_start 之后)的
@@ -6407,6 +7364,7 @@ def run_from_checkpoint(
         getattr(strategy_instance, "_framework_freq", None),
         logger,
     )
+    configure_engine_lifecycle_dispatch(engine, all_strategy_instances)
 
     # 被前置过滤掉的标的只发一条汇总日志, 与 run_backtest 对称(见该函数同名
     # 注释, :4572 附近)——两条入口的可观测性不应该有差异。
@@ -6563,4 +7521,29 @@ def run_from_checkpoint(
         owner_strategy_id=effective_strategy_id,
         resolved_policy=resolved_policy_warm_start,
     )
+    # 续跑结果同样挂已解析配置，供再次存档后链式续跑：以存档为底，覆盖本段
+    # 实际生效的值；本段没有生效值的项（无风控、未设成交策略）保留存档原值
+    segment_resolved = _build_resolved_backtest_config(
+        slippage_policy=normalized_global_slippage,
+        volume_limit_pct=(
+            0.25 if warm_start_volume_limit is None else warm_start_volume_limit
+        ),
+        commission_policy=resolved_commission_policy,
+        stamp_tax_rate=stamp_tax,
+        transfer_fee_rate=transfer_fee,
+        min_commission=min_commission,
+        t_plus_one=bool(t_plus_one),
+        timezone=timezone_name,
+        history_depth=int(
+            restored_backtest_config.get(
+                "history_depth", getattr(strategy_instance, "_history_depth", 0)
+            )
+            or 0
+        ),
+        resolved_policy=resolved_policy_warm_start,
+        risk_config=resume_risk_config,
+    )
+    if resume_risk_config is None:
+        segment_resolved.pop("risk_config", None)
+    result.resolved_config = {**restored_backtest_config, **segment_resolved}
     return result

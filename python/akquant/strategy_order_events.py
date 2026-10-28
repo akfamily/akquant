@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Any, Set, Tuple
+from typing import Any, Iterable, List, Mapping, Set, Tuple
 
 from .akquant import OrderStatus
 from .strategy_framework_hooks import (
@@ -18,6 +18,44 @@ _TERMINAL_ORDER_STATUSES = (
 #: on_order 去重缓存上限(与成交侧 trade_dedupe_cache_size 同量级)。
 #: 不做成对外可配参数: 订单事件量级远小于成交, 固定上限足够, 不必扩大 API 面。
 _ORDER_EVENT_DEDUPE_LIMIT = 50000
+
+
+def assign_slot_ownership(
+    strategies: Mapping[str, Any], default_strategy_id: str
+) -> None:
+    """登记多槽位归属, 使订单/成交/拒单/过期回调只派给所属槽位.
+
+    :param strategies: 槽位 id → 策略实例(含默认槽位)。
+    :param default_strategy_id: 默认槽位 id; ``owner_strategy_id`` 为空或不在任何
+        槽位的订单/成交(如实盘柜台侧产生的订单)归它。
+    """
+    slot_ids = frozenset(str(key) for key in strategies)
+    ownership = (str(default_strategy_id), slot_ids)
+    for strategy in strategies.values():
+        setattr(strategy, "_framework_slot_ownership", ownership)
+
+
+def _slot_filter(strategy: Any) -> Any:
+    """返回只保留本槽位订单/成交的过滤函数; 单槽位或未登记归属时返回 ``None``."""
+    ownership = getattr(strategy, "_framework_slot_ownership", None)
+    if not ownership:
+        return None
+    default_id, slot_ids = ownership
+    if len(slot_ids) <= 1:
+        return None
+    mine = str(getattr(strategy, "_owner_strategy_id", "") or "").strip() or default_id
+
+    def _owned(items: Iterable[Any]) -> List[Any]:
+        kept = []
+        for item in items:
+            owner = str(getattr(item, "owner_strategy_id", "") or "").strip()
+            if owner not in slot_ids:
+                owner = default_id
+            if owner == mine:
+                kept.append(item)
+        return kept
+
+    return _owned
 
 
 def _is_terminal_order(order: Any) -> bool:
@@ -75,6 +113,11 @@ def check_order_events(strategy: Any) -> None:
     if strategy.ctx is None:
         return
 
+    # 多槽位: 账户共享, 但订单/成交/拒单/过期回调只派给所属槽位(按订单与成交的
+    # owner_strategy_id; 为空或不在任何槽位的归默认槽位)。在途/拒单/过期/成交
+    # 列表是全账户的, 需过滤; canceled_order_ids 是本槽位上下文自己的。
+    owned = _slot_filter(strategy)
+
     if hasattr(strategy.ctx, "canceled_order_ids"):
         for oid in strategy.ctx.canceled_order_ids:
             if oid in strategy._known_orders:
@@ -105,16 +148,37 @@ def check_order_events(strategy: Any) -> None:
             remember_finalized_order(strategy, active_order)
 
     if hasattr(strategy.ctx, "recent_rejected_orders"):
-        for order in strategy.ctx.recent_rejected_orders:
+        rejected_orders = strategy.ctx.recent_rejected_orders
+        if owned is not None:
+            rejected_orders = owned(rejected_orders)
+        for order in rejected_orders:
             oid = getattr(order, "id", "")
             if not oid:
                 continue
             strategy._known_orders[oid] = order
             _emit_order_callback(strategy, order)
 
+    # 日终结算过期的 Day 单: 它已离开在途账本, 下面的兜底路径只会留档旧的
+    # New/Submitted 快照而不回调。这里按终态快照回调 on_order 并落档, 再从
+    # _known_orders 移除, 同一张单只回调一次 Expired。
+    expired_orders = getattr(strategy.ctx, "recent_expired_orders", ())
+    if owned is not None:
+        expired_orders = owned(expired_orders)
+    for order in expired_orders:
+        oid = getattr(order, "id", "")
+        if not oid:
+            continue
+        strategy._known_orders[oid] = order
+        _emit_order_callback(strategy, order)
+        remember_finalized_order(strategy, order)
+        del strategy._known_orders[oid]
+
     pending_order_ids: set[str] = set()
     if hasattr(strategy.ctx, "orders"):
-        for order in strategy.ctx.orders:
+        ctx_orders = strategy.ctx.orders
+        if owned is not None:
+            ctx_orders = owned(ctx_orders)
+        for order in ctx_orders:
             oid = getattr(order, "id", "")
             if not oid or oid in strategy._known_orders:
                 continue
@@ -124,7 +188,10 @@ def check_order_events(strategy: Any) -> None:
 
     current_active_ids: set[str] = set()
     if hasattr(strategy.ctx, "active_orders"):
-        for order in strategy.ctx.active_orders:
+        active_orders = strategy.ctx.active_orders
+        if owned is not None:
+            active_orders = owned(active_orders)
+        for order in active_orders:
             current_active_ids.add(order.id)
             oid = order.id
 
@@ -139,10 +206,19 @@ def check_order_events(strategy: Any) -> None:
                     strategy._known_orders[oid] = order
                     _emit_order_callback(strategy, order)
 
+    recent_trades = list(getattr(strategy.ctx, "recent_trades", ()))
+    if owned is not None:
+        recent_trades = owned(recent_trades)
     recent_trade_order_ids: set[str] = set()
-    if hasattr(strategy.ctx, "recent_trades"):
-        for t in strategy.ctx.recent_trades:
-            recent_trade_order_ids.add(t.order_id)
+    for t in recent_trades:
+        recent_trade_order_ids.add(t.order_id)
+
+    # 本步移出在途账本、未成交终结的订单终态快照(撤单/过期/拒单)。别的槽位撤掉
+    # 本槽位的单时, 本槽位 ctx 的 canceled_order_ids 里没有它, 靠这里回调终态。
+    finalized_orders = {
+        getattr(o, "id", ""): o
+        for o in getattr(strategy.ctx, "recent_finalized_orders", ())
+    }
 
     for oid in list(strategy._known_orders.keys()):
         if oid not in current_active_ids:
@@ -157,12 +233,18 @@ def check_order_events(strategy: Any) -> None:
                 del strategy._known_orders[oid]
             elif oid in pending_order_ids:
                 continue
+            elif oid in finalized_orders:
+                order = finalized_orders[oid]
+                strategy._known_orders[oid] = order
+                _emit_order_callback(strategy, order)
+                remember_finalized_order(strategy, order)
+                del strategy._known_orders[oid]
             else:
                 remember_finalized_order(strategy, strategy._known_orders[oid])
                 del strategy._known_orders[oid]
 
-    if hasattr(strategy.ctx, "recent_trades"):
-        for t in strategy.ctx.recent_trades:
+    if recent_trades:
+        for t in recent_trades:
             key = trade_event_key(strategy, t)
             if not remember_trade_key(strategy, key):
                 continue

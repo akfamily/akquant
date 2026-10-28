@@ -153,6 +153,8 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
         assert!(manager.check_internal(&order, &ctx_high).is_ok());
 
@@ -172,6 +174,8 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
         let err = manager
             .check_internal(&order, &ctx_low)
@@ -221,6 +225,8 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
         assert!(manager.check_internal(&order, &ctx_day1_start).is_ok());
 
@@ -240,6 +246,8 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
         let err = manager
             .check_internal(&order, &ctx_day1_drop)
@@ -263,6 +271,8 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
         assert!(manager.check_internal(&order, &ctx_day2_start).is_ok());
     }
@@ -317,6 +327,8 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: Some("Asia/Shanghai"),
             timezone_offset: 8 * 3600,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
         assert!(manager.check_internal(&order, &ctx_day_start).is_ok());
 
@@ -336,6 +348,8 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: Some("Asia/Shanghai"),
             timezone_offset: 8 * 3600,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
         let err = manager
             .check_internal(&order, &ctx_same_local_day_drop)
@@ -384,6 +398,8 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
         assert!(manager.check_internal(&order, &ctx_start).is_ok());
 
@@ -403,6 +419,8 @@ mod tests {
             risk_config: &manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
         let err = manager
             .check_internal(&order, &ctx_drop)

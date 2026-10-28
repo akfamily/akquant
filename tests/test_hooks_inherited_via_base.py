@@ -3,8 +3,7 @@
 回归场景: 用户把 on_before_trading / on_after_trading / on_pre_open 等钩子写在
 一层公共基类里, 具体策略只继承不重写。此前 ``_strategy_overrides_callback``
 只比较 MRO 中第一个定义该方法的基类, 于是"用户基类 vs 用户基类"自比得到
-False, 钩子被 dispatch_time_hooks / collect_pre_open_timer_entries 整段跳过,
-静默不触发。
+False, 钩子被框架整段跳过, 静默不触发。
 """
 
 import pickle
@@ -16,7 +15,6 @@ from akquant.akquant import Bar
 from akquant.backtest.fill_mode import CurrentClose
 from akquant.strategy_framework_hooks import (
     _needs_portfolio_update,
-    _needs_time_hooks,
     _strategy_overrides_callback,
 )
 
@@ -26,9 +24,9 @@ SYMBOL = "HOOKS_BASE_DEMO"
 def _two_day_bars() -> list[Bar]:
     """构造两个交易日各两根 bar, 足以跨日触发 before/after 钩子."""
     stamps = [
-        ("2023-01-03 09:30:00", 10.0),
+        ("2023-01-03 10:00:00", 10.0),
         ("2023-01-03 15:00:00", 10.5),
-        ("2023-01-04 09:30:00", 10.8),
+        ("2023-01-04 10:00:00", 10.8),
         ("2023-01-04 15:00:00", 10.6),
     ]
     return [
@@ -166,14 +164,11 @@ def test_hook_shortcut_cache_is_not_persisted() -> None:
     strategy = InheritedHookStrategy()
     # 模拟旧版本判定留下的错误缓存(框架侧动态字段, 类上无声明)。
     polluted: Any = strategy
-    polluted._framework_needs_time_hooks = False
     polluted._framework_needs_portfolio_update = False
 
     state = strategy.__getstate__()
 
-    assert "_framework_needs_time_hooks" not in state
     assert "_framework_needs_portfolio_update" not in state
 
     restored = pickle.loads(pickle.dumps(strategy))
-    assert _needs_time_hooks(restored), "恢复后应重新判定出需要交易日钩子"
     assert _needs_portfolio_update(restored), "恢复后应重新判定出需要组合钩子"

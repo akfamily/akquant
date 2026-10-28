@@ -41,7 +41,7 @@ from akquant import Bar, InstrumentConfig
 def generate_option_data(length: int = 100) -> pd.DataFrame:
     """生成期权模拟数据."""
     np.random.seed(42)
-    dates = pd.date_range(start="2023-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2023-01-01", periods=length, freq="B")
 
     # 标的期货价格 (震荡向上)
     futures_prices = np.linspace(3500, 3800, length) + np.random.normal(0, 50, length)

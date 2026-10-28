@@ -22,7 +22,9 @@ def test_orders_df() -> None:
     for i in range(10):
         data.append(
             Bar(
-                timestamp=pd.Timestamp(f"2023-01-{i + 1:02d} 10:00:00").value,
+                timestamp=pd.Timestamp(
+                    f"2023-01-{i + 1:02d} 10:00:00", tz="Asia/Shanghai"
+                ).value,
                 open=90.0 + i * 3,
                 high=95.0 + i * 3,
                 low=85.0 + i * 3,

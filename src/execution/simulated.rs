@@ -8,12 +8,73 @@ use crate::execution::slippage::{SlippageModel, ZeroSlippage};
 use crate::execution::{ExecutionClient, crypto, forex, futures, option, stock};
 use crate::log_context::{AkqLogContext, execution_order_context, render_log_message};
 use crate::model::{
-    AssetType, ExecutionPolicyCore, Order, OrderStatus, PriceBasis, TemporalPolicy, TimeInForce,
-    TradingSession,
+    AssetType, ExecutionPolicyCore, Order, OrderStatus, PriceBasis, TemporalPolicy, TradingSession,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::{HashMap, HashSet};
+
+/// 竞价期内记录的一笔行情。
+#[derive(Debug, Clone, Copy)]
+struct AuctionQuote {
+    price: Decimal,
+    /// 最近一笔非零成交量(零量快照只更新价格, 不覆盖已记录的量)。
+    volume: Decimal,
+    /// 设定该价格的事件时间戳: 开盘统一撮合只纳入在它之前下的单。
+    ts: i64,
+    /// 价格来自 tick: tick 撮合不看成交量, 合成事件的量不约束成交。
+    from_tick: bool,
+}
+
+impl AuctionQuote {
+    fn updated(
+        prev: Option<Self>,
+        price: Decimal,
+        volume: Decimal,
+        ts: i64,
+        from_tick: bool,
+    ) -> Self {
+        let volume = if volume > Decimal::ZERO {
+            volume
+        } else {
+            prev.map_or(Decimal::ZERO, |q| q.volume)
+        };
+        Self {
+            price,
+            volume,
+            ts,
+            from_tick,
+        }
+    }
+
+    /// 合成事件不做成交量检查: 竞价价来自 tick(tick 撮合本就不看成交量), 或
+    /// 竞价期行情成交量全为 0(否则合成事件按停牌处理, 统一撮合静默失效)。
+    fn ignores_volume(&self) -> bool {
+        self.from_tick || self.volume <= Decimal::ZERO
+    }
+}
+
+/// 单个品种当日的集合竞价状态。交易日变化时重置。
+#[derive(Debug, Clone, Default)]
+struct AuctionState {
+    trading_day: Option<chrono::NaiveDate>,
+    /// 开盘竞价期内设定的竞价价(竞价价来源 ①)。
+    opening: Option<AuctionQuote>,
+    opening_done: bool,
+    /// 收盘竞价期内最后一笔行情。
+    closing: Option<AuctionQuote>,
+    closing_done: bool,
+}
+
+/// 一次集合竞价统一撮合: 价格全为竞价价的合成事件, 只纳入 `symbol` 在 `cutoff`
+/// 之前下的在途订单, 撮合时该品种视为连续竞价。
+struct Uncross {
+    event: Event,
+    symbol: String,
+    cutoff: i64,
+    /// 撮合时跳过成交量检查(见 [`AuctionQuote::ignores_volume`])。
+    ignore_volume: bool,
+}
 
 /// 模拟交易所执行器 (Simulated Execution Client)
 /// 负责在内存中撮合订单 (回测模式)
@@ -33,6 +94,17 @@ pub struct SimulatedExecutionClient {
     slice_tracking_timestamp: Option<i64>,
     attempted_same_cycle_order_ids: HashSet<String>,
     deferred_same_cycle_order_ids: HashSet<String>,
+    /// 在 tick/定时器回调里下的订单(见 [`ExecutionClient::mark_created_off_bar`])。
+    /// 同一时刻、同品种的带区间 bar 在它们之后处理, 其 OHLC 来自
+    /// `(interval_start, timestamp]`, 早于下单时刻, 故不由这根 bar 撮合。
+    created_off_bar_ids: HashSet<String>,
+    /// 品种 -> 最近一根已处理的带区间 bar 的时间戳。下单时该品种同刻 bar 已撮合过
+    /// (如同刻顺序 tick(A) -> bar(A) -> tick(B) 中在 tick(B) 上下 A 的单), 不再登记。
+    last_interval_bar_ts: HashMap<String, i64>,
+    /// 品种 -> 当日集合竞价状态。
+    auctions: HashMap<String, AuctionState>,
+    /// 已提示过"竞价期成交量为 0"的品种。
+    zero_volume_auction_warned: HashSet<String>,
 }
 
 impl SimulatedExecutionClient {
@@ -51,13 +123,6 @@ impl SimulatedExecutionClient {
                 "Rejected order due to insufficient margin during execution. Required: {total_required}, Available: {current_free_margin}"
             ),
             Self::order_log_context(order, current_time),
-        )
-    }
-
-    fn expired_day_order_warning(order: &Order, event_time: i64) -> String {
-        render_log_message(
-            "Expired day order at session close",
-            Self::order_log_context(order, event_time),
         )
     }
 
@@ -142,8 +207,152 @@ impl SimulatedExecutionClient {
             futures_validation_by_prefix: Vec::new(),
             slice_tracking_timestamp: None,
             attempted_same_cycle_order_ids: HashSet::new(),
+            created_off_bar_ids: HashSet::new(),
+            last_interval_bar_ts: HashMap::new(),
             deferred_same_cycle_order_ids: HashSet::new(),
+            auctions: HashMap::new(),
+            zero_volume_auction_warned: HashSet::new(),
         }
+    }
+
+    /// 价格全为竞价价的合成 bar: 复用 match_order 的手续费、滑点、保证金、成交量限制。
+    fn auction_event(symbol: &str, ts: i64, quote: &AuctionQuote) -> Event {
+        Event::Bar(crate::model::Bar {
+            timestamp: ts,
+            open: quote.price,
+            high: quote.price,
+            low: quote.price,
+            close: quote.price,
+            volume: quote.volume,
+            symbol: symbol.to_string(),
+            extra: HashMap::new(),
+            freq: None,
+            interval_start: None,
+        })
+    }
+
+    /// 在 `ts` 按 `quote` 对 `symbol` 在 `cutoff` 之前下的订单统一撮合; 没有这样的
+    /// 在途订单时返回 None(不必构造合成事件、不跑撮合)。
+    fn build_uncross(
+        &mut self,
+        symbol: &str,
+        ts: i64,
+        cutoff: i64,
+        quote: &AuctionQuote,
+    ) -> Option<Uncross> {
+        let has_candidates = self.orders.values().any(|order| {
+            Self::is_order_active(order) && order.symbol == symbol && order.created_at < cutoff
+        });
+        if !has_candidates {
+            return None;
+        }
+        if !quote.from_tick
+            && quote.volume <= Decimal::ZERO
+            && self.zero_volume_auction_warned.insert(symbol.to_string())
+        {
+            log::warn!(
+                "标的 {symbol} 竞价期行情成交量为 0，按竞价价统一撮合且不受成交量限制（同一标的不再提示）"
+            );
+        }
+        Some(Uncross {
+            event: Self::auction_event(symbol, ts, quote),
+            symbol: symbol.to_string(),
+            cutoff,
+            ignore_volume: quote.ignores_volume(),
+        })
+    }
+
+    /// 记录本事件的竞价行情, 返回本事件要做的统一撮合。
+    fn auction_action(
+        &mut self,
+        symbol: &str,
+        ts: i64,
+        price: Decimal,
+        volume: Decimal,
+        from_tick: bool,
+        ctx: &crate::context::EngineContext,
+    ) -> Option<Uncross> {
+        let session = ctx.sessions.session_for(symbol, ts);
+        if !matches!(
+            session,
+            TradingSession::OpeningAuction
+                | TradingSession::AuctionHold
+                | TradingSession::ClosingAuction
+                | TradingSession::Continuous
+        ) {
+            return None;
+        }
+        // 收盘竞价是否在本事件结束(15:00 bar / 15:00 tick): 终点戳事件取 ts - 1
+        // 所在段, 本事件到达段终点即结束。
+        let closing_ends_here = session == TradingSession::ClosingAuction
+            && ctx
+                .sessions
+                .resolver
+                .and_then(|r| {
+                    let asset_type = ctx
+                        .sessions
+                        .instruments
+                        .and_then(|m| m.get(symbol))
+                        .map(|i| i.asset_type);
+                    r.segment_span_at(symbol, asset_type, ts.saturating_sub(1))
+                        .ok()
+                })
+                .is_some_and(|(_, end, _)| ts >= end);
+        // 每个事件都会走到这里: 命中时不为键分配 String, 只在首次出现时插入。
+        if !self.auctions.contains_key(symbol) {
+            self.auctions
+                .insert(symbol.to_string(), AuctionState::default());
+        }
+        let state = self.auctions.get_mut(symbol).expect("上面已插入");
+        if state.trading_day != ctx.trading_day {
+            *state = AuctionState {
+                trading_day: ctx.trading_day,
+                ..Default::default()
+            };
+        }
+        // (报价, 只纳入此前下的单的截止时刻)
+        let pending: Option<(AuctionQuote, i64)> = match session {
+            TradingSession::OpeningAuction => {
+                state.opening = Some(AuctionQuote::updated(
+                    state.opening,
+                    price,
+                    volume,
+                    ts,
+                    from_tick,
+                ));
+                None
+            }
+            TradingSession::AuctionHold => {
+                // 09:25～09:30 不形成新价: 只在尚无竞价价时设定(Ruling S3-T3-3)
+                if state.opening.is_none() {
+                    state.opening = Some(AuctionQuote::updated(None, price, volume, ts, from_tick));
+                }
+                None
+            }
+            TradingSession::ClosingAuction => {
+                let quote = AuctionQuote::updated(state.closing, price, volume, ts, from_tick);
+                state.closing = Some(quote);
+                if closing_ends_here && !state.closing_done {
+                    state.closing_done = true;
+                    // 结束收盘竞价的事件上新下的单不参加(Ruling S3-5)
+                    Some((quote, ts))
+                } else {
+                    None
+                }
+            }
+            _ => {
+                // 连续竞价: 首个连续竞价事件结束开盘竞价。只在观察到竞价期行情时统一
+                // 撮合(Ruling S3-1); 没有竞价期行情时, 本事件上的常规撮合即来源 ②。
+                // 竞价价已知后下的单进入连续竞价(Ruling S3-T3-3)。
+                if state.opening_done {
+                    None
+                } else {
+                    state.opening_done = true;
+                    state.opening.map(|q| (q, q.ts))
+                }
+            }
+        };
+        pending.and_then(|(quote, cutoff)| self.build_uncross(symbol, ts, cutoff, &quote))
     }
 
     fn prepare_slice_tracking(&mut self, timestamp: i64) {
@@ -167,6 +376,19 @@ impl SimulatedExecutionClient {
             Event::Tick(tick) => Some(tick.symbol.as_str()),
             _ => None,
         }
+    }
+
+    /// 同刻带区间 bar 不得撮合该单: bar 的 `interval_start < timestamp`、与订单
+    /// 同品种、`timestamp == created_at`, 且订单是在 tick/定时器回调里下的(在这根
+    /// bar 之前处理)。`on_bar` 里下的单不受影响; 留给后续事件(含本时间片的 tick)。
+    fn skips_same_time_interval_bar(&self, order: &Order, event: &Event) -> bool {
+        matches!(
+            event,
+            Event::Bar(bar)
+                if bar.symbol == order.symbol
+                    && bar.timestamp == order.created_at
+                    && bar.interval_start.is_some_and(|s| s < bar.timestamp)
+        ) && self.created_off_bar_ids.contains(&order.id)
     }
 
     fn event_timestamp(event: &Event) -> Option<i64> {
@@ -301,6 +523,7 @@ impl SimulatedExecutionClient {
         }
         for id in finished_ids {
             self.orders.remove(&id);
+            self.created_off_bar_ids.remove(&id);
         }
         self.order_queue.retain(|id| self.orders.contains_key(id));
     }
@@ -311,6 +534,7 @@ impl SimulatedExecutionClient {
         ctx: &crate::context::EngineContext,
         mut order_filter: F,
         defer_cross_symbol_increase: bool,
+        uncrosses: &[Uncross],
     ) -> Vec<Event>
     where
         F: FnMut(&Order, &Event) -> bool,
@@ -330,15 +554,30 @@ impl SimulatedExecutionClient {
             ctx.risk_config,
         );
 
-        for event in events {
+        // 集合竞价统一撮合的合成事件排在真实事件之前, 与之共享同一份资金推演
+        // (projected_portfolio / current_free_margin), 不会超额成交。
+        let passes = uncrosses
+            .iter()
+            .map(|u| (&u.event, Some(u)))
+            .chain(events.iter().map(|e| (e, None)));
+        for (event, uncross) in passes {
             let queue = self.sorted_queue();
             for order_id in &queue {
                 let mut synced_report: Option<Event> = None;
                 let Some(order_snapshot) = self.orders.get(order_id).cloned() else {
                     continue;
                 };
-                if !Self::is_order_active(&order_snapshot) || !order_filter(&order_snapshot, event)
-                {
+                let selected = match uncross {
+                    Some(u) => {
+                        order_snapshot.symbol == u.symbol && order_snapshot.created_at < u.cutoff
+                    }
+                    None => order_filter(&order_snapshot, event),
+                };
+                if !Self::is_order_active(&order_snapshot) || !selected {
+                    continue;
+                }
+
+                if uncross.is_none() && self.skips_same_time_interval_bar(&order_snapshot, event) {
                     continue;
                 }
 
@@ -357,7 +596,24 @@ impl SimulatedExecutionClient {
                     continue;
                 }
 
-                let defer_current = defer_cross_symbol_increase
+                // 非连续竞价时段(竞价、午休、闭市、盘后): 订单排队, 等下一可成交时段
+                // (竞价时段的统一撮合见集合竞价撮合)。只对本品种的行情与定时器判断;
+                // 其他品种的行情撮合器本就不会让它成交, 不必查时段。
+                // 统一撮合的合成事件上该品种视为连续竞价。
+                let own_event = uncross.is_none()
+                    && Self::event_symbol(event)
+                        .is_none_or(|symbol| symbol == order_snapshot.symbol);
+                if own_event {
+                    let event_ts = Self::event_timestamp(event).unwrap_or(ctx.current_time);
+                    if ctx.sessions.session_for(&order_snapshot.symbol, event_ts)
+                        != TradingSession::Continuous
+                    {
+                        continue;
+                    }
+                }
+
+                let defer_current = uncross.is_none()
+                    && defer_cross_symbol_increase
                     && self.should_defer_order_on_current_event(&order_snapshot, event, ctx);
                 let mark_attempted = order_snapshot.created_at == ctx.current_time
                     && self.is_same_cycle_close_order(&order_snapshot, ctx)
@@ -396,6 +652,7 @@ impl SimulatedExecutionClient {
                             execution_policy_core: Self::effective_policy(order, ctx),
                             slippage: self.slippage_model.as_ref(),
                             volume_limit_pct: self.volume_limit_pct,
+                            ignore_volume: uncross.is_some_and(|u| u.ignore_volume),
                             bar_index: ctx.bar_index,
                             last_price: ctx.last_prices.get(&order.symbol).copied(),
                         };
@@ -806,6 +1063,21 @@ impl ExecutionClient for SimulatedExecutionClient {
         self.order_queue.push(id);
     }
 
+    fn knows_order(&self, order_id: &str) -> bool {
+        self.orders.contains_key(order_id)
+    }
+
+    fn mark_created_off_bar(&mut self, order_id: &str) {
+        let Some(order) = self.orders.get(order_id) else {
+            return;
+        };
+        // 同品种同刻的 bar 已在下单前处理: 它之后不会再出现, 无需跳过
+        if self.last_interval_bar_ts.get(&order.symbol) == Some(&order.created_at) {
+            return;
+        }
+        self.created_off_bar_ids.insert(order_id.to_string());
+    }
+
     fn on_cancel(&mut self, order_id: &str) {
         match self.orders.get_mut(order_id) {
             Some(order)
@@ -826,42 +1098,60 @@ impl ExecutionClient for SimulatedExecutionClient {
 
     fn on_event(&mut self, event: &Event, ctx: &crate::context::EngineContext) -> Vec<Event> {
         self.prepare_slice_tracking(ctx.current_time);
-        let mut reports = Vec::new();
-
-        if ctx.session == TradingSession::Break
-            || ctx.session == TradingSession::Closed
-            || ctx.session == TradingSession::PreOpen
-            || ctx.session == TradingSession::PostClose
+        if let Event::Bar(bar) = event
+            && bar.interval_start.is_some_and(|s| s < bar.timestamp)
         {
-            if ctx.session == TradingSession::Closed {
-                let timestamp = match event {
-                    Event::Bar(b) => b.timestamp,
-                    Event::Tick(t) => t.timestamp,
-                    _ => 0,
-                };
-
-                for order_id in &self.order_queue {
-                    if let Some(order) = self.orders.get_mut(order_id)
-                        && Self::is_order_active(order)
-                        && order.time_in_force == TimeInForce::Day
-                    {
-                        log::warn!("{}", Self::expired_day_order_warning(order, timestamp));
-                        order.status = OrderStatus::Expired;
-                        order.updated_at = timestamp;
-                        reports.push(Event::ExecutionReport(order.clone(), None));
-                    }
-                }
-                self.cleanup_finished_orders();
-            }
-            return reports;
+            self.last_interval_bar_ts
+                .insert(bar.symbol.clone(), bar.timestamp);
         }
-
+        // 集合竞价: 竞价时段只记价; 开盘竞价在首个连续竞价事件上、收盘竞价在结束它的
+        // 事件上按竞价价统一撮合(与本事件的常规撮合同一次调用, 排在它之前)。
+        let quote = match event {
+            Event::Bar(b) => Some((b.symbol.as_str(), b.timestamp, b.close, b.volume, false)),
+            Event::Tick(t) => Some((t.symbol.as_str(), t.timestamp, t.price, t.volume, true)),
+            _ => None,
+        };
+        let uncross = quote.and_then(|(symbol, ts, price, volume, from_tick)| {
+            self.auction_action(symbol, ts, price, volume, from_tick, ctx)
+        });
+        // 时段按订单品种在 match_with_events 里判断(非连续竞价时段排队), 统一撮合
+        // 之后对本事件的常规撮合不会让竞价时段的订单重复成交;
+        // Day 单只在日终结算过期, 不因闭市时段的行情作废。
         self.match_with_events(
             std::slice::from_ref(event),
             ctx,
             |_order, _event| true,
             true,
+            uncross.as_slice(),
         )
+    }
+
+    fn finalize_closing_auctions(&mut self, ctx: &crate::context::EngineContext) -> Vec<Event> {
+        // 当日收盘竞价有行情但没有结束它的事件(缺收盘时刻的 bar/tick):
+        // 按最后一个收盘竞价事件的价格在收盘时刻(ctx.current_time)统一撮合。
+        let mut pending: Vec<(String, AuctionQuote)> = self
+            .auctions
+            .iter_mut()
+            .filter(|(_, s)| s.trading_day == ctx.trading_day && !s.closing_done)
+            .filter_map(|(sym, s)| {
+                s.closing.map(|q| {
+                    s.closing_done = true;
+                    (sym.clone(), q)
+                })
+            })
+            .collect();
+        // HashMap 迭代无序: 按品种排序, 撮合顺序可复现
+        pending.sort_by(|a, b| a.0.cmp(&b.0));
+        let close_ts = ctx.current_time;
+        let uncrosses: Vec<Uncross> = pending
+            .iter()
+            .filter_map(|(sym, q)| self.build_uncross(sym, close_ts, close_ts, q))
+            .collect();
+        if uncrosses.is_empty() {
+            return Vec::new();
+        }
+        // 所有品种的合成事件一次撮合, 共享资金推演
+        self.match_with_events(&[], ctx, |_order, _event| false, false, &uncrosses)
     }
 
     fn finalize_timestamp(
@@ -908,6 +1198,7 @@ impl ExecutionClient for SimulatedExecutionClient {
             ctx,
             |order, _event| finalize_ids.contains(&order.id),
             false,
+            &[],
         );
         self.clear_slice_tracking();
         reports
@@ -990,6 +1281,7 @@ mod tests {
             volume: Decimal::from(1000),
             extra: HashMap::new(),
             freq: None,
+            interval_start: None,
         }
     }
 
@@ -1047,6 +1339,8 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1135,6 +1429,8 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1208,6 +1504,8 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1281,6 +1579,8 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1356,6 +1656,8 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1471,6 +1773,8 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1583,6 +1887,8 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1706,6 +2012,8 @@ mod tests {
             risk_config: &risk_manager.config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
         };
 
         let events = sim.on_event(&event, &ctx);
@@ -1755,26 +2063,441 @@ mod tests {
         assert!(rendered.contains("\"event_time_iso\":\"1970-01-01T00:00:01Z\""));
     }
 
+    /// 以给定的本时间片品种时段跑一次 `on_event`(AAPL 开盘 100 的 bar)。
+    fn on_event_in_session(
+        sim: &mut SimulatedExecutionClient,
+        session: Option<TradingSession>,
+    ) -> Vec<Event> {
+        let instruments = create_test_instruments();
+        let event = Event::Bar(create_test_bar(
+            "AAPL",
+            Decimal::from(100),
+            Decimal::from(105),
+            Decimal::from(95),
+            Decimal::from(102),
+        ));
+        let portfolio = crate::portfolio::Portfolio {
+            cash: Decimal::from(100000),
+            positions: HashMap::new().into(),
+            available_positions: HashMap::new().into(),
+        };
+        let last_prices = HashMap::new();
+        let risk_manager = crate::risk::RiskManager::new();
+        let trade_tracker = crate::analysis::TradeTracker::new();
+        let market_model = crate::market::MarketConfig::China(crate::market::ChinaMarketConfig {
+            stock: Some(crate::market::stock::StockConfig::default()),
+            ..Default::default()
+        })
+        .create_model();
+        let mut slice = HashMap::new();
+        if let Some(s) = session {
+            slice.insert("AAPL".to_string(), s);
+        }
+        let ctx = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &last_prices,
+            trade_tracker: &trade_tracker,
+            market_model: market_model.as_ref(),
+            execution_policy_core: ExecutionPolicyCore::default(),
+            bar_index: 0,
+            current_time: 1000,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+            risk_config: &risk_manager.config,
+            timezone_name: None,
+            timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView {
+                slice: Some(&slice),
+                resolver: None,
+                instruments: Some(&instruments),
+            },
+        };
+        sim.on_event(&event, &ctx)
+    }
+
+    fn fills(events: &[Event]) -> Vec<Decimal> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ExecutionReport(_, Some(trade)) => Some(trade.price),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
-    fn test_expired_day_order_warning_includes_order_context() {
+    fn non_continuous_session_queues_order_until_continuous() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.on_order(create_test_order(
+            "AAPL",
+            crate::model::OrderSide::Buy,
+            crate::model::OrderType::Market,
+            Decimal::from(100),
+            None,
+        ));
+        for session in [
+            TradingSession::Break,
+            TradingSession::ClosingAuction,
+            TradingSession::OpeningAuction,
+            TradingSession::PostClose,
+        ] {
+            let events = on_event_in_session(&mut sim, Some(session));
+            assert!(events.is_empty(), "{session:?} 时段不应成交: {events:?}");
+        }
+        // 途经开盘竞价时段的 bar(收盘 102): 首个连续竞价事件上按竞价价统一成交
+        let events = on_event_in_session(&mut sim, Some(TradingSession::Continuous));
+        assert_eq!(fills(&events), vec![Decimal::from(102)]);
+    }
+
+    #[test]
+    fn closed_session_event_does_not_expire_day_order() {
+        let mut sim = SimulatedExecutionClient::new();
+        let order = create_test_order(
+            "AAPL",
+            crate::model::OrderSide::Buy,
+            crate::model::OrderType::Market,
+            Decimal::from(100),
+            None,
+        );
+        assert_eq!(order.time_in_force, TimeInForce::Day);
+        sim.on_order(order);
+        let events = on_event_in_session(&mut sim, Some(TradingSession::Closed));
+        assert!(events.is_empty(), "闭市时段不作废 Day 单: {events:?}");
+        // 仍在队列中, 下一连续竞价事件成交
+        let events = on_event_in_session(&mut sim, None);
+        assert_eq!(fills(&events), vec![Decimal::from(100)]);
+    }
+
+    fn day(d: u32) -> Option<chrono::NaiveDate> {
+        chrono::NaiveDate::from_ymd_opt(2024, 1, d)
+    }
+
+    fn auction_bar(ts: i64, open: i64, close: i64) -> Event {
+        let mut bar = create_test_bar(
+            "AAPL",
+            Decimal::from(open),
+            Decimal::from(open.max(close)),
+            Decimal::from(open.min(close)),
+            Decimal::from(close),
+        );
+        bar.timestamp = ts;
+        Event::Bar(bar)
+    }
+
+    fn market_buy_at(created_at: i64) -> Order {
         let mut order = create_test_order(
             "AAPL",
             crate::model::OrderSide::Buy,
-            crate::model::OrderType::Limit,
+            crate::model::OrderType::Market,
             Decimal::from(100),
-            Some(Decimal::from(10)),
+            None,
         );
-        order.owner_strategy_id = Some("beta".to_string());
+        order.created_at = created_at;
+        order
+    }
 
-        let rendered = SimulatedExecutionClient::expired_day_order_warning(&order, 2_000_000_000);
+    /// 以给定时段与交易日跑 `on_event`(`finalize` 为真时改调 `finalize_closing_auctions`)。
+    fn run_auction_step(
+        sim: &mut SimulatedExecutionClient,
+        event: &Event,
+        session: TradingSession,
+        trading_day: Option<chrono::NaiveDate>,
+        finalize: bool,
+    ) -> Vec<Event> {
+        let instruments = create_test_instruments();
+        let portfolio = crate::portfolio::Portfolio {
+            cash: Decimal::from(100000),
+            positions: HashMap::new().into(),
+            available_positions: HashMap::new().into(),
+        };
+        let last_prices = HashMap::new();
+        let risk_manager = crate::risk::RiskManager::new();
+        let trade_tracker = crate::analysis::TradeTracker::new();
+        let market_model = crate::market::MarketConfig::China(crate::market::ChinaMarketConfig {
+            stock: Some(crate::market::stock::StockConfig::default()),
+            ..Default::default()
+        })
+        .create_model();
+        let mut slice = HashMap::new();
+        slice.insert("AAPL".to_string(), session);
+        let ctx = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &last_prices,
+            trade_tracker: &trade_tracker,
+            market_model: market_model.as_ref(),
+            execution_policy_core: ExecutionPolicyCore::default(),
+            bar_index: 0,
+            current_time: SimulatedExecutionClient::event_timestamp(event).unwrap_or(0),
+            session,
+            active_orders: &[],
+            risk_config: &risk_manager.config,
+            timezone_name: None,
+            timezone_offset: 0,
+            trading_day,
+            sessions: crate::context::SessionView {
+                slice: Some(&slice),
+                resolver: None,
+                instruments: Some(&instruments),
+            },
+        };
+        if finalize {
+            sim.finalize_closing_auctions(&ctx)
+        } else {
+            sim.on_event(event, &ctx)
+        }
+    }
 
-        assert!(rendered.contains("Expired day order at session close"));
-        assert!(rendered.contains("\"phase\":\"execution\""));
-        assert!(rendered.contains("\"symbol\":\"AAPL\""));
-        assert!(rendered.contains(&format!("\"order_id\":\"{}\"", order.id)));
-        assert!(rendered.contains("\"strategy_id\":\"beta\""));
-        assert!(rendered.contains("\"slot\":\"beta\""));
-        assert!(rendered.contains("\"event_time_iso\":\"1970-01-01T00:00:02Z\""));
+    fn fill_points(events: &[Event]) -> Vec<(i64, Decimal)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ExecutionReport(_, Some(trade)) => Some((trade.timestamp, trade.price)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn opening_auction_records_price_and_uncrosses_on_first_continuous_event() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.on_order(market_buy_at(500));
+        // 竞价时段事件只记价(收盘价 50), 不成交
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 48, 50),
+            TradingSession::OpeningAuction,
+            day(2),
+            false,
+        );
+        assert!(events.is_empty(), "竞价时段不成交: {events:?}");
+        // 首个连续竞价事件(开盘 100)上按记录的竞价价 50 统一成交, 时间戳为该事件
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(2000, 100, 101),
+            TradingSession::Continuous,
+            day(2),
+            false,
+        );
+        assert_eq!(fill_points(&events), vec![(2000, Decimal::from(50))]);
+    }
+
+    #[test]
+    fn opening_auction_uncrosses_only_once_per_trading_day() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.on_order(market_buy_at(500));
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 48, 50),
+            TradingSession::OpeningAuction,
+            day(2),
+            false,
+        );
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(2000, 100, 101),
+            TradingSession::Continuous,
+            day(2),
+            false,
+        );
+        assert_eq!(fills(&events), vec![Decimal::from(50)]);
+        // 同一交易日再来一段竞价时段行情(脏数据)与连续竞价事件: 不再统一撮合,
+        // 新单按连续竞价事件的开盘价成交
+        sim.on_order(market_buy_at(2500));
+        run_auction_step(
+            &mut sim,
+            &auction_bar(3000, 58, 60),
+            TradingSession::OpeningAuction,
+            day(2),
+            false,
+        );
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(4000, 100, 101),
+            TradingSession::Continuous,
+            day(2),
+            false,
+        );
+        assert_eq!(fills(&events), vec![Decimal::from(100)]);
+    }
+
+    #[test]
+    fn auction_state_resets_when_trading_day_changes() {
+        let mut sim = SimulatedExecutionClient::new();
+        // 01-02 只有竞价时段行情(开盘竞价未结束)
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 48, 50),
+            TradingSession::OpeningAuction,
+            day(2),
+            false,
+        );
+        sim.on_order(market_buy_at(1500));
+        // 01-03 的首个连续竞价事件: 昨天的竞价价不用于今天, 按本事件开盘价成交
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(2000, 100, 101),
+            TradingSession::Continuous,
+            day(3),
+            false,
+        );
+        assert_eq!(fills(&events), vec![Decimal::from(100)]);
+    }
+
+    fn bar_with_volume(ts: i64, close: i64, volume: i64) -> Event {
+        let mut event = auction_bar(ts, close, close);
+        if let Event::Bar(ref mut b) = event {
+            b.volume = Decimal::from(volume);
+        }
+        event
+    }
+
+    #[test]
+    fn zero_volume_auction_event_keeps_recorded_volume() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.on_order(market_buy_at(500));
+        let session = TradingSession::OpeningAuction;
+        run_auction_step(
+            &mut sim,
+            &bar_with_volume(1000, 50, 1000),
+            session,
+            day(2),
+            false,
+        );
+        // 末笔零量快照: 价格更新为 51, 量沿用 1000(否则合成事件零量按停牌不成交)
+        run_auction_step(
+            &mut sim,
+            &bar_with_volume(1100, 51, 0),
+            session,
+            day(2),
+            false,
+        );
+        let quote = sim.auctions["AAPL"].opening.expect("已记录竞价价");
+        assert_eq!(
+            (quote.price, quote.volume, quote.ts),
+            (Decimal::from(51), Decimal::from(1000), 1100)
+        );
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(2000, 100, 101),
+            TradingSession::Continuous,
+            day(2),
+            false,
+        );
+        assert_eq!(fills(&events), vec![Decimal::from(51)]);
+    }
+
+    #[test]
+    fn auction_hold_sets_price_only_when_none_recorded() {
+        let mut sim = SimulatedExecutionClient::new();
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 50, 50),
+            TradingSession::OpeningAuction,
+            day(2),
+            false,
+        );
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1100, 55, 55),
+            TradingSession::AuctionHold,
+            day(2),
+            false,
+        );
+        let quote = sim.auctions["AAPL"].opening.expect("已记录竞价价");
+        assert_eq!((quote.price, quote.ts), (Decimal::from(50), 1000));
+        // 只见到 AuctionHold 行情时由它设定
+        let mut sim = SimulatedExecutionClient::new();
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1100, 55, 55),
+            TradingSession::AuctionHold,
+            day(2),
+            false,
+        );
+        let quote = sim.auctions["AAPL"].opening.expect("已记录竞价价");
+        assert_eq!((quote.price, quote.ts), (Decimal::from(55), 1100));
+    }
+
+    #[test]
+    fn opening_uncross_excludes_orders_placed_after_auction_price_known() {
+        let mut sim = SimulatedExecutionClient::new();
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 50, 50),
+            TradingSession::OpeningAuction,
+            day(2),
+            false,
+        );
+        // 竞价价(1000 时刻)已知后下的单: 进入连续竞价, 按首个连续事件开盘价 100 成交
+        sim.on_order(market_buy_at(1000));
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(2000, 100, 101),
+            TradingSession::Continuous,
+            day(2),
+            false,
+        );
+        assert_eq!(fills(&events), vec![Decimal::from(100)]);
+    }
+
+    #[test]
+    fn tick_fill_after_partial_fill_uses_weighted_average_price() {
+        let mut sim = SimulatedExecutionClient::new();
+        let mut order = market_buy_at(500);
+        order.status = OrderStatus::PartiallyFilled;
+        order.filled_quantity = Decimal::from(30);
+        order.average_filled_price = Some(Decimal::from(10));
+        let id = order.id.clone();
+        sim.on_order(order);
+        let tick = Event::Tick(crate::model::Tick {
+            timestamp: 1000,
+            price: Decimal::new(105, 1),
+            volume: Decimal::from(1000),
+            symbol: "AAPL".to_string(),
+        });
+        let events = run_auction_step(&mut sim, &tick, TradingSession::Continuous, day(2), false);
+        let avg = events.iter().find_map(|e| match e {
+            Event::ExecutionReport(o, Some(_)) if o.id == id => o.average_filled_price,
+            _ => None,
+        });
+        // (30 x 10.0 + 70 x 10.5) / 100
+        assert_eq!(avg, Some(Decimal::new(1035, 2)));
+    }
+
+    #[test]
+    fn finalize_closing_auctions_handles_only_todays_unfinished_auction() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.on_order(market_buy_at(500));
+        // 收盘竞价时段行情(无解析器 → 判不出结束于本事件), 只记价 70
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 69, 70),
+            TradingSession::ClosingAuction,
+            day(2),
+            false,
+        );
+        assert!(events.is_empty(), "收盘竞价期间不成交: {events:?}");
+        // 别的交易日收尾: 不处理
+        let close_next_day = auction_bar(9000, 0, 0);
+        let events = run_auction_step(
+            &mut sim,
+            &close_next_day,
+            TradingSession::Closed,
+            day(3),
+            true,
+        );
+        assert!(events.is_empty(), "非当日收盘竞价不收尾: {events:?}");
+        // 当日收尾: 收盘时刻按最后一个收盘竞价价成交
+        let close = auction_bar(1500, 0, 0);
+        let events = run_auction_step(&mut sim, &close, TradingSession::Closed, day(2), true);
+        assert_eq!(fill_points(&events), vec![(1500, Decimal::from(70))]);
+        // 已完成: 再次收尾不重复撮合
+        sim.on_order(market_buy_at(1200));
+        let events = run_auction_step(&mut sim, &close, TradingSession::Closed, day(2), true);
+        assert!(events.is_empty(), "收盘竞价只收尾一次: {events:?}");
     }
 
     #[test]

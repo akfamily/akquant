@@ -541,5 +541,5 @@ result.viz.report(filename="report_margin.html", show=False)
 
 `report_margin.html` 会包含：
 
-- 强平审计明细（日期、强平标的、优先顺序、当日利息）
+- 强平审计明细（日期、强平标的、优先顺序、本次结算利息；按两次结算之间的自然日天数计提，周五到周一计 3 天）
 - 风险图表区中的按日强平统计图（有数据时显示）

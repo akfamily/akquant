@@ -1,22 +1,18 @@
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
 from .akquant import Bar, StrategyContext, Tick
 from .log import build_log_extra, get_logger
 from .strategy_framework_hooks import (
     call_user_callback,
-    dispatch_boundary_timer,
     dispatch_cross_section_timer,
+    dispatch_lifecycle_timer,
     dispatch_portfolio_update,
-    dispatch_pre_open_timer,
-    dispatch_time_hooks,
     ensure_framework_state,
+    is_lifecycle_payload,
     mark_portfolio_dirty,
-    register_boundary_timers,
     register_cross_section_timers,
-    register_pre_open_timers,
 )
 from .strategy_ml import (
     activate_pending_model,
@@ -27,9 +23,22 @@ from .strategy_ml import (
 )
 from .strategy_order_events import check_expiry_events
 from .strategy_preload import check_preload_overlap
-from .strategy_scheduler import flush_pending_schedules
+from .strategy_scheduler import (
+    PERIODIC_TIMER_PREFIXES,
+    flush_pending_schedules,
+    live_now,
+    next_occurrence,
+)
 
 logger = get_logger("strategy.events")
+
+
+def _periodic_timer_kind(payload: str) -> str | None:
+    """周期定时器 payload（``__daily__|``/``__weekly__|``/``__monthly__|``）的种类."""
+    for kind, prefix in PERIODIC_TIMER_PREFIXES.items():
+        if payload.startswith(prefix):
+            return kind
+    return None
 
 
 def _is_before_active_start(strategy: Any, timestamp: int) -> bool:
@@ -103,9 +112,7 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     ensure_framework_state(strategy)
     strategy.ctx = ctx
     flush_pending_schedules(strategy)
-    register_boundary_timers(strategy)
     register_cross_section_timers(strategy)
-    register_pre_open_timers(strategy)
     strategy._last_event_type = "bar"
 
     strategy._check_order_events()
@@ -141,7 +148,6 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
 
     if current_pos != 0 and previous_price is not None and previous_price != bar.close:
         mark_portfolio_dirty(strategy)
-    dispatch_time_hooks(strategy)
     strategy.current_bar = bar
     _drive_local_stops(strategy, bar.symbol, bar.close, high=bar.high, low=bar.low)
     if hasattr(strategy, "_update_incremental_indicators"):
@@ -190,9 +196,7 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     ensure_framework_state(strategy)
     strategy.ctx = ctx
     flush_pending_schedules(strategy)
-    register_boundary_timers(strategy)
     register_cross_section_timers(strategy)
-    register_pre_open_timers(strategy)
     strategy._last_event_type = "tick"
     strategy._check_order_events()
     check_expiry_events(strategy)
@@ -206,7 +210,6 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     current_pos = ctx.get_position(tick.symbol)
     if current_pos != 0 and previous_price is not None and previous_price != tick.price:
         mark_portfolio_dirty(strategy)
-    dispatch_time_hooks(strategy)
     strategy.current_tick = tick
     _drive_local_stops(strategy, tick.symbol, tick.price)
     if hasattr(strategy, "_update_incremental_indicators"):
@@ -217,54 +220,95 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     _flush_indicator_snapshots(strategy)
 
 
-def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
-    """引擎调用的 Timer 回调 (Internal)."""
+def _flushes_schedules_on_timer(strategy: Any, payload: str) -> bool:
+    """定时器事件上是否刷出 on_start 里登记的定时任务.
+
+    回测(有 ``_trading_days``)的生命周期事件(盘前/开始交易/收盘后)不刷: 首次登记
+    仍在首个行情或用户定时器事件上进行, "跳过早于当前时刻的时点"以它为准(只有
+    日期的日线改写到 15:00 后, 首日 09:35 等定时器不补登记)。实盘按墙钟登记下一次,
+    没有首日规则的顾虑, 生命周期事件上也刷——否则开盘前没有行情时, on_start 里
+    登记的任务要等首个行情才生效。
+    """
+    return not is_lifecycle_payload(payload) or not strategy._trading_days
+
+
+def on_foreign_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
+    """别的槽位所属的定时器事件 (Internal).
+
+    与 :func:`on_timer_event` 的前半段相同(刷出延后登记的定时任务、刷订单与到期
+    回调、组合更新), 但不派发 on_timer / 截面 / 生命周期回调。
+    """
     ensure_framework_state(strategy)
     strategy.ctx = ctx
-    flush_pending_schedules(strategy)
-    register_boundary_timers(strategy)
+    if _flushes_schedules_on_timer(strategy, payload):
+        flush_pending_schedules(strategy)
     register_cross_section_timers(strategy)
-    register_pre_open_timers(strategy)
     strategy._check_order_events()
+    check_expiry_events(strategy)
 
     current_time = int(getattr(ctx, "current_time", 0))
     if _is_before_active_start(strategy, current_time):
         return
 
-    dispatch_time_hooks(strategy)
     dispatch_portfolio_update(strategy)
+    _flush_indicator_snapshots(strategy)
+
+
+def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
+    """引擎调用的 Timer 回调 (Internal)."""
+    ensure_framework_state(strategy)
+    strategy.ctx = ctx
+    if _flushes_schedules_on_timer(strategy, payload):
+        flush_pending_schedules(strategy)
+    register_cross_section_timers(strategy)
+    strategy._check_order_events()
+    # 到期事件也在定时器上送达（按 key 去重）：日终结算后的 on_after_trading
+    # 应已看到当日的到期结果，不必等下一交易日首根 bar。
+    check_expiry_events(strategy)
+
+    current_time = int(getattr(ctx, "current_time", 0))
+    if _is_before_active_start(strategy, current_time):
+        return
+
+    dispatch_portfolio_update(strategy)
+
+    if dispatch_lifecycle_timer(strategy, payload):
+        _flush_indicator_snapshots(strategy)
+        return
 
     if dispatch_cross_section_timer(strategy, payload):
         _flush_indicator_snapshots(strategy)
         return
 
-    if dispatch_boundary_timer(strategy, payload):
-        _flush_indicator_snapshots(strategy)
-        return
-
-    if dispatch_pre_open_timer(strategy, payload):
-        _flush_indicator_snapshots(strategy)
-        return
-
-    if payload.startswith("__daily__|"):
+    periodic_kind = _periodic_timer_kind(payload)
+    if periodic_kind is not None:
         parts = payload.split("|", 2)
         if len(parts) == 3:
             _, time_str, user_payload = parts
 
             call_user_callback(strategy, "on_timer", user_payload, payload=user_payload)
 
+            # 回测已按交易日逐日预登记; 实盘(无 _trading_days)按交易日历重排下一次
             if not strategy._trading_days:
                 try:
-                    t = pd.to_datetime(time_str).time()
-                    now = pd.Timestamp.now(tz=strategy.timezone)
-                    target = pd.Timestamp.combine(now.date(), t).tz_localize(
-                        strategy.timezone
+                    target = next_occurrence(
+                        periodic_kind,
+                        time_str,
+                        live_now(strategy),
+                        ctx.is_trading_day,
+                        ctx.next_trading_day,
+                        strategy.timezone,
                     )
-
-                    if target <= now:
-                        target += pd.Timedelta(days=1)
-
-                    strategy.schedule(target, payload)
+                    if target is None:
+                        logger.warning(
+                            "定时任务 %r（%s %s）在交易日历中找不到下一次触发日，"
+                            "已停止重排；请在 trading_calendar 中补充后续交易日",
+                            user_payload,
+                            periodic_kind,
+                            time_str,
+                        )
+                    else:
+                        strategy.schedule(target, payload)
                 except Exception as exc:
                     owner_strategy_id = (
                         str(getattr(strategy, "_owner_strategy_id", "_default")).strip()

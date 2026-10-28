@@ -28,7 +28,7 @@ from akquant import Bar, Strategy
 def generate_portfolio_data(length: int = 500) -> pd.DataFrame:
     """生成模拟数据."""
     np.random.seed(42)
-    dates = pd.date_range(start="2022-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2022-01-04", periods=length, freq="B")
 
     # 股票：波动大，长期向上但有回撤
     stock_returns = np.random.normal(0.0005, 0.02, length)  # 日均 0.05%, 波动 2%

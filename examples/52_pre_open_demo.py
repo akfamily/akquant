@@ -18,6 +18,7 @@ class PreOpenDemoStrategy(Strategy):
         """Place one default market order before the session open."""
         trading_date = event["trading_date"]
         self.events.append(f"pre_open:{trading_date}")
+        # expected_open_at 是本回调的触发时刻（首个时段 09:15 开始前 1ns），不是成交时刻
         self.log(
             "on_pre_open "
             f"trading_date={trading_date} expected_open_at={event['expected_open_at']}"
@@ -61,11 +62,12 @@ class PreOpenDemoStrategy(Strategy):
 def build_data() -> list[Bar]:
     """Build two daily open bars for the demo."""
     rows = [
-        ("2023-01-03 09:30:00", 10.0, 10.4),
-        ("2023-01-04 09:30:00", 10.8, 11.0),
+        ("2023-01-03", 10.0, 10.4),
+        ("2023-01-04", 10.8, 11.0),
     ]
     bars: list[Bar] = []
     for dt_str, open_price, close_price in rows:
+        # 只有日期(本地 0 点)的日线: 引擎改写到交易日收盘 15:00, 区间覆盖整个交易日
         ts = pd.Timestamp(dt_str, tz="Asia/Shanghai").value
         bars.append(
             Bar(

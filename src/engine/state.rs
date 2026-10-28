@@ -52,6 +52,22 @@ pub struct EngineSnapshot {
     pub window_aggregator_state: Option<crate::data::WindowAggregatorSnapshot>,
     #[serde(default)]
     pub strategy_risk_state: StrategyRiskStateSnapshot,
+    /// 存档时所在的交易日（旧存档无此字段）。
+    #[serde(default)]
+    pub current_trading_day: Option<NaiveDate>,
+    /// 已完成日终结算的最后交易日（旧存档无此字段）。
+    #[serde(default)]
+    pub last_settled_trading_day: Option<NaiveDate>,
+    /// 公司行动已处理到的日期（旧存档无此字段）。
+    #[serde(default)]
+    pub last_corp_action_date: Option<NaiveDate>,
+    /// 交易时段表与交易日历配置（旧存档无此字段，按未配置处理）。
+    #[serde(default)]
+    pub session_config: crate::engine::core::SessionConfig,
+    /// 当日最后一个已处理行情事件的时间（旧存档无此字段，续跑时退回 `current_time`）。
+    /// 定时器会把时钟推过最后一根行情，不能用 `current_time` 代替。
+    #[serde(default)]
+    pub last_event_ts_in_day: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

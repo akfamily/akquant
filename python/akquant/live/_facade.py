@@ -7,7 +7,17 @@ the ``indicator_recorder`` / ``on_event`` extension points so live runs can
 stream indicators exactly like backtests.
 """
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Type,
+    Union,
+)
 
 import pandas as pd
 
@@ -15,6 +25,7 @@ from ..akquant import Bar, Instrument
 from ..backtest import BacktestStreamEvent
 from ..indicator_recording import IndicatorSink
 from ..indicator_script import Indicator, merge_indicators_into_slots
+from ..sessions_config import SessionsArg
 from ..strategy import Strategy, StrategyRuntimeConfig, reconcile_strategy_id
 from ._runner import LiveRunner
 
@@ -92,6 +103,10 @@ def run_live(
         Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]
     ] = None,
     preload_bars: Optional[int] = None,
+    sessions: Optional[SessionsArg] = None,
+    trading_calendar: Optional[Iterable[Any]] = None,
+    timezone: Optional[str] = "Asia/Shanghai",
+    day_close_delay: float = 60.0,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -263,6 +278,30 @@ def run_live(
         logged as INFO. Only depth set before session start (class attribute or
         ``__init__``) is seen; ``set_history_depth`` called in ``on_start`` is
         covered by the 500 floor or needs an explicit ``preload_bars``.
+    :param sessions: 代码前缀 → 时段模板名或自定义时段表（"default" 为全局默认）；
+                     不传时中国时区按资产类型取默认（股票 CN_STOCK、
+                     期货 CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。
+                     可选模板见 aq.SessionResolver.templates()；自定义时段表
+                     写法同 ``run_backtest``
+    :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
+                             中国市场按工作日推算（节假日前后的夜盘与日终
+                             结算会算错），ALWAYS_OPEN 每天都算
+    :param timezone: 时区名称 (默认 "Asia/Shanghai")，与 ``run_backtest`` 同义：
+                     引擎按它划分交易日、计算日终结算时刻与默认时段表（非中国
+                     时区全天连续）；``preload_history`` / replay 的 DataFrame
+                     里不带时区的时间按它本地化；策略的 ``self.timezone`` 同步
+                     为该值（定时器与生命周期钩子按它算本地时刻）。传 None 等同
+                     默认值；非法时区名抛 ``ValueError``
+    :param day_close_delay: 实盘日终结算相对会话收盘的宽限秒数（默认 60.0）。
+                            日终结算（Day 单过期、T+1 解冻、收盘快照）与
+                            ``on_after_trading`` 在“会话收盘 + day_close_delay”
+                            触发，收盘快照仍记在会话收盘时刻；留宽限是因为行情源
+                            常在收盘后才推送最后一根已收盘 bar。收盘后该时长内
+                            到达的行情仍归当日（不撮合、不产生权益点），结算在
+                            “收盘 + day_close_delay”。按交易日历登记，
+                            当日没有任何行情也会结算。取值 0～86400（0 即收盘后
+                            立即结算），越界或非有限值抛 ``ValueError``，非数字抛
+                            ``TypeError``。回测不受影响
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")
@@ -330,6 +369,10 @@ def run_live(
         session_tag=session_tag,
         preload_history=preload_history,
         preload_bars=preload_bars,
+        sessions=sessions,
+        trading_calendar=trading_calendar,
+        timezone=timezone,
+        day_close_delay=day_close_delay,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event

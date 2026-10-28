@@ -120,6 +120,7 @@ mod tests {
                 symbol: "X".to_string(),
                 extra: HashMap::new(),
                 freq: None,
+                interval_start: None,
             })
             .collect();
         let events = engine.preload_history(bars);
@@ -173,6 +174,7 @@ mod tests {
         use crate::history::HistoryBufferSnapshot;
         use crate::order_manager::OrderManager;
         use crate::portfolio::Portfolio;
+        use chrono::NaiveDate;
         use std::collections::HashMap;
         use std::sync::Arc;
 
@@ -211,12 +213,79 @@ mod tests {
             }),
             window_aggregator_state: None,
             strategy_risk_state: Default::default(),
+            current_trading_day: Some(NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()),
+            last_settled_trading_day: None,
+            last_corp_action_date: None,
+            session_config: crate::engine::core::SessionConfig {
+                sessions: Some(vec![(
+                    "au".to_string(),
+                    "CN_FUTURES_NIGHT_0230".to_string(),
+                )]),
+                trading_calendar: Some(vec![NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()]),
+                custom_sessions: Some(vec![(
+                    "xx".to_string(),
+                    vec![crate::calendar::schedule::CustomSegment {
+                        start: "21:00".to_string(),
+                        end: "02:30".to_string(),
+                        session: "continuous".to_string(),
+                        anchor: Some("prev".to_string()),
+                    }],
+                )]),
+                calendar_overrides: crate::calendar::trading_calendar::CalendarOverrides {
+                    added: vec![NaiveDate::from_ymd_opt(2024, 10, 12).unwrap()],
+                    removed: vec![
+                        NaiveDate::from_ymd_opt(2024, 10, 1).unwrap(),
+                        NaiveDate::from_ymd_opt(2024, 10, 2).unwrap(),
+                    ],
+                },
+            },
+            last_event_ts_in_day: Some(123456000),
         };
+
+        // 旧格式存档: msgpack 数组缺少末尾三个交易日进度字段, 读入时应为 None
+        let old_encoded: Vec<u8> = rmp_serde::to_vec(&(
+            &snapshot.current_time,
+            &snapshot.portfolio,
+            &snapshot.order_manager,
+            &snapshot.last_prices,
+            &snapshot.instruments,
+            &snapshot.initial_cash,
+            &snapshot.margin_accrued_interest,
+            &snapshot.margin_daily_interest,
+            &snapshot.history_state,
+            &snapshot.window_aggregator_state,
+            &snapshot.strategy_risk_state,
+        ))
+        .unwrap();
+        let old_decoded: EngineSnapshot = rmp_serde::from_slice(&old_encoded).unwrap();
+        assert_eq!(old_decoded.current_time, 123456789);
+        assert_eq!(old_decoded.current_trading_day, None);
+        assert_eq!(old_decoded.last_settled_trading_day, None);
+        assert_eq!(old_decoded.last_corp_action_date, None);
+        assert_eq!(old_decoded.last_event_ts_in_day, None);
+        assert_eq!(
+            old_decoded.session_config,
+            crate::engine::core::SessionConfig::default()
+        );
 
         let encoded: Vec<u8> = rmp_serde::to_vec(&snapshot).unwrap();
         let decoded: EngineSnapshot = rmp_serde::from_slice(&encoded).unwrap();
 
         assert_eq!(decoded.current_time, 123456789);
+        assert_eq!(
+            decoded.current_trading_day,
+            NaiveDate::from_ymd_opt(2024, 1, 5)
+        );
+        assert_eq!(decoded.last_settled_trading_day, None);
+        assert_eq!(decoded.last_event_ts_in_day, Some(123456000));
+        assert_eq!(decoded.session_config, snapshot.session_config);
+        assert_eq!(
+            decoded.session_config.calendar_overrides.removed,
+            vec![
+                NaiveDate::from_ymd_opt(2024, 10, 1).unwrap(),
+                NaiveDate::from_ymd_opt(2024, 10, 2).unwrap(),
+            ]
+        );
         assert_eq!(decoded.portfolio.cash, Decimal::from(50000));
         assert_eq!(decoded.initial_cash, Some(Decimal::from(50000)));
         assert!(decoded.last_prices.is_empty());
@@ -228,5 +297,51 @@ mod tests {
                 .map(|snapshot| snapshot.default_capacity),
             Some(3)
         );
+    }
+
+    #[test]
+    fn test_session_config_custom_sessions_compat() {
+        use crate::engine::core::SessionConfig;
+        use chrono::NaiveDate;
+        let days = Some(vec![NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()]);
+        let templates = Some(vec![("rb".to_string(), "CN_FUTURES_NIGHT_23".to_string())]);
+        // 旧格式（无 custom_sessions）读入时为 None
+        let old: Vec<u8> = rmp_serde::to_vec(&(&templates, &days)).unwrap();
+        let decoded: SessionConfig = rmp_serde::from_slice(&old).unwrap();
+        assert_eq!(decoded.sessions, templates);
+        assert_eq!(decoded.trading_calendar, days);
+        assert_eq!(decoded.custom_sessions, None);
+        assert!(decoded.calendar_overrides.is_empty());
+        // 阶段 7 之前的格式（有 custom_sessions、无 calendar_overrides）读入时修正量为空
+        let custom: Option<Vec<(String, Vec<crate::calendar::schedule::CustomSegment>)>> = None;
+        let before_overrides: Vec<u8> = rmp_serde::to_vec(&(&templates, &days, &custom)).unwrap();
+        let decoded: SessionConfig = rmp_serde::from_slice(&before_overrides).unwrap();
+        assert_eq!(decoded.sessions, templates);
+        assert!(decoded.calendar_overrides.is_empty());
+        // 新格式往返
+        let cfg = SessionConfig {
+            sessions: Some(Vec::new()),
+            trading_calendar: None,
+            custom_sessions: Some(vec![(
+                "600000".to_string(),
+                vec![crate::calendar::schedule::CustomSegment {
+                    start: "10:00".to_string(),
+                    end: "11:00".to_string(),
+                    session: "continuous".to_string(),
+                    anchor: None,
+                }],
+            )]),
+            calendar_overrides: crate::calendar::trading_calendar::CalendarOverrides {
+                added: vec![NaiveDate::from_ymd_opt(2024, 10, 12).unwrap()],
+                removed: vec![NaiveDate::from_ymd_opt(2024, 10, 1).unwrap()],
+            },
+        };
+        let back: SessionConfig = rmp_serde::from_slice(&rmp_serde::to_vec(&cfg).unwrap()).unwrap();
+        assert_eq!(back, cfg);
+        // 合并后的规格能构造出时段表
+        let built =
+            crate::calendar::resolver::build_sessions(cfg.session_specs().unwrap()).unwrap();
+        assert_eq!(built.len(), 1);
+        assert_eq!(built[0].0, "600000");
     }
 }

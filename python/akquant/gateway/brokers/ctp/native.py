@@ -5,6 +5,7 @@ CTP Gateway Implementation for AKQuant.
 This module provides CTP (China Futures) connectivity using openctp-ctp library.
 """
 
+import datetime
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -999,15 +1000,19 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             )
         self.emit_ticks = emit_ticks
         self.emit_bars = emit_bars
-        # 双流下 bar 必须打区间结束戳, 否则与 tick 混推会时间戳倒退(实盘无
-        # sort 兜底, 见 OnRtnDepthMarketData 里的顺序注释)。
-        self.stamp_bar_at_interval_end = emit_ticks and emit_bars
 
+        # 实盘与回测统一终点戳: 合成 bar 按右闭区间 (S, E] 分桶, timestamp 为
+        # 区间终点 E 并带 interval_start=S, 只出 bar 与双流同一口径。双流下这
+        # 也保证 bar 与 tick 混推时间戳不倒退: 恰在 E 的 tick 只并入在形成
+        # bar, bar 要等下一区间(> E)的 tick 到达或补发才推出, 故总在 E 处
+        # tick 之后(实盘无 sort 兜底, 见 OnRtnDepthMarketData 里的顺序注释)。
         self.aggregator: Optional[BarAggregator] = None
         if self.emit_bars:
-            self.aggregator = BarAggregator(
-                feed, stamp_bar_at_interval_end=self.stamp_bar_at_interval_end
-            )
+            self.aggregator = BarAggregator(feed)
+        # 到期补发线程: 某品种下一区间迟迟没有 tick 时, 由它按墙钟封闭本区间
+        # 的 bar(见 _start_bar_flush_thread)。
+        self._bar_flush_stop = threading.Event()
+        self._bar_flush_thread: Optional[threading.Thread] = None
 
         # CTP 的 pDepthMarketData.Volume 是当日累计成交量, 而回测里
         # Tick.volume 的语义是单笔成交量——同一个策略读 tick.volume, 回测拿
@@ -1018,8 +1023,38 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         # 说明, 两者是有意的不同分工, 不要合并。
         self._last_cum_volume: Dict[str, float] = {}
 
+        # 行情源交易日(TradingDay): 按品种记上次见到的原始值(含空值/非法值, 只在
+        # 变化时才解析, 避免逐笔解析与刷 debug), 以及最近推入 feed 的交易日(登录与
+        # 各品种共用, 同一交易日只推一次, 重新登录后不重复推)。变化时经
+        # feed.add_trading_day_hint 送入引擎, 由引擎校验/修正交易日历。
+        self._last_raw_trading_day: Dict[str, str] = {}
+        self._last_hint_day: Optional[datetime.date] = None
+
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
+
+    def _push_trading_day_hint(self, raw: Any, now_ns: int) -> bool:
+        """把 CTP 的 ``TradingDay``(``YYYYMMDD``)作为行情源交易日推入 feed.
+
+        空值或无法解析时忽略并记 debug 日志; 与最近推入的交易日相同时不重复推。
+        返回是否推入。
+        """
+        text = str(raw or "").strip()
+        if not text:
+            logger.debug("CTP TradingDay 为空, 忽略", extra=self._log_extra())
+            return False
+        try:
+            day = datetime.datetime.strptime(text, "%Y%m%d").date()
+        except ValueError:
+            logger.debug(
+                "CTP TradingDay 无法解析: %r, 忽略", text, extra=self._log_extra()
+            )
+            return False
+        if day == self._last_hint_day:
+            return False
+        self.feed.add_trading_day_hint(now_ns, day, "ctp")
+        self._last_hint_day = day
+        return True
 
     def start(self) -> None:
         """Start the CTP Market API in a blocking way (should be run in a thread)."""
@@ -1033,6 +1068,7 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             self.api.RegisterFront(self.front_url)
             self.api.RegisterSpi(self)
             self.api.Init()
+            self._start_bar_flush_thread()
             logger.info(
                 "Native CTP market API initialized; joining event loop",
                 extra=self._log_extra(),
@@ -1043,6 +1079,72 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
                 "Failed to start native CTP market gateway",
                 extra=self._log_extra(),
             )
+        finally:
+            self._stop_bar_flush_thread()
+
+    def configure_session_clamp(self, resolver: Any, grace_ns: int) -> None:
+        """开启聚合器的收盘宽限钳制(实盘 runner 在启动网关前调用).
+
+        收盘后 ``grace_ns`` 内到达的 tick 计入当日收盘 bar, 该 bar 推迟到收盘 +
+        ``grace_ns`` 之后由补发线程推出; 见 ``BarAggregator.set_session_clamp``。
+        只出 tick(没有聚合器)时什么也不做。
+
+        :param resolver: 与引擎同配置的 ``SessionResolver``
+        :param grace_ns: 收盘后宽限(纳秒)
+        """
+        if self.aggregator is not None:
+            self.aggregator.set_session_clamp(resolver, grace_ns)
+
+    def stop(self) -> None:
+        """Stop the bar flush thread and release the CTP market API."""
+        self._stop_bar_flush_thread()
+        api = self.api
+        if api:
+            api.Release()
+
+    def _start_bar_flush_thread(self) -> None:
+        """启动到期补发守护线程 ``ctp-bar-flush``(只出 bar 或双流时).
+
+        每 1 秒调用 ``aggregator.flush_due(time.time_ns())``: 区间终点 + 宽限
+        (默认 2 秒)已过而下一区间仍没有 tick 的品种, 也能按时收到本区间的
+        bar。已在运行时重复调用无副作用。
+        """
+        if self.aggregator is None:
+            return
+        thread = self._bar_flush_thread
+        if thread is not None and thread.is_alive():
+            return
+        self._bar_flush_stop.clear()
+        thread = threading.Thread(
+            target=self._bar_flush_loop, name="ctp-bar-flush", daemon=True
+        )
+        self._bar_flush_thread = thread
+        thread.start()
+
+    def _stop_bar_flush_thread(self) -> None:
+        """停止到期补发线程(重复调用安全)."""
+        self._bar_flush_stop.set()
+        thread = self._bar_flush_thread
+        self._bar_flush_thread = None
+        if (
+            thread is not None
+            and thread.is_alive()
+            and thread is not threading.current_thread()
+        ):
+            thread.join(timeout=2.0)
+
+    def _bar_flush_loop(self) -> None:
+        aggregator = self.aggregator
+        if aggregator is None:
+            return
+        while not self._bar_flush_stop.wait(1.0):
+            try:
+                aggregator.flush_due(time.time_ns())
+            except Exception:
+                logger.exception(
+                    "CTP bar flush failed",
+                    extra=self._log_extra(),
+                )
 
     def OnFrontConnected(self) -> None:
         """Handle front connection event."""
@@ -1091,6 +1193,9 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             pRspUserLogin.BrokerID,
             pRspUserLogin.UserID,
             extra=self._log_extra(),
+        )
+        self._push_trading_day_hint(
+            getattr(pRspUserLogin, "TradingDay", ""), time.time_ns()
         )
 
         logger.info(
@@ -1181,6 +1286,13 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         # 倒退, 且这个倒退是静默的, 不会报错, 只会破坏批次边界。
         if self.aggregator is not None:
             self.aggregator.on_tick(symbol, price, float(volume), now_ns)
+
+        # 行情源交易日: 本品种原始值变化时才解析, 交易日变化时先于本笔 tick 推入,
+        # 使引擎在这笔行情开日之前按它校验/修正日历。
+        raw_day = str(getattr(pDepthMarketData, "TradingDay", "") or "").strip()
+        if raw_day != self._last_raw_trading_day.get(symbol):
+            self._last_raw_trading_day[symbol] = raw_day
+            self._push_trading_day_hint(raw_day, now_ns)
 
         # 引入真 add_tick 之前, use_aggregator=False 下曾把每笔 tick 包装成
         # 退化 bar(open=high=low=close=price)推入 feed, 作为 on_bar 的替代品

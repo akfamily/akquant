@@ -5,6 +5,7 @@ pub mod columns;
 pub mod compute;
 pub mod feed;
 pub mod parquet_stream;
+pub(crate) mod python_window;
 pub mod window;
 
 pub use aggregator::BarAggregator;

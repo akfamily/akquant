@@ -96,6 +96,8 @@ def _run(
         t_plus_one=True,
         fill_policy=NextOpen(),
         lot_size=100,
+        # 夹具是打 15:00 戳的日线：声明 freq="1d"，否则按 15:00 前 1ns 判为收盘竞价
+        freq="1d",
     )
 
 

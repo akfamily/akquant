@@ -105,8 +105,10 @@ def _snap_time(ts: pd.Timestamp, bar_index: pd.DatetimeIndex) -> Optional[pd.Tim
     """
     if len(bar_index) == 0:
         return None
-    ts = _align_tz(ts, bar_index)
-    pos = max(int(bar_index.searchsorted(ts, side="right")) - 1, 0)
+    ts = _align_tz(ts, bar_index).as_unit("ns")
+    # 统一到纳秒再比较:日线成交时刻可能带纳秒(如 23:59:59.999999999),
+    # 直接与秒/毫秒精度的索引比较会因无法无损转换而报错。
+    pos = max(int(bar_index.as_unit("ns").searchsorted(ts, side="right")) - 1, 0)
     return cast(pd.Timestamp, bar_index[pos])
 
 

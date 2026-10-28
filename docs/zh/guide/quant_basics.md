@@ -202,7 +202,7 @@ print(f"AKQuant version: {akquant.__version__}")
 3. **显示层才做本地化转换**
    - 你在策略里看到的 `self.now`、`self.to_local_time(...)`、`self.format_time(...)`，以及很多面向阅读的日志前缀，才会按策略配置的 `timezone` 转成本地时间。
    - 换句话说，**结构化数据负责“准确”**，**显示层负责“好读”**。
-   - 同一个 `timezone` 也会影响绩效统计里的“按日”口径，例如 `daily_returns`、波动率、Sharpe / Sortino / VaR / CVaR 等，都会按该时区的**本地自然日**聚合，而不是按 UTC 自然日硬切。
+   - 同一个 `timezone` 也会影响绩效统计里的“按日”口径，例如 `daily_returns`、波动率、Sharpe / Sortino / VaR / CVaR 等，都会按该时区下的**交易日**聚合（夜盘归下一交易日），而不是按 UTC 自然日硬切。
 
 例如，A 股的北京时间 `2023-01-01 09:31:00+08:00`，对应的 UTC 时间其实是 `2023-01-01T01:31:00Z`。因此：
 

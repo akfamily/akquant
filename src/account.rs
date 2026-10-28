@@ -84,6 +84,8 @@ pub fn calculate_account_metrics(
     };
 
     let mut maintenance_denominator = Decimal::ZERO;
+    // 股票类多头敞口(正值)；market_value 是带符号净值，不能直接当分母。
+    let mut long_market_value = Decimal::ZERO;
     let mut futures_margin_component = Decimal::ZERO;
 
     for (symbol, quantity) in portfolio.positions.iter() {
@@ -99,6 +101,8 @@ pub fn calculate_account_metrics(
             metrics.equity += exposure;
             if *quantity < Decimal::ZERO {
                 metrics.short_market_value += quantity.abs() * price;
+            } else {
+                long_market_value += exposure;
             }
             continue;
         };
@@ -126,14 +130,91 @@ pub fn calculate_account_metrics(
         metrics.equity += exposure;
         if *quantity < Decimal::ZERO {
             metrics.short_market_value += notional;
+        } else {
+            long_market_value += exposure;
         }
     }
 
-    maintenance_denominator += metrics.market_value + metrics.short_market_value;
+    // 分母 = 多头敞口 + 空头敞口(总敞口)；market_value 为净值，空头会与 short_market_value 抵消。
+    maintenance_denominator += long_market_value + metrics.short_market_value;
     maintenance_denominator += futures_margin_component;
     if maintenance_denominator > Decimal::ZERO {
         metrics.maintenance_ratio = metrics.equity / maintenance_denominator;
     }
 
     metrics
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::instrument::{InstrumentEnum, StockInstrument};
+    use std::sync::Arc;
+
+    fn stock(symbol: &str) -> Instrument {
+        Instrument {
+            asset_type: AssetType::Stock,
+            inner: InstrumentEnum::Stock(StockInstrument {
+                symbol: symbol.to_string(),
+                lot_size: Decimal::ONE,
+                tick_size: Decimal::new(1, 2),
+                expiry_date: None,
+                sellable_after_days: 0,
+            }),
+        }
+    }
+
+    fn metrics_for(cash: i64, positions: &[(&str, i64)]) -> AccountMetrics {
+        let mut pos = HashMap::new();
+        let mut prices = HashMap::new();
+        let mut instruments = HashMap::new();
+        for (sym, qty) in positions {
+            pos.insert(sym.to_string(), Decimal::from(*qty));
+            prices.insert(sym.to_string(), Decimal::from(100));
+            instruments.insert(sym.to_string(), stock(sym));
+        }
+        let portfolio = Portfolio {
+            cash: Decimal::from(cash),
+            positions: Arc::new(pos),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut config = RiskConfig::new();
+        config.account_mode = "margin".to_string();
+        calculate_account_metrics(
+            &portfolio,
+            &prices,
+            &instruments,
+            &TradeTracker::new(),
+            &config,
+        )
+    }
+
+    #[test]
+    fn maintenance_ratio_pure_short_uses_short_exposure() {
+        let m = metrics_for(20000, &[("AAA", -100)]);
+        assert_eq!(m.equity, Decimal::from(10000));
+        assert_eq!(m.maintenance_ratio, Decimal::ONE);
+        assert_eq!(m.market_value, Decimal::from(-10000));
+    }
+
+    #[test]
+    fn maintenance_ratio_mixed_uses_gross_exposure() {
+        // 权益 = 5000 + 10000 - 5000 = 10000，总敞口 15000
+        let m = metrics_for(5000, &[("AAA", 100), ("BBB", -50)]);
+        assert_eq!(m.equity, Decimal::from(10000));
+        assert_eq!(m.market_value, Decimal::from(5000));
+        assert_eq!(
+            m.maintenance_ratio,
+            Decimal::from(10000) / Decimal::from(15000)
+        );
+    }
+
+    #[test]
+    fn maintenance_ratio_long_only_unchanged() {
+        let m = metrics_for(5000, &[("AAA", 100)]);
+        assert_eq!(
+            m.maintenance_ratio,
+            Decimal::from(15000) / Decimal::from(10000)
+        );
+    }
 }

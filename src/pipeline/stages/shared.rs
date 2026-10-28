@@ -32,7 +32,9 @@ pub(crate) fn should_run_phase_for_current_event(
             match event {
                 Some(Event::Bar(_) | Event::Tick(_)) => true,
                 Some(Event::Timer(timer)) => {
+                    // 框架与引擎生命周期定时器(截面定时器除外)不撮合同周期单。
                     matches!(policy.temporal, TemporalPolicy::SameCycle)
+                        && !timer.is_lifecycle()
                         && (!timer.payload.starts_with("__framework_")
                             || timer
                                 .payload

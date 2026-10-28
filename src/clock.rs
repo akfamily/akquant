@@ -39,12 +39,4 @@ impl Clock {
     pub fn timestamp(&self) -> Option<i64> {
         self.now.and_then(|dt| dt.timestamp_nanos_opt())
     }
-
-    /// 是否处于交易时间 (Continuous or CallAuction)
-    pub fn is_trading(&self) -> bool {
-        matches!(
-            self.session,
-            TradingSession::Continuous | TradingSession::CallAuction
-        )
-    }
 }

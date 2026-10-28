@@ -11,10 +11,27 @@ from akquant import talib as ta
 from akquant.utils import fetch_akshare_symbol
 
 
+def a_share_minute_index(start: str, periods: int) -> pd.DatetimeIndex:
+    """从 start 起逐个工作日生成 A 股连续竞价时段的 1 分钟 bar 时间戳.
+
+    时间戳是 bar 区间终点: 上午 09:31-11:30、下午 13:01-15:00, 每日 240 根。
+    """
+    days = pd.bdate_range(start, periods=periods // 240 + 1)
+    stamps = [
+        ts
+        for day in days
+        for begin, end in (("09:31", "11:30"), ("13:01", "15:00"))
+        for ts in pd.date_range(
+            f"{day.date()} {begin}", f"{day.date()} {end}", freq="1min"
+        )
+    ]
+    return pd.DatetimeIndex(stamps[:periods])
+
+
 def build_demo_data(length: int = 420) -> pd.DataFrame:
     """Build deterministic OHLCV data for the playbook demo."""
     rng = np.random.default_rng(20260312)
-    dates = pd.date_range(start="2024-01-01 09:30:00", periods=length, freq="1min")
+    dates = a_share_minute_index("2024-01-02", length)
     base = 100.0 + np.linspace(0.0, 8.0, length)
     wave = 1.8 * np.sin(np.linspace(0.0, 8.5 * np.pi, length))
     noise = rng.normal(0.0, 0.18, length)
@@ -165,6 +182,8 @@ def run_example(
         print("playbook_data_source=akshare")
     else:
         df = build_demo_data(length=synthetic_length)
+        # 合成数据的标的名随 --symbol, 否则回测订阅的标的收不到任何行情
+        df["symbol"] = symbol
         print("playbook_data_source=synthetic")
 
     result = aq.run_backtest(

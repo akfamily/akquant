@@ -41,8 +41,10 @@ def make_data() -> dict[str, pd.DataFrame]:
             return 10.0 + (120 - index) * 0.02
         return 10.0 + (index - 120) * 0.035
 
+    # 只有日期(本地 0 点)的日线: 引擎改写到交易日收盘 15:00。不要把日线打在盘中时刻
+    # (如 10:00), 否则盘中的回调会提前看到当日收盘价(前视)。
     timestamps = list(
-        pd.date_range("2022-01-04 10:00:00", periods=240, freq="B", tz="Asia/Shanghai")
+        pd.date_range("2022-01-04", periods=240, freq="B", tz="Asia/Shanghai")
     )
     return {
         "AAA": _build_symbol_df("AAA", timestamps, [aaa_close(i) for i in range(240)]),
@@ -89,13 +91,10 @@ class OnTimerMomentumRotationStrategy(Strategy):
             scores[symbol] = (end - start) / start
         if not scores:
             return
-        selected = self.rebalance_to_topn(
-            scores=scores,
-            top_n=1,
-            weight_mode="score",
-            long_only=False,
-            liquidate_unmentioned=True,
-        )
+        # 目标仓位取 95%：满仓（100%）时佣金使所需资金超过可用资金，买单会被风控拒绝。
+        best_symbol = max(scores, key=lambda symbol: scores[symbol])
+        self.rebalance_weights({best_symbol: 0.95}, liquidate_unmentioned=True)
+        selected = [best_symbol]
         self.log(f"on_timer action=rebalance selected={selected}")
 
 

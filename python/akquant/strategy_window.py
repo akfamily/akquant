@@ -81,14 +81,15 @@ def _validate_sessions(
         s, e = str(start).strip(), str(end).strip()
         if not (re.fullmatch(r"\d{2}:\d{2}", s) and re.fullmatch(r"\d{2}:\d{2}", e)):
             raise ValueError(f"session_windows 项 ({start!r}, {end!r}) 必须是 'HH:MM'")
-        if e <= s:
+        if e == s:
             raise ValueError(
-                f"session_windows 项 ({start!r}, {end!r}) 终点必须晚于起点"
+                f"session_windows 项 ({start!r}, {end!r}) 起点与终点相同, 时段长度为 0;"
+                ' 跨午夜时段请把终点写得早于起点, 如 ("21:00", "02:30")'
             )
+        # 终点早于起点表示跨午夜(如夜盘 21:00～次日 02:30)
         out.append((s, e))
-    # Rust 侧 dedup_and_validate 按序比较 sessions(见 src/data/window.rs), 排序后
-    # 等价的 session 列表(元素顺序不同)才能比较相等, 否则会被误判为"不一致"而拒绝。
-    out.sort(key=lambda pair: pair[0])
+    # 保留用户给定的顺序(与 Rust 侧 WindowSubscription 一致): 跨午夜的段按起点排序
+    # 没有意义, "最后一段"也不再按位置推断(见 src/data/window.rs)。
     return out
 
 
@@ -129,7 +130,8 @@ def subscribe_bars_impl(
         ):
             raise ValueError(
                 f"subscribe_bars({label!r}) 对同一标的集重复声明且 "
-                "session_windows 不一致"
+                "session_windows 不一致; 请让各次声明的 session_windows "
+                "逐项相同且顺序相同"
             )
     subs.append(WindowSubscription(label, callback, symbol_filter, sessions))
 
@@ -268,14 +270,9 @@ def configure_engine_window_subscriptions(
         return
     specs = _merge_scoped_specs(entries)
     base_min = base_interval_minutes(base_freq)
-    if base_min is None:
-        logger.warning(
-            "已订阅窗口周期 %s 但基础数据周期未知(self.freq=None): 窗口将在下一根落入"
-            "新窗口的 bar 到达时才闭合(晚一根基础 bar)。回测请传 run_backtest(freq=), "
-            "实盘请让行情网关声明 metadata['freq']",
-            sorted({s[1] for s in specs}),
-        )
-    else:
+    # 基础周期未知时不在这里告警: bar 带 interval_start(只有日期的日线改写、tick
+    # 合成 bar、网关给出区间)照样即时闭合; 由引擎在第一根不带区间的 bar 上告警。
+    if base_min is not None:
         for _, freq, _ in specs:
             if parse_window_freq(freq)[1] <= base_min:
                 raise ValueError(

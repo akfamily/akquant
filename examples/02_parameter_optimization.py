@@ -71,7 +71,7 @@ class SMACrossStrategy(Strategy):
 if __name__ == "__main__":
     # 1. 生成模拟数据
     print("Generating synthetic data...")
-    dates = pd.date_range(start="2023-01-01", periods=500)
+    dates = pd.bdate_range(start="2023-01-03", periods=500)
     symbols = ["OPT_A", "OPT_B"]
     data_map: dict[str, pd.DataFrame] = {}
     for index, symbol in enumerate(symbols):

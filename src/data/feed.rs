@@ -1,8 +1,9 @@
 use crate::event::Event;
 use crate::log_context::{AkqLogContext, format_event_time_nanos, render_log_message};
 use crate::model::{Bar, Tick};
+use chrono::NaiveDate;
 use chrono::Utc;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::{HashMap, HashSet};
@@ -164,7 +165,9 @@ impl DataFeed {
     /// :param symbol: 标的代码 (可选，单一标的)
     /// :param symbols: 标的代码数组 (可选，多标的，长度需与数据一致)
     /// :param extra: 额外数据字典 {name: array} (可选)
+    /// :param interval_starts: bar 区间起点数组 (int64 纳秒, 可选; int64 最小值表示该行未知)
     #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (timestamps, opens, highs, lows, closes, volumes, symbol=None, symbols=None, extra=None, interval_starts=None))]
     pub fn add_arrays(
         &mut self,
         timestamps: &Bound<'_, PyAny>,
@@ -176,10 +179,21 @@ impl DataFeed {
         symbol: Option<String>,
         symbols: Option<Vec<String>>,
         extra: Option<HashMap<String, Py<PyAny>>>,
+        interval_starts: Option<&Bound<'_, PyAny>>,
         py: Python<'_>,
     ) -> PyResult<()> {
         let columns = BarColumns::from_py_arrays(
-            timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra, py,
+            timestamps,
+            opens,
+            highs,
+            lows,
+            closes,
+            volumes,
+            symbol,
+            symbols,
+            extra,
+            interval_starts,
+            py,
         )?;
         if self.live_sender.is_some() {
             // 实时模式: 重构为 Bar 事件逐个发送
@@ -212,6 +226,36 @@ impl DataFeed {
             Ok(())
         }
     }
+
+    /// 推送行情源报告的交易日（仅实盘）.
+    ///
+    /// 行情源（如 CTP 的 ``TradingDay``）报告时刻 ``timestamp_ns`` 属于交易日
+    /// ``trading_day``。该事件与行情同序进入引擎：用户传了 ``trading_calendar=`` 时
+    /// 不一致只告警；未传（按工作日推算）且所涉交易日尚未开日时，按它修正缺省日历。
+    ///
+    /// :param timestamp_ns: 报告时刻（UTC 纳秒，与行情时间戳同口径）
+    /// :param trading_day: 行情源报告的交易日
+    /// :param source: 行情源名称（出现在告警里，如 ``"ctp"``）
+    /// :raises RuntimeError: 在回测数据源上调用
+    pub fn add_trading_day_hint(
+        &mut self,
+        timestamp_ns: i64,
+        trading_day: NaiveDate,
+        source: String,
+    ) -> PyResult<()> {
+        let Some(sender) = &self.live_sender else {
+            return Err(PyRuntimeError::new_err(
+                "add_trading_day_hint 仅实盘数据源可用（DataFeed.create_live() 创建的 feed）；回测请用 trading_calendar= 指定交易日历",
+            ));
+        };
+        sender
+            .send(Event::TradingDayHint {
+                timestamp: timestamp_ns,
+                trading_day,
+                source,
+            })
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
 }
 
 // Helper method for Engine
@@ -224,6 +268,18 @@ impl DataFeed {
     pub fn next(&self) -> Option<Event> {
         let mut provider = self.provider.lock().unwrap();
         provider.next()
+    }
+
+    /// 测试读取口: 取出当前排队的全部事件, 只返回其中的 bar。
+    #[cfg(test)]
+    pub fn drain_bars_for_test(&self) -> Vec<Bar> {
+        let mut bars = Vec::new();
+        while let Some(event) = self.next() {
+            if let Event::Bar(bar) = event {
+                bars.push(bar);
+            }
+        }
+        bars
     }
 
     pub fn len_hint(&self) -> Option<usize> {

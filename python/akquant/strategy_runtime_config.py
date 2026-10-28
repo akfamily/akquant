@@ -23,14 +23,31 @@ if TYPE_CHECKING:
     from .strategy import Strategy
 
 
+REMOVED_PRECISE_BOUNDARY_FIELD = "enable_precise_day_boundary_hooks"
+
+
+def removed_precise_boundary_message(where: str) -> str:
+    """已删除的精确边界开关的中文报错文案（``where`` 说明用户写在了哪里）."""
+    return (
+        f"{where}的 enable_precise_day_boundary_hooks 已删除：交易日钩子现在由引擎"
+        "按交易日生命周期精确触发（on_pre_open 在首个交易时段前、on_before_trading "
+        "在连续竞价开始时、on_after_trading 在日终结算后），不再需要开关，请删除它"
+    )
+
+
 @dataclass
 class StrategyRuntimeConfig:
     """策略运行时行为配置."""
 
-    enable_precise_day_boundary_hooks: bool = False
     portfolio_update_eps: float = 0.0
     error_mode: Literal["raise", "continue", "legacy"] = "raise"
     re_raise_on_error: bool = True
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "StrategyRuntimeConfig":
+        """拦截已删除的字段，给出中文说明（否则是英文的 unexpected keyword）."""
+        if REMOVED_PRECISE_BOUNDARY_FIELD in kwargs:
+            raise ValueError(removed_precise_boundary_message("StrategyRuntimeConfig "))
+        return super().__new__(cls)
 
     def __post_init__(self) -> None:
         """校验并标准化配置."""
@@ -41,9 +58,6 @@ class StrategyRuntimeConfig:
         if mode not in {"raise", "continue", "legacy"}:
             raise ValueError("error_mode must be one of: raise, continue, legacy")
         self.error_mode = cast(Literal["raise", "continue", "legacy"], mode)
-        self.enable_precise_day_boundary_hooks = bool(
-            self.enable_precise_day_boundary_hooks
-        )
         self.re_raise_on_error = bool(self.re_raise_on_error)
 
 
@@ -56,6 +70,11 @@ RUNTIME_CONFIG_DEFAULTS: Dict[str, Any] = {
 当时的 ``indicator_mode`` 字段, 新增字段时同样的漏项会再次发生。"""
 
 
+REMOVED_PRECISE_BOUNDARY_MESSAGE = removed_precise_boundary_message(
+    "strategy_runtime_config "
+)
+
+
 def coerce_strategy_runtime_config(
     value: Union[StrategyRuntimeConfig, Dict[str, Any]],
 ) -> StrategyRuntimeConfig:
@@ -66,12 +85,13 @@ def coerce_strategy_runtime_config(
     """
     if isinstance(value, StrategyRuntimeConfig):
         return StrategyRuntimeConfig(
-            enable_precise_day_boundary_hooks=value.enable_precise_day_boundary_hooks,
             portfolio_update_eps=value.portfolio_update_eps,
             error_mode=value.error_mode,
             re_raise_on_error=value.re_raise_on_error,
         )
     if isinstance(value, dict):
+        if REMOVED_PRECISE_BOUNDARY_FIELD in value:
+            raise ValueError(REMOVED_PRECISE_BOUNDARY_MESSAGE)
         unknown_fields = sorted(set(value.keys()) - RUNTIME_CONFIG_FIELDS)
         if unknown_fields:
             allowed = ", ".join(sorted(RUNTIME_CONFIG_FIELDS))

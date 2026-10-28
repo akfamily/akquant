@@ -58,8 +58,7 @@ class CTPMarketAdapter:
 
     def disconnect(self) -> None:
         """Disconnect market stream."""
-        if hasattr(self.gateway, "api") and self.gateway.api:
-            self.gateway.api.Release()
+        self.gateway.stop()
 
     def subscribe(self, symbols: Sequence[str]) -> None:
         """Update subscribed symbols."""
@@ -83,6 +82,10 @@ class CTPMarketAdapter:
     def start(self) -> None:
         """Start market adapter."""
         self.connect()
+
+    def configure_session_clamp(self, resolver: Any, grace_ns: int) -> None:
+        """收盘宽限钳制钩子, 转给底层网关的聚合器."""
+        self.gateway.configure_session_clamp(resolver, grace_ns)
 
 
 class CTPTraderAdapter:

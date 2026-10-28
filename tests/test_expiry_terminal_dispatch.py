@@ -10,7 +10,8 @@ from akquant.backtest import BacktestStreamEvent
 
 
 def _daily(symbol: str, days: list[str], closes: list[float]) -> pd.DataFrame:
-    ts = pd.to_datetime([f"{d} 15:00" for d in days])
+    # 只给日期：引擎改写到收盘并带一整天区间（打 15:00 戳而无区间会被判为收盘竞价）
+    ts = pd.to_datetime(list(days))
     return pd.DataFrame(
         {
             "timestamp": ts,

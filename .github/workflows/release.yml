@@ -5,23 +5,40 @@ on:
     branches:
       - main
     tags:
-      - '*'
+      - 'v*.*.*'
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# tag 构建并发布 wheel；push main 用同样的编译参数完整构建一遍但不上传，
+# 只为把 sccache 写进 main 作用域——tag 运行读不到别的 tag 写的缓存，
+# 只能读当前 ref 和默认分支的。两者编译参数必须一致，否则缓存键对不上。
 env:
   CARGO_INCREMENTAL: "0"
-  CARGO_PROFILE_RELEASE_LTO: ${{ startsWith(github.ref, 'refs/tags/') && 'thin' || 'false' }}
-  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '16' }}
+  CARGO_PROFILE_RELEASE_LTO: ${{ (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main') && 'thin' || 'false' }}
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main') && '1' || '16' }}
 
 jobs:
-  # Release jobs - Run on Tags AND Push/PR (accelerated via Env vars)
+  # 版本号自洽校验（pyproject.toml / Cargo.toml / Cargo.lock / CHANGELOG.md，tag 上再加 tag）。
+  # 各构建 job 都依赖它：PyPI 版本号一经占用不可重用，发错要在花 10 分钟构建之前拦下。
+  check-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Verify release metadata
+        env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+        run: python scripts/check_release.py ${TAG:+"$TAG"}
+
+  # PR 等其余事件只做 smoke check
   linux-smoke:
     runs-on: ubuntu-latest
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    if: "!(startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')"
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -33,7 +50,8 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: check-release
+    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
     strategy:
       matrix:
         target: [x86_64, aarch64]
@@ -42,11 +60,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: Set up QEMU
-        if: matrix.target == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
       # 缓存 cargo registry 到宿主机，后面挂载进 Docker 容器
       - name: Cache cargo registry
         uses: actions/cache@v5
@@ -72,6 +85,7 @@ jobs:
           # 将宿主机的 cargo registry 挂载进容器
           docker-options: -v /home/runner/.cargo/registry:/root/.cargo/registry -v /home/runner/.cargo/git:/root/.cargo/git
       - name: Upload wheels
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v6
         with:
           name: wheels-linux-${{ matrix.target }}
@@ -79,16 +93,13 @@ jobs:
 
   linux-musl:
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: check-release
+    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
       - name: Cache cargo registry
         uses: actions/cache@v5
         with:
@@ -112,6 +123,7 @@ jobs:
           manylinux: musllinux_1_2
           docker-options: -v /home/runner/.cargo/registry:/root/.cargo/registry -v /home/runner/.cargo/git:/root/.cargo/git
       - name: Upload wheels
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v6
         with:
           name: wheels-linux-musllinux-aarch64
@@ -119,13 +131,14 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    needs: check-release
     strategy:
       matrix:
         target: [x64]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         with:
           python-version: '3.13'
           architecture: ${{ matrix.target }}
@@ -133,17 +146,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-      - uses: actions/cache@v5
-        with:
-          path: ~\AppData\Local\Mozilla\sccache
-          key: sccache-windows-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            sccache-windows-${{ matrix.target }}-
       - name: Smoke check
-        if: "!startsWith(github.ref, 'refs/tags/')"
+        if: "!(startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')"
         run: cargo check --release --locked
       - name: Build wheels
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
@@ -158,13 +165,14 @@ jobs:
 
   macos:
     runs-on: macos-latest
+    needs: check-release
     strategy:
       matrix:
         target: [aarch64]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         with:
           python-version: '3.13'
       - uses: dtolnay/rust-toolchain@stable
@@ -172,10 +180,10 @@ jobs:
         with:
           key: macos-${{ matrix.target }}
       - name: Smoke check
-        if: "!startsWith(github.ref, 'refs/tags/')"
+        if: "!(startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')"
         run: cargo check --release --locked
       - name: Build wheels
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
@@ -190,6 +198,7 @@ jobs:
 
   sdist:
     runs-on: ubuntu-latest
+    needs: check-release
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v6
@@ -209,15 +218,33 @@ jobs:
     runs-on: ubuntu-latest
     if: "startsWith(github.ref, 'refs/tags/')"
     needs: [linux, linux-musl, windows, macos, sdist]
+    # PyPI Trusted Publisher 绑定了该环境名；环境只允许 v* tag 部署
+    environment:
+      name: pypi
+      url: https://pypi.org/p/akquant
     permissions:
-      id-token: write
-      contents: write
+      id-token: write  # 向 PyPI 换取临时上传令牌（OIDC）
+      contents: write  # 创建 GitHub Release
     steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
       - uses: actions/download-artifact@v7
         with:
           pattern: wheels-*
           path: dist
           merge-multiple: true
 
+      # check-release 校验的是仓库内的版本声明，这里校验真正要上传的产物文件名，
+      # 并取出该版本的 CHANGELOG 段落作为 GitHub Release 正文
+      - name: Verify built artifacts carry the tagged version
+        run: python scripts/check_release.py "$GITHUB_REF_NAME" --dist dist --notes-out release-notes.md
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file release-notes.md

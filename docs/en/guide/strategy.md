@@ -48,10 +48,10 @@ A strategy goes through the following stages from start to finish:
 | `on_order` | When order status changes | Track lifecycle, reset state, order-linked orchestration | `examples/08_event_callbacks.py` |
 | `on_trade` | When a trade report arrives | Execution logging, post-trade risk handling, aggregation | `examples/08_event_callbacks.py` |
 | `on_reject` | First time an order becomes `Rejected` | Log reject reasons, alerting, graceful degradation | `examples/50_framework_hooks_demo.py` |
-| `on_before_trading` | First entry into `Normal` session each local trading day | Pre-market checks, trading-date level signal preparation | `examples/50_framework_hooks_demo.py` |
-| `on_pre_open` | Triggered by a framework timer before the first regular event of each trading day | Auction/pre-open signal generation with default next-open order semantics | `examples/52_pre_open_demo.py` |
+| `on_before_trading` | 1ns after the trading day's earliest continuous-auction segment starts (A-shares 09:30; for futures with a night session the trading day starts with the previous trading day's night session, so Monday's trading day fires on Friday at 21:00) | Pre-market checks, trading-date level signal preparation | `examples/50_framework_hooks_demo.py` |
+| `on_pre_open` | 1ns before the trading day's first session segment starts (A-shares before the 09:15 opening call auction; futures with a night session before the previous trading day's 20:55 night auction), never earlier than the previous trading day's end-of-day settlement; same timing in backtest and live | Auction/pre-open signal generation; default `NextOpen()` orders join the opening call-auction match, which is not the same as broker counter support for auction-specific order types | `examples/52_pre_open_demo.py` |
 | `on_cross_section` | After the first complete cross-symbol bar slice of the trading day | Cross-sectional same-cycle rebalance using current-day bars/account state | `examples/strategies/09_stock_momentum_rotation_after_bar.py` |
-| `on_after_trading` | When leaving the regular trading session, or replayed on the next event if needed | End-of-day summaries, post-close cleanup, archiving | `examples/50_framework_hooks_demo.py` |
+| `on_after_trading` | After end-of-day settlement completes (backtest: at the close; live: close + `day_close_delay`) | End-of-day summaries, post-close cleanup, archiving | `examples/50_framework_hooks_demo.py` |
 | `on_portfolio_update` | Incrementally when portfolio snapshot changes | Monitor cash/equity changes, push UI or alerts | `examples/50_framework_hooks_demo.py` |
 | `on_error` | When any user callback raises | Record callback source and choose continue vs fail-fast | `examples/22_strategy_runtime_config_demo.py` |
 | `on_timer` | When a registered timer fires | Scheduled rebalance, pre-market tasks, cadence checks | `examples/strategies/07_stock_momentum_rotation_on_timer.py` |
@@ -75,19 +75,18 @@ For each `bar/tick/timer` event, AKQuant dispatches callbacks in this order:
 Notes:
 
 * `on_reject` is emitted once per order id when the order first becomes `Rejected`.
-* `on_pre_open` is emitted once per trading day before the first regular bar/tick callback of that day.
-* `on_before_trading` is emitted once per local trading date when the regular trading session starts; on the default backtest path this session is usually exposed as `Continuous`.
+* The three trading-day hooks are fired by the engine's trading-day lifecycle timers at fixed times; the timing does not depend on market events and is the same in backtest and live. A backtest chains trading days by the trading day of the next market event: a calendar trading day without any market data fires none of the three hooks, and nothing more is scheduled once data is exhausted. Live sessions fire them for every day in the trading calendar (even days without market data).
+* `on_pre_open` fires 1ns before the trading day's first session segment starts (A-shares: before the 09:15 opening call auction, i.e. 09:14:59.999…; futures with a night session: before the previous trading day's 20:55 night auction), and never earlier than the previous trading day's end-of-day settlement. Default `NextOpen()` orders submitted there join the opening call-auction match: matching happens when continuous trading starts, the fill price is the auction price, and the fill time is the first continuous-trading event (the 09:31 bar for A-share minute bars).
+* `on_before_trading` fires 1ns after the trading day's earliest continuous-auction segment starts (just after 09:30:00 for A-shares); for night-session symbols the trading day starts with the previous trading day's night session, so Monday's trading day fires on Friday at 21:00. A trading day without a continuous-auction segment does not fire it.
 * `on_before_trading` always use a "previous trading day / previous snapshot only" visibility model; inside these callbacks, `get_history()`, `get_account()`, and `equity` must not expose the current day's new bar or the current day's updated account view.
 * `on_cross_section` runs after the framework has seen the first complete cross-symbol slice for the trading day; inside this callback, current-day history and the current account snapshot are visible.
-* `on_after_trading` is emitted once per local trading date when leaving the regular trading session, or on the next event if day rollover occurs first.
-* `on_after_trading` is an **end/wind-down hook** intended for end-of-day statistics, cleanup, and archiving. The framework fires it in a **dedicated event at the day's close** (before the next bar), so a `NextOpen()` order submitted inside it fills on the next bar rather than one bar later (#324). If your intent is "decide at close, execute at the next open", the clearer place to order is `on_bar` (next-open) or `on_pre_open`.
-* **`TimeInForce.Day` and next-open expiry semantics**: end-of-day settlement marks any Day order still unfilled that day as `Expired`. For a `NextOpen()` Day order submitted after the close (e.g. in `on_cross_section` / `on_after_trading`), its only matchable slice is the **next day's open**, which comes *after* settlement — so the framework spares such an order once, letting it get that next-open fill chance; it only expires at the next day's settlement if it is still unfilled then (e.g. the symbol is suspended, #334). A same-cycle `CurrentClose()` Day order had its matchable slice on its creation day and so still expires at the next settlement as usual. If you want a "decide at close, fill next day" order that is not subject to same-day expiry, just use the default `GTC`.
-* To branch on the trading **session** (e.g. futures day/night), the framework no longer exposes `on_session_*` callbacks; read `self.ctx.session` (a `TradingSession` enum) inside `on_bar` / `on_tick`, e.g. `if self.ctx.session == TradingSession.Continuous: ...`.
+* `on_after_trading` is an **end/wind-down hook** intended for end-of-day statistics, cleanup, and archiving. It fires **after end-of-day settlement completes**: T+1 positions are already unlocked, the day's unfilled Day orders have expired, and orders submitted inside it belong to the next trading day. Backtest settlement runs at the close; live (`run_live`) at close + `day_close_delay` (default 60 seconds). If backtest data ends intraday and the day is never settled, it does not fire. It is a **dedicated event at the day's close** (after settlement, before the next bar), so a `NextOpen()` order submitted inside it fills on the next bar rather than one bar later (#324). If your intent is "decide at close, execute at the next open", the clearer place to order is `on_bar` (next-open) or `on_pre_open`.
+* **`TimeInForce.Day` and next-open expiry semantics**: end-of-day settlement marks any Day order still unfilled that day as `Expired`. For a `NextOpen()` Day order submitted on or after the day's last market event (e.g. `on_cross_section` on daily data), its only matchable slice is the **next day's open**, which comes *after* settlement — so the framework spares such an order once, letting it get that next-open fill chance; it only expires at the closing settlement of the trading day it belongs to if it is still unfilled then (e.g. the symbol is suspended, #334). A same-cycle `CurrentClose()` Day order had its matchable slice on its creation day and so expires at that day's close. Orders submitted at or after the close in a non-continuous session (e.g. on the 15:00 minute bar that ends the closing auction, in `on_after_trading`, or within the live post-close grace window) belong to the next trading day and do not expire that day, whatever the fill mode. If you want a "decide at close, fill next day" order that is not subject to same-day expiry, just use the default `GTC`.
+* To branch on the trading **session** (e.g. futures day/night, call auction vs continuous trading), the framework provides no `on_session_*` callbacks; read `self.ctx.session` (a `TradingSession` enum with 7 values: `Closed`, `OpeningAuction`, `AuctionHold`, `Continuous`, `Break`, `ClosingAuction`, `PostClose`), or use `self.is_market_open()`, `self.session_of(symbol)` and `self.trading_day` directly; see [2.2 Trading Sessions and Trading Days](#trading-session).
 * Inside `on_pre_open`, plain `buy/sell/order_target_*` calls automatically resolve to `NextOpen()` semantics unless an explicit `fill_mode` is provided.
-* Set `self.enable_precise_day_boundary_hooks = True` to enable boundary-timer based precise day hooks; this switch changes trigger precision only, not the history/account visibility window seen inside day-boundary callbacks.
 * `on_portfolio_update` is incremental: emitted once at initialization, then only on order/trade or position-relevant price changes.
 * Use `self.portfolio_update_eps` to filter tiny equity/cash changes (default `0.0`).
-* During stop phase, a pending `on_after_trading` is flushed before `on_stop`.
+* Stopping does not flush `on_after_trading`: if the day has not completed end-of-day settlement it does not fire (e.g. backtest data ending intraday).
 * Live (`run_live`) vs. backtest teardown: live sessions **skip** the backtest-only data coverage checks (symbols with no fills all session, warmup never reached, tick-only sessions are all normal in live trading and would produce false warnings).
 * In live sessions `on_stop` fires **before** the signal source and broker dispatcher are torn down, so it can cancel or close positions; on the error-abort path the broker channel may already be unusable, and delivery of such teardown orders is not guaranteed.
 * `on_error` receives `(error, source, payload)`. Prefer `self.error_mode = "raise" | "continue"` (default `raise`). `self.re_raise_on_error` remains as fallback for compatibility.
@@ -102,6 +101,7 @@ sequenceDiagram
     participant FW as Framework Dispatcher
     participant Strategy as User Strategy
 
+    Note over Feed,Strategy: Trading-day hooks are fired independently by lifecycle timers:<br/>on_pre_open → on_before_trading → market data → end-of-day settlement → on_after_trading
     Feed->>FW: bar / tick / timer arrives
     FW->>Strategy: on_order(...)
     FW->>Strategy: on_trade(...)
@@ -121,7 +121,7 @@ sequenceDiagram
     end
 ```
 
-#### 2.1.2 Stop-Phase Flush Sequence
+#### 2.1.2 Stop-Phase Sequence
 
 ```mermaid
 sequenceDiagram
@@ -133,11 +133,6 @@ sequenceDiagram
         Engine->>FW: _on_stop_internal()
     else live
         Engine->>FW: _on_stop_live_internal()
-    end
-    alt pending session-end event exists
-    end
-    alt pending trading-day end event exists
-        FW->>Strategy: on_after_trading(...)
     end
     FW->>Strategy: on_stop()
 ```
@@ -194,11 +189,68 @@ Practical tips:
 
 Timing note:
 
-* Do not treat `on_before_trading` as a stable same-day preparation stage that always runs before `on_pre_open`.
-* On the default path, `on_pre_open` runs before the first regular event, while `on_before_trading` is usually emitted on that first regular event after the regular trading session begins.
-* Even with `enable_precise_day_boundary_hooks`, the boundary-timer version of `on_before_trading` should not be used as a deterministic same-day predecessor for `on_pre_open`.
+* Within one trading day, `on_pre_open` (A-shares 09:14:59.999…) always runs before `on_before_trading` (1ns after 09:30:00), so `on_before_trading` cannot prepare for the same day's `on_pre_open`.
 * For a true two-stage pattern, prepare in a later callback from the previous trading day and execute in the next trading day's `on_pre_open`, for example via a previous-day `on_timer` or `on_after_trading`.
 * See `examples/53_timer_to_pre_open_demo.py`.
+* The `expected_open_at` field of the `on_pre_open` event dict is the trigger time of this call (09:14:59.999… for A-shares), not the opening time.
+
+### 2.2 Trading Sessions and Trading Days {: #trading-session }
+
+The engine maps each symbol to a session table and uses it to decide which trading session a moment falls in and which trading day it belongs to. Matching, end-of-day settlement, T+1, Day-order expiry and the trading-day hooks all follow this mapping.
+
+**Reading it from a strategy**
+
+| Expression | Meaning |
+| :--- | :--- |
+| `self.ctx.session` | Session of the current event (`TradingSession` enum) |
+| `self.session_of(symbol=None)` | Session of the symbol at this moment, consistent with matching; without `symbol` it equals `ctx.session` |
+| `self.is_market_open(symbol=None, include_auction=False)` | Whether the symbol is in continuous trading right now; with `include_auction=True` the opening call auction, the post-auction hold and the closing call auction also count as open |
+| `self.trading_day` | Trading day of the current moment (`datetime.date`); `None` when there is no context yet (e.g. in `on_start`) |
+
+`TradingSession` has 7 values: `Closed`, `OpeningAuction` (opening call auction), `AuctionHold` (after the auction, waiting for the open, e.g. A-shares 09:25–09:30), `Continuous` (continuous trading), `Break` (lunch break and other pauses), `ClosingAuction` (closing call auction) and `PostClose` (a post-close segment in a custom session table).
+
+Trading-day rules:
+
+* Intraday events belong to the current trading day; night sessions belong to the next trading day (Friday 21:30 belongs to the following Monday).
+* From the close until the next trading day's open (e.g. a 15:30 timer) the time belongs to the next trading day, consistent with daily risk budgets such as daily loss limits.
+* Live post-close grace: in live trading (including replay), market data arriving within `day_close_delay` seconds after the close and before the next trading day's first session segment still belongs to the current day. The grace never crosses the next trading day's open, so session tables such as `ALWAYS_OPEN`, where the close is immediately followed by the next open, effectively have no grace unless an explicit calendar leaves a gap; `day_close_delay=0` also disables it. During the grace window `ctx.trading_day` is the current day and the session is `Closed` (`PostClose` if the custom table has a post-close segment); nothing is matched, no equity point is produced, and the next trading day is not opened early. Day orders submitted in the grace window still belong to the next trading day. Backtests are unaffected.
+
+```python
+from akquant import Strategy
+
+
+class SessionAwareStrategy(Strategy):
+    def on_bar(self, bar):
+        if not self.is_market_open(bar.symbol):
+            return  # Do not chase during call auctions, breaks or when closed
+        self.log(f"{self.trading_day} {self.ctx.session} {bar.close}")
+```
+
+**Session tables and trading calendar (`sessions=` / `trading_calendar=`)**
+
+Both `run_backtest` and `run_live` accept these two parameters:
+
+* `sessions`: symbol prefix → session template name or custom session table; `"default"` is the global default. When omitted, China time zones use per-asset defaults (stocks/funds `CN_STOCK`, futures `CN_FUTURES_DAY`, options `CN_OPTION`, other assets `ALWAYS_OPEN`); other time zones trade continuously all day (`ALWAYS_OPEN`). List the templates with `aq.SessionResolver.templates()`; futures with a night session must be set explicitly, e.g. `sessions={"rb": "CN_FUTURES_NIGHT_23"}`. For the custom table format see the [API Reference](../reference/api.md#akquantrun_backtest).
+* `trading_calendar`: list of trading days (`date` / string / `Timestamp`). When omitted, China markets infer trading days from weekdays (holidays are treated as trading days, so days are opened, settled and the trading-day hooks fire as usual) and a warning is logged once; night sessions and end-of-day settlement around holidays will be wrong. `ALWAYS_OPEN` counts every day and does not warn.
+
+```python
+import akquant as aq
+
+result = aq.run_backtest(
+    data=df,
+    strategy=MyStrategy,
+    sessions={"rb": "CN_FUTURES_NIGHT_23"},
+    # Exchange trading days; must cover the data range
+    trading_calendar=["2024-01-02", "2024-01-03", "2024-01-04"],
+)
+```
+
+Live notes:
+
+* Session-aware order queueing only happens in the simulated matching of paper/replay: orders submitted while closed, on break, or during a call auction are queued and not filled as continuous trading. Under `broker_live` orders go straight to the broker counter without session queueing; the session table only determines `ctx.session`, `is_market_open()`, the trading-day split, and the timing of end-of-day settlement and the trading-day hooks.
+* Futures without `sessions` use the `CN_FUTURES_DAY` day-session table, so night-session data is classified as closed (under paper, orders are queued until the day session); symbols with a night session must pass `sessions=`.
+* Long-running live sessions must pass `trading_calendar=`; otherwise weekday inference opens and settles days on holidays (a warning is logged once at startup). Since live_server 0.12.0, klinedata sessions fetch the SSE/SZSE trading calendar from the market-data service automatically; when that service is deployed in jwt mode (requiring `X-QMF-Session`, which live_server does not send) the fetch fails and it falls back to weekday inference with a warning.
+* `run_live(timezone=)` must match the exchange; the end-of-day settlement time and the default session tables are computed in it.
 
 ## 3. Utilities
 
@@ -345,8 +397,11 @@ def on_bar(self, bar):
 
 In addition to the low-level `schedule` method, AKQuant provides more convenient ways to register timers:
 
-*   **`schedule_daily(time_str, payload)`**: Triggers daily at a specified time.
-    *   **Live Mode Supported**: Pre-generates triggers in Backtest mode; Automatically schedules the next trigger daily in Live mode.
+*   **`schedule_daily(time_str, payload)`**: Triggers at a specified time on every trading day of the trading calendar (not on non-trading days; in a backtest also on trading days without data inside the data range).
+    *   **Same semantics in backtest and live**: Backtests pre-generate all triggers over the calendar trading days covered by the data; live mode registers only the next trigger and reschedules it along the trading calendar.
+    *   **Default calendar without `trading_calendar`**: derived from the session schedules in use — weekdays for Chinese markets (stocks, futures, options; holidays are not known), every day for `ALWAYS_OPEN` (the default outside Chinese time zones). In the latter case backtests only use days that have data (no weekend triggers when weekends have no bars), while live mode fires on weekends too and warns once; pass `trading_calendar` for markets closed on weekends such as US equities.
+    *   **First-day rule**: In backtests, tasks registered in `on_start` take effect from the first market-data event; earlier times on the first day do not fire. In live mode they are also registered on lifecycle events such as pre-open, provided the strategy overrides one of `on_pre_open` / `on_before_trading` / `on_after_trading`; otherwise lifecycle events are not dispatched to the strategy and tasks are registered on the first market-data event.
+*   **`schedule_weekly(time_str, payload)`** / **`schedule_monthly(time_str, payload)`**: Trigger on the **first trading day** of each week/month (per the trading calendar, rolling over holidays), in both backtest and live; live mode reschedules to the first trading day of the next week/month.
 *   **`schedule(trigger_time, payload)`**: Triggers once at a specified datetime.
 
 ```python
@@ -473,6 +528,7 @@ For style selection guidance, see [Strategy Style Decision Guide](../advanced/st
 | `on_tick(ctx, tick)` | Backtest feed emits Tick events | Tick callbacks are not triggered in bar-only datasets |
 | `on_order(ctx, order)` | Order state changes are observed in strategy context | Triggered before event callback in each event loop |
 | `on_trade(ctx, trade)` | Trade reports appear in `recent_trades` | Trade dedupe applies to avoid repeated callbacks |
+| `on_pre_open(ctx, event)` | 1ns before the trading day's first session segment starts, fired by the trading-day lifecycle timer (A-shares 09:14:59.999…) | Suits function-style "pre-open decision, current open fill" workflows |
 | `on_timer(ctx, payload)` | A timer is scheduled and fired | Includes both one-shot and daily timer payloads |
 
 ### 4.2 Class vs Function Callback Mapping
@@ -685,7 +741,7 @@ def on_trade(self, trade):
 
 Triggered only after the engine actually executes an `expiry_date` driven settlement/removal. The callback receives an event dict, and portfolio state is already updated when it runs.
 
-Settlement happens at the start of the first trading day after `expiry_date`, using the expiry-day close. `cash_flow` is gross; `fee` is the option exercise fee, so the account receives `cash_flow - fee` (for margin-account futures, `cash_flow` is the realized close-out P&L instead). The catch-up settlement at the end of a backtest also fires this callback (and the streaming `expiry` event), including across checkpoint-split runs. Expiry closes are also recorded as a synthetic trade in `trades_df` (`order_tag="__expiry__"`), but do not appear in `orders_df`.
+Settlement happens in the end-of-day settlement at the close of the expiry day, using the expiry-day close, and `on_expiry` is delivered at that day's `on_after_trading` time. `cash_flow` is gross; `fee` is the option exercise fee, so the account receives `cash_flow - fee` (for margin-account futures, `cash_flow` is the realized close-out P&L instead). When backtest data ends intraday on the expiry day, the catch-up settlement at the end of the backtest also fires this callback (and the streaming `expiry` event), including across checkpoint-split runs. Expiry closes are also recorded as a synthetic trade in `trades_df` (`order_tag="__expiry__"`), but do not appear in `orders_df`.
 
 Runnable example: `examples/49_on_expiry_demo.py`.
 

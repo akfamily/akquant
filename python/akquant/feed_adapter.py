@@ -1,11 +1,18 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Mapping, Protocol, cast
+from typing import Any, Iterable, Literal, Mapping, Protocol, Union, cast
 
+import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
 
-from .akquant import Bar
+from .akquant import AssetType, Bar, SessionResolver, WindowAggregator
+from .log import get_logger
+from .sessions_config import (
+    SessionsArg,
+    normalize_sessions,
+    normalize_trading_calendar,
+)
 from .utils import load_bar_from_df
 
 
@@ -16,6 +23,8 @@ class FeedSlice:
     symbol: str
     start_time: pd.Timestamp | None = None
     end_time: pd.Timestamp | None = None
+    # Timezone for the run: naive start/end bounds AND naive source index values
+    # are both interpreted in it (default Asia/Shanghai when None).
     timezone: str | None = None
 
 
@@ -33,6 +42,7 @@ LabelKind = Literal["right", "left"]
 SessionWindow = tuple[str, str]
 AlignKind = Literal["session", "day", "global"]
 DayModeKind = Literal["trading", "calendar"]
+AssetTypeArg = Union[AssetType, str, Mapping[str, Union[AssetType, str]], None]
 DEFAULT_INPUT_TIMEZONE = "Asia/Shanghai"
 
 
@@ -73,7 +83,7 @@ class BasePandasFeedAdapter:
         data = frame
         if data.empty or not isinstance(data.index, pd.DatetimeIndex):
             return data
-        compare_index = _localize_input_index(data.index)
+        compare_index = _localize_input_index(data.index, timezone)
         start_bound = _normalize_request_boundary(start_time, timezone)
         end_bound = _normalize_request_boundary(end_time, timezone)
         mask = pd.Series(True, index=data.index)
@@ -112,8 +122,42 @@ class BasePandasFeedAdapter:
         label: LabelKind = "right",
         closed: LabelKind = "right",
         session_windows: list[SessionWindow] | None = None,
+        sessions: SessionsArg | None = None,
+        trading_calendar: Iterable[Any] | None = None,
+        asset_type: AssetTypeArg = None,
+        base_interval_min: int | None = None,
     ) -> "ReplayFeedAdapter":
-        """Create a replay adapter view."""
+        """Create a replay adapter view.
+
+        ``align="session"``（未给 ``session_windows``）与 ``align="day"`` +
+        ``day_mode="trading"`` 用引擎 ``subscribe_bars`` 同一个窗口聚合器
+        (:class:`akquant.WindowAggregator`) 切分, 对同一数据、同一时段表产出相同的
+        窗口: 日内窗口按(交易日, 交易块)切分、标签为本地时钟 ceil 到周期但不超过块
+        结束(A 股 1h: 10:00、11:00、11:30、14:00、15:00); 日线窗口按交易日切分(夜盘
+        归下一交易日)、标签为交易日收盘时刻。
+
+        交易块截断只对默认 ``label="right", closed="right"`` 且 ``freq`` 为
+        ``Nmin`` / ``Nh`` / ``1D`` 时生效; 其余情况(含 ``align="global"``、
+        ``day_mode="calendar"``、手写 ``session_windows``)沿用 pandas ``resample``
+        按本地日期(或手写时段)分区的旧实现。
+
+        :param sessions: 代码前缀 → 时段模板名或自定义时段表, 同 ``run_backtest``
+            的 ``sessions``。
+        :param trading_calendar: 交易日列表, 同 ``run_backtest`` 的
+            ``trading_calendar``。
+        :param asset_type: 资产类型(决定默认时段表), 同 ``run_backtest``, 默认股票;
+            也可传 ``{symbol: asset_type}``, 未列出的品种按股票。
+        :param base_interval_min: 源数据 bar 周期(分钟); 不传时按相邻时间戳间隔的
+            众数推断。
+        :param emit_partial: ``False`` 时丢弃数据未到达标签的窗口中, 位于该交易日
+            最后的那一个(即每个交易日的尾部未闭合窗口与数据末尾的窗口)。
+
+        注意: 默认 ``align="session"`` 在中国时区(``FeedSlice.timezone`` 缺省即
+        ``Asia/Shanghai``)下按 A 股交易块切分; 非中国市场或 24 小时数据须显式传
+        ``FeedSlice(timezone=...)``, 并按需传 ``sessions=`` / ``asset_type=``。
+        走聚合器时, open/high/low/close 任一为 NaN 的行在聚合前剔除, volume 的
+        NaN 按 0 计。
+        """
         return ReplayFeedAdapter(
             source=self,
             freq=freq,
@@ -124,6 +168,10 @@ class BasePandasFeedAdapter:
             label=label,
             closed=closed,
             session_windows=session_windows,
+            sessions=sessions,
+            trading_calendar=trading_calendar,
+            asset_type=asset_type,
+            base_interval_min=base_interval_min,
         )
 
 
@@ -217,14 +265,16 @@ def _resample_ohlcv_frame(
     return cast(pd.DataFrame, resampled.dropna(how="all"))
 
 
-def _localize_input_index(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+def _localize_input_index(
+    index: pd.DatetimeIndex, timezone: str | None = None
+) -> pd.DatetimeIndex:
     """Normalize input index to a timezone-aware series.
 
-    AKQuant treats naive market data as Asia/Shanghai by default, matching the
-    main DataFrame -> Bar conversion path in ``load_bar_from_df``.
+    Naive market data is interpreted in ``timezone`` (the run's timezone),
+    defaulting to Asia/Shanghai, matching the main DataFrame -> Bar path.
     """
     if index.tz is None:
-        return index.tz_localize(DEFAULT_INPUT_TIMEZONE)
+        return index.tz_localize(timezone or DEFAULT_INPUT_TIMEZONE)
     return index
 
 
@@ -245,14 +295,16 @@ def _session_partition_keys(
     index: pd.DatetimeIndex,
     timezone: str | None,
 ) -> pd.DatetimeIndex:
-    localized = _localize_input_index(index)
+    localized = _localize_input_index(index, timezone)
     if timezone:
         localized = localized.tz_convert(timezone)
     return localized.normalize()
 
 
-def _calendar_partition_keys(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
-    localized = _localize_input_index(index).tz_convert("UTC")
+def _calendar_partition_keys(
+    index: pd.DatetimeIndex, timezone: str | None = None
+) -> pd.DatetimeIndex:
+    localized = _localize_input_index(index, timezone).tz_convert("UTC")
     return localized.normalize()
 
 
@@ -272,7 +324,7 @@ def _session_window_partition_keys(
     timezone: str | None,
     session_windows: list[SessionWindow],
 ) -> tuple[pd.DatetimeIndex, list[bool]]:
-    localized = _localize_input_index(index)
+    localized = _localize_input_index(index, timezone)
     if timezone:
         localized = localized.tz_convert(timezone)
 
@@ -289,6 +341,15 @@ def _session_window_partition_keys(
             if start <= minute_of_day < end:
                 matched_key = ts.normalize() + pd.Timedelta(minutes=start)
                 break
+            # 终点早于起点表示跨午夜(如 21:00～次日 02:30): 午夜后的部分归前一天的段
+            if end < start and minute_of_day >= start:
+                matched_key = ts.normalize() + pd.Timedelta(minutes=start)
+                break
+            if end < start and minute_of_day < end:
+                matched_key = (
+                    ts.normalize() - pd.Timedelta(days=1) + pd.Timedelta(minutes=start)
+                )
+                break
         if matched_key is None:
             keep_mask.append(False)
             key_values.append(pd.Timestamp("1970-01-01", tz=localized.tz))
@@ -296,6 +357,230 @@ def _session_window_partition_keys(
             keep_mask.append(True)
             key_values.append(matched_key)
     return pd.DatetimeIndex(key_values), keep_mask
+
+
+def _engine_window_freq(freq: str) -> str | None:
+    """把 pandas 频率转成窗口聚合器的写法(Nmin/Nh/1d); 不支持的返回 None."""
+    try:
+        offset = to_offset(freq)
+    except (TypeError, ValueError):
+        return None
+    n = int(getattr(offset, "n", 0))
+    if n <= 0:
+        return None
+    if isinstance(offset, pd.offsets.Minute):
+        return f"{n}min"
+    if isinstance(offset, pd.offsets.Hour):
+        return f"{n}h"
+    if isinstance(offset, pd.offsets.Day) and n == 1:
+        return "1d"
+    return None
+
+
+def _resolve_asset_type(asset_type: AssetTypeArg, symbol: str) -> AssetType:
+    from .bar_generator import _to_asset_type
+
+    if asset_type is None:
+        return AssetType.Stock
+    if isinstance(asset_type, Mapping):
+        value = asset_type.get(symbol)
+        return AssetType.Stock if value is None else _to_asset_type(value)
+    return _to_asset_type(asset_type)
+
+
+def _infer_base_interval_min(ts_ns: np.ndarray) -> int | None:
+    """相邻时间戳间隔的众数(分钟); 不是整分钟或数据不足时返回 None."""
+    if ts_ns.size < 2:
+        return None
+    diffs = np.diff(ts_ns)
+    diffs = diffs[diffs > 0]
+    if diffs.size == 0:
+        return None
+    values, counts = np.unique(diffs, return_counts=True)
+    mode = int(values[int(np.argmax(counts))])
+    minute_ns = 60 * 1_000_000_000
+    if mode % minute_ns != 0:
+        return None
+    return mode // minute_ns
+
+
+def _engine_windows_for_symbol(
+    source: pd.DataFrame,
+    symbol: str,
+    window_freq: str,
+    used_agg: Mapping[str, str],
+    emit_partial: bool,
+    timezone: str,
+    resolver: SessionResolver,
+    asset_type: AssetType,
+    base_interval_min: int | None,
+) -> pd.DataFrame:
+    """用引擎窗口聚合器把单品种基础 bar 聚合成窗口(与 subscribe_bars 同口径).
+
+    OHLCV 取聚合器的结果; ``agg`` 里的其他列(或改写了默认聚合方式的列)按聚合器
+    给每行分配的窗口用 pandas 分组计算。
+    """
+    price_cols = ["open", "high", "low", "close"]
+    source = source.loc[source[price_cols].notna().all(axis=1).to_numpy()]
+    if source.empty:
+        return source.iloc[0:0]
+    source_index = pd.DatetimeIndex(source.index)
+    local_index = _localize_input_index(source_index, timezone)
+    utc_naive = local_index.tz_convert("UTC").tz_localize(None).as_unit("ns")
+    ts_ns = np.ascontiguousarray(utc_naive.to_numpy().view(np.int64))
+    volumes = (
+        source["volume"].fillna(0.0).astype(float).to_numpy()
+        if "volume" in source.columns
+        else np.zeros(len(source))
+    )
+    base = (
+        base_interval_min
+        if base_interval_min is not None
+        else _infer_base_interval_min(ts_ns)
+    )
+    aggregator = WindowAggregator(
+        window_freq,
+        base_interval_min=base,
+        resolver=resolver,
+        timezone=timezone,
+        asset_types={symbol: asset_type},
+    )
+
+    # 整列喂入 Rust 聚合器(含收尾 flush), 拿回窗口与每行归属的窗口下标
+    windows, row_window = aggregator.update_arrays(
+        ts_ns,
+        np.ascontiguousarray(source["open"].to_numpy(dtype=np.float64)),
+        np.ascontiguousarray(source["high"].to_numpy(dtype=np.float64)),
+        np.ascontiguousarray(source["low"].to_numpy(dtype=np.float64)),
+        np.ascontiguousarray(source["close"].to_numpy(dtype=np.float64)),
+        np.ascontiguousarray(volumes, dtype=np.float64),
+        symbol,
+        flush=True,
+    )
+    if not windows:
+        return source.iloc[0:0]
+    assigned = row_window >= 0
+
+    labels = np.fromiter((b.timestamp for b in windows), np.int64, len(windows))
+    keep = np.ones(len(windows), dtype=bool)
+    if not emit_partial:
+        last_ts = np.full(len(windows), np.iinfo(np.int64).min, dtype=np.int64)
+        first_ts = np.full(len(windows), np.iinfo(np.int64).max, dtype=np.int64)
+        np.maximum.at(last_ts, row_window[assigned], ts_ns[assigned])
+        np.minimum.at(first_ts, row_window[assigned], ts_ns[assigned])
+        warned = False
+
+        def trading_day(ts: int) -> Any:
+            nonlocal warned
+            try:
+                return resolver.resolve_instant(symbol, ts - 1, asset_type)[0]
+            except ValueError as exc:
+                # 数据超出交易日历覆盖范围等: 按本地日期判断, 只告警一次
+                if not warned:
+                    warned = True
+                    get_logger("feed_adapter").warning(
+                        "replay：%s 的部分数据无法按交易日解析（%s），"
+                        "emit_partial=False 的尾部判断改按本地日期；"
+                        "请传入覆盖全部数据日期的 trading_calendar",
+                        symbol,
+                        exc,
+                    )
+                return pd.Timestamp(ts, tz="UTC").tz_convert(timezone).date()
+
+        # 数据未到达标签的窗口, 若是该交易日的最后一个窗口(或数据末尾)即为未闭合尾部
+        for k in np.flatnonzero(last_ts < labels):
+            if k == len(windows) - 1 or trading_day(int(first_ts[k])) != trading_day(
+                int(first_ts[k + 1])
+            ):
+                keep[k] = False
+
+    default_agg = _default_agg_mapping()
+    columns: dict[str, Any] = {}
+    extra_agg: dict[str, str] = {}
+    for col, how in used_agg.items():
+        if default_agg.get(col) == how:
+            columns[col] = [float(getattr(b, col)) for b in windows]
+        else:
+            extra_agg[col] = how
+    if extra_agg:
+        grouped = (
+            source.loc[assigned, list(extra_agg)]
+            .groupby(row_window[assigned], sort=True)
+            .agg(cast(Any, extra_agg))
+            .reindex(range(len(windows)))
+        )
+        for col in extra_agg:
+            columns[col] = grouped[col].to_numpy()
+
+    index = pd.DatetimeIndex(labels, tz="UTC")
+    if source_index.tz is not None:
+        index = index.tz_convert(source_index.tz)
+    else:
+        index = index.tz_convert(timezone).tz_localize(None)
+    index.name = source_index.name
+    out = pd.DataFrame(
+        {col: columns[col] for col in used_agg if col in columns}, index=index
+    )
+    return cast(pd.DataFrame, out.loc[keep])
+
+
+def _replay_engine_frame(
+    frame: pd.DataFrame,
+    window_freq: str,
+    agg: Mapping[str, str] | None,
+    emit_partial: bool,
+    timezone: str | None,
+    sessions: SessionsArg | None,
+    trading_calendar: Iterable[Any] | None,
+    asset_type: AssetTypeArg,
+    base_interval_min: int | None,
+    symbol: str,
+) -> pd.DataFrame:
+    tz = timezone or DEFAULT_INPUT_TIMEZONE
+    resolver = SessionResolver(
+        sessions=normalize_sessions(sessions),
+        trading_calendar=normalize_trading_calendar(trading_calendar),
+        timezone=tz,
+    )
+    agg_map = dict(_default_agg_mapping())
+    if agg:
+        agg_map.update(dict(agg))
+
+    if "symbol" in frame.columns:
+        by_symbol: Iterable[tuple[Any, pd.DataFrame]] = frame.groupby(
+            frame["symbol"].astype(str), sort=False
+        )
+    else:
+        by_symbol = [(symbol, frame)]
+
+    chunks: list[pd.DataFrame] = []
+    for sym, group in by_symbol:
+        source = group.drop(columns=["symbol"]) if "symbol" in group.columns else group
+        source = source.sort_index(kind="stable")
+        used_agg = {k: v for k, v in agg_map.items() if k in source.columns}
+        sym_name = str(sym)
+        out = _engine_windows_for_symbol(
+            source,
+            sym_name,
+            window_freq,
+            used_agg,
+            emit_partial,
+            tz,
+            resolver,
+            _resolve_asset_type(asset_type, sym_name),
+            base_interval_min,
+        )
+        if out.empty:
+            continue
+        if "symbol" in frame.columns:
+            out["symbol"] = sym_name
+        chunks.append(out)
+
+    if not chunks:
+        return cast(pd.DataFrame, frame.iloc[0:0].copy())
+    result = pd.concat(chunks, axis=0)
+    result.sort_index(inplace=True, kind="stable")
+    return result
 
 
 def _replay_ohlcv_frame(
@@ -309,7 +594,35 @@ def _replay_ohlcv_frame(
     timezone: str | None = None,
     session_windows: list[SessionWindow] | None = None,
     day_mode: DayModeKind = "trading",
+    sessions: SessionsArg | None = None,
+    trading_calendar: Iterable[Any] | None = None,
+    asset_type: AssetTypeArg = None,
+    base_interval_min: int | None = None,
+    symbol: str = "",
 ) -> pd.DataFrame:
+    window_freq = _engine_window_freq(freq)
+    engine_path = (
+        window_freq is not None
+        and label == "right"
+        and closed == "right"
+        and (
+            (align == "session" and not session_windows)
+            or (align == "day" and day_mode == "trading" and window_freq == "1d")
+        )
+    )
+    if engine_path and not frame.empty:
+        return _replay_engine_frame(
+            frame,
+            cast(str, window_freq),
+            agg,
+            emit_partial,
+            timezone,
+            sessions,
+            trading_calendar,
+            asset_type,
+            base_interval_min,
+            symbol,
+        )
     if align == "global":
         return _resample_ohlcv_frame(
             frame=frame,
@@ -338,7 +651,9 @@ def _replay_ohlcv_frame(
         used_agg = {k: v for k, v in agg_map.items() if k in source.columns}
         if align == "day":
             if day_mode == "calendar":
-                keys = _calendar_partition_keys(pd.DatetimeIndex(source.index))
+                keys = _calendar_partition_keys(
+                    pd.DatetimeIndex(source.index), timezone
+                )
             else:
                 keys = _session_partition_keys(pd.DatetimeIndex(source.index), timezone)
         elif session_windows:
@@ -437,6 +752,10 @@ class ReplayFeedAdapter(ResampledFeedAdapter):
         label: LabelKind = "right",
         closed: LabelKind = "right",
         session_windows: list[SessionWindow] | None = None,
+        sessions: SessionsArg | None = None,
+        trading_calendar: Iterable[Any] | None = None,
+        asset_type: AssetTypeArg = None,
+        base_interval_min: int | None = None,
     ) -> None:
         """Initialize replay view."""
         if align not in ("session", "day", "global"):
@@ -450,6 +769,16 @@ class ReplayFeedAdapter(ResampledFeedAdapter):
         self.align = align
         self.day_mode = day_mode
         self.session_windows = list(session_windows or [])
+        if base_interval_min is not None and base_interval_min <= 0:
+            raise ValueError(
+                "base_interval_min 必须为正整数（源数据 bar 的分钟数），不知道时不传"
+            )
+        self.sessions = normalize_sessions(sessions)
+        self.trading_calendar = (
+            list(trading_calendar) if trading_calendar is not None else None
+        )
+        self.asset_type = asset_type
+        self.base_interval_min = base_interval_min
         super().__init__(
             source=source,
             freq=freq,
@@ -474,6 +803,11 @@ class ReplayFeedAdapter(ResampledFeedAdapter):
             timezone=request.timezone,
             session_windows=self.session_windows,
             day_mode=self.day_mode,
+            sessions=self.sessions,
+            trading_calendar=self.trading_calendar,
+            asset_type=self.asset_type,
+            base_interval_min=self.base_interval_min,
+            symbol=str(request.symbol),
         )
 
 

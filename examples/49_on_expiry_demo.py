@@ -43,9 +43,9 @@ class ExpiryCallbackStrategy(Strategy):
 
 def _build_data() -> list[Bar]:
     rows = [
-        ("2026-01-30 15:00:00", 100.0),
-        ("2026-01-31 15:00:00", 110.0),
-        ("2026-02-01 15:00:00", 109.0),
+        ("2026-01-28 15:00:00", 100.0),
+        ("2026-01-29 15:00:00", 110.0),
+        ("2026-01-30 15:00:00", 109.0),
     ]
     bars: list[Bar] = []
     for dt_str, close in rows:
@@ -85,7 +85,7 @@ def run_example() -> None:
                     multiplier=10.0,
                     margin_ratio=0.1,
                     tick_size=0.2,
-                    expiry_date=20260131,
+                    expiry_date=20260129,
                     settlement_type="settlement_price",
                     settlement_price=108.0,
                 )

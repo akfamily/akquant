@@ -591,14 +591,18 @@ def _bar_close_of_minute(k: int) -> float:
 
 
 def _minute_index(ts: int) -> int:
-    return int((ts - _BASE_NS) // 60_000_000_000)
+    """右闭区间 (k, k+1] 分钟的编号 k: tick 在区间内, bar 戳在区间终点."""
+    return int((ts - 1 - _BASE_NS) // 60_000_000_000)
 
 
 def _half_minute_ticks(count: int) -> List[Tick]:
-    """每 30 秒一笔 tick, 价格每笔 +0.5; run_backtest(freq='1min') 聚成基础 bar."""
+    """每 30 秒一笔 tick, 价格每笔 +0.5; run_backtest(freq='1min') 聚成基础 bar.
+
+    从整分后 1 秒起: 右闭分桶 ``(S, E]`` 下每分钟的两笔同属以下一整分结尾的 bar。
+    """
     return [
         Tick(
-            timestamp=_BASE_NS + i * _HALF_MIN_NS,
+            timestamp=_BASE_NS + 1_000_000_000 + i * _HALF_MIN_NS,
             price=10.0 + 0.5 * i,
             volume=100.0,
             symbol=SYMBOL,
@@ -608,14 +612,17 @@ def _half_minute_ticks(count: int) -> List[Tick]:
 
 
 def test_end_stamp_label_matches_rust_aggregator_convention() -> None:
-    """标签公式 = Rust BarAggregator 的区间末 -1ns 打戳: (ts // 间隔 + 1) * 间隔 - 1."""
+    """标签公式 = Rust BarAggregator 的右闭区间终点戳: ((ts - 1) // 间隔 + 1) * 间隔."""
     minute = 60_000_000_000
     base = int(pd.Timestamp("2024-01-02 09:31:00", tz="Asia/Shanghai").value)
-    expected = base + minute - 1  # 09:31:59.999999999
+    expected = base + minute  # 09:32:00, 区间 (09:31, 09:32]
 
-    assert end_stamp_label(base, minute) == expected
+    assert end_stamp_label(base + 1, minute) == expected
     assert end_stamp_label(base + 30_000_000_000, minute) == expected
-    assert end_stamp_label(base + minute, minute) == expected + minute
+    # 恰在整分的 tick 属于以它结尾的 bar
+    assert end_stamp_label(base + minute, minute) == expected
+    assert end_stamp_label(base, minute) == base
+    assert end_stamp_label(base + minute + 1, minute) == expected + minute
 
 
 class _TickIntrabarProbe(Strategy):

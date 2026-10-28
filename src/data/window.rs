@@ -1,17 +1,34 @@
 //! 运行时多周期窗口聚合器(引擎内).
 //!
-//! 把基础 bar 流按 (symbol, freq) 聚合成更高周期的窗口 bar。与 Python 侧
-//! `BarGenerator` / `feed.resample(label="right", closed="right")` 同一时钟对齐
-//! 语义: 分钟/小时窗口标签 = 本地时间 ceil 到周期; 日线标签 = 当日最后一根基础
-//! bar 的时间戳(不指向未来)。窗口 bar **不进 feed、不成为 Event**, 只写历史
-//! 缓冲并交给策略阶段派发。
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
-use chrono_tz::Tz;
+//! 把基础 bar 流按 (symbol, freq) 聚合成更高周期的窗口 bar。窗口 bar **不进 feed、
+//! 不成为 Event**, 只写历史缓冲并交给策略阶段派发。
+//!
+//! 有会话解析器([`WindowAggregator::set_resolver`])时:
+//! - 日内窗口(`Nmin`/`Nh`)按(交易日, 交易块)分组, 不跨块; 标签 = 本地时钟 ceil
+//!   到周期, 但不超过块结束(A 股 1h: 10:00、11:00、11:30、14:00、15:00)。
+//! - 日线窗口按交易日分组(夜盘 bar 归下一交易日), 标签 = 该交易日收盘,
+//!   `interval_start` = 前一交易日收盘。
+//! - 基础 bar 归属按区间内一点 `ts - 1` 判断。
+//!
+//! 没有解析器(或解析出错, 如日历越界)时退回本地时钟: 日内按 ceil 标签, 日线按
+//! 本地日期、标签取当日最后一根基础 bar 的时间戳。
+//!
+//! 即时闭合: 基础周期已知(`base_interval_min`)或 bar 带 `interval_start` 时, bar 的
+//! 区间终点到达窗口标签即闭合; 否则等下一根落入新窗口的 bar 到达才闭合。
+use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-use crate::model::Bar;
+use crate::calendar::clock::LocalClock;
+use crate::calendar::resolver::{SessionResolver, TradingBlock};
+use crate::model::{AssetType, Bar};
+
+const NS_PER_SEC: i64 = 1_000_000_000;
+
+/// "bar 落在时段表之外"告警全局最多逐条输出的品种数, 其余在 flush 时汇总。
+const OUT_OF_BLOCK_WARN_LIMIT: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowFreq {
@@ -68,8 +85,11 @@ pub struct WindowSubscription {
     pub freq: WindowFreq,
     /// 规范化标签(小写), 写进 `Bar.freq` 与历史桶键。
     pub freq_label: String,
-    /// 本地交易时段; 给定则窗口不跨时段拼接。
+    /// 手写本地交易时段(按用户给定顺序); 给定则覆盖时段表。`end < start` 表示跨午夜。
     pub sessions: Vec<(NaiveTime, NaiveTime)>,
+    /// "最后一段"在 `sessions` 中的下标: 不跨午夜的段中结束最晚者, 全部跨午夜时取
+    /// 最后一项。日线窗口在这一段结束时即时闭合。
+    last_session: Option<usize>,
 }
 
 impl WindowSubscription {
@@ -85,134 +105,55 @@ impl WindowSubscription {
                 .map_err(|_| format!("session_windows 起点 {start:?} 不是 HH:MM"))?;
             let e = NaiveTime::parse_from_str(end.trim(), "%H:%M")
                 .map_err(|_| format!("session_windows 终点 {end:?} 不是 HH:MM"))?;
-            if e <= s {
-                return Err(format!("session_windows ({start}, {end}) 终点必须晚于起点"));
+            if e == s {
+                return Err(format!(
+                    "session_windows ({start}, {end}) 起点与终点相同, 时段长度为 0; \
+                     跨午夜时段请把终点写得早于起点, 如 (\"21:00\", \"02:30\")"
+                ));
             }
             parsed_sessions.push((s, e));
         }
+        let last_session = Self::last_session_of(&parsed_sessions);
         Ok(Self {
             symbol,
             freq: parsed,
             freq_label: freq.trim().to_ascii_lowercase(),
             sessions: parsed_sessions,
+            last_session,
         })
+    }
+
+    fn last_session_of(sessions: &[(NaiveTime, NaiveTime)]) -> Option<usize> {
+        let mut best: Option<usize> = None;
+        for (i, (s, e)) in sessions.iter().enumerate() {
+            if e > s && best.is_none_or(|b| *e > sessions[b].1) {
+                best = Some(i);
+            }
+        }
+        best.or_else(|| sessions.len().checked_sub(1))
     }
 
     fn matches(&self, symbol: &str) -> bool {
         self.symbol.as_deref().is_none_or(|s| s == symbol)
     }
 
-    /// 返回 (本地日, 时段序号); 段外归 -1。无时段配置返回 None。
-    fn session_key(&self, local: NaiveDateTime) -> Option<(NaiveDate, i32)> {
-        if self.sessions.is_empty() {
-            return None;
-        }
+    /// 本地时刻 `local`(基础 bar 区间内一点)所在的手写时段: (序号, 段起点, 段终点),
+    /// 起止为本地时间(跨午夜段的终点在次日)。段外返回 `None`。
+    fn session_at(&self, local: NaiveDateTime) -> Option<(i32, NaiveDateTime, NaiveDateTime)> {
         let t = local.time();
-        let idx = self
-            .sessions
-            .iter()
-            .position(|(s, e)| *s <= t && t <= *e)
-            .map_or(-1, |i| i as i32);
-        Some((local.date(), idx))
-    }
-
-    fn is_last_session_end(&self, local: NaiveDateTime) -> bool {
-        self.sessions
-            .last()
-            .is_some_and(|(_, e)| *e == local.time())
-    }
-}
-
-/// 探测夏令时"跳变缺口"时, 向前步进的分钟数上限(6 小时足够覆盖现实世界的
-/// 任何春季跳变缺口, 通常缺口只有 1 小时, 极少数地区 30 分钟)。
-const MAX_DST_GAP_PROBE_MINUTES: i64 = 360;
-
-/// 引擎时区: 有 IANA 名称用名称(随 DST), 否则用固定偏移秒数。
-#[derive(Debug, Clone, Default)]
-struct LocalClock {
-    tz: Option<Tz>,
-    offset_secs: i32,
-}
-
-impl LocalClock {
-    fn new(tz_name: Option<&str>, offset_secs: i32) -> Self {
-        Self {
-            tz: tz_name.and_then(|n| n.parse::<Tz>().ok()),
-            offset_secs,
-        }
-    }
-
-    fn to_local(&self, ts_ns: i64) -> NaiveDateTime {
-        let secs = ts_ns.div_euclid(1_000_000_000);
-        let nanos = ts_ns.rem_euclid(1_000_000_000) as u32;
-        // `ts_ns` 总是来自一个已经存在的合法 `Bar.timestamp`(UTC 纳秒); UTC 本身
-        // 没有本地时间缺口/重叠这类问题, `single()` 只有在 `secs` 超出 chrono
-        // 可表示的范围(约公元前 26 万年~公元后 26 万年)时才会是 `None` —— 真实
-        // 行情时间戳不可能触发, 故此处 `expect` 视为不可达分支。
-        let utc: DateTime<Utc> = Utc
-            .timestamp_opt(secs, nanos)
-            .single()
-            .expect("invalid ts: secs out of chrono's representable range");
-        match &self.tz {
-            Some(tz) => utc.with_timezone(tz).naive_local(),
-            None => (utc + chrono::Duration::seconds(i64::from(self.offset_secs))).naive_utc(),
-        }
-    }
-
-    fn from_local(&self, local: NaiveDateTime) -> i64 {
-        match &self.tz {
-            Some(tz) => Self::nanos_or_clamp(&Self::resolve_local(tz, local)),
-            None => Self::nanos_or_clamp(
-                &(local - chrono::Duration::seconds(i64::from(self.offset_secs))).and_utc(),
-            ),
-        }
-    }
-
-    /// 把可能落入夏令时"春季跳变缺口"的本地时间解析成合法瞬间。
-    ///
-    /// 缺口内的本地时间不对应任何真实瞬间(例如美东 2024-03-10 当天 02:00-02:59
-    /// 因夏令时整体跳过而不存在); `from_local_datetime(..).earliest()` 对此返回
-    /// `None`。为了不让引擎因为一次窗口标签落在缺口里就 panic, 向前逐分钟探测,
-    /// 取缺口结束后第一个合法瞬间(与 pandas/pytz `nonexistent="shift_forward"`
-    /// 语义一致)。`Ambiguous`(秋季回拨的重叠时段)则已经由 `earliest()` 正确
-    /// 处理为取较早的那个瞬间, 无需特殊分支。
-    fn resolve_local(tz: &Tz, local: NaiveDateTime) -> DateTime<Tz> {
-        if let Some(dt) = tz.from_local_datetime(&local).earliest() {
-            return dt;
-        }
-        let mut probe = local;
-        for _ in 0..MAX_DST_GAP_PROBE_MINUTES {
-            probe += chrono::Duration::minutes(1);
-            if let Some(dt) = tz.from_local_datetime(&probe).earliest() {
-                return dt;
+        let date = local.date();
+        self.sessions.iter().enumerate().find_map(|(i, &(s, e))| {
+            if s < e {
+                (s <= t && t < e).then(|| (date.and_time(s), date.and_time(e)))
+            } else if t >= s {
+                Some((date.and_time(s), (date + Duration::days(1)).and_time(e)))
+            } else if t < e {
+                Some(((date - Duration::days(1)).and_time(s), date.and_time(e)))
+            } else {
+                None
             }
-        }
-        // 现实世界的夏令时缺口不会超过几个小时; 走到这里说明探测窗口给的不够
-        // (可能是异常时区配置), 而不是真的存在这么长的缺口——保留 panic 以便
-        // 第一时间暴露问题, 而不是悄悄返回一个误导性的时间。
-        panic!(
-            "no valid local time found after {local} within {MAX_DST_GAP_PROBE_MINUTES} minutes (tz={tz:?})"
-        );
-    }
-
-    /// `timestamp_nanos_opt()` 只有在瞬间超出 chrono 纳秒可表示范围(约
-    /// 1677~2262 年)时才会是 `None`, 真实行情时间戳不会触达; 但这里不用
-    /// `expect` panic, 而是 clamp 到边界值, 避免引擎因为一次离群配置崩溃。
-    fn nanos_or_clamp<T: TimeZone>(dt: &DateTime<T>) -> i64 {
-        dt.timestamp_nanos_opt().unwrap_or(if dt.timestamp() < 0 {
-            i64::MIN
-        } else {
-            i64::MAX
+            .map(|(a, b)| (i as i32, a, b))
         })
-    }
-
-    /// 本地时间 ceil 到周期(以本地零点为锚), 返回 UTC 纳秒标签。
-    fn ceil_label(&self, local: NaiveDateTime, period_secs: i64) -> i64 {
-        let secs_of_day = i64::from(local.num_seconds_from_midnight());
-        // `i64::div_ceil` (signed) is unstable on this toolchain; compute manually.
-        let ceiled = ((secs_of_day + period_secs - 1) / period_secs) * period_secs;
-        let midnight = local.date().and_hms_opt(0, 0, 0).expect("midnight");
-        self.from_local(midnight + chrono::Duration::seconds(ceiled))
     }
 }
 
@@ -221,13 +162,26 @@ pub struct WindowStateSnapshot {
     pub symbol: String,
     pub freq_label: String,
     pub label_ns: i64,
+    /// 日内窗口的分组键 (交易日, 交易块序号或手写时段序号; 段外 -1)。
+    /// 0.3.71 及更早的存档里是 (本地日期, 手写时段序号)。
     pub session_key: Option<(NaiveDate, i32)>,
+    /// 日线窗口的分组键: 交易日(无解析器时为本地日期; 旧存档为本地日期)。
     pub local_date: NaiveDate,
     pub open: Decimal,
     pub high: Decimal,
     pub low: Decimal,
     pub close: Decimal,
     pub volume: Decimal,
+    // 以下字段只能追加在末尾并带 `#[serde(default)]`(旧存档缺省)。
+    /// 分组键里的块序号(与 `session_key` 第二项相同)。
+    #[serde(default)]
+    pub block_index: Option<i32>,
+    /// 由会话解析器求得的交易日; 旧存档与无解析器时为 `None`。
+    #[serde(default)]
+    pub trading_day: Option<NaiveDate>,
+    /// 窗口区间起点(UTC 纳秒)。
+    #[serde(default)]
+    pub interval_start: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -245,6 +199,8 @@ struct WindowState {
     label_ns: i64,
     session_key: Option<(NaiveDate, i32)>,
     local_date: NaiveDate,
+    trading_day: Option<NaiveDate>,
+    interval_start: Option<i64>,
     open: Decimal,
     high: Decimal,
     low: Decimal,
@@ -253,18 +209,14 @@ struct WindowState {
 }
 
 impl WindowState {
-    fn open_from(
-        bar: &Bar,
-        freq: WindowFreq,
-        label_ns: i64,
-        session_key: Option<(NaiveDate, i32)>,
-        local_date: NaiveDate,
-    ) -> Self {
+    fn open_from(bar: &Bar, freq: WindowFreq, place: &Placement) -> Self {
         Self {
             freq,
-            label_ns,
-            session_key,
-            local_date,
+            label_ns: place.label,
+            session_key: place.session_key,
+            local_date: place.date,
+            trading_day: place.trading_day,
+            interval_start: place.interval_start,
             open: bar.open,
             high: bar.high,
             low: bar.low,
@@ -295,7 +247,43 @@ impl WindowState {
             symbol: symbol.to_string(),
             extra: HashMap::new(),
             freq: Some(freq_label.to_string()),
+            interval_start: self.interval_start,
         }
+    }
+}
+
+/// 基础 bar 在某条订阅下的归属。
+struct Placement {
+    label: i64,
+    session_key: Option<(NaiveDate, i32)>,
+    /// 日线分组键(交易日或本地日期); 日内窗口仅记录。
+    date: NaiveDate,
+    trading_day: Option<NaiveDate>,
+    interval_start: Option<i64>,
+    /// 区间终点到达该时刻即闭合(`None` = 不即时闭合)。
+    close_at: Option<i64>,
+}
+
+/// 品种所在交易日的区间缓存: 交易日 D 覆盖 `(lower, close]`。
+#[derive(Debug, Clone, Copy)]
+struct DaySpan {
+    day: NaiveDate,
+    lower: i64,
+    close: i64,
+    /// 日线窗口标签: 收盘时刻; 收盘恰为次日本地 0 点(如 ALWAYS_OPEN)时减 1ns,
+    /// 与只有日期的日线改写(`_date_only_close_ns`)同口径, 标签仍落在交易日当天。
+    label: i64,
+    /// 前一交易日的窗口标签(同上规则), 作本交易日窗口的 `interval_start`。
+    prev_label: Option<i64>,
+}
+
+/// 会话解析器句柄(`SessionResolver` 没有实现 `Debug`)。
+#[derive(Clone)]
+struct ResolverHandle(Arc<SessionResolver>);
+
+impl std::fmt::Debug for ResolverHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SessionResolver")
     }
 }
 
@@ -306,6 +294,36 @@ pub struct WindowAggregator {
     clock: LocalClock,
     /// (symbol, freq_label) -> 在形成窗口
     states: HashMap<(String, String), WindowState>,
+    resolver: Option<ResolverHandle>,
+    asset_types: HashMap<String, AssetType>,
+    /// 按品种缓存上一次命中的交易块。
+    block_cache: HashMap<String, TradingBlock>,
+    /// 按品种缓存上一次命中的交易日区间。
+    day_cache: HashMap<String, DaySpan>,
+    /// bar 落在品种时段表全部交易块之外时是否告警(策略侧 `BarGenerator` 与离线
+    /// replay 打开; 引擎另有闭市时段告警, 不重复)。
+    warn_out_of_block: bool,
+    /// 已告警过"落在时段表之外"的品种(每个品种只告警一次)。
+    out_of_block_warned: HashSet<String>,
+    /// 上次 flush 汇总时的受影响品种数(同一批不重复汇总)。
+    out_of_block_summarized: usize,
+    /// 基础周期未知且 bar 不带区间(只能延迟闭合)时是否告警一次(引擎打开)。
+    warn_deferred_close: bool,
+    deferred_close_warned: bool,
+    /// 本次 `update_in_day` 由引擎指定的归属交易日(只在该调用期间有值)。
+    forced_day: Option<NaiveDate>,
+}
+
+/// bar 区间终点: 旧口径的终点戳 bar 打在边界前 1ns(`ts + 1` 是整秒, 如旧存档),
+/// 其区间终点为 `ts + 1`; 其余 bar(含 `BarAggregator` 按右闭区间合成、
+/// `ts` 恰为边界的 bar, 以及区间未知的)为 `ts`。
+fn bar_end(bar: &Bar) -> i64 {
+    match bar.interval_start {
+        Some(start) if start < bar.timestamp && (bar.timestamp + 1).rem_euclid(NS_PER_SEC) == 0 => {
+            bar.timestamp + 1
+        }
+        _ => bar.timestamp,
+    }
 }
 
 impl WindowAggregator {
@@ -316,8 +334,86 @@ impl WindowAggregator {
         }
     }
 
+    /// 用给定本地时钟新建(与会话解析器共用同一时区)。
+    pub(crate) fn with_local_clock(clock: LocalClock) -> Self {
+        Self {
+            clock,
+            ..Self::default()
+        }
+    }
+
     pub fn set_clock(&mut self, tz_name: Option<&str>, offset_secs: i32) {
         self.clock = LocalClock::new(tz_name, offset_secs);
+        self.block_cache.clear();
+        self.day_cache.clear();
+    }
+
+    /// 设置会话解析器与各品种资产类型(决定时段表)。`None` 退回本地时钟切分。
+    pub fn set_resolver(
+        &mut self,
+        resolver: Option<Arc<SessionResolver>>,
+        asset_types: HashMap<String, AssetType>,
+    ) {
+        self.resolver = resolver.map(ResolverHandle);
+        self.asset_types = asset_types;
+        self.block_cache.clear();
+        self.day_cache.clear();
+    }
+
+    /// 运行中补登记(或改写)单个品种的资产类型, 只作废该品种的区间缓存。
+    pub fn set_asset_type(&mut self, symbol: &str, asset_type: AssetType) {
+        if self.asset_types.get(symbol) == Some(&asset_type) {
+            return;
+        }
+        self.asset_types.insert(symbol.to_string(), asset_type);
+        self.block_cache.remove(symbol);
+        self.day_cache.remove(symbol);
+    }
+
+    /// 品种是否已登记资产类型。
+    pub fn has_asset_type(&self, symbol: &str) -> bool {
+        self.asset_types.contains_key(symbol)
+    }
+
+    /// 已登记的品种资产类型。
+    pub fn asset_types(&self) -> &HashMap<String, AssetType> {
+        &self.asset_types
+    }
+
+    /// 打开"基础周期未知且 bar 不带 interval_start、窗口只能延迟闭合"告警(一次)。
+    pub fn set_warn_deferred_close(&mut self, enabled: bool) {
+        self.warn_deferred_close = enabled;
+    }
+
+    /// 打开"bar 落在时段表之外"告警(每个品种一次)。
+    pub fn set_warn_out_of_block(&mut self, enabled: bool) {
+        self.warn_out_of_block = enabled;
+    }
+
+    /// bar 落在品种时段表全部交易块之外(且有订阅按时段表切分)时告警一次。
+    fn check_out_of_block(&mut self, symbol: &str, point: i64, ts: i64) {
+        // 引擎指定归属交易日的 bar(实盘收盘宽限期内)本就在收盘后, 不告警。
+        if !self.warn_out_of_block
+            || self.forced_day.is_some()
+            || self.out_of_block_warned.contains(symbol)
+        {
+            return;
+        }
+        let uses_schedule = self
+            .subscriptions
+            .iter()
+            .any(|s| s.matches(symbol) && s.sessions.is_empty());
+        if uses_schedule && matches!(self.block_for(symbol, point), Some(None)) {
+            self.out_of_block_warned.insert(symbol.to_string());
+            // 全局最多逐条告警 OUT_OF_BLOCK_WARN_LIMIT 个品种, 其余只记入集合,
+            // 由 flush 汇总一条(多品种不刷屏)。
+            if self.out_of_block_warned.len() <= OUT_OF_BLOCK_WARN_LIMIT {
+                log::warn!(
+                    "标的 {symbol} 的 bar 落在时段表之外，窗口按时钟切分（首次：{}）；期货/期权请传 asset_type= 或 sessions=（如 {{\"rb\": \"CN_FUTURES_NIGHT_23\"}}），手写时段可用 session_windows=",
+                    self.clock.to_local(ts).format("%Y-%m-%d %H:%M:%S")
+                );
+            }
+        }
     }
 
     /// 替换订阅表。**不清空**仍被订阅的在形成窗口(checkpoint 恢复后再配置时要保留),
@@ -364,8 +460,8 @@ impl WindowAggregator {
                 if Self::scopes_overlap(&existing.symbol, &sub.symbol) {
                     return Err(format!(
                         "订阅冲突: freq={:?} 的 symbol 范围重叠(已有 symbol={:?}, 新增 \
-                         symbol={:?})但配置不一致(sessions 或 symbol 范围不完全相同); \
-                         请让重叠的订阅保持完全一致, 或改成互斥的 symbol 范围",
+                         symbol={:?})但配置不一致(session_windows 或 symbol 范围不完全相同); \
+                         请让重叠的订阅保持完全一致(session_windows 须逐项相同且顺序相同), 或改成互斥的 symbol 范围",
                         sub.freq_label, existing.symbol, sub.symbol
                     ));
                 }
@@ -400,81 +496,298 @@ impl WindowAggregator {
         v
     }
 
+    /// `point` 所在的交易块(按品种缓存)。外层 `None` = 无解析器或解析出错(退回本地
+    /// 时钟), 内层 `None` = 落在块外(午休、闭市)。
+    fn block_for(&mut self, symbol: &str, point: i64) -> Option<Option<TradingBlock>> {
+        if let Some(b) = self.block_cache.get(symbol)
+            && b.start <= point
+            && point < b.end
+        {
+            return Some(Some(*b));
+        }
+        let resolver = &self.resolver.as_ref()?.0;
+        let asset_type = self.asset_types.get(symbol).copied();
+        let block = resolver.block_at(symbol, asset_type, point).ok()?;
+        if let Some(b) = block {
+            self.block_cache.insert(symbol.to_string(), b);
+        }
+        Some(block)
+    }
+
+    /// `point` 所属的交易日区间(按品种缓存); 无解析器或解析出错返回 `None`。
+    /// 引擎指定了归属交易日(实盘收盘宽限期内的 bar, 见 [`Self::update_in_day`])时
+    /// 取该交易日的区间, 不查也不写缓存。
+    fn day_for(&mut self, symbol: &str, point: i64) -> Option<DaySpan> {
+        if self.forced_day.is_none()
+            && let Some(s) = self.day_cache.get(symbol)
+            && s.lower < point
+            && point <= s.close
+        {
+            return Some(*s);
+        }
+        let resolver = &self.resolver.as_ref()?.0;
+        let asset_type = self.asset_types.get(symbol).copied();
+        let day = match self.forced_day {
+            Some(day) => day,
+            None => {
+                resolver
+                    .resolve_instant(symbol, asset_type, point)
+                    .ok()?
+                    .trading_day
+            }
+        };
+        let (open, close) = resolver.day_bounds(symbol, asset_type, day).ok()?;
+        let prev = resolver
+            .previous_trading_day(symbol, asset_type, day)
+            .ok()
+            .and_then(|prev| {
+                resolver
+                    .day_bounds(symbol, asset_type, prev)
+                    .ok()
+                    .map(|(_, c)| (prev, c))
+            });
+        let span = DaySpan {
+            day,
+            // 前一交易日未知(日历首日)时只缓存开盘后的部分
+            lower: prev.map_or(open - 1, |(_, c)| c),
+            close,
+            label: self.day_label(day, close),
+            prev_label: prev.map(|(d, c)| self.day_label(d, c)),
+        };
+        if self.forced_day.is_none() {
+            self.day_cache.insert(symbol.to_string(), span);
+        }
+        Some(span)
+    }
+
+    /// 交易日 `day` 的日线窗口标签: 收盘恰为次日本地 0 点时取前 1ns。
+    fn day_label(&self, day: NaiveDate, close: i64) -> i64 {
+        let next_midnight = (day + Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .map(|t| self.clock.from_local(t));
+        if next_midnight == Some(close) {
+            close - 1
+        } else {
+            close
+        }
+    }
+
+    /// 日内窗口(`period` 秒)的归属。
+    fn place_intraday(
+        &mut self,
+        sub_idx: usize,
+        symbol: &str,
+        point: i64,
+        local_ts: NaiveDateTime,
+        period: i64,
+    ) -> Placement {
+        let period_ns = period * NS_PER_SEC;
+        let clock_label = self.clock.ceil_label(local_ts, period);
+        if self.subscriptions[sub_idx].sessions.is_empty() {
+            match self.block_for(symbol, point) {
+                Some(Some(block)) => {
+                    return Placement {
+                        label: clock_label.min(block.end),
+                        session_key: Some((block.trading_day, block.index as i32)),
+                        date: block.trading_day,
+                        trading_day: Some(block.trading_day),
+                        interval_start: Some((clock_label - period_ns).max(block.start)),
+                        close_at: Some(clock_label.min(block.end)),
+                    };
+                }
+                Some(None) => {
+                    if let Some(span) = self.day_for(symbol, point) {
+                        return Placement {
+                            label: clock_label,
+                            session_key: Some((span.day, -1)),
+                            date: span.day,
+                            trading_day: Some(span.day),
+                            interval_start: Some(clock_label - period_ns),
+                            close_at: Some(clock_label),
+                        };
+                    }
+                }
+                None => {}
+            }
+            return Placement {
+                label: clock_label,
+                session_key: None,
+                date: local_ts.date(),
+                trading_day: None,
+                interval_start: Some(clock_label - period_ns),
+                close_at: Some(clock_label),
+            };
+        }
+        // 手写时段: 序号按用户列表, 交易日由解析器求(没有时取时段起点的本地日期)。
+        let local_point = self.clock.to_local(point);
+        let hit = self.subscriptions[sub_idx].session_at(local_point);
+        let span = self.day_for(symbol, point);
+        match hit {
+            Some((idx, start, end)) => {
+                let start_ns = self.clock.from_local(start);
+                let end_ns = self.clock.from_local(end);
+                let day = span.map_or(start.date(), |s| s.day);
+                let label = clock_label.min(end_ns);
+                Placement {
+                    label,
+                    session_key: Some((day, idx)),
+                    date: day,
+                    trading_day: span.map(|s| s.day),
+                    interval_start: Some((clock_label - period_ns).max(start_ns)),
+                    close_at: Some(label),
+                }
+            }
+            None => {
+                let day = span.map_or(local_point.date(), |s| s.day);
+                Placement {
+                    label: clock_label,
+                    session_key: Some((day, -1)),
+                    date: day,
+                    trading_day: span.map(|s| s.day),
+                    interval_start: Some(clock_label - period_ns),
+                    close_at: Some(clock_label),
+                }
+            }
+        }
+    }
+
+    /// 日线窗口的归属。
+    fn place_daily(
+        &mut self,
+        sub_idx: usize,
+        bar: &Bar,
+        point: i64,
+        local_ts: NaiveDateTime,
+    ) -> Placement {
+        let span = self.day_for(&bar.symbol, point);
+        // 无解析器时按 bar 时间戳的本地日期分组(旧行为)。
+        let date = span.map_or(local_ts.date(), |s| s.day);
+        let sub = &self.subscriptions[sub_idx];
+        // 手写时段: bar 落在"最后一段"内时, 在该段这一次的结束时刻闭合。段终点按段
+        // 起点所在日期换算(跨午夜段的终点在起点次日), 不按交易日 D 的日期。
+        let manual = sub.last_session.map(|last| {
+            sub.session_at(self.clock.to_local(point))
+                .filter(|(idx, _, _)| *idx as usize == last)
+                .map(|(_, _, end)| self.clock.from_local(end))
+        });
+        match span {
+            Some(s) => Placement {
+                label: s.label,
+                session_key: None,
+                date,
+                trading_day: Some(s.day),
+                interval_start: s.prev_label,
+                // 闭合判据用收盘本身(不是减 1ns 的标签), 次日 0 点那根 bar 也能闭合。
+                close_at: manual.unwrap_or(Some(s.close)),
+            },
+            // 无解析器: 本地日期分组, 标签 = 当日最后一根基础 bar 的时间戳(旧行为)。
+            None => Placement {
+                label: bar.timestamp,
+                session_key: None,
+                date,
+                trading_day: None,
+                interval_start: None,
+                close_at: manual.flatten(),
+            },
+        }
+    }
+
+    /// 喂入一根基础 bar, 归属交易日由引擎给定: `Some(D)` 时(实盘收盘宽限期内归
+    /// 当日的 bar)按交易日 D 分组, 否则同 [`Self::update`]。
+    pub fn update_in_day(&mut self, bar: &Bar, day: Option<NaiveDate>) -> Vec<Bar> {
+        self.forced_day = day;
+        let closed = self.update(bar);
+        self.forced_day = None;
+        closed
+    }
+
     /// 喂入一根基础 bar, 返回本步闭合的窗口 bar(按周期从小到大)。
     pub fn update(&mut self, bar: &Bar) -> Vec<Bar> {
         if self.subscriptions.is_empty() {
             return Vec::new();
         }
-        let local = self.clock.to_local(bar.timestamp);
-        let base_known = self.base_interval_min.is_some();
+        let local_ts = self.clock.to_local(bar.timestamp);
+        // 区间内一点: 终点戳 bar 的 ts 是区间右端, 归属看 ts 前 1ns。
+        let point = bar.timestamp.saturating_sub(1);
+        let end = bar_end(bar);
+        let base_known = self.base_interval_min.is_some() || bar.interval_start.is_some();
+        self.check_out_of_block(&bar.symbol, point, bar.timestamp);
+        if !base_known && self.warn_deferred_close && !self.deferred_close_warned {
+            self.deferred_close_warned = true;
+            log::warn!(
+                "已订阅窗口周期 {:?} 但基础数据周期未知(self.freq=None)且 bar 不带 interval_start(标的 {}): 窗口将在下一根落入新窗口的 bar 到达时才闭合(晚一根基础 bar)。回测请传 run_backtest(freq=), 实盘请让行情网关声明 metadata['freq'] 或给 bar 带上 interval_start",
+                self.subscribed_freqs(),
+                bar.symbol
+            );
+        }
         // (总分钟数, freq_label, bar); label 作 tie-break, 保证 "1h" 与 "60min"
         // 这类分钟数相同但标签不同的周期有确定顺序(否则顺序依赖 HashMap 迭代,
         // 对 golden baseline 是隐患)。
         let mut closed: Vec<(u32, String, Bar)> = Vec::new();
 
-        for sub in self.subscriptions.iter().filter(|s| s.matches(&bar.symbol)) {
-            let key = (bar.symbol.clone(), sub.freq_label.clone());
-            match sub.freq.period_seconds() {
-                Some(period) => {
-                    let label = self.clock.ceil_label(local, period);
-                    let skey = sub.session_key(local);
-                    if let Some(st) = self.states.get(&key)
-                        && (st.label_ns != label || st.session_key != skey)
-                    {
-                        closed.push((
-                            sub.freq.total_minutes(),
-                            sub.freq_label.clone(),
-                            st.to_bar(&bar.symbol, &sub.freq_label),
-                        ));
-                        self.states.remove(&key);
-                    }
-                    let st = self
-                        .states
-                        .entry(key.clone())
-                        .and_modify(|s| s.merge(bar))
-                        .or_insert_with(|| {
-                            WindowState::open_from(bar, sub.freq, label, skey, local.date())
-                        });
-                    if base_known && bar.timestamp == label {
-                        closed.push((
-                            sub.freq.total_minutes(),
-                            sub.freq_label.clone(),
-                            st.to_bar(&bar.symbol, &sub.freq_label),
-                        ));
-                        self.states.remove(&key);
-                    }
+        for idx in 0..self.subscriptions.len() {
+            if !self.subscriptions[idx].matches(&bar.symbol) {
+                continue;
+            }
+            let freq = self.subscriptions[idx].freq;
+            let freq_label = self.subscriptions[idx].freq_label.clone();
+            let daily = freq.period_seconds().is_none();
+            let place = match freq.period_seconds() {
+                Some(period) => self.place_intraday(idx, &bar.symbol, point, local_ts, period),
+                None => self.place_daily(idx, bar, point, local_ts),
+            };
+            let key = (bar.symbol.clone(), freq_label.clone());
+            if let Some(st) = self.states.get(&key) {
+                // 日内窗口按 (交易日, 标签) 判断是否换窗: 块内标签不超出块且块互不重叠,
+                // 不同块的标签必然不同; 块外 bar(时段表与数据不符, 如期货用了股票表)
+                // 按时钟标签并入同标签的块内窗口, 不会出两根同标签窗口。
+                let changed = if daily {
+                    st.local_date != place.date
+                } else {
+                    st.label_ns != place.label
+                        || st.session_key.map(|k| k.0) != place.session_key.map(|k| k.0)
+                };
+                if changed {
+                    closed.push((
+                        freq.total_minutes(),
+                        freq_label.clone(),
+                        st.to_bar(&bar.symbol, &freq_label),
+                    ));
+                    self.states.remove(&key);
                 }
-                None => {
-                    let date = local.date();
-                    if let Some(st) = self.states.get(&key)
-                        && st.local_date != date
-                    {
-                        closed.push((
-                            sub.freq.total_minutes(),
-                            sub.freq_label.clone(),
-                            st.to_bar(&bar.symbol, &sub.freq_label),
-                        ));
-                        self.states.remove(&key);
+            }
+            let st = self
+                .states
+                .entry(key.clone())
+                .and_modify(|s| {
+                    s.merge(bar);
+                    if daily {
+                        // 日线标签与起点随交易日确定; 无解析器时标签跟随最后一根 bar。
+                        s.label_ns = place.label;
+                        s.interval_start = place.interval_start;
+                    } else {
+                        // 块外与块内 bar 合并时: 起点取两者较早者, 分组键取块内的。
+                        if let (Some(a), Some(b)) = (s.interval_start, place.interval_start) {
+                            s.interval_start = Some(a.min(b));
+                        }
+                        if s.session_key.is_some_and(|k| k.1 < 0)
+                            && place.session_key.is_some_and(|k| k.1 >= 0)
+                        {
+                            s.session_key = place.session_key;
+                        }
                     }
-                    let st = self
-                        .states
-                        .entry(key.clone())
-                        .and_modify(|s| {
-                            s.merge(bar);
-                            s.label_ns = bar.timestamp;
-                        })
-                        .or_insert_with(|| {
-                            WindowState::open_from(bar, sub.freq, bar.timestamp, None, date)
-                        });
-                    if base_known && sub.is_last_session_end(local) {
-                        closed.push((
-                            sub.freq.total_minutes(),
-                            sub.freq_label.clone(),
-                            st.to_bar(&bar.symbol, &sub.freq_label),
-                        ));
-                        self.states.remove(&key);
-                    }
-                }
+                })
+                .or_insert_with(|| WindowState::open_from(bar, freq, &place));
+            // 即时闭合: bar 区间 (point, end] 到达闭合时刻。日线手写时段且无解析器时,
+            // 要求区间覆盖闭合时刻, 免得同一本地日期收盘后的 bar 一来就闭合。
+            let reaches = place.close_at.is_some_and(|c| end >= c && point < c);
+            if base_known && reaches {
+                closed.push((
+                    freq.total_minutes(),
+                    freq_label.clone(),
+                    st.to_bar(&bar.symbol, &freq_label),
+                ));
+                self.states.remove(&key);
             }
         }
         closed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
@@ -484,6 +797,14 @@ impl WindowAggregator {
     /// 闭合全部在形成窗口(会话结束)。按 (symbol, 周期, freq_label) 排序;
     /// freq_label 作 tie-break 原因同 [`Self::update`]。
     pub fn flush(&mut self) -> Vec<Bar> {
+        let affected = self.out_of_block_warned.len();
+        if affected > OUT_OF_BLOCK_WARN_LIMIT && affected != self.out_of_block_summarized {
+            self.out_of_block_summarized = affected;
+            log::warn!(
+                "时段表之外的 bar 汇总：共 {affected} 个标的的 bar 落在时段表之外，窗口按时钟切分；只逐一告警了前 {OUT_OF_BLOCK_WARN_LIMIT} 个标的，其余 {} 个未逐一告警。改法见上面的告警（传 asset_type= 或 sessions=，或用 session_windows= 手写时段）",
+                affected - OUT_OF_BLOCK_WARN_LIMIT
+            );
+        }
         let mut out: Vec<(String, u32, String, Bar)> = Vec::new();
         for ((symbol, label), st) in self.states.drain() {
             out.push((
@@ -495,6 +816,38 @@ impl WindowAggregator {
         }
         out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
         out.into_iter().map(|(_, _, _, b)| b).collect()
+    }
+
+    /// 交易日 `day` 日终(收盘 `close_ts`)时闭合已结束的在形成窗口: 标签不晚于收盘的
+    /// 日内窗口(所在块已结束), 以及交易日不晚于 `day` 的日线窗口。收盘时刻的 bar
+    /// 缺失时, 这些窗口不必等到下一交易日第一根 bar 才闭合。排序同 [`Self::flush`]。
+    pub fn close_through_day(&mut self, day: NaiveDate, close_ts: i64) -> Vec<Bar> {
+        let ended: Vec<(String, String)> = self
+            .states
+            .iter()
+            .filter(|(_, st)| match st.freq {
+                WindowFreq::Day => st.trading_day.is_some_and(|d| d <= day),
+                // 标签晚于收盘、但归 `day` 的日内窗口(实盘收盘宽限期内的 bar)同样闭合。
+                _ => st.label_ns <= close_ts || st.trading_day.is_some_and(|d| d <= day),
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        let mut out: Vec<(String, u32, String, Bar)> = Vec::with_capacity(ended.len());
+        for key in ended {
+            if let Some(st) = self.states.remove(&key) {
+                let (symbol, label) = key;
+                let bar = st.to_bar(&symbol, &label);
+                out.push((symbol, st.freq.total_minutes(), label, bar));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        out.into_iter().map(|(_, _, _, b)| b).collect()
+    }
+
+    /// 品种在 `freq` 上是否有正在形成的窗口(不克隆快照)。
+    pub fn is_forming(&self, symbol: &str, freq: &str) -> bool {
+        self.states
+            .contains_key(&(symbol.to_string(), freq.trim().to_ascii_lowercase()))
     }
 
     pub fn current(&self, symbol: &str, freq: &str) -> Option<Bar> {
@@ -519,6 +872,9 @@ impl WindowAggregator {
                 low: st.low,
                 close: st.close,
                 volume: st.volume,
+                block_index: st.session_key.map(|k| k.1),
+                trading_day: st.trading_day,
+                interval_start: st.interval_start,
             })
             .collect();
         states.sort_by(|a, b| {
@@ -529,6 +885,8 @@ impl WindowAggregator {
         WindowAggregatorSnapshot { states }
     }
 
+    /// 恢复在形成窗口。旧存档(无 `trading_day`)的分组键按原样恢复: 与新规则下的键
+    /// 不一致时, 该窗口在下一根 bar 到达时闭合(不报错)。
     pub fn restore(&mut self, snapshot: WindowAggregatorSnapshot) {
         self.states.clear();
         for s in snapshot.states {
@@ -543,6 +901,8 @@ impl WindowAggregator {
                     label_ns: s.label_ns,
                     session_key: s.session_key,
                     local_date: s.local_date,
+                    trading_day: s.trading_day,
+                    interval_start: s.interval_start,
                     open: s.open,
                     high: s.high,
                     low: s.low,
@@ -582,6 +942,7 @@ mod tests {
             symbol: symbol.to_string(),
             extra,
             freq: None,
+            interval_start: None,
         }
     }
 
@@ -855,6 +1216,361 @@ mod tests {
             out = a.update(&bar(ns(2024, 1, 2, 9, m), 10, "X"));
         }
         assert_eq!(out.len(), 1, "重复订阅去重后只应闭合一根窗口 bar");
+    }
+
+    fn resolved_agg(
+        subs: &[(&str, Option<Vec<(String, String)>>)],
+        sessions: Vec<(&str, &str)>,
+        symbol: &str,
+        asset_type: AssetType,
+    ) -> WindowAggregator {
+        let mut a = agg(subs, Some(1));
+        let clock = LocalClock::new(Some("Asia/Shanghai"), 28800);
+        let sessions = sessions
+            .into_iter()
+            .map(|(k, t)| {
+                (
+                    k.to_string(),
+                    crate::calendar::schedule::template(t).unwrap(),
+                )
+            })
+            .collect();
+        let resolver = SessionResolver::new(clock, None, sessions).unwrap();
+        let mut types = HashMap::new();
+        types.insert(symbol.to_string(), asset_type);
+        a.set_resolver(Some(Arc::new(resolver)), types);
+        a
+    }
+
+    #[test]
+    fn stock_hour_window_clamps_at_lunch_and_closes_immediately() {
+        let mut a = resolved_agg(&[("1h", None)], vec![], "S", AssetType::Stock);
+        assert!(a.update(&bar(ns(2024, 1, 2, 11, 1), 10, "S")).is_empty());
+        // 11:01～11:30 的窗口标签截到块结束 11:30, 在 11:30 那根即时闭合
+        let closed = a.update(&bar(ns(2024, 1, 2, 11, 30), 11, "S"));
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].timestamp, ns(2024, 1, 2, 11, 30));
+        assert_eq!(closed[0].interval_start, Some(ns(2024, 1, 2, 11, 0)));
+        // 下午块: 13:01 开新窗口, 起点为块起点 13:00
+        assert!(a.update(&bar(ns(2024, 1, 2, 13, 1), 12, "S")).is_empty());
+        let cur = a.current("S", "1h").unwrap();
+        assert_eq!(cur.timestamp, ns(2024, 1, 2, 14, 0));
+        assert_eq!(cur.interval_start, Some(ns(2024, 1, 2, 13, 0)));
+    }
+
+    #[test]
+    fn night_futures_windows_group_by_trading_day_across_midnight() {
+        let mut a = resolved_agg(
+            &[("1d", None), ("1h", None)],
+            vec![("au", "CN_FUTURES_NIGHT_0230")],
+            "au2406",
+            AssetType::Futures,
+        );
+        // 周五日盘收盘: 日线(交易日 01-05)在 15:00 即时闭合
+        let closed = a.update(&bar(ns(2024, 1, 5, 15, 0), 10, "au2406"));
+        let day = closed
+            .iter()
+            .find(|b| b.freq.as_deref() == Some("1d"))
+            .unwrap();
+        assert_eq!(day.timestamp, ns(2024, 1, 5, 15, 0));
+        assert_eq!(day.interval_start, Some(ns(2024, 1, 4, 15, 0)));
+        // 周五夜盘跨午夜到周六 02:30: 同一块, 1h 窗口在 00:00 闭合, 不因换自然日断开
+        a.update(&bar(ns(2024, 1, 5, 23, 30), 11, "au2406"));
+        let closed = a.update(&bar(ns(2024, 1, 6, 0, 0), 12, "au2406"));
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].freq.as_deref(), Some("1h"));
+        a.update(&bar(ns(2024, 1, 6, 2, 30), 13, "au2406"));
+        // 周一日盘: 与周五夜盘同属交易日 01-08, 日线不在此处闭合
+        let closed = a.update(&bar(ns(2024, 1, 8, 9, 1), 14, "au2406"));
+        assert!(closed.iter().all(|b| b.freq.as_deref() != Some("1d")));
+        let closed = a.update(&bar(ns(2024, 1, 8, 15, 0), 15, "au2406"));
+        let day = closed
+            .iter()
+            .find(|b| b.freq.as_deref() == Some("1d"))
+            .unwrap();
+        assert_eq!(day.timestamp, ns(2024, 1, 8, 15, 0));
+        assert_eq!(day.interval_start, Some(ns(2024, 1, 5, 15, 0)));
+        assert_eq!(day.open, Decimal::from(11), "开盘取周五夜盘第一根");
+        assert_eq!(day.close, Decimal::from(15));
+    }
+
+    #[test]
+    fn tick_synthesized_bar_closes_window_at_boundary() {
+        // 旧口径（旧存档/外部数据）的终点戳 bar: ts = 边界 - 1ns, interval_start =
+        // 起点 - 1ns; 基础周期未配置时也按 bar 区间即时闭合。
+        let mut a = agg(&[("5min", None)], None);
+        let mut synth = |m: u32| {
+            let mut b = bar(ns(2024, 1, 2, 9, m) - 1, 10, "X");
+            b.interval_start = Some(ns(2024, 1, 2, 9, m - 1) - 1);
+            a.update(&b)
+        };
+        // synth(m) = 区间 [m-1, m) 的合成 bar; 09:30～09:35 窗口含 synth(31..=35)
+        for m in 31..=34 {
+            assert!(synth(m).is_empty(), "minute {m} must not close");
+        }
+        let closed = synth(35);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].timestamp, ns(2024, 1, 2, 9, 35));
+        assert_eq!(closed[0].volume, Decimal::from(50));
+    }
+
+    #[test]
+    fn right_closed_aggregator_bar_closes_window_at_boundary() {
+        // BarAggregator 现行口径: 右闭区间 (S, E], ts = E(整分), interval_start = S;
+        // bar_end 取 ts 本身, 窗口在边界即时闭合且不把 E 那根归入下一窗口。
+        let mut a = agg(&[("5min", None)], None);
+        let mut synth = |m: u32| {
+            let mut b = bar(ns(2024, 1, 2, 9, m), 10, "X");
+            b.interval_start = Some(ns(2024, 1, 2, 9, m - 1));
+            a.update(&b)
+        };
+        for m in 31..=34 {
+            assert!(synth(m).is_empty(), "minute {m} must not close");
+        }
+        let closed = synth(35);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].timestamp, ns(2024, 1, 2, 9, 35));
+        assert_eq!(closed[0].interval_start, Some(ns(2024, 1, 2, 9, 30)));
+        assert_eq!(closed[0].volume, Decimal::from(50));
+        assert!(synth(36).is_empty(), "09:36 属于下一窗口");
+    }
+
+    #[test]
+    fn manual_sessions_accept_cross_midnight_and_pick_last_session() {
+        let sessions = vec![
+            ("21:00".to_string(), "02:30".to_string()),
+            ("09:00".to_string(), "10:15".to_string()),
+            ("13:30".to_string(), "15:00".to_string()),
+            ("10:30".to_string(), "11:30".to_string()),
+        ];
+        let sub = WindowSubscription::parse(None, "1d", Some(sessions)).unwrap();
+        assert_eq!(sub.last_session, Some(2), "不跨午夜的段中结束最晚者");
+        let err = WindowSubscription::parse(
+            None,
+            "1d",
+            Some(vec![("09:00".to_string(), "09:00".to_string())]),
+        )
+        .unwrap_err();
+        assert!(err.contains("长度为 0"), "{err}");
+        let only_night = WindowSubscription::parse(
+            None,
+            "1d",
+            Some(vec![("21:00".to_string(), "02:30".to_string())]),
+        )
+        .unwrap();
+        assert_eq!(only_night.last_session, Some(0));
+        // 跨午夜段: 00:30 归入前一日 21:00 起的那一段
+        let local = NaiveDate::from_ymd_opt(2024, 1, 6)
+            .unwrap()
+            .and_hms_opt(0, 30, 0)
+            .unwrap();
+        let (idx, start, end) = sub.session_at(local).unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(start.date(), NaiveDate::from_ymd_opt(2024, 1, 5).unwrap());
+        assert_eq!(end.date(), NaiveDate::from_ymd_opt(2024, 1, 6).unwrap());
+    }
+
+    #[test]
+    fn legacy_snapshot_without_new_fields_restores_and_closes_on_key_change() {
+        // 0.3.71 存档的窗口状态只有前 11 个字段(rmp_serde 按数组编码)
+        #[derive(Serialize)]
+        struct LegacyState {
+            symbol: String,
+            freq_label: String,
+            label_ns: i64,
+            session_key: Option<(NaiveDate, i32)>,
+            local_date: NaiveDate,
+            open: Decimal,
+            high: Decimal,
+            low: Decimal,
+            close: Decimal,
+            volume: Decimal,
+        }
+        #[derive(Serialize)]
+        struct LegacySnapshot {
+            states: Vec<LegacyState>,
+        }
+        let legacy = LegacySnapshot {
+            states: vec![LegacyState {
+                symbol: "S".to_string(),
+                freq_label: "5min".to_string(),
+                label_ns: ns(2024, 1, 2, 9, 35),
+                session_key: None,
+                local_date: NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+                open: Decimal::from(7),
+                high: Decimal::from(8),
+                low: Decimal::from(6),
+                close: Decimal::from(7),
+                volume: Decimal::from(10),
+            }],
+        };
+        let bytes = rmp_serde::to_vec(&legacy).unwrap();
+        let decoded: WindowAggregatorSnapshot = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded.states[0].trading_day, None);
+        assert_eq!(decoded.states[0].interval_start, None);
+        let mut a = resolved_agg(&[("5min", None)], vec![], "S", AssetType::Stock);
+        a.restore(decoded);
+        // 新键为 (交易日, 块 0), 与旧键 None 不一致: 下一根 bar 到达时闭合旧窗口, 不报错
+        let closed = a.update(&bar(ns(2024, 1, 2, 9, 33), 10, "S"));
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].open, Decimal::from(7));
+        assert_eq!(closed[0].timestamp, ns(2024, 1, 2, 9, 35));
+        // 新窗口带新键, 快照往返保留新字段
+        let snap = a.snapshot();
+        assert_eq!(
+            snap.states[0].trading_day,
+            NaiveDate::from_ymd_opt(2024, 1, 2)
+        );
+        assert_eq!(snap.states[0].block_index, Some(0));
+        assert_eq!(snap.states[0].interval_start, Some(ns(2024, 1, 2, 9, 30)));
+    }
+
+    #[test]
+    fn all_cross_midnight_manual_daily_closes_at_segment_end_after_start_date() {
+        // 只有夜盘一段: 交易日 01-08(周一)的夜盘从周五 21:00 到周六 02:30,
+        // 闭合时刻按段起点日期换算为周六 02:30, 而不是交易日 D(周一)的 02:30。
+        let night = Some(vec![("21:00".to_string(), "02:30".to_string())]);
+        let mut a = resolved_agg(
+            &[("1d", night)],
+            vec![("au", "CN_FUTURES_NIGHT_0230")],
+            "au2406",
+            AssetType::Futures,
+        );
+        assert!(
+            a.update(&bar(ns(2024, 1, 5, 21, 30), 10, "au2406"))
+                .is_empty()
+        );
+        let closed = a.update(&bar(ns(2024, 1, 6, 2, 30), 11, "au2406"));
+        assert_eq!(closed.len(), 1, "周六 02:30 夜盘结束即闭合");
+        assert_eq!(closed[0].timestamp, ns(2024, 1, 8, 15, 0));
+        assert_eq!(closed[0].close, Decimal::from(11));
+    }
+
+    #[test]
+    fn always_open_daily_label_is_one_ns_before_next_midnight() {
+        let mut a = WindowAggregator::with_clock(Some("America/New_York"), 0);
+        a.configure(
+            vec![WindowSubscription::parse(None, "1d", None).unwrap()],
+            Some(1),
+        )
+        .unwrap();
+        let clock = LocalClock::new(Some("America/New_York"), 0);
+        let ny = |d: u32, h: u32, m: u32| {
+            chrono_tz::America::New_York
+                .with_ymd_and_hms(2024, 1, d, h, m, 0)
+                .unwrap()
+                .timestamp_nanos_opt()
+                .unwrap()
+        };
+        let resolver = SessionResolver::new(
+            clock,
+            None,
+            crate::calendar::resolver::effective_sessions(None, Some("America/New_York"), 0),
+        )
+        .unwrap();
+        a.set_resolver(Some(Arc::new(resolver)), HashMap::new());
+        assert!(a.update(&bar(ny(2, 15, 0), 10, "AAPL")).is_empty());
+        // 00:00 那根 bar 的区间终点恰为收盘(次日 0 点): 按收盘判据即时闭合
+        let closed = a.update(&bar(ny(3, 0, 0), 11, "AAPL"));
+        assert_eq!(closed.len(), 1);
+        assert_eq!(
+            closed[0].timestamp,
+            ny(3, 0, 0) - 1,
+            "标签 = 01-02 23:59:59.999999999"
+        );
+        assert_eq!(closed[0].interval_start, Some(ny(2, 0, 0) - 1));
+        assert_eq!(closed[0].close, Decimal::from(11));
+    }
+
+    #[test]
+    fn out_of_block_bars_merge_with_same_label_in_block_window() {
+        // 期货 rb2405 误用股票时段表: 09:01～09:15 落在块外(块 0 = 09:15 起),
+        // 09:16～09:30 在块内, 两段时钟标签都是 09:30, 只能出一根 09:30 窗口。
+        let mut a = resolved_agg(&[("30min", None)], vec![], "rb2405", AssetType::Stock);
+        let mut out = Vec::new();
+        for m in 1..=30 {
+            out.extend(a.update(&bar(ns(2024, 1, 2, 9, m), 10, "rb2405")));
+        }
+        assert_eq!(out.len(), 1, "同标签不得出两根窗口: {out:?}");
+        assert_eq!(out[0].timestamp, ns(2024, 1, 2, 9, 30));
+        assert_eq!(out[0].volume, Decimal::from(300));
+        assert!(a.current("rb2405", "30min").is_none());
+        // 5min: 块外 09:05/09:10/09:15 与块内 09:20～09:30 各一根, 标签不重复
+        let mut a = resolved_agg(&[("5min", None)], vec![], "rb2405", AssetType::Stock);
+        let mut labels = Vec::new();
+        for m in 1..=30 {
+            labels.extend(
+                a.update(&bar(ns(2024, 1, 2, 9, m), 10, "rb2405"))
+                    .into_iter()
+                    .map(|b| b.timestamp),
+            );
+        }
+        let expected: Vec<i64> = (1..=6).map(|k| ns(2024, 1, 2, 9, 5 * k)).collect();
+        assert_eq!(labels, expected);
+    }
+
+    #[test]
+    fn close_through_day_closes_only_ended_windows() {
+        let mut a = resolved_agg(
+            &[("5min", None), ("1d", None)],
+            vec![("au", "CN_FUTURES_NIGHT_0230")],
+            "au2406",
+            AssetType::Futures,
+        );
+        // 交易日 01-05 止于 14:56(收盘 bar 缺失)
+        a.update(&bar(ns(2024, 1, 5, 14, 56), 10, "au2406"));
+        let day = NaiveDate::from_ymd_opt(2024, 1, 5).unwrap();
+        let closed = a.close_through_day(day, ns(2024, 1, 5, 15, 0));
+        let got: Vec<(Option<&str>, i64)> = closed
+            .iter()
+            .map(|b| (b.freq.as_deref(), b.timestamp))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (Some("5min"), ns(2024, 1, 5, 15, 0)),
+                (Some("1d"), ns(2024, 1, 5, 15, 0)),
+            ]
+        );
+        assert!(a.flush().is_empty(), "已闭合的窗口不再由 flush 重复产出");
+        // 下一交易日(01-08)的夜盘窗口不受 01-05 日终影响
+        a.update(&bar(ns(2024, 1, 5, 21, 1), 11, "au2406"));
+        assert!(a.close_through_day(day, ns(2024, 1, 5, 15, 0)).is_empty());
+        assert!(a.current("au2406", "5min").is_some());
+        assert!(a.current("au2406", "1d").is_some());
+    }
+
+    #[test]
+    fn grace_bar_in_forced_day_joins_that_days_windows() {
+        let mut a = resolved_agg(
+            &[("5min", None), ("1d", None)],
+            vec![],
+            "S",
+            AssetType::Stock,
+        );
+        let day = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let close = ns(2024, 1, 2, 15, 0);
+        assert!(a.update(&bar(ns(2024, 1, 2, 14, 58), 10, "S")).is_empty());
+        // 实盘收盘宽限期内的 bar 由引擎指定归 01-02: 并入当日日线, 不开 01-03 的窗口
+        let grace = bar(close + 30 * NS_PER_SEC, 12, "S");
+        let closed = a.update_in_day(&grace, Some(day));
+        assert!(closed.iter().all(|b| b.freq.as_deref() != Some("1d")));
+        let daily = a.current("S", "1d").unwrap();
+        assert_eq!(daily.volume, Decimal::from(20));
+        assert_eq!(daily.close, Decimal::from(12));
+        // 当日日终闭合全部归当日的窗口(含标签晚于收盘的日内窗口)
+        let closed = a.close_through_day(day, close);
+        let got: Vec<Option<&str>> = closed.iter().map(|b| b.freq.as_deref()).collect();
+        assert_eq!(got, vec![Some("5min"), Some("1d")]);
+        assert_eq!(closed[1].timestamp, close);
+        assert_eq!(closed[1].volume, Decimal::from(20));
+        assert!(a.flush().is_empty());
+        // 不指定时按日历归下一交易日: 当日日线在这根 bar 处闭合
+        let mut b = resolved_agg(&[("1d", None)], vec![], "S", AssetType::Stock);
+        b.update(&bar(ns(2024, 1, 2, 14, 58), 10, "S"));
+        let closed = b.update(&grace);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].volume, Decimal::from(10));
     }
 
     #[test]

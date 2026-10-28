@@ -2,7 +2,10 @@
 
 行情网关声明 ``gateway_options={"freq": "1min"}`` 后 ``self.freq == "1min"``,
 5 分钟窗口在 xx:x5 那根 1 分钟 bar 的 on_bar 之后**同一步**闭合(零延迟)。
-同一份策略代码不改一行即可用于 run_backtest。
+replay 的 ``freq`` 只注入 ``self.freq``(引擎据此判定窗口闭合), 不给 bar 填
+``interval_start``; 需要区间起点时请在构造 ``Bar`` 时自行带上。
+窗口默认按品种时段表(A 股 09:30-11:30、13:00-15:00)的交易块切分, 不必手写
+``session_windows``。同一份策略代码不改一行即可用于 run_backtest。
 """
 
 from typing import List
@@ -16,13 +19,11 @@ SYMBOL = "000001.SZ"
 def build_bars(days: int = 1) -> List[Bar]:
     """生成 A 股交易时段的 1 分钟 bar(每日 240 根, 09:31-11:30 + 13:01-15:00).
 
-    每日最后一根 bar(14:59→15:00 收盘)恰好同时是最后一个 5 分钟窗口的即时
-    闭合边界: ``broker='replay'`` 靠 ``bounded_event_total`` 数满事件数后用
-    ``KeyboardInterrupt`` 结束会话, 该窗口 bar 在 ``DataProcessor`` 阶段已经
-    闭合并进入待派发队列, 但派发发生在同一步的策略处理阶段之后——
-    ``Engine::flush_window_tail`` 会把这批"已闭合但还没来得及派发"的窗口 bar
-    与尾部未满窗口一起排空派发, 因此这里不需要刻意错开收尾时间, 每日固定得到
-    48 根窗口(240 / 5)。
+    时间戳是 bar 区间终点, 每日最后一根 bar(14:59→15:00)同时闭合最后一个
+    5 分钟窗口。``broker='replay'`` 的交易日生命周期锚定首个事件; 数据到当日
+    收盘时, 放完最后一根 bar 后会话不立即中断, 而是等该日收盘定时器做日终结算、
+    派发 on_after_trading 后再结束(与同数据回测一致), 因此 15:00 那个窗口照常
+    派发, 每日固定得到 48 根窗口(240 / 5)。
     """
     bars: List[Bar] = []
     day = pd.Timestamp("2024-01-02", tz="Asia/Shanghai")
@@ -56,11 +57,9 @@ class FiveMinuteTrend(Strategy):
     """按 5 分钟窗口打印近 3 根收盘价, 用来展示 subscribe_bars 的实盘闭合时机."""
 
     def __init__(self) -> None:
-        """订阅 5 分钟窗口(按 A 股早/午盘会话切分)."""
+        """订阅 5 分钟窗口(按 A 股时段表的早/午盘交易块切分)."""
         super().__init__()
-        self.subscribe_bars(
-            "5min", session_windows=[("09:30", "11:30"), ("13:00", "15:00")]
-        )
+        self.subscribe_bars("5min")
         self.count = 0
 
     def on_start(self) -> None:

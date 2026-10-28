@@ -363,7 +363,13 @@ def test_provider_empty_logs_info_and_session_runs(
         if r.levelno == logging.INFO and "history_provider" in r.getMessage()
     ]
     assert infos, "空返回应有一条 INFO"
-    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    # 未传 trading_calendar 的一次性缺省日历告警与预加载无关，不计入
+    assert not [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+        and "未传 trading_calendar" not in r.getMessage()
+    ]
 
 
 def test_provider_unmatched_symbols_warns_and_session_runs(

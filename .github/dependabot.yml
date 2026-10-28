@@ -1,0 +1,22 @@
+# Dependabot 配置
+#
+# 只跟进 GitHub Actions 的版本。Rust 与 Python 依赖不交给 Dependabot：
+# pyo3 与 numpy 必须成对升级，polars 的 features 又直接决定 wheel 体积，都需要人工判断。
+#
+# 注意：Dependabot 只读取默认分支（main）上的这份配置，合入 main 后才生效。
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    # 日常开发在 dev，PR 也指向 dev，随下一次发布合入 main
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    # 分组：几个 workflow 引用了相同的 action，不分组会出现多个 PR 改同一文件
+    groups:
+      actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "ci"

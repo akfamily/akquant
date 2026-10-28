@@ -630,6 +630,7 @@ mod tests {
             config: &config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
         let order = create_order("OPT_P", OrderSide::Sell, dec!(1), dec!(4));
 
@@ -672,6 +673,7 @@ mod tests {
             config: &config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
         let rule = CashMarginRule;
 
@@ -732,6 +734,7 @@ mod tests {
             config: &config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
         let rule = CashMarginRule;
 
@@ -794,6 +797,7 @@ mod tests {
             config: &config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let sell = create_order("600000", OrderSide::Sell, dec!(10000), dec!(10));
@@ -835,6 +839,7 @@ mod tests {
             config: &config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         let sell = create_order("600000", OrderSide::Sell, dec!(20000), dec!(10));
@@ -874,6 +879,7 @@ mod tests {
             config: &config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         };
 
         // Proceeds 1 yuan vs >5 yuan of fees (min_commission dominates).

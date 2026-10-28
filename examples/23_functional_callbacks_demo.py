@@ -11,7 +11,9 @@ from akquant import Bar
 
 def make_bars() -> list[Bar]:
     """Build deterministic bar data for demo run."""
-    idx = pd.date_range(start="2023-01-01", periods=4, freq="D")
+    # 交易日、上海时区的日线（只有日期，按 15:00 收盘 bar 处理）。手工 Bar 的时间戳
+    # 是 UTC 纳秒，必须由带时区的时间换算，否则会落在闭市时段而不撮合。
+    idx = pd.bdate_range(start="2023-01-03", periods=4, tz="Asia/Shanghai")
     bars: list[Bar] = []
     for i, ts in enumerate(idx):
         price = 100.0 + i

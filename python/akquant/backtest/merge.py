@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import math
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import pandas as pd
 
+from ..analysis.benchmark import TradingDayEnds, daily_last_by_trading_day
 from ..indicator_identity import identity_of
 
 if TYPE_CHECKING:
@@ -67,6 +68,8 @@ def _compute_core_metrics(
     initial_cash: float,
     *,
     days_per_year: float = _DEFAULT_DAYS_PER_YEAR,
+    trading_day_ends: Optional[TradingDayEnds] = None,
+    timezone: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Recompute core metrics from merged equity curve + trades.
 
@@ -103,8 +106,8 @@ def _compute_core_metrics(
     metrics["max_drawdown"] = abs(max_dd)
     metrics["max_drawdown_pct"] = abs(max_dd) * 100.0
 
-    # 年化收益 / 波动 / sharpe / sortino / calmar：基于日频权益
-    daily_equity = equity.resample("D").last().dropna()
+    # 年化收益 / 波动 / sharpe / sortino / calmar：基于日频权益（按交易日）
+    daily_equity = daily_last_by_trading_day(equity, trading_day_ends, timezone)
     daily_ret = daily_equity.pct_change().dropna()
     span_days = (equity.index[-1] - equity.index[0]).total_seconds() / 86400.0
     years = span_days / 365.25 if span_days > 0 else 0.0
@@ -217,6 +220,7 @@ class MergedResult:
         initial_cash: float,
         timezone: str,
         metrics: Dict[str, Any],
+        trading_day_ends: Optional[List[Tuple[date, int]]] = None,
     ) -> None:
         """Store pre-merged pandas frames and recomputed core metrics."""
         self._equity_curve = equity_curve
@@ -230,13 +234,18 @@ class MergedResult:
         self.initial_cash = initial_cash
         self._timezone = timezone
         self._metrics = metrics
+        self._trading_day_ends: List[Tuple[date, int]] = list(trading_day_ends or [])
 
-    @staticmethod
-    def _to_daily_curve(series: pd.Series) -> pd.Series:
-        """Resample a curve to daily end-of-day values."""
+    @property
+    def trading_day_ends(self) -> List[Tuple[date, int]]:
+        """各段 ``trading_day_ends`` 的并集（按收盘时刻排序）."""
+        return list(self._trading_day_ends)
+
+    def _to_daily_curve(self, series: pd.Series) -> pd.Series:
+        """Daily end-of-day values grouped by trading day."""
         if series.empty:
             return pd.Series(dtype=float)
-        return cast(pd.Series, series.resample("D").last().dropna())
+        return daily_last_by_trading_day(series, self._trading_day_ends, self._timezone)
 
     @property
     def equity_curve(self) -> pd.Series:
@@ -268,7 +277,7 @@ class MergedResult:
         equity = self._equity_curve
         if equity.empty:
             return pd.Series(dtype=float)
-        daily_equity = equity.resample("D").last().dropna()
+        daily_equity = self._to_daily_curve(equity)
         return cast(pd.Series, daily_equity.pct_change().dropna())
 
     @property
@@ -345,6 +354,17 @@ def _collect_expired_symbols(
                 continue
             expiry[str(symbol)] = ts
     return expiry
+
+
+def _merge_trading_day_ends(
+    results: List["BacktestResult"],
+) -> List[Tuple[date, int]]:
+    """各段开过的交易日取并集，按收盘时刻排序（同一交易日跨段续跑只留一条）."""
+    merged: Dict[date, int] = {}
+    for result in results:
+        for day, end in getattr(result, "trading_day_ends", None) or []:
+            merged[day] = int(end)
+    return sorted(merged.items(), key=lambda item: item[1])
 
 
 def merge_results(
@@ -443,7 +463,14 @@ def merge_results(
 
     indicator_outputs = _merge_indicator_outputs(result_list)
 
-    metrics = _compute_core_metrics(equity_curve, trades_df, initial_cash)
+    trading_day_ends = _merge_trading_day_ends(result_list)
+    metrics = _compute_core_metrics(
+        equity_curve,
+        trades_df,
+        initial_cash,
+        trading_day_ends=trading_day_ends,
+        timezone=timezone,
+    )
 
     return MergedResult(
         equity_curve=equity_curve,
@@ -457,6 +484,7 @@ def merge_results(
         initial_cash=initial_cash,
         timezone=timezone,
         metrics=metrics,
+        trading_day_ends=trading_day_ends,
     )
 
 

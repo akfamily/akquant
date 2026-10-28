@@ -78,6 +78,9 @@ def _run() -> _CrossSectionOnly:
         initial_cash=1_000_000.0,
         config=_config(),
         show_progress=False,
+        # 夹具按自然日排布(含周末, 时刻 23:00 本地): 用全天连续时段表让交易日即
+        # 自然日; 默认期货日盘表 + 工作日日历会把周五夜间到周日的 bar 并入下周一。
+        sessions={"default": "ALWAYS_OPEN"},
     )
     return strategy
 

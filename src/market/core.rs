@@ -1,5 +1,4 @@
-use crate::model::{Instrument, OrderSide, TradingSession};
-use chrono::NaiveTime;
+use crate::model::{Instrument, OrderSide};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
@@ -55,6 +54,4 @@ pub trait MarketModel: Send + Sync {
         available_positions: &mut HashMap<String, Decimal>,
         instruments: &HashMap<String, Instrument>,
     );
-
-    fn get_session_status(&self, time: NaiveTime) -> TradingSession;
 }

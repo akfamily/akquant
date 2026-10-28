@@ -163,7 +163,7 @@ AKQuant 在数据处理阶段集成了高级的市场特性支持：
 
 *   **`ChinaMarket` (`china.rs`)**:
     *   实现 A 股和国内期货的市场规则。
-    *   **交易时段**: 支持集合竞价 (CallAuction)、连续竞价 (Continuous)、休市 (Break) 等状态管理。
+    *   **交易时段**: 支持开盘集合竞价 (OpeningAuction)、连续竞价 (Continuous)、休市 (Break) 等状态管理。
     *   **费率计算**: 支持股票 (印花税、过户费、佣金) 和期货 (按手或按金额)；股票与 SimpleMarket 的默认佣金模型现支持 `percent`、`fixed`、`per_unit`。
     *   **T+1/T+0**: 严格的可用持仓管理 (昨仓/今仓)。
 *   **`SimpleMarket` (`simple.rs`)**:

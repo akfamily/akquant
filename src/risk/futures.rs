@@ -194,6 +194,7 @@ mod tests {
             config,
             timezone_name: None,
             timezone_offset: 0,
+            trading_day: None,
         }
     }
 

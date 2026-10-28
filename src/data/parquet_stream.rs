@@ -114,6 +114,7 @@ impl ParquetStreamClient {
                 symbol: sym,
                 extra: std::collections::HashMap::new(),
                 freq: None,
+                interval_start: None,
             });
         }
         Ok(())

@@ -26,6 +26,9 @@ pub struct CalculatorInput {
     pub days_per_year: f64,
     /// 年化无风险利率，默认 0.0。直接从年化收益分子里扣除。
     pub risk_free_rate: f64,
+    /// 引擎实际开过的交易日及其收盘时刻 `(交易日, 收盘纳秒)`，按时间升序。
+    /// 日收益按它把权益点归入交易日；为空或点落在全部区间之后时退回本地自然日。
+    pub trading_day_ends: Vec<(NaiveDate, i64)>,
 }
 
 #[gen_stub_pyclass]
@@ -43,6 +46,7 @@ pub struct CalculatorInput {
 /// :ivar orders: 订单列表
 /// :ivar executions: 成交列表
 /// :ivar liquidation_audits: 强平审计记录
+/// :ivar trading_day_ends: 引擎实际开过的交易日及收盘时刻 [(date, close_ns)]
 pub struct BacktestResult {
     #[pyo3(get)]
     pub equity_curve: Vec<(i64, f64)>,
@@ -65,6 +69,9 @@ pub struct BacktestResult {
     pub executions: Vec<Trade>,
     #[pyo3(get)]
     pub liquidation_audits: Vec<LiquidationAudit>,
+    #[pyo3(get)]
+    #[serde(default)]
+    pub trading_day_ends: Vec<(NaiveDate, i64)>,
 }
 
 impl BacktestResult {
@@ -87,6 +94,23 @@ impl BacktestResult {
         }
         let offset_ns = i64::from(timezone_offset) * 1_000_000_000;
         Self::datetime_from_ns(timestamp + offset_ns).date_naive()
+    }
+
+    /// 权益点所属的交易日：交易日 T 覆盖 `(上一交易日收盘, T 收盘]`，取第一个收盘
+    /// 时刻不早于 `ts` 的已开交易日（夜盘点归下一交易日）。首个收盘之前的点（含首个
+    /// 交易日开日前的点）都归首个交易日；只有 `ends` 为空或 `ts` 晚于最后一个收盘
+    /// 时刻时才退回本地自然日。
+    pub(crate) fn trading_day_key(
+        ts: i64,
+        ends: &[(NaiveDate, i64)],
+        timezone_name: Option<&str>,
+        timezone_offset: i32,
+    ) -> NaiveDate {
+        let idx = ends.partition_point(|(_, end)| *end < ts);
+        match ends.get(idx) {
+            Some((day, _)) => *day,
+            None => Self::local_date_from_ns(ts, timezone_name, timezone_offset),
+        }
     }
 
     pub fn calculate(input: CalculatorInput) -> Self {
@@ -146,6 +170,7 @@ impl BacktestResult {
                 orders: input.orders,
                 executions: input.executions,
                 liquidation_audits: input.liquidation_audits,
+                trading_day_ends: input.trading_day_ends,
             };
         }
 
@@ -195,7 +220,8 @@ impl BacktestResult {
         let timezone_offset = input.timezone_offset;
 
         for (ts, eq) in &input.equity_curve_decimal {
-            let day_key = Self::local_date_from_ns(*ts, timezone_name, timezone_offset);
+            let day_key =
+                Self::trading_day_key(*ts, &input.trading_day_ends, timezone_name, timezone_offset);
             daily_equity_map.insert(day_key, *eq);
         }
 
@@ -412,6 +438,7 @@ impl BacktestResult {
             orders: input.orders,
             executions: input.executions,
             liquidation_audits: input.liquidation_audits,
+            trading_day_ends: input.trading_day_ends,
         }
     }
 }

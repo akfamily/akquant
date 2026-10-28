@@ -101,7 +101,9 @@ def _build_data(symbol: str = "TEST", n: int = 5) -> list[Bar]:
         close = 10.0 + i
         data.append(
             Bar(
-                timestamp=pd.Timestamp(f"2023-01-{i + 1:02d} 10:00:00").value,
+                timestamp=pd.Timestamp(
+                    f"2023-01-{i + 1:02d} 10:00:00", tz="Asia/Shanghai"
+                ).value,
                 open=close,
                 high=close + 0.2,
                 low=close - 0.2,
@@ -141,7 +143,8 @@ def _build_cross_utc_boundary_same_local_day_data(symbol: str = "TEST") -> list[
     data: list[Bar] = []
     timestamps = [
         pd.Timestamp("2024-01-02 01:00:00", tz="Asia/Shanghai").tz_convert("UTC"),
-        pd.Timestamp("2024-01-02 23:00:00", tz="Asia/Shanghai").tz_convert("UTC"),
+        # 留在当日收盘前: 收盘后的时刻属下一交易日 (日统计按交易日分组)
+        pd.Timestamp("2024-01-02 14:00:00", tz="Asia/Shanghai").tz_convert("UTC"),
     ]
     closes = [10.0, 10.5]
     for ts, close in zip(timestamps, closes):
@@ -433,8 +436,9 @@ def test_backtest_result_exposes_structured_benchmark_analysis() -> None:
     assert payload["benchmark"]["label"] == "CSI300"
     assert payload["summary"]["information_ratio"] is not None
     assert payload["meta"]["aligned_points"] > 0
-    # 首日不产生收益点 (口径对齐 Rust), 故对齐序列从第二个交易日 01-02 开始
-    assert payload["series"][0]["date"] == "2023-01-02"
+    # 日收益按交易日分组: 01-01 (周日) 的 bar 属交易日 01-02, 日权益从 01-02 起;
+    # 首日不产生收益点 (口径对齐 Rust), 故对齐序列从第二个交易日 01-03 开始
+    assert payload["series"][0]["date"] == "2023-01-03"
 
 
 def test_export_benchmark_analysis_keeps_cjk_label_readable(tmp_path: Path) -> None:
@@ -1028,7 +1032,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
     _skip_if_no_plotly()
     bars = [
         Bar(
-            timestamp=pd.Timestamp("2023-01-01 10:00:00").value,
+            timestamp=pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai").value,
             open=100.0,
             high=100.2,
             low=99.8,
@@ -1037,7 +1041,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
             symbol="LIQ",
         ),
         Bar(
-            timestamp=pd.Timestamp("2023-01-01 14:00:00").value,
+            timestamp=pd.Timestamp("2023-01-03 14:00:00", tz="Asia/Shanghai").value,
             open=20.0,
             high=20.2,
             low=19.8,
@@ -1046,7 +1050,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
             symbol="LIQ",
         ),
         Bar(
-            timestamp=pd.Timestamp("2023-01-02 10:00:00").value,
+            timestamp=pd.Timestamp("2023-01-04 10:00:00", tz="Asia/Shanghai").value,
             open=20.0,
             high=20.2,
             low=19.8,

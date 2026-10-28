@@ -11,7 +11,7 @@ from akquant import Bar, Strategy
 
 def build_data(n: int = 360) -> pd.DataFrame:
     """Build synthetic daily bars with trend and oscillation."""
-    ts = pd.date_range("2022-01-01", periods=n, freq="D")
+    ts = pd.bdate_range("2022-01-04", periods=n)
     close = [
         100.0 + 0.04 * i + 2.8 * math.sin(i / 7.5) + 1.6 * math.sin(i / 2.7)
         for i in range(n)

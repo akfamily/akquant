@@ -34,7 +34,7 @@ pub fn from_arrays(
     py: Python<'_>,
 ) -> PyResult<Vec<Bar>> {
     let columns = BarColumns::from_py_arrays(
-        timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra, py,
+        timestamps, opens, highs, lows, closes, volumes, symbol, symbols, extra, None, py,
     )?;
     Ok(columns.to_bars())
 }

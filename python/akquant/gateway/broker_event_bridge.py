@@ -494,6 +494,9 @@ class BrokerEventBridge:
     ) -> None:
         # `payload` is already adapted by `drain_events` (via `_adapt_strategy_payload`)
         # while the request cache was still populated, so it's dispatched as-is here.
+        # 多槽位时 `strategy` 是 runner 的 `_StrategyCallbackFanout`: 它实现了下列
+        # 全部回调, 按 owner_strategy_id 路由到所属槽位(账户回调广播);
+        # `_safe_strategy_callback` 取不到方法时跳过只为兼容单策略下的精简替身。
         if event_name == "order":
             self._safe_strategy_callback(strategy, "on_order", payload)
         elif event_name == "trade":

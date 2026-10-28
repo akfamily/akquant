@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 import pandas as pd
 
+from ..analysis.benchmark import daily_last_by_trading_day, result_trading_day_ends
 from .utils import check_plotly, get_color, go, make_subplots
 
 if TYPE_CHECKING:
@@ -48,9 +49,13 @@ def plot_dashboard(
     if len(equity_df) < 2:
         daily_returns = pd.Series(dtype=float)
     else:
-        # Resample to daily end-of-day equity, keeping only real trading days
+        # Daily end-of-day equity grouped by trading day (night-session points
+        # belong to the next trading day), keeping only real trading days
         # (dropna, not ffill —— ffill 会给非交易日补出 0.0 伪收益), then returns
-        daily_returns = equity_df["equity"].resample("D").last().dropna().pct_change()
+        day_ends, day_tz = result_trading_day_ends(result)
+        daily_returns = daily_last_by_trading_day(
+            equity_df["equity"], day_ends, day_tz
+        ).pct_change()
 
     # Create Layout
     # Row 1: Equity

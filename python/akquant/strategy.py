@@ -32,6 +32,7 @@ from .akquant import (
     StrategyContext,
     Tick,
     TimeInForce,
+    TradingSession,
 )
 from .chart import CANDLE_ROLES
 from .gateway.order_receipt import OrderReceipt
@@ -58,6 +59,9 @@ from .strategy_events import (
     on_bar_event as _on_bar_event_impl,
 )
 from .strategy_events import (
+    on_foreign_timer_event as _on_foreign_timer_event_impl,
+)
+from .strategy_events import (
     on_tick_event as _on_tick_event_impl,
 )
 from .strategy_events import (
@@ -67,15 +71,9 @@ from .strategy_framework_hooks import (
     call_user_callback as _call_user_callback_impl,
 )
 from .strategy_framework_hooks import (
-    dispatch_shutdown_hooks as _dispatch_shutdown_hooks_impl,
-)
-from .strategy_framework_hooks import (
     ensure_framework_state as _ensure_framework_state_impl,
 )
 from .strategy_framework_hooks import is_dual_stream_symbol
-from .strategy_framework_hooks import (
-    register_pre_open_timers as _register_pre_open_timers_impl,
-)
 from .strategy_history import get_history as _get_history_impl
 from .strategy_history import get_history_df as _get_history_df_impl
 from .strategy_history import get_history_multi as _get_history_multi_impl
@@ -107,7 +105,11 @@ from .strategy_order_events import (
 )
 from .strategy_position import Position
 from .strategy_preload import PHASE_RUN, replay_preload_history
-from .strategy_runtime_config import StrategyRuntimeConfig
+from .strategy_runtime_config import (
+    REMOVED_PRECISE_BOUNDARY_FIELD,
+    StrategyRuntimeConfig,
+    removed_precise_boundary_message,
+)
 from .strategy_scheduler import _nth_per_group as _nth_per_group_impl
 from .strategy_scheduler import schedule as _schedule_impl
 from .strategy_scheduler import schedule_daily as _schedule_daily_impl
@@ -408,7 +410,6 @@ class Strategy:
     _defer_preload_replay: bool
     _preload_followers: List["Strategy"]
     _indicator_phase: str
-    _framework_last_local_date: Optional[dt.date]
     _framework_before_trading_done_date: Optional[dt.date]
     _framework_after_trading_done_date: Optional[dt.date]
     _framework_pre_open_done_date: Optional[dt.date]
@@ -418,10 +419,7 @@ class Strategy:
     _framework_order_event_keys: set[Tuple[Any, ...]]
     _framework_order_event_key_order: Deque[Tuple[Any, ...]]
     _framework_expiry_event_keys: set[Tuple[Any, ...]]
-    _framework_stop_flushed: bool
     _framework_live_stop_dispatched: bool
-    _framework_boundary_timers_registered: bool
-    _framework_pre_open_timers_registered: bool
     _framework_in_pre_open_phase: bool
     _framework_phase: Optional[str]
     _framework_history_cutoff_ns: Optional[int]
@@ -435,7 +433,6 @@ class Strategy:
     _framework_current_trade: Optional[Any]
     _framework_cross_section_done_date: Optional[dt.date]
     _framework_cross_section_timers_registered: bool
-    _trading_day_bounds: Dict[str, Tuple[int, int]]
     _trading_day_cross_section_timestamps: Dict[str, int]
     _oco_groups: Dict[str, set[str]]
     _oco_order_to_group: Dict[str, str]
@@ -456,6 +453,7 @@ class Strategy:
     _order_group_seq: int
     _pending_schedules: List[Tuple[Union[str, dt.datetime, pd.Timestamp], str]]
     _pending_daily_timers: List[Tuple[str, str]]
+    _pending_periodic_timers: List[Tuple[str, str, str]]
     _instrument_snapshots: Dict[str, InstrumentSnapshot]
     _indicator_recorder: Optional[IndicatorRecorder]
     _window_subscriptions: List["WindowSubscription"]
@@ -499,6 +497,10 @@ class Strategy:
                 "(且须同时写 overlay=True)"
             )
         super().__init_subclass__(**kwargs)
+        if REMOVED_PRECISE_BOUNDARY_FIELD in vars(cls):
+            raise ValueError(
+                removed_precise_boundary_message(f"策略类 {cls.__name__} 类属性")
+            )
         cls._aq_title = _validate_script_label("title", title, cls.__name__)
         cls._aq_id = _validate_script_label("id", id, cls.__name__)
         # 记录当前类命名空间中直接声明的字段
@@ -611,7 +613,6 @@ class Strategy:
             value = cls.__dict__.get(name, default)
             return default if isinstance(value, property) else value
 
-        class_enable_hooks = _class_attr("enable_precise_day_boundary_hooks", False)
         class_portfolio_eps = _class_attr("portfolio_update_eps", 0.0)
         class_error_mode = _class_attr("error_mode", "raise")
         class_re_raise = _class_attr("re_raise_on_error", True)
@@ -619,14 +620,12 @@ class Strategy:
             instance.runtime_config = StrategyRuntimeConfig(**raw_runtime_config)
         elif isinstance(raw_runtime_config, StrategyRuntimeConfig):
             instance.runtime_config = StrategyRuntimeConfig(
-                enable_precise_day_boundary_hooks=raw_runtime_config.enable_precise_day_boundary_hooks,
                 portfolio_update_eps=raw_runtime_config.portfolio_update_eps,
                 error_mode=raw_runtime_config.error_mode,
                 re_raise_on_error=raw_runtime_config.re_raise_on_error,
             )
         else:
             instance.runtime_config = StrategyRuntimeConfig(
-                enable_precise_day_boundary_hooks=bool(class_enable_hooks),
                 portfolio_update_eps=float(class_portfolio_eps),
                 error_mode=cast(
                     Literal["raise", "continue", "legacy"], str(class_error_mode)
@@ -676,7 +675,6 @@ class Strategy:
             "lot_size": 1,
         }
         instance._owner_strategy_id = None
-        instance._framework_last_local_date = None
         instance._framework_before_trading_done_date = None
         instance._framework_after_trading_done_date = None
         instance._framework_pre_open_done_date = None
@@ -686,10 +684,7 @@ class Strategy:
         instance._framework_order_event_keys = set()
         instance._framework_order_event_key_order = deque()
         instance._framework_expiry_event_keys = set()
-        instance._framework_stop_flushed = False
         instance._framework_live_stop_dispatched = False
-        instance._framework_boundary_timers_registered = False
-        instance._framework_pre_open_timers_registered = False
         instance._framework_in_pre_open_phase = False
         instance._framework_phase = None
         instance._framework_history_cutoff_ns = None
@@ -704,7 +699,6 @@ class Strategy:
         instance._framework_current_trade = None
         instance._framework_cross_section_done_date = None
         instance._framework_cross_section_timers_registered = False
-        instance._trading_day_bounds = {}
         instance._trading_day_cross_section_timestamps = {}
         instance._oco_groups = {}
         instance._oco_order_to_group = {}
@@ -717,6 +711,7 @@ class Strategy:
         instance._order_group_lock = threading.RLock()
         instance._pending_schedules = []
         instance._pending_daily_timers = []
+        instance._pending_periodic_timers = []
         instance._instrument_snapshots = {}
         instance._indicator_recorder = None
 
@@ -758,12 +753,8 @@ class Strategy:
         # (optimize.py 多进程会 pickle 策略), 且属于会话级运行时状态。
         if "_live_subscription_forwarder" in state:
             del state["_live_subscription_forwarder"]
-        if "_framework_last_local_date" in state:
-            del state["_framework_last_local_date"]
-        if "_framework_before_trading_done_date" in state:
-            del state["_framework_before_trading_done_date"]
-        if "_framework_after_trading_done_date" in state:
-            del state["_framework_after_trading_done_date"]
+        # 交易日钩子的按交易日去重日期(_framework_*_done_date)随存档保存: 续跑时
+        # 同一交易日已触发过的钩子不再触发(引擎侧也会跳过存档时刻之前的生命周期事件)。
         if "_framework_last_portfolio_state" in state:
             del state["_framework_last_portfolio_state"]
         if "_framework_portfolio_dirty" in state:
@@ -780,24 +771,15 @@ class Strategy:
         ):
             if _order_dedupe_key in state:
                 del state[_order_dedupe_key]
-        if "_framework_stop_flushed" in state:
-            del state["_framework_stop_flushed"]
         # 实盘收尾标志同属会话内派生态: 续跑是一段新会话, 理应能再收尾一次。
         if "_framework_live_stop_dispatched" in state:
             del state["_framework_live_stop_dispatched"]
-        if "_framework_boundary_timers_registered" in state:
-            del state["_framework_boundary_timers_registered"]
-        # 派生态(性能短路标志 + 本地交易日缓存): 恢复时删除, 以强制
-        # ensure_framework_state 重建被重置字段, 并让日期缓存自我重建。
-        # 两个 _framework_needs_* 是按类判定的重写探测缓存, 同属派生态:
-        # 若随存档带走, 旧版本算错的 False 会在恢复后继续屏蔽钩子分发。
+        # 派生态(性能短路标志): 恢复时删除, 以强制 ensure_framework_state 重建
+        # 被重置字段。_framework_needs_portfolio_update 是按类判定的重写探测缓存,
+        # 同属派生态: 若随存档带走, 旧版本算错的 False 会在恢复后继续屏蔽钩子分发。
         for _derived_key in (
             "_framework_state_ready",
-            "_framework_needs_time_hooks",
             "_framework_needs_portfolio_update",
-            "_framework_local_date_cache",
-            "_framework_local_date_lo_ns",
-            "_framework_local_date_hi_ns",
         ):
             if _derived_key in state:
                 del state[_derived_key]
@@ -865,10 +847,9 @@ class Strategy:
         elif "_runtime_config" in self.__dict__:
             self.runtime_config = self.__dict__["_runtime_config"]
         else:
+            # 已删除的精确边界开关(旧存档里的实例属性)直接丢弃。
+            self.__dict__.pop("enable_precise_day_boundary_hooks", None)
             self.runtime_config = StrategyRuntimeConfig(
-                enable_precise_day_boundary_hooks=bool(
-                    self.__dict__.pop("enable_precise_day_boundary_hooks", False)
-                ),
                 portfolio_update_eps=float(
                     self.__dict__.pop("portfolio_update_eps", 0.0)
                 ),
@@ -931,6 +912,8 @@ class Strategy:
             self._pending_schedules = []
         if not hasattr(self, "_pending_daily_timers"):
             self._pending_daily_timers = []
+        if not hasattr(self, "_pending_periodic_timers"):
+            self._pending_periodic_timers = []
         if not hasattr(self, "_instrument_snapshots"):
             self._instrument_snapshots = {}
         self._indicator_recorder = None
@@ -975,6 +958,15 @@ class Strategy:
         _ensure_framework_state_impl(self)
 
     @property
+    def enable_precise_day_boundary_hooks(self) -> bool:
+        """已删除的精确边界开关：读写都报中文错误（钩子现在总是精确触发）."""
+        raise AttributeError(removed_precise_boundary_message("策略实例属性"))
+
+    @enable_precise_day_boundary_hooks.setter
+    def enable_precise_day_boundary_hooks(self, value: Any) -> None:
+        raise ValueError(removed_precise_boundary_message("策略实例属性"))
+
+    @property
     def runtime_config(self) -> StrategyRuntimeConfig:
         """返回策略运行时配置."""
         cfg = getattr(self, "_runtime_config", None)
@@ -993,7 +985,6 @@ class Strategy:
         """设置策略运行时配置."""
         if isinstance(value, StrategyRuntimeConfig):
             self._runtime_config = StrategyRuntimeConfig(
-                enable_precise_day_boundary_hooks=value.enable_precise_day_boundary_hooks,
                 portfolio_update_eps=value.portfolio_update_eps,
                 error_mode=value.error_mode,
                 re_raise_on_error=value.re_raise_on_error,
@@ -1007,22 +998,6 @@ class Strategy:
         )
 
     @property
-    def enable_precise_day_boundary_hooks(self) -> bool:
-        """是否启用边界定时器精确交易日钩子."""
-        return self.runtime_config.enable_precise_day_boundary_hooks
-
-    @enable_precise_day_boundary_hooks.setter
-    def enable_precise_day_boundary_hooks(self, value: bool) -> None:
-        """设置边界定时器精确交易日钩子开关."""
-        cfg = self.runtime_config
-        self.runtime_config = StrategyRuntimeConfig(
-            enable_precise_day_boundary_hooks=bool(value),
-            portfolio_update_eps=cfg.portfolio_update_eps,
-            error_mode=cfg.error_mode,
-            re_raise_on_error=cfg.re_raise_on_error,
-        )
-
-    @property
     def portfolio_update_eps(self) -> float:
         """返回账户快照更新阈值."""
         return self.runtime_config.portfolio_update_eps
@@ -1032,7 +1007,6 @@ class Strategy:
         """设置账户快照更新阈值."""
         cfg = self.runtime_config
         self.runtime_config = StrategyRuntimeConfig(
-            enable_precise_day_boundary_hooks=cfg.enable_precise_day_boundary_hooks,
             portfolio_update_eps=float(value),
             error_mode=cfg.error_mode,
             re_raise_on_error=cfg.re_raise_on_error,
@@ -1048,7 +1022,6 @@ class Strategy:
         """设置错误处理模式."""
         cfg = self.runtime_config
         self.runtime_config = StrategyRuntimeConfig(
-            enable_precise_day_boundary_hooks=cfg.enable_precise_day_boundary_hooks,
             portfolio_update_eps=cfg.portfolio_update_eps,
             error_mode=cast(Literal["raise", "continue", "legacy"], value),
             re_raise_on_error=cfg.re_raise_on_error,
@@ -1064,7 +1037,6 @@ class Strategy:
         """设置 on_error 后是否继续抛出异常."""
         cfg = self.runtime_config
         self.runtime_config = StrategyRuntimeConfig(
-            enable_precise_day_boundary_hooks=cfg.enable_precise_day_boundary_hooks,
             portfolio_update_eps=cfg.portfolio_update_eps,
             error_mode=cfg.error_mode,
             re_raise_on_error=bool(value),
@@ -1116,7 +1088,6 @@ class Strategy:
             self.on_resume()
 
         self.on_start()
-        _register_pre_open_timers_impl(self)
         self._start_initialized = True
         # 实盘 preload_history: on_start 里声明的指标此刻才存在, 回放只能排在
         # 这里(主策略的 on_start 由 Rust 在 engine.run() 内触发)。slot 被 runner
@@ -1136,7 +1107,10 @@ class Strategy:
         pass
 
     def _on_stop_internal(self) -> None:
-        """内部停止回调，用于补发框架级结束钩子.
+        """内部停止回调：数据覆盖校验 + 用户 `on_stop`.
+
+        不补发 `on_after_trading`: 它只在交易日日终结算后由引擎生命周期事件触发,
+        数据在盘中结束、当日未结算时不触发。
 
         `_check_incremental_hl_bar_coverage` 放在这里(而非首个 tick 时)是有意
         选择——见该方法的文档字符串。注意: `run_backtest`/`run_from_checkpoint`
@@ -1156,11 +1130,10 @@ class Strategy:
         self._check_symbol_data_coverage()
         self._check_warmup_symbol_coverage()
         self._check_incremental_hl_bar_coverage()
-        _dispatch_shutdown_hooks_impl(self)
         _call_user_callback_impl(self, "on_stop")
 
     def _on_stop_live_internal(self) -> None:
-        """实盘会话收尾: 只补发框架级结束钩子 + 用户 `on_stop`.
+        """实盘会话收尾: 只派发用户 `on_stop`.
 
         与 `_on_stop_internal` 的区别是**不跑**三个数据覆盖校验
         (`_check_symbol_data_coverage` / `_check_warmup_symbol_coverage` /
@@ -1169,16 +1142,13 @@ class Strategy:
         常态, 跑它们会分别产生误报、误报、以及**抛**
         `StrategyConfigurationError` 打断整个收尾流程。
 
-        `_framework_live_stop_dispatched` 是本方法专属的幂等标志:
-        `_framework_stop_flushed` 只保护 `dispatch_shutdown_hooks` 内部的
-        `on_after_trading` 补发, 覆盖不到 `on_stop` 本身, 重复派发会让用户
-        的 `on_stop` 跑两次(实盘收尾里落盘/发通知重复执行是真实危害)。
+        `_framework_live_stop_dispatched` 是本方法专属的幂等标志: 重复派发会让
+        用户的 `on_stop` 跑两次(实盘收尾里落盘/发通知重复执行是真实危害)。
         """
         _ensure_framework_state_impl(self)
         if getattr(self, "_framework_live_stop_dispatched", False):
             return
         self._framework_live_stop_dispatched = True
-        _dispatch_shutdown_hooks_impl(self)
         _call_user_callback_impl(self, "on_stop")
 
     def log(self, msg: str, level: int = logging.INFO) -> None:
@@ -1194,6 +1164,58 @@ class Strategy:
     def symbol(self) -> str:
         """获取当前正在处理的标的代码 (Proxy to current_bar/tick)."""
         return self._resolve_symbol(None)
+
+    @property
+    def trading_day(self) -> Optional[dt.date]:
+        """当前时刻所属的交易日（``datetime.date``）.
+
+        - 盘中：本交易日；夜盘属下一交易日（如周五 21:30 属下周一）。
+        - 收盘后至下一交易日开盘前（如 15:30 的定时器、次日 09:00 的定时器）：
+          属下一交易日，与风控（每日亏损、风险预算）的交易日口径一致；查询本身
+          不会开日。
+        - 首个交易日开盘前（首日盘前定时器）：按交易日历求当前时刻所属交易日。
+        - 尚无上下文（如 ``on_start`` 中、运行开始之前）时为 None。
+        """
+        if self.ctx is None:
+            return None
+        return getattr(self.ctx, "trading_day", None)
+
+    def session_of(self, symbol: Optional[str] = None) -> TradingSession:
+        """品种此刻的交易时段.
+
+        与撮合同口径：本时间片已解析的优先；否则在 bar 回调中按当前 bar 的区间解析
+        （假定同周期，如日线上查另一只股票得连续竞价），在定时器等其他回调中按当前
+        时刻解析。``symbol`` 为空时即当前事件的时段 ``ctx.session``。回测与实盘同口径。
+
+        :param symbol: 标的代码；不传时取当前事件的时段
+        :return: 交易时段
+        """
+        if self.ctx is None:
+            raise RuntimeError(
+                "session_of 只能在回测/实盘运行期间调用（如 on_bar、on_timer 中）"
+            )
+        if symbol is None:
+            return self.ctx.session
+        return self.ctx.session_of(symbol)
+
+    def is_market_open(
+        self, symbol: Optional[str] = None, include_auction: bool = False
+    ) -> bool:
+        """品种此刻是否处于连续竞价.
+
+        :param symbol: 标的代码；不传时取当前事件的时段
+        :param include_auction: 为 True 时集合竞价（含竞价后等待开盘、收盘集合竞价）
+            也算开市
+        :return: 是否开市
+        """
+        session = self.session_of(symbol)
+        if session == TradingSession.Continuous:
+            return True
+        return include_auction and session in (
+            TradingSession.OpeningAuction,
+            TradingSession.AuctionHold,
+            TradingSession.ClosingAuction,
+        )
 
     @property
     def close(self) -> float:
@@ -1249,7 +1271,19 @@ class Strategy:
         """
         注册每日定时任务 (Daily Timer).
 
-        每个交易日在 ``time_str`` 时点触发一次 :meth:`on_timer` 回调。
+        交易日历上的每个交易日在 ``time_str`` 时点触发一次 :meth:`on_timer` 回调,
+        回测与实盘同一语义: 回测在数据覆盖范围内(首个～最后一个数据交易日)的
+        日历交易日逐日预登记, 区间内没有行情的交易日也触发, 非交易日不触发;
+        实盘只登记下一次, 触发后按会话交易日历(``ctx.next_trading_day``)重排。
+        未配置 ``trading_calendar`` 时按在用时段表的缺省日历: 中国市场为工作日;
+        ALWAYS_OPEN(非中国时区的缺省)每天都算交易日——回测只取有行情的日子,
+        实盘周末也会触发并告警一次, 美股等请传 ``trading_calendar``。
+
+        首日规则: 在 :meth:`on_start` 里登记的任务延后到首个行情事件(或首个用户
+        定时器)才登记, 早于该时刻的时点跳过(回测中盘前等生命周期事件不算), 例如
+        首根 bar 在 09:31 时首日 09:25 的任务不触发。实盘在生命周期事件上也登记(前提是
+        重写了 on_pre_open/on_before_trading/on_after_trading 之一; 都没重写时生命周期
+        事件不派发, 任务仍在首个行情事件登记)。
 
         提示: 若目的是横截面/定期调仓, 优先使用 :meth:`on_cross_section` ——
         它由框架托管、成交时序对齐; ``schedule_daily`` + :meth:`on_timer`
@@ -1264,9 +1298,13 @@ class Strategy:
         """
         注册每周定时任务 (Weekly Timer).
 
-        在每个 ISO 周的**首个交易日**的 ``time_str`` 时点触发一次
-        :meth:`on_timer`; 若该周首日休市/停牌, 自动顺延到该周首个有交易的日子。
-        仅在回测(交易日历已知)时有效。
+        在每个 ISO 周的**首个交易日**(按交易日历; 周一休市则顺延到该周首个
+        交易日)的 ``time_str`` 时点触发一次 :meth:`on_timer`。回测与实盘同一语义,
+        登记与首日规则同 :meth:`schedule_daily`; 实盘触发后重排到下周首个交易日。
+
+        首周口径: 回测的交易日只取数据覆盖范围, 首周被截断——在该周落在数据范围内的
+        首个交易日触发(例如数据从周三开始, 首周在周三触发)。实盘启动时, 若本周首个
+        交易日的 ``time_str`` 已过, 从下一个首个交易日尚未过去的周开始触发, 本周不补。
 
         :param time_str: 时间字符串 (例如 "09:30:00")
         :param payload: 回调标识
@@ -1277,10 +1315,15 @@ class Strategy:
         """
         注册每月定时任务 (Monthly Timer).
 
-        在每个自然月的**首个交易日**的 ``time_str`` 时点触发一次
-        :meth:`on_timer`; 若该月首日休市/停牌, 自动顺延到该月首个有交易的日子。
-        仅在回测(交易日历已知)时有效。需要月末/偏移等非常规节奏时,
-        请改用 :meth:`schedule` + :attr:`trading_days` 自行枚举。
+        在每个自然月的**首个交易日**(按交易日历)的 ``time_str`` 时点触发一次
+        :meth:`on_timer`。回测与实盘同一语义, 登记与首日规则同
+        :meth:`schedule_daily`; 实盘触发后重排到下月首个交易日。需要月末/偏移等
+        非常规节奏时, 请在回测中改用 :meth:`schedule` + :attr:`trading_days` 自行枚举。
+
+        首月口径: 回测的交易日只取数据覆盖范围, 首月被截断——在该月落在数据范围内的
+        首个交易日触发(例如数据从 15 日开始, 首月在 15 日所在交易日触发)。实盘启动
+        时, 若本月首个交易日的 ``time_str`` 已过, 从下一个首个交易日尚未过去的月开始
+        触发, 本月不补。
 
         :param time_str: 时间字符串 (例如 "09:30:00")
         :param payload: 回调标识
@@ -1289,11 +1332,20 @@ class Strategy:
 
     @property
     def trading_days(self) -> "List[pd.Timestamp]":
-        """引擎已知的交易日序列(只读). 回测下可用于在 :meth:`schedule` 上自定义节奏."""
+        """引擎已知的交易日序列(只读).
+
+        回测下为数据覆盖范围内(首个～最后一个数据交易日)的交易日历交易日,
+        含区间内无行情的交易日, 夜盘 bar 归下一交易日; 可用于在 :meth:`schedule`
+        上自定义节奏。实盘为空列表(交易日历按 ``ctx.is_trading_day`` /
+        ``ctx.next_trading_day`` 逐日查询)。
+        """
         return list(self._trading_days)
 
     def nth_trading_day_of_month(self, n: int) -> "List[pd.Timestamp]":
         """每个自然月的第 n 个交易日(n 从 1 开始; 该月不足 n 个则跳过).
+
+        基于 :attr:`trading_days`(交易日历交易日, 仅回测有值; 首尾月份只含数据
+        覆盖范围内的交易日)。
 
         便于在 :meth:`schedule` 上表达非常规节奏, 例如::
 
@@ -2017,6 +2069,7 @@ class Strategy:
                     resolved_symbol,
                     value,
                     timestamp=int(getattr(bar, "timestamp")),
+                    interval_start=getattr(bar, "interval_start", None),
                 )
         if isinstance(bar, Bar) and bar.freq is None:
             self._peek_intrabar_indicators(bar)
@@ -2187,6 +2240,7 @@ class Strategy:
         *,
         timestamp: Optional[int] = None,
         confirmed: bool = True,
+        interval_start: Optional[int] = None,
     ) -> None:
         """把一次指标更新自动上报为绘图点.
 
@@ -2213,6 +2267,7 @@ class Strategy:
                 scale_group=declaration.scale_group,
                 timestamp=timestamp,
                 confirmed=confirmed,
+                interval_start=interval_start,
             )
 
     def _check_symbol_data_coverage(self) -> None:
@@ -2538,7 +2593,11 @@ class Strategy:
         pass
 
     def on_before_trading(self, trading_date: dt.date, timestamp: int) -> None:
-        """交易日开始前回调."""
+        """交易日开始交易回调：该交易日最早的连续竞价开始后 1ns 触发（每个交易日一次）.
+
+        回测与实盘同一时点；交易日没有连续竞价段时不触发。夜盘品种的交易日从前一
+        交易日夜盘开始，如周一交易日在周五 21:00 触发。
+        """
         pass
 
     def on_cross_section(self, trading_date: dt.date, timestamp: int) -> None:
@@ -2550,11 +2609,19 @@ class Strategy:
         pass
 
     def on_after_trading(self, trading_date: dt.date, timestamp: int) -> None:
-        """交易日结束后回调."""
+        """交易日收盘后回调：日终结算完成后触发（每个交易日一次）.
+
+        此时 T+1 已解冻、当日 Day 单已过期；其中下的单属于下一交易日。回测数据在
+        盘中结束、当日未结算时不触发。
+        """
         pass
 
     def on_pre_open(self, event: Dict[str, Any]) -> None:
-        """开盘前回调，仅该阶段默认使用 next-open 成交语义."""
+        """盘前回调：交易日首个交易时段开始前触发（每个交易日一次，回测与实盘一致）.
+
+        时点为该交易日最早时段起点前 1ns，且不早于上一交易日收盘后的日终结算；仅该
+        阶段默认使用 next-open 成交语义。
+        """
         pass
 
     def on_reject(self, order: Any) -> None:
@@ -2661,6 +2728,19 @@ class Strategy:
         self._check_order_events()
         return self._take_pending_engine_plans()
 
+    def _on_foreign_timer_event_and_flush(
+        self, payload: str, ctx: StrategyContext
+    ) -> Optional[Tuple[Any, Any]]:
+        """引擎单次调用入口: 别的槽位的定时器事件 (Internal).
+
+        多槽位下带所属策略的定时器只调所属槽位的 on_timer; 其余槽位走这里, 不调
+        on_timer, 只刷本步的订单/成交/到期回调并取待注册计划——本步撮合产生的
+        成交在引擎 strategy 阶段末清空, 不刷就会丢。
+        """
+        _on_foreign_timer_event_impl(self, payload, ctx)
+        self._check_order_events()
+        return self._take_pending_engine_plans()
+
     def on_bar(self, bar: Bar) -> None:
         """
         策略逻辑入口 (Bar 数据).
@@ -2693,8 +2773,8 @@ class Strategy:
         :param callback: 窗口闭合时的回调; 省略则调用 :meth:`on_window_bar`
         :param symbols: 只对这些标的聚合; 省略覆盖本次运行的全部标的
         :param session_windows: 本地交易时段
-            ``[("09:30", "11:30"), ("13:00", "15:00")]``,
-            给定则窗口不跨时段拼接(避免跨午休的脏 bar)
+            ``[("09:30", "11:30"), ("13:00", "15:00")]``, 给定则覆盖时段表、
+            窗口不跨时段拼接; 终点早于起点表示跨午夜(如 ``("21:00", "02:30")``)
         :raises ValueError: 周期不可解析 / 不高于基础周期(引擎配置时检查) / 时段非法
         :raises RuntimeError: 引擎已启动后调用
         """
@@ -2827,6 +2907,7 @@ class Strategy:
         confirmed: bool = True,
         group: str = "",
         role: str = "",
+        interval_start: Optional[int] = None,
     ) -> None:
         """``record_indicator`` 的实现, 另收 candle 分量的 ``group``/``role``.
 
@@ -2874,6 +2955,20 @@ class Strategy:
             if timestamp is None
             else int(pd.Timestamp(timestamp).value)
         )
+        # 点由 bar 触发时带上该 bar 的区间起点, 让 sink 把毫秒时间取整到区间终点;
+        # 显式传入的优先(自动上报用事件自身的 bar), 未显式给 timestamp 时取
+        # 当前 bar 的; tick 驱动的点没有区间, 保持原样。
+        if (
+            interval_start is None
+            and timestamp is None
+            and self.current_bar is not None
+        ):
+            interval_start = getattr(self.current_bar, "interval_start", None)
+        interval_start_kw: Dict[str, int] = {}
+        if interval_start is not None and self._sink_accepts(
+            recorder, "interval_start"
+        ):
+            interval_start_kw = {"interval_start": int(interval_start)}
         owner_strategy_id = str(
             getattr(self, "_owner_strategy_id", "_default") or "_default"
         )
@@ -2901,6 +2996,7 @@ class Strategy:
                 else {}
             ),
             **group_role,
+            **interval_start_kw,
         )
 
     def _sink_accepts(self, recorder: Any, keyword: str) -> bool:
@@ -3099,7 +3195,7 @@ class Strategy:
                 - maintenance_ratio: 维持担保比例
                 - account_mode: 账户模式 ("cash" / "margin")
                 - accrued_interest: 累计计提利息
-                - daily_interest: 当日计提利息
+                - daily_interest: 本次结算计提利息 (按两次结算间的自然日天数计提)
         """
         return _get_account_impl(self)
 

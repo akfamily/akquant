@@ -31,7 +31,9 @@ def test_partial_filled_status_and_open_orders_visibility() -> None:
     for i in range(3):
         data.append(
             Bar(
-                timestamp=pd.Timestamp(f"2023-01-0{i + 1} 10:00:00").value,
+                timestamp=pd.Timestamp(
+                    f"2023-01-0{i + 1} 10:00:00", tz="Asia/Shanghai"
+                ).value,
                 open=10.0,
                 high=10.0,
                 low=10.0,

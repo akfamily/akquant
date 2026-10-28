@@ -134,9 +134,136 @@ class TimeInForce:
     Day: typing.ClassVar["TimeInForce"]
 
 class TradingSession:
-    Normal: typing.ClassVar["TradingSession"]
-    PreMarket: typing.ClassVar["TradingSession"]
-    PostMarket: typing.ClassVar["TradingSession"]
+    Continuous: typing.ClassVar["TradingSession"]
+    Break: typing.ClassVar["TradingSession"]
+    Closed: typing.ClassVar["TradingSession"]
+    PostClose: typing.ClassVar["TradingSession"]
+    OpeningAuction: typing.ClassVar["TradingSession"]
+    AuctionHold: typing.ClassVar["TradingSession"]
+    ClosingAuction: typing.ClassVar["TradingSession"]
+
+class SessionResolver:
+    r"""
+    交易时段解析器：把时间点或 bar 区间解析为 (交易日, 时段).
+
+    :param sessions: 代码前缀 → 时段模板名或自定义段列表；"default" 为全局默认。
+        自定义段写 (start, end, session)，可选第 4 项锚定 "prev"/"day"
+    :param trading_calendar: 交易日列表；不传时中国市场按工作日推算（节假日会算错），ALWAYS_OPEN 每天都算
+    :param timezone: IANA 时区名
+    """
+
+    def __new__(
+        cls,
+        sessions: typing.Optional[
+            typing.Mapping[
+                str, typing.Union[str, typing.Sequence[typing.Sequence[str]]]
+            ]
+        ] = None,
+        trading_calendar: typing.Optional[list[datetime.date]] = None,
+        timezone: str = "Asia/Shanghai",
+    ) -> "SessionResolver": ...
+    def resolve_instant(
+        self, symbol: str, timestamp: int, asset_type: typing.Optional[AssetType] = None
+    ) -> tuple[datetime.date, TradingSession]: ...
+    def resolve_bar(
+        self,
+        symbol: str,
+        timestamp: int,
+        interval_start: typing.Optional[int] = None,
+        asset_type: typing.Optional[AssetType] = None,
+    ) -> tuple[datetime.date, TradingSession]: ...
+    def day_bounds(
+        self,
+        symbol: str,
+        trading_day: datetime.date,
+        asset_type: typing.Optional[AssetType] = None,
+    ) -> tuple[int, int]: ...
+    def trading_blocks(
+        self,
+        symbol: str,
+        trading_day: datetime.date,
+        asset_type: typing.Optional[AssetType] = None,
+    ) -> list[tuple[int, int]]: ...
+    def block_at(
+        self,
+        symbol: str,
+        timestamp: int,
+        asset_type: typing.Optional[AssetType] = None,
+    ) -> typing.Optional[tuple[datetime.date, int, int, int]]: ...
+    def set_active(
+        self, symbols: list[tuple[str, typing.Optional[AssetType]]]
+    ) -> None: ...
+    def set_option_underlyings(self, mapping: dict[str, str]) -> None:
+        r"""
+        设置期权到标的的映射 ``{期权代码: 标的代码}``.
+
+        期权未命中 ``sessions`` 前缀、且标的在 :meth:`set_active` 中登记为期货时, 期权使用
+        标的的时段表; 否则仍用 ``CN_OPTION``(如 ETF 期权). 与 ``set_active`` 的调用先后无关.
+        """
+    def session_day_end(self, trading_day: datetime.date) -> int: ...
+    def is_session_day(self, day: datetime.date) -> bool: ...
+    def session_trading_day(self, timestamp: int) -> datetime.date: ...
+    def next_session_day(self, day: datetime.date) -> datetime.date: ...
+    @property
+    def uses_fallback_calendar(self) -> bool: ...
+    @property
+    def uses_all_days_fallback(self) -> bool: ...
+    @staticmethod
+    def templates() -> list[str]: ...
+
+class WindowAggregator:
+    r"""
+    单周期窗口聚合器：把基础 bar 流聚合成 ``freq`` 周期的窗口 bar.
+
+    规则与引擎 ``subscribe_bars`` 相同：日内窗口按交易日与交易块切分、标签不超过
+    块结束；日线窗口按交易日切分、标签为交易日收盘。bar 落在品种时段表全部
+    交易块之外时（如期货误用股票时段表），每个品种告警一次。
+
+    :param freq: 窗口周期，``"Nmin"`` / ``"Nh"`` / ``"1d"``
+    :param session_windows: 手写本地交易时段，给定则覆盖时段表
+    :param base_interval_min: 基础 bar 周期（分钟），给定时按 bar 区间即时闭合
+    :param resolver: 会话解析器；不传时按 ``timezone`` 新建默认解析器
+    :param timezone: IANA 时区名；不传时有 ``resolver`` 用其时区，否则
+        ``"Asia/Shanghai"``；与 ``resolver`` 的时区不一致时报错
+    :param asset_types: 品种 → 资产类型
+    """
+
+    def __new__(
+        cls,
+        freq: str,
+        session_windows: typing.Optional[list[tuple[str, str]]] = None,
+        base_interval_min: typing.Optional[int] = None,
+        resolver: typing.Optional[SessionResolver] = None,
+        timezone: typing.Optional[str] = None,
+        asset_types: typing.Optional[dict[str, AssetType]] = None,
+    ) -> "WindowAggregator": ...
+    @property
+    def freq(self) -> str: ...
+    def set_asset_type(self, symbol: str, asset_type: AssetType) -> None: ...
+    def has_asset_type(self, symbol: str) -> bool: ...
+    def update(self, bar: Bar) -> list[Bar]: ...
+    def update_arrays(
+        self,
+        timestamps: numpy.typing.NDArray[numpy.int64],
+        opens: numpy.typing.NDArray[numpy.float64],
+        highs: numpy.typing.NDArray[numpy.float64],
+        lows: numpy.typing.NDArray[numpy.float64],
+        closes: numpy.typing.NDArray[numpy.float64],
+        volumes: numpy.typing.NDArray[numpy.float64],
+        symbol: str,
+        interval_starts: typing.Optional[numpy.typing.NDArray[numpy.int64]] = None,
+        flush: bool = True,
+    ) -> tuple[list[Bar], numpy.typing.NDArray[numpy.int64]]:
+        r"""
+        批量喂入单品种基础 bar 列，返回 (窗口 bar 列表, 行→窗口下标).
+
+        第二个返回值与输入等长，未闭合窗口里的行为 -1；``flush=True`` 时末尾闭合
+        全部在形成窗口并计入列表。注意 flush 会闭合本聚合器里**所有品种**的在形成
+        窗口，与 ``update()`` 混用时请对本品种单独建聚合器。各数组须为 C 连续、
+        类型如签名所示；价格为 NaN/Inf 时按 0 处理，请先剔除这类行。
+        """
+    def flush(self) -> list[Bar]: ...
+    def current(self, symbol: str) -> typing.Optional[Bar]: ...
 
 class CorporateActionType:
     Split: typing.ClassVar["CorporateActionType"]
@@ -318,6 +445,7 @@ class BacktestResult:
     :ivar snapshots: 每日持仓快照 [(timestamp, [snapshot])]
     :ivar orders: 订单列表
     :ivar executions: 成交列表
+    :ivar trading_day_ends: 引擎实际开过的交易日及收盘时刻 [(date, close_ns)]
     """
 
     equity_curve: list[tuple[int, float]]
@@ -329,6 +457,7 @@ class BacktestResult:
     snapshots: list[tuple[int, list[PositionSnapshot]]]
     orders: list[Order]
     executions: list[Trade]
+    trading_day_ends: list[tuple[datetime.date, int]]
     metrics_df: typing.Any
     orders_df: typing.Any
     resolved_execution_policy: typing.Optional[dict[str, typing.Any]]
@@ -382,12 +511,14 @@ class Bar:
     :ivar volume: 成交量
     :ivar symbol: 标的代码
     :ivar freq: 周期标签 (基础 bar 为 None, 引擎聚合出的窗口 bar 带 "5min" 等)
+    :ivar interval_start: 区间起点 (UTC 纳秒, 不含); None 表示未知
     """
 
     timestamp: int
     symbol: str
     extra: dict[str, float]
     freq: typing.Optional[str]
+    interval_start: typing.Optional[int]
     open: float
     high: float
     low: float
@@ -405,6 +536,7 @@ class Bar:
         symbol: str,
         extra: typing.Optional[dict[str, float]] = ...,
         freq: typing.Optional[str] = ...,
+        interval_start: typing.Optional[int] = ...,
     ) -> "Bar": ...
     def set_open(self, value: float) -> None: ...
     def set_high(self, value: float) -> None: ...
@@ -412,6 +544,7 @@ class Bar:
     def set_close(self, value: float) -> None: ...
     def set_volume(self, value: float) -> None: ...
     def __repr__(self) -> str: ...
+    def __reduce__(self) -> tuple[typing.Any, ...]: ...
 
 class BarAggregator:
     r"""
@@ -425,13 +558,31 @@ class BarAggregator:
         feed: "DataFeed",
         interval_min: int = ...,
         volume_is_cumulative: bool = ...,
-        stamp_bar_at_interval_end: bool = ...,
-    ) -> "BarAggregator": ...
+        stamp_bar_at_interval_end: typing.Optional[bool] = ...,
+    ) -> "BarAggregator":
+        r"""
+        创建 K 线合成器.
+
+        按右闭区间 ``(S, E]`` 分桶(恰在整分 ``E`` 的 tick 属于以 ``E`` 结尾的
+        bar), 封闭的 bar 恒用区间终点戳 ``timestamp = E``, 并带
+        ``interval_start = S``, 实盘与回测同一口径。
+
+        :param feed: 数据源 (合成的 Bar 将添加到此数据源)
+        :param interval_min: K 线周期 (分钟, 默认 1 分钟)
+        :param volume_is_cumulative: ``on_tick`` 的 ``volume`` 是否为累计量
+            (默认 True, 对应 CTP 的日累计 Volume)。回测喂单笔量时传 False。
+        :param stamp_bar_at_interval_end: 已废弃, 仅为兼容旧调用保留。传 True
+            静默接受, 传 False 抛 ``ValueError``。
+        """
+        ...
     def on_tick(
         self, symbol: str, price: float, volume: float, timestamp_ns: int
     ) -> None:
         r"""
         处理新的 Tick 数据.
+
+        所属区间已被封闭推出(例如已由 ``flush_due`` 补发)的迟到 tick 不参与
+        OHLC, 其量计入下一根 bar(日累计量守恒), 并计入 ``late_tick_count``。
 
         :param symbol: 标的代码
         :param price: 最新价
@@ -439,6 +590,46 @@ class BarAggregator:
             (TotalVolume); 为 False 时为本笔成交量。
         :param timestamp_ns: 时间戳 (纳秒)
         """
+        ...
+    def flush_due(self, now_ns: int, grace_ns: int = 2_000_000_000) -> int:
+        r"""
+        封闭已到期的在形成 bar 并推入数据源.
+
+        区间终点 ``E`` + ``grace_ns`` ≤ ``now_ns`` 的 bar 被封闭推出。之后到达的
+        同区间 tick(含恰在 ``E`` 的)视为迟到: 不参与 OHLC, 量计入下一根。
+
+        :param now_ns: 当前时刻 (纳秒)
+        :param grace_ns: 区间结束后的宽限期 (纳秒, 默认 2 秒)
+        :return: 本次推出的 bar 根数
+        """
+        ...
+    def late_tick_count(self, symbol: str) -> int:
+        r"""
+        某品种的迟到 tick 数(所属区间已封闭推出, 量已计入下一根).
+
+        :param symbol: 标的代码
+        :return: 迟到 tick 数
+        """
+        ...
+    def set_session_clamp(self, resolver: "SessionResolver", grace_ns: int) -> None:
+        r"""
+        开启收盘宽限钳制(实盘).
+
+        tick 时间戳落在其品种所属交易日 D 的 ``(收盘(D), 收盘(D) + grace_ns]`` 内、
+        且早于下一交易日首段起点时, 计入以收盘(D) 结尾的那根 bar(OHLC 与量都含
+        它); 该 bar 推迟到 ``收盘(D) + grace_ns`` 再加 ``flush_due`` 的补发宽限之后
+        才推出, 并在 ``extra["__akq_close_price"]`` 写入不晚于收盘的最后一笔价格
+        (引擎只在结构上是钳制收盘 bar 时采用: 实盘、带 ``interval_start``、时间戳
+        恰为该品种交易日收盘、当日未结算, 按它记当日结算价)。收盘按品种自己的
+        时段表取; 午休不钳, ALWAYS_OPEN 不钳。默认关闭, 由实盘 runner 经行情网关的 ``configure_session_clamp`` 钩子
+        开启。
+
+        :param resolver: 与引擎同配置的时段解析器(须已 ``set_active`` 全部合约)
+        :param grace_ns: 收盘后宽限 (纳秒, 不能为负, 否则抛 ``ValueError``)
+        """
+        ...
+    def clear_session_clamp(self) -> None:
+        r"""关闭收盘宽限钳制."""
         ...
 
 class BollingerBands:
@@ -540,6 +731,21 @@ class DataFeed:
     def add_bar(self, bar: Bar) -> None: ...
     def add_bars(self, bars: typing.Sequence[Bar]) -> None: ...
     def add_tick(self, tick: Tick) -> None: ...
+    def add_trading_day_hint(
+        self, timestamp_ns: int, trading_day: datetime.date, source: str
+    ) -> None:
+        r"""
+        推送行情源报告的交易日（仅实盘）.
+
+        与行情同序进入引擎：传了 ``trading_calendar=`` 时不一致只告警；未传时在所涉交易日
+        尚未开日前按它修正缺省（工作日）日历。
+
+        :param timestamp_ns: 报告时刻（UTC 纳秒）
+        :param trading_day: 行情源报告的交易日
+        :param source: 行情源名称（如 ``"ctp"``）
+        :raises RuntimeError: 在回测数据源上调用
+        """
+        ...
     def add_arrays(
         self,
         timestamps: numpy.ndarray,
@@ -551,6 +757,7 @@ class DataFeed:
         symbol: typing.Optional[str] = ...,
         symbols: typing.Optional[typing.Sequence[str]] = ...,
         extra: typing.Optional[typing.Mapping[str, typing.Any]] = ...,
+        interval_starts: typing.Optional[numpy.ndarray] = ...,
     ) -> None: ...
     def __new__(
         cls,
@@ -625,6 +832,28 @@ class Engine:
         r"""配置多周期窗口订阅 (由 Strategy.subscribe_bars 收集后下发). 须在 run() 之前调用."""
         ...
 
+    @property
+    def current_trading_day(self) -> typing.Optional[datetime.date]:
+        r"""当前交易日（会话级）；尚未开日时为 None."""
+        ...
+
+    @property
+    def last_settled_trading_day(self) -> typing.Optional[datetime.date]:
+        r"""已完成日终结算的最后交易日；尚未结算时为 None."""
+        ...
+    @property
+    def session_config(
+        self,
+    ) -> tuple[
+        typing.Optional[dict[str, typing.Union[str, list[tuple[str, ...]]]]],
+        typing.Optional[list[datetime.date]],
+    ]:
+        r"""当前交易时段配置 (sessions, trading_calendar)；随存档保存.
+
+        sessions 的值为模板名，或自定义段列表 [(start, end, session[, anchor]), ...]。
+        """
+        ...
+
     def get_state_bytes(self) -> bytes:
         r"""
         导出当前状态为二进制数据.
@@ -675,6 +904,33 @@ class Engine:
         设置时区偏移 (秒).
 
         :param offset: 偏移秒数 (例如 UTC+8 为 28800)
+        """
+        ...
+
+    def configure_sessions(
+        self,
+        sessions: typing.Optional[
+            typing.Mapping[
+                str, typing.Union[str, typing.Sequence[typing.Sequence[str]]]
+            ]
+        ] = None,
+        trading_calendar: typing.Optional[list[datetime.date]] = None,
+    ) -> None:
+        r"""配置交易时段表与交易日历."""
+        ...
+
+    def trading_day_at(self, timestamp_ns: int) -> datetime.date:
+        r"""
+        时刻所属的交易日.
+
+        按当前时段表与交易日历（含行情源对缺省日历的修正）求 ``timestamp_ns`` 所属的会话
+        交易日：收盘之后的时刻属于下一交易日。只读，可在 ``run()`` 之前或之后调用。
+        纯日历查询：不考虑实盘收盘宽限（宽限期内的行情在运行中仍归当日，见
+        ``run_live(day_close_delay=)``；此处按日历属下一交易日）。
+
+        :param timestamp_ns: 时刻（UTC 纳秒）
+        :return: 所属交易日
+        :raises ValueError: 时段配置非法，或时刻超出 ``trading_calendar`` 覆盖范围
         """
         ...
 
@@ -744,11 +1000,56 @@ class Engine:
         """
         ...
 
-    def set_force_session_continuous(self, enabled: bool) -> None:
+    def _set_live_day_close_delay_ns(self, delay_ns: int) -> None:
         r"""
-        强制连续交易时段.
+        设置实盘日终结算定时器相对会话收盘的宽限(纳秒, 默认 60 秒).
 
-        :param enabled: 是否强制连续交易 (忽略午休等)
+        框架内部接口: ``run_live(day_close_delay=)`` 在 ``run()`` 之前下发。只影响实盘
+        (live feed); 回测的收盘定时器恒为收盘 + 1ns。不入存档, 每次会话重新下发。
+
+        :param delay_ns: 宽限纳秒数, 须 >= 0
+        :raises ValueError: 宽限为负
+        """
+        ...
+
+    def _set_live_lifecycle_anchor(self, ts_ns: typing.Optional[int]) -> None:
+        r"""
+        设置实盘生命周期锚点(框架内部接口, replay 用).
+
+        ``run_live(broker="replay")`` 在 ``run()`` 之前按首个回放事件下发(首个事件
+        - 1ns)。设置后 ``run()`` 用 ``min(墙钟, 锚点)`` 代替墙钟排程交易日生命周期,
+        且锚点所属交易日早于锚点的 pre_open / before_trading 照常登记。真实实盘不设。
+
+        :param ts_ns: 锚点(纳秒, UTC epoch); ``None`` 清除
+        """
+        ...
+
+    def _set_live_replay_end(self, last_event_ns: typing.Optional[int]) -> bool:
+        r"""
+        声明 replay 最后一个事件的时刻并判定数据结束时是否收尾结算(框架内部接口).
+
+        最后事件已到其所属交易日的会话收盘时返回 ``True``: 引擎在最后事件处理完后
+        等该日收盘定时器结算并派发 on_after_trading, 然后自行结束会话(行情已取空后
+        等待超过 5 秒则告警并结束)。否则返回 ``False``, 末日不结算(同回测)。
+
+        :param last_event_ns: 最后一个回放事件的时间戳(纳秒); ``None`` 清除
+        :return: 是否等待末日结算后结束
+        """
+        ...
+
+    def set_lifecycle_hooks_dispatch(
+        self, pre_open: bool, before_trading: bool, after_trading: bool
+    ) -> None:
+        r"""
+        设置各交易日生命周期事件是否派发给策略.
+
+        框架在 run 开始时按是否有策略重写了对应钩子设置，缺省全为 True。
+        为 False 的盘前/开始交易事件只在引擎内部消费；收盘后事件为 False 时只在有
+        过期单或到期事件要送达时派发。
+
+        :param pre_open: 是否派发盘前事件（on_pre_open）
+        :param before_trading: 是否派发开始交易事件（on_before_trading）
+        :param after_trading: 是否派发收盘后事件（on_after_trading）
         """
         ...
 
@@ -766,7 +1067,6 @@ class Engine:
 
         - 切换到 ChinaMarket
         - 设置 T+0
-        - 保持当前交易时段配置 (需手动设置 set_market_sessions 以匹配特定品种)
         """
         ...
 
@@ -936,26 +1236,6 @@ class Engine:
         """
         ...
 
-    def set_market_sessions(
-        self, sessions: typing.Sequence[tuple[str, str, akquant.TradingSession]]
-    ) -> None:
-        r"""
-        设置市场交易时段.
-
-        :param sessions: 交易时段列表，每个元素为 (开始时间, 结束时间, 时段类型)
-        :type sessions: List[Tuple[str, str, TradingSession]]
-
-        示例::
-
-        ```python
-        engine.set_market_sessions([
-            ("09:30:00", "11:30:00", TradingSession.Normal),
-            ("13:00:00", "15:00:00", TradingSession.Normal)
-        ])
-        ```
-        """
-        ...
-
     def add_instrument(self, instrument: Instrument) -> None:
         r"""
         添加交易标的.
@@ -1075,6 +1355,7 @@ class Instrument:
     implied_volatility: typing.Optional[float]
     reference_volatility: typing.Optional[float]
     sellable_after_days: int
+    underlying_symbol: typing.Optional[str]
     def __new__(
         cls,
         symbol: str,
@@ -1208,6 +1489,7 @@ class Order:
     def set_filled_quantity(self, value: float) -> None: ...
     def set_average_filled_price(self, value: typing.Optional[float]) -> None: ...
     def __repr__(self) -> str: ...
+    def __reduce__(self) -> tuple[typing.Any, ...]: ...
 
 class PerformanceMetrics:
     r"""
@@ -2715,7 +2997,11 @@ class StrategyContext:
     timers: list[Timer]
     session: akquant.TradingSession
     current_time: int
+    trading_day: typing.Optional[datetime.date]
     recent_trades: list[Trade]
+    recent_rejected_orders: list[Order]
+    recent_expired_orders: list[Order]
+    recent_finalized_orders: list[Order]
     recent_expiry_events: list[ExpiryEvent]
     risk_config: RiskConfig
     strategy_id: typing.Optional[str]
@@ -2924,6 +3210,53 @@ class StrategyContext:
         """
         ...
 
+    def session_of(self, symbol: str) -> TradingSession:
+        r"""
+        品种此刻的交易时段.
+
+        与撮合同口径：本时间片已解析的优先（含 bar 区间信息）；否则当前事件为 bar 时
+        按其区间解析（假定同周期），其他事件按当前时刻解析；解析失败或无解析器时为
+        Continuous。
+
+        :param symbol: 标的代码
+        :return: 交易时段
+        """
+        ...
+
+    def is_trading_day(self, day: datetime.date) -> bool:
+        r"""
+        是否为会话交易日历上的交易日（无解析器时为 False）.
+
+        :param day: 日期
+        """
+        ...
+
+    def next_trading_day(self, day: datetime.date) -> typing.Optional[datetime.date]:
+        r"""
+        会话交易日历上 ``day`` 之后的下一个交易日（超出日历或无解析器时为 None）.
+
+        :param day: 日期
+        """
+        ...
+
+    def _window_session_context(
+        self,
+    ) -> typing.Optional[tuple[SessionResolver, dict[str, AssetType]]]:
+        r"""
+        引擎切分多周期窗口用的会话解析器与各品种资产类型（无解析器时为 None）.
+
+        供策略内的 ``BarGenerator`` 沿用，与 ``subscribe_bars`` 同一时段表。
+        """
+        ...
+
+    def uses_all_days_calendar(self) -> bool:
+        r"""
+        会话日历是否为全日历兜底（周末也算交易日；无解析器时为 False）.
+
+        未传 ``trading_calendar`` 且在用时段表全是 ALWAYS_OPEN 这类每天都开的表时为 True。
+        """
+        ...
+
 class ExpiryEvent:
     symbol: str
     asset_type: akquant.AssetType
@@ -2959,10 +3292,13 @@ class Tick:
     def set_price(self, value: typing.Any) -> None: ...
     def set_volume(self, value: typing.Any) -> None: ...
     def __repr__(self) -> str: ...
+    def __reduce__(self) -> tuple[typing.Any, ...]: ...
 
 class Timer:
     timestamp: int
     payload: str
+    @property
+    def owner(self) -> typing.Optional[str]: ...
 
 class Trade:
     r"""
@@ -3005,6 +3341,7 @@ class Trade:
         owner_strategy_id: typing.Optional[str] = ...,
     ) -> "Trade": ...
     def __repr__(self) -> str: ...
+    def __reduce__(self) -> tuple[typing.Any, ...]: ...
 
 class TradePnL:
     r"""

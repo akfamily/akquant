@@ -2,6 +2,7 @@ import json
 from typing import Any, Callable, Dict, Optional, Protocol, Tuple, runtime_checkable
 
 from .chart import (
+    bar_end_ns,
     normalize_group_role,
     normalize_pane_index,
     normalize_reference_lines,
@@ -59,6 +60,7 @@ class IndicatorSink(Protocol):
         phase: str = ...,
         group: str = ...,
         role: str = ...,
+        interval_start: Optional[int] = ...,
     ) -> None:
         """Record one indicator point.
 
@@ -66,6 +68,10 @@ class IndicatorSink(Protocol):
         ``run_live(preload_history=)`` and ``"run"`` otherwise (1.4). Sinks
         written against the 1.3 protocol may omit it; the framework detects
         that and simply does not pass it.
+
+        ``interval_start`` (bar 区间起点, UTC 纳秒, 可选): 点由 tick 合成的终点戳
+        bar 触发时由框架传入, sink 据此把对外毫秒时间取整到区间终点(整分钟);
+        不接受该参数的 sink 收不到, 行为与此前一致。
 
         ``group``/``role`` (1.6) identify one OHLC component of a
         ``render_type="candle"`` declaration: ``group`` is the ``Strategy.I``
@@ -235,7 +241,10 @@ class IndicatorRecorder:
         self._instances: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
         self._points: list[Dict[str, Any]] = []
         self._stream_emitter = stream_emitter
-        self._pending_snapshots: Dict[Tuple[str, str, int], list[Dict[str, Any]]] = {}
+        # 键末位是快照的毫秒时间(按 bar 区间终点取整), 与纳秒戳分开存
+        self._pending_snapshots: Dict[
+            Tuple[str, str, int, int], list[Dict[str, Any]]
+        ] = {}
         self._series_registry = SeriesKeyRegistry()
 
     def declare(self, owner_strategy_id: str, indicator_key: str) -> None:
@@ -278,6 +287,7 @@ class IndicatorRecorder:
         phase: str = "run",
         group: str = "",
         role: str = "",
+        interval_start: Optional[int] = None,
     ) -> None:
         """Record one indicator definition, instance, and point update.
 
@@ -300,7 +310,7 @@ class IndicatorRecorder:
         reference_lines_norm = normalize_reference_lines(reference_lines)
         scale_group_norm = normalize_scale_group(scale_group)
         timestamp_ns = _normalize_timestamp_ns(timestamp)
-        timestamp_ms = timestamp_ms_from_ns(timestamp_ns)
+        timestamp_ms = timestamp_ms_from_ns(bar_end_ns(timestamp_ns, interval_start))
         phase_text = _normalize_text(phase, default="run")
 
         try:
@@ -399,7 +409,7 @@ class IndicatorRecorder:
                     "meta_json": meta_json,
                 },
             )
-            snapshot_key = (strategy_id, symbol_text, timestamp_ns)
+            snapshot_key = (strategy_id, symbol_text, timestamp_ns, timestamp_ms)
             snapshot_items = self._pending_snapshots.setdefault(snapshot_key, [])
             snapshot_items.append(
                 {
@@ -422,7 +432,7 @@ class IndicatorRecorder:
         if self._stream_emitter is None or not self._pending_snapshots:
             self._pending_snapshots.clear()
             return
-        for (strategy_id, symbol_text, timestamp_ns), items in list(
+        for (strategy_id, symbol_text, timestamp_ns, timestamp_ms), items in list(
             self._pending_snapshots.items()
         ):
             stamp_snapshot_items(self._series_registry, strategy_id, items)
@@ -434,7 +444,7 @@ class IndicatorRecorder:
                     "owner_strategy_id": strategy_id,
                     "symbol": symbol_text,
                     "timestamp": str(timestamp_ns),
-                    "timestamp_ms": str(timestamp_ms_from_ns(timestamp_ns)),
+                    "timestamp_ms": str(timestamp_ms),
                     "indicator_count": str(len(items)),
                     "confirmed": all_items_confirmed(items),
                     "phase": snapshot_phase(items),

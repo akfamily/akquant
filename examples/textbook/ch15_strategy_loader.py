@@ -16,7 +16,8 @@ from akquant import Bar, Strategy
 
 def make_bars(symbol: str, count: int) -> list[Bar]:
     """构造示例 K 线."""
-    start = datetime(2024, 1, 2, 9, 30, tzinfo=timezone.utc)
+    # 北京时间交易日上午连续竞价内的 1 分钟线（时间戳打在区间终点）
+    start = datetime(2024, 1, 2, 9, 31, tzinfo=timezone(timedelta(hours=8)))
     bars: list[Bar] = []
     for i in range(count):
         dt = start + timedelta(minutes=i)

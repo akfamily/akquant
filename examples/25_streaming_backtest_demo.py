@@ -8,8 +8,12 @@ from akquant import Bar, Strategy
 
 
 def make_bars() -> list[Bar]:
-    """Build deterministic bar data for the streaming demo."""
-    idx = pd.date_range(start="2023-01-01", periods=20, freq="D")
+    """Build deterministic daily bars on business days for the streaming demo.
+
+    ``Bar.timestamp`` 是 UTC 纳秒, 须由带时区的时间换算: 本地 0 点(只有日期)
+    的日线由引擎改写到交易日收盘(15:00), 订单在下一交易日开盘集合竞价成交。
+    """
+    idx = pd.bdate_range(start="2023-01-03", periods=20, tz="Asia/Shanghai")
     bars: list[Bar] = []
     for i, ts in enumerate(idx):
         price = 100.0 + float(i)

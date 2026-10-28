@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import math
+import numbers
 import random
 import re
 import signal
@@ -12,6 +13,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Iterable,
     Iterator,
     List,
     Optional,
@@ -21,7 +23,7 @@ from typing import (
     cast,
 )
 
-from ..akquant import Bar, DataFeed, Engine, Instrument
+from ..akquant import AssetType, Bar, DataFeed, Engine, Instrument, SessionResolver
 from ..backtest import BacktestStreamEvent
 from ..gateway.broker_event_adapter import map_order_snapshot, map_trade
 from ..gateway.broker_runtime import BrokerRuntime
@@ -37,14 +39,25 @@ from ..gateway.symbol_match import normalize_symbol_for_match
 from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink, declare_plotted_indicators
 from ..log import build_log_extra, get_logger
+from ..schema import DEFAULT_INPUT_TIMEZONE
+from ..sessions_config import (
+    SessionsArg,
+    SessionsMap,
+    normalize_sessions,
+    normalize_trading_calendar,
+)
 from ..strategy import (
     InstrumentSnapshot,
     Strategy,
     StrategyRuntimeConfig,
     reconcile_strategy_id,
 )
-from ..strategy_framework_hooks import normalize_dual_stream_declaration
+from ..strategy_framework_hooks import (
+    configure_engine_lifecycle_dispatch,
+    normalize_dual_stream_declaration,
+)
 from ..strategy_loader import resolve_strategy_input
+from ..strategy_order_events import assign_slot_ownership
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
 from ..utils import format_metric_value
@@ -77,6 +90,11 @@ from ._stream_sink import StreamingIndicatorSink
 
 logger = get_logger("gateway.live")
 
+# 中国交易所所在时区(IANA 名与别名); 真实行情源配其他时区时构造期告警。
+_CHINA_TIMEZONES = frozenset(
+    {"Asia/Shanghai", "Asia/Chongqing", "PRC", "Asia/Harbin", "Asia/Urumqi"}
+)
+
 #: 实盘引擎历史缓冲的默认容量, 对齐 ``Engine::new`` 里的 ``HistoryBuffer::new(10000)``。
 #: 预热扩容取 ``max(预热深度, 本值)``: 超大预热扩容而非截断(设计 §9.1)。
 _DEFAULT_HISTORY_CAPACITY = 10000
@@ -88,6 +106,8 @@ _LEGACY_GATEWAY_OPTION_KEYS = LEGACY_GATEWAY_OPTION_KEYS
 _DEFAULT_RECOVERY_TICK_SEC = 1.0
 _DEFAULT_RECOVERY_ACCOUNT_SEC = 5.0
 _DEFAULT_RECOVERY_SYNC_SEC = 30.0
+# replay: engine.run() 之前等推送线程推完全部行情的上限(秒), 见 _await_replay_pushed
+_REPLAY_PUSH_WAIT_SECONDS = 60.0
 
 #: `_closed_broker_order_ids` 会话级有界 FIFO 上限。它只需要覆盖"委托进终态
 #: 之后还会收到多久的后续回报"这个时间窗(内置 broker 是同一 payload 成对
@@ -101,6 +121,37 @@ _SESSION_TAG_ALLOWED_CHARS = re.compile(r"^[A-Za-z0-9_]+$")
 #: ``client_order_id`` 要发给柜台, 柜台字段有长度上限, 过长会被截断(截断
 #: 直接破坏前缀匹配, 见设计文档"风险"一节)。
 _SESSION_TAG_MAX_LEN = 32
+
+
+#: 收盘钳制宽限比 ``day_close_delay`` 少的余量(纳秒)。钳制的收盘 bar 在
+#: 收盘 + 钳制宽限 + 补发宽限(2 秒)之后、补发线程下一次轮询(≤1 秒)时推出, 须早于
+#: 收盘定时器(收盘 + ``day_close_delay``), 否则推到时当日已结算(引擎会忽略其收盘价
+#: 标记并告警)。余下约 2 秒留给线程调度与 GIL 等待。``day_close_delay`` 不足它时
+#: 不开启钳制。
+_SESSION_CLAMP_MARGIN_NS = 5_000_000_000
+
+#: ``day_close_delay`` 上界(秒): 一天。宽限再长就跨过下一交易日开盘, 当日改由
+#: 下一交易日首个行情开日时补结算, 日历定时器失去意义。
+_DAY_CLOSE_DELAY_MAX_SECONDS = 86_400.0
+
+
+def _validate_day_close_delay(day_close_delay: object) -> int:
+    """校验 ``day_close_delay``（秒）并换算为纳秒."""
+    if isinstance(day_close_delay, bool) or not isinstance(
+        day_close_delay, numbers.Real
+    ):
+        raise TypeError(
+            "day_close_delay 须为秒数（int/float），"
+            f"收到 {type(day_close_delay).__name__}，如 day_close_delay=60.0"
+        )
+    seconds = float(day_close_delay)
+    if not math.isfinite(seconds) or not 0 <= seconds <= _DAY_CLOSE_DELAY_MAX_SECONDS:
+        raise ValueError(
+            "day_close_delay 须为 0～86400 之间的有限秒数"
+            f"（收到 {day_close_delay!r}），它是实盘日终结算相对会话收盘的宽限，"
+            "如 day_close_delay=60.0"
+        )
+    return int(round(seconds * 1_000_000_000))
 
 
 def _validate_session_tag(session_tag: str) -> None:
@@ -276,53 +327,67 @@ def _instruments_to_snapshots(
 
 
 class _StrategyCallbackFanout:
-    def __init__(self, strategies: List[Strategy]):
-        self._strategies = strategies
+    """多槽位 broker_live 的柜台回调路由器.
+
+    与回测/paper 的槽位语义一致(``strategy_order_events._slot_filter``):
+    订单、成交、执行回报与 OCO/Bracket 协调(``_process_order_groups``)按
+    ``owner_strategy_id`` 只派给所属槽位, owner 为空或不在任何槽位的归默认
+    槽位; 账户回调 ``on_portfolio_update`` 是全账户的, 广播给全部槽位。
+
+    owner 由 runner 的 ``_resolve_owner_strategy_id`` 解析: 先读 payload 的
+    ``owner_strategy_id``(适配后的订单/成交已带), 取不到时按
+    ``client_order_id``/``broker_order_id`` 查下单时登记的归属表(执行回报是
+    原始 payload, 走这条)。每个槽位的回调经 runner 的
+    ``_safe_strategy_callback`` 调用: 异常按该槽位记日志并转给它的 on_error,
+    不影响其余槽位。
+
+    单策略会话不经过本类, 回调目标就是主策略本身。
+    """
+
+    def __init__(
+        self,
+        strategies_by_slot: Dict[str, Strategy],
+        default_slot_id: str,
+        resolve_owner: Callable[[Any], str],
+        safe_callback: Callable[[Strategy, str, Any], None],
+    ):
+        if default_slot_id not in strategies_by_slot:
+            raise ValueError(
+                f"默认槽位 {default_slot_id!r} 不在槽位表 "
+                f"{sorted(strategies_by_slot)} 中; 请检查 strategy_id 与 "
+                "strategies_by_slot 的配置"
+            )
+        self._strategies_by_slot = dict(strategies_by_slot)
+        self._default_slot_id = default_slot_id
+        self._resolve_owner = resolve_owner
+        self._safe_callback = safe_callback
+
+    def _owner_strategy(self, payload: Any) -> Strategy:
+        owner = str(self._resolve_owner(payload) or "").strip()
+        strategy = self._strategies_by_slot.get(owner)
+        if strategy is None:
+            return self._strategies_by_slot[self._default_slot_id]
+        return strategy
+
+    def _route(self, callback_name: str, payload: Any) -> None:
+        self._safe_callback(self._owner_strategy(payload), callback_name, payload)
 
     def on_order(self, order: Any) -> None:
-        for strategy in self._strategies:
-            callback = getattr(strategy, "on_order", None)
-            if callback is None:
-                continue
-            try:
-                callback(order)
-            except Exception as exc:
-                on_error = getattr(strategy, "on_error", None)
-                if on_error is not None:
-                    try:
-                        on_error(exc, "on_order", order)
-                    except Exception:
-                        pass
+        self._route("on_order", order)
 
     def on_trade(self, trade: Any) -> None:
-        for strategy in self._strategies:
-            callback = getattr(strategy, "on_trade", None)
-            if callback is None:
-                continue
-            try:
-                callback(trade)
-            except Exception as exc:
-                on_error = getattr(strategy, "on_error", None)
-                if on_error is not None:
-                    try:
-                        on_error(exc, "on_trade", trade)
-                    except Exception:
-                        pass
+        self._route("on_trade", trade)
 
     def on_execution_report(self, report: Any) -> None:
-        for strategy in self._strategies:
-            callback = getattr(strategy, "on_execution_report", None)
-            if callback is None:
-                continue
-            try:
-                callback(report)
-            except Exception as exc:
-                on_error = getattr(strategy, "on_error", None)
-                if on_error is not None:
-                    try:
-                        on_error(exc, "on_execution_report", report)
-                    except Exception:
-                        pass
+        self._route("on_execution_report", report)
+
+    def _process_order_groups(self, trade: Any) -> None:
+        # OCO/Bracket 组登记在下单的槽位上, 只有它能撤对手腿/激活子单。
+        self._route("_process_order_groups", trade)
+
+    def on_portfolio_update(self, snapshot: Any) -> None:
+        for strategy in self._strategies_by_slot.values():
+            self._safe_callback(strategy, "on_portfolio_update", snapshot)
 
 
 class LiveRunner:
@@ -398,6 +463,10 @@ class LiveRunner:
         session_tag: Optional[str] = None,
         preload_history: Any = None,
         preload_bars: Optional[int] = None,
+        sessions: Optional[SessionsArg] = None,
+        trading_calendar: Optional[Iterable[Any]] = None,
+        timezone: Optional[str] = DEFAULT_INPUT_TIMEZONE,
+        day_close_delay: float = 60.0,
     ):
         """
         Initialize the LiveRunner.
@@ -463,6 +532,18 @@ class LiveRunner:
             unless tick-driven), ``0`` = off, ``N > 0`` = fetch N bars per symbol
             (clamped to 10000; also applies to tick-driven sessions). Ignored when
             ``preload_history`` is given. See ``run_live``.
+        :param sessions: 代码前缀 → 时段模板名或自定义时段表（"default" 为全局
+            默认）；不传时中国时区按资产类型取默认（股票 CN_STOCK、期货
+            CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。可选模板见
+            aq.SessionResolver.templates()；自定义时段表写法同 ``run_backtest``
+        :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
+            中国市场按工作日推算（节假日前后的夜盘与日终
+            结算会算错），ALWAYS_OPEN 每天都算
+        :param timezone: 时区名称（默认 "Asia/Shanghai"），与 ``run_backtest``
+            同义。见 ``run_live``
+        :param day_close_delay: 实盘日终结算相对会话收盘的宽限秒数（默认 60.0，
+            取值 0～86400）。收盘后该时长内到达的行情仍归当日（不撮合、
+            不产生权益点），结算在“收盘 + day_close_delay”。见 ``run_live``
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
@@ -560,6 +641,11 @@ class LiveRunner:
         self.session_tag = session_tag
         self.preload_history = preload_history
         self.preload_bars = validate_preload_bars(preload_bars)
+        # 交易时段表与交易日历: 构造时归一(类型错、空日历立即报错), 模板名与
+        # 自定义段的取值由 run() 里 engine.configure_sessions 校验。
+        self.sessions: Optional[SessionsMap] = normalize_sessions(sessions)
+        self.trading_calendar = normalize_trading_calendar(trading_calendar)
+        self.day_close_delay_ns = _validate_day_close_delay(day_close_delay)
         self._preload_result: Optional[PreloadResult] = None
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
@@ -569,6 +655,10 @@ class LiveRunner:
 
         self.feed = DataFeed.create_live()  # type: ignore
         self.engine = Engine()
+        # 会话时区, 由 run() 最先下发引擎(非法时区名在连网关之前报错)。
+        # None/空串回退默认 Asia/Shanghai, 与 run_backtest 一致。
+        self.timezone = str(timezone or DEFAULT_INPUT_TIMEZONE).strip()
+        self._warn_non_china_timezone()
 
         # 收尾派发的目标: run() 里策略创建成功后写入。预置 None/空是因为
         # run() 在创建策略之前就可能抛(网关工厂、broker_live 校验), 那时
@@ -631,6 +721,11 @@ class LiveRunner:
             "Configuring live engine",
             extra=self._runner_log_extra(phase="live"),
         )
+        # 引擎时区最先下发: 交易日划分、日终结算时刻、默认时段表(规则 B: 非中国
+        # 时区全天连续)都按它算; 非法时区名在此报 ValueError, 尚未连任何网关。
+        # 与 run_backtest 相同按 hasattr 判断(单测替身引擎不一定实现该方法)。
+        if hasattr(self.engine, "set_timezone_name"):
+            self.engine.set_timezone_name(self._session_timezone())
         self.engine.add_data(self.feed)
         self.engine.set_cash(cash)
 
@@ -649,7 +744,12 @@ class LiveRunner:
             self.engine.use_china_futures_market()
         else:
             self.engine.use_china_market()
-        self.engine.set_force_session_continuous(True)
+        # 交易日划分与日终结算时刻(按上面下发的引擎时区)
+        self.engine.configure_sessions(self.sessions, self.trading_calendar)
+        # 实盘日终结算宽限(收盘 + day_close_delay 秒), 运行参数不入存档, 每次下发
+        set_day_close_delay = getattr(self.engine, "_set_live_day_close_delay_ns", None)
+        if set_day_close_delay is not None:
+            set_day_close_delay(self.day_close_delay_ns)
 
         symbols = [inst.symbol for inst in self.instruments]
         gateway_kwargs = self._build_gateway_kwargs()
@@ -667,6 +767,12 @@ class LiveRunner:
         # 建好, 但策略的 on_start(里面才调 subscribe)要等到 engine.run() 才触发,
         # 所以只能存下网关引用, 到 subscribe 发生的当刻再运行期下发。
         self._market_gateway = bundle.market_gateway
+        # replay: 生命周期锚定首个回放事件、按最后事件判定收尾(同回测), 须在
+        # engine.run() 之前下发; 真实行情源不设, 生命周期仍按墙钟。
+        replay_awaits_close = self._configure_replay_lifecycle(bundle)
+        # 收盘宽限钳制(行情网关的可选钩子): 收盘后宽限期内的 tick 计入当日收盘
+        # bar。须在网关线程启动、开始推行情之前下发。
+        self._configure_session_clamp(bundle)
 
         if bundle.market_gateway is not None:
             logger.info(
@@ -705,6 +811,10 @@ class LiveRunner:
         # 那时局部名尚未绑定。
         self._stop_target_strategy = strategy_instance
         self._stop_target_slot_strategies = slot_strategy_instances
+        # 策略时区与引擎一致(与 run_backtest 相同, 覆盖策略自设的值): 定时器、
+        # 生命周期钩子与 naive 时间的本地化都读 strategy.timezone。
+        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
+            current_strategy.timezone = self._session_timezone()
         # 运行时配置下发放在最前: error_mode 等字段影响 on_start 自身的异常
         # 处理与指标声明(self.I 在 on_start 里调用) —— 主策略的 on_start 由
         # Rust 在 engine.run() 内触发, 槽位由 _dispatch_slot_strategy_start
@@ -741,7 +851,15 @@ class LiveRunner:
         if self.trading_mode == "broker_live" and bundle.trader_gateway is not None:
             strategy_targets = [strategy_instance, *slot_strategy_instances.values()]
             callback_target: Any = (
-                _StrategyCallbackFanout(strategy_targets)
+                _StrategyCallbackFanout(
+                    {
+                        effective_strategy_id: strategy_instance,
+                        **slot_strategy_instances,
+                    },
+                    effective_strategy_id,
+                    resolve_owner=self._resolve_owner_strategy_id,
+                    safe_callback=self._safe_strategy_callback,
+                )
                 if len(strategy_targets) > 1
                 else strategy_instance
             )
@@ -756,6 +874,10 @@ class LiveRunner:
         # 之前: on_start 里可能注册 timer, 早于 deadline 设置更符合"启动完成
         # 再计时"。
         self._dispatch_slot_strategy_start(slot_strategy_instances)
+
+        # replay: 等推送线程把行情全部推入 feed 再开跑(见 _await_replay_pushed)。
+        # 放在 duration 计时之前: 等待时间不计入 duration。
+        self._await_replay_pushed(bundle)
 
         # Apply duration limit if specified
         if duration:
@@ -787,6 +909,7 @@ class LiveRunner:
                 strategy_instance,
                 bounded_total,
                 list(slot_strategy_instances.values()),
+                await_day_close=replay_awaits_close,
             )
 
         # 外部信号端口: 必须在 engine.run() 之前取。run() 会独占可变借用引擎对象,
@@ -800,6 +923,10 @@ class LiveRunner:
                 effective_strategy_id,
                 [strategy_instance, *slot_strategy_instances.values()],
             )
+
+        configure_engine_lifecycle_dispatch(
+            self.engine, [strategy_instance, *slot_strategy_instances.values()]
+        )
 
         logger.info(
             "Running live strategy loop",
@@ -1069,7 +1196,10 @@ class LiveRunner:
             return
         try:
             result = normalize_preload_history(
-                preload, self._subscribed_symbol_set(), time.time_ns()
+                preload,
+                self._subscribed_symbol_set(),
+                time.time_ns(),
+                tz=self._session_timezone(),
             )
         except ValueError as exc:
             if not auto:
@@ -1186,6 +1316,10 @@ class LiveRunner:
         setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
         for slot_id, slot_strategy in slot_strategy_instances.items():
             setattr(slot_strategy, "_owner_strategy_id", slot_id)
+        assign_slot_ownership(
+            {effective_strategy_id: strategy_instance, **slot_strategy_instances},
+            effective_strategy_id,
+        )
 
         default_ready = getattr(self, "trading_mode", "paper") != "broker_live"
         for target in [strategy_instance, *slot_strategy_instances.values()]:
@@ -1622,8 +1756,53 @@ class LiveRunner:
     ) -> Dict[str, Any]:
         return normalize_gateway_options(gateway_options, **legacy_values)
 
+    def _warn_non_china_timezone(self) -> None:
+        """真实行情源配了非中国时区时告警一次(replay 回放的数据可来自任意市场)."""
+        market_key = str(
+            getattr(self, "market_broker", None) or getattr(self, "broker", "") or ""
+        )
+        if market_key.strip().lower() == "replay":
+            return
+        timezone = self._session_timezone()
+        if timezone in _CHINA_TIMEZONES:
+            return
+        logger.warning(
+            "实盘行情源按中国交易所时间切交易日，timezone=%s 会让交易日、日终结算与 "
+            "Day 单过期按该时区划分；接中国市场请保持默认 Asia/Shanghai",
+            timezone,
+            extra=self._runner_log_extra(phase="live"),
+        )
+
+    def _session_timezone(self) -> str:
+        """会话时区(``run_live(timezone=)``); 未经构造器的实例取默认值."""
+        return str(getattr(self, "timezone", DEFAULT_INPUT_TIMEZONE))
+
     def _build_gateway_kwargs(self) -> Dict[str, Any]:
-        return cast(Dict[str, Any], dict(self.gateway_options))
+        kwargs = cast(Dict[str, Any], dict(self.gateway_options))
+        # replay 把 naive DataFrame 转 Bar 时按会话时区本地化。只下发给 replay:
+        # 其他 broker 收到未识别的键会告警(klinedata)或透传给构造器。
+        market_key = (
+            getattr(self, "market_broker", None) or getattr(self, "broker", "") or ""
+        )
+        if str(market_key).strip().lower() == "replay":
+            timezone = self._session_timezone()
+            given = kwargs.get("timezone")
+            if given is not None and str(given).strip() != timezone:
+                logger.warning(
+                    "gateway_options['timezone']=%r 与 run_live(timezone=%r) 不一致，"
+                    "以 run_live 的 timezone 为准（请只在 run_live 传 timezone）",
+                    given,
+                    timezone,
+                    extra=self._runner_log_extra(phase="gateway"),
+                )
+            kwargs["timezone"] = timezone
+            # 只有日期的 bar 按与引擎相同的时段配置改写到收盘时刻(同 run_backtest)
+            kwargs["session_context"] = {
+                "sessions": getattr(self, "sessions", None),
+                "trading_calendar": getattr(self, "trading_calendar", None),
+                "instruments": list(getattr(self, "instruments", None) or []),
+            }
+        return kwargs
 
     def _start_gateway_thread(self, target: Any, name: str) -> None:
         start_gateway_thread(target, name)
@@ -1682,6 +1861,11 @@ class LiveRunner:
         self._broker_to_strategy_ids: dict[str, str] = {}
         self._closed_broker_order_ids: set[str] = set()
         self._closed_order_id_fifo: deque[str] = deque()
+        # 已终结订单的归属: 终态时活动归属表被清, 但同批的执行回报(不经适配、
+        # 派发时才解析 owner)与迟到成交仍要路由回下单槽位。键带前缀区分
+        # client_order_id("c:")与 broker_order_id("b:"), 有界 FIFO。
+        self._closed_order_owners: dict[str, str] = {}
+        self._closed_order_owner_fifo: deque[str] = deque()
         self._broker_dispatch_stop: threading.Event | None = None
         self._broker_dispatch_thread: threading.Thread | None = None
         self._broker_recovery_stop: threading.Event | None = None
@@ -2513,7 +2697,30 @@ class LiveRunner:
             mapped = self._broker_to_strategy_ids.get(broker_order_id, "").strip()
             if mapped:
                 return mapped
+        # 活动表查不到时查已终结订单: 终态回报之后到达的执行回报/成交。
+        # getattr 兜底: 部分测试替身绕开 _init_broker_bridge_state。
+        closed = getattr(self, "_closed_order_owners", None) or {}
+        for key in (f"c:{client_order_id}", f"b:{broker_order_id}"):
+            mapped = closed.get(key, "") if key[2:] else ""
+            if mapped:
+                return mapped
         return "_default"
+
+    def _remember_closed_order_owner(
+        self, client_order_id: str, broker_order_id: str, owner_strategy_id: str
+    ) -> None:
+        """终态清表前把订单归属移入有界留档, 供迟到回报路由(见上)."""
+        if not owner_strategy_id:
+            return
+        for key in (f"c:{client_order_id}", f"b:{broker_order_id}"):
+            if not key[2:]:
+                continue
+            if key not in self._closed_order_owners:
+                self._closed_order_owner_fifo.append(key)
+            self._closed_order_owners[key] = owner_strategy_id
+        while len(self._closed_order_owner_fifo) > 2 * _CLOSED_ORDER_ID_LIMIT:
+            stale = self._closed_order_owner_fifo.popleft()
+            self._closed_order_owners.pop(stale, None)
 
     def _payload_to_dict(self, payload: Any) -> Dict[str, Any]:
         return payload_to_dict(payload)
@@ -2525,6 +2732,17 @@ class LiveRunner:
         return self._client_to_broker_order_ids.get(client_order_id, "")
 
     def _close_order_mapping(self, client_order_id: str, broker_order_id: str) -> None:
+        owner = (
+            self._client_to_strategy_ids.get(client_order_id, "")
+            if client_order_id
+            else ""
+        ) or (
+            self._broker_to_strategy_ids.get(broker_order_id, "")
+            if broker_order_id
+            else ""
+        )
+        if owner and hasattr(self, "_closed_order_owners"):
+            self._remember_closed_order_owner(client_order_id, broker_order_id, owner)
         if client_order_id:
             self._client_to_broker_order_ids.pop(client_order_id, None)
             self._client_to_strategy_ids.pop(client_order_id, None)
@@ -2712,11 +2930,136 @@ class LiveRunner:
                         ),
                     )
 
+    def _is_replay_market(self) -> bool:
+        market_key = (
+            getattr(self, "market_broker", None) or getattr(self, "broker", "") or ""
+        )
+        return str(market_key).strip().lower() == "replay"
+
+    def _session_clamp_resolver(self) -> Any:
+        """与引擎同配置的时段解析器, 供行情网关的收盘钳制使用.
+
+        口径同引擎 ``ensure_session_resolver``: 同一 ``sessions`` /
+        ``trading_calendar`` / 时区, 在用合约为全部合约, 期权 → 标的映射取期权
+        合约的 ``underlying_symbol``。
+
+        不随行情源交易日提示对缺省日历的修正(``calendar_overrides``)更新, 已知限制:
+        修正把缺省工作日历之外的日子(如周末)补成交易日时, 引擎按该日开日、做收盘
+        宽限归属, 聚合器仍按未修正的日历把它当作非交易日, 当日收盘 bar 不钳制(不带
+        收盘价标记, 宽限 tick 单独成 bar, 可能在结算后到达、提前开下一交易日)。
+        传了 ``trading_calendar`` 时不受影响; 中国交易所周末不交易, 实际不会遇到。
+        """
+        resolver = SessionResolver(
+            sessions=self.sessions,
+            trading_calendar=self.trading_calendar,
+            timezone=self._session_timezone(),
+        )
+        instruments = list(getattr(self, "instruments", None) or [])
+        underlyings: Dict[str, str] = {}
+        for inst in instruments:
+            if inst.asset_type != AssetType.Option:
+                continue
+            underlying = getattr(inst, "underlying_symbol", None)
+            if underlying is not None and str(underlying).strip():
+                underlyings[str(inst.symbol)] = str(underlying)
+        resolver.set_option_underlyings(underlyings)
+        resolver.set_active(
+            [(str(inst.symbol), inst.asset_type) for inst in instruments]
+        )
+        return resolver
+
+    def _configure_session_clamp(self, bundle: Any) -> None:
+        """行情网关有 ``configure_session_clamp`` 钩子时开启收盘宽限钳制.
+
+        钳制宽限 = ``day_close_delay`` − 5 秒(见 ``_SESSION_CLAMP_MARGIN_NS``),
+        ``day_close_delay`` 不足 5 秒时不开启。钩子失败只告警, 会话照常运行
+        (收盘后宽限期内的 tick 进下一根 bar, 与未开启时相同)。
+        """
+        gateway = getattr(bundle, "market_gateway", None)
+        hook = getattr(gateway, "configure_session_clamp", None)
+        if not callable(hook):
+            return
+        grace_ns = (
+            int(getattr(self, "day_close_delay_ns", 0)) - _SESSION_CLAMP_MARGIN_NS
+        )
+        if grace_ns < 0:
+            return
+        try:
+            hook(self._session_clamp_resolver(), grace_ns)
+        except Exception as exc:
+            logger.warning(
+                "行情网关开启收盘钳制失败（%s），收盘后宽限期内的 tick 不计入当日"
+                "收盘 bar，会话继续运行；请检查 sessions/trading_calendar 配置，"
+                "或行情网关的 configure_session_clamp 实现",
+                exc,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+
+    def _configure_replay_lifecycle(self, bundle: Any) -> bool:
+        """Replay 的交易日生命周期按回测语义, 返回数据结束时是否等末日结算.
+
+        - 锚定首个回放事件(``first_event_ns() - 1``): 引擎按它所属交易日排程,
+          该日盘前/开始交易在首个事件之前触发; 墙钟当日不排。
+        - 最后事件已到其交易日收盘时, 引擎在最后事件后等该日收盘定时器结算、
+          派发 on_after_trading 再自行结束会话(返回 ``True``, 有界计数不再在
+          最后事件后中断); 否则末日不结算(同回测数据在盘中结束)。
+
+        真实行情源不调用, 生命周期仍按墙钟。引擎或网关缺对应接口(替身)时跳过。
+        """
+        if not self._is_replay_market():
+            return False
+        gateway = bundle.market_gateway
+        first_event_ns = getattr(gateway, "first_event_ns", None)
+        last_event_ns = getattr(gateway, "last_event_ns", None)
+        if not callable(first_event_ns) or not callable(last_event_ns):
+            return False
+        first = first_event_ns()
+        last = last_event_ns()
+        if first is not None and int(first) - 1 >= time.time_ns():
+            # 引擎按 min(墙钟, 锚点) 排程: 锚点晚于墙钟时退回墙钟排程(已知限制),
+            # 末日收盘定时器在未来、会话内到不了, 不设收尾以免空等。
+            logger.warning(
+                "replay 首个事件晚于当前时刻（回放的是未来时间的数据），交易日生命周期"
+                "退回按墙钟排程，盘前/开始交易/日终结算与同数据回测不一致，数据结束时"
+                "也不等待末日结算；如需与回测一致，请回放早于当前时刻的数据",
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+            return False
+        set_anchor = getattr(self.engine, "_set_live_lifecycle_anchor", None)
+        if first is not None and callable(set_anchor):
+            set_anchor(int(first) - 1)
+        set_end = getattr(self.engine, "_set_live_replay_end", None)
+        if last is not None and callable(set_end):
+            return bool(set_end(int(last)))
+        return False
+
+    def _await_replay_pushed(self, bundle: Any) -> None:
+        """replay: engine.run() 之前等推送线程把事件全部推入 feed.
+
+        replay 的生命周期定时器落在历史时刻, 按墙钟恒已到期; feed 暂空时引擎会
+        先触发它们(末日收盘结算可能跑到当日行情之前)。推送是内存操作, 正常很快;
+        超时只告警(会话照常开始, 生命周期可能与回测不一致)。
+        """
+        if not self._is_replay_market():
+            return
+        wait = getattr(bundle.market_gateway, "wait_until_pushed", None)
+        if not callable(wait):
+            return
+        if not wait(_REPLAY_PUSH_WAIT_SECONDS):
+            logger.warning(
+                "replay 推送线程 %s 秒内未把行情全部推入，会话照常开始；"
+                "交易日生命周期（盘前/日终结算）可能早于对应行情触发。"
+                "请减少单次回放的数据量",
+                _REPLAY_PUSH_WAIT_SECONDS,
+                extra=self._runner_log_extra(phase="gateway"),
+            )
+
     def _apply_bounded_event_limit(
         self,
         strategy: Any,
         total_events: int,
         slot_strategies: Sequence[Any] = (),
+        await_day_close: bool = False,
     ) -> None:
         """让有界 live 会话在收到 ``total_events`` 个行情事件后自行结束.
 
@@ -2746,7 +3089,13 @@ class LiveRunner:
         到它), 但中断要等**最后一个** slot 处理完第 N 个事件才抛——否则会话在
         主策略处理完最后一根 bar 时就结束, 后面的 slot 永远收不到它。
 
+        replay 数据结束时最后事件已到其交易日收盘(``await_day_close=True``, 见
+        ``_configure_replay_lifecycle``): 最后事件后不中断, 由引擎等该日收盘定时器
+        结算并派发 on_after_trading 后自行结束(超时 5 秒告警并结束), 与回测一样
+        触发末日日终。计数仍照常累计。
+
         :param slot_strategies: 按派发顺序排列的其余 slot 策略
+        :param await_day_close: 最后事件后是否交给引擎等末日结算再结束
         """
         if total_events <= 0:
             return
@@ -2766,7 +3115,7 @@ class LiveRunner:
             def wrapped(event: Any, ctx: Any) -> Any:
                 # 先处理完本事件再判断, 使第 N 个事件不被截断。
                 result = original(event, ctx)
-                if state["count"] >= total_events:
+                if state["count"] >= total_events and not await_day_close:
                     raise KeyboardInterrupt(
                         f"bounded live session complete: {total_events} events"
                     )

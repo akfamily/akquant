@@ -27,6 +27,17 @@ pub trait ExecutionClient: Send + Sync {
     /// 接收新订单
     fn on_order(&mut self, order: Order);
 
+    /// 撮合器是否已登记该订单。续跑时用它找出尚未登记的在途订单;
+    /// 不在本地撮合的客户端(实盘)默认视为已知, 不重复登记。
+    fn knows_order(&self, _order_id: &str) -> bool {
+        true
+    }
+
+    /// 登记: 该订单是在 tick/定时器回调里下的(不是在 bar 回调里)。同一时刻、
+    /// 同品种的带区间 bar 不撮合它(区间 OHLC 早于下单时刻)。须在 `on_order` 之后调用;
+    /// 不在本地撮合的客户端(实盘)无需处理。
+    fn mark_created_off_bar(&mut self, _order_id: &str) {}
+
     /// 取消订单请求
     fn on_cancel(&mut self, order_id: &str);
 
@@ -35,6 +46,12 @@ pub trait ExecutionClient: Send + Sync {
 
     /// 在一个时间片结束时补充处理延迟的 same-cycle 订单。
     fn finalize_timestamp(&mut self, _events: &[Event], _ctx: &EngineContext) -> Vec<Event> {
+        Vec::new()
+    }
+
+    /// 日终结算前收尾当日未完成的收盘集合竞价(缺收盘时刻行情时按最后一个
+    /// 收盘竞价事件的价格统一撮合)。
+    fn finalize_closing_auctions(&mut self, _ctx: &EngineContext) -> Vec<Event> {
         Vec::new()
     }
 

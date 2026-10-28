@@ -7,12 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.72] - 2026-10-25
+
+> **规则版本 2.0.0：交易时段、交易日与 bar 区间重构，含破坏性变更，升级前请对照下方迁移表**。
+> 回测结果会因日终结算挪到收盘、按真实时段撮合、利息按自然日计提等变化；akquant-klinedata 须同时升到 0.4.0。
+
+### Changed
+- **破坏性：`TradingSession` 重新定义为 7 个值**：`Closed`、`OpeningAuction`、`AuctionHold`、`Continuous`、`Break`、`ClosingAuction`、`PostClose`；删除 `CallAuction`、`PreOpen`，比较这两个值的代码需改写（见迁移表）。
+- **破坏性：旧的时段配置全部删除，改用 `sessions=`**：`ChinaFuturesConfig.enforce_sessions/session_profile/sessions`、`ChinaOptionsConfig.sessions` 传入即报中文迁移错误，导入 `ChinaFuturesSessionConfig`/`ChinaOptionsSessionConfig` 报 `ImportError`；`Engine.set_market_sessions`、`Engine.set_force_session_continuous` 已删除。
+- **破坏性：删除 `enable_precise_day_boundary_hooks`**：交易日钩子总是由引擎按时段表精确触发；策略属性、类属性或运行时配置里读写该字段都报错，删掉即可。
+- **破坏性：低层 `Engine` + `SimpleMarket` 不再隐含全天可交易**：中国时区按资产类型取默认时段表，需要全天可交易时调用 `engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})`；非中国时区默认仍是 `ALWAYS_OPEN`。
+- **破坏性：不带时区的 DataFrame 时间按 `timezone=` 本地化（原固定按上海）**：`catalog.read` 与 `FeedSlice.timezone` 同样生效；非中国时区回测若数据其实是北京时间，先 `tz_localize("Asia/Shanghai")`。
+- **破坏性：`BarAggregator` 封闭 bar 一律打区间终点戳并带 `interval_start`，分桶改为右闭 `(S, E]`**：`stamp_bar_at_interval_end=False` 报错（传 `True` 静默接受）；恰在整分的 tick 归以它结尾的那根，tick 输入回测的分钟 bar 可能因此变化。
+- **破坏性：`BarGenerator` 改为包装 Rust 窗口聚合器**：`interval="day"` 只支持 `window=1`（多日聚合改用数据适配器的 `.resample()` 预先聚合）；“基础周期未知”告警改由 logger `akquant.data.window` 发出。
+- **破坏性：回测与实盘都按真实时段撮合**（原回测默认全天按连续竞价撮合，只有传 `ChinaFuturesConfig` 时才按时段）：任何时段都接单，闭市、午休排队到下一可成交时段，集合竞价按竞价价统一撮合；期货不传 `sessions=` 默认 `CN_FUTURES_DAY`，夜盘 bar 判为闭市；日期落在非交易日的 bar 也判为闭市。恢复旧行为传 `sessions={"default": "ALWAYS_OPEN"}`。
+- **日终结算从“次日首根 bar”挪到交易日收盘**：快照时间戳为收盘时刻，顺序为收盘竞价收尾→到期→利息/强平→T+1 解冻→Day 单过期→快照；夜盘归下一交易日，周一 15:00 结算后 21:00 起属周二。
+- **只有日期的数据（全部为本地 0 点）改写到该交易日收盘时刻**（会话级收盘，多张时段表取最晚），区间为整个交易日；首日不再触发盘中定时器。只对 DataFrame 与 Bar 列表输入改写；`DataFeed` 输入按原样使用，只有日期的数据请改用 DataFrame/Bar 列表，或把时间戳打在交易日收盘并传 `freq="1d"`。
+- **数据在盘中结束时最后一天不结算**，权益曲线止于末根 bar，`on_after_trading` 也不触发（到期合约仍在收尾时补结算）。
+- **利息按两次结算之间的自然日天数计提（周五到周一记 3 天）**，`daily_interest` 字段含义改为“本次结算计提”。
+- **公司行动在除权日开日时处理**；落在非交易日的行动顺延到下一交易日。
+- **风控每日预算、日收益、Sharpe 等按交易日分组**（夜盘归下一交易日），不再按自然日。
+- **开盘竞价单的成交时间记在首个连续竞价事件上**：成交价为竞价价（如 09:25 bar 的价格），成交时间为首根连续竞价 bar（A 股分钟线为 09:31）。
+- **Day 单在所属交易日收盘过期**：收盘后在非连续竞价时段（收盘竞价结束的 15:00 bar、`on_after_trading`、实盘收盘宽限期）下的单属下一交易日，不在当日过期。
+- **带区间的 bar 不撮合同一时刻、先于它处理的同品种单**（同刻 tick 或定时器下的单），留给下一事件，避免用到下单前的区间高低价；恰在整分的定时器单因此晚一根成交。
+- **钩子时点改为生命周期事件**：`on_pre_open` 在首个时段前 1ns，`on_before_trading` 在连续竞价开始时，`on_after_trading` 在结算之后（实盘为收盘 + `day_close_delay`）、停止时不补发；回测只在有行情的交易日触发，未重写的钩子不派发。
+- **日线数据下 `on_pre_open`/`on_before_trading` 里按 `NextOpen()` 下的单当日开盘成交**（原为次日）；实盘 `on_pre_open` 现在可以触发。
+- **`schedule_daily/weekly/monthly` 按交易日历触发**：停牌日不再顺延；回测 `on_start` 里登记的 weekly/monthly 生效；`ALWAYS_OPEN` 且未传日历时回测只取有数据的日子、实盘告警。
+- **多周期窗口按交易日与交易块切分**：日线窗口标签为交易日收盘时刻，日内窗口不跨午休，日终结算前先闭合已结束的窗口。
+- **多槽位派发按归属**：定时器与 `on_order` 只派给所属槽位；引擎撤掉的 OCO 另一腿收到终态 `on_order`；`on_expiry` 广播给所有槽位；`broker_live` 柜台回报按槽位派发。
+- **融资账户的空头敞口计入维持担保比例**：多空混合账户的比例变低，可能比以前更早强平。
+- **实盘不再强制连续竞价**：`ctx.session` 与 paper/replay 撮合按真实时段，与回测一致；`broker_live` 不拦截，委托直接发柜台。
+- **实盘收盘宽限（含 replay）**：收盘后 `day_close_delay` 内、早于下一交易日首段的行情仍归当日（时段为 `Closed`/`PostClose`），不撮合、不记权益点、不提前开下一交易日；结算仍在收盘 + `day_close_delay`，结算价只取不晚于收盘的原始行情。回测不变。
+- **实盘 tick 合成的收盘 bar 并入收盘后 `day_close_delay − 5s` 内的 tick**，在钳制宽限后 +2s 补发（`day_close_delay` 不足 5 秒不钳制）；会话在收盘后结束时期末点钳到收盘、按结算价计价。
+- **golden 基线迁移到规则 2.0.0**：旧场景数据改为交易日；新增 A 股分钟线集合竞价（`stock_minute_auction`）与期货夜盘跨周末（`futures_night_weekend`）两个场景；runner 逐笔比对订单并比对 `trading_day_ends`。
+- **约 50 个示例与教材示例的数据改到交易日与交易时段**：原 25、33 号与 `pb_mock` 等示例的订单因落在闭市而永不成交，现已恢复；`strategies/07`、`strategies/09` 改为 0.95 仓位（满仓加佣金被拒）。
+
 ### Added
-- **复盘页可隐藏价格 K 线：`result.viz.review(hide_price=)` 与页面“隐藏 K 线”按钮**：当前标的带 candle 指标（如平均 K 线）时出现按钮，可随时切换，`hide_price=True` 指定初始隐藏；只隐藏价格 K 线，买卖点、成交量与其他指标照常显示，无 candle 指标的标的不受影响。
+- **`sessions=` / `trading_calendar=`**（`run_backtest`、`run_live`、`run_from_checkpoint`）：值为内置模板名（`aq.SessionResolver.templates()`）或自定义时段表 `[(start, end, session[, anchor]), ...]`，键按代码前缀最长匹配；商品期权（`underlying_symbol` 为已登记期货、自身未配置前缀）跟随标的期货的时段表，其余期权用 `CN_OPTION`。
+- **策略接口**：`ctx.session` 报真实时段；`self.is_market_open()`、`self.session_of(symbol)`、`self.trading_day`；`ctx.is_trading_day()`、`ctx.next_trading_day()`、`ctx.recent_finalized_orders`；`Bar.interval_start`；`Engine.trading_day_at()`、`current_trading_day()`、`last_settled_trading_day()`；`BacktestResult.trading_day_ends`；`aq.SessionResolver`、`aq.WindowAggregator`；`Instrument.underlying_symbol` 只读属性。
+- **`run_backtest(freq=)` 可声明 bar 周期（含 `"1d"`）**：区间为 `(ts − 周期, ts]`；固定在非 0 点的日线未传 `freq` 时告警一次。
+- **`run_live(day_close_delay=60, timezone=)`**：实盘按交易日历登记日终结算，当日无行情也结算；`day_close_delay` 取 0～86400 秒。
+- **replay 生命周期**：锚定首个事件、数据到收盘时结算后收尾；`gateway_options["trading_day_hints"]`、`DataFeed.add_trading_day_hint()` 上报行情源交易日；CTP 上报 `TradingDay`。
+- **`BarAggregator.flush_due(now_ns, grace_ns=2s)`、`late_tick_count()`、`set_session_clamp(resolver, grace_ns)` / `clear_session_clamp()`**：区间结束加宽限后仍无新 tick 时补发 bar、统计迟到 tick；开启或关闭收盘宽限钳制（默认关闭）。
+- **行情网关可选钩子 `configure_session_clamp(resolver, grace_ns)`**：自己用 `BarAggregator` 合成 bar 的第三方网关实现它即可让收盘后宽限内的 tick 计入当日收盘 bar，不实现则不钳制。
+- **未传 `trading_calendar` 时每次运行告警一次**：中国市场表与自定义表按工作日推算交易日，节假日会被当作交易日；全是 `ALWAYS_OPEN` 时不告警。
+- **`akquant.live` 公开导出 `StreamingIndicatorSink`**；`akquant.pyi` 补齐 `StrategyContext.recent_rejected_orders`。
+
+### Fixed
+- **下单中的策略可以存档**：续跑重新登记在途单，并恢复 `timezone`、`risk_config`、`t_plus_one`、`sessions`、`trading_calendar`，结果带 `resolved_config`；续跑首根 bar 不再多结算一次。
+- **日终过期的单回调 `on_order(Expired)` 并发出 order 流事件**。
+- **纯 tick 回测里跨时间片的 `NextOpen()` 单被误判为停牌拒单**。
+- **多品种 tick 驱动（回测与 paper 实盘）市价单不再因同刻无该品种 tick 被以 Missing market data 拒单**：“本时间片没有该品种可成交行情就拒单”的停牌判据只对含 bar 的时间片生效；收到过 tick 的品种在本时间片没有它的任何 bar 时不据此拒单，订单留待其下一笔行情撮合（0.3.71 起即有此问题）。本时间片有它的零量 bar（停牌占位）时仍按停牌拒单，日线/分钟 bar 的停牌拒单不变。
+- **实盘会话在收盘宽限期内结束、且策略重写了 `on_after_trading` 时，期末权益点按宽限价计价**：期末时刻落在收盘前最后一根 bar，原先只有期末时刻不早于收盘才按结算价计价。现在实盘当日已结算或时钟已过收盘时，期末点一律按结算价计价，D 的日末值与收盘快照一致。
+- **期货时段模板 `21:00–23:59 + 00:00–01:00` 拼接留下的 23:59 缺口与 15:00 端点误判**。
+- **akquant-klinedata 起点戳导致多周期窗口错位一根**（配合 klinedata 0.4.0 终点戳）。
+- **示例 06 止损价未按最小变动价位对齐**；示例 36 跟踪止损触发价、45 默认标的与合成数据不一致。
+
+### Known Issues
+- **期货不传 `sessions=` 时按 `CN_FUTURES_DAY`（回测与实盘 paper 都是），夜盘行情判为闭市、订单排到日盘才撮合**：有夜盘的品种必须传 `sessions=`（回测会对闭市时段行情告警一次）。
+- **长期运行的实盘必须传 `trading_calendar=`**：缺省工作日历会把节假日当交易日开日、结算，行情源修正只对尚未开日的日子有效；live_server 0.12.0 起 klinedata 会话自动下发沪深日历。
+- **期货交易日历不在本版范围**：qmf_market 只提供沪深日历，期货会话仍需自行传入。
+- **实盘收盘宽限期内下的 Day 单挂到下一交易日**（即使此时 `ctx.trading_day` 仍为当日）；`day_close_delay` 建议不小于 5 秒，否则不钳制、收盘 bar 可能晚于结算。
+- **宽限期内存档不保存收盘价**，续跑后按当时最新价结算；收盘前没有 tick、只有宽限 tick 时结算价为宽限价。
+- **双流下同品种的宽限 tick 先于收盘 bar 推出**，收盘 bar 时间戳为收盘，回调与权益曲线的时间戳会倒退一次。
+- **多张时段表时宽限按会话级收盘判**：早收盘品种（如 15:00 收盘的股票与 15:15 收盘的国债期货同会话）在其自身收盘后、会话收盘前的行情不属宽限，照常计入当日与结算价，并报一次“闭市时段”告警。
+- **结算后才到的钳制收盘 bar 仍派发 `on_bar` 并进窗口**；`__akq_close_price` 标记只在结构校验通过时采用，否则忽略并告警一次。
+- **tick 驱动品种真实停牌时订单不会被拒**：收到过 tick 的品种在本时间片没有它的 bar 时，不因“本片无行情”拒单（同刻没有它的 tick 不代表停牌），真实停牌也一样，没有运行期告警。默认的 GTC 单会一直挂着，直到该品种复牌后的下一笔行情撮合；Day 单仍在所属交易日收盘过期。存档续跑后，该品种在续跑后的第一个 tick 到来前仍按 bar 的停牌判据处理。
+- **`run_live` 遇会话级错误只记 CRITICAL、不抛异常**，调用方需检查日志或返回状态。
+- **replay**：末日是 hint 补入的交易日时不收尾；晚于全部行情的 hint 不生效；同刻 bar 先于 tick；锚点晚于墙钟时退回墙钟排程；中间无数据的交易日按实盘语义开日、结算并触发钩子。
+- **live_server 的 replay 会话不取交易日历**：默认演示回放会在 09:14:59 触发 `on_pre_open`；回放数据落在元旦等节假日时按缺省工作日历照常开日并触发盘前。
+- **行情源交易日**：`on_pre_open` 发出后才到的 hint 会多发一次 `on_pre_open`；双流下跨品种时间戳可能倒退；klinedata 补发宽限固定 2 秒；CTP tick 用本地接收时间。
+- **竞价状态与 `order_creation_sessions` 不入存档**；结算后到下一事件之间存档会丢失过期回调。
+- **`NightNeedsPreviousDay` 报错里的“前一交易日”实为前一自然日**；首日有夜盘时日历要往前多给一天。
+- **自定义时段表的 `"prev"` 锚定前一交易日，写不出 CME 式时段**；`SHFE.au2406` 类代码须整体大写，否则下单失败。
+- **独立 `BarGenerator`/replay 默认按 A 股交易块切分**：商品期权按 `CN_OPTION` 取表，非中国市场须传 `timezone`/`sessions`/`asset_type`；续跑不传 `instruments_config` 时期货被当作股票。
+- **HTML 报告“当日利息 (Daily Interest)”列名仍为旧称**，字段含义已是本次结算计提。
+- **非中国时区下只在 `on_start` 里订阅自定义时段表标的时，漏发缺省日历告警**。
+- **竞价价来源③未实现**：无竞价行情时（如定时器在 09:15～09:30 下单）不做统一撮合，按普通排队在下一连续竞价事件成交。
+
+### 迁移对照表
+
+| 旧写法 | 新写法 |
+|---|---|
+| `TradingSession.CallAuction` | `OpeningAuction`（A 股 09:15～09:25）/ `ClosingAuction`（14:57～15:00） |
+| `TradingSession.PreOpen` | `AuctionHold`（A 股 09:25～09:30，接单不撮合）；开盘前的时刻仍为 `Closed` |
+| `ChinaFuturesConfig(session_profile="CN_FUTURES_NIGHT_23")` | `run_backtest(sessions={"<品种前缀>": "CN_FUTURES_NIGHT_23"})`（如 `"rb"`，每个夜盘品种一项） |
+| `ChinaFuturesConfig(sessions=[ChinaFuturesSessionConfig(...)])` / `ChinaOptionsConfig(sessions=...)` | `sessions={"<前缀>": [("21:00", "23:00", "continuous"), ...]}`：时刻为 HH:MM，时段名 `call_auction` 改写 `opening_auction`/`closing_auction`，`pre_open` 改写 `auction_hold` |
+| `ChinaFuturesConfig(enforce_sessions=False)` / `engine.set_force_session_continuous(True)` | `sessions={"default": "ALWAYS_OPEN"}` |
+| `engine.set_market_sessions([("09:30:00", "11:30:00", TradingSession.Continuous), ...])` | `engine.configure_sessions(sessions={"default": [("09:30", "11:30", "continuous"), ...]})`：时刻写 HH:MM（不带秒），时段写字符串名 |
+| 低层 `Engine` + `SimpleMarket` 默认全天可交易 | `engine.configure_sessions(sessions={"default": "ALWAYS_OPEN"})` |
+| `enable_precise_day_boundary_hooks = ...`（True/False） | 删除（钩子总是精确触发） |
+| 非中国 `timezone=` 下 naive 时间按上海解释 | naive 时间按 `timezone=` 解释；北京时间数据先 `tz_localize("Asia/Shanghai")` |
+| `BarAggregator(..., stamp_bar_at_interval_end=False)` | 去掉该参数；bar 起点读 `bar.interval_start` |
+| `BarGenerator(interval="day", window=N)`（N>1） | 用数据适配器的 `.resample("2D")` 预先聚合（`akquant.feed_adapter`，离线预聚合，非流式） |
+| 日终快照在次日首根 bar、`on_after_trading` 在次日首 bar 前 | 快照在当日收盘；`on_after_trading` 在结算后（实盘收盘 + `day_close_delay`），其中下的单属下一交易日 |
+| 回测默认全天按连续竞价撮合（闭市/午休/集合竞价期间也成交） | 排队到下一可成交时段，集合竞价期内按竞价价统一撮合；要恢复旧行为传 `sessions={"default": "ALWAYS_OPEN"}` |
+| `on_pre_open` 实盘不触发、`on_after_trading` 次日首 bar 前 | `on_pre_open` 首个时段前 1ns（实盘可触发）；`on_before_trading` 连续竞价开始 |
+| 实盘一律按连续竞价撮合 | 按真实时段；收盘后 `day_close_delay` 内的行情仍归当日 |
+| 期货回测/实盘 paper 不传 `sessions`（夜盘照常撮合） | 夜盘品种传 `sessions={"rb": "CN_FUTURES_NIGHT_23"}` |
+| 实盘不传 `trading_calendar` | `run_live(trading_calendar=ak.tool_trade_date_hist_sina()["trade_date"])`（`import akshare as ak`）；live_server 0.12.0 的 klinedata 会话自动下发 |
+
+### 发版顺序
+
+AKQuant 0.3.72（规则版本 2.0.0）→ akquant-klinedata 0.4.0（bar 终点戳与 `interval_start`、到期补发、交易日上报、`fetch_trading_calendar`、收盘钳制钩子）→ live_server 0.12.0（指标标签对齐前端契约、klinedata 会话自动下发沪深日历、钉 `qmfquant==0.3.72`）。三者须成对升级：klinedata 0.3.x 与 AKQuant 0.3.72 不兼容。
+
+## [0.3.71] - 2026-10-22
 
 ### Fixed
 - **`freq=` 窗口指标的确认值快照（`indicator_snapshot`）晚一拍，末尾窗口的快照完全缺失**：窗口 bar 在基础事件回调之后才派发，而窗口回调内不发快照，确认值只能等下一个事件顺带发出——实盘只推 bar 时，5min 指标的确认值要等下一根 1min bar 才到前端；回测数据结束或实盘会话停止时强制闭合的末尾窗口后面没有事件，只发了 `indicator_point`、快照永远发不出去，只按快照落库的消费方会丢这一点。现在窗口回调结束时即发快照。`indicator_point`、`indicator_df()` 与导出不受影响。
 - **tick/bar 双流下，未开 `intrabar` 的基础周期 `self.I()` 指标被 tick 与 bar 各推进一次，值静默算错**（规则版本 1.7.2）：tick 与基础 bar 的 `freq` 都是 `None`，指标分发据此把两者都当作输入，bar 收盘时的值混进了逐笔价（例如 `SMA(2)` 变成“最后一笔 tick 与收盘价”的均值）。现在双流标的上这类指标只由 bar 推进，tick 回调里读到的是上一根 bar 的确认值；纯 tick 会话（没有 bar）里 tick 照旧推进。双流按标的判定：回测为 `run_backtest(data=[Tick, ...], freq=...)` 的全部标的，或混合 `[Bar, Tick]` 输入里同时有 bar 与 tick 的标的；实盘取行情网关在 `GatewayBundle.metadata["dual_stream"]` 的声明（`True` 为全部标的，集合为这些标的），`replay`、`ctp` 与 akquant-klinedata 已声明，**第三方网关推双流时需自行声明**，否则仍按旧行为。双流回测里用了这类指标的结果会变化。
+
+## [0.3.70] - 2026-10-22
+
+### Added
+- **复盘页可隐藏价格 K 线：`result.viz.review(hide_price=)` 与页面“隐藏 K 线”按钮**：当前标的带 candle 指标（如平均 K 线）时出现按钮，可随时切换，`hide_price=True` 指定初始隐藏；只隐藏价格 K 线，买卖点、成交量与其他指标照常显示，无 candle 指标的标的不受影响。
 
 ## [0.3.69] - 2026-10-21
 

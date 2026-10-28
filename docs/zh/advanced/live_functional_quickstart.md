@@ -141,7 +141,12 @@ run_live(
   模拟执行后端负责。
 - **不覆盖 timer 语义**。回放数据带历史时间戳，而实盘引擎按墙钟判定 timer 是否
   到期，两条时间线错位。`on_timer` / `schedule_daily` 在回放会话中的行为不作
-  保证；要验证定时任务请用回测。
+  保证；要验证定时任务请用回测。交易日生命周期例外：盘前、开始交易、日终结算
+  与 `on_after_trading` 锚定首个回放事件所属的交易日，与同数据回测一致；数据到达
+  收盘时会话在结算之后结束。只有日期的数据改写到交易日收盘时刻。模拟行情源报告的
+  交易日用 `gateway_options["trading_day_hints"]`（`(ts_ns, date)` 列表）。live_server
+  默认的 replay 会话会在 09:14:59 触发 `on_pre_open`。回放同样适用实盘收盘宽限：收盘后
+  `day_close_delay` 秒内的事件仍归当日（见 [API 参考](../reference/api.md#live-timezone-sessions)）。
 - 多品种 DataFrame 需提供 `股票代码` 列，否则会退化为单标的。多品种场景建议直接
   用 `list[Bar]`。
 - 自行结束依赖每条事件的时间戳为正数：非正时间戳会被引擎静默丢弃，导致声明的

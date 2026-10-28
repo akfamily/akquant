@@ -171,6 +171,8 @@ def main() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         timezone="Asia/Shanghai",
+        # 传入真实沪深交易日历: 不传时引擎按工作日推算, 节假日会被当成交易日
+        trading_calendar=ak.tool_trade_date_hist_sina()["trade_date"],
         show_progress=False,
     )
 

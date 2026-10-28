@@ -13,7 +13,10 @@ class TimerToPreOpenStrategy(Strategy):
     def on_start(self) -> None:
         """Subscribe the demo symbol and register a daily preparation timer."""
         self.subscribe("TIMER_PREOPEN")
-        self.schedule_daily("15:00:00", "prepare_next_day")
+        # 日线 bar 打在收盘 15:00（区间终点），同一时刻的定时器先于该 bar 触发、
+        # 读不到当日收盘价；准备定时器放在收盘与日终结算之后
+        # （也可改用 on_after_trading）。
+        self.schedule_daily("15:30:00", "prepare_next_day")
 
     def on_timer(self, payload: str) -> None:
         """Prepare the next-day plan using end-of-day information."""
@@ -62,12 +65,13 @@ class TimerToPreOpenStrategy(Strategy):
 def build_data() -> list[Bar]:
     """Build daily bars so the timer can prepare the next-day plan."""
     rows = [
-        ("2023-01-03 09:30:00", 10.0, 10.6),
-        ("2023-01-04 09:30:00", 10.7, 10.2),
-        ("2023-01-05 09:30:00", 10.1, 10.0),
+        ("2023-01-03", 10.0, 10.6),
+        ("2023-01-04", 10.7, 10.2),
+        ("2023-01-05", 10.1, 10.0),
     ]
     bars: list[Bar] = []
     for dt_str, open_price, close_price in rows:
+        # 只有日期(本地 0 点)的日线: 引擎改写到交易日收盘 15:00, 区间覆盖整个交易日
         ts = pd.Timestamp(dt_str, tz="Asia/Shanghai").value
         bars.append(
             Bar(

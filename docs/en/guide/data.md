@@ -22,7 +22,7 @@ Your DataFrame **must** contain the following columns (column names are case-ins
 
 | Column Name | Type | Description |
 | :--- | :--- | :--- |
-| `date` / `time` / `datetime` | `datetime64[ns]` | Timestamp index. Must be Pandas datetime type. |
+| `date` / `time` / `datetime` | `datetime64[ns]` | Timestamp index. Must be Pandas datetime type. The timestamp is the bar's **interval end** (e.g. the 09:31 minute bar covers (09:30, 09:31]). |
 | `open` | `float` | Open price |
 | `high` | `float` | High price |
 | `low` | `float` | Low price |
@@ -33,7 +33,9 @@ Your DataFrame **must** contain the following columns (column names are case-ins
 **Note:**
 
 1.  **Column Standardization**: It is recommended to rename columns to lowercase English (e.g., `open`, `close`) before passing them in.
-2.  **Symbol Column**: **Multi-symbol data must carry a symbol column**, otherwise every symbol's bars are collapsed into a single time series (both indicators and matching results become wrong). The column may be named `symbol`, `股票代码`, `code`, or `ticker` (AKShare's native `股票代码` works as-is, no renaming needed); `symbol` is the recommended choice. When no symbol column is recognized but multiple rows share the same timestamp, the backtest logs a `WARNING` about the degradation to single-symbol. Single-symbol data may omit the column entirely (the engine treats it as one asset and does not warn).
+2.  **Daily timestamps**: Date-only daily bars (local midnight) are rewritten to that trading day's close (15:00 for A-shares), the bar interval covers the whole trading day, and no `freq` is needed. If the dates include non-trading days (e.g. weekends), a warning is logged once; such a row is assigned to the next trading day after the rewrite, its session is closed and nothing is matched on it, so pending orders fill on the next trading day's bar. This rewrite applies only to DataFrame and Bar-list input; a `DataFeed` is used as-is, so for date-only data pass a DataFrame or a list of Bars instead, or stamp each bar at the trading day's close and pass `freq="1d"`. Daily bars stamped at a fixed non-midnight time such as 15:00 need `run_backtest(freq="1d")`; otherwise they are classified by "1ns before the timestamp" as the closing call auction (the engine logs a warning once): fills happen at the same time, but a market order fills at the bar's close instead of its open.
+3.  **Minute bars and other periods**: Pass `run_backtest(freq="1min")` etc. to declare the period; the engine then fills each bar's interval start `interval_start`, and `subscribe_bars` windows can close immediately.
+4.  **Symbol Column**: **Multi-symbol data must carry a symbol column**, otherwise every symbol's bars are collapsed into a single time series (both indicators and matching results become wrong). The column may be named `symbol`, `股票代码`, `code`, or `ticker` (AKShare's native `股票代码` works as-is, no renaming needed); `symbol` is the recommended choice. When no symbol column is recognized but multiple rows share the same timestamp, the backtest logs a `WARNING` about the degradation to single-symbol. Single-symbol data may omit the column entirely (the engine treats it as one asset and does not warn).
 
 ### 1.2 Index
 
@@ -137,7 +139,7 @@ feed_1h = base.replay(
     align="session",            # session | day | global
     day_mode="trading",         # effective only when align='day': trading | calendar
     emit_partial=False,
-    session_windows=[("09:30", "11:30"), ("13:00", "15:00")],  # session only
+    # No session_windows: split by the symbol's session-table trading blocks, same as subscribe_bars
 )
 
 result = aq.run_backtest(
@@ -150,7 +152,7 @@ result = aq.run_backtest(
 
 Parameter semantics:
 
-*   `align="session"`: Partition by trading day, optionally with `session_windows`.
+*   `align="session"`: Partition by trading day and trading block (by the symbol's session table by default); hand-written `session_windows` can override it, but manual sessions are not aligned bar for bar with engine windows.
 *   `align="day"`: Partition by day without `session_windows`; `day_mode` supports `trading/calendar`.
 *   `align="global"`: Aggregate on the full timeline without day partitioning.
 
@@ -284,11 +286,10 @@ result = aq.run_backtest(
 
 With `freq`, the raw ticks still reach `on_tick` as usual, and the aggregated bars additionally reach `on_bar` — giving you full OHLC semantics and every indicator, including H/L-dependent ones like ATR. Key points:
 
-*   The vocabulary matches `feed_adapter.resample(freq=...)`, but only **whole minutes** are supported (`"1min"` / `"5min"` / `"1h"`). Sub-minute or non-integer periods such as `"30s"` raise `ValueError` and point you at `feed_adapter.resample` — no silent rounding.
+*   The vocabulary matches `feed_adapter.resample(freq=...)`, but tick aggregation only supports **whole minutes** (`"1min"` / `"5min"` / `"1h"`). Sub-minute or non-integer periods such as `"30s"` raise `ValueError` and point you at `feed_adapter.resample` — no silent rounding. (For bar data, `freq` declares the period and also accepts `"1d"`; see Section 1.1 of this page.)
 *   The adapter declares **per-trade** volume semantics (each `Tick.volume` is that single trade's volume, not a running total), and the aggregator sums every tick's volume in the interval directly into the synthesized bar's `volume`.
-*   A synthesized bar is stamped at the **end** of its interval (1 nanosecond before the next interval starts), not at the start. Backtests put synthesized bars and their source ticks into the same feed and then sort by timestamp; with an interval-start stamp the bar would sort **ahead of** the ticks that formed it, and the strategy would read high/low/close values from trades that had not happened yet. Stamping at interval end guarantees the bar is strictly later than all of its source ticks.
-*   Trailing ticks that do not complete a full period produce no bar (the aggregator offers no flush).
-*   Passing `freq` when `data` contains no `Tick` raises `ValueError` — the parameter would be meaningless.
+*   Buckets are right-closed: the interval is `(S, E]`, so a tick exactly on the minute `E` belongs to the bar ending there (a 09:31:00 tick belongs to the 09:30–09:31 bar). A synthesized bar is stamped at the **interval end E** and carries `interval_start = S`, not at the start. Backtests put synthesized bars and their source ticks into the same feed and then sort by timestamp; with an interval-start stamp the bar would sort **ahead of** the ticks that formed it, and the strategy would read high/low/close values from trades that had not happened yet. Stamping at the interval end guarantees the bar is never earlier than any of its source ticks.
+*   In a backtest whose data ends mid-interval, trailing ticks that do not complete a full period produce no bar (backtests do no final flush). When a live gateway sees no tick of the next interval for a while, it emits the bar 2 seconds after the interval end; the closing bar is the exception: it also takes ticks within `day_close_delay − 5` seconds after the close and is emitted 2 seconds after that window ends (see the [API Reference](../reference/api.md#live-timezone-sessions)). With dual tick + bar streams, the symbol's grace ticks reach the strategy before this closing bar, so the closing bar (stamped at the close) arrives after ticks with later timestamps and callback timestamps step back once.
 
 See [examples/68_backtest_tick_demo.py](https://github.com/akfamily/akquant/blob/main/examples/68_backtest_tick_demo.py) for a runnable comparison of both modes.
 
@@ -351,5 +352,5 @@ In a strategy, you can fetch historical market data for the past N days at any t
 
 AKQuant internally uses UTC timestamps uniformly.
 If your data is in local time (e.g., Beijing Time), please specify `timezone="Asia/Shanghai"` in `run_backtest`.
-If you call `ParquetDataCatalog.read(start_time=..., end_time=...)` directly, naive boundary values follow the same `timezone` rule and default to `Asia/Shanghai` when not provided explicitly.
+If you call `ParquetDataCatalog.read(start_time=..., end_time=...)` directly, naive boundary values and a naive stored index both follow the same `timezone` rule and default to `Asia/Shanghai` when not provided explicitly.
 For more details, refer to the [Timezone Handling Guide](../advanced/timezone.md).

@@ -92,7 +92,6 @@ def test_futures_template_does_not_override_explicit_multiplier() -> None:
             )
         ],
         china_futures=akquant.ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 akquant.ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB", multiplier=10.0

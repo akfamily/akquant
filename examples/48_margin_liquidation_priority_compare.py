@@ -24,20 +24,22 @@ class HedgedMarginStrategy(Strategy):
 
 
 def _build_data() -> list[Bar]:
-    # Day 1: open the hedged legs at par (LONG 100 @ 100, SHORT 50 @ 100).
-    # Day 2: SHORT gets caught in a short squeeze (100 -> 400), which pushes
-    # the account's maintenance ratio (3.5) below `maintenance_margin_ratio`
-    # (4.0) and should force a liquidation. The engine evaluates a day's
-    # maintenance breach at the NEXT day's settlement (it triggers on the
-    # date-change boundary), so Day 3 is required purely to roll settlement
-    # forward and surface the Day-2 breach in `liquidation_audit_df`.
+    # Date-only daily bars on trading days (2024-01-02 ~ 01-04); run_backtest
+    # moves them to the 15:00 session close, so CurrentClose fills at close.
+    # Maintenance ratio = equity / gross exposure (long + short).
+    # Day 1: open the hedged legs at par (LONG 100 @ 100, SHORT 50 @ 100):
+    # 50000 / 15000 = 3.33, above `maintenance_margin_ratio` (2.0).
+    # Day 2: SHORT gets caught in a short squeeze (100 -> 400): equity drops
+    # to 35000 against 30000 exposure (1.17), so the Day-2 settlement forces
+    # a liquidation, recorded in `liquidation_audit_df`.
+    # Day 3: one more quiet day after the liquidation.
     rows = [
-        ("2023-01-01 10:00:00", "LONG", 100.0),
-        ("2023-01-01 10:00:00", "SHORT", 100.0),
-        ("2023-01-02 10:00:00", "LONG", 100.0),
-        ("2023-01-02 10:00:00", "SHORT", 400.0),
-        ("2023-01-03 10:00:00", "LONG", 100.0),
-        ("2023-01-03 10:00:00", "SHORT", 400.0),
+        ("2024-01-02", "LONG", 100.0),
+        ("2024-01-02", "SHORT", 100.0),
+        ("2024-01-03", "LONG", 100.0),
+        ("2024-01-03", "SHORT", 400.0),
+        ("2024-01-04", "LONG", 100.0),
+        ("2024-01-04", "SHORT", 400.0),
     ]
     bars: list[Bar] = []
     for dt_str, symbol, close in rows:
@@ -69,7 +71,7 @@ def _run_once(liquidation_priority: str) -> Any:
             account_mode="margin",
             enable_short_sell=True,
             initial_margin_ratio=0.5,
-            maintenance_margin_ratio=4.0,
+            maintenance_margin_ratio=2.0,
             financing_rate_annual=0.0,
             borrow_rate_annual=0.0,
             allow_force_liquidation=True,

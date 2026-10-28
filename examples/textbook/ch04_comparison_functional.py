@@ -49,7 +49,7 @@ from akquant import Bar
 def generate_mock_data(length: int = 1000) -> pd.DataFrame:
     """生成模拟数据."""
     np.random.seed(42)
-    dates = pd.date_range(start="2020-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2020-01-02", periods=length, freq="B")
     prices = 100 + np.cumsum(np.random.randn(length))
     df = pd.DataFrame(
         {

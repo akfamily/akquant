@@ -8,7 +8,7 @@ try:
 except metadata.PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
-__engine_rule_version__ = "1.7.2"  # Increment on behavior-changing updates
+__engine_rule_version__ = "2.0.0"  # Increment on behavior-changing updates
 
 from . import akquant as _akquant
 from . import log as _log
@@ -38,11 +38,9 @@ from .config import (
     ChinaFuturesConfig,
     ChinaFuturesFeeConfig,
     ChinaFuturesInstrumentTemplateConfig,
-    ChinaFuturesSessionConfig,
     ChinaFuturesValidationConfig,
     ChinaOptionsConfig,
     ChinaOptionsFeeConfig,
-    ChinaOptionsSessionConfig,
     ChinaStockConfig,
     InstrumentAssetTypeEnum,
     InstrumentConfig,
@@ -132,7 +130,8 @@ else:
 
 __doc__ = _akquant.__doc__
 if hasattr(_akquant, "__all__"):  # noqa: F405
-    __all__ = list(_akquant.__all__) + [  # noqa: F405
+    # `_restore_*` 是 pickle 还原函数，仍可经 `akquant.akquant` 访问，不对外导出
+    __all__ = [n for n in _akquant.__all__ if not n.startswith("_restore_")] + [  # noqa: F405
         "load_bar_from_df",
         "prepare_dataframe",
         "normalize",
@@ -171,11 +170,9 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "ChinaFuturesConfig",
         "ChinaFuturesFeeConfig",
         "ChinaFuturesInstrumentTemplateConfig",
-        "ChinaFuturesSessionConfig",
         "ChinaFuturesValidationConfig",
         "ChinaOptionsConfig",
         "ChinaOptionsFeeConfig",
-        "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
         "PrecomputedIndicator",
         "IndicatorBinding",
@@ -281,7 +278,6 @@ else:
         "strategy_config",
         "ChinaOptionsConfig",
         "ChinaOptionsFeeConfig",
-        "ChinaOptionsSessionConfig",
         "ChinaStockConfig",
         "PrecomputedIndicator",
         "IndicatorBinding",
@@ -350,6 +346,25 @@ else:
     ]
 
 
+_REMOVED_SESSION_CONFIG_CLASSES = {
+    "ChinaFuturesSessionConfig": "ChinaFuturesConfig.sessions",
+    "ChinaOptionsSessionConfig": "ChinaOptionsConfig.sessions",
+}
+
+
+def __getattr__(name: str) -> object:
+    """已删除的时段配置类给出中文迁移提示，其余名字保持默认的属性错误."""
+    if name in _REMOVED_SESSION_CONFIG_CLASSES:
+        raise ImportError(
+            f"{name} 已删除（原用于 {_REMOVED_SESSION_CONFIG_CLASSES[name]}）："
+            "时段改由 run_backtest(sessions=...) 配置，例如 "
+            'sessions={"rb": "CN_FUTURES_NIGHT_23"}；'
+            '不受时段约束请用 sessions={"default": "ALWAYS_OPEN"}；'
+            "期权默认用 CN_OPTION，商品期权未单独配置时跟随其标的期货的时段表"
+        )
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def create_bar(
     timestamp: int,
     open_px: float,
@@ -361,40 +376,6 @@ def create_bar(
 ) -> Bar:  # noqa: F405
     """创建 Bar 对象的辅助函数."""
     return Bar(timestamp, open_px, high_px, low_px, close_px, volume, symbol)  # noqa: F405
-
-
-def _engine_set_timezone_name(self: Engine, tz_name: str) -> None:  # noqa: F405
-    """
-    通过时区名称设置引擎时区.
-
-    :param tz_name: 时区名称，例如 "Asia/Shanghai", "UTC", "US/Eastern"
-    """
-    import datetime
-
-    try:
-        import zoneinfo
-
-        tz: typing.Union[datetime.tzinfo, typing.Any] = zoneinfo.ZoneInfo(tz_name)
-    except ImportError:
-        import pytz
-
-        tz = pytz.timezone(tz_name)
-
-    # Get offset for current time (approximate is usually fine for constant
-    # offset zones, but for DST aware zones, we might want a specific date.
-    # For simplicity and standard market hours, we use current date or a fixed date)
-    now = datetime.datetime.now(tz)
-    utc_offset = now.utcoffset()
-    if utc_offset is None:
-        offset = 0
-    else:
-        offset = int(utc_offset.total_seconds())
-    self.set_timezone(offset)
-
-
-# Patch Engine class only when the native extension does not provide this API.
-if not hasattr(Engine, "set_timezone_name"):
-    Engine.set_timezone_name = _engine_set_timezone_name  # type: ignore
 
 
 def _engine_get_orders_dataframe(self: Engine) -> "pd.DataFrame":  # noqa: F405

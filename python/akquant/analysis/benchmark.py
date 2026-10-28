@@ -1,8 +1,118 @@
 """Benchmark analysis helpers shared by reports, exports, and APIs."""
 
-from typing import Any, Optional, Union, cast
+import datetime as _dt
+from typing import Any, Optional, Sequence, Tuple, Union, cast
 
+import numpy as np
 import pandas as pd
+
+TradingDayEnds = Sequence[Tuple[_dt.date, int]]
+"""引擎实际开过的交易日及其收盘时刻 ``[(交易日, 收盘纳秒)]``."""
+
+_DEFAULT_TIMEZONE = "Asia/Shanghai"
+
+
+def _utc_ns(index: pd.DatetimeIndex) -> np.ndarray:
+    """带时区索引转为 UTC 纳秒整数数组（NaT 为 int64 最小值）."""
+    naive_utc = index.tz_convert("UTC").tz_localize(None)
+    return np.asarray(naive_utc.as_unit("ns").to_numpy(dtype="datetime64[ns]")).view(
+        np.int64
+    )
+
+
+def _trading_day_labels(
+    index: pd.DatetimeIndex, ends: Optional[TradingDayEnds], tz: Optional[str]
+) -> pd.DatetimeIndex:
+    """把时间索引映射成所属交易日的本地 0 点.
+
+    交易日 T 覆盖 ``(上一交易日收盘, T 收盘]``：取第一个收盘时刻不早于该时刻的
+    已开交易日（夜盘点归下一交易日），口径与 Rust
+    ``BacktestResult::trading_day_key`` 一致。首个收盘之前的时刻（含首个交易日
+    开日前）都归首个交易日；只有 ``ends`` 为空，或时刻晚于最后一个收盘时刻时，
+    才退回本地自然日（``index.normalize()``）。
+
+    带时区的索引返回 ``tz`` 下的带时区标签；不带时区的索引按 ``tz`` 本地时间
+    解释，返回不带时区的标签。
+
+    :param index: 待映射的时间索引。
+    :param ends: 交易日及收盘时刻（纳秒），来自结果对象的 ``trading_day_ends``。
+    :param tz: 结果时区；为空时取索引自身时区，再退回 ``Asia/Shanghai``。
+    :return: 与 ``index`` 等长的交易日标签索引。
+    """
+    if not isinstance(index, pd.DatetimeIndex):
+        index = pd.DatetimeIndex(index)
+    if not ends or len(index) == 0:
+        return index.normalize()
+    naive = index.tz is None
+    zone = tz or (str(index.tz) if not naive else _DEFAULT_TIMEZONE)
+    if naive:
+        local = index.tz_localize(
+            zone,
+            ambiguous=np.ones(len(index), dtype=bool),
+            nonexistent="shift_forward",
+        )
+    else:
+        local = index.tz_convert(zone)
+
+    end_ns = np.asarray([int(end) for _, end in ends], dtype=np.int64)
+    order = np.argsort(end_ns, kind="stable")
+    end_ns = end_ns[order]
+    days = pd.DatetimeIndex(
+        pd.to_datetime([pd.Timestamp(ends[int(i)][0]) for i in order])
+    )
+    day_labels = days.tz_localize(
+        zone,
+        ambiguous=np.ones(len(days), dtype=bool),
+        nonexistent="shift_forward",
+    )
+    day_labels_ns = _utc_ns(day_labels)
+
+    ts = _utc_ns(local)
+    pos = np.searchsorted(end_ns, ts, side="left")
+    hit = (pos < len(end_ns)) & ~np.asarray(local.isna())
+    fallback = _utc_ns(local.normalize())
+    out = np.where(hit, day_labels_ns[np.minimum(pos, len(end_ns) - 1)], fallback)
+    labels = pd.DatetimeIndex(out.view("M8[ns]")).tz_localize("UTC").tz_convert(zone)
+    if naive:
+        labels = labels.tz_localize(None)
+    return labels.rename(index.name)
+
+
+def daily_last_by_trading_day(
+    series: pd.Series,
+    ends: Optional[TradingDayEnds] = None,
+    tz: Optional[str] = None,
+) -> pd.Series:
+    """按交易日取每日最后一个值（只保留有数据的交易日）.
+
+    ``ends`` 为空时与 ``series.resample("D").last().dropna()`` 完全一致。
+    """
+    if series.empty:
+        return pd.Series(dtype=float)
+    if not ends:
+        return cast(pd.Series, series.resample("D").last().dropna())
+    labels = _trading_day_labels(cast(pd.DatetimeIndex, series.index), ends, tz)
+    return cast(pd.Series, series.groupby(labels).last().dropna())
+
+
+def sum_by_trading_day(
+    series: pd.Series,
+    ends: Optional[TradingDayEnds] = None,
+    tz: Optional[str] = None,
+) -> pd.Series:
+    """按交易日求和，日期轴连续（无数据的日期为 0），与 ``resample("D").sum()`` 同形."""
+    if series.empty or not ends:
+        return cast(pd.Series, series.resample("D").sum())
+    labels = _trading_day_labels(cast(pd.DatetimeIndex, series.index), ends, tz)
+    relabeled = series.set_axis(labels)
+    return cast(pd.Series, relabeled.resample("D").sum())
+
+
+def result_trading_day_ends(result: Any) -> Tuple[list[Tuple[_dt.date, int]], str]:
+    """取结果对象的 ``trading_day_ends`` 与时区（缺失时为空列表与默认时区）."""
+    ends = getattr(result, "trading_day_ends", None)
+    tz = getattr(result, "_timezone", None) or _DEFAULT_TIMEZONE
+    return (list(ends) if ends else []), str(tz)
 
 
 def normalize_curve_freq(curve_freq: str) -> str:
@@ -25,16 +135,21 @@ def resolve_equity_curve(result: Any, curve_freq: str) -> pd.Series:
     return cast(pd.Series, result.equity_curve)
 
 
-def build_daily_returns_from_equity(equity_curve: pd.Series) -> pd.Series:
+def build_daily_returns_from_equity(
+    equity_curve: pd.Series,
+    trading_day_ends: Optional[TradingDayEnds] = None,
+    timezone: Optional[str] = None,
+) -> pd.Series:
     """Build daily returns from an equity curve.
 
     口径对齐 Rust ``src/analysis/result.rs::calculate``: 只保留真实存在行情的
     交易日 (``dropna`` 而非 ``ffill``, 后者会给非交易日补出 0.0 伪收益), 且首日
-    不产生收益点。
+    不产生收益点。给出 ``trading_day_ends``（结果对象的同名属性）时按交易日分组
+    （夜盘点归下一交易日），否则按本地自然日。
     """
     if equity_curve.empty:
         return pd.Series(dtype=float)
-    daily_equity = equity_curve.resample("D").last().dropna()
+    daily_equity = daily_last_by_trading_day(equity_curve, trading_day_ends, timezone)
     returns = daily_equity.pct_change().dropna()
     return cast(pd.Series, returns)
 
@@ -274,7 +389,8 @@ def benchmark_analysis_from_result(
 ) -> dict[str, Any]:
     """Build structured benchmark analysis directly from a backtest-like result."""
     equity_curve = resolve_equity_curve(result, curve_freq)
-    strategy_returns = build_daily_returns_from_equity(equity_curve)
+    ends, tz = result_trading_day_ends(result)
+    strategy_returns = build_daily_returns_from_equity(equity_curve, ends, tz)
     return build_benchmark_analysis(
         strategy_returns=strategy_returns,
         benchmark=benchmark,

@@ -14,8 +14,8 @@ different scenario and none replacing the others:
 
 | Path | Fits | Backtest | Live | Feeds `get_history`/indicators | Daily label convention |
 | --- | --- | --- | --- | --- | --- |
-| `subscribe_bars` (recommended) | Declarative in-strategy multi-timeframe subscription | Yes | Yes | Yes, via `get_history(freq=)` / `self.I(freq=)` | Last base bar of the trading day |
-| `BarGenerator` | In-strategy manual aggregation, no engine configuration needed | Yes | Yes | No — only the bar delivered to the callback is available | Next midnight (pandas `resample` convention) |
+| `subscribe_bars` (recommended) | Declarative in-strategy multi-timeframe subscription | Yes | Yes | Yes, via `get_history(freq=)` / `self.I(freq=)` | Trading-day close |
+| `BarGenerator` | In-strategy manual aggregation, no engine configuration needed | Yes | Yes | No — only the bar delivered to the callback is available | Trading-day close (same aggregator as `subscribe_bars`) |
 | `feed.resample` / `feed.replay` | Offline data orchestration before `run_backtest` | Backtest only | No | Requires a synthetic symbol; timestamps are user-defined | User-defined |
 
 ## `subscribe_bars` Usage
@@ -32,9 +32,8 @@ class FiveMinuteTrend(Strategy):
 
     def __init__(self) -> None:
         super().__init__()
-        self.subscribe_bars(
-            "5min", session_windows=[("09:30", "11:30"), ("13:00", "15:00")]
-        )
+        # No session_windows: split by the symbol's session-table trading blocks
+        self.subscribe_bars("5min")
         self.count = 0
 
     def on_start(self) -> None:
@@ -63,7 +62,15 @@ Key API:
 
 - `subscribe_bars(freq, callback=None, symbols=None, *, session_windows=None)`:
   declares a subscription. `freq` accepts integer minutes (`"Nmin"`), integer
-  hours (`"Nh"`), or daily (`"1d"`). `symbols=None` means all symbols.
+  hours (`"Nh"`), or daily (`"1d"`). `symbols=None` means all symbols. Without
+  `session_windows` (recommended), windows are split by the trading blocks of
+  the symbol's session table: the opening call auction joins the morning block
+  (A-shares 09:15–11:30) and the closing call auction shares the afternoon
+  continuous block (13:00–15:00); intraday window labels never pass the block
+  end (A-share 1h labels are 10:00, 11:00, 11:30, 14:00, 15:00); daily windows
+  are split by trading day (night sessions belong to the next trading day) and
+  labelled with the trading day's close. Hand-write `session_windows` only to
+  override the session table.
 - `callback`: when omitted, closed window bars are routed to the strategy's
   `on_window_bar(bar)`; passing a specific function (as in example 14's
   `on_daily`) routes that subscription there instead and `on_window_bar` is
@@ -89,15 +96,17 @@ When a window closes depends on whether the **base data frequency**
   window closes and dispatches in the **same step**, right after the `on_bar`
   call of the base bar that closes it (zero delay).
 - **Base frequency unknown** (e.g. a backtest fed a plain bar `DataFrame`
-  without `freq=`, or without `list[Tick]` input): the engine cannot tell
+  without `freq=` and not a `list[Tick]` input): the engine cannot tell
   whether the next base bar has already crossed into a new window, so the
   window only closes once the **next base bar that falls into a new window**
   arrives (one bar late), and a one-time `WARNING` is logged at configuration
-  time. Example 14 is exactly this case: the daily window only closes once the
-  next day's first 09:31 minute bar arrives. `session_windows` only splits
-  trading-session boundaries correctly — it does not make a window close
-  immediately; immediate closing depends solely on whether the base frequency
-  is known.
+  time. The trading day's last windows (the daily window and the intraday
+  windows of the block containing the close) do not wait for the next day:
+  they close before end-of-day settlement and are dispatched before
+  `on_after_trading`. Session splitting only gets trading-block boundaries
+  right — it does not make a window close immediately; immediate closing
+  depends solely on whether the base frequency is known. Example 14 passes
+  `run_backtest(freq="1min")`, so its windows close immediately.
 
 ## Limits
 
@@ -114,11 +123,19 @@ When a window closes depends on whether the **base data frequency**
 - Window bars are **never** used by the matching engine for fills — they are
   informational only; the strategy still needs to place orders from
   `on_bar` (or other base market data callbacks).
-- The CTP gateway's synthesized bars are stamped at the interval's start by
-  default; only enabling both `emit_ticks` and `emit_bars` yields an
-  end-of-interval stamp. Without both enabled, multi-timeframe aggregation
-  will be off by one bar due to the timestamp convention mismatch — enable
-  both `emit_ticks` and `emit_bars` when doing multi-timeframe with CTP.
+- Closed bars are always stamped at the interval end E and carry
+  `interval_start = S`, bucketed right-closed `(S, E]` (backtest tick
+  aggregation and bars synthesized by the CTP/klinedata gateways follow the
+  same rule), so multi-timeframe aggregation is never misaligned by the
+  timestamp convention.
+- Replay's `gateway_options={"freq": ...}` only declares the base frequency
+  (`self.freq` and immediate window closing); it does not fill
+  `interval_start` on replayed bars. Supply it yourself via
+  `Bar(..., interval_start=...)` if you need the interval start.
+- When one symbol is fed external bars of two periods at the same moment
+  (e.g. 1min and 5min), an order submitted on the 1min bar may be matched by
+  the same-moment 5min bar against its earlier interval. Feed only one base
+  period and aggregate higher periods with `subscribe_bars`.
 - At session end (backtest completion, or live/replay session termination),
   the engine flushes any still-open tail window and fires one callback for
   it; orders placed there have no further chance to fill in a backtest. If a
@@ -138,11 +155,7 @@ two series — plus a manual +15 hour timestamp shift to avoid colliding with
 the minute data's timestamps. Now:
 
 ```python
-self.subscribe_bars(
-    "1d",
-    callback=self.on_daily,
-    session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
-)
+self.subscribe_bars("1d", callback=self.on_daily)
 self.daily_sma = self.I(
     aq.SMA(self.ma_window), name="daily_sma", source="close", freq="1d"
 )
@@ -177,24 +190,33 @@ replayed = feed.replay(
     align="session",
     day_mode="trading",
     emit_partial=False,
-    session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
 )
 ```
+
+Prefer omitting `session_windows`: windows are then split by the symbol's session-table trading blocks, matching `subscribe_bars` bar for bar; hand-written `session_windows` use the previous implementation and are not aligned with engine windows.
 
 ### Current Minimal Delivery
 
 - `BasePandasFeedAdapter` supports:
   - `resample(freq, agg=None, label="right", closed="right", emit_partial=True)`
-  - `replay(freq, align="session", emit_partial=False, agg=None, label="right", closed="right")`
+  - `replay(freq, align="session", emit_partial=False, agg=None, label="right", closed="right", session_windows=None, sessions=None, trading_calendar=None, asset_type=None, base_interval_min=None)`
 - Both return adapter objects that can be passed directly to `run_backtest(data=...)`.
-- `replay(align="session")` supports per-trading-day partitioning, and drops each partition tail when `emit_partial=False`.
-- `session_windows` can further split intraday sessions (for example, before/after lunch break) to avoid cross-session aggregation.
+- `replay(align="session")` (without `session_windows`) and `replay(align="day", day_mode="trading")` use the same window aggregator as the engine's `subscribe_bars`, so for the same data and session table they produce the same windows as `subscribe_bars` and `BarGenerator`:
+  - Intraday windows (`Nmin`/`Nh`) are split by (trading day, trading block); the label is the local clock ceiling to the period, clamped to the block end (A-share 1h: 10:00, 11:00, 11:30, 14:00, 15:00).
+  - Daily windows (`1D`) are split by trading day (night session belongs to the next trading day) and labelled at the trading-day close.
+  - `sessions`, `trading_calendar` and `asset_type` mean the same as in `run_backtest` (default: stock); `base_interval_min` is the source bar period in minutes, inferred from the modal timestamp spacing when omitted.
+  - OHLCV comes from the aggregator; other `agg` columns (or columns whose default aggregation is overridden) are grouped by the window the aggregator assigned to each row.
+  - With `emit_partial=False`, a window whose data does not reach its label is dropped when it is the last window of its trading day (or of the data).
+  - The default `align="session"` cuts by the A-share block table in China timezone (the request `timezone` defaults to `Asia/Shanghai`), so lunch-break and after-close rows are not merged into trading-hour windows. For non-China markets or 24h data, pass `FeedSlice(timezone=...)` explicitly, plus `sessions=` / `asset_type=` as needed (e.g. night futures: `sessions={"au": "CN_FUTURES_NIGHT_0230"}, asset_type="futures"`).
+  - Rows with NaN in any of open/high/low/close are dropped before aggregation; NaN volume counts as 0.
+- Block clamping only applies to the default `label="right", closed="right"` with `freq` of `Nmin`/`Nh`/`1D`; anything else keeps the previous pandas `resample` implementation (partitioned by local date).
+- `session_windows` hand-writes intraday sessions (for example, before/after lunch break); an end earlier than the start means the session crosses midnight (e.g. `("21:00", "02:30")`). Manual sessions use the previous implementation and are not aligned bar-for-bar with engine windows.
 - `align` currently supports:
-  - `session`: partition by trading day, with optional `session_windows`.
+  - `session`: partition by trading day and trading block, or by manual `session_windows`.
   - `day`: partition by day without `session_windows`, with configurable `day_mode`.
   - `global`: aggregate on the full timeline without day/session partitioning.
 - `day_mode` currently supports:
-  - `trading`: partition by local trading day under request timezone.
+  - `trading`: partition by the symbol's trading day (night session belongs to the next trading day).
   - `calendar`: partition by UTC calendar day.
 
 ### Semantics
@@ -238,16 +260,20 @@ replayed = feed.replay(
 the strategy and is fed bar-by-bar as a stream, with no offline data
 orchestration involved. Backtest and live trading call the exact same
 `update_bar` — strategy code doesn't need to distinguish which mode it's
-running under. Both follow the same clock-alignment semantics under matching
-parameters (`label="right"`, `closed="right"`, consistent with pandas
-`resample(label="right", closed="right")`), so identical parameters produce
-identical results.
+running under.
+
+Under the hood `BarGenerator` wraps the same Rust window aggregator used by the
+engine's `subscribe_bars` (also available directly as
+`akquant.WindowAggregator`), so it produces identical windows for the same data
+and session table: intraday windows are split by (trading day, trading block),
+labelled by the local clock ceiled to the period but never past the block end
+(A-share 1h: 10:00, 11:00, 11:30, 14:00, 15:00); daily windows are split by
+trading day (night session belongs to the next trading day) and labelled with
+the trading-day close. Window bars carry `freq` and `interval_start`.
 
 The key difference from `subscribe_bars`: bars aggregated by `BarGenerator`
 **never** enter the `get_history`/incremental-indicator system — only the bar
-delivered to the callback is available. The daily timestamp convention also
-differs (`BarGenerator` uses pandas' next-midnight convention, while
-`subscribe_bars` uses the last base bar of the trading day).
+delivered to the callback is available.
 
 Minimal usage:
 
@@ -277,13 +303,22 @@ class MyStrategy(Strategy):
 
 - `window`/`interval` combine to form the target period (e.g.
   `BarGenerator(cb, 15, "minute")`, `BarGenerator(cb, 1, "hour")`,
-  `BarGenerator(cb, 1, "day")`).
-- `session_windows` segments aggregation by trading session, avoiding dirty
-  bars that splice across boundaries like the lunch break, e.g.
-  `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`; omit it for pure
-  clock alignment (no special handling of session boundaries).
-- `timezone` specifies the market timezone used for clock/session alignment
-  (e.g. `"Asia/Shanghai"`).
+  `BarGenerator(cb, 1, "day")`); `"day"` only supports `window=1`.
+- `timezone` (default `"Asia/Shanghai"`), `sessions`, `trading_calendar` and
+  `asset_type` (default stock; a `{symbol: asset_type}` mapping keyed by the
+  full symbol is also accepted) mean the same as in `run_backtest` and decide
+  each symbol's session table and trading days. For non-China markets (US
+  stocks, crypto, ...) pass `timezone` explicitly (e.g. `"America/New_York"`,
+  `"UTC"`); otherwise windows are cut by the A-share session table. Non-China
+  timezones default to all-day continuous trading.
+- `base_interval_min` is the period (minutes) of the bars you feed. When given,
+  a window closes as soon as a bar's interval end reaches the window label
+  (e.g. the 11:30 one-minute bar closes the 11:30 window); otherwise it closes
+  only when the next bar falling into a new window arrives.
+- `session_windows` hand-writes trading sessions that override the session
+  table; usually not needed, since the default splits by the symbol's
+  session-table trading blocks. For example `session_windows=[("09:30", "11:30"), ("13:00", "15:00")]`; an end
+  earlier than its start means the session crosses midnight.
 - `current(symbol)` peeks at the in-progress, not-yet-closed window snapshot
   for a symbol without triggering a callback — useful for intraday display.
 - Multiple symbols aggregate independently of each other.

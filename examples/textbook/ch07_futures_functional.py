@@ -6,6 +6,7 @@
 2. **杠杆 (Leverage)**：放大收益与风险。
 3. **做空 (Short Selling)**：使用 `short()` / `cover()` 显式表达开空与平空。
 4. **合约乘数 (Multiplier)**：一手合约代表的价值。
+5. **交易时段 (Sessions)**：用 `sessions=` 为有夜盘的品种指定时段模板。
 
 示例场景：
 - 交易品种：螺纹钢期货 (RB)
@@ -38,7 +39,7 @@ from akquant import Bar
 def generate_futures_data(length: int = 100) -> pd.DataFrame:
     """生成期货模拟数据."""
     np.random.seed(42)
-    dates = pd.date_range(start="2023-01-01", periods=length, freq="D")
+    dates = pd.date_range(start="2023-01-03", periods=length, freq="B")
 
     # 构造一个先涨后跌的趋势
     trend = np.concatenate(
@@ -158,7 +159,6 @@ if __name__ == "__main__":
         strategy_config=StrategyConfig(initial_cash=500_000, commission_rate=0.0001),
         instruments_config=[rb_config],
         china_futures=ChinaFuturesConfig(
-            enforce_sessions=False,
             instrument_templates_by_symbol_prefix=[
                 ChinaFuturesInstrumentTemplateConfig(
                     symbol_prefix="RB",
@@ -192,6 +192,11 @@ if __name__ == "__main__":
         # 注意：推荐显式声明滑点类型。
         # 0.0002 = 2 bps；如果写成 0.2，表示 20% 滑点，不是 0.2 个点。
         slippage={"type": "percent", "value": 0.0002},
+        # 螺纹钢有夜盘（21:00-23:00）：按品种前缀指定时段模板。夜盘归下一交易日
+        # （周五夜盘属下周一），结算在交易日 15:00 收盘。只有日期的日线会改写到
+        # 交易日收盘时刻，所以本例结果与不传 sessions 时的默认日盘模板
+        # （CN_FUTURES_DAY）相同。
+        sessions={"rb": "CN_FUTURES_NIGHT_23"},
     )
 
     print("\n" + "=" * 40)

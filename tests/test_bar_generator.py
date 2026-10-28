@@ -4,15 +4,23 @@ from datetime import datetime
 from typing import cast
 
 import pandas as pd
+import pytest
 from akquant import BarGenerator
 from akquant.akquant import Bar
+
+TZ = "Asia/Shanghai"
+
+
+def _ns(text: str) -> int:
+    """本地(北京时间)时刻 -> UTC 纳秒; BarGenerator 默认按北京时间与 A 股时段切分."""
+    return int(pd.Timestamp(text, tz=TZ).value)
 
 
 def _bars_1min(
     n: int, symbol: str = "X", start: str = "2024-01-02 09:30:00"
 ) -> list[Bar]:
     """造 n 根 1min bar(时间戳=右缘, 递增), OHLCV 可预期."""
-    idx = pd.date_range(start, periods=n, freq="1min")
+    idx = pd.date_range(start, periods=n, freq="1min", tz=TZ)
     bars = []
     for i, ts in enumerate(idx):
         base = 10.0 + i
@@ -74,8 +82,11 @@ def test_matches_pandas_resample_5min() -> None:
 
 
 def test_matches_pandas_resample_15min_and_hour() -> None:
-    """15min 与 1h 聚合逐桶应与 pandas resample 一致."""
-    bars = _bars_1min(140)
+    """15min 与 1h 聚合逐桶应与 pandas resample 一致.
+
+    120 根 = 09:30-11:29, 全在 A 股上午交易块内(11:30 之后是午休)。
+    """
+    bars = _bars_1min(120)
     for window, interval, freq in [(15, "minute", "15min"), (1, "hour", "1h")]:
         got = _collect((window, interval, freq), bars)
         exp = _expected_resample(bars, freq)
@@ -95,10 +106,18 @@ def test_daily_aggregation() -> None:
     got = _collect((1, "day", "1D"), bars)
     exp = _expected_resample(bars, "1D")
     assert len(got) == 3
-    # 日线标签也须与 pandas resample(label=right,closed=right) 一致(不止根数)
+    # 日线标签为交易日收盘时刻(A 股 15:00), interval_start 为前一交易日收盘
     assert [b.timestamp for b in got] == [
-        int(pd.Timestamp(ts).value) for ts in exp.index
+        _ns("2024-01-02 15:00"),
+        _ns("2024-01-03 15:00"),
+        _ns("2024-01-04 15:00"),
     ]
+    assert [b.interval_start for b in got] == [
+        _ns("2024-01-01 15:00"),
+        _ns("2024-01-02 15:00"),
+        _ns("2024-01-03 15:00"),
+    ]
+    assert [b.freq for b in got] == ["1d", "1d", "1d"]
     assert [b.volume for b in got] == list(exp["volume"])
 
 
@@ -214,7 +233,7 @@ def test_session_windows_no_cross_lunch() -> None:
     bars = []
     for i, t in enumerate(ts):
         base = 10.0 + i
-        bars.append(Bar(int(pd.Timestamp(t).value), base, base, base, base, 100.0, "X"))
+        bars.append(Bar(_ns(t), base, base, base, base, 100.0, "X"))
     got = []
     bg = BarGenerator(
         lambda b: got.append(b),
@@ -240,9 +259,7 @@ def test_no_session_windows_merges_across_gap() -> None:
     """
     # 同一 5min 时钟桶归并规则下 3 根应归并为 1 窗(仅验证不配 session 时不额外切分)
     ts = ["2024-01-02 13:01:00", "2024-01-02 13:02:00", "2024-01-02 13:03:00"]
-    bars = [
-        Bar(int(pd.Timestamp(t).value), 10.0, 10.0, 10.0, 10.0, 100.0, "X") for t in ts
-    ]
+    bars = [Bar(_ns(t), 10.0, 10.0, 10.0, 10.0, 100.0, "X") for t in ts]
     got = []
     bg = BarGenerator(lambda b: got.append(b), window=5, interval="minute")
     for b in bars:
@@ -256,8 +273,9 @@ def test_session_boundary_inside_clock_bucket_discriminates() -> None:
 
     window=10min, 五根 10:01..10:05 全部 ceil 到同一 (10:00,10:10] 桶:
     - 不配 session: 合并成 1 窗(vol 500)。
-    - 配 session 段界 10:03/10:04: 上午段(10:01-10:03)与下午段(10:04-10:05)切开
-      → 2 窗(vol 300 / 200)。二者标签同为 10:10 但 session_key 不同, 靠段变闭合。
+    - 配 session 段界 10:03: 前段(10:01-10:03 三根)与后段(10:04-10:05)切开
+      → 2 窗(vol 300 / 200)。前段标签截到段末 10:03, 后段标签 10:10。
+      bar 归属按区间 (ts-1min, ts] 判断, 10:04 那根覆盖 10:03-10:04, 故两段首尾相接。
     这个用例在 session 逻辑缺失时会失败(得 1 窗), 故真正覆盖该特性。
     """
     ts = [
@@ -267,9 +285,7 @@ def test_session_boundary_inside_clock_bucket_discriminates() -> None:
         "2024-01-02 10:04:00",
         "2024-01-02 10:05:00",
     ]
-    bars = [
-        Bar(int(pd.Timestamp(t).value), 10.0, 10.0, 10.0, 10.0, 100.0, "X") for t in ts
-    ]
+    bars = [Bar(_ns(t), 10.0, 10.0, 10.0, 10.0, 100.0, "X") for t in ts]
 
     # 对照: 不配 session → 同一 10min 桶合并为 1 窗
     plain: list = []
@@ -286,7 +302,7 @@ def test_session_boundary_inside_clock_bucket_discriminates() -> None:
         lambda b: got.append(b),
         window=10,
         interval="minute",
-        session_windows=[("10:00", "10:03"), ("10:04", "10:10")],
+        session_windows=[("10:00", "10:03"), ("10:03", "10:10")],
     )
     for b in bars:
         bg.update_bar(b)
@@ -294,3 +310,71 @@ def test_session_boundary_inside_clock_bucket_discriminates() -> None:
     assert len(got) == 2
     assert got[0].volume == 300.0  # 上午段 10:01-10:03
     assert got[1].volume == 200.0  # 下午段 10:04-10:05
+
+
+def test_asset_type_picks_session_table() -> None:
+    """asset_type 决定时段表: 期货 10:15 收上午第一块, 1h 窗口标签截到 10:15."""
+    import pytest
+
+    ts = ["2024-01-02 10:01:00", "2024-01-02 10:15:00"]
+    bars = [Bar(_ns(t), 10.0, 10.0, 10.0, 10.0, 100.0, "RB") for t in ts]
+    labels: dict[str, list[int]] = {}
+    for name, asset_type in [("stock", None), ("futures", {"RB": "futures"})]:
+        got: list[Bar] = []
+        bg = BarGenerator(
+            got.append,
+            window=1,
+            interval="hour",
+            asset_type=asset_type,
+            base_interval_min=1,
+        )
+        for b in bars:
+            bg.update_bar(b)
+        bg.flush()
+        labels[name] = [b.timestamp for b in got]
+    assert labels["stock"] == [_ns("2024-01-02 11:00")]
+    assert labels["futures"] == [_ns("2024-01-02 10:15")]
+
+    with pytest.raises(ValueError, match="asset_type"):
+        BarGenerator(lambda b: None, asset_type="bond")
+    with pytest.raises(ValueError, match="window=1"):
+        BarGenerator(lambda b: None, window=2, interval="day")
+
+
+def test_out_of_block_bars_warn_once_per_symbol(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bar 落在时段表全部交易块之外时每个标的告警一次; 块内数据不告警."""
+    got: list[Bar] = []
+    bg = BarGenerator(got.append, window=5, interval="minute", base_interval_min=1)
+    with caplog.at_level("WARNING", logger="akquant"):
+        for b in _bars_1min(30, symbol="rb2405", start="2024-01-02 09:01:00"):
+            bg.update_bar(b)
+        for b in _bars_1min(3, symbol="ag2406", start="2024-01-02 21:01:00"):
+            bg.update_bar(b)
+        for b in _bars_1min(5, symbol="600000.SH"):
+            bg.update_bar(b)
+    hits = [r.getMessage() for r in caplog.records if "时段表之外" in r.getMessage()]
+    assert len(hits) == 2, hits
+    assert "rb2405" in hits[0] and "asset_type=" in hits[0] and "sessions=" in hits[0]
+    assert "ag2406" in hits[1]
+    # 同标签只出一根窗口
+    labels = [b.timestamp for b in got if b.symbol == "rb2405"]
+    assert len(labels) == len(set(labels)) == 6
+
+
+def test_window_aggregator_rejects_resolver_timezone_mismatch() -> None:
+    """Resolver 与 timezone 时区不一致时报错; 只传 resolver 时沿用其时区."""
+    from akquant import SessionResolver, WindowAggregator
+
+    utc = SessionResolver(timezone="UTC")
+    with pytest.raises(ValueError, match="时区"):
+        WindowAggregator("1d", resolver=utc, timezone="Asia/Shanghai")
+    # 时区一致: 不报错
+    WindowAggregator("1d", resolver=utc, timezone="UTC")
+    # 只传 resolver: 按 resolver 的 UTC 切分日线(北京 07:00 与 09:00 跨 UTC 日界)
+    agg = WindowAggregator("1d", resolver=utc, base_interval_min=60)
+    first = Bar(_ns("2024-01-02 07:00"), 1.0, 1.0, 1.0, 1.0, 1.0, "X")
+    second = Bar(_ns("2024-01-02 09:00"), 2.0, 2.0, 2.0, 2.0, 1.0, "X")
+    out = agg.update(first) + agg.update(second)
+    assert [b.close for b in out] == [1.0]

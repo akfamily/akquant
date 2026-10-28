@@ -8,7 +8,6 @@ This page explains how to control strategy runtime behavior from backtest and li
 
 - Error handling mode (`error_mode`)
 - Portfolio update threshold (`portfolio_update_eps`)
-- Precise day-boundary hooks (`enable_precise_day_boundary_hooks`)
 - Legacy fallback flag (`re_raise_on_error`)
 
 It works for all of:
@@ -48,7 +47,6 @@ result = run_backtest(
 |---|---|---|---|---|
 | `error_mode` | `"raise" \| "continue" \| "legacy"` | `"raise"` | Control callback exception policy | Raises `ValueError` |
 | `portfolio_update_eps` | `float` (`>= 0`) | `0.0` | Skip tiny equity/cash update noise | Raises `ValueError` |
-| `enable_precise_day_boundary_hooks` | `bool` | `False` | Enable strict before/after trading by boundary timers | Coerced by bool conversion |
 | `re_raise_on_error` | `bool` | `True` | Legacy fallback when `error_mode="legacy"` | Coerced by bool conversion |
 
 ## 4. Conflict Priority

@@ -42,8 +42,10 @@ def make_data() -> dict[str, pd.DataFrame]:
             return 10.0 + (120 - index) * 0.02
         return 10.0 + (index - 120) * 0.035
 
+    # 只有日期(本地 0 点)的日线: 引擎改写到交易日收盘 15:00。不要把日线打在盘中时刻
+    # (如 10:00), 否则盘中的回调会提前看到当日收盘价(前视)。
     timestamps = list(
-        pd.date_range("2022-01-04 10:00:00", periods=240, freq="B", tz="Asia/Shanghai")
+        pd.date_range("2022-01-04", periods=240, freq="B", tz="Asia/Shanghai")
     )
     return {
         "AAA": _build_symbol_df(
@@ -62,10 +64,13 @@ def make_data() -> dict[str, pd.DataFrame]:
 def rebalance_to_best_symbol(
     strategy: Strategy, ranking: list[tuple[str, float]], symbols: list[str]
 ) -> str:
-    """调仓到排名第一的标的，其余标的清仓."""
+    """调仓到排名第一的标的，其余标的清仓.
+
+    目标仓位取 95%：满仓（100%）时佣金使所需资金超过可用资金，买单会被风控拒绝。
+    """
     best_symbol = ranking[0][0]
     for symbol in symbols:
-        target_percent = 1.0 if symbol == best_symbol else 0.0
+        target_percent = 0.95 if symbol == best_symbol else 0.0
         strategy.order_target_percent(target_percent=target_percent, symbol=symbol)
     return best_symbol
 

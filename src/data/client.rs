@@ -36,6 +36,7 @@ fn event_timestamp(event: &Event) -> i64 {
         Event::Bar(b) => b.timestamp,
         Event::Tick(t) => t.timestamp,
         Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
+        Event::TradingDayHint { timestamp, .. } => *timestamp,
         _ => 0,
     }
 }
@@ -349,6 +350,7 @@ impl CsvDataClient {
                 symbol: self.symbol.clone(),
                 extra: HashMap::new(),
                 freq: None,
+                interval_start: None,
             };
             Some(Event::Bar(bar))
         } else {
@@ -363,12 +365,7 @@ impl DataClient for CsvDataClient {
             self.current = self.read_next();
         }
 
-        self.current.as_ref().map(|e| match e {
-            Event::Bar(b) => b.timestamp,
-            Event::Tick(t) => t.timestamp,
-            Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
-            _ => 0,
-        })
+        self.current.as_ref().map(event_timestamp)
     }
 
     fn next(&mut self) -> Option<Event> {
@@ -431,12 +428,7 @@ impl DataClient for RealtimeDataClient {
             }
         }
 
-        self.current.as_ref().map(|e| match e {
-            Event::Bar(b) => b.timestamp,
-            Event::Tick(t) => t.timestamp,
-            Event::ExecutionReport(_, Some(trade)) => trade.timestamp,
-            _ => 0,
-        })
+        self.current.as_ref().map(event_timestamp)
     }
 
     fn next(&mut self) -> Option<Event> {

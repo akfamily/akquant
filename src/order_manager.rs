@@ -32,6 +32,16 @@ pub struct OrderManager {
     /// 当前步收到的拒单回报 (用于通知策略 on_reject)
     #[serde(default)]
     pub current_step_rejected_orders: Vec<Order>,
+    /// 当前步日终结算置为 Expired 的 Day 单 (用于通知策略 on_order)。
+    /// 不入存档: 存档按位置编码(msgpack 数组), 插在中间会让旧存档错位解码失败;
+    /// 且它只在结算到下一个策略事件之间非空, 存档时恒为空。
+    #[serde(skip)]
+    pub current_step_expired_orders: Vec<Order>,
+    /// 本步移出在途账本、未成交终结的订单(撤单/过期/拒单)的终态快照。
+    /// 多槽位下订单可能被别的槽位撤掉, 所属槽位的 ctx 里没有撤单 id, 靠它回调
+    /// on_order(Cancelled)。不入存档(同上, 存档时恒为空)。
+    #[serde(skip)]
+    pub current_step_finalized_orders: Vec<Order>,
     /// 交易追踪器 (用于计算 PnL 和统计)
     pub trade_tracker: TradeTracker,
     /// OCO 订单组映射: group_id -> {order_id}
@@ -62,6 +72,8 @@ impl OrderManager {
             trades: Vec::new(),
             current_step_trades: Vec::new(),
             current_step_rejected_orders: Vec::new(),
+            current_step_expired_orders: Vec::new(),
+            current_step_finalized_orders: Vec::new(),
             trade_tracker: TradeTracker::new(),
             oco_groups: HashMap::new(),
             oco_order_to_group: HashMap::new(),
@@ -310,6 +322,7 @@ impl OrderManager {
             if order.status != OrderStatus::Filled {
                 self.handle_oco_terminal_without_fill(&order.id);
                 self.pending_bracket_plans.remove(&order.id);
+                self.current_step_finalized_orders.push(order.clone());
             }
         }
         self.orders.extend(finished);
@@ -547,6 +560,61 @@ mod tests {
         order.order_role = OrderRole::Standalone;
         order.status = status;
         order
+    }
+
+    #[test]
+    fn old_layout_checkpoint_decodes_and_new_layout_round_trips() {
+        let mut manager = OrderManager::new();
+        manager
+            .active_orders
+            .push(make_order("active-1", OrderStatus::New));
+        manager
+            .orders
+            .push(make_order("done-1", OrderStatus::Expired));
+        manager.register_oco_group(
+            "oco-1".to_string(),
+            "active-1".to_string(),
+            "done-1".to_string(),
+        );
+
+        // 加入 current_step_expired_orders 之前的字段布局(msgpack 按位置编码)
+        let old_encoded: Vec<u8> = rmp_serde::to_vec(&(
+            &manager.orders,
+            &manager.active_orders,
+            &manager.trades,
+            &manager.current_step_trades,
+            &manager.current_step_rejected_orders,
+            &manager.trade_tracker,
+            &manager.oco_groups,
+            &manager.oco_order_to_group,
+            &manager.pending_bracket_plans,
+        ))
+        .unwrap();
+        let old_decoded: OrderManager =
+            rmp_serde::from_slice(&old_encoded).expect("旧布局存档应能解码");
+        assert_eq!(old_decoded.active_orders.len(), 1);
+        assert_eq!(old_decoded.active_orders[0].id, "active-1");
+        assert_eq!(old_decoded.orders[0].id, "done-1");
+        assert_eq!(
+            old_decoded
+                .oco_order_to_group
+                .get("active-1")
+                .map(String::as_str),
+            Some("oco-1")
+        );
+        assert!(old_decoded.current_step_expired_orders.is_empty());
+
+        // 新布局往返: 过期单缓冲不入存档, 读回为空, 其余字段不变
+        manager
+            .current_step_expired_orders
+            .push(make_order("done-1", OrderStatus::Expired));
+        let encoded: Vec<u8> = rmp_serde::to_vec(&manager).unwrap();
+        assert_eq!(encoded, old_encoded);
+        let decoded: OrderManager = rmp_serde::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.active_orders[0].id, "active-1");
+        assert_eq!(decoded.orders[0].status, OrderStatus::Expired);
+        assert_eq!(decoded.oco_groups.len(), 1);
+        assert!(decoded.current_step_expired_orders.is_empty());
     }
 
     #[test]

@@ -7,5 +7,6 @@ longer part of the public API.
 """
 
 from ._facade import run_live
+from ._stream_sink import StreamingIndicatorSink
 
-__all__ = ["run_live"]
+__all__ = ["run_live", "StreamingIndicatorSink"]

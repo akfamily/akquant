@@ -49,10 +49,10 @@
 | `on_order` | 订单状态变化时 | 跟踪下单生命周期、联动撤单/重置状态 | `examples/08_event_callbacks.py` |
 | `on_trade` | 收到成交回报时 | 成交日志、成交后风控、累计统计 | `examples/08_event_callbacks.py` |
 | `on_reject` | 订单首次进入 `Rejected` 时 | 记录拒单原因、告警、降级处理 | `examples/50_framework_hooks_demo.py` |
-| `on_before_trading` | 本地交易日首次进入 `Normal` 会话 | 盘前检查、生成交易日级信号 | `examples/50_framework_hooks_demo.py` |
-| `on_pre_open` | 每个交易日首个常规行情事件前，由框架定时器抢先触发 | 盘前信号与“本次 open 成交”语义钩子；可用于表达集合竞价前的最后决策点，但不等同于券商柜台已支持集合竞价专用委托 | `examples/52_pre_open_demo.py` |
+| `on_before_trading` | 交易日最早的连续竞价开始后 1ns（A 股 09:30；有夜盘的期货从前一交易日夜盘开始，周一交易日在周五 21:00 触发） | 盘前检查、生成交易日级信号 | `examples/50_framework_hooks_demo.py` |
+| `on_pre_open` | 交易日首个时段开始前 1ns（A 股 09:15 集合竞价前；有夜盘的期货为前一交易日 20:55 夜盘集合竞价前），不早于上一交易日日终结算；回测与实盘一致 | 盘前信号与“本次 open 成交”语义钩子；默认 `NextOpen()` 单参加开盘集合竞价统一撮合，但不等同于券商柜台已支持集合竞价专用委托 | `examples/52_pre_open_demo.py` |
 | `on_cross_section` | 当日首个跨标的完整 bar 切片之后 | 基于当日 bar/账户快照的横截面同周期调仓 | `examples/strategies/09_stock_momentum_rotation_after_bar.py` |
-| `on_after_trading` | 离开 `Normal` 会话时，必要时下一事件补发 | 日终统计、收盘后清理与归档 | `examples/50_framework_hooks_demo.py` |
+| `on_after_trading` | 日终结算完成后（回测在收盘时刻；实盘在收盘 + `day_close_delay`） | 日终统计、收盘后清理与归档 | `examples/50_framework_hooks_demo.py` |
 | `on_portfolio_update` | 账户快照变化时增量触发 | 监控现金/权益变化、推送 UI 或告警 | `examples/50_framework_hooks_demo.py` |
 | `on_error` | 任一用户回调抛异常时 | 记录异常源、决定继续/中断策略 | `examples/22_strategy_runtime_config_demo.py` |
 | `on_timer` | 定时器到点时 | 定时调仓、盘前任务、节律性检查 | `examples/strategies/07_stock_momentum_rotation_on_timer.py` |
@@ -77,20 +77,20 @@
 
 * `on_reject` 对同一订单 id 只触发一次。
 * 回测中已终态拒单会通过上下文快照 `recent_rejected_orders` 在下一次事件分发时补发，避免因清理活跃订单导致漏触发。
-* `on_before_trading` 在本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。
-* `on_pre_open` 在每个交易日的首个常规行情事件前，由框架预注册 timer 先触发一次。
+* 三个交易日钩子由引擎的交易日生命周期定时器在固定时点触发，触发时点不依赖行情事件，回测与实盘同一时点。回测按下一个行情事件所属的交易日逐日串联：日历上没有任何行情的交易日不触发这三个钩子，数据耗尽后也不再排程；实盘按交易日历逐日触发（当日无行情也触发）。
+* `on_pre_open` 在交易日首个时段开始前 1ns 触发（A 股为 09:15 开盘集合竞价前，即 09:14:59.999…；有夜盘的期货为前一交易日 20:55 夜盘集合竞价前），且不早于上一交易日的日终结算。其中默认的 `NextOpen()` 单参加开盘集合竞价统一撮合：撮合在连续竞价开始时进行，成交价为竞价价，成交时间记在首个连续竞价事件上（A 股分钟线为 09:31 那根 bar）。
+* `on_before_trading` 在交易日最早的连续竞价开始后 1ns 触发（A 股 09:30:00 之后）；夜盘品种的交易日从前一交易日夜盘开始，周一交易日在周五 21:00 触发。交易日没有连续竞价段时不触发。
 * `on_before_trading` 始终按“前一交易日/前一时点信息可见”的语义工作；在该回调里，`get_history()`、`get_account()`、`equity` 不应看到当日新 bar 或当日更新后的账户视图。
 * `on_cross_section` 会在框架见到当日首个“跨标的完整切片”后触发；在该回调里，可以看到当日历史和当前账户快照。
-* `on_after_trading` 是**结束/收尾型钩子**，定位为日终的统计、清理与归档。框架已让它在**当日收盘点的独立事件**（早于下一根 bar）触发，因此在其中提交的 `NextOpen()` 单会落在下一根 bar（而非再晚一格，#324）。但若你的意图是“收盘决策、次日开盘成交”，更清晰的写法是在 `on_bar`（next-open）或 `on_pre_open` 中下单。
-* **`TimeInForce.Day` 与 next-open 的过期语义**：日终结算会把当日仍未成交的 Day 单置为 `Expired`。对于在收盘后（如 `on_cross_section` / `on_after_trading`）提交的 `NextOpen()` next-open Day 单，其唯一可撮合切片是**次日开盘**，晚于结算时点——框架据此豁免这类订单一次，让它先获得次日开盘的成交机会；只有当次日开盘仍未成交（如次日停牌），才在次日结算时过期（#334）。同一时点成交（`CurrentClose()`）的 Day 单其可撮合切片就在创建当日，因此仍在次日结算时按常规过期。若希望“收盘决策、次日成交”的委托不受当日过期约束，也可直接使用默认的 `GTC`。
-* 需要按**会话**(如期货日盘/夜盘)分支时,框架不再提供 `on_session_*` 回调;请在 `on_bar` / `on_tick` 内读取 `self.ctx.session`(`TradingSession` 枚举)自行判断,例如 `if self.ctx.session == TradingSession.Continuous: ...`。
+* `on_after_trading` 是**结束/收尾型钩子**，定位为日终的统计、清理与归档。它在**日终结算完成之后**触发：此时 T+1 持仓已解冻、当日未成交的 Day 单已过期，其中下的单属于下一交易日。回测的日终结算在收盘时刻进行；实盘（`run_live`）在收盘 + `day_close_delay`（默认 60 秒）。回测数据在盘中结束、当日未结算时不触发。它是**当日收盘点的独立事件**（在日终结算之后、早于下一根 bar），因此在其中提交的 `NextOpen()` 单会落在下一根 bar（而非再晚一格，#324）。但若你的意图是“收盘决策、次日开盘成交”，更清晰的写法是在 `on_bar`（next-open）或 `on_pre_open` 中下单。
+* **`TimeInForce.Day` 与 next-open 的过期语义**：日终结算会把当日仍未成交的 Day 单置为 `Expired`。对于在当日最后一个行情事件上或之后（如日线数据下的 `on_cross_section`）提交的 `NextOpen()` Day 单，其唯一可撮合切片是**次日开盘**，晚于结算时点——框架据此豁免这类订单一次，让它先获得次日开盘的成交机会；只有当次日开盘仍未成交（如次日停牌），才在它所属交易日收盘结算时过期（#334）。同一时点成交（`CurrentClose()`）的 Day 单其可撮合切片就在创建当日，因此在创建当日收盘过期。收盘时刻及之后、在非连续竞价时段（如收盘竞价结束的 15:00 分钟 bar、`on_after_trading`、实盘收盘宽限期内）下的单属于下一交易日，不论成交模式都不在当日过期。若希望“收盘决策、次日成交”的委托不受当日过期约束，也可直接使用默认的 `GTC`。
+* 需要按**时段**（如期货日盘/夜盘、集合竞价/连续竞价）分支时，框架不提供 `on_session_*` 回调；请读取 `self.ctx.session`（`TradingSession` 枚举，共 7 个值：`Closed`、`OpeningAuction`、`AuctionHold`、`Continuous`、`Break`、`ClosingAuction`、`PostClose`），或直接用 `self.is_market_open()`、`self.session_of(symbol)` 与 `self.trading_day`，见 [2.2 交易时段与交易日](#trading-session)。
 * `on_pre_open` 内若直接调用 `buy/sell/order_target_*` 且未显式传 `fill_mode`，框架会自动按 `NextOpen()`（下一根 open 成交）解析。
 * 这里表达的是框架侧“盘前决策，本次 open 成交”的时序语义，不等同于交易所或券商柜台已经实现了集合竞价专用报单、撤单窗口控制或专有价格类型。
 * 新股/新债打新不属于 `on_pre_open` 或当前统一 `submit_order(...)` 的默认承诺范围；若要支持，通常需要补齐 broker 专有字段与业务路由。
-* 若需要更精确的交易日边界触发，可在策略中设置 `self.enable_precise_day_boundary_hooks = True`；该开关只影响 `on_before_trading` / `on_after_trading` 的触发精度，不改变这些日边界回调中的历史数据与账户快照可见窗口。
 * `on_portfolio_update` 采用增量触发：初始化时触发一次，后续仅在订单/成交或持仓相关价格变化时触发。
 * 可通过 `self.portfolio_update_eps` 过滤微小资产波动（默认 `0.0`，即不过滤）。
-* 停止阶段会在 `on_stop` 之前补发待触发的 `on_after_trading`。
+* 停止时不补发 `on_after_trading`：当日未完成日终结算就不触发（回测数据在盘中结束即属此类）。
 * 实盘（`run_live`）与回测的收尾差异：实盘**不做**回测特有的数据覆盖校验（整场无成交标的、warmup 未攒满、纯 tick 会话在实盘都是常态，校验会误报）。
 * 实盘的 `on_stop` 在断开信号源与 broker 分发**之前**触发，因此可以在其中撤单或平仓；但异常中止路径下柜台通道可能已不可用，框架不保证这类收尾委托送达。
 * 实盘 `on_stop` 覆盖四条停止路径：正常结束、`Ctrl+C` / `duration` 到点、异常中止、以及**收到 `SIGTERM`**（平台「停止任务」按钮的常见实现，框架会把它转成与 `Ctrl+C` 相同的收尾路径）。两种情况覆盖不到，需要调用方配合：`kill -9`（`SIGKILL`）与 Windows 的 `TerminateProcess` 不经用户态代码即回收进程，任何框架都无法收尾，请让调度方改用优雅停止；`run_live` 跑在**非主线程**时（如线程池承载多个任务）装不上信号处理器，会打一条 WARNING 并照常运行，此时 `SIGTERM` 同样不触发 `on_stop`。
@@ -106,6 +106,7 @@ sequenceDiagram
     participant FW as Framework Dispatcher
     participant Strategy as 用户策略
 
+    Note over Feed,Strategy: 交易日钩子由生命周期定时器独立触发：<br/>on_pre_open → on_before_trading → 行情 → 日终结算 → on_after_trading
     Feed->>FW: bar / tick / timer 到达
     FW->>Strategy: on_order(...)
     FW->>Strategy: on_trade(...)
@@ -124,7 +125,7 @@ sequenceDiagram
     end
 ```
 
-#### 2.1.2 停止阶段补发时序
+#### 2.1.2 停止阶段时序
 
 ```mermaid
 sequenceDiagram
@@ -136,9 +137,6 @@ sequenceDiagram
         Engine->>FW: _on_stop_internal()
     else 实盘
         Engine->>FW: _on_stop_live_internal()
-    end
-    alt 仍有未补发的交易日结束事件
-        FW->>Strategy: on_after_trading(...)
     end
     FW->>Strategy: on_stop()
 ```
@@ -195,11 +193,68 @@ class AuctionSignalStrategy(Strategy):
 
 时序提醒：
 
-* 不要把 `on_before_trading` 当成“同一天稳定先于 `on_pre_open` 的准备阶段”。
-* 默认路径下，`on_pre_open` 发生在首个常规事件之前，而 `on_before_trading` 通常发生在进入 `Normal` 会话后的首个常规事件上。
-* 即使启用 `enable_precise_day_boundary_hooks`，`on_before_trading` 的边界 timer 也不应被当作 `on_pre_open` 的同日准备链路来依赖。
+* 同一交易日内，`on_pre_open`（A 股 09:14:59.999…）一定先于 `on_before_trading`（09:30:00 之后 1ns），所以不能用 `on_before_trading` 给同日的 `on_pre_open` 做准备。
 * 如果你想做“双阶段”最佳实践，推荐用“前一交易日更晚的回调先准备，下一交易日 `on_pre_open` 再下单”，例如前一日 `on_timer` 或 `on_after_trading`。
 * 参考示例：`examples/53_timer_to_pre_open_demo.py`。
+* `on_pre_open` 事件字典中的 `expected_open_at` 是本次触发时刻（A 股为 09:14:59.999…），不是开盘时刻。
+
+### 2.2 交易时段与交易日 {: #trading-session }
+
+引擎按“品种 → 时段表”判断每个时刻处于哪个交易时段、属于哪个交易日，撮合、日终结算、T+1、Day 单过期与交易日钩子都按这套口径。
+
+**策略侧读取**
+
+| 写法 | 含义 |
+| :--- | :--- |
+| `self.ctx.session` | 当前事件的时段（`TradingSession` 枚举） |
+| `self.session_of(symbol=None)` | 品种此刻的时段，与撮合同口径；不传 `symbol` 即 `ctx.session` |
+| `self.is_market_open(symbol=None, include_auction=False)` | 品种此刻是否处于连续竞价；`include_auction=True` 时开盘集合竞价、竞价后等待开盘与收盘集合竞价也算开市 |
+| `self.trading_day` | 当前时刻所属交易日（`datetime.date`）；尚无上下文（如 `on_start` 中）时为 `None` |
+
+`TradingSession` 共 7 个值：`Closed`（闭市）、`OpeningAuction`（开盘集合竞价）、`AuctionHold`（竞价后等待开盘，如 A 股 09:25～09:30）、`Continuous`（连续竞价）、`Break`（午休等休市）、`ClosingAuction`（收盘集合竞价）、`PostClose`（自定义时段表里的盘后段）。
+
+交易日口径：
+
+* 盘中属本交易日；夜盘属下一交易日（周五 21:30 属下周一）。
+* 收盘后至下一交易日开盘前（如 15:30 的定时器）属下一交易日，与风控的每日亏损等口径一致。
+* 实盘收盘宽限：实盘（含 replay）在收盘后 `day_close_delay` 秒内、且早于下一交易日首个时段开始时到达的行情仍归当日（宽限不越过下一交易日开盘，因此 `ALWAYS_OPEN` 这类收盘即次日开盘的时段表实际没有宽限，除非显式日历有空档；`day_close_delay=0` 时也没有宽限），此时 `ctx.trading_day` 为当日、时段为 `Closed`（自定义表有盘后段时为 `PostClose`），不撮合、不产生权益点，也不提前开下一交易日；宽限期内下的 Day 单仍属下一交易日。回测不受影响。
+
+```python
+from akquant import Strategy
+
+
+class SessionAwareStrategy(Strategy):
+    def on_bar(self, bar):
+        if not self.is_market_open(bar.symbol):
+            return  # 集合竞价、休市、闭市时不追单
+        self.log(f"{self.trading_day} {self.ctx.session} {bar.close}")
+```
+
+**时段表与交易日历（`sessions=` / `trading_calendar=`）**
+
+`run_backtest`、`run_live` 都接受这两个参数：
+
+* `sessions`：代码前缀 → 时段模板名或自定义时段表，`"default"` 为全局默认。不传时中国时区按资产类型取默认（股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`，其他资产 `ALWAYS_OPEN`），其他时区全天连续（`ALWAYS_OPEN`）。可选模板见 `aq.SessionResolver.templates()`；有夜盘的期货要显式指定，如 `sessions={"rb": "CN_FUTURES_NIGHT_23"}`。自定义时段表写法见 [API 参考](../reference/api.md#akquantrun_backtest)。
+* `trading_calendar`：交易日列表（`date`/字符串/`Timestamp`）。不传时中国市场按工作日推算（节假日也被当作交易日，照常开日、结算并触发交易日钩子），并告警一次；节假日前后的夜盘与日终结算会算错。`ALWAYS_OPEN` 每天都算，不告警。
+
+```python
+import akquant as aq
+
+result = aq.run_backtest(
+    data=df,
+    strategy=MyStrategy,
+    sessions={"rb": "CN_FUTURES_NIGHT_23"},
+    # 交易所交易日列表，须覆盖数据区间
+    trading_calendar=["2024-01-02", "2024-01-03", "2024-01-04"],
+)
+```
+
+实盘注意：
+
+* 按时段排队撮合只发生在 paper/replay 的模拟撮合：闭市、休市或集合竞价时订单排队，不按连续竞价成交。`broker_live` 下订单直接报到柜台、不按时段排队，时段表只决定 `ctx.session`、`is_market_open()`、交易日划分与日终结算、交易日钩子的时刻。
+* 期货不传 `sessions` 时按 `CN_FUTURES_DAY` 日盘时段，夜盘行情的时段判为闭市（paper 下订单排到日盘才撮合），有夜盘的品种必须传 `sessions=`。
+* 长期运行的实盘必须传 `trading_calendar=`，否则按工作日推算会在节假日开日、结算（启动时告警一次）。live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历；行情服务以 jwt 模式部署时（需要 `X-QMF-Session`，live_server 不带）取不到，退回工作日推算并告警。
+* `run_live(timezone=)` 须与交易所一致，日终结算时刻与默认时段表都按它计算。
 
 ## 3. 风险管理 (Risk Management)
 
@@ -505,9 +560,11 @@ broker（无行情通道）都属于这种情形。框架**不从数据推断**�
 
 除了底层的 `schedule` 方法，AKQuant 提供了更便捷的定时任务注册方式：
 
-*   **`schedule_daily(time_str, payload)`**: 每个交易日在指定时间触发。
-    *   **支持实盘**: 在回测模式下预生成所有触发时间；在实盘模式下，每日自动调度下一次触发。
-*   **`schedule_weekly(time_str, payload)`** / **`schedule_monthly(time_str, payload)`**: 在每周/每月的**首个交易日**触发（节假日或停牌自动顺延）。仅回测（交易日历已知）有效。
+*   **`schedule_daily(time_str, payload)`**: 交易日历上的每个交易日在指定时间触发（非交易日不触发；回测区间内没有行情的交易日也触发）。
+    *   **回测与实盘同一语义**: 回测按数据覆盖范围内的日历交易日预生成所有触发时间；实盘只登记下一次，触发后按交易日历调度下一次。
+    *   **未配置 `trading_calendar` 时的缺省日历**: 按在用时段表推算——中国市场（股票、期货、期权）为工作日（节假日会算错）；`ALWAYS_OPEN`（非中国时区的缺省）每天都算交易日。后一种情况下回测只取有行情的日子（周末无数据就不触发），实盘则周末也会触发并告警一次；美股等周末休市的市场请传 `trading_calendar`。
+    *   **首日规则**: 回测中在 `on_start` 里登记的任务从首个行情事件起生效，首日早于该时刻的时点不触发；实盘在盘前等生命周期事件上也会登记（前提是策略重写了 `on_pre_open` / `on_before_trading` / `on_after_trading` 之一；都没重写时，生命周期事件不派发给策略，任务仍在首个行情事件登记）。
+*   **`schedule_weekly(time_str, payload)`** / **`schedule_monthly(time_str, payload)`**: 在每周/每月的**首个交易日**（按交易日历，节假日自动顺延）触发，回测与实盘都可用；实盘触发后调度到下周/下月首个交易日。
 *   **`schedule(trigger_time, payload)`**: 在指定时间点（一次性）触发。月末、偏移、每两周等非常规节奏，可用 `self.trading_days` 与 `nth_trading_day_of_month/week` 等日历辅助自行枚举，再逐个调 `schedule`。
 
 > 提示：若目的是横截面/定期调仓，优先使用 `on_cross_section`（由框架托管、成交时序对齐）；`schedule_*` + `on_timer` 面向通用自定义时点任务。
@@ -646,7 +703,7 @@ AKQuant 提供了两种风格的策略开发接口：
 | `on_order(ctx, order)` | 策略上下文中观察到订单状态变化 | 每轮事件循环中先于主事件回调触发 |
 | `on_trade(ctx, trade)` | `recent_trades` 中出现成交回报 | 框架会进行成交去重，避免重复触发 |
 | `on_expiry(ctx, event)` | 引擎实际执行到期结算/移除 | 仅在 `expiry_date` 驱动的结算真正发生后触发，且触发时账户状态已更新 |
-| `on_pre_open(ctx, event)` | 每个交易日首个常规行情事件前，由框架预注册 timer 抢先触发 | 适合函数式“盘前决策，本次 open 成交”场景 |
+| `on_pre_open(ctx, event)` | 交易日首个时段开始前 1ns，由交易日生命周期定时器触发（A 股 09:14:59.999…） | 适合函数式“盘前决策，本次 open 成交”场景 |
 | `on_timer(ctx, payload)` | 已注册的定时器到点触发 | 支持单次定时与每日定时 payload |
 
 ### 5.2 类风格 vs 函数式回调对照
@@ -1209,7 +1266,7 @@ class MetaAwareStrategy(Strategy):
 
 *   `on_order(self, order)`: 订单状态更新时触发。
 *   `on_trade(self, trade)`: 订单成交时触发。
-*   `on_expiry(self, event)`: 到期结算事件触发。仅当引擎实际执行到期结算/移除后触发，回调参数为事件字典，常见字段包括 `symbol`、`expiry_date`、`quantity_closed`、`cash_flow`、`fee` 与 `settlement_type`（`cash_flow` 为毛额，`fee` 为期权行权结算费，账户实收 `cash_flow - fee`；保证金账户期货的 `cash_flow` 为平仓盈亏）。到期结算在到期日之后第一个交易日开始时进行；回测收尾时的补结算同样触发该回调（含流式 `expiry` 事件），checkpoint 拆分运行也不会丢失。到期平仓还会以 `order_tag="__expiry__"` 的合成成交记入 `trades_df`（不进入 `orders_df`）。最小可运行示例见：`examples/49_on_expiry_demo.py`。
+*   `on_expiry(self, event)`: 到期结算事件触发。仅当引擎实际执行到期结算/移除后触发，回调参数为事件字典，常见字段包括 `symbol`、`expiry_date`、`quantity_closed`、`cash_flow`、`fee` 与 `settlement_type`（`cash_flow` 为毛额，`fee` 为期权行权结算费，账户实收 `cash_flow - fee`；保证金账户期货的 `cash_flow` 为平仓盈亏）。到期结算在到期日收盘的日终结算中进行，`on_expiry` 在该日 `on_after_trading` 的时点送达；回测数据在到期日盘中结束时，收尾的补结算同样触发该回调（含流式 `expiry` 事件），checkpoint 拆分运行也不会丢失。到期平仓还会以 `order_tag="__expiry__"` 的合成成交记入 `trades_df`（不进入 `orders_df`）。最小可运行示例见：`examples/49_on_expiry_demo.py`。
 
 ### 7.2 指标 (Indicators)
 

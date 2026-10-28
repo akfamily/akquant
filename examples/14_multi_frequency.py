@@ -9,13 +9,13 @@
 三条多周期路径怎么选, 见 docs/zh/advanced/multi_timeframe_feed_api.md 的
 「怎么选」表格; 本示例演示推荐路径 ``subscribe_bars``。
 
-**关于闭合时机的取舍**: 本示例把 1 分钟 DataFrame 整表传给 ``run_backtest``
-(纯 bar 输入), 引擎无法从这种输入直接得知基础周期(``self.freq`` 为 ``None``),
-因此日线窗口要等**次日第一根 09:31 分钟 bar** 到达后才闭合并派发(晚一根,
-见 ``on_daily`` 里打印的提示)。示例里传了 ``session_windows`` 只是用来正确
-切分早盘/午盘的会话边界, 不代表窗口会即时闭合——即时闭合还需要基础周期已知
-(比如把数据转成 ``list[Bar]`` 且逐根打上 ``freq="1min"``, 或走实盘/replay 网关
-声明 ``metadata["freq"]``, 见 examples/71_native_multi_timeframe_live.py)。
+**时段与闭合时机**: 窗口默认按品种时段表(A 股: 09:30-11:30、13:00-15:00)的
+交易块切分, 不需要手写 ``session_windows``; 日线窗口按交易日聚合, 标签为当日
+收盘时刻 15:00。``run_backtest(freq="1min")`` 声明了基础周期, 每根分钟 bar 带上
+区间起点(``interval_start``), 日线窗口在当日 15:00 那根分钟 bar 之后即时闭合并
+派发; 不传 ``freq`` 时引擎不知道基础周期, 要等次日第一根 bar 到达才闭合(晚一根,
+并告警)。实盘/replay 由行情网关声明 ``metadata["freq"]``, 见
+examples/71_native_multi_timeframe_live.py。
 """
 
 from datetime import timedelta
@@ -29,8 +29,9 @@ from akquant import BacktestConfig, InstrumentConfig, StrategyConfig
 
 def create_dummy_data_1m(symbol: str, start_date: str, days: int) -> pd.DataFrame:
     """Generate 1-minute dummy data for a few days (A-share hours)."""
-    # Trading hours: 9:31-11:30 (120 min), 13:01-15:00 (120 min)
-    # Total 240 bars per day
+    # 时间戳是 bar 区间终点: 9:31-11:30 (120 根), 13:01-15:00 (120 根), 每日 240 根。
+    # 09:31 那根覆盖 09:30-09:31(开盘集合竞价之后的连续竞价), 15:00 那根覆盖
+    # 14:59-15:00(含收盘集合竞价)。示例按工作日生成, 未传交易日历时引擎也按工作日推算。
     timestamps: List[pd.Timestamp] = []
     base_price = 100.0
     prices: List[float] = []
@@ -53,7 +54,7 @@ def create_dummy_data_1m(symbol: str, start_date: str, days: int) -> pd.DataFram
         )
         timestamps.extend(rng_am)
         timestamps.extend(rng_pm)
-        current_date += timedelta(days=1)
+        current_date += pd.offsets.BDay(1)
 
     n = len(timestamps)
     np.random.seed(42)
@@ -91,11 +92,8 @@ class MultiFreqStrategy(aq.Strategy):
         super().__init__()
         self.ma_window = 3
         self.daily_trend = 0
-        self.subscribe_bars(
-            "1d",
-            callback=self.on_daily,
-            session_windows=[("09:30", "11:30"), ("13:00", "15:00")],
-        )
+        # 窗口按 A 股时段表的交易块切分, 不必手写 session_windows
+        self.subscribe_bars("1d", callback=self.on_daily)
         self.daily_sma = self.I(
             aq.SMA(self.ma_window), name="daily_sma", source="close", freq="1d"
         )
@@ -125,7 +123,7 @@ class MultiFreqStrategy(aq.Strategy):
 
 if __name__ == "__main__":
     print("Generating dummy data (5 Days) for A-shares...")
-    df_1m = create_dummy_data_1m("000001.SZ", "2024-01-01", 5)
+    df_1m = create_dummy_data_1m("000001.SZ", "2024-01-02", 5)
     print(f"Generated {len(df_1m)} minute bars.")
 
     stock_1m_config = InstrumentConfig(
@@ -149,6 +147,7 @@ if __name__ == "__main__":
         strategy=MultiFreqStrategy,
         symbols=["000001.SZ"],
         config=config,
+        freq="1min",  # 声明基础周期: 日线窗口在当日 15:00 即时闭合
     )
 
     print("\n" + "=" * 50)

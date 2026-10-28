@@ -53,17 +53,18 @@ class _BothRecorder(Strategy):
 
 
 def _minute_one_ticks() -> List[Tick]:
-    """第 1 分钟内的 4 个 tick, 第 2 分钟 1 个(用于封闭第 1 分钟的 bar).
+    """(1:00, 2:00] 内的 4 个 tick, 下一区间 1 个(用于封闭这根 bar).
 
-    BarAggregator 无 flush: 最后一个未满周期不会发出, 故第 2 分钟的 tick 只用来
-    触发第 1 分钟 bar 的封闭, 本身不产生 bar。
+    右闭分桶: 恰在 2:00 的 tick 属于 (1:00, 2:00]。BarAggregator 无 flush: 最后
+    一个未满周期不会发出, 故 2:15 的 tick 只用来触发前一根 bar 的封闭, 本身不
+    产生 bar。
     """
     return [
-        _tick(1, 0, 10.0, 100.0),
-        _tick(1, 15, 10.6, 200.0),
-        _tick(1, 30, 9.8, 150.0),
-        _tick(1, 45, 10.2, 50.0),
-        _tick(2, 0, 11.0, 300.0),
+        _tick(1, 15, 10.0, 100.0),
+        _tick(1, 30, 10.6, 200.0),
+        _tick(1, 45, 9.8, 150.0),
+        _tick(2, 0, 10.2, 50.0),
+        _tick(2, 15, 11.0, 300.0),
     ]
 
 
@@ -116,13 +117,13 @@ def test_synthesized_bar_volume_sums_tick_volumes() -> None:
 
     first = strategy.bars[0]
     assert float(first.volume) == pytest.approx(500.0), (
-        "第 1 分钟 4 个 tick 量为 100+200+150+50=500; "
+        "(1:00, 2:00] 4 个 tick 量为 100+200+150+50=500; "
         "若得到 0 或接近 0, 说明 volume 未做累计适配"
     )
 
 
-def test_freq_without_ticks_raises() -> None:
-    """Freq 给了但数据里没有 tick: 参数无意义, 早失败."""
+def test_freq_without_ticks_declares_bar_period() -> None:
+    """Freq 给了但数据里没有 tick: 作为 bar 周期声明, 区间起点 = 时间戳 - 周期."""
     bar = Bar(
         timestamp=_ns(1),
         open=10.0,
@@ -133,8 +134,9 @@ def test_freq_without_ticks_raises() -> None:
         symbol=SYMBOL,
     )
 
-    with pytest.raises(ValueError, match="freq"):
-        _run([bar], freq="1min")
+    strategy = _run([bar], freq="1min")
+
+    assert [b.interval_start for b in strategy.bars] == [_ns(1) - 60 * 10**9]
 
 
 def test_sub_minute_freq_raises() -> None:
@@ -180,10 +182,85 @@ def test_synthesized_bar_never_precedes_its_source_ticks() -> None:
     contributing = [
         int(t.timestamp)
         for t in strategy.ticks
-        if _ns(1, 0) <= int(t.timestamp) < _ns(2, 0)
+        if _ns(1, 0) < int(t.timestamp) <= _ns(2, 0)
     ]
-    assert contributing, "第 1 分钟没有 tick"
+    assert contributing, "(1:00, 2:00] 没有 tick"
     assert first_bar_ts >= max(contributing), (
         f"合成 bar 时间戳 {first_bar_ts} 早于其最后贡献 tick {max(contributing)}: "
         "策略会读到未来数据"
     )
+
+
+def _sh_ns(text: str) -> int:
+    """上海本地时刻 -> UTC 纳秒."""
+    import pandas as pd
+
+    return int(pd.Timestamp(text, tz="Asia/Shanghai").value)
+
+
+class _OrderRecorder(Strategy):
+    """按到达顺序记录 tick/bar, 以及 bar 到达时的交易日."""
+
+    def __init__(self) -> None:
+        """初始化记录容器."""
+        self.events: List[Any] = []
+        self.bar_days: List[Any] = []
+
+    def on_start(self) -> None:
+        """订阅标的."""
+        self.subscribe(SYMBOL)
+
+    def on_bar(self, bar: Any) -> None:
+        """记录合成 bar 及其交易日."""
+        self.events.append(("bar", int(bar.timestamp), bar))
+        self.bar_days.append((int(bar.timestamp), self.trading_day))
+
+    def on_tick(self, tick: Any) -> None:
+        """记录原始 tick."""
+        self.events.append(("tick", int(tick.timestamp), tick))
+
+
+def test_close_tick_at_1500_belongs_to_same_day_bar() -> None:
+    """15:00:00 那笔 tick 归入 (14:59, 15:00] 的 bar: 收盘价与量正确且属当日.
+
+    左闭分桶会把它放进 (15:00, 15:01] 那根, 收盘价/量缺一笔且被归到下一交易日。
+    同一时刻 15:00 的 tick 与 bar: tick 先到, bar 后到(bar 不得早于其源 tick)。
+    """
+    import datetime as dt
+
+    def tick(text: str, price: float, volume: float) -> Tick:
+        return Tick(timestamp=_sh_ns(text), price=price, volume=volume, symbol=SYMBOL)
+
+    ticks = [
+        tick("2023-01-03 14:59:30", 10.0, 100.0),
+        tick("2023-01-03 15:00:00", 10.5, 200.0),
+        tick("2023-01-04 09:30:01", 11.0, 50.0),
+        tick("2023-01-04 09:30:30", 11.2, 10.0),
+        tick("2023-01-04 09:31:05", 11.4, 10.0),
+    ]
+    strategy = _OrderRecorder()
+    run_backtest(
+        data=ticks,
+        strategy=strategy,
+        symbols=[SYMBOL],
+        initial_cash=100_000.0,
+        show_progress=False,
+        fill_policy=CurrentClose(),
+        freq="1min",
+    )
+
+    close_ns = _sh_ns("2023-01-03 15:00:00")
+    bars = {ts: obj for kind, ts, obj in strategy.events if kind == "bar"}
+    assert close_ns in bars, f"没有以 15:00 结尾的 bar: {sorted(bars)}"
+    close_bar = bars[close_ns]
+    assert float(close_bar.close) == pytest.approx(10.5)
+    assert float(close_bar.volume) == pytest.approx(300.0)
+    assert close_bar.interval_start == _sh_ns("2023-01-03 14:59:00")
+    # 当日收盘后不应再有 bar(15:00:00 那笔不得开出 15:00-15:01 的 bar)
+    assert all(ts <= close_ns or ts >= _sh_ns("2023-01-04 09:30:00") for ts in bars), (
+        sorted(bars)
+    )
+    assert dict(strategy.bar_days)[close_ns] == dt.date(2023, 1, 3)
+    # 同刻排序: 15:00 的 tick 在 15:00 的 bar 之前
+    order = [(kind, ts) for kind, ts, _ in strategy.events if ts == close_ns]
+    assert order == [("tick", close_ns), ("bar", close_ns)]
