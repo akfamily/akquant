@@ -40,7 +40,7 @@ from .analysis import (
 from .dashboard import plot_dashboard
 from .indicator import plot_indicators
 from .strategy import plot_strategy
-from .utils import check_plotly
+from .utils import check_plotly, get_color
 
 if TYPE_CHECKING:
     from ..backtest import BacktestResult
@@ -116,8 +116,9 @@ HTML_TEMPLATE = """
             --text-color: #333333;
             --text-secondary: #7f8c8d;
             --border-color: #e1e4e8;
-            --success-color: #27ae60;
-            --danger-color: #c0392b;
+            /* 正值/盈利与负值/亏损按 A 股习惯红涨绿跌, 取自主题 up_color/down_color */
+            --up-color: {up_color};
+            --down-color: {down_color};
         }}
 
         body {{
@@ -240,11 +241,11 @@ HTML_TEMPLATE = """
         }}
 
         .metric-value.positive {{
-            color: var(--success-color);
+            color: var(--up-color);
         }}
 
         .metric-value.negative {{
-            color: var(--danger-color);
+            color: var(--down-color);
         }}
 
         .metric-label {{
@@ -1950,6 +1951,8 @@ def plot_report(
     # 4. Assemble HTML
     html_content = HTML_TEMPLATE.format(
         title=title,
+        up_color=get_color("light", "up_color"),
+        down_color=get_color("light", "down_color"),
         favicon_uri=favicon_uri,
         icon_svg=AKQUANT_LOGO_SVG,
         date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

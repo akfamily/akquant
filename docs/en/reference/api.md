@@ -35,7 +35,7 @@ def run_backtest(
     timezone: Optional[str] = None,
     sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
-    t_plus_one: bool = False,
+    t_plus_one: Optional[bool] = None,
     initialize: Optional[Callable[[Any], None]] = None,
     on_start: Optional[Callable[[Any], None]] = None,
     on_resume: Optional[Callable[[Any], None]] = None,
@@ -127,7 +127,7 @@ def run_backtest(
 *   `freq`: Data frequency, default `None`. When `data` is a list containing `Tick`, it is the tick aggregation period (whole minutes only, e.g. `"1min"`): ticks are aggregated into bars and `on_bar` fires as well. Bar data (DataFrame, `List[Bar]`, catalog) may pass it too, to declare the bar period and fill each bar's interval start (`interval_start = timestamp − period`); write it as "positive integer + unit" with unit `min` / `h` / `d` (or `day`), e.g. `"1min"`, `"5min"`, `"1h"`, `"1d"`. Date-only daily bars (local midnight) need no `freq`: they are rewritten to the trading day's close automatically. Daily bars stamped at a fixed non-midnight time such as 15:00 need `freq="1d"`; otherwise each bar is matched in the session of that time (15:00 is classified by "1ns before the timestamp", i.e. 14:59:59.999…, as the closing call auction), orders are queued to the next bar, and a warning is logged once. The strategy's `self.freq` is this value.
 *   `sessions`: Symbol prefix → session template name or custom session table (`"default"` is the global default), default `None`. When omitted, China time zones use per-asset defaults (stocks/funds `CN_STOCK`, futures `CN_FUTURES_DAY`, options `CN_OPTION`, other assets `ALWAYS_OPEN`); other time zones trade continuously all day (`ALWAYS_OPEN`). List the templates with `aq.SessionResolver.templates()`. A custom table is a sequence of `(start, end, session[, anchor])` segments, e.g. `[("21:00", "02:30", "continuous"), ("09:00", "15:00", "continuous")]`; anything outside the segments is closed, segments with `start >= "18:00"` anchor to the previous trading day (night session) unless a 4th item `"prev"` / `"day"` says otherwise, and keys match by the longest symbol prefix. Full rules in [Chapter 7](../textbook/07_futures.md).
 *   `trading_calendar`: List of trading days (`date` / string / `Timestamp`), default `None`. When omitted, China markets infer trading days from weekdays (holidays are treated as trading days, so night sessions and end-of-day settlement around holidays are wrong) and a warning is logged once; `ALWAYS_OPEN` counts every day and does not warn. Data timestamps outside the range covered by the given calendar raise `ValueError`.
-*   `t_plus_one`: Enable T+1 trading rule (Default False). If enabled, it forces usage of China Market Model.
+*   `t_plus_one`: Enable T+1 trading rule. When omitted, the `broker_profile` setting is used (all three built-in A-share templates enable it); without a template it is False. If enabled, it forces usage of China Market Model.
 *   `slippage`: Global slippage (Default 0.0). E.g., 0.0001 means 1bp (0.01%) slippage, using percent model.
 *   `volume_limit_pct`: Max participation rate, default `None` (unlimited, same as 0). With 0.25 a single bar fills at most 25% of its volume, rounded down to whole lots; if that is less than one lot the bar fills nothing and the order stays open. An order whose remaining quantity is at most `volume × pct` still fills in one piece (this may be an odd lot, e.g. selling the last 50 shares); an IOC/FOK order whose floored cap is 0 is cancelled on that bar. **Bar volume must use the same unit as order quantity**: AKShare's `stock_zh_a_hist` reports volume in lots (100 shares), multiply by 100 before enabling the limit. The limit applies to bar matching only; tick-driven matching is not subject to it. For instruments with fractional quantities (crypto, forex), set `lot_size` (default 1), otherwise the capped quantity is floored to whole units.
 *   `warmup_period`: Strategy warmup period. Specifies the length of historical data (number of Bars) to preload for indicator calculation.
@@ -167,7 +167,7 @@ def run_backtest(
 *   `risk_budget_mode` / `risk_budget_reset_daily`: Risk budget accounting mode and reset policy.
 *   `analyzer_plugins`: Optional analyzer plugin list. Plugins receive `on_start/on_bar/on_trade/on_finish` callbacks and final outputs are stored in `result.analyzer_outputs`.
 *   `on_event`: Optional stream callback. When omitted, an internal no-op callback keeps legacy blocking return semantics; when provided, runtime events are emitted.
-*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size). Built-ins: `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
+*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size/T+1); explicit arguments take precedence. Built-ins: `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
 
 **Recommended fill_policy examples (primary path):**
 

@@ -144,7 +144,13 @@ def plot_pnl_vs_duration(
             marker=dict(
                 size=8,
                 color=pnl_values,
-                colorscale="RdBu",
+                # 红盈绿亏(A 股习惯), 0 居中为灰; 与报告其他图的涨跌色一致
+                colorscale=[
+                    [0.0, get_color(theme, "down_color")],
+                    [0.5, "#bdbdbd"],
+                    [1.0, get_color(theme, "up_color")],
+                ],
+                cmid=0.0,
                 showscale=True,
                 colorbar=dict(title="盈亏 (PnL)"),
             ),

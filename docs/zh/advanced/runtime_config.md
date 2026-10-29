@@ -207,12 +207,14 @@ result = run_backtest(
 
 模板参数明细（当前内置值）：
 
-| 模板名 | commission_rate | stamp_tax_rate | transfer_fee_rate | min_commission | slippage | volume_limit_pct | lot_size |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `cn_stock_miniqmt` | 0.0003 | 0.001 | 0.00001 | 5.0 | 0.0002 | 0.2 | 100 |
-| `cn_stock_t1_low_fee` | 0.0002 | 0.001 | 0.000005 | 3.0 | 0.0001 | 0.25 | 100 |
-| `cn_stock_sim_high_slippage` | 0.0003 | 0.001 | 0.00001 | 5.0 | 0.001 | 0.1 | 100 |
+| 模板名 | commission_rate | stamp_tax_rate | transfer_fee_rate | min_commission | slippage | volume_limit_pct | lot_size | t_plus_one |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `cn_stock_miniqmt` | 0.0003 | 0.0005 | 0.00001 | 5.0 | 0.0002 | 0.2 | 100 | True |
+| `cn_stock_t1_low_fee` | 0.0002 | 0.0005 | 0.000005 | 3.0 | 0.0001 | 0.25 | 100 | True |
+| `cn_stock_sim_high_slippage` | 0.0003 | 0.0005 | 0.00001 | 5.0 | 0.001 | 0.1 | 100 | True |
 
+> 印花税按 2023-08-28 起的现行税率 0.05% 计（此前为 0.1%，模板原先误用旧税率），回测 2023-08-28 之前的行情请显式传 `stamp_tax_rate=0.001`。三个模板都开 T+1（此前未开，当日买入可当日卖出）；不需要时显式传 `t_plus_one=False`。
+>
 > 0.3.74 起 `cn_stock_t1_low_fee` 的 `volume_limit_pct=0.25` 才真正生效（此前因默认值判断被跳过）；`cn_stock_miniqmt`（0.2）与 `cn_stock_sim_high_slippage`（0.1）被截断的成交量也改为按 `lot_size` 向下取整到整手。
 
 快速示例：

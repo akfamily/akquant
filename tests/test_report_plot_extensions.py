@@ -1087,3 +1087,42 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
     assert "强平审计明细 (Forced Liquidation Audit)" in html
     assert "强平标的 (Liquidated Symbols)" in html
     assert "LIQ" in html
+
+
+def test_report_colors_follow_china_up_red_down_green(tmp_path: Path) -> None:
+    """指标卡片与图表同为红涨绿跌: 正值用主题 up_color, 负值用 down_color."""
+    _skip_if_no_plotly()
+    from akquant.plot.utils import get_color
+
+    result = run_backtest(
+        data=_build_data(),
+        strategy=RoundTripStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        fill_policy=CurrentClose(),
+        lot_size=1,
+        show_progress=False,
+    )
+    report_path = tmp_path / "report_colors.html"
+    result.viz.report(filename=str(report_path), show=False)
+    html = report_path.read_text(encoding="utf-8")
+    assert f"--up-color: {get_color('light', 'up_color')};" in html
+    assert f"--down-color: {get_color('light', 'down_color')};" in html
+    assert "--success-color" not in html
+
+
+def test_pnl_vs_duration_uses_up_down_colors() -> None:
+    """盈亏散点图红盈绿亏, 0 居中."""
+    _skip_if_no_plotly()
+    from akquant.plot.utils import get_color
+
+    trades = pd.DataFrame(
+        {"duration_bars": [1, 2], "pnl": [-5.0, 8.0], "symbol": ["A", "B"]}
+    )
+    fig = plot_pnl_vs_duration(trades)
+    assert fig is not None
+    marker = fig.data[0].marker
+    scale = [color for _, color in marker.colorscale]
+    assert scale[0] == get_color("light", "down_color")
+    assert scale[-1] == get_color("light", "up_color")
+    assert marker.cmid == 0.0

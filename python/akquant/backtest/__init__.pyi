@@ -104,7 +104,7 @@ def run_backtest(
     slippage: Optional[Union[float, SlippagePolicyInput]] = ...,
     volume_limit_pct: Optional[float] = ...,
     timezone: Optional[str] = ...,
-    t_plus_one: bool = ...,
+    t_plus_one: Optional[bool] = ...,
     initialize: Optional[Callable[[Any], None]] = ...,
     on_start: Optional[Callable[[Any], None]] = ...,
     on_resume: Optional[Callable[[Any], None]] = ...,

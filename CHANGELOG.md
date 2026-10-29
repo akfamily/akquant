@@ -7,13 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> **规则版本 2.1.1**：「部分成交后成交时验资不过」与「成交时自动缩量」只影响订单记录与回调，成交、持仓、资金不变；`buy()` 不传 `quantity`（交给 sizer 定量）且资金不足、或 sizer 算出非整手数量的回测结果会变化（原来拒单，现在缩量或取整后成交），显式给数量的回测不变。
+> **规则版本 2.1.1**：「部分成交后成交时验资不过」与「成交时自动缩量」只影响订单记录与回调，成交、持仓、资金不变；`buy()` 不传 `quantity`（交给 sizer 定量）且资金不足、或 sizer 算出非整手数量的回测结果会变化（原来拒单，现在缩量或取整后成交），显式给数量的回测不变。使用 `cn_stock_*` 三个 `broker_profile` 模板的回测结果会变化（印花税减半、开 T+1）。
 
 ### Fixed
 - **订单跨多根 bar 部分成交后，某一根成交时验资被拒（资金或可用持仓不足），`orders_df` 与 `on_order` 里的 `filled_quantity` 被清零、状态为 `rejected`**（0.3.74 Known Issues 第一条）：被拒的只是剩余部分，现在状态记为 `cancelled`，`filled_quantity`、`avg_price` 与佣金保留已成交部分，原因仍写在 `reject_reason`（带 `at execution` 标记，`top_reject_reasons` 照常统计）；一股未成交就被拒的订单仍是 `rejected`。
 - **成交时自动缩量（`allow_quantity_auto_resize`）后订单的成交量与成交记录不一致**：原来成交记录按缩量后的数量，订单的 `filled_quantity` 与均价却按缩量前；现在订单数量改写为实际成交总量（与提交时缩量改写数量一致）、状态为 `filled`。缩到 0 股时原来回报被丢弃，订单从执行端消失而订单记录永远停在挂单状态，现在与不允许缩量时一样按上一条处理。
 - **`buy()` 不传 `quantity`、交给 sizer 定量时资金不足不会自动缩量，直接拒单**：文档承诺的自动缩量自引入开平语义（自动开平拆腿）起失效——拆腿后各腿按显式数量下单，缩量标志被重算为否，提交时与成交时都不缩量。现在缩量标志传给开仓腿（平仓腿数量由持仓决定，不缩）；显式给 `quantity` 的买单仍不缩量。
 - **sizer 算出的数量不按手数取整，A 股、港股等登记了 `lot_size` 的标的整单被拒**：`PercentSizer`、`AllInSizer` 只按资金折算股数（如 2790 股），撮合层要求买单是 `lot_size` 的整数倍。现在 `buy()`、`short()` 不传 `quantity` 时，以及 `broker_live` 下买入不传 `quantity` 时，sizer 的结果按 `lot_size` 向下取整（口径与 `order_target_*` 相同，自定义 sizer 一并生效），不足一手不下单；`lot_size` 为 1 时不取整，加密货币等小数数量不受影响；显式给的 `quantity` 不取整。
+- **A 股 `broker_profile` 模板的印花税仍是旧税率 0.1%**：`cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage` 改为 2023-08-28 起的现行税率 0.0005（0.05%，与教材第 6 章一致）；回测此前的行情请显式传 `stamp_tax_rate=0.001`。
+- **A 股 `broker_profile` 模板没有开 T+1**（`cn_stock_t1_low_fee` 名字带 t1 也没开），当日买入可当日卖出：三个模板现在都开 T+1；`run_backtest(t_plus_one=...)` 默认值改为 `None`，不传时取模板设置、没有模板时仍为 `False`，显式传 `t_plus_one=False` 可关闭。热启动 `run_from_checkpoint` 的优先级为：显式入参 > 存档配置 > 模板 > 按快照推断。
+
+### Changed
+- **`result.metrics` 可取到 `metrics_df` 里的全部字段**：`metrics` 原来只有收益与风险类指标，`result.metrics.total_commission`、`closed_trade_count` 等交易类字段会抛 `AttributeError`（它们在 `result.trade_metrics` 上）；现在取不到时依次回退到 `trade_metrics` 与 `metrics_df`，字段名不存在时报错信息指向 `metrics_df.index`。
+- **回测报告统一红涨绿跌**：指标卡片原来正值绿、负值红，与月度热力图、年度收益柱、权益曲线的红涨绿跌相反；交易盈亏散点图用的是红蓝色阶（负值红、正值蓝）。现在都取主题的 `up_color`（红）/`down_color`（绿），散点图 0 居中为灰；最大回撤等亏损类卡片显示为绿色。
+
+### Docs
+- README 与《快速开始》（中英文）的示例改为传 `broker_profile="cn_stock_t1_low_fee"` 与交易日历，并醒目提示 `run_backtest` 默认不计交易成本、不开 T+1；示例输出按当前版本重跑（原输出来自旧版本，与示例代码对不上）。README 的指标数量更正为 104 个。
 
 ## [0.3.74] - 2026-10-29
 

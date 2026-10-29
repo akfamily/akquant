@@ -1378,33 +1378,38 @@ BacktestDataInput = Union[
     DataFeedAdapter,
 ]
 
+# A 股模板: 印花税取 2023-08-28 起的现行税率 0.05%(卖出单边), 回测此前的数据需
+# 显式传 stamp_tax_rate=0.001; 三个模板都按 A 股制度开 T+1。
 _BROKER_PROFILE_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "cn_stock_miniqmt": {
         "commission_rate": 0.0003,
-        "stamp_tax_rate": 0.001,
+        "stamp_tax_rate": 0.0005,
         "transfer_fee_rate": 0.00001,
         "min_commission": 5.0,
         "slippage": {"type": "percent", "value": 0.0002},
         "volume_limit_pct": 0.2,
         "lot_size": 100,
+        "t_plus_one": True,
     },
     "cn_stock_t1_low_fee": {
         "commission_rate": 0.0002,
-        "stamp_tax_rate": 0.001,
+        "stamp_tax_rate": 0.0005,
         "transfer_fee_rate": 0.000005,
         "min_commission": 3.0,
         "slippage": {"type": "percent", "value": 0.0001},
         "volume_limit_pct": 0.25,
         "lot_size": 100,
+        "t_plus_one": True,
     },
     "cn_stock_sim_high_slippage": {
         "commission_rate": 0.0003,
-        "stamp_tax_rate": 0.001,
+        "stamp_tax_rate": 0.0005,
         "transfer_fee_rate": 0.00001,
         "min_commission": 5.0,
         "slippage": {"type": "percent", "value": 0.001},
         "volume_limit_pct": 0.1,
         "lot_size": 100,
+        "t_plus_one": True,
     },
 }
 
@@ -3123,7 +3128,7 @@ def run_backtest(
     timezone: Optional[str] = None,
     sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
-    t_plus_one: bool = False,
+    t_plus_one: Optional[bool] = None,
     initialize: Optional[Callable[[Any], None]] = None,
     on_start: Optional[Callable[[Any], None]] = None,
     on_resume: Optional[Callable[[Any], None]] = None,
@@ -3253,7 +3258,8 @@ def run_backtest(
     :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
                              中国市场按工作日推算（节假日前后的夜盘与日终
                              结算会算错），ALWAYS_OPEN 每天都算
-    :param t_plus_one: 是否启用 T+1 交易规则 (默认 False)
+    :param t_plus_one: 是否启用 T+1 交易规则; 不传时取 broker_profile 模板的设置,
+                       没有模板时为 False
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
     :param on_start: 启动回调函数 (仅当 strategy 为函数时使用)
     :param on_stop: 停止回调函数 (仅当 strategy 为函数时使用)
@@ -3422,6 +3428,9 @@ def run_backtest(
             min_commission = cast(
                 Optional[float], broker_profile_values.get("min_commission")
             )
+        if t_plus_one is None:
+            t_plus_one = cast(Optional[bool], broker_profile_values.get("t_plus_one"))
+    t_plus_one = bool(t_plus_one)
     # 指标脚本是"只画图不交易"的 slot: 复用多策略拓扑, 在风控校验之前并入 slot 表,
     # 让后续所有按 slot key 的校验/归属/窗口订阅合并对它一视同仁。
     # 先解析策略(含 strategy_source 加载), 让类定义行的 id 参与 strategy_id 对账:
@@ -7116,13 +7125,16 @@ def run_from_checkpoint(
         broker_profile_values=broker_profile_values,
         strategy_config=strategy_config,
     )
-    # T+1 优先级：显式入参 > 存档已解析配置 > 按快照推断。存档没带 config= 时
-    # 不含已解析配置，若快照中有 T+1 冻结持仓（多头持仓大于可用持仓）即视为
-    # 原来开着 T+1；否则续跑会退回 SimpleMarket，次日也不再按 T+1 冻结新买入。
+    # T+1 优先级：显式入参 > 存档已解析配置 > broker_profile 模板 > 按快照推断。
+    # 存档没带 config= 时不含已解析配置，若快照中有 T+1 冻结持仓（多头持仓大于
+    # 可用持仓）即视为原来开着 T+1；否则续跑会退回 SimpleMarket，次日也不再
+    # 按 T+1 冻结新买入。
     t_plus_one = kwargs.get("t_plus_one", False)
     if "t_plus_one" not in kwargs:
         if "t_plus_one" in restored_backtest_config:
             t_plus_one = bool(restored_backtest_config.get("t_plus_one"))
+        elif "t_plus_one" in broker_profile_values:
+            t_plus_one = bool(broker_profile_values["t_plus_one"])
         elif _snapshot_has_t_plus_one_frozen_positions(engine):
             t_plus_one = True
             logger.info(
