@@ -1,8 +1,25 @@
+use crate::indicators::true_range;
 use numpy::PyArray1;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
+
+// 窗口内每个值减去窗口首值后的方差: 平盘窗口恰为 0, 避免大数相减的舍入残差;
+// 负的舍入残差记 0。BollingerBands、STDDEV、VAR 共用。
+fn window_variance(window: &VecDeque<f64>) -> f64 {
+    let n = window.len() as f64;
+    let shift = window[0];
+    let mut sum = 0.0;
+    let mut sum_sq = 0.0;
+    for x in window {
+        let d = x - shift;
+        sum += d;
+        sum_sq += d * d;
+    }
+    let mean = sum / n;
+    (sum_sq / n - mean * mean).max(0.0)
+}
 
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
@@ -11,8 +28,6 @@ pub struct BollingerBands {
     period: usize,
     multiplier: f64,
     buffer: VecDeque<f64>,
-    sum: f64,
-    sum_sq: f64,
 }
 
 #[gen_stub_pymethods]
@@ -24,31 +39,20 @@ impl BollingerBands {
             period,
             multiplier,
             buffer: VecDeque::with_capacity(period),
-            sum: 0.0,
-            sum_sq: 0.0,
         }
     }
 
     pub fn update(&mut self, value: f64) -> Option<(f64, f64, f64)> {
+        skip_non_finite!(value);
+        // 周期为 0 时不计算, 避免空窗口 panic
+        if self.period == 0 {
+            return None;
+        }
         self.buffer.push_back(value);
-        self.sum += value;
-        self.sum_sq += value * value;
-        if self.buffer.len() > self.period
-            && let Some(removed) = self.buffer.pop_front()
-        {
-            self.sum -= removed;
-            self.sum_sq -= removed * removed;
+        if self.buffer.len() > self.period {
+            self.buffer.pop_front();
         }
-        if self.buffer.len() == self.period {
-            let mean = self.sum / self.period as f64;
-            let variance = (self.sum_sq / self.period as f64 - mean * mean).max(0.0);
-            let std_dev = variance.sqrt();
-            let upper = mean + self.multiplier * std_dev;
-            let lower = mean - self.multiplier * std_dev;
-            Some((upper, mean, lower))
-        } else {
-            None
-        }
+        self.bands()
     }
 
     pub fn update_many<'py>(
@@ -83,16 +87,19 @@ impl BollingerBands {
 
     #[getter]
     pub fn value(&self) -> Option<(f64, f64, f64)> {
-        if self.buffer.len() == self.period {
-            let mean = self.sum / self.period as f64;
-            let variance = (self.sum_sq / self.period as f64 - mean * mean).max(0.0);
-            let std_dev = variance.sqrt();
-            let upper = mean + self.multiplier * std_dev;
-            let lower = mean - self.multiplier * std_dev;
-            Some((upper, mean, lower))
-        } else {
-            None
+        self.bands()
+    }
+}
+
+impl BollingerBands {
+    // 窗口已满时按当前窗口精确重算 (upper, middle, lower)。
+    fn bands(&self) -> Option<(f64, f64, f64)> {
+        if self.buffer.len() < self.period {
+            return None;
         }
+        let middle = self.buffer.iter().sum::<f64>() / self.period as f64;
+        let width = self.multiplier * window_variance(&self.buffer).sqrt();
+        Some((middle + width, middle, middle - width))
     }
 }
 
@@ -102,8 +109,9 @@ impl BollingerBands {
 pub struct ATR {
     period: usize,
     prev_close: Option<f64>,
-    smoothed_tr: f64,
-    count: usize,
+    seed_sum: f64,
+    seed_count: usize,
+    current_value: Option<f64>,
 }
 
 #[gen_stub_pymethods]
@@ -114,35 +122,29 @@ impl ATR {
         ATR {
             period,
             prev_close: None,
-            smoothed_tr: 0.0,
-            count: 0,
+            seed_sum: 0.0,
+            seed_count: 0,
+            current_value: None,
         }
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
-        let tr = match self.prev_close {
-            Some(pc) => {
-                let hl = high - low;
-                let hpc = (high - pc).abs();
-                let lpc = (low - pc).abs();
-                hl.max(hpc).max(lpc)
-            }
-            None => high - low,
-        };
-        self.prev_close = Some(close);
-        if self.count < self.period {
-            self.smoothed_tr += tr;
-            self.count += 1;
-            if self.count == self.period {
-                self.smoothed_tr /= self.period as f64;
-                return Some(self.smoothed_tr);
-            } else {
-                return None;
+        skip_non_finite!(high, low, close);
+        let prev_close = self.prev_close.replace(close)?;
+        let tr = true_range(high, low, prev_close);
+        let n = self.period as f64;
+        match self.current_value {
+            Some(prev) => self.current_value = Some((prev * (n - 1.0) + tr) / n),
+            None => {
+                self.seed_sum += tr;
+                self.seed_count += 1;
+                if self.seed_count < self.period {
+                    return None;
+                }
+                self.current_value = Some(self.seed_sum / n);
             }
         }
-        self.smoothed_tr =
-            (self.smoothed_tr * (self.period as f64 - 1.0) + tr) / self.period as f64;
-        Some(self.smoothed_tr)
+        self.current_value
     }
 
     pub fn update_many_hlc<'py>(
@@ -167,11 +169,7 @@ impl ATR {
 
     #[getter]
     pub fn value(&self) -> Option<f64> {
-        if self.count >= self.period {
-            Some(self.smoothed_tr)
-        } else {
-            None
-        }
+        self.current_value
     }
 }
 
@@ -195,12 +193,13 @@ impl NATR {
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
+        skip_non_finite!(high, low, close);
         let atr = self.atr.update(high, low, close)?;
-        if close.abs() <= f64::EPSILON {
-            self.current_value = Some(f64::NAN);
+        self.current_value = Some(if close == 0.0 {
+            0.0
         } else {
-            self.current_value = Some(100.0 * atr / close);
-        }
+            atr / close * 100.0
+        });
         self.current_value
     }
 
@@ -250,17 +249,9 @@ impl TRANGE {
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
-        let tr = match self.prev_close {
-            Some(prev_close) => {
-                let hl = high - low;
-                let hpc = (high - prev_close).abs();
-                let lpc = (low - prev_close).abs();
-                hl.max(hpc).max(lpc)
-            }
-            None => high - low,
-        };
-        self.prev_close = Some(close);
-        self.current_value = Some(tr);
+        skip_non_finite!(high, low, close);
+        let prev_close = self.prev_close.replace(close)?;
+        self.current_value = Some(true_range(high, low, prev_close));
         self.current_value
     }
 
@@ -297,8 +288,6 @@ pub struct STDDEV {
     period: usize,
     nbdev: f64,
     buffer: VecDeque<f64>,
-    sum: f64,
-    sum_sq: f64,
     current_value: Option<f64>,
 }
 
@@ -311,29 +300,25 @@ impl STDDEV {
             period,
             nbdev,
             buffer: VecDeque::with_capacity(period),
-            sum: 0.0,
-            sum_sq: 0.0,
             current_value: None,
         }
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
+        // 周期为 0 时不计算, 避免空窗口 panic
+        if self.period == 0 {
+            return None;
+        }
         self.buffer.push_back(value);
-        self.sum += value;
-        self.sum_sq += value * value;
-        if self.buffer.len() > self.period
-            && let Some(removed) = self.buffer.pop_front()
-        {
-            self.sum -= removed;
-            self.sum_sq -= removed * removed;
+        if self.buffer.len() > self.period {
+            self.buffer.pop_front();
         }
         if self.buffer.len() < self.period {
             self.current_value = None;
             return None;
         }
-        let mean = self.sum / self.period as f64;
-        let variance = (self.sum_sq / self.period as f64 - mean * mean).max(0.0);
-        self.current_value = Some(variance.sqrt() * self.nbdev);
+        self.current_value = Some(window_variance(&self.buffer).sqrt() * self.nbdev);
         self.current_value
     }
 
@@ -360,10 +345,7 @@ impl STDDEV {
 #[derive(Debug, Clone)]
 pub struct VAR {
     period: usize,
-    nbdev: f64,
     buffer: VecDeque<f64>,
-    sum: f64,
-    sum_sq: f64,
     current_value: Option<f64>,
 }
 
@@ -372,33 +354,30 @@ pub struct VAR {
 impl VAR {
     #[new]
     pub fn new(period: usize, nbdev: f64) -> Self {
+        // TA-Lib 的 VAR 不使用 nbdev, 保留参数只为不破坏构造签名
+        let _ = nbdev;
         VAR {
             period,
-            nbdev,
             buffer: VecDeque::with_capacity(period),
-            sum: 0.0,
-            sum_sq: 0.0,
             current_value: None,
         }
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
+        // 周期为 0 时不计算, 避免空窗口 panic
+        if self.period == 0 {
+            return None;
+        }
         self.buffer.push_back(value);
-        self.sum += value;
-        self.sum_sq += value * value;
-        if self.buffer.len() > self.period
-            && let Some(removed) = self.buffer.pop_front()
-        {
-            self.sum -= removed;
-            self.sum_sq -= removed * removed;
+        if self.buffer.len() > self.period {
+            self.buffer.pop_front();
         }
         if self.buffer.len() < self.period {
             self.current_value = None;
             return None;
         }
-        let mean = self.sum / self.period as f64;
-        let variance = (self.sum_sq / self.period as f64 - mean * mean).max(0.0);
-        self.current_value = Some(variance * self.nbdev * self.nbdev);
+        self.current_value = Some(window_variance(&self.buffer));
         self.current_value
     }
 

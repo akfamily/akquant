@@ -1,22 +1,70 @@
+use crate::indicators::{is_zero, true_range};
 use numpy::PyArray1;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
 
+// 内部累加器, 不对 Python 暴露; +DM/-DM/TR 的 Wilder 累加沿用 TA-Lib 口径。
+#[derive(Debug, Clone)]
+struct DirectionalCore {
+    period: usize,
+    prev: Option<(f64, f64, f64)>,
+    count: usize,
+    plus_dm: f64,
+    minus_dm: f64,
+    tr: f64,
+}
+
+impl DirectionalCore {
+    fn new(period: usize) -> Self {
+        DirectionalCore {
+            period,
+            prev: None,
+            count: 0,
+            plus_dm: 0.0,
+            minus_dm: 0.0,
+            tr: 0.0,
+        }
+    }
+
+    // 第 1..period-1 根只累加, 第 period 根起 `s = s - s/period + x`, 返回 (+DI, -DI)。
+    fn update(&mut self, high: f64, low: f64, close: f64) -> Option<(f64, f64)> {
+        let (prev_high, prev_low, prev_close) = self.prev.replace((high, low, close))?;
+        let up = high - prev_high;
+        let down = prev_low - low;
+        let plus = if up > 0.0 && up > down { up } else { 0.0 };
+        let minus = if down > 0.0 && down > up { down } else { 0.0 };
+        let tr = true_range(high, low, prev_close);
+        self.count += 1;
+        if self.count < self.period {
+            self.plus_dm += plus;
+            self.minus_dm += minus;
+            self.tr += tr;
+            return None;
+        }
+        let n = self.period as f64;
+        self.plus_dm = self.plus_dm - self.plus_dm / n + plus;
+        self.minus_dm = self.minus_dm - self.minus_dm / n + minus;
+        self.tr = self.tr - self.tr / n + tr;
+        if self.tr <= 0.0 {
+            return Some((0.0, 0.0));
+        }
+        Some((
+            100.0 * self.plus_dm / self.tr,
+            100.0 * self.minus_dm / self.tr,
+        ))
+    }
+}
+
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 pub struct ADX {
     period: usize,
-    prev_high: Option<f64>,
-    prev_low: Option<f64>,
-    prev_close: Option<f64>,
-    smoothed_tr: f64,
-    smoothed_plus_dm: f64,
-    smoothed_minus_dm: f64,
-    trend_count: usize,
-    dx_values: VecDeque<f64>,
+    dx: DX,
+    seed_sum: f64,
+    seed_count: usize,
     current_value: Option<f64>,
 }
 
@@ -27,93 +75,27 @@ impl ADX {
     pub fn new(period: usize) -> Self {
         ADX {
             period,
-            prev_high: None,
-            prev_low: None,
-            prev_close: None,
-            smoothed_tr: 0.0,
-            smoothed_plus_dm: 0.0,
-            smoothed_minus_dm: 0.0,
-            trend_count: 0,
-            dx_values: VecDeque::with_capacity(period),
+            dx: DX::new(period),
+            seed_sum: 0.0,
+            seed_count: 0,
             current_value: None,
         }
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
-        let Some(prev_high) = self.prev_high else {
-            self.prev_high = Some(high);
-            self.prev_low = Some(low);
-            self.prev_close = Some(close);
-            return None;
-        };
-        let prev_low = self.prev_low.unwrap_or(low);
-        let prev_close = self.prev_close.unwrap_or(close);
-
-        let up_move = high - prev_high;
-        let down_move = prev_low - low;
-        let plus_dm = if up_move > down_move && up_move > 0.0 {
-            up_move
-        } else {
-            0.0
-        };
-        let minus_dm = if down_move > up_move && down_move > 0.0 {
-            down_move
-        } else {
-            0.0
-        };
-
-        let tr = (high - low)
-            .max((high - prev_close).abs())
-            .max((low - prev_close).abs());
-
-        self.prev_high = Some(high);
-        self.prev_low = Some(low);
-        self.prev_close = Some(close);
-
-        if self.trend_count < self.period {
-            self.smoothed_tr += tr;
-            self.smoothed_plus_dm += plus_dm;
-            self.smoothed_minus_dm += minus_dm;
-            self.trend_count += 1;
-
-            if self.trend_count < self.period {
-                return None;
+        skip_non_finite!(high, low, close);
+        let dx = self.dx.update(high, low, close)?;
+        let n = self.period as f64;
+        match self.current_value {
+            Some(prev) => self.current_value = Some((prev * (n - 1.0) + dx) / n),
+            None => {
+                self.seed_sum += dx;
+                self.seed_count += 1;
+                if self.seed_count < self.period {
+                    return None;
+                }
+                self.current_value = Some(self.seed_sum / n);
             }
-        } else {
-            self.smoothed_tr = self.smoothed_tr - (self.smoothed_tr / self.period as f64) + tr;
-            self.smoothed_plus_dm =
-                self.smoothed_plus_dm - (self.smoothed_plus_dm / self.period as f64) + plus_dm;
-            self.smoothed_minus_dm =
-                self.smoothed_minus_dm - (self.smoothed_minus_dm / self.period as f64) + minus_dm;
-        }
-
-        if self.smoothed_tr <= f64::EPSILON {
-            self.current_value = Some(0.0);
-            return self.current_value;
-        }
-
-        let plus_di = 100.0 * self.smoothed_plus_dm / self.smoothed_tr;
-        let minus_di = 100.0 * self.smoothed_minus_dm / self.smoothed_tr;
-        let di_sum = plus_di + minus_di;
-        let dx = if di_sum <= f64::EPSILON {
-            0.0
-        } else {
-            100.0 * (plus_di - minus_di).abs() / di_sum
-        };
-
-        if self.current_value.is_none() {
-            self.dx_values.push_back(dx);
-            if self.dx_values.len() < self.period {
-                return None;
-            }
-            let dx_mean = self.dx_values.iter().sum::<f64>() / self.period as f64;
-            self.current_value = Some(dx_mean);
-            return self.current_value;
-        }
-
-        if let Some(prev_adx) = self.current_value {
-            let adx = ((prev_adx * (self.period as f64 - 1.0)) + dx) / self.period as f64;
-            self.current_value = Some(adx);
         }
         self.current_value
     }
@@ -148,14 +130,7 @@ impl ADX {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 pub struct DX {
-    period: usize,
-    prev_high: Option<f64>,
-    prev_low: Option<f64>,
-    prev_close: Option<f64>,
-    smoothed_tr: f64,
-    smoothed_plus_dm: f64,
-    smoothed_minus_dm: f64,
-    count: usize,
+    core: DirectionalCore,
     current_value: Option<f64>,
 }
 
@@ -165,72 +140,22 @@ impl DX {
     #[new]
     pub fn new(period: usize) -> Self {
         DX {
-            period,
-            prev_high: None,
-            prev_low: None,
-            prev_close: None,
-            smoothed_tr: 0.0,
-            smoothed_plus_dm: 0.0,
-            smoothed_minus_dm: 0.0,
-            count: 0,
+            core: DirectionalCore::new(period),
             current_value: None,
         }
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
-        let Some(prev_high) = self.prev_high else {
-            self.prev_high = Some(high);
-            self.prev_low = Some(low);
-            self.prev_close = Some(close);
-            return None;
+        skip_non_finite!(high, low, close);
+        let (plus, minus) = self.core.update(high, low, close)?;
+        let sum = plus + minus;
+        // 分母为 0 时沿用上一个 DX(首个之前记 0), 与 TA-Lib 一致。
+        let dx = if is_zero(sum) {
+            self.current_value.unwrap_or(0.0)
+        } else {
+            100.0 * (plus - minus).abs() / sum
         };
-        let prev_low = self.prev_low.unwrap_or(low);
-        let prev_close = self.prev_close.unwrap_or(close);
-        let up_move = high - prev_high;
-        let down_move = prev_low - low;
-        let plus_dm = if up_move > down_move && up_move > 0.0 {
-            up_move
-        } else {
-            0.0
-        };
-        let minus_dm = if down_move > up_move && down_move > 0.0 {
-            down_move
-        } else {
-            0.0
-        };
-        let tr = (high - low)
-            .max((high - prev_close).abs())
-            .max((low - prev_close).abs());
-        self.prev_high = Some(high);
-        self.prev_low = Some(low);
-        self.prev_close = Some(close);
-        if self.count < self.period {
-            self.smoothed_tr += tr;
-            self.smoothed_plus_dm += plus_dm;
-            self.smoothed_minus_dm += minus_dm;
-            self.count += 1;
-            if self.count < self.period {
-                return None;
-            }
-        } else {
-            self.smoothed_tr = self.smoothed_tr - (self.smoothed_tr / self.period as f64) + tr;
-            self.smoothed_plus_dm =
-                self.smoothed_plus_dm - (self.smoothed_plus_dm / self.period as f64) + plus_dm;
-            self.smoothed_minus_dm =
-                self.smoothed_minus_dm - (self.smoothed_minus_dm / self.period as f64) + minus_dm;
-        }
-        if self.smoothed_tr <= f64::EPSILON {
-            self.current_value = Some(0.0);
-            return self.current_value;
-        }
-        let plus_di = 100.0 * self.smoothed_plus_dm / self.smoothed_tr;
-        let minus_di = 100.0 * self.smoothed_minus_dm / self.smoothed_tr;
-        let di_sum = plus_di + minus_di;
-        if di_sum <= f64::EPSILON {
-            self.current_value = Some(0.0);
-        } else {
-            self.current_value = Some(100.0 * (plus_di - minus_di).abs() / di_sum);
-        }
+        self.current_value = Some(dx);
         self.current_value
     }
 
@@ -266,7 +191,7 @@ impl DX {
 pub struct ADXR {
     period: usize,
     adx: ADX,
-    adx_values: VecDeque<f64>,
+    history: VecDeque<f64>,
     current_value: Option<f64>,
 }
 
@@ -278,23 +203,23 @@ impl ADXR {
         ADXR {
             period,
             adx: ADX::new(period),
-            adx_values: VecDeque::with_capacity(period + 1),
+            history: VecDeque::with_capacity(period),
             current_value: None,
         }
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
+        skip_non_finite!(high, low, close);
         let adx_now = self.adx.update(high, low, close)?;
-        self.adx_values.push_back(adx_now);
-        if self.adx_values.len() > self.period + 1 {
-            self.adx_values.pop_front();
+        self.history.push_back(adx_now);
+        if self.history.len() > self.period {
+            self.history.pop_front();
         }
-        if self.adx_values.len() <= self.period {
-            self.current_value = None;
+        if self.history.len() < self.period {
             return None;
         }
-        let adx_prev = *self.adx_values.front()?;
-        self.current_value = Some((adx_now + adx_prev) / 2.0);
+        // (ADX[i] + ADX[i-(period-1)]) / 2, 与 TA-Lib 一致。
+        self.current_value = Some((adx_now + *self.history.front()?) / 2.0);
         self.current_value
     }
 
@@ -329,13 +254,7 @@ impl ADXR {
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct PLUS_DI {
-    period: usize,
-    prev_high: Option<f64>,
-    prev_low: Option<f64>,
-    prev_close: Option<f64>,
-    smoothed_tr: f64,
-    smoothed_plus_dm: f64,
-    count: usize,
+    core: DirectionalCore,
     current_value: Option<f64>,
 }
 
@@ -345,56 +264,15 @@ impl PLUS_DI {
     #[new]
     pub fn new(period: usize) -> Self {
         PLUS_DI {
-            period,
-            prev_high: None,
-            prev_low: None,
-            prev_close: None,
-            smoothed_tr: 0.0,
-            smoothed_plus_dm: 0.0,
-            count: 0,
+            core: DirectionalCore::new(period),
             current_value: None,
         }
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
-        let Some(prev_high) = self.prev_high else {
-            self.prev_high = Some(high);
-            self.prev_low = Some(low);
-            self.prev_close = Some(close);
-            return None;
-        };
-        let prev_low = self.prev_low.unwrap_or(low);
-        let prev_close = self.prev_close.unwrap_or(close);
-        let up_move = high - prev_high;
-        let down_move = prev_low - low;
-        let plus_dm = if up_move > down_move && up_move > 0.0 {
-            up_move
-        } else {
-            0.0
-        };
-        let tr = (high - low)
-            .max((high - prev_close).abs())
-            .max((low - prev_close).abs());
-        self.prev_high = Some(high);
-        self.prev_low = Some(low);
-        self.prev_close = Some(close);
-        if self.count < self.period {
-            self.smoothed_tr += tr;
-            self.smoothed_plus_dm += plus_dm;
-            self.count += 1;
-            if self.count < self.period {
-                return None;
-            }
-        } else {
-            self.smoothed_tr = self.smoothed_tr - (self.smoothed_tr / self.period as f64) + tr;
-            self.smoothed_plus_dm =
-                self.smoothed_plus_dm - (self.smoothed_plus_dm / self.period as f64) + plus_dm;
-        }
-        if self.smoothed_tr <= f64::EPSILON {
-            self.current_value = Some(0.0);
-        } else {
-            self.current_value = Some(100.0 * self.smoothed_plus_dm / self.smoothed_tr);
-        }
+        skip_non_finite!(high, low, close);
+        let (plus, _) = self.core.update(high, low, close)?;
+        self.current_value = Some(plus);
         self.current_value
     }
 
@@ -429,13 +307,7 @@ impl PLUS_DI {
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub struct MINUS_DI {
-    period: usize,
-    prev_high: Option<f64>,
-    prev_low: Option<f64>,
-    prev_close: Option<f64>,
-    smoothed_tr: f64,
-    smoothed_minus_dm: f64,
-    count: usize,
+    core: DirectionalCore,
     current_value: Option<f64>,
 }
 
@@ -445,56 +317,15 @@ impl MINUS_DI {
     #[new]
     pub fn new(period: usize) -> Self {
         MINUS_DI {
-            period,
-            prev_high: None,
-            prev_low: None,
-            prev_close: None,
-            smoothed_tr: 0.0,
-            smoothed_minus_dm: 0.0,
-            count: 0,
+            core: DirectionalCore::new(period),
             current_value: None,
         }
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
-        let Some(prev_high) = self.prev_high else {
-            self.prev_high = Some(high);
-            self.prev_low = Some(low);
-            self.prev_close = Some(close);
-            return None;
-        };
-        let prev_low = self.prev_low.unwrap_or(low);
-        let prev_close = self.prev_close.unwrap_or(close);
-        let up_move = high - prev_high;
-        let down_move = prev_low - low;
-        let minus_dm = if down_move > up_move && down_move > 0.0 {
-            down_move
-        } else {
-            0.0
-        };
-        let tr = (high - low)
-            .max((high - prev_close).abs())
-            .max((low - prev_close).abs());
-        self.prev_high = Some(high);
-        self.prev_low = Some(low);
-        self.prev_close = Some(close);
-        if self.count < self.period {
-            self.smoothed_tr += tr;
-            self.smoothed_minus_dm += minus_dm;
-            self.count += 1;
-            if self.count < self.period {
-                return None;
-            }
-        } else {
-            self.smoothed_tr = self.smoothed_tr - (self.smoothed_tr / self.period as f64) + tr;
-            self.smoothed_minus_dm =
-                self.smoothed_minus_dm - (self.smoothed_minus_dm / self.period as f64) + minus_dm;
-        }
-        if self.smoothed_tr <= f64::EPSILON {
-            self.current_value = Some(0.0);
-        } else {
-            self.current_value = Some(100.0 * self.smoothed_minus_dm / self.smoothed_tr);
-        }
+        skip_non_finite!(high, low, close);
+        let (_, minus) = self.core.update(high, low, close)?;
+        self.current_value = Some(minus);
         self.current_value
     }
 

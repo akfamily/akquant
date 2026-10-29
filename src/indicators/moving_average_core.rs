@@ -25,6 +25,7 @@ impl SMA {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         self.sum += value;
         if self.buffer.len() > self.period
@@ -72,6 +73,9 @@ impl SMA {
 pub struct EMA {
     period: usize,
     k: f64,
+    /// 预热期内已累加的前几个值之和, 满 period 个后用作种子.
+    seed_sum: f64,
+    seed_count: usize,
     current_value: Option<f64>,
 }
 
@@ -83,18 +87,27 @@ impl EMA {
         EMA {
             period,
             k: 2.0 / (period as f64 + 1.0),
+            seed_sum: 0.0,
+            seed_count: 0,
             current_value: None,
         }
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         match self.current_value {
             Some(prev) => {
                 let next = (value - prev) * self.k + prev;
                 self.current_value = Some(next);
             }
             None => {
-                self.current_value = Some(value);
+                // TA-Lib: 种子是前 period 个值的简单平均, 预热期(前 period-1 个)不出值
+                self.seed_sum += value;
+                self.seed_count += 1;
+                if self.seed_count < self.period {
+                    return None;
+                }
+                self.current_value = Some(self.seed_sum / self.period as f64);
             }
         }
         self.current_value
@@ -148,6 +161,7 @@ impl WMA {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -204,6 +218,7 @@ impl TRIMA {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();

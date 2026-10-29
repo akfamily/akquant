@@ -4,6 +4,8 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
 
+use crate::indicators::{TA_EPSILON, is_zero};
+
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
@@ -26,6 +28,7 @@ impl LINEARREG {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -96,6 +99,7 @@ impl LINEARREG_SLOPE {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -164,6 +168,7 @@ impl LINEARREG_INTERCEPT {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -233,6 +238,7 @@ impl LINEARREG_ANGLE {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -301,6 +307,7 @@ impl TSF {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -353,8 +360,8 @@ impl TSF {
 #[derive(Debug, Clone)]
 pub struct CORREL {
     period: usize,
-    buffer_x: VecDeque<f64>,
-    buffer_y: VecDeque<f64>,
+    xs: VecDeque<f64>,
+    ys: VecDeque<f64>,
     current_value: Option<f64>,
 }
 
@@ -365,43 +372,52 @@ impl CORREL {
     pub fn new(period: usize) -> Self {
         CORREL {
             period,
-            buffer_x: VecDeque::with_capacity(period),
-            buffer_y: VecDeque::with_capacity(period),
+            xs: VecDeque::with_capacity(period),
+            ys: VecDeque::with_capacity(period),
             current_value: None,
         }
     }
 
     pub fn update(&mut self, x: f64, y: f64) -> Option<f64> {
-        self.buffer_x.push_back(x);
-        self.buffer_y.push_back(y);
-        if self.buffer_x.len() > self.period {
-            self.buffer_x.pop_front();
-            self.buffer_y.pop_front();
+        skip_non_finite!(x, y);
+        // 周期为 0 时不计算, 避免空窗口 panic
+        if self.period == 0 {
+            return None;
         }
-        if self.buffer_x.len() < self.period {
+        self.xs.push_back(x);
+        self.ys.push_back(y);
+        if self.xs.len() > self.period {
+            self.xs.pop_front();
+            self.ys.pop_front();
+        }
+        if self.xs.len() < self.period {
             self.current_value = None;
             return None;
         }
-        let n = self.period as f64;
-        let sum_x = self.buffer_x.iter().sum::<f64>();
-        let sum_y = self.buffer_y.iter().sum::<f64>();
-        let sum_xy = self
-            .buffer_x
-            .iter()
-            .zip(self.buffer_y.iter())
-            .map(|(a, b)| *a * *b)
-            .sum::<f64>();
-        let sum_x2 = self.buffer_x.iter().map(|v| v * v).sum::<f64>();
-        let sum_y2 = self.buffer_y.iter().map(|v| v * v).sum::<f64>();
-        let num = n * sum_xy - sum_x * sum_y;
-        let den_x = n * sum_x2 - sum_x * sum_x;
-        let den_y = n * sum_y2 - sum_y * sum_y;
-        let den = (den_x * den_y).sqrt();
-        if den <= f64::EPSILON {
-            self.current_value = Some(f64::NAN);
-        } else {
-            self.current_value = Some(num / den);
+        // 窗口每个值先减去窗口首值再求和, 平盘窗口的离差平方和恰为 0
+        let (shift_x, shift_y) = (self.xs[0], self.ys[0]);
+        let (mut sx, mut sy, mut sxx, mut syy, mut sxy) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for (a, b) in self.xs.iter().zip(self.ys.iter()) {
+            let dx = a - shift_x;
+            let dy = b - shift_y;
+            sx += dx;
+            sy += dy;
+            sxx += dx * dx;
+            syy += dy * dy;
+            sxy += dx * dy;
         }
+        let inv = 1.0 / self.period as f64;
+        let ss_x = sxx - sx * sx * inv;
+        let ss_y = syy - sy * sy * inv;
+        let sp_xy = sxy - sx * sy * inv;
+        // TA-Lib 0.8.1: 任一序列在窗口内没有离散度时记 0, 结果夹到 [-1, 1]
+        self.current_value = Some(
+            if ss_x > TA_EPSILON * sxx && ss_y > TA_EPSILON * syy && ss_x * ss_y > 0.0 {
+                (sp_xy / (ss_x * ss_y).sqrt()).clamp(-1.0, 1.0)
+            } else {
+                0.0
+            },
+        );
         self.current_value
     }
 
@@ -432,8 +448,8 @@ impl CORREL {
 #[derive(Debug, Clone)]
 pub struct BETA {
     period: usize,
-    buffer_x: VecDeque<f64>,
-    buffer_y: VecDeque<f64>,
+    prev: Option<(f64, f64)>,
+    returns: VecDeque<(f64, f64)>,
     current_value: Option<f64>,
 }
 
@@ -444,40 +460,51 @@ impl BETA {
     pub fn new(period: usize) -> Self {
         BETA {
             period,
-            buffer_x: VecDeque::with_capacity(period),
-            buffer_y: VecDeque::with_capacity(period),
+            prev: None,
+            returns: VecDeque::with_capacity(period),
             current_value: None,
         }
     }
 
     pub fn update(&mut self, x: f64, y: f64) -> Option<f64> {
-        self.buffer_x.push_back(x);
-        self.buffer_y.push_back(y);
-        if self.buffer_x.len() > self.period {
-            self.buffer_x.pop_front();
-            self.buffer_y.pop_front();
+        skip_non_finite!(x, y);
+        // TA-Lib BETA: 先换成单期收益率, 再算 y 收益对 x 收益的回归斜率
+        let Some((prev_x, prev_y)) = self.prev.replace((x, y)) else {
+            self.current_value = None;
+            return None;
+        };
+        let rx = if is_zero(prev_x) {
+            0.0
+        } else {
+            (x - prev_x) / prev_x
+        };
+        let ry = if is_zero(prev_y) {
+            0.0
+        } else {
+            (y - prev_y) / prev_y
+        };
+        self.returns.push_back((rx, ry));
+        if self.returns.len() > self.period {
+            self.returns.pop_front();
         }
-        if self.buffer_x.len() < self.period {
+        if self.returns.len() < self.period {
             self.current_value = None;
             return None;
         }
-        let n = self.period as f64;
-        let sum_x = self.buffer_x.iter().sum::<f64>();
-        let sum_y = self.buffer_y.iter().sum::<f64>();
-        let sum_xy = self
-            .buffer_x
-            .iter()
-            .zip(self.buffer_y.iter())
-            .map(|(a, b)| *a * *b)
-            .sum::<f64>();
-        let sum_y2 = self.buffer_y.iter().map(|v| v * v).sum::<f64>();
-        let cov_num = n * sum_xy - sum_x * sum_y;
-        let var_y_num = n * sum_y2 - sum_y * sum_y;
-        if var_y_num.abs() <= f64::EPSILON {
-            self.current_value = Some(f64::NAN);
-        } else {
-            self.current_value = Some(cov_num / var_y_num);
+        let (mut sxx, mut sx, mut sxy, mut sy) = (0.0, 0.0, 0.0, 0.0);
+        for (a, b) in &self.returns {
+            sxx += a * a;
+            sx += a;
+            sxy += a * b;
+            sy += b;
         }
+        let n = self.period as f64;
+        let den = n * sxx - sx * sx;
+        self.current_value = Some(if den > TA_EPSILON * n * sxx {
+            (n * sxy - sx * sy) / den
+        } else {
+            0.0
+        });
         self.current_value
     }
 
@@ -527,6 +554,7 @@ impl COVAR {
     }
 
     pub fn update(&mut self, x: f64, y: f64) -> Option<f64> {
+        skip_non_finite!(x, y);
         self.buffer_x.push_back(x);
         self.buffer_y.push_back(y);
         if self.buffer_x.len() > self.period {
@@ -595,6 +623,7 @@ impl LINEARREG_R2 {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();

@@ -3,6 +3,77 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
 
+// MAXINDEX/MININDEX 的状态: 复刻 TA-Lib 的并列规则(极值滑出窗口后重扫取最早的一根,
+// 新值与当前极值相等时取新的一根)。下标从首个有效值起数, 不对 Python 暴露。
+#[derive(Debug, Clone)]
+struct ExtremeIndex {
+    period: usize,
+    find_max: bool,
+    window: VecDeque<f64>,
+    count: usize,
+    best_idx: Option<usize>,
+    best: f64,
+}
+
+impl ExtremeIndex {
+    fn new(period: usize, find_max: bool) -> Self {
+        ExtremeIndex {
+            period,
+            find_max,
+            window: VecDeque::with_capacity(period),
+            count: 0,
+            best_idx: None,
+            best: 0.0,
+        }
+    }
+
+    // 喂一个(已判为有限的)值; 窗口满后返回极值的绝对下标。
+    fn update(&mut self, value: f64) -> Option<usize> {
+        // 周期为 0 时不计算, 避免空窗口 panic
+        if self.period == 0 {
+            return None;
+        }
+        let today = self.count;
+        self.count += 1;
+        self.window.push_back(value);
+        if self.window.len() > self.period {
+            self.window.pop_front();
+        }
+        if self.window.len() < self.period {
+            return None;
+        }
+        let trailing = today + 1 - self.period;
+        let find_max = self.find_max;
+        let better = |a: f64, b: f64, strict: bool| match (find_max, strict) {
+            (true, true) => a > b,
+            (true, false) => a >= b,
+            (false, true) => a < b,
+            (false, false) => a <= b,
+        };
+        match self.best_idx {
+            Some(idx) if idx >= trailing => {
+                if better(value, self.best, false) {
+                    self.best_idx = Some(today);
+                    self.best = value;
+                }
+            }
+            _ => {
+                let mut best_idx = trailing;
+                let mut best = self.window[0];
+                for (offset, candidate) in self.window.iter().enumerate().skip(1) {
+                    if better(*candidate, best, true) {
+                        best_idx = trailing + offset;
+                        best = *candidate;
+                    }
+                }
+                self.best_idx = Some(best_idx);
+                self.best = best;
+            }
+        }
+        self.best_idx
+    }
+}
+
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
@@ -25,6 +96,7 @@ impl MIDPOINT {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -79,6 +151,7 @@ impl MAX {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -132,6 +205,7 @@ impl MIN {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -167,9 +241,7 @@ impl MIN {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 pub struct MAXINDEX {
-    period: usize,
-    buffer: VecDeque<f64>,
-    total_count: usize,
+    inner: ExtremeIndex,
     current_value: Option<f64>,
 }
 
@@ -179,33 +251,18 @@ impl MAXINDEX {
     #[new]
     pub fn new(period: usize) -> Self {
         MAXINDEX {
-            period,
-            buffer: VecDeque::with_capacity(period),
-            total_count: 0,
+            inner: ExtremeIndex::new(period, true),
             current_value: None,
         }
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
-        self.total_count += 1;
-        self.buffer.push_back(value);
-        if self.buffer.len() > self.period {
-            self.buffer.pop_front();
-        }
-        if self.buffer.len() < self.period {
+        skip_non_finite!(value);
+        let Some(index) = self.inner.update(value) else {
             self.current_value = None;
             return None;
-        }
-        let mut max_idx = 0usize;
-        let mut max_v = f64::NEG_INFINITY;
-        for (i, v) in self.buffer.iter().enumerate() {
-            if *v >= max_v {
-                max_v = *v;
-                max_idx = i;
-            }
-        }
-        let start = self.total_count - self.period;
-        self.current_value = Some((start + max_idx) as f64);
+        };
+        self.current_value = Some(index as f64);
         self.current_value
     }
 
@@ -231,9 +288,7 @@ impl MAXINDEX {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 pub struct MININDEX {
-    period: usize,
-    buffer: VecDeque<f64>,
-    total_count: usize,
+    inner: ExtremeIndex,
     current_value: Option<f64>,
 }
 
@@ -243,33 +298,18 @@ impl MININDEX {
     #[new]
     pub fn new(period: usize) -> Self {
         MININDEX {
-            period,
-            buffer: VecDeque::with_capacity(period),
-            total_count: 0,
+            inner: ExtremeIndex::new(period, false),
             current_value: None,
         }
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
-        self.total_count += 1;
-        self.buffer.push_back(value);
-        if self.buffer.len() > self.period {
-            self.buffer.pop_front();
-        }
-        if self.buffer.len() < self.period {
+        skip_non_finite!(value);
+        let Some(index) = self.inner.update(value) else {
             self.current_value = None;
             return None;
-        }
-        let mut min_idx = 0usize;
-        let mut min_v = f64::INFINITY;
-        for (i, v) in self.buffer.iter().enumerate() {
-            if *v <= min_v {
-                min_v = *v;
-                min_idx = i;
-            }
-        }
-        let start = self.total_count - self.period;
-        self.current_value = Some((start + min_idx) as f64);
+        };
+        self.current_value = Some(index as f64);
         self.current_value
     }
 
@@ -295,9 +335,8 @@ impl MININDEX {
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 pub struct MINMAXINDEX {
-    period: usize,
-    buffer: VecDeque<f64>,
-    total_count: usize,
+    min: ExtremeIndex,
+    max: ExtremeIndex,
     current_value: Option<(f64, f64)>,
 }
 
@@ -307,39 +346,22 @@ impl MINMAXINDEX {
     #[new]
     pub fn new(period: usize) -> Self {
         MINMAXINDEX {
-            period,
-            buffer: VecDeque::with_capacity(period),
-            total_count: 0,
+            min: ExtremeIndex::new(period, false),
+            max: ExtremeIndex::new(period, true),
             current_value: None,
         }
     }
 
+    // 返回 (minidx, maxidx), 与 TA-Lib 的输出顺序一致。
     pub fn update(&mut self, value: f64) -> Option<(f64, f64)> {
-        self.total_count += 1;
-        self.buffer.push_back(value);
-        if self.buffer.len() > self.period {
-            self.buffer.pop_front();
-        }
-        if self.buffer.len() < self.period {
+        skip_non_finite!(value);
+        let min = self.min.update(value);
+        let max = self.max.update(value);
+        let (Some(min), Some(max)) = (min, max) else {
             self.current_value = None;
             return None;
-        }
-        let mut min_idx = 0usize;
-        let mut min_v = f64::INFINITY;
-        let mut max_idx = 0usize;
-        let mut max_v = f64::NEG_INFINITY;
-        for (i, v) in self.buffer.iter().enumerate() {
-            if *v <= min_v {
-                min_v = *v;
-                min_idx = i;
-            }
-            if *v >= max_v {
-                max_v = *v;
-                max_idx = i;
-            }
-        }
-        let start = self.total_count - self.period;
-        self.current_value = Some(((start + min_idx) as f64, (start + max_idx) as f64));
+        };
+        self.current_value = Some((min as f64, max as f64));
         self.current_value
     }
 
@@ -393,6 +415,7 @@ impl MINMAX {
     }
 
     pub fn update(&mut self, value: f64) -> Option<(f64, f64)> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -459,6 +482,7 @@ impl SUM {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         self.sum += value;
         if self.buffer.len() > self.period
@@ -514,6 +538,7 @@ impl AVGDEV {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -569,6 +594,7 @@ impl RANGE {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period {
             self.buffer.pop_front();
@@ -619,6 +645,7 @@ impl LN {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.current_value = if value > 0.0 {
             Some(value.ln())
         } else {

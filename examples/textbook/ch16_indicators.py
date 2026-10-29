@@ -137,9 +137,9 @@ def demonstrate_backend_migration() -> None:
     }
 
     print(
-        "\n说明：对比'全区段'与'收敛尾段'两个口径。EMA 这类简单递推指标全程紧密一致；"
-        "\nRSI/ADX/NATR 这类 Wilder 平滑指标在 warmup 区段易有初值差异，"
-        "收敛后趋于接近。"
+        "\n说明：对比'全区段'与'收敛尾段'两个口径。两个后端都以 TA-Lib 0.8.2 为准，"
+        "\n预热长度与种子取值相同，全区段与收敛尾段都应逐值一致，"
+        "差值仅为浮点误差。"
     )
 
     for name, fn in cases.items():

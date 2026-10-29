@@ -7,14 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> **规则版本 2.0.1**：显式开启成交量限制（含 `broker_profile` 模板）的回测结果会变化；不传 `volume_limit_pct` 且不用 `broker_profile` 的回测不变。
+> **规则版本 2.1.0**：显式开启成交量限制（含 `broker_profile` 模板）的回测结果会变化，不传 `volume_limit_pct` 且不用 `broker_profile` 的回测不变；**指标数值口径统一对齐 TA-Lib 0.8.2**，用到下列指标的回测、`Strategy.I()`、`aq.Indicator` 与实盘指标都会变化，不用指标的回测不变。
 
 ### Fixed
 - **`volume_limit_pct` 显式传 0.25 不生效**（#409）：原来只有不等于 0.25 时才下发给引擎，而引擎默认不限制，因此文档里的默认值 0.25、显式传入的 0.25、`cn_stock_t1_low_fee` 模板的 0.25 都没有生效；现在任何显式值都生效，热启动同样如此。
 - **成交量截断后出现零股或小数手**：截断量按 `lot_size` 向下取整，不足一手时本根不成交、订单继续挂着；订单剩余量不超过 `成交量 × 比例` 时仍一次成交（可能是零股，比如卖出最后剩下的 50 股）；IOC/FOK 订单取整后的截断量为 0 时当根撤销。
+- **输入含 NaN 后 rust 后端一直输出 NaN**（#417）：现在任一输入为 NaN/±inf 的那一根不参与计算、输出 NaN，之后照常计算；开头的 NaN 与 TA-Lib 完全一致，因此 `SMA(RSI(close))` 这类串联在默认后端下恢复可用。序列中段的 NaN 与 TA-Lib 不同（TA-Lib 会让之后全部为 NaN），这是有意的。
+- **停牌、一字板等平盘窗口的边界值**：STDDEV、BBANDS 在平盘窗口恰为 0（原约 3e-6），CORREL 单边平盘时为 0（原为 NaN 或 inf），CCI、MFI、WILLR 平盘为 0，RSI 平均跌幅为 0 时为 100（原 99.0099），TRANGE 首根为 NaN，MAXINDEX、MININDEX 的并列规则与 TA-Lib 一致。
+- python 后端 RSI、CCI、ADX 系、STOCH、MFI、CMO 的计算错误；RSI、CMO、MFI 在空输入或全非有限输入时抛 IndexError。
+- **ROC、ROCP、ROCR、ROCR100 前值为 0 时**与 TA-Lib 一致输出 0（rust 原为 NaN，python 原为 inf）。
+- BollingerBands、STDDEV、VAR、CORREL、MAXINDEX、MININDEX、MINMAXINDEX 以周期 0 构造后调用 `update` 会 panic，现在返回 None。
+- `CLIP` 的上下界含 NaN 或下界大于上界时 Rust panic。
 
 ### Changed
 - **`volume_limit_pct` 默认改为不限制**：与此前的实际行为一致，文档原写默认 0.25；`StrategyConfig.volume_limit_pct` 默认值改为 0.0，`result.resolved_config` 记录 0.0。0.3.73 及以前的快照无法区分用户显式传的 0.25 与当时的默认值，量限记为 0.25 时热启动一律按不限制恢复；需要量限时在 `run_from_checkpoint` 里重新传 `volume_limit_pct`。热启动时如果传了 `config=BacktestConfig(strategy_config=StrategyConfig(...))`（哪怕只是为了设滑点），其中的 `volume_limit_pct`（默认 0.0）会覆盖快照里记录的量限；需要保留时显式设置。
+- **`akquant.talib` 两个后端与 `aq.EMA` 等流式指标类统一以 TA-Lib 0.8.2 为准**（#413、#414）：种子、预热长度、除零时的取值与 TA-Lib 一致，两个后端逐值相同。只差预热期的：EMA、DEMA、TEMA、TRIX、T3、MACD、APO、PPO、KAMA、ATR、NATR、ADX、DX、PLUS_DI、MINUS_DI、ULTOSC（首个输出晚一根，在下标 max(三个周期)）；整个序列都会变的：SAR、AROON、AROONOSC、ADXR、BETA、CMO、OBV、HT_TRENDLINE、MAMA。流式类在预热期 `update` 返回 None（例如 `aq.MACD(12, 26, 9)` 前 33 根），原先返回的是编造值（MACD 首值 0.0）。
+- **BBANDS 默认 `timeperiod` 由 5 改为 20，AVGDEV 由 5 改为 14**，与 TA-Lib 一致。VAR 不再使用 `nbdev`（TA-Lib 的 VAR 本就忽略它）。
+- **预热推断按 TA-Lib lookback 计算**：`MACD(12, 26, 9)` 推断为 34 根（原 26），`RSI(14)`、`ATR(14)` 为 15（原 14），`ADX(14)` 为 28，`TEMA(14)` 为 40，`SAR` 为 2，`MAMA` 为 33；周期参数无法静态解析时仍按旧规则。
+- 与 TA-Lib 有意不同的几处：`NATR(timeperiod=1)` 照常按收盘价归一化（TA-Lib 此时直接返回 TRANGE）；MAXINDEX、MININDEX、MINMAXINDEX 的预热期填 NaN（TA-Lib 填 0）；MA、BBANDS、STOCH 只支持 `matype=0`。完整对照表见《指标组合实战手册》的“数值口径”一节。
 
 ### Docs
 - 写明提交时验资用参考价估算、跳空日可能拒单及规避办法（#410）。

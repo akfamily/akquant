@@ -38,9 +38,7 @@ impl HeikinAshi {
     ) -> Option<(f64, f64, f64, f64)> {
         // 任一输入非有限值(NaN/inf, 例如停牌缺价)时本根不出值, 也不推进状态:
         // 否则 NaN 会写进 prev_ha_*, 此后每一根的 ha_open 都是 NaN。
-        if !(open.is_finite() && high.is_finite() && low.is_finite() && close.is_finite()) {
-            return None;
-        }
+        skip_non_finite!(open, high, low, close);
         let ha_close = (open + high + low + close) / 4.0;
         let ha_open = match (self.prev_ha_open, self.prev_ha_close) {
             (Some(po), Some(pc)) => (po + pc) / 2.0,

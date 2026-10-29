@@ -4,6 +4,8 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
 
+use crate::indicators::is_zero_scaled;
+
 #[path = "trend_directional.rs"]
 mod trend_directional;
 #[path = "trend_oscillators.rs"]
@@ -25,7 +27,6 @@ pub struct CCI {
     period: usize,
     c: f64,
     typical_prices: VecDeque<f64>,
-    sum: f64,
     current_value: Option<f64>,
 }
 
@@ -38,36 +39,44 @@ impl CCI {
             period,
             c,
             typical_prices: VecDeque::with_capacity(period),
-            sum: 0.0,
             current_value: None,
         }
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
+        skip_non_finite!(high, low, close);
         let typical_price = (high + low + close) / 3.0;
         self.typical_prices.push_back(typical_price);
-        self.sum += typical_price;
-        if self.typical_prices.len() > self.period
-            && let Some(removed) = self.typical_prices.pop_front()
-        {
-            self.sum -= removed;
+        if self.typical_prices.len() > self.period {
+            self.typical_prices.pop_front();
         }
         if self.typical_prices.len() < self.period {
             self.current_value = None;
             return None;
         }
-        let sma = self.sum / self.period as f64;
+        // 每个窗口精确重算均值与平均偏差, 不做滑动累加
+        let n = self.period as f64;
+        let mean = self.typical_prices.iter().sum::<f64>() / n;
         let mean_deviation = self
             .typical_prices
             .iter()
-            .map(|x| (x - sma).abs())
+            .map(|x| (x - mean).abs())
             .sum::<f64>()
-            / self.period as f64;
-        if mean_deviation <= f64::EPSILON || self.c <= f64::EPSILON {
-            self.current_value = Some(f64::NAN);
-        } else {
-            self.current_value = Some((typical_price - sma) / (self.c * mean_deviation));
-        }
+            / n;
+        let numerator = typical_price - mean;
+        let divisor = self.c * mean_deviation;
+        let scale = mean.abs();
+        // TA-Lib 0.8.1: 分子或平均偏差相对均值可忽略(停牌、一字板)时输出 0
+        self.current_value = Some(
+            if is_zero_scaled(numerator, scale)
+                || is_zero_scaled(mean_deviation, scale)
+                || divisor == 0.0
+            {
+                0.0
+            } else {
+                numerator / divisor
+            },
+        );
         self.current_value
     }
 
