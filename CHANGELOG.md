@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **规则版本 2.1.1**：只影响「部分成交后成交时验资不过」与「成交时自动缩量」的订单记录与回调，成交、持仓、资金不变。
+
+### Fixed
+- **订单跨多根 bar 部分成交后，某一根成交时验资被拒（资金或可用持仓不足），`orders_df` 与 `on_order` 里的 `filled_quantity` 被清零、状态为 `rejected`**（0.3.74 Known Issues 第一条）：被拒的只是剩余部分，现在状态记为 `cancelled`，`filled_quantity`、`avg_price` 与佣金保留已成交部分，原因仍写在 `reject_reason`（带 `at execution` 标记，`top_reject_reasons` 照常统计）；一股未成交就被拒的订单仍是 `rejected`。
+- **成交时自动缩量（`allow_quantity_auto_resize`）后订单的成交量与成交记录不一致**：原来成交记录按缩量后的数量，订单的 `filled_quantity` 与均价却按缩量前；现在订单数量改写为实际成交总量（与提交时缩量改写数量一致）、状态为 `filled`。缩到 0 股时原来回报被丢弃，订单从执行端消失而订单记录永远停在挂单状态，现在与不允许缩量时一样按上一条处理。
+
 ## [0.3.74] - 2026-10-29
 
 > **规则版本 2.1.0**：显式开启成交量限制（含 `broker_profile` 模板）的回测结果会变化，不传 `volume_limit_pct` 且不用 `broker_profile` 的回测不变；**指标数值口径统一对齐 TA-Lib 0.8.2**，用到下列指标的回测、`Strategy.I()`、`aq.Indicator` 与实盘指标都会变化，不用指标的回测不变。

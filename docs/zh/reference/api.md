@@ -1523,7 +1523,7 @@ class RiskConfig:
 *   `safety_margin`: 提交时闸门的安全垫（默认 `0.0001`），按 `(1 - safety_margin)` 折减可用资金，用于吸收"提交时用预估价、成交时用真实价"的偏差。成交时闸门不留安全垫。
 *   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以跳空高开的日子里，按开盘价算好的满仓市价买单可能在提交时就被拒（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩量；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
 
-这些拒单原因会体现在 `orders_df.reject_reason` 字段中。成交时闸门产生的拒单，原因里会带 `at execution` 标记。
+这些拒单原因会体现在 `orders_df.reject_reason` 字段中。成交时闸门产生的拒单，原因里会带 `at execution` 标记。订单此前已部分成交（如开了 `volume_limit_pct` 跨多根 bar 成交）时，成交时被拒的只是剩余部分：状态为 `cancelled`，`filled_quantity` 与 `avg_price` 保留已成交部分，原因仍写在 `reject_reason`。
 
 ## 6. 结果分析 (Analysis)
 

@@ -1379,7 +1379,7 @@ Funds-check fields:
 *   `safety_margin`: buffer for the submission gate (default `0.0001`), applied as `available × (1 − safety_margin)`. The execution gate uses no buffer.
 *   The submission gate prices the order at a **reference price**: the limit price for limit orders, the last price for market orders. Under `fill_policy=NextOpen()` the last price is the previous bar's close while the real fill is the next bar's open, so on gap-up days a full-size market buy sized at the open can be rejected at submission (`Insufficient margin`, with `Required = quantity × reference price + commission` and `Available = available funds × (1 − safety_margin)`). The execution gate checks again at the real fill price. Workarounds: use a limit order priced at the highest price you accept; call `buy(symbol, quantity=None)` so the sizer computes the quantity and the engine shrinks it when funds are short; or size with `reference price × (1 + headroom)` yourself.
 
-Rejection reasons are available in `orders_df.reject_reason`.
+Rejection reasons are available in `orders_df.reject_reason`. Execution-time rejections carry an `at execution` marker. If the order was already partially filled (e.g. across several bars under `volume_limit_pct`), only the remainder is rejected: the status becomes `cancelled`, `filled_quantity` and `avg_price` keep the filled part, and the reason is still in `reject_reason`.
 
 ## 6. Analysis
 

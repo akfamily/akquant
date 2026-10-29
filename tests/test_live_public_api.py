@@ -9,8 +9,8 @@ def test_streaming_indicator_sink_is_public() -> None:
     assert StreamingIndicatorSink is Private
 
 
-def test_engine_rule_version_is_2_1_0() -> None:
-    """成交量限制默认不限制 (#409) 与指标对齐 TA-Lib 后规则版本为 2.1.0."""
+def test_engine_rule_version_is_2_1_1() -> None:
+    """部分成交后成交时验资被拒保留已成交量, 规则版本为 2.1.1."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.1.0"
+    assert akquant.__engine_rule_version__ == "2.1.1"

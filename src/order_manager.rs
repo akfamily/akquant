@@ -275,6 +275,8 @@ impl OrderManager {
         // Find existing order
         if let Some(existing) = self.active_orders.iter_mut().find(|o| o.id == report.id) {
             existing.status = report.status;
+            // 成交时缩量会改写订单数量(见 execution::simulated)
+            existing.quantity = report.quantity;
             existing.filled_quantity = report.filled_quantity;
             existing.average_filled_price = report.average_filled_price;
             existing.updated_at = report.updated_at;

@@ -239,3 +239,61 @@ def test_legacy_snapshot_default_quarter_means_unlimited() -> None:
         == 0.1
     )
     assert _resolve_warm_start_volume_limit(None, None, {}, {}) == 0.0
+
+
+class _BuyOnceRecordingOrders(_BuyOnce):
+    """同 _BuyOnce, 另记下每次 on_order 回调的 (状态, 已成交量)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.order_events: list[tuple[str, float]] = []
+
+    def on_order(self, order: Any) -> None:
+        self.order_events.append((str(order.status), float(order.filled_quantity)))
+
+
+def test_execution_reject_after_partial_fills_keeps_filled_quantity() -> None:
+    """跨 bar 部分成交后剩余部分验资被拒: 已成交量保留, 剩余部分撤销.
+
+    3000 股 @10 下单时资金 31000 够用; 之后价格涨到 12, 每根只能成交 1000 股,
+    前两根成交 2000 股后剩 7000 元, 第三根 12000 元的成交在成交时被拒.
+    """
+    stamps = pd.date_range(start="2023-01-03", periods=4, freq="D", tz="Asia/Shanghai")
+    bars = [
+        Bar(
+            timestamp=(ts + pd.Timedelta(hours=10)).value,
+            open=price,
+            high=price,
+            low=price,
+            close=price,
+            volume=10_000.0,
+            symbol=SYMBOL,
+        )
+        for ts, price in zip(stamps, [10.0, 12.0, 12.0, 12.0])
+    ]
+    result = run_backtest(
+        data=bars,
+        strategy=_BuyOnceRecordingOrders,
+        symbols=SYMBOL,
+        initial_cash=31_000.0,
+        commission_rate=0.0,
+        min_commission=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        lot_size=100,
+        volume_limit_pct=0.1,
+        show_progress=False,
+    )
+
+    assert [float(t.quantity) for t in result.executions] == [1000.0, 1000.0]
+    orders = result.orders_df
+    assert len(orders) == 1
+    row = orders.iloc[0]
+    assert row["status"] == "cancelled"
+    assert float(row["filled_quantity"]) == 2000.0
+    assert float(row["avg_price"]) == 12.0
+    assert "Insufficient margin at execution" in str(row["reject_reason"])
+
+    strategy = result.strategy
+    assert strategy is not None
+    assert strategy.order_events[-1] == ("OrderStatus.Cancelled", 2000.0)
