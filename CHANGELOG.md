@@ -7,11 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> **规则版本 2.1.1**：只影响「部分成交后成交时验资不过」与「成交时自动缩量」的订单记录与回调，成交、持仓、资金不变。
+> **规则版本 2.1.1**：「部分成交后成交时验资不过」与「成交时自动缩量」只影响订单记录与回调，成交、持仓、资金不变；`buy()` 不传 `quantity`（交给 sizer 定量）且资金不足的回测结果会变化（原来拒单，现在缩量成交），显式给数量的回测不变。
 
 ### Fixed
 - **订单跨多根 bar 部分成交后，某一根成交时验资被拒（资金或可用持仓不足），`orders_df` 与 `on_order` 里的 `filled_quantity` 被清零、状态为 `rejected`**（0.3.74 Known Issues 第一条）：被拒的只是剩余部分，现在状态记为 `cancelled`，`filled_quantity`、`avg_price` 与佣金保留已成交部分，原因仍写在 `reject_reason`（带 `at execution` 标记，`top_reject_reasons` 照常统计）；一股未成交就被拒的订单仍是 `rejected`。
 - **成交时自动缩量（`allow_quantity_auto_resize`）后订单的成交量与成交记录不一致**：原来成交记录按缩量后的数量，订单的 `filled_quantity` 与均价却按缩量前；现在订单数量改写为实际成交总量（与提交时缩量改写数量一致）、状态为 `filled`。缩到 0 股时原来回报被丢弃，订单从执行端消失而订单记录永远停在挂单状态，现在与不允许缩量时一样按上一条处理。
+- **`buy()` 不传 `quantity`、交给 sizer 定量时资金不足不会自动缩量，直接拒单**：文档承诺的自动缩量自引入开平语义（自动开平拆腿）起失效——拆腿后各腿按显式数量下单，缩量标志被重算为否，提交时与成交时都不缩量。现在缩量标志传给开仓腿（平仓腿数量由持仓决定，不缩）；显式给 `quantity` 的买单仍不缩量。注意 `PercentSizer`、`AllInSizer` 算出的数量不按 `lot_size` 取整，非整手的数量仍会被拒。
 
 ## [0.3.74] - 2026-10-29
 

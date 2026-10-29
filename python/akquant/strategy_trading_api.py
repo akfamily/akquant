@@ -371,6 +371,7 @@ def _submit_buy_side_orders(
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
     reduce_only: bool = False,
+    allow_quantity_auto_resize: Optional[bool] = None,
 ) -> List[str]:
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
@@ -381,7 +382,10 @@ def _submit_buy_side_orders(
     if ref_price is None:
         ref_price = strategy._last_prices.get(symbol, 0.0)
 
-    allow_quantity_auto_resize = quantity is None
+    # 只由公开入口按 quantity is None 判定; 拆腿递归时数量已由 sizer 算出,
+    # 须显式传下去, 否则缩量能力随拆腿丢失。
+    if allow_quantity_auto_resize is None:
+        allow_quantity_auto_resize = quantity is None
     if quantity is None:
         quantity = strategy.sizer.get_size(
             ref_price, strategy.ctx.cash, strategy.ctx, symbol
@@ -418,6 +422,11 @@ def _submit_buy_side_orders(
                     commission=commission,
                     position_effect=leg_effect,
                     reduce_only=leg_reduce_only,
+                    # 缩量只针对开仓腿: 它按可用资金定量; 平仓腿的数量由持仓决定,
+                    # 缩它会留下本该平掉的仓位。
+                    allow_quantity_auto_resize=(
+                        allow_quantity_auto_resize and leg_effect == "open"
+                    ),
                 )
             )
         return order_ids
