@@ -281,8 +281,14 @@ class BacktestResult:
 
     @property
     def metrics(self) -> Any:
-        """Get metrics with timezone-aware datetime conversion."""
+        """Get metrics with timezone-aware datetime conversion.
+
+        绩效指标之外的字段(如 ``total_commission``、``closed_trade_count``)依次从
+        ``trade_metrics`` 与 ``metrics_df`` 取, 使 ``metrics.<名称>`` 与
+        ``metrics_df`` 的字段一致。
+        """
         metrics = self._raw.metrics
+        result = self
 
         class MetricsWrapper:
             def __init__(
@@ -293,7 +299,12 @@ class BacktestResult:
                 self._initial_cash = initial_cash
 
             def __getattr__(self, name: str) -> Any:
-                val = getattr(self._raw, name)
+                if name.startswith("_"):
+                    raise AttributeError(name)
+                try:
+                    val = getattr(self._raw, name)
+                except AttributeError:
+                    return self._fallback(name)
                 if name in ["start_time", "end_time"]:
                     # Convert ns timestamp to datetime
                     if isinstance(val, int):
@@ -302,6 +313,17 @@ class BacktestResult:
                         )
                         return dt
                 return val
+
+            def _fallback(self, name: str) -> Any:
+                trade_metrics = getattr(result._raw, "trade_metrics", None)
+                if trade_metrics is not None and hasattr(trade_metrics, name):
+                    return getattr(trade_metrics, name)
+                frame = result.metrics_df
+                if name in frame.index:
+                    return frame.at[name, "value"]
+                raise AttributeError(
+                    f"metrics 没有字段 {name!r}; 全部字段见 result.metrics_df.index"
+                )
 
         return MetricsWrapper(metrics, self._timezone, self.initial_cash)
 

@@ -35,7 +35,7 @@ def run_backtest(
     timezone: Optional[str] = None,
     sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
-    t_plus_one: bool = False,
+    t_plus_one: Optional[bool] = None,
     initialize: Optional[Callable[[Any], None]] = None,
     on_start: Optional[Callable[[Any], None]] = None,
     on_resume: Optional[Callable[[Any], None]] = None,
@@ -235,7 +235,7 @@ def run_from_checkpoint(
 *   `freq`: 数据周期，默认 `None`。`data` 为含 `Tick` 的列表时是 tick 聚合周期（只支持整数分钟，如 `"1min"`），把 tick 合成 bar 并同时触发 `on_bar`；bar 数据（DataFrame、`List[Bar]`、catalog）也可传，用来声明 bar 周期并填 bar 的区间起点（`interval_start = 时间戳 − 周期`），写法为“正整数 + 单位”，单位 `min` / `h` / `d`（或 `day`），如 `"1min"`、`"5min"`、`"1h"`、`"1d"`。只有日期（本地 0 点）的日线不需要传，会自动改写到交易日收盘时刻；打在 15:00 等固定非 0 点时刻的日线要传 `freq="1d"`，否则每根 bar 按该时刻所在时段撮合（15:00 按“时间戳前 1ns”即 14:59:59.999… 判为收盘集合竞价），订单排到下一根 bar，并告警一次。策略的 `self.freq` 即该值。
 *   `sessions`: 代码前缀 → 时段模板名或自定义时段表（`"default"` 为全局默认），默认 `None`。不传时中国时区按资产类型取默认（股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`，其他资产 `ALWAYS_OPEN`），其他时区全天连续（`ALWAYS_OPEN`）。可选模板见 `aq.SessionResolver.templates()`；自定义时段表写法见下文 `BacktestConfig.china_futures` 一节的时段说明。
 *   `trading_calendar`: 交易日列表（`date` / 字符串 / `Timestamp`），默认 `None`。不传时中国市场按工作日推算（节假日也被当作交易日，节假日前后的夜盘与日终结算会算错），并告警一次；`ALWAYS_OPEN` 每天都算，不告警。数据时刻超出所传日历覆盖范围时报 `ValueError`。
-*   `t_plus_one`: 是否启用 T+1 交易规则 (默认 False)。如果启用，将强制使用中国市场模型。
+*   `t_plus_one`: 是否启用 T+1 交易规则。不传时取 `broker_profile` 模板的设置（三个内置 A 股模板都开），没有模板时为 False。如果启用，将强制使用中国市场模型。
 *   `slippage`: 全局滑点 (默认 0.0)。例如 0.0001 代表 1bp (0.01%) 的滑点，采用百分比模型。
 *   `volume_limit_pct`: 成交量限制比例，默认 `None`（不限制，等同 0）。设为 0.25 时单根 bar 最多成交该 bar 成交量的 25%，截断量按手数向下取整，不足一手则本根不成交、订单继续挂着。订单剩余量不超过 `成交量 × 比例` 时仍一次成交（可能是零股，比如卖出最后剩下的 50 股）；IOC/FOK 订单若取整后的截断量为 0，当根撤销。**bar 的成交量必须与下单数量同单位**：AKShare 的 `stock_zh_a_hist` 等接口成交量单位是“手”，需先乘以 100 再开启量限。量限只作用于 bar 撮合，tick 驱动的撮合不受量限约束。数量可为小数的品种（加密货币、外汇）需设置 `lot_size`（默认 1），否则截断后的数量会向下取整为整数。
 *   `warmup_period`: 策略预热期。指定需要预加载的历史数据长度（Bar 数量），用于计算指标。
@@ -271,7 +271,7 @@ def run_from_checkpoint(
 *   T+1 范围说明：当前 `t_plus_one` 仍是运行级/市场级开关，不支持按 `strategy_id` 分层配置。
 *   `analyzer_plugins`: 可选 Analyzer 插件列表。插件接收 `on_start/on_bar/on_trade/on_finish` 生命周期回调，结果汇总到 `result.analyzer_outputs`。
 *   `on_event`: 可选事件回调。不传时内部使用 no-op 回调并保持阻塞返回语义；传入时可实时消费事件。
-*   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数等默认值。内置模板：`cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
+*   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数/T+1 等默认值，显式参数优先。内置模板：`cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
 
 **fill_policy 推荐示例（主路径）：**
 
@@ -780,7 +780,7 @@ cb = InstrumentConfig(symbol="113050.SH", asset_type="CONVERTIBLE_BOND")
 |---|---|---|---|
 | 股票费率（佣金/印花税/过户费/最低佣金） | `InstrumentConfig` 单标的费率字段 | `StrategyConfig` 全局费率字段（含 `commission_policy` / `commission_rate`） | `run_backtest` 内置默认值 |
 | 交易单位（`lot_size`） | `InstrumentConfig.lot_size`（显式设置） | `run_backtest(lot_size=...)` 全局设置 | `1` |
-| 市场制度（T+1） | `run_backtest(t_plus_one=...)` 显式参数 | `Engine.set_t_plus_one(...)` 引擎设置 | `False` |
+| 市场制度（T+1） | `run_backtest(t_plus_one=...)` 显式参数 | `broker_profile` 模板（内置 A 股模板为 `True`） | `False` |
 | 市场模型 | `use_china_market()` | `use_simple_market()` | 引擎默认市场配置 |
 
 股票侧说明：
@@ -1010,7 +1010,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   如果指定 `price`，则为限价单。
     *   如果指定 `trigger_price`，则为止损/止盈单 (Stop Market)。
     *   不传 `symbol` 时取当前 bar/tick 的标的；在无行情上下文的回调（如 `on_start`）中必须显式传入。
-    *   不传 `quantity` 时按 `self.sizer` 计算下单量（默认 `FixedSize(100)`，可用 `set_sizer()` 替换）。
+    *   不传 `quantity` 时按 `self.sizer` 计算下单量（默认 `FixedSize(100)`，可用 `set_sizer()` 替换），算出的数量按标的最小交易单位（`lot_size`）向下取整，不足一手则不下单；`lot_size` 为 1 时不取整（小数数量照常下单）。显式给的 `quantity` 不取整。
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: 卖出（平多/开空）。参数同上，但**不传 `quantity` 时不走 sizer，而是全平当前持仓**：回测取总持仓，`broker_live` 取可用持仓（A 股 T+1 下当日买入部分不可卖，按总量报单会被柜台整单拒绝）。
 *   解析后下单量 `<= 0` 时不报单，返回空回执（`len(receipt) == 0`、`receipt.primary == ""`）。
 *   `receipt.failure`（只读，`None` / `"rejected"` / `"unknown"`）：区分空回执的三种成因。
@@ -1521,9 +1521,9 @@ class RiskConfig:
     *   **减仓/平仓**会释放保证金，变化量为负，先抵掉自己的费用——因此**卖单不需要预先持有现金**，与 A 股"卖出费用从成交款净额扣除"的规则一致。满仓后只剩几十元现金时，全量卖单照常成交。
     *   仅当卖出所得连费用都盖不住时（如持 100 股 0.01 元的股票），该值仍为正并照常验资；放过它等于让现金透支，而透支只有 `check_cash=False` 才允许。
 *   `safety_margin`: 提交时闸门的安全垫（默认 `0.0001`），按 `(1 - safety_margin)` 折减可用资金，用于吸收"提交时用预估价、成交时用真实价"的偏差。成交时闸门不留安全垫。
-*   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以跳空高开的日子里，按开盘价算好的满仓市价买单可能在提交时就被拒（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩量；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
+*   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以跳空高开的日子里，按开盘价算好的满仓市价买单可能在提交时就被拒（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩到买得起的整手数（提交时与成交时都会缩；显式给 `quantity` 的买单不缩量）；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
 
-这些拒单原因会体现在 `orders_df.reject_reason` 字段中。成交时闸门产生的拒单，原因里会带 `at execution` 标记。
+这些拒单原因会体现在 `orders_df.reject_reason` 字段中。成交时闸门产生的拒单，原因里会带 `at execution` 标记。订单此前已部分成交（如开了 `volume_limit_pct` 跨多根 bar 成交）时，成交时被拒的只是剩余部分：状态为 `cancelled`，`filled_quantity` 与 `avg_price` 保留已成交部分，原因仍写在 `reject_reason`。
 
 ## 6. 结果分析 (Analysis)
 

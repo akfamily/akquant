@@ -26,7 +26,7 @@
 
 *   **高性能内核**：得益于 Rust 的零开销抽象与 **Zero-Copy 数据导入**（`add_arrays` 借用 NumPy 缓冲入引擎；策略侧 `get_history` 等读取则返回安全快照拷贝），AKQuant 在部分回测场景下可显著降低 Python 层开销；实际运行速度取决于策略逻辑、数据规模、回调频率与运行环境。
 *   **原生 ML 支持**：内置 **Walk-forward Validation**（滚动训练）框架，无缝集成 PyTorch/Scikit-learn，让 AI 策略开发从实验到回测一气呵成。
-*   **TA-Lib 指标生态**：内置 `akquant.talib` 双后端（`python/rust`）兼容能力，支持 **103 个指标**。
+*   **TA-Lib 指标生态**：内置 `akquant.talib` 双后端（`python/rust`）兼容能力，支持 **104 个指标**。
 *   **因子表达式引擎**：内置 **Polars** 驱动的高性能因子计算引擎，支持 `Rank(Ts_Mean(Close, 5))` 等 Alpha101 风格公式，自动处理并行计算与数据对齐。
 *   **参数优化**：内置多进程网格搜索（Grid Search）框架，支持策略参数的高效并行优化。
 *   **专业级风控**：内置完善的订单流管理与即时风控模块，支持多资产组合回测。
@@ -53,6 +53,8 @@ from akquant import Strategy
 # 1. 准备数据
 # 使用 akshare 获取 A 股历史数据 (需安装: pip install akshare)
 df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20250212", end_date="20260212")
+# 交易日历: 不传时按工作日推算, 节假日会被当作交易日
+trade_dates = ak.tool_trade_date_hist_sina()["trade_date"]
 
 
 class MyStrategy(Strategy):
@@ -78,7 +80,9 @@ result = aq.run_backtest(
     data=df,
     strategy=MyStrategy,
     initial_cash=100000.0,
-    symbols="sh600000"
+    symbols="sh600000",
+    broker_profile="cn_stock_t1_low_fee",  # A 股佣金/印花税/过户费、T+1、一手 100 股
+    trading_calendar=trade_dates,
 )
 
 # 打印回测结果
@@ -98,69 +102,73 @@ result.viz.report(
 
 调用 `result.viz.report(..., benchmark=...)` 后，报告会新增“基准对比 (Benchmark Comparison)”区块，展示策略/基准/超额累计收益曲线，以及累计超额收益、年化超额收益、跟踪误差、信息比率、Beta、Alpha 等相对指标。
 
+> **注意：`run_backtest` 默认不计交易成本、不开 T+1。** 不传 `broker_profile` 也不传费率时，佣金、印花税、过户费都是 0，可以当日买卖，最小交易单位是 1 股——这样得到的是理想化的结果，换手越高越偏乐观。A 股回测请像上面这样传 `broker_profile`（内置 `cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`），或者显式传 `commission_rate`、`stamp_tax_rate`、`transfer_fee_rate`、`min_commission`、`t_plus_one=True`、`lot_size=100`。模板的印花税按 2023-08-28 起的现行税率 0.05% 计，回测此前的行情请显式传 `stamp_tax_rate=0.001`。
+
 **运行结果示例:**
 
 ```text
 === Backtest Result ===
 BacktestResult:
                                             Value
-start_time              2025-02-12 00:00:00+08:00
-end_time                2026-02-12 00:00:00+08:00
+name
+start_time              2025-02-12 15:00:00+08:00
+end_time                2026-02-12 15:00:00+08:00
 duration                        365 days, 0:00:00
 total_bars                                    249
-closed_trade_count                                  62.0
-execution_count                                    124.0
-open_position_count                                  0.0
+closed_trade_count                           62.0
+execution_count                             124.0
+open_position_count                           0.0
 initial_market_value                     100000.0
-end_market_value                          99804.0
-total_pnl                                  -196.0
+end_market_value                     99379.212386
+total_pnl                             -620.787614
 unrealized_pnl                                0.0
-total_return_pct                           -0.196
-annualized_return                        -0.00196
-volatility                               0.002402
-total_profit                                548.0
-total_loss                                 -744.0
-total_commission                              0.0
-max_drawdown                                345.0
-max_drawdown_pct                         0.344487
+total_return_pct                        -0.620788
+annualized_return                       -0.006208
+volatility                               0.002456
+total_profit                              544.624
+total_loss                              -755.5086
+total_commission                       409.903014
+max_drawdown                             0.006234
+max_drawdown_value                     623.409236
+max_drawdown_pct                         0.623393
 win_rate                                22.580645
 loss_rate                               77.419355
 winning_trades                               14.0
 losing_trades                                48.0
-avg_pnl                                  -3.16129
-avg_return_pct                          -0.199577
+avg_pnl                                 -3.401365
+avg_return_pct                          -0.219536
 avg_trade_bars                           1.967742
-avg_profit                              39.142857
-avg_profit_pct                           3.371156
+avg_profit                              38.901714
+avg_profit_pct                           3.350484
 avg_winning_trade_bars                        4.5
-avg_loss                                    -15.5
-avg_loss_pct                            -1.241041
+avg_loss                               -15.739762
+avg_loss_pct                            -1.260791
 avg_losing_trade_bars                    1.229167
-largest_win                                 120.0
-largest_win_pct                         10.178117
+largest_win                              119.7522
+largest_win_pct                         10.156084
 largest_win_bars                              7.0
-largest_loss                                -70.0
-largest_loss_pct                        -5.380477
+largest_loss                             -70.2532
+largest_loss_pct                        -5.399399
 largest_loss_bars                             1.0
 max_wins                                      2.0
 max_losses                                    9.0
-sharpe_ratio                            -0.816142
-sortino_ratio                           -1.066016
-profit_factor                            0.736559
-ulcer_index                              0.001761
-upi                                     -1.113153
-equity_r2                                0.399577
-std_error                                68.64863
-calmar_ratio                            -0.568962
+sharpe_ratio                            -2.574886
+sortino_ratio                            -3.16692
+profit_factor                            0.720871
+ulcer_index                              0.003099
+upi                                     -2.003008
+equity_r2                                0.871776
+std_error                               69.889352
+calmar_ratio                            -0.995821
 exposure_time_pct                       48.995984
-var_95                                   -0.00023
-var_99                                   -0.00062
-cvar_95                                 -0.000405
-cvar_99                                  -0.00069
-sqn                                     -0.743693
-kelly_criterion                         -0.080763
-max_leverage                              0.01458
-min_margin_level                        68.587671
+var_95                                  -0.000262
+var_99                                  -0.000623
+cvar_95                                 -0.000427
+cvar_99                                 -0.000702
+sqn                                     -0.800105
+kelly_criterion                         -0.087435
+max_leverage                             0.014604
+min_margin_level                        68.473617
 ```
 
 ## 复杂订单助手 (OCO / Bracket)

@@ -47,6 +47,7 @@ class _Strategy:
         self._last_prices = last_prices or {}
         self.current_bar = current_bar
         self.current_tick = None
+        self._instrument_snapshots: dict[str, Any] = {}
 
 
 def _submitter(
@@ -202,3 +203,29 @@ def test_short_sell_allowed_when_capability_declares() -> None:
         symbol="IF2601", side="Sell", quantity=2, position_effect="open"
     )
     assert [r.quantity for r in captured] == [2.0]
+
+
+class _LotSnapshot:
+    lot_size = 100
+
+
+def test_buy_sizer_quantity_rounded_down_to_lot() -> None:
+    """标的登记了 lot_size=100 时, sizer 算出的 1050 股取整为 1000 股再报单."""
+    captured: list[UnifiedOrderRequest] = []
+    strategy = _Strategy(sizer=PercentSizer(10.5), execution=_Execution(cash=100_000.0))
+    strategy._instrument_snapshots = {"600000.SH": _LotSnapshot()}
+    _submitter(strategy, captured).submit_order(
+        symbol="600000.SH", side="Buy", price=10.0
+    )
+    assert [r.quantity for r in captured] == [1000.0]
+
+
+def test_explicit_buy_quantity_not_rounded() -> None:
+    """显式给的数量不取整, 原样报单(不整手由柜台拒)."""
+    captured: list[UnifiedOrderRequest] = []
+    strategy = _Strategy(execution=_Execution(cash=100_000.0))
+    strategy._instrument_snapshots = {"600000.SH": _LotSnapshot()}
+    _submitter(strategy, captured).submit_order(
+        symbol="600000.SH", side="Buy", price=10.0, quantity=1050
+    )
+    assert [r.quantity for r in captured] == [1050.0]

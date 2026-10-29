@@ -29,6 +29,8 @@ from akquant import Strategy, run_backtest
 
 # 1. 准备数据 (这里利用 AKShare 来获取数据；若尚未安装，可先执行 `uv pip install akshare`)
 df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20250101", end_date="20260212")
+# 交易日历：不传时按工作日推算，节假日会被当作交易日
+trade_dates = ak.tool_trade_date_hist_sina()["trade_date"]
 
 
 # 2. 策略定义
@@ -53,12 +55,16 @@ result = run_backtest(
     data=df,  # 输入数据
     strategy=MyStrategy,  # 输入策略
     initial_cash=100000.0,  # 初始资金
-    symbols="sh600000"  # 交易的股票代码
+    symbols="sh600000",  # 交易的股票代码
+    broker_profile="cn_stock_t1_low_fee",  # A 股佣金/印花税/过户费、T+1、一手 100 股
+    trading_calendar=trade_dates,  # 交易日历
 )
 
 # 4. 查看结果
 print(result)  # 跟 print(result.metrics_df) 等效
 ```
+
+> **注意：`run_backtest` 默认不计交易成本、不开 T+1。** 不传 `broker_profile` 也不传费率时，佣金、印花税、过户费都是 0，可以当日买卖，最小交易单位是 1 股——这样得到的是理想化的结果，换手越高越偏乐观。A 股回测请像上面这样传 `broker_profile`，或者显式传 `commission_rate`、`stamp_tax_rate`、`transfer_fee_rate`、`min_commission`、`t_plus_one=True`、`lot_size=100`。模板的印花税按 2023-08-28 起的现行税率 0.05% 计，回测此前的行情请显式传 `stamp_tax_rate=0.001`。
 
 ## 基准对比快览
 
@@ -82,95 +88,91 @@ result.viz.report(
 
 ```text
 开始回测...
-2026-02-12 00:58:53 | INFO | Running backtest via run_backtest()...
+2026-10-29 19:24:06 | INFO | akquant.backtest | Running backtest via run_backtest()...
 BacktestResult:
                                             Value
 name
-start_time              2025-01-02 00:00:00+08:00
-end_time                2026-02-11 00:00:00+08:00
-duration                        405 days, 0:00:00
-total_bars                                    271
-closed_trade_count                                  67.0
-execution_count                                    134.0
-open_position_count                                  0.0
+start_time              2025-01-02 15:00:00+08:00
+end_time                2026-02-12 15:00:00+08:00
+duration                        406 days, 0:00:00
+total_bars                                    272
+closed_trade_count                           67.0
+execution_count                             134.0
+open_position_count                           0.0
 initial_market_value                     100000.0
-end_market_value                      99100.68204
-total_pnl                              -899.31796
+end_market_value                     99353.571893
+total_pnl                             -646.428107
 unrealized_pnl                                0.0
-total_return_pct                        -0.899318
-annualized_return                       -0.008109
-volatility                               0.002453
-total_profit                                584.0
-total_loss                                 -772.0
-total_commission                        711.31796
-max_drawdown                            913.30785
-max_drawdown_pct                          0.91318
+total_return_pct                        -0.646428
+annualized_return                       -0.005813
+volatility                                0.00241
+total_profit                             579.8034
+total_loss                               -783.713
+total_commission                       442.518507
+max_drawdown                             0.006622
+max_drawdown_value                     662.321952
+max_drawdown_pct                         0.662217
 win_rate                                26.865672
 loss_rate                               73.134328
 winning_trades                               18.0
 losing_trades                                49.0
-avg_pnl                                  -2.80597
-avg_return_pct                          -0.172318
+avg_pnl                                 -3.043427
+avg_return_pct                          -0.192281
 avg_trade_bars                           2.014925
-avg_profit                              32.444444
-avg_profit_pct                           2.818291
+avg_profit                                32.2113
+avg_profit_pct                           2.797729
 avg_winning_trade_bars                   4.055556
-avg_loss                               -15.755102
-avg_loss_pct                            -1.270909
+avg_loss                               -15.994143
+avg_loss_pct                            -1.290653
 avg_losing_trade_bars                    1.265306
-largest_win                                 120.0
-largest_win_pct                         10.178117
+largest_win                              119.7522
+largest_win_pct                         10.156084
 largest_win_bars                              7.0
-largest_loss                                -70.0
-largest_loss_pct                        -5.380477
+largest_loss                             -70.2532
+largest_loss_pct                        -5.399399
 largest_loss_bars                             1.0
 max_wins                                      2.0
 max_losses                                    9.0
-sharpe_ratio                            -3.305093
-sortino_ratio                            -3.92213
-profit_factor                            0.756477
-ulcer_index                              0.004666
-upi                                     -1.737695
-equity_r2                                0.932224
-std_error                               70.552942
-calmar_ratio                            -0.887949
-exposure_time_pct                       49.815498
-var_95                                  -0.000281
-var_99                                  -0.000625
-cvar_95                                 -0.000434
-cvar_99                                  -0.00071
-sqn                                     -0.708177
-kelly_criterion                         -0.086485
+sharpe_ratio                            -2.500877
+sortino_ratio                            -3.07497
+profit_factor                            0.739816
+ulcer_index                              0.003265
+upi                                     -1.780317
+equity_r2                                0.878604
+std_error                               69.866917
+calmar_ratio                            -0.877868
+exposure_time_pct                       49.632353
+var_95                                  -0.000262
+var_99                                  -0.000623
+cvar_95                                 -0.000421
+cvar_99                                 -0.000702
+sqn                                     -0.768037
+kelly_criterion                         -0.094483
+max_leverage                             0.014608
+min_margin_level                        68.456055
 ```
 
-可以通过 `print(result.positions_df)` 来查看详细的持仓指标。
+可以通过 `print(result.positions_df)` 查看每日持仓明细，下面只列出主要几列：
+
+```python
+print(result.positions_df[["long_shares", "close", "market_value", "unrealized_pnl", "date"]])
+```
 
 ```text
-     long_shares  short_shares  close  equity  market_value  margin  \
-0          100.0           0.0  10.27  1027.0        1027.0  1027.0
-1          100.0           0.0  10.30  1030.0        1030.0  1030.0
-2          100.0           0.0  10.19  1019.0        1019.0  1019.0
-3          100.0           0.0  10.21  1021.0        1021.0  1021.0
-4          100.0           0.0  10.21  1021.0        1021.0  1021.0
-..           ...           ...    ...     ...           ...     ...
-130        100.0           0.0  11.03  1103.0        1103.0  1103.0
-131        100.0           0.0  10.04  1004.0        1004.0  1004.0
-132        100.0           0.0  10.23  1023.0        1023.0  1023.0
-133        100.0           0.0  10.12  1012.0        1012.0  1012.0
-134        100.0           0.0  10.18  1018.0        1018.0  1018.0
-     unrealized_pnl    symbol                      date
-0              16.0  sh600000 2025-01-07 00:00:00+08:00
-1              19.0  sh600000 2025-01-08 00:00:00+08:00
-2               8.0  sh600000 2025-01-09 00:00:00+08:00
-3               5.0  sh600000 2025-01-15 00:00:00+08:00
-4               5.0  sh600000 2025-01-16 00:00:00+08:00
-..              ...       ...                       ...
-130            -7.0  sh600000 2026-01-20 00:00:00+08:00
-131           -10.0  sh600000 2026-01-30 00:00:00+08:00
-132             8.0  sh600000 2026-02-05 00:00:00+08:00
-133            -3.0  sh600000 2026-02-06 00:00:00+08:00
-134            -1.0  sh600000 2026-02-10 00:00:00+08:00
-[135 rows x 9 columns]
+     long_shares  close  market_value  unrealized_pnl                      date
+0          100.0  10.27        1027.0         15.8989 2025-01-07 15:00:00+08:00
+1          100.0  10.30        1030.0         18.8989 2025-01-08 15:00:00+08:00
+2          100.0  10.19        1019.0          7.8989 2025-01-09 15:00:00+08:00
+3          100.0  10.21        1021.0          4.8984 2025-01-15 15:00:00+08:00
+4          100.0  10.21        1021.0          4.8984 2025-01-16 15:00:00+08:00
+..           ...    ...           ...             ...                       ...
+130        100.0  11.03        1103.0         -7.1110 2026-01-20 15:00:00+08:00
+131        100.0  10.04        1004.0        -10.1014 2026-01-30 15:00:00+08:00
+132        100.0  10.23        1023.0          7.8985 2026-02-05 15:00:00+08:00
+133        100.0  10.12        1012.0         -3.1015 2026-02-06 15:00:00+08:00
+134        100.0  10.18        1018.0         -1.1019 2026-02-10 15:00:00+08:00
+
+[135 rows x 5 columns]
 ```
 
 ### 结果里的时间为什么和 `timestamp_iso` 可能不一样？
@@ -186,7 +188,7 @@ print(bar.timestamp_iso)
 你看到的可能会是 UTC ISO 8601，例如：
 
 ```text
-2025-01-06T16:00:00Z
+2025-01-06T07:00:00Z
 ```
 
 这并不表示时间错了，而是同一个时刻的不同表达：
@@ -194,88 +196,50 @@ print(bar.timestamp_iso)
 - 本地市场展示：更适合读日志、看回测结果
 - UTC 结构化字段：更适合排序、跨语言传递、JSON 日志和多市场统一处理
 
-可以通过 `print(result.orders_df)` 来查看详细的订单指标。
+可以通过 `print(result.orders_df)` 查看订单明细（手续费在 `commission` 列），下面只列出主要几列：
 
-```text
-                                       id    symbol  side order_type  \
-0    fe400570-5971-4307-afff-13d47b627148  sh600000   buy     market
-1    111b9549-e363-439d-a79e-85c7e9f70295  sh600000  sell     market
-2    27967cc5-7e67-4f4a-af9e-78263d25a6e8  sh600000   buy     market
-3    c69e6a33-f157-464f-8dba-237abafa1dde  sh600000  sell     market
-4    1e3ed424-eebc-49bd-ae9d-62b2cb779347  sh600000   buy     market
-..                                    ...       ...   ...        ...
-129  f4d338e6-ef74-4658-868a-f19f0e57c3b9  sh600000  sell     market
-130  419e9504-c6bf-4708-9b62-f9cebac62876  sh600000   buy     market
-131  0f682e75-fb18-4336-9b40-c821c385ec70  sh600000  sell     market
-132  52f97d2d-741e-4511-b104-81e99123f870  sh600000   buy     market
-133  95408a55-9b3d-4620-a752-f74b3272db25  sh600000  sell     market
-     quantity  filled_quantity  limit_price  stop_price  avg_price  \
-0       100.0            100.0          NaN         NaN      10.11
-1       100.0            100.0          NaN         NaN      10.23
-2       100.0            100.0          NaN         NaN      10.16
-3       100.0            100.0          NaN         NaN      10.25
-4       100.0            100.0          NaN         NaN      10.32
-..        ...              ...          ...         ...        ...
-129     100.0            100.0          NaN         NaN      10.07
-130     100.0            100.0          NaN         NaN      10.15
-131     100.0            100.0          NaN         NaN      10.11
-132     100.0            100.0          NaN         NaN      10.19
-133     100.0            100.0          NaN         NaN      10.18
-     commission  status time_in_force                created_at
-0       5.01011  filled           gtc 2025-01-06 00:00:00+08:00
-1       5.52173  filled           gtc 2025-01-09 00:00:00+08:00
-2       5.01016  filled           gtc 2025-01-14 00:00:00+08:00
-3       5.52275  filled           gtc 2025-01-16 00:00:00+08:00
-4       5.01032  filled           gtc 2025-01-17 00:00:00+08:00
-..          ...     ...           ...                       ...
-129     5.51357  filled           gtc 2026-01-30 00:00:00+08:00
-130     5.01015  filled           gtc 2026-02-04 00:00:00+08:00
-131     5.51561  filled           gtc 2026-02-06 00:00:00+08:00
-132     5.01019  filled           gtc 2026-02-09 00:00:00+08:00
-133     5.51918  filled           gtc 2026-02-10 00:00:00+08:00
-[134 rows x 13 columns]
+```python
+print(result.orders_df[["side", "quantity", "filled_quantity", "avg_price", "commission", "status", "created_at"]])
 ```
 
-可以通过 `print(result.trades_df)` 来查看详细的成交指标。
+```text
+     side  quantity  filled_quantity  avg_price  commission  status                created_at
+0     buy     100.0            100.0  10.111011    3.005056  filled 2025-01-06 15:00:00+08:00
+1    sell     100.0            100.0  10.228977    3.516563  filled 2025-01-09 15:00:00+08:00
+2     buy     100.0            100.0  10.161016    3.005081  filled 2025-01-14 15:00:00+08:00
+3    sell     100.0            100.0  10.248975    3.517573  filled 2025-01-16 15:00:00+08:00
+4     buy     100.0            100.0  10.321032    3.005161  filled 2025-01-17 15:00:00+08:00
+..    ...       ...              ...        ...         ...     ...                       ...
+129  sell     100.0            100.0  10.068993    3.508484  filled 2026-01-30 15:00:00+08:00
+130   buy     100.0            100.0  10.151015    3.005076  filled 2026-02-04 15:00:00+08:00
+131  sell     100.0            100.0  10.108989    3.510504  filled 2026-02-06 15:00:00+08:00
+132   buy     100.0            100.0  10.191019    3.005096  filled 2026-02-09 15:00:00+08:00
+133  sell     100.0            100.0  10.178982    3.514039  filled 2026-02-10 15:00:00+08:00
+
+[134 rows x 7 columns]
+```
+
+可以通过 `print(result.trades_df)` 查看每笔完整交易（开仓到平仓），下面只列出主要几列：
+
+```python
+print(result.trades_df[["entry_time", "exit_time", "entry_price", "exit_price", "quantity", "pnl", "net_pnl", "commission"]])
+```
 
 ```text
-      symbol                entry_time                 exit_time  entry_price  \
-0   sh600000 2025-01-07 00:00:00+08:00 2025-01-10 00:00:00+08:00        10.11
-1   sh600000 2025-01-15 00:00:00+08:00 2025-01-17 00:00:00+08:00        10.16
-2   sh600000 2025-01-20 00:00:00+08:00 2025-01-23 00:00:00+08:00        10.32
-3   sh600000 2025-01-24 00:00:00+08:00 2025-02-06 00:00:00+08:00        10.26
-4   sh600000 2025-02-07 00:00:00+08:00 2025-02-10 00:00:00+08:00        10.43
-..       ...                       ...                       ...          ...
-62  sh600000 2026-01-13 00:00:00+08:00 2026-01-14 00:00:00+08:00        11.72
-63  sh600000 2026-01-20 00:00:00+08:00 2026-01-21 00:00:00+08:00        11.10
-64  sh600000 2026-01-30 00:00:00+08:00 2026-02-02 00:00:00+08:00        10.14
-65  sh600000 2026-02-05 00:00:00+08:00 2026-02-09 00:00:00+08:00        10.15
-66  sh600000 2026-02-10 00:00:00+08:00 2026-02-11 00:00:00+08:00        10.19
-    exit_price  quantity  side   pnl   net_pnl  return_pct  commission  \
-0        10.23     100.0  Long  12.0   1.46816    1.186944    10.53184
-1        10.25     100.0  Long   9.0  -1.53291    0.885827    10.53291
-2        10.11     100.0  Long -21.0 -31.52593   -2.034884    10.52593
-3        10.38     100.0  Long  12.0   1.46036    1.169591    10.53964
-4        10.32     100.0  Long -11.0 -21.53675   -1.054650    10.53675
-..         ...       ...   ...   ...       ...         ...         ...
-62       11.61     100.0  Long -11.0 -21.60383   -0.938567    10.60383
-63       11.03     100.0  Long  -7.0 -17.57363   -0.630631    10.57363
-64       10.07     100.0  Long  -7.0 -17.52371   -0.690335    10.52371
-65       10.11     100.0  Long  -4.0 -14.52576   -0.394089    10.52576
-66       10.18     100.0  Long  -1.0 -11.52937   -0.098135    10.52937
-    duration_bars duration
-0               3   3 days
-1               2   2 days
-2               3   3 days
-3               3  13 days
-4               1   3 days
-..            ...      ...
-62              1   1 days
-63              1   1 days
-64              1   3 days
-65              2   4 days
-66              1   1 days
-[67 rows x 13 columns]
+                  entry_time                 exit_time  entry_price  exit_price  quantity      pnl    net_pnl  commission
+0  2025-01-07 15:00:00+08:00 2025-01-10 15:00:00+08:00    10.111011   10.228977     100.0  11.7966   5.274981    6.521619
+1  2025-01-15 15:00:00+08:00 2025-01-17 15:00:00+08:00    10.161016   10.248975     100.0   8.7959   2.273246    6.522654
+2  2025-01-20 15:00:00+08:00 2025-01-23 15:00:00+08:00    10.321032   10.108989     100.0 -21.2043 -27.719964    6.515664
+3  2025-01-24 15:00:00+08:00 2025-02-06 15:00:00+08:00    10.261026   10.378962     100.0  11.7936   5.264332    6.529268
+4  2025-02-07 15:00:00+08:00 2025-02-10 15:00:00+08:00    10.431043   10.318968     100.0 -11.2075 -17.733823    6.526323
+..                       ...                       ...          ...         ...       ...      ...        ...         ...
+62 2026-01-13 15:00:00+08:00 2026-01-14 15:00:00+08:00    11.721172   11.608839     100.0 -11.2333 -17.825407    6.592107
+63 2026-01-20 15:00:00+08:00 2026-01-21 15:00:00+08:00    11.101110   11.028897     100.0  -7.2213 -13.783810    6.562510
+64 2026-01-30 15:00:00+08:00 2026-02-02 15:00:00+08:00    10.141014   10.068993     100.0  -7.2021 -13.715655    6.513555
+65 2026-02-05 15:00:00+08:00 2026-02-09 15:00:00+08:00    10.151015   10.108989     100.0  -4.2026 -10.718179    6.515579
+66 2026-02-10 15:00:00+08:00 2026-02-11 15:00:00+08:00    10.191019   10.178982     100.0  -1.2037  -7.722834    6.519134
+
+[67 rows x 8 columns]
 ```
 
 ## 复杂订单 30 秒示例

@@ -126,6 +126,25 @@ impl SimulatedExecutionClient {
         )
     }
 
+    /// 成交时验资不过、本次不成交时的回报。
+    ///
+    /// 以撮合前的快照为底: 撮合器已在订单上原地累加了本次(被拒的)成交量与均价,
+    /// 沿用它会把没发生的成交记进去; 而清零又会抹掉此前几根 bar 已入账的成交
+    /// (成交记录与持仓都在, 订单却显示成交 0)。此前有成交的订单只撤剩余部分,
+    /// 状态记为撤销(与即成剩撤一致, 成交量留在 filled_quantity 上), 原因写在
+    /// reject_reason; 一股未成交的才是拒单。
+    fn execution_time_rejection(order_snapshot: &Order, reason: String, now: i64) -> Order {
+        let mut order = order_snapshot.clone();
+        order.status = if order.filled_quantity > Decimal::ZERO {
+            OrderStatus::Cancelled
+        } else {
+            OrderStatus::Rejected
+        };
+        order.updated_at = now;
+        order.reject_reason = reason;
+        order
+    }
+
     fn ignored_unknown_cancel_warning(order_id: &str) -> String {
         render_log_message(
             "Ignored cancel request for unknown order",
@@ -503,6 +522,8 @@ impl SimulatedExecutionClient {
             && let Some(existing) = self.orders.get_mut(&updated_order.id)
         {
             existing.status = updated_order.status;
+            // 成交时缩量会改写订单数量
+            existing.quantity = updated_order.quantity;
             existing.filled_quantity = updated_order.filled_quantity;
             existing.average_filled_price = updated_order.average_filled_price;
             existing.commission = updated_order.commission;
@@ -815,14 +836,36 @@ impl SimulatedExecutionClient {
                                         }
 
                                         trade.quantity = new_qty;
-                                    } else {
-                                        let mut rejected_order = report_order.clone();
-                                        rejected_order.status = crate::model::OrderStatus::Rejected;
-                                        rejected_order.filled_quantity = Decimal::ZERO;
-                                        rejected_order.average_filled_price = None;
-                                        rejected_order.updated_at = ctx.current_time;
-                                        rejected_order.reject_reason = format!(
-                                            "Risk: Insufficient margin at execution. Required: {total_required}, Available: {current_free_margin}"
+                                        if new_qty > Decimal::ZERO {
+                                            // 撮合器按缩量前的成交量累加过 report_order,
+                                            // 按快照重算; 订单数量随之收为实际成交总量,
+                                            // 与下单时缩量改写数量的口径一致。
+                                            let prev_filled = order_snapshot.filled_quantity;
+                                            let filled = prev_filled + new_qty;
+                                            let prev_avg = order_snapshot
+                                                .average_filled_price
+                                                .unwrap_or(Decimal::ZERO);
+                                            report_order.quantity = filled;
+                                            report_order.filled_quantity = filled;
+                                            report_order.average_filled_price = Some(
+                                                (prev_avg * prev_filled + trade.price * new_qty)
+                                                    / filled,
+                                            );
+                                            report_order.status = crate::model::OrderStatus::Filled;
+                                        }
+                                    }
+                                    // 缩到 0 与不允许缩量同样按拒单处理: 若只丢弃回报,
+                                    // 执行端的订单已被撮合器原地记成成交而被清理,
+                                    // 订单管理器却永远收不到终态。
+                                    if !report_order.allow_quantity_auto_resize
+                                        || trade.quantity <= Decimal::ZERO
+                                    {
+                                        let rejected_order = Self::execution_time_rejection(
+                                            &order_snapshot,
+                                            format!(
+                                                "Risk: Insufficient margin at execution. Required: {total_required}, Available: {current_free_margin}"
+                                            ),
+                                            ctx.current_time,
                                         );
                                         log::warn!(
                                             "{}",
@@ -861,14 +904,13 @@ impl SimulatedExecutionClient {
                                     .copied()
                                     .unwrap_or(Decimal::ZERO);
                                 if available < trade.quantity {
-                                    let mut rejected_order = order_snapshot.clone();
-                                    rejected_order.status = crate::model::OrderStatus::Rejected;
-                                    rejected_order.filled_quantity = Decimal::ZERO;
-                                    rejected_order.average_filled_price = None;
-                                    rejected_order.updated_at = ctx.current_time;
-                                    rejected_order.reject_reason = format!(
-                                        "Risk: Insufficient available position for {} at execution. Available: {}, Required: {}",
-                                        trade.symbol, available, trade.quantity
+                                    let rejected_order = Self::execution_time_rejection(
+                                        &order_snapshot,
+                                        format!(
+                                            "Risk: Insufficient available position for {} at execution. Available: {}, Required: {}",
+                                            trade.symbol, available, trade.quantity
+                                        ),
+                                        ctx.current_time,
                                     );
                                     log::warn!(
                                         "{}",
@@ -2560,5 +2602,206 @@ mod tests {
         assert!(rendered.contains("\"strategy_id\":\"delta\""));
         assert!(rendered.contains("\"slot\":\"delta\""));
         assert!(rendered.contains("\"event_time_iso\":\"1970-01-01T00:00:04Z\""));
+    }
+
+    /// 带一笔「此前已部分成交」的订单(1000 股, 已成交 300 股, 均价 90),
+    /// 在 AAPL 开盘 100 的 bar 上跑一次撮合。
+    fn run_after_prior_fill(
+        side: crate::model::OrderSide,
+        allow_resize: bool,
+        cash: Decimal,
+        position: Decimal,
+        available: Decimal,
+    ) -> (SimulatedExecutionClient, Vec<Event>) {
+        let mut order = create_test_order(
+            "AAPL",
+            side,
+            crate::model::OrderType::Market,
+            Decimal::from(1000),
+            None,
+        );
+        order.status = OrderStatus::PartiallyFilled;
+        order.filled_quantity = Decimal::from(300);
+        order.average_filled_price = Some(Decimal::from(90));
+        order.commission = Decimal::from(5);
+        order.allow_quantity_auto_resize = allow_resize;
+        run_stock_order_at_100(order, cash, position, available)
+    }
+
+    fn run_stock_order_at_100(
+        order: Order,
+        cash: Decimal,
+        position: Decimal,
+        available: Decimal,
+    ) -> (SimulatedExecutionClient, Vec<Event>) {
+        let mut sim = SimulatedExecutionClient::new();
+        let instruments = create_test_instruments();
+        sim.on_order(order);
+
+        let bar = create_test_bar(
+            "AAPL",
+            Decimal::from(100),
+            Decimal::from(100),
+            Decimal::from(100),
+            Decimal::from(100),
+        );
+        let mut positions = HashMap::new();
+        let mut available_positions = HashMap::new();
+        if position > Decimal::ZERO {
+            positions.insert("AAPL".to_string(), position);
+            available_positions.insert("AAPL".to_string(), available);
+        }
+        let portfolio = crate::portfolio::Portfolio {
+            cash,
+            positions: positions.into(),
+            available_positions: available_positions.into(),
+        };
+        let last_prices = HashMap::new();
+        let risk_manager = crate::risk::RiskManager::new();
+        let trade_tracker = crate::analysis::TradeTracker::new();
+        let market_model = crate::market::MarketConfig::China(crate::market::ChinaMarketConfig {
+            stock: Some(crate::market::stock::StockConfig::default()),
+            ..Default::default()
+        })
+        .create_model();
+        let ctx = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &last_prices,
+            trade_tracker: &trade_tracker,
+            market_model: market_model.as_ref(),
+            execution_policy_core: ExecutionPolicyCore::default(),
+            bar_index: 0,
+            current_time: 0,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+            risk_config: &risk_manager.config,
+            timezone_name: None,
+            timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
+        };
+        let events = sim.on_event(&Event::Bar(bar), &ctx);
+        (sim, events)
+    }
+
+    fn single_report(events: &[Event]) -> (&Order, Option<&crate::model::Trade>) {
+        assert_eq!(events.len(), 1, "expected exactly one report: {events:?}");
+        match &events[0] {
+            Event::ExecutionReport(order, trade) => (order, trade.as_ref()),
+            other => panic!("unexpected event {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_margin_reject_after_partial_fill_keeps_filled_quantity() {
+        // 剩余 700 股 @100 需 70000, 只有 50000: 剩余部分被拒,
+        // 但此前已成交的 300 股(均价 90)必须保留, 状态为撤销而非拒单。
+        let (sim, events) = run_after_prior_fill(
+            crate::model::OrderSide::Buy,
+            false,
+            Decimal::from(50000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        let (order, trade) = single_report(&events);
+        assert!(trade.is_none());
+        assert_eq!(order.status, OrderStatus::Cancelled);
+        assert_eq!(order.filled_quantity, Decimal::from(300));
+        assert_eq!(order.average_filled_price, Some(Decimal::from(90)));
+        assert_eq!(order.commission, Decimal::from(5));
+        assert!(
+            order
+                .reject_reason
+                .contains("Insufficient margin at execution")
+        );
+        assert!(sim.orders.is_empty());
+    }
+
+    #[test]
+    fn test_position_reject_after_partial_fill_keeps_filled_quantity() {
+        // 剩余 700 股要卖, 可用只有 200: 同上, 保留已成交的 300 股。
+        let (sim, events) = run_after_prior_fill(
+            crate::model::OrderSide::Sell,
+            false,
+            Decimal::from(50000),
+            Decimal::from(700),
+            Decimal::from(200),
+        );
+        let (order, trade) = single_report(&events);
+        assert!(trade.is_none());
+        assert_eq!(order.status, OrderStatus::Cancelled);
+        assert_eq!(order.filled_quantity, Decimal::from(300));
+        assert_eq!(order.average_filled_price, Some(Decimal::from(90)));
+        assert!(
+            order
+                .reject_reason
+                .contains("Insufficient available position")
+        );
+        assert!(sim.orders.is_empty());
+    }
+
+    #[test]
+    fn test_margin_reject_without_prior_fill_stays_rejected() {
+        let order = create_test_order(
+            "AAPL",
+            crate::model::OrderSide::Buy,
+            crate::model::OrderType::Market,
+            Decimal::from(1000),
+            None,
+        );
+        let (_, events) =
+            run_stock_order_at_100(order, Decimal::from(50000), Decimal::ZERO, Decimal::ZERO);
+        let (order, trade) = single_report(&events);
+        assert!(trade.is_none());
+        assert_eq!(order.status, OrderStatus::Rejected);
+        assert_eq!(order.filled_quantity, Decimal::ZERO);
+        assert_eq!(order.average_filled_price, None);
+    }
+
+    #[test]
+    fn test_resize_after_partial_fill_reports_consistent_order() {
+        // 剩余 700 股只买得起 400 股: 订单数量收为 300 + 400, 成交量与成交记录一致。
+        let (sim, events) = run_after_prior_fill(
+            crate::model::OrderSide::Buy,
+            true,
+            Decimal::from(50000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        let (order, trade) = single_report(&events);
+        let trade = trade.expect("resized order should still fill");
+        assert_eq!(trade.quantity, Decimal::from(400));
+        assert_eq!(order.status, OrderStatus::Filled);
+        assert_eq!(order.quantity, Decimal::from(700));
+        assert_eq!(order.filled_quantity, Decimal::from(700));
+        let expected_avg = (Decimal::from(300) * Decimal::from(90)
+            + Decimal::from(400) * Decimal::from(100))
+            / Decimal::from(700);
+        assert_eq!(order.average_filled_price, Some(expected_avg));
+        assert!(sim.orders.is_empty());
+    }
+
+    #[test]
+    fn test_resize_to_zero_after_partial_fill_reports_cancel() {
+        // 一手都买不起: 不能静默丢掉回报(订单会从执行端消失, 订单管理器却永远收不到终态)。
+        let (sim, events) = run_after_prior_fill(
+            crate::model::OrderSide::Buy,
+            true,
+            Decimal::from(50),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        let (order, trade) = single_report(&events);
+        assert!(trade.is_none());
+        assert_eq!(order.status, OrderStatus::Cancelled);
+        assert_eq!(order.filled_quantity, Decimal::from(300));
+        assert_eq!(order.average_filled_price, Some(Decimal::from(90)));
+        assert!(
+            order
+                .reject_reason
+                .contains("Insufficient margin at execution")
+        );
+        assert!(sim.orders.is_empty());
     }
 }

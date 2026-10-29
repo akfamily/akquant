@@ -35,7 +35,7 @@ def run_backtest(
     timezone: Optional[str] = None,
     sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
-    t_plus_one: bool = False,
+    t_plus_one: Optional[bool] = None,
     initialize: Optional[Callable[[Any], None]] = None,
     on_start: Optional[Callable[[Any], None]] = None,
     on_resume: Optional[Callable[[Any], None]] = None,
@@ -127,7 +127,7 @@ def run_backtest(
 *   `freq`: Data frequency, default `None`. When `data` is a list containing `Tick`, it is the tick aggregation period (whole minutes only, e.g. `"1min"`): ticks are aggregated into bars and `on_bar` fires as well. Bar data (DataFrame, `List[Bar]`, catalog) may pass it too, to declare the bar period and fill each bar's interval start (`interval_start = timestamp − period`); write it as "positive integer + unit" with unit `min` / `h` / `d` (or `day`), e.g. `"1min"`, `"5min"`, `"1h"`, `"1d"`. Date-only daily bars (local midnight) need no `freq`: they are rewritten to the trading day's close automatically. Daily bars stamped at a fixed non-midnight time such as 15:00 need `freq="1d"`; otherwise each bar is matched in the session of that time (15:00 is classified by "1ns before the timestamp", i.e. 14:59:59.999…, as the closing call auction), orders are queued to the next bar, and a warning is logged once. The strategy's `self.freq` is this value.
 *   `sessions`: Symbol prefix → session template name or custom session table (`"default"` is the global default), default `None`. When omitted, China time zones use per-asset defaults (stocks/funds `CN_STOCK`, futures `CN_FUTURES_DAY`, options `CN_OPTION`, other assets `ALWAYS_OPEN`); other time zones trade continuously all day (`ALWAYS_OPEN`). List the templates with `aq.SessionResolver.templates()`. A custom table is a sequence of `(start, end, session[, anchor])` segments, e.g. `[("21:00", "02:30", "continuous"), ("09:00", "15:00", "continuous")]`; anything outside the segments is closed, segments with `start >= "18:00"` anchor to the previous trading day (night session) unless a 4th item `"prev"` / `"day"` says otherwise, and keys match by the longest symbol prefix. Full rules in [Chapter 7](../textbook/07_futures.md).
 *   `trading_calendar`: List of trading days (`date` / string / `Timestamp`), default `None`. When omitted, China markets infer trading days from weekdays (holidays are treated as trading days, so night sessions and end-of-day settlement around holidays are wrong) and a warning is logged once; `ALWAYS_OPEN` counts every day and does not warn. Data timestamps outside the range covered by the given calendar raise `ValueError`.
-*   `t_plus_one`: Enable T+1 trading rule (Default False). If enabled, it forces usage of China Market Model.
+*   `t_plus_one`: Enable T+1 trading rule. When omitted, the `broker_profile` setting is used (all three built-in A-share templates enable it); without a template it is False. If enabled, it forces usage of China Market Model.
 *   `slippage`: Global slippage (Default 0.0). E.g., 0.0001 means 1bp (0.01%) slippage, using percent model.
 *   `volume_limit_pct`: Max participation rate, default `None` (unlimited, same as 0). With 0.25 a single bar fills at most 25% of its volume, rounded down to whole lots; if that is less than one lot the bar fills nothing and the order stays open. An order whose remaining quantity is at most `volume × pct` still fills in one piece (this may be an odd lot, e.g. selling the last 50 shares); an IOC/FOK order whose floored cap is 0 is cancelled on that bar. **Bar volume must use the same unit as order quantity**: AKShare's `stock_zh_a_hist` reports volume in lots (100 shares), multiply by 100 before enabling the limit. The limit applies to bar matching only; tick-driven matching is not subject to it. For instruments with fractional quantities (crypto, forex), set `lot_size` (default 1), otherwise the capped quantity is floored to whole units.
 *   `warmup_period`: Strategy warmup period. Specifies the length of historical data (number of Bars) to preload for indicator calculation.
@@ -167,7 +167,7 @@ def run_backtest(
 *   `risk_budget_mode` / `risk_budget_reset_daily`: Risk budget accounting mode and reset policy.
 *   `analyzer_plugins`: Optional analyzer plugin list. Plugins receive `on_start/on_bar/on_trade/on_finish` callbacks and final outputs are stored in `result.analyzer_outputs`.
 *   `on_event`: Optional stream callback. When omitted, an internal no-op callback keeps legacy blocking return semantics; when provided, runtime events are emitted.
-*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size). Built-ins: `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
+*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size/T+1); explicit arguments take precedence. Built-ins: `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
 
 **Recommended fill_policy examples (primary path):**
 
@@ -947,7 +947,7 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
     *   Limit order if `price` is specified.
     *   Stop order (Stop Market) if `trigger_price` is specified.
     *   Omitting `symbol` uses the current bar/tick symbol; callbacks without market context (e.g. `on_start`) must pass it explicitly.
-    *   Omitting `quantity` sizes the order via `self.sizer` (defaults to `FixedSize(100)`, replaceable with `set_sizer()`).
+    *   Omitting `quantity` sizes the order via `self.sizer` (defaults to `FixedSize(100)`, replaceable with `set_sizer()`); the sized quantity is rounded down to the instrument's `lot_size`, and nothing is submitted if it is below one lot. With `lot_size` 1 no rounding is applied (fractional quantities pass through). An explicit `quantity` is never rounded.
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: Sell (close long / open short). Same parameters as above, except that **omitting `quantity` does not use the sizer — it closes the whole position**: total position in backtest, available position under `broker_live` (China A-share T+1 freezes same-day buys, so sizing off the total gets the whole order rejected by the broker).
 *   When the resolved quantity is `<= 0`, no order is placed and an empty receipt is returned (`len(receipt) == 0`, `receipt.primary == ""`).
 *   `receipt.failure` (read-only, `None` / `"rejected"` / `"unknown"`): distinguishes the three causes of an empty receipt.
@@ -1377,9 +1377,9 @@ Funds-check fields:
 
 *   `check_cash`: enable cash/margin checks (default `True`). It controls both the submission gate and the execution gate; `False` lets the account overdraw.
 *   `safety_margin`: buffer for the submission gate (default `0.0001`), applied as `available × (1 − safety_margin)`. The execution gate uses no buffer.
-*   The submission gate prices the order at a **reference price**: the limit price for limit orders, the last price for market orders. Under `fill_policy=NextOpen()` the last price is the previous bar's close while the real fill is the next bar's open, so on gap-up days a full-size market buy sized at the open can be rejected at submission (`Insufficient margin`, with `Required = quantity × reference price + commission` and `Available = available funds × (1 − safety_margin)`). The execution gate checks again at the real fill price. Workarounds: use a limit order priced at the highest price you accept; call `buy(symbol, quantity=None)` so the sizer computes the quantity and the engine shrinks it when funds are short; or size with `reference price × (1 + headroom)` yourself.
+*   The submission gate prices the order at a **reference price**: the limit price for limit orders, the last price for market orders. Under `fill_policy=NextOpen()` the last price is the previous bar's close while the real fill is the next bar's open, so on gap-up days a full-size market buy sized at the open can be rejected at submission (`Insufficient margin`, with `Required = quantity × reference price + commission` and `Available = available funds × (1 − safety_margin)`). The execution gate checks again at the real fill price. Workarounds: use a limit order priced at the highest price you accept; call `buy(symbol, quantity=None)` so the sizer computes the quantity and the engine shrinks it to whole lots it can afford when funds are short (at both gates; buys with an explicit `quantity` are never resized); or size with `reference price × (1 + headroom)` yourself.
 
-Rejection reasons are available in `orders_df.reject_reason`.
+Rejection reasons are available in `orders_df.reject_reason`. Execution-time rejections carry an `at execution` marker. If the order was already partially filled (e.g. across several bars under `volume_limit_pct`), only the remainder is rejected: the status becomes `cancelled`, `filled_quantity` and `avg_price` keep the filled part, and the reason is still in `reject_reason`.
 
 ## 6. Analysis
 

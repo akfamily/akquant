@@ -4030,7 +4030,7 @@ def test_run_backtest_broker_profile_applies_defaults() -> None:
 
     strategy = cast(ProfileCaptureStrategy, result.strategy)
     assert strategy.snapshot["commission_rate"] == pytest.approx(0.0003, rel=1e-12)
-    assert strategy.snapshot["stamp_tax_rate"] == pytest.approx(0.001, rel=1e-12)
+    assert strategy.snapshot["stamp_tax_rate"] == pytest.approx(0.0005, rel=1e-12)
     assert strategy.snapshot["transfer_fee_rate"] == pytest.approx(0.00001, rel=1e-12)
     assert strategy.snapshot["min_commission"] == pytest.approx(5.0, rel=1e-12)
     assert strategy.snapshot["lot_size"] == 100
