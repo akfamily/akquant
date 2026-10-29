@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.74] - 2026-10-29
+
 > **规则版本 2.1.0**：显式开启成交量限制（含 `broker_profile` 模板）的回测结果会变化，不传 `volume_limit_pct` 且不用 `broker_profile` 的回测不变；**指标数值口径统一对齐 TA-Lib 0.8.2**，用到下列指标的回测、`Strategy.I()`、`aq.Indicator` 与实盘指标都会变化，不用指标的回测不变。
 
 ### Fixed
