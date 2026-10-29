@@ -387,8 +387,10 @@ def _submit_buy_side_orders(
     if allow_quantity_auto_resize is None:
         allow_quantity_auto_resize = quantity is None
     if quantity is None:
-        quantity = strategy.sizer.get_size(
-            ref_price, strategy.ctx.cash, strategy.ctx, symbol
+        quantity = round_sizer_quantity(
+            strategy,
+            symbol,
+            strategy.sizer.get_size(ref_price, strategy.ctx.cash, strategy.ctx, symbol),
         )
     if quantity <= 0:
         return []
@@ -1075,6 +1077,21 @@ def _resolve_lot_size(strategy: Any, symbol: str) -> int:
     return registered
 
 
+def round_sizer_quantity(strategy: Any, symbol: str, quantity: float) -> float:
+    """把 sizer 算出的数量按最小交易单位向下取整.
+
+    ``PercentSizer`` / ``AllInSizer`` 等只按资金折算股数, 不知道手数; A 股、港股
+    登记了 ``lot_size`` 时, 非整手的买单会被撮合层整单拒掉。取整口径与
+    ``order_target_*`` 相同(:func:`_resolve_lot_size`), 自定义 sizer 一并覆盖。
+    最小交易单位为 1 时不取整: 加密货币等小数数量照常下单。显式给的 quantity
+    不经过这里, 原样提交。
+    """
+    lot_size = _resolve_lot_size(strategy, symbol)
+    if lot_size <= 1 or quantity <= 0:
+        return quantity
+    return float((quantity // lot_size) * lot_size)
+
+
 def calculate_max_buy_qty(
     strategy: Any, symbol: str, price: float, cash: float
 ) -> float:
@@ -1595,8 +1612,10 @@ def short(
             ref_price = 0.0
 
     if quantity is None:
-        quantity = strategy.sizer.get_size(
-            ref_price, strategy.ctx.cash, strategy.ctx, symbol
+        quantity = round_sizer_quantity(
+            strategy,
+            symbol,
+            strategy.sizer.get_size(ref_price, strategy.ctx.cash, strategy.ctx, symbol),
         )
 
     if quantity > 0:

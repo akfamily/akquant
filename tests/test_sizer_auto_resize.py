@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 import pandas as pd
 from akquant import Bar, Strategy, run_backtest
-from akquant.sizer import AllInSizer, FixedSize, Sizer
+from akquant.sizer import AllInSizer, FixedSize, PercentSizer, Sizer
 
 SYMBOL = "RESIZE"
 
@@ -49,7 +49,7 @@ class _BuyOnce(Strategy):
             self.buy(bar.symbol, self.quantity)
 
 
-def _run(strategy: type[Strategy], prices: list[float]) -> Any:
+def _run(strategy: type[Strategy], prices: list[float], lot_size: int = 100) -> Any:
     return run_backtest(
         data=_bars(prices),
         strategy=strategy,
@@ -59,7 +59,7 @@ def _run(strategy: type[Strategy], prices: list[float]) -> Any:
         min_commission=0.0,
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
-        lot_size=100,
+        lot_size=lot_size,
         show_progress=False,
     )
 
@@ -71,6 +71,11 @@ class _AllIn(_BuyOnce):
 class _Fixed2700(_BuyOnce):
     sizer_factory = FixedSize
     sizer_args = (2700.0,)
+
+
+class _FixedSize50(_BuyOnce):
+    sizer_factory = FixedSize
+    sizer_args = (50.0,)
 
 
 class _Explicit3100(_BuyOnce):
@@ -106,3 +111,39 @@ def test_explicit_quantity_is_not_resized() -> None:
     result = _run(_Explicit3100, [10.0, 10.0, 10.0])
     assert result.executions == []
     assert result.orders_df.iloc[0]["status"] == "rejected"
+
+
+class _Percent90(_BuyOnce):
+    sizer_factory = PercentSizer
+    sizer_args = (90.0,)
+
+
+class _Fractional(Sizer):
+    """返回小数数量的自定义 sizer(如加密货币)."""
+
+    def get_size(self, price: float, cash: float, context: Any, symbol: str) -> float:
+        return 2.5
+
+
+class _FractionalBuy(_BuyOnce):
+    sizer_factory = _Fractional
+
+
+def test_sizer_quantity_rounded_down_to_lot() -> None:
+    """PercentSizer 按 10 元算出 2790 股: 按手数取整为 2700 股, 不再整单被拒."""
+    result = _run(_Percent90, [10.0, 10.0, 10.0])
+    assert [float(t.quantity) for t in result.executions] == [2700.0]
+    assert float(result.orders_df.iloc[0]["quantity"]) == 2700.0
+
+
+def test_sizer_quantity_below_one_lot_places_nothing() -> None:
+    """不足一手时不下单(与 order_target 一致), 而不是下一张必被拒的单."""
+    result = _run(_FixedSize50, [10.0, 10.0, 10.0])
+    assert result.executions == []
+    assert len(result.orders_df) == 0
+
+
+def test_sizer_fractional_quantity_kept_when_lot_is_one() -> None:
+    """lot_size 为 1 时不取整, 小数数量原样下单."""
+    result = _run(_FractionalBuy, [10.0, 10.0, 10.0], lot_size=1)
+    assert float(result.orders_df.iloc[0]["quantity"]) == 2.5

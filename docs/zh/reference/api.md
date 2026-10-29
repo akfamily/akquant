@@ -1010,7 +1010,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   如果指定 `price`，则为限价单。
     *   如果指定 `trigger_price`，则为止损/止盈单 (Stop Market)。
     *   不传 `symbol` 时取当前 bar/tick 的标的；在无行情上下文的回调（如 `on_start`）中必须显式传入。
-    *   不传 `quantity` 时按 `self.sizer` 计算下单量（默认 `FixedSize(100)`，可用 `set_sizer()` 替换）。
+    *   不传 `quantity` 时按 `self.sizer` 计算下单量（默认 `FixedSize(100)`，可用 `set_sizer()` 替换），算出的数量按标的最小交易单位（`lot_size`）向下取整，不足一手则不下单；`lot_size` 为 1 时不取整（小数数量照常下单）。显式给的 `quantity` 不取整。
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: 卖出（平多/开空）。参数同上，但**不传 `quantity` 时不走 sizer，而是全平当前持仓**：回测取总持仓，`broker_live` 取可用持仓（A 股 T+1 下当日买入部分不可卖，按总量报单会被柜台整单拒绝）。
 *   解析后下单量 `<= 0` 时不报单，返回空回执（`len(receipt) == 0`、`receipt.primary == ""`）。
 *   `receipt.failure`（只读，`None` / `"rejected"` / `"unknown"`）：区分空回执的三种成因。

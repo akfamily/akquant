@@ -947,7 +947,7 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
     *   Limit order if `price` is specified.
     *   Stop order (Stop Market) if `trigger_price` is specified.
     *   Omitting `symbol` uses the current bar/tick symbol; callbacks without market context (e.g. `on_start`) must pass it explicitly.
-    *   Omitting `quantity` sizes the order via `self.sizer` (defaults to `FixedSize(100)`, replaceable with `set_sizer()`).
+    *   Omitting `quantity` sizes the order via `self.sizer` (defaults to `FixedSize(100)`, replaceable with `set_sizer()`); the sized quantity is rounded down to the instrument's `lot_size`, and nothing is submitted if it is below one lot. With `lot_size` 1 no rounding is applied (fractional quantities pass through). An explicit `quantity` is never rounded.
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: Sell (close long / open short). Same parameters as above, except that **omitting `quantity` does not use the sizer — it closes the whole position**: total position in backtest, available position under `broker_live` (China A-share T+1 freezes same-day buys, so sizing off the total gets the whole order rejected by the broker).
 *   When the resolved quantity is `<= 0`, no order is placed and an empty receipt is returned (`len(receipt) == 0`, `receipt.primary == ""`).
 *   `receipt.failure` (read-only, `None` / `"rejected"` / `"unknown"`): distinguishes the three causes of an empty receipt.

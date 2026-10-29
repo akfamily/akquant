@@ -413,7 +413,10 @@ class BrokerOrderSubmitter:
                 f"sizer {type(sizer).__name__}.get_size() 返回 None "
                 "(get_size 是否漏了 return?)"
             )
-        return float(size)
+        # 与回测同口径按手数取整; 延迟导入: strategy_trading_api 依赖 gateway 包。
+        from ..strategy_trading_api import round_sizer_quantity
+
+        return round_sizer_quantity(self._strategy, symbol, float(size))
 
     def _check_risk(
         self,
