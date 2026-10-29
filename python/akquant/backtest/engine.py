@@ -13,6 +13,7 @@ from typing import (
     Iterable,
     List,
     Literal,
+    Mapping,
     Optional,
     Sequence,
     Tuple,
@@ -1628,6 +1629,30 @@ def _attach_result_runtime_metadata(
         )
 
 
+def _resolve_warm_start_volume_limit(
+    explicit: Optional[float],
+    strategy_config: Optional[StrategyConfig],
+    restored_config: Mapping[str, Any],
+    snapshot_features: Mapping[str, Any],
+) -> float:
+    """热启动的量限: 显式入参 > strategy_config > 快照记录 > 不限制.
+
+    0.3.73 及以前的快照在用户没传量限时也记 0.25(当年文档里的默认值),
+    而那时 0.25 实际从未生效; 没有 ``volume_limit_explicit`` 标记的快照里的
+    0.25 因此按“不限制”恢复, 保持续跑结果与冷启动一致。
+    """
+    if explicit is not None:
+        return float(explicit)
+    if strategy_config is not None:
+        return float(strategy_config.volume_limit_pct)
+    restored = restored_config.get("volume_limit_pct")
+    if restored is None:
+        return 0.0
+    if float(restored) == 0.25 and not snapshot_features.get("volume_limit_explicit"):
+        return 0.0
+    return float(restored)
+
+
 def _build_resolved_backtest_config(
     *,
     slippage_policy: SlippagePolicy,
@@ -3199,7 +3224,7 @@ def run_backtest(
                      {"type": "fixed", "value": 0.2}、
                      {"type": "ticks", "value": 1}。
                      裸 float 仍兼容，但已不推荐，且按 percent 语义解析。
-    :param volume_limit_pct: 成交量限制比例 (默认 0.25)
+    :param volume_limit_pct: 成交量限制比例, 默认 0 表示不限制; 截断量按手数向下取整
     :param fill_policy: 统一成交语义配置（可选），传入 ``FillMode`` 对象:
         ``NextOpen()`` 下一根开盘价、``NextClose()`` 下一根收盘价、
         ``CurrentClose()`` 当根收盘价、``NextAverage()`` 下一根 OHLC4 均价、
@@ -3498,7 +3523,7 @@ def run_backtest(
         if config and config.strategy_config:
             volume_limit_pct = config.strategy_config.volume_limit_pct
         else:
-            volume_limit_pct = 0.25
+            volume_limit_pct = 0.0
 
     # Resolve Timezone
     if timezone is None:
@@ -4999,13 +5024,13 @@ def run_backtest(
                 normalized_global_slippage,
             )
 
-    if volume_limit_pct != 0.25:
-        if hasattr(engine, "set_volume_limit"):
-            engine.set_volume_limit(volume_limit_pct)
-        else:
-            logger.warning(
-                f"Volume limit {volume_limit_pct} set but not supported by Engine."
-            )
+    # 0 表示不限制; 任何解析出来的值都下发, 不能拿默认值当哨兵跳过 (#409)
+    if hasattr(engine, "set_volume_limit"):
+        engine.set_volume_limit(float(volume_limit_pct))
+    else:
+        logger.warning(
+            f"Volume limit {volume_limit_pct} set but not supported by Engine."
+        )
 
     # Configure other asset fees if provided
     if "fund_commission" in kwargs:
@@ -7231,18 +7256,16 @@ def run_from_checkpoint(
                 normalized_global_slippage,
             )
 
-    warm_start_volume_limit = cast(Optional[float], kwargs.get("volume_limit_pct"))
-    if warm_start_volume_limit is None and strategy_config is not None:
-        warm_start_volume_limit = strategy_config.volume_limit_pct
-    if warm_start_volume_limit is None:
-        warm_start_volume_limit = cast(
-            Optional[float], restored_backtest_config.get("volume_limit_pct")
-        )
-    if (
-        warm_start_volume_limit is not None
-        and warm_start_volume_limit != 0.25
-        and hasattr(engine, "set_volume_limit")
-    ):
+    warm_start_volume_limit = _resolve_warm_start_volume_limit(
+        cast(Optional[float], kwargs.get("volume_limit_pct")),
+        strategy_config,
+        restored_backtest_config,
+        cast(
+            Mapping[str, Any],
+            getattr(strategy_instance, "_warm_start_snapshot_features", None) or {},
+        ),
+    )
+    if hasattr(engine, "set_volume_limit"):
         engine.set_volume_limit(warm_start_volume_limit)
 
     restored_initial_market_value = float(restored_cash)
@@ -7525,9 +7548,7 @@ def run_from_checkpoint(
     # 实际生效的值；本段没有生效值的项（无风控、未设成交策略）保留存档原值
     segment_resolved = _build_resolved_backtest_config(
         slippage_policy=normalized_global_slippage,
-        volume_limit_pct=(
-            0.25 if warm_start_volume_limit is None else warm_start_volume_limit
-        ),
+        volume_limit_pct=warm_start_volume_limit,
         commission_policy=resolved_commission_policy,
         stamp_tax_rate=stamp_tax,
         transfer_fee_rate=transfer_fee,

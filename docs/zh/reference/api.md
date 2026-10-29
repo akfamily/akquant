@@ -237,7 +237,7 @@ def run_from_checkpoint(
 *   `trading_calendar`: 交易日列表（`date` / 字符串 / `Timestamp`），默认 `None`。不传时中国市场按工作日推算（节假日也被当作交易日，节假日前后的夜盘与日终结算会算错），并告警一次；`ALWAYS_OPEN` 每天都算，不告警。数据时刻超出所传日历覆盖范围时报 `ValueError`。
 *   `t_plus_one`: 是否启用 T+1 交易规则 (默认 False)。如果启用，将强制使用中国市场模型。
 *   `slippage`: 全局滑点 (默认 0.0)。例如 0.0001 代表 1bp (0.01%) 的滑点，采用百分比模型。
-*   `volume_limit_pct`: 成交量限制比例 (默认 0.25)。限制单笔成交不超过该 Bar 总成交量的百分比。
+*   `volume_limit_pct`: 成交量限制比例，默认 `None`（不限制，等同 0）。设为 0.25 时单根 bar 最多成交该 bar 成交量的 25%，截断量按手数向下取整，不足一手则本根不成交、订单继续挂着。订单剩余量不超过 `成交量 × 比例` 时仍一次成交（可能是零股，比如卖出最后剩下的 50 股）；IOC/FOK 订单若取整后的截断量为 0，当根撤销。**bar 的成交量必须与下单数量同单位**：AKShare 的 `stock_zh_a_hist` 等接口成交量单位是“手”，需先乘以 100 再开启量限。量限只作用于 bar 撮合，tick 驱动的撮合不受量限约束。数量可为小数的品种（加密货币、外汇）需设置 `lot_size`（默认 1），否则截断后的数量会向下取整为整数。
 *   `warmup_period`: 策略预热期。指定需要预加载的历史数据长度（Bar 数量），用于计算指标。
 *   `start_time` / `end_time`: 回测开始/结束时间。若传入 naive 时间字符串或 `Timestamp`，会按当前 `timezone` 解释，再转换为 UTC 参与过滤。
 *   `catalog_path`: 当 `data` 未显式传入时，可从该目录按 `ParquetDataCatalog` 规则加载数据。
@@ -497,7 +497,7 @@ class StrategyConfig:
     enable_fractional_shares: bool = False
     round_fill_price: bool = True
     slippage: Union[float, Dict[str, Any], None] = 0.0
-    volume_limit_pct: float = 0.25
+    volume_limit_pct: float = 0.0
     max_long_positions: Optional[int] = None
     max_short_positions: Optional[int] = None
     exit_on_last_bar: bool = True
@@ -1521,6 +1521,7 @@ class RiskConfig:
     *   **减仓/平仓**会释放保证金，变化量为负，先抵掉自己的费用——因此**卖单不需要预先持有现金**，与 A 股"卖出费用从成交款净额扣除"的规则一致。满仓后只剩几十元现金时，全量卖单照常成交。
     *   仅当卖出所得连费用都盖不住时（如持 100 股 0.01 元的股票），该值仍为正并照常验资；放过它等于让现金透支，而透支只有 `check_cash=False` 才允许。
 *   `safety_margin`: 提交时闸门的安全垫（默认 `0.0001`），按 `(1 - safety_margin)` 折减可用资金，用于吸收"提交时用预估价、成交时用真实价"的偏差。成交时闸门不留安全垫。
+*   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以跳空高开的日子里，按开盘价算好的满仓市价买单可能在提交时就被拒（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩量；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
 
 这些拒单原因会体现在 `orders_df.reject_reason` 字段中。成交时闸门产生的拒单，原因里会带 `at execution` 标记。
 

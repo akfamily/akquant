@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **规则版本 2.0.1**：显式开启成交量限制（含 `broker_profile` 模板）的回测结果会变化；不传 `volume_limit_pct` 且不用 `broker_profile` 的回测不变。
+
+### Fixed
+- **`volume_limit_pct` 显式传 0.25 不生效**（#409）：原来只有不等于 0.25 时才下发给引擎，而引擎默认不限制，因此文档里的默认值 0.25、显式传入的 0.25、`cn_stock_t1_low_fee` 模板的 0.25 都没有生效；现在任何显式值都生效，热启动同样如此。
+- **成交量截断后出现零股或小数手**：截断量按 `lot_size` 向下取整，不足一手时本根不成交、订单继续挂着；订单剩余量不超过 `成交量 × 比例` 时仍一次成交（可能是零股，比如卖出最后剩下的 50 股）；IOC/FOK 订单取整后的截断量为 0 时当根撤销。
+
+### Changed
+- **`volume_limit_pct` 默认改为不限制**：与此前的实际行为一致，文档原写默认 0.25；`StrategyConfig.volume_limit_pct` 默认值改为 0.0，`result.resolved_config` 记录 0.0。0.3.73 及以前的快照无法区分用户显式传的 0.25 与当时的默认值，量限记为 0.25 时热启动一律按不限制恢复；需要量限时在 `run_from_checkpoint` 里重新传 `volume_limit_pct`。热启动时如果传了 `config=BacktestConfig(strategy_config=StrategyConfig(...))`（哪怕只是为了设滑点），其中的 `volume_limit_pct`（默认 0.0）会覆盖快照里记录的量限；需要保留时显式设置。
+
+### Docs
+- 写明提交时验资用参考价估算、跳空日可能拒单及规避办法（#410）。
+
+### Known Issues
+- **订单跨多根 bar 部分成交后，若某一根在成交时验资被拒（资金或可用持仓不足），`orders_df` 里该订单的 `filled_quantity` 记为 0、状态为 `rejected`**：此前已成交的部分仍记录在 `executions` 中并已入账，两处口径不一致；开启成交量限制后订单更容易跨多根 bar 成交，因此更容易遇到；后续修复。
+- **IOC/FOK 订单在量限截断量大于 0 但小于剩余量时，IOC 的剩余量不会撤销，FOK 会部分成交**：与 IOC/FOK 的语义不符，目前只有截断量取整后为 0 时才当根撤销；后续修复。
+
 ## [0.3.73] - 2026-10-28
 
 仅文档与发布流程变更，无代码改动，行为与 0.3.72 完全一致；下游无需为此升级。

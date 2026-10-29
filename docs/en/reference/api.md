@@ -129,7 +129,7 @@ def run_backtest(
 *   `trading_calendar`: List of trading days (`date` / string / `Timestamp`), default `None`. When omitted, China markets infer trading days from weekdays (holidays are treated as trading days, so night sessions and end-of-day settlement around holidays are wrong) and a warning is logged once; `ALWAYS_OPEN` counts every day and does not warn. Data timestamps outside the range covered by the given calendar raise `ValueError`.
 *   `t_plus_one`: Enable T+1 trading rule (Default False). If enabled, it forces usage of China Market Model.
 *   `slippage`: Global slippage (Default 0.0). E.g., 0.0001 means 1bp (0.01%) slippage, using percent model.
-*   `volume_limit_pct`: Volume limit percentage (Default 0.25). Limits single trade to not exceed this percentage of the bar's total volume.
+*   `volume_limit_pct`: Max participation rate, default `None` (unlimited, same as 0). With 0.25 a single bar fills at most 25% of its volume, rounded down to whole lots; if that is less than one lot the bar fills nothing and the order stays open. An order whose remaining quantity is at most `volume × pct` still fills in one piece (this may be an odd lot, e.g. selling the last 50 shares); an IOC/FOK order whose floored cap is 0 is cancelled on that bar. **Bar volume must use the same unit as order quantity**: AKShare's `stock_zh_a_hist` reports volume in lots (100 shares), multiply by 100 before enabling the limit. The limit applies to bar matching only; tick-driven matching is not subject to it. For instruments with fractional quantities (crypto, forex), set `lot_size` (default 1), otherwise the capped quantity is floored to whole units.
 *   `warmup_period`: Strategy warmup period. Specifies the length of historical data (number of Bars) to preload for indicator calculation.
 *   `start_time` / `end_time`: Backtest start/end time. Naive strings or `Timestamp` values are interpreted in the current `timezone` before being converted to UTC for filtering.
 *   `catalog_path`: When `data` is omitted, load data from this directory using `ParquetDataCatalog` rules.
@@ -509,7 +509,7 @@ class StrategyConfig:
     enable_fractional_shares: bool = False
     round_fill_price: bool = True
     slippage: Union[float, Dict[str, Any], None] = 0.0
-    volume_limit_pct: float = 0.25
+    volume_limit_pct: float = 0.0
     exit_on_last_bar: bool = True
 
     # Position Sizing
@@ -1372,6 +1372,12 @@ Account-level field semantics:
 *   `max_account_drawdown`: Maximum drawdown limit in 0~1 ratio. Drawdown is measured against historical peak equity; once breached, new order requests are rejected.
 *   `max_daily_loss`: Daily loss limit in 0~1 ratio. Loss is measured against equity at the first risk check of the trading day; once breached, new order requests are rejected.
 *   `stop_loss_threshold`: Equity stop-loss threshold in 0~1 ratio. If current equity falls below `baseline_equity_at_rule_activation * threshold`, new order requests are rejected.
+
+Funds-check fields:
+
+*   `check_cash`: enable cash/margin checks (default `True`). It controls both the submission gate and the execution gate; `False` lets the account overdraw.
+*   `safety_margin`: buffer for the submission gate (default `0.0001`), applied as `available × (1 − safety_margin)`. The execution gate uses no buffer.
+*   The submission gate prices the order at a **reference price**: the limit price for limit orders, the last price for market orders. Under `fill_policy=NextOpen()` the last price is the previous bar's close while the real fill is the next bar's open, so on gap-up days a full-size market buy sized at the open can be rejected at submission (`Insufficient margin`, with `Required = quantity × reference price + commission` and `Available = available funds × (1 − safety_margin)`). The execution gate checks again at the real fill price. Workarounds: use a limit order priced at the highest price you accept; call `buy(symbol, quantity=None)` so the sizer computes the quantity and the engine shrinks it when funds are short; or size with `reference price × (1 + headroom)` yourself.
 
 Rejection reasons are available in `orders_df.reject_reason`.
 

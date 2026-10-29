@@ -355,4 +355,30 @@ mod tests {
         let _ = matcher.match_order(&mut order, &ctx);
         assert_ne!(order.status, OrderStatus::Rejected);
     }
+
+    #[test]
+    fn test_futures_volume_limit_floors_to_whole_contracts() {
+        // 0.25 * 7 = 1.75 手, 期货 lot_size=1, 只能成交 1 手 (#409)
+        let matcher = FuturesMatcher::default();
+        let mut order = create_order(OrderSide::Buy);
+        order.quantity = dec!(3);
+        let instrument = create_futures_instrument();
+        let bar = crate::model::Bar {
+            timestamp: 100,
+            symbol: "RB2310".to_string(),
+            open: dec!(3500.0),
+            high: dec!(3510.0),
+            low: dec!(3490.0),
+            close: dec!(3505.0),
+            volume: dec!(7),
+            extra: Default::default(),
+            freq: None,
+            interval_start: None,
+        };
+        let event = Event::Bar(bar);
+        let mut ctx = create_context(&event, &instrument);
+        ctx.volume_limit_pct = dec!(0.25);
+        matcher.match_order(&mut order, &ctx);
+        assert_eq!(order.filled_quantity, dec!(1));
+    }
 }

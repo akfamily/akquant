@@ -134,6 +134,9 @@ def save_checkpoint(
             # 若策略声明了 subscribe_bars(), 窗口历史与在制窗口都会从空开始——
             # 见 load_checkpoint 里的告警。
             "history_window_series": True,
+            # 标记该存档的 backtest_config.volume_limit_pct 是真实生效值 (#409)。
+            # 旧存档在未传量限时也记 0.25, 恢复时按“不限制”处理。
+            "volume_limit_explicit": True,
         },
         "backtest_config": backtest_config,
         "version": _VERSION,

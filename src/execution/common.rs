@@ -347,16 +347,33 @@ impl CommonMatcher {
                     let final_price = Self::apply_slippage(order, price, ctx);
 
                     // Check Volume Limit
-                    // 乘法溢出(量极大或比例 > 1)按不限制处理, 不 panic
+                    // 乘法溢出(量极大或比例 > 1)按不限制处理, 不 panic。
+                    // 令 raw = 成交量 * 比例(截断上限): 剩余量不超过 raw 时整笔一次成交
+                    // (可能是零股); 否则按最小交易单位向下取整(#409), 股票不出零股、
+                    // 期货不出小数手。取整后为 0 时本根不成交: 普通订单继续挂着,
+                    // IOC/FOK 在下方按未成交撤销。
+                    let remaining = order.quantity - order.filled_quantity;
                     let max_qty = if !ctx.ignore_volume && volume_limit_pct > Decimal::ZERO {
-                        bar.volume
-                            .checked_mul(volume_limit_pct)
-                            .unwrap_or(Decimal::MAX)
+                        match bar.volume.checked_mul(volume_limit_pct) {
+                            Some(raw) if remaining <= raw => remaining,
+                            Some(raw) => {
+                                let lot = instrument.lot_size();
+                                let lot = if lot > Decimal::ZERO {
+                                    lot
+                                } else {
+                                    Decimal::ONE
+                                };
+                                raw.checked_div(lot)
+                                    .map(|lots| lots.floor() * lot)
+                                    .unwrap_or(raw)
+                            }
+                            None => Decimal::MAX,
+                        }
                     } else {
                         Decimal::MAX
                     };
 
-                    let trade_qty = (order.quantity - order.filled_quantity).min(max_qty);
+                    let trade_qty = remaining.min(max_qty);
 
                     if trade_qty > Decimal::ZERO {
                         order.status = OrderStatus::Filled;
@@ -392,7 +409,10 @@ impl CommonMatcher {
                         };
                         return Some(Event::ExecutionReport(order.clone(), Some(trade)));
                     }
-                } else if order.time_in_force == TimeInForce::IOC
+                }
+
+                // 走到这里说明本根没有成交: 未触发/未满足价格, 或截断量取整为 0。
+                if order.time_in_force == TimeInForce::IOC
                     || order.time_in_force == TimeInForce::FOK
                 {
                     // Cancel IOC/FOK if not filled
