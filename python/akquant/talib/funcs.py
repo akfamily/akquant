@@ -109,8 +109,9 @@ from ..akquant import WCLPRICE as RustWCLPRICE
 from ..akquant import WILLR as RustWILLR
 from ..akquant import WMA as RustWMA
 from ..akquant import BollingerBands as RustBollingerBands
+from . import _kernels
 from .backend import resolve_backend
-from .core import SeriesLike, finalize_output, to_series
+from .core import SeriesLike, finalize_output, skip_non_finite_rows, to_series
 
 
 def _ensure_period(value: int, name: str) -> int:
@@ -124,6 +125,16 @@ def _ensure_period(value: int, name: str) -> int:
 def _rolling_mean(series: pd.Series, period: int) -> pd.Series:
     """Compute rolling mean with default pandas behavior."""
     return cast(pd.Series, series.rolling(period).mean())
+
+
+def _np(series: pd.Series) -> np.ndarray:
+    """内核只吃 float64 数组."""
+    return series.to_numpy(dtype=float)
+
+
+def _like(values: np.ndarray, template: pd.Series) -> pd.Series:
+    """把内核输出包成与输入同索引的 Series."""
+    return pd.Series(values, index=template.index, dtype=float)
 
 
 def _batch_call(
@@ -375,6 +386,7 @@ def _run_rust_single_pair_series(
     )
 
 
+@skip_non_finite_rows()
 def ROC(
     close: SeriesLike,
     timeperiod: int = 10,
@@ -391,10 +403,14 @@ def ROC(
         indicator = RustROC(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    out = cast(pd.Series, close_series.pct_change(use_period) * 100.0)
+    shifted = cast(pd.Series, close_series.shift(use_period))
+    out = cast(pd.Series, (close_series - shifted) / shifted * 100.0)
+    # 与 TA-Lib 一致: 前值为 0 时输出 0(预热期的 NaN 保留)
+    out = cast(pd.Series, out.where(shifted != 0.0, 0.0))
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ROCP(
     close: SeriesLike,
     timeperiod: int = 10,
@@ -411,10 +427,14 @@ def ROCP(
         indicator = RustROCP(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    out = cast(pd.Series, close_series.pct_change(use_period))
+    shifted = cast(pd.Series, close_series.shift(use_period))
+    out = cast(pd.Series, (close_series - shifted) / shifted)
+    # 与 TA-Lib 一致: 前值为 0 时输出 0(预热期的 NaN 保留)
+    out = cast(pd.Series, out.where(shifted != 0.0, 0.0))
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ROCR(
     close: SeriesLike,
     timeperiod: int = 10,
@@ -433,10 +453,11 @@ def ROCR(
         return finalize_output(out, as_series=as_series)
     shifted = cast(pd.Series, close_series.shift(use_period))
     out = cast(pd.Series, close_series / shifted)
-    out = cast(pd.Series, out.where(shifted.abs() > 1e-12, np.nan))
+    out = cast(pd.Series, out.where(shifted != 0.0, 0.0))
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ROCR100(
     close: SeriesLike,
     timeperiod: int = 10,
@@ -455,10 +476,11 @@ def ROCR100(
         return finalize_output(out, as_series=as_series)
     shifted = cast(pd.Series, close_series.shift(use_period))
     out = cast(pd.Series, (close_series / shifted) * 100.0)
-    out = cast(pd.Series, out.where(shifted.abs() > 1e-12, np.nan))
+    out = cast(pd.Series, out.where(shifted != 0.0, 0.0))
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def WILLR(
     high: SeriesLike,
     low: SeriesLike,
@@ -484,13 +506,13 @@ def WILLR(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    highest = cast(pd.Series, high_series.rolling(use_period).max())
-    lowest = cast(pd.Series, low_series.rolling(use_period).min())
-    denominator = highest - lowest
-    out = cast(pd.Series, -100.0 * (highest - close_series) / denominator)
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.willr(
+        _np(high_series), _np(low_series), _np(close_series), use_period
+    )
+    return finalize_output(_like(result, high_series), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def CCI(
     high: SeriesLike,
     low: SeriesLike,
@@ -519,16 +541,13 @@ def CCI(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    typical_price = (high_series + low_series + close_series) / 3.0
-    sma = _rolling_mean(typical_price, use_period)
-    mean_deviation = cast(
-        pd.Series,
-        (typical_price - sma).abs().rolling(use_period).mean(),
+    result = _kernels.cci(
+        _np(high_series), _np(low_series), _np(close_series), use_period, float(c)
     )
-    out = cast(pd.Series, (typical_price - sma) / (c * mean_deviation))
-    return finalize_output(out, as_series=as_series)
+    return finalize_output(_like(result, high_series), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ADX(
     high: SeriesLike,
     low: SeriesLike,
@@ -554,58 +573,18 @@ def ADX(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-
-    up_move = cast(pd.Series, high_series.diff())
-    down_move = cast(pd.Series, -low_series.diff())
-    plus_dm = cast(
-        pd.Series,
-        up_move.where((up_move > down_move) & (up_move > 0.0), 0.0),
+    return finalize_output(
+        _like(
+            _kernels.adx(
+                _np(high_series), _np(low_series), _np(close_series), use_period
+            ),
+            close_series,
+        ),
+        as_series=as_series,
     )
-    minus_dm = cast(
-        pd.Series,
-        down_move.where((down_move > up_move) & (down_move > 0.0), 0.0),
-    )
-    tr_components = pd.concat(
-        [
-            high_series - low_series,
-            (high_series - close_series.shift(1)).abs(),
-            (low_series - close_series.shift(1)).abs(),
-        ],
-        axis=1,
-    )
-    tr = cast(pd.Series, tr_components.max(axis=1))
-    atr = cast(
-        pd.Series,
-        tr.ewm(alpha=1.0 / use_period, adjust=False, min_periods=use_period).mean(),
-    )
-    plus_di = cast(
-        pd.Series,
-        100.0
-        * plus_dm.ewm(
-            alpha=1.0 / use_period,
-            adjust=False,
-            min_periods=use_period,
-        ).mean()
-        / atr,
-    )
-    minus_di = cast(
-        pd.Series,
-        100.0
-        * minus_dm.ewm(
-            alpha=1.0 / use_period,
-            adjust=False,
-            min_periods=use_period,
-        ).mean()
-        / atr,
-    )
-    dx = cast(pd.Series, 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di))
-    out = cast(
-        pd.Series,
-        dx.ewm(alpha=1.0 / use_period, adjust=False, min_periods=use_period).mean(),
-    )
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def DX(
     high: SeriesLike,
     low: SeriesLike,
@@ -631,53 +610,18 @@ def DX(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    up_move = cast(pd.Series, high_series.diff())
-    down_move = cast(pd.Series, -low_series.diff())
-    plus_dm = cast(
-        pd.Series,
-        up_move.where((up_move > down_move) & (up_move > 0.0), 0.0),
+    return finalize_output(
+        _like(
+            _kernels.dx(
+                _np(high_series), _np(low_series), _np(close_series), use_period
+            ),
+            close_series,
+        ),
+        as_series=as_series,
     )
-    minus_dm = cast(
-        pd.Series,
-        down_move.where((down_move > up_move) & (down_move > 0.0), 0.0),
-    )
-    tr_components = pd.concat(
-        [
-            high_series - low_series,
-            (high_series - close_series.shift(1)).abs(),
-            (low_series - close_series.shift(1)).abs(),
-        ],
-        axis=1,
-    )
-    tr = cast(pd.Series, tr_components.max(axis=1))
-    atr = cast(
-        pd.Series,
-        tr.ewm(alpha=1.0 / use_period, adjust=False, min_periods=use_period).mean(),
-    )
-    plus_di = cast(
-        pd.Series,
-        100.0
-        * plus_dm.ewm(
-            alpha=1.0 / use_period,
-            adjust=False,
-            min_periods=use_period,
-        ).mean()
-        / atr,
-    )
-    minus_di = cast(
-        pd.Series,
-        100.0
-        * minus_dm.ewm(
-            alpha=1.0 / use_period,
-            adjust=False,
-            min_periods=use_period,
-        ).mean()
-        / atr,
-    )
-    out = cast(pd.Series, 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di))
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def PLUS_DI(
     high: SeriesLike,
     low: SeriesLike,
@@ -703,38 +647,18 @@ def PLUS_DI(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    up_move = cast(pd.Series, high_series.diff())
-    down_move = cast(pd.Series, -low_series.diff())
-    plus_dm = cast(
-        pd.Series,
-        up_move.where((up_move > down_move) & (up_move > 0.0), 0.0),
+    return finalize_output(
+        _like(
+            _kernels.plus_minus_di(
+                _np(high_series), _np(low_series), _np(close_series), use_period
+            )[0],
+            close_series,
+        ),
+        as_series=as_series,
     )
-    tr_components = pd.concat(
-        [
-            high_series - low_series,
-            (high_series - close_series.shift(1)).abs(),
-            (low_series - close_series.shift(1)).abs(),
-        ],
-        axis=1,
-    )
-    tr = cast(pd.Series, tr_components.max(axis=1))
-    atr = cast(
-        pd.Series,
-        tr.ewm(alpha=1.0 / use_period, adjust=False, min_periods=use_period).mean(),
-    )
-    out = cast(
-        pd.Series,
-        100.0
-        * plus_dm.ewm(
-            alpha=1.0 / use_period,
-            adjust=False,
-            min_periods=use_period,
-        ).mean()
-        / atr,
-    )
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MINUS_DI(
     high: SeriesLike,
     low: SeriesLike,
@@ -760,38 +684,18 @@ def MINUS_DI(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    up_move = cast(pd.Series, high_series.diff())
-    down_move = cast(pd.Series, -low_series.diff())
-    minus_dm = cast(
-        pd.Series,
-        down_move.where((down_move > up_move) & (down_move > 0.0), 0.0),
+    return finalize_output(
+        _like(
+            _kernels.plus_minus_di(
+                _np(high_series), _np(low_series), _np(close_series), use_period
+            )[1],
+            close_series,
+        ),
+        as_series=as_series,
     )
-    tr_components = pd.concat(
-        [
-            high_series - low_series,
-            (high_series - close_series.shift(1)).abs(),
-            (low_series - close_series.shift(1)).abs(),
-        ],
-        axis=1,
-    )
-    tr = cast(pd.Series, tr_components.max(axis=1))
-    atr = cast(
-        pd.Series,
-        tr.ewm(alpha=1.0 / use_period, adjust=False, min_periods=use_period).mean(),
-    )
-    out = cast(
-        pd.Series,
-        100.0
-        * minus_dm.ewm(
-            alpha=1.0 / use_period,
-            adjust=False,
-            min_periods=use_period,
-        ).mean()
-        / atr,
-    )
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ULTOSC(
     high: SeriesLike,
     low: SeriesLike,
@@ -822,34 +726,13 @@ def ULTOSC(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    prev_close = cast(pd.Series, close_series.shift(1))
-    low_or_prev = cast(
-        pd.Series,
-        pd.concat([low_series, prev_close], axis=1).min(axis=1),
+    result = _kernels.ultosc(
+        _np(high_series), _np(low_series), _np(close_series), p1, p2, p3
     )
-    high_or_prev = cast(
-        pd.Series,
-        pd.concat([high_series, prev_close], axis=1).max(axis=1),
-    )
-    bp = cast(pd.Series, close_series - low_or_prev)
-    tr = cast(pd.Series, high_or_prev - low_or_prev)
-    bp1 = cast(pd.Series, bp.rolling(p1).sum())
-    tr1 = cast(pd.Series, tr.rolling(p1).sum())
-    bp2 = cast(pd.Series, bp.rolling(p2).sum())
-    tr2 = cast(pd.Series, tr.rolling(p2).sum())
-    bp3 = cast(pd.Series, bp.rolling(p3).sum())
-    tr3 = cast(pd.Series, tr.rolling(p3).sum())
-    avg1 = cast(pd.Series, bp1 / tr1)
-    avg2 = cast(pd.Series, bp2 / tr2)
-    avg3 = cast(pd.Series, bp3 / tr3)
-    out = cast(pd.Series, 100.0 * (4.0 * avg1 + 2.0 * avg2 + avg3) / 7.0)
-    out = cast(
-        pd.Series,
-        out.where((tr1 > 1e-12) & (tr2 > 1e-12) & (tr3 > 1e-12), np.nan),
-    )
-    return finalize_output(out, as_series=as_series)
+    return finalize_output(_like(result, high_series), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def AROON(
     high: SeriesLike,
     low: SeriesLike,
@@ -876,30 +759,14 @@ def AROON(
             finalize_output(up_s, as_series=as_series),
         )
 
-    def _down(window: np.ndarray) -> float:
-        low_idx = int(np.argmin(window))
-        days_since_low = use_period - 1 - low_idx
-        return 100.0 * (use_period - days_since_low) / use_period
-
-    def _up(window: np.ndarray) -> float:
-        high_idx = int(np.argmax(window))
-        days_since_high = use_period - 1 - high_idx
-        return 100.0 * (use_period - days_since_high) / use_period
-
-    down_s = cast(
-        pd.Series,
-        low_series.rolling(use_period).apply(_down, raw=True),
-    )
-    up_s = cast(
-        pd.Series,
-        high_series.rolling(use_period).apply(_up, raw=True),
-    )
+    down, up = _kernels.aroon(_np(high_series), _np(low_series), use_period)
     return (
-        finalize_output(down_s, as_series=as_series),
-        finalize_output(up_s, as_series=as_series),
+        finalize_output(_like(down, high_series), as_series=as_series),
+        finalize_output(_like(up, high_series), as_series=as_series),
     )
 
 
+@skip_non_finite_rows()
 def AROONOSC(
     high: SeriesLike,
     low: SeriesLike,
@@ -918,20 +785,11 @@ def AROONOSC(
         indicator = RustAROONOSC(use_period)
         out = _run_rust_hl_series(high_series, low_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    aroon_down, aroon_up = cast(
-        tuple[pd.Series, pd.Series],
-        AROON(
-            high_series,
-            low_series,
-            timeperiod=use_period,
-            as_series=True,
-            backend="python",
-        ),
-    )
-    out = cast(pd.Series, aroon_up - aroon_down)
-    return finalize_output(out, as_series=as_series)
+    down, up = _kernels.aroon(_np(high_series), _np(low_series), use_period)
+    return finalize_output(_like(up - down, high_series), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def LINEARREG(
     close: SeriesLike,
     timeperiod: int = 14,
@@ -966,6 +824,7 @@ def LINEARREG(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def LINEARREG_SLOPE(
     close: SeriesLike,
     timeperiod: int = 14,
@@ -998,6 +857,7 @@ def LINEARREG_SLOPE(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def LINEARREG_R2(
     close: SeriesLike,
     timeperiod: int = 14,
@@ -1019,6 +879,7 @@ def LINEARREG_R2(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def LINEARREG_INTERCEPT(
     close: SeriesLike,
     timeperiod: int = 14,
@@ -1055,6 +916,7 @@ def LINEARREG_INTERCEPT(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def LINEARREG_ANGLE(
     close: SeriesLike,
     timeperiod: int = 14,
@@ -1084,6 +946,7 @@ def LINEARREG_ANGLE(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def TSF(
     close: SeriesLike,
     timeperiod: int = 14,
@@ -1118,6 +981,7 @@ def TSF(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def CORREL(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -1136,10 +1000,11 @@ def CORREL(
         indicator = RustCORREL(use_period)
         out = _run_rust_dual_series(series0, series1, indicator.update)
         return finalize_output(out, as_series=as_series)
-    out = cast(pd.Series, series0.rolling(use_period).corr(series1))
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.correl(_np(series0), _np(series1), use_period)
+    return finalize_output(_like(result, series0), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def BETA(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -1158,21 +1023,11 @@ def BETA(
         indicator = RustBETA(use_period)
         out = _run_rust_dual_series(series0, series1, indicator.update)
         return finalize_output(out, as_series=as_series)
-    mean0 = cast(pd.Series, series0.rolling(use_period).mean())
-    mean1 = cast(pd.Series, series1.rolling(use_period).mean())
-    cov = cast(
-        pd.Series,
-        (series0 * series1).rolling(use_period).mean() - mean0 * mean1,
-    )
-    var1 = cast(
-        pd.Series,
-        (series1 * series1).rolling(use_period).mean() - mean1 * mean1,
-    )
-    out = cast(pd.Series, cov / var1)
-    out = cast(pd.Series, out.where(var1.abs() > 1e-12, np.nan))
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.beta(_np(series0), _np(series1), use_period)
+    return finalize_output(_like(result, series0), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def COVAR(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -1200,6 +1055,7 @@ def COVAR(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ADXR(
     high: SeriesLike,
     low: SeriesLike,
@@ -1225,21 +1081,18 @@ def ADXR(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    adx_series = cast(
-        pd.Series,
-        ADX(
-            high_series,
-            low_series,
+    return finalize_output(
+        _like(
+            _kernels.adxr(
+                _np(high_series), _np(low_series), _np(close_series), use_period
+            ),
             close_series,
-            timeperiod=use_period,
-            as_series=True,
-            backend="python",
         ),
+        as_series=as_series,
     )
-    out = cast(pd.Series, (adx_series + adx_series.shift(use_period)) / 2.0)
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def RSI(
     close: SeriesLike,
     timeperiod: int = 14,
@@ -1256,22 +1109,13 @@ def RSI(
         indicator = RustRSI(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    delta = cast(pd.Series, close_series.diff())
-    gain = cast(pd.Series, delta.where(delta > 0.0, 0.0))
-    loss = cast(pd.Series, -delta.where(delta < 0.0, 0.0))
-    avg_gain = cast(
-        pd.Series,
-        gain.ewm(alpha=1.0 / use_period, adjust=False, min_periods=use_period).mean(),
+    return finalize_output(
+        _like(_kernels.rsi(_np(close_series), use_period), close_series),
+        as_series=as_series,
     )
-    avg_loss = cast(
-        pd.Series,
-        loss.ewm(alpha=1.0 / use_period, adjust=False, min_periods=use_period).mean(),
-    )
-    rs = cast(pd.Series, avg_gain / avg_loss)
-    out = cast(pd.Series, 100.0 - (100.0 / (1.0 + rs)))
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def SMA(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1292,6 +1136,7 @@ def SMA(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MA(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1313,6 +1158,7 @@ def MA(
     )
 
 
+@skip_non_finite_rows()
 def EMA(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1329,14 +1175,13 @@ def EMA(
         indicator = RustEMA(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    out = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
+    return finalize_output(
+        _like(_kernels.ema(_np(close_series), use_period), close_series),
+        as_series=as_series,
     )
-    out.iloc[: use_period - 1] = np.nan
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def APO(
     close: SeriesLike,
     fastperiod: int = 12,
@@ -1356,19 +1201,13 @@ def APO(
         indicator = RustAPO(fast_p, slow_p)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    fast_ema = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (fast_p + 1.0), adjust=False).mean(),
+    return finalize_output(
+        _like(_kernels.apo(_np(close_series), fast_p, slow_p), close_series),
+        as_series=as_series,
     )
-    slow_ema = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (slow_p + 1.0), adjust=False).mean(),
-    )
-    out = cast(pd.Series, fast_ema - slow_ema)
-    out.iloc[: slow_p - 1] = np.nan
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def PPO(
     close: SeriesLike,
     fastperiod: int = 12,
@@ -1388,20 +1227,13 @@ def PPO(
         indicator = RustPPO(fast_p, slow_p)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    fast_ema = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (fast_p + 1.0), adjust=False).mean(),
+    return finalize_output(
+        _like(_kernels.ppo(_np(close_series), fast_p, slow_p), close_series),
+        as_series=as_series,
     )
-    slow_ema = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (slow_p + 1.0), adjust=False).mean(),
-    )
-    out = cast(pd.Series, 100.0 * (fast_ema - slow_ema) / slow_ema)
-    out = cast(pd.Series, out.where(slow_ema.abs() > 1e-12, np.nan))
-    out.iloc[: slow_p - 1] = np.nan
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def WMA(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1430,6 +1262,7 @@ def WMA(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def TRIMA(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1469,6 +1302,7 @@ def TRIMA(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MIDPOINT(
     close: SeriesLike,
     timeperiod: int = 14,
@@ -1491,6 +1325,7 @@ def MIDPOINT(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MAX(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1511,6 +1346,7 @@ def MAX(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MIN(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1531,6 +1367,7 @@ def MIN(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows(index_outputs=True)
 def MAXINDEX(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1547,21 +1384,11 @@ def MAXINDEX(
         indicator = RustMAXINDEX(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    local = cast(
-        pd.Series,
-        close_series.rolling(use_period).apply(
-            lambda arr: float(len(arr) - 1 - int(np.argmax(arr[::-1]))),
-            raw=True,
-        ),
-    )
-    base = pd.Series(
-        np.arange(len(close_series), dtype=float),
-        index=close_series.index,
-    )
-    out = cast(pd.Series, local + (base - (use_period - 1)))
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.extreme_index(_np(close_series), use_period, True)
+    return finalize_output(_like(result, close_series), as_series=as_series)
 
 
+@skip_non_finite_rows(index_outputs=True)
 def MININDEX(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1578,21 +1405,11 @@ def MININDEX(
         indicator = RustMININDEX(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    local = cast(
-        pd.Series,
-        close_series.rolling(use_period).apply(
-            lambda arr: float(len(arr) - 1 - int(np.argmin(arr[::-1]))),
-            raw=True,
-        ),
-    )
-    base = pd.Series(
-        np.arange(len(close_series), dtype=float),
-        index=close_series.index,
-    )
-    out = cast(pd.Series, local + (base - (use_period - 1)))
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.extreme_index(_np(close_series), use_period, False)
+    return finalize_output(_like(result, close_series), as_series=as_series)
 
 
+@skip_non_finite_rows(index_outputs=True)
 def MINMAXINDEX(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1612,32 +1429,16 @@ def MINMAXINDEX(
             finalize_output(min_s, as_series=as_series),
             finalize_output(max_s, as_series=as_series),
         )
-    local_min = cast(
-        pd.Series,
-        close_series.rolling(use_period).apply(
-            lambda arr: float(len(arr) - 1 - int(np.argmin(arr[::-1]))),
-            raw=True,
-        ),
-    )
-    local_max = cast(
-        pd.Series,
-        close_series.rolling(use_period).apply(
-            lambda arr: float(len(arr) - 1 - int(np.argmax(arr[::-1]))),
-            raw=True,
-        ),
-    )
-    base = pd.Series(
-        np.arange(len(close_series), dtype=float),
-        index=close_series.index,
-    )
-    out_min = cast(pd.Series, local_min + (base - (use_period - 1)))
-    out_max = cast(pd.Series, local_max + (base - (use_period - 1)))
+    values = _np(close_series)
+    min_idx = _kernels.extreme_index(values, use_period, False)
+    max_idx = _kernels.extreme_index(values, use_period, True)
     return (
-        finalize_output(out_min, as_series=as_series),
-        finalize_output(out_max, as_series=as_series),
+        finalize_output(_like(min_idx, close_series), as_series=as_series),
+        finalize_output(_like(max_idx, close_series), as_series=as_series),
     )
 
 
+@skip_non_finite_rows()
 def MINMAX(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1665,6 +1466,7 @@ def MINMAX(
     )
 
 
+@skip_non_finite_rows()
 def SUM(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1685,9 +1487,10 @@ def SUM(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def AVGDEV(
     close: SeriesLike,
-    timeperiod: int = 5,
+    timeperiod: int = 14,
     *,
     period: int | None = None,
     as_series: bool = False,
@@ -1710,6 +1513,7 @@ def AVGDEV(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def RANGE(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -1732,6 +1536,7 @@ def RANGE(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def LN(
     close: SeriesLike,
     *,
@@ -1749,6 +1554,7 @@ def LN(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def LOG10(
     close: SeriesLike,
     *,
@@ -1766,6 +1572,7 @@ def LOG10(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def SQRT(
     close: SeriesLike,
     *,
@@ -1783,6 +1590,7 @@ def SQRT(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def CEIL(
     close: SeriesLike,
     *,
@@ -1800,6 +1608,7 @@ def CEIL(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def FLOOR(
     close: SeriesLike,
     *,
@@ -1817,6 +1626,7 @@ def FLOOR(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def SIN(
     close: SeriesLike,
     *,
@@ -1834,6 +1644,7 @@ def SIN(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def COS(
     close: SeriesLike,
     *,
@@ -1851,6 +1662,7 @@ def COS(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def TAN(
     close: SeriesLike,
     *,
@@ -1868,6 +1680,7 @@ def TAN(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ASIN(
     close: SeriesLike,
     *,
@@ -1886,6 +1699,7 @@ def ASIN(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ACOS(
     close: SeriesLike,
     *,
@@ -1904,6 +1718,7 @@ def ACOS(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ATAN(
     close: SeriesLike,
     *,
@@ -1921,6 +1736,7 @@ def ATAN(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def SINH(
     close: SeriesLike,
     *,
@@ -1938,6 +1754,7 @@ def SINH(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def COSH(
     close: SeriesLike,
     *,
@@ -1955,6 +1772,7 @@ def COSH(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def TANH(
     close: SeriesLike,
     *,
@@ -1972,6 +1790,7 @@ def TANH(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def EXP(
     close: SeriesLike,
     *,
@@ -1989,6 +1808,7 @@ def EXP(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ABS(
     close: SeriesLike,
     *,
@@ -2006,6 +1826,7 @@ def ABS(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def SIGN(
     close: SeriesLike,
     *,
@@ -2023,6 +1844,7 @@ def SIGN(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ADD(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -2042,6 +1864,7 @@ def ADD(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def SUB(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -2061,6 +1884,7 @@ def SUB(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MULT(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -2080,6 +1904,7 @@ def MULT(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def DIV(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -2100,6 +1925,7 @@ def DIV(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MAX2(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -2119,6 +1945,7 @@ def MAX2(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MIN2(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -2138,6 +1965,7 @@ def MIN2(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def CLIP(
     real: SeriesLike,
     min_value: SeriesLike,
@@ -2179,6 +2007,7 @@ def CLIP(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ROUND(
     close: SeriesLike,
     *,
@@ -2196,6 +2025,7 @@ def ROUND(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def POW(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -2215,6 +2045,7 @@ def POW(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MOD(
     real0: SeriesLike,
     real1: SeriesLike,
@@ -2235,6 +2066,7 @@ def MOD(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def CLAMP01(
     close: SeriesLike,
     *,
@@ -2252,6 +2084,7 @@ def CLAMP01(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def SQ(
     close: SeriesLike,
     *,
@@ -2269,6 +2102,7 @@ def SQ(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def CUBE(
     close: SeriesLike,
     *,
@@ -2286,6 +2120,7 @@ def CUBE(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def RECIP(
     close: SeriesLike,
     *,
@@ -2304,6 +2139,7 @@ def RECIP(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def INV_SQRT(
     close: SeriesLike,
     *,
@@ -2322,6 +2158,7 @@ def INV_SQRT(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def LOG1P(
     close: SeriesLike,
     *,
@@ -2339,6 +2176,7 @@ def LOG1P(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def EXPM1(
     close: SeriesLike,
     *,
@@ -2356,6 +2194,7 @@ def EXPM1(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def DEG2RAD(
     close: SeriesLike,
     *,
@@ -2373,31 +2212,25 @@ def DEG2RAD(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def HT_TRENDLINE(
     close: SeriesLike,
     *,
     as_series: bool = False,
     backend: str = "auto",
 ) -> pd.Series | object:
-    """Hilbert Transform trendline approximation."""
+    """Hilbert Transform instantaneous trendline (TA-Lib 算法)."""
     backend_key = resolve_backend(backend)
     close_series = to_series(close, name="close")
     if backend_key == "rust":
         indicator = RustHT_TRENDLINE()
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    weights = np.array([1.0, 2.0, 3.0, 4.0, 3.0, 2.0, 1.0], dtype=float)
-    denom = float(weights.sum())
-    out = cast(
-        pd.Series,
-        close_series.rolling(7).apply(
-            lambda arr: float(np.dot(arr, weights) / denom),
-            raw=True,
-        ),
-    )
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.ht_trendline(_np(close_series))
+    return finalize_output(_like(result, close_series), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ATR(
     high: SeriesLike,
     low: SeriesLike,
@@ -2420,22 +2253,18 @@ def ATR(
             high_series, low_series, close_series, indicator.update
         )
         return finalize_output(out_series, as_series=as_series)
-    tr_components = pd.concat(
-        [
-            high_series - low_series,
-            (high_series - close_series.shift(1)).abs(),
-            (low_series - close_series.shift(1)).abs(),
-        ],
-        axis=1,
+    return finalize_output(
+        _like(
+            _kernels.atr(
+                _np(high_series), _np(low_series), _np(close_series), use_period
+            ),
+            close_series,
+        ),
+        as_series=as_series,
     )
-    tr = cast(pd.Series, tr_components.max(axis=1))
-    atr_series = cast(
-        pd.Series,
-        tr.ewm(alpha=1.0 / use_period, adjust=False, min_periods=use_period).mean(),
-    )
-    return finalize_output(atr_series, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def TRANGE(
     high: SeriesLike,
     low: SeriesLike,
@@ -2458,18 +2287,16 @@ def TRANGE(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    tr_components = pd.concat(
-        [
-            high_series - low_series,
-            (high_series - close_series.shift(1)).abs(),
-            (low_series - close_series.shift(1)).abs(),
-        ],
-        axis=1,
+    return finalize_output(
+        _like(
+            _kernels.trange(_np(high_series), _np(low_series), _np(close_series)),
+            close_series,
+        ),
+        as_series=as_series,
     )
-    out = cast(pd.Series, tr_components.max(axis=1))
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MEDPRICE(
     high: SeriesLike,
     low: SeriesLike,
@@ -2489,6 +2316,7 @@ def MEDPRICE(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def AVGPRICE(
     open: SeriesLike,
     high: SeriesLike,
@@ -2518,6 +2346,7 @@ def AVGPRICE(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def TYPPRICE(
     high: SeriesLike,
     low: SeriesLike,
@@ -2544,6 +2373,7 @@ def TYPPRICE(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def WCLPRICE(
     high: SeriesLike,
     low: SeriesLike,
@@ -2570,6 +2400,7 @@ def WCLPRICE(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MIDPRICE(
     high: SeriesLike,
     low: SeriesLike,
@@ -2594,6 +2425,7 @@ def MIDPRICE(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MACD(
     close: SeriesLike,
     fastperiod: int = 12,
@@ -2645,31 +2477,15 @@ def MACD(
             finalize_output(dea_s, as_series=as_series),
             finalize_output(hist_s, as_series=as_series),
         )
-    fast_ema = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (fast_p + 1.0), adjust=False).mean(),
-    )
-    slow_ema = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (slow_p + 1.0), adjust=False).mean(),
-    )
-    dif_s = cast(pd.Series, fast_ema - slow_ema)
-    dea_s = cast(
-        pd.Series,
-        dif_s.ewm(alpha=2.0 / (signal_p + 1.0), adjust=False).mean(),
-    )
-    hist_s = cast(pd.Series, dif_s - dea_s)
-    warmup = slow_p + signal_p - 2
-    dif_s.iloc[:warmup] = np.nan
-    dea_s.iloc[:warmup] = np.nan
-    hist_s.iloc[:warmup] = np.nan
+    dif, dea, hist = _kernels.macd(_np(close_series), fast_p, slow_p, signal_p)
     return (
-        finalize_output(dif_s, as_series=as_series),
-        finalize_output(dea_s, as_series=as_series),
-        finalize_output(hist_s, as_series=as_series),
+        finalize_output(_like(dif, close_series), as_series=as_series),
+        finalize_output(_like(dea, close_series), as_series=as_series),
+        finalize_output(_like(hist, close_series), as_series=as_series),
     )
 
 
+@skip_non_finite_rows()
 def MAMA(
     close: SeriesLike,
     fastlimit: float = 0.5,
@@ -2692,45 +2508,19 @@ def MAMA(
             finalize_output(mama_s, as_series=as_series),
             finalize_output(fama_s, as_series=as_series),
         )
-    prev = cast(pd.Series, close_series.shift(1))
-    base = cast(pd.Series, prev.abs().clip(lower=1e-12))
-    ratio = cast(
-        pd.Series,
-        ((close_series - prev).abs() / base).clip(lower=0.0, upper=1.0),
+    mama_v, fama_v = _kernels.mama(
+        _np(close_series), float(fastlimit), float(slowlimit)
     )
-    alpha = cast(pd.Series, (fastlimit * ratio).clip(lower=slowlimit, upper=fastlimit))
-    mama = pd.Series(np.nan, index=close_series.index, dtype=float)
-    fama = pd.Series(np.nan, index=close_series.index, dtype=float)
-    for idx in range(len(close_series)):
-        value_i = float(close_series.iloc[idx])
-        alpha_i = (
-            float(alpha.iloc[idx]) if np.isfinite(alpha.iloc[idx]) else float(slowlimit)
-        )
-        prev_mama = (
-            value_i
-            if idx == 0 or not np.isfinite(mama.iloc[idx - 1])
-            else float(mama.iloc[idx - 1])
-        )
-        mama.iloc[idx] = alpha_i * value_i + (1.0 - alpha_i) * prev_mama
-        prev_fama = (
-            float(mama.iloc[idx])
-            if idx == 0 or not np.isfinite(fama.iloc[idx - 1])
-            else float(fama.iloc[idx - 1])
-        )
-        fama.iloc[idx] = (0.5 * alpha_i) * float(mama.iloc[idx]) + (
-            1.0 - 0.5 * alpha_i
-        ) * prev_fama
-    mama.iloc[0] = np.nan
-    fama.iloc[0] = np.nan
     return (
-        finalize_output(cast(pd.Series, mama), as_series=as_series),
-        finalize_output(cast(pd.Series, fama), as_series=as_series),
+        finalize_output(_like(mama_v, close_series), as_series=as_series),
+        finalize_output(_like(fama_v, close_series), as_series=as_series),
     )
 
 
+@skip_non_finite_rows()
 def BBANDS(
     close: SeriesLike,
-    timeperiod: int = 5,
+    timeperiod: int = 20,
     nbdevup: float = 2.0,
     nbdevdn: float = 2.0,
     matype: int = 0,
@@ -2781,17 +2571,17 @@ def BBANDS(
             finalize_output(middle_s, as_series=as_series),
             finalize_output(lower_s, as_series=as_series),
         )
-    middle_s = _rolling_mean(close_series, use_period)
-    std = cast(pd.Series, close_series.rolling(use_period).std(ddof=0))
-    upper_s = cast(pd.Series, middle_s + float(nbdevup) * std)
-    lower_s = cast(pd.Series, middle_s - float(nbdevdn) * std)
+    upper, middle, lower = _kernels.bbands(
+        _np(close_series), use_period, float(nbdevup), float(nbdevdn)
+    )
     return (
-        finalize_output(upper_s, as_series=as_series),
-        finalize_output(middle_s, as_series=as_series),
-        finalize_output(lower_s, as_series=as_series),
+        finalize_output(_like(upper, close_series), as_series=as_series),
+        finalize_output(_like(middle, close_series), as_series=as_series),
+        finalize_output(_like(lower, close_series), as_series=as_series),
     )
 
 
+@skip_non_finite_rows()
 def STDDEV(
     close: SeriesLike,
     timeperiod: int = 5,
@@ -2809,13 +2599,11 @@ def STDDEV(
         indicator = RustSTDDEV(use_period, float(nbdev))
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    out = cast(
-        pd.Series,
-        close_series.rolling(use_period).std(ddof=0) * float(nbdev),
-    )
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.stddev(_np(close_series), use_period, float(nbdev))
+    return finalize_output(_like(result, close_series), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def VAR(
     close: SeriesLike,
     timeperiod: int = 5,
@@ -2833,13 +2621,11 @@ def VAR(
         indicator = RustVAR(use_period, float(nbdev))
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    out = cast(
-        pd.Series,
-        close_series.rolling(use_period).var(ddof=0) * float(nbdev) * float(nbdev),
-    )
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.variance(_np(close_series), use_period)
+    return finalize_output(_like(result, close_series), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def STOCH(
     high: SeriesLike,
     low: SeriesLike,
@@ -2877,17 +2663,21 @@ def STOCH(
             finalize_output(slow_d, as_series=as_series),
         )
 
-    highest = cast(pd.Series, high_series.rolling(k_period).max())
-    lowest = cast(pd.Series, low_series.rolling(k_period).min())
-    fast_k = cast(pd.Series, 100.0 * (close_series - lowest) / (highest - lowest))
-    slow_k = _rolling_mean(fast_k, k_smooth)
-    slow_d = _rolling_mean(slow_k, d_period)
+    k_values, d_values = _kernels.stoch(
+        _np(high_series),
+        _np(low_series),
+        _np(close_series),
+        k_period,
+        k_smooth,
+        d_period,
+    )
     return (
-        finalize_output(slow_k, as_series=as_series),
-        finalize_output(slow_d, as_series=as_series),
+        finalize_output(_like(k_values, high_series), as_series=as_series),
+        finalize_output(_like(d_values, high_series), as_series=as_series),
     )
 
 
+@skip_non_finite_rows()
 def MOM(
     close: SeriesLike,
     timeperiod: int = 10,
@@ -2908,6 +2698,7 @@ def MOM(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def CMO(
     close: SeriesLike,
     timeperiod: int = 14,
@@ -2924,17 +2715,13 @@ def CMO(
         indicator = RustCMO(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    delta = cast(pd.Series, close_series.diff())
-    gains = cast(pd.Series, delta.clip(lower=0.0))
-    losses = cast(pd.Series, (-delta).clip(lower=0.0))
-    gain_sum = cast(pd.Series, gains.rolling(use_period).sum())
-    loss_sum = cast(pd.Series, losses.rolling(use_period).sum())
-    denom = cast(pd.Series, gain_sum + loss_sum)
-    out = cast(pd.Series, 100.0 * (gain_sum - loss_sum) / denom)
-    out = cast(pd.Series, out.where(denom > 1e-12, 0.0))
-    return finalize_output(out, as_series=as_series)
+    return finalize_output(
+        _like(_kernels.cmo(_np(close_series), use_period), close_series),
+        as_series=as_series,
+    )
 
 
+@skip_non_finite_rows()
 def OBV(
     close: SeriesLike,
     volume: SeriesLike,
@@ -2950,18 +2737,11 @@ def OBV(
         indicator = RustOBV()
         out = _run_rust_dual_series(close_series, volume_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    direction = cast(
-        pd.Series,
-        pd.Series(
-            np.sign(close_series.diff().to_numpy(dtype=float)),
-            index=close_series.index,
-            dtype=float,
-        ).fillna(0.0),
-    )
-    out = cast(pd.Series, (direction * volume_series).cumsum())
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.obv(_np(close_series), _np(volume_series))
+    return finalize_output(_like(result, close_series), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def AD(
     high: SeriesLike,
     low: SeriesLike,
@@ -2997,6 +2777,7 @@ def AD(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def ADOSC(
     high: SeriesLike,
     low: SeriesLike,
@@ -3052,6 +2833,7 @@ def ADOSC(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def BOP(
     open: SeriesLike,
     high: SeriesLike,
@@ -3083,6 +2865,7 @@ def BOP(
     return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def DEMA(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -3099,20 +2882,13 @@ def DEMA(
         indicator = RustDEMA(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    ema1 = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
+    return finalize_output(
+        _like(_kernels.dema(_np(close_series), use_period), close_series),
+        as_series=as_series,
     )
-    ema2 = cast(
-        pd.Series,
-        ema1.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
-    )
-    out = cast(pd.Series, 2.0 * ema1 - ema2)
-    warmup = 2 * use_period - 2
-    out.iloc[:warmup] = np.nan
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def TRIX(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -3129,24 +2905,13 @@ def TRIX(
         indicator = RustTRIX(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    ema1 = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
+    return finalize_output(
+        _like(_kernels.trix(_np(close_series), use_period), close_series),
+        as_series=as_series,
     )
-    ema2 = cast(
-        pd.Series,
-        ema1.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
-    )
-    ema3 = cast(
-        pd.Series,
-        ema2.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
-    )
-    out = cast(pd.Series, ema3.pct_change() * 100.0)
-    warmup = 3 * use_period - 2
-    out.iloc[:warmup] = np.nan
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def MFI(
     high: SeriesLike,
     low: SeriesLike,
@@ -3175,20 +2940,17 @@ def MFI(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    typical = cast(pd.Series, (high_series + low_series + close_series) / 3.0)
-    raw_flow = cast(pd.Series, typical * volume_series)
-    delta = cast(pd.Series, typical.diff())
-    pos_flow = cast(pd.Series, raw_flow.where(delta > 0.0, 0.0))
-    neg_flow = cast(pd.Series, raw_flow.where(delta < 0.0, 0.0))
-    pos_sum = cast(pd.Series, pos_flow.rolling(use_period).sum())
-    neg_sum = cast(pd.Series, neg_flow.rolling(use_period).sum())
-    ratio = cast(pd.Series, pos_sum / neg_sum)
-    out = cast(pd.Series, 100.0 - (100.0 / (1.0 + ratio)))
-    out = cast(pd.Series, out.where(neg_sum > 0.0, 100.0))
-    out = cast(pd.Series, out.where((neg_sum > 0.0) | (pos_sum > 0.0), 50.0))
-    return finalize_output(out, as_series=as_series)
+    result = _kernels.mfi(
+        _np(high_series),
+        _np(low_series),
+        _np(close_series),
+        _np(volume_series),
+        use_period,
+    )
+    return finalize_output(_like(result, high_series), as_series=as_series)
 
 
+@skip_non_finite_rows()
 def TEMA(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -3205,24 +2967,13 @@ def TEMA(
         indicator = RustTEMA(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    ema1 = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
+    return finalize_output(
+        _like(_kernels.tema(_np(close_series), use_period), close_series),
+        as_series=as_series,
     )
-    ema2 = cast(
-        pd.Series,
-        ema1.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
-    )
-    ema3 = cast(
-        pd.Series,
-        ema2.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
-    )
-    out = cast(pd.Series, 3.0 * ema1 - 3.0 * ema2 + ema3)
-    warmup = 3 * use_period - 2
-    out.iloc[:warmup] = np.nan
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def T3(
     close: SeriesLike,
     timeperiod: int = 5,
@@ -3240,24 +2991,13 @@ def T3(
         indicator = RustT3(use_period, float(vfactor))
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    e1 = cast(
-        pd.Series,
-        close_series.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean(),
+    return finalize_output(
+        _like(_kernels.t3(_np(close_series), use_period, float(vfactor)), close_series),
+        as_series=as_series,
     )
-    e2 = cast(pd.Series, e1.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean())
-    e3 = cast(pd.Series, e2.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean())
-    e4 = cast(pd.Series, e3.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean())
-    e5 = cast(pd.Series, e4.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean())
-    e6 = cast(pd.Series, e5.ewm(alpha=2.0 / (use_period + 1.0), adjust=False).mean())
-    a = float(vfactor)
-    c1 = -(a**3)
-    c2 = 3.0 * a * a + 3.0 * (a**3)
-    c3 = -6.0 * a * a - 3.0 * a - 3.0 * (a**3)
-    c4 = 1.0 + 3.0 * a + (a**3) + 3.0 * a * a
-    out = cast(pd.Series, c1 * e6 + c2 * e5 + c3 * e4 + c4 * e3)
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def KAMA(
     close: SeriesLike,
     timeperiod: int = 30,
@@ -3274,22 +3014,13 @@ def KAMA(
         indicator = RustKAMA(use_period)
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    fast_sc = 2.0 / 3.0
-    slow_sc = 2.0 / 31.0
-    out = pd.Series(np.nan, index=close_series.index, dtype=float)
-    if len(close_series) <= use_period:
-        return finalize_output(out, as_series=as_series)
-    for idx in range(use_period, len(close_series)):
-        window = close_series.iloc[idx - use_period : idx + 1]
-        change = abs(float(window.iloc[-1] - window.iloc[0]))
-        volatility = float(window.diff().abs().sum())
-        er = 0.0 if volatility <= 1e-12 else change / volatility
-        sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2
-        prev = float(window.iloc[-1]) if idx == use_period else float(out.iloc[idx - 1])
-        out.iloc[idx] = prev + sc * (float(close_series.iloc[idx]) - prev)
-    return finalize_output(cast(pd.Series, out), as_series=as_series)
+    return finalize_output(
+        _like(_kernels.kama(_np(close_series), use_period), close_series),
+        as_series=as_series,
+    )
 
 
+@skip_non_finite_rows()
 def NATR(
     high: SeriesLike,
     low: SeriesLike,
@@ -3315,23 +3046,18 @@ def NATR(
             indicator.update,
         )
         return finalize_output(out, as_series=as_series)
-    tr_components = pd.concat(
-        [
-            high_series - low_series,
-            (high_series - close_series.shift(1)).abs(),
-            (low_series - close_series.shift(1)).abs(),
-        ],
-        axis=1,
+    return finalize_output(
+        _like(
+            _kernels.natr(
+                _np(high_series), _np(low_series), _np(close_series), use_period
+            ),
+            close_series,
+        ),
+        as_series=as_series,
     )
-    tr = cast(pd.Series, tr_components.max(axis=1))
-    atr = cast(
-        pd.Series,
-        tr.ewm(alpha=1.0 / use_period, adjust=False, min_periods=use_period).mean(),
-    )
-    out = cast(pd.Series, 100.0 * atr / close_series)
-    return finalize_output(out, as_series=as_series)
 
 
+@skip_non_finite_rows()
 def SAR(
     high: SeriesLike,
     low: SeriesLike,
@@ -3353,48 +3079,7 @@ def SAR(
         indicator = RustSAR(float(acceleration), float(maximum))
         out = _run_rust_hl_series(high_series, low_series, indicator.update)
         return finalize_output(out, as_series=as_series)
-    out = pd.Series(np.nan, index=high_series.index, dtype=float)
-    if len(high_series) < 2:
-        return finalize_output(out, as_series=as_series)
-    trend_up = float(high_series.iloc[1]) >= float(high_series.iloc[0])
-    af = float(acceleration)
-    ep = (
-        max(float(high_series.iloc[0]), float(high_series.iloc[1]))
-        if trend_up
-        else min(float(low_series.iloc[0]), float(low_series.iloc[1]))
+    result = _kernels.sar(
+        _np(high_series), _np(low_series), float(acceleration), float(maximum)
     )
-    sar = (
-        min(float(low_series.iloc[0]), float(low_series.iloc[1]))
-        if trend_up
-        else max(float(high_series.iloc[0]), float(high_series.iloc[1]))
-    )
-    out.iloc[1] = sar
-    for idx in range(2, len(high_series)):
-        high_v = float(high_series.iloc[idx])
-        low_v = float(low_series.iloc[idx])
-        prev_high = float(high_series.iloc[idx - 1])
-        prev_low = float(low_series.iloc[idx - 1])
-        sar_next = sar + af * (ep - sar)
-        if trend_up:
-            sar_next = min(sar_next, prev_low, low_v)
-            if low_v < sar_next:
-                trend_up = False
-                sar_next = ep
-                ep = low_v
-                af = float(acceleration)
-            elif high_v > ep:
-                ep = high_v
-                af = min(af + float(acceleration), float(maximum))
-        else:
-            sar_next = max(sar_next, prev_high, high_v)
-            if high_v > sar_next:
-                trend_up = True
-                sar_next = ep
-                ep = high_v
-                af = float(acceleration)
-            elif low_v < ep:
-                ep = low_v
-                af = min(af + float(acceleration), float(maximum))
-        sar = sar_next
-        out.iloc[idx] = sar
-    return finalize_output(cast(pd.Series, out), as_series=as_series)
+    return finalize_output(_like(result, high_series), as_series=as_series)

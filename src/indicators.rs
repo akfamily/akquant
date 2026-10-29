@@ -1,6 +1,41 @@
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::gen_stub_pyfunction;
 
+/// 任一输入非有限值(NaN/±inf, 例如停牌缺价)时本根不出值, 也不推进任何状态。
+///
+/// 每个内置指标 `update` 的第一行都调用它(设计 C2), 规则与 `HeikinAshi` 相同:
+/// 调用方拿到 None, `value` 保持上一个有效值, 下一根有效数据接着上一根有效数据算。
+macro_rules! skip_non_finite {
+    ($($value:expr),+ $(,)?) => {
+        if !($($value.is_finite())&&+) {
+            return None;
+        }
+    };
+}
+
+/// TA-Lib `TA_EPSILON`。
+pub(crate) const TA_EPSILON: f64 = 1e-14;
+
+/// TA-Lib `TA_IS_ZERO`: 绝对值小于 1e-14。
+#[inline]
+pub(crate) fn is_zero(value: f64) -> bool {
+    value > -TA_EPSILON && value < TA_EPSILON
+}
+
+/// TA-Lib `TA_IS_ZERO_SCALED`: 差值相对两个操作数的量级可忽略。
+#[inline]
+pub(crate) fn is_zero_scaled(value: f64, scale: f64) -> bool {
+    value.abs() <= TA_EPSILON * scale
+}
+
+/// 真实波幅 `max(H-L, |H-前收|, |L-前收|)`。
+#[inline]
+pub(crate) fn true_range(high: f64, low: f64, prev_close: f64) -> f64 {
+    (high - low)
+        .max((high - prev_close).abs())
+        .max((low - prev_close).abs())
+}
+
 mod momentum;
 mod moving_average;
 mod trend;

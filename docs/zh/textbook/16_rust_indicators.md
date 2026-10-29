@@ -35,7 +35,7 @@ python examples/textbook/ch16_indicators.py --symbol sh600000
 验收要点：
 
 1. 脚本依次输出三课演示：读指标（输入/输出/warmup）、用指标（EMA+ADX+NATR 角色分工回测）、迁移指标（python/rust 后端对齐）。
-2. 切换 `backend="python"` 与 `backend="rust"` 后，收敛尾段数值基本一致且可解释。
+2. 切换 `backend="python"` 与 `backend="rust"` 后，数值逐值一致（差值仅为浮点误差）。
 3. 能识别 warmup 导致的空值区段，并在计算指标前剔除前部 NaN 填充，避免把无效值喂给策略信号。
 4. `77_heikin_ashi_indicator.py` 输出 `candle_groups=['ha']`、`first_ha_close_matches=True`、`review_has_candlestick=True`、`review_price_hidden=True`、`d3kline_series=['ha']`，以及 `replaces_price=True`，最后打印 `done_heikin_ashi`。
 
@@ -338,7 +338,7 @@ if np.isnan([ema_fast[-1], ema_slow[-1], adx[-1], natr[-1], rsi[-1]]).any():
 
     **应用题**：EMA 给方向、ADX 过滤弱趋势、NATR 定风险尺度（决定仓位大小或止损宽度）——三者角色分工，而非指标堆砌。
 
-    **综合题**：EMA 这类简单递推指标全程基本一致；RSI/ADX/NATR 这类 Wilder 平滑指标在 warmup 区段有初值差异、收敛尾段趋于一致。结论：先用 python 后端对齐基线，再切 rust 提速。
+    **综合题**：两个后端都以 TA-Lib 0.8.2 为准，EMA、RSI、ADX、NATR 的预热长度与种子取值相同，全区段逐值一致（差值仅为浮点误差）。结论：先用 python 后端对齐基线，再切 rust 提速。
 
 ## 常见错误与排查
 

@@ -213,6 +213,8 @@ Template parameter details (current built-in values):
 | `cn_stock_t1_low_fee` | 0.0002 | 0.001 | 0.000005 | 3.0 | 0.0001 | 0.25 | 100 |
 | `cn_stock_sim_high_slippage` | 0.0003 | 0.001 | 0.00001 | 5.0 | 0.001 | 0.1 | 100 |
 
+> Since 0.3.74, `volume_limit_pct=0.25` of `cn_stock_t1_low_fee` actually takes effect (it was previously skipped by a default-value check). For `cn_stock_miniqmt` (0.2) and `cn_stock_sim_high_slippage` (0.1), capped fills are now also floored to whole lots by `lot_size`.
+
 Quick example:
 
 ```python

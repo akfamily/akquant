@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "akquant"
-version = "0.3.73"
+version = "0.3.74"
 description = "High-performance quantitative trading framework based on Rust and Python"
 readme = "README.md"
 license = {text = "MIT License"}
@@ -73,6 +73,7 @@ dev = [
     "pre-commit>=3.0.0",
     "pytest>=7.0.0",
     "ruff==0.17.1",  # 与 .pre-commit-config.yaml 的 ruff-pre-commit rev 保持一致
+    "ta-lib==0.8.2; python_version >= '3.11'",  # 仅测试: 指标与 TA-Lib 逐值对拍的基准(tests/test_talib_alignment.py), 升级即口径变更; 无 cp310 wheel
     "types-pytz>=2025.2.0.20251108",
 ]
 
@@ -129,6 +130,8 @@ module = [
     "pytest",
     "quantstats",
     "quantstats.*",
+    "talib",
+    "talib.*",
     # 可选依赖: redis 走 signal-redis extra 惰性导入; httpx 仅测试用
     "redis",
     "redis.*",

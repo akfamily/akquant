@@ -9,6 +9,9 @@
 - 如需全局覆盖 `auto` 行为，可设置环境变量 `AKQUANT_TALIB_AUTO_BACKEND=python|rust`。
 - 单输出指标返回单序列；多输出指标返回 tuple。
 - 绝大多数窗口类指标在 warmup 区段会返回 `NaN` 或空位，这属于正常行为。
+- 流式指标类（如 `aq.EMA`）在预热期 `update` 返回 `None`、`is_ready` 为 `False`，不再返回编造值；输入含 NaN/±inf 的坏数据行同样返回 `None` 且不推进内部状态。
+- 数值口径以 TA-Lib 0.8.2 为准，TA-Lib 里有的函数两个后端逐值一致，有意偏离项见[指标组合实战手册](talib_indicator_playbook.md)的“数值口径”一节。
+- “warmup 参考”列给出默认口径下前多少个输出为空（`NaN`），与 TA-Lib 的 lookback 一致（akquant 独有的函数按实际行为标注）。
 - 本页统计口径来自 AKQuant 当前指标注册表，当前总计 **104 个指标**。
 - `HeikinAshi`（平均 K 线）只提供增量指标类 `aq.HeikinAshi()`，没有 `akquant.talib` 批量函数；配合 `self.I(..., outputs=("open","high","low","close"), render_type="candle")` 画成 K 线，见[自定义指标](./custom_indicator.md)。
 
@@ -142,12 +145,12 @@
 | 指标 | 解释 | 常见输入 | 输出 | warmup 参考 |
 | :--- | :--- | :--- | :--- | :--- |
 | RSI | 相对强弱指数，衡量涨跌强弱比 | `close` | 单序列 | `period` |
-| ROC | 价格变化率（百分比） | `close` | 单序列 | `period+1` |
-| ROCP | 价格变化率（比例） | `close` | 单序列 | `period+1` |
-| ROCR | 价格比率（当前/过去） | `close` | 单序列 | `period+1` |
-| ROCR100 | 价格比率×100 | `close` | 单序列 | `period+1` |
-| MOM | 动量（当前减过去） | `close` | 单序列 | `period+1` |
-| WILLR | 威廉指标，区间位置振荡器 | `high,low,close` | 单序列 | `period` |
+| ROC | 价格变化率（百分比） | `close` | 单序列 | `period` |
+| ROCP | 价格变化率（比例） | `close` | 单序列 | `period` |
+| ROCR | 价格比率（当前/过去） | `close` | 单序列 | `period` |
+| ROCR100 | 价格比率×100 | `close` | 单序列 | `period` |
+| MOM | 动量（当前减过去） | `close` | 单序列 | `period` |
+| WILLR | 威廉指标，区间位置振荡器 | `high,low,close` | 单序列 | `period-1` |
 | CMO | Chande 动量振荡器 | `close` | 单序列 | `period` |
 
 ## 2) Moving Average & Transforms（59）
@@ -156,35 +159,35 @@
 
 | 指标 | 解释 | 常见输入 | 输出 | warmup 参考 |
 | :--- | :--- | :--- | :--- | :--- |
-| SMA | 简单移动平均 | `close` | 单序列 | `period` |
-| EMA | 指数移动平均 | `close` | 单序列 | 常从首值开始 |
-| WMA | 加权移动平均 | `close` | 单序列 | `period` |
-| TRIMA | 三角移动平均 | `close` | 单序列 | `period` |
-| DEMA | 双指数均线 | `close` | 单序列 | 约 `2*period` |
-| TEMA | 三指数均线 | `close` | 单序列 | 约 `3*period` |
-| TRIX | 三重 EMA 的变化率 | `close` | 单序列 | 约 `3*period` |
-| KAMA | 自适应均线 | `close` | 单序列 | `period+1` |
-| T3 | Tillson T3 平滑 | `close` | 单序列 | 较长（多级 EMA） |
-| HT_TRENDLINE | 近似 Hilbert 趋势线 | `close` | 单序列 | 固定窗口 |
-| MAMA | 自适应双线 `(mama,fama)` | `close` | 双序列 | 需初始点 |
-| MACD | `(macd,signal,hist)` 三输出 | `close` | 三序列 | `slow+signal` 量级 |
-| APO | 绝对价格振荡器（快慢均线差） | `close` | 单序列 | `slow` |
-| PPO | 百分比价格振荡器 | `close` | 单序列 | `slow` |
+| SMA | 简单移动平均 | `close` | 单序列 | `period-1` |
+| EMA | 指数移动平均 | `close` | 单序列 | `period-1` |
+| WMA | 加权移动平均 | `close` | 单序列 | `period-1` |
+| TRIMA | 三角移动平均 | `close` | 单序列 | `period-1` |
+| DEMA | 双指数均线 | `close` | 单序列 | `2*(period-1)` |
+| TEMA | 三指数均线 | `close` | 单序列 | `3*(period-1)` |
+| TRIX | 三重 EMA 的变化率 | `close` | 单序列 | `3*(period-1)+1` |
+| KAMA | 自适应均线 | `close` | 单序列 | `period` |
+| T3 | Tillson T3 平滑 | `close` | 单序列 | `6*(period-1)` |
+| HT_TRENDLINE | 近似 Hilbert 趋势线 | `close` | 单序列 | 63 |
+| MAMA | 自适应双线 `(mama,fama)` | `close` | 双序列 | 32 |
+| MACD | `(macd,signal,hist)` 三输出 | `close` | 三序列 | `slow+signal-2` |
+| APO | 绝对价格振荡器（快慢均线差） | `close` | 单序列 | `slow-1` |
+| PPO | 百分比价格振荡器 | `close` | 单序列 | `slow-1` |
 
 ### 2.2 窗口统计与区间类
 
 | 指标 | 解释 | 常见输入 | 输出 | warmup 参考 |
 | :--- | :--- | :--- | :--- | :--- |
-| MIDPOINT | 窗口中点 `(max+min)/2` | `close` | 单序列 | `period` |
-| MAX | 窗口最大值 | `close` | 单序列 | `period` |
-| MIN | 窗口最小值 | `close` | 单序列 | `period` |
-| MAXINDEX | 窗口最大值对应索引 | `close` | 单序列 | `period` |
-| MININDEX | 窗口最小值对应索引 | `close` | 单序列 | `period` |
-| MINMAX | 同时输出 `(min,max)` | `close` | 双序列 | `period` |
-| MINMAXINDEX | 输出 `(minidx,maxidx)` | `close` | 双序列 | `period` |
-| SUM | 窗口求和 | `close` | 单序列 | `period` |
-| AVGDEV | 平均绝对偏差 | `close` | 单序列 | `period` |
-| RANGE | 窗口振幅 `max-min` | `close` | 单序列 | `period` |
+| MIDPOINT | 窗口中点 `(max+min)/2` | `close` | 单序列 | `period-1` |
+| MAX | 窗口最大值 | `close` | 单序列 | `period-1` |
+| MIN | 窗口最小值 | `close` | 单序列 | `period-1` |
+| MAXINDEX | 窗口最大值对应索引 | `close` | 单序列 | `period-1` |
+| MININDEX | 窗口最小值对应索引 | `close` | 单序列 | `period-1` |
+| MINMAX | 同时输出 `(min,max)` | `close` | 双序列 | `period-1` |
+| MINMAXINDEX | 输出 `(minidx,maxidx)` | `close` | 双序列 | `period-1` |
+| SUM | 窗口求和 | `close` | 单序列 | `period-1` |
+| AVGDEV | 平均绝对偏差 | `close` | 单序列 | `period-1` |
+| RANGE | 窗口振幅 `max-min` | `close` | 单序列 | `period-1`（akquant 独有） |
 
 ### 2.3 代数、三角、对数与变换类
 
@@ -230,53 +233,53 @@
 
 | 指标 | 解释 | 常见输入 | 输出 | warmup 参考 |
 | :--- | :--- | :--- | :--- | :--- |
-| ADX | 趋势强度，不分方向 | `high,low,close` | 单序列 | `2*period` 量级 |
-| ADXR | ADX 平滑再平滑 | `high,low,close` | 单序列 | 略长于 ADX |
+| ADX | 趋势强度，不分方向 | `high,low,close` | 单序列 | `2*period-1` |
+| ADXR | ADX 平滑再平滑 | `high,low,close` | 单序列 | `3*period-2` |
 | DX | 方向动量差异度 | `high,low,close` | 单序列 | `period` |
 | PLUS_DI | 正向方向指标 | `high,low,close` | 单序列 | `period` |
 | MINUS_DI | 负向方向指标 | `high,low,close` | 单序列 | `period` |
-| CCI | 典型价格偏离度 | `high,low,close` | 单序列 | `period` |
+| CCI | 典型价格偏离度 | `high,low,close` | 单序列 | `period-1` |
 | AROON | `(_down,_up)` 趋势新高新低时距 | `high,low` | 双序列 | `period` |
 | AROONOSC | AROON 振荡值 | `high,low` | 单序列 | `period` |
-| STOCH | 随机指标 `(slowk,slowd)` | `high,low,close` | 双序列 | 多窗口叠加 |
-| SAR | 抛物线转向止损 | `high,low` | 单序列 | 需初始化点 |
+| STOCH | 随机指标 `(slowk,slowd)` | `high,low,close` | 双序列 | `fastk+slowk+slowd-3` |
+| SAR | 抛物线转向止损 | `high,low` | 单序列 | 1 |
 | ULTOSC | 终极振荡器 | `high,low,close` | 单序列 | `period3` |
-| LINEARREG | 线性回归末端值 | `close` | 单序列 | `period` |
-| LINEARREG_SLOPE | 回归斜率 | `close` | 单序列 | `period` |
-| LINEARREG_INTERCEPT | 回归截距 | `close` | 单序列 | `period` |
-| LINEARREG_ANGLE | 回归角度 | `close` | 单序列 | `period` |
-| LINEARREG_R2 | 决定系数 `R²` | `close` | 单序列 | `period` |
-| TSF | 时间序列预测值 | `close` | 单序列 | `period` |
-| CORREL | 相关系数 | `x,y` | 单序列 | `period` |
+| LINEARREG | 线性回归末端值 | `close` | 单序列 | `period-1` |
+| LINEARREG_SLOPE | 回归斜率 | `close` | 单序列 | `period-1` |
+| LINEARREG_INTERCEPT | 回归截距 | `close` | 单序列 | `period-1` |
+| LINEARREG_ANGLE | 回归角度 | `close` | 单序列 | `period-1` |
+| LINEARREG_R2 | 决定系数 `R²` | `close` | 单序列 | `period-1`（akquant 独有） |
+| TSF | 时间序列预测值 | `close` | 单序列 | `period-1` |
+| CORREL | 相关系数 | `x,y` | 单序列 | `period-1` |
 | BETA | Beta（协方差/方差） | `x,y` | 单序列 | `period` |
-| COVAR | 协方差 | `x,y` | 单序列 | `period` |
+| COVAR | 协方差 | `x,y` | 单序列 | `period-1`（akquant 独有；rust 后端口径，python 后端晚 4 根） |
 
 ## 4) Volatility（12）
 
 | 指标 | 解释 | 常见输入 | 输出 | warmup 参考 |
 | :--- | :--- | :--- | :--- | :--- |
-| BollingerBands | 布林带 `(upper,middle,lower)` | `close` | 三序列 | `period` |
+| BollingerBands | 布林带 `(upper,middle,lower)` | `close` | 三序列 | `period-1` |
 | ATR | 平均真实波幅 | `high,low,close` | 单序列 | `period` |
 | NATR | 归一化 ATR（%） | `high,low,close` | 单序列 | `period` |
-| TRANGE | 真实波幅（当期） | `high,low,close` | 单序列 | 极短 |
-| STDDEV | 标准差（可带倍数） | `close` | 单序列 | `period` |
-| VAR | 方差（可带倍数） | `close` | 单序列 | `period` |
-| MEDPRICE | 中间价 `(high+low)/2` | `high,low` | 单序列 | 无明显 warmup |
-| TYPPRICE | 典型价 `(h+l+c)/3` | `high,low,close` | 单序列 | 无明显 warmup |
-| WCLPRICE | 加权收盘价 | `high,low,close` | 单序列 | 无明显 warmup |
-| AVGPRICE | 平均价 `(o+h+l+c)/4` | `open,high,low,close` | 单序列 | 无明显 warmup |
-| HeikinAshi | 平均 K 线 `(ha_open,ha_high,ha_low,ha_close)`；仅增量类 `aq.HeikinAshi()` | `open,high,low,close` | 四序列 | 无（第一根即有值） |
-| MIDPRICE | 区间中价 `(maxH+minL)/2` | `high,low` | 单序列 | `period` |
+| TRANGE | 真实波幅（当期） | `high,low,close` | 单序列 | 1 |
+| STDDEV | 标准差（可带倍数） | `close` | 单序列 | `period-1` |
+| VAR | 方差（忽略 `nbdev`，与 TA-Lib 一致） | `close` | 单序列 | `period-1` |
+| MEDPRICE | 中间价 `(high+low)/2` | `high,low` | 单序列 | 0 |
+| TYPPRICE | 典型价 `(h+l+c)/3` | `high,low,close` | 单序列 | 0 |
+| WCLPRICE | 加权收盘价 | `high,low,close` | 单序列 | 0 |
+| AVGPRICE | 平均价 `(o+h+l+c)/4` | `open,high,low,close` | 单序列 | 0 |
+| HeikinAshi | 平均 K 线 `(ha_open,ha_high,ha_low,ha_close)`；仅增量类 `aq.HeikinAshi()` | `open,high,low,close` | 四序列 | 0 |
+| MIDPRICE | 区间中价 `(maxH+minL)/2` | `high,low` | 单序列 | `period-1` |
 
 ## 5) Volume（5）
 
 | 指标 | 解释 | 常见输入 | 输出 | warmup 参考 |
 | :--- | :--- | :--- | :--- | :--- |
-| OBV | 能量潮，价格方向累计成交量 | `close,volume` | 单序列 | 很短 |
+| OBV | 能量潮，价格方向累计成交量 | `close,volume` | 单序列 | 0 |
 | MFI | 资金流量指数 | `high,low,close,volume` | 单序列 | `period` |
-| AD | 累积/派发线 | `high,low,close,volume` | 单序列 | 很短 |
-| ADOSC | AD 的快慢振荡 | `high,low,close,volume` | 单序列 | 快慢窗叠加 |
-| BOP | 买卖力量平衡 | `open,high,low,close` | 单序列 | 很短 |
+| AD | 累积/派发线 | `high,low,close,volume` | 单序列 | 0 |
+| ADOSC | AD 的快慢振荡 | `high,low,close,volume` | 单序列 | `max(fast,slow)-1` |
+| BOP | 买卖力量平衡 | `open,high,low,close` | 单序列 | 0 |
 
 ## 常见问题
 

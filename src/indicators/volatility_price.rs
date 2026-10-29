@@ -22,6 +22,7 @@ impl MEDPRICE {
     }
 
     pub fn update(&mut self, high: f64, low: f64) -> Option<f64> {
+        skip_non_finite!(high, low);
         self.current_value = Some((high + low) / 2.0);
         self.current_value
     }
@@ -66,6 +67,7 @@ impl TYPPRICE {
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
+        skip_non_finite!(high, low, close);
         self.current_value = Some((high + low + close) / 3.0);
         self.current_value
     }
@@ -114,6 +116,7 @@ impl WCLPRICE {
     }
 
     pub fn update(&mut self, high: f64, low: f64, close: f64) -> Option<f64> {
+        skip_non_finite!(high, low, close);
         self.current_value = Some((high + low + 2.0 * close) / 4.0);
         self.current_value
     }
@@ -162,6 +165,7 @@ impl AVGPRICE {
     }
 
     pub fn update(&mut self, open: f64, high: f64, low: f64, close: f64) -> Option<f64> {
+        skip_non_finite!(open, high, low, close);
         self.current_value = Some((open + high + low + close) / 4.0);
         self.current_value
     }
@@ -220,6 +224,7 @@ impl MIDPRICE {
     }
 
     pub fn update(&mut self, high: f64, low: f64) -> Option<f64> {
+        skip_non_finite!(high, low);
         self.highs.push_back(high);
         self.lows.push_back(low);
         if self.highs.len() > self.period {

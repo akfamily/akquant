@@ -24,6 +24,7 @@ macro_rules! define_unary_indicator {
             }
 
             pub fn update(&mut self, value: f64) -> Option<f64> {
+                skip_non_finite!(value);
                 self.current_value = Some(($calc)(value));
                 self.current_value
             }
@@ -68,6 +69,7 @@ macro_rules! define_binary_indicator {
             }
 
             pub fn update(&mut self, left: f64, right: f64) -> Option<f64> {
+                skip_non_finite!(left, right);
                 self.current_value = Some(($calc)(left, right));
                 self.current_value
             }
@@ -192,6 +194,7 @@ impl CLIP {
     }
 
     pub fn update(&mut self, value: f64, min_value: f64, max_value: f64) -> Option<f64> {
+        skip_non_finite!(value, min_value, max_value);
         let lo = min_value.min(max_value);
         let hi = min_value.max(max_value);
         self.current_value = Some(value.clamp(lo, hi));

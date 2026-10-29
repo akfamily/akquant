@@ -82,6 +82,24 @@ if not (macd[-1] == macd[-1] and signal[-1] == signal[-1]):
 3. 对支持 `period` 别名的指标优先沿用旧参数名。
 4. 用固定样本建立最小回归测试。
 
+## 7. 数值口径
+
+- **基准**：以 TA-Lib 0.8.2（内置 C 库 0.8.1）为准。预热长度（首个有效值之前的 `NaN` 个数）、种子取法、递推公式、除零时的取值与默认参数都与 TA-Lib 一致；TA-Lib 里有的函数，`backend="python"` 与 `backend="rust"` 逐值一致（相对误差在 1e-9 以内，`MAMA`、`HT_TRENDLINE` 为 1e-8）。
+- **非有限值**：任一输入为 NaN 或 ±inf 时，这一行视为不存在。流式类（如 `aq.EMA(14).update(...)`）返回 `None` 且不改变内部状态；`akquant.talib` 函数该行输出 `NaN`，计算时跳过该行。开头的 NaN 与 TA-Lib 完全一致，因此 `ta.SMA(ta.RSI(close))` 这类串联可以直接使用。
+- **流式类的预热**：预热期 `update` 返回 `None`、`is_ready` 为 `False`（例如 `aq.MACD(12, 26, 9)` 前 33 根），不再返回编造值。`Strategy.I()` 的预热推断同样按 TA-Lib lookback 计算（`MACD(12, 26, 9)` 为 34 根）。
+- **有意偏离 TA-Lib**：下表各项是刻意与 TA-Lib 不同，不是缺陷。
+
+| 项 | TA-Lib | akquant | 理由 |
+|---|---|---|---|
+| 序列中段的 NaN | 之后全部 NaN | 跳过该行继续算 | 停牌、缺数据后指标要能恢复 |
+| MAXINDEX、MININDEX、MINMAXINDEX 的预热期 | 填 0 | 填 NaN | 0 是合法下标，填 0 会被当成真实结果 |
+| NATR(timeperiod=1) | 直接返回 TRANGE，没有归一化 | 返回 TR / close × 100 | TA-Lib 的 bug |
+| 滑动累加的舍入残差 | 0.8.1 用“平移 + 定期重算”的滑动累加，在接近退化（但不完全退化）的窗口上按各自的相对阈值判零 | 每个窗口精确重算（先减去窗口首值），判零规则照抄 0.8.1 | 完全退化的窗口（停牌、一字板）结果与 TA-Lib 相同；只在“几乎平盘”的人造数据上可能差在 1e-9 以内 |
+| MACD、APO、PPO 的 slowperiod ≤ fastperiod | 自动互换 | `akquant.talib` 抛 ValueError（保持现状）；Rust 类构造时互换 | 不改现有的参数校验 |
+| MA、BBANDS、STOCH 的 matype | 支持 0～8 | 只支持 0（SMA）；APO、PPO 固定为 EMA（等同 TA-Lib 默认的 matype=1） | 不在本轮范围 |
+| LN、LOG10 的输入为 0 | -inf | NaN | 与现有数学函数对非法输入返回 NaN 的约定一致 |
+| akquant 独有函数（COVAR、LINEARREG_R2、CLIP、CLAMP01、SQ 等数学扩展） | 无 | 只遵守非有限值规则；两个后端不保证逐值一致：COVAR 的 python 后端比 rust 后端晚 4 根开始输出，MOD 在操作数为负时两个后端的结果不同 | 没有 TA-Lib 基准 |
+
 相关文档：
 - [第 5 章：策略开发实战](../textbook/05_strategy.md)
 - [可运行示例：45_talib_indicator_playbook_demo.py](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py)

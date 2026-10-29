@@ -25,6 +25,7 @@ impl ROC {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period + 1 {
             self.buffer.pop_front();
@@ -34,8 +35,9 @@ impl ROC {
             return None;
         }
         let base = *self.buffer.front()?;
-        if base.abs() <= f64::EPSILON {
-            self.current_value = Some(f64::NAN);
+        // 与 TA-Lib 一致: 前值为 0 时输出 0
+        if base == 0.0 {
+            self.current_value = Some(0.0);
         } else {
             self.current_value = Some((value - base) / base * 100.0);
         }
@@ -82,6 +84,7 @@ impl ROCP {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period + 1 {
             self.buffer.pop_front();
@@ -91,8 +94,9 @@ impl ROCP {
             return None;
         }
         let base = *self.buffer.front()?;
-        if base.abs() <= f64::EPSILON {
-            self.current_value = Some(f64::NAN);
+        // 与 TA-Lib 一致: 前值为 0 时输出 0
+        if base == 0.0 {
+            self.current_value = Some(0.0);
         } else {
             self.current_value = Some((value - base) / base);
         }
@@ -139,6 +143,7 @@ impl ROCR {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period + 1 {
             self.buffer.pop_front();
@@ -148,8 +153,9 @@ impl ROCR {
             return None;
         }
         let base = *self.buffer.front()?;
-        if base.abs() <= f64::EPSILON {
-            self.current_value = Some(f64::NAN);
+        // 与 TA-Lib 一致: 前值为 0 时输出 0
+        if base == 0.0 {
+            self.current_value = Some(0.0);
         } else {
             self.current_value = Some(value / base);
         }
@@ -196,6 +202,7 @@ impl ROCR100 {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period + 1 {
             self.buffer.pop_front();
@@ -205,8 +212,9 @@ impl ROCR100 {
             return None;
         }
         let base = *self.buffer.front()?;
-        if base.abs() <= f64::EPSILON {
-            self.current_value = Some(f64::NAN);
+        // 与 TA-Lib 一致: 前值为 0 时输出 0
+        if base == 0.0 {
+            self.current_value = Some(0.0);
         } else {
             self.current_value = Some((value / base) * 100.0);
         }
@@ -253,6 +261,7 @@ impl MOM {
     }
 
     pub fn update(&mut self, value: f64) -> Option<f64> {
+        skip_non_finite!(value);
         self.buffer.push_back(value);
         if self.buffer.len() > self.period + 1 {
             self.buffer.pop_front();

@@ -696,8 +696,12 @@ class StrategyConfig:
                      {"type": "fixed", "value": 0.2} 或
                      {"type": "ticks", "value": 1}。
                      裸 float 仍兼容，但按 percent 语义解析。
-    :param volume_limit_pct: Max participation rate. 0.25 means order size is
-                             capped at 25% of the bar's volume. Default 0.25.
+    :param volume_limit_pct: Max participation rate. 0.25 means a fill is capped
+                             at 25% of the bar's volume, rounded down to whole
+                             lots. 0 (default) means unlimited. The bar volume
+                             must use the same unit as order quantity (AKShare's
+                             ``stock_zh_a_hist`` reports volume in lots of 100
+                             shares).
     :param exit_on_last_bar: Auto-close all positions at the end of backtest.
                              Default True.
 
@@ -721,7 +725,7 @@ class StrategyConfig:
     enable_fractional_shares: bool = False
     round_fill_price: bool = True
     slippage: Union[float, Dict[str, Any], None] = 0.0
-    volume_limit_pct: float = 0.25  # Max participation rate (e.g., 25% of bar volume)
+    volume_limit_pct: float = 0.0  # 0 表示不限制; 0.25 即最多成交 bar 成交量的 25%
 
     # Position Sizing Constraints
     max_long_positions: Optional[int] = None

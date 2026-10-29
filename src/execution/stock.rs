@@ -433,4 +433,86 @@ mod tests {
             panic!("Unexpected result");
         }
     }
+
+    fn bar_event(volume: Decimal) -> Event {
+        Event::Bar(crate::model::Bar {
+            timestamp: 100,
+            symbol: "AAPL".to_string(),
+            open: dec!(10.0),
+            high: dec!(10.2),
+            low: dec!(9.8),
+            close: dec!(10.0),
+            volume,
+            extra: Default::default(),
+            freq: None,
+            interval_start: None,
+        })
+    }
+
+    #[test]
+    fn test_volume_limit_caps_fill_to_whole_lots() {
+        // 0.2499 * 10000 = 2499 股, 按 lot_size=100 向下取整为 2400 (#409)
+        let matcher = StockMatcher::default();
+        let mut order = create_order(OrderSide::Buy, OrderType::Limit, Some(dec!(10.5)), None);
+        order.quantity = dec!(3000);
+        let instr = create_instrument();
+        let event = bar_event(dec!(10000));
+        let mut ctx = tick_ctx(&event, &instr);
+        ctx.volume_limit_pct = dec!(0.2499);
+        let report = matcher.match_order(&mut order, &ctx);
+        assert!(report.is_some());
+        assert_eq!(order.filled_quantity, dec!(2400));
+        assert_eq!(order.status, OrderStatus::PartiallyFilled);
+    }
+
+    #[test]
+    fn test_volume_limit_below_one_lot_fills_nothing() {
+        // 0.25 * 300 = 75 股, 不足一手: 本根不成交, 订单继续挂着
+        let matcher = StockMatcher::default();
+        let mut order = create_order(OrderSide::Buy, OrderType::Limit, Some(dec!(10.5)), None);
+        order.quantity = dec!(1000);
+        let instr = create_instrument();
+        let event = bar_event(dec!(300));
+        let mut ctx = tick_ctx(&event, &instr);
+        ctx.volume_limit_pct = dec!(0.25);
+        let report = matcher.match_order(&mut order, &ctx);
+        assert!(report.is_none());
+        assert_eq!(order.filled_quantity, Decimal::ZERO);
+        // 订单仍挂着, 状态不变(未成交也未撤销)
+        assert_eq!(order.status, OrderStatus::New);
+    }
+
+    #[test]
+    fn test_volume_limit_odd_lot_remainder_fills_in_one_piece() {
+        // 剩余 50 股(零股) <= 截断上限 0.25 * 300 = 75, 整笔一次成交; 不能因为
+        // 75 向下取整到 0 手而卡住(#409)
+        let matcher = StockMatcher::default();
+        let mut order = create_order(OrderSide::Sell, OrderType::Limit, Some(dec!(9.5)), None);
+        order.quantity = dec!(50);
+        let instr = create_instrument();
+        let event = bar_event(dec!(300));
+        let mut ctx = tick_ctx(&event, &instr);
+        ctx.volume_limit_pct = dec!(0.25);
+        let report = matcher.match_order(&mut order, &ctx);
+        assert!(report.is_some());
+        assert_eq!(order.filled_quantity, dec!(50));
+        assert_eq!(order.status, OrderStatus::Filled);
+    }
+
+    #[test]
+    fn test_volume_limit_below_one_lot_cancels_ioc() {
+        // 截断上限取整为 0 手时, IOC 当根撤销, 不能继续挂着
+        let matcher = StockMatcher::default();
+        let mut order = create_order(OrderSide::Buy, OrderType::Limit, Some(dec!(10.5)), None);
+        order.quantity = dec!(1000);
+        order.time_in_force = TimeInForce::IOC;
+        let instr = create_instrument();
+        let event = bar_event(dec!(300));
+        let mut ctx = tick_ctx(&event, &instr);
+        ctx.volume_limit_pct = dec!(0.25);
+        let report = matcher.match_order(&mut order, &ctx);
+        assert!(matches!(report, Some(Event::ExecutionReport(_, None))));
+        assert_eq!(order.status, OrderStatus::Cancelled);
+        assert_eq!(order.filled_quantity, Decimal::ZERO);
+    }
 }
