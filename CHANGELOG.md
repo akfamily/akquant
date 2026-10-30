@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.76] - 2026-10-30
+
 > **规则版本 2.1.2**：热启动恢复时，`config` 里没设滑点的配置现在沿用快照里的滑点（此前被覆盖成无滑点），涉及热启动且第一阶段有滑点的回测结果会变；另外，裸数字滑点与 `self.I(...)` 重名声明从静默接受改为直接报错。
 
 ### Changed
