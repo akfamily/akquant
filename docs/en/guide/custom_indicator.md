@@ -28,6 +28,8 @@ framework takes care of three things for you: **advancing it on every bar**, **s
 lookback through `ind[0]` / `ind[1]`**, and **reporting plot points on demand**. This
 mirrors `ta.*` + `plot()` in TradingView Pine Script.
 
+`name=` must be unique within a strategy: declaring the same name twice raises `ValueError` (without `name`, indicators are auto-numbered `ema`, `ema_2`, ...; an explicit name must not collide with those auto names either).
+
 ```python
 import akquant as aq
 from akquant import Bar, Strategy

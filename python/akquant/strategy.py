@@ -1078,6 +1078,8 @@ class Strategy:
             "_indicator_auto_name_counts", {}
         )
         if self.is_restored:
+            # 与计数拨回同一处: 恢复这一轮重新登记已声明的指标名。
+            self.__dict__.setdefault("_declared_indicator_names", {}).clear()
             counts.clear()
             counts.update(getattr(self, "_indicator_auto_name_counts_at_start", {}))
         else:
@@ -1770,6 +1772,7 @@ class Strategy:
                 f"{CANDLE_ROLES!r} 这四个(顺序不限), 收到 outputs={outs!r}"
             )
         indicator_name = self._resolve_indicator_name(name, indicator, factory)
+        self._claim_indicator_name(indicator_name, indicator, factory)
         # warm start 恢复: 声明照旧执行(on_start 会重跑), 但不能覆盖已恢复的
         # 指标状态, 否则预热白做。
         if self.is_restored and indicator_name in self._incremental_indicators:
@@ -1886,6 +1889,33 @@ class Strategy:
                     f"I(name={name!r}) 的上报键 {clash!r} 与本策略 candle 指标 "
                     f"{group!r} 的分量键重名; 请换一个 name"
                 )
+
+    def _claim_indicator_name(
+        self, indicator_name: str, indicator: Any, factory: Optional[Callable[[], Any]]
+    ) -> None:
+        """登记本轮声明的指标名, 同一轮里第二次出现则报错.
+
+        "一轮"指首跑的 ``__init__`` + ``on_start``, 或 warm start 恢复时重跑的
+        那一遍 ``on_start``(``_on_start_internal`` 在恢复开始时清空登记)。
+        不能用 ``_incremental_indicators`` 的键判断: 恢复时字典里本来就有首跑
+        的声明, 重跑 ``on_start`` 的同名声明是合法的。
+        """
+        declared: Dict[str, str] = self.__dict__.setdefault(
+            "_declared_indicator_names", {}
+        )
+        if indicator is not None:
+            kind = type(indicator).__name__
+        else:
+            kind = str(getattr(factory, "__name__", "") or "factory")
+        previous = declared.get(indicator_name)
+        if previous is not None:
+            raise ValueError(
+                f"指标名 {indicator_name!r} 重复声明: 第一次是 {previous}, "
+                f"第二次是 {kind}。同名声明会互相覆盖, 两个指标读到同一组值; "
+                f"请给其中一个换一个 name=(省略 name 时按类名自动编号, "
+                f"显式名字也不能与自动编号 ema、ema_2 等撞名)"
+            )
+        declared[indicator_name] = kind
 
     def _resolve_indicator_name(
         self, name: Optional[str], indicator: Any, factory: Optional[Callable[[], Any]]

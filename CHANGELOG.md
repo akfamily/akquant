@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **MCP 服务 `akquant-mcp`（可选依赖 `pip install "akquant[mcp]"`）**：给 Claude Code、Cursor 等 AI 编程助手用的本地 stdio 服务，提供 7 个工具——`search_api`/`get_api`（运行时内省，与已装版本一致）、`get_guide`（写策略要点）、`check_strategy`（静态检查，不执行代码）、`prepare_data`（本地文件、AKShare A 股日线、合成数据）、`run_backtest`（子进程回测，返回核心指标与带策略文件行号、阶段和修复提示的结构化报错）、`get_run_details`（分页读取成交、委托、权益、日志）。一期只支持类式策略；不做沙箱。见 `docs/zh/guide/mcp.md`。
 
+### Fixed
+- **`self.I(...)` 重名声明不再静默覆盖，直接抛 `ValueError`**：同一策略里 `self.I(aq.EMA(3), name="x")` 与 `self.I(aq.EMA(30), name="x")` 此前不报错也不告警，第二次声明覆盖第一次，两个绑定每根 bar 读到的都是后声明的指标值。原因是指标按名字存进同一个字典、`IndicatorBinding` 也只按名字取值。现在“同一轮声明”（首跑的 `__init__` 与 `on_start`，或 warm start 恢复时重跑的那一遍 `on_start`）里解析后的名字第二次出现即报错，信息写明重复的名字、两次声明各自的指标类型与修改建议；显式名字与自动编号名（`ema`、`ema_2`）撞车、`PrecomputedIndicator` 重名同样报错。warm start 恢复时 `on_start` 重跑的同名声明不受影响（已声明名字的登记在恢复开始时与自动命名计数一并重置）。
+
 ### Removed
 - **【破坏性变更】滑点不再接受裸数字**：`run_backtest(slippage=...)`、`StrategyConfig.slippage`、`InstrumentConfig.slippage`、`strategy_slippage` 映射的值、订单级 `buy/sell/short/cover(..., slippage=...)`、`run_from_checkpoint` 热启动路径，收到 `int`/`float`（含 `0`、`0.0` 和 `bool`）一律抛 `TypeError`。裸数字弃用已久，却只发 `DeprecationWarning`，而策略模块不是 `__main__`，按 Python 默认的告警过滤规则用户根本看不到，所以直接移除。报错信息里带着传入的值和迁移写法：百分比改写成 `{'type': 'percent', 'value': 0.0002}`，固定价差改写成 `{'type': 'fixed', 'value': 0.2}`；不需要滑点时不传或传 `None`（需要在 `broker_profile` 模板之上显式关掉滑点时传 `{'type': 'zero'}`）。`StrategyConfig.slippage` 默认值由 `0.0` 改为 `None`，`SlippageInput` 与各处类型注解去掉 `float`/`int`；同时删除只在裸数字路径上触发的“全局滑点 >= 0.05”提示。不改变任何合法策略的回测结果。
 
