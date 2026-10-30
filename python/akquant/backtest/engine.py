@@ -49,6 +49,7 @@ from ..config import (
     ChinaStockConfig,
     RiskConfig,
     StrategyConfig,
+    bare_slippage_error,
 )
 from ..data import ParquetDataCatalog
 from ..feed_adapter import DEFAULT_INPUT_TIMEZONE, DataFeedAdapter, FeedSlice
@@ -164,7 +165,7 @@ class SlippagePolicy(TypedDict, total=False):
     value: float
 
 
-SlippageInput = Union[float, int, SlippagePolicy, Dict[str, Any], None]
+SlippageInput = Union[SlippagePolicy, Dict[str, Any], None]
 
 
 class CommissionPolicy(TypedDict, total=False):
@@ -3007,66 +3008,18 @@ def _warn_unmatched_instrument_config(
     )
 
 
-def _warn_if_suspicious_global_slippage(
-    slippage: float, logger: logging.Logger
-) -> None:
-    """Warn when a global slippage value looks like a fixed price delta."""
-    if slippage < 0.05:
-        return
-    logger.warning(
-        "Global slippage=%s uses percent semantics in AKQuant. "
-        "For example, 0.2 means 20%% slippage, not a fixed 0.2 price delta. "
-        "If you intended a fixed offset such as 0.2 index points, set "
-        "order-level slippage={'type': 'fixed', 'value': 0.2} instead.",
-        slippage,
-    )
-
-
-def _warn_deprecated_float_slippage(
-    slippage: Union[int, float], logger: logging.Logger, scope: str
-) -> None:
-    _ = slippage
-    warnings.warn(
-        f"{scope} slippage passed as a bare number is deprecated in AKQuant. "
-        "Use an explicit policy such as "
-        "slippage={'type': 'percent', 'value': 0.0002} or "
-        "slippage={'type': 'fixed', 'value': 0.2}.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
-    logger.warning(
-        "%s slippage passed as a bare number is deprecated in AKQuant. "
-        "Please use an explicit policy such as "
-        "slippage={'type': 'percent', 'value': 0.0002} or "
-        "slippage={'type': 'fixed', 'value': 0.2}.",
-        scope,
-    )
-
-
 def _normalize_slippage_policy(
     slippage: SlippageInput,
     *,
     instrument_snapshots: Optional[Dict[str, InstrumentSnapshot]] = None,
     logger: Optional[logging.Logger] = None,
     scope: str = "Global",
-    allow_float: bool = True,
     resolve_ticks: bool = True,
 ) -> SlippagePolicy:
     if slippage is None:
         return {"type": "zero", "value": 0.0}
     if isinstance(slippage, (int, float)):
-        if not allow_float:
-            raise TypeError(
-                f"{scope} slippage must be a dict policy when provided; "
-                "bare numeric slippage is no longer accepted here"
-            )
-        numeric_value = float(slippage)
-        if numeric_value < 0:
-            raise ValueError(f"{scope} slippage.value must be >= 0")
-        if logger is not None and numeric_value != 0.0:
-            _warn_deprecated_float_slippage(numeric_value, logger, scope)
-            _warn_if_suspicious_global_slippage(numeric_value, logger)
-        return {"type": "percent", "value": numeric_value}
+        raise bare_slippage_error(scope, slippage)
     if not isinstance(slippage, dict):
         raise TypeError(f"{scope} slippage must be a dict when provided")
     raw_type = str(slippage.get("type", "percent")).strip().lower()
@@ -3224,11 +3177,14 @@ def run_backtest(
     :param stamp_tax_rate: 印花税率 (仅卖出, 默认 0.0)
     :param transfer_fee_rate: 过户费率 (默认 0.0)
     :param min_commission: 最低佣金 (默认 0.0)
-    :param slippage: 滑点策略。推荐显式传 dict，如
+    :param slippage: 滑点策略。必须显式传 dict，如
                      {"type": "percent", "value": 0.0002}、
                      {"type": "fixed", "value": 0.2}、
                      {"type": "ticks", "value": 1}。
-                     裸 float 仍兼容，但已不推荐，且按 percent 语义解析。
+                     不再接受裸数字（含 0），传入会抛 TypeError。
+                     要关掉滑点（包括覆盖 broker_profile 模板里的滑点）传
+                     {"type": "zero"}；不传或传 None 表示不覆盖：设了
+                     broker_profile 时沿用模板滑点，否则不加滑点。
     :param volume_limit_pct: 成交量限制比例, 默认 0 表示不限制; 截断量按手数向下取整
     :param fill_policy: 统一成交语义配置（可选），传入 ``FillMode`` 对象:
         ``NextOpen()`` 下一根开盘价、``NextClose()`` 下一根收盘价、
@@ -3525,8 +3481,6 @@ def run_backtest(
     if slippage is None:
         if config and config.strategy_config:
             slippage = config.strategy_config.slippage
-        else:
-            slippage = 0.0
 
     if volume_limit_pct is None:
         if config and config.strategy_config:
@@ -7245,8 +7199,6 @@ def run_from_checkpoint(
         warm_start_slippage = cast(
             SlippageInput, restored_backtest_config.get("slippage")
         )
-    if warm_start_slippage is None:
-        warm_start_slippage = 0.0
     normalized_global_slippage = _normalize_slippage_policy(
         warm_start_slippage,
         instrument_snapshots=merged_instrument_snapshots,

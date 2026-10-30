@@ -289,6 +289,7 @@ executions_by_strategy = result.executions_by_strategy() # 按策略归属聚合
 *   🚀 **[快速入门](https://akquant.akfamily.xyz/start/quickstart/)**: 更多示例与基础用法。
 *   🤖 **[机器学习指南](https://akquant.akfamily.xyz/advanced/ml/)**: 如何使用内置的 ML 框架进行滚动训练。
 *   📚 **[API 参考](https://akquant.akfamily.xyz/reference/api/)**: 详细的类与函数文档。
+*   🧩 **[MCP 服务](https://akquant.akfamily.xyz/guide/mcp/)**: 让 Claude Code、Cursor 等 AI 助手查 API、跑回测、读结构化报错。
 *   💻 **[贡献指南](https://github.com/akfamily/akquant/blob/main/CONTRIBUTING.md)**: 如何参与项目开发。
 
 ## 🧪 测试与质量保证

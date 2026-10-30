@@ -27,6 +27,8 @@
 **支持 `ind[0]` / `ind[1]` 序列回溯**、**按需自动上报绘图点**。这对标 TradingView
 Pine Script 的 `ta.*` + `plot()`。
 
+`name=` 在同一个策略内必须唯一，重复声明会直接报错（省略 `name` 时按类名自动编号为 `ema`、`ema_2`……，显式名字也不能与这些自动名撞车）。
+
 ```python
 import akquant as aq
 from akquant import Bar, Strategy

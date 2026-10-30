@@ -117,7 +117,7 @@ result = aq.run_backtest(
 1. **模块名稳定**——同一来源重复加载得到同一模块名
 2. **模块已登记进 `sys.modules`**，且子进程能按该名字重新导入
 
-内置 `python_plain` 已经满足：它按源文件路径生成稳定且可逆的模块名，并在 `import akquant` 时安装 `sys.meta_path` finder，使子进程能按模块名找回源文件。
+内置 `python_plain` 已经满足：它按源文件路径生成稳定且可逆的模块名，并在 `import akquant` 时安装 `sys.meta_path` finder，使子进程能按模块名找回源文件。源文件内容变化时（按内容哈希判断），`python_plain` 会用同一个模块名重新加载，模块命名规则不变；内容没变则复用已加载的模块。重新加载之后，旧模块里的类和实例不能再被 pickle（`PicklingError: not the same object`），因为按名字解析到的是当前最新的类。
 
 自定义加载器若也要支持多进程，需自行提供等价机制。注意时机：`spawn` 启动的子进程在反序列化任务队列时就要还原该模块，早于任何用户代码执行，因此 finder 必须在模块导入期安装。
 

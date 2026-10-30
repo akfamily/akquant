@@ -128,7 +128,7 @@ def run_backtest(
 *   `sessions`: Symbol prefix → session template name or custom session table (`"default"` is the global default), default `None`. When omitted, China time zones use per-asset defaults (stocks/funds `CN_STOCK`, futures `CN_FUTURES_DAY`, options `CN_OPTION`, other assets `ALWAYS_OPEN`); other time zones trade continuously all day (`ALWAYS_OPEN`). List the templates with `aq.SessionResolver.templates()`. A custom table is a sequence of `(start, end, session[, anchor])` segments, e.g. `[("21:00", "02:30", "continuous"), ("09:00", "15:00", "continuous")]`; anything outside the segments is closed, segments with `start >= "18:00"` anchor to the previous trading day (night session) unless a 4th item `"prev"` / `"day"` says otherwise, and keys match by the longest symbol prefix. Full rules in [Chapter 7](../textbook/07_futures.md).
 *   `trading_calendar`: List of trading days (`date` / string / `Timestamp`), default `None`. When omitted, China markets infer trading days from weekdays (holidays are treated as trading days, so night sessions and end-of-day settlement around holidays are wrong) and a warning is logged once; `ALWAYS_OPEN` counts every day and does not warn. Data timestamps outside the range covered by the given calendar raise `ValueError`.
 *   `t_plus_one`: Enable T+1 trading rule. When omitted, the `broker_profile` setting is used (all three built-in A-share templates enable it); without a template it is False. If enabled, it forces usage of China Market Model.
-*   `slippage`: Global slippage (Default 0.0). E.g., 0.0001 means 1bp (0.01%) slippage, using percent model.
+*   `slippage`: Global slippage (Default `None`, i.e. no slippage). Must be an explicit policy dict, e.g. `{"type": "percent", "value": 0.0001}` for 1bp (0.01%) percent slippage, or `{"type": "fixed", "value": 0.2}` for a fixed price offset. Bare numbers (including `0`) are no longer accepted and raise `TypeError`. To disable slippage, including overriding a `broker_profile` template, pass `{"type": "zero"}`; omitting it or passing `None` means no override (the template's slippage applies if a `broker_profile` is set, otherwise there is no slippage).
 *   `volume_limit_pct`: Max participation rate, default `None` (unlimited, same as 0). With 0.25 a single bar fills at most 25% of its volume, rounded down to whole lots; if that is less than one lot the bar fills nothing and the order stays open. An order whose remaining quantity is at most `volume × pct` still fills in one piece (this may be an odd lot, e.g. selling the last 50 shares); an IOC/FOK order whose floored cap is 0 is cancelled on that bar. **Bar volume must use the same unit as order quantity**: AKShare's `stock_zh_a_hist` reports volume in lots (100 shares), multiply by 100 before enabling the limit. The limit applies to bar matching only; tick-driven matching is not subject to it. For instruments with fractional quantities (crypto, forex), set `lot_size` (default 1), otherwise the capped quantity is floored to whole units.
 *   `warmup_period`: Strategy warmup period. Specifies the length of historical data (number of Bars) to preload for indicator calculation.
 *   `start_time` / `end_time`: Backtest start/end time. Naive strings or `Timestamp` values are interpreted in the current `timezone` before being converted to UTC for filtering.
@@ -167,7 +167,7 @@ def run_backtest(
 *   `risk_budget_mode` / `risk_budget_reset_daily`: Risk budget accounting mode and reset policy.
 *   `analyzer_plugins`: Optional analyzer plugin list. Plugins receive `on_start/on_bar/on_trade/on_finish` callbacks and final outputs are stored in `result.analyzer_outputs`.
 *   `on_event`: Optional stream callback. When omitted, an internal no-op callback keeps legacy blocking return semantics; when provided, runtime events are emitted.
-*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size/T+1); explicit arguments take precedence. Built-ins: `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
+*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size/T+1); explicit arguments take precedence (for slippage too: to override the template's slippage you must pass an explicit `slippage={"type": "zero"}` or another policy dict; omitting it or passing `None` leaves the template's slippage in effect). Built-ins: `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
 
 **Recommended fill_policy examples (primary path):**
 
@@ -508,7 +508,7 @@ class StrategyConfig:
     # Execution
     enable_fractional_shares: bool = False
     round_fill_price: bool = True
-    slippage: Union[float, Dict[str, Any], None] = 0.0
+    slippage: Optional[Dict[str, Any]] = None
     volume_limit_pct: float = 0.0
     exit_on_last_bar: bool = True
 
@@ -562,7 +562,7 @@ class InstrumentConfig:
     min_commission: Optional[float] = None
     stamp_tax_rate: Optional[float] = None
     transfer_fee_rate: Optional[float] = None
-    slippage: Optional[Union[float, Dict[str, Any]]] = None
+    slippage: Optional[Dict[str, Any]] = None
 
     # Option specific
     option_type: Optional[

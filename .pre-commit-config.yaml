@@ -33,6 +33,7 @@ repos:
           - polars==1.41.2
           - quantstats==0.0.81
           - pydantic==2.13.4
+          - mcp==2.3.0
 
   - repo: local
     hooks:

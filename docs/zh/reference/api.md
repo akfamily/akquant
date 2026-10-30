@@ -236,7 +236,7 @@ def run_from_checkpoint(
 *   `sessions`: 代码前缀 → 时段模板名或自定义时段表（`"default"` 为全局默认），默认 `None`。不传时中国时区按资产类型取默认（股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`，其他资产 `ALWAYS_OPEN`），其他时区全天连续（`ALWAYS_OPEN`）。可选模板见 `aq.SessionResolver.templates()`；自定义时段表写法见下文 `BacktestConfig.china_futures` 一节的时段说明。
 *   `trading_calendar`: 交易日列表（`date` / 字符串 / `Timestamp`），默认 `None`。不传时中国市场按工作日推算（节假日也被当作交易日，节假日前后的夜盘与日终结算会算错），并告警一次；`ALWAYS_OPEN` 每天都算，不告警。数据时刻超出所传日历覆盖范围时报 `ValueError`。
 *   `t_plus_one`: 是否启用 T+1 交易规则。不传时取 `broker_profile` 模板的设置（三个内置 A 股模板都开），没有模板时为 False。如果启用，将强制使用中国市场模型。
-*   `slippage`: 全局滑点 (默认 0.0)。例如 0.0001 代表 1bp (0.01%) 的滑点，采用百分比模型。
+*   `slippage`: 全局滑点 (默认 `None`，即不加滑点)。必须写成策略字典，例如 `{"type": "percent", "value": 0.0001}` 代表 1bp (0.01%) 的百分比滑点，或 `{"type": "fixed", "value": 0.2}` 代表固定价差。不再接受裸数字（含 `0`），传入会抛 `TypeError`。要关掉滑点（包括覆盖 `broker_profile` 模板里的滑点）传 `{"type": "zero"}`；不传或传 `None` 表示不覆盖，设了 `broker_profile` 时沿用模板的滑点，否则不加滑点。
 *   `volume_limit_pct`: 成交量限制比例，默认 `None`（不限制，等同 0）。设为 0.25 时单根 bar 最多成交该 bar 成交量的 25%，截断量按手数向下取整，不足一手则本根不成交、订单继续挂着。订单剩余量不超过 `成交量 × 比例` 时仍一次成交（可能是零股，比如卖出最后剩下的 50 股）；IOC/FOK 订单若取整后的截断量为 0，当根撤销。**bar 的成交量必须与下单数量同单位**：AKShare 的 `stock_zh_a_hist` 等接口成交量单位是“手”，需先乘以 100 再开启量限。量限只作用于 bar 撮合，tick 驱动的撮合不受量限约束。数量可为小数的品种（加密货币、外汇）需设置 `lot_size`（默认 1），否则截断后的数量会向下取整为整数。
 *   `warmup_period`: 策略预热期。指定需要预加载的历史数据长度（Bar 数量），用于计算指标。
 *   `start_time` / `end_time`: 回测开始/结束时间。若传入 naive 时间字符串或 `Timestamp`，会按当前 `timezone` 解释，再转换为 UTC 参与过滤。
@@ -271,7 +271,7 @@ def run_from_checkpoint(
 *   T+1 范围说明：当前 `t_plus_one` 仍是运行级/市场级开关，不支持按 `strategy_id` 分层配置。
 *   `analyzer_plugins`: 可选 Analyzer 插件列表。插件接收 `on_start/on_bar/on_trade/on_finish` 生命周期回调，结果汇总到 `result.analyzer_outputs`。
 *   `on_event`: 可选事件回调。不传时内部使用 no-op 回调并保持阻塞返回语义；传入时可实时消费事件。
-*   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数/T+1 等默认值，显式参数优先。内置模板：`cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
+*   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数/T+1 等默认值，显式参数优先（滑点同理：要覆盖模板里的滑点须显式传 `slippage={"type": "zero"}` 或其他策略字典，不传或传 `None` 时模板滑点生效）。内置模板：`cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
 
 **fill_policy 推荐示例（主路径）：**
 
@@ -496,7 +496,7 @@ class StrategyConfig:
     min_commission: float = 0.0
     enable_fractional_shares: bool = False
     round_fill_price: bool = True
-    slippage: Union[float, Dict[str, Any], None] = 0.0
+    slippage: Optional[Dict[str, Any]] = None
     volume_limit_pct: float = 0.0
     max_long_positions: Optional[int] = None
     max_short_positions: Optional[int] = None
@@ -545,7 +545,7 @@ class InstrumentConfig:
     min_commission: Optional[float] = None
     stamp_tax_rate: Optional[float] = None
     transfer_fee_rate: Optional[float] = None
-    slippage: Optional[Union[float, Dict[str, Any]]] = None
+    slippage: Optional[Dict[str, Any]] = None
 
     # 期权相关
     option_type: Optional[

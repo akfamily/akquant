@@ -1,8 +1,8 @@
-import warnings
 from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 
 from .akquant import OrderStatus, OrderType, PositionEffect, TimeInForce
+from .config import bare_slippage_error
 
 if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
@@ -206,7 +206,7 @@ def buy(
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
     fill_mode: Optional["FillMode"] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    slippage: Optional[OrderSlippage] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
@@ -267,7 +267,7 @@ def sell(
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
     fill_mode: Optional["FillMode"] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    slippage: Optional[OrderSlippage] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,
@@ -328,7 +328,7 @@ def _submit_buy_side(
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
     fill_mode: Optional["FillMode"] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    slippage: Optional[OrderSlippage] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
     reduce_only: bool = False,
@@ -367,7 +367,7 @@ def _submit_buy_side_orders(
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
     fill_mode: Optional["FillMode"] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    slippage: Optional[OrderSlippage] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
     reduce_only: bool = False,
@@ -513,7 +513,7 @@ def _submit_sell_side(
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
     fill_mode: Optional["FillMode"] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    slippage: Optional[OrderSlippage] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
     reduce_only: bool = False,
@@ -552,7 +552,7 @@ def _submit_sell_side_orders(
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
     fill_mode: Optional["FillMode"] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    slippage: Optional[OrderSlippage] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
     reduce_only: bool = False,
@@ -831,27 +831,16 @@ def _normalize_order_fill_policy(
 def _normalize_order_slippage(
     strategy: Any,
     symbol: str,
-    slippage: Optional[Union[OrderSlippage, float, int]],
+    slippage: Optional[OrderSlippage],
 ) -> Tuple[Optional[str], Optional[float]]:
     if slippage is None:
         return None, None
     if isinstance(slippage, (int, float)):
-        raw_type = "percent"
-        raw_value = float(slippage)
-        if raw_value != 0.0:
-            warnings.warn(
-                "Passing order slippage as a bare number is deprecated in AKQuant. "
-                "Use an explicit policy such as "
-                "slippage={'type': 'percent', 'value': 0.0002} or "
-                "slippage={'type': 'fixed', 'value': 0.2}.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-    else:
-        if not isinstance(slippage, dict):
-            raise TypeError("slippage must be a dict when provided")
-        raw_type = str(slippage.get("type", "percent")).strip().lower()
-        raw_value = slippage.get("value", 0.0)
+        raise bare_slippage_error("Order", slippage)
+    if not isinstance(slippage, dict):
+        raise TypeError("slippage must be a dict when provided")
+    raw_type = str(slippage.get("type", "percent")).strip().lower()
+    raw_value = slippage.get("value", 0.0)
     try:
         value = float(raw_value)
     except (TypeError, ValueError):
@@ -919,8 +908,8 @@ def _resolve_effective_order_fill_policy(
 
 
 def _resolve_effective_order_slippage(
-    strategy: Any, symbol: str, slippage: Optional[Union[OrderSlippage, float, int]]
-) -> Optional[Union[OrderSlippage, float, int]]:
+    strategy: Any, symbol: str, slippage: Optional[OrderSlippage]
+) -> Optional[OrderSlippage]:
     # 优先级: 订单显式 > 品种(InstrumentConfig.slippage) > 策略级映射 > 引擎全局
     if slippage is not None:
         return slippage
@@ -1567,7 +1556,7 @@ def short(
     trigger_price: Optional[float] = None,
     tag: Optional[str] = None,
     fill_mode: Optional["FillMode"] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    slippage: Optional[OrderSlippage] = None,
     commission: Optional[OrderCommission] = None,
     reduce_only: bool = False,
 ) -> Optional[OrderReceipt]:
@@ -1645,7 +1634,7 @@ def cover(
     trigger_price: Optional[float] = None,
     tag: Optional[str] = None,
     fill_mode: Optional["FillMode"] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    slippage: Optional[OrderSlippage] = None,
     commission: Optional[OrderCommission] = None,
     reduce_only: bool = False,
 ) -> Optional[OrderReceipt]:
@@ -2025,7 +2014,7 @@ def _sim_submit_order(
     trail_offset: Optional[float] = None,
     trail_reference_price: Optional[float] = None,
     fill_mode: Optional["FillMode"] = None,
-    slippage: Optional[Union[OrderSlippage, float, int]] = None,
+    slippage: Optional[OrderSlippage] = None,
     commission: Optional[OrderCommission] = None,
     position_effect: Union[PositionEffect, str, None] = None,
     reduce_only: bool = False,

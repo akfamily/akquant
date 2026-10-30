@@ -221,7 +221,7 @@ risk = RiskConfig(max_position_pct=0.1, stop_loss_threshold=0.8)
 strategy_conf = StrategyConfig(
     initial_cash=1_000_000,
     commission_policy={"type": "per_unit", "value": 0.01},  # 每股 0.01 元
-    slippage=0.0002,  # 万2滑点
+    slippage={"type": "percent", "value": 0.0002},  # 万2滑点
     risk=risk
 )
 

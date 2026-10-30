@@ -46,6 +46,9 @@ def fetch_akshare_symbol(
     :param end_date: End date string (e.g., "20231101")
     :param adjust: Adjustment type ("qfq", "hfq", ""). Default "qfq".
     :return: DataFrame with standardized columns compatible with AKQuant.
+    :raises RuntimeError: If the AKShare request failed (network error, API change,
+        bad parameters) and no call returned data.
+    :raises ValueError: If every call succeeded but returned no data.
     """
     try:
         import akshare as ak
@@ -64,25 +67,30 @@ def fetch_akshare_symbol(
         elif symbol.startswith("4") or symbol.startswith("8"):
             ak_symbol = f"bj{symbol}"
 
-    # print(f"Fetching {ak_symbol} from AKShare...")
-    try:
-        df = ak.stock_zh_a_daily(
-            symbol=ak_symbol, start_date=start_date, end_date=end_date, adjust=adjust
-        )
-    except Exception:
-        # Fallback or retry
-        df = pd.DataFrame()
-
-    if df.empty:
-        # Try without prefix if failed (just in case akshare changes behavior)
+    # Try with the market prefix first, then without; remember any exception
+    # so that request failures are not reported as "no data".
+    errors: list[Exception] = []
+    df = pd.DataFrame()
+    for candidate in (ak_symbol, symbol):
         try:
             df = ak.stock_zh_a_daily(
-                symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust
+                symbol=candidate,
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            errors.append(exc)
+            df = pd.DataFrame()
+        if not df.empty:
+            break
 
     if df.empty:
+        if errors:
+            cause = errors[0]
+            raise RuntimeError(
+                f"AKShare 请求失败 ({ak_symbol}): {type(cause).__name__}: {cause}"
+            ) from cause
         raise ValueError(
             f"No data found for {symbol} ({ak_symbol}) between {start_date} and "
             f"{end_date}"

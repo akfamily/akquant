@@ -103,6 +103,7 @@ plugins:
             Capability Boost Plan: 能力补强路线图
             Timezone Handling: 时区处理
             Testing Guide: 测试指南
+            MCP Server: MCP 服务
             API Reference: API 参考
             Architecture & Internals: 架构与原理
             Architecture: 系统架构
@@ -180,6 +181,7 @@ plugins:
             Capability Boost Plan: Capability Boost Plan
             Timezone Handling: Timezone Handling
             Testing Guide: Testing Guide
+            MCP Server: MCP Server
             API Reference: API Reference
             Architecture & Internals: Architecture & Internals
             Architecture: Architecture
@@ -267,6 +269,7 @@ nav:
       - Visualization: guide/visualization.md
       - Optimization Guide: guide/optimization.md
       - Testing Guide: guide/testing.md
+      - MCP Server: guide/mcp.md
       - Examples: guide/examples.md
   - Advanced Topics:
       - ML Guide: advanced/ml.md

@@ -101,7 +101,7 @@ def test_cn_stock_profiles_use_current_stamp_tax(profile: str) -> None:
         fill_policy=CurrentClose(),
         trading_calendar=[d.date() for d in days],
         broker_profile=profile,
-        slippage=0.0,
+        slippage={"type": "zero"},
         show_progress=False,
     )
     executions = result.executions_df

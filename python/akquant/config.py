@@ -55,7 +55,7 @@ risk = RiskConfig(max_position_pct=0.1, stop_loss_threshold=0.8)
 strategy_conf = StrategyConfig(
     initial_cash=1_000_000,
     commission_rate=0.0003,
-    slippage=0.0002,  # 2 bps
+    slippage={"type": "percent", "value": 0.0002},  # 2 bps
     risk=risk
 )
 
@@ -84,6 +84,18 @@ InstrumentOptionMarginModel = Literal[
     "US_BROKER_SINGLE_LEG",
     "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
 ]
+
+
+def bare_slippage_error(scope: str, value: Any) -> TypeError:
+    """Build the TypeError raised when slippage is given as a bare number."""
+    return TypeError(
+        f"{scope} slippage must be an explicit policy dict, got bare number "
+        f"{value!r}. Use {{'type': 'percent', 'value': {value!r}}} or "
+        "{'type': 'fixed', 'value': ...}; to disable slippage (including "
+        "overriding a broker_profile template), pass {'type': 'zero'}. "
+        "Omitting it or passing None means no override: the broker_profile "
+        "template's slippage applies if one is set, otherwise no slippage."
+    )
 
 
 class InstrumentAssetTypeEnum(str, Enum):
@@ -190,10 +202,10 @@ class InstrumentConfig:
     :param min_commission: Minimum commission per order.
     :param stamp_tax_rate: Stamp tax rate (sell side only).
     :param transfer_fee_rate: Transfer fee rate.
-    :param slippage: Asset-specific slippage policy. 推荐显式写为
+    :param slippage: Asset-specific slippage policy. 必须显式写为
                      {"type": "percent", "value": 0.0002}、
                      {"type": "fixed", "value": 0.2} 或
-                     {"type": "ticks", "value": 1}。
+                     {"type": "ticks", "value": 1}；不再接受裸数字。
 
     **Option Specific:**
     :param option_type: "CALL" or "PUT".
@@ -221,7 +233,7 @@ class InstrumentConfig:
     min_commission: Optional[float] = None
     stamp_tax_rate: Optional[float] = None
     transfer_fee_rate: Optional[float] = None
-    slippage: Optional[Union[float, Dict[str, Any]]] = None
+    slippage: Optional[Dict[str, Any]] = None
 
     # Option specific
     option_type: Optional[InstrumentOptionTypeInput] = None
@@ -691,11 +703,14 @@ class StrategyConfig:
     **Execution Behavior:**
     :param enable_fractional_shares: Allow fractional share trading. Default False.
     :param round_fill_price: Round execution price to tick size. Default True.
-    :param slippage: Global slippage policy. 推荐显式写为
+    :param slippage: Global slippage policy. 必须显式写为
                      {"type": "percent", "value": 0.0002}、
                      {"type": "fixed", "value": 0.2} 或
                      {"type": "ticks", "value": 1}。
-                     裸 float 仍兼容，但按 percent 语义解析。
+                     不再接受裸数字（含 0），传入会抛 TypeError。要关掉滑点
+                     （包括覆盖 broker_profile 模板里的滑点）传
+                     {"type": "zero"}；不传或传 None 表示不覆盖：设了
+                     broker_profile 时沿用模板滑点，否则不加滑点。
     :param volume_limit_pct: Max participation rate. 0.25 means a fill is capped
                              at 25% of the bar's volume, rounded down to whole
                              lots. 0 (default) means unlimited. The bar volume
@@ -724,7 +739,7 @@ class StrategyConfig:
     # Execution
     enable_fractional_shares: bool = False
     round_fill_price: bool = True
-    slippage: Union[float, Dict[str, Any], None] = 0.0
+    slippage: Optional[Dict[str, Any]] = None
     volume_limit_pct: float = 0.0  # 0 表示不限制; 0.25 即最多成交 bar 成交量的 25%
 
     # Position Sizing Constraints

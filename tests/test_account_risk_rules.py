@@ -737,7 +737,6 @@ def test_futures_margin_account_snapshot_uses_margin_accounting() -> None:
             strategy_config=StrategyConfig(
                 initial_cash=500000.0,
                 commission_rate=0.0,
-                slippage=0.0,
                 min_commission=0.0,
                 stamp_tax_rate=0.0,
                 transfer_fee_rate=0.0,
@@ -833,7 +832,6 @@ def test_futures_short_overnight_avoids_spurious_liquidation() -> None:
             strategy_config=StrategyConfig(
                 initial_cash=500000.0,
                 commission_rate=0.0,
-                slippage=0.0,
                 min_commission=0.0,
                 stamp_tax_rate=0.0,
                 transfer_fee_rate=0.0,
@@ -945,7 +943,6 @@ def test_futures_force_liquidation_emits_callbacks_and_realizes_pnl_only() -> No
             strategy_config=StrategyConfig(
                 initial_cash=5000.0,
                 commission_rate=0.0,
-                slippage=0.0,
                 min_commission=0.0,
                 stamp_tax_rate=0.0,
                 transfer_fee_rate=0.0,
@@ -1058,7 +1055,6 @@ def test_futures_margin_portfolio_update_can_read_account_metrics() -> None:
             strategy_config=StrategyConfig(
                 initial_cash=500000.0,
                 commission_rate=0.0,
-                slippage=0.0,
                 min_commission=0.0,
                 stamp_tax_rate=0.0,
                 transfer_fee_rate=0.0,

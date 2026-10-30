@@ -1,9 +1,11 @@
 import base64
+import hashlib
 import importlib.abc
 import importlib.machinery
 import importlib.util
 import os
 import sys
+import threading
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Union, cast
@@ -26,6 +28,9 @@ _PLUGINS_LOADED = False
 # 动态加载的策略模块名前缀. 名字里编码了源文件路径, 因此可逆 ——
 # 这是多进程(spawn)下 worker 能重新找回该模块的唯一依据。
 _MODULE_PREFIX = "akquant_user_strategy_"
+
+# 模块对象上记录加载时源文件内容摘要的属性名, 用于判断缓存是否过期。
+_DIGEST_ATTR = "__akquant_source_digest__"
 
 
 def _encode_module_name(source_path: str) -> str:
@@ -83,7 +88,11 @@ class _DynamicStrategyFinder(importlib.abc.MetaPathFinder):
                 f"策略源文件已不存在, 无法重新加载动态策略模块: {source_path}",
                 name=fullname,
             )
-        return importlib.util.spec_from_file_location(fullname, source_path)
+        return importlib.util.spec_from_file_location(
+            fullname,
+            source_path,
+            loader=_FreshSourceLoader(fullname, source_path),
+        )
 
 
 def _install_dynamic_strategy_finder() -> None:
@@ -171,29 +180,77 @@ def get_strategy_loader(name: str) -> StrategyLoader:
     return _LOADERS[normalized]
 
 
+class _FreshSourceLoader(importlib.machinery.SourceFileLoader):
+    """始终从源文件编译, 不读也不写 ``.pyc``.
+
+    ``.pyc`` 靠源文件 mtime(秒)和大小判过期: 同一秒内改出等长的内容(如把
+    ``"A"`` 改成 ``"B"``), 或编辑器保留原 mtime, 都会命中旧字节码。父进程重新
+    加载与 spawn worker 里的 finder 都用本加载器, 两边执行的才是同一份源码。
+
+    ``source`` 给定时直接用这份字节编译(调用方已读过一次并据此算了摘要),
+    避免"算摘要"与"编译"之间文件被改动。
+    """
+
+    def __init__(self, fullname: str, path: str, source: Optional[bytes] = None):
+        """记录可选的预读源码字节."""
+        super().__init__(fullname, path)
+        self._source = source
+
+    def get_code(self, fullname: str) -> Any:
+        """从源文件字节直接编译, 绕开字节码缓存."""
+        path = self.get_filename(fullname)
+        data = self._source if self._source is not None else self.get_data(path)
+        return self.source_to_code(data, path)
+
+
+# 串行化 python_plain 加载: 登记模块早于 exec 完成, 并发加载同一文件时
+# 后到的线程会看到只执行了一半的模块("no Strategy subclass found")。
+_LOAD_LOCK = threading.RLock()
+
+
 def _load_python_plain(source: StrategySource, options: Dict[str, Any]) -> StrategyLike:
+    with _LOAD_LOCK:
+        return _load_python_plain_locked(source, options)
+
+
+def _load_python_plain_locked(
+    source: StrategySource, options: Dict[str, Any]
+) -> StrategyLike:
     if isinstance(source, bytes):
         raise TypeError("python_plain loader does not accept bytes source")
     module_path = os.fspath(source)
     # 模块名按源文件路径编码(稳定可逆)并登记进 sys.modules: 两者缺一,
     # pickle 就无法按名引用该类, 多进程网格搜索会在父进程 dumps 时直接失败。
     module_name = _encode_module_name(module_path)
+    # 内容哈希而非 mtime: Windows 上 mtime 精度有限, 部分编辑器还会保留原 mtime。
+    # 哈希随源文件字节算, 同一进程里改了文件再加载才不会静默拿到旧代码。
+    source_bytes = Path(module_path).read_bytes()
+    digest = hashlib.sha256(source_bytes).hexdigest()
     cached = sys.modules.get(module_name)
-    if cached is None:
-        spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if cached is not None and getattr(cached, _DIGEST_ATTR, None) == digest:
+        module = cached
+    else:
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            module_path,
+            loader=_FreshSourceLoader(module_name, module_path, source_bytes),
+        )
         if spec is None or spec.loader is None:
             raise ValueError(f"failed to create module spec from: {module_path}")
         module = importlib.util.module_from_spec(spec)
+        setattr(module, _DIGEST_ATTR, digest)
         # 先登记再 exec: 模块体内若 import 自身(或触发循环导入)才能拿到半成品
-        # 而非无限递归; exec 失败则回滚, 不留下空壳模块。
+        # 而非无限递归; exec 失败则回滚, 不留下空壳模块。重新加载失败时把旧模块
+        # 放回去, 此前 pickle 出去的对象仍能按名找到。
         sys.modules[module_name] = module
         try:
             spec.loader.exec_module(module)
         except BaseException:
-            sys.modules.pop(module_name, None)
+            if cached is not None:
+                sys.modules[module_name] = cached
+            else:
+                sys.modules.pop(module_name, None)
             raise
-    else:
-        module = cached
 
     attr_name_raw = options.get("strategy_attr")
     attr_name = str(attr_name_raw).strip() if attr_name_raw is not None else ""

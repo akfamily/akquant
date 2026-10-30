@@ -82,7 +82,7 @@ def test_sim_knobs_ignored_with_warning(caplog: Any) -> None:
             quantity=100,
             price=10.5,
             order_type="Limit",
-            slippage=0.01,
+            slippage={"type": "percent", "value": 0.01},
             commission={"rate": 0.001},
         )
     assert len(captured) == 1
