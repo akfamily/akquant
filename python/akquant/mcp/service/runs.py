@@ -1,8 +1,7 @@
 """run_backtest 调度(子进程 + 超时) 与 get_run_details 分页读取.
 
-每次回测一个新的 ``python -m akquant.mcp.worker`` 子进程: 策略加载器按
-路径缓存模块(strategy_loader._load_python_plain), 同进程重跑会静默拿到
-旧代码; 子进程还隔离了死循环、Rust panic 与 sys.exit。
+每次回测一个新的 ``python -m akquant.mcp.worker`` 子进程: 子进程隔离了死循环、
+Rust panic、``sys.exit`` 与状态残留。
 """
 
 from __future__ import annotations
