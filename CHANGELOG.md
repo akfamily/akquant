@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **MCP 服务 `akquant-mcp`（可选依赖 `pip install "akquant[mcp]"`）**：给 Claude Code、Cursor 等 AI 编程助手用的本地 stdio 服务，提供 7 个工具——`search_api`/`get_api`（运行时内省，与已装版本一致）、`get_guide`（写策略要点）、`check_strategy`（静态检查，不执行代码）、`prepare_data`（本地文件、AKShare A 股日线、合成数据）、`run_backtest`（子进程回测，返回核心指标与带策略文件行号、阶段和修复提示的结构化报错）、`get_run_details`（分页读取成交、委托、权益、日志）。一期只支持类式策略；不做沙箱。见 `docs/zh/guide/mcp.md`。
+
 ## [0.3.75] - 2026-10-29
 
 > **规则版本 2.1.1**：「部分成交后成交时验资不过」与「成交时自动缩量」只影响订单记录与回调，成交、持仓、资金不变；`buy()` 不传 `quantity`（交给 sizer 定量）且资金不足、或 sizer 算出非整手数量的回测结果会变化（原来拒单，现在缩量或取整后成交），显式给数量的回测不变。使用 `cn_stock_*` 三个 `broker_profile` 模板的回测结果会变化（印花税减半、开 T+1）。

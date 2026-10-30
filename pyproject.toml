@@ -40,6 +40,9 @@ Homepage = "https://github.com/akfamily/akquant"
 Repository = "https://github.com/akfamily/akquant"
 Documentation = "https://akquant.akfamily.xyz"
 
+[project.scripts]
+akquant-mcp = "akquant.mcp.__main__:main"
+
 [project.optional-dependencies]
 quantstats = [
     "quantstats>=0.0.60"
@@ -60,6 +63,9 @@ docs = [
 signal-redis = [
     "redis>=5.0.0",
 ]
+mcp = [
+    "mcp>=2.3,<3",
+]
 full = [
     "plotly>=5.0.0",
     "scikit-learn>=1.0.0",
@@ -75,6 +81,7 @@ dev = [
     "ruff==0.17.1",  # 与 .pre-commit-config.yaml 的 ruff-pre-commit rev 保持一致
     "ta-lib==0.8.2; python_version >= '3.11'",  # 仅测试: 指标与 TA-Lib 逐值对拍的基准(tests/test_talib_alignment.py), 升级即口径变更; 无 cp310 wheel
     "types-pytz>=2025.2.0.20251108",
+    "mcp>=2.3,<3",
 ]
 
 [tool.maturin]
