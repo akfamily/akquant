@@ -117,7 +117,7 @@ A single failing plugin is logged at `WARNING` and skipped; it does not affect o
 1. **Stable module name** — loading the same source repeatedly yields the same module name
 2. **Registered in `sys.modules`**, and importable by that name from a worker process
 
-The built-in `python_plain` already satisfies both: it derives a stable, reversible module name from the source file path, and installs a `sys.meta_path` finder at `import akquant` time so workers can recover the source file from the module name.
+The built-in `python_plain` already satisfies both: it derives a stable, reversible module name from the source file path, and installs a `sys.meta_path` finder at `import akquant` time so workers can recover the source file from the module name. When the source file content changes (detected by content hash), `python_plain` re-loads it under the same stable module name; unchanged content reuses the already loaded module. After a reload, classes and instances from the old module can no longer be pickled (`PicklingError: not the same object`), because the name now resolves to the latest class.
 
 A custom loader that also needs multiprocessing support must provide an equivalent mechanism. Mind the timing: a `spawn`-started worker restores the module while deserializing the task queue, before any user code runs, so the finder must be installed at module import time.
 

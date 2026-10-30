@@ -5853,7 +5853,8 @@ def test_run_backtest_rejects_bare_number_global_slippage() -> None:
         assert repr(bare) in message
         assert "{'type': 'percent', 'value': " in message
         assert "{'type': 'fixed', 'value': ...}" in message
-        assert "omit it or pass None" in message
+        assert "pass {'type': 'zero'}" in message
+        assert "broker_profile" in message
 
 
 def test_run_backtest_accepts_none_and_dict_global_slippage() -> None:

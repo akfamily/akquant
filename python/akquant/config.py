@@ -91,8 +91,10 @@ def bare_slippage_error(scope: str, value: Any) -> TypeError:
     return TypeError(
         f"{scope} slippage must be an explicit policy dict, got bare number "
         f"{value!r}. Use {{'type': 'percent', 'value': {value!r}}} or "
-        "{'type': 'fixed', 'value': ...}; to disable slippage, omit it or "
-        "pass None."
+        "{'type': 'fixed', 'value': ...}; to disable slippage (including "
+        "overriding a broker_profile template), pass {'type': 'zero'}. "
+        "Omitting it or passing None means no override: the broker_profile "
+        "template's slippage applies if one is set, otherwise no slippage."
     )
 
 
@@ -705,8 +707,10 @@ class StrategyConfig:
                      {"type": "percent", "value": 0.0002}、
                      {"type": "fixed", "value": 0.2} 或
                      {"type": "ticks", "value": 1}。
-                     不再接受裸数字（含 0），传入会抛 TypeError；不需要滑点时
-                     不传或传 None。
+                     不再接受裸数字（含 0），传入会抛 TypeError。要关掉滑点
+                     （包括覆盖 broker_profile 模板里的滑点）传
+                     {"type": "zero"}；不传或传 None 表示不覆盖：设了
+                     broker_profile 时沿用模板滑点，否则不加滑点。
     :param volume_limit_pct: Max participation rate. 0.25 means a fill is capped
                              at 25% of the bar's volume, rounded down to whole
                              lots. 0 (default) means unlimited. The bar volume

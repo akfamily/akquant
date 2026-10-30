@@ -3181,8 +3181,10 @@ def run_backtest(
                      {"type": "percent", "value": 0.0002}、
                      {"type": "fixed", "value": 0.2}、
                      {"type": "ticks", "value": 1}。
-                     不再接受裸数字（含 0），传入会抛 TypeError；
-                     不需要滑点时不传或传 None。
+                     不再接受裸数字（含 0），传入会抛 TypeError。
+                     要关掉滑点（包括覆盖 broker_profile 模板里的滑点）传
+                     {"type": "zero"}；不传或传 None 表示不覆盖：设了
+                     broker_profile 时沿用模板滑点，否则不加滑点。
     :param volume_limit_pct: 成交量限制比例, 默认 0 表示不限制; 截断量按手数向下取整
     :param fill_policy: 统一成交语义配置（可选），传入 ``FillMode`` 对象:
         ``NextOpen()`` 下一根开盘价、``NextClose()`` 下一根收盘价、

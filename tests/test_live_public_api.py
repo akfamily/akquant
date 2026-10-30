@@ -9,8 +9,8 @@ def test_streaming_indicator_sink_is_public() -> None:
     assert StreamingIndicatorSink is Private
 
 
-def test_engine_rule_version_is_2_1_1() -> None:
-    """部分成交后成交时验资被拒保留已成交量, 规则版本为 2.1.1."""
+def test_engine_rule_version_is_2_1_2() -> None:
+    """部分成交后成交时验资被拒保留已成交量, 规则版本为 2.1.2（热启动滑点继承）."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.1.1"
+    assert akquant.__engine_rule_version__ == "2.1.2"

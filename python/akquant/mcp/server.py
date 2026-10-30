@@ -108,6 +108,8 @@ def build_server(cfg: ServiceConfig) -> MCPServer:
         config 只接受: initial_cash, commission_rate, stamp_tax_rate,
         min_commission, slippage, t_plus_one, lot_size, timezone, symbols,
         start_time, end_time, broker_profile, warmup_period。
+        slippage 必须是字典, 如 {"type": "percent", "value": 0.0002};
+        {"type": "zero"} 表示关闭滑点(含覆盖 broker_profile 模板的滑点)。
         strategy_params 只能传类体里 IntParam 等声明过的参数。失败时看
         error.phase、error.user_frames(策略文件里的行号)与 error.hint。
         每次调用都重新加载文件, 改完直接重跑即可。

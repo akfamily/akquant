@@ -51,7 +51,8 @@ def _assert_hint(excinfo: Any, bare: Any) -> None:
     assert repr(bare) in message
     assert f"{{'type': 'percent', 'value': {bare!r}}}" in message
     assert "{'type': 'fixed', 'value': ...}" in message
-    assert "omit it or pass None" in message
+    assert "pass {'type': 'zero'}" in message
+    assert "broker_profile" in message
 
 
 def _run(**kwargs: Any) -> Any:

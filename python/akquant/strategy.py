@@ -1913,7 +1913,9 @@ class Strategy:
                 f"指标名 {indicator_name!r} 重复声明: 第一次是 {previous}, "
                 f"第二次是 {kind}。同名声明会互相覆盖, 两个指标读到同一组值; "
                 f"请给其中一个换一个 name=(省略 name 时按类名自动编号, "
-                f"显式名字也不能与自动编号 ema、ema_2 等撞名)"
+                f"显式名字也不能与自动编号 ema、ema_2 等撞名)。"
+                f"指标声明应放在 on_start（或 __init__）里, 不要写在 on_bar 等"
+                f"回调中: 在回调里声明会从第二根 bar 起因重名而报错"
             )
         declared[indicator_name] = kind
 
