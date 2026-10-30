@@ -304,6 +304,8 @@ def _load(norm: Dict[str, Any], file: Optional[Path]) -> Tuple[pd.DataFrame, Lis
             )
         except ImportError as exc:
             raise ServiceError("需要先安装 AKShare: pip install akshare") from exc
+        except RuntimeError as exc:
+            raise ServiceError(f"AKShare 请求失败: {exc}") from exc
         except ValueError as exc:
             raise ServiceError(f"AKShare 没有返回数据: {exc}") from exc
         return normalize_frame(raw, norm["symbol"], DEFAULT_TZ)

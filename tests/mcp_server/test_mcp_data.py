@@ -174,3 +174,22 @@ def test_csv_symbol_keeps_leading_zeros(
     path = write_file("z.csv", "\n".join(rows) + "\n")
     out = data.prepare_data(cfg, {"source": "file", "path": str(path)})
     assert out["symbols"] == ["000001"]
+
+
+def test_akshare_request_failure_is_service_error(
+    cfg: ServiceConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AKShare 请求失败(RuntimeError)转成带原因的 ServiceError."""
+
+    def boom(*args: Any, **kwargs: Any) -> pd.DataFrame:
+        raise RuntimeError("AKShare 请求失败 (sh600000): ConnectionError: down")
+
+    monkeypatch.setattr(data, "fetch_akshare_symbol", boom)
+    spec = {
+        "source": "akshare",
+        "symbol": "600000",
+        "start": "20240101",
+        "end": "20240131",
+    }
+    with pytest.raises(ServiceError, match="AKShare 请求失败"):
+        data.prepare_data(cfg, spec)
