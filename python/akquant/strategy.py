@@ -3460,7 +3460,7 @@ class Strategy:
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
         fill_mode: Optional["FillMode"] = None,
-        slippage: Optional[Union[float, Dict[str, Any]]] = None,
+        slippage: Optional[Dict[str, Any]] = None,
         commission: Optional[Dict[str, Any]] = None,
     ) -> OrderReceipt:
         """
@@ -3501,7 +3501,7 @@ class Strategy:
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
         fill_mode: Optional["FillMode"] = None,
-        slippage: Optional[Union[float, Dict[str, Any]]] = None,
+        slippage: Optional[Dict[str, Any]] = None,
         commission: Optional[Dict[str, Any]] = None,
     ) -> OrderReceipt:
         """
@@ -3549,7 +3549,7 @@ class Strategy:
         trail_offset: Optional[float] = None,
         trail_reference_price: Optional[float] = None,
         fill_mode: Optional["FillMode"] = None,
-        slippage: Optional[Union[float, Dict[str, Any]]] = None,
+        slippage: Optional[Dict[str, Any]] = None,
         commission: Optional[Dict[str, Any]] = None,
         position_effect: Optional[str] = None,
         reduce_only: bool = False,
@@ -3959,7 +3959,7 @@ class Strategy:
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
         fill_mode: Optional["FillMode"] = None,
-        slippage: Optional[Union[float, Dict[str, Any]]] = None,
+        slippage: Optional[Dict[str, Any]] = None,
         commission: Optional[Dict[str, Any]] = None,
         reduce_only: bool = False,
     ) -> Optional[Any]:
@@ -3999,7 +3999,7 @@ class Strategy:
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
         fill_mode: Optional["FillMode"] = None,
-        slippage: Optional[Union[float, Dict[str, Any]]] = None,
+        slippage: Optional[Dict[str, Any]] = None,
         commission: Optional[Dict[str, Any]] = None,
         reduce_only: bool = False,
     ) -> Optional[Any]:

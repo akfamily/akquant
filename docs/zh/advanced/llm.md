@@ -376,7 +376,7 @@ risk_config = RiskConfig(
 # 应用配置 (StrategyConfig 还可以配置滑点等)
 strategy_config = StrategyConfig(
     risk=risk_config,
-    slippage=0.0002,            # 2bp 滑点
+    slippage={"type": "percent", "value": 0.0002},  # 2bp 滑点
     volume_limit_pct=0.1        # 限制成交量占比 10%
 )
 run_backtest(..., config=BacktestConfig(strategy_config=strategy_config))

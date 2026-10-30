@@ -4361,7 +4361,6 @@ def test_run_backtest_china_futures_instrument_template_multiplier() -> None:
         strategy_config=akquant.StrategyConfig(
             initial_cash=1_000_000.0,
             commission_rate=0.0,
-            slippage=0.0,
             min_commission=0.0,
             stamp_tax_rate=0.0,
             transfer_fee_rate=0.0,
@@ -4408,7 +4407,6 @@ def test_run_backtest_instrument_lot_size_explicit_one_overrides_template() -> N
         strategy_config=akquant.StrategyConfig(
             initial_cash=1_000_000.0,
             commission_rate=0.0,
-            slippage=0.0,
             min_commission=0.0,
             stamp_tax_rate=0.0,
             transfer_fee_rate=0.0,
@@ -4467,7 +4465,6 @@ def test_run_backtest_china_futures_template_commission_prefix() -> None:
         strategy_config=akquant.StrategyConfig(
             initial_cash=1_000_000.0,
             commission_rate=0.0,
-            slippage=0.0,
             min_commission=0.0,
             stamp_tax_rate=0.0,
             transfer_fee_rate=0.0,
@@ -4488,7 +4485,6 @@ def test_run_backtest_china_futures_template_commission_prefix() -> None:
         strategy_config=akquant.StrategyConfig(
             initial_cash=1_000_000.0,
             commission_rate=0.0,
-            slippage=0.0,
             min_commission=0.0,
             stamp_tax_rate=0.0,
             transfer_fee_rate=0.0,
@@ -4605,7 +4601,6 @@ def test_run_backtest_china_options_fee_prefix() -> None:
         strategy_config=akquant.StrategyConfig(
             initial_cash=1_000_000.0,
             commission_rate=0.0,
-            slippage=0.0,
             min_commission=0.0,
             stamp_tax_rate=0.0,
             transfer_fee_rate=0.0,
@@ -4637,7 +4632,6 @@ def test_run_backtest_china_options_fee_prefix() -> None:
         strategy_config=akquant.StrategyConfig(
             initial_cash=1_000_000.0,
             commission_rate=0.0,
-            slippage=0.0,
             min_commission=0.0,
             stamp_tax_rate=0.0,
             transfer_fee_rate=0.0,
@@ -5842,40 +5836,38 @@ def test_run_grid_search_logs_dynamic_warmup_failures(caplog: Any) -> None:
     assert "Failed to calculate dynamic warmup period: warmup failed" in caplog.text
 
 
-def test_run_backtest_warns_on_suspicious_global_slippage(caplog: Any) -> None:
-    """Large float slippage should warn because AKQuant treats it as percent."""
-    data = _build_benchmark_data(n=5, symbol="SLIP_WARN")
+def test_run_backtest_rejects_bare_number_global_slippage() -> None:
+    """Bare-number global slippage raises TypeError with a migration hint."""
+    data = _build_benchmark_data(n=5, symbol="SLIP_BARE")
 
-    with pytest.warns(DeprecationWarning):
-        with caplog.at_level(logging.WARNING, logger="akquant"):
+    for bare in (0.2, 0.0002, 0, 0.0, 1, True):
+        with pytest.raises(TypeError) as excinfo:
             _ = akquant.run_backtest(
                 strategy=NoopStrategy,
                 data=data,
-                symbols="SLIP_WARN",
-                slippage=0.2,
+                symbols="SLIP_BARE",
+                slippage=bare,  # type: ignore[arg-type]
                 show_progress=False,
             )
+        message = str(excinfo.value)
+        assert repr(bare) in message
+        assert "{'type': 'percent', 'value': " in message
+        assert "{'type': 'fixed', 'value': ...}" in message
+        assert "omit it or pass None" in message
 
-    assert "Global slippage=0.2 uses percent semantics in AKQuant" in caplog.text
-    assert "slippage={'type': 'fixed', 'value': 0.2}" in caplog.text
-    assert any(record.name == "akquant.backtest" for record in caplog.records)
 
-
-def test_run_backtest_does_not_warn_on_small_global_slippage(caplog: Any) -> None:
-    """Typical bps-scale slippage should not trigger the suspicious warning."""
+def test_run_backtest_accepts_none_and_dict_global_slippage() -> None:
+    """None means no slippage and a dict policy is still accepted."""
     data = _build_benchmark_data(n=5, symbol="SLIP_OK")
 
-    with pytest.warns(DeprecationWarning):
-        with caplog.at_level(logging.WARNING, logger="akquant"):
-            _ = akquant.run_backtest(
-                strategy=NoopStrategy,
-                data=data,
-                symbols="SLIP_OK",
-                slippage=0.0002,
-                show_progress=False,
-            )
-
-    assert "uses percent semantics in AKQuant" not in caplog.text
+    for ok in (None, {"type": "percent", "value": 0.0002}):
+        _ = akquant.run_backtest(
+            strategy=NoopStrategy,
+            data=data,
+            symbols="SLIP_OK",
+            slippage=ok,
+            show_progress=False,
+        )
 
 
 def test_run_backtest_live_profile_renders_risk_context(

@@ -229,7 +229,8 @@ def test_deprecation_warning_is_visible(
     src = _simple(
         "        if not getattr(self, 'done', False):\n"
         "            self.done = True\n"
-        "            self.buy(symbol=bar.symbol, quantity=100, slippage=0.001)\n"
+        "            warnings.warn('legacy usage is deprecated', DeprecationWarning)\n",
+        head="import warnings\n",
     )
     write_file("dep.py", src)
     out = run_backtest(cfg, "dep.py", _dataset(cfg))

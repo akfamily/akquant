@@ -45,7 +45,7 @@ def _fill_price(
     if strategy_slippage is not None:
         kwargs["strategy_slippage"] = {"_default": strategy_slippage}
     config = akquant.BacktestConfig(
-        strategy_config=akquant.StrategyConfig(initial_cash=1_000_000.0, slippage=0.0),
+        strategy_config=akquant.StrategyConfig(initial_cash=1_000_000.0),
         instruments_config=[
             akquant.InstrumentConfig(symbol="A", slippage=instrument_slippage)
         ],

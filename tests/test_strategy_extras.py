@@ -2071,7 +2071,7 @@ def test_run_warm_start_inherits_global_slippage_from_config(tmp_path: Path) -> 
         tmp_path, {"type": "percent", "value": 0.1}, "snapshot_slip_on.pkl"
     )
     price_no_slippage = _warm_start_phase2_fill_price(
-        tmp_path, 0.0, "snapshot_slip_off.pkl"
+        tmp_path, None, "snapshot_slip_off.pkl"
     )
     # 10% 买入滑点必须抬高成交价；未继承时两者相等（旧 bug）
     assert price_with_slippage > price_no_slippage
@@ -5193,7 +5193,7 @@ def test_strategy_buy_sell_delegate_to_submit_order() -> None:
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
@@ -5254,7 +5254,7 @@ def test_strategy_short_cover_delegate_position_effect() -> None:
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
@@ -5365,7 +5365,7 @@ def test_strategy_rebalance_positions_supports_signed_targets() -> None:
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
@@ -5478,7 +5478,7 @@ def test_strategy_rebalance_positions_can_bypass_strict_short_capability() -> No
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
@@ -5584,7 +5584,7 @@ def test_strategy_rebalance_positions_missing_price_mode_skip() -> None:
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
@@ -5658,7 +5658,7 @@ def test_strategy_rebalance_positions_missing_price_mode_ignore() -> None:
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
@@ -5733,7 +5733,7 @@ def test_strategy_rebalance_positions_records_explainable_plan() -> None:
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
@@ -5811,7 +5811,7 @@ def test_strategy_rebalance_positions_plan_tracks_skipped_legs() -> None:
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
@@ -6573,7 +6573,7 @@ def test_strategy_trailing_helpers_delegate_to_submit_order() -> None:
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
             position_effect: str | None = None,
             reduce_only: bool = False,
@@ -6805,7 +6805,7 @@ def test_bracket_prefers_engine_registration_when_available() -> None:
             trigger_price: float | None = None,
             tag: str | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
         ) -> Any:
             self.buy_calls.append(
@@ -6877,7 +6877,7 @@ def test_bracket_falls_back_to_deferred_engine_queue_on_runtime_error() -> None:
             trigger_price: float | None = None,
             tag: str | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
         ) -> Any:
             _ = (
@@ -6933,7 +6933,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             trigger_price: float | None = None,
             tag: str | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
         ) -> Any:
             self.buy_calls.append(
@@ -6960,7 +6960,7 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             trigger_price: float | None = None,
             tag: str | None = None,
             fill_mode: FillMode | None = None,
-            slippage: float | dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
             commission: dict[str, Any] | None = None,
         ) -> Any:
             self._sell_counter += 1
