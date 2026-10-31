@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **策略跨文件继承时（`from base import MyBase` 加 `class S(MyBase)`），不传 `strategy_attr` 报 `multiple Strategy subclasses found`**：`python_plain` 加载器把模块命名空间里所有 `Strategy` 子类都当候选，导入进来的基类也算一个。现在候选分两层：先取本文件自己定义的类（`__module__` 等于加载器登记的模块名），正好一个就选它，多于一个仍报 multiple；本文件一个都没定义（只 re-export）时才退回原来的全量候选，因此“只 re-export 一个策略”的文件照常可用，“没有策略”与“导入了多个”的报错文字不变。传了 `strategy_attr` 的行为不变。MCP `check_strategy` 的 `unresolved-base` 提示与 `run_backtest` 报错的修复提示同步改了措辞。
+
 ## [0.3.76] - 2026-10-30
 
 > **规则版本 2.1.2**：热启动恢复时，`config` 里没设滑点的配置现在沿用快照里的滑点（此前被覆盖成无滑点），涉及热启动且第一阶段有滑点的回测结果会变；另外，裸数字滑点与 `self.I(...)` 重名声明从静默接受改为直接报错。

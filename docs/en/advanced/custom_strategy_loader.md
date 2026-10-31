@@ -30,6 +30,8 @@ result = aq.run_backtest(
 )
 ```
 
+Without `strategy_attr`, `python_plain` picks the class in two tiers: first the `Strategy` subclasses defined in the file itself, and if there is exactly one it is used (so `from base import MyBase` plus `class S(MyBase)` selects `S`, not the imported base); more than one raises an error; if the file defines none (it only re-exports), it falls back to all `Strategy` subclasses in the module, again requiring exactly one.
+
 ## 3. Core API
 
 Importable from the `akquant` top level:

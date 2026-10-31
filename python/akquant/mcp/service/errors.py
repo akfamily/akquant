@@ -41,6 +41,7 @@ HINT_RULES: Tuple[Tuple[Tuple[str, ...], str], ...] = (
     ),
     (
         ("multiple Strategy subclasses found",),
+        "本文件定义了多个 Strategy 子类(或没有定义、只导入了多个); "
         "用 strategy_attr 参数指定要用的类名",
     ),
 )

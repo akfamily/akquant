@@ -255,7 +255,8 @@ def _unresolved_warning(names: List[str]) -> Dict[str, Any]:
         1,
         0,
         "基类无法静态确认, 可能的策略类: " + (", ".join(names) or "无"),
-        "基类无法静态确认; 回测时如报多个 Strategy 子类, 请传 strategy_attr 指定类名",
+        "基类无法静态确认; 本文件只定义一个策略类时加载器会自动选中它, "
+        "定义了多个时才需传 strategy_attr 指定类名",
     )
 
 
