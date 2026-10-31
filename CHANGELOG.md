@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **策略跨文件继承时（`from base import MyBase` 加 `class S(MyBase)`），不传 `strategy_attr` 报 `multiple Strategy subclasses found`**：`python_plain` 加载器把模块命名空间里所有 `Strategy` 子类都当候选，导入进来的基类也算一个。现在候选分两层：先取本文件自己定义的类（`__module__` 等于加载器登记的模块名），正好一个就选它，多于一个仍报 multiple；本文件一个都没定义（只 re-export）时才退回原来的全量候选，因此“只 re-export 一个策略”的文件照常可用，“没有策略”与“导入了多个”的报错文字不变。传了 `strategy_attr` 的行为不变。MCP `check_strategy` 的 `unresolved-base` 提示与 `run_backtest` 报错的修复提示同步改了措辞。
+- **MCP `check_strategy` 把 Enum、异常等辅助类当成“可能的策略”**：基类无法静态解析的类一律按候选处理，结果只有 `class Side(enum.Enum)` 的文件得到 `ok=True` 加一条 `unresolved-base`，而不是 `no-strategy`；函数式 `on_bar` 加一个 Enum 的文件丢掉“一期只支持类式策略”的提示；多策略（ambiguous）时诊断循环也会扫这些类，`class E(Exception)` 带 `__init__(self, m)` 被误报 `custom-init`。现在基类属于 `Enum`/`IntEnum`/`StrEnum`/`Flag`/`IntFlag`、`Exception`/`BaseException` 及名字以 `Error`/`Exception` 结尾的基类、`NamedTuple`/`TypedDict`/`Protocol`/`Generic`（含下标写法与 `typing.X`、`enum.X` 前缀写法）、`ABC`、`BaseModel` 的类既不算候选也不算“无法解析”，其余基类都可解析时直接忽略。另外，只有一个可解析的策略、同时存在跨文件候选类时，现在会给一条 `unresolved-base` 警告（`ok` 仍为 `True`），说明候选类若也是策略，运行期会与已确认的策略一起算作两个本文件定义的类而报 multiple，可传 `strategy_attr`。顺带：`run_backtest` 子进程崩溃时 `error.message` 里带的日志末行也按 500 字截断，与 `log_tail` 一致。
 
 ## [0.3.76] - 2026-10-30
 

@@ -162,7 +162,7 @@ def run_backtest(
         raw = summary_path.read_text(encoding="utf-8")
         body = cast(Dict[str, Any], json.loads(raw))
     else:
-        last = lines[-1].strip() if lines else ""
+        last = _clip(lines[-1].strip()) if lines else ""
         body = {
             "status": "error",
             "error": _crash_error(returncode, last),

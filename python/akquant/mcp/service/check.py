@@ -183,6 +183,38 @@ def _is_object(base: ast.expr) -> bool:
     return isinstance(base, ast.Name) and base.id == "object"
 
 
+_HELPER_BASES = frozenset(
+    {
+        "Enum",
+        "IntEnum",
+        "StrEnum",
+        "Flag",
+        "IntFlag",
+        "Exception",
+        "BaseException",
+        "NamedTuple",
+        "TypedDict",
+        "Protocol",
+        "Generic",
+        "ABC",
+        "BaseModel",
+    }
+)
+
+
+def _is_helper_base(base: ast.expr) -> bool:
+    """基类是枚举、异常、NamedTuple、Protocol 等不可能是策略的辅助类型."""
+    if isinstance(base, ast.Subscript):  # Generic[T]、Protocol[T]
+        base = base.value
+    if isinstance(base, ast.Name):
+        name = base.id
+    elif isinstance(base, ast.Attribute):  # enum.Enum、typing.NamedTuple
+        name = base.attr
+    else:
+        return False
+    return name in _HELPER_BASES or name.endswith(("Error", "Exception"))
+
+
 def _mentions_strategy(
     node: ast.ClassDef, by_name: Dict[str, ast.ClassDef], seen: Set[str]
 ) -> bool:
@@ -202,12 +234,12 @@ def _mentions_strategy(
 def _fully_resolvable(
     node: ast.ClassDef, by_name: Dict[str, ast.ClassDef], seen: Set[str]
 ) -> bool:
-    """基类链上每个基类都是 Strategy 或同文件类(递归)."""
+    """基类链上每个基类都是 Strategy、辅助类型或同文件类(递归)."""
     if node.name in seen:
         return True
     seen = seen | {node.name}
     for base in node.bases:
-        if _is_strategy_ref(base) or _is_object(base):
+        if _is_strategy_ref(base) or _is_object(base) or _is_helper_base(base):
             continue
         if isinstance(base, ast.Name) and base.id in by_name:
             if not _fully_resolvable(by_name[base.id], by_name, seen):
@@ -260,6 +292,19 @@ def _unresolved_warning(names: List[str]) -> Dict[str, Any]:
     )
 
 
+def _extra_candidates_warning(selected: str, unknown: List[str]) -> Dict[str, Any]:
+    return _diag(
+        "warning",
+        "unresolved-base",
+        1,
+        0,
+        f"除 {selected} 外, 基类无法静态确认的类: " + ", ".join(unknown),
+        "这些类基类来自其他文件, 静态分析认不出是不是 Strategy 子类; 它们也是本文件"
+        f"定义的类, 若是策略, 运行期会与 {selected} 一起报 multiple Strategy "
+        "subclasses, 此时请传 strategy_attr 指定类名",
+    )
+
+
 def _select(
     tree: ast.Module,
     names: List[str],
@@ -277,6 +322,8 @@ def _select(
         msg = f"文件里没有名为 {strategy_attr} 的 Strategy 子类"
         return None, [_diag("error", "no-strategy", 1, 0, msg, tip)]
     if len(names) == 1:
+        if unknown:
+            return names[0], [_extra_candidates_warning(names[0], unknown)]
         return names[0], []
     if not names and unknown:
         return None, [_unresolved_warning(unknown)]

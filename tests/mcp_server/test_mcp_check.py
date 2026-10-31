@@ -213,3 +213,86 @@ def test_star_import_strategy_is_not_no_strategy(
     out = check_strategy(cfg, write_file("star.py", src))
     assert out["ok"] is True
     assert "no-strategy" not in _codes(out)
+
+
+def test_enum_only_file_is_no_strategy(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """只有 Enum 的文件不是候选策略: no-strategy, 不出 unresolved-base."""
+    src = (
+        "import enum\nfrom enum import IntEnum\n\n\n"
+        "class Side(enum.Enum):\n    BUY = 1\n\n\n"
+        "class Level(IntEnum):\n    LOW = 1\n"
+    )
+    out = check_strategy(cfg, write_file("enum_only.py", src))
+    assert out["ok"] is False
+    assert _codes(out) == ["no-strategy"]
+
+
+def test_functional_plus_enum_keeps_class_hint(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """函数式 on_bar 加 Enum: 仍给出“一期只支持类式策略”的提示."""
+    src = (
+        "from enum import Enum\n\n\n"
+        "class Side(Enum):\n    BUY = 1\n\n\n"
+        "def on_bar(ctx, bar):\n    pass\n"
+    )
+    out = check_strategy(cfg, write_file("func_enum.py", src))
+    assert _codes(out) == ["no-strategy"]
+    assert "类式" in out["diagnostics"][0]["hint"]
+
+
+def test_ambiguous_ignores_exception_helper(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """Ambiguous 时不扫描辅助类: class E(Exception) 的 __init__ 不报 custom-init."""
+    src = (
+        "from akquant import Strategy\n\n\n"
+        "class E(Exception):\n"
+        "    def __init__(self, m):\n        self.m = m\n\n\n"
+        "class A(Strategy):\n    pass\n\n\n"
+        "class B(Strategy):\n    pass\n"
+    )
+    out = check_strategy(cfg, write_file("amb_exc.py", src))
+    assert _codes(out) == ["ambiguous-strategy"]
+
+
+@pytest.mark.parametrize(
+    "helper",
+    [
+        "from pydantic import BaseModel\n\n\nclass Cfg(BaseModel):\n    n: int = 1\n",
+        "from typing import NamedTuple\n\n\nclass Pt(NamedTuple):\n    x: int\n",
+        "import typing\n\n\nclass Td(typing.TypedDict):\n    x: int\n",
+        "from typing import Generic, TypeVar\n\nT = TypeVar('T')\n\n\n"
+        "class Box(Generic[T]):\n    pass\n",
+        "import abc\n\n\nclass Ab(abc.ABC):\n    pass\n",
+        "class MyErr(ValueError):\n    pass\n\n\nclass Sub(MyErr):\n    pass\n",
+        "class Weird(Exception):\n    pass\n\n\nclass Err2(RuntimeError, Weird):\n"
+        "    pass\n",
+    ],
+)
+def test_helper_classes_next_to_strategy_are_silent(
+    cfg: ServiceConfig, write_file: WriteFile, helper: str
+) -> None:
+    """辅助类 + 一个正常策略: 选中策略, 没有任何诊断."""
+    out = check_strategy(cfg, write_file("helper.py", helper + "\n\n" + CLEAN))
+    assert out["ok"] is True
+    assert out["selected"] == "Clean"
+    assert out["diagnostics"] == []
+
+
+def test_resolvable_strategy_plus_cross_file_candidate_warns(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """一个可解析策略加一个跨文件候选: ok 为 True, 但给 unresolved-base 警告."""
+    write_file("base.py", SIBLING_BASE)
+    src = "from base import MyBase\n\n\nclass Other(MyBase):\n    pass\n\n\n" + CLEAN
+    out = check_strategy(cfg, write_file("two.py", src))
+    assert out["ok"] is True
+    assert out["selected"] == "Clean"
+    warns = [d for d in out["diagnostics"] if d["code"] == "unresolved-base"]
+    assert len(warns) == 1
+    assert warns[0]["severity"] == "warning"
+    assert "Other" in warns[0]["message"]
+    assert "strategy_attr" in warns[0]["hint"]
