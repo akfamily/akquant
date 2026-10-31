@@ -16,8 +16,10 @@ from typing import (
     Iterable,
     List,
     Literal,
+    Mapping,
     Optional,
     Tuple,
+    Type,
     Union,
     cast,
 )
@@ -1720,10 +1722,11 @@ class Strategy:
         对标 TradingView Pine Script 的 ``ta.*``。返回的绑定对象支持
         ``ind[0]``(当前 bar)/``ind[1]``(上一根) 回溯, 越界返回 ``None``。
 
-        ``self.params`` 在 ``__init__`` **之后**才注入, 所以参数化指标
-        (``optimize.py`` 要扫的那些)必须在 ``on_start`` 里声明;
-        ``__init__`` 只适合字面量参数。``subscribe_bars`` 仍只能在
-        ``__init__``, 本方法的 ``freq=`` 校验该周期已订阅。
+        ``self.params`` 在 ``__new__`` 里就已注入, ``__init__`` 与 ``on_start``
+        都能声明参数化指标(``optimize.py`` 要扫的那些), 推荐 ``on_start``: 热启动
+        恢复会重跑 ``on_start`` 而不重跑 ``__init__``, 且引擎上下文在 ``on_start``
+        才就绪。``subscribe_bars`` 仍只能在 ``__init__``, 本方法的 ``freq=`` 校验
+        该周期已订阅。
 
         画不画由脚本类型决定: 在 ``aq.Indicator`` 指标脚本里默认画(位置由类定义行
         ``overlay`` 决定: True 主图, False 本脚本附图 1), 在 ``aq.Strategy`` 里默认
@@ -4091,6 +4094,50 @@ def reconcile_strategy_id(strategy: Any, strategy_id: Optional[str]) -> Optional
             f"strategy_id={given!r} 与 {cls.__name__} 类定义行的 id={declared!r} 不一致"
         )
     return declared
+
+
+def instantiate_strategy(
+    cls: Type["Strategy"], params: Mapping[str, Any]
+) -> "Strategy":
+    """用策略参数实例化 Strategy 子类, ``__init__`` 只收到它能接收的参数.
+
+    参数仍由 ``Strategy.__new__`` 校验并注入 ``self.params``; 与
+    ``cls(**params)`` 的区别只在于调用 ``__init__`` 时的实参: 签名含 ``**kwargs``
+    则全部传入, 否则只传签名中显式出现的参数名, 这样 ``def __init__(self)``
+    不必为了吞参数而写 ``**kwargs``。语义对齐 ``type.__call__``: 仅当
+    ``__new__`` 返回 ``cls`` 的实例时才调 ``__init__``。签名取不到时原样全传。
+
+    用户给 ``cls`` 定义了自己的元类 ``__call__`` 时, 直接走 ``cls(**params)``
+    以保持原有行为(元类 ``__call__`` 仍被调用一次)。
+    """
+    kwargs = dict(params)
+    if type(cls).__call__ is not type.__call__:
+        return cast("Strategy", cls(**kwargs))
+    obj = cls.__new__(cls, **kwargs)
+    if not isinstance(obj, cls):
+        return cast("Strategy", obj)
+    init = type(obj).__init__
+    try:
+        sig = inspect.signature(init)
+    except (TypeError, ValueError):
+        init_kwargs = kwargs
+    else:
+        sig_params = list(sig.parameters.values())[1:]  # 去掉 self
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig_params):
+            init_kwargs = kwargs
+        else:
+            names = {
+                p.name
+                for p in sig_params
+                if p.kind
+                in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            }
+            init_kwargs = {k: v for k, v in kwargs.items() if k in names}
+    init(obj, **init_kwargs)
+    return obj
 
 
 class VectorizedStrategy(Strategy):

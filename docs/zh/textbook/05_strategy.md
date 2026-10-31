@@ -466,7 +466,7 @@ class MaCrossStrategy(Strategy):
             self.buy(bar.symbol, 100)
 ```
 
-指标声明推荐写在 `on_start` 而不是 `__init__`：`self.params` 在 `__init__` 之后才注入，参数化指标（`run_grid_search` 要扫的那些）只有在 `on_start` 里才拿得到参数值。
+指标声明推荐写在 `on_start` 而不是 `__init__`：`self.params` 在 `__new__` 里就已注入，两处都能读到参数，但热启动恢复会重跑 `on_start` 而不重跑 `__init__`，且引擎上下文在 `on_start` 才就绪。
 
 ### 5.5.3 自定义增量指标：继承 `PrecomputedIndicator` 并实现 `update`
 

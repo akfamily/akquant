@@ -65,10 +65,10 @@ class MaCross(Strategy):
 
 ### Where to declare
 
-Both `__init__` and `on_start` work, but **`on_start` is recommended**: `self.params` is
-injected *after* `__init__`, so a parameterized indicator (the kind `run_grid_search`
-sweeps) can only read its parameter values from `on_start`. Reserve `__init__` for literal
-arguments.
+Both `__init__` and `on_start` work (`self.params` is already injected in `__new__`, so
+`__init__` can read parameters too and a parameterized indicator can be declared in either
+place), but **`on_start` is recommended**: a warm-start restore re-runs `on_start` but not
+`__init__`, and the engine context is only ready in `on_start`.
 
 `subscribe_bars` is the exception — it **must** be called in `__init__`, because the
 subscription table is frozen before the engine starts. `self.I(freq="5min")` then validates

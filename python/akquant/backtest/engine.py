@@ -85,6 +85,7 @@ from ..strategy import (
     Strategy,
     StrategyConfigurationError,
     StrategyRuntimeConfig,
+    instantiate_strategy,
     reconcile_strategy_id,
 )
 from ..strategy import (
@@ -2692,7 +2693,7 @@ def _build_strategy_instance(
                 raise TypeError(message)
             logger.warning("%s (已忽略这些参数, 策略将使用字段默认值)", message)
         try:
-            return cast(Strategy, strategy(**accepted_kwargs))
+            return instantiate_strategy(strategy, accepted_kwargs)
         except (TypeError, ValidationError) as e:
             if strict_strategy_params:
                 raise TypeError(

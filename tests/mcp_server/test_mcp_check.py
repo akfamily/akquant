@@ -101,10 +101,10 @@ def test_unknown_method_and_kwarg(cfg: ServiceConfig, write_file: WriteFile) -> 
     assert out["ok"] is False
 
 
-def test_i_outside_init_and_custom_init(
+def test_i_outside_init_and_plain_init_not_flagged(
     cfg: ServiceConfig, write_file: WriteFile
 ) -> None:
-    """on_bar 里的 self.I 与不接受 **kwargs 的 __init__ 都是 warning."""
+    """on_bar 里的 self.I 是 warning; 不接受 **kwargs 的 __init__ 不再报."""
     src = (
         "import akquant as aq\n"
         "from akquant import Strategy\n\n\n"
@@ -115,7 +115,7 @@ def test_i_outside_init_and_custom_init(
         "        self.I(aq.EMA(5), name='e')\n"
     )
     out = check_strategy(cfg, write_file("s.py", src))
-    assert _codes(out) == ["custom-init", "i-call-outside-init"]
+    assert _codes(out) == ["i-call-outside-init"]
     assert out["ok"] is True
 
 
@@ -246,11 +246,11 @@ def test_functional_plus_enum_keeps_class_hint(
 def test_ambiguous_ignores_exception_helper(
     cfg: ServiceConfig, write_file: WriteFile
 ) -> None:
-    """Ambiguous 时不扫描辅助类: class E(Exception) 的 __init__ 不报 custom-init."""
+    """Ambiguous 时不扫描辅助类: class E(Exception) 里的 self 调用不报."""
     src = (
         "from akquant import Strategy\n\n\n"
         "class E(Exception):\n"
-        "    def __init__(self, m):\n        self.m = m\n\n\n"
+        "    def __init__(self, m):\n        self.m = m\n        self.nope()\n\n\n"
         "class A(Strategy):\n    pass\n\n\n"
         "class B(Strategy):\n    pass\n"
     )

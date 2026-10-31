@@ -63,9 +63,9 @@ class MaCross(Strategy):
 
 ### 在哪里声明
 
-`__init__` 与 `on_start` 都可以，但**推荐 `on_start`**：`self.params` 在 `__init__`
-之后才注入，参数化指标（`run_grid_search` 要扫的那些）只有在 `on_start` 里才拿得到
-参数值。`__init__` 只适合字面量参数。
+`__init__` 与 `on_start` 都可以（`self.params` 在 `__new__` 里就已注入，`__init__`
+里也能读到参数，参数化指标两处都能声明），但**推荐 `on_start`**：热启动恢复会重跑
+`on_start` 而不重跑 `__init__`，并且引擎上下文在 `on_start` 里才就绪。
 
 `subscribe_bars` 是例外，它**只能**在 `__init__` 调用（引擎启动前要冻结订阅表）；
 `self.I(freq="5min")` 会校验该周期已被订阅。

@@ -122,17 +122,17 @@ def test_hint_unknown_param(tmp_path: Path) -> None:
 
 
 def test_hint_custom_init(tmp_path: Path) -> None:
-    """重写 __init__ 又传参: hint 指向 on_start."""
+    """__init__ 带必填的非参数位置参数: hint 指出它不是策略参数."""
     src = HEADER + (
         "class S(Strategy):\n"
         "    n = IntParam(3)\n\n"
-        "    def __init__(self):\n"
+        "    def __init__(self, required_arg):\n"
         "        super().__init__()\n\n"
         "    def on_bar(self, bar):\n"
         "        pass\n"
     )
     out = _describe(tmp_path, src, params={"n": 2})
-    assert "on_start" in out["hint"]
+    assert "必填参数" in out["hint"]
 
 
 def test_hint_ambiguous(tmp_path: Path) -> None:

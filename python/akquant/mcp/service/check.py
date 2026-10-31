@@ -258,19 +258,6 @@ def _check_class(
     for stmt in node.body:
         if not isinstance(stmt, _FuncDef):
             continue
-        if stmt.name == "__init__" and stmt.args.kwarg is None:
-            diags.append(
-                _diag(
-                    "warning",
-                    "custom-init",
-                    stmt.lineno,
-                    stmt.col_offset,
-                    f"{node.name} 重写了 __init__ 且不接受 **kwargs, "
-                    "外部传 strategy_params 时实例化会失败",
-                    "不要重写 __init__: 参数用类体 IntParam 等声明, "
-                    "状态初始化放到 on_start",
-                )
-            )
         for sub in ast.walk(stmt):
             attr = _self_call_attr(sub)
             if attr is not None and isinstance(sub, ast.Call):

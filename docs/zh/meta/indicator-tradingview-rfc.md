@@ -167,10 +167,9 @@ class MaCross(Strategy):
 
 ### 3.3 声明位置:`__init__` 与 `on_start` 都支持,文档推荐 `on_start`
 
-`self.params` 在 `__init__` **之后**才注入(既有 `examples/02_parameter_optimization.py` 正是在 `on_start` 里用 `self.params.fast_period` 声明指标)。因此:
+`self.params` 在 `__new__` 里就已注入(既有 `examples/02_parameter_optimization.py` 在 `on_start` 里用 `self.params.fast_period` 声明指标)。因此:
 
-- 参数化指标(`optimize.py` 网格搜索要扫的那些)**必须**在 `on_start` 声明;
-- `__init__` 只适合字面量参数;
+- 参数化指标(`optimize.py` 网格搜索要扫的那些)两处都能声明,推荐 `on_start`(热启动恢复重跑 `on_start` 而不重跑 `__init__`,引擎上下文在 `on_start` 才就绪);
 - `subscribe_bars` 仍**只能**在 `__init__`(引擎启动前要冻结订阅表),`self.I(freq=...)` 校验该周期已订阅,沿用既有报错文案指向 `subscribe_bars`。
 
 ### 3.4 自动上报的三条默认值
