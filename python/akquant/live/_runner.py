@@ -2127,6 +2127,12 @@ class LiveRunner:
                 cache.positions()
             except Exception:  # noqa: BLE001 保守: 失败交给懒 seed
                 logger.exception("broker baseline seed positions failed")
+            # 账户也预载一次: 每 bar 的统计权益采样只读缓存(不查柜台), 不预载的话
+            # 策略从不读账户时整场会话都没有权益点。
+            try:
+                cache.account()
+            except Exception:  # noqa: BLE001 保守: 失败只影响统计的权益点
+                logger.exception("broker baseline load account failed")
         # 会话级交易统计与持仓缓存同一时刻播种(spec 5.5): 此前排队的成交已丢弃,
         # 它们已含在柜台持仓快照里。查询失败只告警, 不阻塞激活。
         try:
@@ -2612,7 +2618,7 @@ class LiveRunner:
             try:
                 asset = str(parse_asset_type_name(inst.asset_type))
             except ValueError:
-                asset = "stock"
+                asset = ""  # 统计不认识的类型(如 Crypto)按"未知"处理
             cached[symbol] = (float(inst.multiplier), asset)
         self._instrument_stats_meta_cache = cached
         return cached
@@ -2623,9 +2629,13 @@ class LiveRunner:
         return meta[0] if meta is not None else None
 
     def _instrument_asset_type(self, symbol: str) -> str:
-        """标的的资产类型名; 不在 ``instruments`` 中时按股票处理."""
+        """标的的资产类型名; 不在 ``instruments`` 中时返回空串(类型未知).
+
+        未知类型时统计器先认成交的明确开平标志, ``auto`` 才按现货处理,
+        见 ``BrokerTradeStats._truncate_excess_close``。
+        """
         meta = self._instrument_stats_meta().get(normalize_symbol_for_match(symbol))
-        return meta[1] if meta is not None else "stock"
+        return meta[1] if meta is not None else ""
 
     def _make_event_key(self, event_name: str, payload: Any) -> str:
         if event_name == "trade":

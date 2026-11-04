@@ -188,6 +188,27 @@ def test_futures_open_short_allowed() -> None:
     assert _position(st, "IF") == -1.0
 
 
+def test_unknown_asset_honours_explicit_position_effect() -> None:
+    """未配置资产类型的标的：明确的 open 卖出是开空，明确的 close 照常截断."""
+    st = _stats(asset="", mult=300.0)
+    st.initialize(equity=1e6, positions=[], timestamp_ns=0)
+    st.on_trade(T("t1", "IF", "sell", 1, 3800.0, position_effect="open"))
+    assert _position(st, "IF") == -1.0
+    st.on_trade(T("t2", "IF", "buy", 3, 3790.0, position_effect="close"))
+    assert _position(st, "IF") == 0.0
+
+
+def test_unknown_asset_auto_sell_is_close() -> None:
+    """未配置资产类型且 position_effect=auto（middleware 股票成交）：卖出视为平仓."""
+    st = _stats(asset="")
+    st.initialize(equity=1e5, positions=[], timestamp_ns=0)
+    st.on_trade(T("t1", "600000.SH", "sell", 100, 10.0))
+    assert _position(st, "600000.SH") == 0.0
+    st.on_trade(T("t2", "600000.SH", "buy", 100, 10.0))
+    st.on_trade(T("t3", "600000.SH", "sell", 300, 11.0))
+    assert _position(st, "600000.SH") == 0.0
+
+
 def test_futures_close_today_truncated() -> None:
     """期货 close_today 超过持仓的部分截掉."""
     st = _stats(asset="futures", mult=300.0)
@@ -447,6 +468,9 @@ def test_runner_shares_one_stats_and_initializes_once() -> None:
     stats = slots[0].execution.trade_stats
     assert stats is not None and stats.initialized
     assert slots[1].execution.trade_stats is stats
+    # 启动激活时预载各 slot 的账户缓存，供每 bar 权益采样只读
+    for slot in slots:
+        assert slot.execution.state_cache.account_if_loaded() is not None
     queries = gw.account_queries
     runner._baseline_broker_state(gw)
     assert gw.account_queries == queries
@@ -460,6 +484,7 @@ def test_runner_multiplier_and_asset_type_from_instruments() -> None:
     assert runner._instrument_asset_type("IF2612") == "futures"
     assert runner._instrument_asset_type("600000.sh") == "stock"
     assert runner._instrument_multiplier("unknown") is None
+    assert runner._instrument_asset_type("unknown") == ""
 
 
 def test_runner_counts_own_trades_only() -> None:
@@ -544,16 +569,18 @@ def test_per_bar_equity_fed_before_user_on_bar() -> None:
             log.append(("equity", timestamp_ns))
             assert equity == 123.0
 
+    class _Cache:
+        def account_if_loaded(self) -> Any:
+            return UnifiedAccount("a", equity=123.0, cash=0.0, available_cash=0.0)
+
     class _Exec:
         def __init__(self, inner: Any) -> None:
             self._inner = inner
             self.trade_stats = _RecStats()
+            self.state_cache = _Cache()
 
         def __getattr__(self, name: str) -> Any:
             return getattr(self._inner, name)
-
-        def get_portfolio_value(self) -> float:
-            return 123.0
 
     class _S(Strategy):
         def on_start(self) -> None:
@@ -568,3 +595,43 @@ def test_per_bar_equity_fed_before_user_on_bar() -> None:
     for b in bars:
         expected += [("equity", int(b.timestamp)), ("on_bar", int(b.timestamp))]
     assert log == expected
+
+
+def test_per_bar_equity_never_queries_broker(caplog: pytest.LogCaptureFixture) -> None:
+    """每 bar 权益采样只读已缓存的账户：柜台查询一直失败时不查询、不打异常日志."""
+    from akquant.gateway.broker_execution import BrokerExecution
+    from akquant.gateway.broker_state_cache import BrokerStateCache
+    from akquant.strategy_events import _feed_broker_stats_equity
+
+    class _DownGw:
+        def __init__(self) -> None:
+            self.queries = 0
+
+        def query_account(self) -> Any:
+            self.queries += 1
+            raise ConnectionError("broker down")
+
+    class _Holder:
+        pass
+
+    gw = _DownGw()
+    cache = BrokerStateCache(gw)
+    holder = _Holder()
+    execution = BrokerExecution(holder, gw, cache, submitter=None)
+    st = _stats()
+    st.initialize(equity=100_000.0, positions=[], timestamp_ns=0)
+    execution.trade_stats = st
+    cast(Any, holder).execution = execution
+    with caplog.at_level(logging.DEBUG):
+        for ts in range(1, 11):
+            _feed_broker_stats_equity(holder, ts)
+    assert gw.queries == 0
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    # 有缓存值（即使已被成交标记为过期）时照用它，同样不查询
+    cache._account = UnifiedAccount("a", 90_000.0, 0.0, 0.0)
+    cache.invalidate_account()
+    _feed_broker_stats_equity(holder, 20)
+    assert gw.queries == 0
+    snap = st.snapshot(21, 100_000.0, {})
+    assert snap is not None and snap["max_drawdown_value"] == 10_000.0

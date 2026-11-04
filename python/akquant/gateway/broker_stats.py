@@ -4,9 +4,11 @@
 
 - 只计入本会话的单（``is_own_trade``），前端手动单、其他会话的单不计入。
 - 会话启动时用柜台持仓播种（同一标的多空两行先按净持仓合并）。
-- 平仓数量超过统计器已有持仓的部分直接截掉，不当成反向开仓：股票、基金等现货类
-  品种的卖出一律视为平仓；期货、期权按 ``position_effect`` 判断。这一步在喂给 Rust
-  之前完成，不改 ``TradeTracker`` 的撮合逻辑。
+- 平仓数量超过统计器已有持仓的部分直接截掉，不当成反向开仓。开平判定见
+  ``_truncate_excess_close``：期货、期权按 ``position_effect``；已配置的股票、基金等
+  现货卖出一律视为平仓；未配置资产类型的标的先认明确的 open*/close*，``auto`` 时
+  卖出视为平仓。这一步在喂给 Rust 之前完成，不改 ``TradeTracker`` 的撮合逻辑。
+- ``TradeTracker`` 按净持仓记账：持有空头时再开多（锁仓），这笔开仓会被记为平空。
 - 手续费恒为 0（柜台成交不带手续费）。
 - 柜台送来的脏数据（缺字段、非有限数）只记 warning 并跳过：统计出错不能影响柜台
   状态同步。
@@ -29,7 +31,7 @@ from .symbol_match import normalize_symbol_for_match
 
 logger = get_logger("gateway.stats")
 
-#: 按 ``position_effect`` 判断开平的品种；其余（股票、基金、债券……）卖出一律视为平仓。
+#: 按 ``position_effect`` 判断开平的品种；其余已知类型（股票、基金……）卖出一律视为平仓。
 _DERIVATIVE_ASSET_TYPES = frozenset({"futures", "option"})
 
 
@@ -59,7 +61,10 @@ class BrokerTradeStats:
         multiplier_of: Callable[[str], Optional[float]],
         asset_type_of: Callable[[str], str],
     ) -> None:
-        """注入成交归属判定、合约乘数与资产类型的查询函数."""
+        """注入成交归属判定、合约乘数与资产类型的查询函数.
+
+        ``asset_type_of`` 对未配置的标的返回空串（资产类型未知）。
+        """
         self._is_own = is_own_trade
         self._multiplier_of = multiplier_of
         self._asset_type_of = asset_type_of
@@ -212,16 +217,21 @@ class BrokerTradeStats:
         """平仓数量超过统计器持仓的部分截掉（返回应喂入的数量，0 表示整笔忽略）."""
         held = stats.position(symbol)
         effect = _enum_text(_trade_field(payload, "position_effect"))
-        asset = str(self._asset_type_of(symbol) or "stock").strip().lower()
-        if asset not in _DERIVATIVE_ASSET_TYPES:
-            # 现货不能卖空：卖出一律是平仓，买入一律是开仓
+        asset = str(self._asset_type_of(symbol) or "").strip().lower()
+        explicit = effect.startswith("open") or effect.startswith("close")
+        if asset in _DERIVATIVE_ASSET_TYPES:
+            if explicit:
+                closing = effect.startswith("close")
+            else:
+                closing = (side == "sell" and held > 0) or (side == "buy" and held < 0)
+        elif asset or not explicit:
+            # 已知的现货类型不能卖空：卖出一律是平仓，买入一律是开仓。
+            # 类型未知且 position_effect=auto（如 middleware 股票成交）同样处理。
             closing = side == "sell"
-        elif effect.startswith("open"):
-            closing = False
-        elif effect.startswith("close"):
-            closing = True
         else:
-            closing = (side == "sell" and held > 0) or (side == "buy" and held < 0)
+            # 类型未知（标的不在 instruments 里）但柜台给了明确的开平标志：照它判断，
+            # 否则一笔开空会被当成平仓截断为 0
+            closing = effect.startswith("close")
         if not closing:
             return qty
         # 平仓方向与持仓方向相反才有可平的量（期货 close 但持仓同向时为 0）

@@ -110,15 +110,25 @@ def _drive_local_stops(
 def _feed_broker_stats_equity(strategy: Any, timestamp: int) -> None:
     """broker_live: 每根 bar 用柜台权益给会话级统计器记一个权益点(spec 5.5 第 4 条).
 
-    与回测"每 bar 一个权益点"同口径, 在用户 on_bar 之前执行。统计器未初始化时
-    不读权益(避免多一次柜台查询); 回测执行后端没有 ``trade_stats``, 直接跳过。
+    与回测"每 bar 一个权益点"同口径, 在用户 on_bar 之前执行。**只读已缓存的
+    账户快照, 从不查柜台**(``BrokerStateCache.account_if_loaded``): 每次成交/委托
+    回报都会让缓存过期, 若在这里重查, 每个 slot 每根 bar 都可能多一次柜台查询,
+    柜台断线时还会每 bar 重查并打异常日志。没有缓存值时跳过本 bar 的权益点。
+    回测执行后端没有 ``trade_stats``, 直接跳过。
     """
     execution = getattr(strategy, "execution", None)
     stats = getattr(execution, "trade_stats", None)
     if execution is None or stats is None or not getattr(stats, "initialized", False):
         return
+    peek = getattr(getattr(execution, "state_cache", None), "account_if_loaded", None)
+    if not callable(peek):
+        return
     try:
-        stats.on_equity(int(timestamp), float(execution.get_portfolio_value()))
+        account = peek()
+        equity = getattr(account, "equity", None) if account is not None else None
+        if equity is None:
+            return
+        stats.on_equity(int(timestamp), float(equity))
     except Exception:  # noqa: BLE001 统计出错不能打断 bar 派发
         logger.warning("broker_live 统计权益采样失败", exc_info=True)
 

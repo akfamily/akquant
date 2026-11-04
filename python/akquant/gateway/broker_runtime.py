@@ -62,7 +62,7 @@ class BrokerRuntime:
         self._trade_stats = BrokerTradeStats(
             is_own_trade=lambda p: self._event_bridge.is_own_trade(p),
             multiplier_of=multiplier_of or (lambda _s: None),
-            asset_type_of=asset_type_of or (lambda _s: "stock"),
+            asset_type_of=asset_type_of or (lambda _s: ""),
         )
         update_broker_state = wrap_state_invalidation(
             update_broker_state,
