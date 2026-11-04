@@ -147,3 +147,23 @@ def test_payload_drawings_keys_and_disable() -> None:
     assert [t["drawing_id"] for t in seg["tables"]] == ["t"]
     off = build_review_payload(result, {"AAA": df}, include_drawings=False)
     assert off["symbols"][0]["drawings"] == [] and off["symbols"][0]["tables"] == []
+
+
+def test_payload_naive_index_uses_result_timezone() -> None:
+    """Payload 层把 result._timezone 传给 to_lwc_drawings.
+
+    无时区行情首根 bar 上的点必须保留(漏传 tz 时按 UTC 解释会被丢弃)。
+    """
+    from types import SimpleNamespace
+
+    from akquant.lwc._payload import build_review_payload
+
+    result = SimpleNamespace(
+        trades_df=pd.DataFrame(),
+        indicator_outputs={"drawings": [_d("label", [(MS[0], 1.0)])]},
+        _timezone="Asia/Shanghai",
+    )
+    naive = IDX.tz_localize(None)
+    df = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=naive)
+    seg = build_review_payload(result, {"AAA": df})["symbols"][0]
+    assert [p["time"] for p in seg["drawings"][0]["points"]] == ["2024-01-02"]

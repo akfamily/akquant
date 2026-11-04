@@ -55,21 +55,23 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   #chart-wrap{position:relative;}
   #chart{width:100%;height:calc(100vh - 52px);}
   #empty{padding:40px;text-align:center;color:var(--text);opacity:.6;}
-  /* 策略表格浮层: 9 宫格定位, 不拦截鼠标(图表照常拖动/缩放);
-     right 留 60px 避开右侧价格刻度, bottom 留 36px 避开时间轴。 */
-  #akq-tables{position:absolute;inset:0;pointer-events:none;z-index:5;}
+  /* 策略表格浮层: 只覆盖主图 pane(与 TradingView 一致, 表格属于主图), 不盖成交量
+     和副图; 宽高由 JS 按 chart.paneSize(0) 同步, 因此不含价格刻度与时间轴。
+     不拦截鼠标(图表照常拖动/缩放); 超出主图的部分裁掉。TradingView 署名 logo
+     在最下面的 pane(成交量)左下角, 不在主图内, bottom_left 不会盖住它。 */
+  #akq-tables{position:absolute;top:0;left:0;width:0;height:0;overflow:hidden;
+    pointer-events:none;z-index:5;}
   .akq-pos{position:absolute;display:flex;flex-direction:column;gap:6px;
     max-width:45%;}
   .akq-pos.top_left{top:8px;left:8px}
   .akq-pos.top_center{top:8px;left:50%;transform:translateX(-50%)}
-  .akq-pos.top_right{top:8px;right:60px}
+  .akq-pos.top_right{top:8px;right:8px}
   .akq-pos.middle_left{top:50%;left:8px;transform:translateY(-50%)}
   .akq-pos.middle_center{top:50%;left:50%;transform:translate(-50%,-50%)}
-  .akq-pos.middle_right{top:50%;right:60px;transform:translateY(-50%)}
-  /* left 留 56px: 左下角是 LWC 的 TradingView 署名 logo(许可要求), 不能盖住 */
-  .akq-pos.bottom_left{bottom:36px;left:56px}
-  .akq-pos.bottom_center{bottom:36px;left:50%;transform:translateX(-50%)}
-  .akq-pos.bottom_right{bottom:36px;right:60px}
+  .akq-pos.middle_right{top:50%;right:8px;transform:translateY(-50%)}
+  .akq-pos.bottom_left{bottom:8px;left:8px}
+  .akq-pos.bottom_center{bottom:8px;left:50%;transform:translateX(-50%)}
+  .akq-pos.bottom_right{bottom:8px;right:8px}
   .akq-table{--akq-border:var(--grid);border-collapse:collapse;font-size:12px;
     background:var(--bg);opacity:.92;border:1px solid var(--akq-border);}
   .akq-table td{padding:2px 8px;border:1px solid var(--akq-border);
@@ -240,6 +242,11 @@ _APP_JS = """
   }
   var drawRenderer = {
     draw: function(target){
+      // 主图每次重绘(autoSize 改尺寸、拖动 pane 分隔条、副图增删)都会走到这里,
+      // 顺便核对主图尺寸; 变了就下一帧同步表格浮层, 不在绘制回调里改 DOM。
+      target.useMediaCoordinateSpace(function(m){
+        notePaneSize(m.mediaSize.width, m.mediaSize.height);
+      });
       if(drawingsHidden || !curShapes.length) return;
       target.useBitmapCoordinateSpace(function(scope){
         var ctx = scope.context, r = scope.horizontalPixelRatio;
@@ -272,6 +279,24 @@ _APP_JS = """
   };
   candle.attachPrimitive(drawPrim);
   var tablesHost = document.getElementById('akq-tables');
+  // 表格浮层只覆盖主图 pane: 位置/尺寸取自 LWC 公开 API(paneSize(0) 不含价格
+  // 刻度; 左侧刻度默认隐藏, 宽度为 0, 显示时浮层随之右移)。
+  var overlayKey = '', syncPending = false;
+  function syncOverlay(){
+    syncPending = false;
+    var sz = chart.paneSize(0), left = chart.priceScale('left').width();
+    var key = sz.width+'x'+sz.height+'+'+left;
+    if(key===overlayKey) return;
+    overlayKey = key;
+    tablesHost.style.left = left+'px';
+    tablesHost.style.width = sz.width+'px';
+    tablesHost.style.height = sz.height+'px';
+  }
+  function notePaneSize(w, h){
+    if(syncPending || overlayKey.indexOf(w+'x'+h+'+')===0) return;
+    syncPending = true;
+    requestAnimationFrame(syncOverlay);
+  }
   function esc(s){
     return String(s==null ? '' : s).replace(/[&<>"']/g, function(c){
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
@@ -466,6 +491,7 @@ _APP_JS = """
     markerPrim.setMarkers(allMarkers(s, curSignals));
     curShapes = s.drawings||[]; drawTables(s); drawPrim.refresh();
     chart.timeScale().fitContent();
+    syncOverlay();  // 副图随标的重建, 主图高度可能变了
   }
   function recolorCurrent(){
     var s = all[curIdx]; if(!s) return;

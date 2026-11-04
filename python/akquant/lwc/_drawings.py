@@ -16,9 +16,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 
-from ._payload import _bar_time
+from ._payload import _bar_times
 
 #: 各 kind 渲染所需的最少点数; 未知 kind 不渲染(spec 9.5: 未知 kind 忽略)。
 _MIN_POINTS = {"line": 2, "box": 2, "label": 1, "polyline": 2, "fib": 2}
@@ -36,27 +37,32 @@ _POSITION_ORDER = (
 )
 
 
-def _point_ns(ts_ms: Any, bar_index: pd.DatetimeIndex, tz: Optional[str]) -> int:
-    """把 UTC 毫秒换成与 ``bar_index`` 同一口径的纳秒整数(便于 searchsorted)."""
-    ts = pd.Timestamp(int(ts_ms), unit="ms", tz="UTC")
-    if getattr(bar_index, "tz", None) is None:
-        # 无时区索引是本地墙钟时间: 先换到策略时区再抹掉时区信息。
-        ts = ts.tz_convert(tz or "UTC").tz_localize(None)
-    return int(ts.as_unit("ns").value)
+def _utc_ns(index: pd.DatetimeIndex) -> np.ndarray:
+    """``DatetimeIndex`` → int64 纳秒数组(带时区时为 UTC 纳秒, 无时区时为墙钟纳秒)."""
+    index = index.as_unit("ns")
+    if index.tz is not None:
+        index = index.tz_convert("UTC").tz_localize(None)
+    return index.to_numpy(dtype="datetime64[ns]").astype("int64")
 
 
 def _snap_positions(
-    ts_list: list[Any], bar_index: pd.DatetimeIndex, tz: Optional[str]
-) -> list[int]:
-    """每个点吸附到 ``<= ts`` 的最后一根 bar 的下标; 早于首根 bar 为 ``-1``."""
-    if len(bar_index) == 0 or not ts_list:
-        return [-1] * len(ts_list)
-    index_ns = bar_index.as_unit("ns")
-    if index_ns.tz is not None:
-        index_ns = index_ns.tz_convert("UTC").tz_localize(None)
-    values = index_ns.to_numpy(dtype="datetime64[ns]").astype("int64")
-    targets = [_point_ns(t, bar_index, tz) for t in ts_list]
-    return [int(p) - 1 for p in values.searchsorted(targets, side="right")]
+    ts_ms: list[Any], index_ns: np.ndarray, naive: bool, tz: Optional[str]
+) -> np.ndarray:
+    """每个点吸附到 ``<= ts`` 的最后一根 bar 的下标; 早于首根 bar 为 ``-1``.
+
+    :param ts_ms: 点的 UTC 毫秒.
+    :param index_ns: :func:`_utc_ns` 处理后的 bar 索引(整个标的只算一次).
+    :param naive: bar 索引是否无时区; 是则点先换成 ``tz`` 的墙钟时间再比较.
+    """
+    if len(index_ns) == 0 or not ts_ms:
+        return np.full(len(ts_ms), -1, dtype="int64")
+    points = pd.DatetimeIndex(
+        pd.to_datetime(np.asarray(ts_ms, dtype="int64"), unit="ms", utc=True)
+    )
+    if naive:
+        # 无时区索引是本地墙钟时间: 先换到策略时区再抹掉时区信息。
+        points = points.tz_convert(tz or "UTC").tz_localize(None)
+    return index_ns.searchsorted(_utc_ns(points), side="right") - 1
 
 
 def to_lwc_drawings(
@@ -80,6 +86,10 @@ def to_lwc_drawings(
     """
     shapes: list[dict[str, Any]] = []
     tables: list[dict[str, Any]] = []
+    naive = bar_index.tz is None
+    # 索引的纳秒数组与 LWC 时间值都按标的只算一次(日内可能数万根 bar)。
+    index_ns = _utc_ns(bar_index)
+    bar_times: Optional[list[Any]] = None
     for d in drawings:
         sym = str(d.get("symbol", ""))
         kind = str(d.get("kind", ""))
@@ -92,12 +102,13 @@ def to_lwc_drawings(
         if sym != symbol or kind not in _MIN_POINTS:
             continue
         raw_points = list(d.get("points") or [])
-        positions = _snap_positions([p["ts"] for p in raw_points], bar_index, tz)
+        positions = _snap_positions(
+            [p["ts"] for p in raw_points], index_ns, naive, tz
+        ).tolist()
+        if bar_times is None:
+            bar_times = _bar_times(bar_index, intraday)
         points = [
-            {
-                "time": _bar_time(bar_index[pos], intraday),
-                "price": float(p["price"]),
-            }
+            {"time": bar_times[pos], "price": float(p["price"])}
             for p, pos in zip(raw_points, positions)
             if pos >= 0
         ]
