@@ -1326,6 +1326,10 @@ class Engine:
         """
         ...
 
+    def strategy_stats(self) -> dict[str, float]:
+        r"""运行时绩效统计（口径同 result.metrics）."""
+        ...
+
     def get_results(self) -> BacktestResult:
         r"""
         获取回测结果.
@@ -3029,6 +3033,10 @@ class StrategyContext:
     ) -> "StrategyContext": ...
     def current_window(self, symbol: str, freq: str) -> typing.Optional[Bar]:
         r"""某标的某周期正在形成、尚未闭合的窗口快照; 无则 None. 不触发回调."""
+        ...
+
+    def strategy_stats(self) -> dict[str, float]:
+        r"""运行时绩效统计（口径同 result.metrics）."""
         ...
 
     def history(

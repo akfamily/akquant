@@ -25,6 +25,9 @@ pub struct StatisticsManager {
     pub snapshots: Vec<(i64, Vec<PositionSnapshot>)>,
     /// 强平审计记录
     pub liquidation_audits: Vec<LiquidationAudit>,
+    /// 回撤折叠缓存：(折叠用的初始资金, 已折叠到的下标, 状态)。最后一个点可能被 upsert
+    /// 覆盖，所以只折叠到 len-1，最后一个点在查询时临时 push。
+    dd_cache: Option<(Decimal, usize, crate::analysis::DrawdownState)>,
 }
 
 impl Default for StatisticsManager {
@@ -52,6 +55,7 @@ impl StatisticsManager {
             margin_curve: Vec::new(),
             snapshots: Vec::new(),
             liquidation_audits: Vec::new(),
+            dd_cache: None,
         }
     }
 
@@ -236,6 +240,72 @@ impl StatisticsManager {
         })
     }
 
+    /// 当前权益曲线的回撤状态（摊还 O(1)）。初始资金变了，或曲线被截短时重建。
+    ///
+    /// 缓存只折叠到倒数第二个点：最后一个点在下一个时间戳到来之前可能被 upsert 覆盖，
+    /// 每次查询时临时 push 到返回值上。曲线相邻点时间戳必不相同（upsert 保证），
+    /// 所以临时 push 的点不会与缓存里的 pending 点合并。
+    pub fn drawdown_state(&mut self, initial: Decimal) -> crate::analysis::DrawdownState {
+        let len = self.equity_curve.len();
+        let stop = len.saturating_sub(1);
+        let (init, mut folded, mut state) = match self.dd_cache.take() {
+            Some((init, k, st)) if init == initial && k <= stop => (init, k, st),
+            _ => (initial, 0, crate::analysis::DrawdownState::new(initial)),
+        };
+        for (ts, eq) in &self.equity_curve[folded..stop] {
+            state.push(*ts, *eq);
+        }
+        folded = stop.max(folded);
+        let mut out = state;
+        if let Some((ts, eq)) = self.equity_curve.last() {
+            out.push(*ts, *eq);
+        }
+        self.dd_cache = Some((init, folded, state));
+        out
+    }
+
+    /// on_stop 用：与 generate_backtest_result 补期末点的方式相同，结果与 metrics 逐位相等。
+    #[allow(clippy::too_many_arguments)]
+    pub fn stats_snapshot(
+        &mut self,
+        portfolio: &Portfolio,
+        instruments: &HashMap<String, Instrument>,
+        last_prices: &HashMap<String, Decimal>,
+        order_manager: &crate::order_manager::OrderManager,
+        risk_config: &RiskConfig,
+        initial_cash: Decimal,
+        now_ns: Option<i64>,
+    ) -> crate::analysis::StrategyStatsValues {
+        let trade_pnl = order_manager
+            .trade_tracker
+            .calculate_pnl(Some(last_prices.clone()));
+        let state = crate::analysis::StatsState {
+            trades: order_manager.trade_tracker.summary(),
+            drawdown: self.drawdown_state(initial_cash),
+            initial_cash,
+        };
+        // generate_backtest_result：有 now_ns 时在该时刻 upsert 期末权益，否则取曲线末点
+        // （空曲线时 metrics 的 end_market_value 为 initial_cash）。
+        let equity = match now_ns {
+            Some(_) => {
+                calculate_account_metrics(
+                    portfolio,
+                    last_prices,
+                    instruments,
+                    &order_manager.trade_tracker,
+                    risk_config,
+                )
+                .equity
+            }
+            None => self
+                .equity_curve
+                .last()
+                .map(|(_, e)| *e)
+                .unwrap_or(initial_cash),
+        };
+        crate::analysis::compute_strategy_stats(&state, now_ns, equity, trade_pnl.unrealized_pnl)
+    }
+
     // Removed create_backtest_result as it is merged into generate_backtest_result
 
     /// 获取当前的权益曲线（只读）
@@ -251,5 +321,55 @@ impl StatisticsManager {
     /// 获取当前的保证金曲线（只读）
     pub fn margin_curve(&self) -> &Vec<(i64, Decimal)> {
         &self.margin_curve
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    fn fold(
+        curve: &[(i64, Decimal)],
+        initial: Decimal,
+    ) -> crate::analysis::strategy_stats::DrawdownSummary {
+        let mut st = crate::analysis::DrawdownState::new(initial);
+        for (ts, eq) in curve {
+            st.push(*ts, *eq);
+        }
+        st.summary()
+    }
+
+    /// 增量缓存（含末点被同一时间戳覆盖、初始资金变化）必须与整条曲线一次折叠逐位相同。
+    #[test]
+    fn drawdown_state_cache_equals_full_fold() {
+        let mut sm = StatisticsManager::new();
+        let initial = dec!(100);
+        assert_eq!(sm.drawdown_state(initial).summary(), fold(&[], initial));
+        let steps = [
+            (1, dec!(110)),
+            (2, dec!(70)), // 随后被同一时间戳覆盖，不能留下痕迹
+            (2, dec!(105)),
+            (3, dec!(90)),
+            (3, dec!(95)),
+            (4, dec!(120)),
+            (5, dec!(100)),
+        ];
+        for (ts, eq) in steps {
+            sm.update(ts, eq, Decimal::ZERO, Decimal::ZERO);
+            let got = sm.drawdown_state(initial).summary();
+            assert_eq!(got, fold(sm.equity_curve(), initial), "ts={ts}");
+            // 重复查询不改变结果
+            assert_eq!(sm.drawdown_state(initial).summary(), got);
+        }
+        assert_eq!(
+            sm.drawdown_state(initial).summary().max_drawdown_value,
+            dec!(20)
+        );
+        // 初始资金变了要重建
+        assert_eq!(
+            sm.drawdown_state(dec!(200)).summary(),
+            fold(sm.equity_curve(), dec!(200))
+        );
     }
 }
