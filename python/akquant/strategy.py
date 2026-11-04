@@ -211,6 +211,7 @@ if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
     from .ml.model import QuantModel
     from .precomputed import PrecomputedIndicator
+    from .strategy_drawing import DrawingApi
     from .strategy_stats import StrategyStats
 
 # 实盘 subscribe() 告警用: 与 strategy_logging 的 "strategy" 通道同源。
@@ -392,6 +393,9 @@ class Strategy:
     _seen_trade_keys: set[Tuple[Any, ...]]
     _seen_trade_key_order: Deque[Tuple[Any, ...]]
     timezone: str = "Asia/Shanghai"
+    #: 每个 (标的, 绘图类型) 最多保留的存活对象数，超出淘汰最早创建的
+    #: （同 Pine max_labels_count）
+    max_drawings_per_kind: int = 500
     warmup_period: int = 0
     _runtime_config: StrategyRuntimeConfig
     _last_event_type: str = ""  # "bar" or "tick"
@@ -3721,6 +3725,17 @@ class Strategy:
         from .strategy_stats import build_strategy_stats
 
         return build_strategy_stats(self)
+
+    @property
+    def draw(self) -> "DrawingApi":
+        """在 K 线上画线/框/标注/折线/斐波那契/表格，见 ``akquant.strategy_drawing``."""
+        api = getattr(self, "_drawing_api", None)
+        if api is None:
+            from .strategy_drawing import DrawingApi
+
+            api = DrawingApi(self)
+            self._drawing_api = api
+        return api
 
     def _inject_cost_config(
         self,
