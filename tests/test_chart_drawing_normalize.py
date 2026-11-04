@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 import pytest
 from akquant.chart import (
@@ -286,3 +287,104 @@ def test_nan_safe_values_are_json_serializable() -> None:
     nan_cell, inf_cell = t["table"]["rows"][0]
     assert nan_cell["value"] is None and nan_cell["text"] == "—"
     assert inf_cell["value"] is None and inf_cell["text"] == "∞"
+
+
+def _tbl(rows: object, header: object = None) -> dict:
+    return build_table(
+        rows,
+        header=header,
+        position="top_left",
+        precision=2,
+        bg_color="",
+        border_color="",
+    )
+
+
+def test_numpy_scalars_accepted_in_points() -> None:
+    """Numpy ints and datetime64 work as times; np.bool_ is rejected."""
+    expect = normalize_point((NS, 10), tz=TZ)
+    assert normalize_point((np.int64(NS), np.float32(10)), tz=TZ) == expect
+    naive = np.datetime64("2024-01-02T10:00:00")
+    assert normalize_point((naive, 10), tz=TZ) == expect
+    with pytest.raises(ValueError):
+        normalize_point((np.bool_(True), 10), tz=TZ)
+
+
+def test_numpy_scalars_in_cells_become_natives() -> None:
+    """Numpy cell values turn into JSON-safe Python natives."""
+    t = _tbl([[np.int64(7), np.float32(0.5), np.bool_(True), np.float64("nan")]])
+    cells = t["table"]["rows"][0]
+    assert [c["value"] for c in cells] == [7, 0.5, True, None]
+    assert [type(c["value"]) for c in cells[:3]] == [int, float, bool]
+    assert [c["text"] for c in cells] == ["7", "0.50", "是", "—"]
+    json.dumps(t, allow_nan=False)
+
+
+def test_table_cell_truncation_is_reported() -> None:
+    """Long cell strings are cut (value and text) and flagged truncated."""
+    t = _tbl([["长" * 600]])
+    c = t["table"]["rows"][0][0]
+    assert t["truncated"] is True
+    assert len(c["text"]) == 500 and len(c["value"]) == 500
+    t2 = _tbl([[{"value": 1, "text": "长" * 600}]])
+    assert t2["truncated"] is True
+    assert len(t2["table"]["rows"][0][0]["text"]) == 500
+    assert _tbl([["a"]])["truncated"] is False
+
+
+def test_table_header_must_be_sequence() -> None:
+    """A str or dict header is rejected instead of split into characters."""
+    for bad in ("abc", {"a": 1}, b"ab"):
+        with pytest.raises(ValueError, match="header"):
+            _tbl([["a"]], bad)
+
+
+def test_every_build_output_is_strict_json() -> None:
+    """All build_* results serialize with allow_nan=False."""
+    p1, p2 = (NS, 1), (NS + 1, 2)
+    hook = lambda n: n  # noqa: E731
+    outs = [
+        build_line(
+            p1,
+            p2,
+            tz=TZ,
+            to_end_ns=hook,
+            extend="none",
+            color="",
+            width=1,
+            style="solid",
+        ),
+        build_box(
+            p1,
+            p2,
+            tz=TZ,
+            to_end_ns=hook,
+            border_color="",
+            fill_color="",
+            width=1,
+            text="t",
+        ),
+        build_label(
+            p1,
+            "t",
+            tz=TZ,
+            to_end_ns=hook,
+            style="up",
+            color="",
+            text_color="",
+            size="normal",
+        ),
+        build_polyline(
+            [p1, p2],
+            tz=TZ,
+            to_end_ns=hook,
+            closed=True,
+            color="",
+            width=1,
+            fill_color="",
+        ),
+        build_fib(p1, p2, tz=TZ, to_end_ns=hook, color=""),
+        _tbl([[1]], ["h"]),
+    ]
+    for o in outs:
+        json.dumps(o, allow_nan=False)

@@ -11,6 +11,7 @@ import re
 from datetime import datetime
 from typing import Any, Callable, Optional
 
+import numpy as np
 import pandas as pd
 
 from ._normalize import timestamp_ms_from_ns
@@ -72,18 +73,26 @@ def _positive_width(value: Any, field: str = "width") -> float:
     return int(number) if number.is_integer() else number
 
 
+def _unwrap_numpy(value: Any) -> Any:
+    """Turn numpy scalars (except datetime64) into Python natives."""
+    if isinstance(value, np.generic) and not isinstance(value, np.datetime64):
+        return value.item()
+    return value
+
+
 def _to_ns(value: Any, tz: str) -> int:
+    value = _unwrap_numpy(value)
     if isinstance(value, bool):
         raise ValueError("坐标时间不能是 bool")
     if isinstance(value, int):
         return int(value)
-    if isinstance(value, (pd.Timestamp, datetime)):
+    if isinstance(value, (pd.Timestamp, datetime, np.datetime64)):
         ts = pd.Timestamp(value)
         if ts.tzinfo is None:
             ts = ts.tz_localize(tz)
         return int(ts.value)
     raise ValueError(
-        "坐标时间须为 int(UTC 纳秒)/pd.Timestamp/datetime，"
+        "坐标时间须为 int(UTC 纳秒)/pd.Timestamp/datetime/np.datetime64，"
         f"当前为 {type(value).__name__}"
     )
 
@@ -119,21 +128,24 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def normalize_cell(cell: Any, precision: int) -> dict[str, Any]:
-    """Normalize one table cell to ``{value, text, bg_color, text_color}``."""
-    bg, fg, text_override = "", "", None
+def _normalize_cell_flag(cell: Any, precision: int) -> tuple[dict[str, Any], bool]:
+    """Normalize one cell; second item says whether any text was truncated."""
+    bg, fg, text_override, cut = "", "", None, False
     if isinstance(cell, dict):
         bg = normalize_color(cell.get("bg_color"), field="bg_color")
         fg = normalize_color(cell.get("text_color"), field="text_color")
         if cell.get("text") is not None:
-            text_override = str(cell["text"])[:MAX_TEXT_LEN]
+            text_override, cut = normalize_text(cell["text"], field="text")
         value = cell.get("value")
     else:
         value = cell
+    value = _unwrap_numpy(value)
     if value is not None and not isinstance(value, (str, int, float, bool)):
         raise ValueError(
             f"单元格值须为 str/int/float/bool/None，当前为 {type(value).__name__}"
         )
+    if isinstance(value, str) and len(value) > MAX_TEXT_LEN:
+        value, cut = value[:MAX_TEXT_LEN], True
     if text_override is not None:
         text = text_override
     elif value is None or (isinstance(value, float) and math.isnan(value)):
@@ -148,8 +160,14 @@ def normalize_cell(cell: Any, precision: int) -> dict[str, Any]:
         else:
             text = f"{value:,.{precision}f}"
     else:
-        text = value[:MAX_TEXT_LEN]
-    return {"value": _json_safe(value), "text": text, "bg_color": bg, "text_color": fg}
+        text = value
+    out = {"value": _json_safe(value), "text": text, "bg_color": bg, "text_color": fg}
+    return out, cut
+
+
+def normalize_cell(cell: Any, precision: int) -> dict[str, Any]:
+    """Normalize one table cell to ``{value, text, bg_color, text_color}``."""
+    return _normalize_cell_flag(cell, precision)[0]
 
 
 _EMPTY_CELL: dict[str, Any] = {
@@ -160,10 +178,15 @@ _EMPTY_CELL: dict[str, Any] = {
 }
 
 
-def normalize_table(rows: Any, header: Any, precision: int) -> dict[str, Any]:
-    """Normalize a 2-D sequence (plus optional header) into padded cell rows."""
+def _normalize_table_flag(
+    rows: Any, header: Any, precision: int
+) -> tuple[dict[str, Any], bool]:
     if isinstance(rows, (str, bytes)) or not hasattr(rows, "__iter__"):
         raise ValueError("rows 须为二维序列（list[list]）")
+    if header is not None and (
+        isinstance(header, (str, bytes, dict)) or not hasattr(header, "__iter__")
+    ):
+        raise ValueError("header 须为序列（list），每项是一个表头单元格")
     raw_rows = [list(header)] if header is not None else []
     for row in rows:
         if isinstance(row, (str, bytes, dict)) or not hasattr(row, "__iter__"):
@@ -176,12 +199,22 @@ def normalize_table(rows: Any, header: Any, precision: int) -> dict[str, Any]:
     width = max((len(r) for r in raw_rows), default=0)
     if width > MAX_TABLE_COLS:
         raise ValueError(f"表格最多 {MAX_TABLE_COLS} 列，当前 {width}")
-    out = [
-        [normalize_cell(c, precision) for c in r]
-        + [dict(_EMPTY_CELL) for _ in range(width - len(r))]
-        for r in raw_rows
-    ]
-    return {"rows": out, "header_rows": 1 if header is not None else 0}
+    truncated = False
+    out = []
+    for r in raw_rows:
+        cells = []
+        for c in r:
+            cell, cut = _normalize_cell_flag(c, precision)
+            truncated = truncated or cut
+            cells.append(cell)
+        cells += [dict(_EMPTY_CELL) for _ in range(width - len(r))]
+        out.append(cells)
+    return {"rows": out, "header_rows": 1 if header is not None else 0}, truncated
+
+
+def normalize_table(rows: Any, header: Any, precision: int) -> dict[str, Any]:
+    """Normalize a 2-D sequence (plus optional header) into padded cell rows."""
+    return _normalize_table_flag(rows, header, precision)[0]
 
 
 def _base(
@@ -346,7 +379,7 @@ def build_table(
         or not 0 <= precision <= 10
     ):
         raise ValueError(f"precision 须为 0～10 的整数，当前为 {precision!r}")
-    table = normalize_table(rows, header, precision)
+    table, cut = _normalize_table_flag(rows, header, precision)
     table["position"] = _choice(position, TABLE_POSITIONS, "position")
     return _base(
         "table",
@@ -357,4 +390,5 @@ def build_table(
             "border_color": normalize_color(border_color, field="border_color"),
         },
         table=table,
+        truncated=cut,
     )
