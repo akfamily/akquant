@@ -496,6 +496,7 @@ def _merge_indicator_outputs(
         "definitions": [],
         "instances": [],
         "points": [],
+        "drawings": [],
     }
     seen_def: set = set()
     seen_inst: set = set()
@@ -519,4 +520,5 @@ def _merge_indicator_outputs(
                 seen_inst.add(key)
             merged["instances"].append(inst)
         merged["points"].extend(outputs.get("points", []))
+        merged["drawings"].extend(outputs.get("drawings", []))
     return merged

@@ -1,10 +1,12 @@
 """DrawingApi：身份、去重、淘汰、kind 冲突、clear、sink 兼容（spec 3.4、4、6.1）."""
 
+import json
 import logging
 from typing import Any
 
+import pandas as pd
 import pytest
-from akquant import Strategy
+from akquant import Bar, Strategy, run_backtest
 
 
 class FakeSink:
@@ -161,3 +163,138 @@ def test_truncation_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING):
         s.draw.label("a", (NS, 1), "长" * 600)
     assert any("截断" in r.getMessage() for r in caplog.records)
+
+
+# ---- Task 6：回测记录、result.drawings、导出、流事件 ----
+
+
+def _daily_bars(n: int = 6, interval_start_offset_ns: Any = None) -> list[Bar]:
+    """Daily bars; optionally set interval_start = timestamp - offset."""
+    base = pd.Timestamp("2024-01-02 15:00:00", tz="Asia/Shanghai").value
+    bars = []
+    for i in range(n):
+        ts = base + i * 86_400_000_000_000
+        kwargs: dict[str, Any] = {}
+        if interval_start_offset_ns is not None:
+            kwargs["interval_start"] = ts - interval_start_offset_ns
+        bars.append(
+            Bar(
+                timestamp=ts,
+                open=10 + i,
+                high=11 + i,
+                low=9 + i,
+                close=10 + i,
+                volume=1e5,
+                symbol="AAA",
+                **kwargs,
+            )
+        )
+    return bars
+
+
+class _Drawer(Strategy):
+    def on_bar(self, bar: Bar) -> None:
+        self.draw.label(f"l{bar.timestamp}", (bar.timestamp, bar.high), "x")
+        self.draw.line("trend", (self._first, 10.0), (bar.timestamp, bar.close))
+        self.draw.table("perf", self.stats.as_rows(), symbol="*")
+        if bar.close >= 13:
+            self.draw.delete(f"l{bar.timestamp}")
+
+    def on_start(self) -> None:
+        self._first = _daily_bars()[0].timestamp
+
+
+def test_result_drawings_hold_final_state(tmp_path: Any) -> None:
+    """result.drawings 只保留最终存活状态，导出与之一致."""
+    result = run_backtest(data=_daily_bars(), strategy=_Drawer(), show_progress=False)
+    kinds = sorted({d["kind"] for d in result.drawings})
+    assert kinds == ["label", "line", "table"]
+    labels = [d for d in result.drawings if d["kind"] == "label"]
+    assert len(labels) == 3  # close 10,11,12 留下；13,14,15 被删
+    line = next(d for d in result.drawings if d["kind"] == "line")
+    assert line["points"][1]["price"] == 15.0  # 只保留最后一次覆盖
+    assert set(result.drawings_df().columns) >= {
+        "owner_strategy_id",
+        "drawing_id",
+        "kind",
+    }
+    out = tmp_path / "ind.json"
+    result.export_indicators(str(out))
+    exported = json.loads(out.read_text(encoding="utf-8"))
+    assert exported["drawings"] == result.drawings
+    pq = tmp_path / "bundle"
+    result.export_indicators(str(pq), format="parquet")
+    assert json.loads((pq / "drawings.json").read_text(encoding="utf-8")) == (
+        result.drawings
+    )
+
+
+def test_drawing_stream_events_emitted() -> None:
+    """indicator_drawing 事件不被节流，ts 非零."""
+    events: list[Any] = []
+    run_backtest(
+        data=_daily_bars(),
+        strategy=_Drawer(),
+        show_progress=False,
+        on_event=events.append,
+    )
+    drawing_events = [e for e in events if e["event_type"] == "indicator_drawing"]
+    ops = [e["payload"]["op"] for e in drawing_events]
+    assert ops.count("delete") == 3
+    assert all(e["ts"] > 0 for e in drawing_events)
+    assert all(e["payload"]["timestamp"] == str(e["ts"]) for e in drawing_events)
+
+
+class _SamePoint(Strategy):
+    def on_bar(self, bar: Bar) -> None:
+        self.record_indicator("px", bar.close)
+        self.draw.label("m", (bar.timestamp, bar.high), "x")
+
+
+@pytest.mark.parametrize("variant", ["plain", "interval_start", "legacy_end_minus_1ns"])
+def test_drawing_point_ts_matches_indicator_ts(variant: str) -> None:
+    """当前 bar 时间戳处的绘图点与同 bar 指标点 ts(ms) 同口径.
+
+    legacy_end_minus_1ns：timestamp 为整秒 - 1ns 且 interval_start 更早，
+    bar_end_ns 会取 timestamp + 1，用来确认两边都走了这条分支。
+    """
+    bars = _daily_bars(3, None if variant == "plain" else 86_400_000_000_000)
+    if variant == "legacy_end_minus_1ns":
+        bars = [
+            Bar(
+                timestamp=b.timestamp - 1,
+                open=b.open,
+                high=b.high,
+                low=b.low,
+                close=b.close,
+                volume=b.volume,
+                symbol=b.symbol,
+                interval_start=b.interval_start,
+            )
+            for b in bars
+        ]
+    result = run_backtest(data=bars, strategy=_SamePoint(), show_progress=False)
+    ind_ts = int(result.indicator_df()["timestamp_ms"].iloc[-1])
+    label = next(d for d in result.drawings if d["drawing_id"] == "m")
+    assert label["points"][0]["ts"] == ind_ts
+
+
+def test_delete_payload_keys_and_clear_order() -> None:
+    """Delete 载荷键集合固定；clear 按 created_seq 顺序删除."""
+    sink = FakeSink()
+    s = _strategy(sink)
+    s.draw.label("b", (NS, 1), "x")
+    s.draw.label("a", (NS, 2), "x")
+    s.draw.label("c", (NS, 3), "x")
+    s.draw.delete("a")
+    deletes = [d for op, d in sink.calls if op == "delete"]
+    assert set(deletes[0]) == {
+        "owner_strategy_id",
+        "drawing_id",
+        "kind",
+        "symbol",
+        "updated_ts",
+    }
+    sink.calls.clear()
+    s.draw.clear()
+    assert [d["drawing_id"] for op, d in sink.calls if op == "delete"] == ["b", "c"]
