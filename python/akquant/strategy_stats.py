@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, fields
 from typing import Any, Mapping, Optional, Sequence
 
@@ -160,11 +161,36 @@ def build_strategy_stats(strategy: Any) -> StrategyStats:
 
 
 def _broker_live_stats(strategy: Any) -> Optional[StrategyStats]:
-    """broker_live：P1 阶段只给 equity（柜台权益），其余为 None（P1b 接入统计器）."""
+    """broker_live：由会话级统计器（柜台成交驱动）给出，见 spec 5.5.
+
+    统计器不可用（启动时柜台权益/持仓查询失败）时只给 equity（柜台权益），其余为 None。
+    浮动盈亏按策略已见到的最新收盘价（``_last_prices``）计算。
+    """
     from .gateway.broker_execution import BrokerExecution
 
     execution = getattr(strategy, "execution", None)
     if not isinstance(execution, BrokerExecution):
         return None
-    raw: dict[str, Any] = {"equity": execution.get_portfolio_value()}
+    equity = execution.get_portfolio_value()
+    raw: Mapping[str, Any] = {"equity": equity}
+    stats = execution.trade_stats
+    if stats is not None:
+        prices = {
+            str(symbol): float(price)
+            for symbol, price in (getattr(strategy, "_last_prices", None) or {}).items()
+        }
+        snap = stats.snapshot(_current_timestamp_ns(strategy), equity, prices)
+        if snap is not None:
+            raw = snap
     return StrategyStats.from_mapping(raw)
+
+
+def _current_timestamp_ns(strategy: Any) -> int:
+    """当前 bar/tick/ctx 的时间戳；都没有时（如收尾阶段）用墙钟."""
+    resolve = getattr(strategy, "_resolve_record_timestamp", None)
+    if callable(resolve):
+        try:
+            return int(resolve())
+        except RuntimeError:
+            pass
+    return time.time_ns()

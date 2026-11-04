@@ -46,6 +46,7 @@ class BrokerEventBridge:
         is_known_order: Callable[[str, str], bool] | None = None,
         own_session_prefix: str = "",
         strict_task_isolation: bool = False,
+        has_order_owner: Callable[[str, str], bool] | None = None,
     ) -> None:
         """Bind the queue, state callbacks and observer fanout dependencies."""
         self._event_lock = event_lock
@@ -73,6 +74,9 @@ class BrokerEventBridge:
         self._dropped_foreign_symbols = 0
         self._get_subscribed_symbols = get_subscribed_symbols
         self._is_known_order = is_known_order
+        # 订单是否由本会话报出(下单时绑定了归属策略), 交易统计的归属判据, 见
+        # is_own_trade。
+        self._has_order_owner = has_order_owner
         # 已告警过的外来标的(防刷屏): 首次 WARNING 点名, 之后降 DEBUG。
         self._warned_foreign_symbols: set[str] = set()
         # 已告警过的访问器异常类型(防刷屏, 同上)。
@@ -221,6 +225,37 @@ class BrokerEventBridge:
             self._log_foreign_task(client_order_id)
             return False
         return None
+
+    def is_own_trade(self, payload: Any) -> bool:
+        """成交是否属于本会话(会话级交易统计用, spec 5.5 第 2 条).
+
+        先看会话标记判据(``client_order_id`` 前缀): 命中即是, 严格模式下的外来
+        前缀即否。判不出时(前缀不匹配但未启用严格模式、成交不带
+        ``client_order_id`` 等)再看订单是否由本会话报出——即下单时绑定过归属
+        策略(``has_order_owner``)。
+
+        刻意**不用** ``is_known_order``: 那张 id 映射表会被
+        ``_update_broker_state`` 对所有放行的委托/成交回报写入(含同标的的前端
+        手动单), 终态单也会进 ``_closed_broker_order_ids``, 外来单一旦回报过就
+        "已知", 不能用来判归属。
+
+        :param payload: 成交载荷。
+        :return: 属于本会话时 True; 判据缺失或访问器异常时 False(宁可少计)。
+        """
+        try:
+            verdict = self._session_layer_verdict("trade", payload)
+            if verdict is not None:
+                return verdict
+            if self._has_order_owner is None:
+                return False
+            broker_order_id = str(self._payload_field(payload, "broker_order_id") or "")
+            client_order_id = str(self._payload_field(payload, "client_order_id") or "")
+            if not broker_order_id and not client_order_id:
+                return False
+            return bool(self._has_order_owner(broker_order_id, client_order_id))
+        except Exception as exc:
+            self._log_accessor_error(exc)
+            return False
 
     def _foreign_task_dedupe_key(self, client_order_id: str) -> str:
         """把外来 ``client_order_id`` 归到告警去重用的桶.

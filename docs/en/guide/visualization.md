@@ -190,8 +190,14 @@ Sharpe, Sortino, Calmar and annualized return are not provided: they need the fu
 
 `self.stats.as_rows(fields=None, labels=None)` returns a 2-D list that can go straight into `draw.table(rows=...)` (name and value columns). The default fields are `total_return_pct` / `max_drawdown_pct` / `win_rate` / `profit_factor` / `trade_count` / `total_pnl`, with Chinese labels by default (pass `labels=` to change them). `*_pct` and `win_rate` display with `%`, and an infinite `profit_factor` shows `∞`.
 
-!!! warning "Limitation with a real broker in live trading"
-    When `run_live` has no trading broker (for example paper matching with only klinedata market data), every `self.stats` field is available and follows the backtest definitions. With a real broker (`broker_live`, e.g. `trader_broker="middleware"`) the engine does not receive the broker's fills, so for now **every field except `equity` (the broker's equity) is `None`**.
+!!! warning "Definitions and limitations with a real broker in live trading"
+    When `run_live` has no trading broker (for example paper matching with only klinedata market data), every `self.stats` field is available and follows the backtest definitions.
+
+    With a real broker (`broker_live`, e.g. `trader_broker="middleware"`) the engine does not receive the broker's fills, so `self.stats` comes from a per-session statistics tracker instead: broker fills are deduplicated by `trade_id` and fed one by one into the same statistics algorithm the backtest uses; on every bar, before `on_bar`, the broker's account equity is recorded as one equity point (used for drawdown), and `total_return_pct` is the return of this session; unrealized PnL uses the latest close the strategy has received; contract multipliers come from `run_live(instruments=...)`, and a symbol without one is computed with 1 and warned about once. With several slots every slot reads the same account-level statistics. The broker equity is only re-queried after a fill or order update, so price moves in between are not reflected in the drawdown. If querying the broker's equity or positions fails at session start, the tracker is unavailable and every field except `equity` is `None`. Three further limitations:
+
+    - **Commission is 0**: broker fills carry no commission, so `total_commission` is always 0. Win rate and profit factor use gross PnL and are not affected.
+    - **Only this session is counted**: only orders placed by this session's strategies count; orders entered by hand in the front end or by other sessions do not. After a restart the tracker is re-initialized from the broker's positions, and trades closed before the restart are lost.
+    - **Positions held before the session starts are included**: at start-up the tracker is seeded from the broker's positions (quantity, direction, average price), even if a position was originally opened by hand; closing that position later counts toward this session's statistics. A position without an average price cannot be seeded, and fills that close it are not counted (a warning is logged). The part of a close that exceeds the tracker's position is dropped rather than treated as opening the opposite side: for stocks and funds every sell is a close, for futures and options `position_effect` decides.
 
 ### Viewing in backtests
 

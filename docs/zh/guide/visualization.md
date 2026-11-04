@@ -189,8 +189,14 @@ class MyStrategy(aq.Strategy):
 
 `self.stats.as_rows(fields=None, labels=None)` 返回可直接传给 `draw.table(rows=...)` 的二维列表（名称、数值两列），默认字段是 `total_return_pct` / `max_drawdown_pct` / `win_rate` / `profit_factor` / `trade_count` / `total_pnl`，默认中文标签；`*_pct` 和 `win_rate` 的显示文本带 `%`，`profit_factor` 为无穷大时显示 `∞`。
 
-!!! warning "实盘接真实柜台时的限制"
-    `run_live` 不接交易柜台（如只接 klinedata 行情的纸面撮合）时，`self.stats` 全部字段可用，与回测同口径。接真实柜台（`broker_live`，如 `trader_broker="middleware"`）时，引擎本地收不到柜台成交，现阶段**除 `equity`（取柜台权益）外，其余字段全部为 `None`**。
+!!! warning "实盘接真实柜台时的口径与限制"
+    `run_live` 不接交易柜台（如只接 klinedata 行情的纸面撮合）时，`self.stats` 全部字段可用，与回测同口径。
+
+    接真实柜台（`broker_live`，如 `trader_broker="middleware"`）时，引擎本地收不到柜台成交，`self.stats` 改由会话级统计器提供：柜台成交按 `trade_id` 去重后逐笔计入，统计算法与回测相同；每根 bar 在 `on_bar` 之前用柜台账户权益记一个权益点（用于回撤），`total_return_pct` 是本次会话的收益；浮动盈亏按策略已收到的最新收盘价计算；合约乘数取 `run_live(instruments=...)` 的配置，未配置的标的按 1 计算并告警一次。多 slot 时各 slot 读到的是同一份账户级统计。柜台权益只在成交或委托回报之后重新查询，两次之间的价格波动不会反映到回撤里。会话启动时查询柜台权益或持仓失败，统计器不可用，除 `equity` 外的字段为 `None`。另有三条限制：
+
+    - **手续费为 0**：柜台成交不带手续费，`total_commission` 恒为 0。胜率和盈亏比按毛利判定，不受影响。
+    - **只统计本次会话**：只计入本会话策略下的单，前端手动单、其他会话的单不计入。会话重启后从柜台持仓重新初始化，之前已平仓的交易找不回来。
+    - **会话启动前已有的持仓也会计入**：启动时用柜台持仓的数量、方向和均价初始化，即使它最初是手动交易建的仓；之后平掉这部分仓位，会计入本会话的统计。柜台持仓没有均价时，这部分持仓无法初始化，平掉它的成交不计入（会告警）。平仓数量超过统计器持仓的部分直接截掉，不当成反向开仓：股票、基金的卖出一律视为平仓，期货、期权按 `position_effect` 判断。
 
 ### 回测中查看
 

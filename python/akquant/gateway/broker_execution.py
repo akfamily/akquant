@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from ..log import build_log_extra, get_logger
 from .broker_event_adapter import map_local_stop, map_order_snapshot
@@ -16,6 +16,9 @@ from .local_stop_book import (
 )
 from .order_audit import record_cancel, record_cancel_failed
 from .order_receipt import OrderReceipt
+
+if TYPE_CHECKING:
+    from .broker_stats import BrokerTradeStats
 
 logger = get_logger("gateway.live")
 
@@ -44,6 +47,9 @@ class BrokerExecution:
         self._stop_book = LocalStopBook()
         self._stop_seq = 0
         self._warned_hold_bar = False
+        # 会话级交易统计器(BrokerRuntime.install_submitter 挂上, 所有 slot 共用);
+        # self.stats 与每 bar 的权益采样经它取数, 见 strategy_stats/strategy_events。
+        self.trade_stats: Optional[BrokerTradeStats] = None
 
     def _owner_strategy_id(self) -> str | None:
         """本地止损/委托适配对象的归属策略 id(无则 None)."""

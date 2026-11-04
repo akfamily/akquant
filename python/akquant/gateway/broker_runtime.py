@@ -1,10 +1,15 @@
-from typing import Any, Callable
+import time
+from typing import Any, Callable, Optional
 
+from ..log import get_logger
 from .broker_event_bridge import BrokerEventBridge
 from .broker_models import BrokerCapability
 from .broker_recovery import BrokerRecovery
+from .broker_stats import BrokerTradeStats
 from .broker_strategy_api import wrap_state_invalidation
 from .order_submitter import BrokerOrderSubmitter
+
+logger = get_logger("gateway.stats")
 
 
 class BrokerRuntime:
@@ -45,11 +50,24 @@ class BrokerRuntime:
         is_known_order: Callable[[str, str], bool] | None = None,
         own_session_prefix: str = "",
         strict_task_isolation: bool = False,
+        has_order_owner: Callable[[str, str], bool] | None = None,
+        multiplier_of: Callable[[str], Optional[float]] | None = None,
+        asset_type_of: Callable[[str], str] | None = None,
     ) -> None:
         """Assemble broker submitter, event bridge and recovery coordinators."""
         self._broker_state_caches: list[Any] = []
+        # 会话级交易统计(spec 5.5): 每个会话一个, 所有 slot 的 BrokerExecution 共用。
+        # bridge 的构造要用已包装的 update_broker_state, 包装又要引用统计器, 故
+        # 归属判定用 lambda 延迟访问 bridge。
+        self._trade_stats = BrokerTradeStats(
+            is_own_trade=lambda p: self._event_bridge.is_own_trade(p),
+            multiplier_of=multiplier_of or (lambda _s: None),
+            asset_type_of=asset_type_of or (lambda _s: "stock"),
+        )
         update_broker_state = wrap_state_invalidation(
-            update_broker_state, lambda: self._broker_state_caches
+            update_broker_state,
+            lambda: self._broker_state_caches,
+            on_new_fill=lambda p: self._trade_stats.on_trade(p),
         )
         self._event_bridge = BrokerEventBridge(
             event_lock=event_lock,
@@ -68,6 +86,7 @@ class BrokerRuntime:
             is_known_order=is_known_order,
             own_session_prefix=own_session_prefix,
             strict_task_isolation=strict_task_isolation,
+            has_order_owner=has_order_owner,
         )
         self._recovery = BrokerRecovery(
             get_trader_gateway=get_trader_gateway,
@@ -113,6 +132,34 @@ class BrokerRuntime:
         """Expose per-slot BrokerStateCache list (启动激活 seed 用)."""
         return self._broker_state_caches
 
+    @property
+    def trade_stats(self) -> BrokerTradeStats:
+        """会话级交易统计器(所有 slot 共用)."""
+        return self._trade_stats
+
+    def initialize_trade_stats(self, trader_gateway: Any) -> None:
+        """用柜台权益与持仓快照初始化会话级统计器; 已初始化时不重复查询.
+
+        由启动激活(``LiveRunner._baseline_broker_state``)在持仓 seed 之后调用:
+        那时柜台已就绪, 且激活前排队的成交已被丢弃(已含在持仓快照里), 与持仓缓存
+        的 seed 是同一时刻的口径。查询失败只告警, 统计器保持未初始化,
+        ``self.stats`` 退回只给权益。
+        """
+        if self._trade_stats.initialized:
+            return
+        try:
+            account = trader_gateway.query_account()
+            positions = list(trader_gateway.query_positions() or [])
+        except Exception:  # noqa: BLE001 统计不可用不影响交易
+            logger.warning("统计: 查询柜台权益/持仓失败, 交易统计不可用", exc_info=True)
+            return
+        equity = getattr(account, "equity", None) if account is not None else None
+        self._trade_stats.initialize(
+            equity=float(equity or 0.0),
+            positions=positions,
+            timestamp_ns=time.time_ns(),
+        )
+
     def install_submitter(
         self,
         trader_gateway: Any,
@@ -156,6 +203,8 @@ class BrokerRuntime:
             record_stop_remap=self._record_stop_remap,
             group_broker_ids=self._group_broker_ids,
         )
+        # 多 slot 时本方法逐个 slot 调用: 挂同一个会话级统计器(账户级口径)。
+        strategy.execution.trade_stats = self._trade_stats
 
         return self._submitter
 
