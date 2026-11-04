@@ -48,23 +48,47 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   #bar{display:flex;align-items:center;gap:12px;padding:10px 16px;
     border-bottom:1px solid var(--grid);}
   #bar h1{font-size:15px;font-weight:600;margin:0;}
-  #sym,#theme-toggle,#price-toggle{padding:4px 8px;background:var(--bg);
-    color:var(--text);
+  #sym,#theme-toggle,#price-toggle,#drawings-toggle{padding:4px 8px;
+    background:var(--bg);color:var(--text);
     border:1px solid var(--grid);border-radius:4px;font-size:13px;cursor:pointer;}
   #sym{margin-left:auto;cursor:default;}
+  #chart-wrap{position:relative;}
   #chart{width:100%;height:calc(100vh - 52px);}
   #empty{padding:40px;text-align:center;color:var(--text);opacity:.6;}
+  /* 策略表格浮层: 9 宫格定位, 不拦截鼠标(图表照常拖动/缩放);
+     right 留 60px 避开右侧价格刻度, bottom 留 36px 避开时间轴。 */
+  #akq-tables{position:absolute;inset:0;pointer-events:none;z-index:5;}
+  .akq-pos{position:absolute;display:flex;flex-direction:column;gap:6px;
+    max-width:45%;}
+  .akq-pos.top_left{top:8px;left:8px}
+  .akq-pos.top_center{top:8px;left:50%;transform:translateX(-50%)}
+  .akq-pos.top_right{top:8px;right:60px}
+  .akq-pos.middle_left{top:50%;left:8px;transform:translateY(-50%)}
+  .akq-pos.middle_center{top:50%;left:50%;transform:translate(-50%,-50%)}
+  .akq-pos.middle_right{top:50%;right:60px;transform:translateY(-50%)}
+  /* left 留 56px: 左下角是 LWC 的 TradingView 署名 logo(许可要求), 不能盖住 */
+  .akq-pos.bottom_left{bottom:36px;left:56px}
+  .akq-pos.bottom_center{bottom:36px;left:50%;transform:translateX(-50%)}
+  .akq-pos.bottom_right{bottom:36px;right:60px}
+  .akq-table{--akq-border:var(--grid);border-collapse:collapse;font-size:12px;
+    background:var(--bg);opacity:.92;border:1px solid var(--akq-border);}
+  .akq-table td{padding:2px 8px;border:1px solid var(--akq-border);
+    white-space:nowrap;}
+  .akq-table td.n{text-align:right;font-variant-numeric:tabular-nums;}
+  .akq-table tr.h td{font-weight:600;}
 </style>
 </head>
 <body>
 <div id="bar">
   <h1>%%TITLE%%</h1>
   <select id="sym" aria-label="标的选择"></select>
+  <button id="drawings-toggle" type="button"
+    aria-label="隐藏或显示策略绘图">隐藏绘图</button>
   <button id="price-toggle" type="button" aria-label="隐藏或显示价格 K 线"
     style="display:none">隐藏 K 线</button>
   <button id="theme-toggle" type="button" aria-label="切换明暗主题">🌙 暗色</button>
 </div>
-<div id="chart"></div>
+<div id="chart-wrap"><div id="chart"></div><div id="akq-tables"></div></div>
 <script>%%LWC_JS%%</script>
 <script id="akq-data" type="application/json">%%DATA%%</script>
 <script>%%APP_JS%%</script>
@@ -108,6 +132,202 @@ _APP_JS = """
   if(chart.panes && chart.panes()[1]){chart.panes()[1].setHeight(120);}
   var markerPrim = LWC.createSeriesMarkers(candle, []);
   var curIdx = cfg.initial_symbol_index||0;
+
+  // ---- 策略绘图层(self.draw): line/box/label/polyline/fib 用挂在 K 线 series 上的
+  // primitive 在 canvas 上画, table 用 HTML 浮层。这也是给平台前端的参考实现。
+  // 点的 time 已在 Python 侧吸附到某根 bar, timeToCoordinate 才不会返回 null。
+  // 颜色在 Python 侧已校验为 #hex; 这里再校验一次(数据可能来自别处), 空串取主题色。
+  var drawingsHidden = false, curShapes = [];
+  var FIB = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+  var LABEL_SIZE = {small:11, normal:12, large:14};
+  var TABLE_POS = ['top_left','top_center','top_right','middle_left',
+    'middle_center','middle_right','bottom_left','bottom_center','bottom_right'];
+  function hex(c){
+    return /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(c||'') ? c : '';
+  }
+  function textLines(ctx, text){
+    var lines = String(text).split('\\n'), w = 0;
+    lines.forEach(function(l){ w = Math.max(w, ctx.measureText(l).width); });
+    return {lines:lines, width:w};
+  }
+  function fillLines(ctx, lines, x, y, lineH){
+    lines.forEach(function(l, k){ ctx.fillText(l, x, y + k*lineH); });
+  }
+  function drawShape(ctx, d, pts, r, W, H, Y){
+    var st = d.style||{}, col = hex(st.color) || hex(st.border_color) || T().text;
+    ctx.strokeStyle = col; ctx.fillStyle = col;
+    ctx.lineWidth = Math.max(1, (st.width||1)*r);
+    ctx.setLineDash(st.line_style==='dashed' ? [6*r,4*r]
+      : (st.line_style==='dotted' ? [2*r,3*r] : []));
+    if(d.kind==='line'){
+      var a = pts[0], b = pts[1], dx = b[0]-a[0], dy = b[1]-a[1];
+      var x0 = a[0], y0 = a[1], x1 = b[0], y1 = b[1];
+      var yAt = function(x){ return a[1] + dy*(x-a[0])/dx; };
+      if(st.extend==='right' || st.extend==='both'){
+        // 射线: 从 p1 经 p2 延伸到画布边缘(p2 在 p1 左侧时向左延伸)
+        if(dx!==0){ x1 = dx>0 ? W : 0; y1 = yAt(x1); }
+        else if(dy!==0){ y1 = dy>0 ? H : 0; }
+      }
+      if(st.extend==='both'){
+        if(dx!==0){ x0 = dx>0 ? 0 : W; y0 = yAt(x0); }
+        else if(dy!==0){ y0 = dy>0 ? 0 : H; }
+      }
+      ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
+    } else if(d.kind==='box'){
+      var bx = Math.min(pts[0][0],pts[1][0]), by = Math.min(pts[0][1],pts[1][1]);
+      var bw = Math.abs(pts[1][0]-pts[0][0]), bh = Math.abs(pts[1][1]-pts[0][1]);
+      if(hex(st.fill_color)){
+        ctx.fillStyle = st.fill_color; ctx.fillRect(bx,by,bw,bh);
+      }
+      ctx.strokeRect(bx,by,bw,bh);
+      if(d.text){
+        var fs = 12*r; ctx.font = fs+'px sans-serif';
+        var tb = textLines(ctx, d.text), lh = fs*1.25;
+        ctx.fillStyle = T().text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        fillLines(ctx, tb.lines, bx+bw/2, by+bh/2-(tb.lines.length-1)*lh/2, lh);
+      }
+    } else if(d.kind==='polyline'){
+      ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]);
+      for(var i=1;i<pts.length;i++) ctx.lineTo(pts[i][0],pts[i][1]);
+      if(st.closed){
+        ctx.closePath();
+        if(hex(st.fill_color)){ ctx.fillStyle = st.fill_color; ctx.fill(); }
+      }
+      ctx.stroke();
+    } else if(d.kind==='fib'){
+      // 档位 0 在 p2、1 在 p1(TradingView 回撤惯例); 档线半透明, 文字不透明
+      var p1 = d.points[0].price, p2 = d.points[1].price;
+      var fx0 = Math.min(pts[0][0],pts[1][0]), fx1 = Math.max(pts[0][0],pts[1][0]);
+      ctx.font = (11*r)+'px sans-serif'; ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      FIB.forEach(function(lv){
+        var price = p2 + (p1-p2)*lv, y = Y(price); if(y===null) return;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath(); ctx.moveTo(fx0,y); ctx.lineTo(fx1,y); ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillText(lv.toFixed(3)+' ('+price.toFixed(2)+')', fx0+2*r, y-1*r);
+      });
+    } else if(d.kind==='label'){
+      // label_style 是气泡指向: down=气泡在点上方指向下, up=在下方指向上,
+      // left=在右侧指向左, right=在左侧指向右, none=只有文字(以点为中心)
+      var ls = st.label_style || 'down', size = (LABEL_SIZE[st.size]||12)*r;
+      ctx.font = size+'px sans-serif';
+      var lb = textLines(ctx, d.text), lH = size*1.25;
+      var pad = 4*r, w2 = lb.width+pad*2, h2 = lb.lines.length*lH+pad*2;
+      var lx = pts[0][0], ly = pts[0][1], off = 6*r;
+      var rx = lx-w2/2, ry = ly-h2-off, tri = null;
+      if(ls==='up'){ ry = ly+off; tri = [[lx-off,ry],[lx+off,ry]]; }
+      else if(ls==='left'){ rx = lx+off; ry = ly-h2/2;
+        tri = [[rx,ly-off],[rx,ly+off]]; }
+      else if(ls==='right'){ rx = lx-w2-off; ry = ly-h2/2;
+        tri = [[rx+w2,ly-off],[rx+w2,ly+off]]; }
+      else if(ls==='none'){ rx = lx-w2/2; ry = ly-h2/2; }
+      else { tri = [[lx-off,ry+h2],[lx+off,ry+h2]]; }
+      var bubble = hex(st.color) || T().text;
+      if(ls!=='none'){
+        ctx.fillStyle = bubble; ctx.fillRect(rx,ry,w2,h2);
+        ctx.beginPath(); ctx.moveTo(tri[0][0],tri[0][1]);
+        ctx.lineTo(tri[1][0],tri[1][1]);
+        ctx.lineTo(lx,ly); ctx.closePath(); ctx.fill();
+      }
+      // 缺省文字色: 无气泡时同气泡色; 用户给了气泡色时白字(与主题无关, 否则暗色
+      // 主题下深色字压在彩色气泡上看不清); 气泡也取主题色时用背景色反白。
+      ctx.fillStyle = hex(st.text_color) || (ls==='none' ? bubble
+        : (hex(st.color) ? '#ffffff' : T().bg));
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      fillLines(ctx, lb.lines, rx+pad, ry+pad, lH);
+    }
+  }
+  var drawRenderer = {
+    draw: function(target){
+      if(drawingsHidden || !curShapes.length) return;
+      target.useBitmapCoordinateSpace(function(scope){
+        var ctx = scope.context, r = scope.horizontalPixelRatio;
+        var vr = scope.verticalPixelRatio, ts = chart.timeScale();
+        var W = scope.bitmapSize.width, H = scope.bitmapSize.height;
+        function X(t){ var x = ts.timeToCoordinate(t); return x===null ? null : x*r; }
+        function Y(p){
+          var y = candle.priceToCoordinate(p); return y===null ? null : y*vr;
+        }
+        curShapes.forEach(function(d){
+          var pts = d.points.map(function(p){ return [X(p.time), Y(p.price)]; });
+          if(pts.some(function(p){ return p[0]===null || p[1]===null; })) return;
+          ctx.save();
+          try{ drawShape(ctx, d, pts, r, W, H, Y); }
+          finally{ ctx.restore(); }
+        });
+      });
+    }
+  };
+  var drawView = {renderer: function(){ return drawRenderer; }};
+  // LWC v5 series primitive: attachPrimitive 时回调 attached({chart, series,
+  // requestUpdate}), 每帧取 paneViews()[i].renderer().draw(target)。
+  var drawPrim = {
+    _req: null,
+    attached: function(p){ this._req = p.requestUpdate; },
+    detached: function(){ this._req = null; },
+    updateAllViews: function(){},
+    paneViews: function(){ return [drawView]; },
+    refresh: function(){ if(this._req) this._req(); }
+  };
+  candle.attachPrimitive(drawPrim);
+  var tablesHost = document.getElementById('akq-tables');
+  function esc(s){
+    return String(s==null ? '' : s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  // 显式背景色上的缺省文字色按亮度取深/浅, 不跟主题(否则暗色主题下浅色字压在
+  // 用户给的浅色底上看不清); 透明度过半的底色仍跟主题。
+  function ink(bg){
+    if(!hex(bg) || (bg.length===9 && parseInt(bg.slice(7,9),16) < 128)) return '';
+    var n = parseInt(bg.slice(1,7),16);
+    var lum = 0.299*(n>>16) + 0.587*((n>>8)&255) + 0.114*(n&255);
+    return lum > 150 ? '#212529' : '#f8f9fa';
+  }
+  // 同一位置的多张表纵向堆叠; Python 侧已按 (位置, 全局表在前, 创建顺序) 排好序。
+  function drawTables(s){
+    tablesHost.innerHTML = '';
+    if(drawingsHidden || !s) return;
+    var groups = {};
+    (s.tables||[]).forEach(function(t){
+      var tb = t.table || {}, pos = tb.position;
+      if(TABLE_POS.indexOf(pos) < 0) return;
+      if(!groups[pos]){
+        groups[pos] = document.createElement('div');
+        groups[pos].className = 'akq-pos '+pos;
+        tablesHost.appendChild(groups[pos]);
+      }
+      var st = t.style||{}, css = '';
+      if(hex(st.bg_color)) css += 'background:'+st.bg_color+';';
+      if(ink(st.bg_color)) css += 'color:'+ink(st.bg_color)+';';
+      if(hex(st.border_color)) css += '--akq-border:'+st.border_color+';';
+      var html = '<table class="akq-table"'+(css ? ' style="'+css+'"' : '')+'>';
+      (tb.rows||[]).forEach(function(row, ri){
+        html += '<tr'+(ri < (tb.header_rows||0) ? ' class="h"' : '')+'>';
+        row.forEach(function(c){
+          c = c || {};
+          var cs = (hex(c.bg_color) ? 'background:'+c.bg_color+';' : '')
+            + (hex(c.text_color) ? 'color:'+c.text_color+';'
+              : (ink(c.bg_color) ? 'color:'+ink(c.bg_color)+';' : ''));
+          var num = typeof c.value==='number';
+          html += '<td'+(num ? ' class="n"' : '')+(cs ? ' style="'+cs+'"' : '')+'>'
+            + esc(c.text) + '</td>';
+        });
+        html += '</tr>';
+      });
+      groups[pos].insertAdjacentHTML('beforeend', html+'</table>');
+    });
+  }
+  var drawBtn = document.getElementById('drawings-toggle');
+  if(!all.some(function(s){
+    return (s.drawings||[]).length || (s.tables||[]).length;
+  })) drawBtn.style.display = 'none';
+  drawBtn.addEventListener('click', function(){
+    drawingsHidden = !drawingsHidden;
+    drawBtn.textContent = drawingsHidden ? '显示绘图' : '隐藏绘图';
+    drawTables(all[curIdx]); drawPrim.refresh();
+  });
   // 指标 series 随标的切换重建; 元素 {series, ind, idx}。signal 类不建 series,
   // 作为 marker 与买卖点一起交给 markerPrim。
   var indSeries = [];
@@ -244,6 +464,7 @@ _APP_JS = """
     });
     applyPriceVisibility();
     markerPrim.setMarkers(allMarkers(s, curSignals));
+    curShapes = s.drawings||[]; drawTables(s); drawPrim.refresh();
     chart.timeScale().fitContent();
   }
   function recolorCurrent(){
@@ -251,6 +472,7 @@ _APP_JS = """
     vol.setData(colorVol(s));
     recolorIndicators();
     markerPrim.setMarkers(allMarkers(s, curSignals));
+    drawPrim.refresh();  // 缺省色取自主题
   }
   sel.addEventListener('change',function(){draw(parseInt(sel.value,10)||0);});
   priceBtn.addEventListener('click',function(){

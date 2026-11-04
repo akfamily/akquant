@@ -202,6 +202,7 @@ class VizNamespace:
         show: bool = False,
         include_indicators: bool = True,
         hide_price: bool = False,
+        include_drawings: bool = True,
     ) -> str:
         """LWC 交互式 K 线交易复盘(离线自包含 HTML).
 
@@ -220,6 +221,7 @@ class VizNamespace:
             指标按 pane 画到图上(主图叠加 / 成交量之下的副图);默认开。
         :param hide_price: 初始是否隐藏价格 K 线(买卖点照常显示);只对带 candle
             指标(如平均 K 线)的标的生效,页面上的「隐藏 K 线」按钮可随时切换。
+        :param include_drawings: 是否画出策略 self.draw 的绘图对象与表格;默认开。
         :return: 写出的 HTML 文件绝对路径.
         :raises ValueError: ``market_data`` 为空或无有效行情可复盘.
         """
@@ -236,4 +238,5 @@ class VizNamespace:
             show=show,
             include_indicators=include_indicators,
             hide_price=hide_price,
+            include_drawings=include_drawings,
         )
