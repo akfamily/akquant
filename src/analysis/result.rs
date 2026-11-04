@@ -184,30 +184,27 @@ impl BacktestResult {
             Decimal::ZERO
         };
 
-        // 2. Max Drawdown & Ulcer Index
-        let mut max_drawdown_dec = Decimal::ZERO;
-        let mut max_drawdown_val = Decimal::ZERO;
+        // 2. Max Drawdown（与 strategy_stats::DrawdownState 共用折叠逻辑，运行时 stats 才能逐位一致）
+        let mut dd_state = crate::analysis::DrawdownState::new(initial_equity);
+        for (ts, equity) in &input.equity_curve_decimal {
+            dd_state.push(*ts, *equity);
+        }
+        let dd_summary = dd_state.summary();
+        let max_drawdown_dec = dd_summary.max_drawdown;
+        let max_drawdown_val = dd_summary.max_drawdown_value;
+
+        // Ulcer Index（仍逐点计算，口径不变）
         let mut peak = initial_equity;
         let mut sum_sq_drawdown = 0.0;
-
         for (_, equity) in &input.equity_curve_decimal {
             if *equity > peak {
                 peak = *equity;
             }
-            let drawdown_val = peak - *equity;
-            if drawdown_val > max_drawdown_val {
-                max_drawdown_val = drawdown_val;
-            }
-
             let drawdown_dec = if !peak.is_zero() {
-                drawdown_val / peak
+                (peak - *equity) / peak
             } else {
                 Decimal::ZERO
             };
-            if drawdown_dec > max_drawdown_dec {
-                max_drawdown_dec = drawdown_dec;
-            }
-
             let dd_f64 = drawdown_dec.to_f64().unwrap_or_default();
             sum_sq_drawdown += dd_f64 * dd_f64;
         }
