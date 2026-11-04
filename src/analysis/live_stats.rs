@@ -28,6 +28,16 @@ fn dec(v: f64, name: &str) -> PyResult<Decimal> {
     Decimal::from_f64(v).ok_or_else(|| PyValueError::new_err(format!("{name} 不是有限数: {v}")))
 }
 
+fn positive(v: f64, name: &str) -> PyResult<Decimal> {
+    let d = dec(v, name)?;
+    if d <= Decimal::ZERO {
+        return Err(PyValueError::new_err(format!("{name} 必须大于 0: {v}")));
+    }
+    Ok(d)
+}
+
+/// `bar_index` 是逐笔成交计数器，所以 `ClosedTrade.duration_bars` 在这里数的是成交笔数而非 K 线数
+/// （快照字段不使用该值）。
 fn build_trade(
     symbol: &str,
     side: OrderSide,
@@ -73,16 +83,25 @@ impl LiveTradeStats {
                 )));
             }
         };
+        // 先校验再改状态：负数量会跳过 process_trade 的平仓循环并被当成负库存，污染统计
+        let quantity = positive(quantity, "quantity")?;
+        let price = positive(price, "price")?;
+        let multiplier = positive(multiplier, "multiplier")?;
+        let commission = dec(commission, "commission")?;
+        if commission.is_sign_negative() {
+            return Err(PyValueError::new_err(format!(
+                "commission 不能为负: {commission}"
+            )));
+        }
         let trade = build_trade(
             symbol,
             side,
-            dec(quantity, "quantity")?,
-            dec(price, "price")?,
-            dec(commission, "commission")?,
+            quantity,
+            price,
+            commission,
             timestamp_ns,
             self.seq + 1,
         );
-        let multiplier = dec(multiplier, "multiplier")?;
         self.seq += 1;
         let equity = self.drawdown.summary().last_equity.unwrap_or(self.initial);
         self.tracker
@@ -130,14 +149,14 @@ impl LiveTradeStats {
 #[pymethods]
 impl LiveTradeStats {
     #[new]
-    pub fn new(initial_equity: f64) -> Self {
-        let initial = Decimal::from_f64(initial_equity).unwrap_or_default();
-        Self {
+    pub fn new(initial_equity: f64) -> PyResult<Self> {
+        let initial = dec(initial_equity, "initial_equity")?;
+        Ok(Self {
             tracker: TradeTracker::new(),
             drawdown: DrawdownState::new(initial),
             initial,
             seq: 0,
-        }
+        })
     }
 
     /// 记录一笔成交（side 取 "buy" 或 "sell"）.
@@ -176,6 +195,8 @@ impl LiveTradeStats {
     }
 
     /// 当前统计快照，键与 `ctx.strategy_stats()` 相同.
+    ///
+    /// equity 非有限数会抛 ValueError；last_prices 中的非有限价格会被静默忽略.
     fn snapshot<'py>(
         &self,
         py: Python<'py>,
@@ -183,6 +204,7 @@ impl LiveTradeStats {
         equity: f64,
         last_prices: HashMap<String, f64>,
     ) -> PyResult<Bound<'py, PyDict>> {
+        dec(equity, "equity")?;
         self.snapshot_inner(timestamp_ns, equity, &last_prices)
             .to_pydict(py)
     }
@@ -194,7 +216,7 @@ mod tests {
 
     #[test]
     fn round_trip_counts_one_win() {
-        let mut s = LiveTradeStats::new(100_000.0);
+        let mut s = LiveTradeStats::new(100_000.0).unwrap();
         s.on_fill_inner("AAA", "buy", 100.0, 10.0, 1, 1.0, 0.0)
             .unwrap();
         s.on_fill_inner("AAA", "sell", 100.0, 11.0, 2, 1.0, 0.0)
@@ -207,7 +229,7 @@ mod tests {
 
     #[test]
     fn multiplier_scales_pnl() {
-        let mut s = LiveTradeStats::new(1_000_000.0);
+        let mut s = LiveTradeStats::new(1_000_000.0).unwrap();
         s.on_fill_inner("IF", "buy", 1.0, 3800.0, 1, 300.0, 0.0)
             .unwrap();
         s.on_fill_inner("IF", "sell", 1.0, 3810.0, 2, 300.0, 0.0)
@@ -218,7 +240,7 @@ mod tests {
 
     #[test]
     fn bad_side_rejected() {
-        let mut s = LiveTradeStats::new(1.0);
+        let mut s = LiveTradeStats::new(1.0).unwrap();
         assert!(
             s.on_fill_inner("AAA", "hold", 1.0, 1.0, 1, 1.0, 0.0)
                 .is_err()
@@ -226,8 +248,88 @@ mod tests {
     }
 
     #[test]
+    fn non_positive_or_non_finite_inputs_rejected_without_state_change() {
+        let cases: [(f64, f64, f64, f64); 8] = [
+            (-1.0, 10.0, 1.0, 0.0),
+            (0.0, 10.0, 1.0, 0.0),
+            (f64::NAN, 10.0, 1.0, 0.0),
+            (1.0, 0.0, 1.0, 0.0),
+            (1.0, -3.0, 1.0, 0.0),
+            (1.0, 10.0, 0.0, 0.0),
+            (1.0, 10.0, f64::INFINITY, 0.0),
+            (1.0, 10.0, 1.0, -0.1),
+        ];
+        for (q, p, m, c) in cases {
+            let mut s = LiveTradeStats::new(1.0).unwrap();
+            assert!(s.on_fill_inner("AAA", "buy", q, p, 1, m, c).is_err());
+            assert_eq!(s.seq, 0);
+            assert_eq!(s.position_inner("AAA"), 0.0);
+        }
+    }
+
+    #[test]
+    fn non_finite_initial_equity_rejected() {
+        assert!(LiveTradeStats::new(f64::NAN).is_err());
+        assert!(LiveTradeStats::new(f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn unrealized_pnl_uses_multiplier() {
+        let mut s = LiveTradeStats::new(1_000_000.0).unwrap();
+        s.on_fill_inner("IF", "buy", 2.0, 3800.0, 1, 300.0, 0.0)
+            .unwrap();
+        let mut prices = HashMap::new();
+        prices.insert("IF".to_string(), 3810.0);
+        let v = s.snapshot_inner(2, 1_006_000.0, &prices);
+        assert_eq!(v.unrealized_pnl, 6000.0);
+        assert_eq!(s.position_inner("IF"), 2.0);
+    }
+
+    #[test]
+    fn on_equity_feeds_portfolio_value_like_plain_tracker() {
+        let mut live = LiveTradeStats::new(100_000.0).unwrap();
+        let mut plain = TradeTracker::new();
+        let mk = |side, q: i64, p: i64, i: usize| {
+            build_trade(
+                "AAA",
+                side,
+                Decimal::from(q),
+                Decimal::from(p),
+                Decimal::ZERO,
+                i as i64,
+                i,
+            )
+        };
+        live.on_equity(1, 120_000.0).unwrap();
+        live.on_fill_inner("AAA", "buy", 10.0, 10.0, 1, 1.0, 0.0)
+            .unwrap();
+        plain.process_trade(
+            &mk(OrderSide::Buy, 10, 10, 1),
+            Decimal::ONE,
+            None,
+            None,
+            Decimal::from(120_000),
+        );
+        live.on_equity(2, 90_000.0).unwrap();
+        live.on_fill_inner("AAA", "sell", 10.0, 12.0, 2, 1.0, 0.0)
+            .unwrap();
+        plain.process_trade(
+            &mk(OrderSide::Sell, 10, 12, 2),
+            Decimal::ONE,
+            None,
+            None,
+            Decimal::from(90_000),
+        );
+        assert_eq!(live.tracker.summary(), plain.summary());
+        let a = &live.tracker.closed_trades[0];
+        let b = &plain.closed_trades[0];
+        assert_eq!(a.entry_portfolio_value, b.entry_portfolio_value);
+        assert_eq!(a.entry_portfolio_value, 120_000.0);
+    }
+
+    #[test]
     fn short_position_is_negative() {
-        let mut s = LiveTradeStats::new(1.0);
+        let mut s = LiveTradeStats::new(1.0).unwrap();
         s.on_fill_inner("AAA", "sell", 5.0, 10.0, 1, 1.0, 0.0)
             .unwrap();
         assert_eq!(s.position_inner("AAA"), -5.0);
@@ -243,7 +345,7 @@ mod tests {
             ("BBB", "sell", 10.0, 50.0, 5, 0.2),
             ("BBB", "buy", 10.0, 55.0, 6, 0.2),
         ];
-        let mut live = LiveTradeStats::new(100_000.0);
+        let mut live = LiveTradeStats::new(100_000.0).unwrap();
         let mut plain = TradeTracker::new();
         for (i, (sym, side, q, p, ts, c)) in fills.iter().enumerate() {
             live.on_fill_inner(sym, side, *q, *p, *ts, 1.0, *c).unwrap();
