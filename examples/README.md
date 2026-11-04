@@ -71,6 +71,7 @@
 - [75_intrabar_indicators.py](./75_intrabar_indicators.py): 窗口周期指标的实时值（对标 Pine 的 realtime bar）：`self.I(..., freq="5min", intrabar=True)` 后每根 1min bar 上 `[0]` 是未闭合 5min 窗口的试算值、`[1]` 是上一根已确认、`binding.confirmed` 标明状态；流事件临时点 `confirmed=false` 与确认点同 time。`run_live(broker="replay")` + 网关声明 `freq`。
 - [76_tick_intrabar_indicators.py](./76_tick_intrabar_indicators.py): 基础周期指标在 **tick** 上的实时值：`self.I(aq.SMA(3), intrabar=True)` 后 tick 只试算不提交、bar 闭合才推进状态，框架从 tick 累出形成中 bar（含真实 H/L，ATR 可用）；临时点时间戳按区间末打戳公式预测并与闭合 bar 自校验。`run_backtest(data=[Tick,...], freq="1min")`。
 - [77_heikin_ashi_indicator.py](./77_heikin_ashi_indicator.py): K 线形态指标（对标 Pine `plotcandle`）：内置 `aq.HeikinAshi()` 经 `self.I(..., input_mode="ohlc", outputs=("open","high","low","close"), render_type="candle")` 声明成一组，定义带 `group`/`role`；`viz.review` 画成一条空心/实心单色 Candlestick，d3kline 降级为 close 一条线；类定义行 `replaces_price=True` 给前端提示，`aq.inspect_strategy` 静态读出。
+- [78_chart_drawings.py](./78_chart_drawings.py): 策略绘图与统计表：双均线策略用 `self.draw` 画金叉/死叉标注（`label`）、近 20 根区间（`box`）、趋势线（`line(extend="right")`）、斐波那契回撤（`fib`）、最近 5 根收盘连线（`polyline`），并用 `self.stats.as_rows()` 做全局统计表（`table(symbol="*")`）和带单元格底色的标的表；回测结束读 `result.drawings`，`viz.review` 复盘页渲染（HTML 写到临时目录，路径会打印）。
 - [71_native_multi_timeframe_live.py](./71_native_multi_timeframe_live.py): 实盘（`broker="replay"`）多周期示例，行情网关声明 `metadata["freq"]` 后 `subscribe_bars("5min")` 零延迟闭合，`on_window_bar` 与 `run_backtest` 同一份策略代码不改一行。
 
 ## 流式回测与实时报告

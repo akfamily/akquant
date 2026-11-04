@@ -1090,6 +1090,12 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   这些接口在 `on_start` 即可使用（启动阶段已注入快照）。
 *   推荐优先使用这些接口读取静态属性，而不是依赖 `bar.extra`。
 
+**策略绘图与运行时统计:**
+
+*   `draw`: 绑定到当前策略的绘图入口（`DrawingApi`），提供 `line` / `box` / `label` / `polyline` / `fib` / `table` / `delete` / `clear`。第一个参数是非空 `id`，同一 `(owner, symbol, id)` 再次调用整体覆盖，内容不变不发事件；不同 kind 不能共用 id（`ValueError`）；颜色只接受 `#RRGGBB` / `#RRGGBBAA`。`aq.Indicator` 继承同一入口。参数与上限见[可视化指南](../guide/visualization.md#策略绘图与统计表)。
+*   `max_drawings_per_kind`: 类属性，默认 `500`；每个 `(owner, symbol, kind)` 的存活对象数上限，超出时淘汰最早创建的对象并记一条 `warning`。
+*   `stats -> StrategyStats`: 运行时绩效统计快照，每次访问重新计算；口径与 `result.metrics` 一致（`on_stop` 中同名字段完全相等），账户级。不在回调或 `on_stop` 中访问抛 `RuntimeError`；接真实柜台的实盘（`broker_live`）下现阶段除 `equity` 外全部为 `None`。
+
 **机器学习支持:**
 
 *   `set_rolling_window(train_window, step)`: 设置滚动训练窗口。
@@ -1134,6 +1140,21 @@ ha.update(open, high, low, close)  # -> (ha_open, ha_high, ha_low, ha_close)，�
 *   公式：`ha_close = (O+H+L+C)/4`；`ha_open` 第一根取 `(O+C)/2`，之后取前一根 `(ha_open+ha_close)/2`；`ha_high = max(H, ha_open, ha_close)`；`ha_low = min(L, ha_open, ha_close)`。
 *   另有 `value` 属性与批量方法 `update_many_ohlc`；支持 `clone_indicator` 与 `intrabar=True`。没有 `akquant.talib` 批量函数。
 *   画成 K 线：`self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc", outputs=("open", "high", "low", "close"), render_type="candle")`。四个分量（`ha.open` 等）的定义带 `group="ha"` 与 `role`；LWC 与 plotly 画成一条 K 线，d3Kline 降级为 close 一条线。见[自定义指标指南](../guide/custom_indicator.md)。
+
+### `akquant.StrategyStats`
+
+`Strategy.stats` 返回的冻结 dataclass 快照。字段（均为 `Optional`）：`total_return_pct`、`total_pnl`、`unrealized_pnl`、`total_commission`、`max_drawdown`、`max_drawdown_pct`、`max_drawdown_value`、`win_rate`、`loss_rate`、`winning_trades`、`losing_trades`、`profit_factor`、`avg_pnl`、`avg_profit`、`avg_loss`、`largest_win`、`largest_loss`、`max_wins`、`max_losses`，以及额外的 `trade_count`、`current_drawdown_pct`、`equity`。
+
+*   `as_rows(fields=None, labels=None) -> list[list[dict]]`: 转成可直接传给 `self.draw.table(rows=...)` 的二维单元格列表（名称、数值两列）。默认字段 `total_return_pct` / `max_drawdown_pct` / `win_rate` / `profit_factor` / `trade_count` / `total_pnl`，默认中文标签；`labels` 可覆盖标签，未知字段名抛 `ValueError`。
+
+### `akquant.is_drawing_stream_event` / `akquant.to_drawing_message`
+
+```python
+def is_drawing_stream_event(event) -> bool
+def to_drawing_message(event) -> Optional[dict]
+```
+
+流协议 1.7 新增的绘图消息入口。`is_drawing_stream_event` 判断事件是否为 `indicator_drawing`；`to_drawing_message` 转成前端消息 `{"channel": "indicator", "type": "drawing", "schema_version": "1.7", "op": "upsert" | "delete", "drawing": {...}, "run_id", "seq", "ts", "symbol", "level"}`，`op="delete"` 时 `drawing` 只含身份字段；不是绘图事件或 `op` 非法时返回 `None`。`is_indicator_stream_event` / `to_indicator_message` 不变，不会收到 drawing 消息。
 
 ### `akquant.inspect_strategy`
 
@@ -1555,6 +1576,9 @@ class RiskConfig:
 *   `trades`: `ClosedTrade` 对象列表。
 *   `executions`: `Trade` 对象列表 (所有成交流水)。
 *   `snapshots`: 每日 `PositionSnapshot` 列表。
+
+*   `drawings`: 回测结束时仍存活的策略绘图对象列表（`list[dict]`，结构见[可视化指南](../guide/visualization.md#策略绘图与统计表)）。
+*   `drawings_df()`: 绘图对象表格；`points` / `style` / `table` 保留为嵌套结构，不展开。`export_indicators()` 的导出带 `drawings`，`viz.review(include_drawings=True)`（默认开）在复盘页渲染。
 
 **分析方法:**
 
