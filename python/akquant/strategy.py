@@ -211,6 +211,7 @@ if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
     from .ml.model import QuantModel
     from .precomputed import PrecomputedIndicator
+    from .strategy_stats import StrategyStats
 
 # 实盘 subscribe() 告警用: 与 strategy_logging 的 "strategy" 通道同源。
 _live_subscribe_logger = _get_logger("strategy")
@@ -412,6 +413,7 @@ class Strategy:
     _defer_preload_replay: bool
     _preload_followers: List["Strategy"]
     _indicator_phase: str
+    _stats_final: bool = False
     _framework_before_trading_done_date: Optional[dt.date]
     _framework_after_trading_done_date: Optional[dt.date]
     _framework_pre_open_done_date: Optional[dt.date]
@@ -1134,6 +1136,7 @@ class Strategy:
         self._check_symbol_data_coverage()
         self._check_warmup_symbol_coverage()
         self._check_incremental_hl_bar_coverage()
+        self._stats_final = True
         _call_user_callback_impl(self, "on_stop")
 
     def _on_stop_live_internal(self) -> None:
@@ -1153,6 +1156,7 @@ class Strategy:
         if getattr(self, "_framework_live_stop_dispatched", False):
             return
         self._framework_live_stop_dispatched = True
+        self._stats_final = True
         _call_user_callback_impl(self, "on_stop")
 
     def log(self, msg: str, level: int = logging.INFO) -> None:
@@ -3710,6 +3714,13 @@ class Strategy:
     def equity(self) -> float:
         """当前账户总权益（现金 + 持仓市值，权威只读；等同旧 get_portfolio_value()）."""
         return _get_portfolio_value_impl(self)
+
+    @property
+    def stats(self) -> "StrategyStats":
+        """运行时绩效统计快照（口径同 ``result.metrics``）."""
+        from .strategy_stats import build_strategy_stats
+
+        return build_strategy_stats(self)
 
     def _inject_cost_config(
         self,
