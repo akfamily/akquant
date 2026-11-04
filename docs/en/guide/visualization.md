@@ -142,7 +142,7 @@ A point is `(time, price)`. `time` may be an `int` (UTC nanoseconds, i.e. `bar.t
 - Nine `position` values: `top_left` / `top_center` / `top_right` / `middle_left` / `middle_center` / `middle_right` / `bottom_left` / `bottom_center` / `bottom_right`.
 - `rows` is a 2-D sequence. A cell is a `str` / `int` / `float` / `bool` / `None`, or `{"value": ..., "text": ..., "bg_color": ..., "text_color": ...}`.
 - After normalization every cell is `{value, text, bg_color, text_color}`: `value` keeps the original value, `text` is the display text (numbers are formatted with `precision`, `None` and `NaN` show as "—", an explicit `text` wins).
-- Short rows are padded with empty cells on the right; `header` is treated as row 0 and flagged `is_header`.
+- Short rows are padded with empty cells on the right; `header` is treated as row 0, recorded in `table.header_rows` (the number of leading header rows: 1 with a `header`, otherwise 0).
 - `symbol="*"` makes a global table that appears on every symbol's chart; only `table` accepts it.
 
 ### Overwrite, delete and limits
@@ -211,7 +211,7 @@ result.viz.review(df, include_drawings=True)   # on by default
 ```
 
 - `viz.review` draws lines, boxes, polylines, Fibonacci levels and labels on the main candlestick pane. Tables are HTML overlays on the main pane only, placed at the nine positions; switching symbol shows that symbol's tables plus the global ones. The top bar has a "hide drawings" button.
-- Parts whose time falls outside the data range are clipped by the renderer.
+- Points whose time falls outside the data range are handled by the renderer as follows: a point later than the last bar snaps to the last bar (so the slope of a trend line projected into the future changes); a point earlier than the first bar is dropped, and an object left with fewer points than its kind needs is dropped entirely.
 - `merge_results` concatenates the `drawings` of each segment without de-duplication: the same strategy across walk-forward segments may repeat an id.
 
 ### Live stream messages (schema 1.7)

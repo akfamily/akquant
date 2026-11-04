@@ -141,7 +141,7 @@ class MyStrategy(aq.Strategy):
 - `position` 共 9 个：`top_left` / `top_center` / `top_right` / `middle_left` / `middle_center` / `middle_right` / `bottom_left` / `bottom_center` / `bottom_right`。
 - `rows` 是二维序列，单元格可以是 `str` / `int` / `float` / `bool` / `None`，也可以是 `{"value": ..., "text": ..., "bg_color": ..., "text_color": ...}`。
 - 归一后每个单元格是 `{value, text, bg_color, text_color}`：`value` 保留原值，`text` 是显示文本（数值按 `precision` 格式化，`None` 和 `NaN` 显示为“—”，自己给了 `text` 则以自己的为准）。
-- 各行列数不齐时右侧补空单元格；`header` 视为第 0 行，并带 `is_header` 标记。
+- 各行列数不齐时右侧补空单元格；`header` 视为第 0 行，归一结果里用 `table.header_rows`（开头的表头行数，有 `header` 时为 1，否则为 0）标记。
 - `symbol="*"` 是全局表，在每个标的的图上都显示，只有 `table` 允许。
 
 ### 覆盖、删除与上限
@@ -210,7 +210,7 @@ result.viz.review(df, include_drawings=True)   # 默认开启
 ```
 
 - `viz.review` 把线、框、折线、斐波那契、标注画在主图 K 线上；表格是 HTML 浮层，只叠在主图 pane 上，按 9 个位置摆放，切换标的时显示该标的的表加全局表。顶部工具栏有“隐藏绘图”按钮。
-- 时间不在数据范围内的部分由渲染端裁剪。
+- 点的时间超出数据范围时，渲染端按下面的规则处理：时间晚于最后一根 bar 的点吸附到最后一根 bar（向未来延伸的趋势线斜率会因此改变）；时间早于第一根 bar 的点被丢弃，剩余点数不够该类对象最少点数的对象整个丢弃。
 - `merge_results` 会把各段结果的 `drawings` 直接拼接，不去重：同一个策略跨多个滚动窗口时，同一个 id 可能重复出现。
 
 ### 实盘流消息（schema 1.7）

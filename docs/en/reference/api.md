@@ -1027,7 +1027,7 @@ Notes:
 
 *   `draw`: The drawing entry bound to the strategy (`DrawingApi`), with `line` / `box` / `label` / `polyline` / `fib` / `table` / `delete` / `clear`. The first argument is a non-empty `id`; calling again with the same `(owner, symbol, id)` overwrites the whole object and emits nothing if the content is unchanged; a kind cannot reuse another kind's id (`ValueError`); colors accept only `#RRGGBB` / `#RRGGBBAA`. `aq.Indicator` inherits the same entry. See the [visualization guide](../guide/visualization.md#strategy-drawings-and-stats-tables) for parameters and limits.
 *   `max_drawings_per_kind`: Class attribute, default `500`; maximum alive objects per `(owner, symbol, kind)`. When exceeded, the earliest created object is evicted and one `warning` is logged.
-*   `stats -> StrategyStats`: Runtime performance snapshot, recomputed on each access; same definitions as `result.metrics` (fields in `on_stop` are exactly equal), account level. Reading it outside callbacks and `on_stop` raises `RuntimeError`; with a real broker in live trading (`broker_live`) every field except `equity` is `None` for now.
+*   `stats -> StrategyStats`: Runtime performance snapshot, recomputed on each access; same definitions as `result.metrics` (fields in `on_stop` are exactly equal), account level. Reading it outside callbacks and `on_stop` raises `RuntimeError`; with a real broker in live trading (`broker_live`) it is driven by the broker's fills; see the [visualization guide](../guide/visualization.md#runtime-stats-selfstats) for definitions and limitations.
 
 **Machine Learning Support:**
 

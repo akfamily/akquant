@@ -854,7 +854,10 @@ impl Engine {
         self.state.portfolio = snapshot.portfolio;
         self.state.order_manager = snapshot.order_manager;
         // 旧快照缺 TradeTracker 的汇总字段，按平仓明细重建
-        self.state.order_manager.trade_tracker.rebuild_summary_fields();
+        self.state
+            .order_manager
+            .trade_tracker
+            .rebuild_summary_fields();
         *self.last_prices.write().expect("last_prices 写锁被污染") = snapshot.last_prices;
         self.instruments = snapshot.instruments;
         self.invalidate_session_resolver();

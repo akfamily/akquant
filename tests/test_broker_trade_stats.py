@@ -635,3 +635,21 @@ def test_per_bar_equity_never_queries_broker(caplog: pytest.LogCaptureFixture) -
     assert gw.queries == 0
     snap = st.snapshot(21, 100_000.0, {})
     assert snap is not None and snap["max_drawdown_value"] == 10_000.0
+
+
+def test_broker_live_stats_equity_none_when_account_unavailable() -> None:
+    """柜台账户从未加载成功时 equity 是 None，不是 0.0."""
+    from akquant.strategy_stats import _broker_live_stats
+
+    class _FailGw(_Gw):
+        def query_account(self) -> UnifiedAccount:
+            raise RuntimeError("柜台不可用")
+
+    gw = _FailGw()
+    runner, slots = _runner(gw)
+    slot = slots[0]
+    slot._last_prices = {}
+    stats = _broker_live_stats(slot)
+    assert stats is not None
+    assert stats.equity is None
+    assert stats.trade_count is None

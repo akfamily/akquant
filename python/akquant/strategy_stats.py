@@ -163,7 +163,8 @@ def build_strategy_stats(strategy: Any) -> StrategyStats:
 def _broker_live_stats(strategy: Any) -> Optional[StrategyStats]:
     """broker_live：由会话级统计器（柜台成交驱动）给出，见 spec 5.5.
 
-    统计器不可用（启动时柜台权益/持仓查询失败）时只给 equity（柜台权益），其余为 None。
+    统计器不可用（启动时柜台权益/持仓查询失败）时只给 equity（柜台权益；
+    账户也不可用时为 None），其余为 None。
     浮动盈亏按策略已见到的最新收盘价（``_last_prices``）计算。
     """
     from .gateway.broker_execution import BrokerExecution
@@ -171,10 +172,14 @@ def _broker_live_stats(strategy: Any) -> Optional[StrategyStats]:
     execution = getattr(strategy, "execution", None)
     if not isinstance(execution, BrokerExecution):
         return None
-    equity = execution.get_portfolio_value()
+    # 账户从未加载成功（柜台不可用）时权益未知：报 None，不能报 0.0
+    account = execution.state_cache.account()
+    equity: Optional[float] = (
+        None if account is None else float(getattr(account, "equity", 0.0) or 0.0)
+    )
     raw: Mapping[str, Any] = {"equity": equity}
     stats = execution.trade_stats
-    if stats is not None:
+    if stats is not None and equity is not None:
         prices = {
             str(symbol): float(price)
             for symbol, price in (getattr(strategy, "_last_prices", None) or {}).items()

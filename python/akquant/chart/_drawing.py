@@ -87,6 +87,8 @@ def _to_ns(value: Any, tz: str) -> int:
     if isinstance(value, int):
         return int(value)
     if isinstance(value, (pd.Timestamp, datetime, np.datetime64)):
+        if pd.isna(value):
+            raise ValueError("坐标时间不能是 NaT")
         ts = pd.Timestamp(value)
         if ts.tzinfo is None:
             ts = ts.tz_localize(tz)

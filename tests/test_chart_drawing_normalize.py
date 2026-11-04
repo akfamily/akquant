@@ -388,3 +388,10 @@ def test_every_build_output_is_strict_json() -> None:
     ]
     for o in outs:
         json.dumps(o, allow_nan=False)
+
+
+@pytest.mark.parametrize("nat", [pd.NaT, np.datetime64("NaT", "ns")])
+def test_nat_time_rejected(nat: object) -> None:
+    """NaT 不能变成哨兵整数，必须 ValueError."""
+    with pytest.raises(ValueError):
+        normalize_point((nat, 10), tz=TZ)

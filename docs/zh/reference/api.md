@@ -1094,7 +1094,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 
 *   `draw`: 绑定到当前策略的绘图入口（`DrawingApi`），提供 `line` / `box` / `label` / `polyline` / `fib` / `table` / `delete` / `clear`。第一个参数是非空 `id`，同一 `(owner, symbol, id)` 再次调用整体覆盖，内容不变不发事件；不同 kind 不能共用 id（`ValueError`）；颜色只接受 `#RRGGBB` / `#RRGGBBAA`。`aq.Indicator` 继承同一入口。参数与上限见[可视化指南](../guide/visualization.md#策略绘图与统计表)。
 *   `max_drawings_per_kind`: 类属性，默认 `500`；每个 `(owner, symbol, kind)` 的存活对象数上限，超出时淘汰最早创建的对象并记一条 `warning`。
-*   `stats -> StrategyStats`: 运行时绩效统计快照，每次访问重新计算；口径与 `result.metrics` 一致（`on_stop` 中同名字段完全相等），账户级。不在回调或 `on_stop` 中访问抛 `RuntimeError`；接真实柜台的实盘（`broker_live`）下现阶段除 `equity` 外全部为 `None`。
+*   `stats -> StrategyStats`: 运行时绩效统计快照，每次访问重新计算；口径与 `result.metrics` 一致（`on_stop` 中同名字段完全相等），账户级。不在回调或 `on_stop` 中访问抛 `RuntimeError`；接真实柜台的实盘（`broker_live`）下由柜台成交驱动，口径与限制见[可视化指南](../guide/visualization.md#运行时统计-selfstats)。
 
 **机器学习支持:**
 

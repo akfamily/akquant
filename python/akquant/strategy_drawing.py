@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Any, Callable, Optional
 
 from .chart import _drawing as D
@@ -27,6 +28,8 @@ class DrawingApi:
         self._strategy = strategy
         # (symbol, drawing_id) -> 已发出的完整对象
         self._store: dict[tuple[str, str], dict[str, Any]] = {}
+        # (symbol, kind) -> drawing_id 按创建先后排列（覆盖不改变位置）
+        self._index: dict[tuple[str, str], OrderedDict[str, None]] = {}
         self._seq = 0
         self._warned: set[str] = set()
 
@@ -195,6 +198,7 @@ class DrawingApi:
         key = (self._symbol(symbol, allow_global=True), drawing_id)
         existing = self._store.pop(key, None)
         if existing is not None:
+            self._unindex(key, existing["kind"])
             self._emit("delete", self._identity(existing))
 
     def clear(
@@ -211,6 +215,7 @@ class DrawingApi:
             if symbol is not None and key[0] != symbol:
                 continue
             del self._store[key]
+            self._unindex(key, existing["kind"])
             self._emit("delete", self._identity(existing))
 
     # ---- 内部 -----------------------------------------------------------
@@ -293,6 +298,8 @@ class DrawingApi:
             "phase": str(getattr(self._strategy, "_indicator_phase", "run") or "run"),
         }
         self._store[key] = drawing
+        if existing is None:
+            self._index.setdefault((sym, kind), OrderedDict())[drawing_id] = None
         self._emit("upsert", drawing)
         return drawing_id
 
@@ -302,17 +309,19 @@ class DrawingApi:
         except RuntimeError:
             return 0
 
+    def _unindex(self, key: tuple[str, str], kind: str) -> None:
+        bucket = self._index.get((key[0], kind))
+        if bucket is not None:
+            bucket.pop(key[1], None)
+            if not bucket:
+                del self._index[(key[0], kind)]
+
     def _evict_if_full(self, sym: str, kind: str) -> None:
         limit = int(getattr(self._strategy, "max_drawings_per_kind", 500))
-        same = [
-            (d["created_seq"], k)
-            for k, d in self._store.items()
-            if k[0] == sym and d["kind"] == kind
-        ]
-        while len(same) >= limit and same:
-            same.sort()
-            _, oldest_key = same.pop(0)
-            oldest = self._store.pop(oldest_key)
+        bucket = self._index.get((sym, kind))
+        while bucket and len(bucket) >= limit:
+            oldest_id, _ = bucket.popitem(last=False)
+            oldest = self._store.pop((sym, oldest_id))
             self._emit("delete", self._identity(oldest))
             self._warn_once(
                 f"evict:{kind}",
@@ -321,6 +330,8 @@ class DrawingApi:
                 kind,
                 limit,
             )
+        if bucket is not None and not bucket:
+            del self._index[(sym, kind)]
 
     def _warn_once(self, key: str, msg: str, *args: Any) -> None:
         if key in self._warned:

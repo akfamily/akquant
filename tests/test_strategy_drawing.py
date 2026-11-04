@@ -298,3 +298,50 @@ def test_delete_payload_keys_and_clear_order() -> None:
     sink.calls.clear()
     s.draw.clear()
     assert [d["drawing_id"] for op, d in sink.calls if op == "delete"] == ["b", "c"]
+
+
+def test_new_object_does_not_scan_whole_store() -> None:
+    """新建对象只碰目标桶，不遍历全部 symbol 的存储（O(1) 淘汰）."""
+    sink = FakeSink()
+    s = _strategy(sink)
+    s.max_drawings_per_kind = 400
+    for n in range(50):
+        for i in range(400):
+            s.draw.label(f"l{i}", (NS, 1), "x", symbol=f"S{n}")
+
+    class SpyDict(dict):  # type: ignore[type-arg]
+        scans = 0
+
+        def items(self):  # type: ignore[no-untyped-def]
+            SpyDict.scans += 1
+            return super().items()
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            SpyDict.scans += 1
+            return super().__iter__()
+
+    s.draw._store = SpyDict(s.draw._store)  # type: ignore[assignment]
+    sink.calls.clear()
+    s.draw.label("new", (NS, 1), "y", symbol="S7")
+    assert SpyDict.scans == 0
+    deleted = [d["drawing_id"] for op, d in sink.calls if op == "delete"]
+    assert deleted == ["l0"]
+    assert len(s.draw._index[("S7", "label")]) == 400
+
+
+def test_eviction_order_after_delete_and_recreate() -> None:
+    """同桶内 delete 后重建，淘汰顺序仍按创建先后；覆盖不改变位置."""
+    sink = FakeSink()
+    s = _strategy(sink)
+    s.max_drawings_per_kind = 3
+    s.draw.label("a", (NS, 1), "A")
+    s.draw.label("b", (NS, 1), "B")
+    s.draw.label("c", (NS, 1), "C")
+    s.draw.delete("a")
+    s.draw.label("a", (NS, 1), "A2")  # a 现在是最新创建
+    s.draw.label("b", (NS, 2), "B2")  # 覆盖，b 仍是最早
+    sink.calls.clear()
+    s.draw.label("d", (NS, 1), "D")
+    s.draw.label("e", (NS, 1), "E")
+    deleted = [d["drawing_id"] for op, d in sink.calls if op == "delete"]
+    assert deleted == ["b", "c"]
