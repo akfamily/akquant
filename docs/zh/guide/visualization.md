@@ -126,7 +126,7 @@ class MyStrategy(aq.Strategy):
 |---|---|---|
 | `line(id, p1, p2, *, extend="none"\|"right"\|"both", color, width=1, style="solid"\|"dashed"\|"dotted")` | 两点线段 | `extend` 控制向右或双向延伸 |
 | `box(id, top_left, bottom_right, *, border_color, fill_color, width=1, text="")` | 矩形区间 | 可带居中文字 |
-| `label(id, point, text, *, style="up"\|"down"\|"left"\|"right"\|"none", color, text_color, size="normal"\|"small"\|"large")` | 锚点文字标注 | `style` 是气泡指向 |
+| `label(id, point, text, *, style="down"\|"up"\|"left"\|"right"\|"none", color, text_color, size="normal"\|"small"\|"large")` | 锚点文字标注 | `style` 是气泡指向，默认 `"down"` |
 | `polyline(id, points, *, closed=False, color, width=1, fill_color=None)` | 折线 / 闭合多边形 | 2～1000 个点 |
 | `fib(id, p1, p2, *, color)` | 斐波那契回撤 | 档位固定为 0 / 0.236 / 0.382 / 0.5 / 0.618 / 0.786 / 1 |
 | `table(id, rows, *, header=None, position="top_right", precision=2, bg_color, border_color)` | 屏幕固定位置的表格 | 见下文 |
@@ -137,6 +137,7 @@ class MyStrategy(aq.Strategy):
 
 `table` 的细节：
 
+- `precision`：数值显示的小数位数，整数 0～10，默认 2，超出范围抛 `ValueError`。
 - `position` 共 9 个：`top_left` / `top_center` / `top_right` / `middle_left` / `middle_center` / `middle_right` / `bottom_left` / `bottom_center` / `bottom_right`。
 - `rows` 是二维序列，单元格可以是 `str` / `int` / `float` / `bool` / `None`，也可以是 `{"value": ..., "text": ..., "bg_color": ..., "text_color": ...}`。
 - 归一后每个单元格是 `{value, text, bg_color, text_color}`：`value` 保留原值，`text` 是显示文本（数值按 `precision` 格式化，`None` 和 `NaN` 显示为“—”，自己给了 `text` 则以自己的为准）。

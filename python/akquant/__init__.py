@@ -104,6 +104,7 @@ from .strategy_loader import (
     register_strategy_loader,
     resolve_strategy_input,
 )
+from .strategy_stats import StrategyStats
 from .stream_schema import STREAM_SCHEMA_VERSION
 from .trade_stream import (
     is_trade_stream_event,
@@ -181,6 +182,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "IndicatorDeclaration",
         "IndicatorRecorder",
         "IndicatorSink",
+        "StrategyStats",
         "is_indicator_stream_event",
         "is_drawing_stream_event",
         "to_drawing_message",
@@ -288,6 +290,7 @@ else:
         "IndicatorDeclaration",
         "IndicatorRecorder",
         "IndicatorSink",
+        "StrategyStats",
         "is_indicator_stream_event",
         "is_drawing_stream_event",
         "to_drawing_message",

@@ -127,7 +127,7 @@ The first argument of every method is a non-empty `id`; the normalized `id` is r
 |---|---|---|
 | `line(id, p1, p2, *, extend="none"\|"right"\|"both", color, width=1, style="solid"\|"dashed"\|"dotted")` | Two-point segment | `extend` extends it to the right or both ways |
 | `box(id, top_left, bottom_right, *, border_color, fill_color, width=1, text="")` | Rectangle | Optional centered text |
-| `label(id, point, text, *, style="up"\|"down"\|"left"\|"right"\|"none", color, text_color, size="normal"\|"small"\|"large")` | Anchored text label | `style` is the direction the bubble points |
+| `label(id, point, text, *, style="down"\|"up"\|"left"\|"right"\|"none", color, text_color, size="normal"\|"small"\|"large")` | Anchored text label | `style` is the direction the bubble points; default `"down"` |
 | `polyline(id, points, *, closed=False, color, width=1, fill_color=None)` | Polyline / closed polygon | 2 to 1000 points |
 | `fib(id, p1, p2, *, color)` | Fibonacci retracement | Levels fixed at 0 / 0.236 / 0.382 / 0.5 / 0.618 / 0.786 / 1 |
 | `table(id, rows, *, header=None, position="top_right", precision=2, bg_color, border_color)` | Table at a fixed screen position | See below |
@@ -138,6 +138,7 @@ A point is `(time, price)`. `time` may be an `int` (UTC nanoseconds, i.e. `bar.t
 
 `table` details:
 
+- `precision`: decimal places for displayed numbers, an integer from 0 to 10, default 2; other values raise `ValueError`.
 - Nine `position` values: `top_left` / `top_center` / `top_right` / `middle_left` / `middle_center` / `middle_right` / `bottom_left` / `bottom_center` / `bottom_right`.
 - `rows` is a 2-D sequence. A cell is a `str` / `int` / `float` / `bool` / `None`, or `{"value": ..., "text": ..., "bg_color": ..., "text_color": ...}`.
 - After normalization every cell is `{value, text, bg_color, text_color}`: `value` keeps the original value, `text` is the display text (numbers are formatted with `precision`, `None` and `NaN` show as "—", an explicit `text` wins).
