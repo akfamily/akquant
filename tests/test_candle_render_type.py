@@ -358,7 +358,7 @@ def test_stream_points_and_snapshots_carry_group_role() -> None:
     for snap in snaps:
         roles = sorted(i["role"] for i in snap["items"] if i["group"] == "ha")
         assert roles == sorted(OHLC)
-    assert all(m["schema_version"] == "1.6" for m in messages)
+    assert all(m["schema_version"] == aq.STREAM_SCHEMA_VERSION for m in messages)
 
 
 def test_multi_owner_same_group_name_series_keys_prefixed() -> None:
@@ -443,7 +443,7 @@ def test_v15_events_default_group_role_to_empty() -> None:
 
 def test_stream_schema_version_is_1_6() -> None:
     """契约升到 1.6."""
-    assert aq.STREAM_SCHEMA_VERSION == "1.6"
+    assert aq.STREAM_SCHEMA_VERSION == "1.7"
 
 
 # ------------------------------------------------------------- 第三方 sink

@@ -205,6 +205,41 @@ def to_indicator_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]
     return base_message
 
 
+_DRAWING_IDENTITY_KEYS = ("owner_strategy_id", "drawing_id", "kind", "symbol")
+
+
+def is_drawing_stream_event(event: BacktestStreamEvent) -> bool:
+    """Return whether the event is a strategy drawing event (schema 1.7)."""
+    return str(event.get("event_type", "")) == "indicator_drawing"
+
+
+def to_drawing_message(event: BacktestStreamEvent) -> Optional[dict[str, Any]]:
+    """Convert one ``indicator_drawing`` event into a frontend message (schema 1.7)."""
+    if not is_drawing_stream_event(event):
+        return None
+    payload = event.get("payload", {})
+    op = str(payload.get("op", ""))
+    if op not in {"upsert", "delete"}:
+        return None
+    drawing = _json_loads_or_default(payload.get("drawing_json"), {})
+    if not isinstance(drawing, dict):
+        return None
+    if op == "delete":
+        drawing = {k: drawing.get(k) for k in _DRAWING_IDENTITY_KEYS}
+    return {
+        "channel": "indicator",
+        "type": "drawing",
+        "run_id": str(event.get("run_id", "")),
+        "seq": _to_int(event.get("seq", 0)),
+        "ts": _to_int(event.get("ts", 0)),
+        "symbol": _normalize_symbol(event.get("symbol")),
+        "level": str(event.get("level", "info")),
+        "schema_version": STREAM_SCHEMA_VERSION,
+        "op": op,
+        "drawing": drawing,
+    }
+
+
 def to_indicator_messages(
     events: Iterable[BacktestStreamEvent],
 ) -> list[dict[str, Any]]:

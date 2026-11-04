@@ -64,7 +64,9 @@ from .indicator_declaration import IndicatorBinding, IndicatorDeclaration
 from .indicator_recording import IndicatorRecorder, IndicatorSink
 from .indicator_script import Indicator, IndicatorCannotTradeError
 from .indicator_stream import (
+    is_drawing_stream_event,
     is_indicator_stream_event,
+    to_drawing_message,
     to_indicator_message,
     to_indicator_messages,
 )
@@ -180,6 +182,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "IndicatorRecorder",
         "IndicatorSink",
         "is_indicator_stream_event",
+        "is_drawing_stream_event",
+        "to_drawing_message",
         "to_indicator_message",
         "to_indicator_messages",
         "is_trade_stream_event",
@@ -285,6 +289,8 @@ else:
         "IndicatorRecorder",
         "IndicatorSink",
         "is_indicator_stream_event",
+        "is_drawing_stream_event",
+        "to_drawing_message",
         "to_indicator_message",
         "to_indicator_messages",
         "is_trade_stream_event",

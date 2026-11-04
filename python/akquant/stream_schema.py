@@ -59,6 +59,15 @@ History:
   four points of one ``(owner_strategy_id, group, symbol, timestamp)`` into a
   bar. Both fields are ``""`` for every other render type, and absent
   (1.5 events) means ``""``.
+- ``1.7`` — added the indicator-channel message ``type="drawing"`` for strategy
+  drawing objects (``Strategy.draw``: line/box/label/polyline/fib/table). It is
+  produced by the new :func:`akquant.to_drawing_message` /
+  :func:`akquant.is_drawing_stream_event` pair; ``is_indicator_stream_event`` /
+  ``to_indicator_message`` deliberately do **not** match it, so consumers built
+  for 1.6 never see it. Each message carries ``op`` (``"upsert"``/``"delete"``)
+  and ``drawing``; identity is ``(owner_strategy_id, symbol, drawing_id)`` and a
+  later upsert fully replaces an earlier one. ``symbol`` in the envelope is
+  ``None`` for global tables (``drawing.symbol == "*"``).
 """
 
-STREAM_SCHEMA_VERSION = "1.6"
+STREAM_SCHEMA_VERSION = "1.7"

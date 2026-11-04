@@ -24,6 +24,7 @@ from ..chart import (
 from ..indicator_recording import (
     SeriesKeyRegistry,
     all_items_confirmed,
+    drawing_event_payload,
     snapshot_phase,
     stamp_snapshot_items,
 )
@@ -154,6 +155,17 @@ class StreamingIndicatorSink:
                 "role": role_text,
                 "meta_json": meta_json,
             }
+        )
+
+    def record_drawing(self, *, op: str, drawing: Dict[str, Any]) -> None:
+        """Emit one ``indicator_drawing`` event; like points, nothing is accumulated."""
+        payload = drawing_event_payload(op, drawing)
+        symbol = str(drawing.get("symbol", ""))
+        self._emit(
+            "indicator_drawing",
+            None if symbol in ("", "*") else symbol,
+            payload,
+            int(payload["timestamp"]),
         )
 
     def flush_stream_snapshot(self) -> None:
