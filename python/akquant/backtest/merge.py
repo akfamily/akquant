@@ -500,7 +500,9 @@ def _merge_indicator_outputs(
     }
     seen_def: set = set()
     seen_inst: set = set()
-    for result in results:
+    # 绘图身份是 (owner_strategy_id, symbol, drawing_id), 同身份留最后一段(最新状态)
+    drawings: Dict[Tuple[str, str, str], Tuple[int, Dict[str, Any]]] = {}
+    for seg, result in enumerate(results):
         outputs = getattr(result, "indicator_outputs", None)
         if not isinstance(outputs, dict):
             continue
@@ -520,5 +522,24 @@ def _merge_indicator_outputs(
                 seen_inst.add(key)
             merged["instances"].append(inst)
         merged["points"].extend(outputs.get("points", []))
-        merged["drawings"].extend(outputs.get("drawings", []))
+        for drawing in outputs.get("drawings", []):
+            dkey = (
+                str(drawing.get("owner_strategy_id", "")),
+                str(drawing.get("symbol", "")),
+                str(drawing.get("drawing_id", "")),
+            )
+            drawings[dkey] = (seg, drawing)
+    # 排序口径同 IndicatorRecorder.build_payload; created_seq 相同按段序打破平局
+    merged["drawings"] = [
+        d
+        for _, d in sorted(
+            drawings.values(),
+            key=lambda sd: (
+                str(sd[1].get("owner_strategy_id", "")),
+                str(sd[1].get("symbol", "")),
+                sd[1].get("created_seq", 0),
+                sd[0],
+            ),
+        )
+    ]
     return merged

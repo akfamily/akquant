@@ -211,7 +211,7 @@ result.viz.review(df, include_drawings=True)   # 默认开启
 
 - `viz.review` 把线、框、折线、斐波那契、标注画在主图 K 线上；表格是 HTML 浮层，只叠在主图 pane 上，按 9 个位置摆放，切换标的时显示该标的的表加全局表。顶部工具栏有“隐藏绘图”按钮。
 - 点的时间超出数据范围时，渲染端按下面的规则处理：时间晚于最后一根 bar 的点吸附到最后一根 bar（向未来延伸的趋势线斜率会因此改变）；时间早于第一根 bar 的点被丢弃，剩余点数不够该类对象最少点数的对象整个丢弃。
-- `merge_results` 会把各段结果的 `drawings` 直接拼接，不去重：同一个策略跨多个滚动窗口时，同一个 id 可能重复出现。
+- `merge_results` 合并各段结果的 `drawings` 时按 `(owner_strategy_id, symbol, drawing_id)` 去重，同一身份保留最后一段里的对象（最新状态）；结果按 `(owner_strategy_id, symbol, created_seq)` 排序，`created_seq` 相同时按段序。
 
 ### 实盘流消息（schema 1.7）
 

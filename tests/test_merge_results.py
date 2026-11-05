@@ -200,3 +200,50 @@ def test_merge_results_out_of_scope_metric_raises(tmp_path: Path) -> None:
     merged, _ = _two_phase_merge(tmp_path)
     with pytest.raises(AttributeError, match="核心指标子集"):
         _ = merged.metrics.ulcer_index
+
+
+def _seg_result(drawings: list[dict[str, Any]]) -> Any:
+    """最小分段结果桩:只带 indicator_outputs."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(indicator_outputs={"drawings": drawings})
+
+
+def _drw(
+    drawing_id: str, seq: int, tag: str, owner: str = "_default"
+) -> dict[str, Any]:
+    return {
+        "owner_strategy_id": owner,
+        "symbol": "AAA",
+        "drawing_id": drawing_id,
+        "created_seq": seq,
+        "tag": tag,
+    }
+
+
+def test_merge_indicator_outputs_dedupes_drawings_keeps_last_segment() -> None:
+    """同身份绘图只留最后一段;不同 id 都保留;按 created_seq 排序."""
+    from akquant.backtest.merge import _merge_indicator_outputs
+
+    seg1 = _seg_result([_drw("tbl", 1, "seg1"), _drw("line", 2, "seg1")])
+    seg2 = _seg_result([_drw("tbl", 1, "seg2"), _drw("box", 3, "seg2")])
+    out = _merge_indicator_outputs([seg1, seg2])["drawings"]
+    assert [(d["drawing_id"], d["tag"]) for d in out] == [
+        ("tbl", "seg2"),
+        ("line", "seg1"),
+        ("box", "seg2"),
+    ]
+
+
+def test_merge_indicator_outputs_drawing_ties_break_by_segment_order() -> None:
+    """created_seq 相同按段序;不同 owner 互不去重."""
+    from akquant.backtest.merge import _merge_indicator_outputs
+
+    seg1 = _seg_result([_drw("a", 1, "seg1"), _drw("a", 1, "ind", owner="ind1")])
+    seg2 = _seg_result([_drw("b", 1, "seg2")])
+    out = _merge_indicator_outputs([seg1, seg2])["drawings"]
+    assert [(d["owner_strategy_id"], d["drawing_id"]) for d in out] == [
+        ("_default", "a"),
+        ("_default", "b"),
+        ("ind1", "a"),
+    ]

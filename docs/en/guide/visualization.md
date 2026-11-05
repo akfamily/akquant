@@ -212,7 +212,7 @@ result.viz.review(df, include_drawings=True)   # on by default
 
 - `viz.review` draws lines, boxes, polylines, Fibonacci levels and labels on the main candlestick pane. Tables are HTML overlays on the main pane only, placed at the nine positions; switching symbol shows that symbol's tables plus the global ones. The top bar has a "hide drawings" button.
 - Points whose time falls outside the data range are handled by the renderer as follows: a point later than the last bar snaps to the last bar (so the slope of a trend line projected into the future changes); a point earlier than the first bar is dropped, and an object left with fewer points than its kind needs is dropped entirely.
-- `merge_results` concatenates the `drawings` of each segment without de-duplication: the same strategy across walk-forward segments may repeat an id.
+- `merge_results` de-duplicates the `drawings` of all segments by `(owner_strategy_id, symbol, drawing_id)`, keeping the object from the last segment (latest state); the result is ordered by `(owner_strategy_id, symbol, created_seq)`, with ties broken by segment order.
 
 ### Live stream messages (schema 1.7)
 
