@@ -591,3 +591,68 @@ fn test_daily_returns_without_trading_day_ends_fall_back_to_local_date() {
     let result = night_session_result(vec![]);
     assert!(result.metrics.volatility > 0.1);
 }
+
+#[test]
+fn test_summary_matches_calculate_pnl() {
+    use rust_decimal::prelude::ToPrimitive;
+    let d = Decimal::from;
+    let trades = vec![
+        // 多头：赚 200
+        create_trade("A", OrderSide::Buy, d(100), d(10), d(1)),
+        create_trade("A", OrderSide::Sell, d(100), d(12), d(1)),
+        // 多头：亏 300
+        create_trade("A", OrderSide::Buy, d(100), d(12), d(1)),
+        create_trade("A", OrderSide::Sell, d(100), d(9), d(1)),
+        // 空头：赚 50
+        create_trade("B", OrderSide::Sell, d(10), d(20), d(0)),
+        create_trade("B", OrderSide::Buy, d(10), d(15), d(0)),
+        // 空头：亏 80
+        create_trade("B", OrderSide::Sell, d(10), d(20), d(0)),
+        create_trade("B", OrderSide::Buy, d(10), d(28), d(0)),
+    ];
+    let mut tracker = TradeTracker::new();
+    for t in &trades {
+        tracker.process_trade(t, Decimal::ONE, None, None, Decimal::ZERO);
+    }
+    let pnl = tracker.calculate_pnl(None);
+    let s = tracker.summary();
+    let f = |x: Decimal| x.to_f64().unwrap();
+    assert_eq!(s.won_count, 2);
+    assert_eq!(s.lost_count, 2);
+    assert_eq!(f(s.largest_win), pnl.largest_win);
+    assert_eq!(f(s.largest_win), 200.0);
+    assert_eq!(f(s.largest_loss), pnl.largest_loss);
+    assert_eq!(f(s.largest_loss), -300.0);
+    let n = (s.won_count + s.lost_count) as f64;
+    assert_eq!(f(s.sum_closed_pnl) / n, pnl.avg_pnl);
+    assert_eq!(f(s.total_commission), pnl.total_commission);
+    assert_eq!(s.max_wins, pnl.max_wins as usize);
+    assert_eq!(s.max_losses, pnl.max_losses as usize);
+}
+
+#[test]
+fn test_rebuild_summary_fields_from_old_snapshot() {
+    let d = Decimal::from;
+    let mut tracker = TradeTracker::new();
+    for t in [
+        create_trade("A", OrderSide::Buy, d(100), d(10), d(0)),
+        create_trade("A", OrderSide::Sell, d(100), d(12), d(0)),
+        create_trade("A", OrderSide::Buy, d(100), d(12), d(0)),
+        create_trade("A", OrderSide::Sell, d(100), d(9), d(0)),
+    ] {
+        tracker.process_trade(&t, Decimal::ONE, None, None, Decimal::ZERO);
+    }
+    let expected = tracker.summary();
+    assert_ne!(expected.largest_win, Decimal::ZERO);
+
+    // 模拟旧快照：JSON 里没有三个新字段
+    let mut v = serde_json::to_value(&tracker).unwrap();
+    let obj = v.as_object_mut().unwrap();
+    for k in ["sum_closed_pnl", "largest_win", "largest_loss"] {
+        assert!(obj.remove(k).is_some());
+    }
+    let mut restored: TradeTracker = serde_json::from_value(v).unwrap();
+    assert_eq!(restored.summary().sum_closed_pnl, Decimal::ZERO);
+    restored.rebuild_summary_fields();
+    assert_eq!(restored.summary(), expected);
+}

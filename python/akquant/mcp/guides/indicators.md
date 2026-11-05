@@ -4,7 +4,7 @@
 
 ## 规则
 
-- **在 `on_start` 里声明**，不要放进 `on_bar`。`check_strategy` 遇到 `on_start`/`__init__` 以外的 `self.I` 调用会报 `i-call-outside-init`。参数化的指标（比如周期来自 `self.params`）只能写在 `on_start` 里，因为 `__init__` 执行时参数还没注入。
+- **在 `on_start` 里声明**，不要放进 `on_bar`。`check_strategy` 遇到 `on_start`/`__init__` 以外的 `self.I` 调用会报 `i-call-outside-init`。参数化的指标（比如周期来自 `self.params`）在 `__init__` 里也能读到参数，但推荐写在 `on_start` 里：热启动恢复会重跑 `on_start` 而不重跑 `__init__`，引擎上下文也在 `on_start` 才就绪。
 - **用 `name=` 命名**。同一个策略里有多个同类指标时，名字不能重复，重复声明会直接报错。
 - **取值**：`ind[0]` 是当前 bar 的值（`ind.value` 是它的别名），`ind[n]` 是前 n 根的值。预热期或越界时返回 `None`，不抛异常，所以判空统一写 `if value is None`。
 - **内置指标**：`EMA`、`SMA`、`RSI`、`MACD`、`ATR`、`BollingerBands` 等 100 多个，都是 Rust 实现的增量指标。用 `search_api("EMA")` 查构造参数。

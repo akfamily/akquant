@@ -36,6 +36,11 @@ class IndicatorSink(Protocol):
     so the sink can compute stream ``series_key`` values before the first point.
     It is detected with ``getattr`` and deliberately not part of this protocol,
     so sinks written against 1.4 remain valid.
+
+    A sink may also implement the **optional** ``record_drawing(*, op, drawing)``
+    method (1.7), called by ``Strategy.draw`` with ``op`` of ``"upsert"`` or
+    ``"delete"`` and the drawing dict. It is detected with ``getattr`` and not
+    declared in this protocol; sinks without it silently drop drawing objects.
     """
 
     def record(
@@ -226,6 +231,18 @@ def stamp_snapshot_items(
         )
 
 
+def drawing_event_payload(op: str, drawing: Dict[str, Any]) -> Dict[str, str]:
+    """indicator_drawing 事件的 payload(全部为 str, 符合 BacktestStreamEvent 约定)."""
+    updated_ms = int(drawing.get("updated_ts", 0) or 0)
+    return {
+        "op": op,
+        "timestamp": str(updated_ms * 1_000_000),
+        "owner_strategy_id": str(drawing["owner_strategy_id"]),
+        "drawing_id": str(drawing["drawing_id"]),
+        "drawing_json": json.dumps(drawing, ensure_ascii=False, sort_keys=True),
+    }
+
+
 class IndicatorRecorder:
     """Collect normalized indicator metadata and point values during a run."""
 
@@ -246,6 +263,8 @@ class IndicatorRecorder:
             Tuple[str, str, int, int], list[Dict[str, Any]]
         ] = {}
         self._series_registry = SeriesKeyRegistry()
+        # 绘图对象只留最新状态, 身份是 (owner, symbol, drawing_id)
+        self._drawings: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
 
     def declare(self, owner_strategy_id: str, indicator_key: str) -> None:
         """登记一个将要上报的 ``(owner, key)``, 供流消息提前算出 series_key."""
@@ -458,6 +477,28 @@ class IndicatorRecorder:
             )
         self._pending_snapshots.clear()
 
+    def record_drawing(self, *, op: str, drawing: Dict[str, Any]) -> None:
+        """保存/删除一个绘图对象(只留最新状态), 并发出 indicator_drawing 流事件."""
+        key = (
+            str(drawing["owner_strategy_id"]),
+            str(drawing["symbol"]),
+            str(drawing["drawing_id"]),
+        )
+        if op == "upsert":
+            # 深拷贝, 切断与 DrawingApi 内部存储的共享
+            self._drawings[key] = json.loads(json.dumps(drawing))
+        elif op == "delete":
+            self._drawings.pop(key, None)
+        else:
+            raise ValueError(f"op 必须是 upsert 或 delete，当前为 {op!r}")
+        if self._stream_emitter is not None:
+            self._stream_emitter(
+                "indicator_drawing",
+                None if key[1] == "*" else key[1],
+                "info",
+                drawing_event_payload(op, drawing),
+            )
+
     def build_payload(self) -> Dict[str, list[Dict[str, Any]]]:
         """Return stable row-oriented outputs for result access and export."""
         definitions = [
@@ -485,4 +526,8 @@ class IndicatorRecorder:
             "definitions": definitions,
             "instances": instances,
             "points": points,
+            "drawings": sorted(
+                self._drawings.values(),
+                key=lambda d: (d["owner_strategy_id"], d["symbol"], d["created_seq"]),
+            ),
         }

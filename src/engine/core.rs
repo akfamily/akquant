@@ -1606,6 +1606,11 @@ impl Engine {
         self.ensure_strategy_context_capacity();
         let sessions = self.context_sessions();
         let account_metrics = self.current_account_metrics();
+        let stats_state = crate::analysis::StatsState {
+            trades: self.state.order_manager.trade_tracker.summary(),
+            drawdown: self.statistics_manager.drawdown_state(self.initial_cash),
+            initial_cash: self.initial_cash,
+        };
         let position_entry_prices = self.build_position_entry_prices();
         let frozen_cash = self
             .current_frozen_cash(&active_orders)
@@ -1693,6 +1698,8 @@ impl Engine {
                     margin_daily_interest: self.margin_daily_interest.to_f64().unwrap_or_default(),
                     last_prices: Arc::clone(&self.last_prices),
                     sessions,
+                    stats_state,
+                    stats_equity: account_metrics.equity,
                 });
             }
             return Ok(py_ctx);
@@ -2005,7 +2012,7 @@ impl Engine {
     }
 
     pub(crate) fn create_context(
-        &self,
+        &mut self,
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
         step_rejected_orders: Vec<Order>,
@@ -2015,6 +2022,11 @@ impl Engine {
         sessions: crate::context::ContextSessions,
     ) -> StrategyContext {
         let account_metrics = self.current_account_metrics();
+        let stats_state = crate::analysis::StatsState {
+            trades: self.state.order_manager.trade_tracker.summary(),
+            drawdown: self.statistics_manager.drawdown_state(self.initial_cash),
+            initial_cash: self.initial_cash,
+        };
         let position_entry_prices = self.build_position_entry_prices();
         let frozen_cash = self
             .current_frozen_cash(&active_orders)
@@ -2085,6 +2097,8 @@ impl Engine {
             instruments: Arc::new(self.instruments.clone()),
             last_prices: Arc::clone(&self.last_prices),
             sessions,
+            stats_state,
+            stats_equity: account_metrics.equity,
         })
     }
 

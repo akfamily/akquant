@@ -1326,6 +1326,10 @@ class Engine:
         """
         ...
 
+    def strategy_stats(self) -> dict[str, float]:
+        r"""运行时绩效统计（口径同 result.metrics）."""
+        ...
+
     def get_results(self) -> BacktestResult:
         r"""
         获取回测结果.
@@ -1375,6 +1379,44 @@ class Instrument:
         reference_volatility: typing.Optional[float] = ...,
         sellable_after_days: typing.Optional[int] = ...,
     ) -> "Instrument": ...
+
+class LiveTradeStats:
+    r"""
+    实盘会话级统计累加器.
+
+    由柜台真实成交驱动，回撤与汇总公式和回测共用同一套实现。
+    """
+
+    def __new__(cls, initial_equity: float) -> LiveTradeStats: ...
+    def on_fill(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        timestamp_ns: int,
+        multiplier: float = 1.0,
+        commission: float = 0.0,
+    ) -> None:
+        r"""记录一笔成交 (side 取 "buy" 或 "sell")."""
+        ...
+
+    def on_equity(self, timestamp_ns: int, equity: float) -> None:
+        r"""记录一个权益点 (用于回撤)."""
+        ...
+
+    def position(self, symbol: str) -> float:
+        r"""库存的带符号净持仓."""
+        ...
+
+    def snapshot(
+        self,
+        timestamp_ns: int,
+        equity: float,
+        last_prices: typing.Mapping[str, float],
+    ) -> dict[str, float]:
+        r"""当前统计快照, 键与 `ctx.strategy_stats()` 相同."""
+        ...
 
 class MACD:
     r"""平滑异同移动平均线 (MACD)."""
@@ -3029,6 +3071,10 @@ class StrategyContext:
     ) -> "StrategyContext": ...
     def current_window(self, symbol: str, freq: str) -> typing.Optional[Bar]:
         r"""某标的某周期正在形成、尚未闭合的窗口快照; 无则 None. 不触发回调."""
+        ...
+
+    def strategy_stats(self) -> dict[str, float]:
+        r"""运行时绩效统计（口径同 result.metrics）."""
         ...
 
     def history(

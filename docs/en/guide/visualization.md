@@ -103,3 +103,130 @@ Notes:
 - Optimized for **large / intraday** datasets: the payload is built with vectorized ops and timestamps are de-duplicated, so tens of thousands of candles stay smooth (the core advantage over the plotly analytical charts).
 
 See `examples/67_lwc_trade_review.py` for a full example.
+
+
+## Strategy Drawings and Stats Tables
+
+A `self.I()` indicator is a time series: one number per bar. `self.draw` creates **objects with an id that can be overwritten or deleted**: trend lines, range boxes, text labels, polylines, Fibonacci retracements, and stats tables pinned to a corner of the chart (counterparts of Pine's `line.new` / `box.new` / `label.new` / `polyline.new` / `table.new`). Only the currently alive objects are kept, so a finished backtest shows the final state, as in TradingView. Both strategies and `aq.Indicator` scripts can use it; identity is `(owner, symbol, id)`, so they never clash.
+
+```python
+class MyStrategy(aq.Strategy):
+    def on_bar(self, bar):
+        self.draw.label(f"sig-{bar.timestamp}", (bar.timestamp, bar.high), "breakout", style="down", color="#e03131")
+        self.draw.box("zone", (t0, 3820.0), (bar.timestamp, 3780.0), border_color="#1971c2", fill_color="#1971c233")
+        self.draw.table("perf", self.stats.as_rows(), header=["Metric", "Value"], symbol="*")
+```
+
+See `examples/78_chart_drawings.py` for a full example.
+
+### Objects and parameters
+
+The first argument of every method is a non-empty `id`; the normalized `id` is returned. The common optional argument `symbol` defaults to the symbol of the current callback.
+
+| Method | Parameters | Notes |
+|---|---|---|
+| `line(id, p1, p2, *, extend="none"\|"right"\|"both", color, width=1, style="solid"\|"dashed"\|"dotted")` | Two-point segment | `extend` extends it to the right or both ways |
+| `box(id, top_left, bottom_right, *, border_color, fill_color, width=1, text="")` | Rectangle | Optional centered text |
+| `label(id, point, text, *, style="down"\|"up"\|"left"\|"right"\|"none", color, text_color, size="normal"\|"small"\|"large")` | Anchored text label | `style` is the direction the bubble points; default `"down"` |
+| `polyline(id, points, *, closed=False, color, width=1, fill_color=None)` | Polyline / closed polygon | 2 to 1000 points |
+| `fib(id, p1, p2, *, color)` | Fibonacci retracement | Levels fixed at 0 / 0.236 / 0.382 / 0.5 / 0.618 / 0.786 / 1 |
+| `table(id, rows, *, header=None, position="top_right", precision=2, bg_color, border_color)` | Table at a fixed screen position | See below |
+| `delete(id, *, symbol=None)` | Delete one object | Silently ignored if missing |
+| `clear(kind=None, *, symbol=None)` | Clear this owner's objects | Filter by kind / symbol; one delete event per removed object |
+
+A point is `(time, price)`. `time` may be an `int` (UTC nanoseconds, i.e. `bar.timestamp`), a `pd.Timestamp`, or a `datetime` (naive values are localized to the strategy timezone); NumPy scalars work too. Time is normalized to milliseconds with the same function indicator points use, so annotations line up with the candles. Colors accept only `#RRGGBB` or `#RRGGBBAA`; the default (empty string) leaves the choice to the renderer.
+
+`table` details:
+
+- `precision`: decimal places for displayed numbers, an integer from 0 to 10, default 2; other values raise `ValueError`.
+- Nine `position` values: `top_left` / `top_center` / `top_right` / `middle_left` / `middle_center` / `middle_right` / `bottom_left` / `bottom_center` / `bottom_right`.
+- `rows` is a 2-D sequence. A cell is a `str` / `int` / `float` / `bool` / `None`, or `{"value": ..., "text": ..., "bg_color": ..., "text_color": ...}`.
+- After normalization every cell is `{value, text, bg_color, text_color}`: `value` keeps the original value, `text` is the display text (numbers are formatted with `precision`, `None` and `NaN` show as "—", an explicit `text` wins).
+- Short rows are padded with empty cells on the right; `header` is treated as row 0, recorded in `table.header_rows` (the number of leading header rows: 1 with a `header`, otherwise 0).
+- `symbol="*"` makes a global table that appears on every symbol's chart; only `table` accepts it.
+
+### Overwrite, delete and limits
+
+- **Same id overwrites**: calling again with the same `(owner, symbol, id)` replaces the whole object (fields are not patched). If the content is identical nothing is emitted, so calling on every bar costs something only when the content changes.
+- **A kind cannot reuse another kind's id**: drawing a `box` with an id already used by a `line` raises `ValueError`; call `draw.delete(id)` first. Under one symbol a `table` also occupies its id, so do not reuse ids of lines or boxes.
+- **Delete / clear**: `delete` removes one object, `clear(kind=..., symbol=...)` removes in bulk, always within the owner.
+
+| Item | Limit | When exceeded |
+|---|---|---|
+| Alive objects per `(owner, symbol, kind)` | 500 (class attribute `Strategy.max_drawings_per_kind`; override it in the strategy class) | The earliest created object is evicted; one `warning` per owner + kind |
+| Table | 50 rows x 10 columns | `ValueError` |
+| Polyline points | 1000 | `ValueError` |
+| One piece of text | 500 characters | Truncated with a `warning` |
+
+Eviction instead of an error: Pine users habitually put one label per signal, and dropping the oldest ones, like `max_labels_count`, is what they expect.
+
+!!! note "Time alignment"
+    A point whose time equals the current bar's `bar.timestamp` is mapped to the bar end, like indicator points, so it aligns automatically. A timestamp that refers to an **earlier bar** is not mapped; on tick-aggregated bars such a point can sit one bar to the left of the matching indicator point. To mark a particular bar, use that bar's own `bar.timestamp`.
+
+### Runtime stats `self.stats`
+
+Each access to `self.stats` returns a frozen `StrategyStats` snapshot, computed on access. The numbers come from the same state and algorithms as the final `result.metrics`:
+
+- One equity point per bar (same timestamp overwrites); the peak behind `max_drawdown*` starts from the initial cash.
+- `win_rate` is a percentage (0 to 100) judged on **gross** `pnl > 0`, not on net pnl after commission.
+- `total_pnl` is current equity minus initial cash, so it **includes unrealized pnl**; it is not the sum of per-trade gross pnl.
+- Inside callbacks you read the **current state**; in `on_stop` the fields equal the same-named fields of `result.metrics` exactly.
+- Stats are **account level**: in a multi-slot backtest every slot reads the same figures. Per-strategy breakdowns are out of scope.
+- During the run `unrealized_pnl` is the account's floating pnl; in `on_stop` it is the value the trade tracker computes from inventory (as in metrics). They agree for stocks and futures; for instruments priced with margin, such as options, they may differ mid-run.
+- Reading it outside callbacks and `on_stop` raises `RuntimeError`.
+
+| Field | Meaning |
+|---|---|
+| `total_return_pct` / `total_pnl` / `unrealized_pnl` / `total_commission` | Return, total pnl, unrealized pnl, commission |
+| `max_drawdown` / `max_drawdown_pct` / `max_drawdown_value` | Max drawdown (ratio / percent / amount) |
+| `win_rate` / `loss_rate` / `winning_trades` / `losing_trades` | Win / loss rate and counts |
+| `profit_factor` / `avg_pnl` / `avg_profit` / `avg_loss` | Profit factor and averages |
+| `largest_win` / `largest_loss` / `max_wins` / `max_losses` | Largest single win / loss, longest win / loss streak |
+| `trade_count` | Number of trades, `winning_trades + losing_trades` |
+| `current_drawdown_pct` | Current drawdown from the peak in percent (not in `result.metrics`) |
+| `equity` | Current equity |
+
+Sharpe, Sortino, Calmar and annualized return are not provided: they need the full return series and annualization assumptions, so their intraday values would be ambiguous.
+
+`self.stats.as_rows(fields=None, labels=None)` returns a 2-D list that can go straight into `draw.table(rows=...)` (name and value columns). The default fields are `total_return_pct` / `max_drawdown_pct` / `win_rate` / `profit_factor` / `trade_count` / `total_pnl`, with Chinese labels by default (pass `labels=` to change them). `*_pct` and `win_rate` display with `%`, and an infinite `profit_factor` shows `∞`.
+
+!!! warning "Definitions and limitations with a real broker in live trading"
+    When `run_live` has no trading broker (for example paper matching with only klinedata market data), every `self.stats` field is available and follows the backtest definitions.
+
+    With a real broker (`broker_live`, e.g. `trader_broker="middleware"`) the engine does not receive the broker's fills, so `self.stats` comes from a per-session statistics tracker instead: broker fills are deduplicated by `trade_id` and fed one by one into the same statistics algorithm the backtest uses; on every bar, before `on_bar`, the most recently queried broker account equity is recorded as one equity point (used for drawdown; the broker is not queried for this), and `total_return_pct` is the return of this session; unrealized PnL uses the latest close the strategy has received; contract multipliers come from `run_live(instruments=...)`, and a symbol without one is computed with 1 and warned about once. With several slots every slot reads the same account-level statistics. The broker equity is only re-queried when the strategy reads the account (including reading `self.stats`) after a fill or order update, so price moves in between are not reflected in the drawdown. If querying the broker's equity or positions fails at session start, the tracker is unavailable and every field except `equity` is `None`. Further limitations:
+
+    - **Commission is 0**: broker fills carry no commission, so `total_commission` is always 0. Win rate and profit factor use gross PnL and are not affected.
+    - **Only this session is counted**: only orders placed by this session's strategies count; orders entered by hand in the front end or by other sessions do not. After a restart the tracker is re-initialized from the broker's positions, and trades closed before the restart are lost.
+    - **Positions held before the session starts are included**: at start-up the tracker is seeded from the broker's positions (quantity, direction, average price), even if a position was originally opened by hand; closing that position later counts toward this session's statistics. A position without an average price cannot be seeded, and fills that close it are not counted (a warning is logged). **With middleware (`trader_broker="middleware"`), seeding requires an akquant-middleware version that maps the counter's `cost_price` to the position's average price (and derives the direction from `position_side`)**; older versions carry neither, so positions held before the session starts are not seeded, and later sells of them are truncated to 0 as excess closes and not counted.
+    - **Excess closes are truncated**: the part of a close that exceeds the tracker's position is dropped rather than treated as opening the opposite side. Open/close is decided as follows: symbols configured in `run_live(instruments=...)` as futures or options use the fill's `position_effect` (with `auto`, inferred from the current position); symbols configured as stocks, funds or other types treat every sell as a close; for symbols that are not configured, an explicit open or close `position_effect` is honoured, and with `auto` a sell is a close.
+    - **Net-position bookkeeping**: the tracker keeps one net position per symbol. A locked/hedged position (for example buying to open while holding a short) is recorded as closing the short rather than holding both sides; long and short broker positions in the same symbol are also netted before seeding at session start.
+
+### Viewing in backtests
+
+```python
+result.drawings                 # list[dict]: objects still alive at the end
+result.drawings_df()            # DataFrame; points / style / table stay nested
+result.export_indicators("out.json")   # the export carries a "drawings" key (format="parquet" writes drawings.json)
+result.viz.review(df, include_drawings=True)   # on by default
+```
+
+- `viz.review` draws lines, boxes, polylines, Fibonacci levels and labels on the main candlestick pane. Tables are HTML overlays on the main pane only, placed at the nine positions; switching symbol shows that symbol's tables plus the global ones. The top bar has a "hide drawings" button.
+- Points whose time falls outside the data range are handled by the renderer as follows: a point later than the last bar snaps to the last bar (so the slope of a trend line projected into the future changes); a point earlier than the first bar is dropped, and an object left with fewer points than its kind needs is dropped entirely.
+- `merge_results` de-duplicates the `drawings` of all segments by `(owner_strategy_id, symbol, drawing_id)`, keeping the object from the last segment (latest state); the result is ordered by `(owner_strategy_id, symbol, created_seq)`, with ties broken by segment order.
+
+### Live stream messages (schema 1.7)
+
+In live trading, drawing calls reach the sink as `indicator_drawing` events, converted by two new functions:
+
+```python
+if aq.is_drawing_stream_event(event):
+    message = aq.to_drawing_message(event)
+    # {"channel": "indicator", "type": "drawing", "schema_version": "1.7",
+    #  "op": "upsert" | "delete", "drawing": {...}, "symbol": ..., ...}
+```
+
+- With `op="delete"`, `drawing` carries only the identity fields `owner_strategy_id` / `drawing_id` / `symbol` / `kind`. Identity is `(owner_strategy_id, symbol, drawing_id)`; a later upsert replaces an earlier one entirely. A global table has `drawing.symbol == "*"`.
+- **The old entry points never receive drawing messages**: `is_indicator_stream_event` and `to_indicator_message` are unchanged and only know point and snapshot, so downstream code that understands only those two will not forward drawing messages to the frontend as they are.
+- Peers below schema 1.7 produce no drawing messages; consumers should ignore unknown `type` values.
+- If the sink has no `record_drawing` method, drawing calls are silently dropped and one `info` log is written the first time.
+- Drawing calls during `run_live(preload_history=)` replay take effect normally (`phase="preload"`); an object created during preload that is still alive at run time is the same object.

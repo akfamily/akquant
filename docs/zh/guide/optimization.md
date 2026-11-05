@@ -226,6 +226,20 @@ akquant.configure_logging(
 *   如果你希望文件日志更方便被日志平台消费，可额外打开 `file_json=True`。
 *   开启日志聚合后，来自 Rust 执行链路的 warning 也会回传到主进程。例如保证金不足拒单、收盘过期、未知取消订单、`same-cycle` 延后等执行 warning，会按统一结构化字段输出，便于批量筛查 `phase=execution`、`order_id`、`strategy_id` 等信息。
 
+### 全部组合失败时直接报错 (`raise_on_all_failed`)
+
+如果本次所有组合（含 `db_path` 续跑时从库里读出的历史结果）一个成功的都没有，`run_grid_search` 默认抛 `RuntimeError`，而不是返回一张每行都带 `error`、`sharpe_ratio=-999` 的结果表。全部失败几乎总是策略或数据本身的问题（例如策略代码抛异常、数据列缺失），而不是参数不好。报错信息包含总组数、出现次数最多的前 3 种错误（每种最多 200 字）和排查提示。
+
+```python
+# 想保留旧行为（返回结果表，自行检查 error 列）时显式关闭
+results = run_grid_search(..., raise_on_all_failed=False)
+```
+
+*   部分组合失败时行为不变，失败占比低于阈值（50%）时只在汇总里打一行 info，达到或超过阈值才打 warning。
+*   判断发生在 `result_filter` 之前，筛选把结果清空不算“全部失败”。
+*   已写入 `db_path` 的结果在抛错时保留，不回滚。
+*   `run_walk_forward` 内部调用时固定传 `raise_on_all_failed=False`，某个训练窗口全部失败不会中断整个滚动优化，该窗口会被跳过（打 warning，不产生样本外曲线），不会拿失败的 -999 参数去跑样本外。
+
 ### 持久化与断点续传 (Persistence & Resume)
 
 对于参数组合极多（如 > 10,000 组）的场景，单机运行可能需要数小时甚至数天。如果中途断电或程序崩溃，重新运行将非常耗时。AKQuant 支持将优化结果实时写入 SQLite 数据库，并支持断点续传。

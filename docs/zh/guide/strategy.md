@@ -21,7 +21,7 @@
 
 一个策略从开始到结束，会经历以下几个阶段：
 
-* `__init__`: Python 对象初始化。**注意它不是参数入口**——可外部调整的参数请用类体内联字段声明（见[参数声明](#param-declaration)），依赖引擎上下文或需要在热启动时重建的初始化放 `on_start`。
+* `__init__`: Python 对象初始化。**注意它不是参数入口**——可外部调整的参数请用类体内联字段声明（见[参数声明](#param-declaration)），依赖引擎上下文或需要在热启动时重建的初始化放 `on_start`。可以重写 `__init__` 来初始化自己的状态，不必接收 `**kwargs`——引擎只会把 `__init__` 签名里能接收的参数传给它，策略参数始终经类体声明、由 `self.params` 读取。
 * `on_start`: 策略启动时调用，适合在此使用 `self.subscribe()` 订阅数据，也可在此注册指标。如果是热启动，需注意不要覆盖已恢复的状态。回测下**未传 `symbols`** 时，`subscribe()` 的标的会并入回测标的集合；**传了 `symbols`** 时只能订阅 `symbols` 之内的标的，订阅集外的标的会抛 `ValueError`（传了 `symbols` 即表示「只跑这些标的」，参见 [`run_backtest` 的 `symbols` 参数](../reference/api.md#akquantrun_backtest)）。实盘下会下发到行情网关（若该 broker 没有行情网关则记录一条 warning，见[行情源与交易源分开指定](../reference/api.md#mixed-market-trader-broker)）。
 * `on_resume`: **仅在热启动时调用**（在 `on_start` 之前）。用于处理从快照恢复后的特殊逻辑。
 * `on_bar`: 每一根 K 线闭合时触发 (核心交易逻辑)。
@@ -890,8 +890,10 @@ class SMACrossStrategy(Strategy):
     `self.params.<name>` 访问（例如 `self.params.fast_period`）；`self.params`
     是 frozen 对象，不支持在运行期赋值修改。
 *   **派生初始化放 `on_start`**：需要基于参数派生的对象（指标、缓存结构等），
-    应在 `on_start` 中读取 `self.params.<name>` 后再构造，而不是在类体或
-    `__init__` 阶段——`__init__` 之前 `self.params` 尚未注入完毕。
+    应在 `on_start` 中读取 `self.params.<name>` 后再构造，而不是在类体里
+    （类体执行时还没有实例）。`__init__` 里其实已经能读到 `self.params`（它在
+    `__new__` 里注入），推荐 `on_start` 的原因是引擎上下文在 `on_start` 才就绪，
+    且热启动恢复会重跑 `on_start` 而不重跑 `__init__`。
     **注意 resume 语义**：`on_start` 在热启动（从快照恢复）时也会被调用，而
     `__init__` 不会——这意味着原本「每个对象只跑一次」的初始化搬进 `on_start`
     后变成「每次运行都跑一次，含 resume」。计数器、缓存、已建仓记录等

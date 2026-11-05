@@ -4,7 +4,7 @@ MCP 一期只支持类式策略：在一个 `.py` 文件里定义一个继承 `a
 
 ## 四条规则
 
-1. **不要重写 `__init__`。** 参数在类体里用 `IntParam`、`FloatParam`、`BoolParam`、`ChoiceParam`、`ListParam` 声明，读取时用 `self.params.<名>`。`run_backtest` 的 `strategy_params` 只能传这里声明过的参数；重写了 `__init__` 又不接收 `**kwargs` 时，传参会报 `unexpected keyword argument`。
+1. **参数只用类体声明。** 参数在类体里用 `IntParam`、`FloatParam`、`BoolParam`、`ChoiceParam`、`ListParam` 声明，读取时用 `self.params.<名>`。`run_backtest` 的 `strategy_params` 只能传这里声明过的参数。可以重写 `__init__` 来初始化状态，不必接收 `**kwargs`；但 `__init__` 不要带没有默认值的参数，它们不是策略参数，实例化会报 `missing`。
 2. **运行状态在 `on_start` 里初始化。** 这时 `self.params` 已经就绪。指标也在 `on_start` 里用 `self.I(...)` 声明（见 `get_guide("indicators")`）。
 3. **核心逻辑写在 `on_bar(self, bar)` 里。** 每根 K 线闭合时调用一次；有多个标的时，每个标的各调用一次，用 `bar.symbol` 区分。
 4. **一个文件只放一个 `Strategy` 子类。** 有多个时，`check_strategy` 和 `run_backtest` 都要传 `strategy_attr` 指定用哪个。

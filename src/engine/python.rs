@@ -853,6 +853,11 @@ impl Engine {
 
         self.state.portfolio = snapshot.portfolio;
         self.state.order_manager = snapshot.order_manager;
+        // 旧快照缺 TradeTracker 的汇总字段，按平仓明细重建
+        self.state
+            .order_manager
+            .trade_tracker
+            .rebuild_summary_fields();
         *self.last_prices.write().expect("last_prices 写锁被污染") = snapshot.last_prices;
         self.instruments = snapshot.instruments;
         self.invalidate_session_resolver();
@@ -1839,6 +1844,27 @@ impl Engine {
             count,
             self.state.order_manager.trades.len()
         ))
+    }
+
+    /// 运行时绩效统计；用于 run() 返回之后（如 on_stop）。期末点的补法与 get_results 相同。
+    ///
+    /// :return: dict，键见 akquant.strategy_stats.StrategyStats
+    fn strategy_stats<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let (terminal, close_prices) = self.terminal_result_point();
+        // 读锁与 &mut self.statistics_manager 是不相交的字段借用，不必复制价格表。
+        let latest = self.last_prices.read().expect("last_prices 读锁被污染");
+        let prices = close_prices.as_ref().unwrap_or(&*latest);
+        self.statistics_manager
+            .stats_snapshot(
+                &self.state.portfolio,
+                &self.instruments,
+                prices,
+                &self.state.order_manager,
+                &self.risk_manager.config,
+                self.initial_cash,
+                terminal,
+            )
+            .to_pydict(py)
     }
 
     /// 获取回测结果

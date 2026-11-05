@@ -86,24 +86,15 @@ import akshare as ak
 import pandas as pd
 
 # 1. Download Data (Example: Forward Adjusted)
-# period="daily"; adjust="qfq" (forward adjusted)
-df = ak.stock_zh_a_hist(symbol="000001", period="daily", start_date="20200101", end_date="20231231", adjust="qfq")
+# Sina source, symbol needs a market prefix (sh/sz/bj); adjust="qfq" (forward adjusted)
+# Returns English columns date/open/high/low/close/volume/...; volume is in shares
+df = ak.stock_zh_a_daily(symbol="sz000001", start_date="20200101", end_date="20231231", adjust="qfq")
 
-# 2. Rename Columns (AKShare returns Chinese columns)
-df = df.rename(columns={
-    "日期": "date",
-    "开盘": "open",
-    "最高": "high",
-    "最低": "low",
-    "收盘": "close",
-    "成交量": "volume"
-})
-
-# 3. Type Conversion
+# 2. Type Conversion
 df['date'] = pd.to_datetime(df['date'])
 df['symbol'] = "000001"
 
-# 4. Filter Columns
+# 3. Filter Columns
 df = df[["date", "open", "high", "low", "close", "volume", "symbol"]]
 ```
 

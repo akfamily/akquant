@@ -8,7 +8,7 @@ try:
 except metadata.PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
-__engine_rule_version__ = "2.1.2"  # Increment on behavior-changing updates
+__engine_rule_version__ = "2.1.3"  # Increment on behavior-changing updates
 
 from . import akquant as _akquant
 from . import log as _log
@@ -64,7 +64,9 @@ from .indicator_declaration import IndicatorBinding, IndicatorDeclaration
 from .indicator_recording import IndicatorRecorder, IndicatorSink
 from .indicator_script import Indicator, IndicatorCannotTradeError
 from .indicator_stream import (
+    is_drawing_stream_event,
     is_indicator_stream_event,
+    to_drawing_message,
     to_indicator_message,
     to_indicator_messages,
 )
@@ -102,6 +104,7 @@ from .strategy_loader import (
     register_strategy_loader,
     resolve_strategy_input,
 )
+from .strategy_stats import StrategyStats
 from .stream_schema import STREAM_SCHEMA_VERSION
 from .trade_stream import (
     is_trade_stream_event,
@@ -179,7 +182,10 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "IndicatorDeclaration",
         "IndicatorRecorder",
         "IndicatorSink",
+        "StrategyStats",
         "is_indicator_stream_event",
+        "is_drawing_stream_event",
+        "to_drawing_message",
         "to_indicator_message",
         "to_indicator_messages",
         "is_trade_stream_event",
@@ -284,7 +290,10 @@ else:
         "IndicatorDeclaration",
         "IndicatorRecorder",
         "IndicatorSink",
+        "StrategyStats",
         "is_indicator_stream_event",
+        "is_drawing_stream_event",
+        "to_drawing_message",
         "to_indicator_message",
         "to_indicator_messages",
         "is_trade_stream_event",

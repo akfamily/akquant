@@ -26,7 +26,9 @@ pub mod settlement;
 pub mod signal_port;
 pub mod statistics;
 
-use analysis::{BacktestResult, ClosedTrade, LiquidationAudit, PerformanceMetrics, TradePnL};
+use analysis::{
+    BacktestResult, ClosedTrade, LiquidationAudit, LiveTradeStats, PerformanceMetrics, TradePnL,
+};
 use context::{ExpiryEvent, StrategyContext};
 use data::{
     BarAggregator, DataFeed, from_arrays, vec_cumsum, vec_ema, vec_log_returns, vec_returns,
@@ -101,6 +103,7 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BacktestResult>()?;
     m.add_class::<TradePnL>()?;
     m.add_class::<ClosedTrade>()?;
+    m.add_class::<LiveTradeStats>()?;
     m.add_class::<LiquidationAudit>()?;
     m.add_class::<RiskManager>()?;
     m.add_class::<RiskConfig>()?;

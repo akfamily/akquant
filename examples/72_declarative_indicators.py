@@ -46,8 +46,9 @@ class DeclarativeIndicatorStrategy(Strategy):
     def on_start(self) -> None:
         """Declare every indicator up front.
 
-        Declaring in ``on_start`` (not ``__init__``) is what lets the periods
-        come from ``self.params`` - parameters are injected after ``__init__``.
+        ``self.params`` is already injected in ``__new__``, so the periods can
+        come from it in ``__init__`` too; ``on_start`` is preferred because a
+        warm-start restore re-runs ``on_start`` but not ``__init__``.
         """
         # Inside a Strategy ``self.I`` does not plot by default - write
         # ``plot=True`` to chart it. ``pane``/``color``/``label`` alone no

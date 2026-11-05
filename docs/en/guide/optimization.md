@@ -228,6 +228,20 @@ Notes:
 *   If you want file logs to be easier for external log pipelines to consume, enable `file_json=True`.
 *   Once aggregation is enabled, Rust execution-path warnings are also forwarded back to the main process. That includes insufficient-margin rejects, session-close expiry, unknown cancel requests, and `same-cycle` deferrals, all of which are easier to filter through structured fields such as `phase=execution`, `order_id`, and `strategy_id`.
 
+### Raising When Every Combination Fails (`raise_on_all_failed`)
+
+If not a single combination succeeded in this run (including historical results read back from `db_path` when resuming), `run_grid_search` raises `RuntimeError` by default instead of returning a table whose rows all carry an `error` and `sharpe_ratio=-999`. Total failure almost always points at the strategy or the data (e.g. the strategy code raises, a data column is missing) rather than at bad parameters. The message lists the total number of combinations, the 3 most frequent errors (each truncated to 200 characters, with occurrence counts) and a troubleshooting hint.
+
+```python
+# Opt out to get the old behaviour (return the table and inspect the error column yourself)
+results = run_grid_search(..., raise_on_all_failed=False)
+```
+
+*   Partial failures behave as before: only the summary info line is logged, and a warning appears once the failure ratio reaches the 50% threshold.
+*   The check runs before `result_filter`; a filter that empties the results does not count as total failure.
+*   Results already written to `db_path` are kept when the error is raised.
+*   `run_walk_forward` always passes `raise_on_all_failed=False` internally, so a window whose training run fails entirely does not abort the whole walk-forward: that window is skipped with a warning (no out-of-sample curve), and its failed -999 parameters are never used for out-of-sample testing.
+
 ### Persistence & Resume
 
 For scenarios with extremely large parameter sets (e.g., > 10,000 combinations), running on a single machine might take days. AKQuant supports real-time result persistence to SQLite, enabling breakpoint resume.

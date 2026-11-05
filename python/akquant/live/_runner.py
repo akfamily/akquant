@@ -45,6 +45,7 @@ from ..sessions_config import (
     SessionsMap,
     normalize_sessions,
     normalize_trading_calendar,
+    parse_asset_type_name,
 )
 from ..strategy import (
     InstrumentSnapshot,
@@ -1950,6 +1951,9 @@ class LiveRunner:
             is_known_order=self._is_known_broker_order,
             own_session_prefix=f"{self._broker_name_for_cid()}-{self._broker_session_tag}-",
             strict_task_isolation=self._broker_strict_task_isolation,
+            has_order_owner=self._has_bound_order_owner,
+            multiplier_of=self._instrument_multiplier,
+            asset_type_of=self._instrument_asset_type,
         )
         self._broker_event_bridge = self._broker_runtime.event_bridge
         self._broker_recovery = self._broker_runtime.recovery
@@ -2123,6 +2127,18 @@ class LiveRunner:
                 cache.positions()
             except Exception:  # noqa: BLE001 保守: 失败交给懒 seed
                 logger.exception("broker baseline seed positions failed")
+            # 账户也预载一次: 每 bar 的统计权益采样只读缓存(不查柜台), 不预载的话
+            # 策略从不读账户时整场会话都没有权益点。
+            try:
+                cache.account()
+            except Exception:  # noqa: BLE001 保守: 失败只影响统计的权益点
+                logger.exception("broker baseline load account failed")
+        # 会话级交易统计与持仓缓存同一时刻播种(spec 5.5): 此前排队的成交已丢弃,
+        # 它们已含在柜台持仓快照里。查询失败只告警, 不阻塞激活。
+        try:
+            self._broker_runtime.initialize_trade_stats(trader_gateway)
+        except Exception:  # noqa: BLE001 统计不可用不影响交易
+            logger.exception("broker baseline trade stats init failed")
         sync = getattr(trader_gateway, "sync_today_trades", None)
         if callable(sync):
             try:
@@ -2559,6 +2575,67 @@ class LiveRunner:
         if broker_order_id and broker_order_id in closed_broker_order_ids:
             return True
         return False
+
+    def _has_bound_order_owner(
+        self, broker_order_id: str, client_order_id: str
+    ) -> bool:
+        """委托是否由本会话报出: 下单时经 ``_bind_order_owner`` 绑定过归属策略.
+
+        交易统计的归属判据(spec 5.5 第 2 条)。与 ``_resolve_owner_strategy_id``
+        查同几张表, 但不落 ``"_default"`` 兜底——兜底值分不清"单策略会话的单"
+        和"外来单"。也不能用 ``_is_known_broker_order``: 它查的 id 映射表会被
+        ``_update_broker_state`` 对任何放行的回报写入(含同标的的前端手动单)。
+
+        :param broker_order_id: 柜台委托号(可能为空)。
+        :param client_order_id: 客户端委托号(可能为空)。
+        :return: 活动归属表或终态归属留档中有记录时 True。
+        """
+        client_owners = getattr(self, "_client_to_strategy_ids", None) or {}
+        broker_owners = getattr(self, "_broker_to_strategy_ids", None) or {}
+        closed = getattr(self, "_closed_order_owners", None) or {}
+        if client_order_id and (
+            client_order_id in client_owners or f"c:{client_order_id}" in closed
+        ):
+            return True
+        if broker_order_id and (
+            broker_order_id in broker_owners or f"b:{broker_order_id}" in closed
+        ):
+            return True
+        return False
+
+    def _instrument_stats_meta(self) -> Dict[str, tuple[float, str]]:
+        """{归一化标的: (合约乘数, 资产类型名)}, 取自 ``instruments``(惰性缓存)."""
+        cached: Optional[Dict[str, tuple[float, str]]] = getattr(
+            self, "_instrument_stats_meta_cache", None
+        )
+        if cached is not None:
+            return cached
+        cached = {}
+        for inst in getattr(self, "instruments", None) or []:
+            symbol = normalize_symbol_for_match(getattr(inst, "symbol", ""))
+            if not symbol:
+                continue
+            try:
+                asset = str(parse_asset_type_name(inst.asset_type))
+            except ValueError:
+                asset = ""  # 统计不认识的类型(如 Crypto)按"未知"处理
+            cached[symbol] = (float(inst.multiplier), asset)
+        self._instrument_stats_meta_cache = cached
+        return cached
+
+    def _instrument_multiplier(self, symbol: str) -> Optional[float]:
+        """标的的合约乘数; 不在 ``instruments`` 中时返回 None(统计按 1 计并告警)."""
+        meta = self._instrument_stats_meta().get(normalize_symbol_for_match(symbol))
+        return meta[0] if meta is not None else None
+
+    def _instrument_asset_type(self, symbol: str) -> str:
+        """标的的资产类型名; 不在 ``instruments`` 中时返回空串(类型未知).
+
+        未知类型时统计器先认成交的明确开平标志, ``auto`` 才按现货处理,
+        见 ``BrokerTradeStats._truncate_excess_close``。
+        """
+        meta = self._instrument_stats_meta().get(normalize_symbol_for_match(symbol))
+        return meta[1] if meta is not None else ""
 
     def _make_event_key(self, event_name: str, payload: Any) -> str:
         if event_name == "trade":

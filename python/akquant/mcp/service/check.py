@@ -183,6 +183,38 @@ def _is_object(base: ast.expr) -> bool:
     return isinstance(base, ast.Name) and base.id == "object"
 
 
+_HELPER_BASES = frozenset(
+    {
+        "Enum",
+        "IntEnum",
+        "StrEnum",
+        "Flag",
+        "IntFlag",
+        "Exception",
+        "BaseException",
+        "NamedTuple",
+        "TypedDict",
+        "Protocol",
+        "Generic",
+        "ABC",
+        "BaseModel",
+    }
+)
+
+
+def _is_helper_base(base: ast.expr) -> bool:
+    """基类是枚举、异常、NamedTuple、Protocol 等不可能是策略的辅助类型."""
+    if isinstance(base, ast.Subscript):  # Generic[T]、Protocol[T]
+        base = base.value
+    if isinstance(base, ast.Name):
+        name = base.id
+    elif isinstance(base, ast.Attribute):  # enum.Enum、typing.NamedTuple
+        name = base.attr
+    else:
+        return False
+    return name in _HELPER_BASES or name.endswith(("Error", "Exception"))
+
+
 def _mentions_strategy(
     node: ast.ClassDef, by_name: Dict[str, ast.ClassDef], seen: Set[str]
 ) -> bool:
@@ -202,12 +234,12 @@ def _mentions_strategy(
 def _fully_resolvable(
     node: ast.ClassDef, by_name: Dict[str, ast.ClassDef], seen: Set[str]
 ) -> bool:
-    """基类链上每个基类都是 Strategy 或同文件类(递归)."""
+    """基类链上每个基类都是 Strategy、辅助类型或同文件类(递归)."""
     if node.name in seen:
         return True
     seen = seen | {node.name}
     for base in node.bases:
-        if _is_strategy_ref(base) or _is_object(base):
+        if _is_strategy_ref(base) or _is_object(base) or _is_helper_base(base):
             continue
         if isinstance(base, ast.Name) and base.id in by_name:
             if not _fully_resolvable(by_name[base.id], by_name, seen):
@@ -226,19 +258,6 @@ def _check_class(
     for stmt in node.body:
         if not isinstance(stmt, _FuncDef):
             continue
-        if stmt.name == "__init__" and stmt.args.kwarg is None:
-            diags.append(
-                _diag(
-                    "warning",
-                    "custom-init",
-                    stmt.lineno,
-                    stmt.col_offset,
-                    f"{node.name} 重写了 __init__ 且不接受 **kwargs, "
-                    "外部传 strategy_params 时实例化会失败",
-                    "不要重写 __init__: 参数用类体 IntParam 等声明, "
-                    "状态初始化放到 on_start",
-                )
-            )
         for sub in ast.walk(stmt):
             attr = _self_call_attr(sub)
             if attr is not None and isinstance(sub, ast.Call):
@@ -255,7 +274,21 @@ def _unresolved_warning(names: List[str]) -> Dict[str, Any]:
         1,
         0,
         "基类无法静态确认, 可能的策略类: " + (", ".join(names) or "无"),
-        "基类无法静态确认; 回测时如报多个 Strategy 子类, 请传 strategy_attr 指定类名",
+        "基类无法静态确认; 本文件只定义一个策略类时加载器会自动选中它, "
+        "定义了多个时才需传 strategy_attr 指定类名",
+    )
+
+
+def _extra_candidates_warning(selected: str, unknown: List[str]) -> Dict[str, Any]:
+    return _diag(
+        "warning",
+        "unresolved-base",
+        1,
+        0,
+        f"除 {selected} 外, 基类无法静态确认的类: " + ", ".join(unknown),
+        "这些类基类来自其他文件, 静态分析认不出是不是 Strategy 子类; 它们也是本文件"
+        f"定义的类, 若是策略, 运行期会与 {selected} 一起报 multiple Strategy "
+        "subclasses, 此时请传 strategy_attr 指定类名",
     )
 
 
@@ -276,6 +309,8 @@ def _select(
         msg = f"文件里没有名为 {strategy_attr} 的 Strategy 子类"
         return None, [_diag("error", "no-strategy", 1, 0, msg, tip)]
     if len(names) == 1:
+        if unknown:
+            return names[0], [_extra_candidates_warning(names[0], unknown)]
         return names[0], []
     if not names and unknown:
         return None, [_unresolved_warning(unknown)]

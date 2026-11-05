@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from ..log import get_logger
+
+logger = get_logger("gateway.stats")
+
 
 def _account_to_dict(acct: Any) -> dict[str, Any]:
     """Map a broker UnifiedAccount to the backtest get_account dict shape.
@@ -76,6 +80,7 @@ def _signed_fill_qty(payload: Any) -> float:
 def wrap_state_invalidation(
     update_broker_state: Callable[[str, Any], None],
     get_caches: Callable[[], list[Any] | None],
+    on_new_fill: Callable[[Any], None] | None = None,
 ) -> Callable[[str, Any], None]:
     """Wrap the broker update callback: trade 幂等叠总持仓 delta, order 失效委托/资金.
 
@@ -87,10 +92,16 @@ def wrap_state_invalidation(
     `apply_fill` 是加性的, 若不去重会每周期重复入账→持仓无界漂移。故用会话级
     `applied_fill_ids` 保证每个 trade_id 只叠一次。无 trade_id 时无法去重→退回幂等
     `invalidate()`(重查柜台)以防漂移。
+
+    ``on_new_fill``(可选, 会话级交易统计用): 每个 trade_id **首次**出现时调用一次,
+    复用上面的去重; 无 trade_id 的成交不调用(无法去重, 计入会重复), 只告警一次。
+    它抛出的异常只记 warning——统计出错不能影响柜台状态同步。
     """
     applied_fill_ids: set[str] = set()
+    warned_no_id = False
 
     def _wrapped(event_name: str, payload: Any) -> None:
+        nonlocal warned_no_id
         update_broker_state(event_name, payload)
         caches = get_caches() or ()
         if event_name == "trade":
@@ -112,6 +123,19 @@ def wrap_state_invalidation(
                 cache.invalidate_available()
                 cache.invalidate_account()
                 cache.invalidate_open_orders()
+            if on_new_fill is not None:
+                if trade_id:
+                    try:
+                        on_new_fill(payload)
+                    except Exception:  # noqa: BLE001 统计出错不影响柜台状态同步
+                        logger.warning(
+                            "统计: 成交 %s 计入交易统计失败", trade_id, exc_info=True
+                        )
+                elif not warned_no_id:
+                    warned_no_id = True
+                    logger.warning(
+                        "统计: 柜台成交缺少 trade_id, 无法去重, 不计入交易统计"
+                    )
             if trade_id:
                 applied_fill_ids.add(trade_id)
         elif event_name == "order":

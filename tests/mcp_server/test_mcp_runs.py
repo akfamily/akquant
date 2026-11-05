@@ -321,3 +321,18 @@ def test_long_log_line_truncated(cfg: ServiceConfig, write_file: WriteFile) -> N
     assert out["status"] == "ok", out
     assert any(len(t) > 100 for t in out["log_tail"])
     assert all(len(t) <= 501 for t in out["log_tail"])
+
+
+def test_crash_message_clips_long_last_line(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """崩溃前最后一行很长: error.message 里的末行按 500 字截断."""
+    src = _simple(
+        "        print('x' * 2000, flush=True)\n"
+        "        import os\n"
+        "        os._exit(4)\n"
+    )
+    write_file("c3.py", src)
+    out = run_backtest(cfg, "c3.py", _dataset(cfg))
+    assert out["error"]["type"] == "WorkerCrashed"
+    assert len(out["error"]["message"]) <= 600

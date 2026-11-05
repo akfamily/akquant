@@ -129,7 +129,7 @@ def run_backtest(
 *   `trading_calendar`: List of trading days (`date` / string / `Timestamp`), default `None`. When omitted, China markets infer trading days from weekdays (holidays are treated as trading days, so night sessions and end-of-day settlement around holidays are wrong) and a warning is logged once; `ALWAYS_OPEN` counts every day and does not warn. Data timestamps outside the range covered by the given calendar raise `ValueError`.
 *   `t_plus_one`: Enable T+1 trading rule. When omitted, the `broker_profile` setting is used (all three built-in A-share templates enable it); without a template it is False. If enabled, it forces usage of China Market Model.
 *   `slippage`: Global slippage (Default `None`, i.e. no slippage). Must be an explicit policy dict, e.g. `{"type": "percent", "value": 0.0001}` for 1bp (0.01%) percent slippage, or `{"type": "fixed", "value": 0.2}` for a fixed price offset. Bare numbers (including `0`) are no longer accepted and raise `TypeError`. To disable slippage, including overriding a `broker_profile` template, pass `{"type": "zero"}`; omitting it or passing `None` means no override (the template's slippage applies if a `broker_profile` is set, otherwise there is no slippage).
-*   `volume_limit_pct`: Max participation rate, default `None` (unlimited, same as 0). With 0.25 a single bar fills at most 25% of its volume, rounded down to whole lots; if that is less than one lot the bar fills nothing and the order stays open. An order whose remaining quantity is at most `volume × pct` still fills in one piece (this may be an odd lot, e.g. selling the last 50 shares); an IOC/FOK order whose floored cap is 0 is cancelled on that bar. **Bar volume must use the same unit as order quantity**: AKShare's `stock_zh_a_hist` reports volume in lots (100 shares), multiply by 100 before enabling the limit. The limit applies to bar matching only; tick-driven matching is not subject to it. For instruments with fractional quantities (crypto, forex), set `lot_size` (default 1), otherwise the capped quantity is floored to whole units.
+*   `volume_limit_pct`: Max participation rate, default `None` (unlimited, same as 0). With 0.25 a single bar fills at most 25% of its volume, rounded down to whole lots; if that is less than one lot the bar fills nothing and the order stays open. An order whose remaining quantity is at most `volume × pct` still fills in one piece (this may be an odd lot, e.g. selling the last 50 shares); an IOC/FOK order whose floored cap is 0 is cancelled on that bar. **Bar volume must use the same unit as order quantity**: AKShare's Eastmoney `stock_zh_a_hist` reports volume in lots (100 shares), multiply by 100 before enabling the limit; the Sina `stock_zh_a_daily` already reports shares. The limit applies to bar matching only; tick-driven matching is not subject to it. For instruments with fractional quantities (crypto, forex), set `lot_size` (default 1), otherwise the capped quantity is floored to whole units.
 *   `warmup_period`: Strategy warmup period. Specifies the length of historical data (number of Bars) to preload for indicator calculation.
 *   `start_time` / `end_time`: Backtest start/end time. Naive strings or `Timestamp` values are interpreted in the current `timezone` before being converted to UTC for filtering.
 *   `catalog_path`: When `data` is omitted, load data from this directory using `ParquetDataCatalog` rules.
@@ -1023,6 +1023,12 @@ Notes:
 *   These APIs are available in `on_start` (snapshots are injected before start callbacks).
 *   Prefer these APIs for static metadata access instead of relying on `bar.extra`.
 
+**Strategy Drawings and Runtime Stats:**
+
+*   `draw`: The drawing entry bound to the strategy (`DrawingApi`), with `line` / `box` / `label` / `polyline` / `fib` / `table` / `delete` / `clear`. The first argument is a non-empty `id`; calling again with the same `(owner, symbol, id)` overwrites the whole object and emits nothing if the content is unchanged; a kind cannot reuse another kind's id (`ValueError`); colors accept only `#RRGGBB` / `#RRGGBBAA`. `aq.Indicator` inherits the same entry. See the [visualization guide](../guide/visualization.md#strategy-drawings-and-stats-tables) for parameters and limits.
+*   `max_drawings_per_kind`: Class attribute, default `500`; maximum alive objects per `(owner, symbol, kind)`. When exceeded, the earliest created object is evicted and one `warning` is logged.
+*   `stats -> StrategyStats`: Runtime performance snapshot, recomputed on each access; same definitions as `result.metrics` (fields in `on_stop` are exactly equal), account level. Reading it outside callbacks and `on_stop` raises `RuntimeError`; with a real broker in live trading (`broker_live`) it is driven by the broker's fills; see the [visualization guide](../guide/visualization.md#runtime-stats-selfstats) for definitions and limitations.
+
 **Machine Learning Support:**
 
 *   `set_rolling_window(train_window, step)`: Set rolling training window.
@@ -1067,6 +1073,21 @@ ha.update(open, high, low, close)  # -> (ha_open, ha_high, ha_low, ha_close), re
 *   Formula: `ha_close = (O+H+L+C)/4`; `ha_open` is `(O+C)/2` on the first bar, then the previous bar's `(ha_open+ha_close)/2`; `ha_high = max(H, ha_open, ha_close)`; `ha_low = min(L, ha_open, ha_close)`.
 *   Also provides a `value` property and the batch method `update_many_ohlc`; works with `clone_indicator` and `intrabar=True`. There is no `akquant.talib` batch function.
 *   Draw it as candles: `self.I(aq.HeikinAshi(), name="ha", input_mode="ohlc", outputs=("open", "high", "low", "close"), render_type="candle")`. The four components (`ha.open`, ...) carry `group="ha"` and a `role`; LWC and plotly draw one candle series, d3Kline degrades to the close line. See the [custom indicator guide](../guide/custom_indicator.md).
+
+### `akquant.StrategyStats`
+
+The frozen dataclass snapshot returned by `Strategy.stats`. Fields (all `Optional`): `total_return_pct`, `total_pnl`, `unrealized_pnl`, `total_commission`, `max_drawdown`, `max_drawdown_pct`, `max_drawdown_value`, `win_rate`, `loss_rate`, `winning_trades`, `losing_trades`, `profit_factor`, `avg_pnl`, `avg_profit`, `avg_loss`, `largest_win`, `largest_loss`, `max_wins`, `max_losses`, plus `trade_count`, `current_drawdown_pct` and `equity`.
+
+*   `as_rows(fields=None, labels=None) -> list[list[dict]]`: Converts to a 2-D cell list that goes straight into `self.draw.table(rows=...)` (name and value columns). Default fields are `total_return_pct` / `max_drawdown_pct` / `win_rate` / `profit_factor` / `trade_count` / `total_pnl` with Chinese labels; `labels` overrides labels, an unknown field name raises `ValueError`.
+
+### `akquant.is_drawing_stream_event` / `akquant.to_drawing_message`
+
+```python
+def is_drawing_stream_event(event) -> bool
+def to_drawing_message(event) -> Optional[dict]
+```
+
+Entry points for the drawing message added in stream schema 1.7. `is_drawing_stream_event` tells whether an event is `indicator_drawing`; `to_drawing_message` converts it to the frontend message `{"channel": "indicator", "type": "drawing", "schema_version": "1.7", "op": "upsert" | "delete", "drawing": {...}, "run_id", "seq", "ts", "symbol", "level"}`. With `op="delete"` `drawing` carries only the identity fields. It returns `None` for non-drawing events or an invalid `op`. `is_indicator_stream_event` / `to_indicator_message` are unchanged and never receive drawing messages.
 
 ### `akquant.inspect_strategy`
 
@@ -1410,6 +1431,9 @@ Backtest result object.
 *   `equity_curve_daily`: Daily end-of-day equity curve.
 *   `cash_curve_daily`: Daily end-of-day cash curve.
 *   `margin_curve_daily`: Daily end-of-day margin curve.
+
+*   `drawings`: List of strategy drawing objects still alive when the backtest ends (`list[dict]`; structure in the [visualization guide](../guide/visualization.md#strategy-drawings-and-stats-tables)).
+*   `drawings_df()`: Drawing objects as a table; `points` / `style` / `table` stay nested. `export_indicators()` output carries `drawings`, and `viz.review(include_drawings=True)` (default) renders them on the review page.
 
 **Analysis Methods:**
 

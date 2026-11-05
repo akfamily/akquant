@@ -326,3 +326,91 @@ def test_snap_time_accepts_ns_trade_time_against_coarser_bar_index() -> None:
     assert _snap_time(pd.Timestamp("2024-01-03 00:00"), idx) == pd.Timestamp(
         "2024-01-03"
     )
+
+
+class _TzResult(_FakeResult):
+    """带策略时区的 result 桩."""
+
+    _timezone = "Asia/Shanghai"
+
+
+def _aware_trade(entry: str, exit_: str) -> pd.DataFrame:
+    """tz-aware(+08:00)成交,模拟引擎输出."""
+    return pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "side": ["long"],
+            "entry_time": [pd.Timestamp(entry, tz="Asia/Shanghai")],
+            "exit_time": [pd.Timestamp(exit_, tz="Asia/Shanghai")],
+            "entry_price": [10.0],
+            "exit_price": [11.0],
+        }
+    )
+
+
+def _naive_md(index: pd.DatetimeIndex) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "open": 10.0,
+            "high": 11.0,
+            "low": 9.0,
+            "close": 10.5,
+            "volume": 1e6,
+        },
+        index=index,
+    )
+
+
+def _marker_instants(payload: dict) -> list[pd.Timestamp]:
+    """把 marker 时间还原为无时区墙钟时间(无时区索引的墙钟被当作 UTC 秒输出)."""
+    out = []
+    for m in payload["symbols"][0]["markers"]:
+        t = m["time"]
+        if isinstance(t, int):
+            out.append(pd.Timestamp(t, unit="s"))
+        else:
+            out.append(pd.Timestamp(t))
+    return out
+
+
+def test_markers_naive_daily_1500_bars_land_on_own_bar() -> None:
+    """无时区日线(15:00 戳)+ 上海时区成交:marker 落在成交所在 bar,而非前一根."""
+    idx = pd.bdate_range("2024-01-02", periods=8) + pd.Timedelta(hours=15)
+    trades = _aware_trade("2024-01-04 15:00", "2024-01-09 15:00")
+    payload = build_review_payload(
+        _TzResult(trades), {"AAA": _naive_md(idx)}, symbols=["AAA"]
+    )
+    got = _marker_instants(payload)
+    assert got == [pd.Timestamp("2024-01-04 15:00"), pd.Timestamp("2024-01-09 15:00")]
+
+
+def test_markers_naive_intraday_minute_bars_land_on_right_minute() -> None:
+    """无时区分钟线:09:31+08 的成交落在 09:31 这根,而非前一日."""
+    idx = pd.date_range("2024-01-02 09:30", periods=10, freq="min")
+    idx = idx.union(pd.date_range("2024-01-03 09:30", periods=10, freq="min"))
+    trades = _aware_trade("2024-01-03 09:31", "2024-01-03 09:35")
+    payload = build_review_payload(
+        _TzResult(trades), {"AAA": _naive_md(idx)}, symbols=["AAA"]
+    )
+    got = _marker_instants(payload)
+    assert got == [
+        pd.Timestamp("2024-01-03 09:31"),
+        pd.Timestamp("2024-01-03 09:35"),
+    ]
+
+
+def test_snap_time_tz_none_keeps_utc_wall_behaviour() -> None:
+    """Tz 为 None 时保持旧行为(抹成 UTC 墙钟)."""
+    idx = pd.date_range("2024-01-02 00:00", periods=3, freq="D")
+    ts = pd.Timestamp("2024-01-03 03:00", tz="Asia/Shanghai")  # = 01-02 19:00 UTC
+    assert _snap_time(ts, idx) == pd.Timestamp("2024-01-02")
+    assert _snap_time(ts, idx, "Asia/Shanghai") == pd.Timestamp("2024-01-03")
+
+
+def test_snap_time_aware_index_unchanged_by_tz() -> None:
+    """Aware 索引不受 tz 参数影响."""
+    idx = pd.date_range("2024-01-02 09:30", periods=5, freq="min", tz="Asia/Shanghai")
+    ts = pd.Timestamp("2024-01-02 09:32", tz="Asia/Shanghai")
+    assert _snap_time(ts, idx) == _snap_time(ts, idx, "Asia/Shanghai") == idx[2]
+    naive = pd.Timestamp("2024-01-02 09:32")
+    assert _snap_time(naive, idx, "UTC") == idx[2]

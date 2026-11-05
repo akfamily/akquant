@@ -13,6 +13,7 @@ use crossbeam_channel::Sender;
 use numpy::PyArray1;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
@@ -146,6 +147,10 @@ pub struct ContextInit {
     pub instruments: Arc<HashMap<String, Instrument>>,
     pub last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
     pub sessions: ContextSessions,
+    /// 运行时统计状态（见 [`StrategyContext::strategy_stats`]）。
+    pub stats_state: crate::analysis::StatsState,
+    /// 当前账户权益（Decimal，统计用，避免经 f64 的 account_equity 损失精度）。
+    pub stats_equity: Decimal,
 }
 
 /// 策略查询交易日与时段所需的状态（见 [`StrategyContext::session_of`]）。
@@ -198,6 +203,10 @@ pub struct ContextUpdate {
     pub margin_daily_interest: f64,
     pub last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
     pub sessions: ContextSessions,
+    /// 运行时统计状态（见 [`StrategyContext::strategy_stats`]）。
+    pub stats_state: crate::analysis::StatsState,
+    /// 当前账户权益（Decimal，统计用，避免经 f64 的 account_equity 损失精度）。
+    pub stats_equity: Decimal,
 }
 
 #[gen_stub_pyclass]
@@ -423,6 +432,8 @@ impl StrategyContext {
         self.margin_daily_interest = update.margin_daily_interest;
         self.trading_day = update.sessions.trading_day;
         self.sessions = update.sessions;
+        self.stats_state = update.stats_state;
+        self.stats_equity = update.stats_equity;
 
         // Reset accumulators
         self.orders.clear();
@@ -545,6 +556,10 @@ pub struct StrategyContext {
     #[pyo3(get)]
     pub trading_day: Option<chrono::NaiveDate>,
     pub(crate) sessions: ContextSessions,
+    /// 运行时统计状态（引擎每次回调前推入）。
+    pub stats_state: crate::analysis::StatsState,
+    /// 当前账户权益（Decimal），与 stats_state 配套。
+    pub stats_equity: Decimal,
 }
 
 impl StrategyContext {
@@ -596,6 +611,8 @@ impl StrategyContext {
             last_prices: init.last_prices,
             trading_day: init.sessions.trading_day,
             sessions: init.sessions,
+            stats_state: init.stats_state,
+            stats_equity: init.stats_equity,
         }
     }
 
@@ -826,6 +843,8 @@ impl StrategyContext {
             last_prices: Arc::new(RwLock::new(HashMap::new())),
             trading_day: None,
             sessions: ContextSessions::default(),
+            stats_state: Default::default(),
+            stats_equity: Decimal::ZERO,
         })
     }
 
@@ -1041,6 +1060,22 @@ impl StrategyContext {
         let lock = self.window_aggregator.as_ref()?;
         let aggregator = lock.read().ok()?;
         aggregator.current(symbol, freq)
+    }
+
+    /// 运行时绩效统计（口径同 result.metrics，回撤含“当前时刻、当前权益”这一点）。
+    ///
+    /// 回调期间引擎被 run() 独占借用，不能从回调里调用 Engine 的方法，所以统计状态随
+    /// ctx 推过来。unrealized_pnl 取账户浮动盈亏（account_unrealized_pnl）。
+    ///
+    /// :return: dict，键见 akquant.strategy_stats.StrategyStats
+    fn strategy_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        crate::analysis::compute_strategy_stats(
+            &self.stats_state,
+            Some(self.current_time),
+            self.stats_equity,
+            self.account_unrealized_pnl,
+        )
+        .to_pydict(py)
     }
 
     #[getter]
@@ -1586,6 +1621,8 @@ mod tests {
             instruments: Arc::default(),
             last_prices: Arc::default(),
             sessions,
+            stats_state: Default::default(),
+            stats_equity: Decimal::ZERO,
         })
     }
 

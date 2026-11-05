@@ -1611,6 +1611,29 @@ class BacktestResult:
         )
         return cast(pd.DataFrame, grouped[columns])
 
+    @property
+    def drawings(self) -> List[Dict[str, Any]]:
+        """回测结束时仍存活的策略绘图对象(self.draw 的最终状态)."""
+        return [dict(d) for d in self.indicator_outputs.get("drawings", [])]
+
+    def drawings_df(self) -> pd.DataFrame:
+        """绘图对象表; points/style/table 保留为嵌套结构, 不展开."""
+        columns = [
+            "owner_strategy_id",
+            "symbol",
+            "drawing_id",
+            "kind",
+            "pane",
+            "points",
+            "text",
+            "style",
+            "table",
+            "created_seq",
+            "updated_ts",
+            "phase",
+        ]
+        return pd.DataFrame(self.drawings, columns=columns)
+
     @cached_property
     def indicator_definitions(self) -> pd.DataFrame:
         """Get normalized indicator definition metadata."""
@@ -1751,6 +1774,7 @@ class BacktestResult:
                 "definitions": self._json_ready_records(self.indicator_definitions),
                 "instances": self._json_ready_records(self.indicator_instances),
                 "points": self._json_ready_records(self._indicator_points_df),
+                "drawings": self.drawings,
             }
             output_path.parent.mkdir(parents=True, exist_ok=True)
             # ``ensure_ascii=False`` keeps CJK metadata readable and matches the
@@ -1776,6 +1800,10 @@ class BacktestResult:
             definitions_frame.to_parquet(output_path / "definitions.parquet")
             self.indicator_instances.to_parquet(output_path / "instances.parquet")
             self._indicator_points_df.to_parquet(output_path / "points.parquet")
+            (output_path / "drawings.json").write_text(
+                json.dumps(self.drawings, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
             return
         raise ValueError("format must be 'json' or 'parquet'")
 

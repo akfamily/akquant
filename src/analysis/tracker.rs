@@ -18,6 +18,43 @@ pub struct TradeEntry {
     pub entry_portfolio_value: Decimal,
 }
 
+/// 一笔平仓的汇总更新；两个方向的平仓分支共用（以前是两段相同的代码）。
+/// largest_* 的比较规则与 calculate_pnl 的循环相同：初值 0，只有严格更大（更小）才替换。
+///
+/// 用宏而不是 `&mut self` 方法：调用点持有 `self.long_inventory`/`short_inventory` 的
+/// 可变借用，方法会借走整个 `self`；宏直接访问字段，借用检查器能看出字段互不相交。
+macro_rules! record_close {
+    ($self:ident, $pnl:expr, $ret_pct:expr, $bars:expr) => {{
+        let (pnl, ret_pct, bars) = ($pnl, $ret_pct, $bars);
+        $self.sum_closed_pnl += pnl;
+        if pnl > Decimal::ZERO {
+            $self.won_count += 1;
+            $self.won_pnl += pnl;
+            $self.closed_trades_stats.push((pnl, ret_pct, bars, true));
+            if pnl > $self.largest_win {
+                $self.largest_win = pnl;
+            }
+            $self.current_wins += 1;
+            $self.current_losses = 0;
+            if $self.current_wins > $self.max_wins {
+                $self.max_wins = $self.current_wins;
+            }
+        } else {
+            $self.lost_count += 1;
+            $self.lost_pnl += pnl;
+            $self.closed_trades_stats.push((pnl, ret_pct, bars, false));
+            if pnl < $self.largest_loss {
+                $self.largest_loss = pnl;
+            }
+            $self.current_losses += 1;
+            $self.current_wins = 0;
+            if $self.current_losses > $self.max_losses {
+                $self.max_losses = $self.current_losses;
+            }
+        }
+    }};
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeTracker {
     // (qty, price, commission, bar_idx, timestamp, tag, entry_portfolio_value)
@@ -37,6 +74,14 @@ pub struct TradeTracker {
     pub max_losses: usize,
     pub current_wins: usize,
     pub current_losses: usize,
+
+    // 运行时统计用的增量汇总；放在末尾并带 default，旧快照仍可反序列化
+    #[serde(default)]
+    pub sum_closed_pnl: Decimal,
+    #[serde(default)]
+    pub largest_win: Decimal,
+    #[serde(default)]
+    pub largest_loss: Decimal,
 }
 
 impl TradeTracker {
@@ -56,6 +101,45 @@ impl TradeTracker {
             max_losses: 0,
             current_wins: 0,
             current_losses: 0,
+            sum_closed_pnl: Decimal::ZERO,
+            largest_win: Decimal::ZERO,
+            largest_loss: Decimal::ZERO,
+        }
+    }
+
+    /// 从 `closed_trades_stats` 重建 sum_closed_pnl / largest_win / largest_loss。
+    /// 旧状态快照缺这三个字段（反序列化为 0），恢复后必须调用。
+    pub fn rebuild_summary_fields(&mut self) {
+        let mut sum = Decimal::ZERO;
+        let mut largest_win = Decimal::ZERO;
+        let mut largest_loss = Decimal::ZERO;
+        for (pnl, _, _, is_win) in &self.closed_trades_stats {
+            sum += *pnl;
+            if *is_win {
+                if *pnl > largest_win {
+                    largest_win = *pnl;
+                }
+            } else if *pnl < largest_loss {
+                largest_loss = *pnl;
+            }
+        }
+        self.sum_closed_pnl = sum;
+        self.largest_win = largest_win;
+        self.largest_loss = largest_loss;
+    }
+
+    pub fn summary(&self) -> crate::analysis::TradeSummary {
+        crate::analysis::TradeSummary {
+            won_count: self.won_count,
+            lost_count: self.lost_count,
+            won_pnl: self.won_pnl,
+            lost_pnl: self.lost_pnl,
+            sum_closed_pnl: self.sum_closed_pnl,
+            largest_win: self.largest_win,
+            largest_loss: self.largest_loss,
+            total_commission: self.total_commission,
+            max_wins: self.max_wins,
+            max_losses: self.max_losses,
         }
     }
 
@@ -297,27 +381,7 @@ impl TradeTracker {
                             max_drawdown_pct: max_dd_pct,
                         });
 
-                        if pnl > Decimal::ZERO {
-                            self.won_count += 1;
-                            self.won_pnl += pnl;
-                            self.closed_trades_stats.push((pnl, ret_pct, bars, true));
-
-                            self.current_wins += 1;
-                            self.current_losses = 0;
-                            if self.current_wins > self.max_wins {
-                                self.max_wins = self.current_wins;
-                            }
-                        } else {
-                            self.lost_count += 1;
-                            self.lost_pnl += pnl;
-                            self.closed_trades_stats.push((pnl, ret_pct, bars, false));
-
-                            self.current_losses += 1;
-                            self.current_wins = 0;
-                            if self.current_losses > self.max_losses {
-                                self.max_losses = self.current_losses;
-                            }
-                        }
+                        record_close!(self, pnl, ret_pct, bars);
 
                         remaining_qty -= covered_qty;
                         match_entry.quantity -= covered_qty;
@@ -516,27 +580,7 @@ impl TradeTracker {
                             max_drawdown_pct: max_dd_pct,
                         });
 
-                        if pnl > Decimal::ZERO {
-                            self.won_count += 1;
-                            self.won_pnl += pnl;
-                            self.closed_trades_stats.push((pnl, ret_pct, bars, true));
-
-                            self.current_wins += 1;
-                            self.current_losses = 0;
-                            if self.current_wins > self.max_wins {
-                                self.max_wins = self.current_wins;
-                            }
-                        } else {
-                            self.lost_count += 1;
-                            self.lost_pnl += pnl;
-                            self.closed_trades_stats.push((pnl, ret_pct, bars, false));
-
-                            self.current_losses += 1;
-                            self.current_wins = 0;
-                            if self.current_losses > self.max_losses {
-                                self.max_losses = self.current_losses;
-                            }
-                        }
+                        record_close!(self, pnl, ret_pct, bars);
 
                         remaining_qty -= covered_qty;
                         match_entry.quantity -= covered_qty;

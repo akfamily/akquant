@@ -30,10 +30,10 @@ HINT_RULES: Tuple[Tuple[Tuple[str, ...], str], ...] = (
     (
         (
             "Failed to instantiate strategy with provided parameters",
-            "unexpected keyword argument",
+            "missing",
         ),
-        "不要重写 __init__(或让它接受 **kwargs 并传给 super().__init__); "
-        "状态初始化放到 on_start",
+        "__init__ 有必填参数, 但它不是声明的策略参数: 给它一个默认值, "
+        "或去掉; 策略参数只用类体 IntParam 等声明, 读取用 self.params",
     ),
     (
         ("no Strategy subclass found",),
@@ -41,6 +41,7 @@ HINT_RULES: Tuple[Tuple[Tuple[str, ...], str], ...] = (
     ),
     (
         ("multiple Strategy subclasses found",),
+        "本文件定义了多个 Strategy 子类(或没有定义、只导入了多个); "
         "用 strategy_attr 参数指定要用的类名",
     ),
 )

@@ -261,11 +261,18 @@ def _load_python_plain_locked(
                 return cast(StrategyLike, picked)
             raise TypeError(f"module attr '{attr_name}' is not a valid strategy input")
 
-    candidates = [
+    all_candidates = [
         obj
         for obj in module.__dict__.values()
         if isinstance(obj, type) and issubclass(obj, Strategy) and obj is not Strategy
     ]
+    # 两层候选: 先看本模块自己定义的类, 这样 ``from base import MyBase`` 加
+    # ``class S(MyBase)`` 不会把导入进来的基类也算作候选; 本模块一个都没定义时
+    # (只 re-export)才退回全量候选。
+    local_candidates = [
+        obj for obj in all_candidates if obj.__module__ == module.__name__
+    ]
+    candidates = local_candidates or all_candidates
     if len(candidates) == 1:
         return cast(StrategyLike, candidates[0])
     if not candidates:

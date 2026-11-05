@@ -101,6 +101,15 @@ class BrokerStateCache:
                 logger.exception("broker_state_cache.query_account failed")
         return self._account
 
+    def account_if_loaded(self) -> Any:
+        """不查柜台, 返回最近一次查询成功的账户快照; 从未成功过时返回 None.
+
+        成交/委托回报会把账户标记为过期(``invalidate_account``), 但这里仍返回
+        上次的值——调用方(每 bar 权益采样)要的是"不触发查询", 不是"最新"。
+        柜台断线时它不会每 bar 重查、也不会每 bar 打异常日志。
+        """
+        return self._account
+
     def open_orders(self) -> list[Any]:
         """Return open order snapshots from the broker (cached)."""
         if not self._open_orders_loaded:

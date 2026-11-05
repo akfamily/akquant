@@ -99,7 +99,13 @@ def test_indicator_recording_round_trip(tmp_path: Path) -> None:
     export_path = tmp_path / "indicators.json"
     result.export_indicators(str(export_path), format="json")
     payload = json.loads(export_path.read_text(encoding="utf-8"))
-    assert sorted(payload.keys()) == ["definitions", "instances", "points", "run_id"]
+    assert sorted(payload.keys()) == [
+        "definitions",
+        "drawings",
+        "instances",
+        "points",
+        "run_id",
+    ]
     assert result.stream_run_id == events[0]["run_id"]
     assert payload["run_id"] == result.stream_run_id
     assert len(payload["definitions"]) == 2

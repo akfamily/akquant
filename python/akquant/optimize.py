@@ -53,6 +53,7 @@ _GRID_SEARCH_ONLY_KWARGS = frozenset(
         "db_path",
         "forward_worker_logs",
         "return_df",
+        "raise_on_all_failed",
     }
 )
 
@@ -600,6 +601,22 @@ def _log_optimization_summary(
         )
 
 
+def _all_failed_message(results: List[OptimizationResult]) -> str:
+    """构造"全部组合失败"的报错信息: 总组数、最常见的前 3 种错误、应对提示."""
+    counts: Dict[str, int] = {}
+    for r in results:
+        key = str(r.error)[:200]
+        counts[key] = counts.get(key, 0) + 1
+    top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:3]
+    lines = [f"  - ({n} 次) {err}" for err, n in top]
+    return (
+        f"run_grid_search: 全部 {len(results)} 组参数都运行失败。"
+        "最常见的错误:\n" + "\n".join(lines) + "\n"
+        "这通常是策略或数据本身的问题, 而不是参数不好; 请先用单组参数调用 "
+        "run_backtest 复现并排查。传 raise_on_all_failed=False 可改为返回结果表。"
+    )
+
+
 def run_grid_search(
     strategy: Type[Strategy],
     param_grid: Mapping[str, Sequence[Any]],
@@ -615,6 +632,7 @@ def run_grid_search(
     max_tasks_per_child: Optional[int] = None,
     db_path: Optional[str] = None,
     forward_worker_logs: bool = False,
+    raise_on_all_failed: bool = True,
     **kwargs: Any,
 ) -> Union[pd.DataFrame, List[OptimizationResult]]:
     """
@@ -638,8 +656,14 @@ def run_grid_search(
                                 设置 1 可以避免内存泄漏或超时线程残留。
     :param db_path: SQLite 数据库路径 (可选)。如果提供，将支持断点续传和增量保存。
     :param forward_worker_logs: 并行时是否将子进程策略日志回传主进程 (默认: False)
+    :param raise_on_all_failed: 所有组合(含 ``db_path`` 续跑读出的历史结果)都失败时
+                                是否抛 ``RuntimeError`` (默认: True)。全部失败几乎
+                                总是策略或数据本身的问题; 传 False 则照旧返回
+                                每行都带 error、sharpe_ratio=-999 的结果表。部分
+                                失败时不受影响, 只打 warning
     :param kwargs: 传递给 run_backtest 的其他参数 (symbol, cash, etc.)
     :return: 优化结果 (DataFrame 或 List[OptimizationResult])
+    :raises RuntimeError: ``raise_on_all_failed`` 为真且没有任何一组成功
     """
     backtest_kwargs = _resolve_optimization_backtest_kwargs(data, dict(kwargs))
     backtest_kwargs.setdefault("strict_strategy_params", True)
@@ -926,6 +950,10 @@ def run_grid_search(
     # 合并结果
     results = existing_results + new_results
 
+    # 全部失败: 在 result_filter 之前判断(filter 清空结果不算失败)
+    if raise_on_all_failed and results and all(r.error is not None for r in results):
+        raise RuntimeError(_all_failed_message(results))
+
     # 4. 结果筛选
     if result_filter:
         original_count = len(results)
@@ -962,6 +990,12 @@ def run_grid_search(
         results.sort(
             key=lambda x: x.metrics.get(sort_by, -float("inf")), reverse=not ascending
         )
+
+    # 失败的组合只有 error/sharpe_ratio/total_return, 取不到的指标按 -inf 排序,
+    # 升序时会排到最前; 稳定分区, 保证失败行始终在所有成功行之后
+    results = [r for r in results if r.error is None] + [
+        r for r in results if r.error is not None
+    ]
 
     if return_df:
         data_list = []
@@ -1090,6 +1124,8 @@ def run_walk_forward(
             initial_cash=initial_cash,
             timeout=timeout,
             max_tasks_per_child=max_tasks_per_child,
+            # 窗口内全部失败不抛, 保持 walk-forward 原有行为
+            raise_on_all_failed=False,
             **kwargs,
         )
 
@@ -1099,8 +1135,25 @@ def run_walk_forward(
             )
             continue
 
-        # 获取最佳参数
-        best_row = opt_results.iloc[0]
+        # 窗口内每个组合都失败: 结果表非空但全是 -999 的失败行, 不能拿它的
+        # 第一行当"最佳参数"去跑样本外
+        if "error" in opt_results.columns and opt_results["error"].notna().all():
+            top_error = str(opt_results["error"].mode().iloc[0])[:200]
+            logger.warning(
+                "Window %s: all %s parameter combinations failed in training "
+                "(top error: %s). Skipping window.",
+                i // test_period + 1,
+                len(opt_results),
+                top_error,
+            )
+            continue
+
+        # 获取最佳参数: 取第一条成功的行(失败行已排在最后, 这里再防一层)
+        if "error" in opt_results.columns:
+            ok_rows = opt_results[opt_results["error"].isna()]
+            best_row = ok_rows.iloc[0]
+        else:
+            best_row = opt_results.iloc[0]
         best_params = {k: best_row[k] for k in param_grid.keys()}
 
         # 显示排序指标的值

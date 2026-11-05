@@ -30,6 +30,8 @@ result = aq.run_backtest(
 )
 ```
 
+不传 `strategy_attr` 时，`python_plain` 按两层规则选类：先取本文件自己定义的 `Strategy` 子类，正好一个就用它（所以 `from base import MyBase` 加 `class S(MyBase)` 会选中 `S`，不会把导入的基类也算进来）；多于一个报错；本文件一个都没定义（只 re-export）时，退回模块里全部 `Strategy` 子类，同样要求恰好一个。
+
 ## 3. 核心 API
 
 从 `akquant` 顶层可导入：
