@@ -377,20 +377,10 @@ pip install akshare
 import akshare as ak
 import pandas as pd
 
-# 下载 A 股历史数据 (平安银行)
+# 下载 A 股历史日线数据 (平安银行)，使用新浪数据源，代码需带市场前缀 sz/sh/bj
 # adjust="qfq" 表示使用前复权数据，这在回测中非常重要
-# period="daily" 表示日线数据
-df = ak.stock_zh_a_hist(symbol="000001", period="daily", start_date="20230101", end_date="20231231", adjust="qfq")
-
-# 数据清洗：将 AKShare 的中文列名转换为 AKQuant 需要的英文标准格式
-df = df.rename(columns={
-    "日期": "date",
-    "开盘": "open",
-    "最高": "high",
-    "最低": "low",
-    "收盘": "close",
-    "成交量": "volume"
-})
+# 新浪接口已返回 AKQuant 需要的英文列名 (date/open/high/low/close/volume)
+df = ak.stock_zh_a_daily(symbol="sz000001", start_date="20230101", end_date="20231231", adjust="qfq")
 
 # 格式转换：确保 date 列是 datetime 类型
 df['date'] = pd.to_datetime(df['date'])

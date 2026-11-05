@@ -19,10 +19,10 @@ import pandas as pd
 
 
 def generate_mock_raw_data(length: int = 240) -> pd.DataFrame:
-    """断网兜底：生成 AKShare 风格（中文列名）的原始日线数据.
+    """断网兜底：生成与 AKShare 新浪日线接口同列名的原始日线数据.
 
-    保持与 ``stock_zh_a_hist`` 相同的中文列名，使后续重命名与清洗流程
-    在离线时也能完整演示。
+    保持与 ``stock_zh_a_daily`` 相同的列结构（含 ``amount`` 等多余字段），
+    使后续筛选与清洗流程在离线时也能完整演示。
     """
     np.random.seed(7)
     dates = pd.date_range(start="2023-01-03", periods=length, freq="B")
@@ -30,17 +30,31 @@ def generate_mock_raw_data(length: int = 240) -> pd.DataFrame:
     open_ = close + np.random.randn(length) * 0.03
     high = np.maximum(open_, close) + np.abs(np.random.randn(length) * 0.05)
     low = np.minimum(open_, close) - np.abs(np.random.randn(length) * 0.05)
-    volume = np.random.uniform(1e6, 5e6, length)
+    volume = np.random.uniform(1e8, 5e8, length)
     return pd.DataFrame(
         {
-            "日期": dates,
-            "开盘": open_,
-            "最高": high,
-            "最低": low,
-            "收盘": close,
-            "成交量": volume,
+            "date": dates,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+            "amount": volume * close,
         }
     )
+
+
+def to_sina_symbol(symbol: str) -> str:
+    """把 6 位 A 股代码转换为新浪接口需要的带市场前缀代码.
+
+    :param symbol: 6 位代码 (如 "600000")
+    :return: 带前缀代码 (如 "sh600000")
+    """
+    if symbol.startswith(("6", "9")):
+        return f"sh{symbol}"
+    if symbol.startswith(("4", "8")):
+        return f"bj{symbol}"
+    return f"sz{symbol}"
 
 
 def fetch_and_clean_data(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -55,12 +69,13 @@ def fetch_and_clean_data(symbol: str, start_date: str, end_date: str) -> pd.Data
     print(f"正在获取 {symbol} 的历史数据 ({start_date}-{end_date})...")
 
     # 1. 获取数据
-    # 使用 stock_zh_a_hist 接口获取历史行情
+    # 使用新浪数据源的 stock_zh_a_daily 接口获取历史行情（东方财富接口
+    # stock_zh_a_hist 近期常被断开连接，这里统一用新浪源）
+    # 新浪接口的代码需要带市场前缀，如 "sh600000"
     # adjust="qfq" 表示前复权，这是回测中最常用的复权方式
     try:
-        df = ak.stock_zh_a_hist(
-            symbol=symbol,
-            period="daily",
+        df = ak.stock_zh_a_daily(
+            symbol=to_sina_symbol(symbol),
             start_date=start_date,
             end_date=end_date,
             adjust="qfq",
@@ -73,23 +88,18 @@ def fetch_and_clean_data(symbol: str, start_date: str, end_date: str) -> pd.Data
         print("警告: 获取到的数据为空，改用本地合成数据。")
         df = generate_mock_raw_data()
 
-    # 2. 重命名列 (AKShare 中文列名 -> AKQuant 标准英文列名)
+    # 2. 字段映射
     # 标准列名: date, open, high, low, close, volume
-    rename_map = {
-        "日期": "date",
-        "开盘": "open",
-        "最高": "high",
-        "最低": "low",
-        "收盘": "close",
-        "成交量": "volume",
-    }
-    df = df.rename(columns=rename_map)
+    # 新浪接口已返回英文列名，无需重命名；若换用返回中文列名的数据源
+    # （如东方财富 stock_zh_a_hist），在这里用 rename 映射即可，例如
+    # df.rename(columns={"日期": "date", "开盘": "open", "收盘": "close"})
+    # 注意：新浪接口的 volume 单位是“股”，东方财富接口是“手”（100 股）
 
     # 3. 格式转换与清洗
     # 转换日期列为 pandas datetime 类型
     df["date"] = pd.to_datetime(df["date"])
 
-    # 筛选必要的列，去除多余字段 (如涨跌幅、换手率等，除非策略需要)
+    # 筛选必要的列，去除多余字段 (如成交额、换手率等，除非策略需要)
     required_cols = ["date", "open", "high", "low", "close", "volume"]
     df = df[required_cols]
 

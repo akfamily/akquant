@@ -92,24 +92,15 @@ import akshare as ak
 import pandas as pd
 
 # 1. 下载数据 (以前复权为例)
-# period="daily" 日线; adjust="qfq" 前复权
-df = ak.stock_zh_a_hist(symbol="000001", period="daily", start_date="20200101", end_date="20231231", adjust="qfq")
+# 新浪数据源，代码需带市场前缀 (sh/sz/bj); adjust="qfq" 前复权
+# 返回英文列名 date/open/high/low/close/volume/...，成交量单位是“股”
+df = ak.stock_zh_a_daily(symbol="sz000001", start_date="20200101", end_date="20231231", adjust="qfq")
 
-# 2. 重命名列 (AKShare 返回中文列名)
-df = df.rename(columns={
-    "日期": "date",
-    "开盘": "open",
-    "最高": "high",
-    "最低": "low",
-    "收盘": "close",
-    "成交量": "volume"
-})
-
-# 3. 类型转换
+# 2. 类型转换
 df['date'] = pd.to_datetime(df['date'])
 df['symbol'] = "000001"
 
-# 4. 筛选列
+# 3. 筛选列
 df = df[["date", "open", "high", "low", "close", "volume", "symbol"]]
 ```
 

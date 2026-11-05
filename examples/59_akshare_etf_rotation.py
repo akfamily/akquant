@@ -25,32 +25,30 @@ ETF_NAMES = {
 }
 
 
+def to_sina_etf_symbol(symbol: str) -> str:
+    """把 6 位 ETF 代码转换为新浪接口需要的带市场前缀代码.
+
+    上交所 ETF 以 5 开头（如 510300），深交所 ETF 以 1 开头（如 159915）。
+    """
+    return f"sh{symbol}" if symbol.startswith("5") else f"sz{symbol}"
+
+
 def fetch_etf_history(
     symbol: str,
     start_date: str = "20200101",
     end_date: str = "20251231",
-    adjust: str = "qfq",
 ) -> pd.DataFrame:
-    """获取单只 ETF 历史行情并标准化为 AKQuant 可直接回测的列结构."""
-    df = ak.fund_etf_hist_em(
-        symbol=symbol,
-        period="daily",
-        start_date=start_date,
-        end_date=end_date,
-        adjust=adjust,
-    )
+    """获取单只 ETF 历史行情并标准化为 AKQuant 可直接回测的列结构.
+
+    使用新浪数据源 ``fund_etf_hist_sina``（东方财富接口 ``fund_etf_hist_em``
+    近期常被断开连接）。新浪接口一次返回全部历史、不支持日期区间与复权参数，
+    这里在本地按日期截取。价格为不复权价格，除息日会有小幅跳空；
+    正式研究请自行复权。
+    """
+    df = ak.fund_etf_hist_sina(symbol=to_sina_etf_symbol(symbol))
     if df.empty:
         raise ValueError(f"No ETF data returned for {symbol}")
 
-    rename_map = {
-        "日期": "date",
-        "开盘": "open",
-        "最高": "high",
-        "最低": "low",
-        "收盘": "close",
-        "成交量": "volume",
-    }
-    df = df.rename(columns=rename_map)
     required_columns = ["date", "open", "high", "low", "close", "volume"]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
@@ -61,6 +59,8 @@ def fetch_etf_history(
 
     df = df[required_columns].copy()
     df["date"] = pd.to_datetime(df["date"])
+    in_range = df["date"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))
+    df = df.loc[in_range].copy()
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["date", "open", "high", "low", "close", "volume"])

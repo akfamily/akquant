@@ -72,15 +72,17 @@ $$ P_{adj} = P_{raw} \times \frac{P_{today}}{P_{ex-right}} $$
 
 `AKQuant` 核心引擎基于 Bar 数据驱动，支持任意周期的 Bar（1分钟、5分钟、日线等）。
 
-在 `akshare` 中获取前复权数据非常简单：
+在 AKShare 中获取前复权数据非常简单（这里用新浪数据源，代码需带市场前缀 `sh`/`sz`/`bj`）：
 
 ```python
 import akshare as ak
 
 # 获取浦发银行 (600000) 的日线数据，前复权
-df = ak.stock_zh_a_hist(symbol="600000", period="daily", start_date="20200101", end_date="20231231", adjust="qfq")
+df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20200101", end_date="20231231", adjust="qfq")
 print(df.head())
 ```
+
+新浪接口返回英文列名，成交量单位是“股”。东方财富接口 `stock_zh_a_hist` 返回中文列名、成交量单位是“手”，且近期常被服务端断开连接，本书示例统一使用新浪源。
 
 ## 3.3 数据治理与 ETL 流程
 
@@ -203,7 +205,7 @@ ORDER BY (symbol, datetime);
 
 **官方文档与工具**
 
-- [AKShare 官方文档](https://akshare.akfamily.xyz/) —— 本章 `stock_zh_a_hist` 等行情接口与复权参数 `adjust` 的权威说明，对照 3.1 与 3.2。
+- [AKShare 官方文档](https://akshare.akfamily.xyz/) —— 本章 `stock_zh_a_daily` 等行情接口与复权参数 `adjust` 的权威说明，对照 3.1 与 3.2。
 - [Apache Parquet 官方文档](https://parquet.apache.org/docs/) —— 列式存储格式说明，对照本章 3.3.2（数据存储）。
 - [ClickHouse 官方文档](https://clickhouse.com/docs) —— 时序数据库建表与 MergeTree 引擎说明，对照本章 3.4.2。
 - [pandas 官方文档：时间序列与重采样](https://pandas.pydata.org/docs/user_guide/timeseries.html) —— 频率转换与时间戳对齐参考，对照本章 3.2.2。

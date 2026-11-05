@@ -716,7 +716,7 @@ class StrategyConfig:
                              lots. 0 (default) means unlimited. The bar volume
                              must use the same unit as order quantity (AKShare's
                              ``stock_zh_a_hist`` reports volume in lots of 100
-                             shares).
+                             shares; ``stock_zh_a_daily`` reports shares).
     :param exit_on_last_bar: Auto-close all positions at the end of backtest.
                              Default True.
 
