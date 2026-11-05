@@ -413,3 +413,102 @@ def test_end_to_end_backtest_with_declared_indicators_renders_review(
         md, filename=str(tmp_path / "r2.html"), include_indicators=False
     )
     assert '"indicator_key":"sma2"' not in open(out2, encoding="utf-8").read()
+
+
+def _candle_defs() -> list[dict[str, Any]]:
+    return [
+        _def(f"ha.{role}", group="ha", role=role, render_type="candle")
+        for role in ("open", "high", "low", "close")
+    ]
+
+
+def _candle_pts(ts_ms: int) -> list[dict[str, Any]]:
+    return [
+        _pt("A", ts_ms, float(i + 1), key=f"ha.{role}")
+        for i, role in enumerate(("open", "high", "low", "close"))
+    ]
+
+
+def test_naive_tz_daily_1500_line_and_candle_match_candle_bar_times() -> None:
+    """无时区 15:00 日线: 点位按策略时区墙钟编码, 与 K 线时间值一致(line + candle)."""
+    # 2024-01-02 15:00 +08:00 == 07:00 UTC; 无时区索引里该根 bar 是 15:00 墙钟
+    ts = 1_704_178_800_000
+    bar_time = int(pd.Timestamp("2024-01-02 15:00").timestamp())  # 墙钟当 UTC 秒
+    out = to_lwc_indicator_series(
+        [_def("sma"), *_candle_defs()],
+        [_pt("A", ts, 1.5), *_candle_pts(ts)],
+        "A",
+        intraday=True,
+        naive_tz="Asia/Shanghai",
+    )
+    for series in out:
+        assert [p["time"] for p in series["points"]] == [bar_time]
+    assert {s["series_type"] for s in out} == {"Line", "Candlestick"}
+    # 不传 naive_tz: 保持旧口径(按 UTC 编码, 早 8 小时)
+    old = to_lwc_indicator_series(
+        [_def("sma")], [_pt("A", ts, 1.5)], "A", intraday=True
+    )
+    assert old[0]["points"][0]["time"] == bar_time - 8 * 3600
+
+
+def test_naive_tz_matches_candles_end_to_end() -> None:
+    """端到端: 无时区 15:00 日线与 1 分钟线, 指标点时间 == 同一批 K 线时间."""
+    import akquant as aq
+
+    cases = [
+        (pd.bdate_range("2024-01-02", periods=6) + pd.Timedelta(hours=15), "1d"),
+        (pd.date_range("2024-01-02 09:31", periods=6, freq="min"), "1min"),
+    ]
+    for idx, freq in cases:
+        df = pd.DataFrame(
+            {
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.0,
+                "close": [10, 11, 12, 13, 14, 15],
+                "volume": 1e6,
+                "symbol": "AAA",
+            },
+            index=idx,
+        )
+        df.index.name = "date"
+
+        class S(aq.Strategy):
+            def on_bar(self, bar: Any) -> None:
+                self.record_indicator("c", bar.close)
+
+        r = aq.run_backtest(
+            data=df.reset_index(),
+            strategy=S(),
+            symbols=["AAA"],
+            show_progress=False,
+            freq=freq,
+        )
+        seg = build_review_payload(r, {"AAA": df.drop(columns="symbol")})["symbols"][0]
+        assert [p["time"] for p in seg["indicators"][0]["points"]] == [
+            c["time"] for c in seg["candles"]
+        ]
+
+
+def test_aware_index_indicator_times_unchanged() -> None:
+    """有时区索引: build_review_payload 不传 naive_tz, 点位仍按 UTC 编码."""
+    idx = pd.date_range("2024-01-02 09:31", periods=4, freq="min", tz="Asia/Shanghai")
+    df = pd.DataFrame(
+        {"open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 1e6},
+        index=idx,
+    )
+    df.index.name = "date"
+    ts = int(idx[1].timestamp() * 1000)
+    defs = [_def("c")]
+
+    class R:
+        trades_df = pd.DataFrame()
+        _timezone = "Asia/Shanghai"
+        indicator_outputs = {
+            "definitions": defs,
+            "points": [_pt("AAA", ts, 1.0, key="c")],
+        }
+
+    seg = build_review_payload(R(), {"AAA": df})["symbols"][0]
+    assert seg["indicators"][0]["points"][0]["time"] == ts // 1000
+    assert seg["candles"][1]["time"] == ts // 1000

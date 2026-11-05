@@ -239,7 +239,13 @@ def build_review_payload(
             continue
         markers = _build_markers(trades, sym, index, intraday, tz)
         indicators = (
-            to_lwc_indicator_series(ind_defs, ind_points, sym, intraday)
+            to_lwc_indicator_series(
+                ind_defs,
+                ind_points,
+                sym,
+                intraday,
+                naive_tz=tz if index.tz is None else None,
+            )
             if ind_defs
             else []
         )

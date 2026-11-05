@@ -82,8 +82,17 @@ def _as_float(value: Any) -> Optional[float]:
     return None if math.isnan(number) else number
 
 
-def _time_of(ts_ms: Any, intraday: bool) -> Union[str, int]:
+def _time_of(
+    ts_ms: Any, intraday: bool, naive_tz: Optional[str] = None
+) -> Union[str, int]:
+    """UTC 毫秒 -> LWC 时间值.
+
+    ``naive_tz`` 非空表示 K 线索引无时区: 点先换成该策略时区的墙钟时间再抹去
+    tz, 与 K 线(无时区索引按墙钟编码)同一口径。
+    """
     ts = pd.Timestamp(int(ts_ms), unit="ms", tz="UTC")
+    if naive_tz is not None:
+        ts = ts.tz_convert(naive_tz).tz_localize(None)
     return _bar_time(ts, intraday)
 
 
@@ -109,6 +118,7 @@ def to_lwc_indicator_series(
     points: Iterable[Point],
     symbol: str,
     intraday: bool,
+    naive_tz: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """把某个 symbol 的指标定义与点位转成 LWC 可 ``setData`` 的 series 列表.
 
@@ -118,6 +128,8 @@ def to_lwc_indicator_series(
         跨 symbol 混传可以, 这里按 ``symbol`` 过滤.
     :param symbol: 目标标的.
     :param intraday: 与该标的 K 线同一口径的日内标记, 决定时间值格式.
+    :param naive_tz: K 线索引无时区时传回测的策略时区(无时区行情按它解释),
+        点位时间据此换成墙钟再编码; ``None`` 保持按 UTC 编码(索引有时区或未知)。
     :return: 按 ``(pane, series_key)`` 排序的 series; 该 symbol 无点位的指标
         不输出(免得前端建空副图). 定义与点位按 ``(owner_strategy_id,
         indicator_key)`` 关联; 每条 series 带 ``owner_strategy_id`` 与
@@ -140,7 +152,7 @@ def to_lwc_indicator_series(
         identity = identity_of(point)
         if not identity[1]:
             continue
-        time_value = _time_of(point.get("timestamp_ms"), intraday)
+        time_value = _time_of(point.get("timestamp_ms"), intraday, naive_tz)
         # 按 (owner, key) 分桶, 桶内按 time 去重、后来者覆盖 —— 与 confirmed 语义一致
         by_identity.setdefault(identity, {})[time_value] = number
 
