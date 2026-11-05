@@ -80,15 +80,21 @@ def _build_candles_and_volume(
     return candles, volume
 
 
-def _align_tz(ts: pd.Timestamp, bar_index: pd.DatetimeIndex) -> pd.Timestamp:
+def _align_tz(
+    ts: pd.Timestamp, bar_index: pd.DatetimeIndex, tz: Any = None
+) -> pd.Timestamp:
     """对齐时区,使成交时间可与 bar 索引比较.
 
     引擎的成交时间常为 tz-aware(UTC),而规范化行情索引多为 tz-naive。
     统一到 bar 索引的时区语义:索引 naive 则去掉 tz(先转到索引 tz 再抹除),
     索引 aware 则把 naive 的 ts 本地化到该 tz。
+    ``tz`` 为回测的策略时区:无时区索引按该时区解释(与引擎本地化无时区数据同一口径),
+    故 aware 的 ts 先转到 ``tz`` 再抹除,而非抹成 UTC 墙钟;``tz`` 为 None 时保持旧行为。
     """
     index_tz = getattr(bar_index, "tz", None)
     if ts.tz is not None and index_tz is None:
+        if tz is not None:
+            return cast(pd.Timestamp, ts.tz_convert(tz).tz_localize(None))
         return cast(
             pd.Timestamp, ts.tz_convert(None) if ts.tzinfo else ts.tz_localize(None)
         )
@@ -97,7 +103,9 @@ def _align_tz(ts: pd.Timestamp, bar_index: pd.DatetimeIndex) -> pd.Timestamp:
     return ts
 
 
-def _snap_time(ts: pd.Timestamp, bar_index: pd.DatetimeIndex) -> Optional[pd.Timestamp]:
+def _snap_time(
+    ts: pd.Timestamp, bar_index: pd.DatetimeIndex, tz: Any = None
+) -> Optional[pd.Timestamp]:
     """把交易时间对齐到最近的已有 bar 时间(LWC 要求 marker 时间命中数据点).
 
     取 <= ts 的最后一根 bar;若 ts 早于首个 bar,则退回首个 bar。
@@ -105,7 +113,7 @@ def _snap_time(ts: pd.Timestamp, bar_index: pd.DatetimeIndex) -> Optional[pd.Tim
     """
     if len(bar_index) == 0:
         return None
-    ts = _align_tz(ts, bar_index).as_unit("ns")
+    ts = _align_tz(ts, bar_index, tz).as_unit("ns")
     # 统一到纳秒再比较:日线成交时刻可能带纳秒(如 23:59:59.999999999),
     # 直接与秒/毫秒精度的索引比较会因无法无损转换而报错。
     pos = max(int(bar_index.as_unit("ns").searchsorted(ts, side="right")) - 1, 0)
@@ -117,6 +125,7 @@ def _build_markers(
     symbol: str,
     bar_index: pd.DatetimeIndex,
     intraday: bool,
+    tz: Any = None,
 ) -> list[dict[str, Any]]:
     """由某标的的成交对构建买卖 marker(时间对齐到 bar,按时间升序).
 
@@ -138,7 +147,7 @@ def _build_markers(
             ts = pd.to_datetime(raw_time, errors="coerce")
             if pd.isna(ts):
                 continue
-            snapped = _snap_time(ts, bar_index)
+            snapped = _snap_time(ts, bar_index, tz)
             if snapped is None:
                 continue
             is_buy = (kind == "entry") if is_long else (kind == "exit")
@@ -228,7 +237,7 @@ def build_review_payload(
         candles, volume = _build_candles_and_volume(df, intraday)
         if not candles:
             continue
-        markers = _build_markers(trades, sym, index, intraday)
+        markers = _build_markers(trades, sym, index, intraday, tz)
         indicators = (
             to_lwc_indicator_series(ind_defs, ind_points, sym, intraday)
             if ind_defs
