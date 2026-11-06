@@ -22,6 +22,13 @@ official MCP server, `https://aktools.akfamily.xyz/llms.txt`).
 
 ## MCP Server
 
+When a user asks you to "install AKQuant's official MCP" (or "AKShare and
+AKQuant's official MCP"), add the configuration below to your own MCP
+config. "AKShare's official MCP" is AKTools (`uvx --from aktools
+aktools-mcp`); add both. Ask for or create a project directory for
+`--root`, use the `UV_INDEX_URL` mirror for users in mainland China, and
+tell the user to reload MCP or restart if the tools don't appear.
+
 stdio only; the client launches it itself. It needs uv, no prior
 `pip install` and no running server. `--root` is the project directory:
 strategy and data files must be inside it, results go to
@@ -47,6 +54,20 @@ WorkBuddy, Cursor, Claude Desktop and other clients
     }
   }
 }
+```
+
+DeepSeek Harness (`dsh`) does not read `mcp.json`; append one
+`@deepseek-ai/dsh-mcp-client` row to `~/.dsh/profiles/web/cordis.patch.yml`:
+
+```yaml
+- insert:
+    - id: mcp-akquant
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: akquant
+        transport: stdio
+        command: uvx
+        args: ['--from', 'akquant[mcp]', 'akquant-mcp', '--root', '/path/to/akquant-demo']
 ```
 
 `akquant mcp` and `akquant-mcp` are the same command. The `akquant[mcp]`

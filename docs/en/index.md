@@ -75,7 +75,8 @@ AKQuant aims to solve the performance bottlenecks of traditional Python backtest
 *   **Data Aggregator**: `DataFeed` supports multi-source aggregation, handling data alignment issues for different frequencies.
 
 ### 5. Ultimate Developer Experience
-*   **LLM Friendly**: Clear code structure, detailed documentation, and optimized Type Hints facilitate strategy writing with Copilot or GPT.
+*   **AI Assistants (MCP)**: A built-in MCP server lets WorkBuddy, DeepSeek Harness, Codex, Cursor, Claude and other AI assistants write strategies and run backtests from natural language, reading structured results and errors; see [MCP Server](guide/mcp.md).
+*   **LLM Friendly**: Clear code structure, detailed documentation, and type hints help when writing strategies with AI coding assistants; see [LLM Assisted Programming](advanced/llm.md).
 *   **Dual-Style API**: Supports both **Class-based** and **Functional (Zipline-style)** strategy writing styles to suit different user habits.
 *   **Strict Type Checking**: Core logic is strictly checked by the Rust compiler, and Python code is checked via `mypy`, minimizing runtime errors.
 
@@ -222,6 +223,7 @@ For more examples, please refer to the `examples/` directory.
 
 ## Quick Links
 
+*   Let AI assistants write and backtest strategies: tell the assistant "install the official MCP servers of AKShare and AKQuant", see [MCP Server](guide/mcp.md#one-sentence)
 *   Phase-5 migration FAQ (quickstart): [Phase-5 Migration FAQ](start/quickstart.md)
 *   Full compatibility notes (API reference): [Compatibility & Migration Notes](reference/api.md)
 *   Understand AKQuant time semantics (quant basics): [AKQuant Time and Timezones](guide/quant_basics.md)

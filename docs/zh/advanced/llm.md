@@ -2,6 +2,10 @@
 
 本文档旨在帮助用户构建高效的 Prompt，以便利用 ChatGPT、Claude 或其他大模型（LLM）自动生成 AKQuant 策略代码。
 
+!!! tip "AI 助手能接入 MCP 时，优先用 MCP 服务"
+
+    WorkBuddy、Codex、Cursor、Claude Code 等支持 MCP 的助手，推荐接入 AKQuant 的 [MCP 服务](../guide/mcp.md)：助手查到的 API 与本机安装的版本一致，还能自己检查策略、运行回测、读取结构化报错并修改重跑，不必靠下面的 Prompt 记住规则。本文的 Prompt 模板适合网页版对话等不能接入 MCP 的场景，也可以作为 MCP 之外的补充说明。
+
 ## 1. 核心 Prompt 模板 (基础策略)
 
 你可以将以下内容直接复制给大模型，作为"System Prompt"或对话的开头，让模型快速理解 AKQuant 的编程规范。

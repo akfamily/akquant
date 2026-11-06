@@ -18,6 +18,18 @@
 pip install akquant
 ```
 
+按需安装可选功能，多个可以组合，如 `pip install "akquant[mcp,ml]"`：
+
+| 可选功能 | 内容 |
+|---|---|
+| `mcp` | MCP 服务（含 MCP SDK 与 AKShare），让 AI 助手查 API、写策略、跑回测，见 [MCP 服务](../guide/mcp.md) |
+| `ml` | 机器学习：scikit-learn、PyTorch |
+| `quantstats` | QuantStats 绩效报告 |
+| `signal-redis` | 外部信号接入的 Redis Stream 信号源 |
+| `full` | `ml` 与 `quantstats` 的全部内容（不含 `mcp`） |
+
+只想在 AI 助手中使用 AKQuant 时，可以不装：按 [MCP 服务](../guide/mcp.md#clients) 的说明用 `uvx` 接入，客户端会自动下载并启动。
+
 ### 2. 从源码编译安装 (开发模式)
 
 如果您希望参与开发或使用最新功能，可以从源码进行安装。

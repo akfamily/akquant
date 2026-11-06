@@ -9,9 +9,26 @@ AKQuant 自带一个本地 MCP（Model Context Protocol，模型上下文协议�
 - “把刚才的策略改成只在均线向上时开仓，再跑一次，和上一次的结果对比”
 - “刚才那次回测的第 10 到 20 笔成交是什么？”
 
-想让助手自己找数据、写策略、跑回测，请同时接入 AKShare 的官方 MCP，见[与 AKTools 联用](#aktools)。
+想让助手自己找数据、写策略、跑回测，请同时接入 AKShare 的官方 MCP，见[与 AKTools 联用](#aktools)。最快的接入方法是对助手说一句“安装 AKShare 和 AKQuant 的官方 MCP”，见[一句话安装](#one-sentence)。
 
-## 接入客户端 {: #clients }
+## 一句话安装 {: #one-sentence }
+
+WorkBuddy、DeepSeek Harness、Codex、Claude Code 等能自己改配置的 AI 助手，直接说一句话就能装好：
+
+> 安装 AKShare 和 AKQuant 的官方 MCP
+
+助手会自己写好两个服务的配置。想让它接着把事情做完，可以说得更完整：
+
+> 安装 AKShare 和 AKQuant 各自的官方 MCP，项目目录用 /path/to/akquant-demo，运行一个示例策略并报告结果
+
+几点说明：
+
+- 需要先[安装 uv](https://docs.astral.sh/uv/getting-started/installation/)，两个服务都由 `uvx` 启动。
+- 最好说明项目目录（AKQuant 的 `--root`），策略和数据文件都放在里面；不说时助手会自己选一个，请留意它选的位置。
+- 装好后多数助手要重启或重新加载 MCP 才能看到新工具；第一次启动要下载依赖，可能要等几分钟，见[第一次启动很慢](#first-start)。
+- 助手没能装好，或者用的是 Cursor、Claude Desktop 这类要手动改配置的客户端时，按下面的方法手动配置。
+
+## 手动配置 {: #clients }
 
 推荐用 [uv](https://docs.astral.sh/uv/) 的 `uvx` 启动：它会自动下载 AKQuant 并在独立环境中运行，**不需要事先安装 AKQuant，也不需要手动启动服务**。请先[安装 uv](https://docs.astral.sh/uv/getting-started/installation/)，再建好一个项目目录（下文的 `/path/to/akquant-demo`），策略文件和数据文件都要放在这个目录里。
 
@@ -19,7 +36,7 @@ AKQuant 自带一个本地 MCP（Model Context Protocol，模型上下文协议�
 
     最简单的方法是直接对 WorkBuddy 说“安装 AKQuant 的官方 MCP，项目目录用 /path/to/akquant-demo”，它会自己完成配置。
 
-    也可以手动添加：在 WorkBuddy 的连接器（MCP）设置中粘贴下面的配置，或者编辑用户目录下的 `.workbuddy/mcp.json`：
+    也可以手动添加：在 WorkBuddy 的连接器（MCP）设置中粘贴下面的配置，或者编辑用户目录下的 `.workbuddy/mcp.json`（macOS 和 Linux 上是 `~/.workbuddy/mcp.json`，Windows 上是 `%USERPROFILE%\.workbuddy\mcp.json`）：
 
     ```json
     {
@@ -33,11 +50,35 @@ AKQuant 自带一个本地 MCP（Model Context Protocol，模型上下文协议�
     }
     ```
 
-    `env` 中的镜像源用来加快国内下载，在国外可以去掉。连接器显示绿色圆点即表示已连接。
+    `env` 中的镜像源用来加快国内下载，在国外可以去掉。连接器显示绿色圆点即表示已连接。只想在某个项目中使用时，把配置写到项目目录下的 `.workbuddy/mcp.json`。
+
+=== "DeepSeek Harness"
+
+    最简单的方法是直接对 DeepSeek Harness 说“安装 AKShare 和 AKQuant 的官方 MCP，项目目录用 /path/to/akquant-demo”。下面是手动配置的写法，也可以用来核对它写得对不对。
+
+    DeepSeek Harness（`dsh`）不读 `mcp.json`，MCP 服务写在 profile 的 `cordis.patch.yml` 里，每个服务是一条 `@deepseek-ai/dsh-mcp-client` 插件配置。编辑 `~/.dsh/profiles/web/cordis.patch.yml`（Windows 上是 `%USERPROFILE%\.dsh\profiles\web\cordis.patch.yml`；想对所有 profile 生效时写 `~/.dsh/cordis.patch.yml`），在已有内容后面追加：
+
+    ```yaml
+    - insert:
+        - id: mcp-akquant
+          name: '@deepseek-ai/dsh-mcp-client'
+          config:
+            serverName: akquant
+            transport: stdio
+            command: uvx
+            args: ['--from', 'akquant[mcp]', 'akquant-mcp', '--root', '/path/to/akquant-demo']
+            env:
+              UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+    ```
+
+    - 文件里可能已有别的配置，**追加，不要覆盖**。`serverName` 在所有 MCP 服务里必须唯一，接入后工具名形如 `mcp__akquant__run_backtest`。
+    - 保存后 dsh 会自动重连 MCP 服务；没有生效时重启 `dsh web`。用 `dsh --profile web --dump-config` 可以确认配置里有 `mcp-akquant` 这一条。
+    - dsh 不经过 shell 直接启动 `command`，找不到 `uvx` 时把它换成 `uvx` 的完整路径（Windows 上用 `where uvx` 查看，macOS 和 Linux 上用 `which uvx`）。
+    - 第一次启动要下载依赖，工具可能过一会儿才出现，见[第一次启动很慢](#first-start)。
 
 === "Codex"
 
-    在命令行中运行：
+    可以直接对 Codex 说“安装 AKShare 和 AKQuant 的官方 MCP”，也可以在命令行中运行：
 
     ```bash
     codex mcp add akquant -- uvx --from "akquant[mcp]" akquant-mcp --root /path/to/akquant-demo
@@ -62,7 +103,7 @@ AKQuant 自带一个本地 MCP（Model Context Protocol，模型上下文协议�
 
 === "Claude Code"
 
-    在项目目录中运行：
+    可以直接对 Claude Code 说“安装 AKShare 和 AKQuant 的官方 MCP”，也可以在项目目录中运行：
 
     ```bash
     claude mcp add akquant -- uvx --from "akquant[mcp]" akquant-mcp --root /path/to/akquant-demo
@@ -98,7 +139,13 @@ uvx --from "akquant[mcp]" akquant-mcp --help
 | AKTools（AKShare 官方 MCP） | 查找 AKShare 的接口、查看参数、取回数据 |
 | AKQuant | 查询 AKQuant 的 API、编写并检查策略、准备行情数据、运行回测、读取成交与权益明细 |
 
-在 WorkBuddy 中输入“安装 AKShare 和 AKQuant 各自的官方 MCP，运行一个示例策略并报告结果”，助手会自己完成安装，然后下载数据、编写策略、运行回测并解读结果。手动配置时把两个服务都加进去：
+### 一句话体验
+
+在 WorkBuddy、DeepSeek Harness 等助手中输入“安装 AKShare 和 AKQuant 各自的官方 MCP，运行一个示例策略并报告结果”，助手会自己完成安装，然后下载数据、编写策略、运行回测并解读结果，见[一句话安装](#one-sentence)。
+
+### 手动配置两个服务
+
+助手没能自动安装时，把两个服务都加进配置：
 
 ```json
 {
@@ -113,6 +160,26 @@ uvx --from "akquant[mcp]" akquant-mcp --help
     }
   }
 }
+```
+
+DeepSeek Harness 在 `cordis.patch.yml` 里写两条：
+
+```yaml
+- insert:
+    - id: mcp-aktools
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: aktools
+        transport: stdio
+        command: uvx
+        args: ['--from', 'aktools', 'aktools-mcp']
+    - id: mcp-akquant
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: akquant
+        transport: stdio
+        command: uvx
+        args: ['--from', 'akquant[mcp]', 'akquant-mcp', '--root', '/path/to/akquant-demo']
 ```
 
 回测结果与改进建议由 AI 生成，仅供学习和研究，不构成投资建议。

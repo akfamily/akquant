@@ -1,6 +1,6 @@
 # MCP Server: Let AI Assistants Write Strategies That Run
 
-AKQuant ships a local MCP (Model Context Protocol) server. Once connected to WorkBuddy, Codex, Cursor, Claude or another AI assistant, the assistant can look up the API of the AKQuant version installed on your machine, statically check strategies, prepare data, run backtests, and read structured results and errors — closing the write–run–fix loop.
+AKQuant ships a local MCP (Model Context Protocol) server. Once connected to WorkBuddy, DeepSeek Harness, Codex, Cursor, Claude or another AI assistant, the assistant can look up the API of the AKQuant version installed on your machine, statically check strategies, prepare data, run backtests, and read structured results and errors — closing the write–run–fix loop.
 
 ## What you can ask {: #examples }
 
@@ -9,9 +9,26 @@ AKQuant ships a local MCP (Model Context Protocol) server. Once connected to Wor
 - "Only open positions when the moving average is rising, run it again and compare with the previous run"
 - "What were trades 10 to 20 in that backtest?"
 
-To let the assistant fetch data, write the strategy and backtest it on its own, also connect AKShare's official MCP server — see [Using with AKTools](#aktools).
+To let the assistant fetch data, write the strategy and backtest it on its own, also connect AKShare's official MCP server — see [Using with AKTools](#aktools). The fastest way to connect is to tell the assistant "install the official MCP servers of AKShare and AKQuant", see [One-sentence install](#one-sentence).
 
-## Connecting a client {: #clients }
+## One-sentence install {: #one-sentence }
+
+AI assistants that can edit their own configuration — WorkBuddy, DeepSeek Harness, Codex, Claude Code and others — can set everything up from one sentence:
+
+> Install the official MCP servers of AKShare and AKQuant
+
+The assistant writes the configuration for both servers. To have it carry on, say more:
+
+> Install the official MCP servers of AKShare and AKQuant, use /path/to/akquant-demo as the project directory, run an example strategy and report the results
+
+Notes:
+
+- [Install uv](https://docs.astral.sh/uv/getting-started/installation/) first; both servers are started with `uvx`.
+- Name the project directory (AKQuant's `--root`); strategy and data files go inside it. If you don't, the assistant picks one — check where.
+- Most assistants need a restart or an MCP reload before the new tools appear; the first start downloads dependencies and can take a few minutes, see [Slow first start](#first-start).
+- If the assistant can't do it, or your client needs manual configuration (Cursor, Claude Desktop), configure it manually as below.
+
+## Manual configuration {: #clients }
 
 We recommend starting it with [uv](https://docs.astral.sh/uv/)'s `uvx`: it downloads AKQuant and runs it in an isolated environment, so **you don't need to install AKQuant or start a server first**. [Install uv](https://docs.astral.sh/uv/getting-started/installation/), then create a project directory (`/path/to/akquant-demo` below); strategy and data files must live inside it.
 
@@ -19,7 +36,7 @@ We recommend starting it with [uv](https://docs.astral.sh/uv/)'s `uvx`: it downl
 
     The easiest way is to tell WorkBuddy "install AKQuant's official MCP, with /path/to/akquant-demo as the project directory"; it configures itself.
 
-    To add it manually, paste the configuration below into WorkBuddy's connector (MCP) settings, or edit `.workbuddy/mcp.json` in your home directory:
+    To add it manually, paste the configuration below into WorkBuddy's connector (MCP) settings, or edit `.workbuddy/mcp.json` in your home directory (`~/.workbuddy/mcp.json` on macOS and Linux, `%USERPROFILE%\.workbuddy\mcp.json` on Windows):
 
     ```json
     {
@@ -32,11 +49,33 @@ We recommend starting it with [uv](https://docs.astral.sh/uv/)'s `uvx`: it downl
     }
     ```
 
-    A green dot on the connector means it is connected.
+    A green dot on the connector means it is connected. To use it in one project only, put the configuration in `.workbuddy/mcp.json` inside that project. In mainland China, add `"env": {"UV_INDEX_URL": "https://mirrors.aliyun.com/pypi/simple/"}` to use a mirror.
+
+=== "DeepSeek Harness"
+
+    The easiest way is to tell DeepSeek Harness "install the official MCP servers of AKShare and AKQuant, with /path/to/akquant-demo as the project directory". The manual configuration below also lets you check what it wrote.
+
+    DeepSeek Harness (`dsh`) does not read `mcp.json`. MCP servers go into the profile's `cordis.patch.yml`, one `@deepseek-ai/dsh-mcp-client` plugin row per server. Edit `~/.dsh/profiles/web/cordis.patch.yml` (`%USERPROFILE%\.dsh\profiles\web\cordis.patch.yml` on Windows; use `~/.dsh/cordis.patch.yml` to apply to every profile) and append:
+
+    ```yaml
+    - insert:
+        - id: mcp-akquant
+          name: '@deepseek-ai/dsh-mcp-client'
+          config:
+            serverName: akquant
+            transport: stdio
+            command: uvx
+            args: ['--from', 'akquant[mcp]', 'akquant-mcp', '--root', '/path/to/akquant-demo']
+    ```
+
+    - The file may already hold other patches: **append, don't overwrite**. `serverName` must be unique across all MCP servers; tools show up as e.g. `mcp__akquant__run_backtest`.
+    - dsh reconnects MCP servers after you save; if nothing changes, restart `dsh web`. `dsh --profile web --dump-config` shows whether the `mcp-akquant` row is in the config.
+    - dsh launches `command` without a shell; if it can't find `uvx`, use the full path of `uvx` (`where uvx` on Windows, `which uvx` on macOS and Linux).
+    - The first start downloads dependencies, so the tools may take a while to appear; see [Slow first start](#first-start). In mainland China, add an `env:` map with `UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/`.
 
 === "Codex"
 
-    Run:
+    Tell Codex "install the official MCP servers of AKShare and AKQuant", or run:
 
     ```bash
     codex mcp add akquant -- uvx --from "akquant[mcp]" akquant-mcp --root /path/to/akquant-demo
@@ -61,7 +100,7 @@ We recommend starting it with [uv](https://docs.astral.sh/uv/)'s `uvx`: it downl
 
 === "Claude Code"
 
-    Run in the project directory:
+    Tell Claude Code "install the official MCP servers of AKShare and AKQuant", or run in the project directory:
 
     ```bash
     claude mcp add akquant -- uvx --from "akquant[mcp]" akquant-mcp --root /path/to/akquant-demo
@@ -97,7 +136,13 @@ In mainland China, add `"env": {"UV_INDEX_URL": "https://mirrors.aliyun.com/pypi
 | AKTools (AKShare's official MCP) | Finding AKShare interfaces, checking parameters, fetching data |
 | AKQuant | Looking up AKQuant APIs, writing and checking strategies, preparing market data, running backtests, reading trades and equity details |
 
-In WorkBuddy, say "install the official MCP servers of AKShare and AKQuant, run an example strategy and report the results"; the assistant installs both, downloads data, writes a strategy, runs the backtest and explains the results. To configure manually, add both servers:
+### One-sentence try
+
+In WorkBuddy, DeepSeek Harness or another assistant, say "install the official MCP servers of AKShare and AKQuant, run an example strategy and report the results"; the assistant installs both, downloads data, writes a strategy, runs the backtest and explains the results. See [One-sentence install](#one-sentence).
+
+### Configuring both servers manually
+
+If the assistant can't install them itself, add both servers:
 
 ```json
 {
@@ -112,6 +157,26 @@ In WorkBuddy, say "install the official MCP servers of AKShare and AKQuant, run 
     }
   }
 }
+```
+
+For DeepSeek Harness, add two rows to `cordis.patch.yml`:
+
+```yaml
+- insert:
+    - id: mcp-aktools
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: aktools
+        transport: stdio
+        command: uvx
+        args: ['--from', 'aktools', 'aktools-mcp']
+    - id: mcp-akquant
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: akquant
+        transport: stdio
+        command: uvx
+        args: ['--from', 'akquant[mcp]', 'akquant-mcp', '--root', '/path/to/akquant-demo']
 ```
 
 Backtest results and suggestions are AI-generated, for learning and research only, and are not investment advice.

@@ -32,7 +32,7 @@
 *   **因子表达式引擎**：内置 **Polars** 驱动的高性能因子计算引擎，支持 `Rank(Ts_Mean(Close, 5))` 等 Alpha101 风格公式，自动处理并行计算与数据对齐。
 *   **参数优化**：内置多进程网格搜索（Grid Search）框架，支持策略参数的高效并行优化。
 *   **专业级风控**：内置完善的订单流管理与即时风控模块，支持多资产组合回测。
-*   **AI 助手（MCP）**：自带 MCP 服务，在 WorkBuddy、Codex、Cursor、Claude 等 AI 助手中用自然语言写策略、跑回测，助手能读到结构化的结果和报错。
+*   **AI 助手（MCP）**：自带 MCP 服务，在 WorkBuddy、DeepSeek Harness、Codex、Cursor、Claude 等 AI 助手中用自然语言写策略、跑回测，助手能读到结构化的结果和报错。
 
 👉 **[阅读完整文档](https://akquant.akfamily.xyz/)** | **[English Documentation](https://akquant.akfamily.xyz/en/)**
 
@@ -46,7 +46,11 @@ pip install akquant
 
 ## 在 AI 助手中使用（MCP）
 
-先[安装 uv](https://docs.astral.sh/uv/getting-started/installation/)，再把 AKQuant 加入 AI 助手，**不需要事先安装 AKQuant**。`--root` 是项目目录（请先建好），策略和数据文件都放在里面：
+先[安装 uv](https://docs.astral.sh/uv/getting-started/installation/)，然后在 WorkBuddy、DeepSeek Harness、Codex、Claude Code 等 AI 助手中说一句话就能装好：
+
+> 安装 AKShare 和 AKQuant 的官方 MCP，项目目录用 /path/to/akquant-demo，运行一个示例策略并报告结果
+
+助手会自己配置好两个服务，再下载数据、编写策略、运行回测并解读结果，**不需要事先安装 AKQuant**。助手没能自动安装，或者想手动配置时，`--root` 是项目目录（请先建好），策略和数据文件都放在里面：
 
 ```bash
 claude mcp add akquant -- uvx --from "akquant[mcp]" akquant-mcp --root /path/to/akquant-demo
@@ -65,6 +69,8 @@ WorkBuddy、Cursor、Claude Desktop 等使用 JSON 配置的客户端：
   }
 }
 ```
+
+DeepSeek Harness 不读 JSON，要把同样的命令写进 `~/.dsh/profiles/web/cordis.patch.yml`，写法见 [MCP 服务文档](https://akquant.akfamily.xyz/guide/mcp/#clients)。
 
 接入后可以直接说“用平安银行近三年的日线跑一个均线交叉策略，报告收益和最大回撤”。和 [AKTools](https://github.com/akfamily/aktools)（AKShare 的官方 MCP）一起接入，助手可以自己查数据、写策略、跑回测。各客户端的配置、工具清单与注意事项见 [MCP 服务文档](https://akquant.akfamily.xyz/guide/mcp/)。
 
@@ -316,7 +322,7 @@ executions_by_strategy = result.executions_by_strategy() # 按策略归属聚合
 *   🚀 **[快速入门](https://akquant.akfamily.xyz/start/quickstart/)**: 更多示例与基础用法。
 *   🤖 **[机器学习指南](https://akquant.akfamily.xyz/advanced/ml/)**: 如何使用内置的 ML 框架进行滚动训练。
 *   📚 **[API 参考](https://akquant.akfamily.xyz/reference/api/)**: 详细的类与函数文档。
-*   🧩 **[MCP 服务](https://akquant.akfamily.xyz/guide/mcp/)**: 让 WorkBuddy、Codex、Cursor、Claude 等 AI 助手查 API、写策略、跑回测、读结构化报错。
+*   🧩 **[MCP 服务](https://akquant.akfamily.xyz/guide/mcp/)**: 让 WorkBuddy、DeepSeek Harness、Codex、Cursor、Claude 等 AI 助手查 API、写策略、跑回测、读结构化报错。
 *   💻 **[贡献指南](https://github.com/akfamily/akquant/blob/main/CONTRIBUTING.md)**: 如何参与项目开发。
 
 ## 🧪 测试与质量保证

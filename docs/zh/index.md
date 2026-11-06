@@ -15,6 +15,7 @@
 *   **生产级风控**: 内置 Rust 层 RiskManager，严格执行 T+1 和资金风控。
 *   **高效数据通路**: 数据导入 (`add_arrays`) 借用 NumPy 缓冲、零拷贝入引擎；历史数据读取 (`get_history`) 返回安全快照拷贝（窗口小、开销可忽略），多字段可用 `get_history_multi` 单次取回。
 *   **灵活架构**: 事件驱动设计，支持盘中定时任务和多资产混合回测。
+*   **AI 助手（MCP）**: 自带 MCP 服务，在 WorkBuddy、DeepSeek Harness、Codex、Cursor、Claude 等 AI 助手中用自然语言写策略、跑回测，助手能读到结构化的结果和报错，见 [MCP 服务](guide/mcp.md)。
 
 👉 **[查看完整架构与特性文档](meta/architecture.md)**
 
@@ -161,6 +162,7 @@ run_backtest(strategy=MyStrategy, data=df, symbols="600000")
 
 ## 快速入口
 
+*   让 AI 助手写策略、跑回测：对助手说“安装 AKShare 和 AKQuant 的官方 MCP”，详见 [MCP 服务](guide/mcp.md#one-sentence)
 *   快速查看迁移 FAQ（快速开始）：[快速开始中的阶段 5 迁移 FAQ](start/quickstart.md)
 *   查看完整兼容说明（API 参考）：[API 兼容与迁移说明](reference/api.md)
 *   理解时间与时区语义（量化基础）：[AKQuant 的时间与时区](guide/quant_basics.md)
