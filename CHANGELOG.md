@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.78] - 2026-11-06
+
+> **规则版本不变（2.1.3）**：本版没有改变回测数值的引擎行为。引擎策略派发改经 `StrategyHandler` trait 是内部重构，golden 基线不变；Analyzer 插件的异常隔离只影响插件收到的回调与 `result.analyzer_outputs`。
+
 ### Added
 - **MCP 服务补齐发布与接入配置，准备登记 MCP 官方注册表（`io.github.akfamily/akquant`）**：对照 AKTools 补齐了缺口。新增 `server.json`，README 加入注册表用来确认 PyPI 包归属的 `mcp-name` 标记；发版流程新增 `publish-mcp-registry` 任务，在 PyPI 发布之后通过 GitHub OIDC 登记，`mcp-publisher` 经 cosign 校验签名，失败时自动重试，且不影响 PyPI 与 GitHub Release。注册表客户端按包名启动服务，因此新增 `akquant` 命令（`akquant mcp` 与 `akquant-mcp` 相同），`server.json` 登记为 `uvx --with akquant[mcp]==X.Y.Z akquant mcp --root=<项目目录>`——`mcp` 仍是可选依赖，普通安装不受影响。`scripts/check_release.py` 增加校验：`server.json` 中服务版本、包版本、`--with` 固定的版本三处都要与 tag 一致，README 的 `mcp-name` 标记要与 `server.json` 的名称一致。`akquant[mcp]` 加入 `akshare`，用 `uvx` 零安装启动时 `prepare_data` 也能用 AKShare 取数。MCP 文档（中英文）按客户端分页签重写（WorkBuddy、Codex、Cursor、Claude Code、Claude Desktop），默认用 `uvx --from "akquant[mcp]" akquant-mcp --root ...` 零安装接入，补充国内镜像、Windows 路径、找不到 `uvx`、第一次启动超时、与 AKTools 联用等说明；文档站新增 `llms.txt`；PyPI 关键词补充 MCP。首页（核心特性与快速入口）、安装指南（新增可选功能表，含 `akquant[mcp]`）、《LLM 辅助编程指南》（开头提示能接入 MCP 时优先用 MCP 服务）、教材第 1 章的 IDE 一节与站点描述（中英文）都补上了 MCP 的入口。MCP 文档新增 DeepSeek Harness 分页签：它不读 `mcp.json`，要在 `~/.dsh/profiles/web/cordis.patch.yml` 追加一条 `@deepseek-ai/dsh-mcp-client` 插件配置，文档给出单独接入与和 AKTools 一起接入两种 YAML，并说明追加不覆盖、`serverName` 唯一、不经过 shell 启动时 `uvx` 写完整路径；WorkBuddy 补充 Windows 上的配置文件路径与项目级配置；README 与 `llms.txt` 同步。MCP 文档新增“一句话安装”一节放在手动配置之前：对 WorkBuddy、DeepSeek Harness、Codex、Claude Code 等能自己改配置的助手说“安装 AKShare 和 AKQuant 的官方 MCP”即可装好；README、首页快速入口、教材第 1 章同步；`llms.txt` 写明助手收到这句话时该怎么配置（AKShare 的官方 MCP 即 AKTools，两个都装）。已用本地 wheel 实测注册表与文档两种启动写法，经真实 stdio 客户端完成列工具、准备数据（合成数据与 AKShare）、检查策略、回测。
 
