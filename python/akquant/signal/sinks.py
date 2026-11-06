@@ -1,6 +1,7 @@
 """两个下单出口: paper 走引擎注入, broker_live 走柜台报单.
 
-两者的差异必须在此收敛, 因为它们的能力边界不同(见 signal-ingestion-rfc.md 4.1/4.2):
+两者的差异必须在此收敛, 因为它们的能力边界不同
+(见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 4.1/4.2):
 
 - **paper**: 经 ``SignalPort`` 发 ``Event::OrderRequest``, 由 ``ChannelProcessor``
   执行**完整**风控(含 daily_loss / drawdown / risk_budget), 再由模拟撮合器成交。

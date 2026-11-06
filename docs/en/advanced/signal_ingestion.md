@@ -4,7 +4,7 @@ Turn trading instructions pushed by an external quant signal platform into order
 
 Use it when signals are produced elsewhere (factors, timing, portfolio optimisation all live on the platform) and AKQuant only handles intake, auth, risk, execution and audit.
 
-Design rationale and rejected alternatives: [Signal Ingestion RFC](../meta/signal-ingestion-rfc.md) (Chinese).
+Design principles and rejected alternatives: see [Design trade-offs](#design-tradeoffs).
 
 ## Minimal runnable example
 
@@ -150,6 +150,27 @@ Implement the `SignalSource` protocol; subclass `SignalSourceBase` to skip the `
 ⚠️ **`start()` must not return until its thread is actually running.** `run_live` calls it synchronously before the engine loop; once it returns, the main thread enters the Rust loop and holds the GIL for long stretches, so a not-yet-scheduled thread may never run. This is a measured result, not a theoretical concern.
 
 Also: an injected order only fills when a **subsequent** market event arrives. A signal landing after the last bar stays `New` — matching semantics, not a defect.
+
+## Design trade-offs {: #design-tradeoffs }
+
+The path follows four principles:
+
+1. **One order path**: orders from strategy callbacks, external signals and local stops all flow into the same `OrderRequest` event, and risk checks sit on that path with no bypass. New order sources must not add side paths.
+2. **Signals are not hooks**: an external instruction becomes an order directly, without a strategy callback. To intervene, filter, rewrite or reject at the signal source, not in the strategy.
+3. **Transport is separate from semantics**: the `Signal` contract and the `SignalSource` protocol are stable; HTTP, Redis and message queues are just implementations.
+4. **Idempotency over ordering**: platforms reconnect and redeliver, so signals are de-duplicated by `signal_id` and delivery order is not assumed.
+
+Signals are injected through the sender of the engine's internal event channel. Strategies already place orders through this channel and it is safe to use from any thread; the pipeline drains it first in every round, so an injected order reaches risk checks and matching without waiting for the next market event.
+
+Rejected alternatives:
+
+| Alternative | Why rejected |
+|---|---|
+| A new `on_signal` strategy hook | A signal is already an instruction and needs no second decision; an extra callback hop blurs the line between external instructions and the strategy's own signals. Comparable frameworks (e.g. nautilus_trader) do not add a dedicated hook either |
+| Wrapping signals as timers or fake ticks on the market-data channel | The market-data channel only takes timestamps from bars and ticks, so timers are silently dropped; fake ticks would pollute last prices, indicators and bar aggregation |
+| Calling `strategy.buy()` or `ctx.schedule()` from another thread | The former raises before the context is ready; the latter contends with the running engine for the same context object and risks borrow conflicts |
+| A Python-side queue drained by a polling timer | Works without Rust changes, but latency is three orders of magnitude higher, a timer every second keeps disturbing intraday timing logic, and signals still go through a strategy callback |
+| A separate risk layer outside the engine | Two risk implementations and two position views, contradicting "one order path" |
 
 ## See also
 

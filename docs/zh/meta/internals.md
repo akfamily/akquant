@@ -101,7 +101,7 @@ akquant/
 AKQuant 在数据处理阶段集成了高级的市场特性支持：
 
 *   **数据对齐 (Data Alignment)**:
-    *   在 `src/pipeline/stages.rs` 的 `DataProcessor` 中实现。
+    *   在 `src/pipeline/stages/data.rs` 的 `DataProcessor` 中实现。
     *   **Late Fill Strategy**: 当检测到某个标的数据缺失（如停牌）时，自动使用上一时刻的收盘价生成合成 K 线，成交量设为 0。
     *   这保证了多标的回测时时间轴的严格对齐，方便进行矩阵运算。
 

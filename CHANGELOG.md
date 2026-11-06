@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **引擎改为经 `StrategyHandler` trait 派发策略回调（内部重构，行为不变）**：此前引擎在 bar、tick、定时器、窗口 bar 和两个收尾回调处各自按方法名调用 Python 策略；现在统一经 `src/engine/strategy_handler.rs` 的 `StrategyHandler` 派发，Python 策略只是它的一种实现（`PyStrategy`）。流水线各阶段的策略参数由 `&Bound<PyAny>` 改为 `StrategyHandle`；`Engine.run` 的主体抽成 `Engine::run_with_strategy`，Rust 侧可以直接传入原生策略运行（新增一条纯 Rust 策略跑完整会话的单测）。`StrategyContext` 新增纯 Rust 下单入口 `submit_order`，`buy` / `sell` 也改走它。这是引擎核心与 Python 解耦的第一步；trait 目前仍带 `Python` 令牌，上下文仍是 Python 类。
 - 删除已全部落地的 7 份历史 RFC（`docs/zh/meta/` 下的 hooks、timer-api、logging、warm-start、viz-namespace、indicator-tradingview 与 issue-329 修复方案），引用改为指向提交 `512f74ed` 中的原文。
+- 外部信号接入 RFC 已全部落地，删除；其中的设计原则与被否决方案并入《外部信号平台接入》文档新增的“设计取舍”一节（中英文）。列式 RFC 重整为《列式数据层与引擎核心演进》：补进度一览，删去已完成阶段的施工细节和已放弃的 `BarRef` 设计（只留放弃理由），新增核心与 Python 解耦路线（§6），遗留项与待决集中到 §13。
 
 ## [0.3.77] - 2026-11-05
 

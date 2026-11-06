@@ -10,7 +10,8 @@
   parquet 路径 / ``list[Bar]`` 收敛到一处; ``normalize`` 产出规范 ``pa.Table``.
 - ``arrow_to_legacy_arrays`` / ``arrow_to_bars``: Arrow -> 现有 Rust 边界的过渡桥.
 
-A 期原则: 不动 Rust、不改数值、golden 全绿. 详见 docs/zh/meta/columnar-rfc.md 第 15 节.
+A 期原则: 不动 Rust、不改数值、golden 全绿. 进度见 docs/zh/meta/columnar-rfc.md §0;
+A 期细化原文见 512f74ed:docs/zh/meta/columnar-rfc.md 第 15 节.
 """
 
 from pathlib import Path

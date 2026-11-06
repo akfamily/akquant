@@ -342,7 +342,7 @@ class BrokerOrderSubmitter:
         ``strategy_limits`` 形如 ``{"max_order_value": {"_default": 500.0}, ...}``,
         用于报单前的策略级限额前置风控(见 :meth:`_check_risk`)。省略则不做该校验
         —— 生产 broker_live 必须传入, 否则 `strategy_max_*` 在实盘静默失效
-        (见 docs/zh/meta/signal-ingestion-rfc.md 3.3)。
+        (见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 3.3)。
 
         这里刻意收的是**限额快照而非 engine 引用**: 报单在策略回调内发生, 那一刻
         引擎正被 `run(&mut self)` 独占借用, 持有并调用 engine 必然
@@ -429,7 +429,7 @@ class BrokerOrderSubmitter:
         """报单前校验策略级限额, 返回拒单原因(None 表示通过).
 
         broker_live 的订单不经 `ChannelProcessor`, 故 `strategy_max_*` 这组限额
-        此前在实盘完全不生效(见 docs/zh/meta/signal-ingestion-rfc.md 3.3)。
+        此前在实盘完全不生效(见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 3.3)。
 
         **为何不直接调 engine**: 报单发生在策略回调内, 那一刻
         `Engine::run(&mut self)` 正独占借用引擎对象, 任何经 Python 侧触达 `Engine`

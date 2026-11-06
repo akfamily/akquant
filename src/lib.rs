@@ -55,7 +55,7 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(model::_restore_bar, m)?)?;
     m.add_function(wrap_pyfunction!(model::_restore_tick, m)?)?;
     m.add_function(wrap_pyfunction!(from_arrays, m)?)?;
-    // broker_live 报单前的策略级限额前置风控(见 docs/zh/meta/signal-ingestion-rfc.md 3.3)
+    // broker_live 报单前的策略级限额前置风控(见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 3.3)
     m.add_function(wrap_pyfunction!(
         risk::strategy_limits::check_strategy_limits,
         m

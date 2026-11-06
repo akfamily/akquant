@@ -11,7 +11,7 @@ run_backtest"这个最自然的用法会被**静默**压成单标的: 所有标�
 ``instruments_config`` 按真实 symbol 配的合约参数(tick_size/lot_size)全部失效,
 下单真实 symbol 报 ``Instrument not found``。
 
-参见 ``docs/zh/meta/columnar-rfc.md`` 第 335 行(已挂账的"取并集"统一项)。
+参见 ``docs/zh/meta/columnar-rfc.md`` §13 遗留项 1(标的列口径统一)。
 """
 
 from typing import Any, List, Set

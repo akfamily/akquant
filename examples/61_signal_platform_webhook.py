@@ -8,7 +8,7 @@
 
 **两种模式的风控覆盖面不同**(引擎架构决定, 非配置项):
 paper 走完整风控; broker_live 只有策略级三项限额前置生效。详见
-docs/zh/meta/signal-ingestion-rfc.md。
+docs/zh/advanced/signal_ingestion.md。
 """
 
 import json
