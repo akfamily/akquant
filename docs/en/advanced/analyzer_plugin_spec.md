@@ -66,9 +66,15 @@ class AnalyzerPlugin(Protocol):
 - With multiple strategies, all strategies share the same plugins: each bar and each fill triggers a callback once per owning strategy; use `owner_strategy_id` to tell them apart.
 - Only bars trigger `on_bar`; ticks do not.
 
+## When a plugin fails
+
+Plugins are isolated from each other: if one plugin's callback raises, only that call is skipped; other plugins still receive the same callback and the backtest continues.
+
+- The first error per plugin and callback is logged at error level with a traceback; later errors of the same kind are only counted, and one summary line ("N more exceptions suppressed") is logged when the backtest ends.
+- A plugin whose `on_finish` fails is left out of `result.analyzer_outputs`; other plugins' outputs are kept.
+
 ## Known limitations
 
 - **Backtest only**: `run_live` does not accept `analyzer_plugins`.
 - **No automatic discovery**: plugins must be passed in `analyzer_plugins` explicitly; registration through package entry points is not supported.
-- **Exceptions in `on_bar` / `on_trade` are silently swallowed**: nothing is logged, and plugins after the failing one miss that callback too. For example, if an earlier plugin raises on every bar, later plugins never receive `on_bar` for the whole run. Exceptions in `on_start` / `on_finish` are logged at error level and also stop later plugins; if `on_finish` fails, `result.analyzer_outputs` is an empty dict. Catch exceptions inside your plugin.
 - **During warmup `on_bar` does not reach analyzers, but `on_trade` does.** `Strategy.warmup_period` is counted per symbol; while a symbol has fewer bars than `warmup_period`, the engine returns before calling `on_bar`, whereas `on_trade` goes through the separate order-event path and is not gated. Plugins that use the number of `on_bar` calls as a denominator or index will therefore under-count or misalign with multiple symbols and warmup. Count per symbol instead (accumulate by `context["bar"].symbol` in `on_bar` and `context["trade"].symbol` in `on_trade`), and don't rely on the two callbacks staying in step.

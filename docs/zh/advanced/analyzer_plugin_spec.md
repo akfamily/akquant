@@ -66,9 +66,15 @@ class AnalyzerPlugin(Protocol):
 - 多策略时所有策略共用同一组插件：每根 bar、每笔成交按所属策略各触发一次，用 `owner_strategy_id` 区分。
 - 只有 bar 会触发 `on_bar`，tick 不会。
 
+## 插件出错时
+
+每个插件单独隔离：某个插件的回调抛异常，只跳过它的这一次回调，其他插件照常收到同一次回调，回测也不中断。
+
+- 每个插件的每个回调只记第一次错误（error 级别，带 traceback），之后的同类错误只计数，回测结束时汇总一条“另有 N 次异常已抑制”。
+- `on_finish` 出错的插件不出现在 `result.analyzer_outputs` 里，其他插件的输出照常保留。
+
 ## 已知限制
 
 - **只用于回测**：`run_live` 不接收 `analyzer_plugins`。
 - **没有插件自动发现**：插件需要显式传进 `analyzer_plugins`，不支持通过包的 entry points 自动注册。
-- **`on_bar` / `on_trade` 抛异常会被静默吞掉**：不打日志；而且同一次派发里排在它后面的插件也收不到这次回调。例如排在前面的插件每根 bar 都抛异常，后面的插件整场回测都收不到 `on_bar`。`on_start` / `on_finish` 抛异常时会记一条 error 日志，同样中断后续插件，`on_finish` 出错时 `result.analyzer_outputs` 为空字典。请在插件内部自行捕获异常。
 - **预热期内 `on_bar` 不到达 analyzer，但同期 `on_trade` 会**。`Strategy.warmup_period` 按标的独立计数，某标的累计 bar 数不足 `warmup_period` 时，引擎会在调用 `on_bar` 之前返回；而 `on_trade` 走独立的订单事件路径，不受这个门槛约束。因此按“收到的 `on_bar` 次数”做分母或索引的插件，在多标的加预热的场景下计数会偏小或错位。请按标的分别计数（在 `on_bar` 与 `on_trade` 里分别按 `context["bar"].symbol` / `context["trade"].symbol` 累加），不要依赖两种回调的先后与次数对应。

@@ -4257,6 +4257,85 @@ def test_run_backtest_analyzer_plugins_multi_slot_owner_context() -> None:
     assert outputs["owner_aware"]["trade_owner_ids"] == ["alpha", "beta"]
 
 
+class _RecordingAnalyzer:
+    """Counts every callback; used next to a failing analyzer."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.starts = 0
+        self.bars = 0
+        self.trades = 0
+
+    def on_start(self, context: dict[str, Any]) -> None:
+        _ = context
+        self.starts += 1
+
+    def on_bar(self, context: dict[str, Any]) -> None:
+        _ = context
+        self.bars += 1
+
+    def on_trade(self, context: dict[str, Any]) -> None:
+        _ = context
+        self.trades += 1
+
+    def on_finish(self, context: dict[str, Any]) -> dict[str, Any]:
+        _ = context
+        return {"starts": self.starts, "bars": self.bars, "trades": self.trades}
+
+
+class _FailingAnalyzer(_RecordingAnalyzer):
+    """Raises in every callback."""
+
+    def on_start(self, context: dict[str, Any]) -> None:
+        raise RuntimeError("boom on_start")
+
+    def on_bar(self, context: dict[str, Any]) -> None:
+        raise RuntimeError("boom on_bar")
+
+    def on_trade(self, context: dict[str, Any]) -> None:
+        raise RuntimeError("boom on_trade")
+
+    def on_finish(self, context: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("boom on_finish")
+
+
+def test_run_backtest_failing_analyzer_does_not_starve_later_analyzers(
+    caplog: Any,
+) -> None:
+    """一个插件抛异常, 排在它后面的插件照常收到全部回调, 输出也保留."""
+    healthy = _RecordingAnalyzer("healthy")
+    with caplog.at_level(logging.ERROR, logger="akquant"):
+        result = akquant.run_backtest(
+            data=_build_regression_bars("ANALYZER_FAIL"),
+            strategy=RegressionStrategy,
+            symbols="ANALYZER_FAIL",
+            fill_policy=CurrentClose(),
+            show_progress=False,
+            analyzer_plugins=[_FailingAnalyzer("failing"), healthy],
+        )
+
+    outputs = cast(dict[str, dict[str, Any]], result.analyzer_outputs)
+    assert outputs["healthy"] == {"starts": 1, "bars": 3, "trades": 2}
+    # on_finish 失败的插件没有输出, 不影响其他插件
+    assert "failing" not in outputs
+
+    messages = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    first_errors = [m for m in messages if "抛出异常" in m]
+    summaries = [m for m in messages if "已抑制" in m]
+    for method in ("on_start", "on_bar", "on_trade", "on_finish"):
+        # 每个插件的每个回调只记第一次, 不按 bar 刷屏
+        hits = [m for m in first_errors if "'failing'" in m and f" {method} " in m]
+        assert len(hits) == 1, (method, messages)
+    # 收尾汇总被抑制的重复次数: on_bar 3 次记 1 抑制 2, on_trade 2 次记 1 抑制 1;
+    # 只发生一次的 on_start / on_finish 没有汇总
+    assert sorted(summaries) == sorted(
+        [
+            "Analyzer 插件 'failing' 的 on_bar 另有 2 次异常已抑制(只记录了第一次)",
+            "Analyzer 插件 'failing' 的 on_trade 另有 1 次异常已抑制(只记录了第一次)",
+        ]
+    ), messages
+
+
 def test_run_backtest_china_futures_validation_prefix_override() -> None:
     """Prefix validation config should override default futures lot validation."""
     probe = akquant.Engine()

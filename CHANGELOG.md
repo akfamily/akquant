@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **一个 Analyzer 插件抛异常，排在它后面的插件会漏掉回调**：`AnalyzerManager` 在一个循环里依次调用各插件，外层再整体 `try`，所以前一个插件的 `on_bar` / `on_trade` 抛异常时，后面的插件这一次都收不到，而且不打任何日志——排在前面的插件每根 bar 都出错时，后面的插件整场回测都收不到 `on_bar`；`on_finish` 出错时连其他插件的输出也一起丢失，`result.analyzer_outputs` 变成空字典。现在每个插件单独隔离：出错只跳过它自己的这次回调，每个插件的每个回调只记第一次错误（带 traceback），之后只计数并在结束时汇总一条；`on_finish` 出错的插件不进输出，其他插件的输出保留。不涉及引擎撮合，回测数值不变。
+
 ### Changed
 - **《数据源适配器》《Analyzer 插件》两页按实际实现重写（中英文）**：原先标题是“规范草案”，还写着并不存在的功能（`run_backtest(feed_adapter=)` 参数、`~/.akquant/feed_cache/` 缓存、entry points 自动发现插件、可配置的插件异常隔离），英文页只是指向中文页的占位。现在改为使用说明：协议、返回数据格式、内置适配器、自定义写法、各回调的时机与上下文键，以及实测得出的限制——适配器的时间截取由适配器自己负责（引擎不再过滤）、内置适配器不识别中文列名；插件的 `on_bar` / `on_trade` 抛异常会被静默吞掉，并让排在后面的插件也收不到这次回调。导航标签去掉“规范”二字，文件名不变。
 - **引擎改为经 `StrategyHandler` trait 派发策略回调（内部重构，行为不变）**：此前引擎在 bar、tick、定时器、窗口 bar 和两个收尾回调处各自按方法名调用 Python 策略；现在统一经 `src/engine/strategy_handler.rs` 的 `StrategyHandler` 派发，Python 策略只是它的一种实现（`PyStrategy`）。流水线各阶段的策略参数由 `&Bound<PyAny>` 改为 `StrategyHandle`；`Engine.run` 的主体抽成 `Engine::run_with_strategy`，Rust 侧可以直接传入原生策略运行（新增一条纯 Rust 策略跑完整会话的单测）。`StrategyContext` 新增纯 Rust 下单入口 `submit_order`，`buy` / `sell` 也改走它。这是引擎核心与 Python 解耦的第一步；trait 目前仍带 `Python` 令牌，上下文仍是 Python 类。
