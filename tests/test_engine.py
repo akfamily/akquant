@@ -4336,6 +4336,23 @@ def test_run_backtest_failing_analyzer_does_not_starve_later_analyzers(
     ), messages
 
 
+def test_analyzer_manager_never_propagates_plugin_errors() -> None:
+    """调用方(策略回调/回测收尾)不再兜底, 插件异常必须止于 AnalyzerManager."""
+    from akquant.analyzer_plugin import AnalyzerManager
+
+    healthy = _RecordingAnalyzer("healthy")
+    manager = AnalyzerManager()
+    manager.register(_FailingAnalyzer("failing"))
+    manager.register(healthy)
+
+    manager.on_start({})
+    manager.on_bar({})
+    manager.on_trade({})
+    outputs = manager.on_finish({})
+
+    assert outputs == {"healthy": {"starts": 1, "bars": 1, "trades": 1}}
+
+
 def test_run_backtest_china_futures_validation_prefix_override() -> None:
     """Prefix validation config should override default futures lot validation."""
     probe = akquant.Engine()

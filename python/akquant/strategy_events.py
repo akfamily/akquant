@@ -200,21 +200,18 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
             finalize_training_cycle(strategy, training_cycle)
     analyzer_manager = getattr(strategy, "_analyzer_manager", None)
     if analyzer_manager is not None:
-        try:
-            analyzer_manager.on_bar(
-                {
-                    "strategy": strategy,
-                    "bar": bar,
-                    "engine": getattr(strategy, "_engine", None),
-                    "ctx": ctx,
-                    "owner_strategy_id": str(
-                        getattr(ctx, "strategy_id", None)
-                        or getattr(strategy, "_owner_strategy_id", "_default")
-                    ),
-                }
-            )
-        except Exception:
-            pass
+        analyzer_manager.on_bar(
+            {
+                "strategy": strategy,
+                "bar": bar,
+                "engine": getattr(strategy, "_engine", None),
+                "ctx": ctx,
+                "owner_strategy_id": str(
+                    getattr(ctx, "strategy_id", None)
+                    or getattr(strategy, "_owner_strategy_id", "_default")
+                ),
+            }
+        )
     _flush_indicator_snapshots(strategy)
 
 

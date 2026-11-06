@@ -4546,21 +4546,18 @@ def run_backtest(
         setattr(current_strategy, "_engine", engine)
     _prime_framework_cross_section_timers(all_strategy_instances, engine)
     if analyzer_manager.plugins:
-        try:
-            analyzer_manager.on_start(
-                {
-                    "engine": engine,
-                    "strategy": strategy_instance,
-                    "strategies": list(all_strategy_instances),
-                    "slot_strategy_map": {
-                        effective_strategy_id: strategy_instance,
-                        **slot_strategy_instances,
-                    },
-                    "symbols": list(symbols),
-                }
-            )
-        except Exception as e:
-            logger.error(f"Analyzer on_start error: {e}")
+        analyzer_manager.on_start(
+            {
+                "engine": engine,
+                "strategy": strategy_instance,
+                "strategies": list(all_strategy_instances),
+                "slot_strategy_map": {
+                    effective_strategy_id: strategy_instance,
+                    **slot_strategy_instances,
+                },
+                "symbols": list(symbols),
+            }
+        )
     if hasattr(engine, "set_timezone_name"):
         cast(Any, engine).set_timezone_name(timezone)
     else:
@@ -5719,21 +5716,18 @@ def run_backtest(
     )
     analyzer_outputs: Dict[str, Dict[str, Any]] = {}
     if analyzer_manager.plugins:
-        try:
-            analyzer_outputs = analyzer_manager.on_finish(
-                {
-                    "engine": engine,
-                    "strategy": strategy_instance,
-                    "strategies": list(all_strategy_instances),
-                    "slot_strategy_map": {
-                        effective_strategy_id: strategy_instance,
-                        **slot_strategy_instances,
-                    },
-                    "result": result,
-                }
-            )
-        except Exception as e:
-            logger.error(f"Analyzer on_finish error: {e}")
+        analyzer_outputs = analyzer_manager.on_finish(
+            {
+                "engine": engine,
+                "strategy": strategy_instance,
+                "strategies": list(all_strategy_instances),
+                "slot_strategy_map": {
+                    effective_strategy_id: strategy_instance,
+                    **slot_strategy_instances,
+                },
+                "result": result,
+            }
+        )
     result.analyzer_outputs = analyzer_outputs
     return result
 
