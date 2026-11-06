@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.79] - 2026-11-06
+
+> **规则版本不变（2.1.3）**：只改了 MCP 服务的握手信息与文档，回测数值不变。
+
 ### Fixed
 - **MCP 握手不报版本**：`akquant-mcp` 的初始化响应里 `serverInfo.version` 是空字符串，客户端看不出连上的是哪个版本。现在报告本机安装的 AKQuant 版本，并带上文档地址 `websiteUrl`。
 
