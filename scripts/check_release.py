@@ -1,8 +1,11 @@
 """发布前校验版本号自洽，供 release.yml 调用.
 
 PyPI 的版本号一经占用即不可重用，发错只能改用下一个号，因此在构建之前就要拦下。
-版本号散在四处，必须一致：pyproject.toml、Cargo.toml、Cargo.lock 中的 akquant
-条目、CHANGELOG.md 的版本标题；给出 tag 时 tag 也必须与之一致。
+版本号散在五处，必须一致：pyproject.toml、Cargo.toml、Cargo.lock 中的 akquant
+条目、CHANGELOG.md 的版本标题、server.json（MCP 官方注册表的登记信息，其中服务
+版本、PyPI 包版本、--with 的 akquant[mcp]==版本 三处）；给出 tag 时 tag 也必须
+与之一致。注册表还会到 PyPI 项目说明（即 README.md）里找 mcp-name 标记确认包的
+归属，标记中的名称必须与 server.json 的 name 一致。
 
 另有两个可选动作（只在 release job 里用）：
     --dist DIR       校验构建产物文件名都带着这个版本号
@@ -13,6 +16,7 @@ PyPI 的版本号一经占用即不可重用，发错只能改用下一个号，
 """
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -23,6 +27,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "akquant"
 TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
 CHANGELOG_HEADING_RE = re.compile(r"^## \[(?P<version>[^\]]+)\]", re.MULTILINE)
+# server.json 里给 uvx 的 --with 参数, 让注册表客户端连同 mcp extra 一起安装
+MCP_WITH_RE = re.compile(rf"^{PACKAGE}\[mcp\]==(?P<version>.+)$")
 
 
 def parse_tag(tag: str) -> str:
@@ -49,7 +55,47 @@ def read_declared_versions(root: Path) -> dict[str, str]:
         "pyproject.toml": pyproject["project"]["version"],
         "Cargo.toml": cargo["package"]["version"],
         "Cargo.lock": lock_versions[0],
+        **read_server_json_versions(root),
     }
+
+
+def read_server_json_versions(root: Path) -> dict[str, str]:
+    """读取 server.json 中的三处版本号: 服务版本、PyPI 包版本、--with 固定的版本."""
+    server = json.loads((root / "server.json").read_text(encoding="utf-8"))
+    package = server["packages"][0]
+    with_values = [
+        arg.get("value", "")
+        for arg in package.get("runtimeArguments", [])
+        if arg.get("name") == "--with"
+    ]
+    if len(with_values) != 1:
+        raise ValueError(
+            f"server.json 的 runtimeArguments 中 --with 应恰有 1 个，"
+            f"实际 {len(with_values)} 个"
+        )
+    match = MCP_WITH_RE.match(with_values[0])
+    if not match:
+        raise ValueError(
+            f"server.json 的 --with 应为 {PACKAGE}[mcp]==X.Y.Z，"
+            f"实际为 {with_values[0]!r}"
+        )
+    return {
+        "server.json version": server["version"],
+        "server.json packages[0].version": package["version"],
+        "server.json --with": match.group("version"),
+    }
+
+
+def check_mcp_name_marker(root: Path) -> list[str]:
+    """README.md 必须带 mcp-name 标记且名称与 server.json 一致; 返回错误列表."""
+    name = json.loads((root / "server.json").read_text(encoding="utf-8"))["name"]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    if f"<!-- mcp-name: {name} -->" not in readme:
+        return [
+            f"README.md 缺少 <!-- mcp-name: {name} --> 标记"
+            "（MCP 注册表靠它确认 PyPI 包的归属）"
+        ]
+    return []
 
 
 def extract_changelog_section(text: str, version: str) -> str | None:
@@ -111,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     for source, value in declared.items():
         if value != version:
             errors.append(f"{source} 版本为 {value}，期望 {version}")
+
+    errors.extend(check_mcp_name_marker(args.root))
 
     changelog = (args.root / "CHANGELOG.md").read_text(encoding="utf-8")
     notes = extract_changelog_section(changelog, version)

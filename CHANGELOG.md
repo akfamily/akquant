@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **MCP 服务补齐发布与接入配置，准备登记 MCP 官方注册表（`io.github.akfamily/akquant`）**：对照 AKTools 补齐了缺口。新增 `server.json`，README 加入注册表用来确认 PyPI 包归属的 `mcp-name` 标记；发版流程新增 `publish-mcp-registry` 任务，在 PyPI 发布之后通过 GitHub OIDC 登记，`mcp-publisher` 经 cosign 校验签名，失败时自动重试，且不影响 PyPI 与 GitHub Release。注册表客户端按包名启动服务，因此新增 `akquant` 命令（`akquant mcp` 与 `akquant-mcp` 相同），`server.json` 登记为 `uvx --with akquant[mcp]==X.Y.Z akquant mcp --root=<项目目录>`——`mcp` 仍是可选依赖，普通安装不受影响。`scripts/check_release.py` 增加校验：`server.json` 中服务版本、包版本、`--with` 固定的版本三处都要与 tag 一致，README 的 `mcp-name` 标记要与 `server.json` 的名称一致。`akquant[mcp]` 加入 `akshare`，用 `uvx` 零安装启动时 `prepare_data` 也能用 AKShare 取数。MCP 文档（中英文）按客户端分页签重写（WorkBuddy、Codex、Cursor、Claude Code、Claude Desktop），默认用 `uvx --from "akquant[mcp]" akquant-mcp --root ...` 零安装接入，补充国内镜像、Windows 路径、找不到 `uvx`、第一次启动超时、与 AKTools 联用等说明；文档站新增 `llms.txt`；PyPI 关键词补充 MCP。已用本地 wheel 实测注册表与文档两种启动写法，经真实 stdio 客户端完成列工具、准备数据（合成数据与 AKShare）、检查策略、回测。
+
 ### Fixed
 - **一个 Analyzer 插件抛异常，排在它后面的插件会漏掉回调**：`AnalyzerManager` 在一个循环里依次调用各插件，外层再整体 `try`，所以前一个插件的 `on_bar` / `on_trade` 抛异常时，后面的插件这一次都收不到，而且不打任何日志——排在前面的插件每根 bar 都出错时，后面的插件整场回测都收不到 `on_bar`；`on_finish` 出错时连其他插件的输出也一起丢失，`result.analyzer_outputs` 变成空字典。现在每个插件单独隔离：出错只跳过它自己的这次回调，每个插件的每个回调只记第一次错误（带 traceback），之后只计数并在结束时汇总一条；`on_finish` 出错的插件不进输出，其他插件的输出保留。调用插件处原有的四层外层兜底（`on_bar` / `on_trade` 两处静默 `except: pass`，`on_start` / `on_finish` 两处只记一行日志）一并删除：插件异常已在管理器内处理，框架自身拼装回调参数时出错不再被悄悄吞掉，而是直接报错。不涉及引擎撮合，回测数值不变。
 

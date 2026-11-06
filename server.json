@@ -1,0 +1,45 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.akfamily/akquant",
+  "title": "AKQuant",
+  "description": "Write and backtest trading strategies with AKQuant: API lookup, strategy checks, backtest runs",
+  "version": "0.3.77",
+  "websiteUrl": "https://akquant.akfamily.xyz/guide/mcp/",
+  "repository": {
+    "url": "https://github.com/akfamily/akquant",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "akquant",
+      "version": "0.3.77",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--with",
+          "value": "akquant[mcp]==0.3.77",
+          "description": "Install the optional MCP dependencies (MCP SDK and AKShare) together with AKQuant"
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "named",
+          "name": "--root",
+          "description": "Project directory. Strategy and data files must be inside it; results are saved under <root>/.akquant-mcp",
+          "isRequired": true,
+          "format": "filepath"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

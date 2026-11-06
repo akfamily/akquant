@@ -12,11 +12,12 @@ from .service.paths import DEFAULT_MAX_RUNS, make_config
 INSTALL_HINT = '缺少 MCP SDK(需要 mcp>=2.3), 请先安装: pip install "akquant[mcp]"'
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    """解析参数并启动服务; 失败时向 stderr 说明原因并返回 1."""
-    parser = argparse.ArgumentParser(
-        prog="akquant-mcp", description="AKQuant MCP 服务(stdio)"
-    )
+def main(argv: Optional[List[str]] = None, prog: str = "akquant-mcp") -> int:
+    """解析参数并启动服务; 失败时向 stderr 说明原因并返回 1.
+
+    ``prog`` 只影响帮助信息里的命令名(``akquant mcp`` 也走这里).
+    """
+    parser = argparse.ArgumentParser(prog=prog, description="AKQuant MCP 服务(stdio)")
     parser.add_argument("--root", default=None, help="项目根目录, 默认当前目录")
     parser.add_argument(
         "--max-runs",
