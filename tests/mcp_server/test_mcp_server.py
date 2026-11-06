@@ -65,6 +65,20 @@ def test_tool_list(cfg: ServiceConfig) -> None:
     assert all(t.description for t in tools)
 
 
+def test_handshake_reports_version_and_website(cfg: ServiceConfig) -> None:
+    """握手的 serverInfo 带本机 AKQuant 版本与文档地址, 客户端据此显示服务版本."""
+    import akquant
+
+    async def go() -> Any:
+        async with Client(build_server(cfg)) as client:
+            return client.server_info
+
+    info = _run(go)
+    assert info.name == "akquant"
+    assert info.version == akquant.__version__
+    assert info.website_url == "https://akquant.akfamily.xyz/guide/mcp/"
+
+
 def test_structured_results_and_errors(cfg: ServiceConfig) -> None:
     """成功有 structured_content; ServiceError 变成 is_error."""
     ok = _call(cfg, "search_api", {"query": "buy"})

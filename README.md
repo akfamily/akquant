@@ -32,7 +32,7 @@
 *   **因子表达式引擎**：内置 **Polars** 驱动的高性能因子计算引擎，支持 `Rank(Ts_Mean(Close, 5))` 等 Alpha101 风格公式，自动处理并行计算与数据对齐。
 *   **参数优化**：内置多进程网格搜索（Grid Search）框架，支持策略参数的高效并行优化。
 *   **专业级风控**：内置完善的订单流管理与即时风控模块，支持多资产组合回测。
-*   **AI 助手（MCP）**：自带 MCP 服务，在 WorkBuddy、DeepSeek Harness、Codex、Cursor、Claude 等 AI 助手中用自然语言写策略、跑回测，助手能读到结构化的结果和报错。
+*   **AI 助手（MCP）**：自带 MCP 服务，在 WorkBuddy、DeepSeek Harness、Codex、Cursor、Claude 等 AI 助手中用自然语言写策略、跑回测，助手能读到结构化的结果和报错；已上架 [MCP 官方注册表](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.akfamily/akquant)（`io.github.akfamily/akquant`）。
 
 👉 **[阅读完整文档](https://akquant.akfamily.xyz/)** | **[English Documentation](https://akquant.akfamily.xyz/en/)**
 

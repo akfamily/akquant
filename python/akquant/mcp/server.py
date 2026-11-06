@@ -38,7 +38,14 @@ def _call(fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
 
 def build_server(cfg: ServiceConfig) -> MCPServer:
     """构造注册好 7 个工具与 guide resource 的 MCPServer."""
-    srv = MCPServer("akquant", instructions=INSTRUCTIONS)
+    from .. import __version__
+
+    srv = MCPServer(
+        "akquant",
+        instructions=INSTRUCTIONS,
+        version=__version__,
+        website_url="https://akquant.akfamily.xyz/guide/mcp/",
+    )
 
     @srv.tool()
     def search_api(query: str, limit: int = 20) -> dict[str, Any]:
