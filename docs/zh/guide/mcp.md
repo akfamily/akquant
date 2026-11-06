@@ -2,6 +2,8 @@
 
 AKQuant 自带一个本地 MCP（Model Context Protocol，模型上下文协议）服务。接入 WorkBuddy、Codex、Cursor、Claude 等 AI 助手后，助手可以查询与本机安装版本一致的 API、静态检查策略、准备数据、运行回测，并读到结构化的结果和报错，形成“写—跑—改”的闭环。
 
+AKQuant 已上架 [MCP 官方注册表](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.akfamily/akquant)，名称为 `io.github.akfamily/akquant`，支持从注册表安装的客户端可以直接搜索添加。
+
 ## 可以问什么 {: #examples }
 
 - “用平安银行（000001）近三年的日线，跑一个 5 日与 20 日均线交叉的策略，报告收益、最大回撤和交易次数”

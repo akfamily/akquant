@@ -2,6 +2,8 @@
 
 AKQuant ships a local MCP (Model Context Protocol) server. Once connected to WorkBuddy, DeepSeek Harness, Codex, Cursor, Claude or another AI assistant, the assistant can look up the API of the AKQuant version installed on your machine, statically check strategies, prepare data, run backtests, and read structured results and errors — closing the write–run–fix loop.
 
+AKQuant is listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.akfamily/akquant) as `io.github.akfamily/akquant`; clients that install from the registry can search for it and add it directly.
+
 ## What you can ask {: #examples }
 
 - "Using Ping An Bank (000001) daily bars for the last three years, run a 5/20-day moving-average crossover and report return, max drawdown and trade count"

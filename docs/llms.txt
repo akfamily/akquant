@@ -29,6 +29,10 @@ aktools-mcp`); add both. Ask for or create a project directory for
 `--root`, use the `UV_INDEX_URL` mirror for users in mainland China, and
 tell the user to reload MCP or restart if the tools don't appear.
 
+Registered in the official MCP Registry as `io.github.akfamily/akquant`
+(the registry entry starts it as `uvx --with akquant[mcp]==X.Y.Z akquant mcp
+--root=<dir>`).
+
 stdio only; the client launches it itself. It needs uv, no prior
 `pip install` and no running server. `--root` is the project directory:
 strategy and data files must be inside it, results go to

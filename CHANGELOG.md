@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **MCP 握手不报版本**：`akquant-mcp` 的初始化响应里 `serverInfo.version` 是空字符串，客户端看不出连上的是哪个版本。现在报告本机安装的 AKQuant 版本，并带上文档地址 `websiteUrl`。
+
+### Changed
+- README、MCP 文档（中英文）与 `llms.txt` 注明 AKQuant 已上架 MCP 官方注册表（`io.github.akfamily/akquant`，自 0.3.78 起）。
+
 ## [0.3.78] - 2026-11-06
 
 > **规则版本不变（2.1.3）**：本版没有改变回测数值的引擎行为。引擎策略派发改经 `StrategyHandler` trait 是内部重构，golden 基线不变；Analyzer 插件的异常隔离只影响插件收到的回调与 `result.analyzer_outputs`。
