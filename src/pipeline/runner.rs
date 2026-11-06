@@ -1,4 +1,5 @@
 use crate::engine::Engine;
+use crate::engine::strategy_handler::StrategyHandle;
 use crate::pipeline::processor::{Processor, ProcessorResult};
 use pyo3::prelude::*;
 
@@ -28,7 +29,7 @@ impl PipelineRunner {
         &mut self,
         engine: &mut Engine,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &StrategyHandle,
     ) -> PyResult<bool> {
         'main_loop: loop {
             for processor in &mut self.processors {
@@ -53,7 +54,7 @@ impl PipelineRunner {
         &mut self,
         engine: &mut Engine,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &StrategyHandle,
     ) -> PyResult<()> {
         while self.step(engine, py, strategy)? {}
         Ok(())

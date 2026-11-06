@@ -35,6 +35,7 @@ use crate::settlement::SettlementManager;
 use crate::statistics::StatisticsManager;
 
 use super::state::SharedState;
+use super::strategy_handler::{StrategyCallback, StrategyHandle};
 
 /// “行情落在闭市时段”逐品种告警的全局上限；超出的品种在回测结束时汇总一条。
 pub(crate) const CLOSED_SESSION_WARN_LIMIT: usize = 20;
@@ -319,7 +320,8 @@ pub struct Engine {
     pub(crate) progress_total_steps: usize,
     pub(crate) progress_bar: Option<ProgressBar>,
     pub(crate) strategy_contexts: Vec<Option<Py<StrategyContext>>>,
-    pub(crate) strategy_slot_strategies: Vec<Option<Py<PyAny>>>,
+    /// 各槽位绑定的策略; `None` 表示该槽位用 `run()` 传入的主策略。
+    pub(crate) strategy_slot_strategies: Vec<Option<StrategyHandle>>,
     pub(crate) strategy_slots: Vec<StrategySlot>,
     pub(crate) active_strategy_slot: usize,
     pub(crate) default_strategy_id: Option<String>,
@@ -388,7 +390,7 @@ pub(crate) struct PendingStreamEvent {
 
 /// 策略回调返回的待注册引擎级计划(OCO 组 / bracket 计划)。
 /// 常态为 None,避免每 bar 对策略对象做两次 getattr。
-pub(crate) struct PendingEnginePlans {
+pub struct PendingEnginePlans {
     pub oco_groups: Vec<(String, String, String)>,
     pub bracket_plans: Vec<(
         String,
@@ -2245,10 +2247,10 @@ impl Engine {
         Self::datetime_from_ns(timestamp + offset_ns)
     }
 
-    pub(crate) fn call_strategy_for_slot<'py>(
+    pub(crate) fn call_strategy_for_slot(
         &mut self,
-        py: Python<'py>,
-        strategy: &Bound<'py, PyAny>,
+        py: Python<'_>,
+        strategy: &StrategyHandle,
         event: &Event,
         slot_index: usize,
         active_orders: Arc<Vec<Order>>,
@@ -2262,183 +2264,95 @@ impl Engine {
         Option<PendingEnginePlans>,
     )> {
         self.active_strategy_slot = slot_index;
-        match event {
-            Event::Bar(b) => {
-                let previous_cash = self.state.portfolio.cash;
-                let previous_account_metrics = self.current_account_metrics();
-                // 快路径:symbol 通常已存在于 last_prices,get_mut 命中即可原地更新,
-                // 避免每 bar 都为 insert 克隆一次 String。写锁显式限定在本块内,
-                // 在调用 get_or_create_strategy_context / Python 之前释放。
-                {
-                    let mut prices = self.last_prices.write().expect("last_prices 写锁被污染");
-                    match prices.get_mut(&b.symbol) {
-                        Some(slot) => *slot = b.close,
-                        None => {
-                            prices.insert(b.symbol.clone(), b.close);
-                        }
-                    }
-                }
-                let py_ctx = self.get_or_create_strategy_context(
-                    py,
-                    slot_index,
-                    active_orders,
-                    step_trades,
-                    step_rejected_orders,
-                    previous_cash,
-                    previous_account_metrics,
-                )?;
-
-                let args = (b.clone(), py_ctx.clone_ref(py));
-
-                let ret = strategy.call_method1("_on_bar_event_and_flush", args)?;
-                let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
-                    None
-                } else {
-                    let (oco, bracket) = ret.extract()?;
-                    Some(PendingEnginePlans {
-                        oco_groups: oco,
-                        bracket_plans: bracket,
-                    })
-                };
-
-                // Extract orders and timers
-                let mut new_orders = Vec::new();
-                let mut new_timers = Vec::new();
-                let mut canceled_ids = Vec::new();
-                {
-                    let ctx_ref = py_ctx.borrow(py);
-                    // Read from RwLock
-                    if let Ok(orders) = ctx_ref.orders_arc.read() {
-                        new_orders.extend(orders.clone());
-                    }
-                    if let Ok(timers) = ctx_ref.timers_arc.read() {
-                        new_timers.extend(timers.clone());
-                    }
-                    if let Ok(canceled) = ctx_ref.canceled_order_ids_arc.read() {
-                        canceled_ids.extend(canceled.clone());
-                    }
-                }
-                Ok((new_orders, new_timers, canceled_ids, pending_plans))
-            }
-            Event::Tick(t) => {
-                let previous_cash = self.state.portfolio.cash;
-                let previous_account_metrics = self.current_account_metrics();
-                {
-                    let mut prices = self.last_prices.write().expect("last_prices 写锁被污染");
-                    match prices.get_mut(&t.symbol) {
-                        Some(slot) => *slot = t.price,
-                        None => {
-                            prices.insert(t.symbol.clone(), t.price);
-                        }
-                    }
-                }
-                let py_ctx = self.get_or_create_strategy_context(
-                    py,
-                    slot_index,
-                    active_orders,
-                    step_trades,
-                    step_rejected_orders,
-                    previous_cash,
-                    previous_account_metrics,
-                )?;
-
-                let args = (t.clone(), py_ctx.clone_ref(py));
-
-                let ret = strategy.call_method1("_on_tick_event_and_flush", args)?;
-                let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
-                    None
-                } else {
-                    let (oco, bracket) = ret.extract()?;
-                    Some(PendingEnginePlans {
-                        oco_groups: oco,
-                        bracket_plans: bracket,
-                    })
-                };
-
-                // Extract orders and timers
-                let mut new_orders = Vec::new();
-                let mut new_timers = Vec::new();
-                let mut canceled_ids = Vec::new();
-                {
-                    let ctx_ref = py_ctx.borrow(py);
-                    if let Ok(orders) = ctx_ref.orders_arc.read() {
-                        new_orders.extend(orders.clone());
-                    }
-                    if let Ok(timers) = ctx_ref.timers_arc.read() {
-                        new_timers.extend(timers.clone());
-                    }
-                    if let Ok(canceled) = ctx_ref.canceled_order_ids_arc.read() {
-                        canceled_ids.extend(canceled.clone());
-                    }
-                }
-                Ok((new_orders, new_timers, canceled_ids, pending_plans))
-            }
-            Event::Timer(timer) => {
-                let previous_cash = self.state.portfolio.cash;
-                let previous_account_metrics = self.current_account_metrics();
-                let py_ctx = self.get_or_create_strategy_context(
-                    py,
-                    slot_index,
-                    active_orders,
-                    step_trades,
-                    step_rejected_orders,
-                    previous_cash,
-                    previous_account_metrics,
-                )?;
-
-                // 属于别的槽位的定时器: 不调本槽位的 on_timer, 只刷本步的订单/成交
-                // 等回调(本步撮合产生的成交在 strategy 阶段末清空, 不刷就丢)。
-                let method = if deliver_timer {
-                    "_on_timer_event_and_flush"
-                } else {
-                    "_on_foreign_timer_event_and_flush"
-                };
-                let args = (timer.payload.as_str(), py_ctx.clone_ref(py));
-                let ret = strategy.call_method1(method, args)?;
-                let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
-                    None
-                } else {
-                    let (oco, bracket) = ret.extract()?;
-                    Some(PendingEnginePlans {
-                        oco_groups: oco,
-                        bracket_plans: bracket,
-                    })
-                };
-
-                // Extract orders and timers
-                let mut new_orders = Vec::new();
-                let mut new_timers = Vec::new();
-                let mut canceled_ids = Vec::new();
-                {
-                    let ctx_ref = py_ctx.borrow(py);
-                    if let Ok(orders) = ctx_ref.orders_arc.read() {
-                        new_orders.extend(orders.clone());
-                    }
-                    if let Ok(timers) = ctx_ref.timers_arc.read() {
-                        new_timers.extend(timers.clone());
-                    }
-                    if let Ok(canceled) = ctx_ref.canceled_order_ids_arc.read() {
-                        canceled_ids.extend(canceled.clone());
-                    }
-                }
-                Ok((new_orders, new_timers, canceled_ids, pending_plans))
-            }
+        let (callback, price_update) = match event {
+            Event::Bar(b) => (StrategyCallback::Bar(b), Some((&b.symbol, b.close))),
+            Event::Tick(t) => (StrategyCallback::Tick(t), Some((&t.symbol, t.price))),
+            Event::Timer(timer) => (
+                StrategyCallback::Timer {
+                    payload: timer.payload.as_str(),
+                    deliver: deliver_timer,
+                },
+                None,
+            ),
             Event::OrderRequest(_)
             | Event::OrderValidated(_)
             | Event::ExecutionReport(_, _)
-            | Event::TradingDayHint { .. } => Ok((Vec::new(), Vec::new(), Vec::new(), None)),
+            | Event::TradingDayHint { .. } => {
+                return Ok((Vec::new(), Vec::new(), Vec::new(), None));
+            }
+        };
+        // previous_cash / 账户指标取更新最新价之前的口径。
+        let previous_cash = self.state.portfolio.cash;
+        let previous_account_metrics = self.current_account_metrics();
+        if let Some((symbol, price)) = price_update {
+            // 快路径:symbol 通常已存在于 last_prices,get_mut 命中即可原地更新,
+            // 避免每次都为 insert 克隆一次 String。写锁显式限定在本块内,
+            // 在调用 get_or_create_strategy_context / 策略之前释放。
+            let mut prices = self.last_prices.write().expect("last_prices 写锁被污染");
+            match prices.get_mut(symbol) {
+                Some(slot) => *slot = price,
+                None => {
+                    prices.insert(symbol.clone(), price);
+                }
+            }
         }
+        let py_ctx = self.get_or_create_strategy_context(
+            py,
+            slot_index,
+            active_orders,
+            step_trades,
+            step_rejected_orders,
+            previous_cash,
+            previous_account_metrics,
+        )?;
+        let pending_plans = strategy.invoke(py, callback, &py_ctx)?;
+        let (new_orders, new_timers, canceled_ids) = Self::take_context_outputs(py, &py_ctx);
+        Ok((new_orders, new_timers, canceled_ids, pending_plans))
     }
 
-    /// 把闭合的窗口 bar 逐个派发给各策略槽的 `_on_window_bar_event_and_flush`。
+    /// 槽位绑定的策略; 未绑定时用主策略 `fallback`。
+    pub(crate) fn strategy_for_slot(
+        &self,
+        slot_index: usize,
+        fallback: &StrategyHandle,
+    ) -> StrategyHandle {
+        self.strategy_slot_strategies
+            .get(slot_index)
+            .and_then(Option::as_ref)
+            .unwrap_or(fallback)
+            .clone()
+    }
+
+    /// 读出策略回调在上下文里留下的订单 / 定时器 / 撤单(引擎随后投递)。
+    fn take_context_outputs(
+        py: Python<'_>,
+        py_ctx: &Py<StrategyContext>,
+    ) -> (Vec<Order>, Vec<Timer>, Vec<String>) {
+        let ctx_ref = py_ctx.borrow(py);
+        let mut orders = Vec::new();
+        let mut timers = Vec::new();
+        let mut canceled = Vec::new();
+        if let Ok(o) = ctx_ref.orders_arc.read() {
+            orders.extend(o.clone());
+        }
+        if let Ok(t) = ctx_ref.timers_arc.read() {
+            timers.extend(t.clone());
+        }
+        if let Ok(c) = ctx_ref.canceled_order_ids_arc.read() {
+            canceled.extend(c.clone());
+        }
+        (orders, timers, canceled)
+    }
+
+    /// 把闭合的窗口 bar 逐个派发给各策略槽([`StrategyCallback::WindowBar`])。
     ///
-    /// 与 `StrategyProcessor` 对基础事件的处理同构(取 ctx → 调 Python → 收订单/
+    /// 与 `StrategyProcessor` 对基础事件的处理同构(取 ctx → 调策略 → 收订单/
     /// timer/撤单/OCO 计划 → 投递), 但**不更新 last_prices**: 窗口 bar 不是行情事件。
-    /// 每个槽是否真的订阅了该 (symbol, freq) 由 Python 侧过滤。
+    /// 每个槽是否真的订阅了该 (symbol, freq) 由策略侧过滤。
     pub(crate) fn dispatch_window_bars(
         &mut self,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &StrategyHandle,
         bars: Vec<Bar>,
     ) -> PyResult<()> {
         if bars.is_empty() {
@@ -2472,47 +2386,14 @@ impl Engine {
                     previous_cash,
                     previous_account_metrics,
                 )?;
-                let slot_strategy = self
-                    .strategy_slot_strategies
-                    .get(slot_index)
-                    .and_then(|slot| slot.as_ref())
-                    .map(|slot| slot.clone_ref(py));
-                let target = match slot_strategy {
-                    Some(ref slot_py) => slot_py.bind(py).clone(),
-                    None => strategy.clone(),
-                };
-                if !target.hasattr("_on_window_bar_event_and_flush")? {
+                let target = self.strategy_for_slot(slot_index, strategy);
+                if !target.handles_window_bars(py)? {
                     continue;
                 }
-                let ret = target.call_method1(
-                    "_on_window_bar_event_and_flush",
-                    (bar.clone(), py_ctx.clone_ref(py)),
-                )?;
-                let pending_plans: Option<PendingEnginePlans> = if ret.is_none() {
-                    None
-                } else {
-                    let (oco, bracket) = ret.extract()?;
-                    Some(PendingEnginePlans {
-                        oco_groups: oco,
-                        bracket_plans: bracket,
-                    })
-                };
-                let (new_orders, new_timers, canceled_ids) = {
-                    let ctx_ref = py_ctx.borrow(py);
-                    let mut orders = Vec::new();
-                    let mut timers = Vec::new();
-                    let mut canceled = Vec::new();
-                    if let Ok(o) = ctx_ref.orders_arc.read() {
-                        orders.extend(o.clone());
-                    }
-                    if let Ok(t) = ctx_ref.timers_arc.read() {
-                        timers.extend(t.clone());
-                    }
-                    if let Ok(c) = ctx_ref.canceled_order_ids_arc.read() {
-                        canceled.extend(c.clone());
-                    }
-                    (orders, timers, canceled)
-                };
+                let pending_plans =
+                    target.invoke(py, StrategyCallback::WindowBar(&bar), &py_ctx)?;
+                let (new_orders, new_timers, canceled_ids) =
+                    Self::take_context_outputs(py, &py_ctx);
                 crate::pipeline::stages::strategy::apply_pending_engine_plans(self, pending_plans);
                 for id in canceled_ids {
                     self.execution_model.on_cancel(&id);
@@ -2556,7 +2437,7 @@ impl Engine {
     pub(crate) fn flush_window_tail(
         &mut self,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &StrategyHandle,
     ) -> PyResult<()> {
         // `pending_window_bars` 只在"同一基础事件里某窗口已即时闭合、写入
         // pending_window_bars, 但 StrategyProcessor 派发那一段还没来得及跑"时
@@ -2636,7 +2517,7 @@ impl Engine {
     pub(crate) fn flush_terminal_expiry_events(
         &mut self,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &StrategyHandle,
     ) -> PyResult<()> {
         if self.recent_expiry_events.is_empty() {
             return Ok(());
@@ -2667,18 +2548,11 @@ impl Engine {
                 previous_cash,
                 previous_account_metrics,
             )?;
-            let slot_strategy = self
-                .strategy_slot_strategies
-                .get(slot_index)
-                .and_then(|slot| slot.as_ref())
-                .map(|slot| slot.clone_ref(py));
-            if let Some(ref slot_py) = slot_strategy {
-                slot_py
-                    .bind(py)
-                    .call_method1("_flush_terminal_expiry_events", (py_ctx.clone_ref(py),))?;
-            } else {
-                strategy.call_method1("_flush_terminal_expiry_events", (py_ctx,))?;
-            }
+            self.strategy_for_slot(slot_index, strategy).invoke(
+                py,
+                StrategyCallback::TerminalExpiry,
+                &py_ctx,
+            )?;
         }
         Ok(())
     }
@@ -2686,7 +2560,7 @@ impl Engine {
     pub(crate) fn flush_terminal_pending_order_events(
         &mut self,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &StrategyHandle,
     ) -> PyResult<()> {
         // 日终过期的 Day 单也在这里派发: 最后一个交易日收盘结算之后已没有下一个
         // 策略事件来触发常规回调入口。
@@ -2734,18 +2608,11 @@ impl Engine {
                 previous_cash,
                 previous_account_metrics,
             )?;
-            let slot_strategy = self
-                .strategy_slot_strategies
-                .get(slot_index)
-                .and_then(|slot| slot.as_ref())
-                .map(|slot| slot.clone_ref(py));
-            if let Some(ref slot_py) = slot_strategy {
-                slot_py
-                    .bind(py)
-                    .call_method1("_flush_pending_order_events", (py_ctx.clone_ref(py),))?;
-            } else {
-                strategy.call_method1("_flush_pending_order_events", (py_ctx,))?;
-            }
+            self.strategy_for_slot(slot_index, strategy).invoke(
+                py,
+                StrategyCallback::TerminalOrderEvents,
+                &py_ctx,
+            )?;
         }
 
         self.state.order_manager.current_step_trades.clear();

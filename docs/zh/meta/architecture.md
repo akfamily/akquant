@@ -29,6 +29,7 @@
 ### 2.1 极致性能
 *   **Rust 核心**: 核心回测引擎采用 Rust 编写，避免了 Python GIL 的限制。
 *   **Pipeline 架构**: 采用流水线模式 (`DataProcessor` -> `ExecutionProcessor` -> `StrategyProcessor`) 处理事件，逻辑清晰且高效。
+*   **策略派发边界**: 引擎只通过 `StrategyHandler` trait（`src/engine/strategy_handler.rs`）调用策略，不直接调用 Python 方法；Python 策略（`PyStrategy`）是它的一种实现，Rust 侧也可以直接实现该 trait，经 `Engine::run_with_strategy` 运行。目前 trait 仍带 `Python` 令牌，`StrategyContext` 仍是 Python 类。
 *   **增量计算**: 内部状态和指标计算采用增量更新算法，适合超长历史回测。
 
 ### 2.2 事件驱动与仿真

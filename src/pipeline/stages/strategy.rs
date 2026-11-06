@@ -82,7 +82,7 @@ impl Processor for StrategyProcessor {
         &mut self,
         engine: &mut Engine,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &crate::engine::strategy_handler::StrategyHandle,
     ) -> PyResult<ProcessorResult> {
         if let Some(event) = engine.current_event.clone() {
             engine.ensure_strategy_slot_exists();
@@ -106,40 +106,18 @@ impl Processor for StrategyProcessor {
 
             for slot_index in 0..slot_count {
                 let deliver_timer = timer_target.is_none_or(|target| target == slot_index);
-                let slot_strategy = engine
-                    .strategy_slot_strategies
-                    .get(slot_index)
-                    .and_then(|slot| slot.as_ref())
-                    .map(|slot| slot.clone_ref(py));
-                let (new_orders, new_timers, canceled_ids) =
-                    if let Some(ref slot_py) = slot_strategy {
-                        let slot_bound = slot_py.bind(py);
-                        let (orders, timers, canceled, plans) = engine.call_strategy_for_slot(
-                            py,
-                            slot_bound,
-                            &event,
-                            slot_index,
-                            active_orders.clone(),
-                            step_trades.clone(),
-                            step_rejected_orders.clone(),
-                            deliver_timer,
-                        )?;
-                        apply_pending_engine_plans(engine, plans);
-                        (orders, timers, canceled)
-                    } else {
-                        let (orders, timers, canceled, plans) = engine.call_strategy_for_slot(
-                            py,
-                            strategy,
-                            &event,
-                            slot_index,
-                            active_orders.clone(),
-                            step_trades.clone(),
-                            step_rejected_orders.clone(),
-                            deliver_timer,
-                        )?;
-                        apply_pending_engine_plans(engine, plans);
-                        (orders, timers, canceled)
-                    };
+                let slot_strategy = engine.strategy_for_slot(slot_index, strategy);
+                let (new_orders, new_timers, canceled_ids, plans) = engine.call_strategy_for_slot(
+                    py,
+                    &slot_strategy,
+                    &event,
+                    slot_index,
+                    active_orders.clone(),
+                    step_trades.clone(),
+                    step_rejected_orders.clone(),
+                    deliver_timer,
+                )?;
+                apply_pending_engine_plans(engine, plans);
 
                 for id in canceled_ids {
                     engine.execution_model.on_cancel(&id);

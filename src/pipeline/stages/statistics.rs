@@ -12,7 +12,7 @@ impl Processor for StatisticsProcessor {
         &mut self,
         engine: &mut Engine,
         py: Python<'_>,
-        _strategy: &Bound<'_, PyAny>,
+        _strategy: &crate::engine::strategy_handler::StrategyHandle,
     ) -> PyResult<ProcessorResult> {
         if let Some(Event::Bar(_) | Event::Tick(_)) = engine.current_event.clone()
             && let Some(timestamp) = engine.clock.timestamp()

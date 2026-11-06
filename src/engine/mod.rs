@@ -1,6 +1,7 @@
 pub mod core;
 pub mod python;
 pub mod state;
+pub mod strategy_handler;
 
 pub use core::Engine;
 // pub use state::SharedState;

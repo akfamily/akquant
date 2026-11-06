@@ -9,7 +9,7 @@ impl Processor for CleanupProcessor {
         &mut self,
         engine: &mut Engine,
         _py: Python<'_>,
-        _strategy: &Bound<'_, PyAny>,
+        _strategy: &crate::engine::strategy_handler::StrategyHandle,
     ) -> PyResult<ProcessorResult> {
         engine.state.order_manager.cleanup_finished_orders();
         Ok(ProcessorResult::Next)

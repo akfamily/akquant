@@ -28,6 +28,7 @@ use crate::settlement::SettlementManager;
 use crate::statistics::StatisticsManager;
 
 use super::core::{Engine, StrategySlot};
+use super::strategy_handler::{PyStrategy, StrategyHandle};
 use super::state::SharedState;
 
 #[gen_stub_pymethods]
@@ -240,7 +241,6 @@ impl Engine {
 
     fn set_strategy_for_slot(
         &mut self,
-        py: Python<'_>,
         slot_index: usize,
         strategy: Py<PyAny>,
     ) -> PyResult<()> {
@@ -251,7 +251,7 @@ impl Engine {
                 slot_index
             )));
         }
-        self.strategy_slot_strategies[slot_index] = Some(strategy.clone_ref(py));
+        self.strategy_slot_strategies[slot_index] = Some(PyStrategy::handle(strategy));
         self.strategy_contexts[slot_index] = None;
         Ok(())
     }
@@ -1577,6 +1577,65 @@ impl Engine {
         strategy: &Bound<'_, PyAny>,
         show_progress: bool,
     ) -> PyResult<String> {
+        let handle = PyStrategy::handle(strategy.clone().unbind());
+        self.run_with_strategy(py, &handle, show_progress)
+    }
+
+    /// 运行时绩效统计；用于 run() 返回之后（如 on_stop）。期末点的补法与 get_results 相同。
+    ///
+    /// :return: dict，键见 akquant.strategy_stats.StrategyStats
+    fn strategy_stats<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let (terminal, close_prices) = self.terminal_result_point();
+        // 读锁与 &mut self.statistics_manager 是不相交的字段借用，不必复制价格表。
+        let latest = self.last_prices.read().expect("last_prices 读锁被污染");
+        let prices = close_prices.as_ref().unwrap_or(&*latest);
+        self.statistics_manager
+            .stats_snapshot(
+                &self.state.portfolio,
+                &self.instruments,
+                prices,
+                &self.state.order_manager,
+                &self.risk_manager.config,
+                self.initial_cash,
+                terminal,
+            )
+            .to_pydict(py)
+    }
+
+    /// 获取回测结果
+    ///
+    /// :return: BacktestResult
+    fn get_results(&self) -> BacktestResult {
+        // 实盘会话在收盘后结束时, 期末点钳到收盘并按收盘时刻的最新价计价。
+        let (terminal, close_prices) = self.terminal_result_point();
+        let latest = self.last_prices.read().expect("last_prices 读锁被污染");
+        let prices = close_prices.as_ref().unwrap_or(&*latest);
+        self.statistics_manager.generate_backtest_result(
+            &self.state.portfolio,
+            &self.instruments,
+            prices,
+            &self.state.order_manager,
+            &self.risk_manager.config,
+            self.initial_cash,
+            terminal,
+            self.timezone_name.clone(),
+            self.timezone_offset,
+            self.days_per_year,
+            self.risk_free_rate,
+            self.trading_day_ends.clone(),
+        )
+    }
+}
+
+impl Engine {
+    /// 用给定策略跑完一次会话(回测或实盘)。Python 的 `Engine.run` 是它的薄包装;
+    /// Rust 侧可直接传入任意 [`StrategyHandler`](super::strategy_handler::StrategyHandler) 实现。
+    pub(crate) fn run_with_strategy(
+        &mut self,
+        py: Python<'_>,
+        strategy: &StrategyHandle,
+        show_progress: bool,
+    ) -> PyResult<String> {
         // 会话解析器（交易日归属、收盘时刻）在数据循环前构造，配置错误在这里报出。
         self.ensure_session_resolver()?;
         // 每次运行一次：未传交易日历、按工作日推算时告警（节假日会被当作交易日）。
@@ -1623,19 +1682,12 @@ impl Engine {
             self.schedule_lifecycle_for_event(anchor, self.snapshot_time)?;
         }
 
-        // Configure history buffer if strategy has _history_depth set
-        if let Ok(depth_attr) = strategy.getattr("_history_depth")
-            && let Ok(depth) = depth_attr.extract::<usize>()
-            && depth > 0
-        {
+        // 策略要求的历史缓冲深度(Python 策略的 `_history_depth`)。
+        if let Some(depth) = strategy.history_depth(py) {
             self.configure_history_depth(depth);
         }
 
-        if strategy.hasattr("_on_start_internal")? {
-            strategy.call_method0("_on_start_internal")?;
-        } else {
-            strategy.call_method0("on_start")?;
-        }
+        strategy.on_start(py)?;
 
         // Progress Bar Initialization
         // 传入 symbol_whitelist: 过滤生效后被丢弃标的独占的时间戳不该计入
@@ -1844,50 +1896,5 @@ impl Engine {
             count,
             self.state.order_manager.trades.len()
         ))
-    }
-
-    /// 运行时绩效统计；用于 run() 返回之后（如 on_stop）。期末点的补法与 get_results 相同。
-    ///
-    /// :return: dict，键见 akquant.strategy_stats.StrategyStats
-    fn strategy_stats<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let (terminal, close_prices) = self.terminal_result_point();
-        // 读锁与 &mut self.statistics_manager 是不相交的字段借用，不必复制价格表。
-        let latest = self.last_prices.read().expect("last_prices 读锁被污染");
-        let prices = close_prices.as_ref().unwrap_or(&*latest);
-        self.statistics_manager
-            .stats_snapshot(
-                &self.state.portfolio,
-                &self.instruments,
-                prices,
-                &self.state.order_manager,
-                &self.risk_manager.config,
-                self.initial_cash,
-                terminal,
-            )
-            .to_pydict(py)
-    }
-
-    /// 获取回测结果
-    ///
-    /// :return: BacktestResult
-    fn get_results(&self) -> BacktestResult {
-        // 实盘会话在收盘后结束时, 期末点钳到收盘并按收盘时刻的最新价计价。
-        let (terminal, close_prices) = self.terminal_result_point();
-        let latest = self.last_prices.read().expect("last_prices 读锁被污染");
-        let prices = close_prices.as_ref().unwrap_or(&*latest);
-        self.statistics_manager.generate_backtest_result(
-            &self.state.portfolio,
-            &self.instruments,
-            prices,
-            &self.state.order_manager,
-            &self.risk_manager.config,
-            self.initial_cash,
-            terminal,
-            self.timezone_name.clone(),
-            self.timezone_offset,
-            self.days_per_year,
-            self.risk_free_rate,
-            self.trading_day_ends.clone(),
-        )
     }
 }
