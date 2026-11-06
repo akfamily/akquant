@@ -1,6 +1,7 @@
 """``result.viz.*`` 可视化命名空间的结构性测试.
 
-覆盖 RFC(``docs/zh/meta/viz-namespace-and-lwc-review-rfc.md``)P0 阶段的
+覆盖 RFC(``docs/zh/meta/viz-namespace-and-lwc-review-rfc.md``,
+已归档, 原文见提交 512f74ed)P0 阶段的
 契约:旧方法已破坏性删除、``viz`` 属性就位且惰性、五个 viz 方法可达、
 ``to_quantstats`` 保留在顶层。
 """

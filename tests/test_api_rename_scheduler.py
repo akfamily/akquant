@@ -1,6 +1,7 @@
 """定时器注册 API 收敛测试: 改名 schedule_daily + 新增 weekly/monthly/helper.
 
-对应 timer-api-rfc.md。回调端 on_timer 不改,只收敛注册端命名并补齐频率方法族。
+对应 ``docs/zh/meta/timer-api-rfc.md``(已归档, 原文见提交 512f74ed)。
+回调端 on_timer 不改,只收敛注册端命名并补齐频率方法族。
 """
 
 from typing import Any, cast

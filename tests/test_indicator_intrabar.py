@@ -1,6 +1,7 @@
 """L2 Tier A: 窗口周期指标在未闭合窗口上的实时值(intrabar).
 
-设计见 docs/zh/meta/indicator-tradingview-rfc.md §2.3 / §5.1。声明
+设计见 ``docs/zh/meta/indicator-tradingview-rfc.md`` §2.3 / §5.1
+(已归档, 原文见提交 512f74ed)。声明
 ``self.I(..., freq="5min", intrabar=True)`` 后, 每根基础 bar 闭合时用
 ``ctx.current_window()`` 的未闭合窗口快照**试算**一个临时值(``confirmed=False``),
 窗口闭合时真 ``update()``(``confirmed=True``)。``[0]`` 语义对齐 Pine: 有临时值时

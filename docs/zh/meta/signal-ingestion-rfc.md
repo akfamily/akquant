@@ -1,12 +1,12 @@
 # RFC:外部信号平台接入
 
-> **状态**:草案(Draft) · **日期**:2026-08-07 · **范围**:新增 `akquant.signal` 子包 + Rust 指令入口 + `RealtimeExecutionClient` 补实;**允许破坏性变更**(broker_live 下单时序与 `OrderReceipt` 语义)
+> **状态**:已落地(P0–P3) · **日期**:2026-08-07 · **范围**:新增 `akquant.signal` 子包 + Rust 指令入口 + `RealtimeExecutionClient` 补实;**允许破坏性变更**(broker_live 下单时序与 `OrderReceipt` 语义)
 >
 > 对标实现:**Freqtrade**(producer/consumer WebSocket + `POST /forceenter`)、**vn.py**(WebTrader:独立进程 FastAPI + RpcClient ↔ 交易进程 RpcServer)、**nautilus_trader**(`MessageBusConfig.external_streams` + Redis backing,回调 `on_data`)、**QuantConnect LEAN**(自定义数据源拉信号)。
 >
-> 与 [hooks-rfc.md](hooks-rfc.md) / [timer-api-rfc.md](timer-api-rfc.md) 的关系:**严格遵守二者已确立的不变量**——不新增 `on_signal` 钩子(hooks-rfc 设计原则第 1 条字面举 `on_signal` 为反例),不新增引擎事件刻度。本 RFC 的信号**不经策略回调**,直接成为订单,故两条不变量都不受触碰。
+> 与 [hooks-rfc.md](https://github.com/akfamily/akquant/blob/512f74eda4645f8039392e89eb99100f2548e4fc/docs/zh/meta/hooks-rfc.md) / [timer-api-rfc.md](https://github.com/akfamily/akquant/blob/512f74eda4645f8039392e89eb99100f2548e4fc/docs/zh/meta/timer-api-rfc.md) 的关系:**严格遵守二者已确立的不变量**——不新增 `on_signal` 钩子(hooks-rfc 设计原则第 1 条字面举 `on_signal` 为反例),不新增引擎事件刻度。本 RFC 的信号**不经策略回调**,直接成为订单,故两条不变量都不受触碰。
 >
-> 与 [issue-329-fix-plan.md](issue-329-fix-plan.md) 的关系:信号单 `created_at` 落在任意墙钟时刻,与 bar 时间戳天然不对齐,正是 #329 第 3 环暴露的那个面。该修复已落地,本 RFC **只补一条针对信号单的回归测试**锚死它,不重开引擎缺陷。
+> 与 [issue-329-fix-plan.md](https://github.com/akfamily/akquant/blob/512f74eda4645f8039392e89eb99100f2548e4fc/docs/zh/meta/issue-329-fix-plan.md) 的关系:信号单 `created_at` 落在任意墙钟时刻,与 bar 时间戳天然不对齐,正是 #329 第 3 环暴露的那个面。该修复已落地,本 RFC **只补一条针对信号单的回归测试**锚死它,不重开引擎缺陷。
 
 ---
 
@@ -58,7 +58,7 @@
 | 路径 | 结论 | 硬理由 |
 |---|---|---|
 | 推 `Event::Timer` 进 **feed** channel | ✗ 静默丢弃 | `src/pipeline/stages/data.rs` 的 `FeedAction::Event` 分支只给 `Bar`/`Tick` 取时间戳,其余落 `_ => 0`;随后 `timestamp <= engine.snapshot_time` 必然成立 → `ProcessorResult::Loop`。`RealtimeDataClient::peek_timestamp`(`src/data/client.rs`)同样把 Timer 打成 0 |
-| 新增 `on_signal` 钩子 | ✗ 撞已落地原则 | [hooks-rfc.md](hooks-rfc.md) 设计原则第 1 条:「When-not-what……`on_bar` 而非 `on_signal`」——字面把 `on_signal` 举为反例。Nautilus 的同类能力也用 `on_data` + 类型分流,不开语义钩子 |
+| 新增 `on_signal` 钩子 | ✗ 撞已落地原则 | [hooks-rfc.md](https://github.com/akfamily/akquant/blob/512f74eda4645f8039392e89eb99100f2548e4fc/docs/zh/meta/hooks-rfc.md) 设计原则第 1 条:「When-not-what……`on_bar` 而非 `on_signal`」——字面把 `on_signal` 举为反例。Nautilus 的同类能力也用 `on_data` + 类型分流,不开语义钩子 |
 | 外部线程直接调 `strategy.buy()` / `ctx.schedule()` | ✗ 不安全 | 前者撞 `python/akquant/strategy_trading_api.py` 的 `if strategy.ctx is None: raise RuntimeError("Context not ready")`;后者 ctx 是 pyclass,`run()` 期间 `py_ctx.borrow(py)` 有 `PyBorrowMutError` 风险 |
 
 ### 3.2 正解:`EventManager` 的 crossbeam sender
@@ -374,7 +374,7 @@ P0 与 P2 的依赖关系不变(P2 需要 `SignalPort`)。
 **P2 / P3**
 
 - 幂等:同一 `signal_id` 投递 3 次,断言只报单 1 次。
-- **信号单终态化**(#329 回归锚):对停牌/无行情标的注入信号,断言订单在其可撮合切片过后进入终态(`Rejected`),不会逐日累积挤占保证金。参见 [issue-329-fix-plan.md](issue-329-fix-plan.md)。
+- **信号单终态化**(#329 回归锚):对停牌/无行情标的注入信号,断言订单在其可撮合切片过后进入终态(`Rejected`),不会逐日累积挤占保证金。参见 [issue-329-fix-plan.md](https://github.com/akfamily/akquant/blob/512f74eda4645f8039392e89eb99100f2548e4fc/docs/zh/meta/issue-329-fix-plan.md)。
 - 鉴权:无 token 启动断言 `ValueError`;错误签名断言 401 且不产生订单;超窗时间戳断言被拒。
 - 拒单回执:风控拒单后断言信号源收到回执。
 - HTTP/Redis 源用 mock 传输测试(不依赖真实服务),与两个 plugin 仓的 `httpx MockTransport` 范式一致。
@@ -383,7 +383,7 @@ P0 与 P2 的依赖关系不变(P2 需要 `SignalPort`)。
 
 ### 8.1 新增 `on_signal` 策略钩子
 
-最直觉的设计,但撞 [hooks-rfc.md](hooks-rfc.md) 设计原则第 1 条,该原则**字面**把 `on_signal` 举为反例(「`on_bar` 而非 `on_signal`」)。外部佐证:nautilus_trader 的同类能力(外部流 / 自定义数据)落地回调是 `on_data`,靠 `isinstance` 类型分流,同样不为语义开钩子。
+最直觉的设计,但撞 [hooks-rfc.md](https://github.com/akfamily/akquant/blob/512f74eda4645f8039392e89eb99100f2548e4fc/docs/zh/meta/hooks-rfc.md) 设计原则第 1 条,该原则**字面**把 `on_signal` 举为反例(「`on_bar` 而非 `on_signal`」)。外部佐证:nautilus_trader 的同类能力(外部流 / 自定义数据)落地回调是 `on_data`,靠 `isinstance` 类型分流,同样不为语义开钩子。
 
 更根本的是:信号已经是**指令**而不是**事件**,它不需要策略再做一次决策。让它经过策略回调是多余的一跳,还会把「外部指令」与「自有信号」的责任边界搅混。**否决。**
 

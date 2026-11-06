@@ -3,7 +3,7 @@
 ``Strategy.I()`` 的承载模块。一次声明同时携带**计算**与**绘图**两组信息,
 框架在每次行情回调前自动推进指标、记录历史值并按需上报绘图点。
 
-设计契约见 ``docs/zh/meta/indicator-tradingview-rfc.md``:
+设计契约见 ``docs/zh/meta/indicator-tradingview-rfc.md``(已归档, 原文见提交 512f74ed):
 
 - ``ind[0]`` 是当前 bar 的值(与 Pine 的 ``sma[0]`` 等价于 ``sma`` 一致),
   ``ind[n]`` 是前 n 根; 越界返回 ``None`` 而非抛异常——预热期天然越界。
