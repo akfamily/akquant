@@ -3,7 +3,7 @@
 本模块是数据归一化的唯一常量来源, 收敛此前散落在
 ``utils``/``feed_adapter``/``data`` 中重复的列名候选表与时区默认值.
 
-对应设计: docs/zh/meta/columnar-rfc.md 第 3、15 节.
+对应设计: docs/zh/meta/columnar-rfc.md §4(规范数据模型).
 """
 
 from typing import Dict, List, Tuple

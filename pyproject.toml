@@ -4,13 +4,24 @@ build-backend = "maturin"
 
 [project]
 name = "akquant"
-version = "0.3.77"
+version = "0.3.78"
 description = "High-performance quantitative trading framework based on Rust and Python"
 readme = "README.md"
 license = {text = "MIT License"}
 authors = [
     {name = "AKQuant Developers"},
     {email = "albertandking@gmail.com"}
+]
+keywords = [
+    "quant",
+    "backtest",
+    "trading",
+    "rust",
+    "akshare",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "ai-agent",
 ]
 classifiers = [
     "Programming Language :: Rust",
@@ -41,6 +52,10 @@ Repository = "https://github.com/akfamily/akquant"
 Documentation = "https://akquant.akfamily.xyz"
 
 [project.scripts]
+# akquant mcp 与 akquant-mcp 相同。MCP 官方注册表的客户端按包名运行 uvx akquant，
+# server.json 据此登记为 uvx --with akquant[mcp]==X.Y.Z akquant mcp
+akquant = "akquant.cli:main"
+# 供 AI 助手以 stdio 方式启动 MCP 服务，如 uvx --from "akquant[mcp]" akquant-mcp
 akquant-mcp = "akquant.mcp.__main__:main"
 
 [project.optional-dependencies]
@@ -63,8 +78,11 @@ docs = [
 signal-redis = [
     "redis>=5.0.0",
 ]
+# MCP 服务。SDK 的大版本之间不兼容，限制在 2.x；带上 akshare，
+# 让 uvx 零安装启动时 prepare_data 也能用 AKShare 取数
 mcp = [
     "mcp>=2.3,<3",
+    "akshare>=1.0.0",
 ]
 full = [
     "plotly>=5.0.0",

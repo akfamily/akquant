@@ -5,7 +5,8 @@
 绘图后端,保持 ``plotly`` / ``quantstats`` / ``lwc`` 为可选依赖;``viz`` 属性
 本身不触发任何绘图库导入.
 
-设计见 ``docs/zh/meta/viz-namespace-and-lwc-review-rfc.md``.
+设计见 ``docs/zh/meta/viz-namespace-and-lwc-review-rfc.md``
+(已归档, 原文见提交 512f74ed).
 """
 
 from __future__ import annotations

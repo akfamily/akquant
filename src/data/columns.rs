@@ -2,7 +2,7 @@
 //!
 //! 市场数据 (价格/成交量) 以 f64 列存储 —— 输入本就是 f64 numpy, 故无精度损失;
 //! 重构 `Bar` 时对"价格→钱"边界仍用 `Decimal::from_f64`, 与 `batch::from_arrays`
-//! **完全一致**, 保证 golden 逐位不变 (混合路线, 详见 docs/zh/meta/columnar-rfc.md §6/§8)。
+//! **完全一致**, 保证 golden 逐位不变 (混合路线, 详见 docs/zh/meta/columnar-rfc.md §5.1)。
 
 use crate::log_context::{AkqLogContext, format_event_time_nanos, render_log_message};
 use crate::model::Bar;

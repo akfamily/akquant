@@ -4,7 +4,7 @@
 ``ind[0]`` / ``ind[1]`` 序列回溯。取代旧的 ``indicator_mode`` 开关与
 ``register_incremental_indicator`` / ``register_precomputed_indicator``。
 
-设计契约见 docs/zh/meta/indicator-tradingview-rfc.md。
+设计契约见 ``docs/zh/meta/indicator-tradingview-rfc.md``(已归档, 原文见提交 512f74ed)。
 """
 
 from typing import Any, List, Optional, Tuple

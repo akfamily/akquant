@@ -1,6 +1,7 @@
 """duration 必须是真正的墙钟兜底: 行情停摆也要到点结束.
 
-修复前的缺陷(见 docs/zh/meta/signal-ingestion-rfc.md 4.6): ``_apply_time_limit``
+修复前的缺陷(见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 4.6):
+``_apply_time_limit``
 只 patch ``on_bar``/``on_tick``, 墙钟检查因此只在**有行情事件时**执行。行情一停
 (自定义网关推完即退出、或盘后无推送), 引擎永远阻塞在 ``wait_peek`` 上,
 ``on_bar`` 不再被调用, ``duration`` 便永不触发 —— 会话挂死。

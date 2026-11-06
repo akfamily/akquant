@@ -5,7 +5,7 @@
 "接一个 webhook" 这个单一职责完全够用, 且让安全逻辑始终可验证。
 
 高吞吐/复杂路由场景请改用 :class:`RedisSignalSource` + 独立的 Web 进程
-(见 signal-ingestion-rfc.md 4.5 的部署建议)。
+(见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 4.5 的部署建议)。
 """
 
 from __future__ import annotations

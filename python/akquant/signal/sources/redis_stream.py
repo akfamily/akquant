@@ -2,7 +2,7 @@
 
 对标 vn.py 的 WebTrader 取舍: 把 Web 服务放在**独立进程**, 与交易进程之间用消息
 通道解耦 —— HTTP 服务的故障与负载都被进程边界隔开, 不会波及交易主循环
-(见 signal-ingestion-rfc.md 4.5)。
+(见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 4.5)。
 
 用 Stream 而非 List: ``XREADGROUP`` 提供消费组与显式 ack, 崩溃重启后未 ack 的消息
 仍在 pending 中可被重投; ``BLPOP`` 取走即丢, 崩在处理中途就丢单了。

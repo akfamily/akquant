@@ -2,6 +2,10 @@
 
 This document aims to help users construct efficient Prompts to automatically generate AKQuant strategy code using ChatGPT, Claude, or other Large Language Models (LLMs).
 
+!!! tip "Prefer the MCP server when your assistant supports MCP"
+
+    For WorkBuddy, Codex, Cursor, Claude Code and other MCP-capable assistants, connect AKQuant's [MCP server](../guide/mcp.md): the APIs the assistant looks up match the version installed on your machine, and it can check strategies, run backtests, read structured errors and rerun on its own instead of relying on the rules in a prompt. The prompt templates below are for chat interfaces that cannot use MCP, or as extra guidance alongside it.
+
 ## 1. Core Prompt Template (Basic Strategy)
 
 You can copy the following content directly to the LLM as a "System Prompt" or the beginning of a conversation to let the model quickly understand AKQuant's coding conventions.

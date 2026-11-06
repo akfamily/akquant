@@ -11,6 +11,7 @@
 1.  **Rust Core Layer (`akquant_core`)**:
     *   **Data Engine**: Uses `polars` (Arrow format) to manage OHLCV data, aiming for zero-copy memory mapping.
     *   **Backtest Engine**: Event-driven execution engine.
+    *   **Strategy Dispatch Boundary**: The engine calls strategies only through the `StrategyHandler` trait (`src/engine/strategy_handler.rs`), never by Python method name. Python strategies (`PyStrategy`) are one implementation; Rust code can implement the trait directly and run it via `Engine::run_with_strategy`. The trait still takes a `Python` token and `StrategyContext` is still a Python class.
     *   **Event Bus**:
         *   Inspired by mature event-driven message bus concepts, implemented based on Rust Channel (`mpsc`).
         *   Decouples strategy, risk control, execution, and data components.

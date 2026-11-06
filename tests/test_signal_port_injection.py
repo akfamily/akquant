@@ -1,6 +1,6 @@
 """外部线程经 SignalPort 注入指令, 引擎须接受并撮合(paper 模式).
 
-设计依据: docs/zh/meta/signal-ingestion-rfc.md 第 4.1 节。
+设计依据: 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 第 4.1 节。
 
 这条通路的意义: 让外部量化信号平台的指令进入引擎, 而**不经过策略回调** ——
 策略回调内无法触达 Engine(`run(&mut self)` 独占借用, 见 RFC 4.2.1), 故注入必须

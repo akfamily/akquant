@@ -914,7 +914,8 @@ class LiveRunner:
             )
 
         # 外部信号端口: 必须在 engine.run() 之前取。run() 会独占可变借用引擎对象,
-        # 之后再取会撞 "Already borrowed"(见 signal-ingestion-rfc.md 4.2.1)。
+        # 之后再取会撞 "Already borrowed"
+        # (见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 4.2.1)。
         # 取到的是 channel sender 的克隆, 与引擎对象解耦, 可安全交给任意线程。
         if self.signal_port_ready is not None:
             self._deliver_signal_port(effective_strategy_id)
@@ -3241,7 +3242,7 @@ class LiveRunner:
 
         # 墙钟兜底(主路径): 把截止时刻下沉到引擎的等待循环, 使会话在行情停摆时
         # 也能到点结束。此前只有下面的回调 patch, 而它在无行情时永不触发 ——
-        # 行情一停就挂死(见 docs/zh/meta/signal-ingestion-rfc.md 4.6)。
+        # 行情一停就挂死(见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 4.6)。
         set_deadline = getattr(self.engine, "set_session_deadline_ns", None)
         if callable(set_deadline):
             set_deadline(int((start_time + duration_sec) * 1_000_000_000))

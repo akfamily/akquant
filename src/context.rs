@@ -616,6 +616,19 @@ impl StrategyContext {
         }
     }
 
+    /// 提交一张已构造好的订单: 记入本回调的 `orders`, 再交给引擎(回测走事件通道,
+    /// 无通道时进 `orders_arc` 由引擎在回调返回后收走)。
+    ///
+    /// 这是下单的纯 Rust 入口, Python 的 `buy` / `sell` 在解析参数后也走这里。
+    pub fn submit_order(&mut self, order: Order) {
+        self.orders.push(order.clone());
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(Event::OrderRequest(order));
+        } else if let Ok(mut orders) = self.orders_arc.write() {
+            orders.push(order);
+        }
+    }
+
     /// 撮合同口径的时段视图（本时间片表 → 解析器按时刻），供 `session_of` 使用。
     fn with_session_view<R>(&self, f: impl FnOnce(SessionView<'_>) -> R) -> R {
         let slice = self.sessions.slice_sessions.upgrade();
@@ -1298,12 +1311,7 @@ impl StrategyContext {
             allow_quantity_auto_resize,
             reduce_only,
         };
-        self.orders.push(order.clone());
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.send(Event::OrderRequest(order));
-        } else if let Ok(mut orders) = self.orders_arc.write() {
-            orders.push(order);
-        }
+        self.submit_order(order);
         Ok(id)
     }
 
@@ -1405,12 +1413,7 @@ impl StrategyContext {
             allow_quantity_auto_resize: false,
             reduce_only,
         };
-        self.orders.push(order.clone());
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.send(Event::OrderRequest(order));
-        } else if let Ok(mut orders) = self.orders_arc.write() {
-            orders.push(order);
-        }
+        self.submit_order(order);
         Ok(id)
     }
 

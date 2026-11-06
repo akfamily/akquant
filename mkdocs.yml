@@ -1,5 +1,5 @@
 site_name: AKQuant
-site_description: High Performance Rust/Python Quantitative Framework / 高性能 Rust/Python 量化投研框架
+site_description: High Performance Rust/Python Quantitative Framework with an MCP server for AI assistants / 高性能 Rust/Python 量化投研框架，自带供 AI 助手使用的 MCP 服务
 site_author: AKQuant contributors
 site_url: https://akquant.akfamily.xyz/
 repo_url: https://github.com/akfamily/akquant
@@ -97,9 +97,9 @@ plugins:
             Indicator Scenario Quickref: 指标场景速查（四象限）
             Stream Observability: 流式可观测性
             Multi-Timeframe Feed API: 多周期策略
-            Data Feed Adapter Spec: 数据适配层规范
+            Data Feed Adapters: 数据源适配器
             Broker Capability Matrix: Broker 能力矩阵
-            Analyzer Plugin Spec: Analyzer 插件规范
+            Analyzer Plugins: Analyzer 插件
             Capability Boost Plan: 能力补强路线图
             Timezone Handling: 时区处理
             Testing Guide: 测试指南
@@ -175,9 +175,9 @@ plugins:
             Indicator Scenario Quickref: Indicator Scenario Quickref
             Stream Observability: Stream Observability
             Multi-Timeframe Feed API: Multi-Timeframe Strategies
-            Data Feed Adapter Spec: Data Feed Adapter Spec
+            Data Feed Adapters: Data Feed Adapters
             Broker Capability Matrix: Broker Capability Matrix
-            Analyzer Plugin Spec: Analyzer Plugin Spec
+            Analyzer Plugins: Analyzer Plugins
             Capability Boost Plan: Capability Boost Plan
             Timezone Handling: Timezone Handling
             Testing Guide: Testing Guide
@@ -284,10 +284,10 @@ nav:
       - Custom Broker Registry: advanced/custom_broker_registry.md
       - Custom Broker Production Checklist: advanced/custom_broker_production_checklist.md
       - Multi-Timeframe Feed API: advanced/multi_timeframe_feed_api.md
-      - Data Feed Adapter Spec: advanced/data_feed_adapter_spec.md
+      - Data Feed Adapters: advanced/data_feed_adapter_spec.md
       - Broker Capability Matrix: advanced/broker_capability_matrix.md
       - Tick Size Alignment: advanced/tick_size_alignment.md
-      - Analyzer Plugin Spec: advanced/analyzer_plugin_spec.md
+      - Analyzer Plugins: advanced/analyzer_plugin_spec.md
       - Timezone Handling: advanced/timezone.md
   - API Reference: reference/api.md
   - Architecture & Internals:

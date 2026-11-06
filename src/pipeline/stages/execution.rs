@@ -22,7 +22,7 @@ impl Processor for ExecutionProcessor {
         &mut self,
         engine: &mut Engine,
         _py: Python<'_>,
-        _strategy: &Bound<'_, PyAny>,
+        _strategy: &crate::engine::strategy_handler::StrategyHandle,
     ) -> PyResult<ProcessorResult> {
         // 交易日生命周期事件(盘前/开始交易/收盘后)不是行情, 不撮合任何订单。
         if let Some(Event::Timer(timer)) = engine.current_event.as_ref()

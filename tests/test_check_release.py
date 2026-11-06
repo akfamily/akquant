@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -36,6 +37,29 @@ CHANGELOG = """# Changelog
 """
 
 
+SERVER_NAME = "io.github.akfamily/akquant"
+
+
+def _server_json(server: str, package: str, with_spec: str) -> str:
+    return json.dumps(
+        {
+            "name": SERVER_NAME,
+            "version": server,
+            "packages": [
+                {
+                    "registryType": "pypi",
+                    "identifier": "akquant",
+                    "version": package,
+                    "runtimeHint": "uvx",
+                    "runtimeArguments": [
+                        {"type": "named", "name": "--with", "value": with_spec}
+                    ],
+                }
+            ],
+        }
+    )
+
+
 def _make_repo(
     root: Path,
     *,
@@ -43,6 +67,10 @@ def _make_repo(
     cargo: str = "1.2.3",
     lock: str = "1.2.3",
     changelog: str = CHANGELOG,
+    server: str = "1.2.3",
+    server_package: str = "1.2.3",
+    server_with: str = "akquant[mcp]==1.2.3",
+    readme: str = f"# AKQuant\n\n<!-- mcp-name: {SERVER_NAME} -->\n",
 ) -> Path:
     (root / "pyproject.toml").write_text(
         f'[project]\nname = "akquant"\nversion = "{pyproject}"\n', encoding="utf-8"
@@ -57,6 +85,10 @@ def _make_repo(
         encoding="utf-8",
     )
     (root / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
+    (root / "server.json").write_text(
+        _server_json(server, server_package, server_with), encoding="utf-8"
+    )
+    (root / "README.md").write_text(readme, encoding="utf-8")
     return root
 
 
@@ -82,6 +114,42 @@ def test_any_drifted_source_fails(
     root = _make_repo(tmp_path, **{field: "1.2.4"})
     assert _run(root, "v1.2.3") == 1
     assert label in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"server": "1.2.4"},
+        {"server_package": "1.2.4"},
+        # MCP 注册表客户端按 --with 装依赖, 版本也必须跟着走
+        {"server_with": "akquant[mcp]==1.2.4"},
+    ],
+)
+def test_server_json_version_drift_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], overrides: dict[str, str]
+) -> None:
+    """MCP 注册表按 server.json 登记, 其中三处版本号都必须与 tag 一致."""
+    root = _make_repo(tmp_path, **overrides)
+    assert _run(root, "v1.2.3") == 1
+    assert "server.json" in capsys.readouterr().out
+
+
+def test_server_json_with_spec_must_pin_mcp_extra(tmp_path: Path) -> None:
+    """--with 必须是 akquant[mcp]==版本, 写成别的形式时报错而非静默通过."""
+    root = _make_repo(tmp_path, server_with="mcp>=2.3")
+    with pytest.raises(ValueError, match="--with"):
+        _run(root)
+
+
+def test_readme_must_carry_mcp_name_marker(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """注册表靠 PyPI 项目说明里的 mcp-name 标记确认包归属, 名称须与 server.json 一致."""
+    root = _make_repo(
+        tmp_path, readme="# AKQuant\n\n<!-- mcp-name: io.github.someone/akquant -->\n"
+    )
+    assert _run(root, "v1.2.3") == 1
+    assert "mcp-name" in capsys.readouterr().out
 
 
 def test_lock_without_package_entry_raises(tmp_path: Path) -> None:

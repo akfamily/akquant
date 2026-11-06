@@ -1,4 +1,5 @@
 use crate::engine::Engine;
+use crate::engine::strategy_handler::StrategyHandle;
 use pyo3::prelude::*;
 
 #[derive(Debug, PartialEq)]
@@ -16,6 +17,6 @@ pub trait Processor {
         &mut self,
         engine: &mut Engine,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &StrategyHandle,
     ) -> PyResult<ProcessorResult>;
 }

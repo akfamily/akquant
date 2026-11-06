@@ -68,7 +68,7 @@ pub fn exceeds_position_size(
 ///
 /// 只覆盖**不需要引擎运行态**的三项限额(order_value / order_size / position_size)。
 /// daily_loss / drawdown / risk_budget 依赖引擎累计的盈亏与预算用量,不在此处;
-/// 它们在 broker_live 下仍由 `ChannelProcessor` 那条路负责(见 signal-ingestion-rfc 3.3)。
+/// 它们在 broker_live 下仍由 `ChannelProcessor` 那条路负责(见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 3.3)。
 #[allow(clippy::too_many_arguments)]
 pub fn check_all(
     strategy_id: &str,

@@ -1,6 +1,6 @@
 """broker_live 下策略级限额必须真实拦单(回归锚).
 
-设计依据: docs/zh/meta/signal-ingestion-rfc.md 第 3.3 节。
+设计依据: 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 第 3.3 节。
 
 **修复前的缺陷**: `strategy_max_*` 经 `engine.set_strategy_max_*_limits()` 下发到 Rust
 `risk_manager`, 但 broker_live 的订单走 Python `BrokerOrderSubmitter` 直接

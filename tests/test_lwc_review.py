@@ -1,6 +1,7 @@
 """``akquant.lwc`` 交易复盘的 payload / 渲染 / 安全性测试.
 
-覆盖 RFC(``docs/zh/meta/viz-namespace-and-lwc-review-rfc.md``):P1 —— payload
+覆盖 RFC(``docs/zh/meta/viz-namespace-and-lwc-review-rfc.md``,
+已归档, 原文见提交 512f74ed):P1 —— payload
 复用行情 normalizer、日频 vs 日内时间格式、买卖 marker 对齐、XSS 转义、
 离线自包含(无 CDN、内联 LWC);P2 —— 主题无关 payload、页内明暗切换、
 时间戳去重、日内大数据量压测。

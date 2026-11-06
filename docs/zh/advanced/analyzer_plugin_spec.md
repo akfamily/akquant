@@ -1,11 +1,43 @@
-# Analyzer 插件接口草案
+# Analyzer 插件
 
-## 目标
+Analyzer 插件在回测过程中旁听 bar 和成交，结束时产出一份自定义分析结果，放进 `result.analyzer_outputs`。适合做内置指标没有覆盖的统计，例如按时段统计成交、记录特定条件出现的次数，而不必改策略代码。
 
-- 让第三方分析器无需修改内核即可接入回测流程。
-- 将固定分析输出扩展为“内置 + 插件”双轨体系。
+## 最小例子
 
-## 最小生命周期
+```python
+import akquant as aq
+
+class TradeCounter:
+    name = "trade_counter"
+
+    def __init__(self):
+        self.bars = 0
+        self.trades = 0
+
+    def on_start(self, context):
+        pass
+
+    def on_bar(self, context):
+        self.bars += 1
+
+    def on_trade(self, context):
+        self.trades += 1
+
+    def on_finish(self, context):
+        return {"bars": self.bars, "trades": self.trades}
+
+result = aq.run_backtest(
+    data=df,
+    strategy=MyStrategy,
+    symbols="600000",
+    analyzer_plugins=[TradeCounter()],
+)
+print(result.analyzer_outputs)   # {"trade_counter": {"bars": ..., "trades": ...}}
+```
+
+`analyzer_plugins` 必须是列表或元组。每次回测请传入新的插件实例，插件对象本身会累积状态。
+
+## 插件协议
 
 ```python
 class AnalyzerPlugin(Protocol):
@@ -16,56 +48,33 @@ class AnalyzerPlugin(Protocol):
     def on_finish(self, context: dict[str, Any]) -> dict[str, Any]: ...
 ```
 
-实现草案：
-- [analyzer_plugin.py](https://github.com/akfamily/akquant/blob/main/python/akquant/analyzer_plugin.py)
+- 四个方法都必须实现，`name` 必须存在，否则 `run_backtest` 在开始前抛 `TypeError`。
+- `on_finish` 的返回值以 `name` 为键收进 `result.analyzer_outputs`；同名插件后者覆盖前者。
+- `akquant.analyzer_plugin.AnalyzerTemplate` 是一个可以直接复制改写的模板（统计成交笔数 `seen_trades`）。
 
-## 插件管理
+## 回调时机与上下文
 
-- `AnalyzerManager.register(plugin)`
-- `AnalyzerManager.on_start/on_bar/on_trade/on_finish`
-- 输出结构：`{plugin_name: plugin_result}`
+| 回调 | 时机 | `context` 的键 |
+|---|---|---|
+| `on_start` | 数据循环开始前，调用一次 | `engine`、`strategy`、`strategies`、`slot_strategy_map`、`symbols` |
+| `on_bar` | 每根 bar 的策略回调之后（预热期内不调用，见下） | `strategy`、`bar`、`engine`、`ctx`、`owner_strategy_id` |
+| `on_trade` | 每笔成交回报 | `strategy`、`trade`、`engine`、`ctx`、`owner_strategy_id` |
+| `on_finish` | 回测结果生成之后，调用一次 | `engine`、`strategy`、`strategies`、`slot_strategy_map`、`result` |
 
-## 上下文约定（v0）
+- `strategy` 是主策略实例；多策略时 `strategies` 是全部实例，`slot_strategy_map` 是策略 id 到实例的映射，`owner_strategy_id` 是当前回调所属的策略 id。
+- `on_finish` 拿到的 `result` 就是即将返回的 `BacktestResult`，可以读取它的成交、权益曲线等数据。
+- 多策略时所有策略共用同一组插件：每根 bar、每笔成交按所属策略各触发一次，用 `owner_strategy_id` 区分。
+- 只有 bar 会触发 `on_bar`，tick 不会。
 
-- `engine`
-- `strategy`
-- `bar`（在 `on_bar` 时存在）
-- `trade`（在 `on_trade` 时存在）
-- `result`（在 `on_finish` 时存在）
+## 插件出错时
 
-## 模板插件
+每个插件单独隔离：某个插件的回调抛异常，只跳过它的这一次回调，其他插件照常收到同一次回调，回测也不中断。
 
-- `AnalyzerTemplate`
-- 示例输出：`seen_trades`
-
-## 分发建议
-
-- 包发现机制采用 `entry_points`。
-- 每个插件包声明：
-  - 支持 AKQuant 版本范围
-  - 插件名称
-  - 入口类
-
-## 验收
-
-- 插件异常隔离策略可配置（继续/中断）。
-- 报告输出可附加插件 section。
-- 提供至少 2 个官方示例插件。
+- 每个插件的每个回调只记第一次错误（error 级别，带 traceback），之后的同类错误只计数，回测结束时汇总一条“另有 N 次异常已抑制”。
+- `on_finish` 出错的插件不出现在 `result.analyzer_outputs` 里，其他插件的输出照常保留。
 
 ## 已知限制
 
-- **预热期内 `on_bar` 不到达 analyzer，但同期 `on_trade` 会**。`Strategy.warmup_period`
-  按标的独立计数（见 CHANGELOG「修复 `warmup_period` 在多标的下每个标的只预热约
-  `N / 标的数` 根的问题」条目），某标的累计 bar 数不足 `warmup_period` 时，引擎在
-  `on_bar_event` 里会在调用 `analyzer_manager.on_bar` 之前 `return`——但 `on_trade`
-  走的是独立的订单事件路径，不受这个门槛约束，预热期内的成交回报仍会正常派发到
-  `analyzer_manager.on_trade`。
-  这是既有的结构性不一致（修复前同样存在，只是预热期短、不易暴露；per-symbol 化后
-  某个标的的预热期可能覆盖它的全部历史，不一致更容易暴露）。
-  **影响**：若自定义 `AnalyzerPlugin` 按"收到的 `on_bar` 调用次数"做分母或索引，在
-  多标的 + 预热场景下这个计数会比真实成交序列偏小/错位。请勿假设 bar 计数与成交
-  计数同步递增；需要按标的维护自己的计数（例如在 `on_bar` 与 `on_trade` 里分别对
-  `context["bar"].symbol` / `context["trade"].symbol` 累加，不要依赖调用次数本身
-  的先后关系）。
-  修复该不一致需要改动 analyzer 的调度架构（让 `on_trade` 也感知 warmup 门槛，或
-  反过来让预热期的 bar 也送达 analyzer），超出本文档当前范围，暂不改行为。
+- **只用于回测**：`run_live` 不接收 `analyzer_plugins`。
+- **没有插件自动发现**：插件需要显式传进 `analyzer_plugins`，不支持通过包的 entry points 自动注册。
+- **预热期内 `on_bar` 不到达 analyzer，但同期 `on_trade` 会**。`Strategy.warmup_period` 按标的独立计数，某标的累计 bar 数不足 `warmup_period` 时，引擎会在调用 `on_bar` 之前返回；而 `on_trade` 走独立的订单事件路径，不受这个门槛约束。因此按“收到的 `on_bar` 次数”做分母或索引的插件，在多标的加预热的场景下计数会偏小或错位。请按标的分别计数（在 `on_bar` 与 `on_trade` 里分别按 `context["bar"].symbol` / `context["trade"].symbol` 累加），不要依赖两种回调的先后与次数对应。

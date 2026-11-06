@@ -18,6 +18,18 @@ Before installing `AKQuant`, please ensure your system meets the following requi
 pip install akquant
 ```
 
+Install optional features as needed; they can be combined, e.g. `pip install "akquant[mcp,ml]"`:
+
+| Extra | Contents |
+|---|---|
+| `mcp` | MCP server (MCP SDK and AKShare), so AI assistants can look up APIs, write strategies and run backtests; see [MCP Server](../guide/mcp.md) |
+| `ml` | Machine learning: scikit-learn, PyTorch |
+| `quantstats` | QuantStats performance reports |
+| `signal-redis` | Redis Stream source for external signal ingestion |
+| `full` | Everything in `ml` and `quantstats` (not `mcp`) |
+
+To use AKQuant only from an AI assistant you don't need to install it: connect with `uvx` as described in [MCP Server](../guide/mcp.md#clients) and the client downloads and starts it.
+
 ### 2. Install from Source (Development Mode)
 
 If you wish to contribute to development or use the latest features, you can install from source.

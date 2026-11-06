@@ -1,6 +1,6 @@
 """HTTP / Redis 信号源与安全基线.
 
-设计依据: docs/zh/meta/signal-ingestion-rfc.md 第 4.3/4.4 节。
+设计依据: 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 第 4.3/4.4 节。
 
 **HTTP 部分起真实服务、发真实 HTTP 请求**(httpx), 不是 mock —— 这个端点能触发真实
 下单, 安全逻辑必须被真的测到。这也是它用标准库 ``http.server`` 而非 FastAPI 的原因:

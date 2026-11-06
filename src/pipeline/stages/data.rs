@@ -235,7 +235,7 @@ impl Processor for DataProcessor {
         &mut self,
         engine: &mut Engine,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &crate::engine::strategy_handler::StrategyHandle,
     ) -> PyResult<ProcessorResult> {
         // 墙钟兜底: 到点即结束, 不依赖行情事件到达。放在 feed 等待**之前**,
         // 因为等待本身可能长达 1 秒, 而行情停摆时 `Wait` 会无限循环下去。
@@ -910,7 +910,7 @@ fn event_trading_day(current: Option<NaiveDate>, resolved: NaiveDate) -> NaiveDa
 fn open_trading_day(
     engine: &mut Engine,
     py: Python<'_>,
-    strategy: &Bound<'_, PyAny>,
+    strategy: &crate::engine::strategy_handler::StrategyHandle,
     day: NaiveDate,
     timestamp: i64,
 ) -> PyResult<()> {
@@ -987,7 +987,7 @@ fn session_day_span_for(engine: &Engine, day: NaiveDate, ts: i64) -> PyResult<(i
 fn dispatch_day_close_windows(
     engine: &mut Engine,
     py: Python<'_>,
-    strategy: &Bound<'_, PyAny>,
+    strategy: &crate::engine::strategy_handler::StrategyHandle,
     day: NaiveDate,
     close_ts: i64,
 ) -> PyResult<()> {

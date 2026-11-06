@@ -210,7 +210,7 @@ impl Processor for ChannelProcessor {
         &mut self,
         engine: &mut Engine,
         py: Python<'_>,
-        _strategy: &Bound<'_, PyAny>,
+        _strategy: &crate::engine::strategy_handler::StrategyHandle,
     ) -> PyResult<ProcessorResult> {
         let mut trades_to_process = Vec::new();
         let mut pending_order_requests = Vec::new();

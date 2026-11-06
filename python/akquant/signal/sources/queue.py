@@ -1,7 +1,7 @@
 """进程内队列信号源: 参考实现 + 测试基座.
 
 也是最简单的生产可用形态: 外部进程收 HTTP/WS, 把规范化后的 ``Signal`` 投进这个
-队列(或经 Redis 转发, 见 signal-ingestion-rfc.md 4.5 的部署建议)。
+队列(或经 Redis 转发, 见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 4.5 的部署建议)。
 """
 
 from __future__ import annotations
@@ -43,7 +43,8 @@ class QueueSignalSource(SignalSourceBase):
 
         必须等就绪: ``run_live`` 在引擎循环启动前同步调用本方法, 一返回主线程
         就进 Rust 主循环并长期持有 GIL; 若消费线程此刻尚未被调度, 它可能整场会话
-        拿不到执行机会(实测结论, 见 signal-ingestion-rfc.md 4.1.1)。
+        拿不到执行机会
+        (实测结论, 见 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 4.1.1)。
         """
         if self._thread is not None:
             return

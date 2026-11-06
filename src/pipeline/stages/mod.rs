@@ -18,6 +18,7 @@ pub use strategy::StrategyProcessor;
 mod tests {
     use super::*;
     use crate::engine::Engine;
+    use crate::engine::strategy_handler::{PyStrategy, StrategyHandle};
     use crate::model::{
         AssetType, Bar, Instrument, InstrumentEnum, Order, OrderSide, OrderStatus, OrderType,
         StockInstrument, TimeInForce,
@@ -27,6 +28,11 @@ mod tests {
     use rust_decimal_macros::dec;
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    /// 包着 Python `None` 的策略句柄: 这些测试不走到策略派发, 与原先直接传 `None` 等价。
+    fn none_strategy(py: Python<'_>) -> StrategyHandle {
+        PyStrategy::handle(py.None())
+    }
 
     fn create_instrument(symbol: &str) -> Instrument {
         Instrument {
@@ -111,8 +117,7 @@ mod tests {
 
         // Use Python::attach as recommended by PyO3 0.28+
         pyo3::Python::attach(|py| {
-            let locals = py.import("builtins").unwrap();
-            let strategy = locals.getattr("None").unwrap();
+            let strategy = none_strategy(py);
 
             // Step 1: Process T1 A
             processor.process(&mut engine, py, &strategy).unwrap();
@@ -215,8 +220,7 @@ mod tests {
         engine.state.feed.add_bar(bar_t2_a).unwrap();
 
         pyo3::Python::attach(|py| {
-            let locals = py.import("builtins").unwrap();
-            let strategy = locals.getattr("None").unwrap();
+            let strategy = none_strategy(py);
 
             data_processor.process(&mut engine, py, &strategy).unwrap();
             channel_processor
@@ -264,7 +268,7 @@ mod tests {
         processor: &mut DataProcessor,
         engine: &mut Engine,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &StrategyHandle,
     ) {
         use crate::pipeline::processor::ProcessorResult;
         loop {
@@ -337,7 +341,7 @@ mod tests {
 
         let mut processor = DataProcessor::new();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
 
             processor.process(&mut engine, py, &strategy).unwrap();
             assert_eq!(
@@ -465,8 +469,7 @@ mod tests {
 
         // Use Python::attach as recommended by PyO3 0.28+
         pyo3::Python::attach(|py| {
-            let locals = py.import("builtins").unwrap();
-            let strategy = locals.getattr("None").unwrap();
+            let strategy = none_strategy(py);
 
             // Process T1
             processor.process(&mut engine, py, &strategy).unwrap();
@@ -558,7 +561,7 @@ mod tests {
 
     /// 周五处理一根 bar 后存档(未结算周五), 在新引擎上恢复并喂入周一、周二。
     fn friday_checkpoint_then_resume(py: Python<'_>) -> Engine {
-        let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+        let strategy = none_strategy(py);
         let symbol = "600000.SH".to_string();
 
         let mut first = resume_engine(&[(2024, 1, 5)]);
@@ -592,7 +595,7 @@ mod tests {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
             let symbol = "600000.SH".to_string();
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = friday_checkpoint_then_resume(py);
             // 周一开日: 周六拆股生效一次
             assert_eq!(
@@ -617,7 +620,7 @@ mod tests {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
             use chrono::NaiveDate;
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = resume_engine(&[(2024, 1, 9)]);
             let mon = NaiveDate::from_ymd_opt(2024, 1, 8).unwrap();
             engine.current_trading_day = Some(mon);
@@ -735,7 +738,7 @@ mod tests {
     fn test_live_replay_close_ends_session_right_after_last_day_settles() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3), (1, 4)]);
             engine.live_day_close_delay_ns = 0;
             // replay 锚定 01-02 10:00; 最后事件 01-02 15:00 已到收盘
@@ -789,7 +792,7 @@ mod tests {
     fn test_live_replay_close_without_day_close_timer_ends_without_waiting() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             let day2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
             let mut state = crate::engine::core::LiveReplayClose::new(day2, sh_ns(1, 2, 15, 0));
@@ -808,7 +811,7 @@ mod tests {
     fn test_live_replay_close_wait_times_out_and_ends_session() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             let day2 = chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
             let mut state = crate::engine::core::LiveReplayClose::new(day2, sh_ns(1, 2, 15, 0));
@@ -841,7 +844,7 @@ mod tests {
     fn test_live_no_event_day_settles_by_calendar_close_timer() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             // 墙钟在 01-02 盘前: 排当日生命周期时同时登记当日收盘定时器(只一个)
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
@@ -906,7 +909,7 @@ mod tests {
     fn test_live_open_day_does_not_duplicate_calendar_close_timer() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
             engine
@@ -927,7 +930,7 @@ mod tests {
     fn test_live_no_event_day_between_event_days_settles_each_day_once() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3), (1, 4)]);
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
             engine
@@ -980,7 +983,7 @@ mod tests {
     fn test_live_no_event_day_expires_next_open_day_order_at_its_close() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3), (1, 4)]);
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
             engine
@@ -1047,7 +1050,7 @@ mod tests {
     }
 
     /// 数据阶段返回 Next 之后模拟策略阶段写最新价, 再跑统计阶段(记权益点)。
-    fn after_data_step(engine: &mut Engine, py: Python<'_>, strategy: &Bound<'_, PyAny>) {
+    fn after_data_step(engine: &mut Engine, py: Python<'_>, strategy: &StrategyHandle) {
         let priced = match engine.current_event.as_ref() {
             Some(crate::event::Event::Bar(b)) => Some((b.symbol.clone(), b.close)),
             Some(crate::event::Event::Tick(t)) => Some((t.symbol.clone(), t.price)),
@@ -1064,7 +1067,7 @@ mod tests {
         processor: &mut DataProcessor,
         engine: &mut Engine,
         py: Python<'_>,
-        strategy: &Bound<'_, PyAny>,
+        strategy: &StrategyHandle,
         mut stop: impl FnMut(&Engine) -> bool,
     ) {
         for _ in 0..1000 {
@@ -1095,7 +1098,7 @@ mod tests {
     fn test_live_post_close_tick_inside_grace_belongs_to_same_day() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.live_day_close_delay_ns = 60_000_000_000;
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
@@ -1199,7 +1202,7 @@ mod tests {
     fn test_live_close_price_arriving_after_grace_tick_sets_settlement_price() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.live_day_close_delay_ns = 60_000_000_000;
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
@@ -1270,7 +1273,7 @@ mod tests {
     fn test_live_session_ending_inside_grace_prices_terminal_point_at_close() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.live_day_close_delay_ns = 60_000_000_000;
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
@@ -1359,7 +1362,7 @@ mod tests {
         // 权益曲线(含期末点)不变
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.live_day_close_delay_ns = 60_000_000_000;
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
@@ -1423,7 +1426,7 @@ mod tests {
         // 收盘前的 bar 带同名键(用户数据列、第三方网关): 不是钳制 bar, 结算价取 close
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.live_day_close_delay_ns = 60_000_000_000;
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
@@ -1459,7 +1462,7 @@ mod tests {
         // D 的结算价取标记值, 不取 close; 结算后最新价仍是 close。
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.live_day_close_delay_ns = 60_000_000_000;
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
@@ -1511,7 +1514,7 @@ mod tests {
     fn test_live_grace_event_keeps_next_open_day_order_exempt_at_close() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.live_day_close_delay_ns = 60_000_000_000;
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
@@ -1555,7 +1558,7 @@ mod tests {
     fn test_live_grace_bar_joins_same_day_daily_window() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.live_day_close_delay_ns = 60_000_000_000;
             engine
@@ -1602,7 +1605,7 @@ mod tests {
     fn test_live_always_open_next_midnight_event_inside_grace_opens_next_day() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.session_config.sessions =
                 Some(vec![("default".to_string(), "ALWAYS_OPEN".to_string())]);
@@ -1643,7 +1646,7 @@ mod tests {
     fn test_live_grace_stamped_event_after_settlement_belongs_to_next_day() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.live_day_close_delay_ns = 60_000_000_000;
             engine.schedule_live_lifecycle(sh_ns(1, 2, 9, 0)).unwrap();
@@ -1687,7 +1690,7 @@ mod tests {
     fn test_backtest_post_close_tick_still_belongs_to_next_day() {
         pyo3::Python::initialize();
         pyo3::Python::attach(|py| {
-            let strategy = py.import("builtins").unwrap().getattr("None").unwrap();
+            let strategy = none_strategy(py);
             let mut engine = live_calendar_engine(&[(1, 2), (1, 3)]);
             engine.state.feed = crate::data::DataFeed::new();
             engine.live_day_close_delay_ns = 60_000_000_000;

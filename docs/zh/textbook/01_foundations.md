@@ -172,6 +172,7 @@ uv pip install akquant akshare pandas plotly --index-url https://pypi.tuna.tsing
 *   **Context7 深度集成**：能够理解你的整个项目上下文，准确回答关于 `AKQuant` 架构的问题。
 *   **智能代码补全**：根据你的策略逻辑，自动补全 `on_bar` 中的代码。
 *   **一键重构**：帮你把复杂的 Python 循环重构为高效的 Pandas 向量化操作。
+*   **接入 AKQuant 的 MCP 服务**：把 AKQuant 加入 AI 助手的 MCP 配置后，助手可以查询与本机版本一致的 API、检查策略、运行回测并根据报错修改。Trae、VS Code、Cursor 等支持 MCP 的工具都可以接入，最快的方法是对助手说一句“安装 AKShare 和 AKQuant 的官方 MCP”，它会自己完成配置，见 [MCP 服务](../guide/mcp.md#one-sentence)；接入 AKShare 的 MCP 后，助手还能自己取数据。
 
 #### 2. Visual Studio Code (VS Code)
 

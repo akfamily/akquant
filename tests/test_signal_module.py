@@ -1,6 +1,6 @@
 """akquant.signal 端到端: 外部信号 → 幂等 → 下单 → 回执.
 
-设计依据: docs/zh/meta/signal-ingestion-rfc.md 第 4.3 节。
+设计依据: 512f74ed:docs/zh/meta/signal-ingestion-rfc.md 第 4.3 节。
 
 测试时序约定同 test_signal_port_injection.py: 策略与信号源双向握手, 不赌时间窗
 (注入必须落在最后一根 bar 之前才有撮合机会)。

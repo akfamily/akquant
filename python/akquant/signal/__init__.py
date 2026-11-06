@@ -1,7 +1,7 @@
 """外部量化信号平台接入.
 
 把平台推来的交易指令变成委托, **不经过策略回调** —— 信号已经是指令, 不需要策略
-再决策一次(设计依据见 docs/zh/meta/signal-ingestion-rfc.md)。
+再决策一次(设计取舍见 docs/zh/advanced/signal_ingestion.md)。
 
 最小用法::
 
