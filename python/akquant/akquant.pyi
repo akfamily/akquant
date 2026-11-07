@@ -1161,6 +1161,25 @@ class Engine:
         """
         ...
 
+    def set_fund_fee_policy(
+        self,
+        commission_type: str,
+        commission_value: float,
+        transfer_fee: float,
+        min_commission: float,
+    ) -> None:
+        r"""
+        设置基金费率策略(佣金口径同 ``set_stock_fee_policy``).
+
+        只作用于中国市场配置; 简单市场下所有资产共用一份费率。基金印花税不变。
+
+        :param commission_type: 佣金口径: "percent"(按成交额) / "fixed"(每笔) / "per_unit"(按数量)
+        :param commission_value: 佣金数值
+        :param transfer_fee: 过户费率
+        :param min_commission: 最低佣金
+        """
+        ...
+
     def set_instrument_fee_override(
         self,
         symbol: str,

@@ -110,6 +110,7 @@ def run_backtest(
     *   `{"type": "fixed", "value": 3.0}`: a fixed amount charged on each fill.
     *   `{"type": "per_unit", "value": 0.01}`: charged linearly by filled quantity, i.e. `fill_quantity * 0.01`.
     *   When explicitly provided, it takes precedence over `commission_rate`; `commission_rate` remains as a backward-compatible shorthand for percent mode.
+*   **Fee scope**: `commission_policy` / `commission_rate` / `transfer_fee_rate` / `min_commission` apply to both stocks and funds (ETFs). With `t_plus_one=True`, futures/options present, or any instrument setting `sellable_after_days` (China market rules), `stamp_tax_rate` is charged on stock sells only and funds pay no stamp tax; otherwise all assets share one fee schedule. Futures and options fees are configured separately (`china_futures` / `china_options`). Use `InstrumentConfig.commission_rate` and related fields for per-instrument fees.
 *   Legacy price-basis parameter: Removed.
 *   Legacy timer-temporal parameter: Removed.
 *   `fill_policy`: A `FillMode` object expressing unified fill semantics. One of five named modes:

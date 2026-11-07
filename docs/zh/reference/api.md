@@ -218,6 +218,7 @@ def run_from_checkpoint(
     *   `{"type": "fixed", "value": 3.0}`: 每次成交固定收取 3 元。
     *   `{"type": "per_unit", "value": 0.01}`: 按成交数量线性收费，即 `fill_quantity * 0.01`。
     *   若显式提供，优先级高于 `commission_rate`；`commission_rate` 仍保留为兼容入口。
+*   **费率作用范围**：`commission_policy` / `commission_rate` / `transfer_fee_rate` / `min_commission` 同时作用于股票与基金（ETF）；`t_plus_one=True`、含期货或期权、或有标的设置了 `sellable_after_days`（走中国市场规则）时，`stamp_tax_rate` 只在股票卖出时收取，基金不收印花税；其余情况所有资产共用一份费率。期货、期权的费率另有配置（`china_futures` / `china_options`）。按品种不同费率用 `InstrumentConfig.commission_rate` 等字段覆盖。
 *   legacy 价格基准参数：已移除。
 *   legacy 时序参数：已移除。
 *   `fill_policy`: 运行级默认成交语义，接受一个 `FillMode` 对象（从 `akquant` 顶层导入）。五个命名模式：

@@ -96,5 +96,6 @@ def test_fund_min_commission_override() -> None:
         ],
         t_plus_one=True,
     )
-    # 佣金 10000 × 0.0001 = 1 (最低佣金已覆盖为 0) + FUND 缺省过户费 10000 × 0.00001
-    assert fees["CB"] == pytest.approx(1.0 + 10000 * 0.00001)
+    # 佣金 10000 × 0.0001 = 1 (最低佣金已覆盖为 0); 过户费取全局的 0
+    # (规则 2.2.0 前基金不认全局费率, 按引擎缺省过户费 10000 × 0.00001 收)
+    assert fees["CB"] == pytest.approx(1.0)

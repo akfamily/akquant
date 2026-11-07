@@ -7,12 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> **规则版本不变（2.1.3）**：回测不受影响；paper 会话不传新参数时行为与此前一致。
+> **规则版本 2.2.0**：含基金（ETF）标的、且走中国市场规则（`t_plus_one=True`、含期货或期权、或有标的设置了 `sellable_after_days`）的回测，基金手续费会变化——此前按引擎默认费率收取，现在按传入的全局费率收取（不传时与股票一样为 0）；其余回测不变。paper 会话不传新参数时行为与此前一致。
 
 ### Added
 - **`run_live` 新增 paper 撮合参数 `commission_rate` / `stamp_tax_rate` / `transfer_fee_rate` / `min_commission` / `slippage` / `volume_limit_pct`**（#409）：paper 会话由 AKQuant 自己撮合，与回测是同一个撮合器，但此前费率固定为默认值（佣金万分之三、印花税万分之五、过户费十万分之一、最低佣金 5 元）、没有滑点、不限成交量，模拟盘只能绕道引擎内部接口才能与回测按同一口径成交。现在这六个参数与 `run_backtest` 同名同义：费率作用于股票与基金（ETF），印花税只在股票卖出时收取，不传的项沿用上述默认值；期货、期权沿用默认费率，会话里只有期货/期权标的却传了费率参数时报错；`slippage` 与回测同格式（`ticks` 按标的 `tick_size` 换算）；`volume_limit_pct` 截断量按手数取整。`trading_mode="broker_live"` 由柜台撮合，传了任一参数即抛 `ValueError`。
 
 ### Fixed
+- **回测的全局费率不作用于基金（ETF）**：走中国市场规则时，`commission_rate` / `commission_policy` / `transfer_fee_rate` / `min_commission` 只写进股票的费率配置，基金一直按引擎默认费率收取（佣金万分之三、过户费十万分之一、最低 5 元），传了费率也不生效——例如 `commission_rate=0.0001` 下 100 万元成交额的基金买单收 310 元而不是 100 元；不开 T+1 时所有资产共用一份费率，反而正常。现在这四项同样作用于基金，基金也支持 `commission_policy` 的 `fixed` / `per_unit` 口径；印花税仍不作用于基金（场内基金不收）。单独给基金设费率的 `fund_commission` / `fund_transfer_fee` / `fund_min_commission` 仍优先，且 `run_from_checkpoint` 续跑段现在也会重新下发它们（此前续跑段丢失）。按品种的 `InstrumentConfig` 费率覆盖不受影响。新增 `Engine.set_fund_fee_policy`。
 - **API 参考把提交时验资被拒的情形写反了**（#410）：`NextOpen` 下按开盘价算好数量的满仓市价买单，在次日**低开**（开盘价低于前收盘）乃至平开时会被提交时验资拒绝（参考价是前收盘、可用资金还要扣安全垫），文档原写成“跳空高开”。中英文同步更正。
 
 ## [0.3.79] - 2026-11-06
