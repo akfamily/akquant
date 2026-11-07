@@ -1040,6 +1040,7 @@ Notes:
 
 *   `class MyStrategy(aq.Strategy, title="Trend", id="trend")`: `title` is a display name (defaults to the class name); `id` is the machine id. When `id` is given it is the `strategy_id`; a different `run_backtest/run_live(strategy_id=...)` raises `ValueError`. Without `id`, `strategy_id` still defaults to `"_default"`. Strategies do not accept `overlay=` (`TypeError`).
 *   `self.I(...)` does **not** plot by default inside a strategy; pass `plot=True` to draw. Chart arguments such as `pane` / `color` / `label` no longer imply `plot=True`.
+*   The binding returned by `self.I(...)`: `ind[0]` / `ind[n]` read the callback's symbol inside `on_bar` / `on_tick` / window callbacks; `ind.of(symbol)` returns a view pinned to one symbol that works in any callback (with `[n]`, `len()`, components and `is_ready`) and raises `ValueError` for a symbol outside the declared `symbols=`. In other callbacks a bare read of a multi-symbol indicator raises `ValueError`. A `factory=` is called once at declaration to detect the type. See the [Custom Indicator Guide](../guide/custom_indicator.md#indicator-of-symbol).
 
 ### `akquant.Indicator` {: #akquant-indicator }
 
@@ -1060,7 +1061,7 @@ class DualMA(aq.Indicator, title="Dual MA", overlay=True, id="dual_ma"):
 
 ### `akquant.PrecomputedIndicator`
 
-Vectorized precomputed indicator: `PrecomputedIndicator(name, fn)`, where `fn(df) -> pd.Series` computes over one symbol's full `DataFrame` at once; declare it with `self.I(PrecomputedIndicator(...))`. Backtest only; it does not support tick input, `freq=` or `warmup_bars=`.
+Vectorized precomputed indicator: `PrecomputedIndicator(name, fn)`, where `fn(df) -> pd.Series` computes over one symbol's full `DataFrame` at once; declare it with `self.I(PrecomputedIndicator(...))` (multi-symbol by nature: no `factory=` needed, and one is treated as precomputed). Backtest only; it does not support tick input, `freq=` or `warmup_bars=`.
 
 ### `akquant.HeikinAshi`
 

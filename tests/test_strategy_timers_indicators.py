@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import akquant
 import pandas as pd
+import pytest
 from akquant.akquant import StrategyContext
 from akquant.precomputed import PrecomputedIndicator
 from akquant.strategy import Strategy
@@ -215,13 +216,15 @@ def test_incremental_indicator_uses_symbol_scoped_instances() -> None:
 
     strategy._update_incremental_indicators(cast(Any, FakeBar("000001.SZ", 10.0)))
     strategy._update_incremental_indicators(cast(Any, FakeBar("000002.SZ", 20.0)))
-    strategy.current_bar = cast(Any, FakeBar("000001.SZ", 10.0))
-    first_symbol_values = strategy.inc_sma.values
-    strategy.current_bar = cast(Any, FakeBar("000002.SZ", 20.0))
-    second_symbol_values = strategy.inc_sma.values
+    first_symbol_values = strategy.inc_sma.of("000001.SZ").values
+    second_symbol_values = strategy.inc_sma.of("000002.SZ").values
 
     assert first_symbol_values == [10.0]
     assert second_symbol_values == [20.0]
+    # 回调之外不指定标的: 不再按 current_bar 猜(它可能停在别的标的上), 直接报错
+    strategy.current_bar = cast(Any, FakeBar("000001.SZ", 10.0))
+    with pytest.raises(ValueError, match=r"\.of\("):
+        _ = strategy.inc_sma.values
 
 
 def test_incremental_indicator_bootstrap_respects_active_start_boundary() -> None:

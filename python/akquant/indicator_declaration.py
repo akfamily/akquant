@@ -218,6 +218,9 @@ class IndicatorDeclaration:
     # 说明该 symbol 全程只有 tick、从未有 bar, 需要报错而非静默不推进。
     bar_seen_symbols: set[str] = field(default_factory=set)
     tick_only_symbols: set[str] = field(default_factory=set)
+    #: ``factory=`` 声明时探测类型造出的那个实例, 交给第一个出现的标的用,
+    #: 这样 factory 不会因为探测而多调用一次。
+    spare_instance: Any = None
     #: 曾在 tick 上做过 intrabar 试算的 symbol。会话结束时与 bar_seen_symbols
     #: 做差: 从未收到 bar 的 symbol 永远只试算不确认, 是配置错误(纯 tick 会话
     #: 开了 intrabar), 要报错而非静默。
@@ -353,16 +356,43 @@ class IndicatorBinding:
 
     未知属性一律代理到底层指标实例, 所以 ``aq.SMA`` 之类的原生属性
     (``is_ready`` 等)照常可用。
+
+    不指定标的时, 在 ``on_bar`` / ``on_tick`` / 窗口回调里取该回调的标的; 在其他
+    回调(``on_timer``、``on_cross_section`` 等)里, 指标跟踪多个标的时报错, 用
+    :meth:`of` 指定标的。
     """
 
-    def __init__(self, strategy: Any, name: str) -> None:
-        """绑定策略实例与指标名, 延迟解析当前 symbol 对应的真实指标."""
+    def __init__(self, strategy: Any, name: str, symbol: Optional[str] = None) -> None:
+        """绑定策略实例与指标名; ``symbol`` 非空时固定到该标的(见 :meth:`of`)."""
         self._strategy = strategy
         self._name = name
+        self._symbol = symbol
+
+    def of(self, symbol: str) -> "IndicatorBinding":
+        """固定到某个标的的视图: ``self.ma.of("510300")[0]``.
+
+        在任何回调里都按该标的取值, 支持 ``[n]`` 回溯、``len()``、多值分量
+        (``self.macd.of(s).dif[0]``)与 ``is_ready`` 等属性。声明时给了
+        ``symbols=`` 而该标的不在其中时报错(多半是代码写错)。
+
+        :raises ValueError: 标的为空, 或不在声明的 ``symbols`` 之内
+        """
+        text = "" if symbol is None else str(symbol).strip()
+        if not text:
+            raise ValueError(f"指标 {self._name!r} 的 .of() 需要一个非空的标的代码")
+        declared = self._declaration().symbols
+        if declared is not None and text not in declared:
+            raise ValueError(
+                f"指标 {self._name!r} 只声明给了 {sorted(declared)!r}, "
+                f"没有标的 {text!r}; 检查标的代码, 或把它加进 I(symbols=...)"
+            )
+        return IndicatorBinding(self._strategy, self._name, text)
 
     def get_instance(self, symbol: Optional[str] = None) -> Any:
         """返回指定 symbol 对应的底层指标实例."""
-        return self._strategy._get_incremental_indicator_instance(self._name, symbol)
+        return self._strategy._get_incremental_indicator_instance(
+            self._name, symbol if symbol is not None else self._symbol
+        )
 
     def _declaration(self) -> IndicatorDeclaration:
         declaration = self._strategy._get_incremental_registration(self._name)
@@ -371,7 +401,7 @@ class IndicatorBinding:
     def _resolved_symbol(self, symbol: Optional[str] = None) -> str:
         declaration = self._declaration()
         resolved = self._strategy._resolve_incremental_indicator_symbol(
-            declaration, symbol
+            declaration, symbol if symbol is not None else self._symbol, self._name
         )
         return str(resolved)
 
@@ -427,6 +457,12 @@ class IndicatorComponentBinding:
         self._parent = parent
         self._name = name
         self._index = index
+
+    def of(self, symbol: str) -> "IndicatorComponentBinding":
+        """固定到某个标的的分量视图: ``self.macd.dif.of("510300")[0]``."""
+        return IndicatorComponentBinding(
+            self._parent.of(symbol), self._name, self._index
+        )
 
     def __getitem__(self, offset: int) -> Any:
         """``comp[0]`` 当前值, ``comp[n]`` 前 n 根; 未就绪/越界返回 ``None``."""

@@ -810,13 +810,15 @@ class Strategy:
         # binding 代理不入库: 记下"哪个属性持有哪条声明的 binding", 恢复时按
         # 属性名重建。不能按声明名 setattr —— self.I() 返回的 binding 由用户
         # 自己赋给任意属性, 声明名与属性名无关, 按声明名会覆盖用户的同名属性。
-        binding_attrs: Dict[str, Tuple[str, Optional[str]]] = {}
+        # 第三项是 .of(symbol) 固定的标的(未固定为 None)。
+        binding_attrs: Dict[str, Tuple[str, Optional[str], Optional[str]]] = {}
         for attr, value in list(state.items()):
             if isinstance(value, IndicatorBinding):
-                binding_attrs[attr] = (value._name, None)
+                binding_attrs[attr] = (value._name, None, value._symbol)
                 del state[attr]
             elif isinstance(value, IndicatorComponentBinding):
-                binding_attrs[attr] = (value._parent._name, value._name)
+                parent = value._parent
+                binding_attrs[attr] = (parent._name, value._name, parent._symbol)
                 del state[attr]
         state["_indicator_binding_attrs"] = binding_attrs
         return state
@@ -951,8 +953,11 @@ class Strategy:
             self._last_train_bar_count = 0
         binding_attrs = self.__dict__.pop("_indicator_binding_attrs", None)
         if isinstance(binding_attrs, dict):
-            for attr, (decl_name, component) in binding_attrs.items():
-                binding = IndicatorBinding(self, decl_name)
+            for attr, entry in binding_attrs.items():
+                # 旧存档是 (声明名, 分量) 两项, 没有固定标的
+                decl_name, component = entry[0], entry[1]
+                pinned = entry[2] if len(entry) > 2 else None
+                binding = IndicatorBinding(self, decl_name, pinned)
                 setattr(
                     self,
                     attr,
@@ -1793,6 +1798,23 @@ class Strategy:
             raise ValueError("indicator and factory cannot both be provided")
         if indicator is None and factory is None:
             raise ValueError("indicator or factory is required")
+        spare_instance: Any = None
+        if factory is not None:
+            # 先造一个实例看类型: 纯预计算指标(PrecomputedIndicator 且没有自己
+            # 实现 update)自己按标的缓存整段结果, 天然多标的, 按直接传实例处理
+            # ——否则会被当成增量指标, 每根 bar 调 update() 抛 NotImplementedError
+            # (#434)。继承它又实现了 update() 的类(examples/60)一直按增量用,
+            # 保持不变。增量指标把这个实例留给第一个标的, factory 不多调用一次。
+            from .precomputed import PrecomputedIndicator as _Precomputed
+
+            probe = factory()
+            if (
+                isinstance(probe, _Precomputed)
+                and type(probe).update is _Precomputed.update
+            ):
+                indicator, factory = probe, None
+            else:
+                spare_instance = probe
         if int(warmup_bars) < 0:
             raise ValueError("warmup_bars must be >= 0")
         if int(lookback) < 1:
@@ -1846,6 +1868,7 @@ class Strategy:
             warmup_bars=int(warmup_bars),
             factory=factory,
             base_indicator=indicator,
+            spare_instance=spare_instance,
             freq=freq_label,
             lookback=int(lookback),
             precomputed=is_precomputed,
@@ -2541,7 +2564,7 @@ class Strategy:
     ) -> Any:
         registration = self._get_incremental_registration(name)
         resolved_symbol = self._resolve_incremental_indicator_symbol(
-            registration, symbol
+            registration, symbol, name
         )
         if resolved_symbol in registration.instances:
             return registration.instances[resolved_symbol]
@@ -2551,7 +2574,12 @@ class Strategy:
             registration.instances[resolved_symbol] = registration.base_indicator
             return registration.base_indicator
         if registration.factory is not None:
-            indicator = registration.factory()
+            spare = registration.spare_instance
+            if spare is not None:
+                registration.spare_instance = None
+                indicator = spare
+            else:
+                indicator = registration.factory()
         elif registration.primary_symbol is None:
             indicator = registration.base_indicator
             registration.primary_symbol = resolved_symbol
@@ -2567,21 +2595,49 @@ class Strategy:
         return indicator
 
     def _resolve_incremental_indicator_symbol(
-        self, registration: IndicatorDeclaration, symbol: Optional[str]
+        self,
+        registration: IndicatorDeclaration,
+        symbol: Optional[str],
+        name: Optional[str] = None,
     ) -> str:
+        """不指定标的取指标值时, 决定取哪个标的.
+
+        在 ``on_bar`` / ``on_tick`` / 窗口回调里取该回调的标的(框架派发时记在
+        ``_indicator_scope_symbol``)。不能用 ``current_bar``: 它在 ``on_timer`` 里
+        停在最后处理的那根 bar, 在 ``on_cross_section`` 里是 None, 多标的时会
+        静默取到别的标的(#434)。回调之外只在能唯一确定标的时返回, 否则报错。
+
+        :raises ValueError: 回调之外、指标跟踪多个标的
+        """
         if symbol is not None:
             return str(symbol)
-        if self.current_bar is not None:
-            return str(self.current_bar.symbol)
-        if self.current_tick is not None:
-            return str(self.current_tick.symbol)
+        scope = getattr(self, "_indicator_scope_symbol", None)
+        if scope is not None:
+            return str(scope)
         if registration.primary_symbol is not None:
             return registration.primary_symbol
-        if len(registration.instances) == 1:
-            return next(iter(registration.instances))
-        if registration.symbols is not None and len(registration.symbols) == 1:
-            return next(iter(registration.symbols))
-        return "__default__"
+        declared = registration.symbols
+        if declared is not None:
+            candidates = set(declared)
+        else:
+            candidates = set(registration.instances) | set(registration.history)
+            candidates |= set(getattr(self, "_last_prices", {}) or {})
+        candidates.discard("__default__")
+        if len(candidates) == 1:
+            return next(iter(candidates))
+        if not candidates:
+            # 还没有任何标的的数据(如首根 bar 之前): 取值为未就绪
+            return "__default__"
+        label = repr(name) if name else "该指标"
+        preview = sorted(candidates)
+        shown = ", ".join(repr(s) for s in preview[:5])
+        if len(preview) > 5:
+            shown += f" 等 {len(preview)} 个"
+        raise ValueError(
+            f"指标 {label} 跟踪多个标的({shown}), 在 on_bar/on_tick 之外"
+            "(如 on_timer、on_cross_section、on_order)取值必须指定标的: "
+            f"用 .of(symbol), 例如 .of({preview[0]!r})[0]"
+        )
 
     def _build_incremental_indicator_args(
         self, payload: Any, source: str, input_mode: str

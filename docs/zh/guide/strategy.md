@@ -1342,6 +1342,7 @@ class MultiSymbolIncrementalStrategy(Strategy):
 
 *   `ind[0]` 是当前 Bar 的值（`.value` 是它的别名），`ind[1]` 是上一根，越界返回 `None` 而不抛异常，因此判空统一写 `if val is None`。
 *   如果一个共享实例被多个 `symbol` 复用，框架会显式报错，提示改为 `factory=`。
+*   `on_bar` / `on_tick` 里 `ind[0]` 取当前标的；在 `on_timer`、`on_cross_section` 等不属于某个标的的回调里，多标的指标用 `ind.of(symbol)[0]` 取值，不写标的会报错，见[自定义指标指南](./custom_indicator.md#indicator-of-symbol)。
 *   `warmup_bars` 只会消费正式开始时间之前的历史数据，不会重复消费第一根有效 Bar。
 *   策略里写了 `plot=True` 才会自动上报绘图点，默认不上报；`pane` / `color` / `label` 等绘图参数不再隐含 `plot=True`。只画图不交易的单元可写成指标脚本 `aq.Indicator`，那里默认画。
 *   如果你需要编写自己的私有指标，而不仅仅是使用内置 `SMA/EMA`，请继续阅读：[自定义指标指南](./custom_indicator.md)。
