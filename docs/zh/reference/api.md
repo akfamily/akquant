@@ -1253,6 +1253,26 @@ run_live(
     *   已知限制：宽限期内存档后续跑，当日结算价按存档时的最新价；某品种收盘前没有 tick、只有宽限期 tick 时，结算价等于宽限价；结算之后才到的收盘 bar 仍派发给 `on_bar`；双流下同品种的宽限 tick 先于收盘 bar 推出，时间戳会倒退一次；多张时段表时宽限按会话级收盘（取最晚）判，早收盘品种在其自身收盘后、会话收盘前的行情不属宽限，照常计入当日与结算价，并报一次“闭市时段”告警。
 *   `akquant.live.StreamingIndicatorSink(on_event, *, run_id="live")`：实盘用的流式指标录制器，每个指标点即时发给 `on_event`、不在内存累积。`run_live` 传了 `on_event` 而未传 `indicator_recorder` 时默认使用它；需要自行组合时可从 `akquant.live` 导入。
 
+### `akquant.run_live(commission_rate=..., slippage=..., volume_limit_pct=...)`（paper 撮合参数） {: #live-paper-execution }
+
+```python
+run_live(
+    ...,
+    trading_mode="paper",
+    commission_rate=0.0001,
+    stamp_tax_rate=0.0005,
+    min_commission=5.0,
+    slippage={"type": "percent", "value": 0.0005},
+    volume_limit_pct=0.25,
+)
+```
+
+*   **只作用于 `trading_mode="paper"`**：paper 会话由 AKQuant 自己撮合，与回测是同一个撮合器，这六个参数与 `run_backtest` 同名同义，用来让模拟盘与回测按同一口径成交。`broker_live` 由柜台撮合，成交价、成交量与手续费都以柜台回报为准，传了任一参数即抛 `ValueError`。
+*   `commission_rate` / `transfer_fee_rate` / `min_commission`：作用于股票与基金（ETF）；`stamp_tax_rate` 只在股票卖出时收取。不传的项沿用 paper 默认值：佣金万分之三、印花税万分之五、过户费十万分之一、最低佣金 5 元；一个都不传时行为与此前完全一致。期货、期权沿用默认费率；会话里只有期货/期权标的却传了费率参数时抛 `ValueError`，混有股票/基金时告警一次。
+*   `slippage`：与 `run_backtest(slippage=)` 同格式，`{"type": "percent" | "fixed" | "ticks" | "zero", "value": ...}`，不接受裸数字；`ticks` 要求所有标的的 `tick_size` 相同。不传则无滑点。
+*   `volume_limit_pct`：单根 bar 最多成交该 bar 成交量的这一比例，截断量按手数取整，未成交部分留到后续 bar；不传或 `0` 表示不限制。行情源的成交量单位要与下单数量一致（AKShare 部分接口的成交量单位是“手”）。
+*   取值须为有限的非负数，非法值在连接网关之前报错。
+
 ## 3. 核心引擎 (Core)
 
 ### `akquant.Engine`
@@ -1542,7 +1562,7 @@ class RiskConfig:
     *   **减仓/平仓**会释放保证金，变化量为负，先抵掉自己的费用——因此**卖单不需要预先持有现金**，与 A 股"卖出费用从成交款净额扣除"的规则一致。满仓后只剩几十元现金时，全量卖单照常成交。
     *   仅当卖出所得连费用都盖不住时（如持 100 股 0.01 元的股票），该值仍为正并照常验资；放过它等于让现金透支，而透支只有 `check_cash=False` 才允许。
 *   `safety_margin`: 提交时闸门的安全垫（默认 `0.0001`），按 `(1 - safety_margin)` 折减可用资金，用于吸收"提交时用预估价、成交时用真实价"的偏差。成交时闸门不留安全垫。
-*   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以跳空高开的日子里，按开盘价算好的满仓市价买单可能在提交时就被拒（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩到买得起的整手数（提交时与成交时都会缩；显式给 `quantity` 的买单不缩量）；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
+*   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以次日低开（开盘价低于前收盘）乃至平开时，按开盘价算好的满仓市价买单会在提交时被拒——参考价高于成交价，可用资金还要扣掉安全垫（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩到买得起的整手数（提交时与成交时都会缩；显式给 `quantity` 的买单不缩量）；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
 
 这些拒单原因会体现在 `orders_df.reject_reason` 字段中。成交时闸门产生的拒单，原因里会带 `at execution` 标记。订单此前已部分成交（如开了 `volume_limit_pct` 跨多根 bar 成交）时，成交时被拒的只是剩余部分：状态为 `cancelled`，`filled_quantity` 与 `avg_price` 保留已成交部分，原因仍写在 `reject_reason`。
 

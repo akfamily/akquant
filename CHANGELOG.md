@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **规则版本不变（2.1.3）**：回测不受影响；paper 会话不传新参数时行为与此前一致。
+
+### Added
+- **`run_live` 新增 paper 撮合参数 `commission_rate` / `stamp_tax_rate` / `transfer_fee_rate` / `min_commission` / `slippage` / `volume_limit_pct`**（#409）：paper 会话由 AKQuant 自己撮合，与回测是同一个撮合器，但此前费率固定为默认值（佣金万分之三、印花税万分之五、过户费十万分之一、最低佣金 5 元）、没有滑点、不限成交量，模拟盘只能绕道引擎内部接口才能与回测按同一口径成交。现在这六个参数与 `run_backtest` 同名同义：费率作用于股票与基金（ETF），印花税只在股票卖出时收取，不传的项沿用上述默认值；期货、期权沿用默认费率，会话里只有期货/期权标的却传了费率参数时报错；`slippage` 与回测同格式（`ticks` 按标的 `tick_size` 换算）；`volume_limit_pct` 截断量按手数取整。`trading_mode="broker_live"` 由柜台撮合，传了任一参数即抛 `ValueError`。
+
+### Fixed
+- **API 参考把提交时验资被拒的情形写反了**（#410）：`NextOpen` 下按开盘价算好数量的满仓市价买单，在次日**低开**（开盘价低于前收盘）乃至平开时会被提交时验资拒绝（参考价是前收盘、可用资金还要扣安全垫），文档原写成“跳空高开”。中英文同步更正。
+
 ## [0.3.79] - 2026-11-06
 
 > **规则版本不变（2.1.3）**：只改了 MCP 服务的握手信息与文档，回测数值不变。

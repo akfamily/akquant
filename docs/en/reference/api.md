@@ -1186,6 +1186,26 @@ run_live(
     *   Known limitations: when a checkpoint is taken during the grace window and resumed, that day's settlement price is the latest price at checkpoint time; if a symbol has no tick before the close and only grace-window ticks, its settlement price equals the grace price; a closing bar that arrives after settlement is still dispatched to `on_bar`; with dual streams the symbol's grace ticks are pushed before the closing bar, so timestamps step back once; with several session tables the grace window follows the session-level close (the latest one), so data for an earlier-closing symbol between its own close and the session close is not grace data: it counts toward the day and its settlement price as usual and triggers a one-time "closed session" warning.
 *   `akquant.live.StreamingIndicatorSink(on_event, *, run_id="live")`: Streaming indicator recorder for live sessions; each indicator point is sent to `on_event` immediately and nothing accumulates in memory. `run_live` uses it by default when `on_event` is passed without `indicator_recorder`; import it from `akquant.live` to compose your own.
 
+### `akquant.run_live(commission_rate=..., slippage=..., volume_limit_pct=...)` (paper execution parameters) {: #live-paper-execution }
+
+```python
+run_live(
+    ...,
+    trading_mode="paper",
+    commission_rate=0.0001,
+    stamp_tax_rate=0.0005,
+    min_commission=5.0,
+    slippage={"type": "percent", "value": 0.0005},
+    volume_limit_pct=0.25,
+)
+```
+
+*   **Only for `trading_mode="paper"`**: paper sessions are matched by AKQuant itself, with the same matcher as backtests, and these six parameters have the same names and meaning as in `run_backtest`, so a paper session can fill on the same terms as the backtest. Under `broker_live` the broker does the matching and reports fill price, quantity and fees, so passing any of them raises `ValueError`.
+*   `commission_rate` / `transfer_fee_rate` / `min_commission` apply to stocks and funds (ETFs); `stamp_tax_rate` is charged on stock sells only. Omitted items keep the paper defaults: 0.03% commission, 0.05% stamp tax, 0.001% transfer fee, minimum commission 5; passing none of them keeps the previous behavior exactly. Futures and options keep their default fees; passing fee parameters to a session with only futures/options instruments raises `ValueError`, and a mixed session logs a warning once.
+*   `slippage`: same format as `run_backtest(slippage=)`, `{"type": "percent" | "fixed" | "ticks" | "zero", "value": ...}`; bare numbers are rejected, and `ticks` requires all instruments to share one `tick_size`. Omitted means no slippage.
+*   `volume_limit_pct`: a bar fills at most this fraction of its volume, the capped quantity is rounded down to whole lots and the rest carries over to later bars; omitted or `0` means no limit. The data source's volume unit must match the order quantity unit (some AKShare endpoints report volume in lots).
+*   Values must be finite and non-negative; invalid values raise before any gateway connects.
+
 ## 3. Core Engine
 
 ### `akquant.Engine`
@@ -1398,7 +1418,7 @@ Funds-check fields:
 
 *   `check_cash`: enable cash/margin checks (default `True`). It controls both the submission gate and the execution gate; `False` lets the account overdraw.
 *   `safety_margin`: buffer for the submission gate (default `0.0001`), applied as `available × (1 − safety_margin)`. The execution gate uses no buffer.
-*   The submission gate prices the order at a **reference price**: the limit price for limit orders, the last price for market orders. Under `fill_policy=NextOpen()` the last price is the previous bar's close while the real fill is the next bar's open, so on gap-up days a full-size market buy sized at the open can be rejected at submission (`Insufficient margin`, with `Required = quantity × reference price + commission` and `Available = available funds × (1 − safety_margin)`). The execution gate checks again at the real fill price. Workarounds: use a limit order priced at the highest price you accept; call `buy(symbol, quantity=None)` so the sizer computes the quantity and the engine shrinks it to whole lots it can afford when funds are short (at both gates; buys with an explicit `quantity` are never resized); or size with `reference price × (1 + headroom)` yourself.
+*   The submission gate prices the order at a **reference price**: the limit price for limit orders, the last price for market orders. Under `fill_policy=NextOpen()` the last price is the previous bar's close while the real fill is the next bar's open, so when the next bar opens below the previous close (or even flat), a full-size market buy sized at the open is rejected at submission, because the reference price is above the fill price and available funds are also reduced by the safety margin (`Insufficient margin`, with `Required = quantity × reference price + commission` and `Available = available funds × (1 − safety_margin)`). The execution gate checks again at the real fill price. Workarounds: use a limit order priced at the highest price you accept; call `buy(symbol, quantity=None)` so the sizer computes the quantity and the engine shrinks it to whole lots it can afford when funds are short (at both gates; buys with an explicit `quantity` are never resized); or size with `reference price × (1 + headroom)` yourself.
 
 Rejection reasons are available in `orders_df.reject_reason`. Execution-time rejections carry an `at execution` marker. If the order was already partially filled (e.g. across several bars under `volume_limit_pct`), only the remainder is rejected: the status becomes `cancelled`, `filled_quantity` and `avg_price` keep the filled part, and the reason is still in `reject_reason`.
 
