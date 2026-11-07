@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.81] - 2026-11-07
+
+> **规则版本不变（2.2.0）**：回测数值不变。**不兼容变更**：多标的指标在 `on_bar` / `on_tick` / 窗口回调之外不写标的取值，由静默返回别的标的的值改为抛 `ValueError`，见下方 Changed。
+
+### Added
+- **指标绑定对象新增 `.of(symbol)`，在任何回调里按标的取值**（#434）：`self.ma.of("510300")[0]` 返回固定到该标的的视图，支持 `[n]` 回溯、`len()`、多值分量（`self.macd.of(s).dif[0]` / `self.macd.dif.of(s)[0]`）与 `is_ready` 等属性，增量指标与预计算指标写法相同；标的不在声明的 `symbols=` 之内时抛 `ValueError`。热启动存档会连同固定的标的一起恢复。新增示例 `examples/79_multi_symbol_indicator_timer.py`（ETF 轮动，`on_timer` 里按标的读动量与均线）。
+
+### Fixed
+- **`self.I(factory=lambda: PrecomputedIndicator(...))` 第一根 bar 就抛 `NotImplementedError`**（#434）：`factory=` 一律按增量指标处理、每根 bar 调 `update()`。现在声明时调用一次 factory 识别类型：产物是没有自己实现 `update()` 的 `PrecomputedIndicator` 时按预计算处理（它本身按标的缓存结果，天然多标的）；继承它又实现了 `update()` 的类仍按增量处理（`examples/60` 的写法不变）。增量指标的这个探测实例交给第一个标的，factory 的调用次数不变。
+
+### Changed
+- **在 `on_bar` / `on_tick` / 窗口回调之外，多标的指标不写标的取值改为报错**（#434）：原先按 `self.current_bar` 解析标的，而它在 `on_timer` 里停在最后处理的那根 bar 上、在 `on_cross_section` 里是 `None`，于是 `on_timer` 里 `self.ma[0]` 静默返回别的标的的值，`on_cross_section` 里恒为 `None`，按它下单的轮动策略拿到的是错值。现在不写标的时：`on_bar` / `on_tick` / `subscribe_bars` 窗口回调里取该回调的标的（嵌在其中同步触发的 `on_order` 等沿用）；其他回调里指标只跟踪一个标的（只跑一个标的、`symbols=` 只声明一个、或共享实例）时取它，跟踪多个标的时抛 `ValueError` 并提示改用 `.of(symbol)`。单标的策略与只在 `on_bar` 里读指标的策略不受影响。迁移：把 `on_timer` / `on_cross_section` / `on_order` / `on_trade` 里的 `self.ind[0]` 改成 `self.ind.of(symbol)[0]`。
+- 文档：《自定义指标指南》新增“多标的：按标的取值 `.of(symbol)`”一节；自定义增量指标示例不再继承 `PrecomputedIndicator`（任何有 `update()` 的对象即可）；常见误区与选择建议注明 `factory=` 只为增量指标而设、预计算指标直接传实例。策略手册、API 参考与 MCP 指标指南同步（中英文）。
+
 ## [0.3.80] - 2026-11-07
 
 > **规则版本 2.2.0**：含基金（ETF）标的、且走中国市场规则（`t_plus_one=True`、含期货或期权、或有标的设置了 `sellable_after_days`）的回测，基金手续费会变化——此前按引擎默认费率收取，现在按传入的全局费率收取（不传时与股票一样为 0）；其余回测不变。paper 会话不传新参数时行为与此前一致。

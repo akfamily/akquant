@@ -1107,6 +1107,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 
 *   `class MyStrategy(aq.Strategy, title="趋势", id="trend")`：`title` 为显示名（省略为类名），`id` 为机器标识。写了 `id` 时它就是 `strategy_id`，与 `run_backtest/run_live(strategy_id=...)` 不一致报 `ValueError`；不写 `id` 时 `strategy_id` 仍默认 `"_default"`。策略不接受 `overlay=`（报 `TypeError`）。
 *   `self.I(...)` 在策略里**默认不画图**，要画写 `plot=True`；`pane` / `color` / `label` 等绘图参数不再隐含 `plot=True`。
+*   `self.I(...)` 返回的绑定对象：`ind[0]` / `ind[n]` 在 `on_bar` / `on_tick` / 窗口回调里取该回调的标的；`ind.of(symbol)` 返回固定到某个标的的视图，任何回调里都可用（支持 `[n]`、`len()`、多值分量与 `is_ready`），标的不在声明的 `symbols=` 之内时抛 `ValueError`。其他回调里多标的指标不写标的取值抛 `ValueError`。`factory=` 在声明时调用一次识别类型。见[自定义指标指南](../guide/custom_indicator.md#indicator-of-symbol)。
 
 ### `akquant.Indicator` {: #akquant-indicator }
 
@@ -1127,7 +1128,7 @@ class DualMA(aq.Indicator, title="双均线", overlay=True, id="dual_ma"):
 
 ### `akquant.PrecomputedIndicator`
 
-向量化预计算指标：`PrecomputedIndicator(name, fn)`，`fn(df) -> pd.Series` 对单个标的的完整 `DataFrame` 一次性计算，经 `self.I(PrecomputedIndicator(...))` 声明。只用于回测；不支持含 Tick 的输入、`freq=` 与 `warmup_bars=`。
+向量化预计算指标：`PrecomputedIndicator(name, fn)`，`fn(df) -> pd.Series` 对单个标的的完整 `DataFrame` 一次性计算，经 `self.I(PrecomputedIndicator(...))` 声明（天然多标的，不需要 `factory=`，写了也按预计算处理）。只用于回测；不支持含 Tick 的输入、`freq=` 与 `warmup_bars=`。
 
 ### `akquant.HeikinAshi`
 

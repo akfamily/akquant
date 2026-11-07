@@ -81,6 +81,56 @@ class MaCross(Strategy):
 未就绪时取值为 `None`（原生指标未满窗、预计算指标 asof 落空都归一成 `None`），
 因此判空统一写 `if value is None`，不必再区分 `NaN`。
 
+### 多标的：按标的取值 `.of(symbol)` {: #indicator-of-symbol }
+
+多标的策略里一条指标声明对应每个标的各一份数据。`ind[0]` 不写标的时取哪一份，
+取决于在哪个回调里读：
+
+| 在哪里读 | `ind[0]` 取哪个标的 |
+| :--- | :--- |
+| `on_bar` / `on_tick` / `subscribe_bars` 的窗口回调 | 该回调所属的标的 |
+| `on_timer`、`on_cross_section`、`on_order`、`on_trade` 等其他回调 | 指标只跟踪一个标的时取它；**跟踪多个标的时报错**，提示改用 `.of()` |
+
+`ind.of(symbol)` 返回固定到某个标的的视图，在任何回调里都可用，`[n]` 回溯、
+`len()`、多值分量（`self.macd.of(s).dif[0]` 或 `self.macd.dif.of(s)[0]`）与
+`is_ready` 等属性照常。增量指标与预计算指标写法相同。
+
+```python
+from akquant import SMA, PrecomputedIndicator, Strategy
+
+ETFS = ["510300", "510500", "159915"]
+
+
+class Rotation(Strategy):
+    def on_start(self):
+        self.mom = self.I(
+            PrecomputedIndicator("mom20", lambda df: df["close"].pct_change(20)),
+            name="mom",
+        )
+        self.ma = self.I(factory=lambda: SMA(20), name="ma")
+        self.schedule_weekly("14:50:00", "rebalance")
+
+    def on_timer(self, payload):
+        scores = {}
+        for symbol in ETFS:
+            mom, ma_now, ma_before = (
+                self.mom.of(symbol)[0],
+                self.ma.of(symbol)[0],
+                self.ma.of(symbol)[5],
+            )
+            if None not in (mom, ma_now, ma_before) and ma_now > ma_before:
+                scores[symbol] = mom
+        ...  # 按 scores 调仓
+```
+
+- 不能用 `self.current_bar` 推断标的：它在 `on_timer` 里停在最后处理的那根 bar 上，
+  在 `on_cross_section` 里是 `None`。0.3.80 及以前按它解析，会静默取到别的标的的值
+  （`on_cross_section` 里恒为 `None`），现在改为直接报错。
+- 定时器时刻早于当日 bar 收盘时（如 14:50 读日线），读到的是上一根已收盘 bar 的值，
+  没有未来函数。
+- `ind.of(symbol)` 的标的不在声明的 `symbols=` 之内时报 `ValueError`（多半是代码写错）。
+- 完整示例：[79_multi_symbol_indicator_timer.py](https://github.com/akfamily/akquant/blob/main/examples/79_multi_symbol_indicator_timer.py)。
+
 ## 路径一：增量指标
 
 传入任何有 `update()` 的对象即走增量路径。AKQuant 内置了 100+ 个 Rust 实现的
@@ -93,12 +143,13 @@ class MaCross(Strategy):
 from collections import deque
 
 import pandas as pd
-from akquant import PrecomputedIndicator, Strategy
+from akquant import Strategy
 
 
-class MyMomentum(PrecomputedIndicator):
+class MyMomentum:
+    """任何有 update() 的对象都是增量指标, 不需要继承基类."""
+
     def __init__(self, period: int = 10):
-        super().__init__("my_momentum", lambda df: df["close"] - df["close"].shift(period))
         self.period = period
         self.buffer: deque[float] = deque(maxlen=period)
         self._current_value = float("nan")
@@ -138,6 +189,10 @@ class IncrementalMomentumStrategy(Strategy):
 
 多标的策略里，增量指标通常都有内部状态。多个 `symbol` 共用同一个实例会串线，
 因此传实例（而非 `factory`）时跨多标的使用会直接报错，不会静默共享状态。
+`factory` 会在声明时先调用一次识别类型，造出的实例留给第一个标的，不会多造。
+
+`factory` 只为增量指标而设。预计算指标 `PrecomputedIndicator` 自己按标的缓存结果，
+天然多标的，直接传实例即可；写成 `factory=` 也会被识别、按预计算处理。
 
 推荐写法：
 
@@ -272,7 +327,7 @@ class PrecomputeMomentumStrategy(Strategy):
 - **含 Tick 的输入会报错**：预计算需要完整 OHLC，tick 只有成交价；
 - **不支持 `freq=`**：窗口周期请改用增量指标。
 - **不支持 `warmup_bars=`**：它没有增量状态可预热，整段本来就算好了；
-- **多标的天然可用**：`PrecomputedIndicator` 自己按 symbol 缓存整段结果，不需要 `factory=`。
+- **多标的天然可用**：`PrecomputedIndicator` 自己按 symbol 缓存整段结果，不需要 `factory=`（写了也按预计算处理）；在 `on_timer` 等回调里按标的取值见[按标的取值](#indicator-of-symbol)。
 
 ## 自动绘图
 
@@ -1136,7 +1191,8 @@ panes = to_raw_panes(defs, points_by_identity)  # 保留 akquant 原生语义，
   - 不是。预计算场景可以直接用 `PrecomputedIndicator(name, fn)`；增量场景传任何有 `update()` 的对象都行。
     `aq.Indicator` 是“只画图不交易”的指标脚本基类，与“写一个自定义指标”是两回事。
 - 误区 2：多标的一定可以共用一个增量实例
-  - 不行。传实例跨多标的会直接报错，正式策略请用 `factory=`。
+  - 不行。传实例跨多标的会直接报错，增量指标请用 `factory=`；预计算指标天然多标的，
+    直接传实例。
 - 误区 3：`warmup_bars=20` 会重复消费第一根正式 Bar
   - 不会。预热只使用正式开始前的历史数据。
 - 误区 4：自定义指标自然支持热启动
@@ -1146,6 +1202,9 @@ panes = to_raw_panes(defs, points_by_identity)  # 保留 akquant 原生语义，
 - 误区 6：声明了指标就会自动画出来
   - 在 `aq.Strategy` 里不会，要写 `plot=True`（只写 `pane=` / `color=` 不够），与 Pine 的 `ta.*`
     不画、`plot()` 才画一致；在指标脚本 `aq.Indicator` 里默认画，`plot=False` 关闭。
+- 误区 7：在 `on_timer` / `on_cross_section` 里 `ind[0]` 会取“当前标的”
+  - 这些回调不属于某个标的。多标的指标要写 `ind.of(symbol)[0]`，不写会报错，
+    见[按标的取值](#indicator-of-symbol)。
 
 ## 选择建议
 
@@ -1153,7 +1212,8 @@ panes = to_raw_panes(defs, points_by_identity)  # 保留 akquant 原生语义，
 | :--- | :--- |
 | 先快速验证一个想法 | `self.I(PrecomputedIndicator(name, fn))` |
 | 单标的逐 Bar 更新 | `self.I(aq.EMA(20))` |
-| 多标的正式策略 | `self.I(factory=...)` |
+| 多标的正式策略 | 增量指标 `self.I(factory=...)`，预计算指标直接传实例 |
+| 定时器 / 横截面回调里读各标的的指标 | `ind.of(symbol)[0]` |
 | 首根有效 Bar 就要有值 | `self.I(..., warmup_bars=N)` |
 | 要在图上画出来 | 策略里写 `plot=True`，或改写成指标脚本 `aq.Indicator` |
 | 判断金叉死叉 | `ind[0]` / `ind[1]` 序列回溯 |

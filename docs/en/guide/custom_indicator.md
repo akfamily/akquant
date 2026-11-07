@@ -87,6 +87,59 @@ A not-ready value is always `None` (both a native indicator with an unfilled win
 precomputed indicator whose asof lookup misses are normalized to `None`), so a single
 `if value is None` check is enough — no separate `NaN` handling.
 
+### Multiple symbols: per-symbol access with `.of(symbol)` {: #indicator-of-symbol }
+
+In a multi-symbol strategy one indicator declaration holds one series per symbol. Which
+one `ind[0]` reads without a symbol depends on the callback you read it in:
+
+| Where you read | Symbol `ind[0]` resolves to |
+| :--- | :--- |
+| `on_bar` / `on_tick` / a `subscribe_bars` window callback | the symbol of that callback |
+| `on_timer`, `on_cross_section`, `on_order`, `on_trade` and other callbacks | the only symbol if the indicator tracks one; **raises if it tracks several**, pointing to `.of()` |
+
+`ind.of(symbol)` returns a view pinned to one symbol that works in any callback, with
+`[n]` lookback, `len()`, components (`self.macd.of(s).dif[0]` or `self.macd.dif.of(s)[0]`)
+and attributes such as `is_ready`. It works the same for incremental and precomputed
+indicators.
+
+```python
+from akquant import SMA, PrecomputedIndicator, Strategy
+
+ETFS = ["510300", "510500", "159915"]
+
+
+class Rotation(Strategy):
+    def on_start(self):
+        self.mom = self.I(
+            PrecomputedIndicator("mom20", lambda df: df["close"].pct_change(20)),
+            name="mom",
+        )
+        self.ma = self.I(factory=lambda: SMA(20), name="ma")
+        self.schedule_weekly("14:50:00", "rebalance")
+
+    def on_timer(self, payload):
+        scores = {}
+        for symbol in ETFS:
+            mom, ma_now, ma_before = (
+                self.mom.of(symbol)[0],
+                self.ma.of(symbol)[0],
+                self.ma.of(symbol)[5],
+            )
+            if None not in (mom, ma_now, ma_before) and ma_now > ma_before:
+                scores[symbol] = mom
+        ...  # rebalance by scores
+```
+
+- `self.current_bar` cannot identify the symbol: in `on_timer` it still points at the last
+  processed bar, and in `on_cross_section` it is `None`. Up to 0.3.80 reads resolved
+  through it and silently returned another symbol's value (always `None` in
+  `on_cross_section`); they now raise instead.
+- When the timer fires before the day's bar closes (e.g. 14:50 on daily bars), you read the
+  last closed bar, so there is no look-ahead.
+- `ind.of(symbol)` raises `ValueError` if the symbol is outside the declared `symbols=`
+  (most likely a typo).
+- Full example: [79_multi_symbol_indicator_timer.py](https://github.com/akfamily/akquant/blob/main/examples/79_multi_symbol_indicator_timer.py).
+
 ## Path 1: Incremental Indicators
 
 Passing any object that exposes `update()` selects the incremental path. AKQuant ships
@@ -100,12 +153,13 @@ Pine's `ta.*` and work out of the box.
 from collections import deque
 
 import pandas as pd
-from akquant import PrecomputedIndicator, Strategy
+from akquant import Strategy
 
 
-class MyMomentum(PrecomputedIndicator):
+class MyMomentum:
+    """Any object with update() is an incremental indicator; no base class needed."""
+
     def __init__(self, period: int = 10):
-        super().__init__("my_momentum", lambda df: df["close"] - df["close"].shift(period))
         self.period = period
         self.buffer: deque[float] = deque(maxlen=period)
         self._current_value = float("nan")
@@ -146,7 +200,12 @@ class IncrementalMomentumStrategy(Strategy):
 In a multi-symbol strategy, incremental indicators usually carry internal state. Sharing
 one instance across symbols would cross the wires, so passing an *instance* (rather than a
 `factory`) and then using it across multiple symbols raises an error immediately — state is
-never silently shared.
+never silently shared. The `factory` is called once at declaration to detect the indicator
+type, and that instance goes to the first symbol, so no extra instance is created.
+
+`factory` exists for incremental indicators. A precomputed `PrecomputedIndicator` caches its
+results per symbol and is multi-symbol by nature, so pass the instance directly; written as
+`factory=` it is detected and treated as precomputed as well.
 
 Recommended:
 
@@ -292,7 +351,7 @@ class PrecomputeMomentumStrategy(Strategy):
 - **Tick input raises**: precompute needs full OHLC, while a tick only carries a trade price;
 - **`freq=` is not supported**: use an incremental indicator for windowed frequencies.
 - **No `warmup_bars=`**: there is no incremental state to warm up - the whole series is computed up front.
-- **Multi-symbol out of the box**: `PrecomputedIndicator` caches its full series per symbol, so no `factory=` is needed.
+- **Multi-symbol out of the box**: `PrecomputedIndicator` caches its full series per symbol, so no `factory=` is needed (it is treated as precomputed if you write one); to read a given symbol in `on_timer` and similar callbacks see [per-symbol access](#indicator-of-symbol).
 
 ## Automatic Plotting
 
@@ -1275,8 +1334,9 @@ In short, AKQuant should act as the indicator producer, not the full enterprise 
     an `update()` works for the incremental case. `aq.Indicator` is the base class of
     draw-only indicator scripts, which is a different thing from writing a custom indicator.
 - Pitfall 2: one incremental instance can be shared safely across symbols
-  - It cannot. Passing an instance and using it across symbols raises; production
-    multi-symbol strategies use `factory=`.
+  - It cannot. Passing an instance and using it across symbols raises; use `factory=` for
+    incremental indicators. Precomputed indicators are multi-symbol by nature: pass the
+    instance.
 - Pitfall 3: `warmup_bars=20` double-consumes the first active bar
   - It does not. Warmup only uses history before the active start boundary.
 - Pitfall 4: custom indicators automatically work with warm start
@@ -1287,6 +1347,9 @@ In short, AKQuant should act as the indicator producer, not the full enterprise 
   - Not inside an `aq.Strategy`: write `plot=True` (`pane=` / `color=` alone is not enough),
     matching Pine where `ta.*` computes and `plot()` draws. Inside an indicator script
     `aq.Indicator` it is drawn by default; `plot=False` turns it off.
+- Pitfall 7: `ind[0]` in `on_timer` / `on_cross_section` reads "the current symbol"
+  - These callbacks do not belong to a symbol. A multi-symbol indicator needs
+    `ind.of(symbol)[0]`; a bare read raises, see [per-symbol access](#indicator-of-symbol).
 
 ## Recommendation Matrix
 
@@ -1294,7 +1357,8 @@ In short, AKQuant should act as the indicator producer, not the full enterprise 
 | :--- | :--- |
 | Validate an idea quickly | `self.I(PrecomputedIndicator(name, fn))` |
 | Single-symbol bar-by-bar state | `self.I(aq.EMA(20))` |
-| Multi-symbol production strategy | `self.I(factory=...)` |
+| Multi-symbol production strategy | `self.I(factory=...)` for incremental indicators; pass precomputed ones directly |
+| Read each symbol's indicator in a timer / cross-section callback | `ind.of(symbol)[0]` |
 | Need valid values on the first active bar | `self.I(..., warmup_bars=N)` |
 | Need it drawn on the chart | `plot=True` in a strategy, or write an `aq.Indicator` script |
 | Detect a golden/death cross | serial lookback via `ind[0]` / `ind[1]` |

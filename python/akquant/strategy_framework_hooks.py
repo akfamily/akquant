@@ -249,6 +249,15 @@ def _run_in_framework_phase(
             strategy.current_tick = previous_tick
 
 
+#: 回调本身属于某个标的的行情: 期间不指定标的取指标值取该标的
+_SYMBOL_SCOPED_CALLBACKS = frozenset({"on_bar", "on_tick"})
+
+
+def _payload_symbol(payload: Any) -> Optional[str]:
+    symbol = getattr(payload, "symbol", None)
+    return None if symbol is None else str(symbol)
+
+
 def call_user_callback(
     strategy: Any, callback_name: str, *args: Any, payload: Optional[Any] = None
 ) -> Any:
@@ -262,6 +271,12 @@ def call_user_callback(
         payload if callback_name in {"on_order", "on_reject"} else None
     )
     strategy._framework_current_trade = payload if callback_name == "on_trade" else None
+    # on_bar/on_tick 期间不指定标的取指标值取该行情的标的; 其他回调沿用外层
+    # (嵌在 on_bar 里同步触发的 on_order 仍算该 bar 的标的), 见
+    # Strategy._resolve_incremental_indicator_symbol。
+    previous_scope = getattr(strategy, "_indicator_scope_symbol", None)
+    if callback_name in _SYMBOL_SCOPED_CALLBACKS:
+        strategy._indicator_scope_symbol = _payload_symbol(payload)
     try:
         return callback(*args)
     except Exception as exc:
@@ -280,6 +295,7 @@ def call_user_callback(
         strategy._framework_current_callback = previous_callback
         strategy._framework_current_order = previous_order
         strategy._framework_current_trade = previous_trade
+        strategy._indicator_scope_symbol = previous_scope
 
 
 def call_window_bar_callback(strategy: Any, callback: Any, bar: Any) -> Any:
@@ -290,8 +306,10 @@ def call_window_bar_callback(strategy: Any, callback: Any, bar: Any) -> Any:
     callback 可以是任意可调用对象。
     """
     previous_callback = getattr(strategy, "_framework_current_callback", None)
+    previous_scope = getattr(strategy, "_indicator_scope_symbol", None)
     freq = getattr(bar, "freq", None)
     strategy._framework_current_callback = f"window:{freq}"
+    strategy._indicator_scope_symbol = _payload_symbol(bar)
     try:
         return callback(bar)
     except Exception as exc:
@@ -304,6 +322,7 @@ def call_window_bar_callback(strategy: Any, callback: Any, bar: Any) -> Any:
         raise
     finally:
         strategy._framework_current_callback = previous_callback
+        strategy._indicator_scope_symbol = previous_scope
 
 
 def register_cross_section_timers(strategy: Any) -> None:
