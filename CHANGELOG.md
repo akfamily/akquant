@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.81] - 2026-11-07
+
 > **规则版本不变（2.2.0）**：回测数值不变。**不兼容变更**：多标的指标在 `on_bar` / `on_tick` / 窗口回调之外不写标的取值，由静默返回别的标的的值改为抛 `ValueError`，见下方 Changed。
 
 ### Added
