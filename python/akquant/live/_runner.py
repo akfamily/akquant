@@ -67,6 +67,10 @@ from ._gateway_setup import (
     normalize_gateway_options,
     start_gateway_thread,
 )
+from ._paper_execution import (
+    apply_paper_execution_params,
+    resolve_paper_execution_params,
+)
 from ._payload_utils import (
     is_terminal_status,
     normalize_broker_recovery_mode,
@@ -468,6 +472,12 @@ class LiveRunner:
         trading_calendar: Optional[Iterable[Any]] = None,
         timezone: Optional[str] = DEFAULT_INPUT_TIMEZONE,
         day_close_delay: float = 60.0,
+        commission_rate: Optional[float] = None,
+        stamp_tax_rate: Optional[float] = None,
+        transfer_fee_rate: Optional[float] = None,
+        min_commission: Optional[float] = None,
+        slippage: Optional[Dict[str, Any]] = None,
+        volume_limit_pct: Optional[float] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -545,6 +555,12 @@ class LiveRunner:
         :param day_close_delay: 实盘日终结算相对会话收盘的宽限秒数（默认 60.0，
             取值 0～86400）。收盘后该时长内到达的行情仍归当日（不撮合、
             不产生权益点），结算在“收盘 + day_close_delay”。见 ``run_live``
+        :param commission_rate: paper 撮合的佣金率（股票与基金）。见 ``run_live``
+        :param stamp_tax_rate: paper 撮合的印花税率（股票卖出）。见 ``run_live``
+        :param transfer_fee_rate: paper 撮合的过户费率（股票与基金）。见 ``run_live``
+        :param min_commission: paper 撮合的最低佣金（股票与基金）。见 ``run_live``
+        :param slippage: paper 撮合的滑点，与 ``run_backtest`` 同格式。见 ``run_live``
+        :param volume_limit_pct: paper 撮合的成交量限制，0 表示不限制。见 ``run_live``
         """
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
@@ -647,6 +663,18 @@ class LiveRunner:
         self.sessions: Optional[SessionsMap] = normalize_sessions(sessions)
         self.trading_calendar = normalize_trading_calendar(trading_calendar)
         self.day_close_delay_ns = _validate_day_close_delay(day_close_delay)
+        # paper 撮合参数: 构造时校验(broker_live 下传了即报错), run() 里在市场
+        # 配置之后下发, 见 _paper_execution。
+        self._paper_execution = resolve_paper_execution_params(
+            trading_mode=self.trading_mode,
+            instruments=self.instruments or [],
+            commission_rate=commission_rate,
+            stamp_tax_rate=stamp_tax_rate,
+            transfer_fee_rate=transfer_fee_rate,
+            min_commission=min_commission,
+            slippage=slippage,
+            volume_limit_pct=volume_limit_pct,
+        )
         self._preload_result: Optional[PreloadResult] = None
         self._signal_dispatcher: Any = None
         # Indicator streaming wiring (set via set_indicator_stream / run_live).
@@ -745,6 +773,9 @@ class LiveRunner:
             self.engine.use_china_futures_market()
         else:
             self.engine.use_china_market()
+        # paper 撮合参数(费率/滑点/量限)须在市场配置之后: use_china_market() 会
+        # 重建市场配置, 先下发会被冲掉。
+        apply_paper_execution_params(self.engine, self._paper_execution)
         # 交易日划分与日终结算时刻(按上面下发的引擎时区)
         self.engine.configure_sessions(self.sessions, self.trading_calendar)
         # 实盘日终结算宽限(收盘 + day_close_delay 秒), 运行参数不入存档, 每次下发

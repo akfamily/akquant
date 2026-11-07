@@ -107,6 +107,12 @@ def run_live(
     trading_calendar: Optional[Iterable[Any]] = None,
     timezone: Optional[str] = "Asia/Shanghai",
     day_close_delay: float = 60.0,
+    commission_rate: Optional[float] = None,
+    stamp_tax_rate: Optional[float] = None,
+    transfer_fee_rate: Optional[float] = None,
+    min_commission: Optional[float] = None,
+    slippage: Optional[Dict[str, Any]] = None,
+    volume_limit_pct: Optional[float] = None,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -302,6 +308,25 @@ def run_live(
                             当日没有任何行情也会结算。取值 0～86400（0 即收盘后
                             立即结算），越界或非有限值抛 ``ValueError``，非数字抛
                             ``TypeError``。回测不受影响
+    :param commission_rate: paper 撮合的佣金率，作用于股票与基金（ETF）。
+    :param stamp_tax_rate: paper 撮合的印花税率，只在股票卖出时收取。
+    :param transfer_fee_rate: paper 撮合的过户费率，作用于股票与基金。
+    :param min_commission: paper 撮合的最低佣金，作用于股票与基金。
+
+                           四个费率参数与 ``run_backtest`` 同名同义。不传的项沿用
+                           paper 默认值（佣金万分之三、印花税万分之五、过户费
+                           十万分之一、最低佣金 5 元）；期货/期权沿用默认费率，
+                           会话里只有期货/期权标的却传了费率参数时抛 ``ValueError``
+    :param slippage: paper 撮合的滑点，与 ``run_backtest`` 同格式：
+                     ``{"type": "percent"|"fixed"|"ticks"|"zero", "value": ...}``；
+                     ``ticks`` 要求所有标的 ``tick_size`` 相同。不传则无滑点
+    :param volume_limit_pct: paper 撮合的成交量限制：单根 bar 最多成交该 bar
+                             成交量的这一比例，截断量按手数取整，与
+                             ``run_backtest`` 同义；不传或 0 表示不限制。
+
+                             以上六个参数只作用于 ``trading_mode="paper"``（由
+                             akquant 撮合）；``broker_live`` 由柜台撮合，传了任一
+                             参数即抛 ``ValueError``
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")
@@ -373,6 +398,12 @@ def run_live(
         trading_calendar=trading_calendar,
         timezone=timezone,
         day_close_delay=day_close_delay,
+        commission_rate=commission_rate,
+        stamp_tax_rate=stamp_tax_rate,
+        transfer_fee_rate=transfer_fee_rate,
+        min_commission=min_commission,
+        slippage=slippage,
+        volume_limit_pct=volume_limit_pct,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event

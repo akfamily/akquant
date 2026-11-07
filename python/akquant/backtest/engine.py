@@ -2313,6 +2313,35 @@ def _build_instrument_slippage_map(
     return result or None
 
 
+def _apply_fund_fee_rules(
+    engine: Any,
+    *,
+    commission_policy: CommissionPolicy,
+    transfer_fee_rate: float,
+    min_commission: float,
+    kwargs: Dict[str, Any],
+) -> None:
+    """全局费率同样作用于基金; ``fund_commission`` 系列参数单独给基金设置时优先.
+
+    只影响 ChinaMarket(SimpleMarket 所有资产共用一份费率, 引擎侧对其不做处理)。
+    印花税不作用于基金: 场内基金不收印花税, 基金配置的印花税保持 0。
+    此前基金一直按引擎默认(万三 + 过户费 + 最低 5 元)收费, 全局费率参数不生效。
+    """
+    if hasattr(engine, "set_fund_fee_policy"):
+        engine.set_fund_fee_policy(
+            commission_policy["type"],
+            float(commission_policy["value"]),
+            float(transfer_fee_rate),
+            float(min_commission),
+        )
+    if "fund_commission" in kwargs:
+        engine.set_fund_fee_rules(
+            kwargs["fund_commission"],
+            kwargs.get("fund_transfer_fee", 0.0),
+            kwargs.get("fund_min_commission", 0.0),
+        )
+
+
 def _apply_option_market_rules(
     engine: Any,
     *,
@@ -4993,13 +5022,13 @@ def run_backtest(
             f"Volume limit {volume_limit_pct} set but not supported by Engine."
         )
 
-    # Configure other asset fees if provided
-    if "fund_commission" in kwargs:
-        engine.set_fund_fee_rules(
-            kwargs["fund_commission"],
-            kwargs.get("fund_transfer_fee", 0.0),
-            kwargs.get("fund_min_commission", 0.0),
-        )
+    _apply_fund_fee_rules(
+        engine,
+        commission_policy=commission_policy,
+        transfer_fee_rate=transfer_fee_rate,
+        min_commission=min_commission,
+        kwargs=kwargs,
+    )
 
     if has_options_instruments:
         # 全局期权费率 + 前缀规则(前缀规则原在下方 sessions 块内, 其间只有期货
@@ -7169,6 +7198,13 @@ def run_from_checkpoint(
         )
         engine.set_stock_fee_rules(commission, stamp_tax, transfer_fee, min_commission)
         logger.info(f"Re-configured market fees: comm={commission}, stamp={stamp_tax}")
+    _apply_fund_fee_rules(
+        engine,
+        commission_policy=resolved_commission_policy,
+        transfer_fee_rate=transfer_fee,
+        min_commission=min_commission,
+        kwargs=kwargs,
+    )
 
     if has_options_instruments:
         _apply_option_fee_rules(engine, china_options_config, logger)

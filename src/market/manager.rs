@@ -255,9 +255,27 @@ impl MarketManager {
         transfer_fee: f64,
         min_commission: f64,
     ) {
+        self.set_fund_fee_policy(
+            "percent".to_string(),
+            commission_rate,
+            transfer_fee,
+            min_commission,
+        );
+    }
+
+    /// 设置基金费率(佣金口径同 ``set_stock_fee_policy``); 只作用于 ChinaMarket,
+    /// SimpleMarket 下所有资产共用一份费率, 不区分基金。印花税保持不变(场内基金为 0)。
+    pub fn set_fund_fee_policy(
+        &mut self,
+        commission_type: String,
+        commission_value: f64,
+        transfer_fee: f64,
+        min_commission: f64,
+    ) {
         if let MarketConfig::China(ref mut c) = self.config {
             let fund = c.fund.get_or_insert_with(fund::FundConfig::default);
-            fund.commission_rate = Decimal::from_f64(commission_rate).unwrap_or(Decimal::ZERO);
+            fund.commission_mode = parse_commission_mode(&commission_type);
+            fund.commission_rate = Decimal::from_f64(commission_value).unwrap_or(Decimal::ZERO);
             fund.transfer_fee = Decimal::from_f64(transfer_fee).unwrap_or(Decimal::ZERO);
             fund.min_commission = Decimal::from_f64(min_commission).unwrap_or(Decimal::ZERO);
             self.model = self.config.create_model();

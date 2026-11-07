@@ -9,8 +9,8 @@ def test_streaming_indicator_sink_is_public() -> None:
     assert StreamingIndicatorSink is Private
 
 
-def test_engine_rule_version_is_2_1_3() -> None:
-    """自定义 __init__ 收到策略参数、walk-forward 跳过全失败窗口, 规则版本为 2.1.3."""
+def test_engine_rule_version_is_2_2_0() -> None:
+    """回测全局费率同样作用于基金(ETF), 规则版本为 2.2.0."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.1.3"
+    assert akquant.__engine_rule_version__ == "2.2.0"

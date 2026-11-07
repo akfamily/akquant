@@ -1387,6 +1387,29 @@ impl Engine {
             .set_fund_fee_rules(commission_rate, transfer_fee, min_commission);
     }
 
+    /// 设置基金费率策略(佣金口径同 ``set_stock_fee_policy``)
+    ///
+    /// 只作用于中国市场配置; 简单市场下所有资产共用一份费率。基金印花税不变。
+    ///
+    /// :param commission_type: 佣金口径: "percent"(按成交额) / "fixed"(每笔) / "per_unit"(按数量)
+    /// :param commission_value: 佣金数值
+    /// :param transfer_fee: 过户费率
+    /// :param min_commission: 最低佣金
+    fn set_fund_fee_policy(
+        &mut self,
+        commission_type: String,
+        commission_value: f64,
+        transfer_fee: f64,
+        min_commission: f64,
+    ) {
+        self.market_manager.set_fund_fee_policy(
+            commission_type,
+            commission_value,
+            transfer_fee,
+            min_commission,
+        );
+    }
+
     /// 设置单个标的的费用覆盖(对应 InstrumentConfig 的四个费用字段), 未传的项沿用市场配置
     ///
     /// :param symbol: 标的代码
